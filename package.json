@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@frost-beta/mlx": "^0.4.0"
+  }
+}
