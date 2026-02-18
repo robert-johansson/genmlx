@@ -1,7 +1,6 @@
 (ns genmlx.inference.smc
   "Sequential Monte Carlo (particle filtering) inference."
   (:require [genmlx.protocols :as p]
-            [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.mlx :as mx]
@@ -53,7 +52,7 @@
               (let [trace-keys (if ki (rng/split-n ki rejuvenation-steps)
                                       (repeat rejuvenation-steps nil))]
                 (reduce (fn [t rk]
-                          (let [gf     (tr/get-gen-fn t)
+                          (let [gf     (:gen-fn t)
                                 result (p/regenerate gf t rejuvenation-selection)
                                 w      (mx/realize (:weight result))]
                             (if (u/accept-mh? w rk) (:trace result) t)))
@@ -70,7 +69,7 @@
         ess        (compute-ess log-weights)
         resample?  (< ess (* ess-threshold particles))
         [resample-key step-key rejuv-key]
-        (if key (rng/split-n key 3) [nil nil nil])
+        (rng/split-n-or-nils key 3)
         [traces' weights'] (if resample?
                              (let [indices (systematic-resample log-weights particles resample-key)]
                                [(mapv #(nth traces %) indices)
@@ -78,7 +77,7 @@
                              [traces log-weights])
         ;; Update each particle with new observations
         results       (mapv (fn [trace]
-                              (p/update (tr/get-gen-fn trace) trace obs))
+                              (p/update (:gen-fn trace) trace obs))
                             traces')
         new-traces    (mapv :trace results)
         update-weights (mapv :weight results)
@@ -127,7 +126,7 @@
          :log-weights log-weights
          :log-ml-estimate log-ml}
         (let [obs-t (nth obs-vec t)
-              [step-key next-key] (if rk (rng/split rk) [nil nil])]
+              [step-key next-key] (rng/split-or-nils rk)]
           (if (zero? t)
             (let [{:keys [traces log-weights log-ml-increment]}
                   (smc-init-step model args obs-t particles)]

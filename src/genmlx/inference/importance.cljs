@@ -47,12 +47,13 @@
     ;; Resample
     (let [keys (rng/split-n key samples)]
       (mapv (fn [ki]
-              (let [u (mx/realize (rng/uniform ki []))]
-                (loop [i 0 cumsum 0.0]
-                  (if (>= i (count traces))
-                    (last traces)
-                    (let [cumsum' (+ cumsum (nth probs i))]
-                      (if (>= cumsum' u)
-                        (nth traces i)
-                        (recur (inc i) cumsum')))))))
+              (let [u (mx/realize (rng/uniform ki []))
+                    result (reduce (fn [cumsum [i p]]
+                                     (let [cumsum' (+ cumsum p)]
+                                       (if (>= cumsum' u)
+                                         (reduced (nth traces i))
+                                         cumsum')))
+                                   0.0
+                                   (map-indexed vector probs))]
+                (if (number? result) (last traces) result)))
             keys))))

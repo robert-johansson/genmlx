@@ -48,12 +48,12 @@
                    {:choices cm/EMPTY :score (mx/scalar 0.0)
                     :weight (mx/scalar 0.0)
                     :key key :constraints constraints
-                    :old-choices (tr/get-choices trace)
+                    :old-choices (:choices trace)
                     :discard cm/EMPTY
                     :executor execute-sub}
-                   #(apply body-fn (tr/get-args trace)))]
+                   #(apply body-fn (:args trace)))]
       {:trace (tr/make-trace
-                {:gen-fn this :args (tr/get-args trace)
+                {:gen-fn this :args (:args trace)
                  :choices (:choices result)
                  :retval  (:retval result)
                  :score   (:score result)})
@@ -63,20 +63,20 @@
   p/IRegenerate
   (regenerate [this trace selection]
     (let [key (rng/fresh-key)
-          old-score (tr/get-score trace)
+          old-score (:score trace)
           result (h/run-handler h/regenerate-handler
                    {:choices cm/EMPTY :score (mx/scalar 0.0)
                     :weight (mx/scalar 0.0)  ;; tracks proposal ratio
                     :key key :selection selection
-                    :old-choices (tr/get-choices trace)
+                    :old-choices (:choices trace)
                     :executor execute-sub}
-                   #(apply body-fn (tr/get-args trace)))
+                   #(apply body-fn (:args trace)))
           new-score (:score result)
           proposal-ratio (:weight result)
           ;; Gen.jl regenerate weight = new_score - old_score - proposal_ratio
           weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)]
       {:trace (tr/make-trace
-                {:gen-fn this :args (tr/get-args trace)
+                {:gen-fn this :args (:args trace)
                  :choices (:choices result)
                  :retval  (:retval result)
                  :score   new-score})
@@ -97,20 +97,20 @@
                             :choices (or old-choices cm/EMPTY)
                             :retval nil :score (mx/scalar 0.0)})
             selection)]
-      {:choices (tr/get-choices trace) :retval (tr/get-retval trace)
-       :score (tr/get-score trace) :weight weight})
+      {:choices (:choices trace) :retval (:retval trace)
+       :score (:score trace) :weight weight})
 
     ;; Generate with constraints
     (and constraints (not= constraints cm/EMPTY))
     (let [{:keys [trace weight]} (p/generate gf args constraints)]
-      {:choices (tr/get-choices trace) :retval (tr/get-retval trace)
-       :score (tr/get-score trace) :weight weight})
+      {:choices (:choices trace) :retval (:retval trace)
+       :score (:score trace) :weight weight})
 
     ;; Plain simulate
     :else
     (let [trace (p/simulate gf args)]
-      {:choices (tr/get-choices trace) :retval (tr/get-retval trace)
-       :score (tr/get-score trace)})))
+      {:choices (:choices trace) :retval (:retval trace)
+       :score (:score trace)})))
 
 (defn make-gen-fn
   "Create a DynamicGF from a body function and its source form."
@@ -120,7 +120,7 @@
 (defn call
   "Call a generative function as a regular function (simulate and return value)."
   [gf & args]
-  (tr/get-retval (p/simulate gf (vec args))))
+  (:retval (p/simulate gf (vec args))))
 
 ;; ---------------------------------------------------------------------------
 ;; User-facing functions called inside gen bodies

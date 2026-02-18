@@ -11,9 +11,3 @@
   "Create a trace from a map of {:gen-fn :args :choices :retval :score}."
   [m]
   (map->Trace m))
-
-(defn get-retval  [t] (:retval t))
-(defn get-score   [t] (:score t))
-(defn get-choices [t] (:choices t))
-(defn get-args    [t] (:args t))
-(defn get-gen-fn  [t] (:gen-fn t))

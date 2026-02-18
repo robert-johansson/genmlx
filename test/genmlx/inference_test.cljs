@@ -3,7 +3,6 @@
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
-            [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.inference.importance :as is]
@@ -48,7 +47,7 @@
         log-probs (mx/subtract weights-arr (mx/logsumexp weights-arr))
         _ (mx/eval! log-probs)
         probs (mx/->clj (mx/exp log-probs))
-        p-vals (mapv (fn [t] (tr/get-retval t)) traces)
+        p-vals (mapv :retval traces)
         weighted-mean (reduce + (map * p-vals probs))]
     (assert-true "IS posterior p > 0.5" (> weighted-mean 0.5))))
 
@@ -72,7 +71,7 @@
   (assert-true "MH returns traces" (= 200 (count traces)))
   ;; Check posterior concentrates near 3
   (let [mu-vals (mapv (fn [t]
-                        (let [v (cm/get-value (cm/get-submap (tr/get-choices t) :mu))]
+                        (let [v (cm/get-value (cm/get-submap (:choices t) :mu))]
                           (mx/eval! v) (mx/item v)))
                       traces)
         mu-mean (/ (reduce + mu-vals) (count mu-vals))]

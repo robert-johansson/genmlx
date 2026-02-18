@@ -9,7 +9,6 @@
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
-            [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.inference.importance :as importance])
@@ -297,11 +296,11 @@
 (let [d (dist/gaussian 0 1)
       trace (p/simulate d [])]
   (assert-true "gaussian: gen-fn round-trips through trace"
-    (= d (tr/get-gen-fn trace)))
+    (= d (:gen-fn trace)))
   (assert-true "gaussian: args round-trip"
-    (= [] (tr/get-args trace)))
-  (let [choice (tr/get-choices trace)
-        retval (tr/get-retval trace)]
+    (= [] (:args trace)))
+  (let [choice (:choices trace)
+        retval (:retval trace)]
     (mx/eval! retval (cm/get-value choice))
     (assert-close "gaussian: retval = choice value"
       (mx/item retval) (mx/item (cm/get-value choice)) sym-tol)))
@@ -313,8 +312,8 @@
       trace (p/simulate d [0.5])]
   (assert-true "bernoulli: simulate returns trace"
     (some? trace))
-  (let [retval (tr/get-retval trace)
-        score  (tr/get-score trace)]
+  (let [retval (:retval trace)
+        score  (:score trace)]
     (mx/eval! retval score)
     (assert-close "bernoulli(0.5): score = log(0.5)"
       0.5
@@ -368,25 +367,25 @@
            (+ a b c d e))
       trace (p/simulate gf [1 2 3 4 5])]
   (assert-true "deterministic gen: gen-fn round-trips"
-    (= gf (tr/get-gen-fn trace)))
+    (= gf (:gen-fn trace)))
   (assert-true "deterministic gen: args round-trip"
-    (= [1 2 3 4 5] (tr/get-args trace)))
+    (= [1 2 3 4 5] (:args trace)))
   (assert-equal "deterministic gen: retval matches"
-    15 (tr/get-retval trace)))
+    15 (:retval trace)))
 
 ;; No choices for deterministic functions
 (let [gf (gen [x y] (+ x y))
       trace (p/simulate gf [3 4])]
   (assert-equal "deterministic: no choices"
-    0 (count (cm/addresses (tr/get-choices trace)))))
+    0 (count (cm/addresses (:choices trace)))))
 
 ;; trace! creates choices
 (println "\n-- Nested tracing semantics (from Gen.clj) --")
 (let [gf (gen [p]
            (dyn/trace :addr (dist/bernoulli p)))
       trace (p/simulate gf [0.5])]
-  (let [choices (tr/get-choices trace)
-        retval  (tr/get-retval trace)]
+  (let [choices (:choices trace)
+        retval  (:retval trace)]
     (mx/eval! retval)
     (let [v (cm/get-value (cm/get-submap choices :addr))]
       (mx/eval! v)
@@ -397,7 +396,7 @@
 (let [gf0 (gen [] (dyn/trace :addr (dist/bernoulli 0.5)))
       gf1 (gen [] (dyn/splice :sub gf0))
       trace (p/simulate gf1 [])]
-  (let [choices (tr/get-choices trace)
+  (let [choices (:choices trace)
         sub-map (cm/get-submap choices :sub)]
     (assert-true "splice bubbles up: sub-map exists"
       (some? sub-map))
@@ -409,7 +408,7 @@
 (let [inner (gen [] (dyn/trace :inner (dist/bernoulli 0.5)))
       outer (gen [] (dyn/splice :outer inner))
       trace (p/simulate outer [])]
-  (let [choices (tr/get-choices trace)
+  (let [choices (:choices trace)
         outer-sub (cm/get-submap choices :outer)
         inner-val (cm/get-submap outer-sub :inner)]
     (assert-true "nested tracing: outer exists"
@@ -421,7 +420,7 @@
 (let [inner (gen [] (dyn/trace :addr (dist/bernoulli 0.5)))
       outer (gen [] (dyn/splice :sub inner))
       {:keys [trace]} (p/generate outer [] cm/EMPTY)]
-  (let [choices (tr/get-choices trace)
+  (let [choices (:choices trace)
         sub-map (cm/get-submap choices :sub)
         addr-val (cm/get-submap sub-map :addr)]
     (assert-true "generate+splice: structure preserved"
@@ -432,7 +431,7 @@
 (let [trace (p/simulate
               (gen [] (dyn/trace :addr (dist/bernoulli 0.5)))
               [])]
-  (let [score (tr/get-score trace)]
+  (let [score (:score trace)]
     (mx/eval! score)
     (assert-close "bernoulli(0.5) score = log(0.5)"
       0.5
@@ -450,7 +449,7 @@
 (let [gf (gen []
            (dyn/trace :x (dist/bernoulli 0.5)))
       trace (p/simulate gf [])
-      old-x (let [v (cm/get-value (cm/get-submap (tr/get-choices trace) :x))]
+      old-x (let [v (cm/get-value (cm/get-submap (:choices trace) :x))]
               (mx/eval! v) (mx/item v))
       new-val (if (> old-x 0.5) 0.0 1.0)  ;; flip the value
       {:keys [trace discard]} (p/update gf trace
@@ -461,7 +460,7 @@
     (mx/eval! discarded)
     (assert-close "update: discarded value matches old"
       old-x (mx/item discarded) sym-tol))
-  (let [new-x (cm/get-value (cm/get-submap (tr/get-choices trace) :x))]
+  (let [new-x (cm/get-value (cm/get-submap (:choices trace) :x))]
     (mx/eval! new-x)
     (assert-close "update: new trace has new value"
       new-val (mx/item new-x) sym-tol)))
@@ -480,12 +479,12 @@
            (dyn/trace :kept (dist/bernoulli 0.5))
            (dyn/trace :changed (dist/bernoulli 0.5)))
       trace (p/simulate gf [])
-      old-kept (let [v (cm/get-value (cm/get-submap (tr/get-choices trace) :kept))]
+      old-kept (let [v (cm/get-value (cm/get-submap (:choices trace) :kept))]
                  (mx/eval! v) (mx/item v))
       {:keys [trace discard]} (p/update gf trace
                                  (cm/choicemap :changed (mx/scalar 1.0)))]
   ;; :kept should remain unchanged
-  (let [new-kept (cm/get-value (cm/get-submap (tr/get-choices trace) :kept))]
+  (let [new-kept (cm/get-value (cm/get-submap (:choices trace) :kept))]
     (mx/eval! new-kept)
     (assert-close "update partial: unchanged addr kept"
       old-kept (mx/item new-kept) sym-tol))
@@ -514,7 +513,7 @@
       constraints (cm/choicemap :x (mx/scalar 2.0))
       {:keys [trace weight]} (p/generate gf [] constraints)]
   ;; x should be constrained to 2.0
-  (let [x-val (cm/get-value (cm/get-submap (tr/get-choices trace) :x))]
+  (let [x-val (cm/get-value (cm/get-submap (:choices trace) :x))]
     (mx/eval! x-val)
     (assert-close "generate: x constrained to 2.0"
       2.0 (mx/item x-val) sym-tol))
@@ -538,10 +537,10 @@
              (mx/eval! x y)
              [(mx/item x) (mx/item y)]))
       trace (p/simulate gf [])
-      old-y (let [v (cm/get-value (cm/get-submap (tr/get-choices trace) :y))]
+      old-y (let [v (cm/get-value (cm/get-submap (:choices trace) :y))]
               (mx/eval! v) (mx/item v))
       {:keys [trace weight]} (p/regenerate gf trace (sel/select :x))]
-  (let [new-y (cm/get-value (cm/get-submap (tr/get-choices trace) :y))]
+  (let [new-y (cm/get-value (cm/get-submap (:choices trace) :y))]
     (mx/eval! new-y)
     (assert-close "regenerate: unselected :y unchanged"
       old-y (mx/item new-y) sym-tol))
@@ -572,7 +571,7 @@
       trace (first traces)]
   (assert-true "importance resampling: returns trace"
     (some? trace))
-  (let [choices (tr/get-choices trace)
+  (let [choices (:choices trace)
         bar-val (cm/get-value (cm/get-submap choices :bar))]
     (mx/eval! bar-val)
     (assert-close "importance resampling: bar constrained to 1.0"
@@ -622,17 +621,17 @@
       xs (range -5 6)
       trace (p/simulate line-model [(vec xs)])]
   (assert-true "line model: trace has choices"
-    (some? (tr/get-choices trace)))
+    (some? (:choices trace)))
   (assert-true "line model: returns function"
-    (fn? (tr/get-retval trace)))
+    (fn? (:retval trace)))
   (assert-true "line model: has slope"
-    (cm/has-value? (cm/get-submap (tr/get-choices trace) :slope)))
+    (cm/has-value? (cm/get-submap (:choices trace) :slope)))
   (assert-true "line model: has intercept"
-    (cm/has-value? (cm/get-submap (tr/get-choices trace) :intercept)))
+    (cm/has-value? (cm/get-submap (:choices trace) :intercept)))
   ;; Should have y0 through y10
   (doseq [i (range 11)]
     (assert-true (str "line model: has y" i)
-      (cm/has-value? (cm/get-submap (tr/get-choices trace)
+      (cm/has-value? (cm/get-submap (:choices trace)
                                      (keyword (str "y" i)))))))
 
 ;; Generate with observations should constrain ys
@@ -655,7 +654,7 @@
   (mx/eval! weight)
   (assert-true "line model generate: weight is finite"
     (js/isFinite (mx/item weight)))
-  (let [y0 (cm/get-value (cm/get-submap (tr/get-choices trace) :y0))]
+  (let [y0 (cm/get-value (cm/get-submap (:choices trace) :y0))]
     (mx/eval! y0)
     (assert-close "line model generate: y0 = 2.0"
       2.0 (mx/item y0) sym-tol)))

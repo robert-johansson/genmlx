@@ -3,7 +3,6 @@
    MH uses the GFI regenerate operation.
    Gradient-based methods operate on compiled model score functions."
   (:require [genmlx.protocols :as p]
-            [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.mlx :as mx]
@@ -48,7 +47,7 @@
   ([current-trace selection]
    (mh-step current-trace selection nil))
   ([current-trace selection key]
-   (let [gf (tr/get-gen-fn current-trace)
+   (let [gf (:gen-fn current-trace)
          result (p/regenerate gf current-trace selection)
          w (mx/realize (:weight result))]
      (if (u/accept-mh? w key)
@@ -95,8 +94,7 @@
         q' (mx/add q (mx/multiply half-eps2 g) (mx/multiply eps noise))
         _ (mx/eval! q' g)
         ;; Compute acceptance ratio with asymmetric proposal correction
-        g' (grad-score q')
-        _ (mx/eval! g')
+        g' (doto (grad-score q') mx/eval!)
         ;; Forward/backward proposal log-densities
         fwd-mean (mx/add q (mx/multiply half-eps2 g))
         bwd-mean (mx/add q' (mx/multiply half-eps2 g'))
@@ -208,10 +206,10 @@
   [q neg-U-compiled grad-neg-U eps half-eps half q-shape leapfrog-steps key]
   (let [[momentum-key accept-key] (rng/split-or-nils key)
         ;; Sample momentum
-        p0 (if momentum-key
-             (rng/normal momentum-key q-shape)
-             (mx/random-normal q-shape))
-        _ (mx/eval! p0)
+        p0 (doto (if momentum-key
+                   (rng/normal momentum-key q-shape)
+                   (mx/random-normal q-shape))
+              mx/eval!)
         ;; Current Hamiltonian
         current-H (hamiltonian neg-U-compiled q p0 half)
         ;; Fused leapfrog — L+1 gradient evals, one lazy graph
@@ -354,10 +352,10 @@
         (let [[momentum-key slice-key dir-key tree-key]
               (rng/split-n-or-nils step-key 4)
               ;; Sample momentum and compute current Hamiltonian
-              p0 (if momentum-key
-                   (rng/normal momentum-key q-shape)
-                   (mx/random-normal q-shape))
-              _ (mx/eval! p0)
+              p0 (doto (if momentum-key
+                         (rng/normal momentum-key q-shape)
+                         (mx/random-normal q-shape))
+                    mx/eval!)
               current-H (hamiltonian neg-ld-compiled q p0 half)
               log-u (+ (if slice-key
                          (js/Math.log (mx/realize (rng/uniform slice-key [])))

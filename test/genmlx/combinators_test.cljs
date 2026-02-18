@@ -31,8 +31,8 @@
       mapped (comb/map-combinator kernel)
       trace (p/simulate mapped [[1.0 2.0 3.0]])]
   (assert-true "map returns trace" (instance? tr/Trace trace))
-  (assert= "map returns 3 values" 3 (count (tr/get-retval trace)))
-  (assert-true "map retvals are numbers" (every? number? (tr/get-retval trace))))
+  (assert= "map returns 3 values" 3 (count (:retval trace)))
+  (assert-true "map retvals are numbers" (every? number? (:retval trace))))
 
 ;; Map combinator with generate
 (println "\n-- Map combinator generate --")
@@ -56,8 +56,8 @@
       unfold (comb/unfold-combinator step)
       trace (p/simulate unfold [5 0.0])]
   (assert-true "unfold returns trace" (instance? tr/Trace trace))
-  (assert= "unfold returns 5 states" 5 (count (tr/get-retval trace)))
-  (assert-true "unfold retvals are numbers" (every? number? (tr/get-retval trace))))
+  (assert= "unfold returns 5 states" 5 (count (:retval trace)))
+  (assert-true "unfold retvals are numbers" (every? number? (:retval trace))))
 
 ;; Switch combinator
 (println "\n-- Switch combinator --")
@@ -74,7 +74,7 @@
       trace1 (p/simulate sw [1])]
   (assert-true "switch branch 0 returns trace" (instance? tr/Trace trace0))
   (assert-true "switch branch 1 returns trace" (instance? tr/Trace trace1))
-  (assert-true "branch 0 value near 0" (< (js/Math.abs (tr/get-retval trace0)) 5))
-  (assert-true "branch 1 value near 10" (< (js/Math.abs (- (tr/get-retval trace1) 10)) 5)))
+  (assert-true "branch 0 value near 0" (< (js/Math.abs (:retval trace0)) 5))
+  (assert-true "branch 1 value near 10" (< (js/Math.abs (- (:retval trace1) 10)) 5)))
 
 (println "\nAll combinator tests complete.")

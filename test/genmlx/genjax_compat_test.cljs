@@ -7,7 +7,6 @@
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
-            [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.combinators :as comb]
@@ -55,11 +54,11 @@
                     y (dyn/trace :y (dist/gaussian 0 1))]
                 [x y]))
       trace (p/simulate model [])
-      choices (tr/get-choices trace)
-      score (ev (tr/get-score trace))
+      choices (:choices trace)
+      score (ev (:score trace))
       ;; Generate with exactly the same choices
       {:keys [trace weight]} (p/generate model [] choices)
-      gen-score (ev (tr/get-score trace))
+      gen-score (ev (:score trace))
       gen-weight (ev weight)]
   (check "generate with all choices: weight ≈ score"
          (approx= gen-weight gen-score 1e-5))
@@ -75,8 +74,8 @@
                     (dyn/trace (keyword (str "y" i)) (dist/gaussian m 1)))
                   m)))
       trace (p/simulate model [5])
-      choices (tr/get-choices trace)
-      score (ev (tr/get-score trace))
+      choices (:choices trace)
+      score (ev (:score trace))
       {:keys [weight]} (p/generate model [5] choices)
       w (ev weight)]
   (check "hierarchical model: generate weight ≈ score"
@@ -96,11 +95,11 @@
 
 (let [model (gen [] (dyn/trace :x (dist/gaussian 0 1)))
       trace (p/simulate model [])
-      old-score (ev (tr/get-score trace))
+      old-score (ev (:score trace))
       new-val (mx/scalar 2.5)
       constraints (cm/choicemap :x new-val)
       {:keys [trace weight]} (p/update model trace constraints)
-      new-score (ev (tr/get-score trace))
+      new-score (ev (:score trace))
       w (ev weight)]
   (check "update weight = new_score - old_score"
          (approx= w (- new-score old-score) 1e-5)))
@@ -111,10 +110,10 @@
                     y (dyn/trace :y (dist/gaussian 0 1))]
                 [x y]))
       trace (p/simulate model [])
-      old-score (ev (tr/get-score trace))
+      old-score (ev (:score trace))
       constraints (cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar 2.0))
       {:keys [trace weight]} (p/update model trace constraints)
-      new-score (ev (tr/get-score trace))
+      new-score (ev (:score trace))
       w (ev weight)]
   (check "multi-address update: weight = new_score - old_score"
          (approx= w (- new-score old-score) 1e-5)))
@@ -122,7 +121,7 @@
 ;; Update with same value → weight ≈ 0
 (let [model (gen [] (dyn/trace :x (dist/gaussian 0 1)))
       trace (p/simulate model [])
-      old-val (cm/get-value (cm/get-submap (tr/get-choices trace) :x))
+      old-val (cm/get-value (cm/get-submap (:choices trace) :x))
       constraints (cm/choicemap :x old-val)
       {:keys [weight]} (p/update model trace constraints)
       w (ev weight)]
@@ -137,9 +136,9 @@
                     y (dyn/trace :y (dist/gaussian 0 1))]
                 [x y]))
       trace (p/simulate model [])
-      old-x (ev (cm/get-value (cm/get-submap (tr/get-choices trace) :x)))
+      old-x (ev (cm/get-value (cm/get-submap (:choices trace) :x)))
       {:keys [trace weight]} (p/regenerate model trace sel/none)
-      new-x (ev (cm/get-value (cm/get-submap (tr/get-choices trace) :x)))
+      new-x (ev (cm/get-value (cm/get-submap (:choices trace) :x)))
       w (ev weight)]
   (check "regenerate none: weight ≈ 0" (approx= w 0.0 1e-5))
   (check "regenerate none: choices unchanged" (approx= old-x new-x 1e-10)))
@@ -150,9 +149,9 @@
                     y (dyn/trace :y (dist/gaussian 0 1))]
                 [x y]))
       trace (p/simulate model [])
-      old-y (ev (cm/get-value (cm/get-submap (tr/get-choices trace) :y)))
+      old-y (ev (cm/get-value (cm/get-submap (:choices trace) :y)))
       {:keys [trace]} (p/regenerate model trace (sel/select :x))
-      new-y (ev (cm/get-value (cm/get-submap (tr/get-choices trace) :y)))]
+      new-y (ev (cm/get-value (cm/get-submap (:choices trace) :y)))]
   (check "regenerate :x: :y preserved" (approx= old-y new-y 1e-10)))
 
 ;; -- 1.5: Distribution GFI consistency --
@@ -163,8 +162,8 @@
                    ["exponential" (dist/exponential 1)]
                    ["laplace" (dist/laplace 0 1)]]]
   (let [trace (p/simulate d [])
-        v (tr/get-retval trace)
-        score (ev (tr/get-score trace))
+        v (:retval trace)
+        score (ev (:score trace))
         lp (ev (dist/log-prob d v))]
     (check (str name " GFI: simulate score = log-prob")
            (approx= score lp 1e-5))))
@@ -178,7 +177,7 @@
                 (dyn/splice :inner inner)
                 x))
       trace (p/simulate outer [])
-      choices (tr/get-choices trace)]
+      choices (:choices trace)]
   (check "nested: top-level :x exists"
          (cm/has-value? (cm/get-submap choices :x)))
   (check "nested: :inner/:z exists"
@@ -189,8 +188,8 @@
 
 (let [model (gen [x] (* x x))
       trace (p/simulate model [5])
-      score (ev (tr/get-score trace))]
-  (check "deterministic: retval = 25" (= (tr/get-retval trace) 25))
+      score (ev (:score trace))]
+  (check "deterministic: retval = 25" (= (:retval trace) 25))
   (check "deterministic: score = 0" (approx= score 0.0 1e-10)))
 
 ;; ============================================================================
@@ -227,7 +226,7 @@
                         :selection (sel/select :mu)}
                        model [xs sigma] observations)
       mus (mapv (fn [t]
-                  (let [v (cm/get-value (cm/get-submap (tr/get-choices t) :mu))]
+                  (let [v (cm/get-value (cm/get-submap (:choices t) :mu))]
                     (mx/eval! v) (mx/item v)))
                 traces)
       sample-mu (/ (reduce + mus) (count mus))]
@@ -257,7 +256,7 @@
       samples (mcmc/hmc {:samples 200 :step-size 0.05 :leapfrog-steps 10
                           :burn 50 :addresses [:mu]}
                          model [xs sigma] observations)
-      mus (mapv (fn [s] (ev (mx/index s 0))) samples)
+      mus (mapv first samples)
       sample-mu (/ (reduce + mus) (count mus))]
   (check (str "HMC posterior mean ≈ " (.toFixed post-mean 2))
          (approx= sample-mu post-mean 0.3))
@@ -283,7 +282,7 @@
       samples (mcmc/mala {:samples 200 :step-size 0.1
                            :burn 100 :addresses [:mu]}
                           model [xs sigma] observations)
-      mus (mapv (fn [s] (ev (mx/index s 0))) samples)
+      mus (mapv first samples)
       sample-mu (/ (reduce + mus) (count mus))]
   (check (str "MALA posterior mean ≈ " (.toFixed post-mean 2))
          (approx= sample-mu post-mean 1.0))
@@ -315,7 +314,7 @@
                         :selection (sel/select :p)}
                        model [n] observations)
       ps (mapv (fn [t]
-                 (let [v (cm/get-value (cm/get-submap (tr/get-choices t) :p))]
+                 (let [v (cm/get-value (cm/get-submap (:choices t) :p))]
                    (mx/eval! v) (mx/item v)))
                traces)
       sample-p (/ (reduce + ps) (count ps))]
@@ -357,7 +356,7 @@
                         :selection (sel/select :x)}
                        model [] obs)
       vals (mapv (fn [t]
-                   (let [v (cm/get-value (cm/get-submap (tr/get-choices t) :x))]
+                   (let [v (cm/get-value (cm/get-submap (:choices t) :x))]
                      (mx/eval! v) (mx/item v)))
                  traces)
       half (quot (count vals) 2)
@@ -415,7 +414,7 @@
       _ (mx/eval! log-probs)
       probs (mx/->clj (mx/exp log-probs))
       mus (mapv (fn [t]
-                  (let [v (cm/get-value (cm/get-submap (tr/get-choices t) :mu))]
+                  (let [v (cm/get-value (cm/get-submap (:choices t) :mu))]
                     (mx/eval! v) (mx/item v)))
                 traces)
       weighted-mean (reduce + (map * mus probs))]
@@ -434,7 +433,7 @@
       resampled (is/importance-resampling {:samples 50 :particles 200}
                                           model [] obs)
       mus (mapv (fn [t]
-                  (let [v (cm/get-value (cm/get-submap (tr/get-choices t) :mu))]
+                  (let [v (cm/get-value (cm/get-submap (:choices t) :mu))]
                     (mx/eval! v) (mx/item v)))
                 resampled)
       mean-mu (/ (reduce + mus) (count mus))]
@@ -531,8 +530,8 @@
       mapped (comb/map-combinator kernel)
       ;; Simulate
       trace (p/simulate mapped [[1.0 2.0 3.0]])
-      retvals (tr/get-retval trace)
-      score (ev (tr/get-score trace))]
+      retvals (:retval trace)
+      score (ev (:score trace))]
   (check "map simulate: returns 3 values" (= 3 (count retvals)))
   (check "map simulate: score is finite" (finite? score))
 
@@ -542,18 +541,18 @@
                         (cm/set-choice [1] (-> cm/EMPTY (cm/set-choice [:y] (mx/scalar 2.0))))
                         (cm/set-choice [2] (-> cm/EMPTY (cm/set-choice [:y] (mx/scalar 3.0)))))
         {:keys [trace weight]} (p/generate mapped [[1.0 2.0 3.0]] constraints)
-        gen-score (ev (tr/get-score trace))
+        gen-score (ev (:score trace))
         w (ev weight)]
     (check "map generate: weight ≈ score (full constraints)"
            (approx= w gen-score 1e-4)))
 
   ;; Update
   (let [trace (p/simulate mapped [[1.0 2.0 3.0]])
-        old-score (ev (tr/get-score trace))
+        old-score (ev (:score trace))
         constraints (-> cm/EMPTY
                         (cm/set-choice [1] (-> cm/EMPTY (cm/set-choice [:y] (mx/scalar 99.0)))))
         {:keys [trace weight]} (p/update mapped trace constraints)
-        new-score (ev (tr/get-score trace))
+        new-score (ev (:score trace))
         w (ev weight)]
     (check (str "map update: weight ≈ new_score - old_score (w=" (.toFixed w 2) " diff=" (.toFixed (- new-score old-score) 2) ")")
            (approx= w (- new-score old-score) 0.5))))
@@ -567,8 +566,8 @@
                (+ state (mx/item noise))))
       unfolded (comb/unfold-combinator step)
       trace (p/simulate unfolded [5 0.0])
-      states (tr/get-retval trace)
-      score (ev (tr/get-score trace))]
+      states (:retval trace)
+      score (ev (:score trace))]
   (check "unfold simulate: 5 states" (= 5 (count states)))
   (check "unfold simulate: score finite" (finite? score))
 
@@ -587,13 +586,13 @@
       switched (comb/switch-combinator branch-a branch-b)]
   ;; Branch 0
   (let [trace (p/simulate switched [0])
-        v (ev (cm/get-value (cm/get-submap (tr/get-choices trace) :v)))
-        score (ev (tr/get-score trace))]
+        v (ev (cm/get-value (cm/get-submap (:choices trace) :v)))
+        score (ev (:score trace))]
     (check "switch branch 0: value near 0" (< (js/Math.abs v) 5))
     (check "switch branch 0: score finite" (finite? score)))
   ;; Branch 1
   (let [trace (p/simulate switched [1])
-        v (ev (cm/get-value (cm/get-submap (tr/get-choices trace) :v)))]
+        v (ev (cm/get-value (cm/get-submap (:choices trace) :v)))]
     (check "switch branch 1: value near 10" (< (js/Math.abs (- v 10)) 5))))
 
 ;; ============================================================================
@@ -802,7 +801,7 @@
                     (dyn/trace (keyword (str "y" i)) (dist/gaussian m 1)))
                   m)))
       trace (p/simulate model [n])
-      score (ev (tr/get-score trace))]
+      score (ev (:score trace))]
   (check (str "10-obs model: score finite (" (.toFixed score 1) ")")
          (finite? score)))
 
@@ -846,8 +845,8 @@
                   [s i])))
       xs [1.0 2.0 3.0]
       trace (p/simulate model [xs])
-      choices (tr/get-choices trace)
-      score (ev (tr/get-score trace))
+      choices (:choices trace)
+      score (ev (:score trace))
       {:keys [weight]} (p/generate model [xs] choices)
       w (ev weight)]
   (check "hierarchical round-trip: weight ≈ score"
@@ -861,13 +860,13 @@
                     y (dyn/trace :y (dist/gaussian 0 1))]
                 [x y]))
       trace (p/simulate model [])
-      old-score (ev (tr/get-score trace))
+      old-score (ev (:score trace))
       ;; Update with same values
-      old-x (cm/get-value (cm/get-submap (tr/get-choices trace) :x))
-      old-y (cm/get-value (cm/get-submap (tr/get-choices trace) :y))
+      old-x (cm/get-value (cm/get-submap (:choices trace) :x))
+      old-y (cm/get-value (cm/get-submap (:choices trace) :y))
       {:keys [trace weight]} (p/update model trace
                                (cm/choicemap :x old-x :y old-y))
-      new-score (ev (tr/get-score trace))
+      new-score (ev (:score trace))
       w (ev weight)]
   (check "no-op update: score unchanged" (approx= old-score new-score 1e-5))
   (check "no-op update: weight ≈ 0" (approx= w 0.0 1e-5)))
@@ -883,11 +882,11 @@
       ;; Path 1: generate with val-a, then update to val-b
       {:keys [trace]} (p/generate model [] (cm/choicemap :x val-a))
       {:keys [trace weight]} (p/update model trace (cm/choicemap :x val-b))
-      path1-score (ev (tr/get-score trace))
+      path1-score (ev (:score trace))
       path1-weight (ev weight)
       ;; Path 2: generate directly with val-b
       {:keys [trace weight]} (p/generate model [] (cm/choicemap :x val-b))
-      path2-score (ev (tr/get-score trace))]
+      path2-score (ev (:score trace))]
   (check "generate→update score = direct generate score"
          (approx= path1-score path2-score 1e-5)))
 

@@ -82,7 +82,7 @@
     :or {iterations 1000 learning-rate 0.01 elbo-samples 10
          beta1 0.9 beta2 0.999 epsilon 1e-8}}
    log-density init-params]
-  (let [d (let [s (mx/shape init-params)] (if (empty? s) 1 (first s)))
+  (let [d (or (first (mx/shape init-params)) 1)
         init-mu (if (zero? (mx/ndim init-params))
                   (mx/reshape init-params [1])
                   init-params)
@@ -116,9 +116,8 @@
                           (if (= d 1)
                             (mapv #(mx/item (mx/index samples %)) (range n))
                             (mx/->clj samples))))})
-        (let [[iter-key next-key] (if rk (rng/split rk) [nil nil])
-              g (mx/tidy (fn [] (grad-neg-elbo vp)))
-              _ (mx/eval! g)
+        (let [[iter-key next-key] (rng/split-or-nils rk)
+              g (doto (mx/tidy (fn [] (grad-neg-elbo vp))) mx/eval!)
               [vp' opt-state'] (adam-step vp g opt-state
                                           learning-rate beta1 beta2 epsilon)
               elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))

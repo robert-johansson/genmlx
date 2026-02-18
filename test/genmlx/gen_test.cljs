@@ -32,8 +32,8 @@
       trace (p/simulate model [])]
   (assert-true "gen creates DynamicGF" (instance? dyn/DynamicGF model))
   (assert-true "simulate returns trace" (instance? tr/Trace trace))
-  (assert-true "trace has retval" (number? (tr/get-retval trace)))
-  (assert-true "trace has choices" (cm/has-value? (cm/get-submap (tr/get-choices trace) :x))))
+  (assert-true "trace has retval" (number? (:retval trace)))
+  (assert-true "trace has choices" (cm/has-value? (cm/get-submap (:choices trace) :x))))
 
 ;; Test gen with args
 (println "\n-- gen with args --")
@@ -43,7 +43,7 @@
                 (mx/item x)))
       trace (p/simulate model [5.0])]
   (assert-true "gen with args returns trace" (instance? tr/Trace trace))
-  (assert-true "args stored in trace" (= [5.0] (tr/get-args trace))))
+  (assert-true "args stored in trace" (= [5.0] (:args trace))))
 
 ;; Test generate with constraints
 (println "\n-- generate with constraints --")
@@ -53,7 +53,7 @@
                 (mx/item x)))
       constraints (cm/choicemap :x (mx/scalar 2.0))
       {:keys [trace weight]} (p/generate model [] constraints)]
-  (let [x-val (cm/get-value (cm/get-submap (tr/get-choices trace) :x))]
+  (let [x-val (cm/get-value (cm/get-submap (:choices trace) :x))]
     (mx/eval! x-val)
     (assert-close "generate constrains value" 2.0 (mx/item x-val) 0.001))
   (mx/eval! weight)
@@ -69,7 +69,7 @@
       trace (p/simulate model [])
       new-constraints (cm/choicemap :x (mx/scalar 3.0))
       {:keys [trace weight discard]} (p/update model trace new-constraints)]
-  (let [x-val (cm/get-value (cm/get-submap (tr/get-choices trace) :x))]
+  (let [x-val (cm/get-value (cm/get-submap (:choices trace) :x))]
     (mx/eval! x-val)
     (assert-close "update constrains x" 3.0 (mx/item x-val) 0.001))
   (mx/eval! weight)
@@ -84,11 +84,11 @@
                 (mx/eval! x y)
                 (+ (mx/item x) (mx/item y))))
       trace (p/simulate model [])
-      old-y (let [v (cm/get-value (cm/get-submap (tr/get-choices trace) :y))]
+      old-y (let [v (cm/get-value (cm/get-submap (:choices trace) :y))]
               (mx/eval! v) (mx/item v))
       {:keys [trace weight]} (p/regenerate model trace (sel/select :x))]
   ;; y should be unchanged
-  (let [new-y (cm/get-value (cm/get-submap (tr/get-choices trace) :y))]
+  (let [new-y (cm/get-value (cm/get-submap (:choices trace) :y))]
     (mx/eval! new-y)
     (assert-close "regenerate keeps unselected" old-y (mx/item new-y) 0.001))
   (mx/eval! weight)

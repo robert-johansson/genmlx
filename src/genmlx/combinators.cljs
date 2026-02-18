@@ -8,6 +8,25 @@
             [genmlx.selection :as sel]))
 
 ;; ---------------------------------------------------------------------------
+;; Shared helpers for MapCombinator
+;; ---------------------------------------------------------------------------
+
+(defn- assemble-choices
+  "Reduce indexed results into a choice map, extracting choices via `choices-fn`."
+  [results choices-fn]
+  (reduce (fn [cm [i r]]
+            (cm/set-choice cm [i] (choices-fn r)))
+          cm/EMPTY
+          (map-indexed vector results)))
+
+(defn- sum-field
+  "Sum a field across results, starting from scalar 0.0."
+  [results field-fn]
+  (reduce (fn [acc r] (mx/add acc (field-fn r)))
+          (mx/scalar 0.0)
+          results))
+
+;; ---------------------------------------------------------------------------
 ;; Map Combinator
 ;; ---------------------------------------------------------------------------
 ;; Applies a generative function independently to each element of input sequences.
@@ -16,22 +35,13 @@
 (defrecord MapCombinator [kernel]
   p/IGenerativeFunction
   (simulate [this args]
-    ;; args is a vector of sequences, one per kernel argument
-    ;; e.g., for kernel(x, y): args = [[x1 x2 x3] [y1 y2 y3]]
     (let [n (count (first args))
           results (mapv (fn [i]
-                          (let [kernel-args (mapv #(nth % i) args)]
-                            (p/simulate kernel kernel-args)))
+                          (p/simulate kernel (mapv #(nth % i) args)))
                         (range n))
-          choices (reduce (fn [cm [i trace]]
-                            (cm/set-choice cm [i] (tr/get-choices trace)))
-                          cm/EMPTY
-                          (map-indexed vector results))
-          retvals (mapv tr/get-retval results)
-          score (reduce (fn [acc trace]
-                          (mx/add acc (tr/get-score trace)))
-                        (mx/scalar 0.0)
-                        results)]
+          choices (assemble-choices results :choices)
+          retvals (mapv :retval results)
+          score (sum-field results :score)]
       (tr/make-trace {:gen-fn this :args args
                       :choices choices :retval retvals :score score})))
 
@@ -39,87 +49,59 @@
   (generate [this args constraints]
     (let [n (count (first args))
           results (mapv (fn [i]
-                          (let [kernel-args (mapv #(nth % i) args)
-                                sub-cm (cm/get-submap constraints i)]
-                            (p/generate kernel kernel-args sub-cm)))
+                          (p/generate kernel (mapv #(nth % i) args)
+                                      (cm/get-submap constraints i)))
                         (range n))
-          choices (reduce (fn [cm [i {:keys [trace]}]]
-                            (cm/set-choice cm [i] (tr/get-choices trace)))
-                          cm/EMPTY
-                          (map-indexed vector results))
-          retvals (mapv (comp tr/get-retval :trace) results)
-          score (reduce (fn [acc {:keys [trace]}]
-                          (mx/add acc (tr/get-score trace)))
-                        (mx/scalar 0.0) results)
-          weight (reduce (fn [acc {:keys [weight]}]
-                           (mx/add acc weight))
-                         (mx/scalar 0.0) results)]
+          choices (assemble-choices results (comp :choices :trace))
+          retvals (mapv (comp :retval :trace) results)
+          score (sum-field results (comp :score :trace))
+          weight (sum-field results :weight)]
       {:trace (tr/make-trace {:gen-fn this :args args
                               :choices choices :retval retvals :score score})
        :weight weight}))
 
   p/IUpdate
   (update [this trace constraints]
-    (let [old-choices (tr/get-choices trace)
-          args (tr/get-args trace)
+    (let [old-choices (:choices trace)
+          args (:args trace)
           n (count (first args))
           results (mapv (fn [i]
                           (let [kernel-args (mapv #(nth % i) args)
-                                sub-cm (cm/get-submap constraints i)
-                                old-sub (cm/get-submap old-choices i)
                                 old-trace (tr/make-trace
                                             {:gen-fn kernel :args kernel-args
-                                             :choices old-sub :retval nil
-                                             :score (mx/scalar 0.0)})]
-                            (p/update kernel old-trace sub-cm)))
+                                             :choices (cm/get-submap old-choices i)
+                                             :retval nil :score (mx/scalar 0.0)})]
+                            (p/update kernel old-trace (cm/get-submap constraints i))))
                         (range n))
-          choices (reduce (fn [cm [i {:keys [trace]}]]
-                            (cm/set-choice cm [i] (tr/get-choices trace)))
-                          cm/EMPTY
-                          (map-indexed vector results))
-          retvals (mapv (comp tr/get-retval :trace) results)
-          score (reduce (fn [acc {:keys [trace]}]
-                          (mx/add acc (tr/get-score trace)))
-                        (mx/scalar 0.0) results)
-          weight (reduce (fn [acc {:keys [weight]}]
-                           (mx/add acc weight))
-                         (mx/scalar 0.0) results)
-          discard (reduce (fn [cm [i {:keys [discard]}]]
-                            (if discard
-                              (cm/set-choice cm [i] discard)
-                              cm))
-                          cm/EMPTY
-                          (map-indexed vector results))]
+          choices (assemble-choices results (comp :choices :trace))
+          retvals (mapv (comp :retval :trace) results)
+          score (sum-field results (comp :score :trace))
+          weight (sum-field results :weight)
+          discard (assemble-choices
+                    (filter :discard results)
+                    :discard)]
       {:trace (tr/make-trace {:gen-fn this :args args
                               :choices choices :retval retvals :score score})
        :weight weight :discard discard}))
 
   p/IRegenerate
   (regenerate [this trace selection]
-    (let [old-choices (tr/get-choices trace)
-          args (tr/get-args trace)
+    (let [old-choices (:choices trace)
+          args (:args trace)
           n (count (first args))
           results (mapv (fn [i]
                           (let [kernel-args (mapv #(nth % i) args)
-                                old-sub (cm/get-submap old-choices i)
-                                sub-sel (sel/get-subselection selection i)
                                 old-trace (tr/make-trace
                                             {:gen-fn kernel :args kernel-args
-                                             :choices old-sub :retval nil
-                                             :score (mx/scalar 0.0)})]
-                            (p/regenerate kernel old-trace sub-sel)))
+                                             :choices (cm/get-submap old-choices i)
+                                             :retval nil :score (mx/scalar 0.0)})]
+                            (p/regenerate kernel old-trace
+                                          (sel/get-subselection selection i))))
                         (range n))
-          choices (reduce (fn [cm [i {:keys [trace]}]]
-                            (cm/set-choice cm [i] (tr/get-choices trace)))
-                          cm/EMPTY
-                          (map-indexed vector results))
-          retvals (mapv (comp tr/get-retval :trace) results)
-          score (reduce (fn [acc {:keys [trace]}]
-                          (mx/add acc (tr/get-score trace)))
-                        (mx/scalar 0.0) results)
-          weight (reduce (fn [acc {:keys [weight]}]
-                           (mx/add acc weight))
-                         (mx/scalar 0.0) results)]
+          choices (assemble-choices results (comp :choices :trace))
+          retvals (mapv (comp :retval :trace) results)
+          score (sum-field results (comp :score :trace))
+          weight (sum-field results :weight)]
       {:trace (tr/make-trace {:gen-fn this :args args
                               :choices choices :retval retvals :score score})
        :weight weight})))
@@ -148,13 +130,12 @@
         (if (>= t n)
           (tr/make-trace {:gen-fn this :args args
                           :choices choices :retval states :score score})
-          (let [kernel-args (into [t state] extra)
-                trace (p/simulate kernel kernel-args)
-                new-state (tr/get-retval trace)]
+          (let [trace (p/simulate kernel (into [t state] extra))
+                new-state (:retval trace)]
             (recur (inc t)
                    new-state
-                   (cm/set-choice choices [t] (tr/get-choices trace))
-                   (mx/add score (tr/get-score trace))
+                   (cm/set-choice choices [t] (:choices trace))
+                   (mx/add score (:score trace))
                    (conj states new-state)))))))
 
   p/IGenerate
@@ -167,15 +148,14 @@
           {:trace (tr/make-trace {:gen-fn this :args args
                                   :choices choices :retval states :score score})
            :weight weight}
-          (let [kernel-args (into [t state] extra)
-                sub-cm (cm/get-submap constraints t)
-                {:keys [trace weight] :as result}
-                  (p/generate kernel kernel-args sub-cm)
-                new-state (tr/get-retval trace)]
+          (let [result (p/generate kernel (into [t state] extra)
+                                   (cm/get-submap constraints t))
+                trace (:trace result)
+                new-state (:retval trace)]
             (recur (inc t)
                    new-state
-                   (cm/set-choice choices [t] (tr/get-choices trace))
-                   (mx/add score (tr/get-score trace))
+                   (cm/set-choice choices [t] (:choices trace))
+                   (mx/add score (:score trace))
                    (mx/add weight (:weight result))
                    (conj states new-state))))))))
 
@@ -196,22 +176,20 @@
   (simulate [this args]
     ;; args: [index & branch-args]
     (let [[idx & branch-args] args
-          branch (nth branches idx)]
-      (let [trace (p/simulate branch (vec branch-args))]
-        (tr/make-trace {:gen-fn this :args args
-                        :choices (tr/get-choices trace)
-                        :retval (tr/get-retval trace)
-                        :score (tr/get-score trace)}))))
+          trace (p/simulate (nth branches idx) (vec branch-args))]
+      (tr/make-trace {:gen-fn this :args args
+                      :choices (:choices trace)
+                      :retval (:retval trace)
+                      :score (:score trace)})))
 
   p/IGenerate
   (generate [this args constraints]
     (let [[idx & branch-args] args
-          branch (nth branches idx)
-          {:keys [trace weight]} (p/generate branch (vec branch-args) constraints)]
+          {:keys [trace weight]} (p/generate (nth branches idx) (vec branch-args) constraints)]
       {:trace (tr/make-trace {:gen-fn this :args args
-                              :choices (tr/get-choices trace)
-                              :retval (tr/get-retval trace)
-                              :score (tr/get-score trace)})
+                              :choices (:choices trace)
+                              :retval (:retval trace)
+                              :score (:score trace)})
        :weight weight})))
 
 (defn switch-combinator

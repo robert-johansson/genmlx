@@ -46,11 +46,13 @@
 (defn- laplace-icdf
   "Inverse CDF for Laplace: loc - scale * sign(u) * log(1 - 2|u|)."
   [loc scale u]
-  (mx/subtract loc
-    (mx/multiply scale
-      (mx/multiply (mx/sign u)
-        (mx/log (mx/subtract (mx/scalar 1.0)
-                              (mx/multiply (mx/scalar 2.0) (mx/abs u))))))))
+  (->> (mx/abs u)
+       (mx/multiply (mx/scalar 2.0))
+       (mx/subtract (mx/scalar 1.0))
+       mx/log
+       (mx/multiply (mx/sign u))
+       (mx/multiply scale)
+       (mx/subtract loc)))
 
 ;; ---------------------------------------------------------------------------
 ;; Public API wrappers (backward compatible)
@@ -161,11 +163,10 @@
           log-beta-val (mx/scalar (- (+ (log-gamma a-val)
                                         (log-gamma b-val))
                                      (log-gamma (+ a-val b-val))))]
-      (mx/subtract
-        (mx/add (mx/multiply (mx/subtract alpha (mx/scalar 1.0)) (mx/log v))
-                (mx/multiply (mx/subtract beta-param (mx/scalar 1.0))
-                             (mx/log (mx/subtract (mx/scalar 1.0) v))))
-        log-beta-val))))
+      (-> (mx/add (mx/multiply (mx/subtract alpha (mx/scalar 1.0)) (mx/log v))
+                  (mx/multiply (mx/subtract beta-param (mx/scalar 1.0))
+                               (mx/log (mx/subtract (mx/scalar 1.0) v))))
+          (mx/subtract log-beta-val)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Gamma
@@ -193,12 +194,10 @@
   (log-prob [v]
     (let [k shape-param
           log-gamma-k (mx/scalar (log-gamma (mx/realize k)))]
-      (mx/subtract
-        (mx/subtract
-          (mx/add (mx/multiply (mx/subtract k (mx/scalar 1.0)) (mx/log v))
+      (-> (mx/add (mx/multiply (mx/subtract k (mx/scalar 1.0)) (mx/log v))
                   (mx/multiply k (mx/log rate)))
-          (mx/multiply rate v))
-        log-gamma-k))))
+          (mx/subtract (mx/multiply rate v))
+          (mx/subtract log-gamma-k)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Exponential
@@ -254,9 +253,9 @@
   (log-prob [v]
     (let [k-val (mx/realize v)
           log-gamma-k1 (mx/scalar (log-gamma (inc k-val)))]
-      (mx/subtract
-        (mx/subtract (mx/multiply v (mx/log rate)) rate)
-        log-gamma-k1))))
+      (-> (mx/multiply v (mx/log rate))
+          (mx/subtract rate)
+          (mx/subtract log-gamma-k1)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Laplace
@@ -300,11 +299,11 @@
           log-norm (mx/scalar (- (log-gamma half-df1)
                                  (log-gamma half-df)
                                  (* 0.5 (js/Math.log (* df-val js/Math.PI)))))]
-      (mx/subtract
-        (mx/subtract log-norm (mx/log scale))
-        (mx/multiply (mx/scalar half-df1)
-                     (mx/log (mx/add (mx/scalar 1.0)
-                                      (mx/divide (mx/square z) df))))))))
+      (-> log-norm
+          (mx/subtract (mx/log scale))
+          (mx/subtract (mx/multiply (mx/scalar half-df1)
+                                    (mx/log (mx/add (mx/scalar 1.0)
+                                                    (mx/divide (mx/square z) df)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Log-Normal

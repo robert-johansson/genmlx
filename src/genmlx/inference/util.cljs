@@ -5,7 +5,6 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.protocols :as p]
-            [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]))
 
 (defn materialize-weights
@@ -43,7 +42,7 @@
   "Extract parameter values from a trace at the given addresses.
    Returns an MLX 1-D array of realized scalar values."
   [trace addresses]
-  (mx/array (mapv #(let [v (cm/get-choice (tr/get-choices trace) [%])]
+  (mx/array (mapv #(let [v (cm/get-choice (:choices trace) [%])]
                      (mx/realize v))
                   addresses)))
 
