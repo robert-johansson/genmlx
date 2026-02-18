@@ -93,9 +93,15 @@
 ;; Arithmetic (element-wise)
 ;; ---------------------------------------------------------------------------
 
-(defn add      [a b] (.add core a b))
-(defn subtract [a b] (.subtract core a b))
-(defn multiply [a b] (.multiply core a b))
+(defn add
+  ([a b] (.add core a b))
+  ([a b & more] (reduce add (add a b) more)))
+(defn subtract
+  ([a b] (.subtract core a b))
+  ([a b & more] (reduce subtract (subtract a b) more)))
+(defn multiply
+  ([a b] (.multiply core a b))
+  ([a b & more] (reduce multiply (multiply a b) more)))
 (defn divide   [a b] (.divide core a b))
 (defn negative [a]   (.negative core a))
 (defn power    [a b] (.power core a b))

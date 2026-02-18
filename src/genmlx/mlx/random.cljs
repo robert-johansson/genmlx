@@ -26,6 +26,21 @@
   (let [ks (.split mx/random key n)]
     (mapv #(extract-row ks %) (range n))))
 
+(defn ensure-key
+  "Return key if non-nil, otherwise a fresh random key."
+  [key]
+  (or key (fresh-key)))
+
+(defn split-or-nils
+  "Split key into [k1 k2] if non-nil, otherwise [nil nil]."
+  [key]
+  (if key (split key) [nil nil]))
+
+(defn split-n-or-nils
+  "Split key into n sub-keys if non-nil, otherwise a vector of n nils."
+  [key n]
+  (if key (split-n key n) (vec (repeat n nil))))
+
 ;; ---------------------------------------------------------------------------
 ;; Key-based sampling (functional — no global PRNG state)
 ;; ---------------------------------------------------------------------------

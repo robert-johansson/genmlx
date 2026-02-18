@@ -93,8 +93,8 @@
           z (mx/divide (mx/subtract v mu) sigma)]
       (mx/negative
         (mx/add (mx/scalar (* 0.5 LOG-2PI))
-                (mx/add (mx/log sigma)
-                        (mx/multiply (mx/scalar 0.5) (mx/multiply z z)))))))
+                (mx/log sigma)
+                (mx/multiply (mx/scalar 0.5) (mx/square z))))))
 
   IDifferentiable
   (sample-reparam [_ key]
@@ -181,7 +181,7 @@
     ;; Johnk's algorithm for beta sampling
     (let [a (mx/realize alpha)
           b (mx/realize beta-param)
-          key (or key (rng/fresh-key))]
+          key (rng/ensure-key key)]
       (loop [k key]
         (let [[k1 k2] (rng/split k)
               u1 (mx/realize (rng/uniform k1 []))
@@ -225,7 +225,7 @@
           r (mx/realize rate)
           d (- a (/ 1.0 3.0))
           c (/ 1.0 (js/Math.sqrt (* 9.0 d)))
-          key (or key (rng/fresh-key))]
+          key (rng/ensure-key key)]
       (loop [k key]
         (let [[k1 k2] (rng/split k)
               x (mx/realize (rng/normal k1 []))
@@ -322,7 +322,7 @@
   (sample [_ key]
     ;; Knuth's algorithm
     (let [l (js/Math.exp (- (mx/realize rate)))
-          key (or key (rng/fresh-key))]
+          key (rng/ensure-key key)]
       (loop [k 0 p 1.0 rk key]
         (let [[rk1 rk2] (rng/split rk)
               p (* p (mx/realize (rng/uniform rk1 [])))]
@@ -347,23 +347,22 @@
 ;; Laplace
 ;; ---------------------------------------------------------------------------
 
+(defn- laplace-icdf
+  "Inverse CDF for Laplace: loc - scale * sign(u) * log(1 - 2|u|)."
+  [loc scale u]
+  (mx/subtract loc
+    (mx/multiply scale
+      (mx/multiply (mx/sign u)
+        (mx/log (mx/subtract (mx/scalar 1.0)
+                              (mx/multiply (mx/scalar 2.0) (mx/abs u))))))))
+
 (defrecord Laplace [loc scale]
   IDistribution
   (sample [_]
-    (let [u (mx/subtract (mx/random-uniform []) (mx/scalar 0.5))]
-      (mx/subtract loc
-        (mx/multiply scale
-          (mx/multiply (mx/sign u)
-            (mx/log (mx/subtract (mx/scalar 1.0)
-                                  (mx/multiply (mx/scalar 2.0) (mx/abs u)))))))))
+    (laplace-icdf loc scale (mx/subtract (mx/random-uniform []) (mx/scalar 0.5))))
   (sample [_ key]
     (if key
-      (let [u (mx/subtract (rng/uniform key []) (mx/scalar 0.5))]
-        (mx/subtract loc
-          (mx/multiply scale
-            (mx/multiply (mx/sign u)
-              (mx/log (mx/subtract (mx/scalar 1.0)
-                                    (mx/multiply (mx/scalar 2.0) (mx/abs u))))))))
+      (laplace-icdf loc scale (mx/subtract (rng/uniform key []) (mx/scalar 0.5)))
       (sample _)))
   (log-prob [_ v]
     (let [v (mx/ensure-array v)]
@@ -374,12 +373,7 @@
 
   IDifferentiable
   (sample-reparam [_ key]
-    (let [u (mx/subtract (rng/uniform key []) (mx/scalar 0.5))]
-      (mx/subtract loc
-        (mx/multiply scale
-          (mx/multiply (mx/sign u)
-            (mx/log (mx/subtract (mx/scalar 1.0)
-                                  (mx/multiply (mx/scalar 2.0) (mx/abs u))))))))))
+    (laplace-icdf loc scale (mx/subtract (rng/uniform key []) (mx/scalar 0.5)))))
 
 (defn laplace
   "Create a Laplace distribution with location and scale."
@@ -397,7 +391,7 @@
   (sample [_ key]
     ;; Use ratio of normals and chi-squared
     (let [df-val (mx/realize df)
-          key (or key (rng/fresh-key))
+          key (rng/ensure-key key)
           n-keys (rng/split-n key (+ (int df-val) 1))
           ;; Sample chi-squared(df) = sum of df squared normals
           chi2 (loop [i 0 acc 0.0]
@@ -423,7 +417,7 @@
         (mx/subtract log-norm (mx/log scale))
         (mx/multiply (mx/scalar half-df1)
                      (mx/log (mx/add (mx/scalar 1.0)
-                                      (mx/divide (mx/multiply z z) df))))))))
+                                      (mx/divide (mx/square z) df))))))))
 
 (defn student-t
   "Create a Student-t distribution with df degrees of freedom, location and scale."
@@ -451,9 +445,9 @@
       ;; log p(x) = -(log(x) + 0.5*log(2pi) + log(sigma) + 0.5*z^2)
       (mx/negative
         (mx/add log-v
-          (mx/add (mx/scalar (* 0.5 LOG-2PI))
-                  (mx/add (mx/log sigma)
-                          (mx/multiply (mx/scalar 0.5) (mx/multiply z z))))))))
+                (mx/scalar (* 0.5 LOG-2PI))
+                (mx/log sigma)
+                (mx/multiply (mx/scalar 0.5) (mx/square z))))))
 
   IDifferentiable
   (sample-reparam [_ key]
@@ -487,7 +481,7 @@
           diff (mx/subtract v mean-vec)
           ;; y = L^{-1} @ diff  (GPU matmul, no CPU sync)
           y (mx/flatten (mx/matmul L-inv (mx/reshape diff [k 1])))
-          mahal (mx/sum (mx/multiply y y))]
+          mahal (mx/sum (mx/square y))]
       ;; -0.5 * mahal + norm-const
       (mx/add (mx/multiply neg-half mahal) norm-const)))
 
@@ -533,7 +527,7 @@
     ;; Sample via gamma distribution: x_i ~ Gamma(alpha_i, 1), then normalize
     (let [alpha-vals (mx/->clj alpha)
           k (count alpha-vals)
-          key (or key (rng/fresh-key))
+          key (rng/ensure-key key)
           keys (rng/split-n key k)
           gammas (mapv (fn [a ki]
                          (let [g (sample (->Gamma (mx/scalar a) (mx/scalar 1.0)) ki)]
@@ -585,89 +579,37 @@
 ;; GFI bridge — extend all distribution types
 ;; ---------------------------------------------------------------------------
 
-(extend-type Gaussian
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
+(extend-protocol p/IGenerativeFunction
+  Gaussian            (simulate [this _] (dist-simulate this))
+  Uniform             (simulate [this _] (dist-simulate this))
+  Bernoulli           (simulate [this _] (dist-simulate this))
+  Beta                (simulate [this _] (dist-simulate this))
+  Gamma               (simulate [this _] (dist-simulate this))
+  Exponential         (simulate [this _] (dist-simulate this))
+  Categorical         (simulate [this _] (dist-simulate this))
+  Poisson             (simulate [this _] (dist-simulate this))
+  Laplace             (simulate [this _] (dist-simulate this))
+  StudentT            (simulate [this _] (dist-simulate this))
+  LogNormal           (simulate [this _] (dist-simulate this))
+  MultivariateNormal  (simulate [this _] (dist-simulate this))
+  Dirichlet           (simulate [this _] (dist-simulate this))
+  Delta               (simulate [this _] (dist-simulate this)))
 
-(extend-type Uniform
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
-
-(extend-type Bernoulli
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
-
-(extend-type Beta
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
-
-(extend-type Gamma
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
-
-(extend-type Exponential
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
-
-(extend-type Categorical
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
-
-(extend-type Poisson
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
-
-(extend-type Laplace
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
-
-(extend-type StudentT
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
-
-(extend-type LogNormal
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
-
-(extend-type MultivariateNormal
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
-
-(extend-type Dirichlet
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
-
-(extend-type Delta
-  p/IGenerativeFunction
-  (simulate [this _] (dist-simulate this))
-  p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
+(extend-protocol p/IGenerate
+  Gaussian            (generate [this _ constraints] (dist-generate this constraints))
+  Uniform             (generate [this _ constraints] (dist-generate this constraints))
+  Bernoulli           (generate [this _ constraints] (dist-generate this constraints))
+  Beta                (generate [this _ constraints] (dist-generate this constraints))
+  Gamma               (generate [this _ constraints] (dist-generate this constraints))
+  Exponential         (generate [this _ constraints] (dist-generate this constraints))
+  Categorical         (generate [this _ constraints] (dist-generate this constraints))
+  Poisson             (generate [this _ constraints] (dist-generate this constraints))
+  Laplace             (generate [this _ constraints] (dist-generate this constraints))
+  StudentT            (generate [this _ constraints] (dist-generate this constraints))
+  LogNormal           (generate [this _ constraints] (dist-generate this constraints))
+  MultivariateNormal  (generate [this _ constraints] (dist-generate this constraints))
+  Dirichlet           (generate [this _ constraints] (dist-generate this constraints))
+  Delta               (generate [this _ constraints] (dist-generate this constraints)))
 
 ;; ---------------------------------------------------------------------------
 ;; Register bridge functions with handler

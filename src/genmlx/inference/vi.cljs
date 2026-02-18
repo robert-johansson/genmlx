@@ -53,8 +53,8 @@
         diff-norm (mx/divide (mx/subtract samples mu) sigma)
         log-q-per-dim (mx/multiply (mx/scalar -0.5)
                                     (mx/add log-2pi-scalar
-                                            (mx/add (mx/multiply (mx/scalar 2.0) log-sigma)
-                                                    (mx/multiply diff-norm diff-norm))))
+                                            (mx/multiply (mx/scalar 2.0) log-sigma)
+                                            (mx/square diff-norm)))
         log-q (mx/sum log-q-per-dim [1])
         ;; log p for each sample via vmap
         log-p-vals (vmapped-log-density samples)

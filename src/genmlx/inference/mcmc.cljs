@@ -26,7 +26,7 @@
       (if (>= n samples)
         (with-meta (persistent! acc)
           {:acceptance-rate (/ n-accepted total-iters)})
-        (let [[step-key next-key] (if rk (rng/split rk) [nil nil])
+        (let [[step-key next-key] (rng/split-or-nils rk)
               {:keys [state accepted?]} (step-fn state step-key)
               past-burn? (>= i burn)
               keep? (and past-burn? (zero? (mod (- i burn) thin)))]
@@ -78,31 +78,30 @@
 ;; MALA (Metropolis-Adjusted Langevin Algorithm)
 ;; ---------------------------------------------------------------------------
 
+(defn- log-proposal-density
+  "Log-density of a Gaussian proposal centered at `mean`, evaluated at `from`."
+  [from mean two-eps-sq]
+  (mx/negative (mx/divide (mx/sum (mx/square (mx/subtract from mean))) two-eps-sq)))
+
 (defn- mala-step
   "One MALA step. Returns {:state q-next :accepted? bool}."
-  [q score-fn-compiled grad-score eps half-eps2 step-size q-shape key]
-  (let [[noise-key accept-key] (if key (rng/split key) [nil nil])
+  [q score-fn-compiled grad-score eps half-eps2 two-eps-sq q-shape key]
+  (let [[noise-key accept-key] (rng/split-or-nils key)
         ;; MALA proposal: q' = q + eps^2/2 * grad + eps * noise
         g (grad-score q)
         noise (if noise-key
                 (rng/normal noise-key q-shape)
                 (mx/random-normal q-shape))
-        q' (mx/add q (mx/add (mx/multiply half-eps2 g)
-                              (mx/multiply eps noise)))
+        q' (mx/add q (mx/multiply half-eps2 g) (mx/multiply eps noise))
         _ (mx/eval! q' g)
         ;; Compute acceptance ratio with asymmetric proposal correction
         g' (grad-score q')
         _ (mx/eval! g')
-        ;; Forward proposal log-density
+        ;; Forward/backward proposal log-densities
         fwd-mean (mx/add q (mx/multiply half-eps2 g))
-        fwd-diff (mx/subtract q' fwd-mean)
-        log-fwd (mx/negative (mx/divide (mx/sum (mx/square fwd-diff))
-                                         (mx/scalar (* 2.0 step-size step-size))))
-        ;; Backward proposal log-density
         bwd-mean (mx/add q' (mx/multiply half-eps2 g'))
-        bwd-diff (mx/subtract q bwd-mean)
-        log-bwd (mx/negative (mx/divide (mx/sum (mx/square bwd-diff))
-                                         (mx/scalar (* 2.0 step-size step-size))))
+        log-fwd (log-proposal-density q' fwd-mean two-eps-sq)
+        log-bwd (log-proposal-density q bwd-mean two-eps-sq)
         ;; Score difference — compiled forward pass
         score-q  (score-fn-compiled q)
         score-q' (score-fn-compiled q')
@@ -129,6 +128,7 @@
         grad-score       (mx/compile-fn (mx/grad score-fn))
         eps              (mx/scalar step-size)
         half-eps2        (mx/scalar (* 0.5 step-size step-size))
+        two-eps-sq       (mx/scalar (* 2.0 step-size step-size))
         ;; Initialize
         {:keys [trace]} (p/generate model args observations)
         init-q           (u/extract-params trace addresses)
@@ -136,9 +136,21 @@
     (collect-samples
       {:samples samples :burn burn :thin thin :callback callback :key key}
       (fn [q step-key]
-        (mala-step q score-fn-compiled grad-score eps half-eps2 step-size q-shape step-key))
+        (mala-step q score-fn-compiled grad-score eps half-eps2 two-eps-sq q-shape step-key))
       mx/->clj
       init-q)))
+
+;; ---------------------------------------------------------------------------
+;; Shared Hamiltonian helper
+;; ---------------------------------------------------------------------------
+
+(defn- hamiltonian
+  "Compute H = neg-U(q) + 0.5 * sum(p^2). Evals both terms, returns JS number."
+  [neg-U-fn q p half]
+  (let [neg-U (neg-U-fn q)
+        K (mx/multiply half (mx/sum (mx/square p)))]
+    (mx/eval! neg-U K)
+    (+ (mx/item neg-U) (mx/item K))))
 
 ;; ---------------------------------------------------------------------------
 ;; HMC (Hamiltonian Monte Carlo)
@@ -146,17 +158,19 @@
 
 (defn- leapfrog-step
   "Single leapfrog step with eval per step to bound graph size.
-   Used by NUTS which needs per-step control."
+   Used by NUTS which needs per-step control.
+   Returns [q p] Clojure vector."
   [grad-U q p eps half-eps]
-  (mx/tidy
-    (fn []
-      (let [g (grad-U q)
-            p (mx/subtract p (mx/multiply half-eps g))
-            q (mx/add q (mx/multiply eps p))
-            g (grad-U q)
-            p (mx/subtract p (mx/multiply half-eps g))]
-        (mx/eval! q p)
-        #js [q p]))))
+  (let [r (mx/tidy
+            (fn []
+              (let [g (grad-U q)
+                    p (mx/subtract p (mx/multiply half-eps g))
+                    q (mx/add q (mx/multiply eps p))
+                    g (grad-U q)
+                    p (mx/subtract p (mx/multiply half-eps g))]
+                (mx/eval! q p)
+                #js [q p])))]
+    [(aget r 0) (aget r 1)]))
 
 (defn- leapfrog-trajectory
   "Run L leapfrog steps (unfused, used by NUTS)."
@@ -164,8 +178,8 @@
   (loop [i 0, q q, p p]
     (if (>= i L)
       [q p]
-      (let [result (leapfrog-step grad-U q p eps half-eps)]
-        (recur (inc i) (aget result 0) (aget result 1))))))
+      (let [[q' p'] (leapfrog-step grad-U q p eps half-eps)]
+        (recur (inc i) q' p')))))
 
 (defn- leapfrog-trajectory-fused
   "Fused leapfrog: L+1 gradient evals instead of 2L.
@@ -192,30 +206,24 @@
 (defn- hmc-step
   "One HMC step. Returns {:state q-next :accepted? bool}."
   [q neg-U-compiled grad-neg-U eps half-eps half q-shape leapfrog-steps key]
-  (let [[momentum-key accept-key] (if key (rng/split key) [nil nil])
+  (let [[momentum-key accept-key] (rng/split-or-nils key)
         ;; Sample momentum
         p0 (if momentum-key
              (rng/normal momentum-key q-shape)
              (mx/random-normal q-shape))
-        ;; Current Hamiltonian — compiled forward, no backward pass
-        current-neg-U (neg-U-compiled q)
-        current-K (mx/multiply half (mx/sum (mx/multiply p0 p0)))
-        _ (mx/eval! p0 current-neg-U current-K)
-        current-H (+ (mx/item current-neg-U) (mx/item current-K))
+        _ (mx/eval! p0)
+        ;; Current Hamiltonian
+        current-H (hamiltonian neg-U-compiled q p0 half)
         ;; Fused leapfrog — L+1 gradient evals, one lazy graph
-        result (mx/tidy
-                 (fn []
-                   (let [[q' p'] (leapfrog-trajectory-fused
-                                   grad-neg-U q p0 eps half-eps leapfrog-steps)]
-                     (mx/eval! q' p')
-                     #js [q' p'])))
-        q' (aget result 0)
-        p' (aget result 1)
-        ;; Proposed Hamiltonian — compiled forward, no backward pass
-        proposed-neg-U (neg-U-compiled q')
-        proposed-K (mx/multiply half (mx/sum (mx/multiply p' p')))
-        _ (mx/eval! proposed-neg-U proposed-K)
-        proposed-H (+ (mx/item proposed-neg-U) (mx/item proposed-K))
+        [q' p'] (let [r (mx/tidy
+                          (fn []
+                            (let [[q' p'] (leapfrog-trajectory-fused
+                                            grad-neg-U q p0 eps half-eps leapfrog-steps)]
+                              (mx/eval! q' p')
+                              #js [q' p'])))]
+                  [(aget r 0) (aget r 1)])
+        ;; Proposed Hamiltonian
+        proposed-H (hamiltonian neg-U-compiled q' p' half)
         ;; Accept/reject
         log-accept (- current-H proposed-H)
         accept? (u/accept-mh? log-accept accept-key)
@@ -271,16 +279,11 @@
 
 (defn- nuts-base-case
   "NUTS base case: single leapfrog step."
-  [neg-log-density grad-neg-ld q p v eps half-eps half log-u current-H]
+  [{:keys [neg-ld grad eps half-eps half]} q p v log-u current-H]
   (let [actual-eps (if (pos? v) eps (mx/negative eps))
         actual-half (if (pos? v) half-eps (mx/negative half-eps))
-        result (leapfrog-step grad-neg-ld q p actual-eps actual-half)
-        q' (aget result 0)
-        p' (aget result 1)
-        proposed-neg-U (neg-log-density q')
-        proposed-K (mx/multiply half (mx/sum (mx/multiply p' p')))
-        _ (mx/eval! proposed-neg-U proposed-K)
-        proposed-H (+ (mx/item proposed-neg-U) (mx/item proposed-K))
+        [q' p'] (leapfrog-step grad q p actual-eps actual-half)
+        proposed-H (hamiltonian neg-ld q' p' half)
         n' (if (<= log-u (- proposed-H)) 1 0)
         s' (< (- proposed-H current-H) 1000)
         alpha (min 1.0 (js/Math.exp (- current-H proposed-H)))]
@@ -289,20 +292,19 @@
 
 (defn- build-tree
   "Recursively build NUTS tree.
+   `ctx` holds constant config: {:neg-ld :grad :eps :half-eps :half}.
    Optional `key` threads functional PRNG through recursion."
-  [neg-log-density grad-neg-ld q p log-u v eps half-eps half j current-H key]
+  [ctx q p log-u v j current-H key]
   (if (zero? j)
-    (nuts-base-case neg-log-density grad-neg-ld q p v eps half-eps half log-u current-H)
-    (let [[k1 k2 k3] (if key (rng/split-n key 3) [nil nil nil])
-          tree1 (build-tree neg-log-density grad-neg-ld
-                             q p log-u v eps half-eps half (dec j) current-H k1)]
+    (nuts-base-case ctx q p v log-u current-H)
+    (let [[k1 k2 k3] (rng/split-n-or-nils key 3)
+          tree1 (build-tree ctx q p log-u v (dec j) current-H k1)]
       (if (not (:s' tree1))
         tree1
         (let [[q2 p2] (if (pos? v)
                         [(:q-plus tree1) (:p-plus tree1)]
                         [(:q-minus tree1) (:p-minus tree1)])
-              tree2 (build-tree neg-log-density grad-neg-ld
-                                q2 p2 log-u v eps half-eps half (dec j) current-H k2)
+              tree2 (build-tree ctx q2 p2 log-u v (dec j) current-H k2)
               total-n (+ (:n' tree1) (:n' tree2))
               accept-subtree? (and (pos? total-n)
                                    (if k3
@@ -342,6 +344,7 @@
         eps (mx/scalar step-size)
         half-eps (mx/scalar (* 0.5 step-size))
         half (mx/scalar 0.5)
+        ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld :eps eps :half-eps half-eps :half half}
         {:keys [trace]} (p/generate model args observations)
         init-q (u/extract-params trace addresses)
         q-shape (mx/shape init-q)]
@@ -349,15 +352,13 @@
       {:samples samples :burn burn :thin thin :callback callback :key key}
       (fn [q step-key]
         (let [[momentum-key slice-key dir-key tree-key]
-              (if step-key (rng/split-n step-key 4) [nil nil nil nil])
+              (rng/split-n-or-nils step-key 4)
               ;; Sample momentum and compute current Hamiltonian
               p0 (if momentum-key
                    (rng/normal momentum-key q-shape)
                    (mx/random-normal q-shape))
-              current-neg-U (neg-ld-compiled q)
-              current-K (mx/multiply half (mx/sum (mx/multiply p0 p0)))
-              _ (mx/eval! p0 current-neg-U current-K)
-              current-H (+ (mx/item current-neg-U) (mx/item current-K))
+              _ (mx/eval! p0)
+              current-H (hamiltonian neg-ld-compiled q p0 half)
               log-u (+ (if slice-key
                          (js/Math.log (mx/realize (rng/uniform slice-key [])))
                          (js/Math.log (js/Math.random)))
@@ -370,16 +371,15 @@
                            dk dir-key, tk tree-key]
                       (if (or (not continue?) (>= j max-depth))
                         q'
-                        (let [[dk1 dk-next] (if dk (rng/split dk) [nil nil])
-                              [tk1 tk-next] (if tk (rng/split tk) [nil nil])
+                        (let [[dk1 dk-next] (rng/split-or-nils dk)
+                              [tk1 tk-next] (rng/split-or-nils tk)
                               v (if dk1
                                   (if (< (mx/realize (rng/uniform dk1 [])) 0.5) -1 1)
                                   (if (< (js/Math.random) 0.5) -1 1))
                               [qs ps] (if (pos? v)
                                         [q-plus p-plus]
                                         [q-minus p-minus])
-                              tree (build-tree neg-ld-compiled grad-neg-ld
-                                               qs ps log-u v eps half-eps half j current-H tk1)
+                              tree (build-tree ctx qs ps log-u v j current-H tk1)
                               accept? (and (:s' tree)
                                            (if tk1
                                              (let [[ak _] (rng/split tk1)]
