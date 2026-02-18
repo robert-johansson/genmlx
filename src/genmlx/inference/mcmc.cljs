@@ -59,13 +59,13 @@
   [{:keys [samples step-size burn thin addresses callback]
     :or {step-size 0.01 burn 0 thin 1}}
    model args observations]
-  (let [;; Build score function from model
+  (let [indexed-addrs (mapv vector (range) addresses)
         score-fn (fn [params]
                    (let [cm (reduce
                               (fn [cm [i addr]]
                                 (cm/set-choice cm [addr] (mx/index params i)))
                               observations
-                              (map-indexed vector addresses))]
+                              indexed-addrs)]
                      (:weight (p/generate model args cm))))
         grad-score (mx/compile-fn (mx/grad score-fn))
         eps (mx/scalar step-size)
@@ -74,13 +74,14 @@
         {:keys [trace]} (p/generate model args observations)
         init-q (mx/array (mapv #(let [v (cm/get-choice (tr/get-choices trace) [%])]
                                   (mx/eval! v) (mx/item v))
-                               addresses))]
+                               addresses))
+        q-shape (mx/shape init-q)]
     (loop [i 0, q init-q, acc (transient []), n 0]
       (if (>= n samples)
         (persistent! acc)
         (let [;; MALA proposal: q' = q + eps^2/2 * grad + eps * noise
               g (grad-score q)
-              noise (mx/random-normal (mx/shape q))
+              noise (mx/random-normal q-shape)
               q' (mx/add q (mx/add (mx/multiply half-eps2 g)
                                     (mx/multiply eps noise)))
               _ (mx/eval! q' g)
@@ -118,7 +119,8 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- leapfrog-step
-  "Single leapfrog step with eval per step to bound graph size."
+  "Single leapfrog step with eval per step to bound graph size.
+   Used by NUTS which needs per-step control."
   [grad-U q p eps half-eps]
   (mx/tidy
     (fn []
@@ -131,13 +133,35 @@
         #js [q p]))))
 
 (defn- leapfrog-trajectory
-  "Run L leapfrog steps."
+  "Run L leapfrog steps (unfused, used by NUTS)."
   [grad-U q p eps half-eps L]
   (loop [i 0, q q, p p]
     (if (>= i L)
       [q p]
       (let [result (leapfrog-step grad-U q p eps half-eps)]
         (recur (inc i) (aget result 0) (aget result 1))))))
+
+(defn- leapfrog-trajectory-fused
+  "Fused leapfrog: L+1 gradient evals instead of 2L.
+   Adjacent half-kicks between steps are merged into full kicks.
+   Builds one lazy graph — no per-step eval or tidy."
+  [grad-U q p eps half-eps L]
+  ;; Initial half-kick
+  (let [g (grad-U q)
+        p (mx/subtract p (mx/multiply half-eps g))
+        ;; First drift
+        q (mx/add q (mx/multiply eps p))]
+    ;; L-1 interior steps: full kick (two halves fused) + drift
+    (loop [i 1, q q, p p]
+      (if (>= i L)
+        ;; Final half-kick only (no more drift)
+        (let [g (grad-U q)
+              p (mx/subtract p (mx/multiply half-eps g))]
+          [q p])
+        (let [g (grad-U q)
+              p (mx/subtract p (mx/multiply eps g))
+              q (mx/add q (mx/multiply eps p))]
+          (recur (inc i) q p))))))
 
 (defn hmc
   "Hamiltonian Monte Carlo sampling.
@@ -152,17 +176,20 @@
   [{:keys [samples step-size leapfrog-steps burn thin addresses compile? callback]
     :or {step-size 0.01 leapfrog-steps 20 burn 100 thin 1 compile? true}}
    model args observations]
-  (let [score-fn (fn [params]
+  (let [;; Pre-compute indexed addresses once (avoid allocation per gradient call)
+        indexed-addrs (mapv vector (range) addresses)
+        score-fn (fn [params]
                    (let [cm (reduce
                               (fn [cm [i addr]]
                                 (cm/set-choice cm [addr] (mx/index params i)))
                               observations
-                              (map-indexed vector addresses))]
+                              indexed-addrs)]
                      (:weight (p/generate model args cm))))
         neg-U    (fn [q] (mx/negative (score-fn q)))
         grad-neg-U (let [g (mx/grad neg-U)]
                      (if compile? (mx/compile-fn g) g))
-        value-and-grad-neg-U (mx/value-and-grad neg-U)
+        ;; Compile neg-U itself for fast Hamiltonian evaluation
+        neg-U-compiled (if compile? (mx/compile-fn neg-U) neg-U)
         eps      (mx/scalar step-size)
         half-eps (mx/scalar (* 0.5 step-size))
         half     (mx/scalar 0.5)
@@ -170,23 +197,30 @@
         {:keys [trace]} (p/generate model args observations)
         init-q (mx/array (mapv #(let [v (cm/get-choice (tr/get-choices trace) [%])]
                                   (mx/eval! v) (mx/item v))
-                               addresses))]
+                               addresses))
+        q-shape (mx/shape init-q)]
     (loop [i 0, q init-q, acc (transient []), n 0, n-accepted 0]
       (if (>= n samples)
         (with-meta (persistent! acc)
           {:acceptance-rate (/ n-accepted (+ burn (* samples thin)))})
         (let [;; Sample momentum
-              p0 (mx/random-normal (mx/shape q))
-              _ (mx/eval! p0)
-              ;; Current Hamiltonian
-              [current-neg-U _] (value-and-grad-neg-U q)
+              p0 (mx/random-normal q-shape)
+              ;; Current Hamiltonian — compiled forward, no backward pass
+              current-neg-U (neg-U-compiled q)
               current-K (mx/multiply half (mx/sum (mx/multiply p0 p0)))
-              _ (mx/eval! current-neg-U current-K)
+              _ (mx/eval! p0 current-neg-U current-K)
               current-H (+ (mx/item current-neg-U) (mx/item current-K))
-              ;; Leapfrog
-              [q' p'] (leapfrog-trajectory grad-neg-U q p0 eps half-eps leapfrog-steps)
-              ;; Proposed Hamiltonian
-              [proposed-neg-U _] (value-and-grad-neg-U q')
+              ;; Fused leapfrog — L+1 gradient evals, one lazy graph
+              result (mx/tidy
+                       (fn []
+                         (let [[q' p'] (leapfrog-trajectory-fused
+                                         grad-neg-U q p0 eps half-eps leapfrog-steps)]
+                           (mx/eval! q' p')
+                           #js [q' p'])))
+              q' (aget result 0)
+              p' (aget result 1)
+              ;; Proposed Hamiltonian — compiled forward, no backward pass
+              proposed-neg-U (neg-U-compiled q')
               proposed-K (mx/multiply half (mx/sum (mx/multiply p' p')))
               _ (mx/eval! proposed-neg-U proposed-K)
               proposed-H (+ (mx/item proposed-neg-U) (mx/item proposed-K))
@@ -276,12 +310,13 @@
   [{:keys [samples step-size max-depth burn thin addresses compile? callback]
     :or {step-size 0.01 max-depth 10 burn 0 thin 1 compile? true}}
    model args observations]
-  (let [score-fn (fn [params]
+  (let [indexed-addrs (mapv vector (range) addresses)
+        score-fn (fn [params]
                    (let [cm (reduce
                               (fn [cm [i addr]]
                                 (cm/set-choice cm [addr] (mx/index params i)))
                               observations
-                              (map-indexed vector addresses))]
+                              indexed-addrs)]
                      (:weight (p/generate model args cm))))
         neg-log-density (fn [q] (mx/negative (score-fn q)))
         grad-neg-ld (let [g (mx/grad neg-log-density)]
@@ -292,12 +327,13 @@
         {:keys [trace]} (p/generate model args observations)
         init-q (mx/array (mapv #(let [v (cm/get-choice (tr/get-choices trace) [%])]
                                   (mx/eval! v) (mx/item v))
-                               addresses))]
+                               addresses))
+        q-shape (mx/shape init-q)]
     (loop [i 0, q init-q, acc (transient []), n 0]
       (if (>= n samples)
         (persistent! acc)
         (let [;; Sample momentum and compute current Hamiltonian
-              p0 (mx/random-normal (mx/shape q))
+              p0 (mx/random-normal q-shape)
               current-neg-U (neg-log-density q)
               current-K (mx/multiply half (mx/sum (mx/multiply p0 p0)))
               _ (mx/eval! p0 current-neg-U current-K)
