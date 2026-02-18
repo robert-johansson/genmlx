@@ -553,35 +553,31 @@
 ;; Multivariate Normal (via Cholesky)
 ;; ---------------------------------------------------------------------------
 
-(defrecord MultivariateNormal [mean-vec cov-matrix cholesky-L]
+;; Pre-computed fields avoid per-call overhead:
+;;   L-inv:       L^{-1} — matmul on GPU replaces solve-triangular on CPU
+;;   k:           dimension (plain int, no mx/shape per call)
+;;   norm-const:  -0.5 * (k*log(2pi) + log|Sigma|) — the entire constant term
+;;   neg-half:    pre-allocated (mx/scalar -0.5)
+(defrecord MultivariateNormal [mean-vec cov-matrix cholesky-L L-inv k norm-const neg-half]
   IDistribution
   (sample [this] (sample this nil))
   (sample [_ key]
-    (let [k (first (mx/shape mean-vec))
-          z (if key (rng/normal key [k]) (mx/random-normal [k]))]
+    (let [z (if key (rng/normal key [k]) (mx/random-normal [k]))]
       ;; sample = mean + L @ z
       (mx/add mean-vec
               (mx/flatten (mx/matmul cholesky-L (mx/reshape z [k 1]))))))
   (log-prob [_ v]
     (let [v (if (mx/array? v) v (mx/array v))
-          k (first (mx/shape mean-vec))
           diff (mx/subtract v mean-vec)
-          ;; Solve L @ y = diff => y = L^{-1} @ diff
-          y (mx/solve-triangular cholesky-L (mx/reshape diff [k 1]) false)
-          y-flat (mx/flatten y)
-          mahal (mx/sum (mx/multiply y-flat y-flat))
-          ;; log det(Sigma) = 2 * sum(log(diag(L)))
-          log-det-sigma (mx/multiply (mx/scalar 2.0)
-                                     (mx/sum (mx/log (mx/diag cholesky-L))))]
-      (mx/multiply
-        (mx/scalar -0.5)
-        (mx/add (mx/scalar (* k LOG-2PI))
-                (mx/add log-det-sigma mahal)))))
+          ;; y = L^{-1} @ diff  (GPU matmul, no CPU sync)
+          y (mx/flatten (mx/matmul L-inv (mx/reshape diff [k 1])))
+          mahal (mx/sum (mx/multiply y y))]
+      ;; -0.5 * mahal + norm-const
+      (mx/add (mx/multiply neg-half mahal) norm-const)))
 
   IDifferentiable
   (sample-reparam [_ key]
-    (let [k (first (mx/shape mean-vec))
-          z (rng/normal key [k])]
+    (let [z (rng/normal key [k])]
       (mx/add mean-vec
               (mx/flatten (mx/matmul cholesky-L (mx/reshape z [k 1]))))))
 
@@ -594,7 +590,7 @@
 (defn multivariate-normal
   "Create a Multivariate Normal distribution.
    mean-vec: [k] array, cov-matrix: [k k] positive definite array.
-   Cholesky decomposition is computed once at construction."
+   Cholesky decomposition and L-inverse are computed once at construction."
   [mean-vec cov-matrix]
   (let [mu (if (mx/array? mean-vec) mean-vec (mx/array mean-vec))
         cov (if (mx/array? cov-matrix) cov-matrix (mx/array cov-matrix))
@@ -602,9 +598,19 @@
                  (let [k (first (mx/shape mu))]
                    (mx/reshape cov [k k]))
                  cov)
-        L (mx/cholesky cov-2d)]
-    (mx/eval! L)
-    (->MultivariateNormal mu cov-2d L)))
+        L (mx/cholesky cov-2d)
+        _ (mx/eval! L)
+        Li (mx/tri-inv L false)
+        k (first (mx/shape mu))
+        ;; norm-const = -0.5 * (k*log(2pi) + log|Sigma|)
+        ;; log|Sigma| = 2 * sum(log(diag(L)))
+        log-det-sigma (mx/multiply (mx/scalar 2.0)
+                                   (mx/sum (mx/log (mx/diag L))))
+        nc (mx/multiply (mx/scalar -0.5)
+                        (mx/add (mx/scalar (* k LOG-2PI)) log-det-sigma))
+        neg-half (mx/scalar -0.5)]
+    (mx/eval! Li nc)
+    (->MultivariateNormal mu cov-2d L Li k nc neg-half)))
 
 ;; ---------------------------------------------------------------------------
 ;; Dirichlet
