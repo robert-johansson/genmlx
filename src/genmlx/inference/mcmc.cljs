@@ -67,6 +67,7 @@
                               observations
                               indexed-addrs)]
                      (:weight (p/generate model args cm))))
+        score-fn-compiled (mx/compile-fn score-fn)
         grad-score (mx/compile-fn (mx/grad score-fn))
         eps (mx/scalar step-size)
         half-eps2 (mx/scalar (* 0.5 step-size step-size))
@@ -98,9 +99,9 @@
               bwd-diff (mx/subtract q bwd-mean)
               log-bwd (mx/negative (mx/divide (mx/sum (mx/square bwd-diff))
                                                (mx/scalar (* 2.0 step-size step-size))))
-              ;; Score difference
-              score-q  (score-fn q)
-              score-q' (score-fn q')
+              ;; Score difference — compiled forward pass
+              score-q  (score-fn-compiled q)
+              score-q' (score-fn-compiled q')
               _ (mx/eval! log-fwd log-bwd score-q score-q')
               log-accept (+ (- (mx/item score-q') (mx/item score-q))
                            (- (mx/item log-bwd) (mx/item log-fwd)))
@@ -319,8 +320,10 @@
                               indexed-addrs)]
                      (:weight (p/generate model args cm))))
         neg-log-density (fn [q] (mx/negative (score-fn q)))
+        ;; Compile both gradient and forward pass
         grad-neg-ld (let [g (mx/grad neg-log-density)]
                       (if compile? (mx/compile-fn g) g))
+        neg-ld-compiled (if compile? (mx/compile-fn neg-log-density) neg-log-density)
         eps (mx/scalar step-size)
         half-eps (mx/scalar (* 0.5 step-size))
         half (mx/scalar 0.5)
@@ -334,7 +337,7 @@
         (persistent! acc)
         (let [;; Sample momentum and compute current Hamiltonian
               p0 (mx/random-normal q-shape)
-              current-neg-U (neg-log-density q)
+              current-neg-U (neg-ld-compiled q)
               current-K (mx/multiply half (mx/sum (mx/multiply p0 p0)))
               _ (mx/eval! p0 current-neg-U current-K)
               current-H (+ (mx/item current-neg-U) (mx/item current-K))
@@ -350,7 +353,7 @@
                               [qs ps] (if (pos? v)
                                         [q-plus p-plus]
                                         [q-minus p-minus])
-                              tree (build-tree neg-log-density grad-neg-ld
+                              tree (build-tree neg-ld-compiled grad-neg-ld
                                                qs ps log-u v eps half-eps half j current-H)
                               q'' (if (and (:s' tree)
                                            (< (js/Math.random)
