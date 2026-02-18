@@ -392,6 +392,15 @@
   [x] (eval! x) (item x))
 
 (defn ensure-array
-  "Wrap a JS number as an MLX scalar array; pass through existing arrays."
-  ([x]      (if (array? x) x (scalar x)))
-  ([x dtype] (if (array? x) x (scalar x dtype))))
+  "Wrap a JS number as an MLX scalar array; pass through existing arrays.
+   Vectors and sequences are converted to MLX arrays."
+  ([x]
+   (cond
+     (array? x) x
+     (or (vector? x) (seq? x) (sequential? x)) (array x)
+     :else (scalar x)))
+  ([x dtype]
+   (cond
+     (array? x) x
+     (or (vector? x) (seq? x) (sequential? x)) (array x dtype)
+     :else (scalar x dtype))))

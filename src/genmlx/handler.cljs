@@ -8,13 +8,11 @@
   (:require [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.selection :as sel]))
+            [genmlx.selection :as sel]
+            [genmlx.dist.core :as dc]))
 
 (def ^:dynamic *handler* nil)
 (def ^:dynamic *state*   nil)
-
-;; Forward declarations for dist protocol functions
-(declare dist-sample dist-log-prob)
 
 ;; ---------------------------------------------------------------------------
 ;; Key management
@@ -35,8 +33,8 @@
   "Sample from dist at addr, accumulate score."
   [addr dist]
   (let [key   (consume-key!)
-        value (dist-sample dist key)
-        lp    (dist-log-prob dist value)]
+        value (dc/dist-sample dist key)
+        lp    (dc/dist-log-prob dist value)]
     (vswap! *state*
       (fn [s] (-> s
                 (update :choices #(cm/set-choice % [addr] value))
@@ -49,7 +47,7 @@
   (let [constraint (cm/get-submap (:constraints @*state*) addr)]
     (if (cm/has-value? constraint)
       (let [value (cm/get-value constraint)
-            lp    (dist-log-prob dist value)]
+            lp    (dc/dist-log-prob dist value)]
         (vswap! *state*
           (fn [s] (-> s
                     (update :choices #(cm/set-choice % [addr] value))
@@ -68,9 +66,9 @@
       ;; New constraint provided
       (cm/has-value? constraint)
       (let [new-val (cm/get-value constraint)
-            new-lp  (dist-log-prob dist new-val)
+            new-lp  (dc/dist-log-prob dist new-val)
             old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
-            old-lp  (if old-val (dist-log-prob dist old-val) (mx/scalar 0.0))]
+            old-lp  (if old-val (dc/dist-log-prob dist old-val) (mx/scalar 0.0))]
         (vswap! *state*
           (fn [s] (-> s
                     (update :choices #(cm/set-choice % [addr] new-val))
@@ -83,7 +81,7 @@
       ;; Keep old value
       (cm/has-value? old-choice)
       (let [val (cm/get-value old-choice)
-            lp  (dist-log-prob dist val)]
+            lp  (dc/dist-log-prob dist val)]
         (vswap! *state*
           (fn [s] (-> s
                     (update :choices #(cm/set-choice % [addr] val))
@@ -102,10 +100,10 @@
     (if (and sel (sel/selected? sel addr))
       ;; Selected: resample, compute weight adjustment
       (let [key     (consume-key!)
-            new-val (dist-sample dist key)
-            new-lp  (dist-log-prob dist new-val)
+            new-val (dc/dist-sample dist key)
+            new-lp  (dc/dist-log-prob dist new-val)
             old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
-            old-lp  (if old-val (dist-log-prob dist old-val) (mx/scalar 0.0))]
+            old-lp  (if old-val (dc/dist-log-prob dist old-val) (mx/scalar 0.0))]
         (vswap! *state*
           (fn [s] (-> s
                     (update :choices #(cm/set-choice % [addr] new-val))
@@ -114,7 +112,7 @@
         new-val)
       ;; Not selected: keep old
       (let [val (cm/get-value old-choice)
-            lp  (dist-log-prob dist val)]
+            lp  (dc/dist-log-prob dist val)]
         (vswap! *state*
           (fn [s] (-> s
                     (update :choices #(cm/set-choice % [addr] val))
@@ -131,7 +129,7 @@
   (if *handler*
     (*handler* addr dist)
     ;; Direct execution mode — sample and materialize
-    (let [v (dist-sample dist nil)]
+    (let [v (dc/dist-sample dist nil)]
       (mx/eval! v)
       (mx/item v))))
 
@@ -179,24 +177,3 @@
             *state*   (volatile! init-state)]
     (let [retval (body-fn)]
       (assoc @*state* :retval retval))))
-
-;; ---------------------------------------------------------------------------
-;; Bridge functions — set by dist.cljs to avoid circular deps
-;; ---------------------------------------------------------------------------
-
-(defonce ^:private dist-fns (volatile! nil))
-
-(defn set-dist-fns!
-  "Called by genmlx.dist to register sample/log-prob functions."
-  [sample-fn log-prob-fn]
-  (vreset! dist-fns {:sample sample-fn :log-prob log-prob-fn}))
-
-(defn- dist-sample [dist key]
-  (if-let [fns @dist-fns]
-    ((:sample fns) dist key)
-    (throw (ex-info "Distribution functions not registered. Require genmlx.dist first." {}))))
-
-(defn- dist-log-prob [dist value]
-  (if-let [fns @dist-fns]
-    ((:log-prob fns) dist value)
-    (throw (ex-info "Distribution functions not registered. Require genmlx.dist first." {}))))
