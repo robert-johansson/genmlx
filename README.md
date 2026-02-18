@@ -1,4 +1,6 @@
-# GenMLX
+<p align="center">
+  <img src="genmlx.png" alt="GenMLX" width="528">
+</p>
 
 A probabilistic programming language implemented in ClojureScript on Node.js ([nbb](https://github.com/babashka/nbb)), using Apple's [MLX framework](https://github.com/ml-explore/mlx) for GPU acceleration via [`@frost-beta/mlx`](https://github.com/nicebyte/node-mlx).
 
