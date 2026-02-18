@@ -178,9 +178,23 @@ for f in choicemap_test trace_test selection_test handler_test dist_test gen_tes
   npx nbb -cp src:test "test/genmlx/${f}.cljs"
 done
 
+# Gen.clj compatibility tests (165 tests adapted from probcomp/Gen.clj)
+npx nbb -cp src:test test/genmlx/gen_clj_compat_test.cljs
+
 # Benchmarks
 npx nbb -cp src:test test/genmlx/benchmark.cljs
 ```
+
+### Gen.clj Compatibility
+
+165 tests adapted from [Gen.clj](https://github.com/probcomp/Gen.clj)'s test suite verify that GenMLX produces matching results:
+
+- **Distribution logpdf spot checks** — values verified against scipy.stats and Gen.jl (within float32 tolerance)
+- **Mathematical properties** — symmetry, normalization, shift invariance
+- **GFI semantics** — simulate, generate, update (discard/weight), regenerate
+- **Dynamic DSL** — `gen` macro, `trace`, `splice`, nested tracing, score computation
+- **Importance sampling** — rejection robustness with branching models
+- **End-to-end** — line model with constrained observations
 
 ## MLX Optimization Strategy
 
