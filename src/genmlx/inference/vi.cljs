@@ -3,7 +3,9 @@
   (:require [genmlx.protocols :as p]
             [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
-            [genmlx.mlx :as mx]))
+            [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
+            [genmlx.inference.util :as u]))
 
 ;; ---------------------------------------------------------------------------
 ;; Adam optimizer
@@ -35,13 +37,16 @@
 
 (defn- elbo-estimate
   "Estimate ELBO via Monte Carlo with reparameterized samples.
-   ELBO = E_q[log p(x) - log q(x)]"
-  [variational-params log-density n-samples d vmapped-log-density]
+   ELBO = E_q[log p(x) - log q(x)]
+   Optional `key` uses functional PRNG for sampling."
+  [variational-params log-density n-samples d vmapped-log-density key]
   (let [mu (mx/slice variational-params 0 d)
         log-sigma (mx/slice variational-params d (* 2 d))
         sigma (mx/exp log-sigma)
         ;; Draw samples from q via reparameterization
-        eps (mx/random-normal [n-samples d])
+        eps (if key
+              (rng/normal key [n-samples d])
+              (mx/random-normal [n-samples d]))
         samples (mx/add mu (mx/multiply sigma eps))
         ;; log q(z) for each sample
         log-2pi-scalar (mx/scalar (js/Math.log (* 2 js/Math.PI)))
@@ -66,14 +71,14 @@
    Uses a mean-field Gaussian guide and optimizes ELBO via Adam.
 
    opts: {:iterations N :learning-rate lr :elbo-samples N
-          :beta1 b1 :beta2 b2 :epsilon eps :callback fn}
+          :beta1 b1 :beta2 b2 :epsilon eps :callback fn :key prng-key}
 
    log-density: (fn [params]) -> MLX scalar
    init-params: MLX array of initial parameter values
 
    Returns {:mu MLX-array :sigma MLX-array :elbo-history [numbers]
             :sample-fn (fn [n] -> samples)}"
-  [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback]
+  [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback key]
     :or {iterations 1000 learning-rate 0.01 elbo-samples 10
          beta1 0.9 beta2 0.999 epsilon 1e-8}}
    log-density init-params]
@@ -89,11 +94,12 @@
                       vp)))
         vmapped-log-density (mx/vmap log-density)
         neg-elbo-fn (fn [vp]
-                      (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density)))
+                      (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
         grad-neg-elbo (mx/grad neg-elbo-fn)]
     (loop [i 0, vp init-vp
            opt-state (adam-state init-vp)
-           elbo-history (transient [])]
+           elbo-history (transient [])
+           rk key]
       (if (>= i iterations)
         (let [final-mu (mx/slice vp 0 d)
               final-log-sigma (mx/slice vp d (* 2 d))
@@ -103,18 +109,20 @@
            :sigma final-sigma
            :elbo-history (persistent! elbo-history)
            :sample-fn (fn [n]
-                        (let [eps (mx/random-normal [n d])
+                        (let [sample-key (if rk rk (rng/fresh-key))
+                              eps (rng/normal sample-key [n d])
                               samples (mx/add final-mu (mx/multiply final-sigma eps))]
                           (mx/eval! samples)
                           (if (= d 1)
                             (mapv #(mx/item (mx/index samples %)) (range n))
                             (mx/->clj samples))))})
-        (let [g (mx/tidy (fn [] (grad-neg-elbo vp)))
+        (let [[iter-key next-key] (if rk (rng/split rk) [nil nil])
+              g (mx/tidy (fn [] (grad-neg-elbo vp)))
               _ (mx/eval! g)
               [vp' opt-state'] (adam-step vp g opt-state
                                           learning-rate beta1 beta2 epsilon)
               elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
-                         (let [e (mx/tidy (fn [] (elbo-estimate vp' log-density elbo-samples d vmapped-log-density)))]
+                         (let [e (mx/tidy (fn [] (elbo-estimate vp' log-density elbo-samples d vmapped-log-density iter-key)))]
                            (mx/eval! e)
                            (mx/item e)))]
           (when (and callback elbo-val)
@@ -122,7 +130,8 @@
           (recur (inc i) vp' opt-state'
                  (if elbo-val
                    (conj! elbo-history elbo-val)
-                   elbo-history)))))))
+                   elbo-history)
+                 next-key))))))
 
 ;; ---------------------------------------------------------------------------
 ;; VI from model (convenience)
@@ -138,15 +147,7 @@
 
    Returns same as vi."
   [opts model args observations addresses]
-  (let [score-fn (fn [params]
-                   (let [cm (reduce
-                              (fn [cm [i addr]]
-                                (cm/set-choice cm [addr] (mx/index params i)))
-                              observations
-                              (map-indexed vector addresses))]
-                     (:weight (p/generate model args cm))))
+  (let [score-fn (u/make-score-fn model args observations addresses)
         {:keys [trace]} (p/generate model args observations)
-        init-q (mx/array (mapv #(let [v (cm/get-choice (tr/get-choices trace) [%])]
-                                  (mx/eval! v) (mx/item v))
-                               addresses))]
+        init-q (u/extract-params trace addresses)]
     (vi opts score-fn init-q)))

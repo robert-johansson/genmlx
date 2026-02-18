@@ -3,8 +3,8 @@
    Re-exports all inference algorithms."
   (:require [genmlx.inference.importance :as is]
             [genmlx.inference.mcmc :as mcmc]
-            [genmlx.inference.smc :as smc]
-            [genmlx.inference.vi :as vi]
+            [genmlx.inference.smc :as smc-ns]
+            [genmlx.inference.vi :as vi-ns]
             [genmlx.inference.diagnostics :as diag]))
 
 ;; ---------------------------------------------------------------------------
@@ -28,14 +28,14 @@
 ;; SMC
 ;; ---------------------------------------------------------------------------
 
-(def smc smc/smc)
+(def smc smc-ns/smc)
 
 ;; ---------------------------------------------------------------------------
 ;; Variational inference
 ;; ---------------------------------------------------------------------------
 
-(def vi vi/vi)
-(def vi-from-model vi/vi-from-model)
+(def vi vi-ns/vi)
+(def vi-from-model vi-ns/vi-from-model)
 
 ;; ---------------------------------------------------------------------------
 ;; Diagnostics

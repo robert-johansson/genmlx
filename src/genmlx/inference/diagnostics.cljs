@@ -14,16 +14,15 @@
   (let [n (count samples)
         stacked (mx/stack samples)
         _ (mx/eval! stacked)
-        vals (mx/->clj stacked)
+        raw-vals (mx/->clj stacked)
         ;; For scalar params
-        vals (if (number? (first vals)) vals (map first vals))
-        vals (vec vals)
-        mu (/ (reduce + vals) n)
+        flat-vals (vec (if (number? (first raw-vals)) raw-vals (map first raw-vals)))
+        mu (/ (reduce + flat-vals) n)
         ;; Compute autocovariance
-        centered (mapv #(- % mu) vals)
+        centered (mapv #(- % mu) flat-vals)
         var0 (/ (reduce + (map #(* % %) centered)) n)]
     (if (zero? var0)
-      (double n)
+      n
       (let [;; Compute autocorrelation at increasing lags
             max-lag (min (dec n) (int (/ n 2)))
             autocorr (fn [lag]
@@ -99,9 +98,9 @@
   (let [stacked (mx/stack samples)
         n (first (mx/shape stacked))]
     (mx/eval! stacked)
-    (let [vals (mx/->clj stacked)
-          vals (if (number? (first vals)) vals (map first vals))
-          sorted-vals (sort vals)
+    (let [raw-vals (mx/->clj stacked)
+          flat-vals (if (number? (first raw-vals)) raw-vals (map first raw-vals))
+          sorted-vals (sort flat-vals)
           idx-025 (int (* 0.025 n))
           idx-50  (int (* 0.5 n))
           idx-975 (int (* 0.975 n))]

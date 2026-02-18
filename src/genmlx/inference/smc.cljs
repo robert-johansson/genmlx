@@ -4,16 +4,18 @@
             [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
-            [genmlx.mlx :as mx]))
+            [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
+            [genmlx.inference.util :as u]))
 
 (defn- systematic-resample
-  "Systematic resampling of particles. Returns vector of indices."
-  [log-weights n]
-  (let [weights-arr (mx/array (mapv (fn [w] (mx/eval! w) (mx/item w)) log-weights))
-        log-probs (mx/subtract weights-arr (mx/logsumexp weights-arr))
-        _ (mx/eval! log-probs)
-        probs (mx/->clj (mx/exp log-probs))
-        u (/ (js/Math.random) n)]
+  "Systematic resampling of particles. Returns vector of indices.
+   Optional `key` uses functional PRNG; nil falls back to js/Math.random."
+  [log-weights n key]
+  (let [{:keys [probs]} (u/normalize-log-weights log-weights)
+        u (if key
+            (/ (mx/realize (rng/uniform key [])) n)
+            (/ (js/Math.random) n))]
     (loop [i 0, cumsum 0.0, j 0, indices (transient [])]
       (if (>= j n)
         (persistent! indices)
@@ -26,17 +28,76 @@
 (defn- compute-ess
   "Compute effective sample size from log-weights."
   [log-weights]
-  (let [weights-arr (mx/array (mapv (fn [w] (mx/eval! w) (mx/item w)) log-weights))
-        log-probs (mx/subtract weights-arr (mx/logsumexp weights-arr))
-        _ (mx/eval! log-probs)
-        probs (mx/->clj (mx/exp log-probs))]
+  (let [{:keys [probs]} (u/normalize-log-weights log-weights)]
     (/ 1.0 (reduce + (map #(* % %) probs)))))
+
+(defn- smc-init-step
+  "First timestep: generate particles from prior with constraints.
+   Returns {:traces :log-weights :log-ml-increment}."
+  [model args obs particles]
+  (let [results    (mapv (fn [_] (p/generate model args obs)) (range particles))
+        traces     (mapv :trace results)
+        log-weights (mapv :weight results)
+        w-arr      (u/materialize-weights log-weights)
+        ml-inc     (mx/subtract (mx/logsumexp w-arr)
+                                (mx/scalar (js/Math.log particles)))]
+    {:traces traces :log-weights log-weights :log-ml-increment ml-inc}))
+
+(defn- smc-rejuvenate
+  "Apply rejuvenation-steps MH moves to each trace.
+   Returns vector of (possibly updated) traces."
+  [traces rejuvenation-steps rejuvenation-selection key]
+  (if (pos? rejuvenation-steps)
+    (let [keys (if key (rng/split-n key (count traces)) (repeat (count traces) nil))]
+      (mapv (fn [trace ki]
+              (let [trace-keys (if ki (rng/split-n ki rejuvenation-steps)
+                                      (repeat rejuvenation-steps nil))]
+                (reduce (fn [t rk]
+                          (let [gf     (tr/get-gen-fn t)
+                                result (p/regenerate gf t rejuvenation-selection)
+                                w      (mx/realize (:weight result))]
+                            (if (u/accept-mh? w rk) (:trace result) t)))
+                        trace trace-keys)))
+            traces keys))
+    traces))
+
+(defn- smc-step
+  "Subsequent timestep: resample (if ESS low), update particles, rejuvenate.
+   Returns {:traces :log-weights :log-ml-increment}."
+  [traces log-weights model obs particles ess-threshold
+   rejuvenation-steps rejuvenation-selection key]
+  (let [;; Check ESS and resample if needed
+        ess        (compute-ess log-weights)
+        resample?  (< ess (* ess-threshold particles))
+        [resample-key step-key rejuv-key]
+        (if key (rng/split-n key 3) [nil nil nil])
+        [traces' weights'] (if resample?
+                             (let [indices (systematic-resample log-weights particles resample-key)]
+                               [(mapv #(nth traces %) indices)
+                                (vec (repeat particles (mx/scalar 0.0)))])
+                             [traces log-weights])
+        ;; Update each particle with new observations
+        results       (mapv (fn [trace]
+                              (p/update (tr/get-gen-fn trace) trace obs))
+                            traces')
+        new-traces    (mapv :trace results)
+        update-weights (mapv :weight results)
+        new-weights   (mapv mx/add weights' update-weights)
+        ;; Rejuvenation
+        final-traces  (smc-rejuvenate new-traces rejuvenation-steps
+                                       rejuvenation-selection rejuv-key)
+        ;; log ml increment
+        w-arr         (u/materialize-weights new-weights)
+        ml-inc        (mx/subtract (mx/logsumexp w-arr)
+                                    (mx/scalar (js/Math.log particles)))]
+    {:traces final-traces :log-weights new-weights :log-ml-increment ml-inc
+     :ess ess :resampled? resample?}))
 
 (defn smc
   "Sequential Monte Carlo (particle filtering).
 
    opts: {:particles N :ess-threshold ratio :rejuvenation-steps K
-          :rejuvenation-selection sel :callback fn}
+          :rejuvenation-selection sel :callback fn :key prng-key}
 
    observations-seq: sequence of choice maps, one per timestep
    model: generative function
@@ -50,70 +111,34 @@
 
    Returns {:traces [Trace ...] :log-weights [MLX-scalar ...]
             :log-ml-estimate MLX-scalar}"
-  [{:keys [particles ess-threshold rejuvenation-steps rejuvenation-selection callback]
+  [{:keys [particles ess-threshold rejuvenation-steps rejuvenation-selection callback key]
     :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0
          rejuvenation-selection sel/all}}
    model args observations-seq]
   (let [obs-vec (vec observations-seq)
         n-steps (count obs-vec)]
-    ;; Initialize with first observation
     (loop [t 0
            traces nil
            log-weights nil
-           log-ml (mx/scalar 0.0)]
+           log-ml (mx/scalar 0.0)
+           rk key]
       (if (>= t n-steps)
         {:traces traces
          :log-weights log-weights
          :log-ml-estimate log-ml}
-        (let [obs-t (nth obs-vec t)]
+        (let [obs-t (nth obs-vec t)
+              [step-key next-key] (if rk (rng/split rk) [nil nil])]
           (if (zero? t)
-            ;; First step: generate from prior with constraints
-            (let [results (mapv (fn [_] (p/generate model args obs-t))
-                                (range particles))
-                  new-traces (mapv :trace results)
-                  new-weights (mapv :weight results)
-                  ;; log ml increment = logsumexp(w) - log(N)
-                  w-arr (mx/array (mapv (fn [w] (mx/eval! w) (mx/item w)) new-weights))
-                  ml-inc (mx/subtract (mx/logsumexp w-arr)
-                                       (mx/scalar (js/Math.log particles)))]
+            (let [{:keys [traces log-weights log-ml-increment]}
+                  (smc-init-step model args obs-t particles)]
               (when callback
-                (callback {:step t :ess (compute-ess new-weights)}))
-              (recur (inc t) new-traces new-weights (mx/add log-ml ml-inc)))
-            ;; Subsequent steps: update particles with new observations
-            (let [;; Check ESS and resample if needed
-                  ess (compute-ess log-weights)
-                  resample? (< ess (* ess-threshold particles))
-                  [traces' weights'] (if resample?
-                                       (let [indices (systematic-resample log-weights particles)]
-                                         [(mapv #(nth traces %) indices)
-                                          (vec (repeat particles (mx/scalar 0.0)))])
-                                       [traces log-weights])
-                  ;; Update each particle with new observations
-                  results (mapv (fn [trace]
-                                  (p/update (tr/get-gen-fn trace) trace obs-t))
-                                traces')
-                  new-traces (mapv :trace results)
-                  update-weights (mapv :weight results)
-                  new-weights (mapv (fn [w uw] (mx/add w uw))
-                                    weights' update-weights)
-                  ;; Rejuvenation (MH steps)
-                  final-traces (if (pos? rejuvenation-steps)
-                                 (mapv (fn [trace]
-                                         (reduce (fn [t _]
-                                                   (let [gf (tr/get-gen-fn t)
-                                                         result (p/regenerate gf t rejuvenation-selection)
-                                                         w (do (mx/eval! (:weight result))
-                                                               (mx/item (:weight result)))
-                                                         accept? (or (>= w 0)
-                                                                     (< (js/Math.log (js/Math.random)) w))]
-                                                     (if accept? (:trace result) t)))
-                                                 trace (range rejuvenation-steps)))
-                                       new-traces)
-                                 new-traces)
-                  ;; log ml increment
-                  w-arr (mx/array (mapv (fn [w] (mx/eval! w) (mx/item w)) new-weights))
-                  ml-inc (mx/subtract (mx/logsumexp w-arr)
-                                       (mx/scalar (js/Math.log particles)))]
+                (callback {:step t :ess (compute-ess log-weights)}))
+              (recur (inc t) traces log-weights
+                     (mx/add log-ml log-ml-increment) next-key))
+            (let [{:keys [traces log-weights log-ml-increment ess resampled?]}
+                  (smc-step traces log-weights model obs-t particles ess-threshold
+                            rejuvenation-steps rejuvenation-selection step-key)]
               (when callback
-                (callback {:step t :ess (compute-ess new-weights) :resampled? resample?}))
-              (recur (inc t) final-traces new-weights (mx/add log-ml ml-inc)))))))))
+                (callback {:step t :ess ess :resampled? resampled?}))
+              (recur (inc t) traces log-weights
+                     (mx/add log-ml log-ml-increment) next-key))))))))

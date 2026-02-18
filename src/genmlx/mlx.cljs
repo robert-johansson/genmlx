@@ -380,3 +380,12 @@
        (object? x)
        (some? (.-shape x))
        (fn? (.-item x))))
+
+(defn realize
+  "Evaluate a lazy MLX array and return its scalar JS value."
+  [x] (eval! x) (item x))
+
+(defn ensure-array
+  "Wrap a JS number as an MLX scalar array; pass through existing arrays."
+  ([x]      (if (array? x) x (scalar x)))
+  ([x dtype] (if (array? x) x (scalar x dtype))))
