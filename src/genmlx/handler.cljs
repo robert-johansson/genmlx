@@ -156,8 +156,10 @@
           (-> s
             (update :choices #(cm/set-choice % [addr] (:choices sub-result)))
             (update :score (fn [sc] (mx/add sc (:score sub-result))))
-            (update :weight (fn [w] (mx/add w (or (:weight sub-result) (mx/scalar 0.0)))))
             (cond->
+              (and (contains? s :weight) (:weight sub-result))
+              (update :weight (fn [w] (mx/add w (:weight sub-result))))
+
               (:discard sub-result)
               (update :discard #(cm/set-choice % [addr] (:discard sub-result)))))))
       (:retval sub-result))

@@ -104,8 +104,10 @@
       (mx/add lo (mx/multiply (mx/subtract hi lo) (rng/uniform key [])))
       (mx/add lo (mx/multiply (mx/subtract hi lo) (mx/random-uniform [])))))
   (log-prob [_ v]
-    (let [v (if (mx/array? v) v (mx/scalar v))]
-      (mx/negative (mx/log (mx/subtract hi lo)))))
+    (let [v (if (mx/array? v) v (mx/scalar v))
+          in-bounds (mx/multiply (mx/less-equal lo v) (mx/less-equal v hi))
+          log-density (mx/negative (mx/log (mx/subtract hi lo)))]
+      (mx/where in-bounds log-density (mx/scalar ##-Inf))))
 
   IDifferentiable
   (sample-reparam [_ key]
@@ -319,8 +321,10 @@
         (mx/divide (mx/negative (mx/log (mx/subtract (mx/scalar 1.0) u))) rate))
       (sample _)))
   (log-prob [_ v]
-    (let [v (if (mx/array? v) v (mx/scalar v))]
-      (mx/subtract (mx/log rate) (mx/multiply rate v))))
+    (let [v (if (mx/array? v) v (mx/scalar v))
+          log-density (mx/subtract (mx/log rate) (mx/multiply rate v))
+          non-neg (mx/greater-equal v (mx/scalar 0.0))]
+      (mx/where non-neg log-density (mx/scalar ##-Inf))))
 
   IDifferentiable
   (sample-reparam [_ key]
@@ -654,10 +658,9 @@
   (sample [_] v)
   (sample [_ _key] v)
   (log-prob [_ value]
-    (let [value (if (mx/array? value) value (mx/scalar value))]
-      ;; Return 0 if equal, -inf otherwise
-      ;; For continuous values, this is a Dirac delta approximation
-      (mx/scalar 0.0)))
+    (let [value (if (mx/array? value) value (mx/scalar value))
+          eq (mx/equal v value)]
+      (mx/where eq (mx/scalar 0.0) (mx/scalar ##-Inf))))
 
   IEnumerable
   (support [_] [v])
