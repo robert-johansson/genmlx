@@ -4,7 +4,8 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.protocols :as p]
-            [genmlx.choicemap :as cm]))
+            [genmlx.choicemap :as cm]
+            [genmlx.handler :as h]))
 
 ;; ---------------------------------------------------------------------------
 ;; Parameter Store
@@ -131,6 +132,48 @@
             (callback {:iter i :loss loss-val :params new-params}))
           (recur (inc i) new-params new-opt-st
                  (conj! losses loss-val) next-key))))))
+
+;; ---------------------------------------------------------------------------
+;; Param-store integration with GFI
+;; ---------------------------------------------------------------------------
+
+(defn simulate-with-params
+  "Simulate a generative function with a param store bound.
+   Parameters declared via dyn/param inside the model will read from the store."
+  [model args param-store]
+  (binding [h/*param-store* param-store]
+    (p/simulate model args)))
+
+(defn generate-with-params
+  "Generate from a generative function with a param store bound."
+  [model args constraints param-store]
+  (binding [h/*param-store* param-store]
+    (p/generate model args constraints)))
+
+(defn make-param-loss-fn
+  "Create a loss-gradient function for training model parameters.
+   model: generative function using dyn/param
+   args: model arguments
+   observations: observed data (choice map)
+   param-names-vec: vector of parameter names (keywords)
+
+   Returns (fn [params-array key] -> {:loss :grad})
+   where params-array is a flat MLX array matching param-names-vec."
+  [model args observations param-names-vec]
+  (fn [params-array key]
+    (let [loss-fn (fn [p]
+                    (let [store {:params (into {}
+                                          (map-indexed
+                                            (fn [i nm] [nm (mx/index p i)])
+                                            param-names-vec))}]
+                      (binding [h/*param-store* store]
+                        (let [{:keys [weight]} (p/generate model args observations)]
+                          ;; Negative log-joint (minimize)
+                          (mx/negative weight)))))
+          grad-fn (mx/grad loss-fn)
+          loss (loss-fn params-array)
+          grad (grad-fn params-array)]
+      {:loss loss :grad grad})))
 
 ;; ---------------------------------------------------------------------------
 ;; Wake-Sleep Learning

@@ -28,3 +28,9 @@
   (propose [gf args]
     "Forward-sample all choices and return choices + their joint log-probability.
      Returns {:choices ChoiceMap :weight MLX-scalar :retval any}."))
+
+(defprotocol IUpdateWithDiffs
+  (update-with-diffs [gf trace constraints argdiffs]
+    "Update a trace with change hints. argdiffs describes which arguments changed.
+     Enables combinators to skip unchanged sub-computations.
+     Returns {:trace Trace :weight MLX-scalar :discard ChoiceMap}."))

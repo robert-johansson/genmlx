@@ -122,7 +122,7 @@
                                       (edit/proposal-edit forward-kernel backward-kernel)
                                       ;; Without backward kernel, fall back to constraint update
                                       (edit/constraint-edit observations))
-                            result (edit/edit-dispatch (:gen-fn trace) trace edit-req)]
+                            result (edit/edit (:gen-fn trace) trace edit-req)]
                         {:trace (:trace result) :weight (:weight result)})
                       ;; Standard update
                       (let [result (p/update (:gen-fn trace) trace observations)]

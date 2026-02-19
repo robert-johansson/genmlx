@@ -7,7 +7,9 @@
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.vectorized :as vec]))
+            [genmlx.vectorized :as vec]
+            [genmlx.edit :as edit]
+            [genmlx.diff :as diff]))
 
 ;; Forward declaration
 (declare execute-sub)
@@ -241,3 +243,37 @@
     {:vtrace (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
                                      new-score weight n (:retval result))
      :weight weight}))
+
+;; ---------------------------------------------------------------------------
+;; IEdit implementation on DynamicGF
+;; ---------------------------------------------------------------------------
+
+(extend-type DynamicGF
+  edit/IEdit
+  (edit [gf trace edit-request]
+    (edit/edit-dispatch gf trace edit-request)))
+
+;; ---------------------------------------------------------------------------
+;; IUpdateWithDiffs implementation on DynamicGF
+;; ---------------------------------------------------------------------------
+
+(extend-type DynamicGF
+  p/IUpdateWithDiffs
+  (update-with-diffs [gf trace constraints argdiffs]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      ;; No arg changes and no constraints: trace is unchanged
+      {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+      ;; Otherwise delegate to regular update (body must be re-executed)
+      (p/update gf trace constraints))))
+
+;; ---------------------------------------------------------------------------
+;; Trainable parameter support
+;; ---------------------------------------------------------------------------
+
+(defn param
+  "Declare/read a trainable parameter inside a gen body.
+   name: parameter name (keyword)
+   default-value: default parameter value (used when no param store is active)
+   Returns the parameter value as an MLX array."
+  [name default-value]
+  (h/trace-param! name default-value))

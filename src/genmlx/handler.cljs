@@ -14,6 +14,7 @@
 
 (def ^:dynamic *handler* nil)
 (def ^:dynamic *state*   nil)
+(def ^:dynamic *param-store* nil)
 
 ;; ---------------------------------------------------------------------------
 ;; Pure state transitions
@@ -257,6 +258,15 @@
     (let [v (dc/dist-sample dist nil)]
       (mx/eval! v)
       (mx/item v))))
+
+(defn trace-param!
+  "Read a trainable parameter value. If a param store is bound, reads from it.
+   Otherwise returns the default value as an MLX array."
+  [name default-value]
+  (let [default (if (mx/array? default-value) default-value (mx/scalar default-value))]
+    (if *param-store*
+      (or (get-in *param-store* [:params name]) default)
+      default)))
 
 (defn- merge-sub-result
   "Pure: merge a sub-generative-function result into parent state."

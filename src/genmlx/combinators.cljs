@@ -6,7 +6,9 @@
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.selection :as sel]
-            [genmlx.dist.core :as dc]))
+            [genmlx.dist.core :as dc]
+            [genmlx.edit :as edit]
+            [genmlx.diff :as diff]))
 
 ;; ---------------------------------------------------------------------------
 ;; Shared helpers for MapCombinator
@@ -42,9 +44,12 @@
                         (range n))
           choices (assemble-choices results :choices)
           retvals (mapv :retval results)
-          score (sum-field results :score)]
-      (tr/make-trace {:gen-fn this :args args
-                      :choices choices :retval retvals :score score})))
+          score (sum-field results :score)
+          element-scores (mapv :score results)]
+      (with-meta
+        (tr/make-trace {:gen-fn this :args args
+                        :choices choices :retval retvals :score score})
+        {::element-scores element-scores})))
 
   p/IGenerate
   (generate [this args constraints]
@@ -56,9 +61,12 @@
           choices (assemble-choices results (comp :choices :trace))
           retvals (mapv (comp :retval :trace) results)
           score (sum-field results (comp :score :trace))
-          weight (sum-field results :weight)]
-      {:trace (tr/make-trace {:gen-fn this :args args
-                              :choices choices :retval retvals :score score})
+          weight (sum-field results :weight)
+          element-scores (mapv (comp :score :trace) results)]
+      {:trace (with-meta
+                (tr/make-trace {:gen-fn this :args args
+                                :choices choices :retval retvals :score score})
+                {::element-scores element-scores})
        :weight weight}))
 
   p/IUpdate
@@ -80,9 +88,12 @@
           weight (mx/subtract score (:score trace))
           discard (assemble-choices
                     (filter :discard results)
-                    :discard)]
-      {:trace (tr/make-trace {:gen-fn this :args args
-                              :choices choices :retval retvals :score score})
+                    :discard)
+          element-scores (mapv (comp :score :trace) results)]
+      {:trace (with-meta
+                (tr/make-trace {:gen-fn this :args args
+                                :choices choices :retval retvals :score score})
+                {::element-scores element-scores})
        :weight weight :discard discard}))
 
   p/IRegenerate
@@ -102,9 +113,12 @@
           choices (assemble-choices results (comp :choices :trace))
           retvals (mapv (comp :retval :trace) results)
           score (sum-field results (comp :score :trace))
-          weight (mx/subtract (sum-field results :weight) (:score trace))]
-      {:trace (tr/make-trace {:gen-fn this :args args
-                              :choices choices :retval retvals :score score})
+          weight (mx/subtract (sum-field results :weight) (:score trace))
+          element-scores (mapv (comp :score :trace) results)]
+      {:trace (with-meta
+                (tr/make-trace {:gen-fn this :args args
+                                :choices choices :retval retvals :score score})
+                {::element-scores element-scores})
        :weight weight})))
 
 (defn map-combinator
@@ -678,3 +692,132 @@
               log-weights-fn
               (fn [_] log-weights-fn))]
     (->MixCombinator components lwf)))
+
+;; ---------------------------------------------------------------------------
+;; IEdit implementations — delegate to edit-dispatch for all combinator types
+;; ---------------------------------------------------------------------------
+
+(extend-type MapCombinator
+  edit/IEdit
+  (edit [gf trace edit-request]
+    (edit/edit-dispatch gf trace edit-request)))
+
+(extend-type UnfoldCombinator
+  edit/IEdit
+  (edit [gf trace edit-request]
+    (edit/edit-dispatch gf trace edit-request)))
+
+(extend-type SwitchCombinator
+  edit/IEdit
+  (edit [gf trace edit-request]
+    (edit/edit-dispatch gf trace edit-request)))
+
+(extend-type ScanCombinator
+  edit/IEdit
+  (edit [gf trace edit-request]
+    (edit/edit-dispatch gf trace edit-request)))
+
+(extend-type MaskCombinator
+  edit/IEdit
+  (edit [gf trace edit-request]
+    (edit/edit-dispatch gf trace edit-request)))
+
+(extend-type MixCombinator
+  edit/IEdit
+  (edit [gf trace edit-request]
+    (edit/edit-dispatch gf trace edit-request)))
+
+(extend-type ContramapGF
+  edit/IEdit
+  (edit [gf trace edit-request]
+    (edit/edit-dispatch gf trace edit-request)))
+
+(extend-type MapRetvalGF
+  edit/IEdit
+  (edit [gf trace edit-request]
+    (edit/edit-dispatch gf trace edit-request)))
+
+;; ---------------------------------------------------------------------------
+;; IUpdateWithDiffs implementations
+;; ---------------------------------------------------------------------------
+
+(extend-type MapCombinator
+  p/IUpdateWithDiffs
+  (update-with-diffs [this trace constraints argdiffs]
+    (let [old-choices (:choices trace)
+          args (:args trace)
+          n (count (first args))
+          old-element-scores (::element-scores (meta trace))
+          has-constraints (not= constraints cm/EMPTY)]
+      (cond
+        ;; No changes to args and no new constraints: return trace unchanged
+        (and (diff/no-change? argdiffs) (not has-constraints))
+        {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+
+        ;; vector-diff with stored element scores: optimize
+        (and (or (diff/no-change? argdiffs)
+                 (= (:diff-type argdiffs) :vector-diff))
+             old-element-scores)
+        (let [changed-set (if (diff/no-change? argdiffs)
+                            #{}
+                            (:changed argdiffs))
+              kernel (:kernel this)
+              ;; Determine which elements need updating: changed args OR new constraints
+              update-set (into changed-set
+                               (filter #(not= (cm/get-submap constraints %) cm/EMPTY))
+                               (range n))
+              results (mapv
+                        (fn [i]
+                          (if (contains? update-set i)
+                            ;; Element changed: do full update
+                            (let [kernel-args (mapv #(nth % i) args)
+                                  old-trace (tr/make-trace
+                                              {:gen-fn kernel :args kernel-args
+                                               :choices (cm/get-submap old-choices i)
+                                               :retval nil :score (mx/scalar 0.0)})]
+                              (p/update kernel old-trace (cm/get-submap constraints i)))
+                            ;; Element unchanged: reuse old choices and score
+                            {:trace (tr/make-trace
+                                      {:gen-fn kernel
+                                       :args (mapv #(nth % i) args)
+                                       :choices (cm/get-submap old-choices i)
+                                       :retval (nth (:retval trace) i nil)
+                                       :score (nth old-element-scores i)})
+                             :weight (mx/scalar 0.0)
+                             :discard cm/EMPTY}))
+                        (range n))
+              choices (assemble-choices results (comp :choices :trace))
+              retvals (mapv (comp :retval :trace) results)
+              score (sum-field results (comp :score :trace))
+              weight (mx/subtract score (:score trace))
+              discard (assemble-choices (filter #(and (:discard %) (not= (:discard %) cm/EMPTY)) results) :discard)
+              element-scores (mapv (comp :score :trace) results)]
+          {:trace (with-meta
+                    (tr/make-trace {:gen-fn this :args args
+                                    :choices choices :retval retvals :score score})
+                    {::element-scores element-scores})
+           :weight weight :discard discard})
+
+        ;; Unknown change: fall back to full update
+        :else (p/update this trace constraints)))))
+
+(extend-type UnfoldCombinator
+  p/IUpdateWithDiffs
+  (update-with-diffs [this trace constraints argdiffs]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+      (p/update this trace constraints))))
+
+(extend-type SwitchCombinator
+  p/IUpdateWithDiffs
+  (update-with-diffs [this trace constraints argdiffs]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+      (p/update this trace constraints))))
+
+(extend-type ScanCombinator
+  p/IUpdateWithDiffs
+  (update-with-diffs [this trace constraints argdiffs]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+      (p/update this trace constraints))))
