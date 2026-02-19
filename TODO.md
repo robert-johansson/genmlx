@@ -6,8 +6,8 @@
 > **Goals**: Feature parity with Gen.jl (minimum). Speed parity with GenJAX.
 > 100% idiomatic, purely functional ClojureScript. Formally grounded in λ_MLX.
 >
-> Current state: ~5,831 lines across 27 source files, 287+ test assertions,
-> 22 distributions, 8 combinators, 15+ inference algorithms.
+> Current state: ~10,800 lines across 27 source files, 640+ test assertions,
+> 27 distributions, 9 combinators, 15+ inference algorithms.
 
 ---
 
@@ -76,12 +76,13 @@ types so the formal correspondence is obvious.*
 
 *Bring the distribution library to full Gen.jl parity and beyond.*
 
-### Already done (22)
+### Already done (27)
 
 gaussian, uniform, bernoulli, beta, gamma, exponential, categorical, poisson,
 laplace, student-t, log-normal, multivariate-normal, dirichlet, delta, cauchy,
 inv-gamma, geometric, neg-binomial, binomial, discrete-uniform, truncated-normal,
-mixture
+mixture, piecewise-uniform, beta-uniform-mixture, wishart, inv-wishart,
+broadcasted-normal
 
 ### Remaining
 
@@ -102,9 +103,15 @@ mixture
 
 - [x] **3.7** Add tests for neg-binomial (log-prob, sample stats, generate weight)
   - *File*: `test/genmlx/neg_binomial_test.cljs`
-- [ ] **3.8** Add native `dist-sample-n` for remaining batchable distributions
-  - Currently 9 of 22 have native batch sampling
-  - Candidates: laplace, cauchy, inv-gamma, truncated-normal, log-normal
+- [x] **3.8** Add native `dist-sample-n` for remaining batchable distributions
+  - 10 of 27 now have native batch sampling: gaussian, uniform, bernoulli,
+    exponential, laplace, log-normal, delta, cauchy, truncated-normal,
+    broadcasted-normal
+  - Remaining distributions without batch sampling use sequential fallback
+    (beta, gamma, categorical, poisson, student-t, dirichlet, geometric,
+    neg-binomial, binomial, discrete-uniform, multivariate-normal,
+    piecewise-uniform) — most require rejection sampling or complex logic
+  - Further batch sampling expansion tracked in 7.1
 
 ---
 
@@ -191,12 +198,12 @@ broader batch sampling support.*
 
 ### Batch sampling coverage
 
-- [ ] **7.1** Native `dist-sample-n` for all distributions that can batch
-  - [ ] laplace (straightforward: location + scale * logistic noise)
-  - [ ] cauchy (straightforward: location + scale * tan(π * uniform))
-  - [ ] log-normal (exp of batched gaussian)
-  - [ ] truncated-normal (via batched rejection or inverse CDF)
-  - [ ] inv-gamma (if gamma gets batch sampling)
+- [ ] **7.1** Native `dist-sample-n` for more distributions
+  - [x] laplace, cauchy, log-normal, truncated-normal (already implemented)
+  - [ ] inv-gamma (requires gamma batch sampling first)
+  - [ ] student-t (requires gamma batch sampling for chi-squared)
+  - Rejection-based distributions (beta, gamma, poisson, dirichlet) are harder
+    to batch efficiently
   - Each ~5 lines in `dist.cljs`
 
 ### Vectorized inference completeness
@@ -431,9 +438,10 @@ Immediate (solidify what exists):
 Near-term (Gen.jl feature parity):
   3.1–3.5  Missing distributions          ✅
   3.6      map->dist bridge               ✅
+  3.8      Batch sampling candidates      ✅
   4.1      Elliptical slice sampling      ✅
   4.2      MAP optimization               ✅
-  5.1      Recurse combinator             ✅
+  5.1–5.3  Combinators (full Phase 5)     ✅
   6.3–6.4  Testing gaps                   ✅
 
 Medium-term (GenJAX speed parity):
@@ -463,7 +471,7 @@ Long-term (ecosystem):
 |-------|-------|------|-----------|
 | 1. Functional Purity | 5 | 1 | 4 |
 | 2. Missing GFI Ops | 2 | 2 | 0 |
-| 3. Distributions | 8 | 7 | 1 |
+| 3. Distributions | 8 | 8 | 0 |
 | 4. Inference Algorithms | 4 | 2 | 2 |
 | 5. Combinators | 3 | 3 | 0 |
 | 6. Testing Gaps | 5 | 5 | 0 |
@@ -474,4 +482,4 @@ Long-term (ecosystem):
 | 11. Validation | 2 | 0 | 2 |
 | 12. Ecosystem | 6 | 0 | 6 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **22** | **45** |
+| **Total** | **67** | **23** | **44** |
