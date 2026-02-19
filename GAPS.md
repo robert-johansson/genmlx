@@ -19,9 +19,10 @@ MLX for GPU acceleration. It already provides:
 | **Distributions (14)** | gaussian, uniform, bernoulli, beta, gamma, exponential, categorical, poisson, laplace, student-t, log-normal, multivariate-normal, dirichlet, delta |
 | **Combinators (3)** | Map, Unfold, Switch |
 | **Inference (7)** | Importance Sampling, Importance Resampling, MH, MALA, HMC, NUTS, SMC (with rejuvenation), ADVI |
+| **Vectorized inference** | `vsimulate`, `vgenerate`, vectorized IS, vectorized SMC init (29-122x speedup via shape-based batching) |
 | **Diagnostics** | ESS, R-hat, summary statistics |
 | **MLX integration** | Full autograd (`grad`, `value-and-grad`, `jvp`, `vjp`), `compile-fn` (JIT to Metal), `vmap`, `tidy`, functional PRNG |
-| **Data structures** | Hierarchical choice maps, immutable traces, composable selections |
+| **Data structures** | Hierarchical choice maps, immutable traces, `VectorizedTrace`, composable selections |
 
 ---
 
@@ -151,8 +152,8 @@ GenJAX that GenMLX does not yet have, organized by subsystem.
 |---|---|---|---|---|
 | GPU acceleration | CPU only | GPU/TPU via XLA | GPU via MLX (Apple Silicon) | -- |
 | `compile-fn` / JIT | -- | `jax.jit` | `mx/compile-fn` | -- |
-| **`vmap` over traces** | -- | First-class trace vmap | -- | **GAP** |
-| **`vmap` over particles** | -- | Vectorized particle inference | -- | **GAP** |
+| Vectorized traces | -- | First-class trace vmap | `VectorizedTrace` (shape-based) | -- |
+| Vectorized particle inference | -- | Vectorized particle inference | `vsimulate`/`vgenerate` (29-122x speedup) | -- |
 | **Vectorized stochastic branching** | -- | Cond via masking | -- | **GAP** |
 | **Formal vectorization correctness** | -- | lambda_GEN proof (POPL '26) | -- | **GAP** |
 
@@ -632,36 +633,54 @@ GenTraceKernelDSL.jl):
 ### Phase 7: Vectorized Inference & Advanced Compilation
 
 **Goal:** Bring GenJAX's key innovation -- compositional vectorization of
-traces and inference -- to GenMLX via MLX's `vmap`.
+traces and inference -- to GenMLX via shape-based batching.
 
 **Priority:** Medium -- significant performance gains for particle methods.
 
-#### 7a. Vectorized Traces
+**Status:** Phase 7a-7b COMPLETE. Achieved 29-122x speedup via shape-based
+batching (no `vmap` needed -- MLX broadcasting handles everything).
 
-Make traces `vmap`-compatible by structuring them as "struct-of-arrays"
-rather than "array-of-structs":
+#### 7a. Vectorized Traces ✅ DONE
 
-```clojure
-(defrecord VectorizedTrace [gen-fn args choices-batch retval-batch score-batch]
-  ;; choices-batch: a single ChoiceMap where each leaf is a batched MLX array
-  ;; score-batch: a 1-D MLX array of scores, one per particle
-  )
-```
-
-#### 7b. Vectorized GFI Operations
+Struct-of-arrays trace where each leaf is a batched `[N]`-shaped MLX array:
 
 ```clojure
-(defn vsimulate
-  "Vectorized simulate: run N independent simulations via vmap."
-  [gen-fn args n-particles key]
-  ;; Uses mx/vmap internally
-  ...)
-
-(defn vgenerate
-  "Vectorized generate: constrained execution across particles."
-  [gen-fn args constraints n-particles key]
-  ...)
+(defrecord VectorizedTrace [gen-fn args choices score weight n-particles retval])
+;; choices: ChoiceMap where leaves hold [N]-shaped arrays
+;; score/weight: [N]-shaped MLX arrays
 ```
+
+Includes `resample-vtrace`, `vtrace-log-ml-estimate`, `vtrace-ess`,
+`systematic-resample-indices`. Implemented in `genmlx.vectorized`.
+
+#### 7b. Vectorized GFI Operations ✅ DONE
+
+Shape-based batching: sample `[N]` values at each site instead of running
+N sequential particles. Broadcasting handles all score/weight arithmetic.
+
+```clojure
+(dyn/vsimulate model args n key)     ;; → VectorizedTrace
+(dyn/vgenerate model args obs n key) ;; → VectorizedTrace with weights
+```
+
+Also: `vectorized-importance-sampling`, `vsmc-init`.
+
+**Key insight:** No `vmap` needed. `dist-sample-n` produces `[N]`-shaped
+samples, and `dist-log-prob` broadcasts naturally. The handler state
+threading is already shape-agnostic. 7 distributions have native batch
+sampling; the rest fall back to sequential `dist-sample-n :default`.
+
+**Benchmarks (N=100, 5-site model):**
+- `dist-sample-n`: 29x (N=100), 66x (N=1000)
+- `vgenerate`: 61-122x
+- Vectorized IS: 81x
+- Vectorized SMC init: 65x
+
+**Limitations (7.0):**
+- No `splice` (sub-GF calls) in batched mode
+- No vectorized `update`/`regenerate` (needed for multi-step SMC)
+- Rejection-sampling distributions (beta, gamma, poisson, student-t,
+  dirichlet) fall back to sequential
 
 #### 7c. Vectorized Stochastic Branching
 
@@ -692,7 +711,8 @@ Compile entire MCMC chains or SMC sweeps into a single Metal program:
       ...)))
 ```
 
-**Estimated scope:** ~800 lines. Requires deep MLX vmap integration.
+**Remaining scope:** ~400 lines for 7c-7d. Vectorized branching and
+compiled inference loops.
 
 ---
 
@@ -801,7 +821,7 @@ Phases 1, 5, 7, and 8 can proceed in parallel with the main sequence.
 | **Dispatch** | Julia multiple dispatch | Python class hierarchy | Clojure multimethods + protocols |
 | **Extension** | Subtype `GenerativeFunction` | Subclass / Pytree | Implement protocols, add multimethods |
 | **Compilation** | Julia JIT | XLA (GPU/TPU) | MLX Metal (Apple Silicon GPU) |
-| **Vectorization** | Manual | `jax.vmap` (first-class) | `mx/vmap` (available, not yet for traces) |
+| **Vectorization** | Manual | `jax.vmap` (first-class) | Shape-based batching (29-122x speedup) |
 | **PRNG** | Global RNG | JAX splittable keys | Splittable keys (functional) |
 | **Memory** | Julia GC | XLA managed | MLX unified memory (zero-copy CPU/GPU) |
 
@@ -819,6 +839,8 @@ pattern of MCMC inference.
 - **Purely functional handler design** -- cleaner than Gen.jl's mutable traces
 - **`defdist` macro** -- more ergonomic than Gen.jl's manual `Distribution` subtyping
 - **MLX unified memory** -- zero-copy CPU/GPU is architecturally superior to PCIe transfer
+- **Vectorized inference without `vmap`** -- shape-based batching achieves 29-122x
+  speedup by broadcasting, simpler than GenJAX's JAX vmap approach
 - **~2000 lines** -- dramatically smaller than Gen.jl (~20k+) or GenJAX (~10k+),
   making the system auditable and hackable
 
