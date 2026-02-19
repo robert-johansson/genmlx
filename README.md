@@ -34,35 +34,31 @@ npm install
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
-            [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.inference.mcmc :as mcmc])
   (:require-macros [genmlx.gen :refer [gen]]))
 
-;; Bayesian linear regression
+;; Bayesian linear regression — all values stay as MLX arrays
 (def model
   (gen [xs]
     (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
           intercept (dyn/trace :intercept (dist/gaussian 0 10))]
-      (mx/eval! slope intercept)
-      (let [s (mx/item slope) i (mx/item intercept)]
-        (doseq [[j x] (map-indexed vector xs)]
-          (dyn/trace (keyword (str "y" j))
-                     (dist/gaussian (+ (* s x) i) 1)))
-        [s i]))))
+      (doseq [[j x] (map-indexed vector xs)]
+        (dyn/trace (keyword (str "y" j))
+                   (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                          intercept) 1)))
+      slope)))
 ```
 
 ### Run inference
 
 ```clojure
-;; Observed data
+;; Observations — choicemap constructor takes keyword-value pairs
 (def xs [1.0 2.0 3.0 4.0 5.0])
 (def observations
-  (reduce (fn [cm [j y]]
-            (cm/set-choice cm [(keyword (str "y" j))] (mx/scalar y)))
-          cm/EMPTY
-          (map-indexed vector [2.1 3.9 6.2 7.8 10.1])))
+  (cm/choicemap :y0 (mx/scalar 2.1) :y1 (mx/scalar 3.9) :y2 (mx/scalar 6.2)
+                :y3 (mx/scalar 7.8) :y4 (mx/scalar 10.1)))
 
 ;; Metropolis-Hastings
 (def traces
@@ -70,11 +66,8 @@ npm install
             :selection (sel/select :slope :intercept)}
            model [xs] observations))
 
-;; Examine posterior
-(let [slopes (mapv (fn [t]
-                     (let [v (cm/get-value (cm/get-submap (tr/get-choices t) :slope))]
-                       (mx/eval! v) (mx/item v)))
-                   traces)]
+;; Examine posterior — traces are records, choices are hierarchical maps
+(let [slopes (mapv #(mx/item (cm/get-choice (:choices %) [:slope])) traces)]
   (println "Posterior slope mean:" (/ (reduce + slopes) (count slopes))))
 ;; => ~2.0 (true slope)
 ```
