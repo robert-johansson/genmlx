@@ -6,7 +6,8 @@
             [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
-            [genmlx.mlx.random :as rng]))
+            [genmlx.mlx.random :as rng]
+            [genmlx.vectorized :as vec]))
 
 ;; Forward declaration
 (declare execute-sub)
@@ -137,3 +138,38 @@
    Used inside gen bodies: (splice :sub-model my-model args...)"
   [addr gf & args]
   (h/trace-gf! addr gf (vec args)))
+
+;; ---------------------------------------------------------------------------
+;; Vectorized execution (batched: N particles in one model run)
+;; ---------------------------------------------------------------------------
+
+(defn vsimulate
+  "Run model body ONCE with batched handler, producing a VectorizedTrace
+   with [n]-shaped arrays at each choice site.
+   gf: DynamicGF, args: model args, n: number of particles, key: PRNG key."
+  [gf args n key]
+  (let [key (rng/ensure-key key)
+        result (h/run-handler h/batched-simulate-handler
+                 {:choices cm/EMPTY :score (mx/scalar 0.0)
+                  :key key :batch-size n :batched? true
+                  :executor execute-sub}
+                 #(apply (:body-fn gf) args))]
+    (vec/->VectorizedTrace gf args (:choices result) (:score result)
+                           (mx/zeros [n]) n (:retval result))))
+
+(defn vgenerate
+  "Run model body ONCE with batched generate handler, producing a
+   VectorizedTrace. Constrained sites use scalar observations;
+   unconstrained sites produce [n]-shaped samples.
+   gf: DynamicGF, args: model args, constraints: ChoiceMap,
+   n: number of particles, key: PRNG key."
+  [gf args constraints n key]
+  (let [key (rng/ensure-key key)
+        result (h/run-handler h/batched-generate-handler
+                 {:choices cm/EMPTY :score (mx/scalar 0.0)
+                  :weight (mx/scalar 0.0) :key key
+                  :constraints constraints :batch-size n :batched? true
+                  :executor execute-sub}
+                 #(apply (:body-fn gf) args))]
+    (vec/->VectorizedTrace gf args (:choices result) (:score result)
+                           (:weight result) n (:retval result))))

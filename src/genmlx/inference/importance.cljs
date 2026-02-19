@@ -4,7 +4,9 @@
             [genmlx.trace :as tr]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.inference.util :as u]))
+            [genmlx.inference.util :as u]
+            [genmlx.dynamic :as dyn]
+            [genmlx.vectorized :as vec]))
 
 (defn importance-sampling
   "Importance sampling. Generate traces constrained by observations,
@@ -57,3 +59,19 @@
                                    (map-indexed vector probs))]
                 (if (number? result) (last traces) result)))
             keys))))
+
+(defn vectorized-importance-sampling
+  "Vectorized importance sampling. Runs model ONCE with batched handler
+   instead of N sequential generate calls.
+
+   opts: {:samples N :key prng-key}
+   model: DynamicGF
+   args: model arguments
+   observations: choice map of observed values
+
+   Returns {:vtrace VectorizedTrace :log-ml-estimate MLX-scalar}"
+  [{:keys [samples key] :or {samples 100}} model args observations]
+  (let [key (rng/ensure-key key)
+        vtrace (dyn/vgenerate model args observations samples key)]
+    {:vtrace vtrace
+     :log-ml-estimate (vec/vtrace-log-ml-estimate vtrace)}))

@@ -4,7 +4,8 @@
   (:require [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
-            [genmlx.mlx :as mx]))
+            [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]))
 
 ;; ---------------------------------------------------------------------------
 ;; Open multimethods — dispatch on (:type dist)
@@ -14,6 +15,7 @@
 (defmulti dist-log-prob (fn [d _value] (:type d)))
 (defmulti dist-reparam  (fn [d _key] (:type d)))
 (defmulti dist-support   (fn [d] (:type d)))
+(defmulti dist-sample-n  (fn [d _key _n] (:type d)))
 
 ;; Defaults: helpful errors
 (defmethod dist-reparam :default [d _]
@@ -23,6 +25,11 @@
 (defmethod dist-support :default [d]
   (throw (ex-info (str "Distribution " (:type d) " is not enumerable")
                   {:type (:type d)})))
+
+;; Default dist-sample-n: sequential fallback for distributions that can't batch
+(defmethod dist-sample-n :default [d key n]
+  (let [keys (rng/split-n (rng/ensure-key key) n)]
+    (mx/stack (mapv #(dist-sample d %) keys))))
 
 ;; ---------------------------------------------------------------------------
 ;; GFI bridge: distribution -> trace

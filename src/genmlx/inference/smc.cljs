@@ -5,7 +5,9 @@
             [genmlx.selection :as sel]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.inference.util :as u]))
+            [genmlx.inference.util :as u]
+            [genmlx.dynamic :as dyn]
+            [genmlx.vectorized :as vec]))
 
 (defn- systematic-resample
   "Systematic resampling of particles. Returns vector of indices.
@@ -141,3 +143,24 @@
                 (callback {:step t :ess ess :resampled? resampled?}))
               (recur (inc t) traces log-weights
                      (mx/add log-ml log-ml-increment) next-key))))))))
+
+;; ---------------------------------------------------------------------------
+;; Vectorized SMC (single-step, batched init)
+;; ---------------------------------------------------------------------------
+
+(defn vsmc-init
+  "Vectorized SMC initialization. Runs model ONCE with batched handler
+   instead of N sequential generate calls.
+
+   model: DynamicGF
+   args: model arguments
+   observations: choice map of observed values
+   particles: number of particles
+   key: PRNG key
+
+   Returns {:vtrace VectorizedTrace :log-ml-estimate MLX-scalar}"
+  [model args observations particles key]
+  (let [key (rng/ensure-key key)
+        vtrace (dyn/vgenerate model args observations particles key)
+        log-ml (vec/vtrace-log-ml-estimate vtrace)]
+    {:vtrace vtrace :log-ml-estimate log-ml}))

@@ -98,6 +98,37 @@
                (update :score #(mx/add % lp)))]))))
 
 ;; ---------------------------------------------------------------------------
+;; Batched state transitions (vectorized: [N]-shaped values)
+;; ---------------------------------------------------------------------------
+
+(defn- batched-simulate-transition
+  "Pure: sample [N] values, accumulate [N]-shaped score."
+  [state addr dist]
+  (let [n (:batch-size state)
+        [k1 k2] (rng/split (:key state))
+        value (dc/dist-sample-n dist k2 n)
+        lp    (dc/dist-log-prob dist value)]
+    [value (-> state
+             (assoc :key k1)
+             (update :choices #(cm/set-choice % [addr] value))
+             (update :score #(mx/add % lp)))]))
+
+(defn- batched-generate-transition
+  "Pure: constrained sites use scalar observation (broadcasts into [N] score),
+   unconstrained sites delegate to batched-simulate-transition."
+  [state addr dist]
+  (let [constraint (cm/get-submap (:constraints state) addr)]
+    (if (cm/has-value? constraint)
+      ;; Constrained: scalar observation, scalar log-prob → broadcasts into [N] score/weight
+      (let [value (cm/get-value constraint)
+            lp    (dc/dist-log-prob dist value)]
+        [value (-> state
+                 (update :choices #(cm/set-choice % [addr] value))
+                 (update :score  #(mx/add % lp))
+                 (update :weight #(mx/add % lp)))])
+      (batched-simulate-transition state addr dist))))
+
+;; ---------------------------------------------------------------------------
 ;; Handler implementations (thin wrappers over pure transitions)
 ;; ---------------------------------------------------------------------------
 
@@ -126,6 +157,20 @@
   "Resample selected addresses, keep unselected."
   [addr dist]
   (let [[value state'] (regenerate-transition @*state* addr dist)]
+    (vreset! *state* state')
+    value))
+
+(defn batched-simulate-handler
+  "Batched sample from dist at addr, accumulate [N]-shaped score."
+  [addr dist]
+  (let [[value state'] (batched-simulate-transition @*state* addr dist)]
+    (vreset! *state* state')
+    value))
+
+(defn batched-generate-handler
+  "Batched generate: constrained or batched-simulate."
+  [addr dist]
+  (let [[value state'] (batched-generate-transition @*state* addr dist)]
     (vreset! *state* state')
     value))
 
@@ -160,19 +205,24 @@
   "Call a sub-generative-function at the given address namespace."
   [addr gf args]
   (if *handler*
-    ;; Delegate to sub-execution with scoped constraints/state
-    (let [state @*state*
-          sub-constraints (cm/get-submap (:constraints state) addr)
-          sub-old-choices (cm/get-submap (:old-choices state) addr)
-          sub-selection   (when-let [s (:selection state)]
-                            (sel/get-subselection s addr))
-          sub-result ((:executor state) gf args
-                       {:constraints sub-constraints
-                        :old-choices sub-old-choices
-                        :selection   sub-selection
-                        :key         (:key state)})]
-      (vswap! *state* merge-sub-result addr sub-result)
-      (:retval sub-result))
+    (do
+      ;; Guard: splice not supported in batched mode
+      (when (:batched? @*state*)
+        (throw (ex-info "splice (sub-GF calls) not supported in batched/vectorized mode"
+                        {:addr addr})))
+      ;; Delegate to sub-execution with scoped constraints/state
+      (let [state @*state*
+            sub-constraints (cm/get-submap (:constraints state) addr)
+            sub-old-choices (cm/get-submap (:old-choices state) addr)
+            sub-selection   (when-let [s (:selection state)]
+                              (sel/get-subselection s addr))
+            sub-result ((:executor state) gf args
+                         {:constraints sub-constraints
+                          :old-choices sub-old-choices
+                          :selection   sub-selection
+                          :key         (:key state)})]
+        (vswap! *state* merge-sub-result addr sub-result)
+        (:retval sub-result)))
     ;; Direct mode — simulate and return value
     (let [p (requiring-resolve 'genmlx.protocols/simulate)
           trace (p gf args)]

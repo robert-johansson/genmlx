@@ -96,6 +96,11 @@
   (reparam [key]
     (mx/add mu (mx/multiply sigma (rng/normal key [])))))
 
+(defmethod dc/dist-sample-n :gaussian [d key n]
+  (let [{:keys [mu sigma]} (:params d)
+        key (rng/ensure-key key)]
+    (mx/add mu (mx/multiply sigma (rng/normal key [n])))))
+
 (def normal gaussian)
 
 ;; ---------------------------------------------------------------------------
@@ -114,6 +119,11 @@
   (reparam [key]
     (mx/add lo (mx/multiply (mx/subtract hi lo) (rng/uniform key [])))))
 
+(defmethod dc/dist-sample-n :uniform [d key n]
+  (let [{:keys [lo hi]} (:params d)
+        key (rng/ensure-key key)]
+    (mx/add lo (mx/multiply (mx/subtract hi lo) (rng/uniform key [n])))))
+
 ;; ---------------------------------------------------------------------------
 ;; Bernoulli
 ;; ---------------------------------------------------------------------------
@@ -130,6 +140,12 @@
                          (mx/log (mx/subtract (mx/scalar 1.0) p)))))
   (support []
     [(mx/scalar 0.0) (mx/scalar 1.0)]))
+
+(defmethod dc/dist-sample-n :bernoulli [d key n]
+  (let [{:keys [p]} (:params d)
+        key (rng/ensure-key key)
+        u (rng/uniform key [n])]
+    (mx/where (mx/less u p) (mx/scalar 1.0) (mx/scalar 0.0))))
 
 (defn flip
   "Alias for bernoulli."
@@ -217,6 +233,12 @@
     (let [u (rng/uniform key [])]
       (mx/divide (mx/negative (mx/log (mx/subtract (mx/scalar 1.0) u))) rate))))
 
+(defmethod dc/dist-sample-n :exponential [d key n]
+  (let [{:keys [rate]} (:params d)
+        key (rng/ensure-key key)
+        u (rng/uniform key [n])]
+    (mx/divide (mx/negative (mx/log (mx/subtract (mx/scalar 1.0) u))) rate)))
+
 ;; ---------------------------------------------------------------------------
 ;; Categorical
 ;; ---------------------------------------------------------------------------
@@ -273,6 +295,11 @@
   (reparam [key]
     (laplace-icdf loc scale (mx/subtract (rng/uniform key []) (mx/scalar 0.5)))))
 
+(defmethod dc/dist-sample-n :laplace [d key n]
+  (let [{:keys [loc scale]} (:params d)
+        key (rng/ensure-key key)]
+    (laplace-icdf loc scale (mx/subtract (rng/uniform key [n]) (mx/scalar 0.5)))))
+
 ;; ---------------------------------------------------------------------------
 ;; Student-t
 ;; ---------------------------------------------------------------------------
@@ -325,6 +352,11 @@
   (reparam [key]
     (mx/exp (mx/add mu (mx/multiply sigma (rng/normal key []))))))
 
+(defmethod dc/dist-sample-n :log-normal [d key n]
+  (let [{:keys [mu sigma]} (:params d)
+        key (rng/ensure-key key)]
+    (mx/exp (mx/add mu (mx/multiply sigma (rng/normal key [n]))))))
+
 ;; ---------------------------------------------------------------------------
 ;; Dirichlet
 ;; ---------------------------------------------------------------------------
@@ -366,6 +398,10 @@
     (let [eq (mx/equal v value)]
       (mx/where eq (mx/scalar 0.0) (mx/scalar ##-Inf))))
   (support [] [v]))
+
+(defmethod dc/dist-sample-n :delta [d _key n]
+  (let [{:keys [v]} (:params d)]
+    (mx/broadcast-to v [n])))
 
 ;; ---------------------------------------------------------------------------
 ;; Multivariate Normal (via Cholesky) — manual definition
