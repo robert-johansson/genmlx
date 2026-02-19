@@ -183,8 +183,8 @@
             ;; Init step: reference trace at index 0, rest from prior
             (let [other-results (mapv (fn [_] (p/generate model args obs-t))
                                       (range (dec particles)))
-                  ;; Score reference trace
-                  ref-result (p/generate model args obs-t)
+                  ;; Use reference trace at index 0 (the core of cSMC)
+                  ref-result (p/generate model args (:choices reference-trace))
                   traces (into [(:trace ref-result)] (mapv :trace other-results))
                   log-weights (into [(:weight ref-result)] (mapv :weight other-results))
                   w-arr (u/materialize-weights log-weights)

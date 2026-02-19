@@ -77,7 +77,7 @@
           choices (assemble-choices results (comp :choices :trace))
           retvals (mapv (comp :retval :trace) results)
           score (sum-field results (comp :score :trace))
-          weight (sum-field results :weight)
+          weight (mx/subtract score (:score trace))
           discard (assemble-choices
                     (filter :discard results)
                     :discard)]
@@ -102,7 +102,7 @@
           choices (assemble-choices results (comp :choices :trace))
           retvals (mapv (comp :retval :trace) results)
           score (sum-field results (comp :score :trace))
-          weight (sum-field results :weight)]
+          weight (mx/subtract (sum-field results :weight) (:score trace))]
       {:trace (tr/make-trace {:gen-fn this :args args
                               :choices choices :retval retvals :score score})
        :weight weight})))
@@ -167,12 +167,12 @@
           {:keys [args choices]} trace
           [n init-state & extra] args]
       (loop [t 0 state init-state
-             new-choices cm/EMPTY score (mx/scalar 0.0) weight (mx/scalar 0.0)
+             new-choices cm/EMPTY score (mx/scalar 0.0)
              discard cm/EMPTY states []]
         (if (>= t n)
           {:trace (tr/make-trace {:gen-fn this :args args
                                   :choices new-choices :retval states :score score})
-           :weight weight :discard discard}
+           :weight (mx/subtract score (:score trace)) :discard discard}
           (let [old-sub-choices (cm/get-submap choices t)
                 kernel-args (into [t state] extra)
                 old-trace (tr/make-trace
@@ -186,7 +186,6 @@
                    new-state
                    (cm/set-choice new-choices [t] (:choices new-trace))
                    (mx/add score (:score new-trace))
-                   (mx/add weight (:weight result))
                    (if (:discard result)
                      (cm/set-choice discard [t] (:discard result))
                      discard)
@@ -203,7 +202,7 @@
         (if (>= t n)
           {:trace (tr/make-trace {:gen-fn this :args args
                                   :choices new-choices :retval states :score score})
-           :weight weight}
+           :weight (mx/subtract weight (:score trace))}
           (let [old-sub-choices (cm/get-submap choices t)
                 kernel-args (into [t state] extra)
                 old-trace (tr/make-trace
@@ -347,69 +346,90 @@
 ;; [N]-shaped index arrays. This enables vectorized models with discrete
 ;; latent structure (mixture models, clustering, etc.).
 
+(defn- stack-branch-traces
+  "Given N traces from the same GF, stack their values into [N]-shaped arrays."
+  [traces]
+  (let [first-choices (:choices (first traces))
+        is-leaf (cm/has-value? first-choices)]
+    {:choices (if is-leaf
+               (cm/->Value (mx/stack (mapv #(cm/get-value (:choices %)) traces)))
+               (let [addrs (cm/addresses first-choices)]
+                 (reduce (fn [cm addr-path]
+                           (cm/set-choice cm addr-path
+                             (mx/stack (mapv #(cm/get-choice (:choices %) addr-path) traces))))
+                         cm/EMPTY addrs)))
+     :score (mx/stack (mapv :score traces))
+     :retval (let [rvs (mapv :retval traces)]
+               (if (mx/array? (first rvs)) (mx/stack rvs) rvs))}))
+
 (defn vectorized-switch
-  "Execute all branches and mask-select results based on [N]-shaped indices.
+  "Execute all branches with [N] independent samples each, then mask-select
+   results based on [N]-shaped indices.
    branches: vector of generative functions
    index: [N]-shaped MLX int32 array of branch indices
    branch-args: arguments for each branch (shared across branches)
-   Returns {:choices :score :retval} with [N]-shaped arrays at each site.
-
-   Each branch is executed independently (all sites sampled),
-   and results are combined using mx/where per branch index."
+   Returns {:choices :score :retval} with [N]-shaped arrays at each site."
   [branches index branch-args]
-  (let [n-branches (count branches)
-        ;; Execute all branches via simulate
-        branch-results (mapv (fn [gf] (p/simulate gf branch-args)) branches)
-        ;; For each choice address, combine using mx/where
-        ;; Get all addresses from all branches
-        all-addrs (into #{} (mapcat #(cm/addresses (:choices %)) branch-results))
-        ;; Build combined choices and score
-        combined-choices (reduce
-                           (fn [cm addr-path]
-                             (let [;; For each branch, get the value at this address (or zeros)
-                                   branch-vals (mapv (fn [trace]
-                                                       (try
-                                                         (cm/get-choice (:choices trace) addr-path)
-                                                         (catch :default _ nil)))
-                                                     branch-results)
-                                   ;; Combine using where: start with branch 0, overlay others
-                                   combined (reduce-kv
-                                              (fn [acc i bval]
-                                                (if (and bval (pos? i))
-                                                  (let [mask (mx/equal index (mx/scalar i mx/int32))]
-                                                    (mx/where mask bval acc))
-                                                  acc))
-                                              (or (first branch-vals)
-                                                  (mx/scalar 0.0))
-                                              (vec (rest branch-vals)))]
-                               (cm/set-choice cm addr-path combined)))
-                           cm/EMPTY
-                           all-addrs)
+  (let [n-val (first (mx/shape index))
+        n-branches (count branches)
+        ;; For each branch, produce N independent samples stacked into [N]-shaped arrays
+        branch-data (mapv (fn [gf]
+                            (let [traces (mapv (fn [_] (p/simulate gf branch-args))
+                                              (range n-val))]
+                              (stack-branch-traces traces)))
+                          branches)
+        ;; Combine branches using mx/where based on index
+        first-choices (:choices (first branch-data))
+        is-leaf (cm/has-value? first-choices)
+        ;; Build combined choices
+        ;; Note: reduce-kv over full vector (not rest) so indices match branch indices
+        combined-choices
+        (if is-leaf
+          ;; Distribution branches: combine leaf values
+          (let [vals (mapv #(cm/get-value (:choices %)) branch-data)
+                combined (reduce-kv
+                           (fn [acc i v]
+                             (if (zero? i) acc
+                               (mx/where (mx/equal index (mx/scalar i mx/int32)) v acc)))
+                           (first vals) vals)]
+            (cm/->Value combined))
+          ;; GF branches: combine per-address
+          (let [all-addrs (into #{} (mapcat #(cm/addresses (:choices %)) branch-data))]
+            (reduce
+              (fn [cm addr-path]
+                (let [vals (mapv (fn [bd]
+                                  (try (cm/get-choice (:choices bd) addr-path)
+                                       (catch :default _ nil)))
+                                branch-data)
+                      combined (reduce-kv
+                                 (fn [acc i v]
+                                   (if (or (zero? i) (nil? v)) acc
+                                     (mx/where (mx/equal index (mx/scalar i mx/int32)) v acc)))
+                                 (or (first vals) (mx/zeros [n-val]))
+                                 vals)]
+                  (cm/set-choice cm addr-path combined)))
+              cm/EMPTY all-addrs)))
         ;; Combine scores using where
         combined-score (reduce-kv
-                         (fn [acc i trace]
+                         (fn [acc i bd]
                            (if (zero? i)
-                             (:score trace)
-                             (let [mask (mx/equal index (mx/scalar i mx/int32))]
-                               (mx/where mask (:score trace) acc))))
+                             (:score bd)
+                             (mx/where (mx/equal index (mx/scalar i mx/int32))
+                                       (:score bd) acc)))
                          (mx/scalar 0.0)
-                         (vec branch-results))]
+                         (vec branch-data))
+        ;; Combine retvals
+        combined-retval (let [rvs (mapv :retval branch-data)]
+                          (if (and (mx/array? (first rvs)) (> n-branches 1))
+                            (reduce-kv
+                              (fn [acc i rv]
+                                (if (or (zero? i) (nil? rv)) acc
+                                  (mx/where (mx/equal index (mx/scalar i mx/int32)) rv acc)))
+                              (first rvs) rvs)
+                            (first rvs)))]
     {:choices combined-choices
      :score combined-score
-     ;; Combine retvals using where (works for MLX arrays; for non-array retvals
-     ;; falls back to branch-0 retval since mx/where requires arrays)
-     :retval (let [retvals (mapv :retval branch-results)]
-               (if (and (mx/array? (first retvals))
-                        (> n-branches 1))
-                 (reduce-kv
-                   (fn [acc i rv]
-                     (if (and rv (pos? i))
-                       (let [mask (mx/equal index (mx/scalar i mx/int32))]
-                         (mx/where mask rv acc))
-                       acc))
-                   (first retvals)
-                   (vec (rest retvals)))
-                 (first retvals)))}))
+     :retval combined-retval}))
 
 ;; ---------------------------------------------------------------------------
 ;; Scan Combinator
@@ -474,14 +494,14 @@
           [init-carry inputs] args
           n (count inputs)]
       (loop [t 0 carry init-carry
-             new-choices cm/EMPTY score (mx/scalar 0.0) weight (mx/scalar 0.0)
+             new-choices cm/EMPTY score (mx/scalar 0.0)
              discard cm/EMPTY outputs []]
         (if (>= t n)
           {:trace (tr/make-trace {:gen-fn this :args args
                                   :choices new-choices
                                   :retval {:carry carry :outputs outputs}
                                   :score score})
-           :weight weight :discard discard}
+           :weight (mx/subtract score (:score trace)) :discard discard}
           (let [old-sub-choices (cm/get-submap choices t)
                 old-trace (tr/make-trace
                             {:gen-fn kern :args [carry (nth inputs t)]
@@ -494,7 +514,6 @@
                    new-carry
                    (cm/set-choice new-choices [t] (:choices new-trace))
                    (mx/add score (:score new-trace))
-                   (mx/add weight (:weight result))
                    (if (:discard result)
                      (cm/set-choice discard [t] (:discard result))
                      discard)
@@ -514,7 +533,7 @@
                                   :choices new-choices
                                   :retval {:carry carry :outputs outputs}
                                   :score score})
-           :weight weight}
+           :weight (mx/subtract weight (:score trace))}
           (let [old-sub-choices (cm/get-submap choices t)
                 old-trace (tr/make-trace
                             {:gen-fn kern :args [carry (nth inputs t)]

@@ -58,7 +58,7 @@
                  :choices (:choices result)
                  :retval  (:retval result)
                  :score   (:score result)})
-       :weight  (:weight result)
+       :weight  (mx/subtract (:score result) (:score trace))
        :discard (:discard result)}))
 
   p/IRegenerate
