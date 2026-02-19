@@ -79,3 +79,37 @@
   "Sample from standard Laplace distribution using the given key."
   [key shape]
   (.laplace mx/random (clj->js shape) nil key))
+
+(defn truncated-normal
+  "Sample from truncated normal distribution using the given key.
+   Values are clipped to [lower, upper]."
+  [key lower upper shape]
+  (.truncatedNormal mx/random
+    (mx/ensure-array lower) (mx/ensure-array upper)
+    (clj->js shape) nil key))
+
+(defonce ^:private cpu-stream (.newStream mx/core (.-cpu mx/core)))
+
+(defn multivariate-normal
+  "Sample from multivariate normal N(mean, cov) using the given key.
+   mean: [k] array, cov: [k k] positive definite array.
+   Uses CPU stream because MLX's internal SVD/Cholesky requires it.
+   Note: for high dimensions (k>10), manual Cholesky+matmul is faster.
+   Returns [k] array."
+  ([key mean cov]
+   (.multivariateNormal mx/random
+     (if (mx/array? mean) mean (mx/array mean))
+     (if (mx/array? cov) cov (mx/array cov))
+     #js [] nil key cpu-stream))
+  ([key mean cov shape]
+   (.multivariateNormal mx/random
+     (if (mx/array? mean) mean (mx/array mean))
+     (if (mx/array? cov) cov (mx/array cov))
+     (clj->js shape) nil key cpu-stream)))
+
+(defn permutation
+  "Return a random permutation of integers [0, n) or shuffle array along axis."
+  ([key n]
+   (.permutation mx/random n key))
+  ([key arr axis]
+   (.permutation mx/random arr axis key)))
