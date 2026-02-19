@@ -85,11 +85,11 @@ mixture
 
 ### Remaining
 
-- [ ] **3.1** Piecewise uniform — `(piecewise-uniform bounds probs)` (~30 lines)
-- [ ] **3.2** Beta-uniform mixture — `(beta-uniform theta alpha beta)` (~20 lines)
-- [ ] **3.3** Wishart — `(wishart df scale-matrix)` (~50 lines, requires matrix ops)
-- [ ] **3.4** Inverse Wishart — `(inv-wishart df scale-matrix)` (~50 lines)
-- [ ] **3.5** Broadcasted normal — `(broadcasted-normal mu sigma)` for batch params (~20 lines)
+- [x] **3.1** Piecewise uniform — `(piecewise-uniform bounds probs)` (~30 lines)
+- [x] **3.2** Beta-uniform mixture — `(beta-uniform theta alpha beta)` (~20 lines)
+- [x] **3.3** Wishart — `(wishart df scale-matrix)` (~50 lines, requires matrix ops)
+- [x] **3.4** Inverse Wishart — `(inv-wishart df scale-matrix)` (~50 lines)
+- [x] **3.5** Broadcasted normal — `(broadcasted-normal mu sigma)` for batch params (~20 lines)
 
 ### Distribution infrastructure
 
@@ -429,7 +429,7 @@ Immediate (solidify what exists):
   6.2  SMCP3 end-to-end test             ✅
 
 Near-term (Gen.jl feature parity):
-  3.1–3.5  Missing distributions
+  3.1–3.5  Missing distributions          ✅
   3.6      map->dist bridge               ✅
   4.1      Elliptical slice sampling      ✅
   4.2      MAP optimization               ✅
@@ -463,7 +463,7 @@ Long-term (ecosystem):
 |-------|-------|------|-----------|
 | 1. Functional Purity | 5 | 1 | 4 |
 | 2. Missing GFI Ops | 2 | 2 | 0 |
-| 3. Distributions | 8 | 2 | 6 |
+| 3. Distributions | 8 | 7 | 1 |
 | 4. Inference Algorithms | 4 | 2 | 2 |
 | 5. Combinators | 3 | 0 | 3 |
 | 6. Testing Gaps | 5 | 5 | 0 |
@@ -474,4 +474,4 @@ Long-term (ecosystem):
 | 11. Validation | 2 | 0 | 2 |
 | 12. Ecosystem | 6 | 0 | 6 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **14** | **53** |
+| **Total** | **67** | **19** | **48** |

@@ -666,3 +666,211 @@
         z (rng/normal key [k])]
     (mx/add mean-vec
             (mx/flatten (mx/matmul cholesky-L (mx/reshape z [k 1]))))))
+
+;; ---------------------------------------------------------------------------
+;; Broadcasted Normal (independent element-wise Gaussians)
+;; ---------------------------------------------------------------------------
+
+(defdist broadcasted-normal
+  "Independent element-wise normal distribution.
+   mu and sigma are MLX arrays of any shape. Samples N(mu_i, sigma_i) independently."
+  [mu sigma]
+  (sample [key]
+    (let [sh (mx/shape mu)]
+      (mx/add mu (mx/multiply sigma (rng/normal key sh)))))
+  (log-prob [v]
+    (let [z (mx/divide (mx/subtract v mu) sigma)]
+      (mx/sum
+        (mx/negative
+          (mx/add (mx/scalar (* 0.5 LOG-2PI))
+                  (mx/log sigma)
+                  (mx/multiply (mx/scalar 0.5) (mx/square z)))))))
+  (reparam [key]
+    (let [sh (mx/shape mu)]
+      (mx/add mu (mx/multiply sigma (rng/normal key sh))))))
+
+(defmethod dc/dist-sample-n :broadcasted-normal [d key n]
+  (let [{:keys [mu sigma]} (:params d)
+        key (rng/ensure-key key)
+        sh (mx/shape mu)]
+    (mx/add mu (mx/multiply sigma (rng/normal key (into [n] sh))))))
+
+;; ---------------------------------------------------------------------------
+;; Beta-Uniform Mixture — convenience wrapper
+;; ---------------------------------------------------------------------------
+
+(defn beta-uniform-mixture
+  "Mixture of Beta(alpha, beta-param) with probability theta and
+   Uniform(0,1) with probability (1 - theta). Common prior for bounded params."
+  [theta alpha beta-param]
+  (dc/mixture [(beta-dist (mx/ensure-array alpha) (mx/ensure-array beta-param))
+               (uniform (mx/scalar 0.0) (mx/scalar 1.0))]
+              (mx/array [(js/Math.log theta)
+                         (js/Math.log (- 1.0 theta))])))
+
+;; ---------------------------------------------------------------------------
+;; Piecewise Uniform
+;; ---------------------------------------------------------------------------
+
+(defdist piecewise-uniform
+  "Piecewise uniform distribution over bins defined by sorted boundary points.
+   bounds: MLX array of N+1 boundary points (sorted).
+   probs:  MLX array of N unnormalized bin probabilities."
+  [bounds probs]
+  (sample [key]
+    (let [[k1 k2] (rng/split key)
+          ;; Choose bin via categorical on log-probs
+          log-probs (mx/log probs)
+          bin-idx (mx/item (rng/categorical k1 log-probs))
+          ;; Uniform within chosen bin
+          lo (mx/index bounds (int bin-idx))
+          hi (mx/index bounds (inc (int bin-idx)))
+          u (rng/uniform k2 [])]
+      (mx/add lo (mx/multiply u (mx/subtract hi lo)))))
+  (log-prob [v]
+    ;; Find which bin v falls in, return log(prob_k / (total * width_k))
+    (let [bounds-vals (mx/->clj bounds)
+          probs-vals (mx/->clj probs)
+          v-val (mx/realize v)
+          total (reduce + probs-vals)
+          n-bins (count probs-vals)]
+      (loop [i 0]
+        (if (>= i n-bins)
+          (mx/scalar ##-Inf) ;; out of bounds
+          (let [lo (nth bounds-vals i)
+                hi (nth bounds-vals (inc i))]
+            (if (and (>= v-val lo) (< v-val hi))
+              (let [width (- hi lo)
+                    p (nth probs-vals i)]
+                (mx/scalar (- (js/Math.log p) (js/Math.log total) (js/Math.log width))))
+              (recur (inc i)))))))))
+
+;; ---------------------------------------------------------------------------
+;; Wishart
+;; ---------------------------------------------------------------------------
+
+(defn- log-multivariate-gamma
+  "Log of the multivariate gamma function Gamma_k(a)."
+  [a k]
+  (+ (* k (dec k) 0.25 (js/Math.log js/Math.PI))
+     (reduce + (map (fn [i] (log-gamma (- a (* 0.5 i)))) (range k)))))
+
+(defn wishart
+  "Wishart distribution with df degrees of freedom and [k x k] scale matrix V.
+   Uses Bartlett decomposition for sampling."
+  [df scale-matrix]
+  (let [V (if (mx/array? scale-matrix) scale-matrix (mx/array scale-matrix))
+        df-val (if (mx/array? df) (mx/realize df) df)
+        V-2d (if (= 1 (mx/ndim V))
+                (let [k (int (js/Math.sqrt (first (mx/shape V))))]
+                  (mx/reshape V [k k]))
+                V)
+        L (mx/cholesky V-2d)
+        _ (mx/eval! L)
+        k (first (mx/shape V-2d))
+        V-inv (mx/inv V-2d)
+        log-det-V (mx/multiply (mx/scalar 2.0) (mx/sum (mx/log (mx/diag L))))
+        _ (mx/eval! V-inv log-det-V)]
+    (dc/->Distribution :wishart
+                        {:df df-val :scale-matrix V-2d :cholesky-L L
+                         :V-inv V-inv :log-det-V log-det-V :k k})))
+
+(defmethod dc/dist-sample :wishart [d key]
+  (let [{:keys [df cholesky-L k]} (:params d)
+        key (rng/ensure-key key)
+        keys (rng/split-n key (+ k (* k (dec k) (/ 2))))
+        ;; Build lower-triangular A (Bartlett decomposition)
+        ;; Diagonal: A_ii ~ sqrt(chi²(df - i + 1)), chi²(n) = Gamma(n/2, 1/2)
+        ;; Off-diagonal: A_ij ~ N(0,1)
+        ki (atom 0)
+        next-key! (fn [] (let [i @ki] (swap! ki inc) (nth keys i)))
+        A-data (for [i (range k)]
+                 (for [j (range k)]
+                   (cond
+                     (= i j) ;; diagonal: sqrt(chi²(df - i))
+                     (let [chi2-df (- df i)
+                           ;; chi²(n) = Gamma(n/2, 2) but we sample Gamma(n/2, 1) * 2
+                           g (dc/dist-sample (gamma-dist (mx/scalar (/ chi2-df 2.0))
+                                                          (mx/scalar 1.0))
+                                             (next-key!))]
+                       (mx/sqrt (mx/multiply (mx/scalar 2.0) g)))
+                     (> i j) ;; below diagonal: N(0,1)
+                     (rng/normal (next-key!) [])
+                     :else ;; above diagonal: 0
+                     (mx/scalar 0.0))))
+        ;; Build A matrix
+        A (mx/reshape (mx/stack (mapv (fn [row] (mx/stack (vec row))) A-data)) [k k])
+        ;; W = L * A * A^T * L^T
+        LA (mx/matmul cholesky-L A)
+        W (mx/matmul LA (mx/transpose LA))]
+    (do (mx/eval! W) W)))
+
+(defmethod dc/dist-log-prob :wishart [d x]
+  (let [{:keys [df V-inv log-det-V k]} (:params d)
+        x (if (mx/array? x) x (mx/array x))
+        x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
+        log-det-X (mx/multiply (mx/scalar 2.0)
+                               (mx/sum (mx/log (mx/diag (mx/cholesky x-2d)))))
+        _ (mx/eval! log-det-X)
+        ;; log p(X) = ((df-k-1)/2)*log|X| - (1/2)*tr(V^{-1}X) - (df*k/2)*log(2)
+        ;;            - (df/2)*log|V| - log_multivariate_gamma(df/2, k)
+        half-df (/ df 2.0)
+        term1 (mx/multiply (mx/scalar (/ (- df k 1) 2.0)) log-det-X)
+        tr-VinvX (mx/sum (mx/multiply V-inv (mx/transpose x-2d))) ;; tr(A*B) = sum(A .* B^T)
+        term2 (mx/multiply (mx/scalar -0.5) tr-VinvX)
+        term3 (mx/scalar (- (* half-df k (js/Math.log 2.0))))
+        term4 (mx/scalar (- (* half-df (mx/realize log-det-V))))
+        term5 (mx/scalar (- (log-multivariate-gamma half-df k)))]
+    (mx/add term1 term2 term3 term4 term5)))
+
+;; ---------------------------------------------------------------------------
+;; Inverse Wishart
+;; ---------------------------------------------------------------------------
+
+(defn inv-wishart
+  "Inverse Wishart distribution with df degrees of freedom and [k x k] scale matrix Psi.
+   Sample: W ~ Wishart(df, Psi^{-1}), return W^{-1}."
+  [df scale-matrix]
+  (let [Psi (if (mx/array? scale-matrix) scale-matrix (mx/array scale-matrix))
+        df-val (if (mx/array? df) (mx/realize df) df)
+        Psi-2d (if (= 1 (mx/ndim Psi))
+                  (let [k (int (js/Math.sqrt (first (mx/shape Psi))))]
+                    (mx/reshape Psi [k k]))
+                  Psi)
+        k (first (mx/shape Psi-2d))
+        Psi-inv (mx/inv Psi-2d)
+        _ (mx/eval! Psi-inv)
+        ;; Build internal Wishart(df, Psi^{-1}) for sampling
+        wish (wishart df-val Psi-inv)
+        ;; Precompute log|Psi| for log-prob
+        L-psi (mx/cholesky Psi-2d)
+        _ (mx/eval! L-psi)
+        log-det-Psi (mx/multiply (mx/scalar 2.0) (mx/sum (mx/log (mx/diag L-psi))))
+        _ (mx/eval! log-det-Psi)]
+    (dc/->Distribution :inv-wishart
+                        {:df df-val :scale-matrix Psi-2d :k k
+                         :wish wish :log-det-Psi log-det-Psi})))
+
+(defmethod dc/dist-sample :inv-wishart [d key]
+  (let [{:keys [wish]} (:params d)
+        W (dc/dist-sample wish key)]
+    (mx/inv W)))
+
+(defmethod dc/dist-log-prob :inv-wishart [d x]
+  (let [{:keys [df scale-matrix log-det-Psi k]} (:params d)
+        x (if (mx/array? x) x (mx/array x))
+        x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
+        X-inv (mx/inv x-2d)
+        log-det-X (mx/multiply (mx/scalar 2.0)
+                               (mx/sum (mx/log (mx/diag (mx/cholesky x-2d)))))
+        _ (mx/eval! log-det-X)
+        ;; log p(X) = (df/2)*log|Psi| - (df*k/2)*log(2) - log_multivariate_gamma(df/2, k)
+        ;;            - ((df+k+1)/2)*log|X| - (1/2)*tr(Psi * X^{-1})
+        half-df (/ df 2.0)
+        term1 (mx/multiply (mx/scalar half-df) log-det-Psi)
+        term2 (mx/scalar (- (* half-df k (js/Math.log 2.0))))
+        term3 (mx/scalar (- (log-multivariate-gamma half-df k)))
+        term4 (mx/multiply (mx/scalar (- (/ (+ df k 1) 2.0))) log-det-X)
+        tr-PsiXinv (mx/sum (mx/multiply scale-matrix (mx/transpose X-inv)))
+        term5 (mx/multiply (mx/scalar -0.5) tr-PsiXinv)]
+    (mx/add term1 term2 term3 term4 term5)))
