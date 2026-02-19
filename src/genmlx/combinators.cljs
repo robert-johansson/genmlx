@@ -353,6 +353,43 @@
   [inner]
   (->MaskCombinator inner))
 
+(extend-type MaskCombinator
+  p/IUpdate
+  (update [this trace constraints]
+    (let [[active? & inner-args] (:args trace)]
+      (if active?
+        (let [inner (:inner this)
+              old-inner-trace (tr/make-trace
+                                {:gen-fn inner :args (vec inner-args)
+                                 :choices (:choices trace)
+                                 :retval (:retval trace) :score (:score trace)})
+              result (p/update inner old-inner-trace constraints)
+              new-trace (:trace result)]
+          {:trace (tr/make-trace {:gen-fn this :args (:args trace)
+                                  :choices (:choices new-trace)
+                                  :retval (:retval new-trace)
+                                  :score (:score new-trace)})
+           :weight (:weight result) :discard (:discard result)})
+        {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY})))
+
+  p/IRegenerate
+  (regenerate [this trace selection]
+    (let [[active? & inner-args] (:args trace)]
+      (if active?
+        (let [inner (:inner this)
+              old-inner-trace (tr/make-trace
+                                {:gen-fn inner :args (vec inner-args)
+                                 :choices (:choices trace)
+                                 :retval (:retval trace) :score (:score trace)})
+              result (p/regenerate inner old-inner-trace selection)
+              new-trace (:trace result)]
+          {:trace (tr/make-trace {:gen-fn this :args (:args trace)
+                                  :choices (:choices new-trace)
+                                  :retval (:retval new-trace)
+                                  :score (:score new-trace)})
+           :weight (:weight result)})
+        {:trace trace :weight (mx/scalar 0.0)}))))
+
 ;; ---------------------------------------------------------------------------
 ;; Recurse Combinator
 ;; ---------------------------------------------------------------------------
@@ -1048,6 +1085,27 @@
       (p/update this trace constraints))))
 
 (extend-type ScanCombinator
+  p/IUpdateWithDiffs
+  (update-with-diffs [this trace constraints argdiffs]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+      (p/update this trace constraints))))
+
+(extend-type MaskCombinator
+  p/IUpdateWithDiffs
+  (update-with-diffs [this trace constraints argdiffs]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+      (p/update this trace constraints))))
+
+(extend-type ContramapGF
+  p/IUpdateWithDiffs
+  (update-with-diffs [this trace constraints argdiffs]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+      (p/update this trace constraints))))
+
+(extend-type MapRetvalGF
   p/IUpdateWithDiffs
   (update-with-diffs [this trace constraints argdiffs]
     (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))

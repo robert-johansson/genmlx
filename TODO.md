@@ -143,14 +143,14 @@ mixture
   - ~100 lines
   - *File*: `combinators.cljs`
 
-- [ ] **5.2** Full GFI on Mask combinator
-  - Currently only simulate + generate
-  - Add update, regenerate, edit
-  - ~60 lines
+- [x] **5.2** Full GFI on Mask combinator
+  - Added update, regenerate, update-with-diffs
+  - Edit already works via `edit-dispatch` default
 
-- [ ] **5.3** Full GFI on Contramap / Dimap
-  - Currently have update + regenerate (added in limitations fixes)
-  - Verify edit works via `edit-dispatch` default
+- [x] **5.3** Full GFI on Contramap / Dimap
+  - Already had update + regenerate
+  - Added update-with-diffs
+  - Edit works via `edit-dispatch` default
 
 ---
 
@@ -465,7 +465,7 @@ Long-term (ecosystem):
 | 2. Missing GFI Ops | 2 | 2 | 0 |
 | 3. Distributions | 8 | 7 | 1 |
 | 4. Inference Algorithms | 4 | 2 | 2 |
-| 5. Combinators | 3 | 0 | 3 |
+| 5. Combinators | 3 | 3 | 0 |
 | 6. Testing Gaps | 5 | 5 | 0 |
 | 7. Vectorization & Perf | 8 | 0 | 8 |
 | 8. Gradient Programming | 2 | 0 | 2 |
@@ -474,4 +474,4 @@ Long-term (ecosystem):
 | 11. Validation | 2 | 0 | 2 |
 | 12. Ecosystem | 6 | 0 | 6 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **19** | **48** |
+| **Total** | **67** | **22** | **45** |
