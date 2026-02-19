@@ -9,7 +9,8 @@
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist.core :as dc]
-            [genmlx.inference.util :as u]))
+            [genmlx.inference.util :as u]
+            [genmlx.learning :as learn]))
 
 ;; ---------------------------------------------------------------------------
 ;; Generic sample collector (shared burn-in / thin / callback loop)
@@ -579,3 +580,57 @@
           {:state new-q :accepted? (not (identical? new-q q))}))
       mx/->clj
       init-q)))
+
+;; ---------------------------------------------------------------------------
+;; MAP (Maximum A Posteriori) Optimization
+;; ---------------------------------------------------------------------------
+
+(defn map-optimize
+  "MAP (Maximum A Posteriori) optimization via gradient ascent on log p(latents | obs).
+
+   opts:
+     :iterations  - gradient steps (default 1000)
+     :optimizer   - :sgd or :adam (default :adam)
+     :lr          - learning rate (default 0.01)
+     :addresses   - vector of latent addresses to optimize
+     :callback    - (fn [{:iter :score :params}])
+
+   Returns {:trace Trace :score number :params [numbers] :score-history [numbers]}"
+  [{:keys [iterations optimizer lr addresses callback]
+    :or {iterations 1000 optimizer :adam lr 0.01}}
+   model args observations]
+  (let [score-fn   (u/make-score-fn model args observations addresses)
+        val-grad   (mx/value-and-grad score-fn)
+        ;; Initialize from a generate call
+        {:keys [trace]} (p/generate model args observations)
+        init-params (u/extract-params trace addresses)
+        opt-state   (when (= optimizer :adam) (learn/adam-init init-params))]
+    (loop [i 0
+           params init-params
+           opt-st opt-state
+           history (transient [])]
+      (if (>= i iterations)
+        ;; Reconstruct final trace at optimized params
+        (let [final-cm (reduce (fn [cm [j addr]]
+                                 (cm/set-choice cm [addr] (mx/index params j)))
+                               observations
+                               (map-indexed vector addresses))
+              {:keys [trace]} (p/generate model args final-cm)
+              score (mx/realize (:score trace))]
+          {:trace trace
+           :score score
+           :params (mx/->clj params)
+           :score-history (persistent! history)})
+        (let [[score grad] (val-grad params)
+              ;; Negate gradient: optimizers do descent, we want ascent
+              neg-grad (mx/negative grad)
+              _ (mx/eval! score neg-grad)
+              score-val (mx/item score)
+              [new-params new-opt-st]
+              (case optimizer
+                :sgd [(learn/sgd-step params neg-grad lr) nil]
+                :adam (learn/adam-step params neg-grad opt-st {:lr lr}))]
+          (when callback
+            (callback {:iter i :score score-val :params (mx/->clj params)}))
+          (recur (inc i) new-params new-opt-st
+                 (conj! history score-val)))))))
