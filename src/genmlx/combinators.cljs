@@ -967,3 +967,127 @@
     (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
       {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
       (p/update this trace constraints))))
+
+;; ---------------------------------------------------------------------------
+;; IProject implementations
+;; ---------------------------------------------------------------------------
+
+(extend-type MapCombinator
+  p/IProject
+  (project [this trace selection]
+    (let [old-choices (:choices trace)
+          args (:args trace)
+          n (count (first args))
+          kernel (:kernel this)]
+      (reduce (fn [acc i]
+                (let [kernel-args (mapv #(nth % i) args)
+                      sub-trace (tr/make-trace
+                                  {:gen-fn kernel :args kernel-args
+                                   :choices (cm/get-submap old-choices i)
+                                   :retval (nth (:retval trace) i nil)
+                                   :score (mx/scalar 0.0)})
+                      w (p/project kernel sub-trace
+                                   (sel/get-subselection selection i))]
+                  (mx/add acc w)))
+              (mx/scalar 0.0)
+              (range n)))))
+
+(extend-type UnfoldCombinator
+  p/IProject
+  (project [this trace selection]
+    (let [kern (:kernel this)
+          {:keys [args choices]} trace
+          [n init-state & extra] args]
+      (loop [t 0 state init-state
+             weight (mx/scalar 0.0)]
+        (if (>= t n)
+          weight
+          (let [kernel-args (into [t state] extra)
+                sub-choices (cm/get-submap choices t)
+                ;; Replay via generate to recover retval (carry state)
+                {:keys [trace]} (p/generate kern kernel-args sub-choices)
+                new-state (:retval trace)
+                w (p/project kern trace
+                             (sel/get-subselection selection t))]
+            (recur (inc t) new-state (mx/add weight w))))))))
+
+(extend-type SwitchCombinator
+  p/IProject
+  (project [this trace selection]
+    (let [[idx & branch-args] (:args trace)
+          branch (nth (:branches this) idx)
+          branch-trace (tr/make-trace
+                         {:gen-fn branch :args (vec branch-args)
+                          :choices (:choices trace)
+                          :retval (:retval trace) :score (:score trace)})]
+      (p/project branch branch-trace selection))))
+
+(extend-type ScanCombinator
+  p/IProject
+  (project [this trace selection]
+    (let [kern (:kernel this)
+          {:keys [args choices]} trace
+          [init-carry inputs] args
+          n (count inputs)]
+      (loop [t 0 carry init-carry
+             weight (mx/scalar 0.0)]
+        (if (>= t n)
+          weight
+          (let [sub-choices (cm/get-submap choices t)
+                {:keys [trace]} (p/generate kern [carry (nth inputs t)] sub-choices)
+                [new-carry _output] (:retval trace)
+                w (p/project kern trace
+                             (sel/get-subselection selection t))]
+            (recur (inc t) new-carry (mx/add weight w))))))))
+
+(extend-type MaskCombinator
+  p/IProject
+  (project [this trace selection]
+    (let [[active? & inner-args] (:args trace)]
+      (if active?
+        (let [inner-trace (tr/make-trace
+                            {:gen-fn (:inner this) :args (vec inner-args)
+                             :choices (:choices trace)
+                             :retval (:retval trace) :score (:score trace)})]
+          (p/project (:inner this) inner-trace selection))
+        (mx/scalar 0.0)))))
+
+(extend-type MixCombinator
+  p/IProject
+  (project [this trace selection]
+    (let [old-choices (:choices trace)
+          old-idx (int (mx/item (cm/get-choice old-choices [:component-idx])))
+          args (:args trace)
+          log-w ((:log-weights-fn this) args)
+          idx-dist (dc/->Distribution :categorical {:logits log-w})
+          ;; Project the component-idx if selected
+          idx-weight (if (sel/selected? selection :component-idx)
+                       (dc/dist-log-prob idx-dist (mx/scalar old-idx mx/int32))
+                       (mx/scalar 0.0))
+          ;; Project the inner component
+          component (nth (:components this) old-idx)
+          old-idx-score (dc/dist-log-prob idx-dist (mx/scalar old-idx mx/int32))
+          inner-old-choices (cm/->Node (dissoc (:m old-choices) :component-idx))
+          inner-old-score (mx/subtract (:score trace) old-idx-score)
+          inner-trace (tr/make-trace {:gen-fn component :args args
+                                      :choices inner-old-choices
+                                      :retval (:retval trace) :score inner-old-score})
+          inner-weight (p/project component inner-trace selection)]
+      (mx/add idx-weight inner-weight))))
+
+(extend-type ContramapGF
+  p/IProject
+  (project [this trace selection]
+    (let [transformed-args ((:f this) (:args trace))
+          inner-trace (tr/make-trace {:gen-fn (:inner this) :args transformed-args
+                                      :choices (:choices trace)
+                                      :retval (:retval trace) :score (:score trace)})]
+      (p/project (:inner this) inner-trace selection))))
+
+(extend-type MapRetvalGF
+  p/IProject
+  (project [this trace selection]
+    (let [inner-trace (tr/make-trace {:gen-fn (:inner this) :args (:args trace)
+                                      :choices (:choices trace)
+                                      :retval nil :score (:score trace)})]
+      (p/project (:inner this) inner-trace selection))))

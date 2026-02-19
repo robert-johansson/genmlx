@@ -5,7 +5,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
             [genmlx.mlx :as mx]
-            [genmlx.mlx.random :as rng]))
+            [genmlx.mlx.random :as rng]
+            [genmlx.selection :as sel]))
 
 ;; ---------------------------------------------------------------------------
 ;; Open multimethods — dispatch on (:type dist)
@@ -77,7 +78,14 @@
   (assess [this _ choices] (dist-assess this choices))
 
   p/IPropose
-  (propose [this _] (dist-propose this)))
+  (propose [this _] (dist-propose this))
+
+  p/IProject
+  (project [this trace selection]
+    ;; A distribution has a single choice. If nothing is selected, return 0.
+    (if (identical? selection sel/none)
+      (mx/scalar 0.0)
+      (:score trace))))
 
 ;; ---------------------------------------------------------------------------
 ;; Mixture distribution

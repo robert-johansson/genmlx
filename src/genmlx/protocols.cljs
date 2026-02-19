@@ -29,6 +29,11 @@
     "Forward-sample all choices and return choices + their joint log-probability.
      Returns {:choices ChoiceMap :weight MLX-scalar :retval any}."))
 
+(defprotocol IProject
+  (project [gf trace selection]
+    "Compute log-probability of selected choices in trace.
+     Returns MLX scalar log-weight."))
+
 (defprotocol IUpdateWithDiffs
   (update-with-diffs [gf trace constraints argdiffs]
     "Update a trace with change hints. argdiffs describes which arguments changed.

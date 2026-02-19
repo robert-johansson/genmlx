@@ -7,12 +7,14 @@
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
+            [genmlx.selection :as sel]
             [genmlx.vectorized :as vec]
             [genmlx.edit :as edit]
             [genmlx.diff :as diff]))
 
-;; Forward declaration
+;; Forward declarations
 (declare execute-sub)
+(declare execute-sub-project)
 
 (defrecord DynamicGF [body-fn source]
   p/IGenerativeFunction
@@ -108,6 +110,19 @@
        :weight  (:score result)
        :retval  (:retval result)}))
 
+  p/IProject
+  (project [this trace selection]
+    (let [key (rng/fresh-key)
+          result (h/run-handler h/project-handler
+                   {:choices cm/EMPTY :score (mx/scalar 0.0)
+                    :weight (mx/scalar 0.0)
+                    :key key :selection selection
+                    :old-choices (:choices trace)
+                    :constraints cm/EMPTY
+                    :executor execute-sub-project}
+                   #(apply body-fn (:args trace)))]
+      (:weight result)))
+
 )
 
 (defn- execute-sub
@@ -137,6 +152,16 @@
     (let [trace (p/simulate gf args)]
       {:choices (:choices trace) :retval (:retval trace)
        :score (:score trace)})))
+
+(defn- execute-sub-project
+  "Execute sub-GF in project mode: replay via generate, then project."
+  [gf args {:keys [old-choices selection]}]
+  (let [{:keys [trace]} (p/generate gf args (or old-choices cm/EMPTY))
+        weight (p/project gf trace (or selection sel/none))]
+    {:choices (:choices trace)
+     :retval (:retval trace)
+     :score (:score trace)
+     :weight weight}))
 
 (defn make-gen-fn
   "Create a DynamicGF from a body function and its source form."

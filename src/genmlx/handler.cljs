@@ -98,6 +98,19 @@
                (update :choices #(cm/set-choice % [addr] val))
                (update :score #(mx/add % lp)))]))))
 
+(defn- project-transition
+  "Pure: replay old value, accumulate log-prob for selected addresses."
+  [state addr dist]
+  (let [old-choice (cm/get-submap (:old-choices state) addr)
+        val (cm/get-value old-choice)
+        lp (dc/dist-log-prob dist val)
+        sel (:selection state)]
+    [val (-> state
+           (update :choices #(cm/set-choice % [addr] val))
+           (update :score #(mx/add % lp))
+           (cond-> (and sel (sel/selected? sel addr))
+             (update :weight #(mx/add % lp))))]))
+
 ;; ---------------------------------------------------------------------------
 ;; Batched state transitions (vectorized: [N]-shaped values)
 ;; ---------------------------------------------------------------------------
@@ -214,6 +227,13 @@
   "Resample selected addresses, keep unselected."
   [addr dist]
   (let [[value state'] (regenerate-transition @*state* addr dist)]
+    (vreset! *state* state')
+    value))
+
+(defn project-handler
+  "Replay old values, accumulate log-prob for selected addresses."
+  [addr dist]
+  (let [[value state'] (project-transition @*state* addr dist)]
     (vreset! *state* state')
     value))
 
