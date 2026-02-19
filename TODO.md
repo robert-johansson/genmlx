@@ -158,12 +158,12 @@ mixture
 
 *Cover every untested path identified in the audit.*
 
-- [ ] **6.1** ProposalEdit in the edit interface
+- [x] **6.1** ProposalEdit in the edit interface
   - Test with actual forward/backward generative functions
   - Verify backward request swaps correctly
   - Verify weight computation: `w_update + w_backward - w_forward`
 
-- [ ] **6.2** SMCP3 with actual forward/backward kernels
+- [x] **6.2** SMCP3 with actual forward/backward kernels
   - End-to-end test: model + custom proposal + SMCP3 inference
   - Verify incremental weight computation
 
@@ -425,8 +425,8 @@ Immediate (solidify what exists):
   1.4  ChoiceMap algebra tests            ✅
   2.1  Implement project                  ✅
   3.7  Neg-binomial tests                 ✅
-  6.1  ProposalEdit tests
-  6.2  SMCP3 end-to-end test
+  6.1  ProposalEdit tests                ✅
+  6.2  SMCP3 end-to-end test             ✅
 
 Near-term (Gen.jl feature parity):
   3.1–3.5  Missing distributions
