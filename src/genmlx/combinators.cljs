@@ -636,6 +636,58 @@
   [gf f g]
   (-> gf (contramap-gf f) (map-retval g)))
 
+(extend-type ContramapGF
+  p/IUpdate
+  (update [this trace constraints]
+    (let [transformed-args ((:f this) (:args trace))
+          inner-trace (tr/make-trace {:gen-fn (:inner this) :args transformed-args
+                                      :choices (:choices trace)
+                                      :retval (:retval trace) :score (:score trace)})
+          result (p/update (:inner this) inner-trace constraints)]
+      {:trace (tr/make-trace {:gen-fn this :args (:args trace)
+                              :choices (:choices (:trace result))
+                              :retval (:retval (:trace result))
+                              :score (:score (:trace result))})
+       :weight (:weight result) :discard (:discard result)}))
+
+  p/IRegenerate
+  (regenerate [this trace selection]
+    (let [transformed-args ((:f this) (:args trace))
+          inner-trace (tr/make-trace {:gen-fn (:inner this) :args transformed-args
+                                      :choices (:choices trace)
+                                      :retval (:retval trace) :score (:score trace)})
+          result (p/regenerate (:inner this) inner-trace selection)]
+      {:trace (tr/make-trace {:gen-fn this :args (:args trace)
+                              :choices (:choices (:trace result))
+                              :retval (:retval (:trace result))
+                              :score (:score (:trace result))})
+       :weight (:weight result)})))
+
+(extend-type MapRetvalGF
+  p/IUpdate
+  (update [this trace constraints]
+    (let [inner-trace (tr/make-trace {:gen-fn (:inner this) :args (:args trace)
+                                      :choices (:choices trace)
+                                      :retval nil :score (:score trace)})
+          result (p/update (:inner this) inner-trace constraints)]
+      {:trace (tr/make-trace {:gen-fn this :args (:args trace)
+                              :choices (:choices (:trace result))
+                              :retval ((:g this) (:retval (:trace result)))
+                              :score (:score (:trace result))})
+       :weight (:weight result) :discard (:discard result)}))
+
+  p/IRegenerate
+  (regenerate [this trace selection]
+    (let [inner-trace (tr/make-trace {:gen-fn (:inner this) :args (:args trace)
+                                      :choices (:choices trace)
+                                      :retval nil :score (:score trace)})
+          result (p/regenerate (:inner this) inner-trace selection)]
+      {:trace (tr/make-trace {:gen-fn this :args (:args trace)
+                              :choices (:choices (:trace result))
+                              :retval ((:g this) (:retval (:trace result)))
+                              :score (:score (:trace result))})
+       :weight (:weight result)})))
+
 ;; ---------------------------------------------------------------------------
 ;; Mix Combinator
 ;; ---------------------------------------------------------------------------
@@ -692,6 +744,100 @@
               log-weights-fn
               (fn [_] log-weights-fn))]
     (->MixCombinator components lwf)))
+
+(extend-type MixCombinator
+  p/IUpdate
+  (update [this trace constraints]
+    (let [old-choices (:choices trace)
+          old-idx (int (mx/item (cm/get-choice old-choices [:component-idx])))
+          args (:args trace)
+          log-w ((:log-weights-fn this) args)
+          idx-dist (dc/->Distribution :categorical {:logits log-w})
+          old-idx-score (dc/dist-log-prob idx-dist (mx/scalar old-idx mx/int32))
+          ;; Check if component index is being updated
+          idx-constraint (cm/get-submap constraints :component-idx)
+          new-idx (if (cm/has-value? idx-constraint)
+                    (int (mx/item (cm/get-value idx-constraint)))
+                    old-idx)
+          ;; Inner choices = everything except component-idx
+          inner-old-choices (cm/->Node (dissoc (:m old-choices) :component-idx))
+          inner-constraints (if (= constraints cm/EMPTY)
+                              cm/EMPTY
+                              (cm/->Node (dissoc (:m constraints) :component-idx)))]
+      (if (= new-idx old-idx)
+        ;; Same component: update inner only
+        (let [component (nth (:components this) old-idx)
+              inner-old-score (mx/subtract (:score trace) old-idx-score)
+              inner-old-trace (tr/make-trace {:gen-fn component :args args
+                                              :choices inner-old-choices
+                                              :retval (:retval trace) :score inner-old-score})
+              result (p/update component inner-old-trace inner-constraints)
+              new-inner-trace (:trace result)
+              new-score (mx/add (:score new-inner-trace) old-idx-score)]
+          {:trace (tr/make-trace {:gen-fn this :args args
+                                  :choices (cm/set-choice (:choices new-inner-trace)
+                                                          [:component-idx]
+                                                          (mx/scalar old-idx mx/int32))
+                                  :retval (:retval new-inner-trace)
+                                  :score new-score})
+           :weight (mx/subtract new-score (:score trace))
+           :discard (:discard result)})
+        ;; Different component: generate new component from scratch
+        (let [new-component (nth (:components this) new-idx)
+              new-idx-score (dc/dist-log-prob idx-dist (mx/scalar new-idx mx/int32))
+              gen-result (p/generate new-component args inner-constraints)
+              new-inner-trace (:trace gen-result)
+              new-score (mx/add (:score new-inner-trace) new-idx-score)]
+          {:trace (tr/make-trace {:gen-fn this :args args
+                                  :choices (cm/set-choice (:choices new-inner-trace)
+                                                          [:component-idx]
+                                                          (mx/scalar new-idx mx/int32))
+                                  :retval (:retval new-inner-trace)
+                                  :score new-score})
+           :weight (mx/subtract new-score (:score trace))
+           :discard old-choices}))))
+
+  p/IRegenerate
+  (regenerate [this trace selection]
+    (let [old-choices (:choices trace)
+          old-idx (int (mx/item (cm/get-choice old-choices [:component-idx])))
+          args (:args trace)
+          log-w ((:log-weights-fn this) args)
+          idx-dist (dc/->Distribution :categorical {:logits log-w})
+          old-idx-score (dc/dist-log-prob idx-dist (mx/scalar old-idx mx/int32))
+          idx-selected? (sel/selected? selection :component-idx)]
+      (if idx-selected?
+        ;; Resample component index and simulate new component
+        (let [new-idx-trace (dc/dist-simulate idx-dist)
+              new-idx (int (mx/item (cm/get-value (:choices new-idx-trace))))
+              new-idx-score (:score new-idx-trace)
+              new-component (nth (:components this) new-idx)
+              new-comp-trace (p/simulate new-component args)
+              new-score (mx/add (:score new-comp-trace) new-idx-score)]
+          {:trace (tr/make-trace {:gen-fn this :args args
+                                  :choices (cm/set-choice (:choices new-comp-trace)
+                                                          [:component-idx]
+                                                          (mx/scalar new-idx mx/int32))
+                                  :retval (:retval new-comp-trace)
+                                  :score new-score})
+           :weight (mx/subtract new-score (:score trace))})
+        ;; Same component: regenerate within the component
+        (let [component (nth (:components this) old-idx)
+              inner-old-score (mx/subtract (:score trace) old-idx-score)
+              inner-old-choices (cm/->Node (dissoc (:m old-choices) :component-idx))
+              inner-old-trace (tr/make-trace {:gen-fn component :args args
+                                              :choices inner-old-choices
+                                              :retval (:retval trace) :score inner-old-score})
+              result (p/regenerate component inner-old-trace selection)
+              new-inner-trace (:trace result)
+              new-score (mx/add (:score new-inner-trace) old-idx-score)]
+          {:trace (tr/make-trace {:gen-fn this :args args
+                                  :choices (cm/set-choice (:choices new-inner-trace)
+                                                          [:component-idx]
+                                                          (mx/scalar old-idx mx/int32))
+                                  :retval (:retval new-inner-trace)
+                                  :score new-score})
+           :weight (mx/subtract new-score (:score trace))})))))
 
 ;; ---------------------------------------------------------------------------
 ;; IEdit implementations — delegate to edit-dispatch for all combinator types

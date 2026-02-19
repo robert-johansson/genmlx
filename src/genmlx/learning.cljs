@@ -238,6 +238,13 @@
           grad (grad-fn guide-params)]
       {:loss loss :grad grad})))
 
+(defn- discover-guide-addresses
+  "Simulate the guide once to discover all trace addresses."
+  [guide args]
+  (let [trace (p/simulate guide args)
+        addrs (cm/addresses (:choices trace))]
+    (vec (distinct (map first addrs)))))
+
 (defn wake-sleep
   "Wake-sleep learning for amortized inference.
 
@@ -253,14 +260,19 @@
    guide: guide/recognition generative function
    args: model arguments
    observations: observed data
-   guide-addresses: vector of guide parameter addresses
-   init-guide-params: initial guide parameter array
+   guide-addresses: vector of guide parameter addresses (or nil to auto-discover)
+   init-guide-params: initial guide parameter array (or nil for zero-init)
 
    Returns {:params final-guide-params :wake-losses :sleep-losses}"
   [{:keys [iterations wake-steps sleep-steps lr callback key]
     :or {iterations 1000 wake-steps 1 sleep-steps 1 lr 0.001}}
    model guide args observations guide-addresses init-guide-params]
-  (let [wake-loss-fn (wake-phase-loss model guide args observations guide-addresses)
+  (let [;; Auto-discover guide addresses if not provided
+        guide-addresses (or guide-addresses
+                            (discover-guide-addresses guide args))
+        init-guide-params (or init-guide-params
+                              (mx/zeros [(count guide-addresses)]))
+        wake-loss-fn (wake-phase-loss model guide args observations guide-addresses)
         sleep-loss-fn (sleep-phase-loss model guide args guide-addresses)
         opt-state (adam-init init-guide-params)]
     (loop [i 0 params init-guide-params

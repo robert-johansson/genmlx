@@ -255,15 +255,7 @@
     :or {iterations 1000 learning-rate 0.01 n-samples 10
          objective :elbo estimator :reparam}}
    log-p-fn log-q-fn sample-fn init-params]
-  (let [;; Build objective function
-        obj-builder (case objective
-                      :elbo (elbo-objective log-p-fn (fn [z] (log-q-fn z init-params)))
-                      :iwelbo (iwelbo-objective log-p-fn (fn [z] (log-q-fn z init-params)))
-                      :pwake (pwake-objective log-p-fn (fn [z] (log-q-fn z init-params)))
-                      :qwake (qwake-objective log-p-fn (fn [z] (log-q-fn z init-params)))
-                      ;; Custom objective function
-                      objective)
-        ;; Build loss function (parameterized)
+  (let [;; Build loss function (parameterized)
         loss-fn (fn [params iter-key]
                   (let [samples (sample-fn params iter-key n-samples)
                         ;; Rebuild objective with current params

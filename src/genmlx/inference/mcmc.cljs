@@ -109,12 +109,11 @@
                             weight)
                           ;; Symmetric proposal: backward score = forward score
                           forward-score)
-         ;; 4. Accept/reject using trace scores (not update weight)
-         ;; log-alpha = new_score - old_score + backward_score - forward_score
-         old-score (:score current-trace)
-         new-score (:score new-trace)
-         _ (mx/eval! old-score new-score forward-score backward-score)
-         log-alpha (mx/realize (mx/add (mx/subtract new-score old-score)
+         ;; 4. Accept/reject using update weight
+         ;; log-alpha = update-weight + backward_score - forward_score
+         update-weight (:weight update-result)
+         _ (mx/eval! update-weight forward-score backward-score)
+         log-alpha (mx/realize (mx/add update-weight
                                  (mx/subtract backward-score forward-score)))]
      (if (u/accept-mh? log-alpha k3)
        new-trace
@@ -211,21 +210,26 @@
         fwd-result (p/propose proposal-gf [(:choices current-trace)])
         aux-choices (:choices fwd-result)
         fwd-score (:weight fwd-result)
-        ;; 2. Apply involution
-        [new-trace-cm new-aux-cm] (involution (:choices current-trace) aux-choices)
+        ;; 2. Apply involution (may return optional log|det J| as third element)
+        inv-result (involution (:choices current-trace) aux-choices)
+        new-trace-cm (nth inv-result 0)
+        new-aux-cm (nth inv-result 1)
+        log-abs-det-J (if (>= (count inv-result) 3)
+                        (let [j (nth inv-result 2)]
+                          (if (mx/array? j) j (mx/scalar j)))
+                        (mx/scalar 0.0))
         ;; 3. Update model with new choices
         update-result (p/update model current-trace new-trace-cm)
         new-trace (:trace update-result)
         ;; 4. Score backward auxiliary choices under proposal
         bwd-result (p/assess proposal-gf [(:choices new-trace)] new-aux-cm)
         bwd-score (:weight bwd-result)
-        ;; 5. Accept/reject using trace scores
-        ;; log-alpha = new_score - old_score + bwd_score - fwd_score
-        old-score (:score current-trace)
-        new-score (:score new-trace)
-        _ (mx/eval! old-score new-score fwd-score bwd-score)
-        log-alpha (mx/realize (mx/add (mx/subtract new-score old-score)
-                                (mx/subtract bwd-score fwd-score)))]
+        ;; 5. Accept/reject: log-alpha = update-weight + bwd_score - fwd_score + log|det J|
+        update-weight (:weight update-result)
+        _ (mx/eval! update-weight fwd-score bwd-score log-abs-det-J)
+        log-alpha (mx/realize (mx/add (mx/add update-weight
+                                        (mx/subtract bwd-score fwd-score))
+                                log-abs-det-J))]
     (if (u/accept-mh? log-alpha k2)
       new-trace
       current-trace)))

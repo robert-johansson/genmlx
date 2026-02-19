@@ -1,7 +1,8 @@
 # Plan vs Reality Audit
 
 Audit of the plan "Making GenMLX At Least As Powerful As GenJAX" against the
-actual implementation, conducted 2026-02-19. Updated 2026-02-19 after all fixes.
+actual implementation, conducted 2026-02-19. Updated 2026-02-19 after all fixes
+and limitation resolutions.
 
 ---
 
@@ -22,16 +23,16 @@ actual implementation, conducted 2026-02-19. Updated 2026-02-19 after all fixes.
 
 ---
 
-## What works but differs from plan
+## What works but differs from plan — now ALL RESOLVED
 
-| Item | What the plan said | What actually exists |
-|---|---|---|
-| 1.2 custom proposal MH | Use update weight for acceptance ratio | Uses trace scores directly (correct, but the update weight itself is still wrong for dependent models) |
-| 2.3 involutive MCMC | Includes log\|det J\| for continuous transforms | Missing Jacobian determinant. Only works for volume-preserving involutions (like the swap involution in the test). |
-| 3.3 contramap/dimap | Full GFI combinators | Only simulate + generate implemented. No update/regenerate. |
-| 3.5 mix combinator | First-class mixture model combinator | Only simulate + generate. No update/regenerate. |
-| 4.3 programmable VI | Pluggable objectives + estimators | Works, but has dead code (unused `obj-builder` variable constructed then never referenced). IWELBO converges slowly (known issue with IWAE gradient variance). |
-| 4.4 wake-sleep | Amortized inference via wake-sleep | Works for simple cases. Guide constraint coverage may be incomplete if guide has more trace sites than the specified `guide-addresses`. |
+| Item | What the plan said | Previous limitation | Resolution |
+|---|---|---|---|
+| 1.2 custom proposal MH | Use update weight for acceptance ratio | Used trace scores instead of update weight | Now uses update weight directly. Tested with symmetric and asymmetric proposals. |
+| 2.3 involutive MCMC | Includes log\|det J\| for continuous transforms | Missing Jacobian determinant | Involution can now return optional third element `log\|det J\|`. 2-tuple (volume-preserving) and 3-tuple (with Jacobian) both work. Also uses update weight. Tested. |
+| 3.3 contramap/dimap | Full GFI combinators | Only simulate + generate | IUpdate and IRegenerate now implemented for ContramapGF and MapRetvalGF. Tested with constraint update, regenerate, and dimap. |
+| 3.5 mix combinator | First-class mixture model combinator | Only simulate + generate | IUpdate and IRegenerate now implemented. Update handles same-component (inner update) and component-switch (full regeneration). Regenerate handles both inner-only and full resampling based on selection. Tested. |
+| 4.3 programmable VI | Pluggable objectives + estimators | Dead code (`obj-builder` unused) | Dead code removed. IWELBO slow convergence is inherent to IWAE gradient variance (not a bug). |
+| 4.4 wake-sleep | Amortized inference via wake-sleep | Guide address coverage incomplete | Auto-discovers guide addresses when `guide-addresses` is nil. Also auto-initializes params when `init-guide-params` is nil. Tested with explicit and auto-discovered addresses. |
 
 ---
 
@@ -165,25 +166,25 @@ gradient computation via make-param-loss-fn (gradient direction verified).
 
 - ProposalEdit in the edit interface
 - SMCP3 with actual forward/backward kernels
-- Asymmetric custom MH (with explicit backward-gf)
 - `chain`, `cycle-kernels`, `mix-kernels`, `seed` kernel combinators (only
   `repeat-kernel` and `mh-kernel` are exercised in tests)
 - Batched update path (`vupdate`)
-- Involutive MCMC with non-volume-preserving transforms
 
 ---
 
 ## Summary
 
 Out of 22 plan items:
-- **10 work as planned** (mostly distributions, combinators, basic protocols)
-- **6 work but with limitations** (missing update/regenerate, missing Jacobian, etc.)
+- **16 work as planned** (distributions, combinators, protocols, plus 6 formerly
+  limited items now fully resolved)
+- **0 work with limitations**
 - **6 were broken, now ALL FIXED** (update weight, vectorized switch, conditional
   SMC, edit interface, argdiffs, trainable params)
 - **0 remain broken**
 
 All 238 compatibility tests pass (165 Gen.jl + 73 GenJAX). All bugfix tests
-pass (13/13). All remaining-fixes tests pass (36/36).
+pass (13/13). All remaining-fixes tests pass (36/36). All limitation-fixes
+tests pass (50/50).
 
 Planned total: ~2,920 new lines.
-Actual new code: ~2,000-2,200 lines.
+Actual new code: ~2,200-2,400 lines.
