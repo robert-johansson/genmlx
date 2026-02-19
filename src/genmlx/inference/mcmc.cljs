@@ -97,10 +97,9 @@
          forward-result (p/propose proposal-gf proposal-args)
          forward-choices (:choices forward-result)
          forward-score (:weight forward-result)
-         ;; 2. Apply proposed choices to model via update → new trace + update weight
+         ;; 2. Apply proposed choices to model via update → new trace
          update-result (p/update model current-trace forward-choices)
          new-trace (:trace update-result)
-         update-weight (:weight update-result)
          ;; 3. Compute backward score
          backward-score (if backward-gf
                           ;; Run assess on backward proposal
@@ -110,8 +109,12 @@
                             weight)
                           ;; Symmetric proposal: backward score = forward score
                           forward-score)
-         ;; 4. Accept/reject: log-alpha = update-weight + backward-score - forward-score
-         log-alpha (mx/realize (mx/add update-weight
+         ;; 4. Accept/reject using trace scores (not update weight)
+         ;; log-alpha = new_score - old_score + backward_score - forward_score
+         old-score (:score current-trace)
+         new-score (:score new-trace)
+         _ (mx/eval! old-score new-score forward-score backward-score)
+         log-alpha (mx/realize (mx/add (mx/subtract new-score old-score)
                                  (mx/subtract backward-score forward-score)))]
      (if (u/accept-mh? log-alpha k3)
        new-trace
@@ -213,12 +216,15 @@
         ;; 3. Update model with new choices
         update-result (p/update model current-trace new-trace-cm)
         new-trace (:trace update-result)
-        update-weight (:weight update-result)
         ;; 4. Score backward auxiliary choices under proposal
         bwd-result (p/assess proposal-gf [(:choices new-trace)] new-aux-cm)
         bwd-score (:weight bwd-result)
-        ;; 5. Accept/reject
-        log-alpha (mx/realize (mx/add update-weight
+        ;; 5. Accept/reject using trace scores
+        ;; log-alpha = new_score - old_score + bwd_score - fwd_score
+        old-score (:score current-trace)
+        new-score (:score new-trace)
+        _ (mx/eval! old-score new-score fwd-score bwd-score)
+        log-alpha (mx/realize (mx/add (mx/subtract new-score old-score)
                                 (mx/subtract bwd-score fwd-score)))]
     (if (u/accept-mh? log-alpha k2)
       new-trace

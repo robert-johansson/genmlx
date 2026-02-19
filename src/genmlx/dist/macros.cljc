@@ -89,6 +89,9 @@
                   (let [~@params-let]
                     ~@support-body)))))))
 
+)
+
+#?(:org.babashka/nbb
    (defmacro defdist-transform
      "Define a derived distribution via a deterministic transform of a base distribution.
 
