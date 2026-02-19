@@ -3,26 +3,34 @@
 > A phased plan to bring GenMLX to full feature parity with Gen.jl and GenJAX,
 > while remaining 100% idiomatic ClojureScript -- purely functional, data-driven,
 > and GPU-accelerated on Apple Silicon via MLX.
+>
+> *Updated 2026-02-19 after completing all planned phases A-D.*
 
 ---
 
 ## Current State of GenMLX
 
-GenMLX is a ~2000-line probabilistic programming system implementing the
+GenMLX is a ~5,700-line probabilistic programming system implementing the
 **Generative Function Interface (GFI)** in ClojureScript on Node.js (nbb) with
-MLX for GPU acceleration. It already provides:
+MLX for GPU acceleration. It provides:
 
 | Category | What exists today |
 |---|---|
-| **GFI protocols** | `simulate`, `generate`, `assess`, `update`, `regenerate` |
-| **DSL** | `gen` macro, `dyn/trace`, `dyn/splice` (Dynamic DSL only) |
-| **Distributions (14)** | gaussian, uniform, bernoulli, beta, gamma, exponential, categorical, poisson, laplace, student-t, log-normal, multivariate-normal, dirichlet, delta |
-| **Combinators (3)** | Map, Unfold, Switch |
-| **Inference (7)** | Importance Sampling, Importance Resampling, MH, MALA, HMC, NUTS, SMC (with rejuvenation), ADVI |
-| **Vectorized inference** | `vsimulate`, `vgenerate`, vectorized IS, vectorized SMC init (29-122x speedup via shape-based batching) |
+| **GFI protocols (7)** | `simulate`, `generate`, `assess`, `update`, `regenerate`, `propose`, `update-with-diffs` |
+| **DSL** | `gen` macro, `dyn/trace`, `dyn/splice`, `dyn/param` (Dynamic DSL only) |
+| **Distributions (22)** | gaussian, uniform, bernoulli, beta, gamma, exponential, categorical, poisson, laplace, student-t, log-normal, multivariate-normal, dirichlet, delta, cauchy, inv-gamma, geometric, neg-binomial, binomial, discrete-uniform, truncated-normal, mixture |
+| **Combinators (8)** | Map, Unfold, Switch, Scan, Mask, Mix, Contramap/MapRetval (dimap) |
+| **Inference (15+)** | IS, Importance Resampling, MH, Custom Proposal MH, MALA, HMC, NUTS, Enumerative Gibbs, Involutive MCMC (with Jacobian), SMC, Conditional SMC, SMCP3, ADVI, Programmable VI (ELBO/IWELBO/PWake/QWake), Wake-Sleep |
+| **Inference composition** | chain, repeat-kernel, seed, cycle-kernels, mix-kernels, run-kernel |
+| **Edit interface** | IEdit protocol, ConstraintEdit, SelectionEdit, ProposalEdit with backward requests |
+| **Incremental computation** | Argdiffs/retdiffs, diff-aware update on Map/Unfold/Scan/Switch combinators |
+| **Trainable parameters** | `dyn/param`, functional parameter store, SGD/Adam optimizers, `train`, `make-param-loss-fn` |
+| **Choice gradients** | Per-choice and score gradients via MLX autograd |
+| **Vectorized inference** | `vsimulate`, `vgenerate`, `vupdate`, `vregenerate`, vectorized IS/SMC, vectorized switch (29-122x speedup) |
 | **Diagnostics** | ESS, R-hat, summary statistics |
 | **MLX integration** | Full autograd (`grad`, `value-and-grad`, `jvp`, `vjp`), `compile-fn` (JIT to Metal), `vmap`, `tidy`, functional PRNG |
 | **Data structures** | Hierarchical choice maps, immutable traces, `VectorizedTrace`, composable selections |
+| **Distribution constructors** | `defdist` macro, `defdist-transform` (derived dists via transforms), `mixture` constructor |
 
 ---
 
@@ -49,19 +57,19 @@ GenJAX that GenMLX does not yet have, organized by subsystem.
 | Multivariate Normal | `mvnormal` | `mv_normal` | `multivariate-normal` | -- |
 | Dirichlet | `dirichlet` | -- | `dirichlet` | -- |
 | Delta | -- | -- | `delta` | -- |
-| **Cauchy** | `cauchy` | -- | -- | **GAP** |
-| **Inverse Gamma** | `inv_gamma` | -- | -- | **GAP** |
-| **Geometric** | `geometric` | -- | -- | **GAP** |
-| **Negative Binomial** | `neg_binom` | -- | -- | **GAP** |
-| **Binomial** | `binom` | -- | -- | **GAP** |
-| **Discrete Uniform** | `uniform_discrete` | -- | -- | **GAP** |
+| Cauchy | `cauchy` | -- | `cauchy` | -- |
+| Inverse Gamma | `inv_gamma` | -- | `inv-gamma` | -- |
+| Geometric | `geometric` | -- | `geometric` | -- |
+| Negative Binomial | `neg_binom` | -- | `neg-binomial` | -- |
+| Binomial | `binom` | -- | `binomial` | -- |
+| Discrete Uniform | `uniform_discrete` | -- | `discrete-uniform` | -- |
+| Truncated Normal | -- | `truncated_normal` | `truncated-normal` | -- |
+| Mixture | `HomogeneousMixture` | -- | `mixture` constructor | -- |
+| `@dist` constructor | `@dist` transform DSL | -- | `defdist-transform` macro | -- |
 | **Piecewise Uniform** | `piecewise_uniform` | -- | -- | **GAP** |
 | **Beta-Uniform** | `beta_uniform` | -- | -- | **GAP** |
-| **Truncated Normal** | -- | `truncated_normal` | -- | **GAP** |
 | **Broadcasted Normal** | `broadcasted_normal` | -- | -- | **GAP** |
 | **Wishart / Inv-Wishart** | via Distributions.jl | -- | -- | **GAP** |
-| **`@dist` constructor** | `@dist` transform DSL | -- | -- | **GAP** |
-| **Mixture constructors** | `HomogeneousMixture`, `HeterogeneousMixture` | -- | -- | **GAP** |
 | **External dist compat** | GenDistributions.jl | ExactDensity / Distribution base | -- | **GAP** |
 
 ### 2. Inference Algorithms
@@ -71,32 +79,37 @@ GenJAX that GenMLX does not yet have, organized by subsystem.
 | Importance Sampling | `importance_sampling` | ImportanceK | `importance-sampling` | -- |
 | Importance Resampling | `importance_resampling` | -- | `importance-resampling` | -- |
 | MH (selection) | `mh(trace, sel)` | MH | `mh` | -- |
+| MH (custom proposal GF) | `mh(trace, proposal, args)` | Custom proposals | `mh-custom` | -- |
+| Involutive MCMC | `mh(trace, proposal, involution)` | Involutive MCMC | `involutive-mh` (with Jacobian) | -- |
+| Enumerative Gibbs | via enumeration | Enumerative Gibbs | `gibbs` | -- |
 | MALA | `mala` | -- | `mala` | -- |
 | HMC | `hmc` | HMC | `hmc` | -- |
 | NUTS | -- | -- | `nuts` | -- (GenMLX ahead) |
 | SMC / Particle Filter | `initialize_particle_filter` | Bootstrap PF | `smc` | -- |
+| Conditional SMC | -- | cSMC | `csmc` | -- |
+| SMCP3 | GenSMCP3.jl | First-class SMCP3 | `smcp3` | -- |
 | ADVI | -- | -- | `vi` | -- (GenMLX ahead) |
-| **MH (custom proposal GF)** | `mh(trace, proposal, args)` | Custom proposals | -- | **GAP** |
-| **Involutive MCMC** | `mh(trace, proposal, args, involution)` | Involutive MCMC | -- | **GAP** |
+| Programmable VI | -- | PLDI 2024 module | `programmable-vi` (ELBO/IWELBO/PWake/QWake) | -- |
+| Wake-Sleep | `lecture!` | -- | `wake-sleep` (with auto-discovery) | -- |
+| Inference composition | -- | Kernel combinators | `chain`, `repeat-kernel`, `seed`, `cycle-kernels`, `mix-kernels` | -- |
 | **Elliptical Slice Sampling** | `elliptic_slice` | -- | -- | **GAP** |
 | **MAP Optimization** | `map_optimize` | -- | -- | **GAP** |
-| **Gibbs Sampling** | via enumeration | Enumerative Gibbs | -- | **GAP** |
-| **Black-Box VI** | `black_box_vi!` | genjax.vi | -- | **GAP** |
 | **VIMCO** | `black_box_vimco!` | -- | -- | **GAP** |
-| **SMCP3** | GenSMCP3.jl | First-class SMCP3 | -- | **GAP** |
-| **Programmable VI** | -- | PLDI 2024 module | -- | **GAP** |
 | **ADEV gradient estimation** | -- | ADEV integration | -- | **GAP** |
 
 ### 3. Combinators & Model Composition
 
 | Feature | Gen.jl | GenJAX | GenMLX | Gap? |
 |---|---|---|---|---|
-| Map | `Map` | `Map` | `map-combinator` | -- |
-| Unfold | `Unfold` | `Unfold` | `unfold-combinator` | -- |
-| Switch / Cond | `Switch` | `Cond` | `switch-combinator` | -- |
+| Map | `Map` | `Map` | `map-combinator` (full GFI + diffs) | -- |
+| Unfold | `Unfold` | `Unfold` | `unfold-combinator` (full GFI) | -- |
+| Switch / Cond | `Switch` | `Cond` | `switch-combinator` (full GFI) | -- |
+| Scan | -- | `Scan` (lax.scan) | `scan-combinator` (full GFI) | -- |
+| Mask | -- | Masking combinator | `mask-combinator` | -- |
+| Mix | -- | -- | `mix-combinator` (full GFI) | -- (GenMLX ahead) |
+| Contramap / Dimap | -- | -- | `contramap-gf`, `map-retval`, `dimap` (full GFI) | -- (GenMLX ahead) |
+| Vectorized Cond | -- | Vectorized stochastic branching | `vectorized-switch` (mx/where masking) | -- |
 | **Recurse** | `Recurse` | -- | -- | **GAP** |
-| **Scan** | -- | `Scan` (lax.scan) | -- | **GAP** |
-| **Vectorized Cond (masking)** | -- | Vectorized stochastic branching | -- | **GAP** |
 
 ### 4. Gradient & Differentiable Programming
 
@@ -106,8 +119,8 @@ GenJAX that GenMLX does not yet have, organized by subsystem.
 | `value-and-grad` | -- | `jax.value_and_grad` | `mx/value-and-grad` | -- |
 | `jvp` / `vjp` | -- | native JAX | `mx/jvp`, `mx/vjp` | -- |
 | `stop-gradient` | -- | `jax.lax.stop_gradient` | `mx/stop-gradient` | -- |
-| **`choice_gradients`** | Per-choice gradients from trace | -- | -- | **GAP** |
-| **`accumulate_param_gradients!`** | Gradient accum for `@param` | -- | -- | **GAP** |
+| `choice_gradients` | Per-choice gradients from trace | -- | `choice-gradients`, `score-gradient` | -- |
+| Param gradient accumulation | `accumulate_param_gradients!` | -- | `make-param-loss-fn` (via MLX autograd) | -- |
 | **Custom gradient GFs** | `CustomGradientGF` | -- | -- | **GAP** |
 | **Argument gradient annotations** | `has_argument_grads` | -- | -- | **GAP** |
 
@@ -115,11 +128,11 @@ GenJAX that GenMLX does not yet have, organized by subsystem.
 
 | Feature | Gen.jl | GenJAX | GenMLX | Gap? |
 |---|---|---|---|---|
-| **`@param` declarations** | Trainable params in GFs | -- | -- | **GAP** |
-| **Parameter store** | `init_param!`, `get_params`, `set_param!` | -- | -- | **GAP** |
-| **Parameter update configs** | `ParamUpdate`, `FixedStepGradientDescent`, Flux.ADAM | -- | -- | **GAP** |
-| **`train!`** | Supervised training loop | -- | -- | **GAP** |
-| **Wake-Sleep learning** | `lecture!`, `lecture_batched!` | -- | -- | **GAP** |
+| `@param` declarations | Trainable params in GFs | -- | `dyn/param` + `*param-store*` | -- |
+| Parameter store | `init_param!`, `get_params`, `set_param!` | -- | `make-param-store`, `get-param`, `set-param` | -- |
+| Parameter update configs | `ParamUpdate`, `FixedStepGradientDescent`, Flux.ADAM | -- | `sgd-step`, `adam-step` | -- |
+| `train!` | Supervised training loop | -- | `train` (generic loop with pluggable optimizer) | -- |
+| Wake-Sleep learning | `lecture!`, `lecture_batched!` | -- | `wake-sleep` (with auto-discovery) | -- |
 | **Amortized inference** | Via trained proposals | Neural proposals via Equinox | -- | **GAP** |
 
 ### 6. Trace Operations & Incremental Computation
@@ -131,11 +144,12 @@ GenJAX that GenMLX does not yet have, organized by subsystem.
 | `assess` | yes | yes | yes | -- |
 | `update` | yes | `edit` | yes | -- |
 | `regenerate` | yes | -- | yes | -- |
-| **`propose`** | `propose(gf, args)` | -- | -- | **GAP** |
+| `propose` | `propose(gf, args)` | -- | `propose` on DynamicGF + Distribution | -- |
+| Argdiffs / Retdiffs | `NoChange`, `UnknownChange`, `VectorDiff` | `Retdiff` change propagation | `no-change`, `unknown-change`, `value-change`, `vector-diff`, `map-diff` | -- |
+| Diff-aware update | Static DSL skips unchanged | Retdiff-based | `update-with-diffs` on Map (per-element), Unfold, Scan, Switch | -- |
+| EditRequest types | -- | Parametric edit interface | `ConstraintEdit`, `SelectionEdit`, `ProposalEdit` + backward requests | -- |
 | **`project`** | `project(trace, sel)` | -- | -- | **GAP** |
-| **Argdiffs / Retdiffs** | `NoChange`, `UnknownChange`, `VectorDiff` | `Retdiff` change propagation | -- | **GAP** |
-| **Incremental update** | Static DSL skips unchanged computation | Retdiff-based | -- | **GAP** |
-| **EditRequest types** | -- | Parametric edit interface | -- | **GAP** |
+| **Static DSL incremental** | Static DSL skips unchanged subgraphs | XLA-compiled updates | -- | **GAP** |
 
 ### 7. Static DSL / Compilation
 
@@ -153,8 +167,8 @@ GenJAX that GenMLX does not yet have, organized by subsystem.
 | GPU acceleration | CPU only | GPU/TPU via XLA | GPU via MLX (Apple Silicon) | -- |
 | `compile-fn` / JIT | -- | `jax.jit` | `mx/compile-fn` | -- |
 | Vectorized traces | -- | First-class trace vmap | `VectorizedTrace` (shape-based) | -- |
-| Vectorized particle inference | -- | Vectorized particle inference | `vsimulate`/`vgenerate` (29-122x speedup) | -- |
-| **Vectorized stochastic branching** | -- | Cond via masking | -- | **GAP** |
+| Vectorized particle inference | -- | Vectorized particle inference | `vsimulate`/`vgenerate`/`vupdate`/`vregenerate` (29-122x speedup) | -- |
+| Vectorized stochastic branching | -- | Cond via masking | `vectorized-switch` + `mask-combinator` | -- |
 | **Formal vectorization correctness** | -- | lambda_GEN proof (POPL '26) | -- | **GAP** |
 
 ### 9. Ecosystem & Tooling
@@ -202,64 +216,41 @@ The roadmap is organized into **7 phases**, roughly ordered by
 
 ---
 
-### Phase 1: Distribution Library Completeness
+### Phase 1: Distribution Library Completeness ✅ MOSTLY COMPLETE
 
 **Goal:** Match Gen.jl's full distribution library and add distribution
 composition primitives.
 
-**Priority:** High -- distributions are the atoms of every model.
+**Status:** 7 new distributions added (cauchy, inv-gamma, geometric, neg-binomial,
+binomial, discrete-uniform, truncated-normal). `defdist-transform` macro and
+`mixture` constructor implemented. 22 distributions total.
 
-#### 1a. Missing Primitive Distributions
+#### 1a. Primitive Distributions — DONE + Remaining
 
-All implementable with the existing `defdist` macro:
+All 7 planned distributions implemented via `defdist`. Remaining niche distributions:
 
-| Distribution | Constructor | Notes |
+| Distribution | Constructor | Status |
 |---|---|---|
-| Cauchy | `(cauchy loc scale)` | Standard Cauchy via ratio of normals |
-| Inverse Gamma | `(inv-gamma shape scale)` | 1/Gamma transform |
-| Geometric | `(geometric p)` | Discrete, has `support` |
-| Negative Binomial | `(neg-binomial r p)` | Polya / waiting time |
-| Binomial | `(binomial n p)` | Discrete, has `support` for small n |
-| Discrete Uniform | `(discrete-uniform lo hi)` | Integer-valued, has `support` |
-| Truncated Normal | `(truncated-normal mu sigma lo hi)` | Rejection or inverse-CDF |
-| Piecewise Uniform | `(piecewise-uniform bounds probs)` | Continuous, piecewise |
-| Beta-Uniform | `(beta-uniform theta alpha beta)` | Mixture of Beta and Uniform |
-| Wishart | `(wishart df scale)` | Matrix-variate, via Bartlett decomposition |
-| Inverse Wishart | `(inv-wishart df scale)` | Matrix-variate |
+| Cauchy | `(cauchy loc scale)` | ✅ Done |
+| Inverse Gamma | `(inv-gamma shape scale)` | ✅ Done |
+| Geometric | `(geometric p)` | ✅ Done |
+| Negative Binomial | `(neg-binomial r p)` | ✅ Done |
+| Binomial | `(binomial n p)` | ✅ Done |
+| Discrete Uniform | `(discrete-uniform lo hi)` | ✅ Done |
+| Truncated Normal | `(truncated-normal mu sigma lo hi)` | ✅ Done |
+| **Piecewise Uniform** | `(piecewise-uniform bounds probs)` | Remaining |
+| **Beta-Uniform** | `(beta-uniform theta alpha beta)` | Remaining |
+| **Wishart** | `(wishart df scale)` | Remaining |
+| **Inverse Wishart** | `(inv-wishart df scale)` | Remaining |
 
-Add `reparam` methods where possible (Cauchy, Truncated Normal, Inv-Gamma via
-transform).
+#### 1b. Distribution Constructors — DONE
 
-#### 1b. Distribution Constructors
+**`defdist-transform` macro** ✅ — Implemented. Declares derived distributions
+via deterministic transforms of base distributions. Tested with log-normal.
 
-**`defdist-transform` macro** -- ClojureScript equivalent of Gen.jl's `@dist`:
-
-```clojure
-;; Declare a derived distribution via a deterministic transform of a base
-(defdist-transform log-normal-alt [mu sigma]
-  :base gaussian
-  :forward exp
-  :inverse log
-  :log-det-jac (fn [v] v))  ;; log |d/dv exp(v)| = v
-```
-
-The macro generates `sample`, `log-prob`, and optionally `reparam` methods
-by composing the base distribution with the transform + change-of-variables
-Jacobian correction.
-
-**`mixture` constructor** -- data-driven mixture distributions:
-
-```clojure
-;; Homogeneous mixture
-(def mix (mixture gaussian [[0 1] [5 2]] [0.3 0.7]))
-
-;; Heterogeneous mixture
-(def hetmix (mixture [gaussian exponential] [[[0 1]] [[2]]] [0.6 0.4]))
-```
-
-Returns a `Distribution` record whose `sample` draws a component index from
-`categorical`, then delegates to the selected component. `log-prob` computes
-`logsumexp` over weighted component log-probs.
+**`mixture` constructor** ✅ — Implemented as first-class Distribution record.
+`sample` draws component index from categorical, delegates to selected component.
+`log-prob` computes `logsumexp` over weighted component log-probs.
 
 #### 1c. External Distribution Compatibility
 
@@ -273,360 +264,149 @@ A protocol bridge so that user-defined distributions need only supply
   ...)
 ```
 
-**Estimated scope:** ~300 lines. No architectural changes needed.
+**Remaining scope:** ~100 lines for niche distributions + external dist bridge.
 
 ---
 
-### Phase 2: Custom Proposals & Advanced MCMC
+### Phase 2: Custom Proposals & Advanced MCMC ✅ MOSTLY COMPLETE
 
 **Goal:** Enable user-written proposal generative functions for MH, add
-elliptical slice sampling, MAP optimization, and Gibbs sampling.
+Gibbs sampling, and advanced MCMC.
 
-**Priority:** High -- custom proposals are the core of "programmable inference."
+**Status:** `propose` protocol, custom proposal MH, enumerative Gibbs all
+implemented and tested. Elliptical slice sampling and MAP optimization remain.
 
-#### 2a. Custom Proposal MH
+#### 2a. Custom Proposal MH — DONE ✅
 
-Gen.jl's `mh(trace, proposal, proposal_args)` variant, where `proposal` is
-itself a generative function that proposes new values:
+`IPropose` protocol implemented on DynamicGF and Distribution. `mh-custom`
+accepts a proposal GF and optional backward-gf. Uses update weight for
+acceptance ratio: `log-alpha = update-weight + backward-score - forward-score`.
 
-```clojure
-(defn mh-custom
-  "MH with a user-supplied proposal generative function.
-   proposal: a gen fn (fn [trace & args] ...) that proposes new choices
-   Returns updated trace or original (accept/reject)."
-  [trace proposal proposal-args]
-  ...)
-```
+#### 2b. Elliptical Slice Sampling — REMAINING
 
-The proposal GF is `simulate`d to get proposed choices, then the acceptance
-ratio is computed from the model score difference and the forward/backward
-proposal log-densities. This is the standard MH formula:
+A specialized MCMC kernel for models with multivariate Gaussian priors.
+~40 lines, purely functional.
 
-```
-log-alpha = (model-score-new - model-score-old)
-          + (backward-proposal-score - forward-proposal-score)
-```
+#### 2c. MAP Optimization — REMAINING
 
-Requires implementing `propose` on `DynamicGF`:
+Gradient ascent on log-probability of selected continuous choices via
+`mx/grad`. ~50 lines.
 
-```clojure
-(defprotocol IPropose
-  (propose [gf args]
-    "Sample choices and return {:choices cm :weight log-q :retval v}."))
-```
+#### 2d. Gibbs Sampling with Enumeration — DONE ✅
 
-#### 2b. Elliptical Slice Sampling
+`gibbs-step-with-support` and `gibbs` implemented. Enumerates all values
+in support, computes scores, samples from softmax. Tested with posterior
+concentration.
 
-A specialized MCMC kernel for models with multivariate Gaussian priors:
-
-```clojure
-(defn elliptical-slice
-  "Elliptical slice sampling update for address `addr` with prior N(mu, cov).
-   Requires no tuning parameters."
-  [trace addr mu cov]
-  ...)
-```
-
-Implementation: sample a random ellipse in the joint space of the current
-value and a fresh prior sample, then shrink a bracket until a point with
-higher likelihood is found. ~40 lines, purely functional.
-
-#### 2c. MAP Optimization
-
-Gradient ascent on the log-probability of selected continuous choices:
-
-```clojure
-(defn map-optimize
-  "Backtracking gradient ascent on log p(trace) over selected choices.
-   Returns optimized trace."
-  [{:keys [selection learning-rate max-iters tolerance]} trace]
-  ...)
-```
-
-Uses `mx/grad` of the score function, with optional line search. Returns
-an updated trace with optimized values.
-
-#### 2d. Gibbs Sampling with Enumeration
-
-For discrete random variables with finite support, exact conditional
-distributions can be computed by enumeration:
-
-```clojure
-(defn gibbs-step
-  "One Gibbs step: enumerate all values of `addr`, compute conditional,
-   and sample from it."
-  [trace addr]
-  (let [support (dist/dist-support (get-dist trace addr))
-        scores  (mapv #(score-with-value trace addr %) support)
-        probs   (softmax scores)]
-    (sample-from-categorical trace addr support probs)))
-```
-
-Requires that distributions declare their support via the existing
-`dist-support` multimethod (already implemented for `bernoulli`, `categorical`,
-`delta`). Add `support` to `geometric`, `binomial`, `discrete-uniform`,
-`neg-binomial`.
-
-**Estimated scope:** ~400 lines across 4 files.
+**Remaining scope:** ~100 lines for elliptical slice + MAP.
 
 ---
 
-### Phase 3: Involutive MCMC & Reversible Jump
+### Phase 3: Involutive MCMC & Reversible Jump ✅ CORE COMPLETE
 
-**Goal:** Implement Gen.jl's most powerful MCMC primitive -- the involutive
-MCMC framework that enables trans-dimensional inference.
+**Goal:** Implement Gen.jl's involutive MCMC framework.
 
-**Priority:** Medium-High -- unlocks structure learning and model selection.
+**Status:** `involutive-mh-step` and `involutive-mh` implemented with full
+Jacobian support. Involution can return 2-tuple (volume-preserving) or
+3-tuple with `log|det J|`. Uses update weight for acceptance ratio.
 
-#### 3a. Involutive MCMC Kernel
+#### 3a. Involutive MCMC Kernel — DONE ✅
 
-The three-phase kernel:
+Three-phase kernel: propose auxiliary choices, apply involution, accept/reject
+with `log-alpha = update-weight + bwd-score - fwd-score + log|det J|`.
+Tested with both volume-preserving and non-volume-preserving transforms.
 
-1. **Propose:** Simulate an auxiliary generative function to get forward
-   choices `u`.
-2. **Apply involution:** A user-supplied pure function
-   `h : (trace-choices, u) -> (trace-choices', u')` where `h(h(x)) = x`.
-3. **Accept/reject:** Compute weight from the Jacobian of the involution
-   and the score difference.
+#### 3b. Reversible Jump MCMC Helpers — REMAINING
 
-```clojure
-(defn involutive-mh
-  "Involutive MCMC step.
-   - proposal:   generative function producing auxiliary choices
-   - involution: pure fn (trace-cm, aux-cm) -> (new-trace-cm, new-aux-cm)
-   - jacobian?:  if true, compute log |det J| (for continuous transforms)"
-  [trace proposal proposal-args involution & {:keys [jacobian?]}]
-  ...)
-```
-
-The involution must be its own inverse -- GenMLX can verify this property
-in debug mode by checking `h(h(input)) == input`.
-
-#### 3b. Reversible Jump MCMC Helpers
-
-Higher-level helpers for common trans-dimensional moves:
-
-```clojure
-;; Split/merge move
-(defn split-merge-kernel [trace split-proposal merge-fn]
-  ...)
-
-;; Birth/death move
-(defn birth-death-kernel [trace birth-proposal death-selection]
-  ...)
-```
-
-These are sugar over `involutive-mh` with appropriate involutions.
-
-**Estimated scope:** ~300 lines. Requires `propose` from Phase 2a.
+Higher-level sugar for split/merge and birth/death moves.
+~60 lines over involutive-mh.
 
 ---
 
-### Phase 4: Trainable Parameters & Learning
+### Phase 4: Trainable Parameters & Learning ✅ COMPLETE
 
-**Goal:** Add trainable parameters to generative functions, enabling
-gradient-based learning of model parameters (supervised, unsupervised,
-amortized inference).
+**Goal:** Add trainable parameters, gradient infrastructure, and learning
+algorithms.
 
-**Priority:** Medium-High -- essential for neural-network-infused models.
+**Status:** All sub-items implemented in `genmlx.learning` and `genmlx.gradients`.
 
-#### 4a. Parameter Store (Functional)
+#### 4a. Parameter Store — DONE ✅
 
-Unlike Gen.jl's mutable parameter store, GenMLX uses a purely functional
-approach -- parameters are an explicit map threaded through training:
+Purely functional parameter store: `make-param-store`, `get-param`, `set-param`,
+`params->array`, `array->params`. Inside gen bodies, `dyn/param` reads from a
+`*param-store*` dynamic var bound by `simulate-with-params`/`generate-with-params`.
 
-```clojure
-(defrecord ParamStore [params grads])
+#### 4b. Choice Gradients — DONE ✅
 
-(defn init-params
-  "Initialize a parameter store from a generative function's @param declarations."
-  [gen-fn initial-values]
-  (->ParamStore initial-values (zipmap (keys initial-values) (repeat nil))))
-```
+`choice-gradients` and `score-gradient` in `genmlx.gradients`. Uses `mx/grad`
+to compute per-choice gradients of log p(trace).
 
-Inside `gen` bodies, a new `dyn/param` form reads from the store:
+#### 4c. Parameter Gradient Accumulation — DONE ✅
 
-```clojure
-(gen [x]
-  (let [theta (dyn/param :theta)]  ;; reads from implicit param store
-    (dyn/trace :y (gaussian theta 1))))
-```
+`make-param-loss-fn` creates a differentiable loss-gradient function from a
+model + observations + param names. Gradients flow through MLX arrays correctly.
 
-The parameter store is threaded through handlers like the PRNG key --
-no global mutable state.
+#### 4d. Optimizers & Training — DONE ✅
 
-#### 4b. Choice Gradients from Traces
+`sgd-step`, `adam-step`, `adam-init` optimizers. Generic `train` loop with
+pluggable optimizer, learning rate, callback.
 
-Extract per-choice gradients from an executed trace:
+#### 4e. Wake-Sleep Learning — DONE ✅
 
-```clojure
-(defn choice-gradients
-  "Compute gradients of log p(trace) w.r.t. selected continuous choices.
-   Returns {:arg-grads [...] :choice-values cm :choice-grads cm}."
-  [trace selection ret-grad]
-  ...)
-```
-
-This uses `mx/grad` applied to a function that reconstructs the score from
-choices, decomposing the gradient per-address.
-
-#### 4c. Parameter Gradient Accumulation
-
-```clojure
-(defn accumulate-param-gradients
-  "Compute gradient of log p(trace) w.r.t. trainable parameters.
-   Returns updated ParamStore with accumulated gradients."
-  [trace param-store ret-grad]
-  ...)
-```
-
-#### 4d. Optimizers & Training Loop
-
-Data-driven optimizer configs (purely functional -- no mutation):
-
-```clojure
-(defn sgd [lr] {:type :sgd :lr lr})
-(defn adam [lr & {:keys [beta1 beta2 eps] :or {beta1 0.9 beta2 0.999 eps 1e-8}}]
-  {:type :adam :lr lr :beta1 beta1 :beta2 beta2 :eps eps})
-
-(defn apply-update
-  "Apply one optimizer step. Returns [new-params new-opt-state]."
-  [optimizer-config opt-state params grads]
-  ...)
-
-(defn train-step
-  "One training step: run model, accumulate gradients, apply update."
-  [model args observations param-store optimizer opt-state]
-  ...)
-```
-
-#### 4e. Wake-Sleep Learning
-
-```clojure
-(defn lecture
-  "Sleep phase: simulate from model p, train recognition model q on the trace."
-  [model model-args recog-model recog-args param-store]
-  ...)
-
-(defn wake-sleep-step
-  "One wake-sleep iteration: wake phase (train p) + sleep phase (train q)."
-  [model recog-model data-batch param-store-p param-store-q optimizer]
-  ...)
-```
-
-**Estimated scope:** ~500 lines. New namespace `genmlx.learning`.
+`wake-phase-loss`, `sleep-phase-loss`, and `wake-sleep` with auto-discovery
+of guide addresses.
 
 ---
 
-### Phase 5: Incremental Computation & Performance
+### Phase 5: Incremental Computation & Performance ✅ CORE COMPLETE
 
-**Goal:** Add change-propagation hints (argdiffs/retdiffs) and a static
-analysis pass so that `update` and `regenerate` can skip unchanged
-computation -- critical for MCMC performance.
+**Goal:** Add change-propagation hints (argdiffs/retdiffs) so `update` can
+skip unchanged computation.
 
-**Priority:** Medium -- performance optimization for iterative inference.
+**Status:** Diff types, `IUpdateWithDiffs` protocol, and combinator
+implementations all complete. Static analysis pass remains aspirational.
 
-#### 5a. Diff Types
+#### 5a. Diff Types — DONE ✅
 
-Purely functional change descriptors:
+`no-change`, `unknown-change`, `value-change`, `vector-diff`, `map-diff` in
+`genmlx.diff`. Utility functions: `compute-diff`, `compute-vector-diff`,
+`compute-map-diff`, `should-recompute?`.
 
-```clojure
-(def no-change  {:type :no-change})
-(def unknown-change {:type :unknown-change})
+#### 5b. Diff-Aware Update — DONE ✅
 
-(defn vector-diff [changed-indices]
-  {:type :vector-diff :changed changed-indices})
+`IUpdateWithDiffs` protocol implemented on DynamicGF (no-change fast path),
+MapCombinator (full per-element optimization with stored element scores),
+and Unfold/Scan/Switch (no-change fast path).
 
-(defn map-diff [added removed changed]
-  {:type :map-diff :added added :removed removed :changed changed})
-```
+#### 5c. Static Analysis Pass — REMAINING
 
-#### 5b. Diff-Aware Update
-
-Modify the `update` handler to accept and propagate diffs:
-
-```clojure
-(defprotocol IUpdateWithDiffs
-  (update-with-diffs [gf trace new-args argdiffs constraints]
-    "Like update, but with change hints for efficient incremental computation.
-     Returns {:trace Trace :weight MLX-scalar :retdiff diff :discard ChoiceMap}."))
-```
-
-Combinators benefit enormously: `Map` can skip unchanged indices, `Unfold`
-can start from the first changed timestep.
-
-#### 5c. Static Analysis Pass (Optional)
-
-A compile-time analysis of `gen` bodies to extract a dependency graph.
-When a `gen` function's body is sufficiently simple (no recursion, bounded
-loops), the macro can emit a static plan:
-
-```clojure
-(gen ^:static [x]
-  (let [a (dyn/trace :a (gaussian 0 1))
-        b (dyn/trace :b (gaussian a 1))]
-    (dyn/trace :obs (gaussian b x))))
-```
-
-The `^:static` hint instructs the macro to analyze data flow and produce a
-dependency map `{:b #{:a}, :obs #{:b}}`. During `update`, only addresses
-downstream of changed values are re-executed.
-
-**Estimated scope:** ~400 lines. `genmlx.diff` namespace + handler changes.
+Compile-time dependency graph extraction for `gen` bodies.
+Aspirational — requires significant macro engineering.
 
 ---
 
-### Phase 6: SMCP3 & Programmable Sequential Inference
+### Phase 6: SMCP3 & Programmable Sequential Inference ✅ COMPLETE
 
-**Goal:** Implement Sequential Monte Carlo with Probabilistic Program Proposals
-(SMCP3), bringing GenJAX's most distinctive inference capability to GenMLX.
+**Goal:** Implement SMCP3 and the edit interface.
 
-**Priority:** Medium -- advanced but very powerful for sequential models.
+**Status:** All sub-items implemented.
 
-#### 6a. Edit Requests
+#### 6a. Edit Requests — DONE ✅
 
-Generalize `update` into a parametric `edit` operation:
+`IEdit` protocol with `edit-dispatch` handling `ConstraintEdit` (→ update),
+`SelectionEdit` (→ regenerate), `ProposalEdit` (→ propose + update + assess).
+Backward requests generated automatically. Implemented on all 9 GF record types.
 
-```clojure
-(defprotocol IEdit
-  (edit [gf trace edit-request]
-    "Apply an edit request to a trace.
-     Returns {:trace Trace :weight MLX-scalar :retdiff diff
-              :discard ChoiceMap :backward-request EditRequest}."))
-```
+#### 6b. Inference Kernel Composition — DONE ✅
 
-Different `EditRequest` types correspond to different SMCP3 moves:
-- `ConstraintEdit` -- equivalent to current `update`
-- `RegenerateEdit` -- equivalent to current `regenerate`
-- `ProposalEdit` -- forward proposal with backward kernels
+`chain`, `repeat-kernel`, `seed`, `cycle-kernels`, `mix-kernels`, `mh-kernel`,
+`run-kernel` in `genmlx.inference.kernel`.
 
-#### 6b. Trace Kernels
+#### 6c. SMCP3 Inference — DONE ✅
 
-A DSL for defining stochastic maps between traces (inspired by
-GenTraceKernelDSL.jl):
-
-```clojure
-(defn trace-kernel
-  "Define a stochastic map from one trace to another.
-   The body has access to the old trace and produces new choices."
-  [kernel-fn]
-  ...)
-```
-
-#### 6c. SMCP3 Inference
-
-```clojure
-(defn smcp3
-  "Sequential Monte Carlo with Probabilistic Program Proposals.
-   - forward-kernel: gen fn producing new choices given old trace + new obs
-   - backward-kernel: gen fn producing auxiliary choices for weight computation
-   Returns {:traces [...] :log-weights [...] :log-ml-estimate scalar}."
-  [{:keys [particles forward-kernel backward-kernel ess-threshold]}
-   model args observations-seq]
-  ...)
-```
-
-**Estimated scope:** ~600 lines. New namespaces `genmlx.edit`, `genmlx.smcp3`.
+`smcp3-init`, `smcp3-step`, `smcp3` in `genmlx.inference.smcp3`.
+Supports custom forward/backward kernels, ESS-based resampling, and
+optional MCMC rejuvenation.
 
 ---
 
@@ -676,28 +456,18 @@ sampling; the rest fall back to sequential `dist-sample-n :default`.
 - Vectorized IS: 81x
 - Vectorized SMC init: 65x
 
-**Limitations (7.0):**
+**Limitations (remaining):**
 - No `splice` (sub-GF calls) in batched mode
-- No vectorized `update`/`regenerate` (needed for multi-step SMC)
 - Rejection-sampling distributions (beta, gamma, poisson, student-t,
   dirichlet) fall back to sequential
 
-#### 7c. Vectorized Stochastic Branching
+#### 7c. Vectorized Stochastic Branching ✅ DONE
 
-For the `Switch`/`Cond` combinator, replace Python-level branching with
-masking so that all branches execute and results are selected:
+`vectorized-switch` executes all branches with N independent samples each,
+combines results using `mx/where` based on [N]-shaped index arrays.
+`mask-combinator` gates execution on a boolean condition.
 
-```clojure
-(defn vcond
-  "Vectorized conditional: execute all branches, mask-select results.
-   Compatible with vmap and compile-fn."
-  [selector & branches]
-  ...)
-```
-
-This is critical for JIT-compiling models with discrete latent structure.
-
-#### 7d. Full Inference Loop Compilation
+#### 7d. Full Inference Loop Compilation — REMAINING
 
 Compile entire MCMC chains or SMC sweeps into a single Metal program:
 
@@ -788,27 +558,26 @@ Instrument in development mode, strip in production for zero overhead.
 
 ---
 
-## Summary: Phase Dependencies
+## Summary: Phase Status
 
 ```
-Phase 1: Distributions          (no deps -- start immediately)
-    |
-Phase 2: Custom Proposals       (uses Phase 1 distributions)
-    |
-Phase 3: Involutive MCMC        (requires Phase 2 propose)
-    |
-Phase 4: Parameters & Learning  (requires Phase 2 for proposal training)
-    |
-Phase 5: Incremental Compute    (independent, but benefits Phase 6)
-    |
-Phase 6: SMCP3                  (requires Phase 2, 3, 5)
-    |
-Phase 7: Vectorized Inference   (independent, but benefits all phases)
-    |
-Phase 8: Ecosystem              (independent, ongoing)
+Phase 1: Distributions          ✅ MOSTLY COMPLETE (22/26 distributions)
+Phase 2: Custom Proposals       ✅ MOSTLY COMPLETE (ESS + MAP remaining)
+Phase 3: Involutive MCMC        ✅ CORE COMPLETE (RJ helpers remaining)
+Phase 4: Parameters & Learning  ✅ COMPLETE
+Phase 5: Incremental Compute    ✅ CORE COMPLETE (static analysis remaining)
+Phase 6: SMCP3                  ✅ COMPLETE
+Phase 7: Vectorized Inference   ✅ MOSTLY COMPLETE (compiled loops remaining)
+Phase 8: Ecosystem              ❌ NOT STARTED
 ```
 
-Phases 1, 5, 7, and 8 can proceed in parallel with the main sequence.
+**Remaining gaps (by priority):**
+1. Elliptical slice sampling, MAP optimization (~100 lines)
+2. Niche distributions: piecewise-uniform, beta-uniform, Wishart (~100 lines)
+3. Compiled inference loops (~200 lines)
+4. Static DSL / computation graph (significant effort)
+5. VIMCO, ADEV gradient estimation (~200 lines)
+6. Ecosystem: NN integration, visualization, LLM-as-GF (open-ended)
 
 ---
 
@@ -841,7 +610,7 @@ pattern of MCMC inference.
 - **MLX unified memory** -- zero-copy CPU/GPU is architecturally superior to PCIe transfer
 - **Vectorized inference without `vmap`** -- shape-based batching achieves 29-122x
   speedup by broadcasting, simpler than GenJAX's JAX vmap approach
-- **~2000 lines** -- dramatically smaller than Gen.jl (~20k+) or GenJAX (~10k+),
+- **~5,700 lines** -- dramatically smaller than Gen.jl (~20k+) or GenJAX (~10k+),
   making the system auditable and hackable
 
 ---
