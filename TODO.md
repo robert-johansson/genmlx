@@ -137,7 +137,7 @@ mixture
 
 ## Phase 5: Missing Combinators
 
-- [ ] **5.1** Recurse combinator — recursive model structures
+- [x] **5.1** Recurse combinator — recursive model structures
   - Corresponds to `fix(f)` in λ_MLX
   - Full GFI: simulate, generate, update, regenerate, edit
   - ~100 lines
@@ -433,7 +433,7 @@ Near-term (Gen.jl feature parity):
   3.6      map->dist bridge               ✅
   4.1      Elliptical slice sampling      ✅
   4.2      MAP optimization               ✅
-  5.1      Recurse combinator
+  5.1      Recurse combinator             ✅
   6.3–6.4  Testing gaps                   ✅
 
 Medium-term (GenJAX speed parity):

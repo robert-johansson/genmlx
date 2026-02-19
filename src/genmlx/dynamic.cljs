@@ -141,6 +141,16 @@
       {:choices (:choices trace) :retval (:retval trace)
        :score (:score trace) :weight weight})
 
+    ;; Update mode: has old-choices (possibly with new constraints)
+    (and old-choices (not= old-choices cm/EMPTY))
+    (let [old-trace (tr/make-trace {:gen-fn gf :args args
+                                    :choices old-choices
+                                    :retval nil :score (mx/scalar 0.0)})
+          {:keys [trace weight discard]} (p/update gf old-trace
+                                                    (or constraints cm/EMPTY))]
+      {:choices (:choices trace) :retval (:retval trace)
+       :score (:score trace) :weight weight :discard discard})
+
     ;; Generate with constraints
     (and constraints (not= constraints cm/EMPTY))
     (let [{:keys [trace weight]} (p/generate gf args constraints)]

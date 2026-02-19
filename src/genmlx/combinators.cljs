@@ -354,6 +354,92 @@
   (->MaskCombinator inner))
 
 ;; ---------------------------------------------------------------------------
+;; Recurse Combinator
+;; ---------------------------------------------------------------------------
+;; Fixed-point combinator for recursive generative functions.
+;; Enables models that call themselves (random trees, linked lists, grammars).
+;; maker: (fn [self] -> GF) — receives the combinator itself for recursion.
+
+(defrecord RecurseCombinator [maker]
+  p/IGenerativeFunction
+  (simulate [this args]
+    (let [gf (maker this)
+          trace (p/simulate gf args)]
+      (tr/make-trace {:gen-fn this :args args
+                      :choices (:choices trace)
+                      :retval (:retval trace)
+                      :score (:score trace)})))
+
+  p/IGenerate
+  (generate [this args constraints]
+    (let [gf (maker this)
+          {:keys [trace weight]} (p/generate gf args constraints)]
+      {:trace (tr/make-trace {:gen-fn this :args args
+                              :choices (:choices trace)
+                              :retval (:retval trace)
+                              :score (:score trace)})
+       :weight weight})))
+
+(extend-type RecurseCombinator
+  p/IUpdate
+  (update [this trace constraints]
+    (let [gf ((:maker this) this)
+          old-inner-trace (tr/make-trace
+                            {:gen-fn gf :args (:args trace)
+                             :choices (:choices trace)
+                             :retval (:retval trace) :score (:score trace)})
+          result (p/update gf old-inner-trace constraints)
+          new-trace (:trace result)]
+      {:trace (tr/make-trace {:gen-fn this :args (:args trace)
+                              :choices (:choices new-trace)
+                              :retval (:retval new-trace)
+                              :score (:score new-trace)})
+       :weight (:weight result) :discard (:discard result)}))
+
+  p/IRegenerate
+  (regenerate [this trace selection]
+    (let [gf ((:maker this) this)
+          old-inner-trace (tr/make-trace
+                            {:gen-fn gf :args (:args trace)
+                             :choices (:choices trace)
+                             :retval (:retval trace) :score (:score trace)})
+          result (p/regenerate gf old-inner-trace selection)
+          new-trace (:trace result)]
+      {:trace (tr/make-trace {:gen-fn this :args (:args trace)
+                              :choices (:choices new-trace)
+                              :retval (:retval new-trace)
+                              :score (:score new-trace)})
+       :weight (:weight result)})))
+
+(extend-type RecurseCombinator
+  p/IProject
+  (project [this trace selection]
+    (let [gf ((:maker this) this)
+          inner-trace (tr/make-trace
+                        {:gen-fn gf :args (:args trace)
+                         :choices (:choices trace)
+                         :retval (:retval trace) :score (:score trace)})]
+      (p/project gf inner-trace selection))))
+
+(extend-type RecurseCombinator
+  p/IUpdateWithDiffs
+  (update-with-diffs [this trace constraints argdiffs]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+      (p/update this trace constraints))))
+
+(extend-type RecurseCombinator
+  edit/IEdit
+  (edit [gf trace edit-request]
+    (edit/edit-dispatch gf trace edit-request)))
+
+(defn recurse
+  "Create a Recurse combinator from a maker function.
+   maker: (fn [self] -> GF) where self is the RecurseCombinator."
+  [maker]
+  (->RecurseCombinator maker))
+
+;; ---------------------------------------------------------------------------
 ;; Vectorized Switch
 ;; ---------------------------------------------------------------------------
 ;; Executes ALL branches and combines results using mx/where based on
