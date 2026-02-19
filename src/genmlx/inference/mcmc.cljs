@@ -582,6 +582,87 @@
       init-q)))
 
 ;; ---------------------------------------------------------------------------
+;; Elliptical Slice Sampling (Murray, Adams, MacKay 2010)
+;; ---------------------------------------------------------------------------
+
+(defn- log-prior-gaussian
+  "Log-density of N(0, σ²*I) at params."
+  [params prior-std d]
+  (let [z (mx/divide params (mx/scalar prior-std))]
+    (+ (* -0.5 (mx/realize (mx/sum (mx/square z))))
+       (* (- d) (+ (js/Math.log prior-std) (* 0.5 (js/Math.log (* 2 js/Math.PI))))))))
+
+(defn elliptical-slice-step
+  "One elliptical slice sampling step for models with Gaussian priors.
+   current-trace: current model trace
+   selection: addresses with Gaussian prior to resample (vector of keywords)
+   prior-std: scalar standard deviation of the Gaussian prior (N(0, prior-std^2*I))
+   key: PRNG key
+   Returns the new trace (always accepts — no MH rejection)."
+  [current-trace selection prior-std key]
+  (let [gf (:gen-fn current-trace)
+        addrs (if (vector? selection) selection [selection])
+        f (u/extract-params current-trace addrs)
+        d (count addrs)
+        [k1 k2 k3] (rng/split-n (rng/ensure-key key) 3)
+        ;; 1. nu ~ N(0, σ²I)
+        nu (mx/multiply (mx/scalar prior-std) (rng/normal k1 [d]))
+        _ (mx/eval! nu)
+        ;; 2. Current log-likelihood = total score - prior log-prob
+        current-score (mx/realize (:score current-trace))
+        current-ll (- current-score (log-prior-gaussian f prior-std d))
+        ;; 3. Threshold
+        log-y (+ current-ll (js/Math.log (mx/realize (rng/uniform k2 []))))
+        ;; 4. Initial angle bracket
+        init-theta (* 2.0 js/Math.PI (mx/realize (rng/uniform k3 [])))
+        theta-min (- init-theta (* 2.0 js/Math.PI))
+        theta-max init-theta]
+    ;; 5. Shrinking bracket loop
+    (loop [theta init-theta
+           tmin theta-min
+           tmax theta-max
+           iter 0
+           rk key]
+      (let [;; Propose: f' = f*cos(θ) + nu*sin(θ)
+            f' (mx/add (mx/multiply f (mx/scalar (js/Math.cos theta)))
+                       (mx/multiply nu (mx/scalar (js/Math.sin theta))))
+            _ (mx/eval! f')
+            ;; Update trace at selected addresses
+            constraints (reduce (fn [cm [i addr]]
+                                  (cm/set-choice cm [addr] (mx/index f' i)))
+                                cm/EMPTY (map-indexed vector addrs))
+            {:keys [trace]} (p/update gf current-trace constraints)
+            new-score (mx/realize (:score trace))
+            new-ll (- new-score (log-prior-gaussian f' prior-std d))]
+        (if (> new-ll log-y)
+          trace
+          (if (>= iter 100)
+            current-trace
+            (let [[tmin' tmax'] (if (< theta 0) [theta tmax] [tmin theta])
+                  [rk1 rk2] (rng/split (rng/ensure-key rk))
+                  new-theta (+ tmin' (* (- tmax' tmin') (mx/realize (rng/uniform rk1 []))))]
+              (recur new-theta tmin' tmax' (inc iter) rk2))))))))
+
+(defn elliptical-slice
+  "Elliptical slice sampling for models with Gaussian priors.
+   opts: {:samples N :burn B :thin T :selection [addr...] :prior-std σ :key k}
+   model: generative function
+   args: model arguments
+   observations: choice map of observed values
+   Returns vector of traces."
+  [{:keys [samples burn thin selection prior-std key]
+    :or {burn 0 thin 1 prior-std 1.0}}
+   model args observations]
+  (let [{:keys [trace]} (p/generate model args observations)]
+    (collect-samples
+      {:samples samples :burn burn :thin thin :key key}
+      (fn [state step-key]
+        (let [new-trace (elliptical-slice-step state selection prior-std step-key)]
+          {:state new-trace :accepted? true}))
+      identity
+      trace)))
+
+;; ---------------------------------------------------------------------------
 ;; MAP (Maximum A Posteriori) Optimization
 ;; ---------------------------------------------------------------------------
 

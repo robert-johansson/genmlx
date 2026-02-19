@@ -88,6 +88,32 @@
       (:score trace))))
 
 ;; ---------------------------------------------------------------------------
+;; map->dist — create a Distribution from a plain map
+;; ---------------------------------------------------------------------------
+
+(defn map->dist
+  "Create a Distribution from a plain map with :sample and :log-prob functions.
+   Required keys:
+     :type      - keyword identifier (auto-generated if omitted)
+     :sample    - (fn [key] -> MLX-value)
+     :log-prob  - (fn [value] -> MLX-scalar)
+   Optional keys:
+     :reparam   - (fn [key] -> MLX-value) reparameterized sample
+     :support   - (fn [] -> seq) enumerable support
+     :sample-n  - (fn [key n] -> MLX-array) batch sampling"
+  [{:keys [type sample log-prob reparam support sample-n]}]
+  (let [type-kw (or type (keyword (gensym "custom-dist")))]
+    (defmethod dist-sample type-kw [_ key] (sample key))
+    (defmethod dist-log-prob type-kw [_ value] (log-prob value))
+    (when reparam
+      (defmethod dist-reparam type-kw [_ key] (reparam key)))
+    (when support
+      (defmethod dist-support type-kw [_] (support)))
+    (when sample-n
+      (defmethod dist-sample-n type-kw [_ key n] (sample-n key n)))
+    (->Distribution type-kw {})))
+
+;; ---------------------------------------------------------------------------
 ;; Mixture distribution
 ;; ---------------------------------------------------------------------------
 

@@ -93,7 +93,7 @@ mixture
 
 ### Distribution infrastructure
 
-- [ ] **3.6** External distribution compatibility bridge — `map->dist`
+- [x] **3.6** External distribution compatibility bridge — `map->dist`
   ```clojure
   (defn map->dist [{:keys [sample log-prob reparam support]}] ...)
   ```
@@ -112,7 +112,7 @@ mixture
 
 *Match Gen.jl's complete inference toolkit.*
 
-- [ ] **4.1** Elliptical slice sampling — `(elliptical-slice-step trace selection)`
+- [x] **4.1** Elliptical slice sampling — `(elliptical-slice-step trace selection)`
   - Specialized MCMC kernel for models with multivariate Gaussian priors
   - ~40 lines, purely functional
   - *File*: `inference/mcmc.cljs`
@@ -167,13 +167,13 @@ mixture
   - End-to-end test: model + custom proposal + SMCP3 inference
   - Verify incremental weight computation
 
-- [ ] **6.3** Kernel combinators beyond `repeat-kernel` and `mh-kernel`
-  - [ ] `chain` — sequential composition of 2+ kernels
-  - [ ] `cycle-kernels` — round-robin cycling
-  - [ ] `mix-kernels` — random mixture of kernels
-  - [ ] `seed` — fixed PRNG key
+- [x] **6.3** Kernel combinators beyond `repeat-kernel` and `mh-kernel`
+  - [x] `chain` — sequential composition of 2+ kernels
+  - [x] `cycle-kernels` — round-robin cycling
+  - [x] `mix-kernels` — random mixture of kernels
+  - [x] `seed` — fixed PRNG key
 
-- [ ] **6.4** Batched update path (`vupdate`)
+- [x] **6.4** Batched update path (`vupdate`)
   - Shape correctness tests
   - Statistical equivalence with sequential update
 
@@ -430,11 +430,11 @@ Immediate (solidify what exists):
 
 Near-term (Gen.jl feature parity):
   3.1–3.5  Missing distributions
-  3.6      map->dist bridge
-  4.1      Elliptical slice sampling
+  3.6      map->dist bridge               ✅
+  4.1      Elliptical slice sampling      ✅
   4.2      MAP optimization               ✅
   5.1      Recurse combinator
-  6.3–6.4  Testing gaps
+  6.3–6.4  Testing gaps                   ✅
 
 Medium-term (GenJAX speed parity):
   7.1  Batch sampling coverage
@@ -463,10 +463,10 @@ Long-term (ecosystem):
 |-------|-------|------|-----------|
 | 1. Functional Purity | 5 | 1 | 4 |
 | 2. Missing GFI Ops | 2 | 2 | 0 |
-| 3. Distributions | 8 | 1 | 7 |
-| 4. Inference Algorithms | 4 | 1 | 3 |
+| 3. Distributions | 8 | 2 | 6 |
+| 4. Inference Algorithms | 4 | 2 | 2 |
 | 5. Combinators | 3 | 0 | 3 |
-| 6. Testing Gaps | 5 | 1 | 4 |
+| 6. Testing Gaps | 5 | 3 | 2 |
 | 7. Vectorization & Perf | 8 | 0 | 8 |
 | 8. Gradient Programming | 2 | 0 | 2 |
 | 9. Incremental Computation | 3 | 0 | 3 |
@@ -474,4 +474,4 @@ Long-term (ecosystem):
 | 11. Validation | 2 | 0 | 2 |
 | 12. Ecosystem | 6 | 0 | 6 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **8** | **59** |
+| **Total** | **67** | **12** | **55** |
