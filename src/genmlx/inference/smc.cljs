@@ -145,6 +145,102 @@
                      (mx/add log-ml log-ml-increment) next-key))))))))
 
 ;; ---------------------------------------------------------------------------
+;; Conditional SMC (cSMC) for particle MCMC / PMCMC
+;; ---------------------------------------------------------------------------
+
+(defn csmc
+  "Conditional Sequential Monte Carlo: SMC with a retained reference particle.
+   The reference particle is never resampled — its trajectory is preserved.
+   This is the core kernel for particle Gibbs and particle MCMC.
+
+   opts: {:particles N :ess-threshold ratio :rejuvenation-steps K
+          :rejuvenation-selection sel :callback fn :key prng-key}
+   model: generative function
+   args: model arguments
+   observations-seq: sequence of choice maps, one per timestep
+   reference-trace: the retained reference particle (from previous PMCMC iteration)
+
+   Returns {:traces :log-weights :log-ml-estimate}"
+  [{:keys [particles ess-threshold rejuvenation-steps rejuvenation-selection callback key]
+    :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0
+         rejuvenation-selection sel/all}}
+   model args observations-seq reference-trace]
+  (let [obs-vec (vec observations-seq)
+        n-steps (count obs-vec)
+        ref-idx 0]  ;; reference particle is always at index 0
+    (loop [t 0
+           traces nil
+           log-weights nil
+           log-ml (mx/scalar 0.0)
+           rk key]
+      (if (>= t n-steps)
+        {:traces traces
+         :log-weights log-weights
+         :log-ml-estimate log-ml}
+        (let [obs-t (nth obs-vec t)
+              [step-key next-key] (rng/split-or-nils rk)]
+          (if (zero? t)
+            ;; Init step: reference trace at index 0, rest from prior
+            (let [other-results (mapv (fn [_] (p/generate model args obs-t))
+                                      (range (dec particles)))
+                  ;; Score reference trace
+                  ref-result (p/generate model args obs-t)
+                  traces (into [(:trace ref-result)] (mapv :trace other-results))
+                  log-weights (into [(:weight ref-result)] (mapv :weight other-results))
+                  w-arr (u/materialize-weights log-weights)
+                  ml-inc (mx/subtract (mx/logsumexp w-arr)
+                                       (mx/scalar (js/Math.log particles)))]
+              (when callback
+                (callback {:step t :ess (compute-ess log-weights)}))
+              (recur (inc t) traces log-weights
+                     (mx/add log-ml ml-inc) next-key))
+            ;; Subsequent steps with conditional resampling
+            (let [ess (compute-ess log-weights)
+                  resample? (< ess (* ess-threshold particles))
+                  [resample-key step-rk rejuv-key] (rng/split-n-or-nils step-key 3)
+                  ;; Conditional resampling: reference particle always survives
+                  [traces' weights'] (if resample?
+                                       (let [indices (systematic-resample
+                                                       log-weights particles resample-key)
+                                             ;; Force reference particle at index 0
+                                             indices' (assoc indices ref-idx ref-idx)]
+                                         [(mapv #(nth traces %) indices')
+                                          (vec (repeat particles (mx/scalar 0.0)))])
+                                       [traces log-weights])
+                  ;; Update all particles
+                  results (mapv (fn [trace]
+                                  (p/update (:gen-fn trace) trace obs-t))
+                                traces')
+                  new-traces (mapv :trace results)
+                  update-weights (mapv :weight results)
+                  new-weights (mapv mx/add weights' update-weights)
+                  ;; Rejuvenate all except reference
+                  final-traces (if (pos? rejuvenation-steps)
+                                 (let [keys (if rejuv-key
+                                              (rng/split-n rejuv-key particles)
+                                              (repeat particles nil))]
+                                   (mapv (fn [i trace ki]
+                                           (if (= i ref-idx)
+                                             trace  ;; Don't rejuvenate reference
+                                             (reduce (fn [t rk]
+                                                       (let [gf (:gen-fn t)
+                                                             result (p/regenerate gf t rejuvenation-selection)
+                                                             w (mx/realize (:weight result))]
+                                                         (if (u/accept-mh? w rk) (:trace result) t)))
+                                                     trace
+                                                     (if ki (rng/split-n ki rejuvenation-steps)
+                                                            (repeat rejuvenation-steps nil)))))
+                                         (range particles) new-traces keys))
+                                 new-traces)
+                  w-arr (u/materialize-weights new-weights)
+                  ml-inc (mx/subtract (mx/logsumexp w-arr)
+                                       (mx/scalar (js/Math.log particles)))]
+              (when callback
+                (callback {:step t :ess ess :resampled? resample?}))
+              (recur (inc t) final-traces new-weights
+                     (mx/add log-ml ml-inc) next-key))))))))
+
+;; ---------------------------------------------------------------------------
 ;; Vectorized SMC (single-step, batched init)
 ;; ---------------------------------------------------------------------------
 

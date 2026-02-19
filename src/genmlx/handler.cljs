@@ -128,6 +128,62 @@
                  (update :weight #(mx/add % lp)))])
       (batched-simulate-transition state addr dist))))
 
+(defn- batched-update-transition
+  "Pure: batched update with [N]-shaped old values and scalar/[N]-shaped new constraints."
+  [state addr dist]
+  (let [n (:batch-size state)
+        constraint (cm/get-submap (:constraints state) addr)
+        old-choice (cm/get-submap (:old-choices state) addr)]
+    (cond
+      ;; New constraint provided — score difference against old values
+      (cm/has-value? constraint)
+      (let [new-val (cm/get-value constraint)
+            new-lp  (dc/dist-log-prob dist new-val)
+            old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
+            old-lp  (if old-val (dc/dist-log-prob dist old-val) (mx/scalar 0.0))]
+        [new-val (-> state
+                   (update :choices #(cm/set-choice % [addr] new-val))
+                   (update :score  #(mx/add % new-lp))
+                   (update :weight #(mx/add % (mx/subtract new-lp old-lp)))
+                   (cond->
+                     old-val (update :discard #(cm/set-choice % [addr] old-val))))])
+
+      ;; Keep old [N]-shaped values
+      (cm/has-value? old-choice)
+      (let [val (cm/get-value old-choice)
+            lp  (dc/dist-log-prob dist val)]
+        [val (-> state
+               (update :choices #(cm/set-choice % [addr] val))
+               (update :score #(mx/add % lp)))])
+
+      ;; New address: sample [N] fresh values
+      :else (batched-simulate-transition state addr dist))))
+
+(defn- batched-regenerate-transition
+  "Pure: batched regenerate with [N]-shaped values."
+  [state addr dist]
+  (let [n (:batch-size state)
+        sel (:selection state)
+        old-choice (cm/get-submap (:old-choices state) addr)]
+    (if (and sel (sel/selected? sel addr))
+      ;; Selected: resample [N] values, compute [N]-shaped weight adjustment
+      (let [[k1 k2] (rng/split (:key state))
+            new-val (dc/dist-sample-n dist k2 n)
+            new-lp  (dc/dist-log-prob dist new-val)
+            old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
+            old-lp  (if old-val (dc/dist-log-prob dist old-val) (mx/scalar 0.0))]
+        [new-val (-> state
+                   (assoc :key k1)
+                   (update :choices #(cm/set-choice % [addr] new-val))
+                   (update :score  #(mx/add % new-lp))
+                   (update :weight #(mx/add % (mx/subtract new-lp old-lp))))])
+      ;; Not selected: keep old [N]-shaped values
+      (let [val (cm/get-value old-choice)
+            lp  (dc/dist-log-prob dist val)]
+        [val (-> state
+               (update :choices #(cm/set-choice % [addr] val))
+               (update :score #(mx/add % lp)))]))))
+
 ;; ---------------------------------------------------------------------------
 ;; Handler implementations (thin wrappers over pure transitions)
 ;; ---------------------------------------------------------------------------
@@ -171,6 +227,20 @@
   "Batched generate: constrained or batched-simulate."
   [addr dist]
   (let [[value state'] (batched-generate-transition @*state* addr dist)]
+    (vreset! *state* state')
+    value))
+
+(defn batched-update-handler
+  "Batched update: new constraint, keep old [N]-shaped, or sample fresh."
+  [addr dist]
+  (let [[value state'] (batched-update-transition @*state* addr dist)]
+    (vreset! *state* state')
+    value))
+
+(defn batched-regenerate-handler
+  "Batched regenerate: resample selected [N]-shaped addresses."
+  [addr dist]
+  (let [[value state'] (batched-regenerate-transition @*state* addr dist)]
     (vreset! *state* state')
     value))
 

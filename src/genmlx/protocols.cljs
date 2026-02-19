@@ -23,3 +23,8 @@
   (regenerate [gf trace selection]
     "Resample selected addresses.
      Returns {:trace Trace :weight MLX-scalar}."))
+
+(defprotocol IPropose
+  (propose [gf args]
+    "Forward-sample all choices and return choices + their joint log-probability.
+     Returns {:choices ChoiceMap :weight MLX-scalar :retval any}."))

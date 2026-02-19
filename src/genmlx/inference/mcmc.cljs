@@ -1,5 +1,6 @@
 (ns genmlx.inference.mcmc
-  "MCMC inference algorithms: MH, MALA, HMC, NUTS.
+  "MCMC inference algorithms: MH, MALA, HMC, NUTS, Custom Proposal MH,
+   Enumerative Gibbs, Involutive MCMC.
    MH uses the GFI regenerate operation.
    Gradient-based methods operate on compiled model score functions."
   (:require [genmlx.protocols :as p]
@@ -7,6 +8,7 @@
             [genmlx.selection :as sel]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
+            [genmlx.dist.core :as dc]
             [genmlx.inference.util :as u]))
 
 ;; ---------------------------------------------------------------------------
@@ -69,6 +71,175 @@
       {:samples samples :burn burn :thin thin :callback callback :key key}
       (fn [state step-key]
         (let [new-trace (mh-step state selection step-key)]
+          {:state new-trace :accepted? (not (identical? new-trace state))}))
+      identity
+      trace)))
+
+;; ---------------------------------------------------------------------------
+;; Custom Proposal MH
+;; ---------------------------------------------------------------------------
+
+(defn mh-custom-step
+  "One MH step with a custom proposal generative function.
+   proposal-gf: generative function that takes [current-trace-choices]
+                and proposes new choices for some addresses.
+   backward-gf: (optional) generative function for the backward proposal.
+                 If nil, assumes symmetric proposal (backward = forward).
+   model: the target model generative function.
+   current-trace: the current model trace.
+   key: PRNG key."
+  ([current-trace model proposal-gf key]
+   (mh-custom-step current-trace model proposal-gf nil key))
+  ([current-trace model proposal-gf backward-gf key]
+   (let [[k1 k2 k3] (rng/split-n (rng/ensure-key key) 3)
+         ;; 1. Run propose on the proposal GF → forward choices + forward score
+         proposal-args [(:choices current-trace)]
+         forward-result (p/propose proposal-gf proposal-args)
+         forward-choices (:choices forward-result)
+         forward-score (:weight forward-result)
+         ;; 2. Apply proposed choices to model via update → new trace + update weight
+         update-result (p/update model current-trace forward-choices)
+         new-trace (:trace update-result)
+         update-weight (:weight update-result)
+         ;; 3. Compute backward score
+         backward-score (if backward-gf
+                          ;; Run assess on backward proposal
+                          (let [{:keys [weight]} (p/assess backward-gf
+                                                           [(:choices new-trace)]
+                                                           (:choices current-trace))]
+                            weight)
+                          ;; Symmetric proposal: backward score = forward score
+                          forward-score)
+         ;; 4. Accept/reject: log-alpha = update-weight + backward-score - forward-score
+         log-alpha (mx/realize (mx/add update-weight
+                                 (mx/subtract backward-score forward-score)))]
+     (if (u/accept-mh? log-alpha k3)
+       new-trace
+       current-trace))))
+
+(defn mh-custom
+  "MH inference with custom proposal. Returns vector of traces.
+
+   opts: {:samples N :burn B :thin T :proposal-gf gf :backward-gf gf
+          :callback fn :key prng-key}
+   model: generative function
+   args: model arguments
+   observations: choice map of observed values"
+  [{:keys [samples burn thin proposal-gf backward-gf callback key]
+    :or {burn 0 thin 1}}
+   model args observations]
+  (let [{:keys [trace]} (p/generate model args observations)]
+    (collect-samples
+      {:samples samples :burn burn :thin thin :callback callback :key key}
+      (fn [state step-key]
+        (let [new-trace (mh-custom-step state model proposal-gf backward-gf step-key)]
+          {:state new-trace :accepted? (not (identical? new-trace state))}))
+      identity
+      trace)))
+
+;; ---------------------------------------------------------------------------
+;; Enumerative Gibbs Sampling
+;; ---------------------------------------------------------------------------
+
+(defn gibbs-step-with-support
+  "One Gibbs step with explicit support enumeration.
+   support-values: vector of possible values for the address.
+   Returns a new trace."
+  [current-trace addr support-values key]
+  (let [gf (:gen-fn current-trace)
+        ;; For each candidate value, compute model score
+        log-scores (mapv (fn [val]
+                           (let [constraint (cm/choicemap addr val)
+                                 {:keys [trace]} (p/update gf current-trace constraint)]
+                             (:score trace)))
+                         support-values)
+        ;; Normalize via log-softmax
+        log-scores-arr (mx/array (mapv mx/realize log-scores))
+        log-probs (mx/subtract log-scores-arr (mx/logsumexp log-scores-arr))
+        ;; Sample from categorical
+        chosen-idx (mx/realize (rng/categorical (rng/ensure-key key) log-probs))
+        chosen-val (nth support-values (int chosen-idx))
+        ;; Update trace with chosen value
+        {:keys [trace]} (p/update gf current-trace (cm/choicemap addr chosen-val))]
+    trace))
+
+(defn gibbs
+  "Gibbs sampling over discrete addresses with known support.
+
+   opts: {:samples N :burn B :thin T :callback fn :key prng-key}
+   model: generative function
+   args: model arguments
+   observations: choice map of observed values
+   schedule: vector of {:addr keyword :support [values...]} maps
+             specifying which addresses to sweep and their support."
+  [{:keys [samples burn thin callback key]
+    :or {burn 0 thin 1}}
+   model args observations schedule]
+  (let [{:keys [trace]} (p/generate model args observations)]
+    (collect-samples
+      {:samples samples :burn burn :thin thin :callback callback :key key}
+      (fn [state step-key]
+        (let [keys (rng/split-n (rng/ensure-key step-key) (count schedule))
+              new-trace (reduce (fn [t [spec ki]]
+                                  (gibbs-step-with-support
+                                    t (:addr spec) (:support spec) ki))
+                                state
+                                (map vector schedule keys))]
+          {:state new-trace :accepted? true}))
+      identity
+      trace)))
+
+;; ---------------------------------------------------------------------------
+;; Involutive MCMC
+;; ---------------------------------------------------------------------------
+
+(defn involutive-mh-step
+  "One involutive MH step.
+   proposal-gf: generative function for auxiliary randomness.
+                Takes [current-trace-choices] and produces auxiliary choices.
+   involution: pure function (fn [trace-cm aux-cm] -> [new-trace-cm new-aux-cm])
+               Must be its own inverse: involution(involution(t, a)) = (t, a).
+   model: the target model generative function.
+   current-trace: the current model trace.
+   key: PRNG key."
+  [current-trace model proposal-gf involution key]
+  (let [[k1 k2] (rng/split (rng/ensure-key key))
+        ;; 1. Propose auxiliary choices
+        fwd-result (p/propose proposal-gf [(:choices current-trace)])
+        aux-choices (:choices fwd-result)
+        fwd-score (:weight fwd-result)
+        ;; 2. Apply involution
+        [new-trace-cm new-aux-cm] (involution (:choices current-trace) aux-choices)
+        ;; 3. Update model with new choices
+        update-result (p/update model current-trace new-trace-cm)
+        new-trace (:trace update-result)
+        update-weight (:weight update-result)
+        ;; 4. Score backward auxiliary choices under proposal
+        bwd-result (p/assess proposal-gf [(:choices new-trace)] new-aux-cm)
+        bwd-score (:weight bwd-result)
+        ;; 5. Accept/reject
+        log-alpha (mx/realize (mx/add update-weight
+                                (mx/subtract bwd-score fwd-score)))]
+    (if (u/accept-mh? log-alpha k2)
+      new-trace
+      current-trace)))
+
+(defn involutive-mh
+  "Involutive MCMC inference. Returns vector of traces.
+
+   opts: {:samples N :burn B :thin T :proposal-gf gf :involution fn
+          :callback fn :key prng-key}
+   model: generative function
+   args: model arguments
+   observations: choice map of observed values"
+  [{:keys [samples burn thin proposal-gf involution callback key]
+    :or {burn 0 thin 1}}
+   model args observations]
+  (let [{:keys [trace]} (p/generate model args observations)]
+    (collect-samples
+      {:samples samples :burn burn :thin thin :callback callback :key key}
+      (fn [state step-key]
+        (let [new-trace (involutive-mh-step state model proposal-gf involution step-key)]
           {:state new-trace :accepted? (not (identical? new-trace state))}))
       identity
       trace)))

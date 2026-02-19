@@ -1,5 +1,7 @@
 (ns genmlx.inference.vi
-  "Variational Inference (ADVI with mean-field Gaussian guide)."
+  "Variational Inference: ADVI with mean-field Gaussian guide,
+   plus programmable VI objectives (ELBO, IWELBO, PWake, QWake)
+   and gradient estimators (reparameterization, REINFORCE)."
   (:require [genmlx.protocols :as p]
             [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
@@ -150,3 +152,150 @@
         {:keys [trace]} (p/generate model args observations)
         init-q (u/extract-params trace addresses)]
     (vi opts score-fn init-q)))
+
+;; ---------------------------------------------------------------------------
+;; Programmable VI Objectives
+;; ---------------------------------------------------------------------------
+
+(defn elbo-objective
+  "Standard ELBO objective: E_q[log p(x,z) - log q(z)].
+   log-p-fn: (fn [z] -> MLX scalar) — model log-density
+   log-q-fn: (fn [z] -> MLX scalar) — guide log-density
+   Returns (fn [samples] -> MLX scalar) where samples is [K d]."
+  [log-p-fn log-q-fn]
+  (fn [samples]
+    (let [vmapped-p (mx/vmap log-p-fn)
+          vmapped-q (mx/vmap log-q-fn)
+          log-p (vmapped-p samples)
+          log-q (vmapped-q samples)]
+      (mx/mean (mx/subtract log-p log-q)))))
+
+(defn iwelbo-objective
+  "Importance-weighted ELBO (IWELBO/IWAE): tighter bound using K samples.
+   log E[1/K * sum_k w_k] where w_k = p(x,z_k)/q(z_k)
+   Approaches log p(x) as K -> infinity.
+   Returns (fn [samples] -> MLX scalar)."
+  [log-p-fn log-q-fn]
+  (fn [samples]
+    (let [vmapped-p (mx/vmap log-p-fn)
+          vmapped-q (mx/vmap log-q-fn)
+          log-p (vmapped-p samples)
+          log-q (vmapped-q samples)
+          log-w (mx/subtract log-p log-q)
+          k (first (mx/shape samples))]
+      ;; log(1/K * sum exp(log_w)) = logsumexp(log_w) - log(K)
+      (mx/subtract (mx/logsumexp log-w) (mx/scalar (js/Math.log k))))))
+
+(defn pwake-objective
+  "P-Wake objective: trains the model to match the guide's proposals.
+   Equivalent to minimizing KL(q || p).
+   Returns (fn [samples] -> MLX scalar)."
+  [log-p-fn log-q-fn]
+  (fn [samples]
+    (let [vmapped-p (mx/vmap log-p-fn)]
+      ;; Maximize E_q[log p(z)] — the log-q term is constant w.r.t. model params
+      (mx/mean (vmapped-p samples)))))
+
+(defn qwake-objective
+  "Q-Wake objective: trains the guide to approximate the posterior.
+   Uses self-normalized importance weights.
+   Returns (fn [samples] -> MLX scalar)."
+  [log-p-fn log-q-fn]
+  (fn [samples]
+    (let [vmapped-p (mx/vmap log-p-fn)
+          vmapped-q (mx/vmap log-q-fn)
+          log-p (vmapped-p samples)
+          log-q (vmapped-q samples)
+          ;; Self-normalized importance weights
+          log-w (mx/subtract log-p log-q)
+          log-w-norm (mx/subtract log-w (mx/logsumexp log-w))
+          w-norm (mx/exp log-w-norm)]
+      ;; Maximize E_p[log q(z)] ≈ sum_k w_k * log q(z_k)
+      (mx/sum (mx/multiply (mx/stop-gradient w-norm) log-q)))))
+
+(defn reinforce-estimator
+  "REINFORCE (score function) gradient estimator.
+   For non-reparameterizable distributions.
+   objective-fn: (fn [samples] -> MLX scalar)
+   log-q-fn: (fn [z] -> MLX scalar)
+   Returns (fn [samples] -> MLX scalar) with REINFORCE gradient."
+  [objective-fn log-q-fn]
+  (fn [samples]
+    (let [vmapped-q (mx/vmap log-q-fn)
+          log-q (vmapped-q samples)
+          obj-val (objective-fn samples)
+          ;; REINFORCE: (f(z) - baseline) * grad log q(z)
+          ;; We use mean as baseline for variance reduction
+          baseline (mx/stop-gradient (mx/mean log-q))]
+      ;; Return surrogate loss whose gradient equals REINFORCE estimator
+      (mx/add obj-val
+              (mx/mean (mx/multiply (mx/stop-gradient
+                                      (mx/subtract log-q baseline))
+                                    log-q))))))
+
+(defn programmable-vi
+  "Programmable variational inference with pluggable objectives and estimators.
+
+   opts:
+     :iterations       - number of optimization steps
+     :learning-rate    - Adam learning rate
+     :n-samples        - MC samples per gradient estimate
+     :objective        - :elbo (default), :iwelbo, :pwake, :qwake, or custom fn
+     :estimator        - :reparam (default) or :reinforce
+     :callback         - fn called each step
+     :key              - PRNG key
+
+   log-p-fn: (fn [z] -> MLX scalar) — model log-density
+   log-q-fn: (fn [z params] -> MLX scalar) — parameterized guide log-density
+   sample-fn: (fn [params key n] -> [n d] MLX array) — guide sampler
+   init-params: initial variational parameters (MLX array)
+
+   Returns {:params :loss-history}"
+  [{:keys [iterations learning-rate n-samples objective estimator callback key]
+    :or {iterations 1000 learning-rate 0.01 n-samples 10
+         objective :elbo estimator :reparam}}
+   log-p-fn log-q-fn sample-fn init-params]
+  (let [;; Build objective function
+        obj-builder (case objective
+                      :elbo (elbo-objective log-p-fn (fn [z] (log-q-fn z init-params)))
+                      :iwelbo (iwelbo-objective log-p-fn (fn [z] (log-q-fn z init-params)))
+                      :pwake (pwake-objective log-p-fn (fn [z] (log-q-fn z init-params)))
+                      :qwake (qwake-objective log-p-fn (fn [z] (log-q-fn z init-params)))
+                      ;; Custom objective function
+                      objective)
+        ;; Build loss function (parameterized)
+        loss-fn (fn [params iter-key]
+                  (let [samples (sample-fn params iter-key n-samples)
+                        ;; Rebuild objective with current params
+                        log-q-curr (fn [z] (log-q-fn z params))
+                        obj-fn (case objective
+                                 :elbo (elbo-objective log-p-fn log-q-curr)
+                                 :iwelbo (iwelbo-objective log-p-fn log-q-curr)
+                                 :pwake (pwake-objective log-p-fn log-q-curr)
+                                 :qwake (qwake-objective log-p-fn log-q-curr)
+                                 (fn [s] (objective log-p-fn log-q-curr s)))
+                        obj-val (if (= estimator :reinforce)
+                                  ((reinforce-estimator obj-fn log-q-curr) samples)
+                                  (obj-fn samples))]
+                    ;; We minimize negative objective
+                    (mx/negative obj-val)))
+        grad-loss (fn [params iter-key]
+                    (let [g (mx/grad (fn [p] (loss-fn p iter-key)))]
+                      {:loss (loss-fn params iter-key) :grad (g params)}))]
+    ;; Optimization loop
+    (loop [i 0 params init-params
+           opt-state (adam-state init-params)
+           losses (transient [])
+           rk key]
+      (if (>= i iterations)
+        {:params params :loss-history (persistent! losses)}
+        (let [[iter-key next-key] (rng/split-or-nils rk)
+              {:keys [loss grad]} (grad-loss params iter-key)
+              _ (mx/eval! loss grad)
+              loss-val (mx/item loss)
+              [params' opt-state'] (adam-step params grad opt-state
+                                              learning-rate 0.9 0.999 1e-8)]
+          (when callback
+            (callback {:iter i :loss loss-val}))
+          (recur (inc i) params' opt-state'
+                 (conj! losses loss-val) next-key))))))

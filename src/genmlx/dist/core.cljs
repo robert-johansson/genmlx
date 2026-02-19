@@ -54,9 +54,64 @@
 ;; THE single record for all distributions
 ;; ---------------------------------------------------------------------------
 
+(defn dist-propose [dist]
+  (let [v  (dist-sample dist nil)
+        lp (dist-log-prob dist v)]
+    {:choices (cm/->Value v) :weight lp :retval v}))
+
+(defn dist-assess [dist choices]
+  (if (cm/has-value? choices)
+    (let [v  (cm/get-value choices)
+          lp (dist-log-prob dist v)]
+      {:retval v :weight lp})
+    (throw (ex-info "assess requires fully-specified choices" {:dist (:type dist)}))))
+
 (defrecord Distribution [type params]
   p/IGenerativeFunction
   (simulate [this _] (dist-simulate this))
 
   p/IGenerate
-  (generate [this _ constraints] (dist-generate this constraints)))
+  (generate [this _ constraints] (dist-generate this constraints))
+
+  p/IAssess
+  (assess [this _ choices] (dist-assess this choices))
+
+  p/IPropose
+  (propose [this _] (dist-propose this)))
+
+;; ---------------------------------------------------------------------------
+;; Mixture distribution
+;; ---------------------------------------------------------------------------
+
+(defn mixture
+  "Create a mixture distribution from component distributions and log-weights.
+   components: vector of Distribution records
+   log-weights: MLX array of log mixing weights (unnormalized)"
+  [components log-weights]
+  (let [log-w (if (mx/array? log-weights) log-weights (mx/array log-weights))]
+    (->Distribution :mixture {:components components :log-weights log-w})))
+
+(defmethod dist-sample :mixture [d key]
+  (let [{:keys [components log-weights]} (:params d)
+        key (rng/ensure-key key)
+        [k1 k2] (rng/split key)
+        idx (mx/item (rng/categorical k1 log-weights))
+        component (nth components (int idx))]
+    (dist-sample component k2)))
+
+(defmethod dist-log-prob :mixture [d v]
+  (let [{:keys [components log-weights]} (:params d)
+        v (mx/ensure-array v)
+        ;; Normalize log-weights
+        log-norm-w (mx/subtract log-weights (mx/logsumexp log-weights))
+        n (count components)]
+    ;; Compute log p(v) = logsumexp_k(log w_k + log p_k(v))
+    ;; Stay in MLX graph: compute each log(w_k * p_k(v)) and reduce
+    (let [component-lps (mapv #(dist-log-prob % v) components)]
+      ;; Build sum via logaddexp chain to stay differentiable
+      (reduce (fn [acc i]
+                (mx/logaddexp acc
+                  (mx/add (mx/index log-norm-w i)
+                          (nth component-lps i))))
+              (mx/add (mx/index log-norm-w 0) (first component-lps))
+              (range 1 n)))))

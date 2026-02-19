@@ -87,4 +87,64 @@
              (let [[_support-args & support-body] support-clause]
                `(defmethod genmlx.dist.core/dist-support ~type-kw [~'d]
                   (let [~@params-let]
-                    ~@support-body))))))))
+                    ~@support-body)))))))
+
+   (defmacro defdist-transform
+     "Define a derived distribution via a deterministic transform of a base distribution.
+
+      Example:
+        (defdist-transform log-normal-t
+          \"Log-normal via exp transform of gaussian.\"
+          [mu sigma]
+          :base (gaussian mu sigma)
+          :forward exp     ;; forward transform: base -> derived
+          :inverse log     ;; inverse transform: derived -> base
+          :log-det-jac (fn [v] (negative (log v))))  ;; log |d(inverse)/dv|
+
+      Generates: constructor fn, sample method (sample base, apply forward),
+      log-prob method (inverse transform + base log-prob + log-det-jacobian)."
+     [dist-name & args]
+     (let [[docstr args] (if (string? (first args))
+                           [(first args) (rest args)]
+                           [nil args])
+           params (first args)
+           kv-args (apply hash-map (rest args))
+           type-kw (keyword (name dist-name))
+           base-expr (:base kv-args)
+           forward-sym (:forward kv-args)
+           inverse-sym (:inverse kv-args)
+           log-det-jac-expr (:log-det-jac kv-args)]
+       `(do
+          ~(let [ctor-body `(genmlx.dist.core/->Distribution
+                              ~type-kw
+                              ~(into {:base-dist-fn `(fn [~@params] ~base-expr)
+                                      :forward-fn `~forward-sym
+                                      :inverse-fn `~inverse-sym
+                                      :log-det-jac-fn `~log-det-jac-expr}
+                                     (map (fn [p] [(keyword (name p)) p]) params)))]
+             (if docstr
+               `(defn ~dist-name ~docstr ~params
+                  (let [~@(mapcat (fn [p] [p (list 'genmlx.mlx/ensure-array p)])
+                                  params)]
+                    ~ctor-body))
+               `(defn ~dist-name ~params
+                  (let [~@(mapcat (fn [p] [p (list 'genmlx.mlx/ensure-array p)])
+                                  params)]
+                    ~ctor-body))))
+
+          (defmethod genmlx.dist.core/dist-sample ~type-kw [~'d ~'raw-key#]
+            (let [params# (:params ~'d)
+                  base-d# (apply (:base-dist-fn params#)
+                                  (mapv #(get params# %) ~(mapv keyword (map name params))))
+                  base-val# (genmlx.dist.core/dist-sample base-d# ~'raw-key#)]
+              ((:forward-fn params#) base-val#)))
+
+          (defmethod genmlx.dist.core/dist-log-prob ~type-kw [~'d ~'raw-val#]
+            (let [params# (:params ~'d)
+                  v# (genmlx.mlx/ensure-array ~'raw-val#)
+                  inv-val# ((:inverse-fn params#) v#)
+                  base-d# (apply (:base-dist-fn params#)
+                                  (mapv #(get params# %) ~(mapv keyword (map name params))))
+                  base-lp# (genmlx.dist.core/dist-log-prob base-d# inv-val#)
+                  ldj# ((:log-det-jac-fn params#) v#)]
+              (genmlx.mlx/add base-lp# ldj#)))))))
