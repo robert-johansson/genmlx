@@ -7,7 +7,7 @@ using Apple's MLX framework for GPU acceleration on Apple Silicon. It implements
 the **Generative Function Interface (GFI)** — the same architecture as Gen.jl
 (Julia) and GenJAX (JAX).
 
-~2000 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
+~10,000 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
 
 ## How to run things
 
@@ -51,14 +51,20 @@ src/genmlx/
   dynamic.cljs          DynamicGF record (full GFI via handlers), vsimulate, vgenerate
   dist/core.cljs        Distribution record + open multimethods (sample, log-prob, sample-n)
   dist/macros.cljc      defdist macro (zero-boilerplate distribution definition)
-  dist.cljs             14 distributions (gaussian, uniform, bernoulli, beta, gamma, ...)
-  combinators.cljs      Map, Unfold, Switch
+  edit.cljs             Parametric edit interface (constraint, selection, proposal)
+  diff.cljs             Incremental change tracking
+  dist.cljs             27 distributions (gaussian, uniform, bernoulli, beta, gamma, ...)
+  combinators.cljs      Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Contramap/Dimap
   vectorized.cljs       VectorizedTrace, resampling, ESS, log-ML utilities
+  gradients.cljs        Choice gradients, score gradients
+  learning.cljs         Parameter stores, optimizers (SGD, Adam), wake-sleep
   inference/
     importance.cljs     IS, importance resampling, vectorized IS
-    mcmc.cljs           MH, MALA, HMC, NUTS
-    smc.cljs            SMC with rejuvenation, vsmc-init
-    vi.cljs             ADVI (mean-field Gaussian guide)
+    mcmc.cljs           MH, MALA, HMC, NUTS, Gibbs, Elliptical Slice, Involutive MCMC, MAP
+    smc.cljs            SMC with rejuvenation, csmc
+    smcp3.cljs          Sequential Monte Carlo with Probabilistic Program Proposals
+    vi.cljs             ADVI, programmable VI (ELBO, IWELBO, wake-sleep)
+    kernel.cljs         Kernel composition (chain, cycle, mix, repeat, seed)
     util.cljs           Weight materialization, normalization, MH accept
     diagnostics.cljs    ESS, R-hat, summary statistics
 
@@ -76,11 +82,11 @@ test/genmlx/
 ```
 Layer 0: MLX Foundation     (mlx, mlx.random)
 Layer 1: Core Data          (choicemap, trace, selection)
-Layer 2: GFI & Execution    (protocols, handler)
+Layer 2: GFI & Execution    (protocols, handler, edit, diff)
 Layer 3: DSL                (gen macro, dynamic — DynamicGF, vsimulate, vgenerate)
-Layer 4: Distributions      (dist/core, dist/macros, dist — 14 types)
-Layer 5: Combinators        (Map, Unfold, Switch)
-Layer 6: Inference          (IS, MH, MALA, HMC, NUTS, SMC, ADVI + vectorized variants)
+Layer 4: Distributions      (dist/core, dist/macros, dist — 27 types)
+Layer 5: Combinators        (Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Contramap/Dimap)
+Layer 6: Inference          (IS, MH, MALA, HMC, NUTS, Gibbs, SMC, SMCP3, VI, MAP + kernels)
 Layer 7: Vectorized         (VectorizedTrace, batched execution, 29-122x speedup)
 ```
 
@@ -108,16 +114,23 @@ Layer 7: Vectorized         (VectorizedTrace, batched execution, 29-122x speedup
 
 ```clojure
 (def model
-  (gen [args...]
-    (let [x (dyn/trace :addr (dist/gaussian 0 1))]  ;; sample or constrain
-      (dyn/splice :sub sub-model arg1 arg2)          ;; call sub-generative-fn
-      x)))
+  (gen [xs]
+    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
+          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+      (doseq [[j x] (map-indexed vector xs)]
+        (dyn/trace (keyword (str "y" j))
+                   (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                          intercept) 1)))
+      slope)))
 
 ;; GFI operations
 (p/simulate model args)                  ;; => Trace
 (p/generate model args constraints)      ;; => {:trace Trace :weight scalar}
 (p/update model trace new-constraints)   ;; => {:trace :weight :discard}
 (p/regenerate model trace selection)     ;; => {:trace :weight}
+(p/assess model args choices)            ;; => {:weight scalar}
+(p/project model trace selection)        ;; => scalar
+(p/edit model trace edit-request)        ;; => {:trace :weight :discard}
 
 ;; Vectorized (runs model body ONCE for N particles)
 (dyn/vsimulate model args n key)         ;; => VectorizedTrace
@@ -141,7 +154,7 @@ The key insight: MLX operations broadcast naturally. Sample `[N]` values
 instead of `[]` at each trace site, and all downstream arithmetic (log-prob,
 score accumulation, weight computation) just works.
 
-- `dist-sample-n` multimethod: 7 distributions have native batch sampling,
+- `dist-sample-n` multimethod: 10 distributions have native batch sampling,
   the rest fall back to sequential
 - Batched handler transitions: structurally identical to scalar ones
 - `VectorizedTrace`: choices where leaves hold `[N]`-shaped arrays
