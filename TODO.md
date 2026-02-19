@@ -466,7 +466,7 @@ Long-term (ecosystem):
 | 3. Distributions | 8 | 2 | 6 |
 | 4. Inference Algorithms | 4 | 2 | 2 |
 | 5. Combinators | 3 | 0 | 3 |
-| 6. Testing Gaps | 5 | 3 | 2 |
+| 6. Testing Gaps | 5 | 5 | 0 |
 | 7. Vectorization & Perf | 8 | 0 | 8 |
 | 8. Gradient Programming | 2 | 0 | 2 |
 | 9. Incremental Computation | 3 | 0 | 3 |
@@ -474,4 +474,4 @@ Long-term (ecosystem):
 | 11. Validation | 2 | 0 | 2 |
 | 12. Ecosystem | 6 | 0 | 6 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **12** | **55** |
+| **Total** | **67** | **14** | **53** |
