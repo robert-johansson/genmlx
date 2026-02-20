@@ -1,17 +1,64 @@
 (ns genmlx.handler
   "Handler-based execution — the heart of GenMLX.
-   Dynamic vars replace GenJAX's mutable handler stack. State flows through
-   a volatile! that never escapes the execution boundary.
 
-   Each handler is split into a pure transition function
-   (fn [state addr dist] -> [value state']) and a thin dispatch wrapper
-   that reads/writes the volatile."
+   ## Architecture
+
+   Each GFI operation (simulate, generate, update, regenerate, project) is
+   implemented as a **pure state transition**:
+
+       (fn [state addr dist] -> [value state'])
+
+   wrapped in a thin dispatcher that reads/writes a volatile!.
+
+   ## Handler state schemas
+
+   Each handler mode uses a plain map with a specific set of keys.  These
+   correspond to the handler state H(σ, τ) in the λ_MLX formalization:
+
+   | Mode       | Keys                                                          |
+   |------------|---------------------------------------------------------------|
+   | simulate   | :key :choices :score :executor                                |
+   | generate   | :key :choices :score :weight :constraints :executor           |
+   | update     | :key :choices :score :weight :constraints :old-choices        |
+   |            |   :discard :executor                                          |
+   | regenerate | :key :choices :score :weight :old-choices :selection :executor |
+   | project    | :key :choices :score :weight :old-choices :selection          |
+   |            |   :constraints :executor                                      |
+
+   Batched variants add :batch-size (int) and :batched? (true).
+   All other keys and semantics are identical — MLX broadcasting handles
+   the shape difference between scalar and [N]-shaped values.
+
+   ## Mutable boundary
+
+   The **only** mutable state in GenMLX is the volatile! created inside
+   `run-handler`.  It is allocated, written, and dereferenced within a
+   single `binding` block and never escapes.  The handler functions
+   (`simulate-handler`, `generate-handler`, etc.) are the only code that
+   touches it via `vreset!` / `vswap!`.
+
+   One external module (inference/adev.cljs) also writes `*state*` via
+   `vreset!` following the same handler pattern.
+
+   ## Dynamic scope
+
+   Three dynamic vars constitute the complete dynamic scope of the system:
+
+     *handler*     — active handler fn, bound by `run-handler`
+     *state*       — volatile! holding the handler state map, bound by `run-handler`
+     *param-store* — optional parameter store for trainable params,
+                     bound by `learning.cljs` and `inference/adev.cljs`
+
+   No other dynamic vars or global mutable state exists in GenMLX."
   (:require [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.selection :as sel]
             [genmlx.dist.core :as dc]))
 
+;; The three dynamic vars below are the complete dynamic scope of GenMLX.
+;; *handler* and *state* are bound exclusively by run-handler.
+;; *param-store* is bound by learning.cljs and inference/adev.cljs.
 (def ^:dynamic *handler* nil)
 (def ^:dynamic *state*   nil)
 (def ^:dynamic *param-store* nil)

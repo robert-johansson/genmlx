@@ -184,7 +184,12 @@
   (:retval (p/simulate gf (vec args))))
 
 ;; ---------------------------------------------------------------------------
-;; User-facing functions called inside gen bodies
+;; User-facing effect operations called inside gen bodies
+;;
+;; These three functions — trace, splice, param — are the COMPLETE set of
+;; effectful operations available within a `gen` body.  Everything else in a
+;; gen body is pure ClojureScript.  Each dispatches to the active handler
+;; (see handler.cljs) which performs the appropriate state transition.
 ;; ---------------------------------------------------------------------------
 
 (defn trace

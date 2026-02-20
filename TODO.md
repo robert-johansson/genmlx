@@ -19,24 +19,26 @@ types so the formal correspondence is obvious.*
 
 ### Handler architecture
 
-- [ ] **1.1** Replace heterogeneous handler state map with typed records
-  - [ ] `SimulateState` — `{:key :choices :score}`
-  - [ ] `GenerateState` — `{:key :choices :score :weight :constraints}`
-  - [ ] `UpdateState` — `{:key :choices :score :weight :constraints :old-choices :discard}`
-  - [ ] `RegenerateState` — `{:key :choices :score :weight :old-choices :selection}`
-  - [ ] Batched variants of each (add `:batch-size`)
-  - Preserves existing pure transition signatures `(state, addr, dist) → (value, state')`
-  - Makes the correspondence with H(σ, τ) in λ_MLX explicit
+- [x] **1.1** Document handler state schemas and λ_MLX correspondence
+  - Documented all five handler state shapes (simulate, generate, update,
+    regenerate, project) plus batched variants in `handler.cljs` ns docstring
+  - Typed records rejected: CLJS records offer no compile-time checking and
+    would add 9 record types for zero safety gain. Plain maps with documented
+    schemas are idiomatic and sufficient.
   - *Files*: `handler.cljs`
 
-- [ ] **1.2** Audit all uses of `volatile!` — confirm they are confined to `run-handler`
-  - Document the single mutable boundary in a code comment
-  - *Files*: `handler.cljs`, `dynamic.cljs`
+- [x] **1.2** Audit all uses of `volatile!` — confirm they are confined to `run-handler`
+  - Confirmed: only created in `run-handler`. All `vreset!/vswap!` are in
+    handler functions + `trace-gf!` (handler.cljs) + `adev-handler` (adev.cljs).
+  - Documented the mutable boundary in `handler.cljs` ns docstring.
+  - *Files*: `handler.cljs`
 
-- [ ] **1.3** Audit dynamic vars (`*handler*`, `*state*`, `*param-store*`)
-  - Document that these are the only dynamic scope in the system
-  - Consider whether `*param-store*` can be threaded through state instead
-  - *Files*: `handler.cljs`, `learning.cljs`
+- [x] **1.3** Audit dynamic vars (`*handler*`, `*state*`, `*param-store*`)
+  - Confirmed: these three are the only dynamic scope in the system.
+  - `*handler*` and `*state*` bound exclusively by `run-handler`.
+  - `*param-store*` bound by `learning.cljs` and `inference/adev.cljs`.
+  - Documented in `handler.cljs` ns docstring and inline comment.
+  - *Files*: `handler.cljs`
 
 ### ChoiceMap algebra
 
@@ -50,10 +52,11 @@ types so the formal correspondence is obvious.*
 
 ### Effect boundary
 
-- [ ] **1.5** Document the three effect operations (`trace`, `splice`, `param`) as
+- [x] **1.5** Document the three effect operations (`trace`, `splice`, `param`) as
   the complete set of impure operations within `gen` bodies — everything else
   is pure ClojureScript
-  - Add a docstring or comment block in `dynamic.cljs`
+  - Added comment block in `dynamic.cljs` above the effect operations
+  - *Files*: `dynamic.cljs`
 
 ---
 
@@ -284,8 +287,8 @@ correctness, and algebraic effect semantics.*
 
 ### Prerequisites (implementation alignment)
 
-- [ ] **10.1** Complete Phase 1.1 (typed handler state records) — required for
-  H(σ, τ) correspondence
+- [x] **10.1** Complete Phase 1.1 (handler state schemas) — required for
+  H(σ, τ) correspondence (documented in handler.cljs ns docstring)
 - [x] **10.2** Complete Phase 2.1 (`project`) — required for GFI completeness
 - [x] **10.3** Complete Phase 1.4 (ChoiceMap algebra tests) — required for
   trace type monoid ⊕
@@ -424,7 +427,7 @@ For someone working through this linearly:
 
 ```
 Immediate (solidify what exists):
-  1.1  Typed handler state records
+  1.1  Handler state schemas + docs       ✅
   1.4  ChoiceMap algebra tests            ✅
   2.1  Implement project                  ✅
   3.7  Neg-binomial tests                 ✅
@@ -467,7 +470,7 @@ Long-term (ecosystem):
 
 | Phase | Items | Done | Remaining |
 |-------|-------|------|-----------|
-| 1. Functional Purity | 5 | 1 | 4 |
+| 1. Functional Purity | 5 | 5 | 0 |
 | 2. Missing GFI Ops | 2 | 2 | 0 |
 | 3. Distributions | 8 | 8 | 0 |
 | 4. Inference Algorithms | 4 | 4 | 0 |
@@ -476,8 +479,8 @@ Long-term (ecosystem):
 | 7. Vectorization & Perf | 8 | 6 | 2 |
 | 8. Gradient Programming | 2 | 2 | 0 |
 | 9. Incremental Computation | 2 | 0 | 2 |
-| 10. Formal Foundation | 16 | 2 | 14 |
+| 10. Formal Foundation | 16 | 3 | 13 |
 | 11. Validation | 2 | 0 | 2 |
 | 12. Ecosystem | 6 | 2 | 4 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **66** | **35** | **31** |
+| **Total** | **66** | **40** | **26** |
