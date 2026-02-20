@@ -311,46 +311,52 @@ correctness, and algebraic effect semantics.*
 
 ### Formalization work
 
-- [ ] **10.4** Define λ_MLX type grammar formally (extending λ_GEN Figure 10)
+- [x] **10.4** Define λ_MLX type grammar formally (extending λ_GEN Figure 10)
   - Types, terms, handler states, edit requests, diff types
-  - Written in LAMBDA_MLX.md §3
+  - *File*: `formal/calculus.md`
 
-- [ ] **10.5** Define denotational semantics in QBS (extending λ_GEN Figure 11)
+- [x] **10.5** Define denotational semantics in QBS (extending λ_GEN Figure 11)
   - Handler transition semantics as state monad
-  - Written in LAMBDA_MLX.md §4
+  - *File*: `formal/semantics.md`
 
-- [ ] **10.6** Define generate{−}, update{−}, regenerate{−}, edit{−} as program
+- [x] **10.6** Define generate{−}, update{−}, regenerate{−}, edit{−} as program
   transformations (extending λ_GEN Figure 12's simulate{−} and assess{−})
-  - Written in LAMBDA_MLX.md §6
+  - *File*: `formal/transformations.md`
 
-- [ ] **10.7** Prove Proposition: correctness of generate and update
+- [x] **10.7** Prove Proposition: correctness of generate and update
   - Analogous to λ_GEN Proposition 3.1
   - generate weight = log p(observations | args)
   - update weight = log p(new_choices | args) - log p(old_choices | args)
+  - *File*: `formal/proofs/correctness.md`
 
-- [ ] **10.8** Prove broadcasting correctness theorem
+- [x] **10.8** Prove broadcasting correctness theorem
   - Analogous to λ_GEN Theorem 3.3 but for broadcasting instead of vmap
   - Key lemma: handler shape-agnosticism preserves logical relations
-  - Written in LAMBDA_MLX.md §5.3
+  - *File*: `formal/proofs/broadcasting.md`
 
-- [ ] **10.9** Prove broadcasting commutativity corollary
+- [x] **10.9** Prove broadcasting commutativity corollary
   - Analogous to λ_GEN Corollary 3.4
   - Broadcasting-based vectorized inference = N independent sequential runs
+  - *File*: `formal/proofs/broadcasting.md`
 
-- [ ] **10.10** Prove handler soundness
+- [x] **10.10** Prove handler soundness
   - Each handler mode correctly implements its GFI operation
   - By induction on trace effect operations
+  - *File*: `formal/proofs/handler-soundness.md`
 
-- [ ] **10.11** Prove combinator compositionality
-  - GFI contracts preserved by Map, Unfold, Switch, Scan, Mask, Mix
+- [x] **10.11** Prove combinator compositionality
+  - GFI contracts preserved by Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Contramap, Dimap
+  - *File*: `formal/proofs/combinators.md`
 
-- [ ] **10.12** Prove edit/backward duality
+- [x] **10.12** Prove edit/backward duality
   - Backward request correctly inverts forward transformation
   - MH acceptance ratio is valid
+  - *File*: `formal/proofs/edit-duality.md`
 
-- [ ] **10.13** Prove diff-aware update correctness
+- [x] **10.13** Prove diff-aware update correctness
   - MapCombinator vector-diff: only changed elements re-executed
   - Total weight = sum of per-element weight changes
+  - *File*: `formal/proofs/diff-update.md`
 
 ### Trace type annotations (optional, aids formalization)
 
@@ -497,8 +503,8 @@ Long-term (ecosystem):
 | 7. Vectorization & Perf | 9 | 7 | 2 |
 | 8. Gradient Programming | 2 | 2 | 0 |
 | 9. Incremental Computation | 2 | 1 | 1 |
-| 10. Formal Foundation | 16 | 3 | 13 |
+| 10. Formal Foundation | 16 | 13 | 3 |
 | 11. Validation | 2 | 1 | 1 |
 | 12. Ecosystem | 6 | 2 | 4 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **43** | **24** |
+| **Total** | **67** | **53** | **14** |
