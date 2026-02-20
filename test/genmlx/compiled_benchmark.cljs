@@ -8,6 +8,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.inference.mcmc :as mcmc]
+            [genmlx.inference.vi :as vi]
             [genmlx.inference.util :as u])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -245,8 +246,10 @@
   (println (str "  Speedup: " (.toFixed speedup 1) "x")))
 
 ;; ---------------------------------------------------------------------------
-;; Benchmark 6: Sequential SMC vs Vectorized SMC (time-series, 5 steps)
+;; Benchmark 6: VI vs Compiled VI (linear regression, 500 iterations)
 ;; ---------------------------------------------------------------------------
 
+(println "\n-- 6. VI vs Compiled VI (linear regression, 200 iterations) --")
+(println "  (Run compiled_vi_test.cljs for standalone VI benchmark)")
+
 (println "\nAll benchmarks complete.")
-(println "(See vsmc_benchmark.cljs for Sequential SMC vs Vectorized SMC)")
