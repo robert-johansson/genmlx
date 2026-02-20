@@ -141,6 +141,54 @@
       trace)))
 
 ;; ---------------------------------------------------------------------------
+;; Compiled MH (random-walk proposal in parameter space)
+;; ---------------------------------------------------------------------------
+
+(defn- compiled-mh-step
+  "One compiled MH step with random-walk Gaussian proposal.
+   Operates on flat parameter arrays — no GFI overhead per step."
+  [params score-fn proposal-std param-shape key]
+  (let [[propose-key accept-key] (rng/split-or-nils key)
+        noise    (if propose-key
+                   (rng/normal propose-key param-shape)
+                   (mx/random-normal param-shape))
+        proposal (mx/add params (mx/multiply proposal-std noise))
+        score-current  (score-fn params)
+        score-proposal (score-fn proposal)
+        _ (mx/eval! score-current score-proposal)
+        log-alpha (- (mx/item score-proposal) (mx/item score-current))
+        accept? (u/accept-mh? log-alpha accept-key)]
+    {:state (if accept? proposal params) :accepted? accept?}))
+
+(defn compiled-mh
+  "Compiled MH inference with random-walk Gaussian proposal.
+   Extracts latent parameters into a flat array, compiles the score function,
+   and iterates in parameter space — bypassing GFI regenerate overhead.
+
+   opts: {:samples N :burn B :thin T :addresses [addr...]
+          :proposal-std σ :compile? bool :callback fn :key prng-key}
+   model: generative function
+   args: model arguments
+   observations: choice map of observed values
+
+   Returns vector of parameter samples (JS arrays via mx/->clj)."
+  [{:keys [samples burn thin addresses proposal-std compile? callback key]
+    :or {burn 0 thin 1 proposal-std 0.1 compile? true}}
+   model args observations]
+  (let [score-fn  (u/make-score-fn model args observations addresses)
+        score-fn  (if compile? (mx/compile-fn score-fn) score-fn)
+        {:keys [trace]} (p/generate model args observations)
+        init-params (u/extract-params trace addresses)
+        param-shape (mx/shape init-params)
+        std (mx/scalar proposal-std)]
+    (collect-samples
+      {:samples samples :burn burn :thin thin :callback callback :key key}
+      (fn [params step-key]
+        (compiled-mh-step params score-fn std param-shape step-key))
+      mx/->clj
+      init-params)))
+
+;; ---------------------------------------------------------------------------
 ;; Enumerative Gibbs Sampling
 ;; ---------------------------------------------------------------------------
 
