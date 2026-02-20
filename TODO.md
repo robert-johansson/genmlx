@@ -231,7 +231,7 @@ broader batch sampling support.*
   - 24.5x speedup over sequential SMC (50 particles, 5 steps)
   ~100 lines
 
-- [ ] **7.6** Compile VI optimization loop
+- [x] **7.6** Compile VI optimization loop
   ~50 lines
 
 ### Benchmarking
