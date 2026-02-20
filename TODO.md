@@ -134,11 +134,11 @@ broadcasted-normal
   - ~80 lines
   - *File*: `inference/vi.cljs`
 
-- [ ] **4.4** ADEV gradient estimation
+- [x] **4.4** ADEV gradient estimation
   - Sound automatic differentiation of expected values
   - Integrates with `mx/grad` / `mx/value-and-grad`
   - ~100 lines
-  - *File*: new `inference/adev.cljs`
+  - *File*: `inference/adev.cljs`
 
 ---
 
@@ -458,7 +458,7 @@ Medium-term (formal foundation):
   10.7–10.9  Core theorems
 
 Long-term (ecosystem):
-  4.3–4.4  VIMCO, ADEV
+  4.3–4.4  VIMCO, ADEV                ✅
   8.1–8.2  Custom gradients
   9.1–9.3  Incremental computation
   11.1–11.2  Validation
@@ -475,7 +475,7 @@ Long-term (ecosystem):
 | 1. Functional Purity | 5 | 1 | 4 |
 | 2. Missing GFI Ops | 2 | 2 | 0 |
 | 3. Distributions | 8 | 8 | 0 |
-| 4. Inference Algorithms | 4 | 3 | 1 |
+| 4. Inference Algorithms | 4 | 4 | 0 |
 | 5. Combinators | 3 | 3 | 0 |
 | 6. Testing Gaps | 5 | 5 | 0 |
 | 7. Vectorization & Perf | 8 | 6 | 2 |
@@ -485,4 +485,4 @@ Long-term (ecosystem):
 | 11. Validation | 2 | 0 | 2 |
 | 12. Ecosystem | 6 | 0 | 6 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **30** | **37** |
+| **Total** | **67** | **31** | **36** |
