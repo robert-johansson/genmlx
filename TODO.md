@@ -207,10 +207,10 @@ broader batch sampling support.*
 
 ### Vectorized inference completeness
 
-- [ ] **7.2** Vectorized splice support in batched mode
-  - Currently unsupported; sub-GF calls error in batched handlers
-  - Explore the paper's `cond`/`select_p` approach (§3.5) for safe cases
-  - At minimum: support splice when sub-GF has no data-dependent control flow
+- [x] **7.2** Vectorized splice support in batched mode
+  - DynamicGF sub-GFs run under batched handlers (simulate, generate, update, regenerate)
+  - Nested splice (3+ levels) supported
+  - Non-DynamicGF splice (combinators) still throws with clear error
 
 - [x] **7.3** Vectorized MCMC (batched MH chains)
   - Run N independent MH chains in parallel via broadcasting
@@ -478,11 +478,11 @@ Long-term (ecosystem):
 | 4. Inference Algorithms | 4 | 3 | 1 |
 | 5. Combinators | 3 | 3 | 0 |
 | 6. Testing Gaps | 5 | 5 | 0 |
-| 7. Vectorization & Perf | 8 | 5 | 3 |
+| 7. Vectorization & Perf | 8 | 6 | 2 |
 | 8. Gradient Programming | 2 | 0 | 2 |
 | 9. Incremental Computation | 3 | 0 | 3 |
 | 10. Formal Foundation | 16 | 2 | 14 |
 | 11. Validation | 2 | 0 | 2 |
 | 12. Ecosystem | 6 | 0 | 6 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **29** | **38** |
+| **Total** | **67** | **30** | **37** |

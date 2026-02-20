@@ -6,6 +6,7 @@
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
+            [genmlx.selection :as sel]
             [genmlx.vectorized :as vec]
             [genmlx.inference.importance :as is]
             [genmlx.inference.smc :as smc])
@@ -275,21 +276,172 @@
   (assert-true "vsmc-init log-ml is finite" (js/isFinite (mx/realize log-ml-estimate))))
 
 ;; ---------------------------------------------------------------------------
-;; Step 9: splice guard
+;; Step 9: vectorized splice (batched sub-GF calls)
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- splice guard in batched mode --")
+(println "\n-- vectorized splice: vsimulate --")
 
-(let [sub-model (gen [] (dyn/trace :z (dist/gaussian 0 1)))
+(let [sub-model (gen []
+                  (dyn/trace :z (dist/gaussian 0 1))
+                  (dyn/trace :w (dist/uniform -1 1))
+                  nil)
       model (gen []
-              (dyn/splice :sub sub-model)
+              (let [x (dyn/trace :x (dist/gaussian 0 10))]
+                (dyn/splice :sub sub-model)
+                x))
+      n 50
+      key (rng/fresh-key)
+      vtrace (dyn/vsimulate model [] n key)]
+  (assert-true "vsimulate+splice returns VectorizedTrace"
+               (instance? vec/VectorizedTrace vtrace))
+  ;; Top-level :x should be [N]-shaped
+  (let [x-val (cm/get-value (cm/get-submap (:choices vtrace) :x))]
+    (mx/eval! x-val)
+    (assert-equal "splice vsimulate :x shape" [n] (mx/shape x-val)))
+  ;; Nested :sub :z and :sub :w should be [N]-shaped
+  (let [sub-cm (cm/get-submap (:choices vtrace) :sub)
+        z-val (cm/get-value (cm/get-submap sub-cm :z))
+        w-val (cm/get-value (cm/get-submap sub-cm :w))]
+    (mx/eval! z-val w-val)
+    (assert-equal "splice vsimulate :sub :z shape" [n] (mx/shape z-val))
+    (assert-equal "splice vsimulate :sub :w shape" [n] (mx/shape w-val)))
+  ;; Score should be [N]-shaped
+  (let [score (:score vtrace)]
+    (mx/eval! score)
+    (assert-equal "splice vsimulate score shape" [n] (mx/shape score))))
+
+(println "\n-- vectorized splice: vgenerate --")
+
+(let [sub-model (gen [mu]
+                  (dyn/trace :z (dist/gaussian mu 1))
+                  nil)
+      model (gen []
+              (let [x (dyn/trace :x (dist/gaussian 0 10))]
+                (dyn/splice :sub sub-model x)
+                x))
+      n 50
+      key (rng/fresh-key)
+      ;; Constrain the sub-model's :z site via hierarchical choicemap
+      obs (cm/choicemap :sub (cm/choicemap :z (mx/scalar 2.0)))
+      vtrace (dyn/vgenerate model [] obs n key)]
+  (assert-true "vgenerate+splice returns VectorizedTrace"
+               (instance? vec/VectorizedTrace vtrace))
+  ;; :x should be [N]-shaped (unconstrained)
+  (let [x-val (cm/get-value (cm/get-submap (:choices vtrace) :x))]
+    (mx/eval! x-val)
+    (assert-equal "splice vgenerate :x shape" [n] (mx/shape x-val)))
+  ;; :sub :z should be constrained scalar
+  (let [sub-cm (cm/get-submap (:choices vtrace) :sub)
+        z-val (cm/get-value (cm/get-submap sub-cm :z))]
+    (mx/eval! z-val)
+    (assert-close "splice vgenerate :sub :z constrained" 2.0 (mx/realize z-val) 0.001))
+  ;; Weight should be [N]-shaped (log-prob depends on [N]-shaped x)
+  (let [w (:weight vtrace)]
+    (mx/eval! w)
+    (assert-equal "splice vgenerate weight shape" [n] (mx/shape w))))
+
+(println "\n-- vectorized splice: vupdate --")
+
+(let [sub-model (gen []
+                  (dyn/trace :z (dist/gaussian 0 1))
+                  nil)
+      model (gen []
+              (let [x (dyn/trace :x (dist/gaussian 0 10))]
+                (dyn/splice :sub sub-model)
+                x))
+      n 50
+      key (rng/fresh-key)
+      [k1 k2] (rng/split key)
+      vtrace (dyn/vsimulate model [] n k1)
+      ;; Update: constrain :sub :z to a new value
+      new-obs (cm/choicemap :sub (cm/choicemap :z (mx/scalar 3.0)))
+      {:keys [vtrace weight]} (dyn/vupdate model vtrace new-obs k2)]
+  (assert-true "vupdate+splice returns VectorizedTrace"
+               (instance? vec/VectorizedTrace vtrace))
+  ;; :sub :z should now be 3.0
+  (let [sub-cm (cm/get-submap (:choices vtrace) :sub)
+        z-val (cm/get-value (cm/get-submap sub-cm :z))]
+    (mx/eval! z-val)
+    (assert-close "splice vupdate :sub :z updated" 3.0 (mx/realize z-val) 0.001))
+  ;; Weight should be [N]-shaped
+  (mx/eval! weight)
+  (assert-equal "splice vupdate weight shape" [n] (mx/shape weight)))
+
+(println "\n-- vectorized splice: vregenerate --")
+
+(let [sub-model (gen []
+                  (dyn/trace :z (dist/gaussian 0 1))
+                  nil)
+      model (gen []
+              (let [x (dyn/trace :x (dist/gaussian 0 10))]
+                (dyn/splice :sub sub-model)
+                x))
+      n 50
+      key (rng/fresh-key)
+      [k1 k2] (rng/split key)
+      vtrace (dyn/vsimulate model [] n k1)
+      ;; Regenerate: resample :sub :z
+      sel (sel/hierarchical :sub (sel/select :z))
+      {:keys [vtrace weight]} (dyn/vregenerate model vtrace sel k2)]
+  (assert-true "vregenerate+splice returns VectorizedTrace"
+               (instance? vec/VectorizedTrace vtrace))
+  ;; :sub :z should be [N]-shaped (resampled)
+  (let [sub-cm (cm/get-submap (:choices vtrace) :sub)
+        z-val (cm/get-value (cm/get-submap sub-cm :z))]
+    (mx/eval! z-val)
+    (assert-equal "splice vregenerate :sub :z shape" [n] (mx/shape z-val)))
+  ;; Weight should be [N]-shaped
+  (mx/eval! weight)
+  (assert-equal "splice vregenerate weight shape" [n] (mx/shape weight)))
+
+(println "\n-- vectorized splice: non-DynamicGF guard --")
+
+(let [;; A distribution used as a GF has no :body-fn
+      model (gen []
+              (dyn/splice :d (dist/gaussian 0 1))
               nil)
       caught? (try
                 (dyn/vsimulate model [] 10 nil)
                 false
                 (catch :default e
-                  (boolean (re-find #"splice" (.-message e)))))]
-  (assert-true "splice in batched mode throws" caught?))
+                  (boolean (re-find #"non-DynamicGF" (.-message e)))))]
+  (assert-true "non-DynamicGF splice in batched mode throws" caught?))
+
+(println "\n-- vectorized splice: nested (3 levels) --")
+
+(let [inner (gen []
+              (dyn/trace :a (dist/gaussian 0 1)))
+      middle (gen []
+               (dyn/trace :b (dist/uniform -1 1))
+               (dyn/splice :inner inner))
+      outer (gen []
+              (dyn/trace :c (dist/exponential 1.0))
+              (dyn/splice :mid middle)
+              nil)
+      n 50
+      key (rng/fresh-key)
+      vtrace (dyn/vsimulate outer [] n key)]
+  (assert-true "nested splice returns VectorizedTrace"
+               (instance? vec/VectorizedTrace vtrace))
+  ;; :c at top level
+  (let [c-val (cm/get-value (cm/get-submap (:choices vtrace) :c))]
+    (mx/eval! c-val)
+    (assert-equal "nested splice :c shape" [n] (mx/shape c-val)))
+  ;; :mid :b
+  (let [mid-cm (cm/get-submap (:choices vtrace) :mid)
+        b-val (cm/get-value (cm/get-submap mid-cm :b))]
+    (mx/eval! b-val)
+    (assert-equal "nested splice :mid :b shape" [n] (mx/shape b-val)))
+  ;; :mid :inner :a
+  (let [mid-cm (cm/get-submap (:choices vtrace) :mid)
+        inner-cm (cm/get-submap mid-cm :inner)
+        a-val (cm/get-value (cm/get-submap inner-cm :a))]
+    (mx/eval! a-val)
+    (assert-equal "nested splice :mid :inner :a shape" [n] (mx/shape a-val)))
+  ;; Score should be [N]-shaped
+  (let [score (:score vtrace)]
+    (mx/eval! score)
+    (assert-equal "nested splice score shape" [n] (mx/shape score))))
 
 ;; ---------------------------------------------------------------------------
 ;; Step 10: sequential fallback for beta (non-batchable)

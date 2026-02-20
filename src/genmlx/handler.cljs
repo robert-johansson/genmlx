@@ -16,6 +16,8 @@
 (def ^:dynamic *state*   nil)
 (def ^:dynamic *param-store* nil)
 
+(declare run-handler)
+
 ;; ---------------------------------------------------------------------------
 ;; Pure state transitions
 ;; ---------------------------------------------------------------------------
@@ -301,16 +303,76 @@
       (:discard sub-result)
       (update :discard #(cm/set-choice % [addr] (:discard sub-result))))))
 
+(defn- batched-splice-transition
+  "Pure: execute a DynamicGF sub-GF in batched mode at the given address.
+   Splits the parent key, runs the sub-GF body under the appropriate batched
+   handler, and merges the sub-result back into parent state."
+  [state addr gf args]
+  (let [[k1 k2] (rng/split (:key state))
+        n (:batch-size state)
+        ;; Extract scoped state for this splice address
+        sub-constraints (cm/get-submap (:constraints state) addr)
+        sub-old-choices (cm/get-submap (:old-choices state) addr)
+        sub-selection   (when-let [s (:selection state)]
+                          (sel/get-subselection s addr))
+        body-fn (:body-fn gf)
+        ;; Choose handler + build init-state based on mode
+        [handler init-state]
+        (cond
+          ;; Regenerate mode
+          sub-selection
+          [batched-regenerate-handler
+           {:choices cm/EMPTY :score (mx/scalar 0.0)
+            :weight (mx/scalar 0.0) :key k2
+            :selection sub-selection
+            :old-choices (or sub-old-choices cm/EMPTY)
+            :batch-size n :batched? true}]
+
+          ;; Update mode
+          (and sub-old-choices (not= sub-old-choices cm/EMPTY))
+          [batched-update-handler
+           {:choices cm/EMPTY :score (mx/scalar 0.0)
+            :weight (mx/scalar 0.0) :key k2
+            :constraints (or sub-constraints cm/EMPTY)
+            :old-choices sub-old-choices
+            :discard cm/EMPTY
+            :batch-size n :batched? true}]
+
+          ;; Generate mode
+          (and sub-constraints (not= sub-constraints cm/EMPTY))
+          [batched-generate-handler
+           {:choices cm/EMPTY :score (mx/scalar 0.0)
+            :weight (mx/scalar 0.0) :key k2
+            :constraints sub-constraints
+            :batch-size n :batched? true}]
+
+          ;; Simulate mode
+          :else
+          [batched-simulate-handler
+           {:choices cm/EMPTY :score (mx/scalar 0.0)
+            :key k2 :batch-size n :batched? true}])
+        ;; Run sub-GF body under the chosen batched handler
+        sub-result (run-handler handler init-state
+                     #(apply body-fn args))
+        ;; Merge sub-result into parent state, advance parent key
+        state' (-> state
+                 (assoc :key k1)
+                 (merge-sub-result addr sub-result))]
+    [state' (:retval sub-result)]))
+
 (defn trace-gf!
   "Call a sub-generative-function at the given address namespace."
   [addr gf args]
   (if *handler*
-    (do
-      ;; Guard: splice not supported in batched mode
-      (when (:batched? @*state*)
-        (throw (ex-info "splice (sub-GF calls) not supported in batched/vectorized mode"
+    (if (:batched? @*state*)
+      ;; Batched mode: only DynamicGF (with :body-fn) is supported
+      (if (:body-fn gf)
+        (let [[state' retval] (batched-splice-transition @*state* addr gf args)]
+          (vreset! *state* state')
+          retval)
+        (throw (ex-info "splice of non-DynamicGF not supported in batched/vectorized mode"
                         {:addr addr})))
-      ;; Delegate to sub-execution with scoped constraints/state
+      ;; Scalar mode: delegate to sub-execution with scoped constraints/state
       (let [state @*state*
             sub-constraints (cm/get-submap (:constraints state) addr)
             sub-old-choices (cm/get-submap (:old-choices state) addr)
