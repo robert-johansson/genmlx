@@ -313,6 +313,41 @@
                                       (mx/subtract log-q baseline))
                                     log-q))))))
 
+(defn vimco-objective
+  "VIMCO (Variational Inference with Multi-sample Objectives) estimator.
+   Uses leave-one-out control variates for lower-variance gradients than
+   REINFORCE, and provides a tighter bound than single-sample ELBO.
+   log-p-fn: (fn [z] -> MLX scalar) — model log-density
+   log-q-fn: (fn [z] -> MLX scalar) — guide log-density
+   Returns (fn [samples] -> MLX scalar) where samples is [K d]."
+  [log-p-fn log-q-fn]
+  (fn [samples]
+    (let [vmapped-p (mx/vmap log-p-fn)
+          vmapped-q (mx/vmap log-q-fn)
+          log-p (vmapped-p samples)
+          log-q (vmapped-q samples)
+          log-w (mx/subtract log-p log-q)
+          K (first (mx/shape samples))
+          log-K (mx/scalar (js/Math.log K))
+          ;; IWELBO estimate: L̂ = logsumexp(log_w) - log(K)
+          L-hat (mx/subtract (mx/logsumexp log-w) log-K)
+          ;; Leave-one-out geometric means:
+          ;; loo_mean_k = (sum(log_w) - log_w_k) / (K-1)
+          loo-mean (mx/divide (mx/subtract (mx/sum log-w) log-w)
+                              (mx/scalar (dec K)))
+          ;; Build [K,K] matrix: row k has all log_w values,
+          ;; with diagonal (k,k) replaced by loo_mean_k
+          off-diag (mx/broadcast-to (mx/reshape log-w [1 K]) [K K])
+          loo-bcast (mx/broadcast-to (mx/reshape loo-mean [K 1]) [K K])
+          loo-matrix (mx/where (mx/eye K) loo-bcast off-diag)
+          ;; Baselines: L̂_{-k} = logsumexp(loo_matrix[k,:]) - log(K)
+          baselines (mx/subtract (mx/logsumexp loo-matrix [1]) log-K)
+          ;; REINFORCE signal with leave-one-out baseline
+          signal (mx/stop-gradient (mx/subtract L-hat baselines))
+          reinforce-term (mx/mean (mx/multiply signal log-q))]
+      ;; Surrogate loss: gradient equals VIMCO estimator
+      (mx/add L-hat reinforce-term))))
+
 (defn programmable-vi
   "Programmable variational inference with pluggable objectives and estimators.
 
@@ -343,6 +378,7 @@
                         obj-fn (case objective
                                  :elbo (elbo-objective log-p-fn log-q-curr)
                                  :iwelbo (iwelbo-objective log-p-fn log-q-curr)
+                                 :vimco (vimco-objective log-p-fn log-q-curr)
                                  :pwake (pwake-objective log-p-fn log-q-curr)
                                  :qwake (qwake-objective log-p-fn log-q-curr)
                                  (fn [s] (objective log-p-fn log-q-curr s)))
@@ -390,6 +426,7 @@
                         obj-fn (case objective
                                  :elbo (elbo-objective log-p-fn log-q-curr)
                                  :iwelbo (iwelbo-objective log-p-fn log-q-curr)
+                                 :vimco (vimco-objective log-p-fn log-q-curr)
                                  :pwake (pwake-objective log-p-fn log-q-curr)
                                  :qwake (qwake-objective log-p-fn log-q-curr)
                                  (fn [s] (objective log-p-fn log-q-curr s)))
@@ -420,3 +457,14 @@
             (callback {:iter i :loss loss-val}))
           (recur (inc i) params' opt-state'
                  (conj! losses loss-val) next-key))))))
+
+(defn vimco
+  "VIMCO: Variational Inference with Multi-sample Objectives.
+   Convenience wrapper around programmable-vi with :vimco objective.
+   Uses leave-one-out control variates for lower-variance gradients.
+
+   opts: same as programmable-vi (without :objective)
+   Returns {:params :loss-history}"
+  [opts log-p-fn log-q-fn sample-fn init-params]
+  (programmable-vi (assoc opts :objective :vimco)
+                   log-p-fn log-q-fn sample-fn init-params))

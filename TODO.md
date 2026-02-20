@@ -129,7 +129,7 @@ broadcasted-normal
   - ~50 lines
   - *Files*: `inference/mcmc.cljs`, `test/genmlx/map_test.cljs`
 
-- [ ] **4.3** VIMCO — `(vimco model guide args observations)`
+- [x] **4.3** VIMCO — `(vimco model guide args observations)`
   - Variational inference with multi-sample objective
   - ~80 lines
   - *File*: `inference/vi.cljs`
@@ -475,7 +475,7 @@ Long-term (ecosystem):
 | 1. Functional Purity | 5 | 1 | 4 |
 | 2. Missing GFI Ops | 2 | 2 | 0 |
 | 3. Distributions | 8 | 8 | 0 |
-| 4. Inference Algorithms | 4 | 2 | 2 |
+| 4. Inference Algorithms | 4 | 3 | 1 |
 | 5. Combinators | 3 | 3 | 0 |
 | 6. Testing Gaps | 5 | 5 | 0 |
 | 7. Vectorization & Perf | 8 | 5 | 3 |
@@ -485,4 +485,4 @@ Long-term (ecosystem):
 | 11. Validation | 2 | 0 | 2 |
 | 12. Ecosystem | 6 | 0 | 6 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **28** | **39** |
+| **Total** | **67** | **29** | **38** |
