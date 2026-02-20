@@ -379,10 +379,10 @@ and interop. Each sub-project is independently valuable.*
   - Training utilities using MLX's native nn.valueAndGrad + optimizers
   - *Files*: `mlx.cljs`, `nn.cljs`, `test/genmlx/nn_test.cljs`
 
-- [ ] **12.2** Amortized inference via trained neural proposals
-  - Train a neural network to approximate the posterior
-  - Use as proposal in MH or SMC
-  - Builds on 12.1 + wake-sleep learning
+- [x] **12.2** Amortized inference via trained neural proposals
+  - Reparameterized ELBO training (VAE-style) via nn.valueAndGrad
+  - Neural importance sampling using trained guide as proposal
+  - *Files*: `inference/amortized.cljs`, `test/genmlx/amortized_test.cljs`
 
 - [ ] **12.3** Visualization (GenStudio-inspired)
   - `plot-trace`, `plot-posterior`, `animate-smc`
@@ -483,6 +483,6 @@ Long-term (ecosystem):
 | 9. Incremental Computation | 3 | 0 | 3 |
 | 10. Formal Foundation | 16 | 2 | 14 |
 | 11. Validation | 2 | 0 | 2 |
-| 12. Ecosystem | 6 | 1 | 5 |
+| 12. Ecosystem | 6 | 2 | 4 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **34** | **33** |
+| **Total** | **67** | **35** | **32** |
