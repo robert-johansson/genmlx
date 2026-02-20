@@ -117,7 +117,34 @@ sums over all constrained addresses.
 
 The combined score w₁ · w₂ = Π_a density(u(a)) is the joint density
 of the full trace (product of per-site densities), which equals
-dμ/dν(u) by the product structure of the stock measure. ∎
+dμ/dν(u) by the product structure of the stock measure.
+
+**Measure-theoretic detail:** The disjoint grading condition
+keys(grade(t₁)) ∩ keys(grade(t₂)) = ∅ ensures the trace types are
+disjoint: γ₁ ∩ γ₂ = ∅. The combined trace measure decomposes as:
+
+```
+μ_{t₁ ⊕ t₂} = μ_{t₁} ⊗ μ_{t₂ | x}
+```
+
+where μ_{t₂ | x} is the trace measure of t₂ parameterized by the
+return value x of t₁. The stock measure similarly decomposes:
+
+```
+ν_{γ₁ ⊕ γ₂} = ν_{γ₁} ⊗ ν_{γ₂}
+```
+
+The generate weight for the combined term is:
+
+```
+w_c = Σ_{a ∈ dom(obs) ∩ γ₁} log density(obs(a))
+    + Σ_{a ∈ dom(obs) ∩ γ₂} log density(obs(a))
+```
+
+This equals the sum of constrained log-densities over all addresses
+in dom(obs), which is the marginal density of the observations under
+the joint trace distribution — the correct importance weight for
+conditioning on obs. ∎
 
 ---
 
@@ -186,20 +213,84 @@ The discard disc₁ ⊕ disc₂ contains old values at all changed addresses.
 
 ### Key Lemma: Constraint Propagation Preserves Absolute Continuity
 
-If μ ≪ ν (the trace distribution is absolutely continuous w.r.t. the
-stock measure), and we modify the trace at finitely many addresses, then
-the resulting distribution μ' is still absolutely continuous w.r.t. ν.
+**Lemma.** If μ ≪ ν (the trace distribution is absolutely continuous
+w.r.t. the stock measure), and we modify the trace at finitely many
+addresses, then the resulting distribution μ' is still absolutely
+continuous w.r.t. ν.
 
-**Proof:** Modifying finitely many coordinates of a product measure
-preserves absolute continuity — the modified density is:
+**Proof.** The stock measure on a trace type γ = {a₁ : η₁, …, aₖ : ηₖ}
+is the product measure:
 
 ```
-dμ'/dν(u') = Π_{a ∈ changed} density_{d_a}(u'(a))
-             · Π_{a ∉ changed} density_{d_a}(u(a))
+ν_γ = ν_{η₁} ⊗ ν_{η₂} ⊗ ⋯ ⊗ ν_{ηₖ}
 ```
 
-which remains a valid density since each factor density_{d_a}(·) is
-finite and non-negative. ∎
+where each factor is Lebesgue (for continuous) or counting (for discrete).
+By hypothesis, μ ≪ ν_γ, so the Radon-Nikodym density exists:
+
+```
+w(u) = dμ/dν_γ(u) = dμ/d(ν_{η₁} ⊗ ⋯ ⊗ ν_{ηₖ})(u₁, …, uₖ)
+```
+
+Now consider an update that modifies addresses in a set S ⊆ {a₁,…,aₖ}.
+The trace type γ decomposes as a product γ = γ_S × γ_{S^c}, and the
+stock measure decomposes correspondingly:
+
+```
+ν_γ = ν_{γ_S} ⊗ ν_{γ_{S^c}}
+```
+
+By **disintegration** (the measure-theoretic analog of conditioning),
+the original measure μ decomposes as:
+
+```
+μ(du_S, du_{S^c}) = μ_{S^c}(du_{S^c}) · μ_{S | S^c}(du_S | u_{S^c})
+```
+
+The update replaces u_S with fixed values c_S (from constraints) or
+fresh samples v_S (from resampling). In either case, the new measure μ'
+on the full trace is:
+
+```
+μ'(du_S, du_{S^c}) = μ_{S^c}(du_{S^c}) · ρ(du_S)
+```
+
+where ρ is either:
+- δ_{c_S} (Dirac at constraint values), or
+- the marginal sampling distribution of the new values
+
+**Absolute continuity of μ':** We need μ' ≪ ν_γ = ν_{γ_S} ⊗ ν_{γ_{S^c}}.
+
+For the unchanged coordinates: μ_{S^c} ≪ ν_{γ_{S^c}} because it is a
+marginal of μ ≪ ν_γ (marginals of absolutely continuous measures are
+absolutely continuous w.r.t. the corresponding marginal stock measure).
+
+For the changed coordinates: each new value v_S(a) has density
+density_{d_a}(v_S(a)) w.r.t. ν_{η_a} (by GFI contract C1 on the inner
+generative function). So ρ ≪ ν_{γ_S}.
+
+By the product structure, μ' = μ_{S^c} ⊗ ρ ≪ ν_{γ_{S^c}} ⊗ ν_{γ_S} = ν_γ.
+
+The new density is:
+
+```
+dμ'/dν_γ(u') = dμ_{S^c}/dν_{γ_{S^c}}(u'_{S^c}) · dρ/dν_{γ_S}(u'_S)
+             = [Π_{a ∉ S} density_{d_a}(u(a))] · [Π_{a ∈ S} density_{d_a}(u'(a))]
+```
+
+which is finite and non-negative (each factor is a probability density
+w.r.t. the appropriate stock measure). ∎
+
+**Remark (Dependence through deterministic computation).** The product
+decomposition above holds for the *trace* (random choices), even when
+the *body* of the generative function has deterministic dependencies
+between trace sites (e.g., `let y = f(x)` where x is traced). This is
+because the trace distribution μ factors over addresses: the score is
+`Σ_a log density_{d_a}(u(a))` where each `d_a` may depend on previous
+return values but not on previous *choices*. The key insight from GFI
+is that the density factorizes over addresses even when the distributions
+at those addresses are data-dependent — the product structure is over
+the *choices*, not over the *distributions*.
 
 ---
 

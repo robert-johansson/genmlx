@@ -202,9 +202,94 @@ confirming detailed balance:
 exp(weight) · exp(weight') = 1
 ```
 
-when the proposals are consistent (i.e., the forward proposal producing
-choices_f and the backward proposal producing choices_b describe the
-same move pair). ∎
+when the proposals satisfy the **consistency condition** defined below. ∎
+
+### Proposal Consistency Condition
+
+The detailed balance argument above requires that the forward and
+backward proposals are **consistent**: they must describe the same
+bijection between old and new trace spaces, viewed from opposite
+directions.
+
+**Definition (Consistent proposal pair).** A forward GF f and backward
+GF b form a consistent proposal pair if:
+
+**(P1) Support coverage.** The support of f (given the old trace)
+must cover all addresses that the model update will modify:
+
+```
+dom(choices_f) ⊇ dom(constraints applied to model)
+```
+
+That is, f must propose values for every address that will change in
+the model trace. If f proposes fewer addresses than the model expects,
+the update will sample the missing addresses from the prior, introducing
+randomness not accounted for in the weight calculation.
+
+**(P2) Backward support matching.** The backward GF b must be able to
+score any discard that the forward move produces:
+
+```
+dom(assess(b, …, disc)) = dom(disc)
+```
+
+That is, b's support must include the old values at all addresses
+displaced by the forward move. If b cannot score some discarded values
+(they fall outside b's support), the backward weight w_b is -∞ and the
+MH acceptance probability is 0 — the move is always rejected. This is
+correct but wasteful.
+
+**(P3) Bijection condition (for involutive MCMC).** For the stronger
+property that the forward-backward pair defines an involution on the
+extended state space (trace, auxiliary), f and b must define inverse
+bijections:
+
+```
+If f(old_trace) → (choices_f, aux_f)
+and update(model, old_trace, choices_f) → (new_trace, disc)
+then b(new_trace) deterministically produces disc
+and update(model, new_trace, disc) → (old_trace, choices_f)
+```
+
+This is the condition under which
+`exp(weight_forward) · exp(weight_backward) = 1` holds **exactly**
+(not just in expectation).
+
+**When consistency holds automatically:**
+
+1. **ConstraintEdit:** f and b are both identity-like (they just swap
+   values). Consistency is automatic — the discard is always the set
+   of displaced old values, and applying the discard as constraints
+   recovers the old trace.
+
+2. **SelectionEdit:** f = b = same selection. Consistency holds in the
+   sense that the regenerate weight already includes the proposal
+   correction term (proposal_ratio). No bijection is needed.
+
+3. **ProposalEdit with deterministic bijection:** When f and b implement
+   a deterministic invertible transformation (e.g., a reversible jump),
+   P1-P3 all hold.
+
+**When consistency can fail:**
+
+1. **Mismatched supports:** If f proposes at addresses {a, b, c} but
+   the model only has addresses {a, b}, the extra proposal at c is
+   ignored, and the backward assessment of b over {a, b} will miss c.
+   The weight calculation is incorrect.
+
+2. **Stochastic proposals with wrong backward:** If f samples auxiliary
+   randomness (e.g., a random perturbation) and b does not correctly
+   account for the inverse perturbation, the MH ratio is biased.
+
+3. **Support gaps:** If b assigns zero density to some discard values
+   that f can produce, the chain cannot traverse those states in the
+   backward direction, breaking ergodicity (though each individual
+   step is still valid — it just always rejects).
+
+**Practical guidance:** Most GenMLX users will use ConstraintEdit or
+SelectionEdit, which are automatically consistent. ProposalEdit is
+for advanced users implementing custom MCMC kernels (involutive MCMC,
+SMCP3), who must verify P1-P3 for their specific proposal pair.
 
 ---
 

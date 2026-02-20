@@ -221,7 +221,9 @@ No global state is read or written. The dynamic vars `*handler*` and
 ## 5. Splice Soundness
 
 For bodies containing `splice(k, g, args)`, the proof extends by treating
-the splice as a macro-step:
+the splice as a macro-step.
+
+### 5.1 Scalar Splice
 
 ```
 trace-gf!(k, g, args) =
@@ -234,9 +236,149 @@ By the induction hypothesis applied to the sub-GF's own execution:
 `execute-sub` correctly implements the sub-GF's GFI operation. The
 `merge-sub-result` function correctly nests the sub-result under address k.
 
+**State scoping correctness.** The scalar splice (`handler.cljs:432-444`)
+extracts sub-state fields scoped to address k:
+
+```
+sub-constraints = σ.constraints ↾ k
+sub-old-choices = σ.old-choices ↾ k
+sub-selection   = σ.selection ↾ k
+```
+
+The sub-GF executes with these scoped fields via the parent's `:executor`
+function, which calls the appropriate GFI operation on g. The sub-result
+is then merged back:
+
+```
+σ' = σ with {
+  choices[k] ← sub.choices,
+  score += sub.score,
+  weight += sub.weight,
+  discard[k] ← sub.discard
+}
+```
+
+This is correct because:
+1. The sub-GF's addresses are relative — nesting under k in the parent
+   ensures no address collisions with the parent's other trace sites
+2. Score and weight are additive — the sub-GF's contribution adds to
+   the parent's running totals
+3. The discard is nested under k, preserving the hierarchical structure
+
+### 5.2 Batched Splice
+
 The batched variant (`batched-splice-transition` at `handler.cljs:363-418`)
-creates a fresh `run-handler` scope for the sub-GF with a batched handler,
-which is sound by the same argument applied to the sub-GF.
+differs from scalar splice in a critical way: it creates a **nested
+`run-handler` scope** with a fresh `volatile!`.
+
+**Theorem (Batched Splice Soundness).** The batched splice transition
+correctly implements the sub-GF's GFI operation in batched mode, with
+the nested `run-handler` scope isolated from the parent scope.
+
+**Proof.** The batched splice performs five steps:
+
+**Step 1: Key splitting** (`handler.cljs:368`).
+```
+(k₁, k₂) = split(σ_parent.key)
+```
+k₂ is passed to the sub-GF; k₁ becomes the parent's new key. This
+ensures the sub-GF's randomness is independent of the parent's
+subsequent randomness (by the PRNG splitting contract).
+
+**Step 2: Mode detection** (`handler.cljs:377-410`).
+The batched splice determines which handler mode to use by examining
+which state fields are present:
+- If `sub-selection` is present → regenerate mode
+- Else if `sub-old-choices` is non-empty → update mode
+- Else if `sub-constraints` is non-empty → generate mode
+- Else → simulate mode
+
+This mirrors the scalar splice's delegation logic, adapted for the
+batched case where we must choose the batched handler variant.
+
+**Step 3: Nested run-handler** (`handler.cljs:412-413`).
+```
+sub-result = run-handler(batched-m-handler, init-state, #(apply body-fn args))
+```
+
+This call creates a **fresh volatile** (`handler.cljs:458`):
+```
+(binding [*handler* batched-m-handler
+          *state*   (volatile! init-state)    ;; ← FRESH volatile
+          mx/*batched-exec?* true]
+  ...)
+```
+
+**Isolation property:** The fresh volatile is completely independent
+of the parent's volatile. During the sub-GF's execution:
+- The parent's `*state*` volatile is NOT accessible (shadowed by
+  the `binding` block's new binding)
+- The parent's `*handler*` is NOT accessible (similarly shadowed)
+- The sub-GF's handler reads and writes ONLY the fresh volatile
+
+This isolation means the sub-GF's execution cannot observe or corrupt
+the parent's state. The sub-GF sees a clean initial state with:
+- `choices: EMPTY` (no prior choices)
+- `score: 0` (score starts fresh)
+- `weight: 0` (weight starts fresh)
+- `key: k₂` (independent PRNG stream)
+- `batch-size: N` (propagated from parent)
+- Mode-specific fields (constraints, old-choices, selection)
+
+**Step 4: Sub-GF execution.**
+By the handler soundness theorem (§3) applied to the sub-GF's body
+with the batched handler:
+```
+⟦run-handler(batched-m-transition, init-state, body)⟧ = m{body}^N(init-state)
+```
+
+The sub-GF's body executes under the batched handler, producing
+[N]-shaped choices, scores, and weights. By the broadcasting
+correctness theorem (`broadcasting.md` §4), these represent N
+independent executions in SoA format.
+
+**Step 5: Result merging** (`handler.cljs:415-418`).
+```
+σ_parent' = merge-sub-result(σ_parent{key: k₁}, k, sub-result)
+```
+
+The merge function (`handler.cljs:333-361`) combines:
+- `choices[k] ← sub.choices` (nest sub-GF's [N]-shaped choices under k)
+- `score += sub.score` (add [N]-shaped sub-score to parent's [N]-shaped score)
+- `weight += sub.weight` (same for weight)
+- `discard[k] ← sub.discard` (nest discard under k)
+
+The parent volatile is updated exactly once (via `vreset!` at
+`handler.cljs:427-428`) with the fully-computed merged state. No
+intermediate parent states are visible to any other code.
+
+**Volatile nesting diagram:**
+
+```
+Parent run-handler scope:
+  *state* → volatile!(σ_parent)    ← parent handler reads/writes this
+  │
+  ├── trace(a₁, d₁)  → updates σ_parent
+  ├── trace(a₂, d₂)  → updates σ_parent
+  │
+  ├── splice(k, g, args):
+  │   │
+  │   └── Child run-handler scope:
+  │       *state* → volatile!(σ_child)   ← child handler reads/writes this
+  │       │                                 (parent volatile is SHADOWED)
+  │       ├── trace(b₁, e₁) → updates σ_child
+  │       ├── trace(b₂, e₂) → updates σ_child
+  │       └── returns sub-result
+  │
+  │   σ_parent ← merge(σ_parent, k, sub-result)  ← single atomic update
+  │
+  ├── trace(a₃, d₃)  → updates σ_parent (with merged sub-result)
+  └── returns final result
+```
+
+The nesting can be arbitrarily deep (sub-GFs can themselves contain
+splices), and isolation is maintained at each level by the fresh
+`binding` + `volatile!` in each `run-handler` call. ∎
 
 ---
 

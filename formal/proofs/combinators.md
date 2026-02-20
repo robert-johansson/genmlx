@@ -106,9 +106,40 @@ the previous step. Steps are independent in their random choices
 score_Unfold = Σ_{t=0}^{n-1} score_t
 ```
 Each score_t is the log-density of step t's choices under g's trace
-distribution (conditioned on the carry state from step t-1). The total
-score equals the log-density under the sequential composition of
-conditionals, which is the Unfold trace distribution by chain rule. ✓
+distribution conditioned on the carry state from step t-1.
+
+**Carry-state dependency.** Unlike Map (where elements are independent),
+Unfold steps are sequentially dependent through the carry state c_t.
+The trace distribution factors as:
+
+```
+μ_Unfold(u₀, u₁, …, u_{n-1})
+  = μ_g(u₀ | c₀) · μ_g(u₁ | c₁(u₀)) · ⋯ · μ_g(u_{n-1} | c_{n-1}(u₀,…,u_{n-2}))
+```
+
+where c_t is the carry state after step t, which depends deterministically
+on the choices at steps 0, …, t-1 (via the return values of g). The
+log-density is:
+
+```
+log(dμ_Unfold/dν)(u₀,…,u_{n-1})
+  = Σ_t log(dμ_g/dν_γ)(u_t | c_t)
+  = Σ_t score_t
+```
+
+This factorization is valid because:
+1. The **stock measure** ν_{[t:γ]} = ν_γ^{⊗n} is a product (no carry
+   dependency in the reference measure)
+2. The **trace measure** factors by the **chain rule of probability**:
+   P(u₀,…,u_{n-1}) = Π_t P(u_t | u₀,…,u_{t-1}) = Π_t P(u_t | c_t)
+   where the second equality holds because u_t is conditionally
+   independent of u₀,…,u_{t-1} given c_t (the carry state is a
+   sufficient statistic for the history)
+3. Each conditional density dμ_g(u_t | c_t)/dν_γ = score_t by the IH
+   on g (C1 applied to g with carry state c_t as argument)
+
+The score sum therefore equals the log-density of the joint trace
+under the Unfold trace distribution. ✓
 
 **C2 (Generate weight):** Constraints at step t scope to step t:
 ```
@@ -194,24 +225,86 @@ categorical distribution, then execute that component.
 score_Mix = score_categorical(idx) + score_component(idx)
 ```
 The trace distribution is the mixture: P(trace) = Σᵢ wᵢ · P_i(trace|idx=i).
-The log-density decomposes as log P(idx) + log P(trace_inner|idx), which
-is exactly the two-term sum above. ✓
+The joint density of (idx, trace_inner) decomposes as:
+
+```
+p(idx, trace_inner) = p(idx) · p(trace_inner | idx)
+                    = categorical(idx; ws) · p_{g_idx}(trace_inner)
+```
+
+Taking logs: log p = log categorical(idx; ws) + log p_{g_idx}(trace_inner)
+= score_categorical(idx) + score_component(idx). By the IH on g_idx,
+score_component(idx) is the correct log-density. ✓
 
 **C2 (Generate weight):**
 If `:component-idx` is constrained, its density contributes to the weight.
 The inner component's generate weight adds inner constrained densities.
 Total weight = weight_idx + weight_inner. ✓
 
-**C3 (Update weight):**
-Two cases: same component or different component.
-- Same: update inner, weight = score_new - score_old (idx score unchanged)
-- Different: generate new component from scratch, weight = score_new - score_old
+**C3 (Update weight) — detailed treatment:**
 
-Both computed in `combinators.cljs:970-1020`. ✓
+Two cases arise depending on whether the component index changes.
+
+**Case 1: Same component** (old_idx = new_idx = i).
+
+The categorical address `:component-idx` is unchanged (or constrained
+to the same value). The inner trace is updated via `g_i.update`:
+
+```
+weight_Mix = (score_cat_new + score_inner_new) - (score_cat_old + score_inner_old)
+```
+
+Since old_idx = new_idx: score_cat_new = score_cat_old (same categorical
+log-prob). So:
+
+```
+weight_Mix = score_inner_new - score_inner_old = weight_inner
+```
+
+The discard contains displaced inner choices. The categorical address
+is NOT in the discard (unchanged). ✓
+
+**Case 2: Different component** (old_idx = i, new_idx = j ≠ i).
+
+This happens when `:component-idx` is constrained to a new value j.
+The old component i's entire trace is discarded, and a new component j
+is generated from scratch (constrained by any provided constraints):
+
+```
+score_new = score_cat(j) + score_{g_j}(trace_new)
+score_old = score_cat(i) + score_{g_i}(trace_old)
+weight_Mix = score_new - score_old
+```
+
+The weight accounts for both the change in categorical probability
+(different mixture weights) AND the complete replacement of the inner
+trace. This is computed at `combinators.cljs:970-1020`:
+
+1. `p/generate` the new component j with constraints → new inner trace
+2. Total new score = categorical(j) + inner_new_score
+3. Weight = total_new_score - old_trace_score
+
+The discard contains:
+- `:component-idx` → old_idx (the old component index)
+- All old inner choices (entire old component trace displaced)
+
+This is correct because `update`'s contract requires the discard to
+contain old values at all changed addresses. When the component switches,
+*every* address changes (old component fully removed, new component
+fully created). ✓
+
+**C4 (Regenerate weight):**
+
+If `:component-idx` is in the selection, a new component index is
+sampled from the categorical, potentially triggering a component switch.
+The weight accounting follows the same two-case structure as C3. If
+the component index is NOT selected, only inner addresses in the
+selection are regenerated within the current component. ✓
 
 **C5 (Discard):**
-- Same component: discard from inner update
-- Different component: old choices (entire inner trace displaced)
+- Same component: discard from inner update (nested under component key)
+- Different component: old `:component-idx` + old inner choices (entire
+  old component trace displaced)
 ✓
 
 **Implementation:** `MixCombinator` at `combinators.cljs:919-1062`.
@@ -223,15 +316,67 @@ Both computed in `combinators.cljs:970-1020`. ✓
 Recurse creates a fixed-point combinator: `maker(self)` returns a GF
 that may call `self` recursively.
 
-**C1-C5:** At each invocation, Recurse calls `maker(this)` to get the
-inner GF, then delegates the operation to it. Correctness follows from
-the IH on the inner GF (which itself may recurse, but each recursion
-level delegates to a concrete GF body).
+**Well-foundedness condition.** The correctness argument requires that
+every execution of `fix(maker)` terminates, i.e., the recursive
+unfolding reaches a base case after finitely many steps. Formally:
 
-The fixed-point argument: if maker preserves the GFI contract (i.e.,
-`maker(g)` satisfies C1-C5 whenever g does), then `fix(maker)` satisfies
-C1-C5. This is because any finite execution of `fix(maker)` unfolds to
-a finite composition of contract-preserving operations. ✓
+**Definition (Well-founded recursion).** A maker function is
+*well-founded* if there exists a measure μ : Args → ℕ (mapping
+arguments to natural numbers) such that every recursive call
+`self(args')` within `maker(self)(args)` satisfies μ(args') < μ(args).
+
+GenMLX does NOT enforce this statically — it is the programmer's
+responsibility. If the recursion does not terminate, the handler will
+diverge (infinite loop consuming stack), and no GFI contract applies.
+
+**C1-C5 by induction on recursion depth.**
+
+Let R_k = the k-th unfolding of `fix(maker)`:
+- R₀ = ⊥ (undefined — represents non-terminating recursion)
+- R_{k+1} = maker(R_k)
+
+For well-founded recursion, every execution terminates at some finite
+depth d, so we can prove correctness by induction on d.
+
+**Base case (d = 0):** The body of `maker(self)` reaches a base case
+without calling `self`. In this case, the execution is a sequence of
+`trace` and pure operations — correctness follows from the handler
+soundness theorem (see `handler-soundness.md`).
+
+**Inductive case (d → d+1):** The body of `maker(self)` calls `self`
+via `splice(k, self, args')`. By the induction hypothesis, the
+recursive call `self(args')` satisfies C1-C5 at depth d. The splice
+operation nests the sub-result under address k, preserving the trace
+structure (see `handler-soundness.md` §5). The outer body's remaining
+operations are correct by the handler soundness theorem.
+
+The combined trace, score, weight, and discard are correct because:
+1. The outer body's trace sites contribute their densities correctly
+2. The recursive sub-GF's trace is nested under k and contributes its
+   score/weight by the IH
+3. The trace type at each recursion level uses distinct address prefixes
+   (enforced by the `splice` address nesting), so there are no address
+   collisions
+
+**Score structure.** For a Recurse GF that unfolds to depth d:
+
+```
+score_Recurse = score_body + score_splice₁ + score_splice₂ + ⋯
+```
+
+where each `score_splice_j` is the score of a recursive sub-call, and
+the total score is the sum of log-densities at all addresses in the
+(potentially deep) trace tree. This sum equals log(dμ/dν) for the
+full trace by the product structure of the stock measure over the
+(finite but dynamic) set of addresses. ✓
+
+**Remark on measure-theoretic subtlety.** The trace type γ of a
+Recurse GF is not statically determined — it depends on the runtime
+recursion depth, which may depend on random choices (e.g., a geometric
+recursion). The stock measure is therefore defined over a countable
+union of finite product spaces: ν = Σ_d ν_{γ_d} where γ_d is the
+trace type at depth d. Absolute continuity is preserved at each depth
+by the compositionality argument above.
 
 **Implementation:** `RecurseCombinator` at `combinators.cljs:445-522`.
 

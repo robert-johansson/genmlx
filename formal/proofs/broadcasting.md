@@ -93,7 +93,8 @@ sequential fallback, independence follows from N independent calls to
 
 ### Lemma 3.2 (Log-Prob Broadcasting)
 
-For any distribution d : D η and [N]-shaped value v = [v₁,…,vₙ]:
+For broadcastable distributions d : D η and [N]-shaped value
+v = [v₁,…,vₙ]:
 
 ```
 dist-log-prob(d, v) = [dist-log-prob(d, v₁), …, dist-log-prob(d, vₙ)]
@@ -101,22 +102,84 @@ dist-log-prob(d, v) = [dist-log-prob(d, v₁), …, dist-log-prob(d, vₙ)]
 
 That is, log-prob on [N]-shaped input produces element-wise log-prob.
 
-**Proof:** By the definition of `dist-log-prob` for each distribution.
-The log-prob implementations use MLX arithmetic operations (mx/add,
-mx/multiply, mx/log, etc.) that broadcast element-wise. For a gaussian
-with parameters μ, σ (scalars):
+**Proof.** We verify this by categorizing all 27 distributions by their
+log-prob implementation pattern.
 
+**Category 1: Scalar element-wise (23 distributions).** These compute
+log-prob using only element-wise MLX arithmetic operations on the value
+and scalar parameters. Broadcasting is automatic.
+
+*Continuous, closed-form:* gaussian, uniform, exponential, laplace,
+log-normal, logistic, cauchy, half-cauchy, half-normal, von-mises,
+pareto (11 distributions).
+
+Each has the form `f(v, θ₁, …, θₖ)` where f is a composition of
+`mx/add`, `mx/subtract`, `mx/multiply`, `mx/divide`, `mx/log`,
+`mx/exp`, `mx/square`, `mx/abs`, and constants. When v has shape [N]
+and θᵢ are scalar, MLX broadcasting produces [N]-shaped output where
+output[i] = f(v[i], θ₁, …, θₖ).
+
+Example — gaussian with parameters μ (scalar), σ (scalar):
 ```
 log-prob(v) = -0.5 · ((v - μ)/σ)² - log(σ) - 0.5·log(2π)
 ```
+When v : [N], each sub-expression broadcasts: `v - μ` : [N],
+`((v - μ)/σ)²` : [N], final result : [N].
 
-When v has shape [N], each MLX operation broadcasts:
-- `v - μ`: [N]-shaped (scalar μ broadcasts)
-- `((v - μ)/σ)²`: [N]-shaped
-- `-0.5 · … - log(σ) - …`: [N]-shaped
+*Discrete, closed-form:* bernoulli, geometric, discrete-uniform
+(3 distributions).
 
-The result is exactly [log-prob(v₁), …, log-prob(vₙ)]. The same argument
-applies to all 27 distributions by inspection of their log-prob formulas. ∎
+Same element-wise pattern. Bernoulli uses `mx/where` which broadcasts.
+
+*Using special functions:* beta, gamma, student-t, dirichlet, poisson
+(5 distributions).
+
+These use `mlx-log-gamma` (a pure element-wise computation using
+`mx/log`, `mx/add`, `mx/multiply`, `mx/sin` — see `dist.cljs:42-59`)
+or `mx/log-gamma`. No shape inspection occurs; all operations broadcast.
+
+*Simplex-valued:* categorical (1 distribution).
+
+Log-prob for categorical uses `mx/gather` on the logits array at the
+value index. **However**, the categorical log-prob implementation calls
+`mx/shape` on the *logits parameter* (`dist.cljs:406`) during
+normalization to determine the number of categories. This is safe for
+broadcasting because `mx/shape` is called on the *parameter* (which has
+fixed shape regardless of batch size), not on the *value* being scored.
+When v is [N]-shaped (N indices), `mx/gather` correctly selects N
+log-probabilities element-wise.
+
+*Positive semi-definite matrix-valued:* lkj-cholesky (1 distribution).
+
+Log-prob is computed via element-wise operations on the diagonal and
+off-diagonal entries of the Cholesky factor. Broadcasts correctly.
+
+*Mixture:* mixture (1 distribution).
+
+Delegates to component log-probs and uses logsumexp. Broadcasts
+provided all components broadcast.
+
+**Category 2: NON-broadcastable (2 distributions).** These inspect
+value shapes in their log-prob computation and **do not** support
+[N]-shaped broadcasting.
+
+*wishart:* `dist-log-prob` at `dist.cljs:1010` calls `mx/ndim` and
+`mx/reshape` on the value x to determine the matrix dimension k. The
+log-prob formula involves `mx/logdet`, matrix trace, and matrix
+operations that assume x is a k×k matrix — not a batch of matrices.
+
+*inv-wishart:* `dist-log-prob` at `dist.cljs:1061` similarly calls
+`mx/ndim` on the value x and performs matrix operations assuming a
+single k×k matrix.
+
+These distributions are excluded from the broadcasting correctness
+theorem. In practice, they are not used in vectorized inference
+(dist-sample-n falls back to sequential for them as well).
+
+**Summary:** 25 of 27 distributions satisfy Lemma 3.2 unconditionally.
+The 2 matrix-variate distributions (wishart, inv-wishart) are excluded
+from vectorized execution. The categorical distribution inspects
+parameter shapes but not value shapes, so it broadcasts correctly. ∎
 
 ### Lemma 3.3 (Score Accumulation Broadcasting)
 
@@ -170,7 +233,10 @@ This structural identity is the key enabler of broadcasting correctness. ∎
 
 ### Theorem (Broadcasting Correctness)
 
-Let g : G_γ η be a generative function with denotation (μ, f) = ⟦g⟧.
+Let g : G_γ η be a generative function with denotation (μ, f) = ⟦g⟧,
+where all distributions used in g's body are broadcastable (Category 1
+in Lemma 3.2 — i.e., g does not use wishart or inv-wishart).
+
 Let g_N denote the broadcasting lift: executing g with N particles using
 batched handlers (batched-simulate-handler, batched-generate-handler, etc.).
 
@@ -318,7 +384,72 @@ regenerate. ∎
 
 ---
 
-## 6. Implementation Correspondence
+## 6. Batched Splice Correctness
+
+When a generative function body contains `splice(k, g, args)`, the
+batched handler creates a **nested** `run-handler` scope for the sub-GF
+(`batched-splice-transition` at `handler.cljs:363-418`). This requires
+extending the broadcasting correctness theorem to handle splice.
+
+### Statement
+
+**Lemma 6.1 (Batched Splice Correctness).** If the sub-GF g satisfies
+the broadcasting correctness theorem (i.e., g uses only broadcastable
+distributions), then `splice(k, g, args)` under the batched handler
+produces correct [N]-shaped results nested under address k.
+
+### Proof
+
+The batched splice transition (`handler.cljs:363-418`) performs:
+
+1. **Key splitting:** Split parent key into (k₁, k₂). k₂ is passed to
+   the sub-GF. This is identical to scalar splice — independence of
+   the sub-GF's randomness from the parent's subsequent randomness is
+   preserved.
+
+2. **State scoping:** Extract sub-constraints, sub-old-choices, and
+   sub-selection scoped to address k. This is identical to scalar splice.
+
+3. **Nested run-handler:** Create a fresh `run-handler` with:
+   - A fresh `volatile!` holding the sub-GF's initial state
+   - `:batch-size N` propagated from the parent state
+   - The appropriate batched handler (simulate, generate, update, or
+     regenerate) chosen by examining which state fields are present
+
+4. **Sub-GF execution:** The sub-GF body executes under the nested
+   batched handler. By the broadcasting correctness theorem applied to g
+   (induction on the nesting depth of splice calls), this produces
+   correct [N]-shaped choices, score, and weight for the sub-GF.
+
+5. **Result merging:** The sub-result is merged into the parent state
+   via `merge-sub-result`:
+   - `parent.choices[k] ← sub.choices` (nested under k)
+   - `parent.score += sub.score` ([N] + [N] = [N], or scalar + [N] = [N])
+   - `parent.weight += sub.weight` (same broadcasting)
+   - `parent.discard[k] ← sub.discard` (if applicable)
+
+The critical property is that the nested `run-handler` creates a **fresh
+volatile** (`handler.cljs:458`), completely isolated from the parent's
+volatile. The parent's state is not accessed during the sub-GF's execution.
+After the sub-GF completes, the parent volatile is updated exactly once
+with the merged result.
+
+By the handler soundness theorem (see `handler-soundness.md` §5), the
+nested execution correctly implements the sub-GF's GFI operation in
+batched mode. The merge step preserves the address-nesting structure:
+each particle i's sub-choices are nested under k in the parent's
+choices, maintaining the SoA format.
+
+**Limitation:** Only `DynamicGF` instances (those with `:body-fn`) are
+supported for batched splice. Non-DynamicGF sub-GFs (e.g., combinators
+used directly as sub-GFs) throw an error in batched mode
+(`handler.cljs:430-431`). This is a practical limitation, not a
+theoretical one — combinator-based sub-GFs could in principle be
+supported if their GFI operations accepted a `:batch-size` parameter. ∎
+
+---
+
+## 7. Implementation Correspondence
 
 | Formal Concept | Implementation | Location |
 |----------------|---------------|----------|

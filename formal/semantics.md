@@ -58,6 +58,49 @@ in `handler.cljs`.
 ⟦Δ⟧             = {NoChange} + {UnknownChange} + (⟦η⟧ × ⟦η⟧) + 𝒫(ℕ) + …
 ```
 
+### 1.5 Quasi-Borel Space Structure
+
+The denotational semantics uses **quasi-Borel spaces** (QBS) rather than
+measurable spaces. A quasi-Borel space (X, M_X) consists of a set X and a
+set M_X ⊆ (ℝ → X) of *admissible morphisms* satisfying:
+
+1. **Constants:** For all x ∈ X, the constant function (r ↦ x) ∈ M_X
+2. **Composition:** If α ∈ M_X and f : ℝ → ℝ is measurable, then α ∘ f ∈ M_X
+3. **Gluing:** If {Sᵢ} is a countable partition of ℝ into Borel sets and
+   αᵢ ∈ M_X for each i, then the function r ↦ αᵢ(r) for r ∈ Sᵢ is in M_X
+
+These axioms make QBS closed under the constructions we need:
+
+**Products:** (X × Y, M_{X×Y}) where M_{X×Y} = {(α, β) | α ∈ M_X, β ∈ M_Y}.
+This gives ⟦η₁ × η₂⟧ = ⟦η₁⟧ × ⟦η₂⟧ as a QBS.
+
+**Function spaces:** (X → Y, M_{X→Y}) where f ∈ M_{X→Y} iff for all
+α ∈ M_X, the function r ↦ f(α(r)) is in M_Y. This gives ⟦τ₁ → τ₂⟧ as a
+QBS, which is critical for:
+- Distribution constructors (functions from parameters to distributions)
+- Generative function bodies (functions from arguments to traces)
+- Handler transitions (functions from states to states)
+
+**Probability measures on QBS:** A probability measure μ on (X, M_X) is
+a probability measure on (ℝ, Borel(ℝ)) together with a morphism α ∈ M_X
+such that μ = α_*(ν) for some standard measure ν. The key theorem
+(Heunen et al. 2017) is that probability measures on QBS form a monad,
+enabling the `do_P` and `do_G` sequencing in §3.
+
+**Why QBS matters for GenMLX:** Standard measurable spaces lack function
+spaces (the set of measurable functions between measurable spaces is not
+itself a measurable space in general). Since generative functions are
+higher-order (they take and return other generative functions, as in
+combinators and `Recurse`), we need function spaces in our semantic
+domain. QBS provides this while remaining compatible with standard
+measure theory for computing densities.
+
+**Absolute continuity in QBS:** For a QBS (X, M_X), a measure μ on X is
+absolutely continuous w.r.t. ν (written μ ≪ ν) iff for every Borel set
+B ⊆ ℝ and every α ∈ M_X, ν(α⁻¹(B)) = 0 implies μ(α⁻¹(B)) = 0. The
+Radon-Nikodym derivative dμ/dν exists and is a morphism X → ℝ_{≥0}.
+This is what `score` computes: `score(u) = log(dμ/dν(u))`.
+
 ---
 
 ## 2. Stock Measures
@@ -233,12 +276,125 @@ correctness of the joint density) but not to the importance weight.
              -- weight unchanged
 ```
 
-Note: The regenerate weight at the DynamicGF level is computed as
-`new_score - old_score - proposal_ratio` (see `dynamic.cljs:89-107`),
-where proposal_ratio is the accumulated weight from the transitions.
-This ensures the MH acceptance ratio is correct.
+### Regenerate Weight Derivation
+
+The regenerate weight at the DynamicGF level (`dynamic.cljs:89-107`) is:
+
+```
+weight_regen = new_score - old_score - proposal_ratio
+```
+
+where `proposal_ratio` is the `:weight` field accumulated by the
+regenerate transitions. We now derive why this is the correct MH weight.
+
+**Setup.** Let S = selected(σ.selection) be the set of selected addresses.
+Let u be the old trace and u' the new trace after regeneration. For
+selected addresses a ∈ S, u'(a) is a fresh sample from d_a. For
+unselected addresses a ∉ S, u'(a) = u(a).
+
+**Score terms.** The scores decompose over addresses:
+
+```
+new_score = Σ_a log density_{d_a}(u'(a))
+old_score = Σ_a log density_{d_a}(u(a))
+```
+
+For a ∉ S: u'(a) = u(a), so these terms cancel in the difference.
+For a ∈ S: u'(a) ≠ u(a) in general, so they contribute.
+
+**Proposal ratio.** The transition accumulates:
+
+```
+proposal_ratio = Σ_{a ∈ S} [log density_{d_a}(u'(a)) - log density_{d_a}(u(a))]
+```
+
+This is the per-site weight `w_new / w_old` from each regenerate
+transition (§4.4 above), accumulated via multiplication (addition in
+log-space).
+
+**Substituting:**
+
+```
+weight_regen = [Σ_a log p(u'(a)) - Σ_a log p(u(a))]
+             - Σ_{a ∈ S} [log p(u'(a)) - log p(u(a))]
+
+= Σ_{a ∉ S} [log p(u'(a)) - log p(u(a))]
+  + Σ_{a ∈ S} [log p(u'(a)) - log p(u(a))]
+  - Σ_{a ∈ S} [log p(u'(a)) - log p(u(a))]
+
+= Σ_{a ∉ S} [log p(u'(a)) - log p(u(a))]
+= 0
+```
+
+Wait — this is zero because u'(a) = u(a) for a ∉ S. That seems wrong.
+But it is correct: **for a model with no deterministic dependencies
+between trace sites**, the regenerate weight is always zero, and MH
+always accepts.
+
+**The non-trivial case** arises when distributions at unselected
+addresses depend on return values from selected addresses. Concretely,
+if address b ∉ S has distribution `d_b = gaussian(f(x), σ)` where
+x = u(a) for some a ∈ S, then after regeneration u'(a) ≠ u(a), so
+d_b changes to `gaussian(f(u'(a)), σ)`. The log-prob of u'(b) = u(b)
+under the new distribution differs from its log-prob under the old:
+
+```
+log p_new(u'(b)) = log density_{d_b(u'(a))}(u(b))  ≠  log density_{d_b(u(a))}(u(b))
+```
+
+The regenerate handler captures this because it re-executes the body
+under the new choices, computing `new_score` with the updated
+distributions. The `proposal_ratio` only tracks the selected sites'
+density changes. So:
+
+```
+weight_regen = [model score with new distributions evaluated at new choices]
+             - [model score with old distributions evaluated at old choices]
+             - [sum of selected-site density ratios]
+             = Σ_{a ∉ S} [log p_new(u(a)) - log p_old(u(a))]
+```
+
+This captures the change in log-density at unselected addresses due to
+their distributions changing (because the addresses they depend on were
+resampled).
+
+**Connection to MH acceptance ratio.** The MH acceptance ratio is:
+
+```
+α = min(1, p(u')/p(u) · q(u|u')/q(u'|u))
+```
+
+where q is the proposal distribution (regenerate at selection S). Since
+regeneration samples each selected address independently from its prior:
+
+```
+q(u'|u) = Π_{a ∈ S} density_{d_a(u)}(u'(a))
+q(u|u') = Π_{a ∈ S} density_{d_a(u')}(u(a))
+```
+
+Note: d_a(u) means the distribution at a given the return values from
+the old trace, and d_a(u') means the distribution at a given the return
+values from the new trace. For the selected addresses themselves, the
+distribution typically does not depend on other selected addresses
+(it depends on the arguments), so d_a(u) = d_a(u') = d_a.
+
+The log acceptance ratio:
+
+```
+log α = log p(u') - log p(u) + log q(u|u') - log q(u'|u)
+      = new_score - old_score
+        + Σ_{a ∈ S} log density_{d_a}(u(a))
+        - Σ_{a ∈ S} log density_{d_a}(u'(a))
+      = new_score - old_score - proposal_ratio
+      = weight_regen
+```
+
+Therefore `weight_regen` is exactly the log MH acceptance ratio,
+confirming that `exp(weight_regen)` gives the correct acceptance
+probability for the Metropolis-Hastings algorithm. ∎
 
 **Implementation**: `regenerate-transition` at `handler.cljs:126-153`.
+DynamicGF regenerate at `dynamic.cljs:88-108`.
 
 ### 4.5 Project Transition
 
