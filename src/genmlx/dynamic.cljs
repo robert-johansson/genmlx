@@ -312,3 +312,11 @@
    Returns the parameter value as an MLX array."
   [name default-value]
   (h/trace-param! name default-value))
+
+;; ---------------------------------------------------------------------------
+;; IHasArgumentGrads — DynamicGF does not declare argument differentiability
+;; ---------------------------------------------------------------------------
+
+(extend-type DynamicGF
+  p/IHasArgumentGrads
+  (has-argument-grads [_] nil))

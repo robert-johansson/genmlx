@@ -39,3 +39,8 @@
     "Update a trace with change hints. argdiffs describes which arguments changed.
      Enables combinators to skip unchanged sub-computations.
      Returns {:trace Trace :weight MLX-scalar :discard ChoiceMap}."))
+
+(defprotocol IHasArgumentGrads
+  (has-argument-grads [gf]
+    "Vector of booleans: true if that argument position is differentiable.
+     Returns nil if unknown."))

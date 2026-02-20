@@ -248,15 +248,15 @@ broader batch sampling support.*
 
 ## Phase 8: Gradient & Differentiable Programming
 
-- [ ] **8.1** Custom gradient generative functions — `CustomGradientGF`
+- [x] **8.1** Custom gradient generative functions — `CustomGradientGF`
   - User-supplied forward and backward passes
   - ~60 lines
-  - *File*: new `custom_gradient.cljs` or in `dynamic.cljs`
+  - *File*: `custom_gradient.cljs`
 
-- [ ] **8.2** Argument gradient annotations — `has-argument-grads`
-  - Metadata on generative functions indicating which arguments are differentiable
+- [x] **8.2** Argument gradient annotations — `has-argument-grads`
+  - `IHasArgumentGrads` protocol on generative functions indicating which arguments are differentiable
   - Used by gradient-based inference to know what to differentiate
-  - ~30 lines in `protocols.cljs` and `dynamic.cljs`
+  - *Files*: `protocols.cljs`, `custom_gradient.cljs`, `dynamic.cljs`, `dist/core.cljs`
 
 ---
 
@@ -459,7 +459,7 @@ Medium-term (formal foundation):
 
 Long-term (ecosystem):
   4.3–4.4  VIMCO, ADEV                ✅
-  8.1–8.2  Custom gradients
+  8.1–8.2  Custom gradients            ✅
   9.1–9.3  Incremental computation
   11.1–11.2  Validation
   12.1–12.6  Ecosystem
@@ -479,10 +479,10 @@ Long-term (ecosystem):
 | 5. Combinators | 3 | 3 | 0 |
 | 6. Testing Gaps | 5 | 5 | 0 |
 | 7. Vectorization & Perf | 8 | 6 | 2 |
-| 8. Gradient Programming | 2 | 0 | 2 |
+| 8. Gradient Programming | 2 | 2 | 0 |
 | 9. Incremental Computation | 3 | 0 | 3 |
 | 10. Formal Foundation | 16 | 2 | 14 |
 | 11. Validation | 2 | 0 | 2 |
 | 12. Ecosystem | 6 | 0 | 6 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **31** | **36** |
+| **Total** | **67** | **33** | **34** |

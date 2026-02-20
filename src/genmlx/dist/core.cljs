@@ -88,6 +88,14 @@
       (:score trace))))
 
 ;; ---------------------------------------------------------------------------
+;; IHasArgumentGrads — distributions do not declare argument differentiability
+;; ---------------------------------------------------------------------------
+
+(extend-type Distribution
+  p/IHasArgumentGrads
+  (has-argument-grads [_] nil))
+
+;; ---------------------------------------------------------------------------
 ;; map->dist — create a Distribution from a plain map
 ;; ---------------------------------------------------------------------------
 
