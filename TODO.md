@@ -198,13 +198,12 @@ broader batch sampling support.*
 
 ### Batch sampling coverage
 
-- [ ] **7.1** Native `dist-sample-n` for more distributions
+- [x] **7.1** Native `dist-sample-n` for more distributions
   - [x] laplace, cauchy, log-normal, truncated-normal (already implemented)
+  - [x] discrete-uniform, geometric, categorical, multivariate-normal, binomial, student-t
   - [ ] inv-gamma (requires gamma batch sampling first)
-  - [ ] student-t (requires gamma batch sampling for chi-squared)
   - Rejection-based distributions (beta, gamma, poisson, dirichlet) are harder
     to batch efficiently
-  - Each ~5 lines in `dist.cljs`
 
 ### Vectorized inference completeness
 
@@ -447,7 +446,7 @@ Near-term (Gen.jl feature parity):
   6.3–6.4  Testing gaps                   ✅
 
 Medium-term (GenJAX speed parity):
-  7.1  Batch sampling coverage
+  7.1  Batch sampling coverage     ✅
   7.3  Vectorized MCMC                ✅
   7.4  Compiled MH chain              ✅
   7.5  Vectorized SMC sweep           ✅
@@ -479,11 +478,11 @@ Long-term (ecosystem):
 | 4. Inference Algorithms | 4 | 2 | 2 |
 | 5. Combinators | 3 | 3 | 0 |
 | 6. Testing Gaps | 5 | 5 | 0 |
-| 7. Vectorization & Perf | 8 | 4 | 4 |
+| 7. Vectorization & Perf | 8 | 5 | 3 |
 | 8. Gradient Programming | 2 | 0 | 2 |
 | 9. Incremental Computation | 3 | 0 | 3 |
 | 10. Formal Foundation | 16 | 2 | 14 |
 | 11. Validation | 2 | 0 | 2 |
 | 12. Ecosystem | 6 | 0 | 6 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **27** | **40** |
+| **Total** | **67** | **28** | **39** |

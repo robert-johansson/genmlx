@@ -256,6 +256,11 @@
     (let [n (do (mx/eval! logits) (first (mx/shape logits)))]
       (mapv #(mx/scalar (int %) mx/int32) (range n)))))
 
+(defmethod dc/dist-sample-n :categorical [d key n]
+  (let [{:keys [logits]} (:params d)
+        keys (rng/split-n (rng/ensure-key key) n)]
+    (mx/stack (mapv #(rng/categorical % logits) keys))))
+
 ;; ---------------------------------------------------------------------------
 ;; Poisson
 ;; ---------------------------------------------------------------------------
@@ -331,6 +336,19 @@
           (mx/subtract (mx/multiply (mx/scalar half-df1)
                                     (mx/log (mx/add (mx/scalar 1.0)
                                                     (mx/divide (mx/square z) df)))))))))
+
+(defmethod dc/dist-sample-n :student-t [d key n]
+  (let [{:keys [df loc scale]} (:params d)
+        df-val (int (mx/realize df))
+        [k1 k2] (rng/split (rng/ensure-key key))
+        ;; Chi-squared: sum of df squared normals -> [n]
+        normals (rng/normal k1 [n df-val])
+        chi2 (mx/sum (mx/square normals) [1])
+        ;; Standard normal -> [n]
+        z (rng/normal k2 [n])
+        ;; t = z * sqrt(df / chi2)
+        t (mx/multiply z (mx/sqrt (mx/divide df chi2)))]
+    (mx/add loc (mx/multiply scale t))))
 
 ;; ---------------------------------------------------------------------------
 ;; Log-Normal
@@ -481,6 +499,14 @@
     ;; Infinite support; return first few for enumeration
     (mapv #(mx/scalar % mx/int32) (range 100))))
 
+(defmethod dc/dist-sample-n :geometric [d key n]
+  (let [{:keys [p]} (:params d)
+        key (rng/ensure-key key)
+        u (rng/uniform key [n])
+        log-u (mx/log u)
+        log-1mp (mx/log (mx/subtract (mx/scalar 1.0) p))]
+    (mx/floor (mx/divide log-u log-1mp))))
+
 ;; ---------------------------------------------------------------------------
 ;; Negative Binomial
 ;; ---------------------------------------------------------------------------
@@ -542,6 +568,15 @@
     (let [nt (int (mx/realize n-trials))]
       (mapv #(mx/scalar % mx/int32) (range (inc nt))))))
 
+(defmethod dc/dist-sample-n :binomial [d key n]
+  (let [{:keys [n-trials p]} (:params d)
+        nt (int (mx/realize n-trials))
+        key (rng/ensure-key key)
+        ;; [n, nt] uniform draws, compare with p, sum successes
+        u (rng/uniform key [n nt])
+        successes (mx/sum (mx/where (mx/less u p) (mx/scalar 1.0) (mx/scalar 0.0)) [1])]
+    successes))
+
 ;; ---------------------------------------------------------------------------
 ;; Discrete Uniform
 ;; ---------------------------------------------------------------------------
@@ -564,6 +599,11 @@
     (let [lo-val (int (mx/realize lo))
           hi-val (int (mx/realize hi))]
       (mapv #(mx/scalar % mx/int32) (range lo-val (inc hi-val))))))
+
+(defmethod dc/dist-sample-n :discrete-uniform [d key n]
+  (let [{:keys [lo hi]} (:params d)
+        key (rng/ensure-key key)]
+    (rng/randint key (int (mx/realize lo)) (inc (int (mx/realize hi))) [n])))
 
 ;; ---------------------------------------------------------------------------
 ;; Truncated Normal
@@ -666,6 +706,14 @@
         z (rng/normal key [k])]
     (mx/add mean-vec
             (mx/flatten (mx/matmul cholesky-L (mx/reshape z [k 1]))))))
+
+(defmethod dc/dist-sample-n :multivariate-normal [d key n]
+  (let [{:keys [mean-vec cholesky-L k]} (:params d)
+        key (rng/ensure-key key)
+        z (rng/normal key [n k])
+        ;; z: [n, k], L^T: [k, k] -> samples: [n, k]
+        samples (mx/matmul z (mx/transpose cholesky-L))]
+    (mx/add mean-vec samples)))
 
 ;; ---------------------------------------------------------------------------
 ;; Broadcasted Normal (independent element-wise Gaussians)
