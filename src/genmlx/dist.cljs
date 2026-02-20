@@ -39,6 +39,25 @@
          (- t)
          (js/Math.log s)))))
 
+(defn- mlx-log-gamma
+  "Element-wise log-gamma via Lanczos approximation using MLX operations.
+   Works on arrays of any shape (scalar, [N], etc.) via broadcasting."
+  [x]
+  (let [x' (mx/subtract x (mx/scalar 1.0))
+        t  (mx/add x' (mx/scalar 7.5))
+        s  (reduce (fn [acc [i ci]]
+                     (mx/add acc (mx/divide (mx/scalar ci)
+                                            (mx/add x' (mx/scalar (double i))))))
+                   (mx/scalar 0.99999999999980993)
+                   [[1 676.5203681218851] [2 -1259.1392167224028]
+                    [3 771.32342877765313] [4 -176.61502916214059]
+                    [5 12.507343278686905] [6 -0.13857109526572012]
+                    [7 9.9843695780195716e-6] [8 1.5056327351493116e-7]])]
+    (mx/add (mx/scalar (* 0.5 (js/Math.log (* 2 js/Math.PI))))
+            (mx/multiply (mx/add x' (mx/scalar 0.5)) (mx/log t))
+            (mx/negative t)
+            (mx/log s))))
+
 ;; ---------------------------------------------------------------------------
 ;; Laplace inverse CDF helper
 ;; ---------------------------------------------------------------------------
@@ -409,11 +428,9 @@
             (recur (inc k) p rk2)
             (mx/scalar k))))))
   (log-prob [v]
-    (let [k-val (mx/realize v)
-          log-gamma-k1 (mx/scalar (log-gamma (inc k-val)))]
-      (-> (mx/multiply v (mx/log rate))
-          (mx/subtract rate)
-          (mx/subtract log-gamma-k1)))))
+    (-> (mx/multiply v (mx/log rate))
+        (mx/subtract rate)
+        (mx/subtract (mlx-log-gamma (mx/add v (mx/scalar 1.0)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Laplace
@@ -665,12 +682,10 @@
             (mx/scalar k))))))
   (log-prob [v]
     ;; log C(v + r - 1, v) + r*log(p) + v*log(1-p)
-    (let [r-val (mx/realize r)
-          k-val (mx/realize v)
-          log-coeff (- (log-gamma (+ k-val r-val))
-                       (log-gamma (inc k-val))
-                       (log-gamma r-val))]
-      (-> (mx/scalar log-coeff)
+    (let [log-coeff (mx/subtract (mlx-log-gamma (mx/add v r))
+                                 (mx/add (mlx-log-gamma (mx/add v (mx/scalar 1.0)))
+                                         (mlx-log-gamma r)))]
+      (-> log-coeff
           (mx/add (mx/multiply r (mx/log p)))
           (mx/add (mx/multiply v (mx/log (mx/subtract (mx/scalar 1.0) p))))))))
 
@@ -691,12 +706,11 @@
       (mx/scalar successes)))
   (log-prob [v]
     ;; log C(n, k) + k*log(p) + (n-k)*log(1-p)
-    (let [n-val (mx/realize n-trials)
-          k-val (mx/realize v)
-          log-coeff (- (log-gamma (inc n-val))
-                       (log-gamma (inc k-val))
-                       (log-gamma (inc (- n-val k-val))))]
-      (-> (mx/scalar log-coeff)
+    (let [log-coeff (mx/subtract (mlx-log-gamma (mx/add n-trials (mx/scalar 1.0)))
+                                 (mx/add (mlx-log-gamma (mx/add v (mx/scalar 1.0)))
+                                         (mlx-log-gamma (mx/add (mx/subtract n-trials v)
+                                                                (mx/scalar 1.0)))))]
+      (-> log-coeff
           (mx/add (mx/multiply v (mx/log p)))
           (mx/add (mx/multiply (mx/subtract n-trials v)
                                (mx/log (mx/subtract (mx/scalar 1.0) p)))))))
@@ -912,22 +926,23 @@
           u (rng/uniform k2 [])]
       (mx/add lo (mx/multiply u (mx/subtract hi lo)))))
   (log-prob [v]
-    ;; Find which bin v falls in, return log(prob_k / (total * width_k))
+    ;; Vectorized bin assignment using mx/where — works for scalar and [N]-shaped v
     (let [bounds-vals (mx/->clj bounds)
           probs-vals (mx/->clj probs)
-          v-val (mx/realize v)
           total (reduce + probs-vals)
           n-bins (count probs-vals)]
-      (loop [i 0]
-        (if (>= i n-bins)
-          (mx/scalar ##-Inf) ;; out of bounds
+      (reduce
+        (fn [acc i]
           (let [lo (nth bounds-vals i)
-                hi (nth bounds-vals (inc i))]
-            (if (and (>= v-val lo) (< v-val hi))
-              (let [width (- hi lo)
-                    p (nth probs-vals i)]
-                (mx/scalar (- (js/Math.log p) (js/Math.log total) (js/Math.log width))))
-              (recur (inc i)))))))))
+                hi (nth bounds-vals (inc i))
+                width (- hi lo)
+                p (nth probs-vals i)
+                log-density (mx/scalar (- (js/Math.log p) (js/Math.log total) (js/Math.log width)))
+                in-bin (mx/multiply (mx/greater-equal v (mx/scalar lo))
+                                    (mx/less v (mx/scalar hi)))]
+            (mx/where in-bin log-density acc)))
+        (mx/scalar ##-Inf)
+        (range n-bins)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Wishart

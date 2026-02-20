@@ -190,4 +190,56 @@
     #(p/regenerate regen-model empty-trace (sel/select :other))
     "not found in previous trace"))
 
+;; ---------------------------------------------------------------------------
+;; 6. Batched log-prob for discrete distributions (7.9)
+;; ---------------------------------------------------------------------------
+
+(println "\n-- Batched discrete log-prob (7.9) --")
+
+(def poisson-model
+  (gen []
+    (dyn/trace :x (dist/poisson (mx/scalar 3.0)))))
+
+(let [key (rng/fresh-key)
+      vt (dyn/vsimulate poisson-model [] 5 key)
+      choices (:choices vt)
+      x-vals (cm/get-value (cm/get-submap choices :x))]
+  (assert-true "vsimulate poisson produces [5]-shaped output"
+    (= [5] (mx/shape x-vals))))
+
+(def neg-binom-model
+  (gen []
+    (dyn/trace :x (dist/neg-binomial (mx/scalar 5.0) (mx/scalar 0.4)))))
+
+(let [key (rng/fresh-key)
+      vt (dyn/vsimulate neg-binom-model [] 5 key)
+      choices (:choices vt)
+      x-vals (cm/get-value (cm/get-submap choices :x))]
+  (assert-true "vsimulate neg-binomial produces [5]-shaped output"
+    (= [5] (mx/shape x-vals))))
+
+(def binomial-model
+  (gen []
+    (dyn/trace :x (dist/binomial (mx/scalar 10) (mx/scalar 0.3)))))
+
+(let [key (rng/fresh-key)
+      vt (dyn/vsimulate binomial-model [] 5 key)
+      choices (:choices vt)
+      x-vals (cm/get-value (cm/get-submap choices :x))]
+  (assert-true "vsimulate binomial produces [5]-shaped output"
+    (= [5] (mx/shape x-vals))))
+
+(def piecewise-model
+  (gen []
+    (dyn/trace :x (dist/piecewise-uniform
+                    (mx/array [0.0 1.0 2.0 3.0])
+                    (mx/array [1.0 2.0 1.0])))))
+
+(let [key (rng/fresh-key)
+      vt (dyn/vsimulate piecewise-model [] 5 key)
+      choices (:choices vt)
+      x-vals (cm/get-value (cm/get-submap choices :x))]
+  (assert-true "vsimulate piecewise-uniform produces [5]-shaped output"
+    (= [5] (mx/shape x-vals))))
+
 (println "\n=== All error message tests complete ===")

@@ -208,6 +208,20 @@ broader batch sampling support.*
   - [x] inv-gamma, beta, dirichlet (built on batched gamma)
   - Remaining without batch sampling: poisson (Knuth's algorithm, inherently sequential)
 
+- [x] **7.9** Fix `mx/realize`-on-value in discrete log-prob methods (**correctness bug**)
+  - poisson, neg-binomial, and binomial `dist-log-prob` call `(mx/realize v)` to
+    feed the JS `log-gamma` function. In batched mode `v` is `[N]`-shaped and
+    `.item()` throws: `item() can only be called on arrays of size 1`
+  - Verified: `(dyn/vsimulate model [] 5 key)` with a poisson trace site crashes
+  - Root cause: no MLX-native `lgamma` — these log-probs drop to the JS Lanczos
+    approximation, which requires a scalar
+  - Fix: implement element-wise `log-gamma` as an MLX operation (series expansion
+    or Stirling approximation using `mx/log`, `mx/add`, etc.) so log-prob stays
+    in the MLX graph. Alternatively, use `mx/vmap` over the JS function
+  - Also affects: piecewise-uniform log-prob (`mx/realize v` for bin lookup)
+  - Does NOT affect: beta, gamma, student-t (these only `mx/realize` parameters,
+    not values — parameters are always scalar)
+
 ### Vectorized inference completeness
 
 - [x] **7.2** Vectorized splice support in batched mode
@@ -480,11 +494,11 @@ Long-term (ecosystem):
 | 4. Inference Algorithms | 4 | 4 | 0 |
 | 5. Combinators | 3 | 3 | 0 |
 | 6. Testing Gaps | 5 | 5 | 0 |
-| 7. Vectorization & Perf | 8 | 6 | 2 |
+| 7. Vectorization & Perf | 9 | 7 | 2 |
 | 8. Gradient Programming | 2 | 2 | 0 |
 | 9. Incremental Computation | 2 | 1 | 1 |
 | 10. Formal Foundation | 16 | 3 | 13 |
 | 11. Validation | 2 | 1 | 1 |
 | 12. Ecosystem | 6 | 2 | 4 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **66** | **42** | **24** |
+| **Total** | **67** | **43** | **24** |
