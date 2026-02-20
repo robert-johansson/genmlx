@@ -445,6 +445,78 @@ and interop. Each sub-project is independently valuable.*
 
 ---
 
+## Phase 14: Gen.jl Parity (from Gen.jl survey, Feb 2026)
+
+*Items identified by surveying every module in Gen.jl and its ecosystem packages.
+Only features that fit GenMLX's design philosophy (purely functional, no mutation,
+idiomatic ClojureScript) are included. GenMLX already exceeds Gen.jl in many areas
+(vectorized inference, combinators, inference algorithms, distribution count); these
+are the remaining gaps.*
+
+### Inference algorithms
+
+- [x] **14.1** HMC mass matrix support — diagonal and dense
+  - `:metric` option on `hmc` and `nuts`: nil (identity), vector (diagonal), matrix (dense)
+  - `sample-momentum`, `kinetic-energy`, `inv-mass-multiply` helpers
+  - Threads through leapfrog-step, leapfrog-trajectory, leapfrog-trajectory-fused
+  - *Files*: `inference/mcmc.cljs`, `test/genmlx/hmc_mass_resample_test.cljs`
+
+- [ ] **14.2** Enumerative / grid-based inference
+  - Exact inference for small discrete models by iterating over all possible
+    choice assignments. Gen.jl's `enumerative_inference` + `choice_vol_grid`.
+  - Pure function: `(enumerate-inference model args observations choice-specs)`
+  - Choice specs: `[[:addr [v1 v2 v3]] [:addr2 [v1 v2] :continuous]]`
+  - For discrete: log-vol = 0. For continuous grids: log-vol = log(bin-width).
+  - ~60 lines in new `inference/enumerate.cljs`
+
+- [x] **14.3** Residual resampling for SMC
+  - `residual-resample`: deterministic floor(N * w_i) copies + systematic on remainder
+  - Selectable via `:resample-method :residual` in `smc`, `csmc`
+  - *Files*: `inference/smc.cljs`, `test/genmlx/hmc_mass_resample_test.cljs`
+
+- [x] **14.4** Stratified resampling for SMC
+  - `stratified-resample`: one independent uniform per stratum [j/N, (j+1)/N)
+  - Selectable via `:resample-method :stratified` in `smc`, `csmc`
+  - *Files*: `inference/smc.cljs`, `test/genmlx/hmc_mass_resample_test.cljs`
+
+### Distribution infrastructure
+
+- [ ] **14.5** Product distribution — independent joint sampling
+  - `(product-dist d1 d2 ...)` returns a distribution that samples a vector
+    of independent draws, one from each component.
+  - Gen.jl: `ProductDistribution(bernoulli, normal)` → samples `[bool, float]`
+  - ~30 lines in `dist.cljs`
+
+### Kernel infrastructure
+
+- [ ] **14.6** Kernel reversal declarations
+  - Gen.jl's `@rkern k1 : k2` declares two kernels as reversals of each other.
+    `reversal(k)` returns the reverse kernel. All built-in MH/MALA/HMC kernels
+    are self-reversals. This is used for involutive MCMC correctness checking.
+  - Purely data-driven: `(declare-reversal! k1 k2)`, `(reversal k)`.
+  - GenMLX already has the involutive MCMC infrastructure (ProposalEdit,
+    forward/backward swap); this adds explicit reversal metadata.
+  - ~30 lines in `inference/kernel.cljs`
+
+### Ecosystem
+
+- [ ] **14.7** Trace serialization — save/load traces as EDN
+  - Gen.jl has GenSerialization.jl for persisting traces to files.
+  - For GenMLX: serialize trace to EDN (ClojureScript's native data format).
+    Choices are already persistent maps — just need to convert MLX arrays to
+    JS numbers/arrays at the boundary and back.
+  - `(serialize-trace trace) → EDN string`
+  - `(deserialize-trace gen-fn edn-string) → Trace`
+  - ~80 lines in new `serialization.cljs`
+
+- [ ] **14.8** Directional statistics distributions
+  - Gen.jl ecosystem has GenDirectionalStats.jl: von Mises-Fisher (on spheres),
+    distributions on SO(3) and SO(2) for robotics/perception.
+  - Start with von Mises-Fisher: `(von-mises-fisher mu kappa)` on unit sphere.
+  - ~50 lines in `dist.cljs` via `defdist`
+
+---
+
 ## Priority Order
 
 For someone working through this linearly:
@@ -486,6 +558,16 @@ Long-term (ecosystem):
   11.1–11.2  Validation
   12.1–12.6  Ecosystem
   10.16  λ_MLX paper
+
+Gen.jl parity (from survey):
+  14.1  HMC mass matrix              ✅
+  14.2  Enumerative inference
+  14.3  Residual resampling          ✅
+  14.4  Stratified resampling        ✅
+  14.5  Product distribution
+  14.6  Kernel reversals
+  14.7  Trace serialization
+  14.8  Directional distributions
 ```
 
 ---
@@ -507,4 +589,5 @@ Long-term (ecosystem):
 | 11. Validation | 2 | 1 | 1 |
 | 12. Ecosystem | 6 | 2 | 4 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **53** | **14** |
+| 14. Gen.jl Parity | 8 | 3 | 5 |
+| **Total** | **75** | **56** | **19** |

@@ -26,6 +26,72 @@
             (recur i cumsum (inc j) (conj! indices i))
             (recur (inc i) cumsum' j indices)))))))
 
+(defn- residual-resample
+  "Residual resampling: deterministically allocate floor(N * w_i) copies,
+   then multinomially resample the remainder. Lower variance than systematic."
+  [log-weights n key]
+  (let [{:keys [probs]} (u/normalize-log-weights log-weights)
+        ;; Deterministic part: floor(N * w_i) copies of each particle
+        scaled    (mapv #(* n %) probs)
+        floors    (mapv #(js/Math.floor %) scaled)
+        n-det     (reduce + floors)
+        ;; Build deterministic indices
+        det-indices (into []
+                      (mapcat (fn [i cnt] (repeat cnt i))
+                              (range) floors))
+        ;; Stochastic part: resample remainder from residuals
+        n-resid   (- n n-det)]
+    (if (zero? n-resid)
+      det-indices
+      (let [residuals  (mapv #(- %1 %2) scaled floors)
+            resid-sum  (reduce + residuals)
+            resid-probs (mapv #(/ % resid-sum) residuals)
+            ;; Use systematic resampling on the residuals
+            u (if key
+                (/ (mx/realize (rng/uniform key [])) n-resid)
+                (/ (js/Math.random) n-resid))
+            resid-indices
+              (loop [i 0, cumsum 0.0, j 0, acc (transient [])]
+                (if (>= j n-resid)
+                  (persistent! acc)
+                  (let [threshold (+ u (/ j n-resid))
+                        cumsum' (+ cumsum (nth resid-probs i))]
+                    (if (>= cumsum' threshold)
+                      (recur i cumsum (inc j) (conj! acc i))
+                      (recur (inc i) cumsum' j acc)))))]
+        (into det-indices resid-indices)))))
+
+(defn- stratified-resample
+  "Stratified resampling: draw one uniform per stratum [j/N, (j+1)/N).
+   Lower variance than systematic (independent strata)."
+  [log-weights n key]
+  (let [{:keys [probs]} (u/normalize-log-weights log-weights)
+        ;; Generate N stratified uniforms
+        keys (when key (rng/split-n key n))
+        uniforms (mapv (fn [j]
+                         (let [u (if keys
+                                   (mx/realize (rng/uniform (nth keys j) []))
+                                   (js/Math.random))]
+                           (/ (+ j u) n)))
+                       (range n))]
+    (loop [i 0, cumsum 0.0, j 0, indices (transient [])]
+      (if (>= j n)
+        (persistent! indices)
+        (let [threshold (nth uniforms j)
+              cumsum' (+ cumsum (nth probs i))]
+          (if (>= cumsum' threshold)
+            (recur i cumsum (inc j) (conj! indices i))
+            (recur (inc i) cumsum' j indices)))))))
+
+(defn- dispatch-resample
+  "Dispatch to the appropriate resampling method.
+   method: :systematic (default), :residual, or :stratified."
+  [method log-weights n key]
+  (case (or method :systematic)
+    :systematic (systematic-resample log-weights n key)
+    :residual   (residual-resample log-weights n key)
+    :stratified (stratified-resample log-weights n key)))
+
 (defn- compute-ess
   "Compute effective sample size from log-weights."
   [log-weights]
@@ -66,14 +132,15 @@
   "Subsequent timestep: resample (if ESS low), update particles, rejuvenate.
    Returns {:traces :log-weights :log-ml-increment}."
   [traces log-weights model obs particles ess-threshold
-   rejuvenation-steps rejuvenation-selection key]
+   rejuvenation-steps rejuvenation-selection resample-method key]
   (let [;; Check ESS and resample if needed
         ess        (compute-ess log-weights)
         resample?  (< ess (* ess-threshold particles))
         [resample-key step-key rejuv-key]
         (rng/split-n-or-nils key 3)
         [traces' weights'] (if resample?
-                             (let [indices (systematic-resample log-weights particles resample-key)]
+                             (let [indices (dispatch-resample resample-method
+                                            log-weights particles resample-key)]
                                [(mapv #(nth traces %) indices)
                                 (vec (repeat particles (mx/scalar 0.0)))])
                              [traces log-weights])
@@ -98,7 +165,10 @@
   "Sequential Monte Carlo (particle filtering).
 
    opts: {:particles N :ess-threshold ratio :rejuvenation-steps K
-          :rejuvenation-selection sel :callback fn :key prng-key}
+          :rejuvenation-selection sel :resample-method method
+          :callback fn :key prng-key}
+
+   resample-method: :systematic (default), :residual, or :stratified
 
    observations-seq: sequence of choice maps, one per timestep
    model: generative function
@@ -112,7 +182,8 @@
 
    Returns {:traces [Trace ...] :log-weights [MLX-scalar ...]
             :log-ml-estimate MLX-scalar}"
-  [{:keys [particles ess-threshold rejuvenation-steps rejuvenation-selection callback key]
+  [{:keys [particles ess-threshold rejuvenation-steps rejuvenation-selection
+           resample-method callback key]
     :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0
          rejuvenation-selection sel/all}}
    model args observations-seq]
@@ -138,7 +209,8 @@
                      (mx/add log-ml log-ml-increment) next-key))
             (let [{:keys [traces log-weights log-ml-increment ess resampled?]}
                   (smc-step traces log-weights model obs-t particles ess-threshold
-                            rejuvenation-steps rejuvenation-selection step-key)]
+                            rejuvenation-steps rejuvenation-selection
+                            resample-method step-key)]
               (when callback
                 (callback {:step t :ess ess :resampled? resampled?}))
               (recur (inc t) traces log-weights
@@ -154,14 +226,19 @@
    This is the core kernel for particle Gibbs and particle MCMC.
 
    opts: {:particles N :ess-threshold ratio :rejuvenation-steps K
-          :rejuvenation-selection sel :callback fn :key prng-key}
+          :rejuvenation-selection sel :resample-method method
+          :callback fn :key prng-key}
+
+   resample-method: :systematic (default), :residual, or :stratified
+
    model: generative function
    args: model arguments
    observations-seq: sequence of choice maps, one per timestep
    reference-trace: the retained reference particle (from previous PMCMC iteration)
 
    Returns {:traces :log-weights :log-ml-estimate}"
-  [{:keys [particles ess-threshold rejuvenation-steps rejuvenation-selection callback key]
+  [{:keys [particles ess-threshold rejuvenation-steps rejuvenation-selection
+           resample-method callback key]
     :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0
          rejuvenation-selection sel/all}}
    model args observations-seq reference-trace]
@@ -200,7 +277,7 @@
                   [resample-key step-rk rejuv-key] (rng/split-n-or-nils step-key 3)
                   ;; Conditional resampling: reference particle always survives
                   [traces' weights'] (if resample?
-                                       (let [indices (systematic-resample
+                                       (let [indices (dispatch-resample resample-method
                                                        log-weights particles resample-key)
                                              ;; Force reference particle at index 0
                                              indices' (assoc indices ref-idx ref-idx)]

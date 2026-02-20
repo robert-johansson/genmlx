@@ -443,13 +443,59 @@
 ;; Shared Hamiltonian helper
 ;; ---------------------------------------------------------------------------
 
+;; ---------------------------------------------------------------------------
+;; Mass matrix helpers for HMC / NUTS
+;; ---------------------------------------------------------------------------
+
+(defn- sample-momentum
+  "Sample momentum p ~ N(0, M).
+   metric nil → identity (standard normal).
+   metric vector → diagonal M (scale by sqrt of diagonal).
+   metric matrix → dense M (scale by Cholesky factor)."
+  [metric q-shape key]
+  (let [z (if key (rng/normal key q-shape) (mx/random-normal q-shape))]
+    (cond
+      (nil? metric)    z
+      (= 1 (count (mx/shape metric)))  ;; diagonal: p = sqrt(diag) * z
+        (mx/multiply (mx/sqrt metric) z)
+      :else  ;; dense: p = L * z where M = L L^T
+        (let [L (mx/cholesky metric)]
+          (mx/squeeze (mx/matmul L (mx/reshape z [-1 1])))))))
+
+(defn- kinetic-energy
+  "Kinetic energy: 0.5 * p^T M^{-1} p.
+   metric nil → 0.5 * sum(p^2).
+   metric vector → 0.5 * sum(p^2 / diag).
+   metric matrix → 0.5 * p^T M^{-1} p."
+  [p metric half]
+  (cond
+    (nil? metric)
+      (mx/multiply half (mx/sum (mx/square p)))
+    (= 1 (count (mx/shape metric)))  ;; diagonal
+      (mx/multiply half (mx/sum (mx/divide (mx/square p) metric)))
+    :else  ;; dense
+      (let [Minv-p (mx/solve metric p)]
+        (mx/multiply half (mx/sum (mx/multiply p Minv-p))))))
+
+(defn- inv-mass-multiply
+  "Compute M^{-1} * p for the leapfrog position update.
+   metric nil → p (identity).
+   metric vector → p / diag.
+   metric matrix → M^{-1} p."
+  [p metric]
+  (cond
+    (nil? metric)    p
+    (= 1 (count (mx/shape metric)))  (mx/divide p metric)
+    :else            (mx/solve metric p)))
+
 (defn- hamiltonian
-  "Compute H = neg-U(q) + 0.5 * sum(p^2). Evals both terms, returns JS number."
-  [neg-U-fn q p half]
-  (let [neg-U (neg-U-fn q)
-        K (mx/multiply half (mx/sum (mx/square p)))]
-    (mx/eval! neg-U K)
-    (+ (mx/item neg-U) (mx/item K))))
+  "Compute H = neg-U(q) + kinetic-energy(p, M). Returns JS number."
+  ([neg-U-fn q p half] (hamiltonian neg-U-fn q p half nil))
+  ([neg-U-fn q p half metric]
+   (let [neg-U (neg-U-fn q)
+         K (kinetic-energy p metric half)]
+     (mx/eval! neg-U K)
+     (+ (mx/item neg-U) (mx/item K)))))
 
 ;; ---------------------------------------------------------------------------
 ;; HMC (Hamiltonian Monte Carlo)
@@ -458,71 +504,75 @@
 (defn- leapfrog-step
   "Single leapfrog step with eval per step to bound graph size.
    Used by NUTS which needs per-step control.
+   Optional metric for mass matrix (nil = identity).
    Returns [q p] Clojure vector."
-  [grad-U q p eps half-eps]
-  (let [r (mx/tidy
-            (fn []
-              (let [g (grad-U q)
-                    p (mx/subtract p (mx/multiply half-eps g))
-                    q (mx/add q (mx/multiply eps p))
-                    g (grad-U q)
-                    p (mx/subtract p (mx/multiply half-eps g))]
-                (mx/eval! q p)
-                #js [q p])))]
-    [(aget r 0) (aget r 1)]))
+  ([grad-U q p eps half-eps] (leapfrog-step grad-U q p eps half-eps nil))
+  ([grad-U q p eps half-eps metric]
+   (let [r (mx/tidy
+             (fn []
+               (let [g (grad-U q)
+                     p (mx/subtract p (mx/multiply half-eps g))
+                     q (mx/add q (mx/multiply eps (inv-mass-multiply p metric)))
+                     g (grad-U q)
+                     p (mx/subtract p (mx/multiply half-eps g))]
+                 (mx/eval! q p)
+                 #js [q p])))]
+     [(aget r 0) (aget r 1)])))
 
 (defn- leapfrog-trajectory
   "Run L leapfrog steps (unfused, used by NUTS)."
-  [grad-U q p eps half-eps L]
-  (loop [i 0, q q, p p]
-    (if (>= i L)
-      [q p]
-      (let [[q' p'] (leapfrog-step grad-U q p eps half-eps)]
-        (recur (inc i) q' p')))))
+  ([grad-U q p eps half-eps L] (leapfrog-trajectory grad-U q p eps half-eps L nil))
+  ([grad-U q p eps half-eps L metric]
+   (loop [i 0, q q, p p]
+     (if (>= i L)
+       [q p]
+       (let [[q' p'] (leapfrog-step grad-U q p eps half-eps metric)]
+         (recur (inc i) q' p'))))))
 
 (defn- leapfrog-trajectory-fused
   "Fused leapfrog: L+1 gradient evals instead of 2L.
    Adjacent half-kicks between steps are merged into full kicks.
-   Builds one lazy graph — no per-step eval or tidy."
-  [grad-U q p eps half-eps L]
-  ;; Initial half-kick
-  (let [g (grad-U q)
-        p (mx/subtract p (mx/multiply half-eps g))
-        ;; First drift
-        q (mx/add q (mx/multiply eps p))]
-    ;; L-1 interior steps: full kick (two halves fused) + drift
-    (loop [i 1, q q, p p]
-      (if (>= i L)
-        ;; Final half-kick only (no more drift)
-        (let [g (grad-U q)
-              p (mx/subtract p (mx/multiply half-eps g))]
-          [q p])
-        (let [g (grad-U q)
-              p (mx/subtract p (mx/multiply eps g))
-              q (mx/add q (mx/multiply eps p))]
-          (recur (inc i) q p))))))
+   Builds one lazy graph — no per-step eval or tidy.
+   Optional metric for mass matrix (nil = identity)."
+  ([grad-U q p eps half-eps L] (leapfrog-trajectory-fused grad-U q p eps half-eps L nil))
+  ([grad-U q p eps half-eps L metric]
+   ;; Initial half-kick
+   (let [g (grad-U q)
+         p (mx/subtract p (mx/multiply half-eps g))
+         ;; First drift: q += eps * M^{-1} p
+         q (mx/add q (mx/multiply eps (inv-mass-multiply p metric)))]
+     ;; L-1 interior steps: full kick (two halves fused) + drift
+     (loop [i 1, q q, p p]
+       (if (>= i L)
+         ;; Final half-kick only (no more drift)
+         (let [g (grad-U q)
+               p (mx/subtract p (mx/multiply half-eps g))]
+           [q p])
+         (let [g (grad-U q)
+               p (mx/subtract p (mx/multiply eps g))
+               q (mx/add q (mx/multiply eps (inv-mass-multiply p metric)))]
+           (recur (inc i) q p)))))))
 
 (defn- hmc-step
-  "One HMC step. Returns {:state q-next :accepted? bool}."
-  [q neg-U-compiled grad-neg-U eps half-eps half q-shape leapfrog-steps key]
+  "One HMC step. Returns {:state q-next :accepted? bool}.
+   metric: nil (identity), vector (diagonal), or matrix (dense)."
+  [q neg-U-compiled grad-neg-U eps half-eps half q-shape leapfrog-steps metric key]
   (let [[momentum-key accept-key] (rng/split-or-nils key)
-        ;; Sample momentum
-        p0 (doto (if momentum-key
-                   (rng/normal momentum-key q-shape)
-                   (mx/random-normal q-shape))
-              mx/eval!)
+        ;; Sample momentum from N(0, M)
+        p0 (doto (sample-momentum metric q-shape momentum-key) mx/eval!)
         ;; Current Hamiltonian
-        current-H (hamiltonian neg-U-compiled q p0 half)
+        current-H (hamiltonian neg-U-compiled q p0 half metric)
         ;; Fused leapfrog — L+1 gradient evals, one lazy graph
         [q' p'] (let [r (mx/tidy
                           (fn []
                             (let [[q' p'] (leapfrog-trajectory-fused
-                                            grad-neg-U q p0 eps half-eps leapfrog-steps)]
+                                            grad-neg-U q p0 eps half-eps
+                                            leapfrog-steps metric)]
                               (mx/eval! q' p')
                               #js [q' p'])))]
                   [(aget r 0) (aget r 1)])
         ;; Proposed Hamiltonian
-        proposed-H (hamiltonian neg-U-compiled q' p' half)
+        proposed-H (hamiltonian neg-U-compiled q' p' half metric)
         ;; Accept/reject
         log-accept (- current-H proposed-H)
         accept? (u/accept-mh? log-accept accept-key)
@@ -533,13 +583,20 @@
   "Hamiltonian Monte Carlo sampling.
 
    opts: {:samples N :step-size eps :leapfrog-steps L :burn B
-          :thin T :addresses [addr...] :compile? bool :callback fn :key prng-key}
+          :thin T :addresses [addr...] :compile? bool :callback fn :key prng-key
+          :metric M}
+
+   metric: mass matrix (optional, default identity).
+     nil           — identity mass matrix (standard HMC)
+     MLX vector    — diagonal mass matrix (vector of diagonal entries)
+     MLX matrix    — dense mass matrix (positive definite)
+
    model: generative function
    args: model arguments
    observations: choice map of observed values
 
    Returns vector of MLX arrays (parameter samples)."
-  [{:keys [samples step-size leapfrog-steps burn thin addresses compile? callback key]
+  [{:keys [samples step-size leapfrog-steps burn thin addresses compile? callback key metric]
     :or {step-size 0.01 leapfrog-steps 20 burn 100 thin 1 compile? true}}
    model args observations]
   (let [score-fn (u/make-score-fn model args observations addresses)
@@ -558,7 +615,8 @@
     (collect-samples
       {:samples samples :burn burn :thin thin :callback callback :key key}
       (fn [q step-key]
-        (hmc-step q neg-U-compiled grad-neg-U eps half-eps half q-shape leapfrog-steps step-key))
+        (hmc-step q neg-U-compiled grad-neg-U eps half-eps half q-shape
+                  leapfrog-steps metric step-key))
       mx/->clj
       init-q)))
 
@@ -578,11 +636,11 @@
 
 (defn- nuts-base-case
   "NUTS base case: single leapfrog step."
-  [{:keys [neg-ld grad eps half-eps half]} q p v log-u current-H]
+  [{:keys [neg-ld grad eps half-eps half metric]} q p v log-u current-H]
   (let [actual-eps (if (pos? v) eps (mx/negative eps))
         actual-half (if (pos? v) half-eps (mx/negative half-eps))
-        [q' p'] (leapfrog-step grad q p actual-eps actual-half)
-        proposed-H (hamiltonian neg-ld q' p' half)
+        [q' p'] (leapfrog-step grad q p actual-eps actual-half metric)
+        proposed-H (hamiltonian neg-ld q' p' half metric)
         n' (if (<= log-u (- proposed-H)) 1 0)
         s' (< (- proposed-H current-H) 1000)
         alpha (min 1.0 (js/Math.exp (- current-H proposed-H)))]
@@ -628,10 +686,16 @@
   "No-U-Turn Sampler (NUTS).
 
    opts: {:samples N :step-size eps :max-depth J :burn B :thin T
-          :addresses [addr...] :compile? bool :callback fn :key prng-key}
+          :addresses [addr...] :compile? bool :callback fn :key prng-key
+          :metric M}
+
+   metric: mass matrix (optional, default identity). Same as HMC:
+     nil           — identity mass matrix
+     MLX vector    — diagonal mass matrix
+     MLX matrix    — dense mass matrix (positive definite)
 
    Returns vector of MLX arrays (parameter samples)."
-  [{:keys [samples step-size max-depth burn thin addresses compile? callback key]
+  [{:keys [samples step-size max-depth burn thin addresses compile? callback key metric]
     :or {step-size 0.01 max-depth 10 burn 0 thin 1 compile? true}}
    model args observations]
   (let [score-fn (u/make-score-fn model args observations addresses)
@@ -643,7 +707,8 @@
         eps (mx/scalar step-size)
         half-eps (mx/scalar (* 0.5 step-size))
         half (mx/scalar 0.5)
-        ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld :eps eps :half-eps half-eps :half half}
+        ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld :eps eps :half-eps half-eps
+             :half half :metric metric}
         {:keys [trace]} (p/generate model args observations)
         init-q (u/extract-params trace addresses)
         q-shape (mx/shape init-q)]
@@ -652,12 +717,9 @@
       (fn [q step-key]
         (let [[momentum-key slice-key dir-key tree-key]
               (rng/split-n-or-nils step-key 4)
-              ;; Sample momentum and compute current Hamiltonian
-              p0 (doto (if momentum-key
-                         (rng/normal momentum-key q-shape)
-                         (mx/random-normal q-shape))
-                    mx/eval!)
-              current-H (hamiltonian neg-ld-compiled q p0 half)
+              ;; Sample momentum from N(0, M) and compute current Hamiltonian
+              p0 (doto (sample-momentum metric q-shape momentum-key) mx/eval!)
+              current-H (hamiltonian neg-ld-compiled q p0 half metric)
               log-u (+ (if slice-key
                          (js/Math.log (mx/realize (rng/uniform slice-key [])))
                          (js/Math.log (js/Math.random)))
