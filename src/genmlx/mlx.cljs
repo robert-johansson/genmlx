@@ -14,6 +14,8 @@
 (defonce core    (.-core mlx-mod))
 (defonce random  (.-random core))
 (defonce linalg  (.-linalg core))
+(defonce nn-mod  (.-nn mlx-mod))
+(defonce optim-mod (.-optimizers mlx-mod))
 
 ;; CPU stream needed for linalg ops (cholesky, solve, etc.)
 (defonce ^:private cpu-stream (.newStream core (.-cpu core)))

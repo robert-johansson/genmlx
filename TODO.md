@@ -373,11 +373,11 @@ correctness, and algebraic effect semantics.*
 *Build out the ecosystem with neural network integration, visualization,
 and interop. Each sub-project is independently valuable.*
 
-- [ ] **12.1** Neural network integration — `nn->gen-fn`
-  - Protocol for wrapping MLX neural networks as generative functions
-  - Network forward pass becomes the body; parameters become `dyn/param` values
-  - Enables neural amortized proposals
-  - *File*: new `nn.cljs`
+- [x] **12.1** Neural network integration — `nn->gen-fn`
+  - NeuralNetGF wraps nn.Module as deterministic GF (simulate, generate, assess, propose)
+  - Layer constructors (linear, sequential, relu, gelu, etc.)
+  - Training utilities using MLX's native nn.valueAndGrad + optimizers
+  - *Files*: `mlx.cljs`, `nn.cljs`, `test/genmlx/nn_test.cljs`
 
 - [ ] **12.2** Amortized inference via trained neural proposals
   - Train a neural network to approximate the posterior
@@ -483,6 +483,6 @@ Long-term (ecosystem):
 | 9. Incremental Computation | 3 | 0 | 3 |
 | 10. Formal Foundation | 16 | 2 | 14 |
 | 11. Validation | 2 | 0 | 2 |
-| 12. Ecosystem | 6 | 0 | 6 |
+| 12. Ecosystem | 6 | 1 | 5 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **33** | **34** |
+| **Total** | **67** | **34** | **33** |
