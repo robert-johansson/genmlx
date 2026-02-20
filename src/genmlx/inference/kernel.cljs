@@ -5,6 +5,7 @@
   (:require [genmlx.mlx.random :as rng]
             [genmlx.protocols :as p]
             [genmlx.selection :as sel]
+            [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.inference.util :as u]))
 
@@ -121,3 +122,82 @@
                  (if keep? (inc n) n)
                  (if accepted? (inc n-accepted) n-accepted)
                  next-key))))))
+
+;; ---------------------------------------------------------------------------
+;; Kernel DSL — higher-level constructors
+;; ---------------------------------------------------------------------------
+
+(defn random-walk
+  "Gaussian random-walk MH kernel.
+   Single address: (random-walk :x 0.5) — proposes x' = x + N(0, 0.5).
+   Multi-address:  (random-walk {:x 0.5 :y 0.1}) — chains per-address walks."
+  ([addr-or-map std]
+   (if (map? addr-or-map)
+     (apply chain (map (fn [[a s]] (random-walk a s)) addr-or-map))
+     (fn [trace key]
+       (let [[k1 k2] (rng/split (rng/ensure-key key))
+             cur-val (cm/get-choice (:choices trace) [addr-or-map])
+             noise   (mx/multiply (rng/normal k1 (mx/shape cur-val))
+                                  (mx/scalar std))
+             proposed (mx/add cur-val noise)
+             constraints (cm/choicemap addr-or-map proposed)
+             result (p/update (:gen-fn trace) trace constraints)
+             w (mx/realize (:weight result))]
+         (if (u/accept-mh? w k2)
+           (:trace result)
+           trace)))))
+  ([addr-map]
+   (if (map? addr-map)
+     (apply chain (map (fn [[a s]] (random-walk a s)) addr-map))
+     (throw (ex-info "random-walk requires std or a map" {:arg addr-map})))))
+
+(defn prior
+  "MH kernel that resamples addresses from the prior via regenerate.
+   (prior :x)       — single address
+   (prior :x :y :z) — joint resample"
+  [& addrs]
+  (mh-kernel (apply sel/select addrs)))
+
+(defn proposal
+  "MH kernel with a custom proposal generative function.
+   The proposal-gf takes [current-trace-choices] as args and proposes new choices.
+   Symmetric:  (proposal my-gf)
+   Asymmetric: (proposal fwd-gf :backward bwd-gf)"
+  [fwd-gf & {:keys [backward]}]
+  (if backward
+    ;; Asymmetric: weight = update-weight + backward-score - forward-score
+    (fn [trace key]
+      (let [[_k1 _k2 k3] (rng/split-n (rng/ensure-key key) 3)
+            fwd-result    (p/propose fwd-gf [(:choices trace)])
+            fwd-choices   (:choices fwd-result)
+            fwd-score     (:weight fwd-result)
+            update-result (p/update (:gen-fn trace) trace fwd-choices)
+            trace'        (:trace update-result)
+            update-weight (:weight update-result)
+            bwd-result    (p/assess backward [(:choices trace')] (:discard update-result))
+            bwd-score     (:weight bwd-result)
+            _             (mx/eval! update-weight fwd-score bwd-score)
+            log-alpha     (- (+ (mx/item update-weight) (mx/item bwd-score))
+                             (mx/item fwd-score))]
+        (if (u/accept-mh? log-alpha k3)
+          trace'
+          trace)))
+    ;; Symmetric: weight = update-weight (forward and backward cancel)
+    (fn [trace key]
+      (let [[_k1 k2]     (rng/split (rng/ensure-key key))
+            fwd-result    (p/propose fwd-gf [(:choices trace)])
+            fwd-choices   (:choices fwd-result)
+            update-result (p/update (:gen-fn trace) trace fwd-choices)
+            w             (mx/realize (:weight update-result))]
+        (if (u/accept-mh? w k2)
+          (:trace update-result)
+          trace)))))
+
+(defn gibbs
+  "Convenience for the Gibbs cycling pattern.
+   (gibbs :x :y :z)         — resample each from prior in sequence
+   (gibbs {:x 0.5 :y 0.1})  — random walk on each with given std"
+  [& args]
+  (if (and (= 1 (count args)) (map? (first args)))
+    (random-walk (first args))
+    (apply chain (map prior args))))

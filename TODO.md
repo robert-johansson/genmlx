@@ -394,7 +394,7 @@ and interop. Each sub-project is independently valuable.*
   - Each token position is an addressed random choice
   - *File*: new `llm.cljs`
 
-- [ ] **12.5** Trace kernel DSL
+- [x] **12.5** Trace kernel DSL
   - Higher-level sugar for writing MCMC kernels
   - ~100 lines
 
