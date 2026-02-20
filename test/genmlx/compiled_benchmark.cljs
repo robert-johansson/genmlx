@@ -214,4 +214,34 @@
       overhead (if (pos? handcoded-ms) (/ genmlx-ms handcoded-ms) ##Inf)]
   (println (str "  GenMLX overhead: " (.toFixed overhead 1) "x")))
 
+;; ---------------------------------------------------------------------------
+;; Benchmark 5: Compiled MH vs Vectorized MH (N parallel chains)
+;; ---------------------------------------------------------------------------
+
+(println "\n-- 5. Compiled MH vs Vectorized MH (linear regression, 200 samples) --")
+
+(let [n-chains 10
+      n-samples 200
+      ;; Measure 1 compiled-MH chain, extrapolate serial cost for N chains
+      one-ms (bench "1x Compiled MH"
+               (fn [] (mcmc/compiled-mh
+                        {:samples n-samples :burn 20
+                         :addresses [:slope :intercept]
+                         :proposal-std 0.5}
+                        linreg-model [linreg-xs] linreg-obs))
+               {:warmup 1 :runs 3})
+      serial-ms (* n-chains one-ms)
+      _ (println (str "  Serial " n-chains "x (extrapolated): " serial-ms "ms"))
+      ;; Vectorized MH: N chains in parallel via broadcasting
+      vec-ms (bench (str "Vectorized MH (" n-chains " chains)")
+               (fn [] (mcmc/vectorized-compiled-mh
+                        {:samples n-samples :burn 20
+                         :addresses [:slope :intercept]
+                         :proposal-std 0.5
+                         :n-chains n-chains}
+                        linreg-model [linreg-xs] linreg-obs))
+               {:warmup 1 :runs 3})
+      speedup (if (pos? vec-ms) (/ serial-ms vec-ms) ##Inf)]
+  (println (str "  Speedup: " (.toFixed speedup 1) "x")))
+
 (println "\nAll benchmarks complete.")

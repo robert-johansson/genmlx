@@ -189,6 +189,77 @@
       init-params)))
 
 ;; ---------------------------------------------------------------------------
+;; Vectorized Compiled MH (N parallel chains)
+;; ---------------------------------------------------------------------------
+
+(defn- vectorized-mh-step
+  "One vectorized MH step for N parallel chains.
+   params: [N, D], score-fn returns [N], accept/reject via mx/where."
+  [params score-fn proposal-std param-shape n-chains key]
+  (let [[propose-key accept-key] (rng/split-or-nils key)
+        noise    (if propose-key
+                   (rng/normal propose-key param-shape)
+                   (mx/random-normal param-shape))
+        proposal (mx/add params (mx/multiply proposal-std noise))
+        score-current  (score-fn params)
+        score-proposal (score-fn proposal)
+        _ (mx/eval! score-current score-proposal)
+        log-alphas (mx/subtract score-proposal score-current)
+        u (if accept-key
+            (rng/uniform accept-key [n-chains])
+            (mx/random-normal [n-chains]))
+        accept-mask (mx/less (mx/log u) log-alphas)
+        _ (mx/eval! accept-mask)
+        n-accepted (mx/item (mx/sum accept-mask))
+        new-params (mx/where (mx/expand-dims accept-mask 1) proposal params)
+        _ (mx/eval! new-params)]
+    {:state new-params :n-accepted (int n-accepted)}))
+
+(defn vectorized-compiled-mh
+  "Vectorized compiled MH: N independent chains running in parallel.
+   MLX broadcasting executes the model ONCE per step for all N chains.
+
+   opts: {:samples N :burn B :thin T :addresses [addr...]
+          :proposal-std σ :compile? bool :n-chains C :callback fn :key prng-key}
+   model: generative function
+   args: model arguments
+   observations: choice map of observed values
+
+   Returns vector of [N-chains, D] JS arrays (one per sample).
+   Metadata: {:acceptance-rate mean-rate}."
+  [{:keys [samples burn thin addresses proposal-std compile? n-chains callback key]
+    :or {burn 0 thin 1 proposal-std 0.1 compile? true n-chains 10}}
+   model args observations]
+  (let [score-fn (u/make-vectorized-score-fn model args observations addresses)
+        score-fn (if compile? (mx/compile-fn score-fn) score-fn)
+        ;; Initialize N chains from independent generate calls
+        init-params (mx/stack
+                      (mapv (fn [_]
+                              (let [{:keys [trace]} (p/generate model args observations)]
+                                (u/extract-params trace addresses)))
+                            (range n-chains)))
+        param-shape (mx/shape init-params)
+        std (mx/scalar proposal-std)
+        total-iters (+ burn (* samples thin))
+        d (count addresses)]
+    (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
+      (if (>= n samples)
+        (with-meta (persistent! acc)
+          {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
+        (let [[step-key next-key] (rng/split-or-nils rk)
+              {:keys [state n-accepted]} (vectorized-mh-step
+                                           state score-fn std param-shape n-chains step-key)
+              past-burn? (>= i burn)
+              keep? (and past-burn? (zero? (mod (- i burn) thin)))]
+          (when (and callback keep?)
+            (callback {:iter n :value (mx/->clj state) :n-accepted n-accepted}))
+          (recur (inc i) state
+                 (if keep? (conj! acc (mx/->clj state)) acc)
+                 (if keep? (inc n) n)
+                 (+ total-accepted n-accepted)
+                 next-key))))))
+
+;; ---------------------------------------------------------------------------
 ;; Enumerative Gibbs Sampling
 ;; ---------------------------------------------------------------------------
 

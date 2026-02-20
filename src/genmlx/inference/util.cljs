@@ -38,6 +38,20 @@
                  indexed-addrs)]
         (:weight (p/generate model args cm))))))
 
+(defn make-vectorized-score-fn
+  "Build a vectorized score function for N parallel chains.
+   Returns a fn: (params [N,D]) -> [N]-shaped MLX log-weight array."
+  [model args observations addresses]
+  (let [indexed-addrs (mapv vector (range) addresses)]
+    (fn [params]
+      (let [params-t (mx/transpose params)
+            cm (reduce
+                 (fn [cm [i addr]]
+                   (cm/set-choice cm [addr] (mx/index params-t i)))
+                 observations
+                 indexed-addrs)]
+        (:weight (p/generate model args cm))))))
+
 (defn extract-params
   "Extract parameter values from a trace at the given addresses.
    Returns an MLX 1-D array of realized scalar values."
