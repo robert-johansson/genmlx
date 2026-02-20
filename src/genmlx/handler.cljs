@@ -141,17 +141,27 @@
                    (update :score  #(mx/add % new-lp))
                    (update :weight #(mx/add % (mx/subtract new-lp old-lp))))])
       ;; Not selected: keep old
-      (let [val (cm/get-value old-choice)
-            lp  (dc/dist-log-prob dist val)]
-        [val (-> state
-               (update :choices #(cm/set-choice % [addr] val))
-               (update :score #(mx/add % lp)))]))))
+      (let [val (when (cm/has-value? old-choice)
+                  (cm/get-value old-choice))]
+        (when (nil? val)
+          (throw (ex-info (str "regenerate: address " addr " not found in previous trace choices. "
+                               "Cannot keep old value for an address that was never sampled.")
+                          {:addr addr})))
+        (let [lp (dc/dist-log-prob dist val)]
+          [val (-> state
+                 (update :choices #(cm/set-choice % [addr] val))
+                 (update :score #(mx/add % lp)))])))))
 
 (defn- project-transition
   "Pure: replay old value, accumulate log-prob for selected addresses."
   [state addr dist]
   (let [old-choice (cm/get-submap (:old-choices state) addr)
-        val (cm/get-value old-choice)
+        val (when (cm/has-value? old-choice)
+              (cm/get-value old-choice))
+        _ (when (nil? val)
+            (throw (ex-info (str "project: address not found in previous trace choices. "
+                                 "Cannot replay a value for an address that was never sampled.")
+                            {})))
         lp (dc/dist-log-prob dist val)
         sel (:selection state)]
     [val (-> state
@@ -445,6 +455,7 @@
   "Execute body-fn under a handler, returning final state map (immutable)."
   [handler-fn init-state body-fn]
   (binding [*handler* handler-fn
-            *state*   (volatile! init-state)]
+            *state*   (volatile! init-state)
+            mx/*batched-exec?* (boolean (:batched? init-state))]
     (let [retval (body-fn)]
       (assoc @*state* :retval retval))))

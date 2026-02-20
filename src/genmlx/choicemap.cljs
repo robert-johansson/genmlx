@@ -22,7 +22,10 @@
 (defrecord Node [m]
   IChoiceMap
   (-has-value? [_] false)
-  (-get-value  [_] (throw (ex-info "Not a leaf" {})))
+  (-get-value  [_] (throw (ex-info (str "ChoiceMap node is not a leaf value. "
+                                        "Available sub-addresses: " (vec (keys m)) ". "
+                                        "Use get-submap or get-choice to access a specific sub-address.")
+                                       {:sub-addresses (vec (keys m))})))
   (-get-submap [_ addr] (get m addr))
   (-submaps    [_] (seq m)))
 

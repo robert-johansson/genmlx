@@ -67,9 +67,23 @@
 ;; Evaluation / materialization
 ;; ---------------------------------------------------------------------------
 
-(defn eval! [& arrs] (apply (.-eval core) arrs))
+(def ^:dynamic *batched-exec?* false)
 
-(defn item [a] (.item a))
+(defn eval! [& arrs]
+  (when *batched-exec?*
+    (js/console.warn
+      (str "mx/eval! called during batched execution. This materializes the computation "
+           "graph and may produce incorrect results or break vectorization. Move eval!/item "
+           "calls outside the gen body, or use scalar execution instead of vsimulate/vgenerate.")))
+  (apply (.-eval core) arrs))
+
+(defn item [a]
+  (when *batched-exec?*
+    (js/console.warn
+      (str "mx/item called during batched execution. This materializes the computation "
+           "graph and may produce incorrect results or break vectorization. Move eval!/item "
+           "calls outside the gen body, or use scalar execution instead of vsimulate/vgenerate.")))
+  (.item a))
 
 (defn ->clj [a]
   (.eval core a)

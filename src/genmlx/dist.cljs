@@ -79,6 +79,21 @@
   (dc/dist-support d))
 
 ;; ---------------------------------------------------------------------------
+;; Parameter validation helpers
+;; ---------------------------------------------------------------------------
+
+(defn- check-positive [dist-name param-name v]
+  (when (and (number? v) (<= v 0))
+    (throw (ex-info (str dist-name ": " param-name " must be positive, got " v)
+                    {:distribution dist-name :parameter param-name :value v}))))
+
+(defn- check-less-than [dist-name lo-name lo hi-name hi]
+  (when (and (number? lo) (number? hi) (>= lo hi))
+    (throw (ex-info (str dist-name ": " lo-name " must be less than " hi-name
+                         ", got " lo-name "=" lo " " hi-name "=" hi)
+                    {:distribution dist-name :lo lo :hi hi}))))
+
+;; ---------------------------------------------------------------------------
 ;; Gaussian
 ;; ---------------------------------------------------------------------------
 
@@ -95,6 +110,13 @@
                 (mx/multiply (mx/scalar 0.5) (mx/square z))))))
   (reparam [key]
     (mx/add mu (mx/multiply sigma (rng/normal key [])))))
+
+(let [gaussian-raw gaussian]
+  (defn gaussian
+    "Gaussian (normal) distribution with mean mu and std sigma."
+    [mu sigma]
+    (check-positive "gaussian" "sigma" sigma)
+    (gaussian-raw mu sigma)))
 
 (defmethod dc/dist-sample-n :gaussian [d key n]
   (let [{:keys [mu sigma]} (:params d)
@@ -118,6 +140,13 @@
       (mx/where in-bounds log-density (mx/scalar ##-Inf))))
   (reparam [key]
     (mx/add lo (mx/multiply (mx/subtract hi lo) (rng/uniform key [])))))
+
+(let [uniform-raw uniform]
+  (defn uniform
+    "Continuous uniform distribution on [lo, hi]."
+    [lo hi]
+    (check-less-than "uniform" "lo" lo "hi" hi)
+    (uniform-raw lo hi)))
 
 (defmethod dc/dist-sample-n :uniform [d key n]
   (let [{:keys [lo hi]} (:params d)
@@ -184,6 +213,14 @@
                                (mx/log (mx/subtract (mx/scalar 1.0) v))))
           (mx/subtract log-beta-val)))))
 
+(let [beta-dist-raw beta-dist]
+  (defn beta-dist
+    "Beta distribution with parameters alpha and beta."
+    [alpha beta-param]
+    (check-positive "beta-dist" "alpha" alpha)
+    (check-positive "beta-dist" "beta" beta-param)
+    (beta-dist-raw alpha beta-param)))
+
 ;; ---------------------------------------------------------------------------
 ;; Gamma
 ;; ---------------------------------------------------------------------------
@@ -214,6 +251,14 @@
                   (mx/multiply k (mx/log rate)))
           (mx/subtract (mx/multiply rate v))
           (mx/subtract log-gamma-k)))))
+
+(let [gamma-dist-raw gamma-dist]
+  (defn gamma-dist
+    "Gamma distribution with shape and rate parameters."
+    [shape-param rate]
+    (check-positive "gamma-dist" "shape" shape-param)
+    (check-positive "gamma-dist" "rate" rate)
+    (gamma-dist-raw shape-param rate)))
 
 (defn gamma-sample-n
   "Vectorized Marsaglia-Tsang: sample [n] gamma values with given shape and rate.
@@ -311,6 +356,13 @@
   (reparam [key]
     (let [u (rng/uniform key [])]
       (mx/divide (mx/negative (mx/log (mx/subtract (mx/scalar 1.0) u))) rate))))
+
+(let [exponential-raw exponential]
+  (defn exponential
+    "Exponential distribution with the given rate."
+    [rate]
+    (check-positive "exponential" "rate" rate)
+    (exponential-raw rate)))
 
 (defmethod dc/dist-sample-n :exponential [d key n]
   (let [{:keys [rate]} (:params d)

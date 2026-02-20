@@ -10,11 +10,29 @@
             [genmlx.selection :as sel]
             [genmlx.vectorized :as vec]
             [genmlx.edit :as edit]
-            [genmlx.diff :as diff]))
+            [genmlx.diff :as diff]
+            [clojure.set]))
 
 ;; Forward declarations
 (declare execute-sub)
 (declare execute-sub-project)
+
+(defn- warn-unused-constraints
+  "Warn if any top-level constraint keys were not consumed by the trace."
+  [op-name constraints result-choices]
+  (when (and constraints
+             (not= constraints cm/EMPTY)
+             (instance? cm/Node constraints))
+    (let [constraint-keys (set (keys (:m constraints)))
+          trace-keys (when (instance? cm/Node result-choices)
+                       (set (keys (:m result-choices))))
+          unused (clojure.set/difference constraint-keys (or trace-keys #{}))]
+      (when (seq unused)
+        (js/console.warn
+          (str op-name ": constraint address(es) not found in trace: "
+               (vec (sort unused)) ". "
+               "Trace addresses: " (vec (sort (or trace-keys []))) ". "
+               "Unused constraints are ignored."))))))
 
 (defrecord DynamicGF [body-fn source]
   p/IGenerativeFunction
@@ -39,6 +57,7 @@
                     :key key :constraints constraints
                     :executor execute-sub}
                    #(apply body-fn args))]
+      (warn-unused-constraints "generate" constraints (:choices result))
       {:trace (tr/make-trace
                 {:gen-fn this :args args
                  :choices (:choices result)
@@ -57,6 +76,7 @@
                     :discard cm/EMPTY
                     :executor execute-sub}
                    #(apply body-fn (:args trace)))]
+      (warn-unused-constraints "update" constraints (:choices result))
       {:trace (tr/make-trace
                 {:gen-fn this :args (:args trace)
                  :choices (:choices result)

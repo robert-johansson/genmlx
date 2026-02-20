@@ -360,11 +360,13 @@ correctness, and algebraic effect semantics.*
   - Instrument in development mode, strip in production
   - ~200 lines across multiple files
 
-- [ ] **11.2** Helpful error messages for common mistakes
+- [x] **11.2** Helpful error messages for common mistakes
   - Calling `mx/eval!` inside a `gen` body during batched execution
   - Mismatched choice map structure in `generate`/`update`
   - Missing addresses in selections
   - Type mismatches in distribution parameters
+  - *Files*: `choicemap.cljs`, `handler.cljs`, `mlx.cljs`, `dist.cljs`, `dynamic.cljs`,
+    `test/genmlx/error_message_test.cljs`
 
 ---
 
@@ -482,7 +484,7 @@ Long-term (ecosystem):
 | 8. Gradient Programming | 2 | 2 | 0 |
 | 9. Incremental Computation | 2 | 1 | 1 |
 | 10. Formal Foundation | 16 | 3 | 13 |
-| 11. Validation | 2 | 0 | 2 |
+| 11. Validation | 2 | 1 | 1 |
 | 12. Ecosystem | 6 | 2 | 4 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **66** | **41** | **25** |
+| **Total** | **66** | **42** | **24** |
