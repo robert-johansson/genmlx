@@ -262,22 +262,17 @@ broader batch sampling support.*
 
 ## Phase 9: Incremental Computation
 
-- [ ] **9.1** Handler-level diff awareness for DynamicGF
-  - Currently DynamicGF `update-with-diffs` re-executes the full body
-  - Optimization: skip unchanged trace sites during body re-execution
-  - Requires tracking which addresses were visited and what distributions they used
-  - Significant effort but high impact for MCMC on large models
-
-- [ ] **9.2** Per-step optimization for Unfold/Scan
+- [ ] **9.1** Per-step optimization for Unfold/Scan
   - Currently: no-change fast path only
   - Optimization: with `vector-diff`, skip early unchanged steps
   - ~50 lines each
 
-- [ ] **9.3** Static analysis pass (aspirational)
-  - Compile-time dependency graph extraction for `gen` bodies
-  - Would enable Gen.jl's static DSL-level incremental computation
-  - Requires significant macro engineering
-  - Alternative: trace-time dependency recording (simpler, dynamic)
+- [ ] **9.2** Handler-level diff awareness for DynamicGF *(low priority)*
+  - Currently DynamicGF `update-with-diffs` re-executes the full body
+  - Optimization: skip unchanged trace sites during body re-execution
+  - Requires tracking which addresses were visited and what distributions they used
+  - Deprioritized: MLX's lazy graph evaluation and broadcasting-based vectorization
+    already cover most performance needs. Revisit if a specific use case demands it
 
 ---
 
@@ -460,7 +455,7 @@ Medium-term (formal foundation):
 Long-term (ecosystem):
   4.3–4.4  VIMCO, ADEV                ✅
   8.1–8.2  Custom gradients            ✅
-  9.1–9.3  Incremental computation
+  9.1      Unfold/Scan per-step optimization
   11.1–11.2  Validation
   12.1–12.6  Ecosystem
   10.16  λ_MLX paper
@@ -480,9 +475,9 @@ Long-term (ecosystem):
 | 6. Testing Gaps | 5 | 5 | 0 |
 | 7. Vectorization & Perf | 8 | 6 | 2 |
 | 8. Gradient Programming | 2 | 2 | 0 |
-| 9. Incremental Computation | 3 | 0 | 3 |
+| 9. Incremental Computation | 2 | 0 | 2 |
 | 10. Formal Foundation | 16 | 2 | 14 |
 | 11. Validation | 2 | 0 | 2 |
 | 12. Ecosystem | 6 | 2 | 4 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **67** | **35** | **32** |
+| **Total** | **66** | **35** | **31** |
