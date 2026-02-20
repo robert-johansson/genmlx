@@ -141,27 +141,32 @@
     (let [[n init-state & extra] args]
       (loop [t 0 state init-state
              choices cm/EMPTY score (mx/scalar 0.0)
-             states []]
+             states [] step-scores []]
         (if (>= t n)
-          (tr/make-trace {:gen-fn this :args args
-                          :choices choices :retval states :score score})
+          (with-meta
+            (tr/make-trace {:gen-fn this :args args
+                            :choices choices :retval states :score score})
+            {::step-scores step-scores})
           (let [trace (p/simulate kernel (into [t state] extra))
                 new-state (:retval trace)]
             (recur (inc t)
                    new-state
                    (cm/set-choice choices [t] (:choices trace))
                    (mx/add score (:score trace))
-                   (conj states new-state)))))))
+                   (conj states new-state)
+                   (conj step-scores (:score trace))))))))
 
   p/IGenerate
   (generate [this args constraints]
     (let [[n init-state & extra] args]
       (loop [t 0 state init-state
              choices cm/EMPTY score (mx/scalar 0.0) weight (mx/scalar 0.0)
-             states []]
+             states [] step-scores []]
         (if (>= t n)
-          {:trace (tr/make-trace {:gen-fn this :args args
-                                  :choices choices :retval states :score score})
+          {:trace (with-meta
+                    (tr/make-trace {:gen-fn this :args args
+                                    :choices choices :retval states :score score})
+                    {::step-scores step-scores})
            :weight weight}
           (let [result (p/generate kernel (into [t state] extra)
                                    (cm/get-submap constraints t))
@@ -172,38 +177,75 @@
                    (cm/set-choice choices [t] (:choices trace))
                    (mx/add score (:score trace))
                    (mx/add weight (:weight result))
-                   (conj states new-state))))))))
+                   (conj states new-state)
+                   (conj step-scores (:score (:trace result))))))))))
 
 (extend-type UnfoldCombinator
   p/IUpdate
   (update [this trace constraints]
     (let [kern (:kernel this)
           {:keys [args choices]} trace
-          [n init-state & extra] args]
-      (loop [t 0 state init-state
-             new-choices cm/EMPTY score (mx/scalar 0.0)
-             discard cm/EMPTY states []]
-        (if (>= t n)
-          {:trace (tr/make-trace {:gen-fn this :args args
-                                  :choices new-choices :retval states :score score})
-           :weight (mx/subtract score (:score trace)) :discard discard}
-          (let [old-sub-choices (cm/get-submap choices t)
-                kernel-args (into [t state] extra)
-                old-trace (tr/make-trace
-                            {:gen-fn kern :args kernel-args
-                             :choices old-sub-choices
-                             :retval nil :score (mx/scalar 0.0)})
-                result (p/update kern old-trace (cm/get-submap constraints t))
-                new-trace (:trace result)
-                new-state (:retval new-trace)]
-            (recur (inc t)
-                   new-state
-                   (cm/set-choice new-choices [t] (:choices new-trace))
-                   (mx/add score (:score new-trace))
-                   (if (:discard result)
-                     (cm/set-choice discard [t] (:discard result))
-                     discard)
-                   (conj states new-state)))))))
+          [n init-state & extra] args
+          old-step-scores (::step-scores (meta trace))
+          ;; Find first step with non-empty constraints (prefix-skip boundary)
+          first-changed (if old-step-scores
+                          (loop [t 0]
+                            (cond
+                              (>= t n) n
+                              (not= (cm/get-submap constraints t) cm/EMPTY) t
+                              :else (recur (inc t))))
+                          0)]
+      ;; If no steps have constraints and we have metadata, return trace unchanged
+      (if (and old-step-scores (= first-changed n))
+        {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+        ;; Build prefix from old trace (steps 0..first-changed-1)
+        (let [prefix-choices (if (pos? first-changed)
+                               (reduce (fn [cm t]
+                                         (cm/set-choice cm [t] (cm/get-submap choices t)))
+                                       cm/EMPTY (range first-changed))
+                               cm/EMPTY)
+              prefix-score (if (pos? first-changed)
+                             (reduce (fn [acc t] (mx/add acc (nth old-step-scores t)))
+                                     (mx/scalar 0.0) (range first-changed))
+                             (mx/scalar 0.0))
+              prefix-states (if (pos? first-changed)
+                              (subvec (:retval trace) 0 first-changed)
+                              [])
+              prefix-step-scores (if (pos? first-changed)
+                                   (subvec (vec old-step-scores) 0 first-changed)
+                                   [])
+              start-state (if (pos? first-changed)
+                            (nth (:retval trace) (dec first-changed))
+                            init-state)]
+          ;; Execute steps first-changed..n-1
+          (loop [t first-changed state start-state
+                 new-choices prefix-choices score prefix-score
+                 discard cm/EMPTY
+                 states prefix-states step-scores prefix-step-scores]
+            (if (>= t n)
+              {:trace (with-meta
+                        (tr/make-trace {:gen-fn this :args args
+                                        :choices new-choices :retval states :score score})
+                        {::step-scores step-scores})
+               :weight (mx/subtract score (:score trace)) :discard discard}
+              (let [old-sub-choices (cm/get-submap choices t)
+                    kernel-args (into [t state] extra)
+                    old-trace (tr/make-trace
+                                {:gen-fn kern :args kernel-args
+                                 :choices old-sub-choices
+                                 :retval nil :score (mx/scalar 0.0)})
+                    result (p/update kern old-trace (cm/get-submap constraints t))
+                    new-trace (:trace result)
+                    new-state (:retval new-trace)]
+                (recur (inc t)
+                       new-state
+                       (cm/set-choice new-choices [t] (:choices new-trace))
+                       (mx/add score (:score new-trace))
+                       (if (:discard result)
+                         (cm/set-choice discard [t] (:discard result))
+                         discard)
+                       (conj states new-state)
+                       (conj step-scores (:score new-trace))))))))))
 
   p/IRegenerate
   (regenerate [this trace selection]
@@ -212,10 +254,12 @@
           [n init-state & extra] args]
       (loop [t 0 state init-state
              new-choices cm/EMPTY score (mx/scalar 0.0) weight (mx/scalar 0.0)
-             states []]
+             states [] step-scores []]
         (if (>= t n)
-          {:trace (tr/make-trace {:gen-fn this :args args
-                                  :choices new-choices :retval states :score score})
+          {:trace (with-meta
+                    (tr/make-trace {:gen-fn this :args args
+                                    :choices new-choices :retval states :score score})
+                    {::step-scores step-scores})
            :weight (mx/subtract weight (:score trace))}
           (let [old-sub-choices (cm/get-submap choices t)
                 kernel-args (into [t state] extra)
@@ -232,7 +276,8 @@
                    (cm/set-choice new-choices [t] (:choices new-trace))
                    (mx/add score (:score new-trace))
                    (mx/add weight (:weight result))
-                   (conj states new-state))))))))
+                   (conj states new-state)
+                   (conj step-scores (:score new-trace)))))))))
 
 (defn unfold-combinator
   "Create an Unfold combinator from a kernel generative function.
@@ -585,19 +630,23 @@
           n (count inputs)]
       (loop [t 0 carry init-carry
              choices cm/EMPTY score (mx/scalar 0.0)
-             outputs []]
+             outputs [] step-scores [] step-carries []]
         (if (>= t n)
-          (tr/make-trace {:gen-fn this :args args
-                          :choices choices
-                          :retval {:carry carry :outputs outputs}
-                          :score score})
+          (with-meta
+            (tr/make-trace {:gen-fn this :args args
+                            :choices choices
+                            :retval {:carry carry :outputs outputs}
+                            :score score})
+            {::step-scores step-scores ::step-carries step-carries})
           (let [trace (p/simulate kernel [carry (nth inputs t)])
                 [new-carry output] (:retval trace)]
             (recur (inc t)
                    new-carry
                    (cm/set-choice choices [t] (:choices trace))
                    (mx/add score (:score trace))
-                   (conj outputs output)))))))
+                   (conj outputs output)
+                   (conj step-scores (:score trace))
+                   (conj step-carries new-carry)))))))
 
   p/IGenerate
   (generate [this args constraints]
@@ -605,12 +654,14 @@
           n (count inputs)]
       (loop [t 0 carry init-carry
              choices cm/EMPTY score (mx/scalar 0.0) weight (mx/scalar 0.0)
-             outputs []]
+             outputs [] step-scores [] step-carries []]
         (if (>= t n)
-          {:trace (tr/make-trace {:gen-fn this :args args
-                                  :choices choices
-                                  :retval {:carry carry :outputs outputs}
-                                  :score score})
+          {:trace (with-meta
+                    (tr/make-trace {:gen-fn this :args args
+                                    :choices choices
+                                    :retval {:carry carry :outputs outputs}
+                                    :score score})
+                    {::step-scores step-scores ::step-carries step-carries})
            :weight weight}
           (let [result (p/generate kernel [carry (nth inputs t)]
                                     (cm/get-submap constraints t))
@@ -621,7 +672,9 @@
                    (cm/set-choice choices [t] (:choices trace))
                    (mx/add score (:score trace))
                    (mx/add weight (:weight result))
-                   (conj outputs output))))))))
+                   (conj outputs output)
+                   (conj step-scores (:score (:trace result)))
+                   (conj step-carries new-carry))))))))
 
 (extend-type ScanCombinator
   p/IUpdate
@@ -629,32 +682,74 @@
     (let [kern (:kernel this)
           {:keys [args choices]} trace
           [init-carry inputs] args
-          n (count inputs)]
-      (loop [t 0 carry init-carry
-             new-choices cm/EMPTY score (mx/scalar 0.0)
-             discard cm/EMPTY outputs []]
-        (if (>= t n)
-          {:trace (tr/make-trace {:gen-fn this :args args
-                                  :choices new-choices
-                                  :retval {:carry carry :outputs outputs}
-                                  :score score})
-           :weight (mx/subtract score (:score trace)) :discard discard}
-          (let [old-sub-choices (cm/get-submap choices t)
-                old-trace (tr/make-trace
-                            {:gen-fn kern :args [carry (nth inputs t)]
-                             :choices old-sub-choices
-                             :retval nil :score (mx/scalar 0.0)})
-                result (p/update kern old-trace (cm/get-submap constraints t))
-                new-trace (:trace result)
-                [new-carry output] (:retval new-trace)]
-            (recur (inc t)
-                   new-carry
-                   (cm/set-choice new-choices [t] (:choices new-trace))
-                   (mx/add score (:score new-trace))
-                   (if (:discard result)
-                     (cm/set-choice discard [t] (:discard result))
-                     discard)
-                   (conj outputs output)))))))
+          n (count inputs)
+          old-step-scores (::step-scores (meta trace))
+          old-step-carries (::step-carries (meta trace))
+          ;; Find first step with non-empty constraints (prefix-skip boundary)
+          first-changed (if (and old-step-scores old-step-carries)
+                          (loop [t 0]
+                            (cond
+                              (>= t n) n
+                              (not= (cm/get-submap constraints t) cm/EMPTY) t
+                              :else (recur (inc t))))
+                          0)]
+      ;; If no steps have constraints and we have metadata, return trace unchanged
+      (if (and old-step-scores old-step-carries (= first-changed n))
+        {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+        ;; Build prefix from old trace (steps 0..first-changed-1)
+        (let [prefix-choices (if (pos? first-changed)
+                               (reduce (fn [cm t]
+                                         (cm/set-choice cm [t] (cm/get-submap choices t)))
+                                       cm/EMPTY (range first-changed))
+                               cm/EMPTY)
+              prefix-score (if (pos? first-changed)
+                             (reduce (fn [acc t] (mx/add acc (nth old-step-scores t)))
+                                     (mx/scalar 0.0) (range first-changed))
+                             (mx/scalar 0.0))
+              prefix-outputs (if (pos? first-changed)
+                               (subvec (:outputs (:retval trace)) 0 first-changed)
+                               [])
+              prefix-step-scores (if (pos? first-changed)
+                                   (subvec (vec old-step-scores) 0 first-changed)
+                                   [])
+              prefix-step-carries (if (pos? first-changed)
+                                    (subvec (vec old-step-carries) 0 first-changed)
+                                    [])
+              start-carry (if (pos? first-changed)
+                            (nth old-step-carries (dec first-changed))
+                            init-carry)]
+          ;; Execute steps first-changed..n-1
+          (loop [t first-changed carry start-carry
+                 new-choices prefix-choices score prefix-score
+                 discard cm/EMPTY
+                 outputs prefix-outputs
+                 step-scores prefix-step-scores step-carries prefix-step-carries]
+            (if (>= t n)
+              {:trace (with-meta
+                        (tr/make-trace {:gen-fn this :args args
+                                        :choices new-choices
+                                        :retval {:carry carry :outputs outputs}
+                                        :score score})
+                        {::step-scores step-scores ::step-carries step-carries})
+               :weight (mx/subtract score (:score trace)) :discard discard}
+              (let [old-sub-choices (cm/get-submap choices t)
+                    old-trace (tr/make-trace
+                                {:gen-fn kern :args [carry (nth inputs t)]
+                                 :choices old-sub-choices
+                                 :retval nil :score (mx/scalar 0.0)})
+                    result (p/update kern old-trace (cm/get-submap constraints t))
+                    new-trace (:trace result)
+                    [new-carry output] (:retval new-trace)]
+                (recur (inc t)
+                       new-carry
+                       (cm/set-choice new-choices [t] (:choices new-trace))
+                       (mx/add score (:score new-trace))
+                       (if (:discard result)
+                         (cm/set-choice discard [t] (:discard result))
+                         discard)
+                       (conj outputs output)
+                       (conj step-scores (:score new-trace))
+                       (conj step-carries new-carry)))))))))
 
   p/IRegenerate
   (regenerate [this trace selection]
@@ -664,12 +759,14 @@
           n (count inputs)]
       (loop [t 0 carry init-carry
              new-choices cm/EMPTY score (mx/scalar 0.0) weight (mx/scalar 0.0)
-             outputs []]
+             outputs [] step-scores [] step-carries []]
         (if (>= t n)
-          {:trace (tr/make-trace {:gen-fn this :args args
-                                  :choices new-choices
-                                  :retval {:carry carry :outputs outputs}
-                                  :score score})
+          {:trace (with-meta
+                    (tr/make-trace {:gen-fn this :args args
+                                    :choices new-choices
+                                    :retval {:carry carry :outputs outputs}
+                                    :score score})
+                    {::step-scores step-scores ::step-carries step-carries})
            :weight (mx/subtract weight (:score trace))}
           (let [old-sub-choices (cm/get-submap choices t)
                 old-trace (tr/make-trace
@@ -685,7 +782,9 @@
                    (cm/set-choice new-choices [t] (:choices new-trace))
                    (mx/add score (:score new-trace))
                    (mx/add weight (:weight result))
-                   (conj outputs output))))))))
+                   (conj outputs output)
+                   (conj step-scores (:score new-trace))
+                   (conj step-carries new-carry))))))))
 
 (defn scan-combinator
   "Create a Scan combinator from a kernel generative function.
@@ -1073,8 +1172,17 @@
 (extend-type UnfoldCombinator
   p/IUpdateWithDiffs
   (update-with-diffs [this trace constraints argdiffs]
-    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+    (cond
+      ;; No changes at all: fast path
+      (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
       {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+
+      ;; Args changed: full update (strip step-scores to prevent invalid prefix-skip)
+      (not (diff/no-change? argdiffs))
+      (p/update this (with-meta trace (dissoc (meta trace) ::step-scores)) constraints)
+
+      ;; Only constraints changed: prefix-skip via p/update
+      :else
       (p/update this trace constraints))))
 
 (extend-type SwitchCombinator
@@ -1087,8 +1195,17 @@
 (extend-type ScanCombinator
   p/IUpdateWithDiffs
   (update-with-diffs [this trace constraints argdiffs]
-    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+    (cond
+      ;; No changes at all: fast path
+      (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
       {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+
+      ;; Args changed: full update (strip metadata to prevent invalid prefix-skip)
+      (not (diff/no-change? argdiffs))
+      (p/update this (with-meta trace (dissoc (meta trace) ::step-scores ::step-carries)) constraints)
+
+      ;; Only constraints changed: prefix-skip via p/update
+      :else
       (p/update this trace constraints))))
 
 (extend-type MaskCombinator

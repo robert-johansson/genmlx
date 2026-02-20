@@ -265,10 +265,12 @@ broader batch sampling support.*
 
 ## Phase 9: Incremental Computation
 
-- [ ] **9.1** Per-step optimization for Unfold/Scan
-  - Currently: no-change fast path only
-  - Optimization: with `vector-diff`, skip early unchanged steps
-  - ~50 lines each
+- [x] **9.1** Per-step optimization for Unfold/Scan
+  - Store `::step-scores` metadata in Unfold traces (and `::step-carries` for Scan)
+  - During `update`, detect earliest constrained step and skip unchanged prefix
+  - Replay old choices/scores from metadata, only re-execute from first changed step
+  - `update-with-diffs` strips metadata when args change to prevent invalid prefix-skip
+  - *Files*: `combinators.cljs`, `test/genmlx/combinators_test.cljs`
 
 - [ ] **9.2** Handler-level diff awareness for DynamicGF *(low priority)*
   - Currently DynamicGF `update-with-diffs` re-executes the full body
@@ -478,9 +480,9 @@ Long-term (ecosystem):
 | 6. Testing Gaps | 5 | 5 | 0 |
 | 7. Vectorization & Perf | 8 | 6 | 2 |
 | 8. Gradient Programming | 2 | 2 | 0 |
-| 9. Incremental Computation | 2 | 0 | 2 |
+| 9. Incremental Computation | 2 | 1 | 1 |
 | 10. Formal Foundation | 16 | 3 | 13 |
 | 11. Validation | 2 | 0 | 2 |
 | 12. Ecosystem | 6 | 2 | 4 |
 | 13. Documentation | 3 | 0 | 3 |
-| **Total** | **66** | **40** | **26** |
+| **Total** | **66** | **41** | **25** |
