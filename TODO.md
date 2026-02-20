@@ -201,9 +201,9 @@ broader batch sampling support.*
 - [x] **7.1** Native `dist-sample-n` for more distributions
   - [x] laplace, cauchy, log-normal, truncated-normal (already implemented)
   - [x] discrete-uniform, geometric, categorical, multivariate-normal, binomial, student-t
-  - [ ] inv-gamma (requires gamma batch sampling first)
-  - Rejection-based distributions (beta, gamma, poisson, dirichlet) are harder
-    to batch efficiently
+  - [x] gamma (vectorized Marsaglia-Tsang with Ahrens-Dieter for α < 1)
+  - [x] inv-gamma, beta, dirichlet (built on batched gamma)
+  - Remaining without batch sampling: poisson (Knuth's algorithm, inherently sequential)
 
 ### Vectorized inference completeness
 

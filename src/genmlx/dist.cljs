@@ -215,6 +215,85 @@
           (mx/subtract (mx/multiply rate v))
           (mx/subtract log-gamma-k)))))
 
+(defn gamma-sample-n
+  "Vectorized Marsaglia-Tsang: sample [n] gamma values with given shape and rate.
+   shape-val: JS number, rate: MLX scalar, key: PRNG key, n: int.
+   Exposed for reuse by beta, inv-gamma, and dirichlet batch sampling."
+  [shape-val rate key n]
+  (let [key (rng/ensure-key key)
+        ;; For alpha < 1: Ahrens-Dieter boost — sample Gamma(alpha+1), scale by U^(1/alpha)
+        alpha<1? (< shape-val 1.0)
+        a (if alpha<1? (inc shape-val) shape-val)
+        d (- a (/ 1.0 3.0))
+        c (/ 1.0 (js/Math.sqrt (* 9.0 d)))
+        d-arr (mx/scalar d)
+        c-arr (mx/scalar c)
+        max-iter 20]
+    (loop [iter 0
+           result (mx/zeros [n])
+           done (mx/zeros [n])  ;; float 0.0/1.0 mask
+           k key]
+      (if (>= iter max-iter)
+        ;; Scale by rate (and Ahrens-Dieter if alpha < 1)
+        (let [samples (mx/divide result rate)]
+          (if alpha<1?
+            (let [[ku _] (rng/split k)
+                  u (rng/uniform ku [n])]
+              (mx/multiply samples (mx/power u (mx/scalar (/ 1.0 shape-val)))))
+            samples))
+        (let [[k1 k2 k3] (rng/split-n k 3)
+              x (rng/normal k1 [n])
+              u (rng/uniform k2 [n])
+              ;; v = (1 + c*x)^3
+              cx1 (mx/add (mx/scalar 1.0) (mx/multiply c-arr x))
+              v (mx/power cx1 (mx/scalar 3.0))
+              ;; Accept where: v > 0 AND log(u) < 0.5*x^2 + d*(1 - v + log(v))
+              v-pos (mx/greater v (mx/scalar 0.0))
+              safe-v (mx/maximum v (mx/scalar 1e-30))
+              log-accept (mx/add (mx/multiply (mx/scalar 0.5) (mx/square x))
+                                 (mx/multiply d-arr
+                                              (mx/add (mx/subtract (mx/scalar 1.0) safe-v)
+                                                      (mx/log safe-v))))
+              accepted (mx/multiply v-pos (mx/less (mx/log u) log-accept))
+              ;; Only fill not-yet-done slots
+              not-done (mx/equal done (mx/scalar 0.0))
+              newly-done (mx/multiply accepted not-done)
+              new-vals (mx/multiply d-arr safe-v)
+              result (mx/where newly-done new-vals result)
+              done (mx/where newly-done (mx/scalar 1.0) done)]
+          (recur (inc iter) result done k3))))))
+
+(defmethod dc/dist-sample-n :gamma [d key n]
+  (let [{:keys [shape-param rate]} (:params d)
+        shape-val (mx/realize shape-param)]
+    (gamma-sample-n shape-val rate key n)))
+
+;; Beta batch sampling via two independent gamma samples
+(defmethod dc/dist-sample-n :beta-dist [d key n]
+  (let [{:keys [alpha beta-param]} (:params d)
+        key (rng/ensure-key key)
+        [k1 k2] (rng/split key)
+        one (mx/scalar 1.0)
+        g1 (gamma-sample-n (mx/realize alpha) one k1 n)
+        g2 (gamma-sample-n (mx/realize beta-param) one k2 n)]
+    (mx/divide g1 (mx/add g1 g2))))
+
+;; Dirichlet batch sampling via k independent gamma samples, then normalize
+(defmethod dc/dist-sample-n :dirichlet [d key n]
+  (let [{:keys [alpha]} (:params d)
+        key (rng/ensure-key key)
+        alpha-vals (mx/->clj alpha)
+        k (count alpha-vals)
+        keys (rng/split-n key k)
+        one (mx/scalar 1.0)
+        ;; Sample k gamma arrays, each [n], then stack to [k n]
+        gammas (mx/stack (mapv (fn [a ki] (gamma-sample-n a one ki n))
+                               alpha-vals keys))
+        ;; gammas is [k n], sum along axis 0 -> [n], then transpose and divide
+        totals (mx/sum gammas [0])]
+    ;; Result shape [n k]: transpose [k n] -> [n k]
+    (mx/transpose (mx/divide gammas totals))))
+
 ;; ---------------------------------------------------------------------------
 ;; Exponential
 ;; ---------------------------------------------------------------------------
@@ -477,6 +556,11 @@
           (mx/subtract log-gamma-a)
           (mx/subtract (mx/multiply (mx/add shape-param (mx/scalar 1.0)) (mx/log v)))
           (mx/subtract (mx/divide scale-param v))))))
+
+(defmethod dc/dist-sample-n :inv-gamma [d key n]
+  (let [{:keys [shape-param scale-param]} (:params d)
+        g (gamma-sample-n (mx/realize shape-param) (mx/scalar 1.0) key n)]
+    (mx/divide scale-param g)))
 
 ;; ---------------------------------------------------------------------------
 ;; Geometric
