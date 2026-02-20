@@ -83,6 +83,38 @@
   (mx/subtract (mx/logsumexp (:weight vtrace))
                (mx/scalar (js/Math.log (:n-particles vtrace)))))
 
+;; ---------------------------------------------------------------------------
+;; Merge two VectorizedTraces by boolean mask (for per-particle MH accept/reject)
+;; ---------------------------------------------------------------------------
+
+(defn- merge-choicemap-by-mask
+  "Recursively merge two identically-structured choicemaps using an [N] boolean mask.
+   Where mask=true takes from proposed, where false keeps current."
+  [current proposed mask]
+  (cond
+    (cm/has-value? current)
+    (cm/->Value (mx/where mask (cm/get-value proposed) (cm/get-value current)))
+
+    (instance? cm/Node current)
+    (cm/->Node (into {} (map (fn [[k sub]]
+                               [k (merge-choicemap-by-mask
+                                    sub (cm/-get-submap proposed k) mask)])
+                             (cm/-submaps current))))
+    :else current))
+
+(defn merge-vtraces-by-mask
+  "Merge two VectorizedTraces per-particle using an [N] boolean mask.
+   Where mask=true takes from proposed, where false keeps current.
+   Preserves the current vtrace's :weight (rejuvenation is weight-preserving)."
+  [current proposed mask]
+  (assoc current
+    :choices (merge-choicemap-by-mask (:choices current) (:choices proposed) mask)
+    :score   (mx/where mask (:score proposed) (:score current))))
+
+;; ---------------------------------------------------------------------------
+;; Diagnostics
+;; ---------------------------------------------------------------------------
+
 (defn vtrace-ess
   "Effective sample size from a VectorizedTrace's [N] weights."
   [vtrace]

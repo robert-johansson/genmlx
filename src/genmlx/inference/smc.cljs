@@ -241,6 +241,85 @@
                      (mx/add log-ml ml-inc) next-key))))))))
 
 ;; ---------------------------------------------------------------------------
+;; Vectorized SMC — multi-step batched particle filtering
+;; ---------------------------------------------------------------------------
+
+(defn- vsmc-rejuvenate
+  "K rounds of vectorized MH rejuvenation on a VectorizedTrace.
+   Each round: vregenerate -> sample accept mask -> merge per-particle."
+  [vtrace steps selection key]
+  (if (zero? steps)
+    vtrace
+    (loop [k 0, vtrace vtrace, rk key]
+      (if (>= k steps)
+        vtrace
+        (let [[step-key next-key] (rng/split-or-nils rk)
+              [regen-key accept-key] (rng/split-or-nils step-key)
+              n (:n-particles vtrace)
+              {proposed :vtrace mh-weight :weight}
+                (dyn/vregenerate (:gen-fn vtrace) vtrace selection regen-key)
+              _ (mx/eval! mh-weight)
+              u (if accept-key
+                  (rng/uniform accept-key [n])
+                  (mx/random-uniform [n]))
+              accept-mask (mx/less (mx/log u) mh-weight)
+              _ (mx/eval! accept-mask)
+              vtrace (vec/merge-vtraces-by-mask vtrace proposed accept-mask)]
+          (recur (inc k) vtrace next-key))))))
+
+(defn vsmc
+  "Vectorized Sequential Monte Carlo (particle filtering).
+   Runs model body ONCE per timestep for all N particles via batched handlers.
+
+   opts: {:particles N :ess-threshold ratio :rejuvenation-steps K
+          :rejuvenation-selection sel :callback fn :key prng-key}
+
+   observations-seq: sequence of choice maps, one per timestep
+   model: DynamicGF
+   args: model arguments
+
+   Returns {:vtrace VectorizedTrace :log-ml-estimate MLX-scalar}"
+  [{:keys [particles ess-threshold rejuvenation-steps rejuvenation-selection callback key]
+    :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0
+         rejuvenation-selection sel/all}}
+   model args observations-seq]
+  (let [obs-vec (vec observations-seq)
+        n-steps (count obs-vec)
+        [init-key next-key] (rng/split-or-nils key)
+        ;; Step 0: batched init
+        vtrace (dyn/vgenerate model args (first obs-vec) particles
+                              (rng/ensure-key init-key))
+        log-ml (vec/vtrace-log-ml-estimate vtrace)]
+    (when callback (callback {:step 0 :ess (vec/vtrace-ess vtrace)}))
+    (loop [t 1, vtrace vtrace, log-ml log-ml, rk next-key]
+      (if (>= t n-steps)
+        {:vtrace vtrace :log-ml-estimate log-ml}
+        (let [[step-key next-key] (rng/split-or-nils rk)
+              [resample-key update-key rejuv-key] (rng/split-n-or-nils step-key 3)
+              ;; 1. ESS check + conditional resample
+              ess (vec/vtrace-ess vtrace)
+              resample? (< ess (* ess-threshold particles))
+              vtrace (if resample?
+                       (vec/resample-vtrace vtrace resample-key)
+                       vtrace)
+              prev-weights (:weight vtrace)
+              ;; 2. Batched update
+              {updated-vtrace :vtrace update-weight :weight}
+                (dyn/vupdate (:gen-fn vtrace) vtrace (nth obs-vec t) update-key)
+              ;; 3. Accumulate weights
+              cumul-weights (mx/add prev-weights update-weight)
+              _ (mx/eval! cumul-weights)
+              vtrace (assoc updated-vtrace :weight cumul-weights)
+              ;; 4. Log-ML increment
+              log-ml-inc (vec/vtrace-log-ml-estimate vtrace)
+              ;; 5. Rejuvenation
+              vtrace (vsmc-rejuvenate vtrace rejuvenation-steps
+                                       rejuvenation-selection rejuv-key)]
+          (when callback
+            (callback {:step t :ess ess :resampled? resample?}))
+          (recur (inc t) vtrace (mx/add log-ml log-ml-inc) next-key))))))
+
+;; ---------------------------------------------------------------------------
 ;; Vectorized SMC (single-step, batched init)
 ;; ---------------------------------------------------------------------------
 

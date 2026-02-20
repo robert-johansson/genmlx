@@ -244,4 +244,9 @@
       speedup (if (pos? vec-ms) (/ serial-ms vec-ms) ##Inf)]
   (println (str "  Speedup: " (.toFixed speedup 1) "x")))
 
+;; ---------------------------------------------------------------------------
+;; Benchmark 6: Sequential SMC vs Vectorized SMC (time-series, 5 steps)
+;; ---------------------------------------------------------------------------
+
 (println "\nAll benchmarks complete.")
+(println "(See vsmc_benchmark.cljs for Sequential SMC vs Vectorized SMC)")
