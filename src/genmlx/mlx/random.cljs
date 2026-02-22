@@ -45,20 +45,28 @@
 ;; Key-based sampling (functional — no global PRNG state)
 ;; ---------------------------------------------------------------------------
 
+;; Cached empty JS array for scalar shapes (avoids per-call allocation)
+(def ^:private SCALAR-SHAPE #js [])
+
+(defn- ->js-shape
+  "Convert Clojure shape vector to JS array, reusing cached empty array for scalars."
+  [shape]
+  (if (empty? shape) SCALAR-SHAPE (clj->js shape)))
+
 (defn normal
   "Sample from standard normal using the given key."
   [key shape]
-  (.normal mx/random (clj->js shape) nil key))
+  (.normal mx/random (->js-shape shape) nil key))
 
 (defn uniform
   "Sample from uniform [0,1) using the given key."
   [key shape]
-  (.uniform mx/random 0 1 (clj->js shape) nil key))
+  (.uniform mx/random 0 1 (->js-shape shape) nil key))
 
 (defn bernoulli
   "Sample Bernoulli(p) using the given key."
   [key p shape]
-  (.bernoulli mx/random p (clj->js shape) key))
+  (.bernoulli mx/random p (->js-shape shape) key))
 
 (defn categorical
   "Sample from categorical distribution (log-probabilities) using the given key."
@@ -68,17 +76,17 @@
 (defn randint
   "Sample random integers in [lo, hi) using the given key."
   [key lo hi shape]
-  (.randint mx/random lo hi (clj->js shape) nil key))
+  (.randint mx/random lo hi (->js-shape shape) nil key))
 
 (defn gumbel
   "Sample from standard Gumbel distribution using the given key."
   [key shape]
-  (.gumbel mx/random (clj->js shape) nil key))
+  (.gumbel mx/random (->js-shape shape) nil key))
 
 (defn laplace
   "Sample from standard Laplace distribution using the given key."
   [key shape]
-  (.laplace mx/random (clj->js shape) nil key))
+  (.laplace mx/random (->js-shape shape) nil key))
 
 (defn truncated-normal
   "Sample from truncated normal distribution using the given key.
@@ -86,7 +94,7 @@
   [key lower upper shape]
   (.truncatedNormal mx/random
     (mx/ensure-array lower) (mx/ensure-array upper)
-    (clj->js shape) nil key))
+    (->js-shape shape) nil key))
 
 (defonce ^:private cpu-stream (.newStream mx/core (.-cpu mx/core)))
 

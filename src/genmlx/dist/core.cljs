@@ -9,6 +9,12 @@
             [genmlx.selection :as sel]))
 
 ;; ---------------------------------------------------------------------------
+;; Cached zero constant
+;; ---------------------------------------------------------------------------
+
+(def ^:private ZERO (mx/scalar 0.0))
+
+;; ---------------------------------------------------------------------------
 ;; Open multimethods — dispatch on (:type dist)
 ;; ---------------------------------------------------------------------------
 
@@ -49,7 +55,7 @@
       {:trace (tr/make-trace {:gen-fn dist :args [] :choices (cm/->Value v)
                               :retval v :score lp})
        :weight lp})
-    {:trace (dist-simulate dist) :weight (mx/scalar 0.0)}))
+    {:trace (dist-simulate dist) :weight ZERO}))
 
 ;; ---------------------------------------------------------------------------
 ;; THE single record for all distributions
@@ -84,7 +90,7 @@
   (project [this trace selection]
     ;; A distribution has a single choice. If nothing is selected, return 0.
     (if (identical? selection sel/none)
-      (mx/scalar 0.0)
+      ZERO
       (:score trace))))
 
 ;; ---------------------------------------------------------------------------

@@ -13,6 +13,9 @@
             [genmlx.diff :as diff]
             [clojure.set]))
 
+;; Cached zero constant for init states (MLX scalars are immutable)
+(def ^:private SCORE-ZERO (mx/scalar 0.0))
+
 ;; Forward declarations
 (declare execute-sub)
 (declare execute-sub-project)
@@ -39,7 +42,7 @@
   (simulate [this args]
     (let [key (rng/fresh-key)
           result (h/run-handler h/simulate-handler
-                   {:choices cm/EMPTY :score (mx/scalar 0.0) :key key
+                   {:choices cm/EMPTY :score SCORE-ZERO :key key
                     :executor execute-sub}
                    #(apply body-fn args))]
       (tr/make-trace
@@ -52,8 +55,8 @@
   (generate [this args constraints]
     (let [key (rng/fresh-key)
           result (h/run-handler h/generate-handler
-                   {:choices cm/EMPTY :score (mx/scalar 0.0)
-                    :weight (mx/scalar 0.0)
+                   {:choices cm/EMPTY :score SCORE-ZERO
+                    :weight SCORE-ZERO
                     :key key :constraints constraints
                     :executor execute-sub}
                    #(apply body-fn args))]
@@ -69,8 +72,8 @@
   (update [this trace constraints]
     (let [key (rng/fresh-key)
           result (h/run-handler h/update-handler
-                   {:choices cm/EMPTY :score (mx/scalar 0.0)
-                    :weight (mx/scalar 0.0)
+                   {:choices cm/EMPTY :score SCORE-ZERO
+                    :weight SCORE-ZERO
                     :key key :constraints constraints
                     :old-choices (:choices trace)
                     :discard cm/EMPTY
@@ -90,8 +93,8 @@
     (let [key (rng/fresh-key)
           old-score (:score trace)
           result (h/run-handler h/regenerate-handler
-                   {:choices cm/EMPTY :score (mx/scalar 0.0)
-                    :weight (mx/scalar 0.0)  ;; tracks proposal ratio
+                   {:choices cm/EMPTY :score SCORE-ZERO
+                    :weight SCORE-ZERO  ;; tracks proposal ratio
                     :key key :selection selection
                     :old-choices (:choices trace)
                     :executor execute-sub}
@@ -111,8 +114,8 @@
   (assess [this args choices]
     (let [key (rng/fresh-key)
           result (h/run-handler h/generate-handler
-                   {:choices cm/EMPTY :score (mx/scalar 0.0)
-                    :weight (mx/scalar 0.0)
+                   {:choices cm/EMPTY :score SCORE-ZERO
+                    :weight SCORE-ZERO
                     :key key :constraints choices
                     :executor execute-sub}
                    #(apply body-fn args))]
@@ -123,7 +126,7 @@
   (propose [this args]
     (let [key (rng/fresh-key)
           result (h/run-handler h/simulate-handler
-                   {:choices cm/EMPTY :score (mx/scalar 0.0) :key key
+                   {:choices cm/EMPTY :score SCORE-ZERO :key key
                     :executor execute-sub}
                    #(apply body-fn args))]
       {:choices (:choices result)
@@ -134,8 +137,8 @@
   (project [this trace selection]
     (let [key (rng/fresh-key)
           result (h/run-handler h/project-handler
-                   {:choices cm/EMPTY :score (mx/scalar 0.0)
-                    :weight (mx/scalar 0.0)
+                   {:choices cm/EMPTY :score SCORE-ZERO
+                    :weight SCORE-ZERO
                     :key key :selection selection
                     :old-choices (:choices trace)
                     :constraints cm/EMPTY
@@ -156,7 +159,7 @@
           (p/regenerate gf
             (tr/make-trace {:gen-fn gf :args args
                             :choices (or old-choices cm/EMPTY)
-                            :retval nil :score (mx/scalar 0.0)})
+                            :retval nil :score SCORE-ZERO})
             selection)]
       {:choices (:choices trace) :retval (:retval trace)
        :score (:score trace) :weight weight})
@@ -165,7 +168,7 @@
     (and old-choices (not= old-choices cm/EMPTY))
     (let [old-trace (tr/make-trace {:gen-fn gf :args args
                                     :choices old-choices
-                                    :retval nil :score (mx/scalar 0.0)})
+                                    :retval nil :score SCORE-ZERO})
           {:keys [trace weight discard]} (p/update gf old-trace
                                                     (or constraints cm/EMPTY))]
       {:choices (:choices trace) :retval (:retval trace)
@@ -235,7 +238,7 @@
   [gf args n key]
   (let [key (rng/ensure-key key)
         result (h/run-handler h/batched-simulate-handler
-                 {:choices cm/EMPTY :score (mx/scalar 0.0)
+                 {:choices cm/EMPTY :score SCORE-ZERO
                   :key key :batch-size n :batched? true
                   :executor execute-sub}
                  #(apply (:body-fn gf) args))]
@@ -251,8 +254,8 @@
   [gf args constraints n key]
   (let [key (rng/ensure-key key)
         result (h/run-handler h/batched-generate-handler
-                 {:choices cm/EMPTY :score (mx/scalar 0.0)
-                  :weight (mx/scalar 0.0) :key key
+                 {:choices cm/EMPTY :score SCORE-ZERO
+                  :weight SCORE-ZERO :key key
                   :constraints constraints :batch-size n :batched? true
                   :executor execute-sub}
                  #(apply (:body-fn gf) args))]
@@ -267,8 +270,8 @@
   (let [key (rng/ensure-key key)
         n (:n-particles vtrace)
         result (h/run-handler h/batched-update-handler
-                 {:choices cm/EMPTY :score (mx/scalar 0.0)
-                  :weight (mx/scalar 0.0) :key key
+                 {:choices cm/EMPTY :score SCORE-ZERO
+                  :weight SCORE-ZERO :key key
                   :constraints constraints
                   :old-choices (:choices vtrace)
                   :discard cm/EMPTY
@@ -290,8 +293,8 @@
         n (:n-particles vtrace)
         old-score (:score vtrace)
         result (h/run-handler h/batched-regenerate-handler
-                 {:choices cm/EMPTY :score (mx/scalar 0.0)
-                  :weight (mx/scalar 0.0) :key key
+                 {:choices cm/EMPTY :score SCORE-ZERO
+                  :weight SCORE-ZERO :key key
                   :selection selection
                   :old-choices (:choices vtrace)
                   :batch-size n :batched? true
@@ -322,7 +325,7 @@
   (update-with-diffs [gf trace constraints argdiffs]
     (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
       ;; No arg changes and no constraints: trace is unchanged
-      {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+      {:trace trace :weight SCORE-ZERO :discard cm/EMPTY}
       ;; Otherwise delegate to regular update (body must be re-executed)
       (p/update gf trace constraints))))
 

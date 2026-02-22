@@ -9,10 +9,12 @@
 
 (defn materialize-weights
   "Evaluate a vector of MLX log-weight scalars and return them as a single
-   MLX 1-D array of JS doubles.  Replaces the repeated
-   `(mx/array (mapv (fn [w] (mx/eval! w) (mx/item w)) ws))` pattern."
+   MLX 1-D array.  Uses mx/stack to combine in one MLX call instead of
+   realizing each weight individually."
   [log-weights]
-  (mx/array (mapv mx/realize log-weights)))
+  (let [stacked (mx/stack (vec log-weights))]
+    (mx/eval! stacked)
+    stacked))
 
 (defn normalize-log-weights
   "Given a vector of MLX log-weight scalars, return

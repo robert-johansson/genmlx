@@ -86,6 +86,19 @@
 ;; Functional update — returns new choicemap (persistent)
 ;; ---------------------------------------------------------------------------
 
+(defn set-value
+  "Fast-path: set a Value at a single keyword address in a Node.
+   Avoids path-length check, instance? check, and protocol check.
+   Used by handler transitions where cm is always a Node and value is always raw."
+  [cm addr value]
+  (->Node (assoc (:m cm) addr (->Value value))))
+
+(defn set-submap
+  "Fast-path: set a sub-choicemap at a single address in a Node.
+   Value must already be an IChoiceMap."
+  [cm addr sub-cm]
+  (->Node (assoc (:m cm) addr sub-cm)))
+
 (defn set-choice
   "Set a value at the given path, returning a new choice map."
   [cm path value]
