@@ -138,70 +138,84 @@
 ;; Compiled VI (ADVI with mx/compile-fn)
 ;; ---------------------------------------------------------------------------
 
+(defn- resolve-device [device]
+  (case device :cpu mx/cpu :gpu mx/gpu nil))
+
+(defn- with-device [device f]
+  (if-let [d (resolve-device device)]
+    (let [prev (mx/default-device)]
+      (mx/set-default-device! d)
+      (try (f) (finally (mx/set-default-device! prev))))
+    (f)))
+
 (defn compiled-vi
   "Compiled Variational Inference via ADVI.
    Same as `vi` but uses mx/compile-fn on the gradient and ELBO functions
    for faster iteration. Same interface and return type.
 
    opts: {:iterations N :learning-rate lr :elbo-samples N
-          :beta1 b1 :beta2 b2 :epsilon eps :callback fn :key prng-key}
+          :beta1 b1 :beta2 b2 :epsilon eps :callback fn :key prng-key
+          :device :cpu|:gpu}
 
    Returns {:mu MLX-array :sigma MLX-array :elbo-history [numbers]
-            :sample-fn (fn [n] -> samples)}"
-  [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback key]
+            :sample-fn (fn [n] -> samples)}
+   Default device: :cpu (faster for scalar parameters)."
+  [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback key device]
     :or {iterations 1000 learning-rate 0.01 elbo-samples 10
-         beta1 0.9 beta2 0.999 epsilon 1e-8}}
+         beta1 0.9 beta2 0.999 epsilon 1e-8 device :cpu}}
    log-density init-params]
-  (let [d (or (first (mx/shape init-params)) 1)
-        init-mu (if (zero? (mx/ndim init-params))
-                  (mx/reshape init-params [1])
-                  init-params)
-        init-log-sigma (mx/zeros [d])
-        init-vp (mx/tidy
-                  (fn []
-                    (let [vp (mx/concatenate [init-mu init-log-sigma])]
-                      (mx/eval! vp)
-                      vp)))
-        vmapped-log-density (mx/vmap log-density)
-        neg-elbo-fn (fn [vp]
-                      (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
-        grad-neg-elbo (mx/compile-fn (mx/grad neg-elbo-fn))
-        neg-elbo-compiled (mx/compile-fn neg-elbo-fn)]
-    (loop [i 0, vp init-vp
-           opt-state (adam-state init-vp)
-           elbo-history (transient [])
-           rk key]
-      (if (>= i iterations)
-        (let [final-mu (mx/slice vp 0 d)
-              final-log-sigma (mx/slice vp d (* 2 d))
-              final-sigma (mx/exp final-log-sigma)]
-          (mx/eval! final-mu final-sigma)
-          {:mu final-mu
-           :sigma final-sigma
-           :elbo-history (persistent! elbo-history)
-           :sample-fn (fn [n]
-                        (let [sample-key (if rk rk (rng/fresh-key))
-                              eps (rng/normal sample-key [n d])
-                              samples (mx/add final-mu (mx/multiply final-sigma eps))]
-                          (mx/eval! samples)
-                          (if (= d 1)
-                            (mapv #(mx/item (mx/index samples %)) (range n))
-                            (mx/->clj samples))))})
-        (let [[iter-key next-key] (rng/split-or-nils rk)
-              g (doto (mx/tidy (fn [] (grad-neg-elbo vp))) mx/eval!)
-              [vp' opt-state'] (adam-step vp g opt-state
-                                          learning-rate beta1 beta2 epsilon)
-              elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
-                         (let [e (mx/tidy (fn [] (mx/negative (neg-elbo-compiled vp'))))]
-                           (mx/eval! e)
-                           (mx/item e)))]
-          (when (and callback elbo-val)
-            (callback {:iter i :elbo elbo-val :params (mx/->clj vp')}))
-          (recur (inc i) vp' opt-state'
-                 (if elbo-val
-                   (conj! elbo-history elbo-val)
-                   elbo-history)
-                 next-key))))))
+  (with-device device
+    (fn []
+      (let [d (or (first (mx/shape init-params)) 1)
+            init-mu (if (zero? (mx/ndim init-params))
+                      (mx/reshape init-params [1])
+                      init-params)
+            init-log-sigma (mx/zeros [d])
+            init-vp (mx/tidy
+                      (fn []
+                        (let [vp (mx/concatenate [init-mu init-log-sigma])]
+                          (mx/eval! vp)
+                          vp)))
+            vmapped-log-density (mx/vmap log-density)
+            neg-elbo-fn (fn [vp]
+                          (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
+            grad-neg-elbo (mx/compile-fn (mx/grad neg-elbo-fn))
+            neg-elbo-compiled (mx/compile-fn neg-elbo-fn)]
+        (loop [i 0, vp init-vp
+               opt-state (adam-state init-vp)
+               elbo-history (transient [])
+               rk key]
+          (if (>= i iterations)
+            (let [final-mu (mx/slice vp 0 d)
+                  final-log-sigma (mx/slice vp d (* 2 d))
+                  final-sigma (mx/exp final-log-sigma)]
+              (mx/eval! final-mu final-sigma)
+              {:mu final-mu
+               :sigma final-sigma
+               :elbo-history (persistent! elbo-history)
+               :sample-fn (fn [n]
+                            (let [sample-key (if rk rk (rng/fresh-key))
+                                  eps (rng/normal sample-key [n d])
+                                  samples (mx/add final-mu (mx/multiply final-sigma eps))]
+                              (mx/eval! samples)
+                              (if (= d 1)
+                                (mapv (fn [idx] (mx/item (mx/index samples idx))) (range n))
+                                (mx/->clj samples))))})
+            (let [[iter-key next-key] (rng/split-or-nils rk)
+                  g (doto (mx/tidy (fn [] (grad-neg-elbo vp))) mx/eval!)
+                  [vp' opt-state'] (adam-step vp g opt-state
+                                              learning-rate beta1 beta2 epsilon)
+                  elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
+                             (let [e (mx/tidy (fn [] (mx/negative (neg-elbo-compiled vp'))))]
+                               (mx/eval! e)
+                               (mx/item e)))]
+              (when (and callback elbo-val)
+                (callback {:iter i :elbo elbo-val :params (mx/->clj vp')}))
+              (recur (inc i) vp' opt-state'
+                     (if elbo-val
+                       (conj! elbo-history elbo-val)
+                       elbo-history)
+                     next-key))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; VI from model (convenience)
@@ -414,49 +428,48 @@
    for faster iteration. Sampling is separated from gradient computation
    to enable compilation.
 
-   opts: same as programmable-vi
-   Returns {:params :loss-history}"
-  [{:keys [iterations learning-rate n-samples objective estimator callback key]
+   opts: same as programmable-vi, plus :device :cpu|:gpu
+   Returns {:params :loss-history}
+   Default device: :cpu (faster for scalar parameters)."
+  [{:keys [iterations learning-rate n-samples objective estimator callback key device]
     :or {iterations 1000 learning-rate 0.01 n-samples 10
-         objective :elbo estimator :reparam}}
+         objective :elbo estimator :reparam device :cpu}}
    log-p-fn log-q-fn sample-fn init-params]
-  (let [;; Deterministic loss: takes [params samples], no key
-        loss-fn (fn [params samples]
-                  (let [log-q-curr (fn [z] (log-q-fn z params))
-                        obj-fn (case objective
-                                 :elbo (elbo-objective log-p-fn log-q-curr)
-                                 :iwelbo (iwelbo-objective log-p-fn log-q-curr)
-                                 :vimco (vimco-objective log-p-fn log-q-curr)
-                                 :pwake (pwake-objective log-p-fn log-q-curr)
-                                 :qwake (qwake-objective log-p-fn log-q-curr)
-                                 (fn [s] (objective log-p-fn log-q-curr s)))
-                        obj-val (if (= estimator :reinforce)
-                                  ((reinforce-estimator obj-fn log-q-curr) samples)
-                                  (obj-fn samples))]
-                    (mx/negative obj-val)))
-        ;; Compile gradient w.r.t. first arg (params) and forward pass
-        grad-loss (mx/compile-fn (mx/grad loss-fn))
-        loss-compiled (mx/compile-fn loss-fn)]
-    (loop [i 0 params init-params
-           opt-state (adam-state init-params)
-           losses (transient [])
-           rk key]
-      (if (>= i iterations)
-        {:params params :loss-history (persistent! losses)}
-        (let [[iter-key next-key] (rng/split-or-nils rk)
-              ;; Draw samples outside compiled function (stochastic step)
-              samples (sample-fn params iter-key n-samples)
-              ;; Compiled gradient + loss (deterministic)
-              grad (doto (mx/tidy (fn [] (grad-loss params samples))) mx/eval!)
-              loss (mx/tidy (fn [] (loss-compiled params samples)))
-              _ (mx/eval! loss)
-              loss-val (mx/item loss)
-              [params' opt-state'] (adam-step params grad opt-state
-                                              learning-rate 0.9 0.999 1e-8)]
-          (when callback
-            (callback {:iter i :loss loss-val}))
-          (recur (inc i) params' opt-state'
-                 (conj! losses loss-val) next-key))))))
+  (with-device device
+    (fn []
+      (let [loss-fn (fn [params samples]
+                      (let [log-q-curr (fn [z] (log-q-fn z params))
+                            obj-fn (case objective
+                                     :elbo (elbo-objective log-p-fn log-q-curr)
+                                     :iwelbo (iwelbo-objective log-p-fn log-q-curr)
+                                     :vimco (vimco-objective log-p-fn log-q-curr)
+                                     :pwake (pwake-objective log-p-fn log-q-curr)
+                                     :qwake (qwake-objective log-p-fn log-q-curr)
+                                     (fn [s] (objective log-p-fn log-q-curr s)))
+                            obj-val (if (= estimator :reinforce)
+                                      ((reinforce-estimator obj-fn log-q-curr) samples)
+                                      (obj-fn samples))]
+                        (mx/negative obj-val)))
+            grad-loss (mx/compile-fn (mx/grad loss-fn))
+            loss-compiled (mx/compile-fn loss-fn)]
+        (loop [i 0 params init-params
+               opt-state (adam-state init-params)
+               losses (transient [])
+               rk key]
+          (if (>= i iterations)
+            {:params params :loss-history (persistent! losses)}
+            (let [[iter-key next-key] (rng/split-or-nils rk)
+                  samples (sample-fn params iter-key n-samples)
+                  grad (doto (mx/tidy (fn [] (grad-loss params samples))) mx/eval!)
+                  loss (mx/tidy (fn [] (loss-compiled params samples)))
+                  _ (mx/eval! loss)
+                  loss-val (mx/item loss)
+                  [params' opt-state'] (adam-step params grad opt-state
+                                                  learning-rate 0.9 0.999 1e-8)]
+              (when callback
+                (callback {:iter i :loss loss-val}))
+              (recur (inc i) params' opt-state'
+                     (conj! losses loss-val)))))))))
 
 (defn vimco
   "VIMCO: Variational Inference with Multi-sample Objectives.

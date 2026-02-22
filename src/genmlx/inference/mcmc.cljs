@@ -13,6 +13,30 @@
             [genmlx.learning :as learn]))
 
 ;; ---------------------------------------------------------------------------
+;; Device management — CPU for scalar inference, GPU for vectorized
+;; ---------------------------------------------------------------------------
+
+(defn- resolve-device
+  "Resolve a :device option to an MLX device.
+   :cpu → mx/cpu, :gpu → mx/gpu, nil → default for caller."
+  [device]
+  (case device
+    :cpu mx/cpu
+    :gpu mx/gpu
+    nil))
+
+(defn- with-device
+  "Run f with the given MLX device as default, restoring the original after.
+   If device is nil, runs f with no device change."
+  [device f]
+  (if-let [d (resolve-device device)]
+    (let [prev (mx/default-device)]
+      (mx/set-default-device! d)
+      (try (f)
+        (finally (mx/set-default-device! prev))))
+    (f)))
+
+;; ---------------------------------------------------------------------------
 ;; Generic sample collector (shared burn-in / thin / callback loop)
 ;; ---------------------------------------------------------------------------
 
@@ -166,27 +190,92 @@
    and iterates in parameter space — bypassing GFI regenerate overhead.
 
    opts: {:samples N :burn B :thin T :addresses [addr...]
-          :proposal-std σ :compile? bool :callback fn :key prng-key}
+          :proposal-std σ :compile? bool :callback fn :key prng-key
+          :device :cpu|:gpu}
    model: generative function
    args: model arguments
    observations: choice map of observed values
 
-   Returns vector of parameter samples (JS arrays via mx/->clj)."
-  [{:keys [samples burn thin addresses proposal-std compile? callback key]
-    :or {burn 0 thin 1 proposal-std 0.1 compile? true}}
+   Returns vector of parameter samples (JS arrays via mx/->clj).
+   Default device: :cpu (faster for scalar parameters)."
+  [{:keys [samples burn thin addresses proposal-std compile? callback key device]
+    :or {burn 0 thin 1 proposal-std 0.1 compile? true device :cpu}}
    model args observations]
-  (let [score-fn  (u/make-score-fn model args observations addresses)
-        score-fn  (if compile? (mx/compile-fn score-fn) score-fn)
-        {:keys [trace]} (p/generate model args observations)
-        init-params (u/extract-params trace addresses)
-        param-shape (mx/shape init-params)
-        std (mx/scalar proposal-std)]
-    (collect-samples
-      {:samples samples :burn burn :thin thin :callback callback :key key}
-      (fn [params step-key]
-        (compiled-mh-step params score-fn std param-shape step-key))
-      mx/->clj
-      init-params)))
+  (with-device device
+    #(let [score-fn  (u/make-score-fn model args observations addresses)
+           score-fn  (if compile? (mx/compile-fn score-fn) score-fn)
+           {:keys [trace]} (p/generate model args observations)
+           init-params (u/extract-params trace addresses)
+           param-shape (mx/shape init-params)
+           std (mx/scalar proposal-std)]
+       (collect-samples
+         {:samples samples :burn burn :thin thin :callback callback :key key}
+         (fn [params step-key]
+           (compiled-mh-step params score-fn std param-shape step-key))
+         mx/->clj
+         init-params))))
+
+;; ---------------------------------------------------------------------------
+;; Lazy Compiled MH (no per-step GPU sync)
+;; ---------------------------------------------------------------------------
+
+(defn- lazy-compiled-mh-step
+  "One compiled MH step — fully lazy, no eval/item.
+   Accept/reject via mx/where (same pattern as vectorized-mh-step).
+   Returns {:state <lazy MLX array> :accepted? <lazy MLX scalar>}."
+  [params score-fn proposal-std param-shape key]
+  (let [[propose-key accept-key] (rng/split-or-nils key)
+        noise    (if propose-key
+                   (rng/normal propose-key param-shape)
+                   (mx/random-normal param-shape))
+        proposal (mx/add params (mx/multiply proposal-std noise))
+        score-current  (score-fn params)
+        score-proposal (score-fn proposal)
+        log-alpha (mx/subtract score-proposal score-current)
+        u (if accept-key
+            (rng/uniform accept-key [])
+            (mx/random-uniform []))
+        accept? (mx/less (mx/log u) log-alpha)
+        new-params (mx/where accept? proposal params)]
+    {:state new-params :accepted? accept?}))
+
+(defn compiled-mh-lazy
+  "Compiled MH with lazy chain — ONE eval for entire run.
+   Same interface as compiled-mh. Returns vector of parameter samples.
+   Default device: :gpu (lazy eval benefits from batched Metal dispatch)."
+  [{:keys [samples burn thin addresses proposal-std compile? key device]
+    :or {burn 0 thin 1 proposal-std 0.1 compile? true device :gpu}}
+   model args observations]
+  (with-device device
+    #(let [score-fn  (u/make-score-fn model args observations addresses)
+           score-fn  (if compile? (mx/compile-fn score-fn) score-fn)
+           {:keys [trace]} (p/generate model args observations)
+           init-params (u/extract-params trace addresses)
+           param-shape (mx/shape init-params)
+           std (mx/scalar proposal-std)
+           total-iters (+ burn (* samples thin))]
+       (loop [i 0, state init-params, samples-acc (transient []),
+              accepts-acc (transient []), n 0, rk key]
+         (if (>= n samples)
+           (let [samples-vec (persistent! samples-acc)
+                 accepts-vec (persistent! accepts-acc)
+                 accepts-arr (mx/stack accepts-vec)
+                 _ (apply mx/eval! accepts-arr samples-vec)
+                 accepts-f (mx/where accepts-arr (mx/scalar 1.0) (mx/scalar 0.0))
+                 n-accepted (mx/item (mx/sum accepts-f))]
+             (with-meta
+               (mapv mx/->clj samples-vec)
+               {:acceptance-rate (/ n-accepted total-iters)}))
+           (let [[step-key next-key] (rng/split-or-nils rk)
+                 {:keys [state accepted?]}
+                   (lazy-compiled-mh-step state score-fn std param-shape step-key)
+                 past-burn? (>= i burn)
+                 keep? (and past-burn? (zero? (mod (- i burn) thin)))]
+             (recur (inc i) state
+                    (if keep? (conj! samples-acc state) samples-acc)
+                    (conj! accepts-acc accepted?)
+                    (if keep? (inc n) n)
+                    next-key)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized Compiled MH (N parallel chains)
@@ -220,17 +309,20 @@
    MLX broadcasting executes the model ONCE per step for all N chains.
 
    opts: {:samples N :burn B :thin T :addresses [addr...]
-          :proposal-std σ :compile? bool :n-chains C :callback fn :key prng-key}
+          :proposal-std σ :compile? bool :n-chains C :callback fn :key prng-key
+          :device :cpu|:gpu}
    model: generative function
    args: model arguments
    observations: choice map of observed values
 
    Returns vector of [N-chains, D] JS arrays (one per sample).
-   Metadata: {:acceptance-rate mean-rate}."
-  [{:keys [samples burn thin addresses proposal-std compile? n-chains callback key]
-    :or {burn 0 thin 1 proposal-std 0.1 compile? true n-chains 10}}
+   Metadata: {:acceptance-rate mean-rate}.
+   Default device: :gpu (vectorized operations benefit from GPU parallelism)."
+  [{:keys [samples burn thin addresses proposal-std compile? n-chains callback key device]
+    :or {burn 0 thin 1 proposal-std 0.1 compile? true n-chains 10 device :gpu}}
    model args observations]
-  (let [score-fn (u/make-vectorized-score-fn model args observations addresses)
+  (with-device device
+    #(let [score-fn (u/make-vectorized-score-fn model args observations addresses)
         score-fn (if compile? (mx/compile-fn score-fn) score-fn)
         ;; Initialize N chains from independent generate calls
         init-params (mx/stack
@@ -257,7 +349,7 @@
                  (if keep? (conj! acc (mx/->clj state)) acc)
                  (if keep? (inc n) n)
                  (+ total-accepted n-accepted)
-                 next-key))))))
+                 next-key)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Enumerative Gibbs Sampling
@@ -415,29 +507,30 @@
   "MALA inference using gradient information for proposals.
 
    opts: {:samples N :step-size eps :burn B :thin T :addresses [addr...]
-          :callback fn :key prng-key}
+          :callback fn :key prng-key :device :cpu|:gpu}
    model: generative function
    args: model arguments
-   observations: choice map of observed values"
-  [{:keys [samples step-size burn thin addresses callback key]
-    :or {step-size 0.01 burn 0 thin 1}}
+   observations: choice map of observed values
+   Default device: :cpu (faster for scalar parameters)."
+  [{:keys [samples step-size burn thin addresses callback key device]
+    :or {step-size 0.01 burn 0 thin 1 device :cpu}}
    model args observations]
-  (let [score-fn         (u/make-score-fn model args observations addresses)
-        score-fn-compiled (mx/compile-fn score-fn)
-        grad-score       (mx/compile-fn (mx/grad score-fn))
-        eps              (mx/scalar step-size)
-        half-eps2        (mx/scalar (* 0.5 step-size step-size))
-        two-eps-sq       (mx/scalar (* 2.0 step-size step-size))
-        ;; Initialize
-        {:keys [trace]} (p/generate model args observations)
-        init-q           (u/extract-params trace addresses)
-        q-shape          (mx/shape init-q)]
-    (collect-samples
-      {:samples samples :burn burn :thin thin :callback callback :key key}
-      (fn [q step-key]
-        (mala-step q score-fn-compiled grad-score eps half-eps2 two-eps-sq q-shape step-key))
-      mx/->clj
-      init-q)))
+  (with-device device
+    #(let [score-fn         (u/make-score-fn model args observations addresses)
+           score-fn-compiled (mx/compile-fn score-fn)
+           grad-score       (mx/compile-fn (mx/grad score-fn))
+           eps              (mx/scalar step-size)
+           half-eps2        (mx/scalar (* 0.5 step-size step-size))
+           two-eps-sq       (mx/scalar (* 2.0 step-size step-size))
+           {:keys [trace]} (p/generate model args observations)
+           init-q           (u/extract-params trace addresses)
+           q-shape          (mx/shape init-q)]
+       (collect-samples
+         {:samples samples :burn burn :thin thin :callback callback :key key}
+         (fn [q step-key]
+           (mala-step q score-fn-compiled grad-score eps half-eps2 two-eps-sq q-shape step-key))
+         mx/->clj
+         init-q))))
 
 ;; ---------------------------------------------------------------------------
 ;; Shared Hamiltonian helper
@@ -595,30 +688,115 @@
    args: model arguments
    observations: choice map of observed values
 
-   Returns vector of MLX arrays (parameter samples)."
-  [{:keys [samples step-size leapfrog-steps burn thin addresses compile? callback key metric]
-    :or {step-size 0.01 leapfrog-steps 20 burn 100 thin 1 compile? true}}
+   Returns vector of MLX arrays (parameter samples).
+   Default device: :cpu (faster for scalar parameters)."
+  [{:keys [samples step-size leapfrog-steps burn thin addresses compile? callback key metric device]
+    :or {step-size 0.01 leapfrog-steps 20 burn 100 thin 1 compile? true device :cpu}}
    model args observations]
-  (let [score-fn (u/make-score-fn model args observations addresses)
-        neg-U    (fn [q] (mx/negative (score-fn q)))
-        grad-neg-U (let [g (mx/grad neg-U)]
-                     (if compile? (mx/compile-fn g) g))
-        ;; Compile neg-U itself for fast Hamiltonian evaluation
-        neg-U-compiled (if compile? (mx/compile-fn neg-U) neg-U)
-        eps      (mx/scalar step-size)
-        half-eps (mx/scalar (* 0.5 step-size))
-        half     (mx/scalar 0.5)
-        ;; Initialize
-        {:keys [trace]} (p/generate model args observations)
-        init-q (u/extract-params trace addresses)
-        q-shape (mx/shape init-q)]
-    (collect-samples
-      {:samples samples :burn burn :thin thin :callback callback :key key}
-      (fn [q step-key]
-        (hmc-step q neg-U-compiled grad-neg-U eps half-eps half q-shape
-                  leapfrog-steps metric step-key))
-      mx/->clj
-      init-q)))
+  (with-device device
+    #(let [score-fn (u/make-score-fn model args observations addresses)
+           neg-U    (fn [q] (mx/negative (score-fn q)))
+           grad-neg-U (let [g (mx/grad neg-U)]
+                        (if compile? (mx/compile-fn g) g))
+           neg-U-compiled (if compile? (mx/compile-fn neg-U) neg-U)
+           eps      (mx/scalar step-size)
+           half-eps (mx/scalar (* 0.5 step-size))
+           half     (mx/scalar 0.5)
+           {:keys [trace]} (p/generate model args observations)
+           init-q (u/extract-params trace addresses)
+           q-shape (mx/shape init-q)]
+       (collect-samples
+         {:samples samples :burn burn :thin thin :callback callback :key key}
+         (fn [q step-key]
+           (hmc-step q neg-U-compiled grad-neg-U eps half-eps half q-shape
+                     leapfrog-steps metric step-key))
+         mx/->clj
+         init-q))))
+
+;; ---------------------------------------------------------------------------
+;; Lazy HMC (no per-step GPU sync)
+;; ---------------------------------------------------------------------------
+
+(defn- hamiltonian-lazy
+  "Lazy Hamiltonian — returns MLX scalar (no eval/item)."
+  ([neg-U-fn q p half] (hamiltonian-lazy neg-U-fn q p half nil))
+  ([neg-U-fn q p half metric]
+   (let [neg-U (neg-U-fn q)
+         K (kinetic-energy p metric half)]
+     (mx/add neg-U K))))
+
+(defn- hmc-step-lazy
+  "One HMC step — fully lazy. No tidy, no per-step eval.
+   Accept/reject via mx/where."
+  [q neg-U-compiled grad-neg-U eps half-eps half q-shape
+   leapfrog-steps metric key]
+  (let [[momentum-key accept-key] (rng/split-or-nils key)
+        p0 (sample-momentum metric q-shape momentum-key)
+        current-H (hamiltonian-lazy neg-U-compiled q p0 half metric)
+        [q' p'] (leapfrog-trajectory-fused
+                  grad-neg-U q p0 eps half-eps leapfrog-steps metric)
+        proposed-H (hamiltonian-lazy neg-U-compiled q' p' half metric)
+        log-accept (mx/subtract current-H proposed-H)
+        u (if accept-key
+            (rng/uniform accept-key [])
+            (mx/random-uniform []))
+        accept? (mx/less (mx/log u) log-accept)
+        q-next (mx/where accept? q' q)]
+    {:state q-next :accepted? accept?}))
+
+(defn hmc-lazy
+  "HMC with lazy chain — minimal eval points.
+   Same interface as hmc.
+
+   Additional options:
+     :eval-interval — eval state every N steps to bound graph size.
+                      nil (default) = eval only at end.
+     :device — :cpu|:gpu (default :gpu, lazy eval benefits from batched dispatch)."
+  [{:keys [samples step-size leapfrog-steps burn thin
+           addresses compile? key metric eval-interval device]
+    :or {step-size 0.01 leapfrog-steps 20 burn 100 thin 1
+         compile? true device :gpu}}
+   model args observations]
+  (with-device device
+    #(let [score-fn (u/make-score-fn model args observations addresses)
+           neg-U    (fn [q] (mx/negative (score-fn q)))
+           grad-neg-U (let [g (mx/grad neg-U)]
+                        (if compile? (mx/compile-fn g) g))
+           neg-U-compiled (if compile? (mx/compile-fn neg-U) neg-U)
+           eps      (mx/scalar step-size)
+           half-eps (mx/scalar (* 0.5 step-size))
+           half     (mx/scalar 0.5)
+           {:keys [trace]} (p/generate model args observations)
+           init-q (u/extract-params trace addresses)
+           q-shape (mx/shape init-q)
+           total-iters (+ burn (* samples thin))]
+       (loop [i 0, state init-q, samples-acc (transient []),
+              accepts-acc (transient []), n 0, rk key]
+         (if (>= n samples)
+           (let [samples-vec (persistent! samples-acc)
+                 accepts-vec (persistent! accepts-acc)
+                 accepts-arr (mx/stack accepts-vec)
+                 _ (apply mx/eval! accepts-arr samples-vec)
+                 accepts-f (mx/where accepts-arr (mx/scalar 1.0) (mx/scalar 0.0))
+                 n-accepted (mx/item (mx/sum accepts-f))]
+             (with-meta
+               (mapv mx/->clj samples-vec)
+               {:acceptance-rate (/ n-accepted total-iters)}))
+           (let [[step-key next-key] (rng/split-or-nils rk)
+                 {:keys [state accepted?]}
+                   (hmc-step-lazy state neg-U-compiled grad-neg-U
+                                  eps half-eps half q-shape
+                                  leapfrog-steps metric step-key)
+                 _ (when (and eval-interval (pos? eval-interval)
+                              (zero? (mod i eval-interval)))
+                     (mx/eval! state))
+                 past-burn? (>= i burn)
+                 keep? (and past-burn? (zero? (mod (- i burn) thin)))]
+             (recur (inc i) state
+                    (if keep? (conj! samples-acc state) samples-acc)
+                    (conj! accepts-acc accepted?)
+                    (if keep? (inc n) n)
+                    next-key)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; NUTS (No-U-Turn Sampler)
@@ -694,27 +872,28 @@
      MLX vector    — diagonal mass matrix
      MLX matrix    — dense mass matrix (positive definite)
 
-   Returns vector of MLX arrays (parameter samples)."
-  [{:keys [samples step-size max-depth burn thin addresses compile? callback key metric]
-    :or {step-size 0.01 max-depth 10 burn 0 thin 1 compile? true}}
+   Returns vector of MLX arrays (parameter samples).
+   Default device: :cpu (faster for scalar parameters)."
+  [{:keys [samples step-size max-depth burn thin addresses compile? callback key metric device]
+    :or {step-size 0.01 max-depth 10 burn 0 thin 1 compile? true device :cpu}}
    model args observations]
-  (let [score-fn (u/make-score-fn model args observations addresses)
-        neg-log-density (fn [q] (mx/negative (score-fn q)))
-        ;; Compile both gradient and forward pass
-        grad-neg-ld (let [g (mx/grad neg-log-density)]
-                      (if compile? (mx/compile-fn g) g))
-        neg-ld-compiled (if compile? (mx/compile-fn neg-log-density) neg-log-density)
-        eps (mx/scalar step-size)
-        half-eps (mx/scalar (* 0.5 step-size))
-        half (mx/scalar 0.5)
-        ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld :eps eps :half-eps half-eps
-             :half half :metric metric}
-        {:keys [trace]} (p/generate model args observations)
-        init-q (u/extract-params trace addresses)
-        q-shape (mx/shape init-q)]
-    (collect-samples
-      {:samples samples :burn burn :thin thin :callback callback :key key}
-      (fn [q step-key]
+  (with-device device
+    #(let [score-fn (u/make-score-fn model args observations addresses)
+           neg-log-density (fn [q] (mx/negative (score-fn q)))
+           grad-neg-ld (let [g (mx/grad neg-log-density)]
+                         (if compile? (mx/compile-fn g) g))
+           neg-ld-compiled (if compile? (mx/compile-fn neg-log-density) neg-log-density)
+           eps (mx/scalar step-size)
+           half-eps (mx/scalar (* 0.5 step-size))
+           half (mx/scalar 0.5)
+           ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld :eps eps :half-eps half-eps
+                :half half :metric metric}
+           {:keys [trace]} (p/generate model args observations)
+           init-q (u/extract-params trace addresses)
+           q-shape (mx/shape init-q)]
+       (collect-samples
+         {:samples samples :burn burn :thin thin :callback callback :key key}
+         (fn [q step-key]
         (let [[momentum-key slice-key dir-key tree-key]
               (rng/split-n-or-nils step-key 4)
               ;; Sample momentum from N(0, M) and compute current Hamiltonian
@@ -759,8 +938,8 @@
                                  (+ depth-n (:n' tree)) cont?
                                  dk-next tk-next))))]
           {:state new-q :accepted? (not (identical? new-q q))}))
-      mx/->clj
-      init-q)))
+         mx/->clj
+         init-q))))
 
 ;; ---------------------------------------------------------------------------
 ;; Elliptical Slice Sampling (Murray, Adams, MacKay 2010)
@@ -856,43 +1035,42 @@
      :lr          - learning rate (default 0.01)
      :addresses   - vector of latent addresses to optimize
      :callback    - (fn [{:iter :score :params}])
+     :device      - :cpu|:gpu (default :cpu)
 
    Returns {:trace Trace :score number :params [numbers] :score-history [numbers]}"
-  [{:keys [iterations optimizer lr addresses callback]
-    :or {iterations 1000 optimizer :adam lr 0.01}}
+  [{:keys [iterations optimizer lr addresses callback device]
+    :or {iterations 1000 optimizer :adam lr 0.01 device :cpu}}
    model args observations]
-  (let [score-fn   (u/make-score-fn model args observations addresses)
-        val-grad   (mx/value-and-grad score-fn)
-        ;; Initialize from a generate call
-        {:keys [trace]} (p/generate model args observations)
-        init-params (u/extract-params trace addresses)
-        opt-state   (when (= optimizer :adam) (learn/adam-init init-params))]
-    (loop [i 0
-           params init-params
-           opt-st opt-state
-           history (transient [])]
-      (if (>= i iterations)
-        ;; Reconstruct final trace at optimized params
-        (let [final-cm (reduce (fn [cm [j addr]]
-                                 (cm/set-choice cm [addr] (mx/index params j)))
-                               observations
-                               (map-indexed vector addresses))
-              {:keys [trace]} (p/generate model args final-cm)
-              score (mx/realize (:score trace))]
-          {:trace trace
-           :score score
-           :params (mx/->clj params)
-           :score-history (persistent! history)})
-        (let [[score grad] (val-grad params)
-              ;; Negate gradient: optimizers do descent, we want ascent
-              neg-grad (mx/negative grad)
-              _ (mx/eval! score neg-grad)
-              score-val (mx/item score)
-              [new-params new-opt-st]
-              (case optimizer
-                :sgd [(learn/sgd-step params neg-grad lr) nil]
-                :adam (learn/adam-step params neg-grad opt-st {:lr lr}))]
-          (when callback
-            (callback {:iter i :score score-val :params (mx/->clj params)}))
-          (recur (inc i) new-params new-opt-st
-                 (conj! history score-val)))))))
+  (with-device device
+    #(let [score-fn   (u/make-score-fn model args observations addresses)
+           val-grad   (mx/value-and-grad score-fn)
+           {:keys [trace]} (p/generate model args observations)
+           init-params (u/extract-params trace addresses)
+           opt-state   (when (= optimizer :adam) (learn/adam-init init-params))]
+       (loop [i 0
+              params init-params
+              opt-st opt-state
+              history (transient [])]
+         (if (>= i iterations)
+           (let [final-cm (reduce (fn [cm [j addr]]
+                                    (cm/set-choice cm [addr] (mx/index params j)))
+                                  observations
+                                  (map-indexed vector addresses))
+                 {:keys [trace]} (p/generate model args final-cm)
+                 score (mx/realize (:score trace))]
+             {:trace trace
+              :score score
+              :params (mx/->clj params)
+              :score-history (persistent! history)})
+           (let [[score grad] (val-grad params)
+                 neg-grad (mx/negative grad)
+                 _ (mx/eval! score neg-grad)
+                 score-val (mx/item score)
+                 [new-params new-opt-st]
+                 (case optimizer
+                   :sgd [(learn/sgd-step params neg-grad lr) nil]
+                   :adam (learn/adam-step params neg-grad opt-st {:lr lr}))]
+             (when callback
+               (callback {:iter i :score score-val :params (mx/->clj params)}))
+             (recur (inc i) new-params new-opt-st
+                    (conj! history score-val))))))))
