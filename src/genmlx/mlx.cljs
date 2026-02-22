@@ -258,9 +258,11 @@
 
 (defn slice
   ([a start stop]
-   (.index a (new (.-Slice core) start stop)))
+   (let [indices (.arange core start stop 1 int32)]
+     (.take core a indices)))
   ([a start stop step]
-   (.index a (new (.-Slice core) start stop step))))
+   (let [indices (.arange core start stop step int32)]
+     (.take core a indices))))
 
 ;; ---------------------------------------------------------------------------
 ;; Matrix operations
