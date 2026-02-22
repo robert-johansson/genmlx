@@ -16,6 +16,21 @@
 
 (def ^:private LOG-2PI (js/Math.log (* 2.0 js/Math.PI)))
 
+;; Cached MLX scalar constants — avoid per-call allocation.
+;; MLX arrays are immutable; mx/add etc. always create new arrays.
+(def ^:private ZERO (mx/scalar 0.0))
+(def ^:private ONE (mx/scalar 1.0))
+(def ^:private TWO (mx/scalar 2.0))
+(def ^:private THREE (mx/scalar 3.0))
+(def ^:private HALF (mx/scalar 0.5))
+(def ^:private NEG-INF (mx/scalar ##-Inf))
+(def ^:private LOG-2PI-HALF (mx/scalar (* 0.5 LOG-2PI)))
+(def ^:private LOG-PI (mx/scalar (js/Math.log js/Math.PI)))
+(def ^:private MLX-PI (mx/scalar js/Math.PI))
+(def ^:private SQRT-TWO (mx/scalar (js/Math.sqrt 2.0)))
+(def ^:private TINY (mx/scalar 1e-30))
+(def ^:private BERNOULLI-SUPPORT [ZERO ONE])
+
 ;; ---------------------------------------------------------------------------
 ;; Lanczos approximation for log-gamma (needed by Beta, Gamma, etc.)
 ;; ---------------------------------------------------------------------------
@@ -43,7 +58,7 @@
   "Element-wise log-gamma via Lanczos approximation using MLX operations.
    Works on arrays of any shape (scalar, [N], etc.) via broadcasting."
   [x]
-  (let [x' (mx/subtract x (mx/scalar 1.0))
+  (let [x' (mx/subtract x ONE)
         t  (mx/add x' (mx/scalar 7.5))
         s  (reduce (fn [acc [i ci]]
                      (mx/add acc (mx/divide (mx/scalar ci)
@@ -53,8 +68,8 @@
                     [3 771.32342877765313] [4 -176.61502916214059]
                     [5 12.507343278686905] [6 -0.13857109526572012]
                     [7 9.9843695780195716e-6] [8 1.5056327351493116e-7]])]
-    (mx/add (mx/scalar (* 0.5 (js/Math.log (* 2 js/Math.PI))))
-            (mx/multiply (mx/add x' (mx/scalar 0.5)) (mx/log t))
+    (mx/add LOG-2PI-HALF
+            (mx/multiply (mx/add x' HALF) (mx/log t))
             (mx/negative t)
             (mx/log s))))
 
@@ -66,8 +81,8 @@
   "Inverse CDF for Laplace: loc - scale * sign(u) * log(1 - 2|u|)."
   [loc scale u]
   (->> (mx/abs u)
-       (mx/multiply (mx/scalar 2.0))
-       (mx/subtract (mx/scalar 1.0))
+       (mx/multiply TWO)
+       (mx/subtract ONE)
        mx/log
        (mx/multiply (mx/sign u))
        (mx/multiply scale)
@@ -124,9 +139,9 @@
   (log-prob [v]
     (let [z (mx/divide (mx/subtract v mu) sigma)]
       (mx/negative
-        (mx/add (mx/scalar (* 0.5 LOG-2PI))
+        (mx/add LOG-2PI-HALF
                 (mx/log sigma)
-                (mx/multiply (mx/scalar 0.5) (mx/square z))))))
+                (mx/multiply HALF (mx/square z))))))
   (reparam [key]
     (mx/add mu (mx/multiply sigma (rng/normal key [])))))
 
@@ -156,7 +171,7 @@
   (log-prob [v]
     (let [in-bounds (mx/multiply (mx/less-equal lo v) (mx/less-equal v hi))
           log-density (mx/negative (mx/log (mx/subtract hi lo)))]
-      (mx/where in-bounds log-density (mx/scalar ##-Inf))))
+      (mx/where in-bounds log-density NEG-INF)))
   (reparam [key]
     (mx/add lo (mx/multiply (mx/subtract hi lo) (rng/uniform key [])))))
 
@@ -181,19 +196,18 @@
   [p]
   (sample [key]
     (let [u (rng/uniform key [])]
-      (mx/where (mx/less u p) (mx/scalar 1.0) (mx/scalar 0.0))))
+      (mx/where (mx/less u p) ONE ZERO)))
   (log-prob [v]
     (mx/add (mx/multiply v (mx/log p))
-            (mx/multiply (mx/subtract (mx/scalar 1.0) v)
-                         (mx/log (mx/subtract (mx/scalar 1.0) p)))))
-  (support []
-    [(mx/scalar 0.0) (mx/scalar 1.0)]))
+            (mx/multiply (mx/subtract ONE v)
+                         (mx/log (mx/subtract ONE p)))))
+  (support [] BERNOULLI-SUPPORT))
 
 (defmethod dc/dist-sample-n :bernoulli [d key n]
   (let [{:keys [p]} (:params d)
         key (rng/ensure-key key)
         u (rng/uniform key [n])]
-    (mx/where (mx/less u p) (mx/scalar 1.0) (mx/scalar 0.0))))
+    (mx/where (mx/less u p) ONE ZERO)))
 
 (defn flip
   "Alias for bernoulli."
@@ -227,9 +241,9 @@
           log-beta-val (mx/scalar (- (+ (log-gamma a-val)
                                         (log-gamma b-val))
                                      (log-gamma (+ a-val b-val))))]
-      (-> (mx/add (mx/multiply (mx/subtract alpha (mx/scalar 1.0)) (mx/log v))
-                  (mx/multiply (mx/subtract beta-param (mx/scalar 1.0))
-                               (mx/log (mx/subtract (mx/scalar 1.0) v))))
+      (-> (mx/add (mx/multiply (mx/subtract alpha ONE) (mx/log v))
+                  (mx/multiply (mx/subtract beta-param ONE)
+                               (mx/log (mx/subtract ONE v))))
           (mx/subtract log-beta-val)))))
 
 (let [beta-dist-raw beta-dist]
@@ -266,7 +280,7 @@
   (log-prob [v]
     (let [k shape-param
           log-gamma-k (mx/scalar (log-gamma (mx/realize k)))]
-      (-> (mx/add (mx/multiply (mx/subtract k (mx/scalar 1.0)) (mx/log v))
+      (-> (mx/add (mx/multiply (mx/subtract k ONE) (mx/log v))
                   (mx/multiply k (mx/log rate)))
           (mx/subtract (mx/multiply rate v))
           (mx/subtract log-gamma-k)))))
@@ -309,22 +323,22 @@
               x (rng/normal k1 [n])
               u (rng/uniform k2 [n])
               ;; v = (1 + c*x)^3
-              cx1 (mx/add (mx/scalar 1.0) (mx/multiply c-arr x))
+              cx1 (mx/add ONE (mx/multiply c-arr x))
               v (mx/power cx1 (mx/scalar 3.0))
               ;; Accept where: v > 0 AND log(u) < 0.5*x^2 + d*(1 - v + log(v))
-              v-pos (mx/greater v (mx/scalar 0.0))
+              v-pos (mx/greater v ZERO)
               safe-v (mx/maximum v (mx/scalar 1e-30))
-              log-accept (mx/add (mx/multiply (mx/scalar 0.5) (mx/square x))
+              log-accept (mx/add (mx/multiply HALF (mx/square x))
                                  (mx/multiply d-arr
-                                              (mx/add (mx/subtract (mx/scalar 1.0) safe-v)
+                                              (mx/add (mx/subtract ONE safe-v)
                                                       (mx/log safe-v))))
               accepted (mx/multiply v-pos (mx/less (mx/log u) log-accept))
               ;; Only fill not-yet-done slots
-              not-done (mx/equal done (mx/scalar 0.0))
+              not-done (mx/equal done ZERO)
               newly-done (mx/multiply accepted not-done)
               new-vals (mx/multiply d-arr safe-v)
               result (mx/where newly-done new-vals result)
-              done (mx/where newly-done (mx/scalar 1.0) done)]
+              done (mx/where newly-done ONE done)]
           (recur (inc iter) result done k3))))))
 
 (defmethod dc/dist-sample-n :gamma [d key n]
@@ -337,7 +351,7 @@
   (let [{:keys [alpha beta-param]} (:params d)
         key (rng/ensure-key key)
         [k1 k2] (rng/split key)
-        one (mx/scalar 1.0)
+        one ONE
         g1 (gamma-sample-n (mx/realize alpha) one k1 n)
         g2 (gamma-sample-n (mx/realize beta-param) one k2 n)]
     (mx/divide g1 (mx/add g1 g2))))
@@ -349,7 +363,7 @@
         alpha-vals (mx/->clj alpha)
         k (count alpha-vals)
         keys (rng/split-n key k)
-        one (mx/scalar 1.0)
+        one ONE
         ;; Sample k gamma arrays, each [n], then stack to [k n]
         gammas (mx/stack (mapv (fn [a ki] (gamma-sample-n a one ki n))
                                alpha-vals keys))
@@ -367,14 +381,14 @@
   [rate]
   (sample [key]
     (let [u (rng/uniform key [])]
-      (mx/divide (mx/negative (mx/log (mx/subtract (mx/scalar 1.0) u))) rate)))
+      (mx/divide (mx/negative (mx/log (mx/subtract ONE u))) rate)))
   (log-prob [v]
     (let [log-density (mx/subtract (mx/log rate) (mx/multiply rate v))
-          non-neg (mx/greater-equal v (mx/scalar 0.0))]
-      (mx/where non-neg log-density (mx/scalar ##-Inf))))
+          non-neg (mx/greater-equal v ZERO)]
+      (mx/where non-neg log-density NEG-INF)))
   (reparam [key]
     (let [u (rng/uniform key [])]
-      (mx/divide (mx/negative (mx/log (mx/subtract (mx/scalar 1.0) u))) rate))))
+      (mx/divide (mx/negative (mx/log (mx/subtract ONE u))) rate))))
 
 (let [exponential-raw exponential]
   (defn exponential
@@ -387,7 +401,7 @@
   (let [{:keys [rate]} (:params d)
         key (rng/ensure-key key)
         u (rng/uniform key [n])]
-    (mx/divide (mx/negative (mx/log (mx/subtract (mx/scalar 1.0) u))) rate)))
+    (mx/divide (mx/negative (mx/log (mx/subtract ONE u))) rate)))
 
 ;; ---------------------------------------------------------------------------
 ;; Categorical
@@ -430,7 +444,7 @@
   (log-prob [v]
     (-> (mx/multiply v (mx/log rate))
         (mx/subtract rate)
-        (mx/subtract (mlx-log-gamma (mx/add v (mx/scalar 1.0)))))))
+        (mx/subtract (mlx-log-gamma (mx/add v ONE))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Laplace
@@ -440,18 +454,18 @@
   "Laplace distribution with location and scale."
   [loc scale]
   (sample [key]
-    (laplace-icdf loc scale (mx/subtract (rng/uniform key []) (mx/scalar 0.5))))
+    (laplace-icdf loc scale (mx/subtract (rng/uniform key []) HALF)))
   (log-prob [v]
     (mx/subtract
-      (mx/negative (mx/log (mx/multiply (mx/scalar 2.0) scale)))
+      (mx/negative (mx/log (mx/multiply TWO scale)))
       (mx/divide (mx/abs (mx/subtract v loc)) scale)))
   (reparam [key]
-    (laplace-icdf loc scale (mx/subtract (rng/uniform key []) (mx/scalar 0.5)))))
+    (laplace-icdf loc scale (mx/subtract (rng/uniform key []) HALF))))
 
 (defmethod dc/dist-sample-n :laplace [d key n]
   (let [{:keys [loc scale]} (:params d)
         key (rng/ensure-key key)]
-    (laplace-icdf loc scale (mx/subtract (rng/uniform key [n]) (mx/scalar 0.5)))))
+    (laplace-icdf loc scale (mx/subtract (rng/uniform key [n]) HALF))))
 
 ;; ---------------------------------------------------------------------------
 ;; Student-t
@@ -482,7 +496,7 @@
       (-> log-norm
           (mx/subtract (mx/log scale))
           (mx/subtract (mx/multiply (mx/scalar half-df1)
-                                    (mx/log (mx/add (mx/scalar 1.0)
+                                    (mx/log (mx/add ONE
                                                     (mx/divide (mx/square z) df)))))))))
 
 (defmethod dc/dist-sample-n :student-t [d key n]
@@ -512,9 +526,9 @@
           z (mx/divide (mx/subtract log-v mu) sigma)]
       (mx/negative
         (mx/add log-v
-                (mx/scalar (* 0.5 LOG-2PI))
+                LOG-2PI-HALF
                 (mx/log sigma)
-                (mx/multiply (mx/scalar 0.5) (mx/square z))))))
+                (mx/multiply HALF (mx/square z))))))
   (reparam [key]
     (mx/exp (mx/add mu (mx/multiply sigma (rng/normal key []))))))
 
@@ -535,7 +549,7 @@
           k (count alpha-vals)
           keys (rng/split-n key k)
           gammas (mapv (fn [a ki]
-                         (let [g (dc/dist-sample (gamma-dist (mx/scalar a) (mx/scalar 1.0)) ki)]
+                         (let [g (dc/dist-sample (gamma-dist (mx/scalar a) ONE) ki)]
                            (mx/realize g)))
                        alpha-vals keys)
           total (reduce + gammas)
@@ -548,7 +562,7 @@
           log-beta (- (reduce + (map log-gamma alpha-vals))
                       (log-gamma sum-alpha))
           log-terms (mx/sum
-                      (mx/multiply (mx/subtract alpha (mx/scalar 1.0))
+                      (mx/multiply (mx/subtract alpha ONE)
                                    (mx/log v)))]
       (mx/subtract log-terms (mx/scalar log-beta)))))
 
@@ -562,7 +576,7 @@
   (sample [_key] v)
   (log-prob [value]
     (let [eq (mx/equal v value)]
-      (mx/where eq (mx/scalar 0.0) (mx/scalar ##-Inf))))
+      (mx/where eq ZERO NEG-INF)))
   (support [] [v]))
 
 (defmethod dc/dist-sample-n :delta [d _key n]
@@ -579,7 +593,7 @@
   (sample [key]
     ;; Inverse CDF: loc + scale * tan(pi * (u - 0.5))
     (let [u (rng/uniform key [])
-          z (mx/subtract u (mx/scalar 0.5))]
+          z (mx/subtract u HALF)]
       (mx/add loc (mx/multiply scale
                     (mx/divide (mx/sin (mx/multiply (mx/scalar js/Math.PI) z))
                                (mx/cos (mx/multiply (mx/scalar js/Math.PI) z)))))))
@@ -589,10 +603,10 @@
       (mx/negative
         (mx/add (mx/scalar (js/Math.log js/Math.PI))
                 (mx/log scale)
-                (mx/log (mx/add (mx/scalar 1.0) (mx/square z)))))))
+                (mx/log (mx/add ONE (mx/square z)))))))
   (reparam [key]
     (let [u (rng/uniform key [])
-          z (mx/subtract u (mx/scalar 0.5))]
+          z (mx/subtract u HALF)]
       (mx/add loc (mx/multiply scale
                     (mx/divide (mx/sin (mx/multiply (mx/scalar js/Math.PI) z))
                                (mx/cos (mx/multiply (mx/scalar js/Math.PI) z))))))))
@@ -601,7 +615,7 @@
   (let [{:keys [loc scale]} (:params d)
         key (rng/ensure-key key)
         u (rng/uniform key [n])
-        z (mx/subtract u (mx/scalar 0.5))]
+        z (mx/subtract u HALF)]
     (mx/add loc (mx/multiply scale
                   (mx/divide (mx/sin (mx/multiply (mx/scalar js/Math.PI) z))
                              (mx/cos (mx/multiply (mx/scalar js/Math.PI) z)))))))
@@ -615,7 +629,7 @@
   [shape-param scale-param]
   (sample [key]
     ;; Sample gamma(shape, 1/scale), then invert
-    (let [g (dc/dist-sample (gamma-dist shape-param (mx/scalar 1.0)) key)]
+    (let [g (dc/dist-sample (gamma-dist shape-param ONE) key)]
       (mx/divide scale-param g)))
   (log-prob [v]
     ;; log p(v) = shape*log(scale) - log-gamma(shape) - (shape+1)*log(v) - scale/v
@@ -623,12 +637,12 @@
           log-gamma-a (mx/scalar (log-gamma a))]
       (-> (mx/multiply shape-param (mx/log scale-param))
           (mx/subtract log-gamma-a)
-          (mx/subtract (mx/multiply (mx/add shape-param (mx/scalar 1.0)) (mx/log v)))
+          (mx/subtract (mx/multiply (mx/add shape-param ONE) (mx/log v)))
           (mx/subtract (mx/divide scale-param v))))))
 
 (defmethod dc/dist-sample-n :inv-gamma [d key n]
   (let [{:keys [shape-param scale-param]} (:params d)
-        g (gamma-sample-n (mx/realize shape-param) (mx/scalar 1.0) key n)]
+        g (gamma-sample-n (mx/realize shape-param) ONE key n)]
     (mx/divide scale-param g)))
 
 ;; ---------------------------------------------------------------------------
@@ -642,11 +656,11 @@
     ;; Inverse CDF: floor(log(u) / log(1-p))
     (let [u (rng/uniform key [])
           log-u (mx/log u)
-          log-1mp (mx/log (mx/subtract (mx/scalar 1.0) p))]
+          log-1mp (mx/log (mx/subtract ONE p))]
       (mx/floor (mx/divide log-u log-1mp))))
   (log-prob [v]
     ;; log p(k) = k * log(1-p) + log(p)
-    (mx/add (mx/multiply v (mx/log (mx/subtract (mx/scalar 1.0) p)))
+    (mx/add (mx/multiply v (mx/log (mx/subtract ONE p)))
             (mx/log p)))
   (support []
     ;; Infinite support; return first few for enumeration
@@ -657,7 +671,7 @@
         key (rng/ensure-key key)
         u (rng/uniform key [n])
         log-u (mx/log u)
-        log-1mp (mx/log (mx/subtract (mx/scalar 1.0) p))]
+        log-1mp (mx/log (mx/subtract ONE p))]
     (mx/floor (mx/divide log-u log-1mp))))
 
 ;; ---------------------------------------------------------------------------
@@ -670,7 +684,7 @@
   [r p]
   (sample [key]
     ;; Gamma-Poisson mixture: lambda ~ Gamma(r, p/(1-p)), then x ~ Poisson(lambda)
-    (let [rate (mx/divide p (mx/subtract (mx/scalar 1.0) p))
+    (let [rate (mx/divide p (mx/subtract ONE p))
           g (dc/dist-sample (gamma-dist r rate) key)
           g-val (mx/realize g)
           l (js/Math.exp (- g-val))]
@@ -683,11 +697,11 @@
   (log-prob [v]
     ;; log C(v + r - 1, v) + r*log(p) + v*log(1-p)
     (let [log-coeff (mx/subtract (mlx-log-gamma (mx/add v r))
-                                 (mx/add (mlx-log-gamma (mx/add v (mx/scalar 1.0)))
+                                 (mx/add (mlx-log-gamma (mx/add v ONE))
                                          (mlx-log-gamma r)))]
       (-> log-coeff
           (mx/add (mx/multiply r (mx/log p)))
-          (mx/add (mx/multiply v (mx/log (mx/subtract (mx/scalar 1.0) p))))))))
+          (mx/add (mx/multiply v (mx/log (mx/subtract ONE p))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Binomial
@@ -706,14 +720,14 @@
       (mx/scalar successes)))
   (log-prob [v]
     ;; log C(n, k) + k*log(p) + (n-k)*log(1-p)
-    (let [log-coeff (mx/subtract (mlx-log-gamma (mx/add n-trials (mx/scalar 1.0)))
-                                 (mx/add (mlx-log-gamma (mx/add v (mx/scalar 1.0)))
+    (let [log-coeff (mx/subtract (mlx-log-gamma (mx/add n-trials ONE))
+                                 (mx/add (mlx-log-gamma (mx/add v ONE))
                                          (mlx-log-gamma (mx/add (mx/subtract n-trials v)
-                                                                (mx/scalar 1.0)))))]
+                                                                ONE))))]
       (-> log-coeff
           (mx/add (mx/multiply v (mx/log p)))
           (mx/add (mx/multiply (mx/subtract n-trials v)
-                               (mx/log (mx/subtract (mx/scalar 1.0) p)))))))
+                               (mx/log (mx/subtract ONE p)))))))
   (support []
     (let [nt (int (mx/realize n-trials))]
       (mapv #(mx/scalar % mx/int32) (range (inc nt))))))
@@ -724,7 +738,7 @@
         key (rng/ensure-key key)
         ;; [n, nt] uniform draws, compare with p, sum successes
         u (rng/uniform key [n nt])
-        successes (mx/sum (mx/where (mx/less u p) (mx/scalar 1.0) (mx/scalar 0.0)) [1])]
+        successes (mx/sum (mx/where (mx/less u p) ONE ZERO) [1])]
     successes))
 
 ;; ---------------------------------------------------------------------------
@@ -744,7 +758,7 @@
           hi-val (mx/realize hi)
           n (inc (- hi-val lo-val))
           in-range (mx/multiply (mx/greater-equal v lo) (mx/less-equal v hi))]
-      (mx/where in-range (mx/scalar (- (js/Math.log n))) (mx/scalar ##-Inf))))
+      (mx/where in-range (mx/scalar (- (js/Math.log n))) NEG-INF)))
   (support []
     (let [lo-val (int (mx/realize lo))
           hi-val (int (mx/realize hi))]
@@ -774,23 +788,23 @@
     (let [z (mx/divide (mx/subtract v mu) sigma)
           ;; Standard normal log-pdf
           log-phi (mx/negative
-                    (mx/add (mx/scalar (* 0.5 LOG-2PI))
-                            (mx/multiply (mx/scalar 0.5) (mx/square z))))
+                    (mx/add LOG-2PI-HALF
+                            (mx/multiply HALF (mx/square z))))
           ;; Subtract log(sigma)
           log-pdf (mx/subtract log-phi (mx/log sigma))
           ;; Normalization: approximate Phi via erf
           a (mx/divide (mx/subtract lo mu) sigma)
           b (mx/divide (mx/subtract hi mu) sigma)
-          phi-a (mx/multiply (mx/scalar 0.5)
-                  (mx/add (mx/scalar 1.0)
-                          (mx/erf (mx/divide a (mx/scalar (js/Math.sqrt 2.0))))))
-          phi-b (mx/multiply (mx/scalar 0.5)
-                  (mx/add (mx/scalar 1.0)
-                          (mx/erf (mx/divide b (mx/scalar (js/Math.sqrt 2.0))))))
+          phi-a (mx/multiply HALF
+                  (mx/add ONE
+                          (mx/erf (mx/divide a SQRT-TWO))))
+          phi-b (mx/multiply HALF
+                  (mx/add ONE
+                          (mx/erf (mx/divide b SQRT-TWO))))
           log-norm (mx/log (mx/subtract phi-b phi-a))
           ;; Bounds check
           in-bounds (mx/multiply (mx/greater-equal v lo) (mx/less-equal v hi))]
-      (mx/where in-bounds (mx/subtract log-pdf log-norm) (mx/scalar ##-Inf))))
+      (mx/where in-bounds (mx/subtract log-pdf log-norm) NEG-INF)))
   (reparam [key]
     (let [z (rng/truncated-normal key
               (mx/divide (mx/subtract lo mu) sigma)
@@ -825,7 +839,7 @@
         _ (mx/eval! L)
         Li (mx/tri-inv L false)
         k (first (mx/shape mu))
-        log-det-sigma (mx/multiply (mx/scalar 2.0)
+        log-det-sigma (mx/multiply TWO
                                    (mx/sum (mx/log (mx/diag L))))
         nc (mx/multiply (mx/scalar -0.5)
                         (mx/add (mx/scalar (* k LOG-2PI)) log-det-sigma))
@@ -880,9 +894,9 @@
     (let [z (mx/divide (mx/subtract v mu) sigma)]
       (mx/sum
         (mx/negative
-          (mx/add (mx/scalar (* 0.5 LOG-2PI))
+          (mx/add LOG-2PI-HALF
                   (mx/log sigma)
-                  (mx/multiply (mx/scalar 0.5) (mx/square z)))))))
+                  (mx/multiply HALF (mx/square z)))))))
   (reparam [key]
     (let [sh (mx/shape mu)]
       (mx/add mu (mx/multiply sigma (rng/normal key sh))))))
@@ -902,7 +916,7 @@
    Uniform(0,1) with probability (1 - theta). Common prior for bounded params."
   [theta alpha beta-param]
   (dc/mixture [(beta-dist (mx/ensure-array alpha) (mx/ensure-array beta-param))
-               (uniform (mx/scalar 0.0) (mx/scalar 1.0))]
+               (uniform ZERO ONE)]
               (mx/array [(js/Math.log theta)
                          (js/Math.log (- 1.0 theta))])))
 
@@ -941,7 +955,7 @@
                 in-bin (mx/multiply (mx/greater-equal v (mx/scalar lo))
                                     (mx/less v (mx/scalar hi)))]
             (mx/where in-bin log-density acc)))
-        (mx/scalar ##-Inf)
+        NEG-INF
         (range n-bins)))))
 
 ;; ---------------------------------------------------------------------------
@@ -968,7 +982,7 @@
         _ (mx/eval! L)
         k (first (mx/shape V-2d))
         V-inv (mx/inv V-2d)
-        log-det-V (mx/multiply (mx/scalar 2.0) (mx/sum (mx/log (mx/diag L))))
+        log-det-V (mx/multiply TWO (mx/sum (mx/log (mx/diag L))))
         _ (mx/eval! V-inv log-det-V)]
     (dc/->Distribution :wishart
                         {:df df-val :scale-matrix V-2d :cholesky-L L
@@ -990,13 +1004,13 @@
                      (let [chi2-df (- df i)
                            ;; chi²(n) = Gamma(n/2, 2) but we sample Gamma(n/2, 1) * 2
                            g (dc/dist-sample (gamma-dist (mx/scalar (/ chi2-df 2.0))
-                                                          (mx/scalar 1.0))
+                                                          ONE)
                                              (next-key!))]
-                       (mx/sqrt (mx/multiply (mx/scalar 2.0) g)))
+                       (mx/sqrt (mx/multiply TWO g)))
                      (> i j) ;; below diagonal: N(0,1)
                      (rng/normal (next-key!) [])
                      :else ;; above diagonal: 0
-                     (mx/scalar 0.0))))
+                     ZERO)))
         ;; Build A matrix
         A (mx/reshape (mx/stack (mapv (fn [row] (mx/stack (vec row))) A-data)) [k k])
         ;; W = L * A * A^T * L^T
@@ -1008,7 +1022,7 @@
   (let [{:keys [df V-inv log-det-V k]} (:params d)
         x (if (mx/array? x) x (mx/array x))
         x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
-        log-det-X (mx/multiply (mx/scalar 2.0)
+        log-det-X (mx/multiply TWO
                                (mx/sum (mx/log (mx/diag (mx/cholesky x-2d)))))
         _ (mx/eval! log-det-X)
         ;; log p(X) = ((df-k-1)/2)*log|X| - (1/2)*tr(V^{-1}X) - (df*k/2)*log(2)
@@ -1044,7 +1058,7 @@
         ;; Precompute log|Psi| for log-prob
         L-psi (mx/cholesky Psi-2d)
         _ (mx/eval! L-psi)
-        log-det-Psi (mx/multiply (mx/scalar 2.0) (mx/sum (mx/log (mx/diag L-psi))))
+        log-det-Psi (mx/multiply TWO (mx/sum (mx/log (mx/diag L-psi))))
         _ (mx/eval! log-det-Psi)]
     (dc/->Distribution :inv-wishart
                         {:df df-val :scale-matrix Psi-2d :k k
@@ -1060,7 +1074,7 @@
         x (if (mx/array? x) x (mx/array x))
         x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
         X-inv (mx/inv x-2d)
-        log-det-X (mx/multiply (mx/scalar 2.0)
+        log-det-X (mx/multiply TWO
                                (mx/sum (mx/log (mx/diag (mx/cholesky x-2d)))))
         _ (mx/eval! log-det-X)
         ;; log p(X) = (df/2)*log|Psi| - (df*k/2)*log(2) - log_multivariate_gamma(df/2, k)
