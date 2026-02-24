@@ -94,6 +94,11 @@ Key challenge: compile-fn freezes random ops (both stateful and key-based).
 Fix: pre-generate `[K,D]` noise + `[K]` uniforms OUTSIDE compile-fn, pass as inputs.
 The compiled function indexes into pre-generated arrays at each step.
 
+**Where it helps:** burn-in (5x), thinned collection with thin > 1 (proportional).
+**Where it doesn't:** thin=1 sample collection — 1-step compiled chains are slower
+than eager due to 2D array generation overhead. Falls back to eager per-step.
+For `{:burn 0 :thin 1}`, no speedup over the old code.
+
 Test: `test/genmlx/loop_compilation_test.cljs` — correctness, scaling, statistical validity.
 
 ---

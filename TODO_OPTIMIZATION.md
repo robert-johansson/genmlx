@@ -668,13 +668,16 @@ dispatches.
 
 - [x] **5.4.1** Integrate loop compilation into `compiled-mh` in mcmc.cljs
   - Add `make-compiled-chain` helper (pre-generated noise pattern)
-  - Replace eager per-step loop with block-based compiled chain
-  - Burn-in phase: compiled chain with K=burn steps, no sample collection
-  - Collection phase: compiled chain with K=block-size, collect endpoint per block
-  - New option: `:block-size` (default 20) controls steps per Metal dispatch
-  - **Verify**: `compiled-mh` produces statistically equivalent results
-  - **Verify**: existing tests pass (inference_test.cljs, gen_clj_compat, genjax_compat)
-  - **Benchmark**: 200-step compiled-mh before/after on 7-site linreg
+  - Burn-in: compiled chain of block-size steps (default 50), ~5x faster
+  - Collection with thin > 1: compiled chain of thin steps per sample
+  - Collection with thin = 1: **no benefit** — 1-step compiled chain is slower
+    than eager due to 2D noise array overhead. Falls back to eager per-step.
+  - New option: `:block-size` (default 50) controls burn-in steps per dispatch
+  - `mx/tidy` around collection loop prevents Metal resource leak
+  - All tests pass: 165/165 Gen.clj, 73/73 GenJAX, inference green
+  - **Limitation**: for `{:burn 0 :thin 1}` (no burn, no thinning), the new
+    code is the same speed as the old code. The 5.6x headline applies to
+    burn-in and thinning phases only.
 
 - [ ] **5.4.2** Apply loop compilation to MALA (mcmc.cljs)
 - [ ] **5.4.3** Apply loop compilation to HMC leapfrog (mcmc.cljs)
