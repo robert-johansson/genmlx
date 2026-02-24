@@ -169,3 +169,60 @@
   (if (map? m)
     (->Node (into {} (map (fn [[k v]] [k (from-map v)])) m))
     (->Value m)))
+
+;; ---------------------------------------------------------------------------
+;; Stack/Unstack for batched execution
+;; ---------------------------------------------------------------------------
+
+(defn stack-choicemaps
+  "Stack N choicemaps into one with [N]-shaped leaves.
+   mlx-stack-fn: function that stacks a vector of arrays → [N,...]-shaped array.
+   All N choicemaps must have the same address structure."
+  [cms mlx-stack-fn]
+  (cond
+    (every? #(= % EMPTY) cms) EMPTY
+
+    (has-value? (first cms))
+    (->Value (mlx-stack-fn (mapv get-value cms)))
+
+    (instance? Node (first cms))
+    (let [addrs (keys (:m (first cms)))]
+      (->Node
+        (into {}
+          (map (fn [addr]
+                 [addr (stack-choicemaps
+                         (mapv #(get-submap % addr) cms)
+                         mlx-stack-fn)])
+               addrs))))
+
+    :else EMPTY))
+
+(defn unstack-choicemap
+  "Split a choicemap with [N]-shaped leaves into N scalar choicemaps.
+   mlx-index-fn: function (array, i) → element at index i.
+   scalar-leaf-fn: (value) → true if value is scalar (not [N]-shaped)."
+  [cm n mlx-index-fn scalar-leaf-fn]
+  (cond
+    (= cm EMPTY) (vec (repeat n EMPTY))
+
+    (has-value? cm)
+    (let [v (get-value cm)]
+      (if (scalar-leaf-fn v)
+        (vec (repeat n cm))
+        (mapv #(->Value (mlx-index-fn v %)) (range n))))
+
+    (instance? Node cm)
+    (let [addrs (keys (:m cm))
+          addr-vecs (map (fn [addr]
+                           [addr (unstack-choicemap
+                                   (get-submap cm addr) n
+                                   mlx-index-fn scalar-leaf-fn)])
+                         addrs)]
+      (mapv (fn [i]
+              (->Node
+                (into {}
+                  (map (fn [[addr v]] [addr (nth v i)])
+                       addr-vecs))))
+            (range n)))
+
+    :else (vec (repeat n EMPTY))))

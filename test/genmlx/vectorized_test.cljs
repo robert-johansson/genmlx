@@ -394,18 +394,18 @@
   (mx/eval! weight)
   (assert-equal "splice vregenerate weight shape" [n] (mx/shape weight)))
 
-(println "\n-- vectorized splice: non-DynamicGF guard --")
+(println "\n-- vectorized splice: non-DynamicGF (combinator fallback) --")
 
-(let [;; A distribution used as a GF has no :body-fn
+(let [;; A distribution used as a GF has no :body-fn — uses combinator fallback
       model (gen []
               (dyn/splice :d (dist/gaussian 0 1))
               nil)
-      caught? (try
-                (dyn/vsimulate model [] 10 nil)
-                false
-                (catch :default e
-                  (boolean (re-find #"non-DynamicGF" (.-message e)))))]
-  (assert-true "non-DynamicGF splice in batched mode throws" caught?))
+      vtrace (dyn/vsimulate model [] 10 nil)
+      d-sub (cm/get-submap (:choices vtrace) :d)]
+  (assert-true "non-DynamicGF splice works in batched mode" (cm/has-value? d-sub))
+  (let [v (cm/get-value d-sub)]
+    (mx/eval! v)
+    (assert-equal "non-DynamicGF splice shape" [10] (mx/shape v))))
 
 (println "\n-- vectorized splice: nested (3 levels) --")
 

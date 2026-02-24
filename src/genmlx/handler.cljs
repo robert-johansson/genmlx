@@ -54,7 +54,9 @@
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.selection :as sel]
-            [genmlx.dist.core :as dc]))
+            [genmlx.dist.core :as dc]
+            [genmlx.protocols :as p]
+            [genmlx.trace :as tr]))
 
 ;; The three dynamic vars below are the complete dynamic scope of GenMLX.
 ;; *handler* and *state* are bound exclusively by run-handler.
@@ -420,17 +422,132 @@
                  (merge-sub-result addr sub-result))]
     [state' (:retval sub-result)]))
 
+(defn- mlx-arr-batched?
+  "Check if x is an MLX array with at least 1 dimension."
+  [x]
+  (and (some? x) (some? (.-shape x)) (.-item x)
+       (pos? (count (mx/shape x)))))
+
+(defn- scalar-leaf-val?
+  "Check if a value is scalar (0-d or not an MLX array)."
+  [v]
+  (or (not (and (some? v) (some? (.-shape v)) (.-item v)))
+      (= [] (mx/shape v))))
+
+(defn- combinator-batched-fallback
+  "Fallback for splicing a non-DynamicGF (e.g. VmapCombinator) in batched mode.
+   Unstacks [N]-particle state, runs combinator GFI N times, stacks results."
+  [state addr gf args]
+  (let [n (:batch-size state)
+        [k1 k2] (rng/split (:key state))
+        ;; Extract scoped state
+        sub-constraints (cm/get-submap (:constraints state) addr)
+        sub-old-choices (cm/get-submap (:old-choices state) addr)
+        sub-selection   (when-let [s (:selection state)]
+                          (sel/get-subselection s addr))
+        ;; Extract per-particle args: only unstack if leading dim == N (batched)
+        extract-scalar-arg (fn [a i]
+                             (if (and (mlx-arr-batched? a)
+                                      (= (first (mx/shape a)) n))
+                               (mx/index a i)
+                               a))
+        ;; Unstack old-choices if present
+        per-old-choices (when (and sub-old-choices (not= sub-old-choices cm/EMPTY))
+                          (cm/unstack-choicemap sub-old-choices n mx/index scalar-leaf-val?))
+        ;; Unstack constraints if present and not scalar
+        per-constraints (when (and sub-constraints (not= sub-constraints cm/EMPTY))
+                          (if (every? (fn [[_ sub]]
+                                        (or (not (cm/has-value? sub))
+                                            (scalar-leaf-val? (cm/get-value sub))))
+                                      (when (instance? cm/Node sub-constraints)
+                                        (:m sub-constraints)))
+                            ;; Scalar constraints: replicate
+                            (vec (repeat n sub-constraints))
+                            (cm/unstack-choicemap sub-constraints n mx/index scalar-leaf-val?)))
+        ;; Run per-particle
+        results
+        (mapv
+          (fn [i]
+            (let [elem-args (mapv #(extract-scalar-arg % i) args)]
+              (cond
+                ;; Regenerate mode
+                sub-selection
+                (let [old-choices (or (and per-old-choices (nth per-old-choices i)) cm/EMPTY)
+                      elem-trace (tr/make-trace
+                                   {:gen-fn gf :args elem-args
+                                    :choices old-choices :retval nil
+                                    :score (mx/scalar 0.0)})
+                      {:keys [trace weight]} (p/regenerate gf elem-trace sub-selection)]
+                  {:choices (:choices trace) :score (:score trace)
+                   :weight weight :retval (:retval trace)})
+
+                ;; Update mode
+                (and per-old-choices (nth per-old-choices i)
+                     (not= (nth per-old-choices i) cm/EMPTY))
+                (let [c (or (and per-constraints (nth per-constraints i)) cm/EMPTY)
+                      elem-trace (tr/make-trace
+                                   {:gen-fn gf :args elem-args
+                                    :choices (nth per-old-choices i) :retval nil
+                                    :score (mx/scalar 0.0)})
+                      {:keys [trace weight discard]} (p/update gf elem-trace c)]
+                  {:choices (:choices trace) :score (:score trace)
+                   :weight weight :discard discard :retval (:retval trace)})
+
+                ;; Generate with constraints
+                (and per-constraints (nth per-constraints i)
+                     (not= (nth per-constraints i) cm/EMPTY))
+                (let [{:keys [trace weight]} (p/generate gf elem-args (nth per-constraints i))]
+                  {:choices (:choices trace) :score (:score trace)
+                   :weight weight :retval (:retval trace)})
+
+                ;; Simulate
+                :else
+                (let [trace (p/simulate gf elem-args)]
+                  {:choices (:choices trace) :score (:score trace)
+                   :retval (:retval trace)}))))
+          (range n))
+        ;; Stack results
+        stacked-choices (cm/stack-choicemaps (mapv :choices results) mx/stack)
+        stacked-scores (mx/stack (mapv :score results))
+        stacked-weights (when (some :weight results)
+                          (mx/stack (mapv #(or (:weight %) (mx/scalar 0.0)) results)))
+        stacked-retval (let [rvs (mapv :retval results)]
+                         (if (every? mx/array? rvs) (mx/stack rvs) (vec rvs)))
+        stacked-discard (when (some :discard results)
+                          (let [discards (mapv #(or (:discard %) cm/EMPTY) results)]
+                            (if (every? #(= % cm/EMPTY) discards)
+                              cm/EMPTY
+                              (cm/stack-choicemaps discards mx/stack))))
+        ;; Merge into parent state
+        sub-result {:choices stacked-choices :score stacked-scores
+                    :weight stacked-weights :discard stacked-discard
+                    :retval stacked-retval}
+        state' (-> state
+                 (assoc :key k1)
+                 (merge-sub-result addr sub-result))]
+    [state' stacked-retval]))
+
 (defn trace-gf!
   "Call a sub-generative-function at the given address namespace."
   [addr gf args]
   (if *handler*
     (if (:batched? @*state*)
-      ;; Batched mode: only DynamicGF (with :body-fn) is supported
-      (if (:body-fn gf)
+      ;; Batched mode
+      (cond
+        ;; DynamicGF: batched splice transition (runs body once)
+        (:body-fn gf)
         (let [[state' retval] (batched-splice-transition @*state* addr gf args)]
           (vreset! *state* state')
           retval)
-        (throw (ex-info "splice of non-DynamicGF not supported in batched/vectorized mode"
+
+        ;; Combinator / other GFI: scalar fallback per particle
+        (satisfies? p/IGenerativeFunction gf)
+        (let [[state' retval] (combinator-batched-fallback @*state* addr gf args)]
+          (vreset! *state* state')
+          retval)
+
+        :else
+        (throw (ex-info "splice of unsupported gen-fn type in batched mode"
                         {:addr addr})))
       ;; Scalar mode: delegate to sub-execution with scoped constraints/state
       (let [state @*state*
