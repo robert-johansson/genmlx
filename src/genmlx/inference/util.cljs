@@ -28,7 +28,7 @@
     {:log-probs log-probs :probs probs}))
 
 (defn make-score-fn
-  "Build a compiled score function from a model + observations + addresses.
+  "Build a score function from a model + observations + addresses.
    Returns a fn: (params-array) -> MLX scalar log-weight."
   [model args observations addresses]
   (let [indexed-addrs (mapv vector (range) addresses)]
@@ -42,10 +42,11 @@
 
 (defn make-vectorized-score-fn
   "Build a vectorized score function for N parallel chains.
-   Returns a fn: (params [N,D]) -> [N]-shaped MLX log-weight array."
+   Returns a fn: (params [N,D]) -> [N]-shaped MLX log-weight array.
+   NOT compiled — node-mlx's compile has a graph size limit (~100-120 ops)
+   that model execution easily exceeds."
   [model args observations addresses]
   (let [indexed-addrs (mapv vector (range) addresses)
-        ;; Pre-create index scalars so mx/compile-fn sees same objects each call
         idx-scalars (mapv #(mx/scalar % mx/int32) (range (count addresses)))]
     (fn [params]
       (let [params-t (mx/transpose params)
@@ -120,9 +121,9 @@
 
 (defn make-compiled-vectorized-score-and-grad
   "Vectorized score fn + vectorized gradient fn.
-   Score fn is NOT compiled because model execution creates internal MLX
-   arrays (mx/scalar for data) that break mx/compile-fn's graph cache.
-   Grad fn is also left uncompiled for the same reason.
+   NOT compiled — node-mlx's compile has a graph size limit (~100-120 ops)
+   that model execution easily exceeds. Vectorization (N-shaped batching)
+   provides the main speedup regardless.
    Returns {:score-fn ([N,D]->[N]), :grad-fn ([N,D]->[N,D])}."
   [model args observations addresses]
   {:score-fn (make-vectorized-score-fn model args observations addresses)
@@ -130,8 +131,7 @@
 
 (defn make-compiled-vectorized-val-grad
   "Vectorized value-and-grad via sum trick.
-   NOT compiled because model execution creates internal MLX arrays that
-   break mx/compile-fn's graph cache.
+   NOT compiled — see make-compiled-vectorized-score-and-grad.
    Returns fn: [N,D] -> [scalar, [N,D]] where scalar = sum(scores).
    Per-chain scores can be obtained separately via score-fn."
   [model args observations addresses]
