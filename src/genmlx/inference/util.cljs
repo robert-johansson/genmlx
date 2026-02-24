@@ -44,14 +44,16 @@
   "Build a vectorized score function for N parallel chains.
    Returns a fn: (params [N,D]) -> [N]-shaped MLX log-weight array."
   [model args observations addresses]
-  (let [indexed-addrs (mapv vector (range) addresses)]
+  (let [indexed-addrs (mapv vector (range) addresses)
+        ;; Pre-create index scalars so mx/compile-fn sees same objects each call
+        idx-scalars (mapv #(mx/scalar % mx/int32) (range (count addresses)))]
     (fn [params]
       (let [params-t (mx/transpose params)
             cm (reduce
                  (fn [cm [i addr]]
                    ;; take-idx with axis=0 extracts row i of [D,N] → [N]-shaped
                    (cm/set-choice cm [addr]
-                     (mx/take-idx params-t (mx/scalar i mx/int32) 0)))
+                     (mx/take-idx params-t (nth idx-scalars i) 0)))
                  observations
                  indexed-addrs)]
         (:weight (p/generate model args cm))))))
