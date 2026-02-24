@@ -308,17 +308,17 @@
 
 
 ;; =========================================================================
-;; SECTION 4: Vectorized MCMC (10 chains, 50 steps)
-;;   Reduced from 200 to 50 steps to stay within Metal resource limits.
-;;   Per-step cost is the meaningful metric for comparison.
+;; SECTION 4: Vectorized MCMC (10 chains, 200 steps)
+;;   Vec HMC L=10 exceeds Metal resource limit on M4; L=5 Model A only.
+;;   Run vec_mcmc_bench.cljs separately for isolated measurements.
 ;; =========================================================================
 
 (println (str "\n" sep))
-(println "SECTION 4: Vectorized MCMC (10 chains, 50 steps)")
+(println "SECTION 4: Vectorized MCMC (10 chains, 200 steps)")
 (println sep)
 
 (def n-chains 10)
-(def vec-steps 50)
+(def vec-steps 200)
 
 ;; -- Vectorized compiled MH --
 (println (str "\n-- Vec Compiled MH " vec-steps " steps, " n-chains " chains --"))
@@ -354,7 +354,7 @@
      model-b [xs-b] obs-b)
   :vec_mala_10chains_b)
 
-;; -- Vectorized HMC (L=5 to reduce resource usage) --
+;; -- Vectorized HMC (L=5 — L=10 exceeds Metal resource limit) --
 (println (str "\n-- Vec HMC " vec-steps " steps, L=5, " n-chains " chains --"))
 
 (safe-run "Model A (4-site)" bench
