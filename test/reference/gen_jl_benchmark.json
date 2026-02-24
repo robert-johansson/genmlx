@@ -1,0 +1,405 @@
+{
+  "metadata": {
+    "julia_version": "1.12.3",
+    "protocol": {
+      "timing": "@elapsed (wall-clock seconds converted to ms)",
+      "runs": 7,
+      "warmup": 3
+    },
+    "generator": "gen_jl_benchmark.jl",
+    "date": "2026-02-21T23:16:59.548",
+    "gen_version": "0.4.8"
+  },
+  "benchmarks": [
+    {
+      "iterations": 100,
+      "model": "single_gaussian",
+      "times_ms": [
+        0.027042,
+        0.027042,
+        0.027291,
+        0.027292,
+        0.027666,
+        0.029915999999999998,
+        0.031333
+      ],
+      "operation": "simulate",
+      "median_ms": 0.027292
+    },
+    {
+      "iterations": 100,
+      "model": "linear_regression",
+      "times_ms": [
+        0.206875,
+        0.207792,
+        0.207959,
+        0.208083,
+        0.208083,
+        0.208875,
+        0.21225000000000002
+      ],
+      "operation": "simulate",
+      "median_ms": 0.208083
+    },
+    {
+      "iterations": 100,
+      "model": "mixed",
+      "times_ms": [
+        0.04475,
+        0.045250000000000005,
+        0.045833,
+        0.047333,
+        0.0475,
+        0.04825,
+        0.048583
+      ],
+      "operation": "simulate",
+      "median_ms": 0.047333
+    },
+    {
+      "iterations": 100,
+      "model": "map_combinator",
+      "times_ms": [
+        0.108375,
+        0.108875,
+        0.10900000000000001,
+        0.109458,
+        0.1095,
+        0.110084,
+        0.111291
+      ],
+      "operation": "simulate",
+      "median_ms": 0.109458
+    },
+    {
+      "iterations": 100,
+      "model": "unfold_combinator",
+      "times_ms": [
+        0.123208,
+        0.12375,
+        0.123958,
+        0.123958,
+        0.124542,
+        0.126041,
+        0.13466699999999998
+      ],
+      "operation": "simulate",
+      "median_ms": 0.123958
+    },
+    {
+      "iterations": 100,
+      "model": "many_addresses",
+      "times_ms": [
+        0.40087500000000004,
+        0.402833,
+        0.42216699999999996,
+        0.425417,
+        0.425792,
+        0.42604200000000003,
+        0.42895900000000003
+      ],
+      "operation": "simulate",
+      "median_ms": 0.425417
+    },
+    {
+      "iterations": 100,
+      "model": "single_gaussian",
+      "times_ms": [
+        0.034541,
+        0.034875,
+        0.035207999999999996,
+        0.035292,
+        0.035500000000000004,
+        0.035625,
+        0.035792
+      ],
+      "operation": "generate",
+      "median_ms": 0.035292
+    },
+    {
+      "iterations": 100,
+      "model": "linear_regression",
+      "times_ms": [
+        0.237375,
+        0.2375,
+        0.237542,
+        0.23766600000000002,
+        0.23975,
+        0.239959,
+        0.241125
+      ],
+      "operation": "generate",
+      "median_ms": 0.23766600000000002
+    },
+    {
+      "iterations": 100,
+      "model": "mixed",
+      "times_ms": [
+        0.056541,
+        0.056749999999999995,
+        0.056792,
+        0.057417,
+        0.057584,
+        0.05775,
+        0.060666
+      ],
+      "operation": "generate",
+      "median_ms": 0.057417
+    },
+    {
+      "iterations": 100,
+      "model": "map_combinator",
+      "times_ms": [
+        0.151625,
+        0.151625,
+        0.151916,
+        0.151959,
+        0.1525,
+        0.15312499999999998,
+        0.1535
+      ],
+      "operation": "generate",
+      "median_ms": 0.151959
+    },
+    {
+      "iterations": 100,
+      "model": "unfold_combinator",
+      "times_ms": [
+        0.154,
+        0.15429199999999998,
+        0.15445899999999999,
+        0.154916,
+        0.158625,
+        0.162084,
+        0.16275
+      ],
+      "operation": "generate",
+      "median_ms": 0.154916
+    },
+    {
+      "iterations": 100,
+      "model": "many_addresses",
+      "times_ms": [
+        0.465125,
+        0.46675,
+        0.468833,
+        0.475833,
+        0.487583,
+        0.505959,
+        0.507833
+      ],
+      "operation": "generate",
+      "median_ms": 0.475833
+    },
+    {
+      "iterations": 100,
+      "model": "single_gaussian",
+      "times_ms": [
+        0.099333,
+        0.099834,
+        0.10041599999999999,
+        0.10045899999999999,
+        0.10124999999999999,
+        0.101583,
+        0.103458
+      ],
+      "operation": "update",
+      "median_ms": 0.10045899999999999
+    },
+    {
+      "iterations": 100,
+      "model": "linear_regression",
+      "times_ms": [
+        0.542667,
+        0.543167,
+        0.543708,
+        0.5445,
+        0.546833,
+        0.547458,
+        0.5770000000000001
+      ],
+      "operation": "update",
+      "median_ms": 0.5445
+    },
+    {
+      "iterations": 100,
+      "model": "many_addresses",
+      "times_ms": [
+        0.9515,
+        0.9536250000000001,
+        0.958125,
+        0.9626669999999999,
+        0.977583,
+        1.006292,
+        1.0341669999999998
+      ],
+      "operation": "update",
+      "median_ms": 0.9626669999999999
+    },
+    {
+      "iterations": 10,
+      "model": "single_gaussian",
+      "times_ms": [
+        0.365125,
+        0.40808300000000003,
+        0.41300000000000003,
+        0.422625,
+        0.428417,
+        0.428792,
+        0.446708
+      ],
+      "operation": "importance_sampling",
+      "median_ms": 0.422625
+    },
+    {
+      "iterations": 10,
+      "model": "linear_regression",
+      "times_ms": [
+        2.452625,
+        2.456208,
+        2.459166,
+        2.461417,
+        2.479167,
+        2.481542,
+        2.5782079999999996
+      ],
+      "operation": "importance_sampling",
+      "median_ms": 2.461417
+    },
+    {
+      "iterations": 10,
+      "model": "mixed",
+      "times_ms": [
+        0.596208,
+        0.602541,
+        0.604417,
+        0.612834,
+        0.6255,
+        0.627958,
+        0.636583
+      ],
+      "operation": "importance_sampling",
+      "median_ms": 0.612834
+    },
+    {
+      "iterations": 10,
+      "model": "map_combinator",
+      "times_ms": [
+        1.485417,
+        1.5011670000000001,
+        1.514958,
+        1.523333,
+        1.53775,
+        1.5594160000000001,
+        6.364833
+      ],
+      "operation": "importance_sampling",
+      "median_ms": 1.523333
+    },
+    {
+      "iterations": 10,
+      "model": "unfold_combinator",
+      "times_ms": [
+        1.529917,
+        1.562541,
+        1.580417,
+        1.595708,
+        1.610917,
+        1.69525,
+        6.185416
+      ],
+      "operation": "importance_sampling",
+      "median_ms": 1.595708
+    },
+    {
+      "iterations": 10,
+      "model": "many_addresses",
+      "times_ms": [
+        4.403917,
+        4.418417,
+        4.436,
+        4.50325,
+        4.5119169999999995,
+        4.559583,
+        9.763416000000001
+      ],
+      "operation": "importance_sampling",
+      "median_ms": 4.50325
+    },
+    {
+      "iterations": 200,
+      "model": "single_gaussian",
+      "times_ms": [
+        0.20149999999999998,
+        0.201875,
+        0.20249999999999999,
+        0.20258400000000001,
+        0.20274999999999999,
+        0.20325000000000001,
+        0.204292
+      ],
+      "operation": "mh",
+      "median_ms": 0.20258400000000001
+    },
+    {
+      "iterations": 200,
+      "model": "linear_regression",
+      "times_ms": [
+        0.928709,
+        0.929458,
+        0.9297500000000001,
+        0.933125,
+        0.936458,
+        0.9444170000000001,
+        0.95575
+      ],
+      "operation": "mh",
+      "median_ms": 0.933125
+    },
+    {
+      "iterations": 200,
+      "model": "many_addresses",
+      "times_ms": [
+        1.548125,
+        1.54975,
+        1.55,
+        1.551416,
+        1.554,
+        1.554917,
+        1.562959
+      ],
+      "operation": "mh",
+      "median_ms": 1.551416
+    },
+    {
+      "iterations": 50,
+      "model": "linear_regression",
+      "times_ms": [
+        12.128417,
+        12.141957999999999,
+        12.158000000000001,
+        12.194875000000001,
+        12.431625,
+        12.871374999999999,
+        22.752666
+      ],
+      "operation": "hmc",
+      "median_ms": 12.194875000000001
+    },
+    {
+      "iterations": 50,
+      "model": "many_addresses",
+      "times_ms": [
+        16.30975,
+        16.331583000000002,
+        16.374584000000002,
+        16.392542,
+        16.463124999999998,
+        16.530291,
+        24.697709000000003
+      ],
+      "operation": "hmc",
+      "median_ms": 16.392542
+    }
+  ]
+}
