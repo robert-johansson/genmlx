@@ -188,13 +188,13 @@ beta-uniform-mixture, wishart, inv-wishart, broadcasted-normal
   - **Impact**: `wake-phase-loss` computes `-log p(x,z)` instead of `-(log p(x,z) - log q(z|x))`
   - **Fix**: Rename one of the destructured `weight` bindings; subtract guide log-prob from model weight
 
-- [ ] **15.4** Possible 3-arg `mx/add` call in amortized inference
+- [x] **15.4** ~~Possible 3-arg `mx/add` call in amortized inference~~ (not a bug: `mx/add` supports variadic args)
   - **File**: `inference/amortized.cljs:62`
   - **Severity**: Medium -- may cause runtime error if `mx/add` is strictly binary
   - **Impact**: `make-elbo-loss` log-q computation
   - **Fix**: Chain binary `mx/add` calls or verify `mx/add` supports 3+ args
 
-- [ ] **15.5** Neg-binomial sample reuses same PRNG key for gamma and Poisson steps
+- [x] **15.5** Neg-binomial sample reuses same PRNG key for gamma and Poisson steps
   - **File**: `dist.cljs:671-682`
   - **Severity**: Low -- correlated randomness, statistically incorrect samples
   - **Fix**: Split key before Poisson loop: use `k1` for gamma, `k2` for Poisson
@@ -241,7 +241,7 @@ wrong results in certain use cases.*
   - **Fix**: Compare old and new branch indices; if changed, simulate new branch from scratch
     and weight = `new_score - old_score`
 
-- [ ] **16.5** Mix combinator `generate` passes full constraints (including `:component-idx`)
+- [x] **16.5** Mix combinator `generate` passes full constraints (including `:component-idx`)
   to component GF
   - **File**: `combinators.cljs:949`
   - **Impact**: The component GF receives a `:component-idx` key in constraints it doesn't
@@ -765,10 +765,7 @@ operation deterministic.*
 
 ```
 CRITICAL (fix before any new feature work):
-  15.1  Vectorized MH random-normal bug          ~1 line fix
-  15.2  REINFORCE signal bug                      ~3 line fix
-  15.3  Wake-sleep ELBO shadowed variable         ~5 line fix
-  15.4  Amortized inference mx/add arity          ~2 line fix
+  (all fixed)
 
 HIGH (correctness concerns affecting real use cases):
   22.2  Remove deprecated stateful PRNG            ~15 lines deleted
@@ -785,8 +782,6 @@ MEDIUM (quality and completeness):
   18.1  MLX-native log-gamma in 4 distributions   ~80 lines
   18.2  Categorical native sample-n               ~15 lines
   18.3  Parameter validation for all dists        ~30 lines
-  15.5  Neg-binomial key reuse                    ~3 lines
-  16.5  Mix generate constraint leak              ~2 lines
   17.1  IAssess on combinators                    ~50 lines
   17.2  IPropose on combinators                   ~50 lines
   17.5  IProject on CustomGradientGF/NeuralNetGF  ~10 lines
@@ -868,8 +863,8 @@ RESEARCH (Lean 4 formalization):
 | 12. Ecosystem | 6 | 3 | 3 |
 | 13. Documentation | 3 | 0 | 3 |
 | 14. Gen.jl Parity | 8 | 4 | 4 |
-| 15. Confirmed Bugs | 5 | 3 | **2** |
-| 16. Correctness Concerns | 6 | 0 | **6** |
+| 15. Confirmed Bugs | 5 | 5 | 0 |
+| 16. Correctness Concerns | 6 | 1 | **5** |
 | 17. Missing Protocols | 6 | 0 | **6** |
 | 18. Distribution Quality | 5 | 0 | **5** |
 | 19. Code Quality | 9 | 0 | **9** |
@@ -878,4 +873,4 @@ RESEARCH (Lean 4 formalization):
 | 22. Practical Inference | 3 | 1 | **2** |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 0 | **7** |
-| **Total** | **135** | **62** | **73** |
+| **Total** | **135** | **65** | **70** |

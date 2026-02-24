@@ -683,11 +683,12 @@
   [r p]
   (sample [key]
     ;; Gamma-Poisson mixture: lambda ~ Gamma(r, p/(1-p)), then x ~ Poisson(lambda)
-    (let [rate (mx/divide p (mx/subtract ONE p))
-          g (dc/dist-sample (gamma-dist r rate) key)
+    (let [[k1 k2] (rng/split key)
+          rate (mx/divide p (mx/subtract ONE p))
+          g (dc/dist-sample (gamma-dist r rate) k1)
           g-val (mx/realize g)
           l (js/Math.exp (- g-val))]
-      (loop [k 0 pr 1.0 rk key]
+      (loop [k 0 pr 1.0 rk k2]
         (let [[rk1 rk2] (rng/split rk)
               pr (* pr (mx/realize (rng/uniform rk1 [])))]
           (if (> pr l)

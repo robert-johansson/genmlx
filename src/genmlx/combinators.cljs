@@ -946,7 +946,10 @@
                          {:trace (dc/dist-simulate d) :weight (mx/scalar 0.0)}))
           idx (mx/item (cm/get-value (:choices (:trace idx-result))))
           component (nth components (int idx))
-          {:keys [trace weight]} (p/generate component args constraints)]
+          comp-constraints (if (instance? cm/Node constraints)
+                              (cm/->Node (dissoc (:m constraints) :component-idx))
+                              constraints)
+          {:keys [trace weight]} (p/generate component args comp-constraints)]
       {:trace (tr/make-trace {:gen-fn this :args args
                               :choices (cm/set-choice (:choices trace)
                                                       [:component-idx]
