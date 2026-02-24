@@ -200,10 +200,11 @@
                           ;; Sample from guide
                           {:keys [trace weight]} (p/generate guide args guide-cm)
                           ;; Score under model with guide's choices + observations
+                          guide-weight weight
                           model-cm (cm/merge-cm (:choices trace) observations)
                           {:keys [weight]} (p/generate model args model-cm)]
                       ;; Negative ELBO: -(log p(x,z) - log q(z|x))
-                      (mx/negative weight)))
+                      (mx/negative (mx/subtract weight guide-weight))))
           grad-fn (mx/grad loss-fn)
           loss (loss-fn guide-params)
           grad (grad-fn guide-params)]
