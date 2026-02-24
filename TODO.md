@@ -1,573 +1,851 @@
 # GenMLX Master TODO
 
 > Single source of truth for all remaining work. Consolidated from GAPS.md,
-> AUDIT.md, and LAMBDA_MLX.md.
+> AUDIT.md, LAMBDA_MLX.md, and a comprehensive code review (Feb 2026).
 >
 > **Goals**: Feature parity with Gen.jl (minimum). Speed parity with GenJAX.
-> 100% idiomatic, purely functional ClojureScript. Formally grounded in λ_MLX.
+> 100% idiomatic, purely functional ClojureScript. Formally grounded in lambda_MLX.
 >
-> Current state: ~10,800 lines across 27 source files, 640+ test assertions,
-> 27 distributions, 9 combinators, 15+ inference algorithms.
+> Current state: ~10,800 lines across 29 source files, ~750-800 test assertions,
+> 25 unique distribution types, 10 combinators, 60+ inference algorithms/functions.
 
 ---
 
 ## Phase 1: Functional Purity & Code Quality
 
 *Eliminate all unnecessary mutation. Make every boundary between pure and
-impure code explicit. Align the implementation with λ_MLX's handler state
+impure code explicit. Align the implementation with lambda_MLX's handler state
 types so the formal correspondence is obvious.*
 
 ### Handler architecture
 
-- [x] **1.1** Document handler state schemas and λ_MLX correspondence
-  - Documented all five handler state shapes (simulate, generate, update,
-    regenerate, project) plus batched variants in `handler.cljs` ns docstring
-  - Typed records rejected: CLJS records offer no compile-time checking and
-    would add 9 record types for zero safety gain. Plain maps with documented
-    schemas are idiomatic and sufficient.
-  - *Files*: `handler.cljs`
-
-- [x] **1.2** Audit all uses of `volatile!` — confirm they are confined to `run-handler`
-  - Confirmed: only created in `run-handler`. All `vreset!/vswap!` are in
-    handler functions + `trace-gf!` (handler.cljs) + `adev-handler` (adev.cljs).
-  - Documented the mutable boundary in `handler.cljs` ns docstring.
-  - *Files*: `handler.cljs`
-
+- [x] **1.1** Document handler state schemas and lambda_MLX correspondence
+- [x] **1.2** Audit all uses of `volatile!` -- confirm confined to `run-handler`
 - [x] **1.3** Audit dynamic vars (`*handler*`, `*state*`, `*param-store*`)
-  - Confirmed: these three are the only dynamic scope in the system.
-  - `*handler*` and `*state*` bound exclusively by `run-handler`.
-  - `*param-store*` bound by `learning.cljs` and `inference/adev.cljs`.
-  - Documented in `handler.cljs` ns docstring and inline comment.
-  - *Files*: `handler.cljs`
 
 ### ChoiceMap algebra
 
 - [x] **1.4** Add property tests for the ChoiceMap algebra
-  - [x] `merge(EMPTY, cm) = cm` (left identity)
-  - [x] `merge(cm, EMPTY) = cm` (right identity)
-  - [x] `get(set(cm, a, v), a) = v` (get-set)
-  - [x] `get(set(cm, a, v), b) = get(cm, b)` when `a ≠ b` (set-get)
-  - [x] Trace type concatenation ⊕ is associative with `{}` as unit
-  - *Files*: `choicemap.cljs`, `test/genmlx/choicemap_algebra_test.cljs`
 
 ### Effect boundary
 
-- [x] **1.5** Document the three effect operations (`trace`, `splice`, `param`) as
-  the complete set of impure operations within `gen` bodies — everything else
-  is pure ClojureScript
-  - Added comment block in `dynamic.cljs` above the effect operations
-  - *Files*: `dynamic.cljs`
+- [x] **1.5** Document the three effect operations (`trace`, `splice`, `param`)
 
 ---
 
 ## Phase 2: Missing GFI Operations
 
-*Complete the Generative Function Interface so that every operation in the
-λ_MLX calculus has a corresponding implementation.*
-
-- [x] **2.1** Implement `project` — `(project trace selection) → log-weight`
-  - Computes the log-probability of selected choices under the model
-  - `IProject` protocol on DynamicGF and all combinators
-  - *Files*: `protocols.cljs`, `dynamic.cljs`, `combinators.cljs`
-
+- [x] **2.1** Implement `project` -- `(project trace selection) -> log-weight`
 - [x] **2.2** Add `IProject` to Distribution record
-  - *Files*: `dist/core.cljs`
 
 ---
 
-## Phase 3: Missing Distributions (Gen.jl Parity)
+## Phase 3: Distributions
 
-*Bring the distribution library to full Gen.jl parity and beyond.*
+### Already done (25 unique type keywords, 27 named constructors)
 
-### Already done (27)
+gaussian/normal, uniform, bernoulli/flip, beta-dist, gamma-dist, exponential,
+categorical, poisson, laplace, student-t, log-normal, multivariate-normal,
+dirichlet, delta, cauchy, inv-gamma, geometric, neg-binomial, binomial,
+discrete-uniform, truncated-normal, mixture, piecewise-uniform,
+beta-uniform-mixture, wishart, inv-wishart, broadcasted-normal
 
-gaussian, uniform, bernoulli, beta, gamma, exponential, categorical, poisson,
-laplace, student-t, log-normal, multivariate-normal, dirichlet, delta, cauchy,
-inv-gamma, geometric, neg-binomial, binomial, discrete-uniform, truncated-normal,
-mixture, piecewise-uniform, beta-uniform-mixture, wishart, inv-wishart,
-broadcasted-normal
-
-### Remaining
-
-- [x] **3.1** Piecewise uniform — `(piecewise-uniform bounds probs)` (~30 lines)
-- [x] **3.2** Beta-uniform mixture — `(beta-uniform theta alpha beta)` (~20 lines)
-- [x] **3.3** Wishart — `(wishart df scale-matrix)` (~50 lines, requires matrix ops)
-- [x] **3.4** Inverse Wishart — `(inv-wishart df scale-matrix)` (~50 lines)
-- [x] **3.5** Broadcasted normal — `(broadcasted-normal mu sigma)` for batch params (~20 lines)
-
-### Distribution infrastructure
-
-- [x] **3.6** External distribution compatibility bridge — `map->dist`
-  ```clojure
-  (defn map->dist [{:keys [sample log-prob reparam support]}] ...)
-  ```
-  Allows users to define distributions as plain maps without `defdist`
-  (~30 lines in `dist/core.cljs`)
-
-- [x] **3.7** Add tests for neg-binomial (log-prob, sample stats, generate weight)
-  - *File*: `test/genmlx/neg_binomial_test.cljs`
-- [x] **3.8** Add native `dist-sample-n` for remaining batchable distributions
-  - 10 of 27 now have native batch sampling: gaussian, uniform, bernoulli,
-    exponential, laplace, log-normal, delta, cauchy, truncated-normal,
-    broadcasted-normal
-  - Remaining distributions without batch sampling use sequential fallback
-    (beta, gamma, categorical, poisson, student-t, dirichlet, geometric,
-    neg-binomial, binomial, discrete-uniform, multivariate-normal,
-    piecewise-uniform) — most require rejection sampling or complex logic
-  - Further batch sampling expansion tracked in 7.1
+- [x] **3.1** Piecewise uniform
+- [x] **3.2** Beta-uniform mixture
+- [x] **3.3** Wishart
+- [x] **3.4** Inverse Wishart
+- [x] **3.5** Broadcasted normal
+- [x] **3.6** External distribution compatibility bridge -- `map->dist`
+- [x] **3.7** Add tests for neg-binomial
+- [x] **3.8** Add native `dist-sample-n` for batchable distributions
 
 ---
 
-## Phase 4: Missing Inference Algorithms (Gen.jl Parity)
+## Phase 4: Inference Algorithms (Gen.jl Parity)
 
-*Match Gen.jl's complete inference toolkit.*
-
-- [x] **4.1** Elliptical slice sampling — `(elliptical-slice-step trace selection)`
-  - Specialized MCMC kernel for models with multivariate Gaussian priors
-  - ~40 lines, purely functional
-  - *File*: `inference/mcmc.cljs`
-
-- [x] **4.2** MAP optimization — `(map-optimize opts model args observations)`
-  - Gradient ascent via `mx/value-and-grad`, Adam/SGD optimizers
-  - ~50 lines
-  - *Files*: `inference/mcmc.cljs`, `test/genmlx/map_test.cljs`
-
-- [x] **4.3** VIMCO — `(vimco model guide args observations)`
-  - Variational inference with multi-sample objective
-  - ~80 lines
-  - *File*: `inference/vi.cljs`
-
+- [x] **4.1** Elliptical slice sampling
+- [x] **4.2** MAP optimization
+- [x] **4.3** VIMCO
 - [x] **4.4** ADEV gradient estimation
-  - Sound automatic differentiation of expected values
-  - Integrates with `mx/grad` / `mx/value-and-grad`
-  - ~100 lines
-  - *File*: `inference/adev.cljs`
 
 ---
 
-## Phase 5: Missing Combinators
+## Phase 5: Combinators
 
-- [x] **5.1** Recurse combinator — recursive model structures
-  - Corresponds to `fix(f)` in λ_MLX
-  - Full GFI: simulate, generate, update, regenerate, edit
-  - ~100 lines
-  - *File*: `combinators.cljs`
-
+- [x] **5.1** Recurse combinator
 - [x] **5.2** Full GFI on Mask combinator
-  - Added update, regenerate, update-with-diffs
-  - Edit already works via `edit-dispatch` default
-
 - [x] **5.3** Full GFI on Contramap / Dimap
-  - Already had update + regenerate
-  - Added update-with-diffs
-  - Edit works via `edit-dispatch` default
 
 ---
 
 ## Phase 6: Testing Gaps (from AUDIT.md)
 
-*Cover every untested path identified in the audit.*
-
 - [x] **6.1** ProposalEdit in the edit interface
-  - Test with actual forward/backward generative functions
-  - Verify backward request swaps correctly
-  - Verify weight computation: `w_update + w_backward - w_forward`
-
 - [x] **6.2** SMCP3 with actual forward/backward kernels
-  - End-to-end test: model + custom proposal + SMCP3 inference
-  - Verify incremental weight computation
-
-- [x] **6.3** Kernel combinators beyond `repeat-kernel` and `mh-kernel`
-  - [x] `chain` — sequential composition of 2+ kernels
-  - [x] `cycle-kernels` — round-robin cycling
-  - [x] `mix-kernels` — random mixture of kernels
-  - [x] `seed` — fixed PRNG key
-
+- [x] **6.3** Kernel combinators (chain, cycle, mix, seed)
 - [x] **6.4** Batched update path (`vupdate`)
-  - Shape correctness tests
-  - Statistical equivalence with sequential update
-
-- [x] **6.5** Comprehensive neg-binomial distribution tests (same as 3.7)
-  - Log-prob spot checks
-  - Sample mean/variance
-  - Generate weight test
+- [x] **6.5** Neg-binomial distribution tests
 
 ---
 
-## Phase 7: Vectorization & Performance (GenJAX Speed Parity)
-
-*Achieve GenJAX-level performance through compiled inference loops and
-broader batch sampling support.*
-
-### Batch sampling coverage
+## Phase 7: Vectorization & Performance
 
 - [x] **7.1** Native `dist-sample-n` for more distributions
-  - [x] laplace, cauchy, log-normal, truncated-normal (already implemented)
-  - [x] discrete-uniform, geometric, categorical, multivariate-normal, binomial, student-t
-  - [x] gamma (vectorized Marsaglia-Tsang with Ahrens-Dieter for α < 1)
-  - [x] inv-gamma, beta, dirichlet (built on batched gamma)
-  - Remaining without batch sampling: poisson (Knuth's algorithm, inherently sequential)
-
-- [x] **7.9** Fix `mx/realize`-on-value in discrete log-prob methods (**correctness bug**)
-  - poisson, neg-binomial, and binomial `dist-log-prob` call `(mx/realize v)` to
-    feed the JS `log-gamma` function. In batched mode `v` is `[N]`-shaped and
-    `.item()` throws: `item() can only be called on arrays of size 1`
-  - Verified: `(dyn/vsimulate model [] 5 key)` with a poisson trace site crashes
-  - Root cause: no MLX-native `lgamma` — these log-probs drop to the JS Lanczos
-    approximation, which requires a scalar
-  - Fix: implement element-wise `log-gamma` as an MLX operation (series expansion
-    or Stirling approximation using `mx/log`, `mx/add`, etc.) so log-prob stays
-    in the MLX graph. Alternatively, use `mx/vmap` over the JS function
-  - Also affects: piecewise-uniform log-prob (`mx/realize v` for bin lookup)
-  - Does NOT affect: beta, gamma, student-t (these only `mx/realize` parameters,
-    not values — parameters are always scalar)
-
-### Vectorized inference completeness
-
 - [x] **7.2** Vectorized splice support in batched mode
-  - DynamicGF sub-GFs run under batched handlers (simulate, generate, update, regenerate)
-  - Nested splice (3+ levels) supported
-  - Non-DynamicGF splice (combinators) still throws with clear error
-
 - [x] **7.3** Vectorized MCMC (batched MH chains)
-  - Run N independent MH chains in parallel via broadcasting
-  - Enables parallel tempering and R-hat diagnostics from a single call
-
-### Compiled inference loops
-
 - [x] **7.4** Compile entire MH chain into a single Metal program
-  ```clojure
-  (defn compiled-mh-chain [model args obs selection n-samples]
-    (mx/compile-fn (fn [key] ...)))
-  ```
-  ~100 lines
-
-- [x] **7.5** Vectorized SMC sweep — multi-step batched particle filtering
-  - vsmc runs model body ONCE per timestep for all N particles
-  - 24.5x speedup over sequential SMC (50 particles, 5 steps)
-  ~100 lines
-
+- [x] **7.5** Vectorized SMC sweep
 - [x] **7.6** Compile VI optimization loop
-  ~50 lines
-
-### Benchmarking
-
 - [x] **7.7** Benchmark suite comparing GenMLX vs handcoded MLX
-  - Importance sampling (N=100, 1000, 10000)
-  - HMC (chain length 100, 500, 1000)
-  - Match the paper's Fig. 17 methodology
-
-- [ ] **7.8** Benchmark suite comparing GenMLX vs GenJAX (where possible)
-  - Same models, same algorithms, different hardware
-  - Document Apple Silicon vs NVIDIA GPU tradeoffs
+- [ ] **7.8** Benchmark suite comparing GenMLX vs GenJAX
+- [x] **7.9** Fix `mx/realize`-on-value in discrete log-prob methods
 
 ---
 
 ## Phase 8: Gradient & Differentiable Programming
 
-- [x] **8.1** Custom gradient generative functions — `CustomGradientGF`
-  - User-supplied forward and backward passes
-  - ~60 lines
-  - *File*: `custom_gradient.cljs`
-
-- [x] **8.2** Argument gradient annotations — `has-argument-grads`
-  - `IHasArgumentGrads` protocol on generative functions indicating which arguments are differentiable
-  - Used by gradient-based inference to know what to differentiate
-  - *Files*: `protocols.cljs`, `custom_gradient.cljs`, `dynamic.cljs`, `dist/core.cljs`
+- [x] **8.1** Custom gradient generative functions -- `CustomGradientGF`
+- [x] **8.2** Argument gradient annotations -- `has-argument-grads`
 
 ---
 
 ## Phase 9: Incremental Computation
 
 - [x] **9.1** Per-step optimization for Unfold/Scan
-  - Store `::step-scores` metadata in Unfold traces (and `::step-carries` for Scan)
-  - During `update`, detect earliest constrained step and skip unchanged prefix
-  - Replay old choices/scores from metadata, only re-execute from first changed step
-  - `update-with-diffs` strips metadata when args change to prevent invalid prefix-skip
-  - *Files*: `combinators.cljs`, `test/genmlx/combinators_test.cljs`
-
 - [ ] **9.2** Handler-level diff awareness for DynamicGF *(low priority)*
-  - Currently DynamicGF `update-with-diffs` re-executes the full body
-  - Optimization: skip unchanged trace sites during body re-execution
-  - Requires tracking which addresses were visited and what distributions they used
-  - Deprioritized: MLX's lazy graph evaluation and broadcasting-based vectorization
-    already cover most performance needs. Revisit if a specific use case demands it
 
 ---
 
-## Phase 10: Formal Foundation (λ_MLX)
+## Phase 10: Formal Foundation (lambda_MLX)
 
-*Ground GenMLX in a formal lambda calculus, extending λ_GEN from the
-POPL 2026 paper with handler types, full GFI operations, broadcasting
-correctness, and algebraic effect semantics.*
-
-### Prerequisites (implementation alignment)
-
-- [x] **10.1** Complete Phase 1.1 (handler state schemas) — required for
-  H(σ, τ) correspondence (documented in handler.cljs ns docstring)
-- [x] **10.2** Complete Phase 2.1 (`project`) — required for GFI completeness
-- [x] **10.3** Complete Phase 1.4 (ChoiceMap algebra tests) — required for
-  trace type monoid ⊕
-
-### Formalization work
-
-- [x] **10.4** Define λ_MLX type grammar formally (extending λ_GEN Figure 10)
-  - Types, terms, handler states, edit requests, diff types
-  - *File*: `formal/calculus.md`
-
-- [x] **10.5** Define denotational semantics in QBS (extending λ_GEN Figure 11)
-  - Handler transition semantics as state monad
-  - *File*: `formal/semantics.md`
-
-- [x] **10.6** Define generate{−}, update{−}, regenerate{−}, edit{−} as program
-  transformations (extending λ_GEN Figure 12's simulate{−} and assess{−})
-  - *File*: `formal/transformations.md`
-
-- [x] **10.7** Prove Proposition: correctness of generate and update
-  - Analogous to λ_GEN Proposition 3.1
-  - generate weight = log p(observations | args)
-  - update weight = log p(new_choices | args) - log p(old_choices | args)
-  - *File*: `formal/proofs/correctness.md`
-
-- [x] **10.8** Prove broadcasting correctness theorem
-  - Analogous to λ_GEN Theorem 3.3 but for broadcasting instead of vmap
-  - Key lemma: handler shape-agnosticism preserves logical relations
-  - *File*: `formal/proofs/broadcasting.md`
-
-- [x] **10.9** Prove broadcasting commutativity corollary
-  - Analogous to λ_GEN Corollary 3.4
-  - Broadcasting-based vectorized inference = N independent sequential runs
-  - *File*: `formal/proofs/broadcasting.md`
-
-- [x] **10.10** Prove handler soundness
-  - Each handler mode correctly implements its GFI operation
-  - By induction on trace effect operations
-  - *File*: `formal/proofs/handler-soundness.md`
-
-- [x] **10.11** Prove combinator compositionality
-  - GFI contracts preserved by Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Contramap, Dimap
-  - *File*: `formal/proofs/combinators.md`
-
-- [x] **10.12** Prove edit/backward duality
-  - Backward request correctly inverts forward transformation
-  - MH acceptance ratio is valid
-  - *File*: `formal/proofs/edit-duality.md`
-
-- [x] **10.13** Prove diff-aware update correctness
-  - MapCombinator vector-diff: only changed elements re-executed
-  - Total weight = sum of per-element weight changes
-  - *File*: `formal/proofs/diff-update.md`
-
-### Trace type annotations (optional, aids formalization)
-
+- [x] **10.1** -- **10.13** Formal specification and proofs (all complete)
 - [ ] **10.14** Add optional `:trace-schema` metadata to `gen` forms
-  - Documents the grading γ in G_γ η
-  - Not enforced at runtime, used for documentation and verification
-
 - [ ] **10.15** Add optional `:retval-type` to `gen` forms
-  - Documents the η in G_γ η
-
-### Paper
-
-- [ ] **10.16** Write λ_MLX paper (see LAMBDA_MLX.md §9 for structure)
+- [ ] **10.16** Write lambda_MLX paper
 
 ---
 
 ## Phase 11: Input Validation & Error Messages
 
 - [ ] **11.1** Malli schemas for all public API functions
-  - Distribution constructors, GFI operations, inference algorithms
-  - Instrument in development mode, strip in production
-  - ~200 lines across multiple files
-
 - [x] **11.2** Helpful error messages for common mistakes
-  - Calling `mx/eval!` inside a `gen` body during batched execution
-  - Mismatched choice map structure in `generate`/`update`
-  - Missing addresses in selections
-  - Type mismatches in distribution parameters
-  - *Files*: `choicemap.cljs`, `handler.cljs`, `mlx.cljs`, `dist.cljs`, `dynamic.cljs`,
-    `test/genmlx/error_message_test.cljs`
 
 ---
 
 ## Phase 12: Ecosystem
 
-*Build out the ecosystem with neural network integration, visualization,
-and interop. Each sub-project is independently valuable.*
-
-- [x] **12.1** Neural network integration — `nn->gen-fn`
-  - NeuralNetGF wraps nn.Module as deterministic GF (simulate, generate, assess, propose)
-  - Layer constructors (linear, sequential, relu, gelu, etc.)
-  - Training utilities using MLX's native nn.valueAndGrad + optimizers
-  - *Files*: `mlx.cljs`, `nn.cljs`, `test/genmlx/nn_test.cljs`
-
+- [x] **12.1** Neural network integration -- `nn->gen-fn`
 - [x] **12.2** Amortized inference via trained neural proposals
-  - Reparameterized ELBO training (VAE-style) via nn.valueAndGrad
-  - Neural importance sampling using trained guide as proposal
-  - *Files*: `inference/amortized.cljs`, `test/genmlx/amortized_test.cljs`
-
 - [ ] **12.3** Visualization (GenStudio-inspired)
-  - `plot-trace`, `plot-posterior`, `animate-smc`
-  - ClojureScript + Observable Plot or Vega-Lite
-  - *File*: new `viz.cljs`
-
-- [ ] **12.4** LLM-as-generative-function (following GenGPT3.jl)
-  - Wrap LLM API calls as generative functions
-  - Each token position is an addressed random choice
-  - *File*: new `llm.cljs`
-
+- [ ] **12.4** LLM-as-generative-function
 - [x] **12.5** Trace kernel DSL
-  - Higher-level sugar for writing MCMC kernels
-  - ~100 lines
-
 - [ ] **12.6** Auto-genify
-  - Automatically convert plain ClojureScript functions into generative functions
-  - Macro that inserts `dyn/trace` at every stochastic call site
 
 ---
 
 ## Phase 13: Documentation & Packaging
 
 - [ ] **13.1** Comprehensive API documentation
-  - Every public function with docstring, signature, example
-  - Generate from source via `codox` or similar
-
 - [ ] **13.2** Tutorial notebooks
-  - Getting started
-  - Bayesian linear regression
-  - Mixture models with stochastic branching
-  - Custom inference algorithms
-  - Vectorized inference
-
 - [ ] **13.3** npm package for distribution
-  - `package.json` with proper dependencies
-  - `npx genmlx` CLI entry point
 
 ---
 
-## Phase 14: Gen.jl Parity (from Gen.jl survey, Feb 2026)
+## Phase 14: Gen.jl Parity (from survey)
 
-*Items identified by surveying every module in Gen.jl and its ecosystem packages.
-Only features that fit GenMLX's design philosophy (purely functional, no mutation,
-idiomatic ClojureScript) are included. GenMLX already exceeds Gen.jl in many areas
-(vectorized inference, combinators, inference algorithms, distribution count); these
-are the remaining gaps.*
-
-### Inference algorithms
-
-- [x] **14.1** HMC mass matrix support — diagonal and dense
-  - `:metric` option on `hmc` and `nuts`: nil (identity), vector (diagonal), matrix (dense)
-  - `sample-momentum`, `kinetic-energy`, `inv-mass-multiply` helpers
-  - Threads through leapfrog-step, leapfrog-trajectory, leapfrog-trajectory-fused
-  - *Files*: `inference/mcmc.cljs`, `test/genmlx/hmc_mass_resample_test.cljs`
-
+- [x] **14.1** HMC mass matrix support
 - [ ] **14.2** Enumerative / grid-based inference
-  - Exact inference for small discrete models by iterating over all possible
-    choice assignments. Gen.jl's `enumerative_inference` + `choice_vol_grid`.
-  - Pure function: `(enumerate-inference model args observations choice-specs)`
-  - Choice specs: `[[:addr [v1 v2 v3]] [:addr2 [v1 v2] :continuous]]`
-  - For discrete: log-vol = 0. For continuous grids: log-vol = log(bin-width).
-  - ~60 lines in new `inference/enumerate.cljs`
-
 - [x] **14.3** Residual resampling for SMC
-  - `residual-resample`: deterministic floor(N * w_i) copies + systematic on remainder
-  - Selectable via `:resample-method :residual` in `smc`, `csmc`
-  - *Files*: `inference/smc.cljs`, `test/genmlx/hmc_mass_resample_test.cljs`
-
 - [x] **14.4** Stratified resampling for SMC
-  - `stratified-resample`: one independent uniform per stratum [j/N, (j+1)/N)
-  - Selectable via `:resample-method :stratified` in `smc`, `csmc`
-  - *Files*: `inference/smc.cljs`, `test/genmlx/hmc_mass_resample_test.cljs`
-
-### Distribution infrastructure
-
-- [ ] **14.5** Product distribution — independent joint sampling
-  - `(product-dist d1 d2 ...)` returns a distribution that samples a vector
-    of independent draws, one from each component.
-  - Gen.jl: `ProductDistribution(bernoulli, normal)` → samples `[bool, float]`
-  - ~30 lines in `dist.cljs`
-
-### Kernel infrastructure
-
+- [ ] **14.5** Product distribution
 - [ ] **14.6** Kernel reversal declarations
-  - Gen.jl's `@rkern k1 : k2` declares two kernels as reversals of each other.
-    `reversal(k)` returns the reverse kernel. All built-in MH/MALA/HMC kernels
-    are self-reversals. This is used for involutive MCMC correctness checking.
-  - Purely data-driven: `(declare-reversal! k1 k2)`, `(reversal k)`.
-  - GenMLX already has the involutive MCMC infrastructure (ProposalEdit,
-    forward/backward swap); this adds explicit reversal metadata.
-  - ~30 lines in `inference/kernel.cljs`
-
-### Ecosystem
-
-- [ ] **14.7** Trace serialization — save/load traces as EDN
-  - Gen.jl has GenSerialization.jl for persisting traces to files.
-  - For GenMLX: serialize trace to EDN (ClojureScript's native data format).
-    Choices are already persistent maps — just need to convert MLX arrays to
-    JS numbers/arrays at the boundary and back.
-  - `(serialize-trace trace) → EDN string`
-  - `(deserialize-trace gen-fn edn-string) → Trace`
-  - ~80 lines in new `serialization.cljs`
-
+- [ ] **14.7** Trace serialization
 - [ ] **14.8** Directional statistics distributions
-  - Gen.jl ecosystem has GenDirectionalStats.jl: von Mises-Fisher (on spheres),
-    distributions on SO(3) and SO(2) for robotics/perception.
-  - Start with von Mises-Fisher: `(von-mises-fisher mu kappa)` on unit sphere.
-  - ~50 lines in `dist.cljs` via `defdist`
+
+---
+
+## Phase 15: Confirmed Bugs (from code review, Feb 2026)
+
+*These are real bugs that should be fixed before any new feature work.*
+
+- [x] **15.1** `mx/random-normal` instead of `mx/random-uniform` in vectorized compiled MH
+  - **File**: `inference/mcmc.cljs:210`
+  - **Severity**: High -- produces NaN from `mx/log` of negative values
+  - **Impact**: `vectorized-compiled-mh` accept/reject is broken
+  - **Fix**: Change `mx/random-normal` to `mx/random-uniform`
+
+- [x] **15.2** REINFORCE estimator uses `log-q` as signal instead of objective values
+  - **File**: `inference/vi.cljs:308-314`
+  - **Severity**: High -- mathematically incorrect gradient estimator
+  - **Impact**: `reinforce-estimator` and `programmable-vi` with `:reinforce` produce wrong gradients
+  - **Fix**: Replace `(mx/stop-gradient (mx/subtract log-q baseline))` with
+    `(mx/stop-gradient (mx/subtract obj-val baseline))` where `obj-val` is the
+    objective function value (e.g., ELBO), not `log-q`
+
+- [x] **15.3** Wake phase ELBO missing `log q(z|x)` entropy term
+  - **File**: `learning.cljs:201-204`
+  - **Severity**: High -- the guide weight variable is shadowed by the model weight
+  - **Impact**: `wake-phase-loss` computes `-log p(x,z)` instead of `-(log p(x,z) - log q(z|x))`
+  - **Fix**: Rename one of the destructured `weight` bindings; subtract guide log-prob from model weight
+
+- [ ] **15.4** Possible 3-arg `mx/add` call in amortized inference
+  - **File**: `inference/amortized.cljs:62`
+  - **Severity**: Medium -- may cause runtime error if `mx/add` is strictly binary
+  - **Impact**: `make-elbo-loss` log-q computation
+  - **Fix**: Chain binary `mx/add` calls or verify `mx/add` supports 3+ args
+
+- [ ] **15.5** Neg-binomial sample reuses same PRNG key for gamma and Poisson steps
+  - **File**: `dist.cljs:671-682`
+  - **Severity**: Low -- correlated randomness, statistically incorrect samples
+  - **Fix**: Split key before Poisson loop: use `k1` for gamma, `k2` for Poisson
+
+---
+
+## Phase 16: Correctness Concerns (from code review, Feb 2026)
+
+*These are not necessarily bugs, but design issues that could produce subtly
+wrong results in certain use cases.*
+
+- [ ] **16.1** Combinator sub-trace reconstruction uses `score = 0.0` and `retval = nil`
+  - **Files**: `combinators.cljs` (Map update:82, Unfold update:236, Unfold regenerate:269,
+    Scan update:739, Scan regenerate:774)
+  - **Impact**: When Map/Unfold/Scan call `p/update` or `p/regenerate` on per-element
+    kernel traces, the old trace has `score = 0.0` instead of the real per-element score.
+    If the kernel's weight computation depends on `old_score`, weights will be wrong.
+    `update-with-diffs` (Map:1137-1170) correctly uses stored element scores, but the
+    basic `update` does not.
+  - **Fix**: Store per-element scores in trace metadata (already done as `::element-scores`
+    for Map, `::step-scores` for Unfold/Scan) and use them when reconstructing sub-traces
+    for update/regenerate
+
+- [ ] **16.2** `execute-sub` constructs fake traces with `score = 0.0` for spliced sub-GFs
+  - **File**: `dynamic.cljs:156-172`
+  - **Impact**: When a model uses `splice` and the trace undergoes `update` or `regenerate`,
+    the sub-GF receives a fake old trace with zero score. This makes the sub-GF's weight
+    = `new_score - 0.0` instead of `new_score - old_score`. Affects MH acceptance ratios
+    in nested models.
+  - **Fix**: Store per-sub-GF scores in trace metadata and reconstruct accurately
+
+- [ ] **16.3** `assess` does not validate that all choices are constrained
+  - **File**: `dynamic.cljs:111-120`
+  - **Impact**: In Gen.jl, `assess` requires all choices to be specified. GenMLX silently
+    samples missing choices (via simulate fallback in generate-handler). This can produce
+    quietly wrong results when a user forgets to constrain an address.
+  - **Fix**: Add a post-execution check that all addresses were constrained, or use a
+    dedicated assess-handler that throws on unconstrained addresses
+
+- [ ] **16.4** Switch combinator `update` does not support branch switching
+  - **File**: `combinators.cljs:315-331`
+  - **Impact**: `update` always uses the original branch index. If the user wants to change
+    which branch is active, `update` cannot do it (Gen.jl's Switch supports this).
+  - **Fix**: Compare old and new branch indices; if changed, simulate new branch from scratch
+    and weight = `new_score - old_score`
+
+- [ ] **16.5** Mix combinator `generate` passes full constraints (including `:component-idx`)
+  to component GF
+  - **File**: `combinators.cljs:949`
+  - **Impact**: The component GF receives a `:component-idx` key in constraints it doesn't
+    expect. May be silently ignored or may cause issues depending on the component.
+  - **Fix**: Strip `:component-idx` from constraints before passing to component
+    (as `update` already does at line 988)
+
+- [ ] **16.6** PRNG keys frequently ignored -- non-reproducible inference
+  - **Files**: Multiple
+    - `importance-sampling` accepts `key` in opts but never uses it (`importance.cljs:22`)
+    - `smcp3-step` generates per-particle keys but never passes them (`smcp3.cljs:116-118`)
+    - `dist-simulate` always passes `nil` key (`dist/core.cljs:40`)
+    - `systematic-resample-indices` ignores the passed key, uses global RNG (`vectorized.cljs:27-29`)
+    - `choice-gradients` and `score-gradient` have no key parameter (`gradients.cljs`)
+    - `wake-phase-loss` and `sleep-phase-loss` accept `key` but ignore it (`learning.cljs:192,221`)
+    - `amortized.cljs:46` uses `mx/random-normal` with global state
+  - **Impact**: Inference results are not reproducible even when users provide PRNG keys
+  - **Fix**: Thread keys through all functions that involve randomness; audit every call
+    to `mx/random-*` and `dist-sample` to ensure key propagation
+
+---
+
+## Phase 17: Missing Protocol Implementations (from code review, Feb 2026)
+
+*Generative function types that are missing GFI protocol implementations,
+causing runtime failures when used in certain inference contexts.*
+
+- [ ] **17.1** Add `IAssess` to all combinators
+  - **Files**: `combinators.cljs`
+  - **Impact**: `p/assess` cannot be called on Map, Unfold, Switch, Scan, Mask, Mix,
+    Recurse, Contramap, or MapRetval. Any inference code that calls `assess` on a
+    combinator-constructed GF will fail at runtime.
+  - **Scope**: ~5-10 lines per combinator (delegate to `generate` with full constraints,
+    similar to how DynamicGF implements it)
+
+- [ ] **17.2** Add `IPropose` to all combinators
+  - **Files**: `combinators.cljs`
+  - **Impact**: `p/propose` cannot be called on combinators. Affects custom proposal MH
+    when the proposal is a combinator-constructed GF.
+  - **Scope**: ~5-10 lines per combinator (simulate + return choices and score)
+
+- [ ] **17.3** Add `IUpdate` and `IRegenerate` to `CustomGradientGF`
+  - **File**: `custom_gradient.cljs`
+  - **Impact**: Splicing a `CustomGradientGF` into a model and running MCMC update/regenerate
+    will fail. Since it's deterministic (no choices, score=0), update/regenerate are trivial.
+  - **Scope**: ~10 lines (re-run forward, return zero weight, empty discard)
+
+- [ ] **17.4** Add `IUpdate` and `IRegenerate` to `NeuralNetGF`
+  - **File**: `nn.cljs`
+  - **Impact**: Same as 17.3 -- splicing a `NeuralNetGF` and running MCMC fails.
+  - **Scope**: ~10 lines (same trivial implementation as CustomGradientGF)
+
+- [ ] **17.5** Add `IProject` to `CustomGradientGF` and `NeuralNetGF`
+  - **Files**: `custom_gradient.cljs`, `nn.cljs`
+  - **Impact**: `p/project` fails on these types. Trivial: always returns 0 (no choices).
+  - **Scope**: ~5 lines each
+
+- [ ] **17.6** Add `IUpdateWithDiffs` to `MixCombinator`
+  - **File**: `combinators.cljs`
+  - **Impact**: Mix is the only combinator missing this. Calling `p/update-with-diffs` on a
+    Mix trace will fail. All other combinators have at least the no-change fast path.
+  - **Scope**: ~10 lines (no-change fast path + fallback to regular update)
+
+---
+
+## Phase 18: Distribution Quality (from code review, Feb 2026)
+
+*Distribution-level issues that affect correctness, differentiability, or
+performance.*
+
+- [ ] **18.1** Replace JS `log-gamma` with MLX-native `mlx-log-gamma` in beta, gamma,
+  inv-gamma, student-t log-prob methods
+  - **Files**: `dist.cljs` (beta ~line 225, gamma ~line 268, inv-gamma ~line 622,
+    student-t ~line 477)
+  - **Impact**: These distributions call `mx/realize` to extract parameters as JS numbers,
+    compute `log-gamma` in JS, then mix back into MLX. This breaks the computation graph
+    and prevents gradient flow through distribution parameters. The MLX-native
+    `mlx-log-gamma` already exists (line 42-59) and is used by poisson, neg-binomial,
+    and binomial -- it just needs to be adopted by the other distributions.
+  - **Scope**: ~20 lines of changes per distribution
+
+- [ ] **18.2** Make categorical `dist-sample-n` native/vectorized
+  - **File**: `dist.cljs:409-412`
+  - **Impact**: Categorical is one of the most common distributions in PPL models.
+    Its `sample-n` currently uses the sequential fallback (`split-n` + `mapv` + `stack`).
+    This is a significant performance bottleneck for vectorized inference with categorical
+    choices.
+  - **Fix**: Use `mx/random-categorical` or implement batch Gumbel-max trick
+
+- [ ] **18.3** Extend parameter validation to all distributions
+  - **File**: `dist.cljs`
+  - **Impact**: Only 5 of 25 distributions validate parameters (gaussian sigma>0,
+    uniform lo<hi, beta alpha>0/beta>0, gamma shape>0/rate>0, exponential rate>0).
+    Invalid parameters to other distributions produce silent NaN or incorrect results.
+  - **Missing validation**: truncated-normal (sigma>0, lo<hi), cauchy (scale>0),
+    laplace (scale>0), student-t (df>0), poisson (rate>0), inv-gamma (shape>0, scale>0),
+    wishart (df>0), multivariate-normal (positive-definite cov)
+  - **Scope**: ~2-3 lines per distribution using existing `check-positive`/`check-less-than`
+
+- [ ] **18.4** Fix geometric `support` to not use hardcoded `(range 100)`
+  - **File**: `dist.cljs:653`
+  - **Impact**: For geometric distributions with very small `p`, significant probability
+    mass lies beyond k=100. Enumeration-based inference (Gibbs) will miss this mass.
+  - **Fix**: Compute support dynamically based on `p`, e.g., up to the 0.999 quantile
+
+- [ ] **18.5** Wire `CustomGradientGF`'s `gradient-fn` into the autograd system
+  - **File**: `custom_gradient.cljs`
+  - **Impact**: The `gradient-fn` field is stored on the record and accessible via tests,
+    but no code in the GFI pipeline dispatches to it. The custom gradient is effectively
+    dead code from the framework's perspective.
+  - **Fix**: Register the custom gradient with MLX's autograd via `mx/custom-vjp` or
+    similar, or have `choice-gradients`/`score-gradient` check for and use it
+
+---
+
+## Phase 19: Code Quality & Cleanup (from code review, Feb 2026)
+
+*Technical debt, dead code, and code duplication identified during review.*
+
+- [ ] **19.1** Remove or complete the diff infrastructure
+  - **File**: `diff.cljs`
+  - **Status**: Only `no-change`, `no-change?`, and `changed?` are used in production.
+    Everything else (`vector-diff`, `map-diff`, `value-change`, `compute-vector-diff`,
+    `compute-map-diff`, `should-recompute?`, `unknown-change`) is only used in tests.
+  - **Decision needed**: Either build the incremental computation system that uses these
+    (Phase 9.2), or remove the unused infrastructure to reduce dead code
+
+- [ ] **19.2** Deduplicate resampling code
+  - **Files**: `vectorized.cljs` (systematic-resample-indices), `inference/smc.cljs`
+    (systematic-resample, residual-resample, stratified-resample), `inference/smcp3.cljs`
+    (systematic-resample, compute-ess)
+  - **Impact**: Three separate implementations of systematic resampling and two of ESS.
+    Bug fixes must be applied in multiple places.
+  - **Fix**: Consolidate into a single shared namespace (e.g., `vectorized.cljs` or a new
+    `inference/resample.cljs`) and have all consumers import from there
+
+- [ ] **19.3** Deduplicate Adam optimizer
+  - **Files**: `learning.cljs` (adam-init, adam-step), `inference/vi.cljs` (adam-state, adam-step)
+  - **Impact**: Two independent Adam implementations. The vi.cljs version may have subtle
+    differences from the learning.cljs version.
+  - **Fix**: Have `vi.cljs` import from `learning.cljs`
+
+- [ ] **19.4** Remove or test `defdist-transform` macro
+  - **File**: `dist/macros.cljc`
+  - **Status**: The macro is defined and tested in `untested_features_test.cljs`, but is
+    never used in production code. The most obvious candidate (log-normal) is defined
+    directly with `defdist` instead.
+  - **Decision needed**: Either use it for log-normal (validating the macro in practice)
+    or remove it
+
+- [ ] **19.5** Merge `SelectAddrs` and `SelectSet` record types
+  - **File**: `selection.cljs:23-43`
+  - **Impact**: Both records have identical implementations (wrap a set, check `contains?`).
+    The only difference is the constructor: `select` takes varargs, `from-set` takes a set.
+  - **Fix**: Single record type with two constructor functions
+
+- [ ] **19.6** Add missing `clojure.set` require in `diff.cljs`
+  - **File**: `diff.cljs` ns form
+  - **Impact**: `compute-map-diff` uses `clojure.set/difference` and
+    `clojure.set/intersection` without requiring `clojure.set`. Works in nbb (SCI
+    auto-loads it) but would break in standard ClojureScript.
+  - **Fix**: Add `[clojure.set :as set]` to the ns `:require`
+
+- [ ] **19.7** Fix `requiring-resolve` usage in handler.cljs
+  - **File**: `handler.cljs:446`
+  - **Impact**: `requiring-resolve` is a Clojure JVM feature, fragile in nbb/ClojureScript.
+    Used as a workaround to avoid circular dependency with `genmlx.protocols`.
+  - **Fix**: Refactor to break the circular dependency, or use a different dynamic
+    resolution mechanism
+
+- [ ] **19.8** Add `inference/adev.cljs` and `inference/amortized.cljs` to the
+  `inference.cljs` re-export facade
+  - **File**: `inference.cljs`
+  - **Impact**: These two modules are orphaned from the public API. Users must require
+    them directly by full namespace.
+  - **Fix**: Add re-exports for key public functions
+
+- [ ] **19.9** Deduplicate `run-kernel` (kernel.cljs) and `collect-samples` (mcmc.cljs)
+  - **Files**: `inference/kernel.cljs:100-124`, `inference/mcmc.cljs:19-41`
+  - **Impact**: Essentially identical MCMC loops with slightly different signatures.
+  - **Fix**: Have one delegate to the other, or extract a shared helper
+
+---
+
+## Phase 20: Amortized Inference Improvements (from code review, Feb 2026)
+
+*The amortized inference module works but has significant limitations.*
+
+- [ ] **20.1** Vectorize `neural-importance-sampling`
+  - **File**: `inference/amortized.cljs:113-127`
+  - **Impact**: Currently sequential (`mapv` over samples). Misses the 60-120x speedups
+    from vectorized IS.
+  - **Fix**: Use `dyn/vgenerate` with neural proposal as constraint source
+
+- [ ] **20.2** Support non-Gaussian posteriors in amortized inference
+  - **File**: `inference/amortized.cljs`
+  - **Impact**: The encoder must output `[mu, log-sigma]` pairs -- only Gaussian posteriors
+    are supported. No mixture of Gaussians, normalizing flows, or discrete latents.
+  - **Scope**: Significant -- requires abstracting the reparameterization and log-q computation
+
+- [ ] **20.3** Add minibatch training support
+  - **File**: `inference/amortized.cljs:71-92`
+  - **Impact**: `train-proposal!` cycles through individual data points one at a time.
+    No minibatch training.
+  - **Fix**: Accept batch size parameter, group dataset into minibatches
+
+- [ ] **20.4** Add ADEV variance reduction (baseline subtraction)
+  - **File**: `inference/adev.cljs`
+  - **Impact**: The REINFORCE term has no baseline, leading to high variance gradients.
+  - **Fix**: Implement moving-average baseline or learned baseline
+
+---
+
+## Phase 22: Practical Inference Improvements (from CODEBASE_ASSESSMENT.md)
+
+- [ ] **22.1** Adaptive step-size for HMC/NUTS via dual averaging
+  - **File**: `inference/mcmc.cljs`
+  - **Impact**: Called "the single biggest missing feature for practical MCMC" in the
+    codebase assessment. Currently HMC/NUTS require manual step-size tuning. Real
+    implementations (Stan, NumPyro) use Hoffman & Gelman 2014 dual averaging to
+    automatically find the optimal step-size during warmup.
+  - **Scope**: ~100-150 lines. Add a `warmup` function that runs L adaptation steps,
+    targeting acceptance rate ~0.65 (HMC) or ~0.8 (NUTS), and returns the tuned step-size.
+    Optionally also tune mass matrix from warmup samples.
+
+- [ ] **22.2** Remove deprecated stateful PRNG functions from `mlx.cljs`
+  - **File**: `mlx.cljs:302-315`
+  - **Impact**: `random-seed!`, `random-normal`, `random-uniform` use global MLX state,
+    directly contradicting the functional PRNG design. They are never called anywhere in
+    GenMLX source code but their presence is confusing and could lead users astray.
+  - **Fix**: Delete the three functions. Grep confirms zero internal callers.
+
+- [x] **22.3** Add `mx/eval!` after resampling to prevent unbounded lazy graph growth
+  - **File**: `vectorized.cljs:72-73`
+  - **Impact**: `resample-vtrace` reindexes all leaf arrays via `mx/take` but never
+    materializes the result. In a long SMC run with many resample steps, the computation
+    graph chains `take(take(take(...)))` without bound.
+  - **Fix**: Add `(mx/eval! (:choices new-vtrace))` after reindexing
+
+---
+
+## Phase 24: Verified Probabilistic Programming (from VERIFIED_PPL.md)
+
+*Runtime verification of GFI contracts as executable theorems. Each contract
+is a measure-theoretic theorem expressed as an executable predicate. The
+contract registry serves as both a runtime verifier and a formal specification
+that maps 1:1 to lambda_MLX theorems and (future) Lean 4 propositions.*
+
+*See VERIFIED_PPL.md for the full design document.*
+
+### Static validator (Level 1: structural correctness)
+
+- [ ] **24.1** `validate-gen-fn` — static analysis of generative functions
+  - **File**: new `src/genmlx/verify.cljs` (~100-150 lines)
+  - **Checks**: address uniqueness (run once, collect addresses, check for dupes),
+    score finiteness, parameter type validity, no side effects detected (heuristic),
+    all code paths return a value
+  - **Returns**: `{:valid? bool :violations [...]}`
+  - **Use case**: Claude Code generates a model, run `validate-gen-fn` before
+    executing any inference. Catches structural bugs immediately.
+
+### GFI contract registry (Level 2: measure-theoretic soundness)
+
+- [ ] **24.2** Data-driven GFI contract registry
+  - **File**: new `src/genmlx/contracts.cljs` (~150 lines)
+  - **Design**: A plain Clojure map of `{keyword -> {:theorem string, :check fn}}`.
+    Each `:check` function takes `{:model :args :trace}` and returns boolean.
+    Contracts are data — inspectable, composable, translatable.
+  - **Contracts to implement** (11 core contracts):
+    1. `generate` weight = score when fully constrained
+    2. `update` with empty constraints = identity (weight 0)
+    3. `update` weight = new_score - old_score
+    4. `update` round-trip via discard recovers original trace
+    5. `regenerate` with empty selection = identity (weight 0)
+    6. `project(all)` = score
+    7. `project(none)` = 0
+    8. `assess` weight = `generate` score for same choices
+    9. `propose` -> `generate` round-trip = weight 0
+    10. Score decomposition: sum of `project` over address partition = score
+    11. Broadcasting equivalence: `vsimulate(N)` statistically matches N `simulate` calls
+  - **Corresponds to**: lambda_MLX Propositions 3.1, 3.2, Corollary 3.4, and
+    handler soundness theorem
+
+- [ ] **24.3** `verify-gfi-contracts` — automated contract verification for any model
+  - **File**: same `src/genmlx/contracts.cljs` (~50 lines)
+  - **API**: `(verify-gfi-contracts model args & {:keys [n-trials levels]})`
+  - **Behavior**: For each contract in the registry, run N trials (default 50).
+    Each trial: `simulate` to get a random trace, then check the contract.
+    Returns detailed report with pass/fail counts per contract.
+  - **Expected output**: 50 trials x 11 contracts = 550 checks per model.
+    A model that passes all 550 checks has very high probability of being
+    a valid generative function.
+
+- [ ] **24.4** Canonical model suite for contract verification
+  - **File**: new `test/genmlx/contract_verification_test.cljs` (~80 lines)
+  - **Models**: 10-15 canonical models covering all features:
+    single-site, multi-site, dependent addresses, discrete, mixed
+    discrete/continuous, splice, Map, Unfold, Switch, Scan, Mask, Mix,
+    Recurse, deep nesting
+  - **Test**: Run `verify-gfi-contracts` on each model, assert zero failures
+  - **Expected assertions**: 10 models x 550 checks = 5,500 contract checks
+
+### Future: Lean 4 formalization (Level 4: mathematical certainty)
+
+- [ ] **24.5** Formalize lambda_MLX core types in Lean 4
+  - **Scope**: Significant (research-level effort)
+  - Define: `ChoiceMap`, `Trace`, `Selection`, `Distribution`, `GenFn` as Lean types
+  - Define: handler state transitions as pure Lean functions
+  - Builds on Mathlib's existing probability theory and measure theory formalizations
+
+- [ ] **24.6** Prove GFI axioms in Lean 4
+  - **Scope**: Significant (research-level effort)
+  - Prove: generate correctness, update weight, handler soundness,
+    broadcasting commutativity
+  - Proof structure: structural induction on trace operations (mirrors the
+    handler's pure transition design)
+
+- [ ] **24.7** Spec-to-Lean translator
+  - **Scope**: ~200 lines of Clojure
+  - Walk the contract registry, emit Lean 4 theorem statements
+  - The `:check` predicates become theorem bodies; the `:theorem` strings
+    become docstrings
+  - Proofs still require human/tactic effort, but theorem STATEMENTS come
+    from the contract registry automatically
+
+---
+
+## Phase 21: Testing Strategies (from TESTING.md, Feb 2026)
+
+*Systematic testing gaps identified by comparing TESTING.md strategies against
+existing test coverage. All tests use the existing `assert-true`/`assert-close`/
+`assert-equal` + `println` pattern in standalone `.cljs` files (no test.check --
+it doesn't work with nbb).*
+
+### Distribution statistical verification
+
+- [ ] **21.1** E[X] and Var[X] for all distributions (10,000 samples each)
+  - **Status**: Only gaussian (1K samples), inv-gamma, and neg-binomial have any
+    statistical tests. The other ~22 distributions have zero sample-statistics coverage.
+  - **Scope**: ~150 lines in a new `test/genmlx/dist_statistics_test.cljs`
+  - For each distribution: sample 10,000 times, compute empirical mean and variance,
+    compare to known analytical formulas within tolerance
+  - Distributions needing coverage: uniform, bernoulli, beta, gamma, exponential,
+    categorical, poisson, laplace, student-t, log-normal, delta, cauchy, geometric,
+    binomial, discrete-uniform, truncated-normal, multivariate-normal, dirichlet,
+    broadcasted-normal, wishart, inv-wishart
+
+- [ ] **21.2** Discrete PMF sums to 1
+  - **Status**: Only bernoulli is tested. Other discrete distributions untested.
+  - **Scope**: ~30 lines
+  - For each discrete distribution with finite `support`: enumerate all values,
+    compute `exp(log-prob(v))` for each, verify sum is within 1e-4 of 1.0
+  - Distributions: bernoulli, categorical, geometric (truncated), binomial,
+    discrete-uniform
+
+### GFI round-trip and cross-validation
+
+- [ ] **21.3** Update round-trip: `update(trace, c)` then `update(trace', discard)` recovers
+  original trace
+  - **Status**: Discard is extracted and checked in gen_clj_compat_test, but never fed back
+    into a second update to verify full round-trip
+  - **Scope**: ~20 lines on 2-3 models (single-site, multi-site, with splice)
+  - Verify: recovered choices match original, weight sum is ~0
+
+- [ ] **21.4** Edit round-trip: apply edit, then apply backward request, verify recovery
+  - **Status**: Backward requests are created and type-checked but never applied
+  - **Scope**: ~30 lines
+  - For `ConstraintEdit`: apply forward, apply backward request, verify original trace
+    recovered and weights sum to ~0
+  - For `SelectionEdit`: verify backward request contains the same selection
+  - For `ProposalEdit`: apply forward, apply backward, verify weights are correct
+
+- [ ] **21.5** Cross-validate `assess` weight against `generate` score
+  - **Status**: Both are tested independently but never compared to each other
+  - **Scope**: ~15 lines on 2-3 models
+  - `assess(model, args, choices).weight` should equal the score of
+    `generate(model, args, choices).trace`
+
+- [ ] **21.6** Cross-validate `propose` -> `generate` round-trip
+  - **Status**: Propose is tested, but proposed choices are never fed back to generate
+  - **Scope**: ~15 lines
+  - `propose(model, args)` produces choices; `generate(model, args, those_choices)`
+    should produce weight ~0 (proposal matches prior)
+
+### Combinator compositionality
+
+- [ ] **21.7** Combinator degenerate case tests
+  - **Status**: Not tested
+  - **Scope**: ~40 lines
+  - `Map(kernel, [single-input])`: trace structure, score, and weight should match
+    the kernel run directly (nested under address 0)
+  - `Unfold(kernel, init, 1)`: should behave like a single kernel step
+  - `Switch([g1, g2], 0)`: should produce identical trace to running g1 directly
+  - `Recurse(f)` with base case only: single kernel application
+
+- [ ] **21.8** Nested combinator tests
+  - **Status**: No tests combine two different combinators
+  - **Scope**: ~50 lines
+  - `Map(Switch(g1, g2))`: verify trace structure, simulate, generate with constraints
+  - `Unfold(Map(kernel))`: temporal sequence of parallel models, verify update
+  - `Scan(Mask(kernel))`: carry threading with masked steps
+
+- [ ] **21.9** Score additivity per combinator
+  - **Status**: Not tested
+  - **Scope**: ~30 lines
+  - Map: total score = sum of per-element scores (using `::element-scores` metadata)
+  - Unfold: total score = sum of per-step scores (using `::step-scores` metadata)
+  - Switch: total score = selected branch score
+  - Mix: total score = categorical log-prob + component score
+
+### Inference convergence
+
+- [ ] **21.10** Gamma-Poisson conjugate model convergence
+  - **Status**: Not tested. Only Normal-Normal and Beta-Bernoulli conjugates are tested.
+  - **Scope**: ~30 lines
+  - Prior: Gamma(alpha, beta), Likelihood: Poisson(lambda), n observations
+  - Posterior: Gamma(alpha + sum(x_i), beta + n)
+  - Verify: IS, MH, SMC posterior mean within tolerance of analytical value
+
+- [ ] **21.11** HMC and NUTS acceptance rate checks
+  - **Status**: HMC convergence is tested but acceptance rate is not explicitly checked.
+    NUTS has basic run test only.
+  - **Scope**: ~20 lines
+  - HMC: acceptance rate should be > 0.6 with good step size on Normal-Normal model
+  - NUTS: verify no divergent transitions on simple models, acceptance rate > 0.5
+
+### GFI contract harness (from TESTING.md Phase A-C)
+
+- [ ] **21.12** Reusable `verify-gfi-contract` harness function
+  - **Status**: Not implemented. Individual GFI operations are tested per-file but there
+    is no unified harness that systematically verifies all contracts on any model.
+  - **Scope**: ~80 lines for the harness, ~80 lines for 10-15 canonical models
+  - The harness takes `(model, args, observations)` and runs ~15 checks:
+    1. simulate returns valid trace
+    2. generate with all choices -> weight = score
+    3. update with empty constraints -> weight 0
+    4. update with all choices -> weight 0
+    5. regenerate with empty selection -> weight 0
+    6. project(all) = score
+    7. project(empty) = 0
+    8. propose -> generate round-trip -> weight 0
+    9. assess weight = generate score
+    10. update round-trip via discard
+    11. score decomposition via project partition
+  - Apply harness to 10-15 canonical models covering: single-site, multi-site,
+    dependent addresses, discrete, mixed, splice, and each combinator type
+  - This alone would add ~150-225 new assertions from ~160 lines of code
+
+---
+
+## Phase 23: Differential Testing Against Gen.jl (reference oracle)
+
+*Use Gen.jl as a ground-truth oracle. A Julia script pre-computes deterministic
+GFI outputs and log-prob values, saves to JSON. GenMLX loads the JSON and
+asserts agreement. The Julia script runs manually (not in CI); the JSON file
+is checked in. This eliminates all randomness — fixed choices make every GFI
+operation deterministic.*
+
+### Reference value generation (Julia side)
+
+- [ ] **23.1** Julia script to generate `gen_jl_reference.json`
+  - **File**: new `test/reference/gen_jl_reference.jl` (~200 lines)
+  - **Output**: `test/reference/gen_jl_reference.json` (checked into repo)
+  - **Contents**:
+    - **Distribution log-probs** (~125 values): For each of the 25 distributions that
+      have a Gen.jl equivalent, compute `logpdf` at 5+ test points (including boundary
+      values, zero, negative, large). Cover all distributions in Gen.jl's standard
+      library: normal, uniform, beta, gamma, exponential, categorical, poisson, bernoulli,
+      laplace, geometric, binomial, neg-binomial, discrete-uniform, cauchy, inv-gamma,
+      multivariate-normal, dirichlet
+    - **GFI operation outputs** (~50 values): For 10 canonical models with fixed
+      choicemaps, compute: `generate` weight, `generate` score, `update` weight (with
+      specific new constraints), `update` discard values, `assess` weight, `project`
+      with specific selections. Models:
+      1. Single Gaussian (1 address)
+      2. Two independent Gaussians
+      3. Linear regression (dependent addresses: slope, intercept, observations)
+      4. Single Bernoulli
+      5. Mixed discrete/continuous (Bernoulli + Gaussian)
+      6. Nested splice (sub-GF with `@trace`)
+      7. Map combinator (3 elements)
+      8. Unfold combinator (3 steps)
+      9. Switch combinator (both branches)
+      10. Model with 10+ addresses (stress test for weight accumulation)
+    - **Conjugate posterior analytics** (~10 values): For Normal-Normal, Beta-Bernoulli,
+      and Gamma-Poisson conjugate models, compute exact posterior parameters
+  - **Requires**: Julia 1.9+ with Gen.jl installed on the developer's machine
+  - **Run manually**: `julia test/reference/gen_jl_reference.jl`
+
+### GenMLX test loader (ClojureScript side)
+
+- [ ] **23.2** GenMLX test that loads and compares against `gen_jl_reference.json`
+  - **File**: new `test/genmlx/gen_jl_differential_test.cljs` (~80 lines)
+  - **Approach**:
+    - Load JSON via `(js/JSON.parse (js/require "fs").readFileSync ...)`
+    - Define the same 10 canonical models in GenMLX
+    - For each distribution log-prob entry: compute GenMLX value, assert-close
+      within float32 tolerance (1e-5)
+    - For each GFI operation entry: run the same operation with the same fixed
+      choicemap, assert-close on weight/score/discard values
+    - For conjugate posteriors: verify analytical values match
+  - **Expected assertions**: ~185 (125 log-prob + 50 GFI + 10 conjugate)
+  - **Tolerance**: 1e-5 for most values (float32 vs float64), 1e-3 for values
+    involving log-gamma approximations
+
+### Extended comparison (optional, future)
+
+- [ ] **23.3** Cross-process Gen.jl oracle for dynamic queries
+  - **Scope**: ~100 lines Julia server + ~50 lines ClojureScript client
+  - A persistent Julia process that accepts JSON commands over stdin/stdout:
+    `{"op": "generate", "model": "linear_regression", "choices": {...}}` -> result
+  - Enables property-style testing: generate random choicemaps in GenMLX, send to
+    Gen.jl oracle, compare results
+  - **Requires**: Julia installed on test machine, slower (Julia startup ~2-5s,
+    or persistent server)
+  - **When**: Only needed if the static reference file (23.1-23.2) proves insufficient
 
 ---
 
 ## Priority Order
 
-For someone working through this linearly:
-
 ```
-Immediate (solidify what exists):
-  1.1  Handler state schemas + docs       ✅
-  1.4  ChoiceMap algebra tests            ✅
-  2.1  Implement project                  ✅
-  3.7  Neg-binomial tests                 ✅
-  6.1  ProposalEdit tests                ✅
-  6.2  SMCP3 end-to-end test             ✅
+CRITICAL (fix before any new feature work):
+  15.1  Vectorized MH random-normal bug          ~1 line fix
+  15.2  REINFORCE signal bug                      ~3 line fix
+  15.3  Wake-sleep ELBO shadowed variable         ~5 line fix
+  15.4  Amortized inference mx/add arity          ~2 line fix
 
-Near-term (Gen.jl feature parity):
-  3.1–3.5  Missing distributions          ✅
-  3.6      map->dist bridge               ✅
-  3.8      Batch sampling candidates      ✅
-  4.1      Elliptical slice sampling      ✅
-  4.2      MAP optimization               ✅
-  5.1–5.3  Combinators (full Phase 5)     ✅
-  6.3–6.4  Testing gaps                   ✅
+HIGH (correctness concerns affecting real use cases):
+  22.2  Remove deprecated stateful PRNG            ~15 lines deleted
+  22.3  mx/eval! after resampling                  ~2 lines
+  16.1  Combinator sub-trace score=0              ~20 lines
+  16.2  execute-sub fake trace score=0            ~15 lines
+  16.3  assess not validating full constraints    ~10 lines
+  17.3  CustomGradientGF IUpdate/IRegenerate      ~10 lines
+  17.4  NeuralNetGF IUpdate/IRegenerate           ~10 lines
+  17.6  MixCombinator IUpdateWithDiffs            ~10 lines
+  22.1  Adaptive HMC/NUTS step-size               ~100-150 lines
 
-Medium-term (GenJAX speed parity):
-  7.1  Batch sampling coverage     ✅
-  7.3  Vectorized MCMC                ✅
-  7.4  Compiled MH chain              ✅
-  7.5  Vectorized SMC sweep           ✅
-  7.7  Benchmark suite                ✅
+MEDIUM (quality and completeness):
+  18.1  MLX-native log-gamma in 4 distributions   ~80 lines
+  18.2  Categorical native sample-n               ~15 lines
+  18.3  Parameter validation for all dists        ~30 lines
+  15.5  Neg-binomial key reuse                    ~3 lines
+  16.5  Mix generate constraint leak              ~2 lines
+  17.1  IAssess on combinators                    ~50 lines
+  17.2  IPropose on combinators                   ~50 lines
+  17.5  IProject on CustomGradientGF/NeuralNetGF  ~10 lines
+  19.2  Deduplicate resampling                    ~30 lines refactor
+  19.3  Deduplicate Adam optimizer                ~5 lines refactor
+  19.8  inference.cljs re-exports                 ~10 lines
 
-Medium-term (formal foundation):
-  10.1–10.3  Prerequisites
-  10.4–10.6  Calculus definition
-  10.7–10.9  Core theorems
+LOW (cleanup and polish):
+  16.4  Switch combinator branch switching        ~30 lines
+  16.6  PRNG key threading audit                  ~100+ lines
+  18.4  Geometric support range                   ~5 lines
+  18.5  CustomGradientGF gradient-fn wiring       ~20 lines
+  19.1  Diff infrastructure cleanup               Decision needed
+  19.4  defdist-transform usage                   Decision needed
+  19.5  SelectAddrs/SelectSet merge               ~10 lines
+  19.6  clojure.set require                       ~1 line
+  19.7  requiring-resolve workaround              ~10 lines
+  19.9  run-kernel/collect-samples dedup          ~10 lines
 
-Long-term (ecosystem):
-  4.3–4.4  VIMCO, ADEV                ✅
-  8.1–8.2  Custom gradients            ✅
-  9.1      Unfold/Scan per-step optimization
-  11.1–11.2  Validation
-  12.1–12.6  Ecosystem
-  10.16  λ_MLX paper
+MEDIUM-HIGH (verification -- catches bugs, path to formal proofs):
+  24.1  Static validator (validate-gen-fn)          ~100-150 lines
+  24.2  GFI contract registry (11 contracts)        ~150 lines
+  24.3  verify-gfi-contracts function               ~50 lines
+  24.4  Canonical model suite + contract test       ~80 lines, ~5500 checks
+  23.1  Gen.jl reference value generation (Julia)   ~200 lines Julia
+  23.2  GenMLX differential test loader             ~80 lines, ~185 assertions
 
-Gen.jl parity (from survey):
-  14.1  HMC mass matrix              ✅
-  14.2  Enumerative inference
-  14.3  Residual resampling          ✅
-  14.4  Stratified resampling        ✅
-  14.5  Product distribution
-  14.6  Kernel reversals
-  14.7  Trace serialization
-  14.8  Directional distributions
+MEDIUM-HIGH (testing -- catches bugs in existing code):
+  21.12 GFI contract harness + canonical models    ~160 lines, ~150-225 assertions
+  21.1  Distribution E[X]/Var[X] for all dists     ~150 lines
+  21.3  Update round-trip via discard              ~20 lines
+  21.5  assess vs generate cross-validation        ~15 lines
+  21.9  Score additivity per combinator            ~30 lines
+
+MEDIUM (testing -- deeper coverage):
+  21.2  Discrete PMF sums to 1                     ~30 lines
+  21.4  Edit round-trip via backward request       ~30 lines
+  21.6  Propose -> generate round-trip             ~15 lines
+  21.7  Combinator degenerate cases                ~40 lines
+  21.10 Gamma-Poisson conjugate convergence        ~30 lines
+  21.11 HMC/NUTS acceptance rate checks            ~20 lines
+
+LOW-MEDIUM (testing -- nice to have):
+  21.8  Nested combinator tests                    ~50 lines
+
+FUTURE (new features, lower priority):
+  7.8   GenJAX benchmark comparison
+  9.2   Handler-level diff awareness
+  10.14-10.16  Formal foundation completion
+  11.1  Malli schemas
+  12.3-12.4, 12.6  Ecosystem features
+  13.1-13.3  Documentation & packaging
+  14.2, 14.5-14.8  Gen.jl parity features
+  20.1-20.4  Amortized inference improvements
+
+RESEARCH (Lean 4 formalization):
+  24.5  Formalize lambda_MLX types in Lean 4       Research-level
+  24.6  Prove GFI axioms in Lean 4                 Research-level
+  24.7  Spec-to-Lean translator                    ~200 lines
 ```
 
 ---
@@ -587,7 +865,17 @@ Gen.jl parity (from survey):
 | 9. Incremental Computation | 2 | 1 | 1 |
 | 10. Formal Foundation | 16 | 13 | 3 |
 | 11. Validation | 2 | 1 | 1 |
-| 12. Ecosystem | 6 | 2 | 4 |
+| 12. Ecosystem | 6 | 3 | 3 |
 | 13. Documentation | 3 | 0 | 3 |
-| 14. Gen.jl Parity | 8 | 3 | 5 |
-| **Total** | **75** | **56** | **19** |
+| 14. Gen.jl Parity | 8 | 4 | 4 |
+| 15. Confirmed Bugs | 5 | 3 | **2** |
+| 16. Correctness Concerns | 6 | 0 | **6** |
+| 17. Missing Protocols | 6 | 0 | **6** |
+| 18. Distribution Quality | 5 | 0 | **5** |
+| 19. Code Quality | 9 | 0 | **9** |
+| 20. Amortized Improvements | 4 | 0 | **4** |
+| 21. Testing Strategies | 12 | 0 | **12** |
+| 22. Practical Inference | 3 | 1 | **2** |
+| 23. Gen.jl Differential Testing | 3 | 0 | **3** |
+| 24. Verified PPL | 7 | 0 | **7** |
+| **Total** | **135** | **62** | **73** |

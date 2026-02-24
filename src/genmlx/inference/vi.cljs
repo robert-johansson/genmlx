@@ -97,7 +97,7 @@
         vmapped-log-density (mx/vmap log-density)
         neg-elbo-fn (fn [vp]
                       (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
-        grad-neg-elbo (mx/grad neg-elbo-fn)]
+        grad-neg-elbo (mx/compile-fn (mx/grad neg-elbo-fn))]
     (loop [i 0, vp init-vp
            opt-state (adam-state init-vp)
            elbo-history (transient [])
@@ -320,11 +320,11 @@
           obj-val (objective-fn samples)
           ;; REINFORCE: (f(z) - baseline) * grad log q(z)
           ;; We use mean as baseline for variance reduction
-          baseline (mx/stop-gradient (mx/mean log-q))]
+          baseline (mx/stop-gradient (mx/mean obj-val))]
       ;; Return surrogate loss whose gradient equals REINFORCE estimator
       (mx/add obj-val
               (mx/mean (mx/multiply (mx/stop-gradient
-                                      (mx/subtract log-q baseline))
+                                      (mx/subtract obj-val baseline))
                                     log-q))))))
 
 (defn vimco-objective

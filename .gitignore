@@ -2,3 +2,5 @@ node_modules/
 .nrepl-port
 .cpcache/
 .nbb/
+*.pdf
+node-mlx/

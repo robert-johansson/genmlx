@@ -12,7 +12,7 @@
 (defn- extract-row
   "Extract row i from a 2D MLX array as a 1D array."
   [arr i]
-  (mx/squeeze (.index arr (new (.-Slice mx/core) i (inc i)))))
+  (.take mx/core arr (mx/scalar i mx/int32) 0))
 
 (defn split
   "Split a key into two independent sub-keys. Returns [k1 k2]."

@@ -3,6 +3,7 @@
    A VectorizedTrace holds [N]-shaped arrays at each choice site,
    enabling N particles to be processed in a single model execution."
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             [genmlx.choicemap :as cm]))
 
 ;; ---------------------------------------------------------------------------
@@ -37,6 +38,28 @@
                           (recur (inc i) cumsum' j acc)))))]
     (mx/array indices mx/int32)))
 
+(defn systematic-resample-indices-gpu
+  "GPU-native systematic resampling from [N]-shaped log-weights.
+   Pure MLX operations — no CLJS loop. O(N^2) memory, suitable for N ≤ 10,000.
+   Returns [N] int32 MLX array of ancestor indices."
+  [log-weights n key]
+  (let [probs    (mx/exp (mx/subtract log-weights (mx/logsumexp log-weights)))
+        cumprobs (mx/cumsum probs)
+        ;; Single uniform offset in [0, 1/N)
+        u0       (mx/divide (rng/uniform (rng/ensure-key key) [1])
+                            (mx/scalar n))
+        ;; Thresholds: u0 + i/N for i in [0, N)
+        thresholds (mx/add u0 (mx/divide (mx/arange n) (mx/scalar n)))
+        ;; Broadcasting: cumprobs [1,N] >= thresholds [N,1] → [N,N] bool matrix
+        ;; Each row i has true where cumprobs[j] >= threshold[i]
+        ;; argmax on axis 1 gives first true index per threshold → ancestor index
+        comparison (mx/greater-equal
+                     (mx/reshape cumprobs [1 n])
+                     (mx/reshape thresholds [n 1]))
+        indices (mx/argmax comparison 1)]
+    (mx/eval! indices)
+    indices))
+
 ;; ---------------------------------------------------------------------------
 ;; Reindex choicemap leaves
 ;; ---------------------------------------------------------------------------
@@ -68,10 +91,14 @@
   [vtrace key]
   (let [{:keys [weight n-particles choices score]} vtrace
         indices (systematic-resample-indices weight n-particles key)]
-    (assoc vtrace
-           :choices (reindex-choicemap choices indices)
-           :score   (mx/take-idx score indices)
-           :weight  (mx/zeros [n-particles]))))
+    (let [new-choices (reindex-choicemap choices indices)
+          new-score (mx/take-idx score indices)
+          new-weight (mx/zeros [n-particles])]
+      (mx/eval! new-score new-weight)
+      (assoc vtrace
+             :choices new-choices
+             :score   new-score
+             :weight  new-weight))))
 
 ;; ---------------------------------------------------------------------------
 ;; Diagnostics

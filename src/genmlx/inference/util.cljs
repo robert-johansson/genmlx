@@ -49,10 +49,30 @@
       (let [params-t (mx/transpose params)
             cm (reduce
                  (fn [cm [i addr]]
-                   (cm/set-choice cm [addr] (mx/index params-t i)))
+                   ;; take-idx with axis=0 extracts row i of [D,N] → [N]-shaped
+                   (cm/set-choice cm [addr]
+                     (mx/take-idx params-t (mx/scalar i mx/int32) 0)))
                  observations
                  indexed-addrs)]
         (:weight (p/generate model args cm))))))
+
+(defn make-compiled-score-fn
+  "Build a compiled score function from a model + observations + addresses.
+   Returns a compiled fn: (params-array) -> MLX scalar log-weight."
+  [model args observations addresses]
+  (mx/compile-fn (make-score-fn model args observations addresses)))
+
+(defn make-compiled-grad-score
+  "Build a compiled gradient of the score function.
+   Returns a compiled fn: (params-array) -> MLX gradient array."
+  [model args observations addresses]
+  (mx/compile-fn (mx/grad (make-score-fn model args observations addresses))))
+
+(defn make-compiled-val-grad
+  "Build a compiled value-and-grad of the score function.
+   Returns a compiled fn: (params-array) -> [score grad]."
+  [model args observations addresses]
+  (mx/compile-fn (mx/value-and-grad (make-score-fn model args observations addresses))))
 
 (defn extract-params
   "Extract parameter values from a trace at the given addresses.
@@ -61,6 +81,66 @@
   (mx/array (mapv #(let [v (cm/get-choice (:choices trace) [%])]
                      (mx/realize v))
                   addresses)))
+
+(defn- make-differentiable-vectorized-score-fn
+  "Like make-vectorized-score-fn but uses differentiable column extraction.
+   The standard vectorized-score-fn uses transpose+index which doesn't
+   differentiate properly in MLX. This version uses matmul with one-hot
+   selectors, which is fully differentiable.
+   Returns fn: [N,D] -> [N]-shaped scores."
+  [model args observations addresses]
+  (let [d (count addresses)
+        indexed-addrs (mapv vector (range) addresses)
+        ;; Pre-build one-hot column selectors [D,1] for each address
+        one-hots (mapv (fn [i]
+                         (let [v (vec (repeat d 0.0))]
+                           (mx/array (assoc v i 1.0))))
+                       (range d))]
+    (fn [params]
+      (let [;; Extract column i via dot product: params [N,D] . one-hot [D] -> [N]
+            cm (reduce
+                 (fn [cm [i addr]]
+                   ;; matmul [N,D] x [D,1] -> [N,1], squeeze -> [N]
+                   (cm/set-choice cm [addr]
+                     (mx/squeeze (mx/matmul params (mx/reshape (nth one-hots i) [d 1])))))
+                 observations
+                 indexed-addrs)]
+        (:weight (p/generate model args cm))))))
+
+(defn make-vectorized-grad-score
+  "Per-chain gradients for N parallel chains via the sum trick.
+   Since score_n depends only on params[n,:], grad(sum(scores))[n,:] = grad(score_n).
+   Returns fn: [N,D] -> [N,D]."
+  [model args observations addresses]
+  (let [diff-score-fn (make-differentiable-vectorized-score-fn model args observations addresses)
+        summed-fn (fn [params] (mx/sum (diff-score-fn params)))]
+    (mx/grad summed-fn)))
+
+(defn make-compiled-vectorized-score-and-grad
+  "Compiled vectorized score fn + compiled vectorized gradient fn.
+   Returns {:score-fn (compiled [N,D]->[N]), :grad-fn (compiled [N,D]->[N,D])}."
+  [model args observations addresses]
+  (let [vec-score-fn (make-vectorized-score-fn model args observations addresses)]
+    {:score-fn (mx/compile-fn vec-score-fn)
+     :grad-fn  (mx/compile-fn (make-vectorized-grad-score model args observations addresses))}))
+
+(defn make-compiled-vectorized-val-grad
+  "Compiled vectorized value-and-grad via sum trick.
+   Returns compiled fn: [N,D] -> [scalar, [N,D]] where scalar = sum(scores).
+   Per-chain scores can be obtained separately via score-fn."
+  [model args observations addresses]
+  (let [diff-score-fn (make-differentiable-vectorized-score-fn model args observations addresses)
+        summed-fn (fn [params] (mx/sum (diff-score-fn params)))]
+    (mx/compile-fn (mx/value-and-grad summed-fn))))
+
+(defn init-vectorized-params
+  "Initialize [N,D] parameter matrix from N independent generates."
+  [model args observations addresses n-chains]
+  (mx/stack
+    (mapv (fn [_]
+            (let [{:keys [trace]} (p/generate model args observations)]
+              (extract-params trace addresses)))
+          (range n-chains))))
 
 (defn accept-mh?
   "Metropolis-Hastings accept/reject decision.

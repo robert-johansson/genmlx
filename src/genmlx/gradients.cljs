@@ -32,8 +32,8 @@
                               choices
                               indexed-addrs)]
                      (:weight (p/generate model args cm))))
-        ;; Compute gradient
-        grad-fn (mx/grad score-fn)
+        ;; Compute gradient (compiled for faster execution)
+        grad-fn (mx/compile-fn (mx/grad score-fn))
         grad-arr (grad-fn params)]
     (mx/eval! grad-arr)
     ;; Split gradient array into per-address map
@@ -62,7 +62,7 @@
                               observations
                               indexed-addrs)]
                      (:weight (p/generate model args cm))))
-        vag (mx/value-and-grad score-fn)
+        vag (mx/compile-fn (mx/value-and-grad score-fn))
         [score grad] (vag params)]
     (mx/eval! score grad)
     {:score score :grad grad}))
