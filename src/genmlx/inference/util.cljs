@@ -42,22 +42,21 @@
 
 (defn make-vectorized-score-fn
   "Build a vectorized score function for N parallel chains.
-   Returns a fn: (params [N,D]) -> [N]-shaped MLX log-weight array.
-   NOT compiled — node-mlx's compile has a graph size limit (~100-120 ops)
-   that model execution easily exceeds."
+   Returns a fn: (params [N,D]) -> [N]-shaped MLX log-weight array."
   [model args observations addresses]
   (let [indexed-addrs (mapv vector (range) addresses)
         idx-scalars (mapv #(mx/scalar % mx/int32) (range (count addresses)))]
-    (fn [params]
-      (let [params-t (mx/transpose params)
-            cm (reduce
-                 (fn [cm [i addr]]
-                   ;; take-idx with axis=0 extracts row i of [D,N] → [N]-shaped
-                   (cm/set-choice cm [addr]
-                     (mx/take-idx params-t (nth idx-scalars i) 0)))
-                 observations
-                 indexed-addrs)]
-        (:weight (p/generate model args cm))))))
+    (mx/compile-fn
+      (fn [params]
+        (let [params-t (mx/transpose params)
+              cm (reduce
+                   (fn [cm [i addr]]
+                     ;; take-idx with axis=0 extracts row i of [D,N] → [N]-shaped
+                     (cm/set-choice cm [addr]
+                       (mx/take-idx params-t (nth idx-scalars i) 0)))
+                   observations
+                   indexed-addrs)]
+          (:weight (p/generate model args cm)))))))
 
 (defn make-compiled-score-fn
   "Build a compiled score function from a model + observations + addresses.
@@ -120,24 +119,20 @@
     (mx/grad summed-fn)))
 
 (defn make-compiled-vectorized-score-and-grad
-  "Vectorized score fn + vectorized gradient fn.
-   NOT compiled — node-mlx's compile has a graph size limit (~100-120 ops)
-   that model execution easily exceeds. Vectorization (N-shaped batching)
-   provides the main speedup regardless.
+  "Vectorized score fn + vectorized gradient fn, both compiled.
    Returns {:score-fn ([N,D]->[N]), :grad-fn ([N,D]->[N,D])}."
   [model args observations addresses]
   {:score-fn (make-vectorized-score-fn model args observations addresses)
-   :grad-fn  (make-vectorized-grad-score model args observations addresses)})
+   :grad-fn  (mx/compile-fn (make-vectorized-grad-score model args observations addresses))})
 
 (defn make-compiled-vectorized-val-grad
-  "Vectorized value-and-grad via sum trick.
-   NOT compiled — see make-compiled-vectorized-score-and-grad.
+  "Compiled vectorized value-and-grad via sum trick.
    Returns fn: [N,D] -> [scalar, [N,D]] where scalar = sum(scores).
    Per-chain scores can be obtained separately via score-fn."
   [model args observations addresses]
   (let [diff-score-fn (make-differentiable-vectorized-score-fn model args observations addresses)
         summed-fn (fn [params] (mx/sum (diff-score-fn params)))]
-    (mx/value-and-grad summed-fn)))
+    (mx/compile-fn (mx/value-and-grad summed-fn))))
 
 (defn init-vectorized-params
   "Initialize [N,D] parameter matrix from N independent generates."
