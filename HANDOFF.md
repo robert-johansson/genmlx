@@ -1,6 +1,6 @@
 # GenMLX Optimization Handoff
 
-> Last updated: 2026-02-24 (night — post loop-compilation breakthrough)
+> Last updated: 2026-02-24 (night — post MALA/HMC loop compilation + lazy removal + dist fixes)
 > This document provides background context for someone picking up the optimization work.
 > For the actual plan and step-by-step instructions, read **TODO_OPTIMIZATION.md**.
 
@@ -8,7 +8,7 @@
 
 ## Start Here
 
-1. Read **TODO_OPTIMIZATION.md** — it's the plan. Steps 0-1 done, Step 2 skipped, **Step 2.5 (ground truth) is the critical finding**, Steps 3-4 skipped (compile-fn already handles them), **Step 5.4 (loop compilation) is the breakthrough: 5.6x on compiled-mh**, Step 6 and production integration are next.
+1. Read **TODO_OPTIMIZATION.md** — it's the plan. Steps 0-1 done, Step 2 skipped, **Step 2.5 (ground truth) is the critical finding**, Steps 3-4 skipped (compile-fn already handles them), **Steps 5-6-8 DONE: loop compilation for all gradient MCMC (MH 5.6x, MALA 2.3x, HMC 3.9x), lazy variants removed, distribution gradients fixed**. Remaining: Step 7 (docs), Steps 9-11 (lowered sim/gen, final benchmark).
 2. Read this file for background: what each source file does, how to run things, what's been tried, and **what we now know about the real performance model**.
 3. Read **CLAUDE.md** for project conventions and test patterns.
 4. Ignore OPTIMIZATION_MANIFESTO.md and TODO_SPEED.md — they contain estimates that turned out to be wrong. All accurate numbers are in TODO_OPTIMIZATION.md.
@@ -66,7 +66,14 @@ Total:                          0.300ms
 4. The triple transform `compile(vmap(grad(score-fn)))` works on the existing SCI-based functions
 5. vmap composes directly with make-score-fn — no lowering needed
 
-**Step 5 mostly complete.** eval! cost model established, micro-batching tested and ruled out, triple transform validated, **loop compilation achieves 5.6x** (Step 5.4). Remaining: 5.3 (collect-samples overhead) deprioritized since loop compilation bypasses it.
+**Step 5 DONE.** Loop compilation applied to all gradient MCMC algorithms:
+- **compiled-mh: 5.6x** — K-step chains compiled into single Metal dispatches
+- **MALA: 2.3x** — score+gradient cached across iterations (3→1 val-grad calls/step)
+- **HMC: 3.9x** — K outer MH × L inner leapfrog unrolled into single dispatch
+
+**Step 6 DONE.** Lazy variants removed (`compiled-mh-lazy`, `mala-lazy`, `hmc-lazy`). Tidy/eval discipline applied in all loop-compiled paths.
+
+**Step 8 DONE.** Distribution gradient fixes: JS `log-gamma` → MLX `mlx-log-gamma` in beta, gamma, inv-gamma, student-t, dirichlet (fixes gradient opacity). Batch categorical via Gumbel-max trick.
 
 **Bugs fixed (Step 0):**
 1. `mcmc.cljs:299` — `mx/random-normal` → `mx/random-uniform` in vectorized-mh accept/reject
@@ -80,26 +87,34 @@ Total:                          0.300ms
 
 ## What's Been Done (Since Last Handoff)
 
-**Step 5.4: Loop compilation — THE HEADLINE RESULT (2026-02-24)**
+**Step 5.4: Loop compilation — ALL GRADIENT MCMC (2026-02-24)**
 
-compile-fn can cache an entire K-step MH chain as one Metal dispatch. **5.6x speedup.**
+compile-fn caches entire K-step chains as single Metal dispatches. Applied to all three gradient MCMC algorithms:
 
 ```
-Compiled chain (200 steps): 13.8 ms  (0.069 ms/step)
-Eager MH (200 steps):       77.9 ms  (0.390 ms/step)
-Speedup:                     5.6x
+Algorithm         Compiled          Eager             Speedup
+─────────────────────────────────────────────────────────────
+compiled-mh:      13.8 ms (200st)   77.9 ms (200st)   5.6x
+MALA:             65 ms (300st)     148 ms (300st)     2.3x
+HMC (L=10):       158 ms (150st)    622 ms (150st)    3.9x
 ```
 
-Key challenge: compile-fn freezes random ops (both stateful and key-based).
-Fix: pre-generate `[K,D]` noise + `[K]` uniforms OUTSIDE compile-fn, pass as inputs.
-The compiled function indexes into pre-generated arrays at each step.
+Key design patterns:
+- **Pre-generated noise**: `[K,D]` noise + `[K]` uniforms generated OUTSIDE compile-fn, passed as inputs (compile-fn freezes random ops)
+- **MALA score+grad caching**: Thread `[q, score, grad]` through iterations → reduces val-grad calls from 3→1 per step. Return `#js [q score grad]` (JS array, not CLJS vector — required for compile-fn TreeFlatten)
+- **HMC leapfrog unrolling**: K outer MH × L inner leapfrog fully unrolled during compilation. Default block-size=20 (smaller than MH's 50 due to graph depth)
+- **Thin=1 fallback**: MALA uses 1-step compiled chain (still benefits from caching). HMC falls back to eager `hmc-step`
 
-**Where it helps:** burn-in (5x), thinned collection with thin > 1 (proportional).
-**Where it doesn't:** thin=1 sample collection — 1-step compiled chains are slower
-than eager due to 2D array generation overhead. Falls back to eager per-step.
-For `{:burn 0 :thin 1}`, no speedup over the old code.
+Tests: `loop_compiled_mala_test.cljs`, `loop_compiled_hmc_test.cljs`, `loop_compilation_test.cljs`
 
-Test: `test/genmlx/loop_compilation_test.cljs` — correctness, scaling, statistical validity.
+**Step 6: Lazy variant removal (2026-02-24)**
+
+Deleted: `compiled-mh-lazy`, `lazy-compiled-mh-step`, `mala-lazy`, `mala-step-lazy`, `hmc-lazy`, `hmc-step-lazy`, `hamiltonian-lazy`. These were confirmed regressions incompatible with Metal's 499K buffer limit. Loop compilation supersedes them completely.
+
+**Step 8: Distribution optimizations (2026-02-24)**
+
+- Replaced JS `log-gamma` (gradient-opaque) with `mlx-log-gamma` (MLX Lanczos, gradient-transparent) in beta, gamma, inv-gamma, student-t, dirichlet log-prob
+- Added batch categorical via Gumbel-max trick: `argmax(logits + Gumbel_noise, axis=1)` replacing sequential `mapv`
 
 ---
 
@@ -107,20 +122,14 @@ Test: `test/genmlx/loop_compilation_test.cljs` — correctness, scaling, statist
 
 | Step | What | Expected gain | Status |
 |---|---|---|---|
-| **5.4→prod** | Integrate loop compilation into `compiled-mh` | 5.6x on compiled-mh | **NEXT** |
-| **5.4→mala** | Apply loop compilation to MALA | ~5x on mala | Ready |
-| **5.4→hmc** | Apply loop compilation to HMC leapfrog | ~3-4x on hmc | Ready |
-| **5.3** | Optimize `collect-samples` loop overhead | 1.5-1.76x (lower priority now) | Deprioritized |
-| **6** | Remove lazy variants + tidy discipline | Correctness, long-chain stability | Ready |
 | **7** | Bun docs | Documentation only | Nearly done |
-| **8** | Distribution optimizations (mlx-log-gamma) | Enables beta/gamma gradients | Ready |
 | **9** | Lowered simulate/generate | 2-3x on simulate | Reassess |
 | **10** | Lowered vectorized sim/gen | Blocked on 9 | Later |
 | **11** | Final benchmark | Blocked on all | Later |
 
 **Skipped (zero-value):** Steps 3 (score lowering), 4 (gradient lowering) — compile-fn handles these.
 **Dead end:** Micro-batched lazy MH (Step 5.1) — measured, doesn't help.
-**Done:** Loop compilation (Step 5.4) — validated, ready for production integration.
+**Done:** Loop compilation (Step 5.4) for MH/MALA/HMC, lazy removal (Step 6), distribution fixes (Step 8).
 
 ---
 
@@ -137,25 +146,24 @@ Test: `test/genmlx/loop_compilation_test.cljs` — correctness, scaling, statist
 - `extract-params` (line 77): Extracts parameter values from trace as flat MLX array.
 - `init-vectorized-params` (line 136): Creates `[N,D]` param matrix from N independent generates.
 
-### `inference/mcmc.cljs` — All MCMC Variants (~1467 lines)
+### `inference/mcmc.cljs` — All MCMC Variants (~1300 lines)
 
 **MH variants:**
-- `mh` (line 84): GFI-based. Calls `p/regenerate` per step. 394x slower than Gen.jl.
-- `compiled-mh` (line 187): Parameter-space. Uses compiled score-fn. **0.375ms/step manual, 0.66ms/step actual** (gap is collect-samples overhead).
-- `compiled-mh-lazy` (line 242): Deferred eval. **REGRESSION** (1.81x slower). To be removed (Step 6).
-- `vectorized-compiled-mh` (line 307): N parallel chains. Bug 0.1 fixed.
+- `mh`: GFI-based. Calls `p/regenerate` per step. 394x slower than Gen.jl.
+- `compiled-mh`: Parameter-space. Loop-compiled by default (`compile? true`). **5.6x speedup** via `make-compiled-chain`.
+- `vectorized-compiled-mh`: N parallel chains.
 
 **MALA variants:**
-- `mala` (line 507): Uses `value-and-grad`. ~0.64ms/step.
-- `mala-lazy` (line 570): Deferred eval. **REGRESSION** (1.15-1.18x slower). To be removed (Step 6).
-- `vectorized-mala` (line 669): N parallel chains. Working, 12x effective at N=50.
+- `mala`: Uses `value-and-grad`. Loop-compiled by default (`compile? true`). **2.3x speedup** via `make-compiled-mala-chain` (caches score+grad across iterations).
+- `vectorized-mala`: N parallel chains. 12x effective at N=50.
 
 **HMC variants:**
-- `hmc` (line 853): Uses `mx/tidy` around leapfrog. 2.2-3.6x slower than Gen.jl.
-- `hmc-lazy` (line 925): Deferred eval. **REGRESSION** (~0.5x). To be removed (Step 6).
-- `vectorized-hmc` (line 1051): N parallel chains. Working, 2.5x effective at N=10.
+- `hmc`: Loop-compiled by default for identity mass matrix (`compile? true`). **3.9x speedup** via `make-compiled-hmc-chain` (K outer × L inner leapfrog unrolling). Non-identity metric falls back to eager.
+- `vectorized-hmc`: N parallel chains. 2.5x effective at N=10.
 
-**Other:** NUTS (line 1097), Gibbs (line 380), elliptical slice (line 412), involutive MH (line 449), MAP (line 1378).
+**Lazy variants REMOVED:** `compiled-mh-lazy`, `mala-lazy`, `hmc-lazy` — confirmed regressions, incompatible with Metal 499K limit. Superseded by loop compilation.
+
+**Other:** NUTS, Gibbs, elliptical slice, involutive MH, MAP.
 
 ### `mlx.cljs` — MLX Wrapper (~400 lines)
 
@@ -226,11 +234,13 @@ GenMLX uses a **local fork** of `@frost-beta/mlx` with MLX bumped from 0.25.0 to
 | `test/genmlx/eval_cost_model.cljs` | eval! cost vs graph depth. | 0.16ms fixed + 0.013ms/op. |
 | `test/genmlx/eval_cost_model_2.cljs` | Micro-batched MH, vmap, triple transform, dispatch cost. | Micro-batch dead end. Triple transform works. |
 
-### Loop Compilation Test (2026-02-24) — THE BREAKTHROUGH
+### Loop Compilation Tests (2026-02-24) — THE BREAKTHROUGH
 
 | File | What it tests | Key finding |
 |---|---|---|
 | `test/genmlx/loop_compilation_test.cljs` | compile-fn around entire K-step MH chain | **5.6x speedup.** Pre-generated noise fixes frozen randomness. |
+| `test/genmlx/loop_compiled_mala_test.cljs` | MALA loop compilation: correctness, benchmarks, stability | **2.3x speedup.** Score+grad caching (3→1 val-grad/step). |
+| `test/genmlx/loop_compiled_hmc_test.cljs` | HMC loop compilation: correctness, benchmarks, stability | **3.9x speedup.** K outer × L inner leapfrog unrolling. |
 
 ### Earlier Benchmarks
 
@@ -267,7 +277,7 @@ bun run --bun nbb test/genmlx/genjax_compat_test.cljs
 
 | Document | Status | Purpose |
 |---|---|---|
-| **TODO_OPTIMIZATION.md** | **ACTIVE — the plan** | Step-by-step optimization plan with validated data. Steps 3-4 marked superseded, Step 2.5 is the critical finding. |
+| **TODO_OPTIMIZATION.md** | **ACTIVE — the plan** | Steps 0-1, 2.5, 5, 6, 8 DONE. Steps 7 (docs), 9-11 remaining. |
 | **HANDOFF.md** | Active — background | Context for someone picking up the work (this file) |
 | **CLAUDE.md** | Active — conventions | Project structure, test patterns, how to edit |
 | OPTIMIZATION_MANIFESTO.md | **Outdated** | Contains wrong estimates. The architecture vision (triple transform pattern) is validated but the numbers are wrong. |
@@ -290,10 +300,12 @@ Metal execution (per graph op): 0.013ms     Scale with model size (GPU paralleli
 
 **Two proven strategies for amortizing dispatch:**
 
-1. **Loop compilation** (Step 5.4): compile-fn around entire K-step chain → one dispatch for K steps. 5.6x on compiled-mh. Pre-generate noise outside, pass as input arrays.
+1. **Loop compilation** (Step 5.4): compile-fn around entire K-step chain → one dispatch for K steps. MH 5.6x, MALA 2.3x, HMC 3.9x. Pre-generate noise outside, pass as input arrays. MALA additionally caches [score, grad] across iterations (3→1 val-grad calls). HMC unrolls K×L leapfrog steps.
 
 2. **Vectorized inference** (existing): N chains per eval! → one dispatch for N chains. 12x at N=50 for MALA.
 
-**Critical detail:** compile-fn freezes ALL random operations (stateful AND key-based). Solution: pre-generate noise arrays outside compile-fn and pass them as inputs. The compiled function indexes into pre-generated arrays at each step. This is the pattern for all future loop-compiled algorithms.
+**Critical detail:** compile-fn freezes ALL random operations (stateful AND key-based). Solution: pre-generate noise arrays outside compile-fn and pass them as inputs. The compiled function indexes into pre-generated arrays at each step.
+
+**Multi-output from compile-fn:** Use `#js [a b c]` (JS arrays), NOT `[a b c]` (CLJS vectors) — CLJS vectors are not traversed by compile-fn's TreeFlatten. This is required for MALA's `[q, score, grad]` threading. Extract with `(aget result 0)`.
 
 The triple transform `compile(vmap(grad(f)))` works on existing SCI-based functions. This is GenMLX's path to competitive performance: not by eliminating SCI, but by amortizing Metal dispatch.
