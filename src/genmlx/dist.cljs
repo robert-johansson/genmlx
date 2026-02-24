@@ -236,11 +236,9 @@
             (let [[k' _] (rng/split k2)]
               (recur k')))))))
   (log-prob [v]
-    (let [a-val (mx/realize alpha)
-          b-val (mx/realize beta-param)
-          log-beta-val (mx/scalar (- (+ (log-gamma a-val)
-                                        (log-gamma b-val))
-                                     (log-gamma (+ a-val b-val))))]
+    (let [log-beta-val (mx/subtract (mx/add (mlx-log-gamma alpha)
+                                            (mlx-log-gamma beta-param))
+                                    (mlx-log-gamma (mx/add alpha beta-param)))]
       (-> (mx/add (mx/multiply (mx/subtract alpha ONE) (mx/log v))
                   (mx/multiply (mx/subtract beta-param ONE)
                                (mx/log (mx/subtract ONE v))))
@@ -278,12 +276,11 @@
             (let [[k' _] (rng/split k2)]
               (recur k')))))))
   (log-prob [v]
-    (let [k shape-param
-          log-gamma-k (mx/scalar (log-gamma (mx/realize k)))]
+    (let [k shape-param]
       (-> (mx/add (mx/multiply (mx/subtract k ONE) (mx/log v))
                   (mx/multiply k (mx/log rate)))
           (mx/subtract (mx/multiply rate v))
-          (mx/subtract log-gamma-k)))))
+          (mx/subtract (mlx-log-gamma k))))))
 
 (let [gamma-dist-raw gamma-dist]
   (defn gamma-dist
@@ -422,8 +419,15 @@
 
 (defmethod dc/dist-sample-n :categorical [d key n]
   (let [{:keys [logits]} (:params d)
-        keys (rng/split-n (rng/ensure-key key) n)]
-    (mx/stack (mapv #(rng/categorical % logits) keys))))
+        key (rng/ensure-key key)
+        k (first (mx/shape logits))
+        ;; Gumbel-max trick: argmax(logits + Gumbel_noise) ~ Categorical(softmax(logits))
+        ;; Gumbel noise = -log(-log(U)), U ~ Uniform(0,1)
+        u (rng/uniform key [n k])
+        gumbel (mx/negative (mx/log (mx/negative (mx/log u))))
+        ;; Broadcast logits [K] + gumbel [N,K] → [N,K], then argmax over axis 1
+        perturbed (mx/add logits gumbel)]
+    (mx/argmax perturbed 1)))
 
 ;; ---------------------------------------------------------------------------
 ;; Poisson
@@ -487,15 +491,14 @@
       (mx/add loc (mx/multiply scale (mx/scalar t)))))
   (log-prob [v]
     (let [z (mx/divide (mx/subtract v loc) scale)
-          df-val (mx/realize df)
-          half-df (/ df-val 2.0)
-          half-df1 (/ (inc df-val) 2.0)
-          log-norm (mx/scalar (- (log-gamma half-df1)
-                                 (log-gamma half-df)
-                                 (* 0.5 (js/Math.log (* df-val js/Math.PI)))))]
+          half-df (mx/multiply HALF df)
+          half-df1 (mx/multiply HALF (mx/add df ONE))
+          log-norm (mx/subtract (mlx-log-gamma half-df1)
+                                (mx/add (mlx-log-gamma half-df)
+                                        (mx/multiply HALF (mx/log (mx/multiply df (mx/scalar js/Math.PI))))))]
       (-> log-norm
           (mx/subtract (mx/log scale))
-          (mx/subtract (mx/multiply (mx/scalar half-df1)
+          (mx/subtract (mx/multiply half-df1
                                     (mx/log (mx/add ONE
                                                     (mx/divide (mx/square z) df)))))))))
 
@@ -557,14 +560,12 @@
       (mx/array normalized)))
   (log-prob [v]
     (let [v (if (mx/array? v) v (mx/array v))
-          alpha-vals (mx/->clj alpha)
-          sum-alpha (reduce + alpha-vals)
-          log-beta (- (reduce + (map log-gamma alpha-vals))
-                      (log-gamma sum-alpha))
+          log-beta (mx/subtract (mx/sum (mlx-log-gamma alpha))
+                                (mlx-log-gamma (mx/sum alpha)))
           log-terms (mx/sum
                       (mx/multiply (mx/subtract alpha ONE)
                                    (mx/log v)))]
-      (mx/subtract log-terms (mx/scalar log-beta)))))
+      (mx/subtract log-terms log-beta))))
 
 ;; ---------------------------------------------------------------------------
 ;; Delta (point mass)
@@ -633,12 +634,10 @@
       (mx/divide scale-param g)))
   (log-prob [v]
     ;; log p(v) = shape*log(scale) - log-gamma(shape) - (shape+1)*log(v) - scale/v
-    (let [a (mx/realize shape-param)
-          log-gamma-a (mx/scalar (log-gamma a))]
-      (-> (mx/multiply shape-param (mx/log scale-param))
-          (mx/subtract log-gamma-a)
-          (mx/subtract (mx/multiply (mx/add shape-param ONE) (mx/log v)))
-          (mx/subtract (mx/divide scale-param v))))))
+    (-> (mx/multiply shape-param (mx/log scale-param))
+        (mx/subtract (mlx-log-gamma shape-param))
+        (mx/subtract (mx/multiply (mx/add shape-param ONE) (mx/log v)))
+        (mx/subtract (mx/divide scale-param v)))))
 
 (defmethod dc/dist-sample-n :inv-gamma [d key n]
   (let [{:keys [shape-param scale-param]} (:params d)

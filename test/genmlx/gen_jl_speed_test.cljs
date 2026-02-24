@@ -380,24 +380,24 @@
            many-addresses [] (obs-many-addresses))))
 
 ;; ---------------------------------------------------------------------------
-;; Lazy Compiled MH benchmarks (200 steps, no per-step GPU sync)
+;; Loop-Compiled MH benchmarks (200 steps, compiled chain)
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- Lazy Compiled MH (200 steps) --")
+(println "\n-- Loop-Compiled MH (200 steps) --")
 
-(run-bench! "single_gaussian" "compiled_mh_lazy" 200
-  (fn [] (mcmc/compiled-mh-lazy
-           {:samples 200 :addresses [:x]}
+(run-bench! "single_gaussian" "compiled_mh_loop" 200
+  (fn [] (mcmc/compiled-mh
+           {:samples 200 :addresses [:x] :compile? true}
            single-gaussian [] (constraints-single-gaussian))))
 
-(run-bench! "linear_regression" "compiled_mh_lazy" 200
-  (fn [] (mcmc/compiled-mh-lazy
-           {:samples 200 :addresses [:slope :intercept]}
+(run-bench! "linear_regression" "compiled_mh_loop" 200
+  (fn [] (mcmc/compiled-mh
+           {:samples 200 :addresses [:slope :intercept] :compile? true}
            linear-regression [linreg-xs] (obs-linear-regression))))
 
-(run-bench! "many_addresses" "compiled_mh_lazy" 200
-  (fn [] (mcmc/compiled-mh-lazy
-           {:samples 200 :addresses [:mu]}
+(run-bench! "many_addresses" "compiled_mh_loop" 200
+  (fn [] (mcmc/compiled-mh
+           {:samples 200 :addresses [:mu] :compile? true}
            many-addresses [] (obs-many-addresses))))
 
 ;; ---------------------------------------------------------------------------
@@ -420,21 +420,23 @@
                    many-addresses [] (obs-many-addresses))))
 
 ;; ---------------------------------------------------------------------------
-;; Lazy HMC benchmarks (50 steps, L=10, no per-step GPU sync)
+;; Loop-Compiled HMC benchmarks (50 steps, L=10)
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- Lazy HMC (50 steps, L=10) --")
+(println "\n-- Loop-Compiled HMC (50 steps, L=10) --")
 
-(run-bench! "linear_regression" "hmc_lazy" 50
-  (fn [] (mcmc/hmc-lazy
+(run-bench! "linear_regression" "hmc_loop" 50
+  (fn [] (mcmc/hmc
            {:samples 50 :burn 0 :step-size 0.01
-            :leapfrog-steps 10 :addresses [:slope :intercept]}
+            :leapfrog-steps 10 :addresses [:slope :intercept]
+            :compile? true}
            linear-regression [linreg-xs] (obs-linear-regression))))
 
-(run-bench! "many_addresses" "hmc_lazy" 50
-  (fn [] (mcmc/hmc-lazy
+(run-bench! "many_addresses" "hmc_loop" 50
+  (fn [] (mcmc/hmc
            {:samples 50 :burn 0 :step-size 0.01
-            :leapfrog-steps 10 :addresses [:mu]}
+            :leapfrog-steps 10 :addresses [:mu]
+            :compile? true}
            many-addresses [] (obs-many-addresses))))
 
 ;; ---------------------------------------------------------------------------
