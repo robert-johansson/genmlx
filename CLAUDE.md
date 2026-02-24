@@ -205,6 +205,6 @@ After any change, verify:
 
 - `README.md` — Quick start, examples, public API overview
 - `GAPS.md` — Long-term roadmap, gap analysis vs Gen.jl and GenJAX
-- `HANDOFF.md` — Optimization context, performance model, what's been tried
 - `TESTING.md` — Testing strategy and verification plan
-- `TODO_OPTIMIZATION.md` — Optimization plan and step-by-step progress
+- `TODO.md` — Master TODO with all remaining work
+- `TODO_OPTIMIZATION.md` — Optimization plan, findings, and step-by-step progress
