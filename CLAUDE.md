@@ -7,34 +7,31 @@ using Apple's MLX framework for GPU acceleration on Apple Silicon. It implements
 the **Generative Function Interface (GFI)** — the same architecture as Gen.jl
 (Julia) and GenJAX (JAX).
 
-~10,000 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
+~14,000 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
 
 ## How to run things
 
 ```bash
-# Run any ClojureScript file
-npx nbb <filepath>
-
-# Run a test
-npx nbb test/genmlx/dist_test.cljs
+# Run with Bun (recommended — 1.5x faster than Node.js)
+bun run --bun nbb <file.cljs>
 
 # Run all core tests
 for f in choicemap_test trace_test selection_test handler_test dist_test gen_test combinators_test inference_test; do
-  npx nbb "test/genmlx/${f}.cljs"
+  bun run --bun nbb "test/genmlx/${f}.cljs"
 done
 
 # Compatibility suites (must pass 165/165 and 73/73)
-npx nbb test/genmlx/gen_clj_compat_test.cljs
-npx nbb test/genmlx/genjax_compat_test.cljs
+bun run --bun nbb test/genmlx/gen_clj_compat_test.cljs
+bun run --bun nbb test/genmlx/genjax_compat_test.cljs
 
 # Vectorized inference tests + benchmarks
-npx nbb test/genmlx/vectorized_test.cljs
-npx nbb test/genmlx/vectorized_benchmark.cljs
+bun run --bun nbb test/genmlx/vectorized_test.cljs
+bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 ```
 
 No build step, no compilation. nbb interprets ClojureScript directly.
 
-**Requirements:** macOS with Apple Silicon, Node.js 18+, `npm install` for `@frost-beta/mlx`.
+**Requirements:** macOS with Apple Silicon, Bun (or Node.js 18+), `npm install` for `@frost-beta/mlx`.
 
 ## Project structure
 
@@ -86,8 +83,8 @@ Layer 2: GFI & Execution    (protocols, handler, edit, diff)
 Layer 3: DSL                (gen macro, dynamic — DynamicGF, vsimulate, vgenerate)
 Layer 4: Distributions      (dist/core, dist/macros, dist — 27 types)
 Layer 5: Combinators        (Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Contramap/Dimap)
-Layer 6: Inference          (IS, MH, MALA, HMC, NUTS, Gibbs, SMC, SMCP3, VI, MAP + kernels)
-Layer 7: Vectorized         (VectorizedTrace, batched execution, 29-122x speedup)
+Layer 6: Inference          (IS, MH, MALA, HMC, NUTS, Gibbs, ESS, SMC, SMCP3, VI, MAP + kernels)
+Layer 7: Vectorized         (VectorizedTrace, batched execution, dispatch amortization)
 ```
 
 ## Key design principles
@@ -154,20 +151,16 @@ The key insight: MLX operations broadcast naturally. Sample `[N]` values
 instead of `[]` at each trace site, and all downstream arithmetic (log-prob,
 score accumulation, weight computation) just works.
 
-- `dist-sample-n` multimethod: 10 distributions have native batch sampling,
-  the rest fall back to sequential
+- `dist-sample-n` multimethod: all distributions have native batch sampling
 - Batched handler transitions: structurally identical to scalar ones
 - `VectorizedTrace`: choices where leaves hold `[N]`-shaped arrays
 
-**Benchmarks (N=100, 5-site model):**
-- dist-sample-n: 29x speedup
-- vgenerate: 61-122x speedup
-- Vectorized IS: 81x
-- Vectorized SMC init: 65x
+**Benchmarks (N=100, 5-site model — dispatch amortization):**
+- vgenerate: 57x
+- Vectorized IS: 53x
+- Vectorized SMC init: 62x
 
-**Limitations:** No `splice` in batched mode, no vectorized `update`/`regenerate`
-yet, rejection-sampling distributions (beta, gamma, poisson, student-t,
-dirichlet) fall back to sequential.
+**Limitations:** No `splice` in batched mode.
 
 ## Test conventions
 
@@ -197,7 +190,7 @@ After any change, verify:
   (pure functions, MLX arrays for weights, `u/materialize-weights` at boundaries).
 - **Modifying handlers:** Edit transitions in `handler.cljs`. Keep them pure
   (`[state addr dist] -> [value state']`). The volatile! wrapper is separate.
-- **Testing:** Create `test/genmlx/<name>_test.cljs`, run with `npx nbb`.
+- **Testing:** Create `test/genmlx/<name>_test.cljs`, run with `bun run --bun nbb`.
 
 ## What to avoid
 
@@ -211,5 +204,7 @@ After any change, verify:
 ## Related documents
 
 - `README.md` — Quick start, examples, public API overview
-- `ARCHITECTURE.md` — Internal design patterns and refactoring history
 - `GAPS.md` — Long-term roadmap, gap analysis vs Gen.jl and GenJAX
+- `HANDOFF.md` — Optimization context, performance model, what's been tried
+- `TESTING.md` — Testing strategy and verification plan
+- `TODO_OPTIMIZATION.md` — Optimization plan and step-by-step progress
