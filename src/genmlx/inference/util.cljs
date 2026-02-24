@@ -119,21 +119,25 @@
     (mx/grad summed-fn)))
 
 (defn make-compiled-vectorized-score-and-grad
-  "Compiled vectorized score fn + compiled vectorized gradient fn.
-   Returns {:score-fn (compiled [N,D]->[N]), :grad-fn (compiled [N,D]->[N,D])}."
+  "Vectorized score fn + vectorized gradient fn.
+   Score fn is NOT compiled because model execution creates internal MLX
+   arrays (mx/scalar for data) that break mx/compile-fn's graph cache.
+   Grad fn is also left uncompiled for the same reason.
+   Returns {:score-fn ([N,D]->[N]), :grad-fn ([N,D]->[N,D])}."
   [model args observations addresses]
-  (let [vec-score-fn (make-vectorized-score-fn model args observations addresses)]
-    {:score-fn (mx/compile-fn vec-score-fn)
-     :grad-fn  (mx/compile-fn (make-vectorized-grad-score model args observations addresses))}))
+  {:score-fn (make-vectorized-score-fn model args observations addresses)
+   :grad-fn  (make-vectorized-grad-score model args observations addresses)})
 
 (defn make-compiled-vectorized-val-grad
-  "Compiled vectorized value-and-grad via sum trick.
-   Returns compiled fn: [N,D] -> [scalar, [N,D]] where scalar = sum(scores).
+  "Vectorized value-and-grad via sum trick.
+   NOT compiled because model execution creates internal MLX arrays that
+   break mx/compile-fn's graph cache.
+   Returns fn: [N,D] -> [scalar, [N,D]] where scalar = sum(scores).
    Per-chain scores can be obtained separately via score-fn."
   [model args observations addresses]
   (let [diff-score-fn (make-differentiable-vectorized-score-fn model args observations addresses)
         summed-fn (fn [params] (mx/sum (diff-score-fn params)))]
-    (mx/compile-fn (mx/value-and-grad summed-fn))))
+    (mx/value-and-grad summed-fn)))
 
 (defn init-vectorized-params
   "Initialize [N,D] parameter matrix from N independent generates."
