@@ -896,7 +896,7 @@
         log-accept (- current-H proposed-H)
         accept? (u/accept-mh? log-accept accept-key)
         q-next (if accept? q' q)]
-    {:state q-next :accepted? accept?}))
+    {:state q-next :accepted? accept? :log-accept log-accept}))
 
 (defn- make-compiled-hmc-chain
   "Build a compiled K-step HMC chain as one Metal dispatch.
@@ -989,6 +989,47 @@
                      (recur q' (conj! acc (mx/->clj q')) (inc i)))))]
     result))
 
+;; ---------------------------------------------------------------------------
+;; Dual averaging step-size adaptation (Hoffman & Gelman 2014, Algorithm 5)
+;; ---------------------------------------------------------------------------
+
+(defn- dual-averaging-warmup
+  "Run n-warmup eager HMC steps, adapting step-size via dual averaging.
+   Returns {:step-size adapted-eps :state final-q}."
+  [n-warmup target-accept init-q neg-U-compiled grad-neg-U
+   q-shape leapfrog-steps metric init-eps]
+  (let [gamma 0.05
+        t0 10
+        kappa 0.75
+        mu (js/Math.log (* 10.0 init-eps))]
+    (loop [m 1
+           q init-q
+           log-eps-bar 0.0
+           h-bar 0.0
+           current-eps init-eps]
+      (if (> m n-warmup)
+        {:step-size (js/Math.exp log-eps-bar) :state q}
+        (let [eps-mx (mx/scalar current-eps)
+              half-eps-mx (mx/scalar (* 0.5 current-eps))
+              half (mx/scalar 0.5)
+              {:keys [state log-accept]}
+              (hmc-step q neg-U-compiled grad-neg-U
+                        eps-mx half-eps-mx half q-shape
+                        leapfrog-steps metric nil)
+              ;; Acceptance probability (clamped to [0,1], NaN → 0 for divergent trajectories)
+              raw-alpha (js/Math.exp log-accept)
+              alpha (if (js/isNaN raw-alpha) 0.0 (min 1.0 raw-alpha))
+              ;; Update dual averaging statistics
+              w (/ 1.0 (+ m t0))
+              h-bar' (+ (* (- 1.0 w) h-bar)
+                        (* w (- target-accept alpha)))
+              log-eps' (- mu (/ (* (js/Math.sqrt m) h-bar') gamma))
+              ;; Averaged step-size (more stable)
+              m-kappa (js/Math.pow m (- kappa))
+              log-eps-bar' (+ (* m-kappa log-eps')
+                              (* (- 1.0 m-kappa) log-eps-bar))]
+          (recur (inc m) state log-eps-bar' h-bar' (js/Math.exp log-eps')))))))
+
 (defn hmc
   "Hamiltonian Monte Carlo sampling.
 
@@ -998,7 +1039,13 @@
 
    opts: {:samples N :step-size eps :leapfrog-steps L :burn B
           :thin T :addresses [addr...] :compile? bool :callback fn :key prng-key
-          :metric M :block-size K :device :cpu|:gpu}
+          :metric M :block-size K :device :cpu|:gpu
+          :adapt-step-size bool :target-accept float}
+
+   When :adapt-step-size is true, the burn-in phase uses dual averaging
+   (Hoffman & Gelman 2014) to tune step-size to achieve :target-accept
+   acceptance rate (default 0.65). The adapted step-size is then used
+   for the sampling phase.
 
    metric: mass matrix (optional, default identity).
      nil           — identity mass matrix (standard HMC)
@@ -1012,9 +1059,9 @@
    Returns vector of MLX arrays (parameter samples).
    Default device: :cpu (faster for scalar parameters)."
   [{:keys [samples step-size leapfrog-steps burn thin addresses compile? callback
-           key metric device block-size]
+           key metric device block-size adapt-step-size target-accept]
     :or {step-size 0.01 leapfrog-steps 20 burn 100 thin 1 compile? true
-         device :cpu block-size 20}}
+         device :cpu block-size 20 adapt-step-size false target-accept 0.65}}
    model args observations]
   (with-device device
     #(let [score-fn (u/make-score-fn model args observations addresses)
@@ -1022,17 +1069,32 @@
            grad-neg-U-raw (mx/grad neg-U)
            grad-neg-U (if compile? (mx/compile-fn grad-neg-U-raw) grad-neg-U-raw)
            neg-U-compiled (if compile? (mx/compile-fn neg-U) neg-U)
-           eps      (mx/scalar step-size)
-           half-eps (mx/scalar (* 0.5 step-size))
-           half     (mx/scalar 0.5)
            {:keys [trace]} (p/generate model args observations)
            init-q (u/extract-params trace addresses)
            n-params (count addresses)
-           q-shape (mx/shape init-q)]
+           q-shape (mx/shape init-q)
+           ;; Adaptive warmup: run dual averaging during burn-in
+           {:keys [adapted-eps warmup-q]}
+           (if (and adapt-step-size (> burn 0))
+             (let [{:keys [step-size state]}
+                   (dual-averaging-warmup
+                     burn target-accept init-q neg-U-compiled grad-neg-U
+                     q-shape leapfrog-steps metric step-size)]
+               {:adapted-eps step-size :warmup-q state})
+             {:adapted-eps nil :warmup-q nil})
+           ;; Use adapted step-size if available, otherwise original
+           final-step-size (or adapted-eps step-size)
+           eps      (mx/scalar final-step-size)
+           half-eps (mx/scalar (* 0.5 final-step-size))
+           half     (mx/scalar 0.5)
+           ;; Start from warmup state if adaptation ran
+           start-q  (or warmup-q init-q)
+           ;; If adapted, burn-in is already done
+           remaining-burn (if adapted-eps 0 burn)]
        (if (and compile? (nil? metric))
          ;; Loop-compiled path (identity mass matrix only)
-         (let [burn-block (min (max burn 1) block-size)
-               burn-chain (when (> burn 0)
+         (let [burn-block (min (max remaining-burn 1) block-size)
+               burn-chain (when (> remaining-burn 0)
                             (make-compiled-hmc-chain
                               burn-block neg-U grad-neg-U-raw
                               eps half-eps half n-params leapfrog-steps))
@@ -1041,17 +1103,17 @@
                               thin neg-U grad-neg-U-raw
                               eps half-eps half n-params leapfrog-steps))]
            (run-loop-compiled-hmc
-             {:samples samples :burn burn :thin thin :callback callback}
-             init-q n-params neg-U-compiled grad-neg-U eps half-eps half q-shape
+             {:samples samples :burn remaining-burn :thin thin :callback callback}
+             start-q n-params neg-U-compiled grad-neg-U eps half-eps half q-shape
              leapfrog-steps metric burn-chain burn-block thin-chain))
          ;; Fallback: per-step eager path (or non-identity metric)
          (collect-samples
-           {:samples samples :burn burn :thin thin :callback callback :key key}
+           {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
            (fn [q step-key]
              (hmc-step q neg-U-compiled grad-neg-U eps half-eps half q-shape
                        leapfrog-steps metric step-key))
            mx/->clj
-           init-q)))))
+           start-q)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized HMC (N parallel chains)
