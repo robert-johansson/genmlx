@@ -259,7 +259,7 @@ wrong results in certain use cases.*
 *Generative function types that are missing GFI protocol implementations,
 causing runtime failures when used in certain inference contexts.*
 
-- [ ] **17.1** Add `IAssess` to all combinators
+- [x] **17.1** Add `IAssess` to all combinators
   - **Files**: `combinators.cljs`
   - **Impact**: `p/assess` cannot be called on Map, Unfold, Switch, Scan, Mask, Mix,
     Recurse, Contramap, or MapRetval. Any inference code that calls `assess` on a
@@ -267,7 +267,7 @@ causing runtime failures when used in certain inference contexts.*
   - **Scope**: ~5-10 lines per combinator (delegate to `generate` with full constraints,
     similar to how DynamicGF implements it)
 
-- [ ] **17.2** Add `IPropose` to all combinators
+- [x] **17.2** Add `IPropose` to all combinators
   - **Files**: `combinators.cljs`
   - **Impact**: `p/propose` cannot be called on combinators. Affects custom proposal MH
     when the proposal is a combinator-constructed GF.
@@ -767,8 +767,8 @@ MEDIUM (quality and completeness):
   18.1  MLX-native log-gamma in 4 distributions   ~80 lines
   18.2  Categorical native sample-n               ~15 lines
   18.3  Parameter validation for all dists        ~30 lines
-  17.1  IAssess on combinators                    ~50 lines
-  17.2  IPropose on combinators                   ~50 lines
+  17.1  IAssess on combinators                    (done)
+  17.2  IPropose on combinators                   (done)
   17.5  IProject on CustomGradientGF/NeuralNetGF  (done)
   19.2  Deduplicate resampling                    ~30 lines refactor
   19.3  Deduplicate Adam optimizer                ~5 lines refactor

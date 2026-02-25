@@ -1367,3 +1367,181 @@
                                       :choices (:choices trace)
                                       :retval nil :score (:score trace)})]
       (p/project (:inner this) inner-trace selection))))
+
+;; ---------------------------------------------------------------------------
+;; IAssess and IPropose implementations
+;; ---------------------------------------------------------------------------
+
+(extend-type MapCombinator
+  p/IAssess
+  (assess [this args choices]
+    (let [n (count (first args))
+          results (mapv (fn [i]
+                          (p/assess (:kernel this)
+                                    (mapv #(nth % i) args)
+                                    (cm/get-submap choices i)))
+                        (range n))]
+      {:retval (mapv :retval results)
+       :weight (sum-field results :weight)}))
+
+  p/IPropose
+  (propose [this args]
+    (let [n (count (first args))
+          results (mapv (fn [i]
+                          (p/propose (:kernel this)
+                                     (mapv #(nth % i) args)))
+                        (range n))]
+      {:choices (assemble-choices results :choices)
+       :weight (sum-field results :weight)
+       :retval (mapv :retval results)})))
+
+(extend-type UnfoldCombinator
+  p/IAssess
+  (assess [this args choices]
+    (let [[n init-state & extra] args]
+      (loop [t 0 state init-state weight (mx/scalar 0.0) states []]
+        (if (>= t n)
+          {:retval states :weight weight}
+          (let [result (p/assess (:kernel this)
+                                 (into [t state] extra)
+                                 (cm/get-submap choices t))
+                new-state (:retval result)]
+            (recur (inc t) new-state
+                   (mx/add weight (:weight result))
+                   (conj states new-state)))))))
+
+  p/IPropose
+  (propose [this args]
+    (let [[n init-state & extra] args]
+      (loop [t 0 state init-state
+             choices cm/EMPTY weight (mx/scalar 0.0) states []]
+        (if (>= t n)
+          {:choices choices :weight weight :retval states}
+          (let [result (p/propose (:kernel this)
+                                  (into [t state] extra))
+                new-state (:retval result)]
+            (recur (inc t) new-state
+                   (cm/set-choice choices [t] (:choices result))
+                   (mx/add weight (:weight result))
+                   (conj states new-state))))))))
+
+(extend-type SwitchCombinator
+  p/IAssess
+  (assess [this args choices]
+    (let [[idx & branch-args] args]
+      (p/assess (nth (:branches this) idx) (vec branch-args) choices)))
+
+  p/IPropose
+  (propose [this args]
+    (let [[idx & branch-args] args]
+      (p/propose (nth (:branches this) (int idx)) (vec branch-args)))))
+
+(extend-type ScanCombinator
+  p/IAssess
+  (assess [this args choices]
+    (let [[init-carry inputs] args
+          n (count inputs)]
+      (loop [t 0 carry init-carry weight (mx/scalar 0.0) outputs []]
+        (if (>= t n)
+          {:retval {:carry carry :outputs outputs} :weight weight}
+          (let [result (p/assess (:kernel this)
+                                 [carry (nth inputs t)]
+                                 (cm/get-submap choices t))
+                [new-carry output] (:retval result)]
+            (recur (inc t) new-carry
+                   (mx/add weight (:weight result))
+                   (conj outputs output)))))))
+
+  p/IPropose
+  (propose [this args]
+    (let [[init-carry inputs] args
+          n (count inputs)]
+      (loop [t 0 carry init-carry
+             choices cm/EMPTY weight (mx/scalar 0.0) outputs []]
+        (if (>= t n)
+          {:choices choices :weight weight
+           :retval {:carry carry :outputs outputs}}
+          (let [result (p/propose (:kernel this)
+                                  [carry (nth inputs t)])
+                [new-carry output] (:retval result)]
+            (recur (inc t) new-carry
+                   (cm/set-choice choices [t] (:choices result))
+                   (mx/add weight (:weight result))
+                   (conj outputs output))))))))
+
+(extend-type MaskCombinator
+  p/IAssess
+  (assess [this args choices]
+    (let [[active? & inner-args] args]
+      (if active?
+        (p/assess (:inner this) (vec inner-args) choices)
+        {:retval nil :weight (mx/scalar 0.0)})))
+
+  p/IPropose
+  (propose [this args]
+    (let [[active? & inner-args] args]
+      (if active?
+        (p/propose (:inner this) (vec inner-args))
+        {:choices cm/EMPTY :weight (mx/scalar 0.0) :retval nil}))))
+
+(extend-type RecurseCombinator
+  p/IAssess
+  (assess [this args choices]
+    (p/assess ((:maker this) this) args choices))
+
+  p/IPropose
+  (propose [this args]
+    (p/propose ((:maker this) this) args)))
+
+(extend-type ContramapGF
+  p/IAssess
+  (assess [this args choices]
+    (p/assess (:inner this) ((:f this) args) choices))
+
+  p/IPropose
+  (propose [this args]
+    (p/propose (:inner this) ((:f this) args))))
+
+(extend-type MapRetvalGF
+  p/IAssess
+  (assess [this args choices]
+    (let [result (p/assess (:inner this) args choices)]
+      {:retval ((:g this) (:retval result))
+       :weight (:weight result)}))
+
+  p/IPropose
+  (propose [this args]
+    (let [result (p/propose (:inner this) args)]
+      {:choices (:choices result)
+       :weight (:weight result)
+       :retval ((:g this) (:retval result))})))
+
+(extend-type MixCombinator
+  p/IAssess
+  (assess [this args choices]
+    (let [log-w ((:log-weights-fn this) args)
+          idx-val (cm/get-choice choices [:component-idx])
+          idx (int (mx/item idx-val))
+          idx-dist (dc/->Distribution :categorical {:logits log-w})
+          idx-weight (dc/dist-log-prob idx-dist (mx/scalar idx mx/int32))
+          component (nth (:components this) idx)
+          inner-choices (if (instance? cm/Node choices)
+                          (cm/->Node (dissoc (:m choices) :component-idx))
+                          choices)
+          inner-result (p/assess component args inner-choices)]
+      {:retval (:retval inner-result)
+       :weight (mx/add idx-weight (:weight inner-result))}))
+
+  p/IPropose
+  (propose [this args]
+    (let [log-w ((:log-weights-fn this) args)
+          idx-dist (dc/->Distribution :categorical {:logits log-w})
+          idx-propose (dc/dist-propose idx-dist)
+          idx (int (mx/item (cm/get-value (:choices idx-propose))))
+          component (nth (:components this) idx)
+          comp-result (p/propose component args)]
+      {:choices (cm/set-choice (:choices comp-result)
+                               [:component-idx]
+                               (mx/scalar idx mx/int32))
+       :weight (mx/add (:weight idx-propose) (:weight comp-result))
+       :retval (:retval comp-result)})))
