@@ -74,12 +74,13 @@
     (let [old-choices (:choices trace)
           args (:args trace)
           n (count (first args))
+          old-element-scores (::element-scores (meta trace))
           results (mapv (fn [i]
                           (let [kernel-args (mapv #(nth % i) args)
                                 old-trace (tr/make-trace
                                             {:gen-fn kernel :args kernel-args
                                              :choices (cm/get-submap old-choices i)
-                                             :retval nil :score (mx/scalar 0.0)})]
+                                             :retval nil :score (if old-element-scores (nth old-element-scores i) (mx/scalar 0.0))})]
                             (p/update kernel old-trace (cm/get-submap constraints i))))
                         (range n))
           choices (assemble-choices results (comp :choices :trace))
@@ -101,12 +102,13 @@
     (let [old-choices (:choices trace)
           args (:args trace)
           n (count (first args))
+          old-element-scores (::element-scores (meta trace))
           results (mapv (fn [i]
                           (let [kernel-args (mapv #(nth % i) args)
                                 old-trace (tr/make-trace
                                             {:gen-fn kernel :args kernel-args
                                              :choices (cm/get-submap old-choices i)
-                                             :retval nil :score (mx/scalar 0.0)})]
+                                             :retval nil :score (if old-element-scores (nth old-element-scores i) (mx/scalar 0.0))})]
                             (p/regenerate kernel old-trace
                                           (sel/get-subselection selection i))))
                         (range n))
@@ -233,7 +235,7 @@
                     old-trace (tr/make-trace
                                 {:gen-fn kern :args kernel-args
                                  :choices old-sub-choices
-                                 :retval nil :score (mx/scalar 0.0)})
+                                 :retval nil :score (if old-step-scores (nth old-step-scores t) (mx/scalar 0.0))})
                     result (p/update kern old-trace (cm/get-submap constraints t))
                     new-trace (:trace result)
                     new-state (:retval new-trace)]
@@ -251,7 +253,8 @@
   (regenerate [this trace selection]
     (let [kern (:kernel this)
           {:keys [args choices]} trace
-          [n init-state & extra] args]
+          [n init-state & extra] args
+          old-step-scores (::step-scores (meta trace))]
       (loop [t 0 state init-state
              new-choices cm/EMPTY score (mx/scalar 0.0) weight (mx/scalar 0.0)
              states [] step-scores []]
@@ -266,7 +269,7 @@
                 old-trace (tr/make-trace
                             {:gen-fn kern :args kernel-args
                              :choices old-sub-choices
-                             :retval nil :score (mx/scalar 0.0)})
+                             :retval nil :score (if old-step-scores (nth old-step-scores t) (mx/scalar 0.0))})
                 result (p/regenerate kern old-trace
                                      (sel/get-subselection selection t))
                 new-trace (:trace result)
@@ -736,7 +739,7 @@
                     old-trace (tr/make-trace
                                 {:gen-fn kern :args [carry (nth inputs t)]
                                  :choices old-sub-choices
-                                 :retval nil :score (mx/scalar 0.0)})
+                                 :retval nil :score (if old-step-scores (nth old-step-scores t) (mx/scalar 0.0))})
                     result (p/update kern old-trace (cm/get-submap constraints t))
                     new-trace (:trace result)
                     [new-carry output] (:retval new-trace)]
@@ -756,7 +759,8 @@
     (let [kern (:kernel this)
           {:keys [args choices]} trace
           [init-carry inputs] args
-          n (count inputs)]
+          n (count inputs)
+          old-step-scores (::step-scores (meta trace))]
       (loop [t 0 carry init-carry
              new-choices cm/EMPTY score (mx/scalar 0.0) weight (mx/scalar 0.0)
              outputs [] step-scores [] step-carries []]
@@ -772,7 +776,7 @@
                 old-trace (tr/make-trace
                             {:gen-fn kern :args [carry (nth inputs t)]
                              :choices old-sub-choices
-                             :retval nil :score (mx/scalar 0.0)})
+                             :retval nil :score (if old-step-scores (nth old-step-scores t) (mx/scalar 0.0))})
                 result (p/regenerate kern old-trace
                                      (sel/get-subselection selection t))
                 new-trace (:trace result)
@@ -1145,7 +1149,7 @@
                                   old-trace (tr/make-trace
                                               {:gen-fn kernel :args kernel-args
                                                :choices (cm/get-submap old-choices i)
-                                               :retval nil :score (mx/scalar 0.0)})]
+                                               :retval nil :score (if old-element-scores (nth old-element-scores i) (mx/scalar 0.0))})]
                               (p/update kernel old-trace (cm/get-submap constraints i)))
                             ;; Element unchanged: reuse old choices and score
                             {:trace (tr/make-trace
@@ -1232,6 +1236,13 @@
       {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
       (p/update this trace constraints))))
 
+(extend-type MixCombinator
+  p/IUpdateWithDiffs
+  (update-with-diffs [this trace constraints argdiffs]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
+      (p/update this trace constraints))))
+
 ;; ---------------------------------------------------------------------------
 ;; IProject implementations
 ;; ---------------------------------------------------------------------------
@@ -1242,14 +1253,15 @@
     (let [old-choices (:choices trace)
           args (:args trace)
           n (count (first args))
-          kernel (:kernel this)]
+          kernel (:kernel this)
+          old-element-scores (::element-scores (meta trace))]
       (reduce (fn [acc i]
                 (let [kernel-args (mapv #(nth % i) args)
                       sub-trace (tr/make-trace
                                   {:gen-fn kernel :args kernel-args
                                    :choices (cm/get-submap old-choices i)
                                    :retval (nth (:retval trace) i nil)
-                                   :score (mx/scalar 0.0)})
+                                   :score (if old-element-scores (nth old-element-scores i) (mx/scalar 0.0))})
                       w (p/project kernel sub-trace
                                    (sel/get-subselection selection i))]
                   (mx/add acc w)))

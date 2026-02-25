@@ -36,6 +36,21 @@
      :weight (mx/scalar 0.0)
      :retval (apply forward-fn args)})
 
+  p/IUpdate
+  (update [this trace constraints]
+    {:trace (p/simulate this (:args trace))
+     :weight (mx/scalar 0.0)
+     :discard cm/EMPTY})
+
+  p/IRegenerate
+  (regenerate [this trace selection]
+    {:trace (p/simulate this (:args trace))
+     :weight (mx/scalar 0.0)})
+
+  p/IProject
+  (project [this trace selection]
+    (mx/scalar 0.0))
+
   p/IHasArgumentGrads
   (has-argument-grads [_] arg-grads))
 

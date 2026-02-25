@@ -19,6 +19,7 @@
 ;; Forward declarations
 (declare execute-sub)
 (declare execute-sub-project)
+(declare execute-sub-assess)
 
 (defn- warn-unused-constraints
   "Warn if any top-level constraint keys were not consumed by the trace."
@@ -44,12 +45,15 @@
           result (h/run-handler h/simulate-handler
                    {:choices cm/EMPTY :score SCORE-ZERO :key key
                     :executor execute-sub}
-                   #(apply body-fn args))]
-      (tr/make-trace
-        {:gen-fn this :args args
-         :choices (:choices result)
-         :retval  (:retval result)
-         :score   (:score result)})))
+                   #(apply body-fn args))
+          trace (tr/make-trace
+                  {:gen-fn this :args args
+                   :choices (:choices result)
+                   :retval  (:retval result)
+                   :score   (:score result)})]
+      (if-let [ss (:splice-scores result)]
+        (with-meta trace {::splice-scores ss})
+        trace)))
 
   p/IGenerate
   (generate [this args constraints]
@@ -59,13 +63,16 @@
                     :weight SCORE-ZERO
                     :key key :constraints constraints
                     :executor execute-sub}
-                   #(apply body-fn args))]
+                   #(apply body-fn args))
+          trace (tr/make-trace
+                  {:gen-fn this :args args
+                   :choices (:choices result)
+                   :retval  (:retval result)
+                   :score   (:score result)})]
       (warn-unused-constraints "generate" constraints (:choices result))
-      {:trace (tr/make-trace
-                {:gen-fn this :args args
-                 :choices (:choices result)
-                 :retval  (:retval result)
-                 :score   (:score result)})
+      {:trace (if-let [ss (:splice-scores result)]
+                (with-meta trace {::splice-scores ss})
+                trace)
        :weight (:weight result)}))
 
   p/IUpdate
@@ -76,15 +83,19 @@
                     :weight SCORE-ZERO
                     :key key :constraints constraints
                     :old-choices (:choices trace)
+                    :old-splice-scores (::splice-scores (meta trace))
                     :discard cm/EMPTY
                     :executor execute-sub}
-                   #(apply body-fn (:args trace)))]
+                   #(apply body-fn (:args trace)))
+          new-trace (tr/make-trace
+                      {:gen-fn this :args (:args trace)
+                       :choices (:choices result)
+                       :retval  (:retval result)
+                       :score   (:score result)})]
       (warn-unused-constraints "update" constraints (:choices result))
-      {:trace (tr/make-trace
-                {:gen-fn this :args (:args trace)
-                 :choices (:choices result)
-                 :retval  (:retval result)
-                 :score   (:score result)})
+      {:trace (if-let [ss (:splice-scores result)]
+                (with-meta new-trace {::splice-scores ss})
+                new-trace)
        :weight  (mx/subtract (:score result) (:score trace))
        :discard (:discard result)}))
 
@@ -97,30 +108,34 @@
                     :weight SCORE-ZERO  ;; tracks proposal ratio
                     :key key :selection selection
                     :old-choices (:choices trace)
+                    :old-splice-scores (::splice-scores (meta trace))
                     :executor execute-sub}
                    #(apply body-fn (:args trace)))
           new-score (:score result)
           proposal-ratio (:weight result)
           ;; Gen.jl regenerate weight = new_score - old_score - proposal_ratio
-          weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)]
-      {:trace (tr/make-trace
-                {:gen-fn this :args (:args trace)
-                 :choices (:choices result)
-                 :retval  (:retval result)
-                 :score   new-score})
+          weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)
+          new-trace (tr/make-trace
+                      {:gen-fn this :args (:args trace)
+                       :choices (:choices result)
+                       :retval  (:retval result)
+                       :score   new-score})]
+      {:trace (if-let [ss (:splice-scores result)]
+                (with-meta new-trace {::splice-scores ss})
+                new-trace)
        :weight weight}))
 
   p/IAssess
   (assess [this args choices]
     (let [key (rng/fresh-key)
-          result (h/run-handler h/generate-handler
+          result (h/run-handler h/assess-handler
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
                     :key key :constraints choices
-                    :executor execute-sub}
+                    :executor execute-sub-assess}
                    #(apply body-fn args))]
       {:retval (:retval result)
-       :weight (:weight result)}))
+       :weight (:score result)}))
 
   p/IPropose
   (propose [this args]
@@ -151,7 +166,7 @@
 (defn- execute-sub
   "Execute a sub-generative-function during handler execution.
    Delegates to the sub-gf's own GFI methods."
-  [gf args {:keys [constraints old-choices selection key]}]
+  [gf args {:keys [constraints old-choices selection key old-splice-score]}]
   (cond
     ;; Regenerate mode
     selection
@@ -159,7 +174,7 @@
           (p/regenerate gf
             (tr/make-trace {:gen-fn gf :args args
                             :choices (or old-choices cm/EMPTY)
-                            :retval nil :score SCORE-ZERO})
+                            :retval nil :score (or old-splice-score SCORE-ZERO)})
             selection)]
       {:choices (:choices trace) :retval (:retval trace)
        :score (:score trace) :weight weight})
@@ -168,7 +183,7 @@
     (and old-choices (not= old-choices cm/EMPTY))
     (let [old-trace (tr/make-trace {:gen-fn gf :args args
                                     :choices old-choices
-                                    :retval nil :score SCORE-ZERO})
+                                    :retval nil :score (or old-splice-score SCORE-ZERO)})
           {:keys [trace weight discard]} (p/update gf old-trace
                                                     (or constraints cm/EMPTY))]
       {:choices (:choices trace) :retval (:retval trace)
@@ -195,6 +210,13 @@
      :retval (:retval trace)
      :score (:score trace)
      :weight weight}))
+
+(defn- execute-sub-assess
+  "Execute a sub-GF in assess mode: all choices must be provided."
+  [gf args {:keys [constraints]}]
+  (let [{:keys [retval weight]} (p/assess gf args (or constraints cm/EMPTY))]
+    {:choices (or constraints cm/EMPTY) :retval retval
+     :score weight :weight weight}))
 
 (defn make-gen-fn
   "Create a DynamicGF from a body function and its source form."

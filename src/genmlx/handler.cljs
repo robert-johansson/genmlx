@@ -98,6 +98,21 @@
                  (update :weight #(mx/add % lp)))])
       (simulate-transition state addr dist))))
 
+(defn- assess-transition
+  "Pure: all addresses must be constrained. Throws if not."
+  [state addr dist]
+  (let [constraint (cm/get-submap (:constraints state) addr)]
+    (if (cm/has-value? constraint)
+      (let [value (cm/get-value constraint)
+            lp    (dc/dist-log-prob dist value)]
+        [value (-> state
+                 (update :choices cm/set-value addr value)
+                 (update :score  #(mx/add % lp))
+                 (update :weight #(mx/add % lp)))])
+      (throw (ex-info (str "assess: address " addr " not found in provided choices. "
+                           "All addresses must be constrained for assess.")
+                      {:addr addr})))))
+
 (defn- update-transition
   "Pure: use new constraint, keep old, or sample fresh."
   [state addr dist]
@@ -280,6 +295,13 @@
     (vreset! *state* state')
     value))
 
+(defn assess-handler
+  "All addresses must be constrained. Errors on unconstrained."
+  [addr dist]
+  (let [[value state'] (assess-transition @*state* addr dist)]
+    (vreset! *state* state')
+    value))
+
 (defn update-handler
   "Update: use new constraint, keep old, or sample fresh."
   [addr dist]
@@ -358,6 +380,7 @@
   (-> state
     (update :choices cm/set-submap addr (:choices sub-result))
     (update :score (fn [sc] (mx/add sc (:score sub-result))))
+    (update :splice-scores (fn [ss] (assoc (or ss {}) addr (:score sub-result))))
     (cond->
       (and (contains? state :weight) (:weight sub-result))
       (update :weight (fn [w] (mx/add w (:weight sub-result))))
@@ -555,11 +578,13 @@
             sub-old-choices (cm/get-submap (:old-choices state) addr)
             sub-selection   (when-let [s (:selection state)]
                               (sel/get-subselection s addr))
+            old-splice-score (get (:old-splice-scores state) addr)
             sub-result ((:executor state) gf args
                          {:constraints sub-constraints
                           :old-choices sub-old-choices
                           :selection   sub-selection
-                          :key         (:key state)})]
+                          :key         (:key state)
+                          :old-splice-score old-splice-score})]
         (vswap! *state* merge-sub-result addr sub-result)
         (:retval sub-result)))
     ;; Direct mode — simulate and return value
