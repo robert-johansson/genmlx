@@ -989,35 +989,85 @@
     result))
 
 ;; ---------------------------------------------------------------------------
+;; Find reasonable initial step-size (Hoffman & Gelman 2014, Algorithm 4)
+;; ---------------------------------------------------------------------------
+
+(defn- find-reasonable-epsilon
+  "Find initial step-size yielding ~50% acceptance via doubling/halving."
+  [q neg-U-fn grad-neg-U q-shape metric]
+  (let [half (mx/scalar 0.5)
+        test-accept
+        (fn [eps]
+          (let [p0 (doto (sample-momentum metric q-shape nil) mx/eval!)
+                current-H (hamiltonian neg-U-fn q p0 half metric)
+                [q' p'] (leapfrog-step grad-neg-U q p0
+                                       (mx/scalar eps) (mx/scalar (* 0.5 eps)) metric)
+                proposed-H (hamiltonian neg-U-fn q' p' half metric)
+                raw (js/Math.exp (- current-H proposed-H))]
+            (if (js/isNaN raw) 0.0 (min 1.0 raw))))
+        init-a (test-accept 1.0)
+        dir (if (> init-a 0.5) 1 -1)]
+    (loop [eps 1.0, i 0]
+      (if (>= i 100) eps
+        (let [a (test-accept eps)]
+          (if (or (and (pos? dir) (< a 0.5))
+                  (and (neg? dir) (> a 0.5)))
+            eps
+            (recur (* eps (js/Math.pow 2.0 dir)) (inc i))))))))
+
+;; ---------------------------------------------------------------------------
+;; Welford's online mean + variance (for diagonal mass matrix estimation)
+;; ---------------------------------------------------------------------------
+
+(defn- welford-update
+  "Online Welford update for mean and M2 (sum of squared deviations)."
+  [mean-vec m2-vec n q-js]
+  (let [n' (inc n)
+        delta (mapv - q-js mean-vec)
+        mean' (mapv (fn [m d] (+ m (/ d n'))) mean-vec delta)
+        delta2 (mapv - q-js mean')
+        m2' (mapv + m2-vec (mapv * delta delta2))]
+    [mean' m2' n']))
+
+(defn- welford-variance
+  "Compute variance from Welford state. Returns MLX diagonal array or nil if n < 10."
+  [m2-vec n]
+  (when (>= n 10)
+    (let [var-vec (mapv (fn [m2] (max (/ m2 (dec n)) 1e-3)) m2-vec)]
+      (mx/array var-vec))))
+
+;; ---------------------------------------------------------------------------
 ;; Dual averaging step-size adaptation (Hoffman & Gelman 2014, Algorithm 5)
+;; with optional diagonal mass matrix estimation via Welford's algorithm.
 ;; ---------------------------------------------------------------------------
 
 (defn- dual-averaging-warmup
-  "Run n-warmup eager HMC steps, adapting step-size via dual averaging.
-   Returns {:step-size adapted-eps :state final-q}."
-  [n-warmup target-accept init-q neg-U-compiled grad-neg-U
-   q-shape leapfrog-steps metric init-eps]
+  "Run n-warmup steps adapting step-size via dual averaging.
+   step-fn: (fn [q eps-val metric key] -> {:state q' :accept-stat alpha})
+   warmup-metric: metric to use during warmup (nil = identity).
+   Returns {:step-size adapted-eps :state final-q :metric diagonal-or-nil}."
+  [n-warmup target-accept init-q step-fn n-params init-eps adapt-metric? warmup-metric]
   (let [gamma 0.05
         t0 10
         kappa 0.75
-        mu (js/Math.log (* 10.0 init-eps))]
+        mu (js/Math.log (* 10.0 init-eps))
+        init-welford (when adapt-metric?
+                       [(vec (repeat n-params 0.0))
+                        (vec (repeat n-params 0.0))
+                        0])]
     (loop [m 1
            q init-q
            log-eps-bar 0.0
            h-bar 0.0
-           current-eps init-eps]
+           current-eps init-eps
+           welford init-welford]
       (if (> m n-warmup)
-        {:step-size (js/Math.exp log-eps-bar) :state q}
-        (let [eps-mx (mx/scalar current-eps)
-              half-eps-mx (mx/scalar (* 0.5 current-eps))
-              half (mx/scalar 0.5)
-              {:keys [state log-accept]}
-              (hmc-step q neg-U-compiled grad-neg-U
-                        eps-mx half-eps-mx half q-shape
-                        leapfrog-steps metric nil)
-              ;; Acceptance probability (clamped to [0,1], NaN → 0 for divergent trajectories)
-              raw-alpha (js/Math.exp log-accept)
-              alpha (if (js/isNaN raw-alpha) 0.0 (min 1.0 raw-alpha))
+        {:step-size (js/Math.exp log-eps-bar)
+         :state q
+         :metric (when welford (welford-variance (second welford) (nth welford 2)))}
+        (let [{:keys [state accept-stat]}
+              (step-fn q current-eps warmup-metric nil)
+              alpha (if (js/isNaN accept-stat) 0.0 (min 1.0 accept-stat))
               ;; Update dual averaging statistics
               w (/ 1.0 (+ m t0))
               h-bar' (+ (* (- 1.0 w) h-bar)
@@ -1026,8 +1076,14 @@
               ;; Averaged step-size (more stable)
               m-kappa (js/Math.pow m (- kappa))
               log-eps-bar' (+ (* m-kappa log-eps')
-                              (* (- 1.0 m-kappa) log-eps-bar))]
-          (recur (inc m) state log-eps-bar' h-bar' (js/Math.exp log-eps')))))))
+                              (* (- 1.0 m-kappa) log-eps-bar))
+              ;; Welford update for metric estimation
+              welford' (when welford
+                         (let [[mean-v m2-v n] welford
+                               q-js (mx/->clj state)]
+                           (welford-update mean-v m2-v n q-js)))]
+          (recur (inc m) state log-eps-bar' h-bar' (js/Math.exp log-eps')
+                 welford'))))))
 
 (defn hmc
   "Hamiltonian Monte Carlo sampling.
@@ -1039,12 +1095,15 @@
    opts: {:samples N :step-size eps :leapfrog-steps L :burn B
           :thin T :addresses [addr...] :compile? bool :callback fn :key prng-key
           :metric M :block-size K :device :cpu|:gpu
-          :adapt-step-size bool :target-accept float}
+          :adapt-step-size bool :target-accept float :adapt-metric bool}
 
    When :adapt-step-size is true, the burn-in phase uses dual averaging
    (Hoffman & Gelman 2014) to tune step-size to achieve :target-accept
    acceptance rate (default 0.65). The adapted step-size is then used
    for the sampling phase.
+
+   When :adapt-metric is true, a diagonal mass matrix is estimated from
+   warmup samples using Welford's online algorithm.
 
    metric: mass matrix (optional, default identity).
      nil           — identity mass matrix (standard HMC)
@@ -1058,9 +1117,10 @@
    Returns vector of MLX arrays (parameter samples).
    Default device: :cpu (faster for scalar parameters)."
   [{:keys [samples step-size leapfrog-steps burn thin addresses compile? callback
-           key metric device block-size adapt-step-size target-accept]
+           key metric device block-size adapt-step-size target-accept adapt-metric]
     :or {step-size 0.01 leapfrog-steps 20 burn 100 thin 1 compile? true
-         device :cpu block-size 20 adapt-step-size false target-accept 0.65}}
+         device :cpu block-size 20 adapt-step-size false target-accept 0.65
+         adapt-metric false}}
    model args observations]
   (with-device device
     #(let [score-fn (u/make-score-fn model args observations addresses)
@@ -1072,25 +1132,41 @@
            init-q (u/extract-params trace addresses)
            n-params (count addresses)
            q-shape (mx/shape init-q)
-           ;; Adaptive warmup: run dual averaging during burn-in
-           {:keys [adapted-eps warmup-q]}
-           (if (and adapt-step-size (> burn 0))
-             (let [{:keys [step-size state]}
-                   (dual-averaging-warmup
-                     burn target-accept init-q neg-U-compiled grad-neg-U
-                     q-shape leapfrog-steps metric step-size)]
-               {:adapted-eps step-size :warmup-q state})
-             {:adapted-eps nil :warmup-q nil})
-           ;; Use adapted step-size if available, otherwise original
+           ;; Adaptive warmup: dual averaging + optional metric estimation
+           {:keys [adapted-eps warmup-q adapted-metric]}
+           (if (and (or adapt-step-size adapt-metric) (> burn 0))
+             (let [hmc-step-fn
+                   (fn [q eps-val m _key]
+                     (let [eps-mx (mx/scalar eps-val)
+                           half-eps-mx (mx/scalar (* 0.5 eps-val))
+                           half-mx (mx/scalar 0.5)
+                           {:keys [state log-accept]}
+                           (hmc-step q neg-U-compiled grad-neg-U
+                                     eps-mx half-eps-mx half-mx q-shape
+                                     leapfrog-steps m nil)]
+                       {:state state
+                        :accept-stat (let [a (js/Math.exp log-accept)]
+                                       (if (js/isNaN a) 0.0 (min 1.0 a)))}))
+                   init-eps (if adapt-step-size
+                              (find-reasonable-epsilon init-q neg-U-compiled grad-neg-U
+                                                       q-shape metric)
+                              step-size)
+                   result (dual-averaging-warmup
+                            burn target-accept init-q hmc-step-fn n-params init-eps
+                            adapt-metric (when-not adapt-metric metric))]
+               {:adapted-eps (when adapt-step-size (:step-size result))
+                :warmup-q (:state result)
+                :adapted-metric (:metric result)})
+             {:adapted-eps nil :warmup-q nil :adapted-metric nil})
+           ;; Use adapted values if available
+           final-metric (or adapted-metric metric)
            final-step-size (or adapted-eps step-size)
            eps      (mx/scalar final-step-size)
            half-eps (mx/scalar (* 0.5 final-step-size))
            half     (mx/scalar 0.5)
-           ;; Start from warmup state if adaptation ran
            start-q  (or warmup-q init-q)
-           ;; If adapted, burn-in is already done
-           remaining-burn (if adapted-eps 0 burn)]
-       (if (and compile? (nil? metric))
+           remaining-burn (if warmup-q 0 burn)]
+       (if (and compile? (nil? final-metric))
          ;; Loop-compiled path (identity mass matrix only)
          (let [burn-block (min (max remaining-burn 1) block-size)
                burn-chain (when (> remaining-burn 0)
@@ -1104,13 +1180,13 @@
            (run-loop-compiled-hmc
              {:samples samples :burn remaining-burn :thin thin :callback callback}
              start-q n-params neg-U-compiled grad-neg-U eps half-eps half q-shape
-             leapfrog-steps metric burn-chain burn-block thin-chain))
+             leapfrog-steps final-metric burn-chain burn-block thin-chain))
          ;; Fallback: per-step eager path (or non-identity metric)
          (collect-samples
            {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
            (fn [q step-key]
              (hmc-step q neg-U-compiled grad-neg-U eps half-eps half q-shape
-                       leapfrog-steps metric step-key))
+                       leapfrog-steps final-metric step-key))
            mx/->clj
            start-q)))))
 
@@ -1298,7 +1374,15 @@
 
    opts: {:samples N :step-size eps :max-depth J :burn B :thin T
           :addresses [addr...] :compile? bool :callback fn :key prng-key
-          :metric M}
+          :metric M :adapt-step-size bool :target-accept float
+          :adapt-metric bool}
+
+   When :adapt-step-size is true, the burn-in phase uses dual averaging
+   (Hoffman & Gelman 2014) to tune step-size to achieve :target-accept
+   acceptance rate (default 0.8). Uses find-reasonable-epsilon for initialization.
+
+   When :adapt-metric is true, a diagonal mass matrix is estimated from
+   warmup samples using Welford's online algorithm.
 
    metric: mass matrix (optional, default identity). Same as HMC:
      nil           — identity mass matrix
@@ -1307,8 +1391,10 @@
 
    Returns vector of MLX arrays (parameter samples).
    Default device: :cpu (faster for scalar parameters)."
-  [{:keys [samples step-size max-depth burn thin addresses compile? callback key metric device]
-    :or {step-size 0.01 max-depth 10 burn 0 thin 1 compile? true device :cpu}}
+  [{:keys [samples step-size max-depth burn thin addresses compile? callback key metric device
+           adapt-step-size target-accept adapt-metric]
+    :or {step-size 0.01 max-depth 10 burn 0 thin 1 compile? true device :cpu
+         adapt-step-size false target-accept 0.8 adapt-metric false}}
    model args observations]
   (with-device device
     #(let [score-fn (u/make-score-fn model args observations addresses)
@@ -1316,27 +1402,85 @@
            grad-neg-ld (let [g (mx/grad neg-log-density)]
                          (if compile? (mx/compile-fn g) g))
            neg-ld-compiled (if compile? (mx/compile-fn neg-log-density) neg-log-density)
-           eps (mx/scalar step-size)
-           half-eps (mx/scalar (* 0.5 step-size))
-           half (mx/scalar 0.5)
-           ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld :eps eps :half-eps half-eps
-                :half half :metric metric}
            {:keys [trace]} (p/generate model args observations)
            init-q (u/extract-params trace addresses)
-           q-shape (mx/shape init-q)]
+           n-params (count addresses)
+           q-shape (mx/shape init-q)
+           ;; Adaptive warmup: dual averaging + optional metric estimation
+           {:keys [adapted-eps warmup-q adapted-metric]}
+           (if (and (or adapt-step-size adapt-metric) (> burn 0))
+             (let [nuts-step-fn
+                   (fn [q eps-val m _key]
+                     (let [eps-mx (mx/scalar eps-val)
+                           half-eps-mx (mx/scalar (* 0.5 eps-val))
+                           half-mx (mx/scalar 0.5)
+                           local-ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld
+                                      :eps eps-mx :half-eps half-eps-mx
+                                      :half half-mx :metric m}
+                           p0 (doto (sample-momentum m q-shape nil) mx/eval!)
+                           current-H (hamiltonian neg-ld-compiled q p0 half-mx m)
+                           log-u (+ (js/Math.log (js/Math.random)) (- current-H))]
+                       (loop [j 0
+                              q-minus q, p-minus p0
+                              q-plus q, p-plus p0
+                              q' q, depth-n 1, continue? true
+                              total-alpha 0.0, total-n-alpha 0]
+                         (if (or (not continue?) (>= j max-depth))
+                           {:state q'
+                            :accept-stat (if (pos? total-n-alpha)
+                                           (/ total-alpha total-n-alpha)
+                                           0.0)}
+                           (let [v (if (< (js/Math.random) 0.5) -1 1)
+                                 [qs ps] (if (pos? v)
+                                           [q-plus p-plus]
+                                           [q-minus p-minus])
+                                 tree (build-tree local-ctx qs ps log-u v j current-H nil)
+                                 accept? (and (:s' tree)
+                                              (< (js/Math.random)
+                                                 (/ (:n' tree) (max 1 depth-n))))
+                                 q'' (if accept? (:q' tree) q')
+                                 qm' (if (neg? v) (:q-minus tree) q-minus)
+                                 pm' (if (neg? v) (:p-minus tree) p-minus)
+                                 qp' (if (pos? v) (:q-plus tree) q-plus)
+                                 pp' (if (pos? v) (:p-plus tree) p-plus)
+                                 cont? (and (:s' tree)
+                                            (compute-u-turn? qm' qp' pm' pp'))]
+                             (recur (inc j) qm' pm' qp' pp' q''
+                                    (+ depth-n (:n' tree)) cont?
+                                    (+ total-alpha (:alpha tree))
+                                    (+ total-n-alpha (:n-alpha tree))))))))
+                   init-eps (if adapt-step-size
+                              (find-reasonable-epsilon init-q neg-ld-compiled grad-neg-ld
+                                                       q-shape metric)
+                              step-size)
+                   result (dual-averaging-warmup
+                            burn target-accept init-q nuts-step-fn n-params init-eps
+                            adapt-metric (when-not adapt-metric metric))]
+               {:adapted-eps (when adapt-step-size (:step-size result))
+                :warmup-q (:state result)
+                :adapted-metric (:metric result)})
+             {:adapted-eps nil :warmup-q nil :adapted-metric nil})
+           ;; Use adapted values if available
+           final-metric (or adapted-metric metric)
+           final-step-size (or adapted-eps step-size)
+           eps (mx/scalar final-step-size)
+           half-eps (mx/scalar (* 0.5 final-step-size))
+           half (mx/scalar 0.5)
+           ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld :eps eps :half-eps half-eps
+                :half half :metric final-metric}
+           start-q (or warmup-q init-q)
+           remaining-burn (if warmup-q 0 burn)]
        (collect-samples
-         {:samples samples :burn burn :thin thin :callback callback :key key}
+         {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
          (fn [q step-key]
         (let [[momentum-key slice-key dir-key tree-key]
               (rng/split-n-or-nils step-key 4)
-              ;; Sample momentum from N(0, M) and compute current Hamiltonian
-              p0 (doto (sample-momentum metric q-shape momentum-key) mx/eval!)
-              current-H (hamiltonian neg-ld-compiled q p0 half metric)
+              p0 (doto (sample-momentum final-metric q-shape momentum-key) mx/eval!)
+              current-H (hamiltonian neg-ld-compiled q p0 half final-metric)
               log-u (+ (if slice-key
                          (js/Math.log (mx/realize (rng/uniform slice-key [])))
                          (js/Math.log (js/Math.random)))
                        (- current-H))
-              ;; Build tree
               new-q (loop [j 0
                            q-minus q, p-minus p0
                            q-plus q, p-plus p0
@@ -1372,7 +1516,7 @@
                                  dk-next tk-next))))]
           {:state new-q :accepted? (not (identical? new-q q))}))
          mx/->clj
-         init-q))))
+         start-q))))
 
 ;; ---------------------------------------------------------------------------
 ;; Elliptical Slice Sampling (Murray, Adams, MacKay 2010)
