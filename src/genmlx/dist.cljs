@@ -127,6 +127,11 @@
                          ", got " lo-name "=" lo " " hi-name "=" hi)
                     {:distribution dist-name :lo lo :hi hi}))))
 
+(defn- check-probability [dist-name param-name v]
+  (when (and (number? v) (or (< v 0) (> v 1)))
+    (throw (ex-info (str dist-name ": " param-name " must be in [0,1], got " v)
+                    {:distribution dist-name :parameter param-name :value v}))))
+
 ;; ---------------------------------------------------------------------------
 ;; Gaussian
 ;; ---------------------------------------------------------------------------
@@ -208,6 +213,13 @@
         key (rng/ensure-key key)
         u (rng/uniform key [n])]
     (mx/where (mx/less u p) ONE ZERO)))
+
+(let [raw bernoulli]
+  (defn bernoulli
+    "Bernoulli distribution with probability p."
+    [p]
+    (check-probability "bernoulli" "p" p)
+    (raw p)))
 
 (defn flip
   "Alias for bernoulli."
@@ -450,6 +462,13 @@
         (mx/subtract rate)
         (mx/subtract (mlx-log-gamma (mx/add v ONE))))))
 
+(let [raw poisson]
+  (defn poisson
+    "Poisson distribution with the given rate."
+    [rate]
+    (check-positive "poisson" "rate" rate)
+    (raw rate)))
+
 ;; ---------------------------------------------------------------------------
 ;; Laplace
 ;; ---------------------------------------------------------------------------
@@ -470,6 +489,13 @@
   (let [{:keys [loc scale]} (:params d)
         key (rng/ensure-key key)]
     (laplace-icdf loc scale (mx/subtract (rng/uniform key [n]) HALF))))
+
+(let [raw laplace]
+  (defn laplace
+    "Laplace distribution with location and scale."
+    [loc scale]
+    (check-positive "laplace" "scale" scale)
+    (raw loc scale)))
 
 ;; ---------------------------------------------------------------------------
 ;; Student-t
@@ -515,6 +541,14 @@
         t (mx/multiply z (mx/sqrt (mx/divide df chi2)))]
     (mx/add loc (mx/multiply scale t))))
 
+(let [raw student-t]
+  (defn student-t
+    "Student-t distribution with df degrees of freedom, location and scale."
+    [df loc scale]
+    (check-positive "student-t" "df" df)
+    (check-positive "student-t" "scale" scale)
+    (raw df loc scale)))
+
 ;; ---------------------------------------------------------------------------
 ;; Log-Normal
 ;; ---------------------------------------------------------------------------
@@ -539,6 +573,13 @@
   (let [{:keys [mu sigma]} (:params d)
         key (rng/ensure-key key)]
     (mx/exp (mx/add mu (mx/multiply sigma (rng/normal key [n]))))))
+
+(let [raw log-normal]
+  (defn log-normal
+    "Log-Normal distribution with parameters mu and sigma."
+    [mu sigma]
+    (check-positive "log-normal" "sigma" sigma)
+    (raw mu sigma)))
 
 ;; ---------------------------------------------------------------------------
 ;; Dirichlet
@@ -621,6 +662,13 @@
                   (mx/divide (mx/sin (mx/multiply (mx/scalar js/Math.PI) z))
                              (mx/cos (mx/multiply (mx/scalar js/Math.PI) z)))))))
 
+(let [raw cauchy]
+  (defn cauchy
+    "Cauchy distribution with location and scale."
+    [loc scale]
+    (check-positive "cauchy" "scale" scale)
+    (raw loc scale)))
+
 ;; ---------------------------------------------------------------------------
 ;; Inverse Gamma
 ;; ---------------------------------------------------------------------------
@@ -643,6 +691,14 @@
   (let [{:keys [shape-param scale-param]} (:params d)
         g (gamma-sample-n (mx/realize shape-param) ONE key n)]
     (mx/divide scale-param g)))
+
+(let [raw inv-gamma]
+  (defn inv-gamma
+    "Inverse-Gamma distribution with shape and scale parameters."
+    [shape-param scale-param]
+    (check-positive "inv-gamma" "shape" shape-param)
+    (check-positive "inv-gamma" "scale" scale-param)
+    (raw shape-param scale-param)))
 
 ;; ---------------------------------------------------------------------------
 ;; Geometric
@@ -673,6 +729,13 @@
         log-1mp (mx/log (mx/subtract ONE p))]
     (mx/floor (mx/divide log-u log-1mp))))
 
+(let [raw geometric]
+  (defn geometric
+    "Geometric distribution: number of failures before first success, p in (0,1)."
+    [p]
+    (check-probability "geometric" "p" p)
+    (raw p)))
+
 ;; ---------------------------------------------------------------------------
 ;; Negative Binomial
 ;; ---------------------------------------------------------------------------
@@ -702,6 +765,15 @@
       (-> log-coeff
           (mx/add (mx/multiply r (mx/log p)))
           (mx/add (mx/multiply v (mx/log (mx/subtract ONE p))))))))
+
+(let [raw neg-binomial]
+  (defn neg-binomial
+    "Negative binomial (Polya) distribution.
+   r: number of successes, p: probability of success."
+    [r p]
+    (check-positive "neg-binomial" "r" r)
+    (check-probability "neg-binomial" "p" p)
+    (raw r p)))
 
 ;; ---------------------------------------------------------------------------
 ;; Binomial
@@ -741,6 +813,13 @@
         successes (mx/sum (mx/where (mx/less u p) ONE ZERO) [1])]
     successes))
 
+(let [raw binomial]
+  (defn binomial
+    "Binomial distribution: n trials with success probability p."
+    [n-trials p]
+    (check-probability "binomial" "p" p)
+    (raw n-trials p)))
+
 ;; ---------------------------------------------------------------------------
 ;; Discrete Uniform
 ;; ---------------------------------------------------------------------------
@@ -768,6 +847,13 @@
   (let [{:keys [lo hi]} (:params d)
         key (rng/ensure-key key)]
     (rng/randint key (int (mx/realize lo)) (inc (int (mx/realize hi))) [n])))
+
+(let [raw discrete-uniform]
+  (defn discrete-uniform
+    "Discrete uniform distribution on integers [lo, hi]."
+    [lo hi]
+    (check-less-than "discrete-uniform" "lo" lo "hi" hi)
+    (raw lo hi)))
 
 ;; ---------------------------------------------------------------------------
 ;; Truncated Normal
@@ -819,6 +905,14 @@
         b (mx/divide (mx/subtract hi mu) sigma)
         z (rng/truncated-normal key a b [n])]
     (mx/add mu (mx/multiply sigma z))))
+
+(let [raw truncated-normal]
+  (defn truncated-normal
+    "Truncated normal distribution on [lo, hi] with parameters mu and sigma."
+    [mu sigma lo hi]
+    (check-positive "truncated-normal" "sigma" sigma)
+    (check-less-than "truncated-normal" "lo" lo "hi" hi)
+    (raw mu sigma lo hi)))
 
 ;; ---------------------------------------------------------------------------
 ;; Multivariate Normal (via Cholesky) — manual definition

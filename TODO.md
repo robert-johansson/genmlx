@@ -296,7 +296,7 @@ causing runtime failures when used in certain inference contexts.*
 *Distribution-level issues that affect correctness, differentiability, or
 performance.*
 
-- [ ] **18.1** Replace JS `log-gamma` with MLX-native `mlx-log-gamma` in beta, gamma,
+- [x] **18.1** Replace JS `log-gamma` with MLX-native `mlx-log-gamma` in beta, gamma,
   inv-gamma, student-t log-prob methods
   - **Files**: `dist.cljs` (beta ~line 225, gamma ~line 268, inv-gamma ~line 622,
     student-t ~line 477)
@@ -307,7 +307,7 @@ performance.*
     and binomial -- it just needs to be adopted by the other distributions.
   - **Scope**: ~20 lines of changes per distribution
 
-- [ ] **18.2** Make categorical `dist-sample-n` native/vectorized
+- [x] **18.2** Make categorical `dist-sample-n` native/vectorized
   - **File**: `dist.cljs:409-412`
   - **Impact**: Categorical is one of the most common distributions in PPL models.
     Its `sample-n` currently uses the sequential fallback (`split-n` + `mapv` + `stack`).
@@ -315,7 +315,7 @@ performance.*
     choices.
   - **Fix**: Use `mx/random-categorical` or implement batch Gumbel-max trick
 
-- [ ] **18.3** Extend parameter validation to all distributions
+- [x] **18.3** Extend parameter validation to all distributions
   - **File**: `dist.cljs`
   - **Impact**: Only 5 of 25 distributions validate parameters (gaussian sigma>0,
     uniform lo<hi, beta alpha>0/beta>0, gamma shape>0/rate>0, exponential rate>0).
@@ -851,11 +851,11 @@ RESEARCH (Lean 4 formalization):
 | 15. Confirmed Bugs | 5 | 5 | 0 |
 | 16. Correctness Concerns | 6 | 4 | **2** |
 | 17. Missing Protocols | 6 | 4 | **2** |
-| 18. Distribution Quality | 5 | 0 | **5** |
+| 18. Distribution Quality | 5 | 3 | **2** |
 | 19. Code Quality | 9 | 0 | **9** |
 | 20. Amortized Improvements | 4 | 0 | **4** |
 | 21. Testing Strategies | 12 | 0 | **12** |
 | 22. Practical Inference | 3 | 1 | **2** |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 0 | **7** |
-| **Total** | **135** | **72** | **63** |
+| **Total** | **135** | **75** | **60** |
