@@ -362,7 +362,7 @@ performance.*
   - **Fix**: Consolidate into a single shared namespace (e.g., `vectorized.cljs` or a new
     `inference/resample.cljs`) and have all consumers import from there
 
-- [ ] **19.3** Deduplicate Adam optimizer
+- [x] **19.3** Deduplicate Adam optimizer
   - **Files**: `learning.cljs` (adam-init, adam-step), `inference/vi.cljs` (adam-state, adam-step)
   - **Impact**: Two independent Adam implementations. The vi.cljs version may have subtle
     differences from the learning.cljs version.
@@ -382,7 +382,7 @@ performance.*
     The only difference is the constructor: `select` takes varargs, `from-set` takes a set.
   - **Fix**: Single record type with two constructor functions
 
-- [ ] **19.6** Add missing `clojure.set` require in `diff.cljs`
+- [x] **19.6** Add missing `clojure.set` require in `diff.cljs`
   - **File**: `diff.cljs` ns form
   - **Impact**: `compute-map-diff` uses `clojure.set/difference` and
     `clojure.set/intersection` without requiring `clojure.set`. Works in nbb (SCI
@@ -852,10 +852,10 @@ RESEARCH (Lean 4 formalization):
 | 16. Correctness Concerns | 6 | 4 | **2** |
 | 17. Missing Protocols | 6 | 4 | **2** |
 | 18. Distribution Quality | 5 | 4 | **1** |
-| 19. Code Quality | 9 | 1 | **8** |
+| 19. Code Quality | 9 | 3 | **6** |
 | 20. Amortized Improvements | 4 | 0 | **4** |
 | 21. Testing Strategies | 12 | 0 | **12** |
 | 22. Practical Inference | 3 | 1 | **2** |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 0 | **7** |
-| **Total** | **135** | **77** | **58** |
+| **Total** | **135** | **79** | **56** |

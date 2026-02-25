@@ -2,7 +2,8 @@
   "Change-tagged values for incremental computation.
    Argdiffs and retdiffs enable `update` to skip unchanged computation,
    which is critical for MCMC performance where each MH step only changes
-   one or a few addresses.")
+   one or a few addresses."
+  (:require [clojure.set]))
 
 ;; ---------------------------------------------------------------------------
 ;; Diff types

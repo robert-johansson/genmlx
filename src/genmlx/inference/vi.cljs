@@ -7,31 +7,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.inference.util :as u]))
-
-;; ---------------------------------------------------------------------------
-;; Adam optimizer
-;; ---------------------------------------------------------------------------
-
-(defn- adam-state [params]
-  {:m (mx/zeros (mx/shape params))
-   :v (mx/zeros (mx/shape params))
-   :t 0})
-
-(defn- adam-step [params grad-arr state lr beta1 beta2 epsilon]
-  (let [{:keys [m v t]} state
-        t' (inc t)
-        m' (mx/add (mx/multiply (mx/scalar beta1) m)
-                   (mx/multiply (mx/scalar (- 1.0 beta1)) grad-arr))
-        v' (mx/add (mx/multiply (mx/scalar beta2) v)
-                   (mx/multiply (mx/scalar (- 1.0 beta2)) (mx/square grad-arr)))
-        m-hat (mx/divide m' (mx/scalar (- 1.0 (js/Math.pow beta1 t'))))
-        v-hat (mx/divide v' (mx/scalar (- 1.0 (js/Math.pow beta2 t'))))
-        update (mx/divide (mx/multiply (mx/scalar lr) m-hat)
-                          (mx/add (mx/sqrt v-hat) (mx/scalar epsilon)))
-        params' (mx/subtract params update)]
-    (mx/eval! params' m' v')
-    [params' {:m m' :v v' :t t'}]))
+            [genmlx.inference.util :as u]
+            [genmlx.learning :as learn]))
 
 ;; ---------------------------------------------------------------------------
 ;; ELBO estimation
@@ -99,7 +76,7 @@
                       (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
         grad-neg-elbo (mx/compile-fn (mx/grad neg-elbo-fn))]
     (loop [i 0, vp init-vp
-           opt-state (adam-state init-vp)
+           opt-state (learn/adam-init init-vp)
            elbo-history (transient [])
            rk key]
       (if (>= i iterations)
@@ -120,8 +97,8 @@
                             (mx/->clj samples))))})
         (let [[iter-key next-key] (rng/split-or-nils rk)
               g (doto (mx/tidy (fn [] (grad-neg-elbo vp))) mx/eval!)
-              [vp' opt-state'] (adam-step vp g opt-state
-                                          learning-rate beta1 beta2 epsilon)
+              [vp' opt-state'] (learn/adam-step vp g opt-state
+                                          {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
               elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
                          (let [e (mx/tidy (fn [] (elbo-estimate vp' log-density elbo-samples d vmapped-log-density iter-key)))]
                            (mx/eval! e)
@@ -182,7 +159,7 @@
             grad-neg-elbo (mx/compile-fn (mx/grad neg-elbo-fn))
             neg-elbo-compiled (mx/compile-fn neg-elbo-fn)]
         (loop [i 0, vp init-vp
-               opt-state (adam-state init-vp)
+               opt-state (learn/adam-init init-vp)
                elbo-history (transient [])
                rk key]
           (if (>= i iterations)
@@ -203,8 +180,8 @@
                                 (mx/->clj samples))))})
             (let [[iter-key next-key] (rng/split-or-nils rk)
                   g (doto (mx/tidy (fn [] (grad-neg-elbo vp))) mx/eval!)
-                  [vp' opt-state'] (adam-step vp g opt-state
-                                              learning-rate beta1 beta2 epsilon)
+                  [vp' opt-state'] (learn/adam-step vp g opt-state
+                                              {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
                   elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
                              (let [e (mx/tidy (fn [] (mx/negative (neg-elbo-compiled vp'))))]
                                (mx/eval! e)
@@ -406,7 +383,7 @@
                       {:loss (loss-fn params iter-key) :grad (g params)}))]
     ;; Optimization loop
     (loop [i 0 params init-params
-           opt-state (adam-state init-params)
+           opt-state (learn/adam-init init-params)
            losses (transient [])
            rk key]
       (if (>= i iterations)
@@ -415,8 +392,8 @@
               {:keys [loss grad]} (grad-loss params iter-key)
               _ (mx/eval! loss grad)
               loss-val (mx/item loss)
-              [params' opt-state'] (adam-step params grad opt-state
-                                              learning-rate 0.9 0.999 1e-8)]
+              [params' opt-state'] (learn/adam-step params grad opt-state
+                                              {:lr learning-rate})]
           (when callback
             (callback {:iter i :loss loss-val}))
           (recur (inc i) params' opt-state'
@@ -453,7 +430,7 @@
             grad-loss (mx/compile-fn (mx/grad loss-fn))
             loss-compiled (mx/compile-fn loss-fn)]
         (loop [i 0 params init-params
-               opt-state (adam-state init-params)
+               opt-state (learn/adam-init init-params)
                losses (transient [])
                rk key]
           (if (>= i iterations)
@@ -464,8 +441,8 @@
                   loss (mx/tidy (fn [] (loss-compiled params samples)))
                   _ (mx/eval! loss)
                   loss-val (mx/item loss)
-                  [params' opt-state'] (adam-step params grad opt-state
-                                                  learning-rate 0.9 0.999 1e-8)]
+                  [params' opt-state'] (learn/adam-step params grad opt-state
+                                                  {:lr learning-rate})]
               (when callback
                 (callback {:iter i :loss loss-val}))
               (recur (inc i) params' opt-state'
