@@ -206,33 +206,23 @@ beta-uniform-mixture, wishart, inv-wishart, broadcasted-normal
 *These are not necessarily bugs, but design issues that could produce subtly
 wrong results in certain use cases.*
 
-- [ ] **16.1** Combinator sub-trace reconstruction uses `score = 0.0` and `retval = nil`
-  - **Files**: `combinators.cljs` (Map update:82, Unfold update:236, Unfold regenerate:269,
-    Scan update:739, Scan regenerate:774)
-  - **Impact**: When Map/Unfold/Scan call `p/update` or `p/regenerate` on per-element
-    kernel traces, the old trace has `score = 0.0` instead of the real per-element score.
-    If the kernel's weight computation depends on `old_score`, weights will be wrong.
-    `update-with-diffs` (Map:1137-1170) correctly uses stored element scores, but the
-    basic `update` does not.
-  - **Fix**: Store per-element scores in trace metadata (already done as `::element-scores`
-    for Map, `::step-scores` for Unfold/Scan) and use them when reconstructing sub-traces
-    for update/regenerate
+- [x] **16.1** Combinator sub-trace reconstruction uses `score = 0.0` and `retval = nil`
+  - **Files**: `combinators.cljs` (Map update/regenerate/project, Unfold update/regenerate,
+    Scan update/regenerate — 8 locations)
+  - **Fix**: Now uses real element/step scores from trace metadata (`::element-scores`,
+    `::step-scores`) with fallback to `(mx/scalar 0.0)` for backward compat
 
-- [ ] **16.2** `execute-sub` constructs fake traces with `score = 0.0` for spliced sub-GFs
-  - **File**: `dynamic.cljs:156-172`
-  - **Impact**: When a model uses `splice` and the trace undergoes `update` or `regenerate`,
-    the sub-GF receives a fake old trace with zero score. This makes the sub-GF's weight
-    = `new_score - 0.0` instead of `new_score - old_score`. Affects MH acceptance ratios
-    in nested models.
-  - **Fix**: Store per-sub-GF scores in trace metadata and reconstruct accurately
+- [x] **16.2** `execute-sub` constructs fake traces with `score = 0.0` for spliced sub-GFs
+  - **Files**: `handler.cljs`, `dynamic.cljs`
+  - **Fix**: `merge-sub-result` now tracks per-splice scores, stored in trace metadata
+    as `::splice-scores`, passed to handler state as `:old-splice-scores` for
+    update/regenerate
 
-- [ ] **16.3** `assess` does not validate that all choices are constrained
-  - **File**: `dynamic.cljs:111-120`
-  - **Impact**: In Gen.jl, `assess` requires all choices to be specified. GenMLX silently
-    samples missing choices (via simulate fallback in generate-handler). This can produce
-    quietly wrong results when a user forgets to constrain an address.
-  - **Fix**: Add a post-execution check that all addresses were constrained, or use a
-    dedicated assess-handler that throws on unconstrained addresses
+- [x] **16.3** `assess` does not validate that all choices are constrained
+  - **Files**: `handler.cljs`, `dynamic.cljs`
+  - **Fix**: Added `assess-transition` and `assess-handler` that throw on unconstrained
+    addresses, plus `execute-sub-assess` for nested GFs. DynamicGF.assess now uses the
+    dedicated handler instead of generate-handler
 
 - [ ] **16.4** Switch combinator `update` does not support branch switching
   - **File**: `combinators.cljs:315-331`
@@ -283,27 +273,21 @@ causing runtime failures when used in certain inference contexts.*
     when the proposal is a combinator-constructed GF.
   - **Scope**: ~5-10 lines per combinator (simulate + return choices and score)
 
-- [ ] **17.3** Add `IUpdate` and `IRegenerate` to `CustomGradientGF`
+- [x] **17.3** Add `IUpdate` and `IRegenerate` to `CustomGradientGF`
   - **File**: `custom_gradient.cljs`
-  - **Impact**: Splicing a `CustomGradientGF` into a model and running MCMC update/regenerate
-    will fail. Since it's deterministic (no choices, score=0), update/regenerate are trivial.
-  - **Scope**: ~10 lines (re-run forward, return zero weight, empty discard)
+  - **Fix**: Added IUpdate, IRegenerate, IProject — deterministic, zero weight
 
-- [ ] **17.4** Add `IUpdate` and `IRegenerate` to `NeuralNetGF`
+- [x] **17.4** Add `IUpdate` and `IRegenerate` to `NeuralNetGF`
   - **File**: `nn.cljs`
-  - **Impact**: Same as 17.3 -- splicing a `NeuralNetGF` and running MCMC fails.
-  - **Scope**: ~10 lines (same trivial implementation as CustomGradientGF)
+  - **Fix**: Added IUpdate, IRegenerate, IProject — deterministic, zero weight
 
-- [ ] **17.5** Add `IProject` to `CustomGradientGF` and `NeuralNetGF`
+- [x] **17.5** Add `IProject` to `CustomGradientGF` and `NeuralNetGF`
   - **Files**: `custom_gradient.cljs`, `nn.cljs`
-  - **Impact**: `p/project` fails on these types. Trivial: always returns 0 (no choices).
-  - **Scope**: ~5 lines each
+  - **Fix**: Included in 17.3/17.4 above — always returns 0 (no choices)
 
-- [ ] **17.6** Add `IUpdateWithDiffs` to `MixCombinator`
+- [x] **17.6** Add `IUpdateWithDiffs` to `MixCombinator`
   - **File**: `combinators.cljs`
-  - **Impact**: Mix is the only combinator missing this. Calling `p/update-with-diffs` on a
-    Mix trace will fail. All other combinators have at least the no-change fast path.
-  - **Scope**: ~10 lines (no-change fast path + fallback to regular update)
+  - **Fix**: Added no-change fast path + fallback to regular update
 
 ---
 
@@ -769,13 +753,14 @@ CRITICAL (fix before any new feature work):
 
 HIGH (correctness concerns affecting real use cases):
   22.2  Remove deprecated stateful PRNG            ~15 lines deleted
-  22.3  mx/eval! after resampling                  ~2 lines
-  16.1  Combinator sub-trace score=0              ~20 lines
-  16.2  execute-sub fake trace score=0            ~15 lines
-  16.3  assess not validating full constraints    ~10 lines
-  17.3  CustomGradientGF IUpdate/IRegenerate      ~10 lines
-  17.4  NeuralNetGF IUpdate/IRegenerate           ~10 lines
-  17.6  MixCombinator IUpdateWithDiffs            ~10 lines
+  22.3  mx/eval! after resampling                  ~2 lines  (done)
+  16.1  Combinator sub-trace score=0              (done)
+  16.2  execute-sub fake trace score=0            (done)
+  16.3  assess not validating full constraints    (done)
+  17.3  CustomGradientGF IUpdate/IRegenerate      (done)
+  17.4  NeuralNetGF IUpdate/IRegenerate           (done)
+  17.5  IProject on CustomGradientGF/NeuralNetGF  (done)
+  17.6  MixCombinator IUpdateWithDiffs            (done)
   22.1  Adaptive HMC/NUTS step-size               ~100-150 lines
 
 MEDIUM (quality and completeness):
@@ -784,7 +769,7 @@ MEDIUM (quality and completeness):
   18.3  Parameter validation for all dists        ~30 lines
   17.1  IAssess on combinators                    ~50 lines
   17.2  IPropose on combinators                   ~50 lines
-  17.5  IProject on CustomGradientGF/NeuralNetGF  ~10 lines
+  17.5  IProject on CustomGradientGF/NeuralNetGF  (done)
   19.2  Deduplicate resampling                    ~30 lines refactor
   19.3  Deduplicate Adam optimizer                ~5 lines refactor
   19.8  inference.cljs re-exports                 ~10 lines
@@ -864,8 +849,8 @@ RESEARCH (Lean 4 formalization):
 | 13. Documentation | 3 | 0 | 3 |
 | 14. Gen.jl Parity | 8 | 4 | 4 |
 | 15. Confirmed Bugs | 5 | 5 | 0 |
-| 16. Correctness Concerns | 6 | 1 | **5** |
-| 17. Missing Protocols | 6 | 0 | **6** |
+| 16. Correctness Concerns | 6 | 4 | **2** |
+| 17. Missing Protocols | 6 | 4 | **2** |
 | 18. Distribution Quality | 5 | 0 | **5** |
 | 19. Code Quality | 9 | 0 | **9** |
 | 20. Amortized Improvements | 4 | 0 | **4** |
@@ -873,4 +858,4 @@ RESEARCH (Lean 4 formalization):
 | 22. Practical Inference | 3 | 1 | **2** |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 0 | **7** |
-| **Total** | **135** | **65** | **70** |
+| **Total** | **135** | **72** | **63** |
