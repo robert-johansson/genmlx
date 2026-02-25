@@ -718,8 +718,11 @@
     (mx/add (mx/multiply v (mx/log (mx/subtract ONE p)))
             (mx/log p)))
   (support []
-    ;; Infinite support; return first few for enumeration
-    (mapv #(mx/scalar % mx/int32) (range 100))))
+    ;; Dynamic support up to 0.999 quantile (capped at 10000)
+    (let [p-val (mx/realize p)
+          max-k (min 10000 (int (js/Math.ceil (/ (js/Math.log 0.001)
+                                                 (js/Math.log (- 1.0 p-val))))))]
+      (mapv #(mx/scalar % mx/int32) (range (inc max-k))))))
 
 (defmethod dc/dist-sample-n :geometric [d key n]
   (let [{:keys [p]} (:params d)

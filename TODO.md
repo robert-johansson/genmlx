@@ -325,7 +325,7 @@ performance.*
     wishart (df>0), multivariate-normal (positive-definite cov)
   - **Scope**: ~2-3 lines per distribution using existing `check-positive`/`check-less-than`
 
-- [ ] **18.4** Fix geometric `support` to not use hardcoded `(range 100)`
+- [x] **18.4** Fix geometric `support` to not use hardcoded `(range 100)`
   - **File**: `dist.cljs:653`
   - **Impact**: For geometric distributions with very small `p`, significant probability
     mass lies beyond k=100. Enumeration-based inference (Gibbs) will miss this mass.
@@ -396,7 +396,7 @@ performance.*
   - **Fix**: Refactor to break the circular dependency, or use a different dynamic
     resolution mechanism
 
-- [ ] **19.8** Add `inference/adev.cljs` and `inference/amortized.cljs` to the
+- [x] **19.8** Add `inference/adev.cljs` and `inference/amortized.cljs` to the
   `inference.cljs` re-export facade
   - **File**: `inference.cljs`
   - **Impact**: These two modules are orphaned from the public API. Users must require
@@ -851,11 +851,11 @@ RESEARCH (Lean 4 formalization):
 | 15. Confirmed Bugs | 5 | 5 | 0 |
 | 16. Correctness Concerns | 6 | 4 | **2** |
 | 17. Missing Protocols | 6 | 4 | **2** |
-| 18. Distribution Quality | 5 | 3 | **2** |
-| 19. Code Quality | 9 | 0 | **9** |
+| 18. Distribution Quality | 5 | 4 | **1** |
+| 19. Code Quality | 9 | 1 | **8** |
 | 20. Amortized Improvements | 4 | 0 | **4** |
 | 21. Testing Strategies | 12 | 0 | **12** |
 | 22. Practical Inference | 3 | 1 | **2** |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 0 | **7** |
-| **Total** | **135** | **75** | **60** |
+| **Total** | **135** | **77** | **58** |

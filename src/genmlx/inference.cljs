@@ -7,7 +7,9 @@
             [genmlx.inference.smcp3 :as smcp3-ns]
             [genmlx.inference.vi :as vi-ns]
             [genmlx.inference.kernel :as kern]
-            [genmlx.inference.diagnostics :as diag]))
+            [genmlx.inference.diagnostics :as diag]
+            [genmlx.inference.adev :as adev-ns]
+            [genmlx.inference.amortized :as amortized-ns]))
 
 ;; ---------------------------------------------------------------------------
 ;; Importance sampling
@@ -87,3 +89,21 @@
 (def sample-std diag/sample-std)
 (def sample-quantiles diag/sample-quantiles)
 (def summarize diag/summarize)
+
+;; ---------------------------------------------------------------------------
+;; ADEV gradient estimation
+;; ---------------------------------------------------------------------------
+
+(def has-reparam? adev-ns/has-reparam?)
+(def adev-execute adev-ns/adev-execute)
+(def adev-surrogate adev-ns/adev-surrogate)
+(def adev-gradient adev-ns/adev-gradient)
+(def adev-optimize adev-ns/adev-optimize)
+
+;; ---------------------------------------------------------------------------
+;; Amortized inference
+;; ---------------------------------------------------------------------------
+
+(def make-elbo-loss amortized-ns/make-elbo-loss)
+(def train-proposal! amortized-ns/train-proposal!)
+(def neural-importance-sampling amortized-ns/neural-importance-sampling)
