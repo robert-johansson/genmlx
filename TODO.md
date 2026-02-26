@@ -429,7 +429,7 @@ performance.*
     No minibatch training.
   - **Fix**: Accept batch size parameter, group dataset into minibatches
 
-- [ ] **20.4** Add ADEV variance reduction (baseline subtraction)
+- [x] **20.4** Add ADEV variance reduction (baseline subtraction)
   - **File**: `inference/adev.cljs`
   - **Impact**: The REINFORCE term has no baseline, leading to high variance gradients.
   - **Fix**: Implement moving-average baseline for REINFORCE surrogate term. ~15 lines.

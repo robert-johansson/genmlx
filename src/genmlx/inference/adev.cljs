@@ -81,12 +81,16 @@
 (defn adev-surrogate
   "Build the ADEV surrogate loss for a single sample.
    cost-fn: (fn [trace] -> MLX-scalar) — the cost to minimize.
-   The surrogate is: cost + stop_gradient(cost) * reinforce-lp
+   The surrogate is: cost + stop_gradient(cost - baseline) * reinforce-lp
+   When baseline is nil, falls back to stop_gradient(cost).
    Taking mx/grad of this gives an unbiased gradient estimate."
-  [gf args cost-fn key]
+  [gf args cost-fn key & [baseline]]
   (let [{:keys [trace reinforce-lp]} (adev-execute gf args key)
-        cost (cost-fn trace)]
-    (mx/add cost (mx/multiply (mx/stop-gradient cost) reinforce-lp))))
+        cost (cost-fn trace)
+        reinforce-mult (if baseline
+                         (mx/stop-gradient (mx/subtract cost baseline))
+                         (mx/stop-gradient cost))]
+    (mx/add cost (mx/multiply reinforce-mult reinforce-lp))))
 
 ;; ---------------------------------------------------------------------------
 ;; Gradient estimation with param-store integration
@@ -94,12 +98,14 @@
 
 (defn adev-gradient
   "Compute ADEV gradient of E[cost] w.r.t. a flat parameter array.
-   opts: {:n-samples N} — number of samples for Monte Carlo estimate (default 1).
+   opts: {:n-samples N, :baseline scalar-or-nil} — number of samples for
+   Monte Carlo estimate (default 1), optional variance-reduction baseline.
    param-names: vector of parameter name keywords.
    params-array: flat 1-D MLX array of parameter values.
    Returns {:loss MLX-scalar, :grad MLX-array}."
-  [{:keys [n-samples] :or {n-samples 1}} gf args cost-fn param-names params-array]
-  (let [loss-fn (fn [p]
+  [{:keys [n-samples baseline] :or {n-samples 1}} gf args cost-fn param-names params-array]
+  (let [bl (when baseline (mx/scalar baseline))
+        loss-fn (fn [p]
                   (let [store {:params (into {}
                                         (map-indexed
                                           (fn [i nm] [nm (mx/index p i)])
@@ -107,7 +113,7 @@
                         keys (rng/split-n (rng/fresh-key) n-samples)
                         surrogates (mapv (fn [k]
                                           (binding [h/*param-store* store]
-                                            (adev-surrogate gf args cost-fn k)))
+                                            (adev-surrogate gf args cost-fn k bl)))
                                         keys)]
                     ;; Average over samples
                     (mx/divide (reduce mx/add surrogates)
@@ -123,36 +129,44 @@
 (defn adev-optimize
   "Optimize E[cost] via ADEV gradient estimation with Adam.
    opts:
-     :iterations  - number of steps (default 100)
-     :lr          - learning rate (default 0.01)
-     :n-samples   - samples per gradient estimate (default 1)
-     :callback    - (fn [{:iter :loss :params}]) called each step
-     :key         - PRNG key (unused, kept for API consistency)
+     :iterations     - number of steps (default 100)
+     :lr             - learning rate (default 0.01)
+     :n-samples      - samples per gradient estimate (default 1)
+     :baseline-decay - EMA decay for variance-reduction baseline (default nil = off)
+     :callback       - (fn [{:iter :loss :params}]) called each step
+     :key            - PRNG key (unused, kept for API consistency)
    gf: DynamicGF model
    args: model arguments
    cost-fn: (fn [trace] -> MLX-scalar)
    param-names: vector of parameter name keywords
    init-params: initial flat MLX parameter array
    Returns {:params final-params, :loss-history [numbers...]}."
-  [{:keys [iterations lr n-samples callback key]
+  [{:keys [iterations lr n-samples baseline-decay callback key]
     :or {iterations 100 lr 0.01 n-samples 1}}
    gf args cost-fn param-names init-params]
   (let [opt-state (learn/adam-init init-params)]
     (loop [i 0
            params init-params
            opt-st opt-state
+           baseline nil
            losses (transient [])]
       (if (>= i iterations)
         {:params params :loss-history (persistent! losses)}
-        (let [{:keys [loss grad]} (adev-gradient {:n-samples n-samples}
+        (let [{:keys [loss grad]} (adev-gradient {:n-samples n-samples
+                                                   :baseline baseline}
                                                   gf args cost-fn
                                                   param-names params)
               _ (mx/eval! loss grad)
               loss-val (mx/item loss)
+              new-baseline (when baseline-decay
+                             (if baseline
+                               (+ (* baseline-decay baseline)
+                                  (* (- 1.0 baseline-decay) loss-val))
+                               loss-val))
               [new-params new-opt-st] (learn/adam-step params grad opt-st {:lr lr})]
           (when callback
             (callback {:iter i :loss loss-val :params new-params}))
-          (recur (inc i) new-params new-opt-st
+          (recur (inc i) new-params new-opt-st new-baseline
                  (conj! losses loss-val)))))))
 
 ;; ---------------------------------------------------------------------------
@@ -206,11 +220,15 @@
 
 (defn vadev-surrogate
   "Build the batched ADEV surrogate loss (scalar).
-   Runs model body ONCE for all N particles, returns mean surrogate."
-  [gf args cost-fn n key]
+   Runs model body ONCE for all N particles, returns mean surrogate.
+   Optional baseline subtracts from the REINFORCE multiplier for variance reduction."
+  [gf args cost-fn n key & [baseline]]
   (let [{:keys [retval reinforce-lp] :as result} (vadev-execute gf args n key)
         costs (cost-fn result)
-        surrogate (mx/add costs (mx/multiply (mx/stop-gradient costs) reinforce-lp))]
+        reinforce-mult (if baseline
+                         (mx/stop-gradient (mx/subtract costs baseline))
+                         (mx/stop-gradient costs))
+        surrogate (mx/add costs (mx/multiply reinforce-mult reinforce-lp))]
     (mx/mean surrogate)))
 
 (defn vadev-gradient
@@ -238,37 +256,45 @@
   "Optimize E[cost] via compiled vectorized ADEV gradient estimation.
    Uses mx/compile-fn on the gradient function for faster iteration.
    opts:
-     :iterations  - number of steps (default 100)
-     :lr          - learning rate (default 0.01)
-     :n-samples   - batch size per gradient estimate (default 100)
-     :callback    - (fn [{:iter :loss :params}]) called each step
+     :iterations     - number of steps (default 100)
+     :lr             - learning rate (default 0.01)
+     :n-samples      - batch size per gradient estimate (default 100)
+     :baseline-decay - EMA decay for variance-reduction baseline (default nil = off)
+     :callback       - (fn [{:iter :loss :params}]) called each step
    Returns {:params final-params, :loss-history [numbers...]}."
-  [{:keys [iterations lr n-samples callback]
+  [{:keys [iterations lr n-samples baseline-decay callback]
     :or {iterations 100 lr 0.01 n-samples 100}}
    gf args cost-fn param-names init-params]
-  (let [loss-fn (fn [p key]
+  (let [loss-fn (fn [p key bl]
                   (let [store {:params (into {}
                                         (map-indexed
                                           (fn [i nm] [nm (mx/index p i)])
                                           param-names))}]
                     (binding [h/*param-store* store]
-                      (vadev-surrogate gf args cost-fn n-samples key))))
-        grad-fn (fn [p key]
-                  (let [[loss grad] ((mx/value-and-grad loss-fn) p key)]
+                      (vadev-surrogate gf args cost-fn n-samples key bl))))
+        grad-fn (fn [p key bl]
+                  (let [[loss grad] ((mx/value-and-grad loss-fn) p key bl)]
                     [loss grad]))
         opt-state (learn/adam-init init-params)]
     (loop [i 0
            params init-params
            opt-st opt-state
+           baseline nil
            losses (transient [])]
       (if (>= i iterations)
         {:params params :loss-history (persistent! losses)}
         (let [key (rng/fresh-key)
-              [loss grad] (mx/tidy (fn [] (grad-fn params key)))
+              bl (when baseline (mx/scalar baseline))
+              [loss grad] (mx/tidy (fn [] (grad-fn params key bl)))
               _ (mx/eval! loss grad)
               loss-val (mx/item loss)
+              new-baseline (when baseline-decay
+                             (if baseline
+                               (+ (* baseline-decay baseline)
+                                  (* (- 1.0 baseline-decay) loss-val))
+                               loss-val))
               [new-params new-opt-st] (learn/adam-step params grad opt-st {:lr lr})]
           (when callback
             (callback {:iter i :loss loss-val :params new-params}))
-          (recur (inc i) new-params new-opt-st
+          (recur (inc i) new-params new-opt-st new-baseline
                  (conj! losses loss-val)))))))
