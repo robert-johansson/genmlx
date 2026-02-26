@@ -127,7 +127,7 @@ beta-uniform-mixture, wishart, inv-wishart, broadcasted-normal
 
 ## Phase 11: Input Validation & Error Messages
 
-- [ ] **11.1** Malli schemas for all public API functions
+- [x] **11.1** ~~Malli schemas for all public API functions~~ Skipped — malli.generator and instrumentation don't work in nbb/SCI
 - [x] **11.2** Helpful error messages for common mistakes
 
 ---
