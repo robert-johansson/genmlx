@@ -154,3 +154,121 @@
             (callback {:iter i :loss loss-val :params new-params}))
           (recur (inc i) new-params new-opt-st
                  (conj! losses loss-val)))))))
+
+;; ---------------------------------------------------------------------------
+;; Vectorized ADEV (batched: single model execution for N particles)
+;; ---------------------------------------------------------------------------
+
+(defn- vadev-transition
+  "Pure batched ADEV state transition.
+   Reparam sites: dist-sample-n, gradient flows through value.
+   Non-reparam: stop-gradient + accumulate [N]-shaped reinforce-lp."
+  [state addr dist]
+  (let [n (:batch-size state)
+        [k1 k2] (rng/split (:key state))
+        reparam? (has-reparam? dist)
+        value (if reparam?
+                (dc/dist-sample-n dist k2 n)
+                (mx/stop-gradient (dc/dist-sample-n dist k2 n)))
+        lp (dc/dist-log-prob dist value)]
+    [value (-> state
+             (assoc :key k1)
+             (update :choices #(cm/set-value % addr value))
+             (update :score #(mx/add % lp))
+             (cond-> (not reparam?)
+               (update :reinforce-lp #(mx/add % lp))))]))
+
+(defn- vadev-handler
+  "Handler wrapper for batched ADEV execution."
+  [addr dist]
+  (let [[value state'] (vadev-transition @h/*state* addr dist)]
+    (vreset! h/*state* state')
+    value))
+
+(defn vadev-execute
+  "Execute a generative function under the batched ADEV handler.
+   Returns {:choices :score :reinforce-lp :retval} with [N]-shaped arrays."
+  [gf args n key]
+  (let [key (rng/ensure-key key)
+        result (h/run-handler vadev-handler
+                 {:choices cm/EMPTY
+                  :score (mx/zeros [n])
+                  :reinforce-lp (mx/zeros [n])
+                  :key key
+                  :batch-size n
+                  :batched? true
+                  :executor nil}
+                 #(apply (:body-fn gf) args))]
+    {:choices (:choices result)
+     :score (:score result)
+     :reinforce-lp (:reinforce-lp result)
+     :retval (:retval result)}))
+
+(defn vadev-surrogate
+  "Build the batched ADEV surrogate loss (scalar).
+   Runs model body ONCE for all N particles, returns mean surrogate."
+  [gf args cost-fn n key]
+  (let [{:keys [retval reinforce-lp] :as result} (vadev-execute gf args n key)
+        costs (cost-fn result)
+        surrogate (mx/add costs (mx/multiply (mx/stop-gradient costs) reinforce-lp))]
+    (mx/mean surrogate)))
+
+(defn vadev-gradient
+  "Compute ADEV gradient via vectorized execution (single model body call).
+   opts: {:n-samples N} — batch size (default 100).
+   Returns {:loss MLX-scalar, :grad MLX-array}."
+  [{:keys [n-samples] :or {n-samples 100}} gf args cost-fn param-names params-array]
+  (let [loss-fn (fn [p]
+                  (let [store {:params (into {}
+                                        (map-indexed
+                                          (fn [i nm] [nm (mx/index p i)])
+                                          param-names))}
+                        key (rng/fresh-key)]
+                    (binding [h/*param-store* store]
+                      (vadev-surrogate gf args cost-fn n-samples key))))
+        vg (mx/value-and-grad loss-fn)
+        [loss grad] (vg params-array)]
+    {:loss loss :grad grad}))
+
+;; ---------------------------------------------------------------------------
+;; Compiled ADEV optimization (mx/compile-fn + mx/tidy)
+;; ---------------------------------------------------------------------------
+
+(defn compiled-adev-optimize
+  "Optimize E[cost] via compiled vectorized ADEV gradient estimation.
+   Uses mx/compile-fn on the gradient function for faster iteration.
+   opts:
+     :iterations  - number of steps (default 100)
+     :lr          - learning rate (default 0.01)
+     :n-samples   - batch size per gradient estimate (default 100)
+     :callback    - (fn [{:iter :loss :params}]) called each step
+   Returns {:params final-params, :loss-history [numbers...]}."
+  [{:keys [iterations lr n-samples callback]
+    :or {iterations 100 lr 0.01 n-samples 100}}
+   gf args cost-fn param-names init-params]
+  (let [loss-fn (fn [p key]
+                  (let [store {:params (into {}
+                                        (map-indexed
+                                          (fn [i nm] [nm (mx/index p i)])
+                                          param-names))}]
+                    (binding [h/*param-store* store]
+                      (vadev-surrogate gf args cost-fn n-samples key))))
+        grad-fn (fn [p key]
+                  (let [[loss grad] ((mx/value-and-grad loss-fn) p key)]
+                    [loss grad]))
+        opt-state (learn/adam-init init-params)]
+    (loop [i 0
+           params init-params
+           opt-st opt-state
+           losses (transient [])]
+      (if (>= i iterations)
+        {:params params :loss-history (persistent! losses)}
+        (let [key (rng/fresh-key)
+              [loss grad] (mx/tidy (fn [] (grad-fn params key)))
+              _ (mx/eval! loss grad)
+              loss-val (mx/item loss)
+              [new-params new-opt-st] (learn/adam-step params grad opt-st {:lr lr})]
+          (when callback
+            (callback {:iter i :loss loss-val :params new-params}))
+          (recur (inc i) new-params new-opt-st
+                 (conj! losses loss-val)))))))

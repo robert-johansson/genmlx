@@ -167,4 +167,77 @@
   (assert-close "ADEV grad ≈ analytical 2*mu"
     analytical-grad adev-grad 0.5))
 
+;; ---------------------------------------------------------------------------
+;; Test 8: vadev-gradient produces finite gradients with correct sign
+;; ---------------------------------------------------------------------------
+
+(println "\n-- Vectorized ADEV gradient (vadev-gradient) --")
+(let [model (gen []
+              (let [mu (dyn/param :mu 0.0)
+                    x (dyn/trace :x (dist/gaussian mu (mx/scalar 1.0)))]
+                x))
+      cost-fn (fn [result]
+                (mx/square (mx/subtract (:retval result) (mx/scalar 3.0))))
+      param-names [:mu]
+      params (mx/array [0.0])
+      {:keys [loss grad]} (adev/vadev-gradient {:n-samples 100}
+                                                model [] cost-fn
+                                                param-names params)]
+  (mx/eval! loss grad)
+  (assert-true "vadev loss is finite" (js/isFinite (mx/item loss)))
+  (assert-true "vadev grad is finite" (js/isFinite (mx/item (mx/index grad 0))))
+  ;; At mu=0, cost=(x-3)^2, gradient should be negative (need to increase mu)
+  (assert-true "vadev grad is negative (should increase mu)" (< (mx/item (mx/index grad 0)) 0)))
+
+;; ---------------------------------------------------------------------------
+;; Test 9: vadev-gradient agrees with adev-gradient statistically
+;; ---------------------------------------------------------------------------
+
+(println "\n-- vadev-gradient vs adev-gradient agreement --")
+(let [model (gen []
+              (let [mu (dyn/param :mu 0.0)
+                    x (dyn/trace :x (dist/gaussian mu (mx/scalar 1.0)))]
+                x))
+      cost-fn-scalar (fn [trace]
+                       (mx/square (mx/subtract (:retval trace) (mx/scalar 0.0))))
+      cost-fn-batch (fn [result]
+                      (mx/square (mx/subtract (:retval result) (mx/scalar 0.0))))
+      param-names [:mu]
+      mu-val 2.0
+      params (mx/array [mu-val])
+      ;; Analytical gradient: d/dmu E[(x-0)^2] = d/dmu (mu^2 + 1) = 2*mu = 4.0
+      analytical-grad (* 2.0 mu-val)
+      {:keys [grad]} (adev/adev-gradient {:n-samples 500}
+                                          model [] cost-fn-scalar
+                                          param-names params)
+      adev-g (mx/item (mx/index grad 0))
+      {:keys [grad]} (adev/vadev-gradient {:n-samples 500}
+                                           model [] cost-fn-batch
+                                           param-names params)
+      vadev-g (mx/item (mx/index grad 0))]
+  (assert-close "adev-gradient ≈ analytical 2*mu" analytical-grad adev-g 0.5)
+  (assert-close "vadev-gradient ≈ analytical 2*mu" analytical-grad vadev-g 0.5))
+
+;; ---------------------------------------------------------------------------
+;; Test 10: compiled-adev-optimize convergence
+;; ---------------------------------------------------------------------------
+
+(println "\n-- compiled-adev-optimize convergence --")
+(let [model (gen []
+              (let [mu (dyn/param :mu 0.0)
+                    x (dyn/trace :x (dist/gaussian mu (mx/scalar 1.0)))]
+                x))
+      cost-fn (fn [result]
+                (mx/square (mx/subtract (:retval result) (mx/scalar 5.0))))
+      param-names [:mu]
+      init-params (mx/array [0.0])
+      {:keys [params loss-history]} (adev/compiled-adev-optimize
+                                      {:iterations 200 :lr 0.1 :n-samples 100}
+                                      model [] cost-fn param-names init-params)
+      final-mu (mx/item (mx/index params 0))
+      first-loss (first loss-history)
+      last-loss (last loss-history)]
+  (assert-close "mu converges near 5.0" 5.0 final-mu 1.5)
+  (assert-true "loss decreases" (< last-loss first-loss)))
+
 (println "\n=== ADEV Tests Complete ===")

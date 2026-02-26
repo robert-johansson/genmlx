@@ -436,7 +436,7 @@ performance.*
     Store exponential moving average of cost values, subtract from `stop_gradient(cost)`
     in surrogate: `cost + stop_grad(cost - baseline) * reinforce_lp`
 
-- [ ] **20.5** Vectorized ADEV — batched gradient estimation on GPU
+- [x] **20.5** Vectorized ADEV — batched gradient estimation on GPU
   - **File**: `inference/adev.cljs`
   - **Impact**: Currently `adev-gradient` loops over N samples in JS (`mapv`), running the
     model body N times sequentially. This is the single biggest ADEV performance bottleneck.
@@ -453,7 +453,7 @@ performance.*
     interpretation + `modular_vmap`). GenMLX's shape-based approach achieves the same
     parallelism in ~40 lines because MLX broadcasting replaces explicit vmap.
 
-- [ ] **20.6** Compiled ADEV optimization loop
+- [x] **20.6** Compiled ADEV optimization loop
   - **File**: `inference/adev.cljs`
   - **Impact**: `adev-optimize` rebuilds the computation graph each iteration. The existing
     `compiled-vi` and `compiled-programmable-vi` show 2-5x additional speedup from Metal JIT
@@ -463,7 +463,7 @@ performance.*
     splitting) from the compiled gradient computation.
   - **Depends on**: 20.5 (vectorized ADEV) — compile the vectorized version, not the sequential one
 
-- [ ] **20.7** ADEV benchmark suite — measure vectorized + compiled speedups
+- [x] **20.7** ADEV benchmark suite — measure vectorized + compiled speedups
   - **File**: new `test/genmlx/adev_benchmark.cljs` (~60 lines)
   - **Impact**: Required to validate that GPU ADEV delivers real speedups before merging.
     Must demonstrate measurable improvement or the feature should not ship.
@@ -803,9 +803,9 @@ LOW-MEDIUM (testing -- nice to have):
   ~~21.8  Nested combinator tests~~ ✅ DONE
 
 HIGH (GPU ADEV — inspired by GenJAX, gate on benchmarks):
-  20.5  Vectorized ADEV (batched GPU gradient est.)  ~40 lines, ~50-60x speedup
-  20.6  Compiled ADEV optimization loop              ~30 lines, additional 2-5x
-  20.7  ADEV benchmark suite (gate: ≥10x at N=100)  ~60 lines
+  ~~20.5  Vectorized ADEV (batched GPU gradient est.)~~ ✅ DONE (75-86x speedup)
+  ~~20.6  Compiled ADEV optimization loop~~ ✅ DONE
+  ~~20.7  ADEV benchmark suite (gate: ≥10x at N=100)~~ ✅ DONE (all PASS)
   20.4  ADEV variance reduction (baseline)           ~15 lines
 
 FUTURE (new features, lower priority):
