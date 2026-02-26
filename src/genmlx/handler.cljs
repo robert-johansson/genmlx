@@ -588,8 +588,7 @@
         (vswap! *state* merge-sub-result addr sub-result)
         (:retval sub-result)))
     ;; Direct mode — simulate and return value
-    (let [p (requiring-resolve 'genmlx.protocols/simulate)
-          trace (p gf args)]
+    (let [trace (p/simulate gf args)]
       (:retval trace))))
 
 ;; ---------------------------------------------------------------------------

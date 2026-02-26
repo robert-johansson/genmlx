@@ -10,6 +10,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.dist.core :as dc]
             [genmlx.inference.util :as u]
+            [genmlx.inference.kernel :as kern]
             [genmlx.learning :as learn]))
 
 ;; ---------------------------------------------------------------------------
@@ -35,34 +36,6 @@
       (try (f)
         (finally (mx/set-default-device! prev))))
     (f)))
-
-;; ---------------------------------------------------------------------------
-;; Generic sample collector (shared burn-in / thin / callback loop)
-;; ---------------------------------------------------------------------------
-
-(defn- collect-samples
-  "Generic MCMC sample collection loop with burn-in, thinning, and callback.
-   - `step-fn`:    (fn [state key] -> {:state new-state :accepted? bool})
-   - `extract-fn`: (fn [state] -> sample)
-   - `init-state`: initial MCMC state
-   - Returns vector of samples with {:acceptance-rate ...} metadata."
-  [{:keys [samples burn thin callback key]} step-fn extract-fn init-state]
-  (let [total-iters (+ burn (* samples thin))]
-    (loop [i 0, state init-state, acc (transient []), n 0, n-accepted 0, rk key]
-      (if (>= n samples)
-        (with-meta (persistent! acc)
-          {:acceptance-rate (/ n-accepted total-iters)})
-        (let [[step-key next-key] (rng/split-or-nils rk)
-              {:keys [state accepted?]} (step-fn state step-key)
-              past-burn? (>= i burn)
-              keep? (and past-burn? (zero? (mod (- i burn) thin)))]
-          (when (and callback keep?)
-            (callback {:iter n :value (extract-fn state) :accepted? accepted?}))
-          (recur (inc i) state
-                 (if keep? (conj! acc (extract-fn state)) acc)
-                 (if keep? (inc n) n)
-                 (if accepted? (inc n-accepted) n-accepted)
-                 next-key))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Metropolis-Hastings (via regenerate)
@@ -92,7 +65,7 @@
     :or {burn 0 thin 1 selection sel/all}}
    model args observations]
   (let [{:keys [trace]} (p/generate model args observations)]
-    (collect-samples
+    (kern/collect-samples
       {:samples samples :burn burn :thin thin :callback callback :key key}
       (fn [state step-key]
         (let [new-trace (mh-step state selection step-key)]
@@ -156,7 +129,7 @@
     :or {burn 0 thin 1}}
    model args observations]
   (let [{:keys [trace]} (p/generate model args observations)]
-    (collect-samples
+    (kern/collect-samples
       {:samples samples :burn burn :thin thin :callback callback :key key}
       (fn [state step-key]
         (let [new-trace (mh-custom-step state model proposal-gf backward-gf step-key)]
@@ -292,7 +265,7 @@
              init-params n-params score-fn std
              burn-chain burn-block thin-chain))
          ;; Fallback: per-step eager path
-         (collect-samples
+         (kern/collect-samples
            {:samples samples :burn burn :thin thin :callback callback :key key}
            (fn [params step-key]
              (compiled-mh-step params score-fn std (mx/shape init-params) step-key))
@@ -411,7 +384,7 @@
     :or {burn 0 thin 1}}
    model args observations schedule]
   (let [{:keys [trace]} (p/generate model args observations)]
-    (collect-samples
+    (kern/collect-samples
       {:samples samples :burn burn :thin thin :callback callback :key key}
       (fn [state step-key]
         (let [keys (rng/split-n (rng/ensure-key step-key) (count schedule))
@@ -479,7 +452,7 @@
     :or {burn 0 thin 1}}
    model args observations]
   (let [{:keys [trace]} (p/generate model args observations)]
-    (collect-samples
+    (kern/collect-samples
       {:samples samples :burn burn :thin thin :callback callback :key key}
       (fn [state step-key]
         (let [new-trace (involutive-mh-step state model proposal-gf involution step-key)]
@@ -655,7 +628,7 @@
              init-q n-params val-grad-compiled
              burn-chain burn-block thin-chain thin-steps))
          ;; Fallback: per-step eager path
-         (collect-samples
+         (kern/collect-samples
            {:samples samples :burn burn :thin thin :callback callback :key key}
            (fn [q step-key]
              (mala-step q val-grad-compiled eps half-eps2 two-eps-sq q-shape step-key))
@@ -1182,7 +1155,7 @@
              start-q n-params neg-U-compiled grad-neg-U eps half-eps half q-shape
              leapfrog-steps final-metric burn-chain burn-block thin-chain))
          ;; Fallback: per-step eager path (or non-identity metric)
-         (collect-samples
+         (kern/collect-samples
            {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
            (fn [q step-key]
              (hmc-step q neg-U-compiled grad-neg-U eps half-eps half q-shape
@@ -1470,7 +1443,7 @@
                 :half half :metric final-metric}
            start-q (or warmup-q init-q)
            remaining-burn (if warmup-q 0 burn)]
-       (collect-samples
+       (kern/collect-samples
          {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
          (fn [q step-key]
         (let [[momentum-key slice-key dir-key tree-key]
@@ -1591,7 +1564,7 @@
     :or {burn 0 thin 1 prior-std 1.0}}
    model args observations]
   (let [{:keys [trace]} (p/generate model args observations)]
-    (collect-samples
+    (kern/collect-samples
       {:samples samples :burn burn :thin thin :key key}
       (fn [state step-key]
         (let [new-trace (elliptical-slice-step state selection prior-std step-key)]

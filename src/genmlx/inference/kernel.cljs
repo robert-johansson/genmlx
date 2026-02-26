@@ -97,31 +97,48 @@
 ;; Kernel execution
 ;; ---------------------------------------------------------------------------
 
+(defn collect-samples
+  "Generic sample collection loop with burn-in, thinning, and callback.
+   - `step-fn`:    (fn [state key] -> {:state new-state :accepted? bool})
+   - `extract-fn`: (fn [state] -> sample)
+   - `init-state`: initial state
+   - Returns vector of samples with {:acceptance-rate ...} metadata."
+  [{:keys [samples burn thin callback key]
+    :or {burn 0 thin 1}}
+   step-fn extract-fn init-state]
+  (let [total-iters (+ burn (* samples thin))]
+    (loop [i 0, state init-state, acc (transient []), n 0, n-accepted 0, rk key]
+      (if (>= n samples)
+        (with-meta (persistent! acc)
+          {:acceptance-rate (if (pos? total-iters) (/ n-accepted total-iters) 0)})
+        (let [[step-key next-key] (rng/split-or-nils rk)
+              {:keys [state accepted?]} (step-fn state step-key)
+              past-burn? (>= i burn)
+              keep? (and past-burn? (zero? (mod (- i burn) thin)))]
+          (when (and callback keep?)
+            (callback {:iter n :value (extract-fn state) :accepted? accepted?}))
+          (recur (inc i) state
+                 (if keep? (conj! acc (extract-fn state)) acc)
+                 (if keep? (inc n) n)
+                 (if accepted? (inc n-accepted) n-accepted)
+                 next-key))))))
+
 (defn run-kernel
   "Run a kernel for n-samples iterations with burn-in and thinning.
    Returns a vector of traces with {:acceptance-rate ...} metadata."
   [{:keys [samples burn thin callback key]
     :or {burn 0 thin 1}}
    kernel init-trace]
-  (let [total (+ burn (* samples thin))]
-    (loop [i 0 trace init-trace
-           acc (transient []) n 0 n-accepted 0
-           rk key]
-      (if (>= n samples)
-        (with-meta (persistent! acc)
-          {:acceptance-rate (if (pos? i) (/ n-accepted i) 0)})
-        (let [[step-key next-key] (rng/split-or-nils rk)
-              trace' (kernel trace step-key)
-              accepted? (not (identical? trace' trace))
-              past-burn? (>= i burn)
-              keep? (and past-burn? (zero? (mod (- i burn) thin)))]
-          (when (and callback keep?)
-            (callback {:iter n :trace trace' :accepted? accepted?}))
-          (recur (inc i) trace'
-                 (if keep? (conj! acc trace') acc)
-                 (if keep? (inc n) n)
-                 (if accepted? (inc n-accepted) n-accepted)
-                 next-key))))))
+  (collect-samples
+    {:samples samples :burn burn :thin thin :key key
+     :callback (when callback
+                 (fn [{:keys [iter value accepted?]}]
+                   (callback {:iter iter :trace value :accepted? accepted?})))}
+    (fn [trace step-key]
+      (let [trace' (kernel trace step-key)]
+        {:state trace' :accepted? (not (identical? trace' trace))}))
+    identity
+    init-trace))
 
 ;; ---------------------------------------------------------------------------
 ;; Kernel DSL — higher-level constructors

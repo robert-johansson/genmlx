@@ -31,16 +31,10 @@
   [& addrs]
   (->SelectAddrs (set addrs)))
 
-;; Support plain sets as selections via SelectSet wrapper
-(defrecord SelectSet [s]
-  ISelection
-  (selected? [_ addr] (contains? s addr))
-  (get-subselection [_ _] all))
-
 (defn from-set
   "Create a selection from a set of addresses."
   [s]
-  (->SelectSet s))
+  (->SelectAddrs s))
 
 ;; Hierarchical selection: address -> sub-selection
 (defrecord Hierarchical [m]

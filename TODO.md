@@ -373,11 +373,11 @@ performance.*
   - **Decision needed**: Either use it for log-normal (validating the macro in practice)
     or remove it
 
-- [ ] **19.5** Merge `SelectAddrs` and `SelectSet` record types
+- [x] **19.5** Merge `SelectAddrs` and `SelectSet` record types
   - **File**: `selection.cljs:23-43`
   - **Impact**: Both records have identical implementations (wrap a set, check `contains?`).
     The only difference is the constructor: `select` takes varargs, `from-set` takes a set.
-  - **Fix**: Single record type with two constructor functions
+  - **Fix**: Deleted `SelectSet`, `from-set` now constructs `SelectAddrs`
 
 - [x] **19.6** Add missing `clojure.set` require in `diff.cljs`
   - **File**: `diff.cljs` ns form
@@ -386,12 +386,11 @@ performance.*
     auto-loads it) but would break in standard ClojureScript.
   - **Fix**: Add `[clojure.set :as set]` to the ns `:require`
 
-- [ ] **19.7** Fix `requiring-resolve` usage in handler.cljs
-  - **File**: `handler.cljs:446`
+- [x] **19.7** Fix `requiring-resolve` usage in handler.cljs
+  - **File**: `handler.cljs:591`
   - **Impact**: `requiring-resolve` is a Clojure JVM feature, fragile in nbb/ClojureScript.
     Used as a workaround to avoid circular dependency with `genmlx.protocols`.
-  - **Fix**: Refactor to break the circular dependency, or use a different dynamic
-    resolution mechanism
+  - **Fix**: Replaced with direct `p/simulate` call (already required as `genmlx.protocols :as p`)
 
 - [x] **19.8** Add `inference/adev.cljs` and `inference/amortized.cljs` to the
   `inference.cljs` re-export facade
@@ -400,10 +399,11 @@ performance.*
     them directly by full namespace.
   - **Fix**: Add re-exports for key public functions
 
-- [ ] **19.9** Deduplicate `run-kernel` (kernel.cljs) and `collect-samples` (mcmc.cljs)
+- [x] **19.9** Deduplicate `run-kernel` (kernel.cljs) and `collect-samples` (mcmc.cljs)
   - **Files**: `inference/kernel.cljs:100-124`, `inference/mcmc.cljs:19-41`
   - **Impact**: Essentially identical MCMC loops with slightly different signatures.
-  - **Fix**: Have one delegate to the other, or extract a shared helper
+  - **Fix**: Moved `collect-samples` to `kernel.cljs` as public fn, `run-kernel` delegates
+    to it. Deleted private copy from `mcmc.cljs`, all 10 callers use `kern/collect-samples`.
 
 ---
 
@@ -779,10 +779,10 @@ LOW (cleanup and polish):
   18.5  CustomGradientGF gradient-fn wiring       ~20 lines
   19.1  Diff infrastructure cleanup               Decision needed
   19.4  defdist-transform usage                   Decision needed
-  19.5  SelectAddrs/SelectSet merge               ~10 lines
+  19.5  SelectAddrs/SelectSet merge               (done)
   19.6  clojure.set require                       ~1 line
-  19.7  requiring-resolve workaround              ~10 lines
-  19.9  run-kernel/collect-samples dedup          ~10 lines
+  19.7  requiring-resolve workaround              (done)
+  19.9  run-kernel/collect-samples dedup          (done)
 
 MEDIUM-HIGH (verification -- catches bugs, path to formal proofs):
   24.1  Static validator (validate-gen-fn)          ~100-150 lines
@@ -850,10 +850,10 @@ RESEARCH (Lean 4 formalization):
 | 16. Correctness Concerns | 6 | 5 | **1** |
 | 17. Missing Protocols | 6 | 6 | 0 |
 | 18. Distribution Quality | 5 | 4 | **1** |
-| 19. Code Quality | 9 | 4 | **5** |
+| 19. Code Quality | 9 | 7 | **2** |
 | 20. Amortized Improvements | 4 | 0 | **4** |
 | 21. Testing Strategies | 12 | 0 | **12** |
 | 22. Practical Inference | 3 | 1 | **2** |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 0 | **7** |
-| **Total** | **135** | **83** | **52** |
+| **Total** | **135** | **86** | **49** |
