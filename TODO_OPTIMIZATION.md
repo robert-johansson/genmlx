@@ -679,8 +679,8 @@ dispatches.
     code is the same speed as the old code. The 5.6x headline applies to
     burn-in and thinning phases only.
 
-- [ ] **5.4.2** Apply loop compilation to MALA (mcmc.cljs)
-- [ ] **5.4.3** Apply loop compilation to HMC leapfrog (mcmc.cljs)
+- [x] **5.4.2** Apply loop compilation to MALA (mcmc.cljs)
+- [x] **5.4.3** Apply loop compilation to HMC leapfrog (mcmc.cljs)
 
 ```
 STEP 5 RESULTS (2026-02-24):
