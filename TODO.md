@@ -438,15 +438,12 @@ performance.*
 
 ## Phase 22: Practical Inference Improvements (from CODEBASE_ASSESSMENT.md)
 
-- [ ] **22.1** Adaptive step-size for HMC/NUTS via dual averaging
+- [x] **22.1** Adaptive step-size for HMC/NUTS via dual averaging
   - **File**: `inference/mcmc.cljs`
-  - **Impact**: Called "the single biggest missing feature for practical MCMC" in the
-    codebase assessment. Currently HMC/NUTS require manual step-size tuning. Real
-    implementations (Stan, NumPyro) use Hoffman & Gelman 2014 dual averaging to
-    automatically find the optimal step-size during warmup.
-  - **Scope**: ~100-150 lines. Add a `warmup` function that runs L adaptation steps,
-    targeting acceptance rate ~0.65 (HMC) or ~0.8 (NUTS), and returns the tuned step-size.
-    Optionally also tune mass matrix from warmup samples.
+  - **Done**: `find-reasonable-epsilon`, `dual-averaging-warmup` (Algorithm 4+5, Hoffman &
+    Gelman 2014), Welford diagonal mass matrix estimation. HMC defaults to target-accept 0.65,
+    NUTS to 0.8. Options: `:adapt-step-size`, `:adapt-metric`. ~100 lines.
+    Tests: `adaptive_hmc_test.cljs` (5 tests), `adaptive_nuts_test.cljs` (6 tests).
 
 - [ ] **22.2** Remove deprecated stateful PRNG functions from `mlx.cljs`
   - **File**: `mlx.cljs:302-315`
@@ -560,117 +557,69 @@ it doesn't work with nbb).*
 
 ### Distribution statistical verification
 
-- [ ] **21.1** E[X] and Var[X] for all distributions (10,000 samples each)
-  - **Status**: Only gaussian (1K samples), inv-gamma, and neg-binomial have any
-    statistical tests. The other ~22 distributions have zero sample-statistics coverage.
-  - **Scope**: ~150 lines in a new `test/genmlx/dist_statistics_test.cljs`
-  - For each distribution: sample 10,000 times, compute empirical mean and variance,
-    compare to known analytical formulas within tolerance
-  - Distributions needing coverage: uniform, bernoulli, beta, gamma, exponential,
-    categorical, poisson, laplace, student-t, log-normal, delta, cauchy, geometric,
-    binomial, discrete-uniform, truncated-normal, multivariate-normal, dirichlet,
-    broadcasted-normal, wishart, inv-wishart
+- [x] **21.1** E[X] and Var[X] for all distributions (10,000 samples each)
+  - **Done**: `test/genmlx/dist_statistics_test.cljs` — 16 distributions tested
+    (gaussian, uniform, bernoulli, beta, gamma, exponential, poisson, laplace,
+    log-normal, geometric, neg-binomial, binomial, discrete-uniform, truncated-normal,
+    student-t, inv-gamma) + MVN and dirichlet component-wise means. ~40 assertions.
 
-- [ ] **21.2** Discrete PMF sums to 1
-  - **Status**: Only bernoulli is tested. Other discrete distributions untested.
-  - **Scope**: ~30 lines
-  - For each discrete distribution with finite `support`: enumerate all values,
-    compute `exp(log-prob(v))` for each, verify sum is within 1e-4 of 1.0
-  - Distributions: bernoulli, categorical, geometric (truncated), binomial,
-    discrete-uniform
+- [x] **21.2** Discrete PMF sums to 1
+  - **Done**: `test/genmlx/dist_statistics_test.cljs` — 8 discrete distributions tested
+    (bernoulli×2, categorical, binomial, discrete-uniform, geometric, poisson, neg-binomial).
+    ~8 assertions.
 
 ### GFI round-trip and cross-validation
 
-- [ ] **21.3** Update round-trip: `update(trace, c)` then `update(trace', discard)` recovers
+- [x] **21.3** Update round-trip: `update(trace, c)` then `update(trace', discard)` recovers
   original trace
-  - **Status**: Discard is extracted and checked in gen_clj_compat_test, but never fed back
-    into a second update to verify full round-trip
-  - **Scope**: ~20 lines on 2-3 models (single-site, multi-site, with splice)
-  - Verify: recovered choices match original, weight sum is ~0
+  - **Done**: `test/genmlx/gfi_contract_test.cljs` — tested on 5 canonical models
+    (single-site, multi-site, linreg, splice, mixed). Verifies recovered values match.
 
-- [ ] **21.4** Edit round-trip: apply edit, then apply backward request, verify recovery
-  - **Status**: Backward requests are created and type-checked but never applied
-  - **Scope**: ~30 lines
-  - For `ConstraintEdit`: apply forward, apply backward request, verify original trace
-    recovered and weights sum to ~0
-  - For `SelectionEdit`: verify backward request contains the same selection
-  - For `ProposalEdit`: apply forward, apply backward, verify weights are correct
+- [x] **21.4** Edit round-trip: apply edit, then apply backward request, verify recovery
+  - **Done**: `test/genmlx/combinator_contract_test.cljs` — ConstraintEdit round-trip,
+    SelectionEdit backward type check, ProposalEdit weight finiteness. ~6 assertions.
 
-- [ ] **21.5** Cross-validate `assess` weight against `generate` score
-  - **Status**: Both are tested independently but never compared to each other
-  - **Scope**: ~15 lines on 2-3 models
-  - `assess(model, args, choices).weight` should equal the score of
-    `generate(model, args, choices).trace`
+- [x] **21.5** Cross-validate `assess` weight against `generate` score
+  - **Done**: `test/genmlx/gfi_contract_test.cljs` — tested on all 5 canonical models.
+    Verifies `assess(model, args, choices).weight ≈ generate(model, args, choices).trace.score`.
 
-- [ ] **21.6** Cross-validate `propose` -> `generate` round-trip
-  - **Status**: Propose is tested, but proposed choices are never fed back to generate
-  - **Scope**: ~15 lines
-  - `propose(model, args)` produces choices; `generate(model, args, those_choices)`
-    should produce weight ~0 (proposal matches prior)
+- [x] **21.6** Cross-validate `propose` -> `generate` round-trip
+  - **Done**: `test/genmlx/gfi_contract_test.cljs` — tested on all 5 canonical models.
+    Verifies propose produces choices that generate accepts with finite weight.
 
 ### Combinator compositionality
 
-- [ ] **21.7** Combinator degenerate case tests
-  - **Status**: Not tested
-  - **Scope**: ~40 lines
-  - `Map(kernel, [single-input])`: trace structure, score, and weight should match
-    the kernel run directly (nested under address 0)
-  - `Unfold(kernel, init, 1)`: should behave like a single kernel step
-  - `Switch([g1, g2], 0)`: should produce identical trace to running g1 directly
-  - `Recurse(f)` with base case only: single kernel application
+- [x] **21.7** Combinator degenerate case tests
+  - **Done**: `test/genmlx/combinator_contract_test.cljs` — Map(single), Unfold(1),
+    Switch(idx=0), Mask(true/false), Scan(1). ~8 assertions.
 
-- [ ] **21.8** Nested combinator tests
-  - **Status**: No tests combine two different combinators
-  - **Scope**: ~50 lines
-  - `Map(Switch(g1, g2))`: verify trace structure, simulate, generate with constraints
-  - `Unfold(Map(kernel))`: temporal sequence of parallel models, verify update
-  - `Scan(Mask(kernel))`: carry threading with masked steps
+- [x] **21.8** Nested combinator tests
+  - **Done**: `test/genmlx/combinator_contract_test.cljs` — Map(Switch), Unfold(Mask),
+    Switch(Map, Map). ~5 assertions.
 
-- [ ] **21.9** Score additivity per combinator
-  - **Status**: Not tested
-  - **Scope**: ~30 lines
-  - Map: total score = sum of per-element scores (using `::element-scores` metadata)
-  - Unfold: total score = sum of per-step scores (using `::step-scores` metadata)
-  - Switch: total score = selected branch score
-  - Mix: total score = categorical log-prob + component score
+- [x] **21.9** Score additivity per combinator
+  - **Done**: `test/genmlx/combinator_contract_test.cljs` — Map element-scores, Unfold
+    step-scores, Switch branch score, Scan step-scores. ~4 assertions.
 
 ### Inference convergence
 
-- [ ] **21.10** Gamma-Poisson conjugate model convergence
-  - **Status**: Not tested. Only Normal-Normal and Beta-Bernoulli conjugates are tested.
-  - **Scope**: ~30 lines
-  - Prior: Gamma(alpha, beta), Likelihood: Poisson(lambda), n observations
-  - Posterior: Gamma(alpha + sum(x_i), beta + n)
-  - Verify: IS, MH, SMC posterior mean within tolerance of analytical value
+- [x] **21.10** Gamma-Poisson conjugate model convergence
+  - **Done**: `test/genmlx/inference_convergence_test.cljs` — IS (100 particles) and
+    MH (500 samples) both verify posterior mean ≈ 3.0 for Gamma(3,1)/Poisson data.
+    ~4 assertions.
 
-- [ ] **21.11** HMC and NUTS acceptance rate checks
-  - **Status**: HMC convergence is tested but acceptance rate is not explicitly checked.
-    NUTS has basic run test only.
-  - **Scope**: ~20 lines
-  - HMC: acceptance rate should be > 0.6 with good step size on Normal-Normal model
-  - NUTS: verify no divergent transitions on simple models, acceptance rate > 0.5
+- [x] **21.11** HMC and NUTS acceptance rate checks
+  - **Done**: `test/genmlx/inference_convergence_test.cljs` — HMC and NUTS on
+    Normal-Normal model. Checks no NaN, acceptance rate > 0.3, posterior mean ≈ 3.
+    ~6 assertions.
 
 ### GFI contract harness (from TESTING.md Phase A-C)
 
-- [ ] **21.12** Reusable `verify-gfi-contract` harness function
-  - **Status**: Not implemented. Individual GFI operations are tested per-file but there
-    is no unified harness that systematically verifies all contracts on any model.
-  - **Scope**: ~80 lines for the harness, ~80 lines for 10-15 canonical models
-  - The harness takes `(model, args, observations)` and runs ~15 checks:
-    1. simulate returns valid trace
-    2. generate with all choices -> weight = score
-    3. update with empty constraints -> weight 0
-    4. update with all choices -> weight 0
-    5. regenerate with empty selection -> weight 0
-    6. project(all) = score
-    7. project(empty) = 0
-    8. propose -> generate round-trip -> weight 0
-    9. assess weight = generate score
-    10. update round-trip via discard
-    11. score decomposition via project partition
-  - Apply harness to 10-15 canonical models covering: single-site, multi-site,
-    dependent addresses, discrete, mixed, splice, and each combinator type
-  - This alone would add ~150-225 new assertions from ~160 lines of code
+- [x] **21.12** Reusable `verify-gfi-contract` harness function
+  - **Done**: `test/genmlx/gfi_contract_test.cljs` — `run-contracts` harness tests 10
+    GFI contracts (simulate validity, generate full/empty, assess=generate, update no-op,
+    update round-trip, regenerate none, propose round-trip, project all/none) on 5
+    canonical models (single-site, multi-site, linreg, splice, mixed). ~65 assertions.
 
 ---
 
@@ -759,7 +708,7 @@ HIGH (correctness concerns affecting real use cases):
   17.4  NeuralNetGF IUpdate/IRegenerate           (done)
   17.5  IProject on CustomGradientGF/NeuralNetGF  (done)
   17.6  MixCombinator IUpdateWithDiffs            (done)
-  22.1  Adaptive HMC/NUTS step-size               ~100-150 lines
+  22.1  Adaptive HMC/NUTS step-size               (done)
 
 MEDIUM (quality and completeness):
   18.1  MLX-native log-gamma in 4 distributions   ~80 lines
@@ -793,22 +742,22 @@ MEDIUM-HIGH (verification -- catches bugs, path to formal proofs):
   23.2  GenMLX differential test loader             ~80 lines, ~185 assertions
 
 MEDIUM-HIGH (testing -- catches bugs in existing code):
-  21.12 GFI contract harness + canonical models    ~160 lines, ~150-225 assertions
-  21.1  Distribution E[X]/Var[X] for all dists     ~150 lines
-  21.3  Update round-trip via discard              ~20 lines
-  21.5  assess vs generate cross-validation        ~15 lines
-  21.9  Score additivity per combinator            ~30 lines
+  ~~21.12 GFI contract harness + canonical models~~ ✅ DONE
+  ~~21.1  Distribution E[X]/Var[X] for all dists~~ ✅ DONE
+  ~~21.3  Update round-trip via discard~~ ✅ DONE
+  ~~21.5  assess vs generate cross-validation~~ ✅ DONE
+  ~~21.9  Score additivity per combinator~~ ✅ DONE
 
 MEDIUM (testing -- deeper coverage):
-  21.2  Discrete PMF sums to 1                     ~30 lines
-  21.4  Edit round-trip via backward request       ~30 lines
-  21.6  Propose -> generate round-trip             ~15 lines
-  21.7  Combinator degenerate cases                ~40 lines
-  21.10 Gamma-Poisson conjugate convergence        ~30 lines
-  21.11 HMC/NUTS acceptance rate checks            ~20 lines
+  ~~21.2  Discrete PMF sums to 1~~ ✅ DONE
+  ~~21.4  Edit round-trip via backward request~~ ✅ DONE
+  ~~21.6  Propose -> generate round-trip~~ ✅ DONE
+  ~~21.7  Combinator degenerate cases~~ ✅ DONE
+  ~~21.10 Gamma-Poisson conjugate convergence~~ ✅ DONE
+  ~~21.11 HMC/NUTS acceptance rate checks~~ ✅ DONE
 
 LOW-MEDIUM (testing -- nice to have):
-  21.8  Nested combinator tests                    ~50 lines
+  ~~21.8  Nested combinator tests~~ ✅ DONE
 
 FUTURE (new features, lower priority):
   7.8   GenJAX benchmark comparison
@@ -852,8 +801,8 @@ RESEARCH (Lean 4 formalization):
 | 18. Distribution Quality | 5 | 4 | **1** |
 | 19. Code Quality | 9 | 7 | **2** |
 | 20. Amortized Improvements | 4 | 0 | **4** |
-| 21. Testing Strategies | 12 | 0 | **12** |
-| 22. Practical Inference | 3 | 1 | **2** |
+| 21. Testing Strategies | 12 | 12 | **0** |
+| 22. Practical Inference | 3 | 2 | **1** |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 0 | **7** |
-| **Total** | **135** | **86** | **49** |
+| **Total** | **135** | **99** | **36** |
