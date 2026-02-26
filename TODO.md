@@ -432,7 +432,50 @@ performance.*
 - [ ] **20.4** Add ADEV variance reduction (baseline subtraction)
   - **File**: `inference/adev.cljs`
   - **Impact**: The REINFORCE term has no baseline, leading to high variance gradients.
-  - **Fix**: Implement moving-average baseline or learned baseline
+  - **Fix**: Implement moving-average baseline for REINFORCE surrogate term. ~15 lines.
+    Store exponential moving average of cost values, subtract from `stop_gradient(cost)`
+    in surrogate: `cost + stop_grad(cost - baseline) * reinforce_lp`
+
+- [ ] **20.5** Vectorized ADEV — batched gradient estimation on GPU
+  - **File**: `inference/adev.cljs`
+  - **Impact**: Currently `adev-gradient` loops over N samples in JS (`mapv`), running the
+    model body N times sequentially. This is the single biggest ADEV performance bottleneck.
+    GenJAX achieves GPU-parallel ADEV via `modular_vmap` over Jaxpr; GenMLX should use its
+    existing shape-based batching (`[N]`-shaped arrays, same approach as `vsimulate`/`vgenerate`).
+  - **Scope**: ~40 lines. Add `vadev-transition` (batched ADEV handler that samples `[N]`-shaped
+    arrays at each trace site, accumulates `[N]`-shaped `reinforce-lp`), `vadev-execute`
+    (runs model once with N particles), and `vadev-surrogate` (computes per-particle surrogate
+    losses, returns mean). The handler is structurally identical to the existing batched
+    generate handler, plus `reinforce-lp` accumulation for non-reparam sites.
+  - **Expected speedup**: ~50-60x for N=100 (matching existing `vgenerate` benchmarks).
+    MLX broadcasting handles all arithmetic naturally — no code changes to model bodies.
+  - **Inspired by**: GenJAX ADEV (`src/genjax/adev/__init__.py`, ~1,719 lines using Jaxpr
+    interpretation + `modular_vmap`). GenMLX's shape-based approach achieves the same
+    parallelism in ~40 lines because MLX broadcasting replaces explicit vmap.
+
+- [ ] **20.6** Compiled ADEV optimization loop
+  - **File**: `inference/adev.cljs`
+  - **Impact**: `adev-optimize` rebuilds the computation graph each iteration. The existing
+    `compiled-vi` and `compiled-programmable-vi` show 2-5x additional speedup from Metal JIT
+    via `mx/compile-fn`.
+  - **Scope**: ~30 lines. Add `compiled-adev-optimize` following the `compiled-programmable-vi`
+    pattern: wrap `mx/value-and-grad(loss-fn)` in `mx/compile-fn`, separate sampling (key
+    splitting) from the compiled gradient computation.
+  - **Depends on**: 20.5 (vectorized ADEV) — compile the vectorized version, not the sequential one
+
+- [ ] **20.7** ADEV benchmark suite — measure vectorized + compiled speedups
+  - **File**: new `test/genmlx/adev_benchmark.cljs` (~60 lines)
+  - **Impact**: Required to validate that GPU ADEV delivers real speedups before merging.
+    Must demonstrate measurable improvement or the feature should not ship.
+  - **Benchmarks** (3 models × 3 configurations):
+    - **Models**: (1) pure reparam (5 gaussians), (2) mixed reparam+REINFORCE (3 gaussians
+      + 2 bernoullis), (3) 20-site model (stress test for dispatch amortization)
+    - **Configurations**: sequential `adev-gradient` (baseline), vectorized `vadev-surrogate`,
+      compiled+vectorized `compiled-adev-optimize`
+    - **Particle counts**: N = 10, 100, 1000
+    - Measure wall-clock time per gradient step, report speedup ratios
+  - **Expected results**: 50-100x for vectorized, 100-300x for compiled+vectorized vs baseline
+  - **Gate**: Only merge 20.5/20.6 if benchmarks show ≥10x speedup at N=100
 
 ---
 
@@ -759,6 +802,12 @@ MEDIUM (testing -- deeper coverage):
 LOW-MEDIUM (testing -- nice to have):
   ~~21.8  Nested combinator tests~~ ✅ DONE
 
+HIGH (GPU ADEV — inspired by GenJAX, gate on benchmarks):
+  20.5  Vectorized ADEV (batched GPU gradient est.)  ~40 lines, ~50-60x speedup
+  20.6  Compiled ADEV optimization loop              ~30 lines, additional 2-5x
+  20.7  ADEV benchmark suite (gate: ≥10x at N=100)  ~60 lines
+  20.4  ADEV variance reduction (baseline)           ~15 lines
+
 FUTURE (new features, lower priority):
   7.8   GenJAX benchmark comparison
   9.2   Handler-level diff awareness
@@ -767,7 +816,7 @@ FUTURE (new features, lower priority):
   12.3-12.4, 12.6  Ecosystem features
   13.1-13.3  Documentation & packaging
   14.2, 14.5-14.8  Gen.jl parity features
-  20.1-20.4  Amortized inference improvements
+  20.1-20.3  Amortized inference improvements
 
 RESEARCH (Lean 4 formalization):
   24.5  Formalize lambda_MLX types in Lean 4       Research-level
@@ -800,9 +849,9 @@ RESEARCH (Lean 4 formalization):
 | 17. Missing Protocols | 6 | 6 | 0 |
 | 18. Distribution Quality | 5 | 4 | **1** |
 | 19. Code Quality | 9 | 7 | **2** |
-| 20. Amortized Improvements | 4 | 0 | **4** |
+| 20. Amortized + GPU ADEV | 7 | 0 | **7** |
 | 21. Testing Strategies | 12 | 12 | **0** |
 | 22. Practical Inference | 3 | 2 | **1** |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 0 | **7** |
-| **Total** | **135** | **99** | **36** |
+| **Total** | **138** | **99** | **39** |
