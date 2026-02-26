@@ -224,12 +224,12 @@ wrong results in certain use cases.*
     addresses, plus `execute-sub-assess` for nested GFs. DynamicGF.assess now uses the
     dedicated handler instead of generate-handler
 
-- [ ] **16.4** Switch combinator `update` does not support branch switching
-  - **File**: `combinators.cljs:315-331`
-  - **Impact**: `update` always uses the original branch index. If the user wants to change
-    which branch is active, `update` cannot do it (Gen.jl's Switch supports this).
-  - **Fix**: Compare old and new branch indices; if changed, simulate new branch from scratch
-    and weight = `new_score - old_score`
+- [x] **16.4** Switch combinator `update` does not support branch switching
+  - **File**: `combinators.cljs`
+  - **Fix**: Added `::switch-idx` metadata to simulate/generate/regenerate traces.
+    Update reads old idx from metadata, compares to new idx from args. Same branch:
+    updates in place. Different branch: generates new branch from scratch,
+    weight = new_score - old_score, discard = old choices.
 
 - [x] **16.5** Mix combinator `generate` passes full constraints (including `:component-idx`)
   to component GF
@@ -353,14 +353,11 @@ performance.*
   - **Decision needed**: Either build the incremental computation system that uses these
     (Phase 9.2), or remove the unused infrastructure to reduce dead code
 
-- [ ] **19.2** Deduplicate resampling code
-  - **Files**: `vectorized.cljs` (systematic-resample-indices), `inference/smc.cljs`
-    (systematic-resample, residual-resample, stratified-resample), `inference/smcp3.cljs`
-    (systematic-resample, compute-ess)
-  - **Impact**: Three separate implementations of systematic resampling and two of ESS.
-    Bug fixes must be applied in multiple places.
-  - **Fix**: Consolidate into a single shared namespace (e.g., `vectorized.cljs` or a new
-    `inference/resample.cljs`) and have all consumers import from there
+- [x] **19.2** Deduplicate resampling code
+  - **Files**: `inference/util.cljs`, `inference/smc.cljs`, `inference/smcp3.cljs`
+  - **Fix**: Moved `systematic-resample` and `compute-ess` to `inference/util.cljs`.
+    Deleted private copies from smc.cljs and smcp3.cljs, replaced calls with `u/` prefix.
+    (`vectorized.cljs` version intentionally kept separate — uses MLX array I/O.)
 
 - [x] **19.3** Deduplicate Adam optimizer
   - **Files**: `learning.cljs` (adam-init, adam-step), `inference/vi.cljs` (adam-state, adam-step)
@@ -454,9 +451,10 @@ performance.*
 - [ ] **22.2** Remove deprecated stateful PRNG functions from `mlx.cljs`
   - **File**: `mlx.cljs:302-315`
   - **Impact**: `random-seed!`, `random-normal`, `random-uniform` use global MLX state,
-    directly contradicting the functional PRNG design. They are never called anywhere in
-    GenMLX source code but their presence is confusing and could lead users astray.
-  - **Fix**: Delete the three functions. Grep confirms zero internal callers.
+    directly contradicting the functional PRNG design.
+  - **Depends on 16.6**: `mx/random-normal` has ~15 callers and `mx/random-uniform` has
+    ~10 callers in inference modules (mcmc.cljs, vi.cljs, amortized.cljs, smc.cljs,
+    vectorized.cljs). Must thread PRNG keys through all call sites first (16.6).
 
 - [x] **22.3** Add `mx/eval!` after resampling to prevent unbounded lazy graph growth
   - **File**: `vectorized.cljs:72-73`
@@ -752,7 +750,7 @@ CRITICAL (fix before any new feature work):
   (all fixed)
 
 HIGH (correctness concerns affecting real use cases):
-  22.2  Remove deprecated stateful PRNG            ~15 lines deleted
+  22.2  Remove deprecated stateful PRNG            depends on 16.6
   22.3  mx/eval! after resampling                  ~2 lines  (done)
   16.1  Combinator sub-trace score=0              (done)
   16.2  execute-sub fake trace score=0            (done)
@@ -770,12 +768,12 @@ MEDIUM (quality and completeness):
   17.1  IAssess on combinators                    (done)
   17.2  IPropose on combinators                   (done)
   17.5  IProject on CustomGradientGF/NeuralNetGF  (done)
-  19.2  Deduplicate resampling                    ~30 lines refactor
+  19.2  Deduplicate resampling                    (done)
   19.3  Deduplicate Adam optimizer                ~5 lines refactor
   19.8  inference.cljs re-exports                 ~10 lines
 
 LOW (cleanup and polish):
-  16.4  Switch combinator branch switching        ~30 lines
+  16.4  Switch combinator branch switching        (done)
   16.6  PRNG key threading audit                  ~100+ lines
   18.4  Geometric support range                   ~5 lines
   18.5  CustomGradientGF gradient-fn wiring       ~20 lines
@@ -849,13 +847,13 @@ RESEARCH (Lean 4 formalization):
 | 13. Documentation | 3 | 0 | 3 |
 | 14. Gen.jl Parity | 8 | 4 | 4 |
 | 15. Confirmed Bugs | 5 | 5 | 0 |
-| 16. Correctness Concerns | 6 | 4 | **2** |
-| 17. Missing Protocols | 6 | 4 | **2** |
+| 16. Correctness Concerns | 6 | 5 | **1** |
+| 17. Missing Protocols | 6 | 6 | 0 |
 | 18. Distribution Quality | 5 | 4 | **1** |
-| 19. Code Quality | 9 | 3 | **6** |
+| 19. Code Quality | 9 | 4 | **5** |
 | 20. Amortized Improvements | 4 | 0 | **4** |
 | 21. Testing Strategies | 12 | 0 | **12** |
 | 22. Practical Inference | 3 | 1 | **2** |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 0 | **7** |
-| **Total** | **135** | **79** | **56** |
+| **Total** | **135** | **83** | **52** |

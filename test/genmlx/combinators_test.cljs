@@ -373,4 +373,93 @@
   (assert-true "scan update with empty constraints returns same trace"
     (identical? (:trace result) trace)))
 
+;; ---------------------------------------------------------------------------
+;; Switch branch-switching tests (16.4)
+;; ---------------------------------------------------------------------------
+
+(println "\n-- Switch update same branch --")
+(let [branch0 (gen []
+                (let [x (dyn/trace :x (dist/gaussian 0 1))]
+                  (mx/eval! x)
+                  (mx/item x)))
+      branch1 (gen []
+                (let [x (dyn/trace :x (dist/gaussian 10 1))]
+                  (mx/eval! x)
+                  (mx/item x)))
+      sw (comb/switch-combinator branch0 branch1)
+      obs (cm/choicemap :x (mx/scalar 1.0))
+      {:keys [trace]} (p/generate sw [0] obs)
+      ;; Update same branch with new constraint
+      new-obs (cm/choicemap :x (mx/scalar 2.0))
+      ;; Construct trace with same branch idx in args
+      updated-trace (tr/make-trace {:gen-fn sw :args [0]
+                                    :choices (:choices trace)
+                                    :retval (:retval trace)
+                                    :score (:score trace)})
+      updated-trace (with-meta updated-trace (meta trace))
+      {:keys [trace weight discard]} (p/update sw updated-trace new-obs)]
+  (mx/eval! weight)
+  (let [new-val (cm/get-choice (:choices trace) [:x])]
+    (mx/eval! new-val)
+    (assert-true "switch same-branch update has new value"
+      (< (js/Math.abs (- (mx/item new-val) 2.0)) 0.01)))
+  (assert-true "switch same-branch update has weight" (number? (mx/item weight)))
+  (assert-true "switch same-branch update has discard" (some? discard)))
+
+(println "\n-- Switch update branch change --")
+(let [branch0 (gen []
+                (let [x (dyn/trace :x (dist/gaussian 0 1))]
+                  (mx/eval! x)
+                  (mx/item x)))
+      branch1 (gen []
+                (let [x (dyn/trace :x (dist/gaussian 10 1))]
+                  (mx/eval! x)
+                  (mx/item x)))
+      sw (comb/switch-combinator branch0 branch1)
+      ;; Generate trace on branch 0
+      obs (cm/choicemap :x (mx/scalar 1.0))
+      {:keys [trace]} (p/generate sw [0] obs)
+      old-score (do (mx/eval! (:score trace)) (mx/item (:score trace)))
+      old-choices (:choices trace)
+      ;; Switch to branch 1 by constructing trace with new args
+      switched-trace (with-meta
+                       (tr/make-trace {:gen-fn sw :args [1]
+                                       :choices (:choices trace)
+                                       :retval (:retval trace)
+                                       :score (:score trace)})
+                       (meta trace))
+      ;; Update with new branch constraint
+      new-obs (cm/choicemap :x (mx/scalar 10.5))
+      {:keys [trace weight discard]} (p/update sw switched-trace new-obs)]
+  (mx/eval! weight)
+  (mx/eval! (:score trace))
+  ;; New trace should use branch 1 (gaussian 10 1)
+  (let [new-val (cm/get-choice (:choices trace) [:x])]
+    (mx/eval! new-val)
+    (assert-true "switch branch-change has new value"
+      (< (js/Math.abs (- (mx/item new-val) 10.5)) 0.01)))
+  ;; Weight should be new_score - old_score
+  (let [expected-weight (- (mx/item (:score trace)) old-score)]
+    (assert-true "switch branch-change weight = new_score - old_score"
+      (< (js/Math.abs (- (mx/item weight) expected-weight)) 1e-5)))
+  ;; Discard should be old choices
+  (assert-true "switch branch-change discard is old choices"
+    (some? discard)))
+
+(println "\n-- Switch metadata preserved --")
+(let [branch0 (gen []
+                (let [x (dyn/trace :x (dist/gaussian 0 1))]
+                  (mx/eval! x)
+                  (mx/item x)))
+      sw (comb/switch-combinator branch0)
+      trace (p/simulate sw [0])]
+  (assert-true "simulate has ::switch-idx metadata"
+    (= 0 (::comb/switch-idx (meta trace))))
+  (let [{:keys [trace]} (p/generate sw [0] (cm/choicemap :x (mx/scalar 1.0)))]
+    (assert-true "generate has ::switch-idx metadata"
+      (= 0 (::comb/switch-idx (meta trace)))))
+  (let [{:keys [trace]} (p/regenerate sw trace (sel/select :x))]
+    (assert-true "regenerate has ::switch-idx metadata"
+      (= 0 (::comb/switch-idx (meta trace))))))
+
 (println "\nAll combinator tests complete.")

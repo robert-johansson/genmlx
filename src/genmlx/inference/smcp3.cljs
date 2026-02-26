@@ -14,31 +14,6 @@
             [genmlx.edit :as edit]
             [genmlx.inference.util :as u]))
 
-;; ---------------------------------------------------------------------------
-;; Resampling
-;; ---------------------------------------------------------------------------
-
-(defn- systematic-resample
-  "Systematic resampling. Returns vector of indices."
-  [log-weights n key]
-  (let [{:keys [probs]} (u/normalize-log-weights log-weights)
-        u0 (if key
-             (/ (mx/realize (rng/uniform key [])) n)
-             (/ (js/Math.random) n))]
-    (loop [i 0 cumsum 0.0 j 0 indices (transient [])]
-      (if (>= j n)
-        (persistent! indices)
-        (let [threshold (+ u0 (/ j n))
-              cumsum' (+ cumsum (nth probs i))]
-          (if (>= cumsum' threshold)
-            (recur i cumsum (inc j) (conj! indices i))
-            (recur (inc i) cumsum' j indices)))))))
-
-(defn- compute-ess
-  "Effective sample size from log-weights vector."
-  [log-weights]
-  (let [{:keys [probs]} (u/normalize-log-weights log-weights)]
-    (/ 1.0 (reduce + (map #(* % %) probs)))))
 
 ;; ---------------------------------------------------------------------------
 ;; SMCP3 init step
@@ -104,11 +79,11 @@
    forward-kernel backward-kernel
    particles ess-threshold rejuvenation-fn key]
   (let [;; Check ESS and resample if needed
-        ess (compute-ess log-weights)
+        ess (u/compute-ess log-weights)
         resample? (< ess (* ess-threshold particles))
         [resample-key step-key rejuv-key] (rng/split-n-or-nils key 3)
         [traces' weights'] (if resample?
-                             (let [indices (systematic-resample log-weights particles resample-key)]
+                             (let [indices (u/systematic-resample log-weights particles resample-key)]
                                [(mapv #(nth traces %) indices)
                                 (vec (repeat particles (mx/scalar 0.0)))])
                              [traces log-weights])
@@ -187,7 +162,7 @@
             (let [{:keys [traces log-weights log-ml-increment]}
                   (smcp3-init model args obs-t init-proposal particles step-key)]
               (when callback
-                (callback {:step t :ess (compute-ess log-weights)}))
+                (callback {:step t :ess (u/compute-ess log-weights)}))
               (recur (inc t) traces log-weights
                      (mx/add log-ml log-ml-increment) next-key))
             ;; Subsequent steps

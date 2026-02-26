@@ -9,22 +9,6 @@
             [genmlx.dynamic :as dyn]
             [genmlx.vectorized :as vec]))
 
-(defn- systematic-resample
-  "Systematic resampling of particles. Returns vector of indices.
-   Optional `key` uses functional PRNG; nil falls back to js/Math.random."
-  [log-weights n key]
-  (let [{:keys [probs]} (u/normalize-log-weights log-weights)
-        u (if key
-            (/ (mx/realize (rng/uniform key [])) n)
-            (/ (js/Math.random) n))]
-    (loop [i 0, cumsum 0.0, j 0, indices (transient [])]
-      (if (>= j n)
-        (persistent! indices)
-        (let [threshold (+ u (/ j n))
-              cumsum' (+ cumsum (nth probs i))]
-          (if (>= cumsum' threshold)
-            (recur i cumsum (inc j) (conj! indices i))
-            (recur (inc i) cumsum' j indices)))))))
 
 (defn- residual-resample
   "Residual resampling: deterministically allocate floor(N * w_i) copies,
@@ -88,15 +72,10 @@
    method: :systematic (default), :residual, or :stratified."
   [method log-weights n key]
   (case (or method :systematic)
-    :systematic (systematic-resample log-weights n key)
+    :systematic (u/systematic-resample log-weights n key)
     :residual   (residual-resample log-weights n key)
     :stratified (stratified-resample log-weights n key)))
 
-(defn- compute-ess
-  "Compute effective sample size from log-weights."
-  [log-weights]
-  (let [{:keys [probs]} (u/normalize-log-weights log-weights)]
-    (/ 1.0 (reduce + (map #(* % %) probs)))))
 
 (defn- smc-init-step
   "First timestep: generate particles from prior with constraints.
@@ -134,7 +113,7 @@
   [traces log-weights model obs particles ess-threshold
    rejuvenation-steps rejuvenation-selection resample-method key]
   (let [;; Check ESS and resample if needed
-        ess        (compute-ess log-weights)
+        ess        (u/compute-ess log-weights)
         resample?  (< ess (* ess-threshold particles))
         [resample-key step-key rejuv-key]
         (rng/split-n-or-nils key 3)
@@ -204,7 +183,7 @@
             (let [{:keys [traces log-weights log-ml-increment]}
                   (smc-init-step model args obs-t particles)]
               (when callback
-                (callback {:step t :ess (compute-ess log-weights)}))
+                (callback {:step t :ess (u/compute-ess log-weights)}))
               (recur (inc t) traces log-weights
                      (mx/add log-ml log-ml-increment) next-key))
             (let [{:keys [traces log-weights log-ml-increment ess resampled?]}
@@ -268,11 +247,11 @@
                   ml-inc (mx/subtract (mx/logsumexp w-arr)
                                        (mx/scalar (js/Math.log particles)))]
               (when callback
-                (callback {:step t :ess (compute-ess log-weights)}))
+                (callback {:step t :ess (u/compute-ess log-weights)}))
               (recur (inc t) traces log-weights
                      (mx/add log-ml ml-inc) next-key))
             ;; Subsequent steps with conditional resampling
-            (let [ess (compute-ess log-weights)
+            (let [ess (u/compute-ess log-weights)
                   resample? (< ess (* ess-threshold particles))
                   [resample-key step-rk rejuv-key] (rng/split-n-or-nils step-key 3)
                   ;; Conditional resampling: reference particle always survives

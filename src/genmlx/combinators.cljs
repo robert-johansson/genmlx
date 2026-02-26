@@ -300,38 +300,60 @@
     ;; args: [index & branch-args]
     (let [[idx & branch-args] args
           trace (p/simulate (nth branches idx) (vec branch-args))]
-      (tr/make-trace {:gen-fn this :args args
-                      :choices (:choices trace)
-                      :retval (:retval trace)
-                      :score (:score trace)})))
+      (with-meta
+        (tr/make-trace {:gen-fn this :args args
+                        :choices (:choices trace)
+                        :retval (:retval trace)
+                        :score (:score trace)})
+        {::switch-idx idx})))
 
   p/IGenerate
   (generate [this args constraints]
     (let [[idx & branch-args] args
           {:keys [trace weight]} (p/generate (nth branches idx) (vec branch-args) constraints)]
-      {:trace (tr/make-trace {:gen-fn this :args args
-                              :choices (:choices trace)
-                              :retval (:retval trace)
-                              :score (:score trace)})
+      {:trace (with-meta
+                (tr/make-trace {:gen-fn this :args args
+                                :choices (:choices trace)
+                                :retval (:retval trace)
+                                :score (:score trace)})
+                {::switch-idx idx})
        :weight weight})))
 
 (extend-type SwitchCombinator
   p/IUpdate
   (update [this trace constraints]
     (let [orig-args (:args trace)
-          [idx & branch-args] orig-args
-          branch (nth (:branches this) idx)
-          old-branch-trace (tr/make-trace
-                             {:gen-fn branch :args (vec branch-args)
-                              :choices (:choices trace)
-                              :retval (:retval trace) :score (:score trace)})
-          result (p/update branch old-branch-trace constraints)
-          new-branch-trace (:trace result)]
-      {:trace (tr/make-trace {:gen-fn this :args orig-args
-                              :choices (:choices new-branch-trace)
-                              :retval (:retval new-branch-trace)
-                              :score (:score new-branch-trace)})
-       :weight (:weight result) :discard (:discard result)}))
+          [new-idx & branch-args] orig-args
+          old-idx (or (::switch-idx (meta trace)) new-idx)]
+      (if (= old-idx new-idx)
+        ;; Same branch: update in place
+        (let [branch (nth (:branches this) new-idx)
+              old-branch-trace (tr/make-trace
+                                 {:gen-fn branch :args (vec branch-args)
+                                  :choices (:choices trace)
+                                  :retval (:retval trace) :score (:score trace)})
+              result (p/update branch old-branch-trace constraints)
+              new-branch-trace (:trace result)]
+          {:trace (with-meta
+                    (tr/make-trace {:gen-fn this :args orig-args
+                                    :choices (:choices new-branch-trace)
+                                    :retval (:retval new-branch-trace)
+                                    :score (:score new-branch-trace)})
+                    {::switch-idx new-idx})
+           :weight (:weight result) :discard (:discard result)})
+        ;; Different branch: generate new branch from scratch
+        (let [new-branch (nth (:branches this) new-idx)
+              gen-result (p/generate new-branch (vec branch-args) constraints)
+              new-branch-trace (:trace gen-result)
+              new-score (:score new-branch-trace)]
+          {:trace (with-meta
+                    (tr/make-trace {:gen-fn this :args orig-args
+                                    :choices (:choices new-branch-trace)
+                                    :retval (:retval new-branch-trace)
+                                    :score new-score})
+                    {::switch-idx new-idx})
+           :weight (mx/subtract new-score (:score trace))
+           :discard (:choices trace)}))))
 
   p/IRegenerate
   (regenerate [this trace selection]
@@ -344,10 +366,12 @@
                               :retval (:retval trace) :score (:score trace)})
           result (p/regenerate branch old-branch-trace selection)
           new-branch-trace (:trace result)]
-      {:trace (tr/make-trace {:gen-fn this :args orig-args
-                              :choices (:choices new-branch-trace)
-                              :retval (:retval new-branch-trace)
-                              :score (:score new-branch-trace)})
+      {:trace (with-meta
+                (tr/make-trace {:gen-fn this :args orig-args
+                                :choices (:choices new-branch-trace)
+                                :retval (:retval new-branch-trace)
+                                :score (:score new-branch-trace)})
+                {::switch-idx idx})
        :weight (:weight result)})))
 
 (defn switch-combinator

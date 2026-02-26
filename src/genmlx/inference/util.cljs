@@ -143,6 +143,29 @@
               (extract-params trace addresses)))
           (range n-chains))))
 
+(defn systematic-resample
+  "Systematic resampling of particles. Returns vector of indices.
+   Optional `key` uses functional PRNG; nil falls back to js/Math.random."
+  [log-weights n key]
+  (let [{:keys [probs]} (normalize-log-weights log-weights)
+        u (if key
+            (/ (mx/realize (rng/uniform key [])) n)
+            (/ (js/Math.random) n))]
+    (loop [i 0, cumsum 0.0, j 0, indices (transient [])]
+      (if (>= j n)
+        (persistent! indices)
+        (let [threshold (+ u (/ j n))
+              cumsum' (+ cumsum (nth probs i))]
+          (if (>= cumsum' threshold)
+            (recur i cumsum (inc j) (conj! indices i))
+            (recur (inc i) cumsum' j indices)))))))
+
+(defn compute-ess
+  "Compute effective sample size from log-weights."
+  [log-weights]
+  (let [{:keys [probs]} (normalize-log-weights log-weights)]
+    (/ 1.0 (reduce + (map #(* % %) probs)))))
+
 (defn accept-mh?
   "Metropolis-Hastings accept/reject decision.
    `log-accept` is a JS number (the log acceptance ratio).
