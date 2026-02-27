@@ -436,9 +436,8 @@
 
 (defn array? [x]
   (and (some? x)
-       (object? x)
        (some? (.-shape x))
-       (fn? (.-item x))))
+       (.-item x)))
 
 (defn realize
   "Evaluate a lazy MLX array and return its scalar JS value."

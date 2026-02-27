@@ -166,19 +166,38 @@
   (let [{:keys [probs]} (normalize-log-weights log-weights)]
     (/ 1.0 (reduce + (map #(* % %) probs)))))
 
+(defn collect-trace-arrays
+  "Collect all MLX arrays from a trace for bulk evaluation."
+  [trace]
+  (let [arrays (volatile! (transient []))]
+    (letfn [(walk [cm]
+              (cond
+                (nil? cm) nil
+                (cm/has-value? cm)
+                (let [v (cm/get-value cm)]
+                  (when (mx/array? v) (vswap! arrays conj! v)))
+                (instance? cm/Node cm)
+                (doseq [[_ sub] (cm/-submaps cm)]
+                  (walk sub))
+                :else nil))]
+      (when-let [choices (:choices trace)]
+        (walk choices)))
+    (when-let [s (:score trace)]
+      (when (mx/array? s) (vswap! arrays conj! s)))
+    (when-let [r (:retval trace)]
+      (when (mx/array? r) (vswap! arrays conj! r)))
+    (persistent! @arrays)))
+
 (defn eval-state!
-  "Evaluate key arrays in an inference state to materialize computation graphs.
-   Handles both MLX arrays (param vectors) and Trace records."
+  "Evaluate ALL arrays in an inference state to materialize computation graphs
+   and detach graph nodes, making intermediate arrays GC-eligible.
+   Handles both MLX arrays (param vectors) and Trace records (walks choices)."
   [state]
   (if (mx/array? state)
     (mx/eval! state)
-    (let [score  (:score state)
-          retval (:retval state)]
-      (cond
-        (and score (mx/array? retval)) (mx/eval! score retval)
-        score                          (mx/eval! score)
-        (mx/array? retval)             (mx/eval! retval)
-        :else nil))))
+    (let [arrays (collect-trace-arrays state)]
+      (when (seq arrays)
+        (apply mx/eval! arrays)))))
 
 (defn accept-mh?
   "Metropolis-Hastings accept/reject decision.
@@ -192,3 +211,68 @@
                  (mx/realize (rng/uniform key []))
                  (js/Math.random))]
          (< (js/Math.log u) log-accept)))))
+
+;; ---------------------------------------------------------------------------
+;; Resource guard — disable Metal buffer caching during long inference loops
+;; ---------------------------------------------------------------------------
+
+(def ^:private DEFAULT-CACHE-LIMIT (* 256 1024 1024))
+
+(mx/set-cache-limit! DEFAULT-CACHE-LIMIT)
+
+(def ^:private gc-fn
+  "Synchronous GC function (Bun.gc or global.gc if available)."
+  (or (when (exists? js/Bun) (.-gc js/Bun))
+      (.-gc js/globalThis)))
+
+(defn force-gc!
+  "Force a synchronous garbage collection cycle to release Metal buffers.
+   Uses Bun.gc(true) or global.gc() if available; no-op otherwise."
+  []
+  (when gc-fn (gc-fn true)))
+
+(defn with-resource-guard
+  "Run f with cache-limit=0 to prevent Metal buffer accumulation.
+   Freed buffers are released immediately instead of being cached."
+  [f]
+  (let [prev-limit (mx/set-cache-limit! 0)]
+    (try (f)
+      (finally
+        (mx/clear-cache!)
+        (mx/set-cache-limit! prev-limit)))))
+
+(defn dispose-trace!
+  "Dispose all MLX arrays in a trace (or collection of traces), freeing Metal
+   buffers immediately. Handles shared arrays safely by deduplicating first."
+  [trace-or-traces]
+  (let [traces (if (sequential? trace-or-traces) trace-or-traces [trace-or-traces])
+        ;; Use a JS Set to deduplicate by identity (shared obs arrays appear once)
+        seen (js/Set.)]
+    (doseq [t traces
+            a (collect-trace-arrays t)]
+      (when-not (.has seen a)
+        (.add seen a)))
+    (.forEach seen (fn [a] (mx/dispose! a)))))
+
+(defn tidy-step
+  "Run step-fn inside mx/tidy, preserving all arrays in the returned trace.
+   step-fn must return {:state trace :accepted? bool}.
+   mx/tidy disposes all intermediate arrays not in the return value, but
+   cannot walk CLJS data structures. We work around this by:
+   1. Running the step inside tidy
+   2. Evaluating all trace arrays (detaches computation graphs from intermediates)
+   3. Returning those arrays as a JS array for tidy to preserve"
+  [step-fn state key]
+  (let [result-vol (volatile! nil)]
+    (mx/tidy
+      (fn []
+        (let [result (step-fn state key)
+              arrays (collect-trace-arrays (:state result))]
+          ;; Eval all trace arrays BEFORE tidy disposes intermediates.
+          ;; This detaches computation graphs so intermediates are safe to dispose.
+          (when (seq arrays)
+            (apply mx/eval! arrays))
+          (vreset! result-vol result)
+          ;; Return arrays as JS array for tidy to preserve
+          (to-array arrays))))
+    @result-vol))

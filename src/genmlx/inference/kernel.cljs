@@ -106,24 +106,25 @@
   [{:keys [samples burn thin callback key]
     :or {burn 0 thin 1}}
    step-fn extract-fn init-state]
-  (let [total-iters (+ burn (* samples thin))]
-    (loop [i 0, state init-state, acc (transient []), n 0, n-accepted 0, rk key]
-      (if (>= n samples)
-        (with-meta (persistent! acc)
-          {:acceptance-rate (if (pos? total-iters) (/ n-accepted total-iters) 0)})
-        (let [[step-key next-key] (rng/split-or-nils rk)
-              {:keys [state accepted?]} (step-fn state step-key)
-              _  (u/eval-state! state)
-              _  (when (zero? (mod i 50)) (mx/clear-cache!))
-              past-burn? (>= i burn)
-              keep? (and past-burn? (zero? (mod (- i burn) thin)))]
-          (when (and callback keep?)
-            (callback {:iter n :value (extract-fn state) :accepted? accepted?}))
-          (recur (inc i) state
-                 (if keep? (conj! acc (extract-fn state)) acc)
-                 (if keep? (inc n) n)
-                 (if accepted? (inc n-accepted) n-accepted)
-                 next-key))))))
+  (u/with-resource-guard
+    (fn []
+      (let [total-iters (+ burn (* samples thin))]
+        (loop [i 0, state init-state, acc (transient []), n 0, n-accepted 0, rk key]
+          (if (>= n samples)
+            (with-meta (persistent! acc)
+              {:acceptance-rate (if (pos? total-iters) (/ n-accepted total-iters) 0)})
+            (let [[step-key next-key] (rng/split-or-nils rk)
+                  {:keys [state accepted?]} (u/tidy-step step-fn state step-key)
+                  _  (mx/clear-cache!)
+                  past-burn? (>= i burn)
+                  keep? (and past-burn? (zero? (mod (- i burn) thin)))]
+              (when (and callback keep?)
+                (callback {:iter n :value (extract-fn state) :accepted? accepted?}))
+              (recur (inc i) state
+                     (if keep? (conj! acc (extract-fn state)) acc)
+                     (if keep? (inc n) n)
+                     (if accepted? (inc n-accepted) n-accepted)
+                     next-key))))))))
 
 (defn run-kernel
   "Run a kernel for n-samples iterations with burn-in and thinning.
