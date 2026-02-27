@@ -105,6 +105,39 @@
 
 (defn dispose! [a] (.dispose core a))
 
+;; Memory monitoring
+(defn get-active-memory [] (.getActiveMemory core))
+(defn get-cache-memory [] (.getCacheMemory core))
+(defn get-peak-memory [] (.getPeakMemory core))
+(defn reset-peak-memory! [] (.resetPeakMemory core))
+(defn get-wrappers-count [] (.getWrappersCount core))
+
+;; Memory control
+(defn set-memory-limit! [n] (.setMemoryLimit core n))
+(defn set-cache-limit! [n] (.setCacheLimit core n))
+(defn set-wired-limit! [n] (.setWiredLimit core n))
+(defn clear-cache! [] (.clearCache core))
+
+;; Metal device info
+(defn metal-is-available? [] (.isAvailable (.-metal core)))
+
+(defn metal-device-info []
+  (let [info (.deviceInfo (.-metal core))]
+    {:architecture (.-architecture info)
+     :device-name (.-device_name info)
+     :memory-size (.-memory_size info)
+     :max-buffer-length (.-max_buffer_length info)
+     :max-recommended-working-set-size (.-max_recommended_working_set_size info)
+     :resource-limit (.-resource_limit info)}))
+
+;; Convenience
+(defn memory-report []
+  {:active-bytes (get-active-memory)
+   :cache-bytes (get-cache-memory)
+   :peak-bytes (get-peak-memory)
+   :wrappers (get-wrappers-count)
+   :resource-limit (:resource-limit (metal-device-info))})
+
 ;; ---------------------------------------------------------------------------
 ;; Arithmetic (element-wise)
 ;; ---------------------------------------------------------------------------
