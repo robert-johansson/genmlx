@@ -738,45 +738,11 @@ operation deterministic.*
 ## Priority Order
 
 ```
-CRITICAL (fix before any new feature work):
-  (all fixed)
-
-HIGH (correctness concerns affecting real use cases):
+HIGH (correctness — reproducibility):
+  16.6  PRNG key threading audit                   ~100+ lines
   22.2  Remove deprecated stateful PRNG            depends on 16.6
-  22.3  mx/eval! after resampling                  ~2 lines  (done)
-  16.1  Combinator sub-trace score=0              (done)
-  16.2  execute-sub fake trace score=0            (done)
-  16.3  assess not validating full constraints    (done)
-  17.3  CustomGradientGF IUpdate/IRegenerate      (done)
-  17.4  NeuralNetGF IUpdate/IRegenerate           (done)
-  17.5  IProject on CustomGradientGF/NeuralNetGF  (done)
-  17.6  MixCombinator IUpdateWithDiffs            (done)
-  22.1  Adaptive HMC/NUTS step-size               (done)
 
-MEDIUM (quality and completeness):
-  18.1  MLX-native log-gamma in 4 distributions   ~80 lines
-  18.2  Categorical native sample-n               ~15 lines
-  18.3  Parameter validation for all dists        ~30 lines
-  17.1  IAssess on combinators                    (done)
-  17.2  IPropose on combinators                   (done)
-  17.5  IProject on CustomGradientGF/NeuralNetGF  (done)
-  19.2  Deduplicate resampling                    (done)
-  19.3  Deduplicate Adam optimizer                ~5 lines refactor
-  19.8  inference.cljs re-exports                 ~10 lines
-
-LOW (cleanup and polish):
-  16.4  Switch combinator branch switching        (done)
-  16.6  PRNG key threading audit                  ~100+ lines
-  18.4  Geometric support range                   ~5 lines
-  18.5  CustomGradientGF gradient-fn wiring       ~20 lines
-  19.1  Diff infrastructure cleanup               Decision needed
-  19.4  defdist-transform usage                   Decision needed
-  19.5  SelectAddrs/SelectSet merge               (done)
-  19.6  clojure.set require                       ~1 line
-  19.7  requiring-resolve workaround              (done)
-  19.9  run-kernel/collect-samples dedup          (done)
-
-MEDIUM-HIGH (verification -- catches bugs, path to formal proofs):
+MEDIUM-HIGH (verification — catches bugs, path to formal proofs):
   24.1  Static validator (validate-gen-fn)          ~100-150 lines
   24.2  GFI contract registry (11 contracts)        ~150 lines
   24.3  verify-gfi-contracts function               ~50 lines
@@ -784,29 +750,18 @@ MEDIUM-HIGH (verification -- catches bugs, path to formal proofs):
   23.1  Gen.jl reference value generation (Julia)   ~200 lines Julia
   23.2  GenMLX differential test loader             ~80 lines, ~185 assertions
 
-MEDIUM-HIGH (testing -- catches bugs in existing code):
-  ~~21.12 GFI contract harness + canonical models~~ ✅ DONE
-  ~~21.1  Distribution E[X]/Var[X] for all dists~~ ✅ DONE
-  ~~21.3  Update round-trip via discard~~ ✅ DONE
-  ~~21.5  assess vs generate cross-validation~~ ✅ DONE
-  ~~21.9  Score additivity per combinator~~ ✅ DONE
+MEDIUM (quality and completeness):
+  18.5  CustomGradientGF gradient-fn wiring         ~20 lines
+  20.4  ADEV variance reduction (baseline)          ~15 lines
+  14.5  Product distribution                        Small
+  14.7  Trace serialization                         Medium
+  20.1  Vectorize neural-importance-sampling         Significant
+  20.2  Non-Gaussian posteriors in amortized         Significant
+  20.3  Minibatch training for amortized             Medium
 
-MEDIUM (testing -- deeper coverage):
-  ~~21.2  Discrete PMF sums to 1~~ ✅ DONE
-  ~~21.4  Edit round-trip via backward request~~ ✅ DONE
-  ~~21.6  Propose -> generate round-trip~~ ✅ DONE
-  ~~21.7  Combinator degenerate cases~~ ✅ DONE
-  ~~21.10 Gamma-Poisson conjugate convergence~~ ✅ DONE
-  ~~21.11 HMC/NUTS acceptance rate checks~~ ✅ DONE
-
-LOW-MEDIUM (testing -- nice to have):
-  ~~21.8  Nested combinator tests~~ ✅ DONE
-
-HIGH (GPU ADEV — inspired by GenJAX, gate on benchmarks):
-  ~~20.5  Vectorized ADEV (batched GPU gradient est.)~~ ✅ DONE (75-86x speedup)
-  ~~20.6  Compiled ADEV optimization loop~~ ✅ DONE
-  ~~20.7  ADEV benchmark suite (gate: ≥10x at N=100)~~ ✅ DONE (all PASS)
-  20.4  ADEV variance reduction (baseline)           ~15 lines
+LOW (cleanup — decision needed):
+  19.1  Diff infrastructure cleanup                 Remove or use?
+  19.4  defdist-transform usage                     Remove or use?
 
 FUTURE (new features, lower priority):
   7.8   GenJAX benchmark comparison
@@ -815,8 +770,9 @@ FUTURE (new features, lower priority):
   11.1  Malli schemas
   12.3-12.4, 12.6  Ecosystem features
   13.1-13.3  Documentation & packaging
-  14.2, 14.5-14.8  Gen.jl parity features
-  20.1-20.3  Amortized inference improvements
+  14.2  Enumerative / grid-based inference
+  14.6  Kernel reversal declarations
+  14.8  Directional statistics distributions
 
 RESEARCH (Lean 4 formalization):
   24.5  Formalize lambda_MLX types in Lean 4       Research-level
@@ -836,22 +792,22 @@ RESEARCH (Lean 4 formalization):
 | 4. Inference Algorithms | 4 | 4 | 0 |
 | 5. Combinators | 3 | 3 | 0 |
 | 6. Testing Gaps | 5 | 5 | 0 |
-| 7. Vectorization & Perf | 9 | 7 | 2 |
+| 7. Vectorization & Perf | 9 | 8 | 1 |
 | 8. Gradient Programming | 2 | 2 | 0 |
 | 9. Incremental Computation | 2 | 1 | 1 |
 | 10. Formal Foundation | 16 | 13 | 3 |
 | 11. Validation | 2 | 1 | 1 |
 | 12. Ecosystem | 6 | 3 | 3 |
 | 13. Documentation | 3 | 0 | 3 |
-| 14. Gen.jl Parity | 8 | 4 | 4 |
+| 14. Gen.jl Parity | 8 | 3 | **5** |
 | 15. Confirmed Bugs | 5 | 5 | 0 |
 | 16. Correctness Concerns | 6 | 5 | **1** |
 | 17. Missing Protocols | 6 | 6 | 0 |
 | 18. Distribution Quality | 5 | 4 | **1** |
 | 19. Code Quality | 9 | 7 | **2** |
-| 20. Amortized + GPU ADEV | 7 | 0 | **7** |
-| 21. Testing Strategies | 12 | 12 | **0** |
+| 20. Amortized + GPU ADEV | 7 | 4 | **3** |
+| 21. Testing Strategies | 12 | 12 | 0 |
 | 22. Practical Inference | 3 | 2 | **1** |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 0 | **7** |
-| **Total** | **138** | **99** | **39** |
+| **Total** | **138** | **103** | **35** |
