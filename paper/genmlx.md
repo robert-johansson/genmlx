@@ -2,7 +2,7 @@
 
 ## Abstract
 
-We present GenMLX, a probabilistic programming language implemented in approximately 5,700 lines of ClojureScript, targeting Apple's MLX framework for GPU-accelerated inference on Apple Silicon. GenMLX implements the Generative Function Interface (GFI), the same compositional abstraction used by Gen.jl and GenJAX, but with a purely functional design built on persistent data structures, open multimethods, and shape-based vectorization. The system provides 22 probability distributions (with a `defdist-transform` macro for derived distributions and a first-class mixture constructor), eight model combinators (Map, Unfold, Switch, Scan, Mask, Mix, Contramap, Dimap), and a comprehensive inference toolkit spanning importance sampling, seven MCMC algorithms (MH, custom-proposal MH, enumerative Gibbs, involutive MCMC, MALA, HMC, NUTS), three SMC variants (standard, conditional, SMCP3), variational inference (ADVI, programmable VI with four objectives), and wake-sleep learning. A parametric edit interface generalizes trace mutations into typed requests with automatic backward computation for reversible kernels. Diff-aware updates enable incremental computation in combinators. Trainable parameters (`dyn/param`) integrate the learning infrastructure with the generative function interface. Vectorized execution achieves 29--122x speedup over sequential particle methods by exploiting MLX's broadcasting semantics rather than explicit vectorization transforms. All computation stays on GPU as lazy MLX arrays throughout the inference pipeline, with materialization deferred to inference boundaries. The system passes 287+ test assertions across 16 test files, including compatibility suites adapted from Gen.jl (165 tests) and GenJAX (73 tests).
+We present GenMLX, a probabilistic programming language implemented in approximately 10,400 lines of ClojureScript, targeting Apple's MLX framework for GPU-accelerated inference on Apple Silicon. GenMLX implements the Generative Function Interface (GFI), the same compositional abstraction used by Gen.jl and GenJAX, but with a purely functional design built on persistent data structures, open multimethods, and shape-based vectorization. The system provides 27 probability distributions (with a `defdist` macro for zero-boilerplate definitions and a first-class mixture constructor), ten model combinators (Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Contramap, Dimap, and a vmap combinator), and a comprehensive inference toolkit spanning importance sampling, nine MCMC algorithms (MH, custom-proposal MH, enumerative Gibbs, involutive MCMC, MALA, HMC, NUTS, elliptical slice sampling, MAP), four SMC variants (standard, conditional, vectorized, SMCP3), variational inference (ADVI, programmable VI with five objectives including VIMCO), ADEV gradient estimation, amortized inference via trained neural proposals, and wake-sleep learning. Adaptive tuning (dual averaging for step-size, Welford metric estimation) and loop compilation (fusing multi-step MCMC chains into single Metal dispatches) further improve gradient-based samplers. A parametric edit interface generalizes trace mutations into typed requests with automatic backward computation for reversible kernels. Diff-aware updates enable incremental computation in combinators. Trainable parameters (`dyn/param`) integrate the learning infrastructure with the generative function interface. Vectorized execution achieves significant speedup over sequential particle methods by exploiting MLX's broadcasting semantics rather than explicit vectorization transforms. All computation stays on GPU as lazy MLX arrays throughout the inference pipeline, with materialization deferred to inference boundaries. The system passes 1,300+ test assertions across 77 test files, including compatibility suites adapted from Gen.jl (165 tests) and GenJAX (73 tests).
 
 ---
 
@@ -14,13 +14,13 @@ Despite the maturity of these systems, none targets Apple Silicon's unified memo
 
 GenMLX explores what happens when a PPL is designed from the ground up for this architecture. The result is a system that:
 
-- Implements the full GFI in ~5,700 lines of ClojureScript, running on Node.js via nbb with native MLX bindings
+- Implements the full GFI in ~10,400 lines of ClojureScript, running on Node.js via nbb with native MLX bindings
 - Keeps all probabilistic values as lazy MLX arrays throughout the inference pipeline
-- Achieves 29--122x speedup for particle methods through shape-based vectorization that requires no code transformation
-- Provides gradient-based inference (MALA, HMC, NUTS, ADVI) with JIT-compiled score functions and fused leapfrog integration
-- Matches GenJAX's inference algorithm repertoire: custom-proposal MH, enumerative Gibbs, involutive MCMC, SMCP3, conditional SMC, programmable variational inference, and composable inference kernels
-- Provides a parametric edit interface, diff-aware incremental updates, and trainable parameters inside model bodies
-- Maintains semantic equivalence with Gen.jl and GenJAX, verified by 287+ test assertions
+- Achieves significant speedup for particle methods through shape-based vectorization that requires no code transformation
+- Provides gradient-based inference (MALA, HMC, NUTS, ADVI) with JIT-compiled score functions, fused leapfrog integration, and adaptive step-size and metric tuning
+- Matches and extends GenJAX's inference algorithm repertoire: custom-proposal MH, enumerative Gibbs, involutive MCMC, elliptical slice sampling, SMCP3, conditional SMC, programmable variational inference with five objectives (ELBO, IWELBO, PWake, QWake, VIMCO), ADEV gradient estimation, amortized inference, and composable inference kernels
+- Provides a parametric edit interface, diff-aware incremental updates, trainable parameters inside model bodies, a neural network integration layer, and a vmap combinator for batched generative functions
+- Maintains semantic equivalence with Gen.jl and GenJAX, verified by 1,300+ test assertions
 
 ### 1.1 The Gen Ecosystem
 
@@ -45,7 +45,7 @@ GenMLX is organized into seven layers, each building on the layers below. This s
 
 ### 2.1 MLX Foundation (Layer 0)
 
-The foundation is a thin ClojureScript wrapper over `@frost-beta/mlx`, the Node.js native addon for Apple's MLX framework. The wrapper (`genmlx.mlx`, 406 lines) exposes MLX operations as idiomatic ClojureScript functions:
+The foundation is a thin ClojureScript wrapper over `@frost-beta/mlx`, the Node.js native addon for Apple's MLX framework. The wrapper (`genmlx.mlx`, 440 lines) exposes approximately 130 MLX operations as idiomatic ClojureScript functions:
 
 ```clojure
 (mx/add a b)              ;; element-wise addition (lazy)
@@ -58,7 +58,9 @@ The foundation is a thin ClojureScript wrapper over `@frost-beta/mlx`, the Node.
 
 All MLX operations are lazy by default. Calling `(mx/add a b)` does not compute the sum; it records the operation in a computation graph. The graph is materialized only when `mx/eval!` is called, at which point MLX fuses operations into optimized Metal kernels. This laziness is critical: it allows GenMLX to build up entire score computations --- spanning multiple distribution log-probabilities and accumulations --- as a single fused GPU dispatch.
 
-A companion namespace (`genmlx.mlx.random`, 115 lines) provides functional PRNG key management. Every random operation consumes a key and produces sub-keys via deterministic splitting, following the splittable PRNG design pioneered by JAX:
+The wrapper covers arithmetic, math functions (including special functions like `lgamma`, `digamma`, `erf`, `erfinv`), reductions with axis support, comparison and selection, shape manipulation, indexing, matrix operations, linear algebra (Cholesky, solve, QR, SVD, eigendecomposition), autograd (`grad`, `value-and-grad`, `jvp`, `vjp`), transforms (`compile-fn`, `vmap`), Metal GPU device discovery and monitoring, and explicit memory management (`tidy`, `dispose!`, cache control).
+
+A companion namespace (`genmlx.mlx.random`, 166 lines) provides functional PRNG key management. Every random operation consumes a key and produces sub-keys via deterministic splitting, following the splittable PRNG design pioneered by JAX:
 
 ```clojure
 (rng/fresh-key)           ;; create initial key
@@ -66,13 +68,13 @@ A companion namespace (`genmlx.mlx.random`, 115 lines) provides functional PRNG 
 (rng/normal key [n])      ;; sample n standard normals
 ```
 
-This eliminates hidden PRNG state --- every sample is a pure function of its key.
+This eliminates hidden PRNG state --- every sample is a pure function of its key. A dynamic variable `*prng-key*` enables reproducible inference by threading a PRNG key through all GFI operations within a `with-key` scope. The module provides 10 key-based sampling functions: `normal`, `uniform`, `bernoulli`, `categorical`, `randint`, `gumbel`, `laplace`, `truncated-normal`, `multivariate-normal`, and `permutation`.
 
 ### 2.2 Core Data Types (Layer 1)
 
 Three persistent data structures form the vocabulary of GenMLX:
 
-**Choice Maps** (`genmlx.choicemap`, 155 lines) are hierarchical trees mapping addresses to values. They use ClojureScript's persistent maps for structural sharing, with a thin protocol (`IChoiceMap`) distinguishing leaf values from interior nodes:
+**Choice Maps** (`genmlx.choicemap`, 228 lines) are hierarchical trees mapping addresses to values. They use ClojureScript's persistent maps for structural sharing, with a thin protocol (`IChoiceMap`) distinguishing leaf values from interior nodes:
 
 ```clojure
 (cm/choicemap :slope (mx/scalar 2.0) :intercept (mx/scalar 1.0))
@@ -80,7 +82,7 @@ Three persistent data structures form the vocabulary of GenMLX:
 (cm/set-choice cm [:obs :y0] (mx/scalar 3.0))
 ```
 
-Choice maps are the universal data interchange format: observations are choice maps, trace contents are choice maps, and update constraints are choice maps.
+Choice maps are the universal data interchange format: observations are choice maps, trace contents are choice maps, and update constraints are choice maps. The module also provides batching utilities (`stack-choicemaps`, `unstack-choicemap`) for converting between N scalar choice maps and one choice map with `[N]`-shaped leaf arrays.
 
 **Traces** (`genmlx.trace`, 13 lines) are immutable records holding the result of a generative function execution:
 
@@ -90,11 +92,11 @@ Choice maps are the universal data interchange format: observations are choice m
 
 The `score` field holds `log p(choices | args)` as a lazy MLX array, staying on GPU until explicitly materialized.
 
-**Selections** (`genmlx.selection`, 66 lines) are a composable algebra for identifying subsets of addresses. They support flat selection (`(sel/select :x :y)`), hierarchical selection, complement, and the universal selections `all` and `none`. Selections drive the `regenerate` operation, which resamples only the selected addresses while holding others fixed.
+**Selections** (`genmlx.selection`, 60 lines) are a composable algebra for identifying subsets of addresses. They support flat selection (`(sel/select :x :y)`), hierarchical selection, complement, and the universal selections `all` and `none`. Selections drive the `regenerate` operation, which resamples only the selected addresses while holding others fixed.
 
 ### 2.3 GFI Protocols and Execution Engine (Layer 2)
 
-The GFI is expressed as seven ClojureScript protocols:
+The GFI is expressed as nine ClojureScript protocols:
 
 ```clojure
 (defprotocol IGenerativeFunction (simulate [gf args]))
@@ -103,12 +105,14 @@ The GFI is expressed as seven ClojureScript protocols:
 (defprotocol IRegenerate (regenerate [gf trace selection]))
 (defprotocol IAssess (assess [gf args choices]))
 (defprotocol IPropose (propose [gf args]))
+(defprotocol IProject (project [gf trace selection]))
 (defprotocol IUpdateWithDiffs (update-with-diffs [gf trace constraints argdiffs]))
+(defprotocol IHasArgumentGrads (has-argument-grads [gf]))
 ```
 
-The first four are the core GFI from Gen.jl. `IAssess` and `IPropose` enable custom-proposal MH and involutive MCMC. `IUpdateWithDiffs` enables diff-aware incremental computation in combinators (Section 2.9).
+The first four are the core GFI from Gen.jl. `IAssess` and `IPropose` enable custom-proposal MH and involutive MCMC. `IProject` scores a subset of trace addresses. `IUpdateWithDiffs` enables diff-aware incremental computation in combinators (Section 2.9). `IHasArgumentGrads` reports which arguments support gradient computation.
 
-The execution engine (`genmlx.handler`, 321 lines) implements these operations through a handler-based architecture. When a model body calls `(dyn/trace :addr dist)`, the call dispatches to whichever handler is currently active. Each handler is decomposed into a **pure state transition function** and a **thin mutable wrapper**:
+The execution engine (`genmlx.handler`, 608 lines) implements these operations through a handler-based architecture. When a model body calls `(dyn/trace :addr dist)`, the call dispatches to whichever handler is currently active. Each handler is decomposed into a **pure state transition function** and a **thin mutable wrapper**:
 
 ```clojure
 ;; Pure transition: (state, addr, dist) -> (value, state')
@@ -132,7 +136,7 @@ The state is an immutable map containing `:choices`, `:score`, `:weight`, `:key`
 
 This separation has a crucial consequence: the pure transition functions are entirely agnostic to the shapes of the values flowing through them. A score that starts as a scalar `(mx/scalar 0.0)` and accumulates scalar log-probabilities works identically to a score that starts as `(mx/scalar 0.0)` and accumulates `[N]`-shaped log-probabilities via broadcasting. This shape-agnosticism is what enables vectorized execution without modifying the handler (Section 5).
 
-The handler also provides six batched transitions (simulate, generate, update, regenerate, and their batched variants) that sample `[N]`-shaped arrays at each trace site, enabling all particles to be processed in a single model execution.
+The handler provides six scalar transitions (simulate, generate, assess, update, regenerate, project) and four batched transitions (batched-simulate, batched-generate, batched-update, batched-regenerate) that sample `[N]`-shaped arrays at each trace site, enabling all particles to be processed in a single model execution. Sub-generative-function calls via `dyn/splice` are handled transparently, with native batched execution for DynamicGF sub-models and a per-particle fallback for combinator sub-models.
 
 ### 2.4 Dynamic DSL (Layer 3)
 
@@ -158,13 +162,13 @@ Inside `gen` bodies, `dyn/trace` addresses a random choice, `dyn/splice` calls a
   (dyn/trace :obs (dist/gaussian mu 1)))
 ```
 
-The `DynamicGF` record (`genmlx.dynamic`, 279 lines) implements all seven GFI protocols by selecting the appropriate handler and running the body function.
+The `DynamicGF` record (`genmlx.dynamic`, 380 lines) implements all nine GFI protocols by selecting the appropriate handler and running the body function. It also provides four vectorized entry points (`vsimulate`, `vgenerate`, `vupdate`, `vregenerate`) that run the model body once with batched handlers for N-particle inference.
 
 Unlike Gen.jl's approach of compiling the model body into a static computation graph, GenMLX's dynamic DSL supports full ClojureScript control flow --- loops, recursion, higher-order functions, conditionals on random values. This flexibility comes at the cost of incremental computation (a static graph can skip unchanged subexpressions during `update`), though the diff-aware update system (Section 2.9) recovers some of this performance at the combinator level.
 
 ### 2.5 Distributions (Layer 4)
 
-GenMLX provides 22 probability distributions, all built on a single `Distribution` record with open multimethods:
+GenMLX provides 27 probability distributions, all built on a single `Distribution` record with open multimethods:
 
 ```clojure
 (defrecord Distribution [type params]
@@ -194,26 +198,27 @@ The `defdist` macro (`genmlx.dist.macros`, 153 lines) reduces distribution defin
 
 The macro generates the constructor function, `defmethod` implementations for `dist-sample`, `dist-log-prob`, `dist-reparam`, and optionally `dist-support` (for enumeration in Gibbs sampling), and wraps all constructor parameters with `mx/ensure-array` so that plain numbers are automatically promoted to MLX scalars.
 
-The 22 distributions span:
-- **Continuous**: gaussian, uniform, exponential, laplace, log-normal, beta, gamma, student-t, cauchy, inverse-gamma, truncated-normal
+The 27 distributions span:
+- **Continuous**: gaussian, uniform, exponential, laplace, log-normal, beta, gamma, student-t, cauchy, inverse-gamma, truncated-normal, broadcasted-normal, piecewise-uniform
 - **Discrete**: bernoulli, categorical, poisson, geometric, negative-binomial, binomial, discrete-uniform
 - **Multivariate**: multivariate-normal, dirichlet
+- **Matrix**: wishart, inverse-wishart
 - **Structural**: delta (point mass)
 - **Composite**: mixture (first-class mixture constructor)
 
-Nine distributions provide native batch sampling for vectorized inference; the rest fall back to sequential sampling with automatic stacking.
+Twenty distributions provide native batch sampling via `dist-sample-n` for vectorized inference; the remainder fall back to sequential sampling with automatic stacking.
 
-A `defdist-transform` macro enables declaring derived distributions via deterministic transforms of base distributions (e.g., log-normal as an exponential transform of gaussian). The `mixture` constructor in `dist/core.cljs` creates mixture distributions as first-class `Distribution` records with proper log-prob computation via log-sum-exp.
+The `mixture` constructor in `dist/core.cljs` creates mixture distributions as first-class `Distribution` records with proper log-prob computation via log-sum-exp. A `map->dist` function enables creating distributions dynamically from maps of functions, enabling runtime distribution construction without macros.
 
 Because distributions are GFI participants --- they implement `IGenerativeFunction` and `IGenerate` --- they can be used directly as arguments to inference algorithms, as components in combinators, and as building blocks in hierarchical models.
 
 ### 2.6 Combinators (Layer 5)
 
-Eight combinators compose generative functions into higher-level models:
+Ten combinators compose generative functions into higher-level models (`genmlx.combinators`, 1,571 lines):
 
 **Map** applies a kernel generative function independently to each element of input sequences, analogous to Gen.jl's `Map`. Each invocation is addressed by its integer index, enabling per-element constraints and updates. Map stores per-element scores as trace metadata, enabling diff-aware updates that skip unchanged elements (Section 2.9).
 
-**Unfold** applies a kernel sequentially, threading state from one step to the next. This is the natural combinator for time-series and sequential models: the kernel receives `[t state & extra-args]` and returns the next state.
+**Unfold** applies a kernel sequentially, threading state from one step to the next. This is the natural combinator for time-series and sequential models: the kernel receives `[t state & extra-args]` and returns the next state. Supports prefix-skip optimization: only recomputes from the first changed step.
 
 **Switch** selects between multiple branch generative functions based on a runtime index, enabling mixture models and discrete structural choices.
 
@@ -221,51 +226,76 @@ Eight combinators compose generative functions into higher-level models:
 
 **Mask** gates execution of a generative function on a boolean condition. When masked (condition = false), the GF is not executed and contributes zero score. Used internally by vectorized switch for all-branch execution with mask-selection.
 
-**Mix** is a first-class mixture model combinator that combines multiple component generative functions with mixing weights. It samples a component index from a categorical distribution, then executes the selected component. Both the index and the component's choices appear in the trace.
+**Mix** is a first-class mixture model combinator that combines multiple component generative functions with mixing weights. It samples a component index from a categorical distribution, then executes the selected component. Both the index and the component's choices appear in the trace. Log-weights can be a function of arguments for adaptive mixtures.
+
+**Recurse** is a fixed-point combinator for recursive models. A maker function receives a reference to the combinator itself and returns a generative function, enabling recursive calls. This supports random trees, linked lists, context-free grammars, and other recursive stochastic structures.
 
 **Contramap** transforms arguments before passing to an inner generative function, enabling argument preprocessing without modifying the inner model.
 
-**Dimap** transforms both arguments and return values, composing Contramap with a return-value map.
+**Dimap** transforms both arguments and return values, composing a Contramap with a return-value map (MapRetvalGF).
 
-All combinators with update/regenerate support implement the full GFI --- `simulate`, `generate`, `update`, `regenerate`, and `edit` --- so they compose seamlessly with all inference algorithms. Map, Unfold, Switch, and Scan have complete GFI implementations; Contramap, Mask, Mix, and Dimap currently support simulate and generate.
+**Vmap** (`genmlx.vmap`, 428 lines) applies a kernel GF independently to N elements, storing choices with `[N]`-shaped leaf arrays instead of integer-indexed sub-choicemaps. This is GenMLX's analog of `jax.vmap` applied to generative functions.
+
+All combinators implement the complete GFI --- `simulate`, `generate`, `update`, `regenerate`, `assess`, `propose`, `project`, `edit`, and `update-with-diffs` --- so they compose seamlessly with all inference algorithms. A vectorized switch mechanism executes all branches with N independent samples each, then combines results using `mx/where` based on `[N]`-shaped index arrays, enabling vectorized mixture models.
 
 ### 2.7 Inference Algorithms (Layer 6)
 
-GenMLX provides a comprehensive inference toolkit spanning the major paradigms:
+GenMLX provides a comprehensive inference toolkit spanning the major paradigms.
 
-**Importance Sampling and Resampling** (`importance.cljs`, 77 lines). The simplest particle method: run `generate` with observations to get weighted samples, then optionally resample proportional to weights. A vectorized variant (`vectorized-importance-sampling`) runs all particles in a single model execution (Section 5).
+**Importance Sampling and Resampling** (`importance.cljs`, 81 lines). The simplest particle method: run `generate` with observations to get weighted samples, then optionally resample proportional to weights. A vectorized variant (`vectorized-importance-sampling`) runs all particles in a single model execution (Section 5).
 
-**Metropolis-Hastings** (`mcmc.cljs`, 577 lines). Four MH variants:
+**Metropolis-Hastings** (`mcmc.cljs`, 1,730 lines). Nine MCMC algorithms:
 
 - *Standard MH*: Uses the GFI `regenerate` operation as the proposal mechanism, resampling selected addresses from the prior.
 - *Custom-proposal MH*: Accepts a user-written proposal generative function. Runs `propose` on the proposal GF, applies proposed choices via `update`, and computes the Metropolis-Hastings acceptance ratio from the update weight, forward score, and backward score. This is the foundation of programmable inference.
-- *Enumerative Gibbs*: Exact conditional sampling for discrete variables with finite support. Enumerates all values in `dist-support`, computes the conditional score for each via `update`, and samples from the resulting categorical distribution. Critical for models with discrete latent structure (mixture indicators, topic assignments).
-- *Involutive MCMC*: The general MCMC framework from Gen.jl for trans-dimensional inference. Three-phase kernel: (1) propose auxiliary choices from a proposal GF, (2) apply a user-supplied involution `h(trace-cm, aux-cm) -> (new-trace-cm, new-aux-cm)`, (3) accept/reject with score difference. Currently supports volume-preserving involutions.
-
-**Gradient-Based MCMC**:
-
+- *Enumerative Gibbs*: Exact conditional sampling for discrete variables with finite support. Enumerates all values in `dist-support`, computes the conditional score for each via `update`, and samples from the resulting categorical distribution.
+- *Involutive MCMC*: The general MCMC framework from Gen.jl for trans-dimensional inference. Three-phase kernel: (1) propose auxiliary choices from a proposal GF, (2) apply a user-supplied involution `h(trace-cm, aux-cm) -> (new-trace-cm, new-aux-cm)`, (3) accept/reject with score difference.
 - *MALA* (Metropolis-Adjusted Langevin Algorithm): Gradient-informed proposals shifted in the direction of the score gradient, with a Metropolis correction for the asymmetric proposal.
-- *HMC* (Hamiltonian Monte Carlo): Simulates Hamiltonian dynamics via fused leapfrog integration that merges adjacent half-kicks, reducing gradient evaluations from 2L to L+1 for L steps.
-- *NUTS* (No-U-Turn Sampler): Adaptively selects trajectory length by recursively doubling the tree of leapfrog states until a U-turn is detected, following the original Hoffman and Gelman algorithm.
+- *HMC* (Hamiltonian Monte Carlo): Simulates Hamiltonian dynamics via fused leapfrog integration that merges adjacent half-kicks, reducing gradient evaluations from 2L to L+1 for L steps. Supports diagonal and dense mass matrices.
+- *NUTS* (No-U-Turn Sampler): Adaptively selects trajectory length by recursively doubling the tree of leapfrog states until a U-turn is detected, following the Hoffman and Gelman algorithm with generalized U-turn detection.
+- *Elliptical Slice Sampling*: A tuning-free sampler for models with Gaussian priors that proposes along elliptical slices through the current state.
+- *MAP* (Maximum A Posteriori): Gradient ascent on the log-posterior, returning the mode rather than samples.
+
+**Adaptive Tuning.** HMC and NUTS support automatic tuning during warmup via dual averaging (Algorithm 4, Hoffman & Gelman 2014) for step-size adaptation and Welford online variance estimation for diagonal mass matrix learning. HMC defaults to a target acceptance rate of 0.65, NUTS to 0.8.
+
+**Loop Compilation.** MH, MALA, and HMC support loop-compiled chains: multiple MCMC steps are fused into a single Metal dispatch via `mx/compile-fn`, with pre-generated noise arrays passed as inputs. This amortizes the N-API call overhead across K steps, yielding significant speedup over per-step eager execution.
+
+**Vectorized MCMC.** MH, MALA, HMC, and MAP provide vectorized variants that run N independent chains simultaneously via `[N,D]`-shaped parameter arrays, with per-particle accept/reject decisions.
 
 Score functions and their gradients are JIT-compiled via `mx/compile-fn` for amortized Metal dispatch.
 
-**Sequential Monte Carlo** (`smc.cljs`, 262 lines). Three SMC variants:
+**Sequential Monte Carlo** (`smc.cljs`, 406 lines). Four SMC variants:
 
-- *Standard SMC*: Particle filtering with systematic resampling and optional MCMC rejuvenation. Each timestep: extend particles with new observations via `update`, reweight, resample if ESS falls below threshold, rejuvenate.
+- *Standard SMC*: Particle filtering with adaptive resampling and optional MCMC rejuvenation. Each timestep: extend particles with new observations via `update`, reweight, resample if ESS falls below threshold, rejuvenate. Supports three resampling strategies: systematic, residual, and stratified.
 - *Conditional SMC* (cSMC): SMC with a retained reference particle for particle MCMC / PMCMC. The reference particle is never resampled; its trajectory is preserved through conditional resampling.
+- *Vectorized SMC*: Uses shape-based batching for initialization and rejuvenation, running all particles in a single model execution with vectorized MH rejuvenation.
 - *Vectorized SMC init*: Uses shape-based batching for the initialization step, running all particles in a single model execution.
 
-**SMCP3** (`smcp3.cljs`, 201 lines). Sequential Monte Carlo with Probabilistic Program Proposals --- the most powerful inference algorithm in GenJAX. Uses custom generative functions as proposals in SMC, with automatic incremental weight computation via the edit interface (Section 2.8). Supports per-particle forward and backward proposal kernels.
+**SMCP3** (`smcp3.cljs`, 182 lines). Sequential Monte Carlo with Probabilistic Program Proposals --- the most powerful inference algorithm in GenJAX. Uses custom generative functions as proposals in SMC, with automatic incremental weight computation via the edit interface (Section 2.8). Supports per-particle forward and backward proposal kernels.
 
-**Variational Inference** (`vi.cljs`, 301 lines):
+**Variational Inference** (`vi.cljs`, 459 lines):
 
 - *ADVI*: Fits a mean-field Gaussian guide by maximizing the ELBO via Adam optimization. Uses reparameterized sampling and `mx/vmap` to batch ELBO sample evaluation.
-- *Programmable VI*: Supports four variational objectives (ELBO, IWELBO, PWake, QWake) and two gradient estimators (reparameterization, REINFORCE with variance-reducing baseline). Pluggable objectives enable different trade-offs between bound tightness and gradient variance.
+- *Programmable VI*: Supports five variational objectives and two gradient estimators. Pluggable objectives enable different trade-offs between bound tightness and gradient variance.
 
-**Wake-Sleep Learning** (`learning.cljs`, 301 lines). Amortized inference via alternating wake and sleep phases: wake phase minimizes KL(q||p) by optimizing guide parameters, sleep phase minimizes KL(p||q) by training the guide on model prior samples.
+The five variational objectives are:
+- **ELBO**: Standard evidence lower bound --- `E_q[log p(x,z) - log q(z)]`
+- **IWELBO**: Importance-weighted ELBO (IWAE bound) --- tighter bound that approaches `log p(x)` as K increases
+- **PWake**: P-Wake objective --- trains model parameters by minimizing `KL(q || p)`
+- **QWake**: Q-Wake objective --- trains guide parameters using self-normalized importance weights
+- **VIMCO**: Variational Inference with Multi-sample Objectives --- leave-one-out control variates for lower variance than REINFORCE with non-reparameterizable distributions
 
-**Inference Composition** (`kernel.cljs`, 123 lines). Composable inference kernels with algebraic operators:
+Two gradient estimators:
+- **Reparameterization**: Gradient flows through the sampling process (for continuous, reparameterizable distributions)
+- **REINFORCE**: Score function estimator with variance-reducing mean baseline (for discrete or non-reparameterizable distributions)
+
+**ADEV Gradient Estimation** (`inference/adev.cljs`, 301 lines). Automatic Differentiation of Expected Values computes unbiased gradients of expected costs by automatically choosing reparameterization or score-function estimation at each trace site, following Lew et al. (POPL 2023).
+
+**Amortized Inference** (`inference/amortized.cljs`, 136 lines). Trains neural encoder networks `q(z|x; θ)` to approximate posteriors via reparameterized ELBO (VAE-style training), then uses trained encoders as proposals in importance sampling.
+
+**Wake-Sleep Learning** (`learning.cljs`, 324 lines). Amortized inference via alternating wake and sleep phases: wake phase minimizes KL(q||p) by optimizing guide parameters, sleep phase minimizes KL(p||q) by training the guide on model prior samples.
+
+**Inference Composition** (`kernel.cljs`, 223 lines). Composable inference kernels with algebraic operators:
 
 ```clojure
 (chain k1 k2 k3)           ;; sequential composition
@@ -279,6 +309,8 @@ Score functions and their gradients are JIT-compiled via `mx/compile-fn` for amo
 An inference kernel is simply a function `(fn [trace key] -> trace)`. The `run-kernel` executor handles burn-in, thinning, callbacks, and acceptance rate tracking.
 
 **Choice Gradients** (`gradients.cljs`, 68 lines). Per-choice gradients of log p(trace) w.r.t. individual continuous choices, and score gradients w.r.t. flat parameter arrays. Foundation for gradient-based learning and parameter training.
+
+**Custom Gradient GFs** (`custom_gradient.cljs`, 69 lines). Generative functions with user-defined gradient behavior, enabling gradient overrides for distributions or model components where automatic differentiation is insufficient.
 
 **Diagnostics** (`diagnostics.cljs`, 125 lines). Effective sample size (ESS) via the autocorrelation-based estimator with Geyer's initial positive sequence truncation, R-hat (Gelman-Rubin) convergence diagnostic for multiple chains, and summary statistics (mean, standard deviation, quantiles).
 
@@ -297,11 +329,11 @@ Three EditRequest types cover the space of trace mutations:
 - **SelectionEdit**: equivalent to `regenerate` --- resamples selected addresses. The backward request is the same selection (regenerate is its own inverse as a proposal).
 - **ProposalEdit**: forward + backward proposal GFs for SMCP3-style reversible kernels. Runs `propose` on the forward GF, applies choices via `update`, scores the reverse move via `assess` on the backward GF, and combines weights. The backward request swaps forward and backward GFs.
 
-`IEdit` is implemented on all nine GF record types (DynamicGF, MapCombinator, UnfoldCombinator, SwitchCombinator, ScanCombinator, MaskCombinator, MixCombinator, ContramapGF, MapRetvalGF). Each delegates to a default `edit-dispatch` that handles all three request types, but individual types can override with specialized implementations. SMCP3 uses the polymorphic `edit/edit` method, so custom GF types automatically work with SMCP3 inference.
+`IEdit` is implemented on all ten generative function types (DynamicGF, MapCombinator, UnfoldCombinator, SwitchCombinator, ScanCombinator, MaskCombinator, MixCombinator, RecurseCombinator, ContramapGF, MapRetvalGF). Each delegates to a default `edit-dispatch` that handles all three request types, but individual types can override with specialized implementations. SMCP3 uses the polymorphic `edit/edit` method, so custom GF types automatically work with SMCP3 inference.
 
 ### 2.9 Diff-Aware Incremental Updates
 
-The diff system (`diff.cljs`, 120 lines) provides change-tagged values for incremental computation:
+The diff system (`diff.cljs`, 121 lines) provides change-tagged values for incremental computation:
 
 ```clojure
 diff/no-change              ;; value has not changed
@@ -319,7 +351,9 @@ The `IUpdateWithDiffs` protocol enables combinators to skip unchanged sub-comput
 
 **MapCombinator** provides the key optimization: it stores per-element scores as trace metadata. When called with a `vector-diff`, only the changed elements are updated --- unchanged elements reuse their stored choices and scores. Elements with new constraints are also detected and updated even when the argdiff says no-change. This makes updating one element of a 1000-element mapped model O(1) instead of O(1000).
 
-Other combinators (Unfold, Scan, Switch) provide `no-change` fast paths that return the trace unchanged with zero weight when no arguments or constraints have changed. DynamicGF delegates to regular `update` (since the body must be re-executed), with a `no-change` shortcut when there are no constraints.
+**UnfoldCombinator** and **ScanCombinator** provide prefix-skip optimization: they store per-step scores and carry states, and only recompute from the first changed step forward.
+
+Other combinators (Switch, Mask, Mix, Recurse) provide `no-change` fast paths that return the trace unchanged with zero weight when no arguments or constraints have changed. DynamicGF delegates to regular `update` (since the body must be re-executed), with a `no-change` shortcut when there are no constraints.
 
 ### 2.10 Trainable Parameters
 
@@ -348,6 +382,16 @@ The learning module provides integration utilities:
 ```
 
 The `make-param-loss-fn` builds a param store from a flat parameter array, binds it, runs `generate`, and returns the negative log-weight as the loss. Gradients flow through the MLX arrays correctly, enabling standard optimization (SGD, Adam) over model parameters.
+
+### 2.11 Neural Network Integration
+
+The neural network module (`nn.cljs`, 119 lines) bridges MLX's native `nn.Module` infrastructure with the GFI:
+
+- **Layer constructors**: `linear`, `sequential`, `relu`, `gelu`, `tanh-act`, `sigmoid-act`, `dropout`, `layer-norm`, `embedding` wrap MLX's native nn.Module classes
+- **GFI bridge**: `nn->gen-fn` wraps any nn.Module as a deterministic generative function (delta distribution over the forward pass output), enabling neural networks to be composed with probabilistic models via `dyn/splice`
+- **Training**: `value-and-grad` and `step!` provide gradient computation and parameter updates for nn.Module parameters via MLX's native `nn.valueAndGrad`
+
+This enables amortized inference architectures where neural networks serve as recognition models or proposal distributions within the GFI framework.
 
 ---
 
@@ -384,12 +428,32 @@ GenMLX exploits this by deferring `mx/eval!` as late as possible. A typical scor
 
 For gradient-based inference, `mx/compile-fn` takes this further: it traces the score function once, caches the resulting Metal program, and reuses it across all subsequent evaluations. Combined with `mx/grad` (which is also lazy), this means the entire gradient computation --- forward pass, backward pass, and parameter update --- can be a single cached Metal dispatch.
 
-### 3.3 Memory Management
+### 3.3 Loop Compilation
+
+Loop compilation extends the compilation strategy to multi-step MCMC chains. Instead of dispatching one Metal kernel per MCMC step, an entire K-step chain is compiled into a single Metal dispatch:
+
+```clojure
+(let [chain-fn (fn [params noise uniforms]
+                 (loop [p params, i 0]
+                   (if (>= i k-steps)
+                     p
+                     (let [proposal (mx/add p (mx/multiply std (mx/index noise i)))
+                           ...]
+                       (recur (mx/where accept? proposal p) (inc i))))))
+      compiled (mx/compile-fn chain-fn)]
+  ;; Each call dispatches ONE Metal program for K steps
+  (compiled init-params (rng/normal key [k n]) (rng/uniform key [k])))
+```
+
+The noise arrays are pre-generated outside the compiled function, ensuring correct randomness while keeping the entire chain within a single dispatch. This technique applies to MH, MALA, and HMC, and is particularly effective for burn-in where per-step output is not needed.
+
+### 3.4 Memory Management
 
 MLX's lazy evaluation can accumulate large computation graphs if left unchecked. GenMLX manages this through:
 
 - **Explicit `mx/eval!` at step boundaries**: each MCMC step, leapfrog step, or VI iteration materializes its results, bounding graph size
 - **`mx/tidy` blocks**: wrap computations that produce intermediate arrays, automatically disposing them after the block returns
+- **Periodic cache clearing**: long-running inference loops (SMC, compiled VI, wake-sleep) periodically call `mx/clear-cache!` to prevent Metal cache exhaustion
 - **Score scalars, not tensors**: the typical GenMLX trace score is a scalar MLX array, not a large tensor, so the memory pressure from score accumulation is minimal
 
 ---
@@ -423,6 +487,7 @@ This design means:
 
 3. **Data serialization for free.** Distribution instances are plain Clojure maps: `{:type :gaussian :params {:mu <mlx-array> :sigma <mlx-array>}}`. They can be serialized, compared, and inspected with standard Clojure tools.
 4. **GFI participation for free.** The `Distribution` record implements `IGenerativeFunction` and `IGenerate`, so every distribution is automatically a valid generative function that can be used in combinators, passed to inference algorithms, and composed in model hierarchies.
+5. **Runtime construction.** The `map->dist` function creates distributions dynamically from maps of functions, enabling distribution construction at runtime without macros.
 
 ### 4.2 The `defdist` Macro
 
@@ -450,8 +515,6 @@ The macro generates:
 - `defmethod dist-log-prob :exponential` with value wrapping
 - `defmethod dist-reparam :exponential` (optional, for gradient flow)
 - `defmethod dist-support :exponential` (optional, for enumeration)
-
-A companion `defdist-transform` macro enables declaring derived distributions via deterministic transforms of base distributions, reducing each to a single line defining the base distribution and the forward/inverse transforms.
 
 ### 4.3 Log-Probability Broadcasting
 
@@ -511,9 +574,9 @@ The implementation adds several components:
     (mx/stack (mapv #(dist-sample d %) keys))))
 ```
 
-Nine distributions provide native batch sampling (one line each: call `rng/normal` or `rng/uniform` with shape `[n]` instead of `[]`). Distributions with rejection loops (beta, gamma, poisson, student-t) or complex structure (dirichlet, categorical) use the sequential fallback.
+Twenty distributions provide native batch sampling (one or two lines each: call `rng/normal` or `rng/uniform` with shape `[n]` instead of `[]`). Distributions with complex structure (neg-binomial, wishart, inv-wishart) or those defined via `map->dist` use the sequential fallback.
 
-**Batched handler transitions** (`handler.cljs`). Six batched transitions (simulate, generate, update, regenerate, and their constrained variants) that are structurally identical to the scalar transitions but calling `dist-sample-n`:
+**Batched handler transitions** (`handler.cljs`). Four batched transitions (simulate, generate, update, regenerate) that are structurally identical to the scalar transitions but calling `dist-sample-n`:
 
 ```clojure
 (defn- batched-simulate-transition [state addr dist]
@@ -529,34 +592,23 @@ Nine distributions provide native batch sampling (one line each: call `rng/norma
 
 For constrained sites, the observation is a scalar. Its log-probability is also a scalar. When this scalar is added to the `[N]`-shaped running score, MLX broadcasts it across all particles --- exactly the correct semantics (all particles see the same observation).
 
-**`VectorizedTrace` record** (`vectorized.cljs`, 94 lines). A trace where choice map leaves hold `[N]`-shaped arrays, and score/weight are `[N]`-shaped. With utilities for systematic resampling (reindex all choice map leaves by ancestor indices), ESS computation, and log marginal likelihood estimation.
+**`VectorizedTrace` record** (`vectorized.cljs`, 153 lines). A trace where choice map leaves hold `[N]`-shaped arrays, and score/weight are `[N]`-shaped. With utilities for systematic resampling (both CPU loop-based and GPU-native implementations), ESS computation, log marginal likelihood estimation, and per-particle trace merging via boolean masks.
 
 **`vsimulate` / `vgenerate` / `vupdate` / `vregenerate`** (`dynamic.cljs`). Public API functions that run the model body once with the appropriate batched handler, producing or updating a `VectorizedTrace`.
 
 **Vectorized switch** (`combinators.cljs`). For models with discrete latent structure, executes all branches with N independent samples each, then combines results using `mx/where` based on `[N]`-shaped index arrays. This enables vectorized mixture models and clustering models.
 
-### 5.4 Performance Results
+### 5.4 Performance Characteristics
 
-Benchmarks on a 5-site Gaussian model with N=100 particles:
+The speedup comes entirely from eliminating per-particle overhead. The GPU compute is the same --- evaluating N scalar Gaussians sequentially takes the same number of FLOPs as evaluating one `[N]`-shaped Gaussian. But the sequential version makes Nx more N-API calls and Nx more synchronization points.
 
-| Operation | Sequential | Batched | Speedup |
-|---|---|---|---|
-| `dist-sample` (N=100) | 29 ms | 1 ms | **29x** |
-| `dist-sample` (N=1000) | 265 ms | 4 ms | **66x** |
-| `generate` (5 sites, N=100) | 122 ms | 2 ms | **61x** |
-| Importance sampling (N=100) | 81 ms | 1 ms | **81x** |
-| SMC init (N=100) | 65 ms | 1 ms | **65x** |
+The speedup scales with particle count: at higher N, the overhead per particle in the batched case is effectively zero (bounded by a constant number of API calls regardless of N), while the sequential version scales linearly in N.
 
-The speedup comes entirely from eliminating per-particle overhead. The GPU compute is the same --- evaluating N scalar Gaussians sequentially takes the same number of FLOPs as evaluating one `[N]`-shaped Gaussian. But the sequential version makes 100x more N-API calls and 100x more synchronization points.
-
-The speedup scales linearly with particle count: at N=1000, the `dist-sample-n` speedup reaches 66x, and the overhead per particle in the batched case is effectively zero (bounded by a constant number of API calls regardless of N).
-
-### 5.5 Limitations and Future Work
+### 5.5 Limitations
 
 The current vectorized execution has several limitations:
 
 - **No `splice`**: sub-generative-function calls are not supported in batched mode, because the sub-GF may have control flow that depends on sampled values (which are now `[N]`-shaped arrays rather than scalars)
-- **Rejection-sampling distributions**: beta, gamma, poisson, student-t, and dirichlet fall back to sequential because their sampling algorithms contain data-dependent loops
 - **Models must not materialize**: calling `mx/eval!` or `mx/item` on traced values inside the model body would force scalar semantics on `[N]`-shaped arrays
 
 Vectorized `update` and `regenerate` have been implemented, enabling multi-step SMC where particles can be updated and resampled incrementally. Vectorized stochastic branching via the vectorized switch mechanism is also available for models with discrete latent structure.
@@ -573,17 +625,17 @@ Gen.jl is the original GFI implementation, written in Julia (~20,000 lines). Key
 - **Static DSL**: Gen.jl provides a `@gen (static)` variant that compiles model bodies into dependency graphs for incremental computation. GenMLX has only the dynamic DSL, but provides diff-aware combinators for partial incremental updates.
 - **Mutation**: Gen.jl uses mutable traces and a mutable parameter store. GenMLX uses persistent data structures throughout.
 - **Hardware**: Gen.jl runs on CPU only (GPU support via GenFlux.jl for neural network components). GenMLX runs all numerics on Apple Silicon GPU.
-- **NUTS**: GenMLX provides a built-in NUTS sampler; Gen.jl does not.
+- **Gradient-based MCMC**: GenMLX provides built-in MALA, HMC, NUTS, and elliptical slice sampling with adaptive tuning; Gen.jl does not include these built-in.
 
 ### 6.2 GenJAX
 
 GenJAX brings the GFI to JAX (~10,000 lines). Key differences:
 
 - **Vectorization**: GenJAX uses `jax.vmap` to transform scalar trace operations into batched ones, requiring all code to be JAX-traceable. GenMLX uses shape-based batching, which works with arbitrary ClojureScript control flow but cannot vectorize data-dependent branching.
-- **Compilation**: GenJAX benefits from XLA's whole-program compilation. GenMLX uses per-function `mx/compile-fn` and lazy graph fusion.
+- **Compilation**: GenJAX benefits from XLA's whole-program compilation. GenMLX uses per-function `mx/compile-fn`, lazy graph fusion, and loop compilation for multi-step chains.
 - **Hardware**: GenJAX targets NVIDIA GPUs and Google TPUs. GenMLX targets Apple Silicon.
 - **Edit interface**: Both systems provide a parametric edit interface with typed requests and backward computation. GenMLX implements `IEdit` on all GF types via a default `edit-dispatch` with per-type overridability.
-- **Inference parity**: GenMLX now matches GenJAX's inference algorithm repertoire: custom-proposal MH, enumerative Gibbs, involutive MCMC, SMCP3, conditional SMC, programmable VI, composable inference kernels, and trainable parameters. GenMLX additionally provides NUTS, MALA, and standard ADVI, which GenJAX does not ship built-in.
+- **Inference parity**: GenMLX matches GenJAX's inference algorithm repertoire (custom-proposal MH, enumerative Gibbs, involutive MCMC, SMCP3, conditional SMC, programmable VI, composable inference kernels, trainable parameters) and additionally provides MALA, HMC, NUTS, elliptical slice sampling, ADVI, ADEV, VIMCO, amortized inference, and adaptive step-size/metric tuning.
 
 ### 6.3 Size Comparison
 
@@ -591,27 +643,29 @@ GenJAX brings the GFI to JAX (~10,000 lines). Key differences:
 |---|---|---|---|---|---|---|
 | Gen.jl | Julia | ~20,000+ | 12 | 3 | 4 (MH, IS, SMC, MAP) | CPU |
 | GenJAX | Python/JAX | ~10,000+ | 8 | 5 | 6+ (MH, Gibbs, SMCP3, VI) | GPU/TPU (NVIDIA, Google) |
-| GenMLX | ClojureScript | ~5,700 | 22 | 8 | 15+ (MH, Gibbs, MALA, HMC, NUTS, IS, SMC, cSMC, SMCP3, ADVI, PVI, wake-sleep) | GPU (Apple Silicon) |
+| GenMLX | ClojureScript | ~10,400 | 27 | 10 | 20+ (MH, Gibbs, MALA, HMC, NUTS, ESS, MAP, IS, SMC, cSMC, vSMC, SMCP3, ADVI, PVI, VIMCO, ADEV, amortized, wake-sleep) | GPU (Apple Silicon) |
 
-The size difference reflects different design trade-offs: Gen.jl includes a static DSL compiler, incremental computation, and extensive learning infrastructure; GenJAX includes JAX-compatible pytree structures and XLA compilation infrastructure. GenMLX achieves its compact size by relying on ClojureScript's built-in persistent data structures, open multimethods, and MLX's lazy evaluation model, which together replace significant amounts of infrastructure code.
+The size difference between GenMLX and its predecessors is smaller than before, reflecting the system's growth from its initial ~5,700-line core to include adaptive MCMC, loop compilation, amortized inference, ADEV, neural network integration, vmap, and comprehensive combinator coverage. GenMLX achieves its relative compactness by relying on ClojureScript's built-in persistent data structures, open multimethods, and MLX's lazy evaluation model, which together replace significant amounts of infrastructure code.
 
 ---
 
 ## 7. Verification and Testing
 
-GenMLX is verified by 287+ test assertions across 16 test files:
+GenMLX is verified by 1,300+ test assertions across 77 test files:
 
 **Gen.jl compatibility** (165 tests): distribution log-probability spot checks verified against scipy.stats and Gen.jl (within float32 tolerance), mathematical properties (symmetry, normalization, shift invariance), GFI semantics (simulate, generate, update with discard/weight, regenerate), dynamic DSL semantics (gen macro, trace, splice, nested tracing, score computation), and end-to-end inference (line model with constrained observations, importance sampling with branching models).
 
 **GenJAX compatibility** (73 tests): GFI invariants (generate weight equals score under full constraints, update weight equals score difference), MCMC convergence (normal-normal and beta-Bernoulli conjugate posteriors), importance sampling and SMC diagnostics, variational inference convergence, combinator GFI contracts, gradient flow (per-choice gradients, value-and-grad, reparameterized sampling, compiled gradients), diagnostics (ESS, R-hat), numerical stability (extreme parameters, boundary values, large models), and score consistency (hierarchical round-trips, no-op update invariance).
 
-**Bug fix tests** (13 tests): update weight correctness for dependent variables (DynamicGF, MapCombinator, ScanCombinator), vectorized switch producing distinct samples with correct branch selection, and conditional SMC preserving the reference particle.
+**Vectorized inference** (60+ tests): shape correctness for all batchable distributions, log-probability broadcasting, `vsimulate`/`vgenerate`/`vupdate`/`vregenerate` shape and statistical equivalence, resampling, vectorized importance sampling, vectorized SMC initialization, splice guard in batched mode, and sequential fallback for non-batchable distributions.
 
-**Remaining fixes tests** (36 tests): edit interface (ConstraintEdit and SelectionEdit on DynamicGF and MapCombinator, backward request generation), diff-aware updates (no-change shortcut, MapCombinator vector-diff optimization with weight verification, no-change with constraints), trainable parameters (dyn/param with and without param store, inside gen bodies, generate-with-params, gradient flow verification via make-param-loss-fn), and diff utility functions.
+**Combinators** (62+ tests): Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Contramap, Dimap --- full GFI coverage including simulate, generate, update, regenerate, edit, update-with-diffs. Combinator-specific tests for element-level score tracking, prefix-skip optimization, branch switching, and recursive structure.
 
-**Vectorized inference** (34 tests): shape correctness for all nine batchable distributions, log-probability broadcasting, `vsimulate`/`vgenerate` shape and statistical equivalence, resampling, vectorized importance sampling, vectorized SMC initialization, splice guard in batched mode, and sequential fallback for non-batchable distributions.
+**Vmap** (103 tests): comprehensive coverage of the vmap combinator across simulate, generate, update, regenerate, project, edit, and update-with-diffs for single-site, multi-site, and nested models.
 
-**Additional test suites** cover distributions, combinators, handlers, selections, choice maps, traces, and the extended feature set (Scan, Mask, Mix, Contramap/Dimap, custom-proposal MH, Gibbs, involutive MCMC, SMCP3, programmable VI, wake-sleep, inference composition, choice gradients, defdist-transform, mixture distributions, and the param store).
+**MCMC algorithms**: dedicated test suites for adaptive HMC (step-size and metric adaptation), adaptive NUTS, loop-compiled chains (MH, MALA, HMC), elliptical slice sampling, vectorized MCMC, and compiled benchmarks.
+
+**Additional test suites** cover distributions (including batch sampling, gamma batching, statistical moments), ADEV, amortized inference, neural network integration, PRNG key threading (16 reproducibility tests), custom gradient GFs, SMCP3 kernels, kernel DSL composition, assess/propose protocols, the edit interface (constraint, selection, proposal edits), diff-aware updates, trainable parameters, error messages, memory management, and resource stress testing.
 
 ---
 
@@ -650,10 +704,11 @@ The following example demonstrates the complete workflow --- model definition, o
           cm/EMPTY
           (map-indexed vector [2.1 3.9 6.2 7.8 10.1])))
 
-;; Run HMC inference
+;; Run HMC inference with adaptive tuning
 (def samples
   (mcmc/hmc {:samples 1000 :burn 200 :step-size 0.01
-             :leapfrog-steps 20 :addresses [:slope :intercept]}
+             :leapfrog-steps 20 :addresses [:slope :intercept]
+             :adapt-step-size true :adapt-metric true}
             linear-regression [xs] observations))
 
 ;; Posterior analysis
@@ -666,15 +721,15 @@ The following example demonstrates the complete workflow --- model definition, o
 
 ## 9. Conclusion
 
-GenMLX demonstrates that a full-featured probabilistic programming system --- matching the inference algorithm repertoire of GenJAX while adding NUTS, MALA, and ADVI --- can be built in approximately 5,700 lines of ClojureScript by leveraging three properties of the target platform:
+GenMLX demonstrates that a full-featured probabilistic programming system --- exceeding the inference algorithm repertoire of GenJAX while adding NUTS, MALA, elliptical slice sampling, ADVI, ADEV, VIMCO, amortized inference, and adaptive MCMC tuning --- can be built in approximately 10,400 lines of ClojureScript by leveraging three properties of the target platform:
 
 1. **MLX's unified memory** eliminates the CPU-GPU transfer overhead that dominates MCMC performance on discrete GPUs
-2. **MLX's lazy evaluation** enables entire score computations to be fused into single GPU dispatches, and `mx/compile-fn` caches these as reusable Metal programs
-3. **MLX's broadcasting semantics** enable vectorized particle inference through shape manipulation rather than code transformation, achieving 29--122x speedup with minimal implementation complexity
+2. **MLX's lazy evaluation** enables entire score computations to be fused into single GPU dispatches, `mx/compile-fn` caches these as reusable Metal programs, and loop compilation extends this to multi-step MCMC chains
+3. **MLX's broadcasting semantics** enable vectorized particle inference through shape manipulation rather than code transformation
 
-The purely functional design --- persistent data structures, open multimethods, explicit state threading --- results in a system that is both smaller and more extensible than its predecessors. New distributions, inference algorithms, and combinators can be added without modifying core code.
+The purely functional design --- persistent data structures, open multimethods, explicit state threading --- results in a system that is extensible without modifying core code. New distributions, inference algorithms, and combinators can be added from any namespace.
 
-The system now provides the complete GenJAX feature set: a parametric edit interface with typed requests and automatic backward computation, diff-aware incremental updates for combinators, trainable parameters integrated with the GFI, composable inference kernels, enumerative Gibbs sampling, involutive MCMC, SMCP3 with probabilistic program proposals, conditional SMC, and programmable variational inference with four objectives and two gradient estimators.
+The system now provides the complete GenJAX feature set and more: a parametric edit interface with typed requests and automatic backward computation, diff-aware incremental updates for combinators, trainable parameters integrated with the GFI, composable inference kernels, enumerative Gibbs sampling, involutive MCMC, SMCP3 with probabilistic program proposals, conditional SMC, programmable variational inference with five objectives and two gradient estimators, ADEV gradient estimation, amortized inference via trained neural proposals, neural network integration, and a vmap combinator. All ten model combinators implement the complete GFI.
 
 The system's remaining limitations --- no static DSL, no handler-level incremental computation, volume-preserving-only involutions --- represent clear directions for future work. The functional handler architecture, which proved to be shape-agnostic by construction, suggests that these extensions can be made without architectural changes.
 
@@ -699,3 +754,7 @@ GenMLX is open source under the MIT license at https://github.com/robert-johanss
 7. Kucukelbir, A., Tran, D., Ranganath, R., Gelman, A., & Blei, D. M. (2017). Automatic Differentiation Variational Inference. JMLR 2017.
 
 8. Apple Inc. (2023). MLX: An array framework for Apple silicon. https://github.com/ml-explore/mlx.
+
+9. Mnih, A. & Gregor, K. (2014). Neural Variational Inference and Learning in Belief Networks. ICML 2014.
+
+10. Murray, I., Adams, R. P., & MacKay, D. J. C. (2010). Elliptical Slice Sampling. AISTATS 2010.
