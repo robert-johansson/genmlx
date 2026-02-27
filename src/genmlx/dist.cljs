@@ -32,46 +32,25 @@
 (def ^:private BERNOULLI-SUPPORT [ZERO ONE])
 
 ;; ---------------------------------------------------------------------------
-;; Lanczos approximation for log-gamma (needed by Beta, Gamma, etc.)
+;; Log-gamma: native MLX kernel (single Metal dispatch per call)
 ;; ---------------------------------------------------------------------------
 
+;; JS-side log-gamma for scalar computations (e.g. Wishart log-prob).
 (defn- log-gamma [x]
   (if (<= x 0)
     js/Infinity
-    (let [g 7
-          c [0.99999999999980993 676.5203681218851 -1259.1392167224028
-             771.32342877765313 -176.61502916214059 12.507343278686905
-             -0.13857109526572012 9.9843695780195716e-6 1.5056327351493116e-7]
-          x (dec x)
-          t (+ x g 0.5)
-          rest-c (rest c)
+    (let [x (dec x)
+          t (+ x 5.5)
           s (reduce (fn [a [i ci]]
                       (+ a (/ ci (+ x i 1))))
-                    (first c)
-                    (map-indexed vector rest-c))]
+                    1.000000000190015
+                    [[0 76.18009172947146] [1 -86.50532032941677]
+                     [2 24.01409824083091] [3 -1.231739572450155]
+                     [4 1.208650973866179e-3] [5 -5.395239384953e-6]])]
       (+ (* 0.5 (js/Math.log (* 2 js/Math.PI)))
          (* (+ x 0.5) (js/Math.log t))
          (- t)
          (js/Math.log s)))))
-
-(defn- mlx-log-gamma
-  "Element-wise log-gamma via Lanczos approximation using MLX operations.
-   Works on arrays of any shape (scalar, [N], etc.) via broadcasting."
-  [x]
-  (let [x' (mx/subtract x ONE)
-        t  (mx/add x' (mx/scalar 7.5))
-        s  (reduce (fn [acc [i ci]]
-                     (mx/add acc (mx/divide (mx/scalar ci)
-                                            (mx/add x' (mx/scalar (double i))))))
-                   (mx/scalar 0.99999999999980993)
-                   [[1 676.5203681218851] [2 -1259.1392167224028]
-                    [3 771.32342877765313] [4 -176.61502916214059]
-                    [5 12.507343278686905] [6 -0.13857109526572012]
-                    [7 9.9843695780195716e-6] [8 1.5056327351493116e-7]])]
-    (mx/add LOG-2PI-HALF
-            (mx/multiply (mx/add x' HALF) (mx/log t))
-            (mx/negative t)
-            (mx/log s))))
 
 ;; ---------------------------------------------------------------------------
 ;; Laplace inverse CDF helper
@@ -248,9 +227,9 @@
             (let [[k' _] (rng/split k2)]
               (recur k')))))))
   (log-prob [v]
-    (let [log-beta-val (mx/subtract (mx/add (mlx-log-gamma alpha)
-                                            (mlx-log-gamma beta-param))
-                                    (mlx-log-gamma (mx/add alpha beta-param)))]
+    (let [log-beta-val (mx/subtract (mx/add (mx/lgamma alpha)
+                                            (mx/lgamma beta-param))
+                                    (mx/lgamma (mx/add alpha beta-param)))]
       (-> (mx/add (mx/multiply (mx/subtract alpha ONE) (mx/log v))
                   (mx/multiply (mx/subtract beta-param ONE)
                                (mx/log (mx/subtract ONE v))))
@@ -292,7 +271,7 @@
       (-> (mx/add (mx/multiply (mx/subtract k ONE) (mx/log v))
                   (mx/multiply k (mx/log rate)))
           (mx/subtract (mx/multiply rate v))
-          (mx/subtract (mlx-log-gamma k))))))
+          (mx/subtract (mx/lgamma k))))))
 
 (let [gamma-dist-raw gamma-dist]
   (defn gamma-dist
@@ -460,7 +439,7 @@
   (log-prob [v]
     (-> (mx/multiply v (mx/log rate))
         (mx/subtract rate)
-        (mx/subtract (mlx-log-gamma (mx/add v ONE))))))
+        (mx/subtract (mx/lgamma (mx/add v ONE))))))
 
 (let [raw poisson]
   (defn poisson
@@ -519,8 +498,8 @@
     (let [z (mx/divide (mx/subtract v loc) scale)
           half-df (mx/multiply HALF df)
           half-df1 (mx/multiply HALF (mx/add df ONE))
-          log-norm (mx/subtract (mlx-log-gamma half-df1)
-                                (mx/add (mlx-log-gamma half-df)
+          log-norm (mx/subtract (mx/lgamma half-df1)
+                                (mx/add (mx/lgamma half-df)
                                         (mx/multiply HALF (mx/log (mx/multiply df (mx/scalar js/Math.PI))))))]
       (-> log-norm
           (mx/subtract (mx/log scale))
@@ -601,8 +580,8 @@
       (mx/array normalized)))
   (log-prob [v]
     (let [v (if (mx/array? v) v (mx/array v))
-          log-beta (mx/subtract (mx/sum (mlx-log-gamma alpha))
-                                (mlx-log-gamma (mx/sum alpha)))
+          log-beta (mx/subtract (mx/sum (mx/lgamma alpha))
+                                (mx/lgamma (mx/sum alpha)))
           log-terms (mx/sum
                       (mx/multiply (mx/subtract alpha ONE)
                                    (mx/log v)))]
@@ -683,7 +662,7 @@
   (log-prob [v]
     ;; log p(v) = shape*log(scale) - log-gamma(shape) - (shape+1)*log(v) - scale/v
     (-> (mx/multiply shape-param (mx/log scale-param))
-        (mx/subtract (mlx-log-gamma shape-param))
+        (mx/subtract (mx/lgamma shape-param))
         (mx/subtract (mx/multiply (mx/add shape-param ONE) (mx/log v)))
         (mx/subtract (mx/divide scale-param v)))))
 
@@ -762,9 +741,9 @@
             (mx/scalar k))))))
   (log-prob [v]
     ;; log C(v + r - 1, v) + r*log(p) + v*log(1-p)
-    (let [log-coeff (mx/subtract (mlx-log-gamma (mx/add v r))
-                                 (mx/add (mlx-log-gamma (mx/add v ONE))
-                                         (mlx-log-gamma r)))]
+    (let [log-coeff (mx/subtract (mx/lgamma (mx/add v r))
+                                 (mx/add (mx/lgamma (mx/add v ONE))
+                                         (mx/lgamma r)))]
       (-> log-coeff
           (mx/add (mx/multiply r (mx/log p)))
           (mx/add (mx/multiply v (mx/log (mx/subtract ONE p))))))))
@@ -795,9 +774,9 @@
       (mx/scalar successes)))
   (log-prob [v]
     ;; log C(n, k) + k*log(p) + (n-k)*log(1-p)
-    (let [log-coeff (mx/subtract (mlx-log-gamma (mx/add n-trials ONE))
-                                 (mx/add (mlx-log-gamma (mx/add v ONE))
-                                         (mlx-log-gamma (mx/add (mx/subtract n-trials v)
+    (let [log-coeff (mx/subtract (mx/lgamma (mx/add n-trials ONE))
+                                 (mx/add (mx/lgamma (mx/add v ONE))
+                                         (mx/lgamma (mx/add (mx/subtract n-trials v)
                                                                 ONE))))]
       (-> log-coeff
           (mx/add (mx/multiply v (mx/log p)))

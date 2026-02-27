@@ -183,6 +183,8 @@
 (defn sigmoid  [a] (.sigmoid core a))
 (defn erf      [a] (.erf core a))
 (defn erfinv   [a] (.erfinv core a))
+(defn lgamma   [a] (.lgamma core a))
+(defn digamma  [a] (.digamma core a))
 
 (defn floor    [a] (.floor core a))
 (defn ceil     [a] (.ceil core a))
