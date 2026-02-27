@@ -178,3 +178,39 @@
         (let [shape (mx/shape scores)]
           (and (= (vec shape) [n])
                (every? finite? (mx/->clj scores))))))}})
+
+;; ---------------------------------------------------------------------------
+;; Automated verifier
+;; ---------------------------------------------------------------------------
+
+(defn verify-gfi-contracts
+  "Run GFI contracts over multiple random trials and return a structured report.
+   Options:
+     :n-trials      — number of random traces per contract (default 50)
+     :contract-keys — subset of contract keys to run (default: all)"
+  [model args & {:keys [n-trials contract-keys]
+                 :or   {n-trials 50}}]
+  (let [selected (if contract-keys
+                   (select-keys contracts contract-keys)
+                   contracts)
+        results  (into {}
+                   (map (fn [[k {:keys [theorem check]}]]
+                          (let [counts (reduce
+                                         (fn [{:keys [pass fail]} _]
+                                           (let [trace (p/simulate model args)
+                                                 ok?   (try
+                                                          (check {:model model :args args :trace trace})
+                                                          (catch :default _ false))]
+                                             (if ok?
+                                               {:pass (inc pass) :fail fail}
+                                               {:pass pass :fail (inc fail)})))
+                                         {:pass 0 :fail 0}
+                                         (range n-trials))]
+                            [k (assoc counts :theorem theorem)])))
+                   selected)
+        total-pass (reduce + 0 (map :pass (vals results)))
+        total-fail (reduce + 0 (map :fail (vals results)))]
+    {:results    results
+     :total-pass total-pass
+     :total-fail total-fail
+     :all-pass?  (zero? total-fail)}))

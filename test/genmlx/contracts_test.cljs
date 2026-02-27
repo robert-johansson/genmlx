@@ -71,4 +71,35 @@
                             (fn? (:check v))))
                      contracts/contracts))
 
+;; ---------------------------------------------------------------------------
+;; verify-gfi-contracts tests
+;; ---------------------------------------------------------------------------
+
+(println "\n-- verify-gfi-contracts --")
+
+;; Run on scalar model (all contracts except broadcast-equivalence)
+(let [scalar-keys (disj (set (keys contracts/contracts)) :broadcast-equivalence)
+      report (contracts/verify-gfi-contracts model args :n-trials 5 :contract-keys scalar-keys)]
+  (assert-true "all-pass? true for scalar contracts"
+               (:all-pass? report))
+  (assert-true "total-pass = 50 (10 contracts × 5 trials)"
+               (= 50 (:total-pass report)))
+  (assert-true "total-fail = 0"
+               (= 0 (:total-fail report)))
+  (assert-true "each result has :pass :fail :theorem"
+               (every? (fn [[_ v]]
+                         (and (integer? (:pass v))
+                              (integer? (:fail v))
+                              (string? (:theorem v))))
+                       (:results report))))
+
+;; Run broadcast-equivalence on vec-compatible model
+(let [report (contracts/verify-gfi-contracts vec-model args
+               :n-trials 3
+               :contract-keys #{:broadcast-equivalence})]
+  (assert-true "broadcast-equivalence passes on vec model"
+               (:all-pass? report))
+  (assert-true "broadcast total-pass = 3"
+               (= 3 (:total-pass report))))
+
 (println "\nAll contract registry tests complete.")

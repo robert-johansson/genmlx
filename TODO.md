@@ -544,7 +544,7 @@ that maps 1:1 to lambda_MLX theorems and (future) Lean 4 propositions.*
   - **Corresponds to**: lambda_MLX Propositions 3.1, 3.2, Corollary 3.4, and
     handler soundness theorem
 
-- [ ] **24.3** `verify-gfi-contracts` — automated contract verification for any model
+- [x] **24.3** `verify-gfi-contracts` — automated contract verification for any model
   - **File**: same `src/genmlx/contracts.cljs` (~50 lines)
   - **API**: `(verify-gfi-contracts model args & {:keys [n-trials levels]})`
   - **Behavior**: For each contract in the registry, run N trials (default 50).
@@ -806,5 +806,5 @@ RESEARCH (Lean 4 formalization):
 | 21. Testing Strategies | 12 | 12 | 0 |
 | 22. Practical Inference | 3 | 3 | 0 |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
-| 24. Verified PPL | 7 | 0 | **7** |
-| **Total** | **138** | **105** | **33** |
+| 24. Verified PPL | 7 | 3 | **4** |
+| **Total** | **138** | **108** | **30** |
