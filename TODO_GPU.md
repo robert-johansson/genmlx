@@ -309,13 +309,12 @@ T=100, N=100 = 10,000 traces → 100K+ buffers minimum.
 
 | Function | Loop type | Iters | tidy | eval! | Buffers/iter | Risk |
 |----------|-----------|-------|------|-------|-------------|------|
-| `collect-samples` (line 100) | `loop` | burn+thin×N | **-** | **-** | varies | **CRITICAL** |
-| `run-kernel` (line 126) | Delegates to `collect-samples` | burn+thin×N | - | - | varies | **CRITICAL** |
+| `collect-samples` (line 100) | `loop` | burn+thin×N | **+** (Phase 4) | **+** (Phase 4) | varies | **Low** ✅ |
+| `run-kernel` (line 126) | Delegates to `collect-samples` | burn+thin×N | + | + | varies | **Low** ✅ |
 
-**`collect-samples` is the single most impactful function to fix.** It's the
-generic loop used by `mh`, `mh-custom`, `gibbs`, `involutive-mh`, `elliptical-slice`,
-and all kernel combinators (`chain`, `repeat-kernel`, `cycle-kernels`, `mix-kernels`).
-Adding `mx/tidy` + `mx/eval!` here fixes all of them at once.
+**`collect-samples` fixed in Phase 4** via `tidy-step` + `with-resource-guard`.
+Each step's intermediates are disposed by `mx/tidy`; trace arrays are preserved.
+Wrapper growth: ~0.3/iter. Verified at 15,000 iterations (10K samples + 5K burn).
 
 ### 4.9 Amortized Inference (`inference/amortized.cljs`)
 
@@ -503,62 +502,89 @@ All 16 call sites now use `(mx/lgamma ...)` directly.
 Native `lgamma` is already a single Metal kernel dispatch. `compile-fn` would
 add no benefit.
 
-### Phase 4: Global Safety Mechanisms (Easy, Defense in Depth)
+### Phase 4: Global Safety Mechanisms ✅ DONE
 
 **Goal:** Even if individual loops have bugs, the system should not crash.
+Long MH chains (7000+ iterations) must complete without hitting the 499K limit.
 
-#### Task 4.1: Add a global resource guard
+**Key discoveries during implementation:**
 
-```clojure
-(defn with-resource-guard
-  "Runs f with periodic cache clearing to prevent resource exhaustion.
-   Options:
-   - :check-interval  — how often to check (default: every 50 iterations)
-   - :cache-limit     — max cache size in bytes (default: 100MB)
-   - :clear-threshold — clear cache when active memory exceeds this fraction
-                         of the resource limit (default: 0.7)"
-  [opts f]
-  (let [{:keys [cache-limit]} opts]
-    (when cache-limit (mx/set-cache-limit! cache-limit))
-    (try (f)
-      (finally
-        (mx/clear-cache!)
-        (when cache-limit (mx/set-cache-limit! (* 2 1024 1024 1024)))))))
-```
+1. **`mx/array?` was broken in nbb.** ClojureScript's `object?` returns `false`
+   for N-API objects in Bun's JavaScriptCore. This caused `eval-state!` (Phase 2)
+   to silently skip evaluating trace arrays — computation graphs never detached.
+2. **`Bun.gc()` does NOT trigger N-API destructor callbacks.** MLX array wrappers
+   are never freed by garbage collection in Bun. Only `mx/tidy` and `mx/dispose!`
+   can release Metal buffers.
+3. **`mx/tidy` cannot walk CLJS persistent data structures.** It only sees arrays
+   in plain JS objects/arrays. Wrapping a step function directly in `tidy` causes
+   segfaults because it disposes arrays it can't find in the CLJS return value.
 
-#### Task 4.2: Add resource-aware inference wrapper
+**Solution:** `tidy-step` — a wrapper that runs the step inside `mx/tidy`, but
+first evaluates all trace arrays (detaching computation graphs) and returns them
+as a JS array that tidy CAN walk. This reduces wrapper growth from ~200/iter to
+~0.3/iter, making iteration count effectively unlimited.
 
-Inference functions could optionally accept a `:resource-safe?` flag that
-enables conservative memory management:
+#### Task 4.1: Fix `mx/array?` for N-API objects ✅
 
-```clojure
-(defn importance-sampling
-  [{:keys [samples resource-safe?] :or {samples 100}} model args observations]
-  (if resource-safe?
-    ;; Evaluate and clear cache every 50 samples
-    (let [batch-size 50]
-      (loop [remaining samples, all-results []]
-        (if (<= remaining 0)
-          (finalize all-results)
-          (let [n (min remaining batch-size)
-                batch (run-batch n model args observations)]
-            (mx/clear-cache!)
-            (recur (- remaining n) (into all-results batch))))))
-    ;; Original behavior
-    (mapv (fn [_] (p/generate model args observations)) (range samples))))
-```
+Removed the `object?` check from `mx/array?` (`mlx.cljs`). N-API objects report
+`typeof === "object"` in V8 but ClojureScript's `object?` uses `identical?` which
+fails for these objects. The fix matches the existing workaround in `vmap.cljs`.
 
-#### Task 4.3: Set conservative cache limit at startup
+#### Task 4.2: Enhanced `eval-state!` with `collect-trace-arrays` ✅
 
-Add to GenMLX initialization:
+`collect-trace-arrays` walks the choicemap tree and collects ALL MLX arrays
+(choices + score + retval). `eval-state!` now evaluates them all in one
+`(apply mx/eval! arrays)` call, detaching all computation graphs.
+
+#### Task 4.3: `tidy-step` for automatic intermediate disposal ✅
 
 ```clojure
-;; Default: limit cache to 256MB to keep buffer count low
-(mx/set-cache-limit! (* 256 1024 1024))
+(defn tidy-step [step-fn state key]
+  ;; 1. Run step inside mx/tidy
+  ;; 2. Eval all trace arrays (detaches graphs from intermediates)
+  ;; 3. Return arrays as JS array for tidy to preserve
+  ;; Result: tidy disposes all intermediates, trace arrays survive
+  ...)
 ```
 
-This forces more aggressive buffer release, trading some allocation performance
-for staying well within the 499K resource limit.
+Applied to `collect-samples` in `kernel.cljs`. This fixes all algorithms that
+use `collect-samples`: `mh`, `mh-custom`, `gibbs`, `elliptical-slice`,
+`involutive-mh`, and all kernel combinators.
+
+#### Task 4.4: `with-resource-guard` + cache limit ✅
+
+```clojure
+(mx/set-cache-limit! (* 256 1024 1024))  ;; Set at module load
+
+(defn with-resource-guard [f]
+  ;; Sets cache-limit=0 during f, restores afterward.
+  ;; Freed buffers release immediately instead of being cached.
+  ...)
+```
+
+`collect-samples` is wrapped in `with-resource-guard`.
+
+#### Task 4.5: `dispose-trace!` for explicit cleanup ✅
+
+```clojure
+(defn dispose-trace! [trace-or-traces]
+  ;; Collects all MLX arrays, deduplicates by identity (handles shared
+  ;; observation arrays), disposes each. Safe for collections of traces.
+  ...)
+```
+
+#### Task 4.6: `force-gc!` helper ✅
+
+Calls `Bun.gc(true)` or `global.gc()` if available. Note: ineffective for
+freeing MLX wrappers in Bun (see discovery #2), but retained for Node.js
+compatibility and future Bun fixes.
+
+**Verification:** Stress test (`test/genmlx/stress_test.cljs`) passes all 3 sections:
+- §7.2: MH 5000 samples + 2000 burn on Beta-Bernoulli (10 obs) — PASS
+- §7.5: MH 10000 samples + 5000 burn on Beta — PASS
+- §7.3: SMC 100 particles × 20 timesteps — PASS
+
+All core tests pass, 165/165 Gen.clj compat, 73/73 GenJAX compat (1 flaky).
 
 ### Phase 5: Documentation and User Guidance (Easy, Important)
 
