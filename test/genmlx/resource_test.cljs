@@ -2,6 +2,7 @@
   "Stress tests for Metal resource management.
    Verifies that inference loops don't leak Metal buffers over extended runs."
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
@@ -82,7 +83,7 @@
                 (let [;; Create several intermediate arrays
                       a (mx/add state (mx/scalar 0.1))
                       b (mx/multiply a (mx/scalar 0.99))
-                      c (mx/add b (mx/random-normal [10]))
+                      c (mx/add b (rng/normal (rng/fresh-key) [10]))
                       d (mx/sum c)]
                   (mx/eval! d)
                   {:state d :accepted? true}))
@@ -103,7 +104,7 @@
 (println "\n-- clear-cache effect test --")
 (let [;; Create and eval a bunch of arrays to fill cache
       _ (doseq [_ (range 100)]
-          (let [a (mx/random-normal [100])]
+          (let [a (rng/normal (rng/fresh-key) [100])]
             (mx/eval! a)))
       cache-before (mx/get-cache-memory)
       _ (mx/clear-cache!)

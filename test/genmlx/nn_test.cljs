@@ -1,5 +1,6 @@
 (ns genmlx.nn-test
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             [genmlx.nn :as nn]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
@@ -64,14 +65,14 @@
 (println "\n-- Forward pass --")
 
 (let [lin (nn/linear 3 1)
-      x (mx/random-normal [3])
+      x (rng/normal (rng/fresh-key) [3])
       y (.forward lin x)]
   (mx/eval! y)
   (assert-true "Linear(3,1) forward produces [1]-shaped output"
                (= [1] (mx/shape y))))
 
 (let [mlp (nn/sequential [(nn/linear 4 8) (nn/relu) (nn/linear 8 2)])
-      x (mx/random-normal [4])
+      x (rng/normal (rng/fresh-key) [4])
       y (.forward mlp x)]
   (mx/eval! y)
   (assert-true "Sequential MLP forward produces [2]-shaped output"
@@ -79,7 +80,7 @@
 
 ;; Batched input
 (let [lin (nn/linear 3 1)
-      x (mx/random-normal [5 3])
+      x (rng/normal (rng/fresh-key) [5 3])
       y (.forward lin x)]
   (mx/eval! y)
   (assert-true "Linear(3,1) batched [5,3] -> [5,1]"
@@ -93,7 +94,7 @@
 
 (let [lin (nn/linear 3 1)
       gf (nn/nn->gen-fn lin)
-      x (mx/random-normal [3])
+      x (rng/normal (rng/fresh-key) [3])
       trace (p/simulate gf [x])]
   (mx/eval! (:retval trace) (:score trace))
   (assert-true "simulate retval shape = [1]"
@@ -111,7 +112,7 @@
 
 (let [lin (nn/linear 3 1)
       gf (nn/nn->gen-fn lin)
-      x (mx/random-normal [3])
+      x (rng/normal (rng/fresh-key) [3])
       {:keys [trace weight]} (p/generate gf [x] cm/EMPTY)]
   (mx/eval! (:retval trace) weight)
   (assert-true "generate retval shape = [1]"
@@ -127,7 +128,7 @@
 
 (let [lin (nn/linear 3 1)
       gf (nn/nn->gen-fn lin)
-      x (mx/random-normal [3])]
+      x (rng/normal (rng/fresh-key) [3])]
 
   (let [{:keys [retval weight]} (p/assess gf [x] cm/EMPTY)]
     (mx/eval! retval weight)
@@ -167,7 +168,7 @@
               (let [mu (dyn/splice :net net-gf x)]
                 (dyn/trace :y (dist/gaussian mu 1))
                 mu))
-      x (mx/random-normal [3])
+      x (rng/normal (rng/fresh-key) [3])
       ;; Compute expected output
       expected (.forward net x)
       _ (mx/eval! expected)
@@ -192,7 +193,7 @@
                 (let [y (.forward lin x)]
                   (mx/sum (mx/square y))))
       vg (nn/value-and-grad lin loss-fn)
-      x (mx/random-normal [3])
+      x (rng/normal (rng/fresh-key) [3])
       [loss grads] (vg x)]
   (mx/eval! loss)
   (assert-true "loss is a scalar"
@@ -228,7 +229,7 @@
 
   ;; Train for 200 steps
   (dotimes [_ 200]
-    (let [x (mx/random-uniform -1.0 1.0 [10 1])]
+    (let [x (mx/subtract (mx/multiply (rng/uniform (rng/fresh-key) [10 1]) (mx/scalar 2.0)) (mx/scalar 1.0))]
       (nn/step! lin opt vg x)))
 
   ;; Check final parameters

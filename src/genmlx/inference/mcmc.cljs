@@ -182,8 +182,8 @@
         compiled (mx/compile-fn chain-fn)]
     ;; Trace call to cache the Metal program
     (mx/eval! (compiled (mx/array (vec (repeat n-params 0.0)))
-                        (mx/random-normal [k-steps n-params])
-                        (mx/random-uniform [k-steps])))
+                        (rng/normal (rng/fresh-key) [k-steps n-params])
+                        (rng/uniform (rng/fresh-key) [k-steps])))
     compiled))
 
 (defn- run-loop-compiled-mh
@@ -546,8 +546,8 @@
           [init-s init-g] (val-grad-fn init-q)]
       (mx/eval! init-s init-g)
       (mx/eval! (compiled init-q init-s init-g
-                          (mx/random-normal [k-steps n-params])
-                          (mx/random-uniform [k-steps]))))
+                          (rng/normal (rng/fresh-key) [k-steps n-params])
+                          (rng/uniform (rng/fresh-key) [k-steps]))))
     compiled))
 
 (defn- run-loop-compiled-mala
@@ -923,8 +923,8 @@
         compiled (mx/compile-fn chain-fn)]
     ;; Warm-up trace call
     (mx/eval! (compiled (mx/zeros [n-params])
-                        (mx/random-normal [k-steps n-params])
-                        (mx/random-uniform [k-steps])))
+                        (rng/normal (rng/fresh-key) [k-steps n-params])
+                        (rng/uniform (rng/fresh-key) [k-steps])))
     compiled))
 
 (defn- run-loop-compiled-hmc

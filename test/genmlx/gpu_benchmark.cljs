@@ -34,8 +34,8 @@
 
 ;; Matmul
 (doseq [n [256 512 1024]]
-  (let [a (mx/random-normal [n n])
-        b (mx/random-normal [n n])]
+  (let [a (rng/normal (rng/fresh-key) [n n])
+        b (rng/normal (rng/fresh-key) [n n])]
     (mx/eval! a b)
     (time-it (str n "x" n " matmul")
       (fn []
@@ -46,7 +46,7 @@
 ;; Cholesky decomposition
 (doseq [n [128 256 512]]
   (let [;; Build positive definite matrix: A^T A + nI
-        a (mx/random-normal [n n])
+        a (rng/normal (rng/fresh-key) [n n])
         _ (mx/eval! a)
         ata (mx/matmul (mx/transpose a) a)
         spd (mx/add ata (mx/multiply (mx/scalar (float n)) (mx/eye n)))]
@@ -59,11 +59,11 @@
 
 ;; Linear solve
 (doseq [n [128 256 512]]
-  (let [a (mx/random-normal [n n])
+  (let [a (rng/normal (rng/fresh-key) [n n])
         _ (mx/eval! a)
         ata (mx/add (mx/matmul (mx/transpose a) a)
                     (mx/multiply (mx/scalar (float n)) (mx/eye n)))
-        b (mx/random-normal [n 1])]
+        b (rng/normal (rng/fresh-key) [n 1])]
     (mx/eval! ata b)
     (time-it (str n "x" n " linear solve")
       (fn []
@@ -79,8 +79,8 @@
 
 ;; Element-wise ops on large arrays
 (doseq [n [100000 1000000]]
-  (let [a (mx/random-normal [n])
-        b (mx/random-normal [n])]
+  (let [a (rng/normal (rng/fresh-key) [n])
+        b (rng/normal (rng/fresh-key) [n])]
     (mx/eval! a b)
     (time-it (str (/ n 1000) "K element-wise (add+mul+exp+sum)")
       (fn []
@@ -93,7 +93,7 @@
 
 ;; Softmax on large vectors
 (doseq [n [10000 100000]]
-  (let [logits (mx/random-normal [n])]
+  (let [logits (rng/normal (rng/fresh-key) [n])]
     (mx/eval! logits)
     (time-it (str (/ n 1000) "K softmax")
       (fn []
@@ -104,8 +104,8 @@
 ;; Batched outer products
 (let [n 1000
       d 100
-      a (mx/random-normal [n d])
-      b (mx/random-normal [n d])]
+      a (rng/normal (rng/fresh-key) [n d])
+      b (rng/normal (rng/fresh-key) [n d])]
   (mx/eval! a b)
   (time-it (str n " batched " d "-dim dot products via matmul")
     (fn []
@@ -123,7 +123,7 @@
 
 ;; Gradient of a large quadratic form
 (doseq [n [100 500 1000]]
-  (let [A (let [a (mx/random-normal [n n])]
+  (let [A (let [a (rng/normal (rng/fresh-key) [n n])]
             (mx/eval! a)
             (mx/add (mx/matmul (mx/transpose a) a)
                     (mx/multiply (mx/scalar (float n)) (mx/eye n))))
@@ -131,7 +131,7 @@
         f (fn [x] (mx/squeeze (mx/matmul (mx/reshape x [1 n])
                                           (mx/matmul A (mx/reshape x [n 1])))))
         grad-f (mx/grad f)
-        x0 (mx/random-normal [n])]
+        x0 (rng/normal (rng/fresh-key) [n])]
     (mx/eval! x0)
     (time-it (str n "-dim quadratic gradient")
       (fn []
@@ -144,10 +144,10 @@
       d-in 64
       d-hidden 128
       d-out 1
-      W1 (mx/random-normal [d-in d-hidden])
-      W2 (mx/random-normal [d-hidden d-out])
-      x (mx/random-normal [n d-in])
-      y (mx/random-normal [n d-out])]
+      W1 (rng/normal (rng/fresh-key) [d-in d-hidden])
+      W2 (rng/normal (rng/fresh-key) [d-hidden d-out])
+      x (rng/normal (rng/fresh-key) [n d-in])
+      y (rng/normal (rng/fresh-key) [n d-out])]
   (mx/eval! W1 W2 x y)
   (let [loss-fn (fn [w1]
                   (let [h (mx/tanh (mx/matmul x w1))
@@ -173,7 +173,7 @@
                 e (mx/exp (mx/negative (mx/divide s (mx/scalar 2.0))))]
             (mx/multiply (mx/scalar (/ 1.0 (js/Math.sqrt (* 2 js/Math.PI)))) e)))
       f-compiled (mx/compile-fn f)
-      x (mx/random-normal [n])]
+      x (rng/normal (rng/fresh-key) [n])]
   (mx/eval! x)
   ;; Warm up compiled version
   (let [r (f-compiled x)] (mx/eval! r))
@@ -197,7 +197,7 @@
 (doseq [k [10 50 100]]
   (let [mean-vec (mx/zeros [k])
         ;; Random SPD covariance
-        a (mx/random-normal [k k])
+        a (rng/normal (rng/fresh-key) [k k])
         _ (mx/eval! a)
         cov (mx/add (mx/matmul (mx/transpose a) a)
                     (mx/multiply (mx/scalar (float k)) (mx/eye k)))
@@ -258,7 +258,7 @@
         log-density (fn [params]
                       (mx/multiply (mx/scalar -0.5)
                                    (mx/sum (mx/multiply params params))))
-        init-params (mx/random-normal [d])]
+        init-params (rng/normal (rng/fresh-key) [d])]
     (mx/eval! init-params)
     (time-it (str d "-dim VI: 200 iterations, 10 ELBO samples")
       (fn []
@@ -276,8 +276,8 @@
         grad-neg-U (mx/compile-fn (mx/grad (fn [q] (mx/multiply (mx/scalar -0.5) (mx/sum (mx/square q))))))
         eps (mx/scalar 0.01)
         half-eps (mx/scalar 0.005)
-        q0 (mx/random-normal [d])
-        p0 (mx/random-normal [d])]
+        q0 (rng/normal (rng/fresh-key) [d])
+        p0 (rng/normal (rng/fresh-key) [d])]
     (mx/eval! q0 p0)
     (time-it (str d "-dim leapfrog: 100 steps")
       (fn []
@@ -301,14 +301,14 @@
 (doseq [n [10000 100000 1000000]]
   (time-it (str (/ n 1000) "K normal samples")
     (fn []
-      (let [x (mx/random-normal [n])]
+      (let [x (rng/normal (rng/fresh-key) [n])]
         (mx/eval! x)
         x))))
 
 (doseq [n [10000 100000 1000000]]
   (time-it (str (/ n 1000) "K uniform samples")
     (fn []
-      (let [x (mx/random-uniform [n])]
+      (let [x (rng/uniform (rng/fresh-key) [n])]
         (mx/eval! x)
         x))))
 
@@ -319,7 +319,7 @@
 (section "Numerically Stable Reductions")
 
 (doseq [n [10000 100000 1000000]]
-  (let [x (mx/random-normal [n])]
+  (let [x (rng/normal (rng/fresh-key) [n])]
     (mx/eval! x)
     (time-it (str (/ n 1000) "K logsumexp")
       (fn []
@@ -329,7 +329,7 @@
 
 ;; 2D logsumexp (particle weights)
 (doseq [[particles obs] [[100 1000] [1000 100]]]
-  (let [x (mx/random-normal [particles obs])]
+  (let [x (rng/normal (rng/fresh-key) [particles obs])]
     (mx/eval! x)
     (time-it (str particles " particles x " obs " obs logsumexp(axis=1)")
       (fn []

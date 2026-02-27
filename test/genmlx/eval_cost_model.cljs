@@ -141,7 +141,7 @@
 
       ;; Eager MH step (eval every step — current approach)
       eager-step (fn [params]
-                   (let [noise (mx/random-normal [2])
+                   (let [noise (rng/normal (rng/fresh-key) [2])
                          proposal (mx/add params (mx/multiply std noise))
                          score-cur (score-fn params)
                          score-prop (score-fn proposal)]
@@ -152,13 +152,13 @@
 
       ;; Lazy MH step (NO eval — uses mx/where for accept/reject)
       lazy-step (fn [params]
-                  (let [noise (mx/random-normal [2])
+                  (let [noise (rng/normal (rng/fresh-key) [2])
                         proposal (mx/add params (mx/multiply std noise))
                         score-cur (score-fn params)
                         score-prop (score-fn proposal)
                         log-alpha (mx/subtract score-prop score-cur)
                         ;; Lazy accept/reject: no eval needed
-                        u (mx/log (mx/random-uniform []))
+                        u (mx/log (rng/uniform (rng/fresh-key) []))
                         accept-mask (mx/greater log-alpha u)]
                     ;; mx/where selects lazily — no materialization
                     (mx/where accept-mask proposal params)))

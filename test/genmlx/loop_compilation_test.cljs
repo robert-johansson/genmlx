@@ -86,8 +86,8 @@
         compiled (mx/compile-fn chain-fn)]
     ;; Trace call
     (mx/eval! (compiled (mx/array (vec (repeat n-params 0.0)))
-                        (mx/random-normal [k-steps n-params])
-                        (mx/random-uniform [k-steps])))
+                        (rng/normal (rng/fresh-key) [k-steps n-params])
+                        (rng/uniform (rng/fresh-key) [k-steps])))
     compiled))
 
 ;; ---------------------------------------------------------------------------
@@ -100,8 +100,8 @@
       init-params (mx/array [1.0 0.5])
       compiled (make-compiled-chain 10 score-fn std n-params)
       results (mapv (fn [_]
-                      (let [noise (mx/random-normal [10 n-params])
-                            uniforms (mx/random-uniform [10])
+                      (let [noise (rng/normal (rng/fresh-key) [10 n-params])
+                            uniforms (rng/uniform (rng/fresh-key) [10])
                             r (compiled init-params noise uniforms)]
                         (mx/eval! r)
                         (vec (mx/->clj r))))
@@ -111,8 +111,8 @@
   (println (str "  Randomness: " (if (> unique 10) "CORRECT" "BROKEN")))
 
   ;; Deterministic with same noise?
-  (let [noise (mx/random-normal [10 n-params])
-        uniforms (mx/random-uniform [10])
+  (let [noise (rng/normal (rng/fresh-key) [10 n-params])
+        uniforms (rng/uniform (rng/fresh-key) [10])
         _ (mx/eval! noise uniforms)
         r1 (let [r (compiled init-params noise uniforms)] (mx/eval! r) (vec (mx/->clj r)))
         r2 (let [r (compiled init-params noise uniforms)] (mx/eval! r) (vec (mx/->clj r)))]
@@ -135,8 +135,8 @@
                    (fn []
                      (mx/tidy
                        (fn []
-                         (let [noise (mx/random-normal [k n-params])
-                               uniforms (mx/random-uniform [k])
+                         (let [noise (rng/normal (rng/fresh-key) [k n-params])
+                               uniforms (rng/uniform (rng/fresh-key) [k])
                                r (compiled init-params noise uniforms)]
                            (mx/eval! r)
                            r))))
@@ -158,7 +158,7 @@
 
       ;; Eager MH (current compiled-mh approach)
       eager-step (fn [params]
-                   (let [noise (mx/random-normal [n-params])
+                   (let [noise (rng/normal (rng/fresh-key) [n-params])
                          proposal (mx/add params (mx/multiply std noise))
                          s-cur (score-fn params)
                          s-prop (score-fn proposal)]
@@ -186,8 +186,8 @@
                (fn []
                  (mx/tidy
                    (fn []
-                     (let [noise (mx/random-normal [total-steps n-params])
-                           uniforms (mx/random-uniform [total-steps])
+                     (let [noise (rng/normal (rng/fresh-key) [total-steps n-params])
+                           uniforms (rng/uniform (rng/fresh-key) [total-steps])
                            r (compiled init-params noise uniforms)]
                        (mx/eval! r)
                        r))))
@@ -208,8 +208,8 @@
 
       ;; Run 50 independent chains
       samples (mapv (fn [_]
-                      (let [noise (mx/random-normal [k-steps n-params])
-                            uniforms (mx/random-uniform [k-steps])
+                      (let [noise (rng/normal (rng/fresh-key) [k-steps n-params])
+                            uniforms (rng/uniform (rng/fresh-key) [k-steps])
                             r (compiled init-params noise uniforms)]
                         (mx/eval! r)
                         (vec (mx/->clj r))))
@@ -245,7 +245,7 @@
                      (loop [params init-params, samples [], i 0]
                        (if (>= i total-samples)
                          samples
-                         (let [noise (mx/random-normal [n-params])
+                         (let [noise (rng/normal (rng/fresh-key) [n-params])
                                proposal (mx/add params (mx/multiply std noise))
                                s-cur (score-fn params)
                                s-prop (score-fn proposal)]
@@ -267,8 +267,8 @@
                          (loop [params init-params, samples [], block 0]
                            (if (>= block n-blocks)
                              samples
-                             (let [noise (mx/random-normal [k n-params])
-                                   uniforms (mx/random-uniform [k])
+                             (let [noise (rng/normal (rng/fresh-key) [k n-params])
+                                   uniforms (rng/uniform (rng/fresh-key) [k])
                                    new-params (compiled params noise uniforms)]
                                (mx/eval! new-params)
                                (recur new-params
@@ -298,8 +298,8 @@
   (let [t0 (js/performance.now)
         final (loop [params init-params, block 0]
                 (if (>= block 40) params
-                  (let [noise (mx/random-normal [k-per-block n-params])
-                        uniforms (mx/random-uniform [k-per-block])
+                  (let [noise (rng/normal (rng/fresh-key) [k-per-block n-params])
+                        uniforms (rng/uniform (rng/fresh-key) [k-per-block])
                         new-params (compiled params noise uniforms)]
                     (mx/eval! new-params)
                     (recur new-params (inc block)))))

@@ -48,8 +48,8 @@
     (fn [] (let [c (-> a (mx/add b) (mx/multiply b) (mx/subtract b) (mx/divide b))]
              (mx/eval! c) c))))
 
-(let [a (doto (mx/random-normal [512 512]) mx/eval!)
-      b (doto (mx/random-normal [512 512]) mx/eval!)]
+(let [a (doto (random/normal (random/fresh-key) [512 512]) mx/eval!)
+      b (doto (random/normal (random/fresh-key) [512 512]) mx/eval!)]
   (bench "matmul 512x512" 100
     (fn [] (let [c (mx/matmul a b)] (mx/eval! c) c))))
 

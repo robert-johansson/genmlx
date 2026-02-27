@@ -79,7 +79,7 @@
       ;; D: Proposal: generate random noise + add to params
       t6 (js/performance.now)
       _ (dotimes [_ n]
-          (let [noise (mx/random-normal [2])
+          (let [noise (rng/normal (rng/fresh-key) [2])
                 proposed (mx/add params (mx/multiply step-size noise))]
             (mx/eval! proposed)))
       t7 (js/performance.now)
@@ -100,7 +100,7 @@
       _ (let [current-score (score-fn params)]
           (mx/eval! current-score)
           (dotimes [_ n]
-            (let [noise (mx/random-normal [2])
+            (let [noise (rng/normal (rng/fresh-key) [2])
                   proposed (mx/add params (mx/multiply step-size noise))
                   proposed-score (score-fn proposed)]
               (mx/eval! proposed-score)

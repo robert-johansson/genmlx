@@ -105,7 +105,7 @@
 (let [log-p (fn [z] (dc/dist-log-prob (dist/gaussian 0 1) (mx/index z 0)))
       log-q (fn [z] (dc/dist-log-prob (dist/gaussian 0 1) (mx/index z 0)))
       obj-fn (vi/vimco-objective log-p log-q)
-      samples (mx/random-normal [5 1])
+      samples (rng/normal (rng/fresh-key) [5 1])
       result (obj-fn samples)]
   (mx/eval! result)
   (assert-true "VIMCO objective: returns scalar" (= 0 (mx/ndim result)))
@@ -117,7 +117,7 @@
       log-q (fn [z] (dc/dist-log-prob (dist/gaussian 0 1) (mx/index z 0)))
       obj-fn (vi/vimco-objective log-p log-q)]
   (doseq [k [3 10 20]]
-    (let [samples (mx/random-normal [k 1])
+    (let [samples (rng/normal (rng/fresh-key) [k 1])
           result (obj-fn samples)]
       (mx/eval! result)
       (assert-true (str "VIMCO K=" k ": returns scalar") (= 0 (mx/ndim result)))

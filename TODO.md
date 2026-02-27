@@ -488,13 +488,11 @@ performance.*
     NUTS to 0.8. Options: `:adapt-step-size`, `:adapt-metric`. ~100 lines.
     Tests: `adaptive_hmc_test.cljs` (5 tests), `adaptive_nuts_test.cljs` (6 tests).
 
-- [ ] **22.2** Remove deprecated stateful PRNG functions from `mlx.cljs`
-  - **File**: `mlx.cljs:302-315`
-  - **Impact**: `random-seed!`, `random-normal`, `random-uniform` use global MLX state,
-    directly contradicting the functional PRNG design.
-  - **Depends on 16.6**: `mx/random-normal` has ~15 callers and `mx/random-uniform` has
-    ~10 callers in inference modules (mcmc.cljs, vi.cljs, amortized.cljs, smc.cljs,
-    vectorized.cljs). Must thread PRNG keys through all call sites first (16.6).
+- [x] **22.2** Remove deprecated stateful PRNG functions from `mlx.cljs`
+  - **Done**: Deleted 8 stateful wrappers (`random-seed!`, `random-normal`, `random-uniform`,
+    `random-bernoulli`, `random-categorical`, `random-randint`, `random-gumbel`, `random-laplace`)
+    from `mlx.cljs`. Migrated 6 production callers in `mcmc.cljs` and ~69 test/benchmark callers
+    across 11 files to functional `rng/*` API. Zero `mx/random-*` callers remain.
 
 - [x] **22.3** Add `mx/eval!` after resampling to prevent unbounded lazy graph growth
   - **File**: `vectorized.cljs:72-73`
@@ -739,8 +737,8 @@ operation deterministic.*
 
 ```
 HIGH (correctness — reproducibility):
-  16.6  PRNG key threading audit                   ~100+ lines
-  22.2  Remove deprecated stateful PRNG            depends on 16.6
+  16.6  PRNG key threading audit                   DONE
+  22.2  Remove deprecated stateful PRNG            DONE
 
 MEDIUM-HIGH (verification — catches bugs, path to formal proofs):
   24.1  Static validator (validate-gen-fn)          ~100-150 lines
@@ -801,13 +799,13 @@ RESEARCH (Lean 4 formalization):
 | 13. Documentation | 3 | 0 | 3 |
 | 14. Gen.jl Parity | 8 | 3 | **5** |
 | 15. Confirmed Bugs | 5 | 5 | 0 |
-| 16. Correctness Concerns | 6 | 5 | **1** |
+| 16. Correctness Concerns | 6 | 6 | 0 |
 | 17. Missing Protocols | 6 | 6 | 0 |
 | 18. Distribution Quality | 5 | 4 | **1** |
 | 19. Code Quality | 9 | 7 | **2** |
 | 20. Amortized + GPU ADEV | 7 | 4 | **3** |
 | 21. Testing Strategies | 12 | 12 | 0 |
-| 22. Practical Inference | 3 | 2 | **1** |
+| 22. Practical Inference | 3 | 3 | 0 |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 0 | **7** |
-| **Total** | **138** | **103** | **35** |
+| **Total** | **138** | **105** | **33** |

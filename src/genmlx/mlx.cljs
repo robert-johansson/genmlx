@@ -332,24 +332,6 @@
   ([a]     (.norm linalg a))
   ([a ord] (.norm linalg a ord)))
 
-;; ---------------------------------------------------------------------------
-;; Random number generation (stateful — for convenience outside handlers)
-;; ---------------------------------------------------------------------------
-
-(defn random-seed! [seed] (.seed random seed))
-(defn random-normal
-  ([shape]       (.normal random (clj->js shape)))
-  ([shape dtype] (.normal random (clj->js shape) dtype)))
-(defn random-uniform
-  ([shape]            (.uniform random (scalar 0) (scalar 1) (clj->js shape)))
-  ([lo hi shape]      (.uniform random (scalar lo) (scalar hi) (clj->js shape))))
-(defn random-bernoulli [p shape] (.bernoulli random (scalar p) (clj->js shape)))
-(defn random-categorical
-  ([logits]             (.categorical random logits))
-  ([logits num-samples] (.categorical random logits num-samples)))
-(defn random-randint [lo hi shape] (.randint random lo hi (clj->js shape)))
-(defn random-gumbel [shape] (.gumbel random (clj->js shape)))
-(defn random-laplace [shape] (.laplace random (clj->js shape)))
 
 ;; ---------------------------------------------------------------------------
 ;; Autograd

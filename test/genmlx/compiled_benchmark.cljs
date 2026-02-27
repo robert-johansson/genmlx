@@ -2,6 +2,7 @@
   "Benchmark suite: compiled inference vs GFI-based inference.
    Measures speedup from compiled score functions and parameter-space iteration."
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
@@ -181,7 +182,7 @@
           (loop [i 0, q init-q, samples (transient [])]
             (if (>= i 250) ;; 200 samples + 50 burn
               (persistent! samples)
-              (let [p0 (doto (mx/random-normal q-shape) mx/eval!)
+              (let [p0 (doto (rng/normal (rng/fresh-key) q-shape) mx/eval!)
                     neg-U (log-density-compiled q)
                     K0 (mx/multiply half (mx/sum (mx/square p0)))
                     _ (mx/eval! neg-U K0)

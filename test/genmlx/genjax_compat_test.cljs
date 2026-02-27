@@ -704,7 +704,7 @@
 (println "\n-- 7.1 ESS --")
 
 (let [;; IID samples should have ESS ≈ n
-      samples (mapv (fn [_] (let [v (mx/random-normal [])]
+      samples (mapv (fn [_] (let [v (rng/normal (rng/fresh-key) [])]
                               (mx/eval! v) v))
                     (range 50))
       effective (diag/ess samples)]
@@ -810,7 +810,7 @@
 
 (let [;; Near-identity covariance
       k 10
-      cov (mx/add (mx/eye k) (mx/multiply (mx/scalar 0.001) (mx/random-normal [k k])))
+      cov (mx/add (mx/eye k) (mx/multiply (mx/scalar 0.001) (rng/normal (rng/fresh-key) [k k])))
       ;; Make it symmetric
       cov-sym (mx/multiply (mx/scalar 0.5) (mx/add cov (mx/transpose cov)))
       ;; Add diagonal dominance
