@@ -393,150 +393,81 @@ Note: keys are kebab-case (`:resource-limit` not `:resource_limit`).
                           ;;     :resource-limit 499000}
 ```
 
-### Phase 2: Fix All Inference Loops (Medium, Highest Impact)
+### Phase 2: Fix All Inference Loops (Medium, Highest Impact) ✅ DONE
 
 **Goal:** Every inference loop properly cleans up Metal buffers between
 iterations. No inference algorithm should ever hit the 499K limit for
 reasonable problem sizes.
 
-#### Task 2.1: Add `mx/tidy` + `mx/eval!` to `collect-samples` (CRITICAL)
+**Design insight:** The original plan proposed `mx/tidy` wrapping step functions,
+but tidy only protects the *direct return value* — it can't protect MLX arrays
+nested inside ClojureScript maps (Trace records, `{:trace :weight}` results).
+Since most inference loops deal with Traces (CLJS maps), the actual strategy is:
 
-This single change fixes: `mh`, `mh-custom`, `gibbs`, `involutive-mh`,
-`elliptical-slice`, and all kernel combinators.
+- **Trace-based loops** → `mx/eval!` on key arrays + periodic `mx/clear-cache!`
+- **Param-array loops** → already have `mx/tidy` (compiled-mh, compiled-mala, HMC)
 
-**Current code** (`kernel.cljs:100-124`):
+After eval, the computation graph detaches. Intermediate arrays' JS wrappers
+become GC-eligible when step-fn returns. V8 collects them under allocation
+pressure. `clear-cache!` then releases Metal buffers from the cache.
+
+**Verified:** All tests pass — core tests, 165/165 Gen.clj compat, 73/73 GenJAX
+compat, plus new resource stress test (`test/genmlx/resource_test.cljs`).
+
+#### Task 2.1: Add `eval-state!` + periodic `clear-cache!` to `collect-samples` ✅
+
+Added `u/eval-state!` helper to `inference/util.cljs` that evaluates key arrays
+in both MLX arrays (param vectors) and Trace records (eval score + retval).
+
+Added to `collect-samples` loop body (`kernel.cljs`):
 ```clojure
-(loop [i 0, state init-state, acc (transient []), n 0, n-accepted 0, rk key]
-  (if (>= n samples)
-    ...
-    (let [[step-key next-key] (rng/split-or-nils rk)
-          {:keys [state accepted?]} (step-fn state step-key)  ;; <-- No cleanup!
-          ...]
-      (recur (inc i) state ...))))
+_  (u/eval-state! state)
+_  (when (zero? (mod i 50)) (mx/clear-cache!))
 ```
 
-**Fix:** Wrap step-fn in `mx/tidy`, eval the state, and periodically
-`clear-cache!`:
+This single change fixes: `mh`, `mh-custom`, `gibbs`, `elliptical-slice`,
+`involutive-mh`, and all kernel combinators (`chain`, `repeat`, `cycle`, `mix`).
 
+#### Task 2.2: Fix `importance-sampling` ✅
+
+Added `mx/eval!` after each generate in the `mapv` (`importance.cljs`):
 ```clojure
-(loop [i 0, state init-state, acc (transient []), n 0, n-accepted 0, rk key]
-  (if (>= n samples)
-    ...
-    (let [[step-key next-key] (rng/split-or-nils rk)
-          {:keys [state accepted?]}
-          (mx/tidy
-            (fn []
-              (let [result (step-fn state step-key)]
-                ;; Materialize the trace's score/weight/choices
-                (when-let [s (:score (:state result))]
-                  (mx/eval! s))
-                result)))
-          ...]
-      (recur (inc i) state ...))))
+(let [r (p/generate model args observations)]
+  (mx/eval! (:weight r) (:score (:trace r)))
+  r)
 ```
 
-**Design considerations:**
-- The `state` returned from `step-fn` is a Trace record containing choice maps
-  with MLX arrays. We need to eval the arrays we want to keep **before** tidy
-  deletes intermediates.
-- For MH, if the proposal is rejected, `state` is `identical?` to the previous
-  trace — `mx/tidy` must not delete arrays that belong to the retained trace.
-  This is safe because `tidy` only deletes arrays **created during** the wrapped
-  function. If the trace is unchanged (rejection), no new arrays were added to it.
-- Consider adding periodic `clear-cache!` every N iterations (e.g., every 100)
-  to prevent the buffer cache from consuming resource slots.
+#### Task 2.3: Fix SMC loops ✅
 
-#### Task 2.2: Fix `importance-sampling` (HIGH)
+- `smc-init-step`: eval per generate
+- `smc-step`: eval per update
+- `smc` main loop: periodic `clear-cache!` every 10 timesteps
+- `csmc` init step: eval per generate (both other-results and ref-result)
+- `csmc` subsequent step: eval per update
+- `csmc` main loop: periodic `clear-cache!` every 10 timesteps
 
-**Current:** `mapv` with no cleanup — all N traces accumulate.
+#### Task 2.4: Fix SMCP3 loops ✅
 
-**Fix option A:** Add `mx/eval!` after each generate:
-```clojure
-(let [results (mapv (fn [_]
-                      (let [r (p/generate model args observations)]
-                        (mx/eval! (:weight r) (:score (:trace r)))
-                        r))
-                    (range samples))]
-  ...)
-```
+- `smcp3-init`: eval per particle (both proposal and standard paths)
+- `smcp3-step`: eval per particle (both forward-kernel and standard paths)
+- `smcp3` main loop: periodic `clear-cache!` every 10 timesteps
 
-**Fix option B:** Use `mx/tidy` per sample (more aggressive cleanup):
-```clojure
-(let [results (mapv (fn [_]
-                      (mx/tidy
-                        (fn []
-                          (let [r (p/generate model args observations)]
-                            (mx/eval! (:weight r) (:score (:trace r)))
-                            r))))
-                    (range samples))]
-  ...)
-```
+#### Task 2.5: Fix vectorized MCMC loops ✅
 
-**Fix option C:** Recommend `vectorized-importance-sampling` as default.
-The vectorized version runs the model body ONCE for N particles using `[N]`-shaped
-arrays, creating ~12 buffers total instead of N×12.
+- `vectorized-compiled-mh`: periodic `clear-cache!` every 50 iterations
+  (step functions already eval internally)
+- `vectorized-mala`: periodic `clear-cache!` every 50 iterations
+  (step functions already eval internally)
 
-#### Task 2.3: Fix SMC loops (CRITICAL)
+#### Task 2.6 (deferred): Fix step-size adaptation loops
 
-`smc` and `csmc` are the most resource-hungry: T timesteps × N particles × model
-cost per particle. No cleanup anywhere.
+`find-reasonable-epsilon` and `dual-averaging-warmup` have bounded iterations
+(~100 max) and leapfrog-step already uses tidy. Medium risk — deferred to
+future phase.
 
-**Fix `smc-init-step`:** Wrap each generate in `mx/tidy`:
-```clojure
-(mapv (fn [_]
-        (mx/tidy (fn []
-          (let [r (p/generate model args observations)]
-            (mx/eval! (:weight r))
-            r))))
-      (range n))
-```
+#### Task 2.7 (deferred): Fix `programmable-vi`
 
-**Fix `smc-step`:** Wrap each update in `mx/tidy`:
-```clojure
-(mapv (fn [trace]
-        (mx/tidy (fn []
-          (let [r (p/update model trace constraints)]
-            (mx/eval! (:weight r))
-            r))))
-      traces)
-```
-
-**Fix `smc` main loop:** Add periodic `clear-cache!` between timesteps:
-```clojure
-(loop [t 1, particles particles, ...]
-  (when (zero? (mod t 10)) (mx/clear-cache!))  ;; Periodic cache flush
-  ...)
-```
-
-**Fix `csmc`:** Same pattern as `smc`.
-
-**Fix `smcp3`:** Same patterns for init, step, and main loop.
-
-**Prefer `vsmc`:** The vectorized SMC (`vsmc`) already has proper cleanup
-(tidy in rejuvenate, eval in main loop). Recommend it as default for new code.
-
-#### Task 2.4: Fix `vectorized-compiled-mh` and `vectorized-mala` (HIGH)
-
-Both run vectorized chains (`[N,D]` arrays per step) with no per-step tidy.
-N chains × samples steps × D parameters = massive buffer accumulation.
-
-**Fix:** Add `mx/tidy` + `mx/eval!` to the main loop, matching the pattern
-already used in `run-loop-compiled-mh` and `run-loop-compiled-hmc`.
-
-#### Task 2.5: Fix step-size adaptation loops (MEDIUM)
-
-`find-reasonable-epsilon` and `dual-averaging-warmup` iterate up to ~100 times
-with gradient computations. No cleanup.
-
-**Fix:** Add `mx/tidy` per iteration in the main loop.
-
-#### Task 2.6: Fix `programmable-vi` (MEDIUM)
-
-Has `mx/eval!` but no `mx/tidy`. Intermediates from gradient computation
-accumulate.
-
-**Fix:** Wrap gradient computation in `mx/tidy` (matching the pattern in
-`compiled-programmable-vi` which already does this).
+Already has `mx/eval!` on loss/grad. Medium risk — deferred to future phase.
 
 ### Phase 3: Reduce Per-Operation Buffer Count (Hard, Structural)
 

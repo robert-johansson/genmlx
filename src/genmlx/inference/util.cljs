@@ -166,6 +166,20 @@
   (let [{:keys [probs]} (normalize-log-weights log-weights)]
     (/ 1.0 (reduce + (map #(* % %) probs)))))
 
+(defn eval-state!
+  "Evaluate key arrays in an inference state to materialize computation graphs.
+   Handles both MLX arrays (param vectors) and Trace records."
+  [state]
+  (if (mx/array? state)
+    (mx/eval! state)
+    (let [score  (:score state)
+          retval (:retval state)]
+      (cond
+        (and score (mx/array? retval)) (mx/eval! score retval)
+        score                          (mx/eval! score)
+        (mx/array? retval)             (mx/eval! retval)
+        :else nil))))
+
 (defn accept-mh?
   "Metropolis-Hastings accept/reject decision.
    `log-accept` is a JS number (the log acceptance ratio).

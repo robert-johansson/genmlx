@@ -113,6 +113,8 @@
           {:acceptance-rate (if (pos? total-iters) (/ n-accepted total-iters) 0)})
         (let [[step-key next-key] (rng/split-or-nils rk)
               {:keys [state accepted?]} (step-fn state step-key)
+              _  (u/eval-state! state)
+              _  (when (zero? (mod i 50)) (mx/clear-cache!))
               past-burn? (>= i burn)
               keep? (and past-burn? (zero? (mod (- i burn) thin)))]
           (when (and callback keep?)

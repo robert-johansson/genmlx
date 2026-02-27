@@ -21,7 +21,9 @@
             :log-ml-estimate MLX-scalar}"
   [{:keys [samples key] :or {samples 100}} model args observations]
   (let [results (mapv (fn [_]
-                        (p/generate model args observations))
+                        (let [r (p/generate model args observations)]
+                          (mx/eval! (:weight r) (:score (:trace r)))
+                          r))
                       (range samples))
         traces     (mapv :trace results)
         log-weights (mapv :weight results)

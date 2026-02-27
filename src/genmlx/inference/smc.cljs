@@ -81,7 +81,11 @@
   "First timestep: generate particles from prior with constraints.
    Returns {:traces :log-weights :log-ml-increment}."
   [model args obs particles]
-  (let [results    (mapv (fn [_] (p/generate model args obs)) (range particles))
+  (let [results    (mapv (fn [_]
+                          (let [r (p/generate model args obs)]
+                            (mx/eval! (:weight r) (:score (:trace r)))
+                            r))
+                        (range particles))
         traces     (mapv :trace results)
         log-weights (mapv :weight results)
         w-arr      (u/materialize-weights log-weights)
@@ -125,7 +129,9 @@
                              [traces log-weights])
         ;; Update each particle with new observations
         results       (mapv (fn [trace]
-                              (p/update (:gen-fn trace) trace obs))
+                              (let [r (p/update (:gen-fn trace) trace obs)]
+                                (mx/eval! (:weight r) (:score (:trace r)))
+                                r))
                             traces')
         new-traces    (mapv :trace results)
         update-weights (mapv :weight results)
@@ -178,7 +184,8 @@
          :log-weights log-weights
          :log-ml-estimate log-ml}
         (let [obs-t (nth obs-vec t)
-              [step-key next-key] (rng/split-or-nils rk)]
+              [step-key next-key] (rng/split-or-nils rk)
+              _ (when (and (pos? t) (zero? (mod t 10))) (mx/clear-cache!))]
           (if (zero? t)
             (let [{:keys [traces log-weights log-ml-increment]}
                   (smc-init-step model args obs-t particles)]
@@ -234,13 +241,19 @@
          :log-weights log-weights
          :log-ml-estimate log-ml}
         (let [obs-t (nth obs-vec t)
-              [step-key next-key] (rng/split-or-nils rk)]
+              [step-key next-key] (rng/split-or-nils rk)
+              _ (when (and (pos? t) (zero? (mod t 10))) (mx/clear-cache!))]
           (if (zero? t)
             ;; Init step: reference trace at index 0, rest from prior
-            (let [other-results (mapv (fn [_] (p/generate model args obs-t))
+            (let [other-results (mapv (fn [_]
+                                        (let [r (p/generate model args obs-t)]
+                                          (mx/eval! (:weight r) (:score (:trace r)))
+                                          r))
                                       (range (dec particles)))
                   ;; Use reference trace at index 0 (the core of cSMC)
-                  ref-result (p/generate model args (:choices reference-trace))
+                  ref-result (let [r (p/generate model args (:choices reference-trace))]
+                               (mx/eval! (:weight r) (:score (:trace r)))
+                               r)
                   traces (into [(:trace ref-result)] (mapv :trace other-results))
                   log-weights (into [(:weight ref-result)] (mapv :weight other-results))
                   w-arr (u/materialize-weights log-weights)
@@ -265,7 +278,9 @@
                                        [traces log-weights])
                   ;; Update all particles
                   results (mapv (fn [trace]
-                                  (p/update (:gen-fn trace) trace obs-t))
+                                  (let [r (p/update (:gen-fn trace) trace obs-t)]
+                                    (mx/eval! (:weight r) (:score (:trace r)))
+                                    r))
                                 traces')
                   new-traces (mapv :trace results)
                   update-weights (mapv :weight results)
