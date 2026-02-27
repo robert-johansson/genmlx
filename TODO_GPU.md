@@ -84,39 +84,26 @@ the buffer cache retains freed buffers as Metal resources.
 
 ## 2. Root Cause Analysis
 
-### 2.1 Lanczos gamma approximation creates ~21 Metal buffers per call
+### 2.1 Log-gamma buffer cost ✅ RESOLVED
 
-**Source:** `src/genmlx/dist.cljs:57-74` — `mlx-log-gamma`
+~~The original Lanczos approximation (`mlx-log-gamma`) created ~21-34 Metal
+buffers per call.~~ **Resolved:** Native `mx/lgamma` (contributed upstream in
+[MLX PR #3181](https://github.com/ml-explore/mlx/pull/3181)) reduces each
+log-gamma call to **1 Metal buffer** — a single GPU kernel dispatch.
 
-Every call to `mlx-log-gamma` creates these MLX operations:
+**Current impact on distribution log-prob (with native lgamma):**
 
-| Step | Operation | Buffers |
-|------|-----------|---------|
-| `x' = x - 1` | `mx/subtract` | 1 |
-| `t = x' + 7.5` | `mx/add` + `mx/scalar` | 2 |
-| 8 Lanczos coefficients | 8 × (`mx/scalar` + `mx/divide` + `mx/add`) | 24 |
-| Final: `log(2π)/2 + (x'+0.5)*log(t) - t + log(s)` | `mx/add` × 3 + `mx/multiply` + `mx/log` × 2 + `mx/negative` | 7 |
-| **Total** | | **~34** |
-
-(Some `mx/scalar` calls for constants may be cached, actual count is ~21-34.)
-
-**Impact on distribution log-prob:**
-
-| Distribution | `mlx-log-gamma` calls | Additional ops | **Total buffers per log-prob** |
-|-------------|----------------------|----------------|-------------------------------|
+| Distribution | `mx/lgamma` calls | Additional ops | **Total buffers per log-prob** |
+|-------------|-------------------|----------------|-------------------------------|
 | Gaussian | 0 | ~8 | **~8** |
-| Poisson | 1 | ~6 | **~27** |
-| Gamma | 1 | ~10 | **~31** |
-| Beta | 3 | ~10 | **~73** |
-| Dirichlet | k+1 | ~10+k | **~21(k+1) + 10 + k** |
-| Inv-Gamma | 1 | ~10 | **~31** |
-| Fisher-F | 3 | ~12 | **~75** |
-| Beta-Binomial | 4 | ~10 | **~94** |
-| Beta-Neg-Binomial | 4 | ~10 | **~94** |
-
-MLX does **not** have a native `lgamma` operation. The Lanczos approximation is
-the only available path for log-gamma on MLX arrays. (Confirmed: searched all of
-`mlx/ops.h` and `node_mlx.node.d.ts` — no lgamma, digamma, or polygamma.)
+| Poisson | 1 | ~6 | **~7** |
+| Gamma | 1 | ~10 | **~11** |
+| Beta | 3 | ~10 | **~13** |
+| Dirichlet | k+1 | ~10+k | **(k+1) + 10 + k** |
+| Inv-Gamma | 1 | ~10 | **~11** |
+| Neg-Binomial | 3 | ~8 | **~11** |
+| Binomial | 3 | ~8 | **~11** |
+| Student-t | 2 | ~10 | **~12** |
 
 ### 2.2 Handler score accumulation creates buffers per trace site
 
@@ -143,17 +130,18 @@ or `mx/eval!` calls. Every iteration's arrays accumulate.
 
 **Example: MH on 5-site Beta-Bernoulli model**
 
-Per MH iteration:
-- `regenerate` runs the model → 5 sites × ~73 buffers/Beta-log-prob = 365 buffers
+Per MH iteration (with native `mx/lgamma` — Phase 3):
+- `regenerate` runs the model → 5 sites × ~13 buffers/Beta-log-prob = 65 buffers
 - Score accumulation: 5 × `mx/add` = 5 buffers
 - Weight computation: ~5 buffers
-- **Total: ~375 Metal buffers per iteration**
+- **Total: ~75 Metal buffers per iteration**
 
-At 500 iterations: 375 × 500 = **187,500 buffers**
-With 200 burn-in: 375 × 700 = **262,500 buffers** → approaching limit
+Without Phase 2 `mx/eval!` + `mx/clear-cache!`: 75 × 500 = 37,500 buffers
+(previously 187,500 with JS Lanczos). With Phase 2 cleanup each iteration,
+buffers are recycled and never accumulate.
 
-For Gaussian models (~8 buffers/log-prob): 375 → ~65 buffers/iteration,
-allowing ~7,600 iterations. Still limited for serious inference.
+For Gaussian models (~8 buffers/log-prob): ~65 buffers/iteration — comparable.
+Phase 2 cleanup makes iteration count effectively unlimited for all models.
 
 ### 2.4 Buffer cache retains freed buffers
 
@@ -469,90 +457,51 @@ future phase.
 
 Already has `mx/eval!` on loss/grad. Medium risk — deferred to future phase.
 
-### Phase 3: Reduce Per-Operation Buffer Count (Hard, Structural)
+### Phase 3: Reduce Per-Operation Buffer Count ✅ DONE
 
 **Goal:** Reduce the number of Metal buffers created per distribution log-prob
 call, making all inference algorithms fundamentally cheaper.
 
-#### Task 3.1: Contribute `lgamma` to MLX (HARD, upstream)
+**Result:** Native `lgamma` kernel contributed upstream to MLX, eliminating the
+Lanczos approximation entirely. Each log-gamma call now creates **1 buffer**
+instead of **~23**, a **~23x reduction** per call. For Beta (3 calls):
+~73 → ~13 buffers. For all 16 calls across 8 distributions: ~752 → ~16.
 
-MLX has no native `lgamma` operation. If one were added:
-- Beta log-prob: 73 buffers → ~13 buffers (6x reduction)
-- Gamma log-prob: 31 buffers → ~11 buffers (3x reduction)
+#### Task 3.1: Contribute `lgamma` to MLX ✅
 
-This is an upstream contribution to `ml-explore/mlx`. It would require:
-1. C++ primitive implementing `lgamma` (wrapping `std::lgamma` for CPU, Metal
-   shader for GPU)
-2. VJP (backward) implementation using `digamma`
-3. Node-mlx binding
+**PR:** [ml-explore/mlx#3181](https://github.com/ml-explore/mlx/pull/3181)
 
-**Complexity:** High. Requires Metal shader development, grad rules, testing.
-But it would permanently solve the problem for all gamma-family distributions.
+Added native `lgamma` and `digamma` as unary ops across all MLX backends:
+- **Metal:** Lanczos g=5 kernel (`lgamma.h`) + asymptotic digamma
+- **CPU:** `std::lgamma` + custom digamma
+- **CUDA:** built-in `::lgamma` + custom digamma
+- **Autograd:** `grad(lgamma) = digamma`
+- **Python:** `mx.lgamma()`, `mx.digamma()` with docstrings
 
-#### Task 3.2: Reduce Lanczos coefficients (MEDIUM)
+19 files, ~510 lines. All 236 MLX tests pass (3369 assertions).
 
-The current implementation uses g=7 with 8 coefficients (~15 digits accuracy).
-For log-prob computation in inference, ~7 digits is plenty.
+Node-mlx bindings updated in `robert-johansson/node-mlx` (commit `e4aeb03`).
 
-A g=4 approximation with 5 coefficients would:
-- Cut Lanczos loop from 8 to 5 iterations
-- Reduce `mlx-log-gamma` from ~21 to ~14 buffers
-- Reduce Beta log-prob from ~73 to ~52 buffers (30% reduction)
+#### Task 3.2: Reduce Lanczos coefficients — SUPERSEDED
 
-```clojure
-;; g=4 Lanczos coefficients (Godfrey's method)
-;; Accurate to ~7 decimal places — sufficient for log-prob scoring
-[[1 76.18009172947146]
- [2 -86.50532032941677]
- [3 24.01409824083091]
- [4 -1.231739572450155]
- [5 0.1208650973866179e-2]]
-```
+~~Reduce from g=7/8-term to g=5/6-term.~~ No longer needed — native `mx/lgamma`
+replaces the entire ClojureScript Lanczos approximation.
 
-**Trade-off:** Slightly less numerical precision in log-prob. For inference this
-is irrelevant — MCMC acceptance ratios involve log-prob differences, and 7 digits
-of precision far exceeds the Monte Carlo noise.
+The JS-side `log-gamma` (used only for Wishart scalar computation) was updated
+to g=5/6-term Numerical Recipes coefficients as part of the interim optimization.
 
-#### Task 3.3: Cache Lanczos constant arrays (EASY)
+#### Task 3.3: Cache Lanczos constant arrays — SUPERSEDED
 
-The current code creates `(mx/scalar ci)` and `(mx/scalar (double i))` on every
-call. These could be module-level constants:
+~~Cache `mx/scalar` constants at module level.~~ No longer needed — the cached
+constants (`LANCZOS-G`, `LANCZOS-T-OFFSET`, `LANCZOS-C0`, `LANCZOS-COEFFS`)
+and the `mlx-log-gamma` function were removed from `dist.cljs` entirely.
 
-```clojure
-(def ^:private LANCZOS-COEFFS
-  (mapv (fn [[i c]] [(mx/scalar (double i)) (mx/scalar c)])
-        [[1 676.52...] [2 -1259.13...] ...]))
+All 16 call sites now use `(mx/lgamma ...)` directly.
 
-(defn- mlx-log-gamma [x]
-  (let [x' (mx/subtract x ONE)
-        t  (mx/add x' (mx/scalar 7.5))
-        s  (reduce (fn [acc [i-arr ci-arr]]
-                     (mx/add acc (mx/divide ci-arr (mx/add x' i-arr))))
-                   (mx/scalar 0.99999999999980993)
-                   LANCZOS-COEFFS)]
-    ...))
-```
+#### Task 3.4: Explore fused log-gamma via `mx/compile-fn` — NOT NEEDED
 
-This saves ~16 `mx/scalar` allocations per call (8 for coefficients + 8 for
-indices). Combined with the g=4 reduction, saves ~22 buffers per call.
-
-**Caution:** Must ensure these cached scalars aren't invalidated by `mx/tidy`
-in inference loops. Since they're module-level `def`s, they exist outside any
-tidy scope and should be safe.
-
-#### Task 3.4: Explore fused log-gamma via `mx/compile-fn` (MEDIUM)
-
-MLX's `compile-fn` can fuse a sequence of operations into a single Metal
-dispatch. If `mlx-log-gamma` is wrapped in `compile-fn`, the intermediate
-buffers might be fused away:
-
-```clojure
-(def compiled-mlx-log-gamma (mx/compile-fn mlx-log-gamma))
-```
-
-**Unknown:** Whether `compile-fn` actually reduces the buffer count or just the
-dispatch count. Needs benchmarking. The compiled function might still allocate
-intermediate buffers for the graph topology, just execute them faster.
+Native `lgamma` is already a single Metal kernel dispatch. `compile-fn` would
+add no benefit.
 
 ### Phase 4: Global Safety Mechanisms (Easy, Defense in Depth)
 
@@ -694,15 +643,20 @@ created inside the tidy scope. We need to `eval!` them before tidy cleans up.
 After tidy, only the new trace's arrays survive; the rejected alternatives are
 deleted.
 
-### 6.4 Estimated impact of Phase 2 fixes
+### 6.4 Estimated impact of Phase 2 + Phase 3 fixes
 
-| Algorithm | Before (buffers held) | After (buffers held) | Improvement |
-|-----------|----------------------|---------------------|-------------|
-| MH (500 iter, 5-site Gaussian) | ~32,500 | ~65 (per iter) | 500x |
-| MH (500 iter, 5-site Beta) | ~187,500 | ~375 (per iter) | 500x |
-| IS (500 samples, 5-site Gaussian) | ~20,000 | ~40 (per sample) | 500x |
-| SMC (T=100, N=100, Gaussian) | ~400,000 | ~4,000 (per step) | 100x |
-| collect-samples (generic) | O(N×S×C) | O(S×C) | Nx |
+| Algorithm | Original (no fixes) | Phase 2 (eval/clear) | Phase 2+3 (native lgamma) |
+|-----------|--------------------|-----------------------|--------------------------|
+| MH (500 iter, 5-site Gaussian) | ~32,500 | ~65/iter | ~65/iter (unchanged) |
+| MH (500 iter, 5-site Beta) | ~187,500 | ~375/iter | **~65/iter** |
+| IS (500 samples, 5-site Gaussian) | ~20,000 | ~40/sample | ~40/sample (unchanged) |
+| IS (500 samples, 5-site Beta) | ~182,500 | ~365/sample | **~65/sample** |
+| SMC (T=100, N=100, Gaussian) | ~400,000 | ~4,000/step | ~4,000/step (unchanged) |
+| collect-samples (generic) | O(N×S×C) | O(S×C) | O(S×C) with C ~5x smaller |
+
+Phase 3 (native lgamma) has no effect on Gaussian models (they don't use
+log-gamma) but dramatically reduces buffer counts for gamma-family distributions
+(Beta, Gamma, Poisson, Student-t, Dirichlet, Inv-Gamma, Neg-Binomial, Binomial).
 
 Where S = trace sites, C = buffers per log-prob, N = iterations.
 
@@ -744,17 +698,15 @@ After Phase 2.3, verify scalar SMC runs with many timesteps:
 ;; Should complete without resource error
 ```
 
-### 7.4 Test: Lanczos optimization
+### 7.4 Test: Native lgamma accuracy ✅
 
-After Phase 3.2-3.3, verify Beta/Gamma log-prob accuracy is preserved:
+Verified via `test/genmlx/lanczos_test.cljs` (22/22 pass):
+- 6 log-gamma accuracy tests against reference values (tolerance 1e-5)
+- 4 distribution log-prob tests (Beta, Gamma, Poisson, Student-t)
+- 10 vectorized correctness tests (Gamma + Beta on `[5]`-shaped inputs)
+- 2 shape checks
 
-```clojure
-(let [d (dist/beta-dist 2 5)
-      v (mx/scalar 0.3)
-      lp (dc/dist-log-prob d v)]
-  (mx/eval! lp)
-  (assert-close "Beta log-prob" -0.832 (mx/item lp) 0.001))
-```
+All core tests pass, 165/165 Gen.clj compat, GenJAX compat unchanged.
 
 ### 7.5 Stress test: Long inference chains
 
