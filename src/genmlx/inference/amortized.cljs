@@ -8,6 +8,7 @@
 
    Inference uses the standard GFI: simulate the guide, score under the model."
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             [genmlx.nn :as nn]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
@@ -42,7 +43,7 @@
             log-sigs (mx/slice out d (* 2 d))
             sigs     (mx/exp log-sigs)
             ;; Reparameterized sample: z = μ + σε
-            eps (mx/random-normal [d])
+            eps (rng/normal (rng/next-key) [d])
             zs  (mx/add mus (mx/multiply sigs eps))
             ;; Build constraint choicemap: latent values + observations
             obs (observations-fn data)

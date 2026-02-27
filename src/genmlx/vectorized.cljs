@@ -26,7 +26,7 @@
         probs-clj (mx/->clj probs)
         ;; Single uniform offset
         u0        (if key
-                    (/ (mx/realize (mx/random-uniform [1])) n)
+                    (/ (mx/realize (rng/uniform key [1])) n)
                     (/ (js/Math.random) n))
         indices   (loop [i 0 cumsum 0.0 j 0 acc (transient [])]
                     (if (>= j n)

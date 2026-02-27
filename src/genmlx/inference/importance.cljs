@@ -20,11 +20,13 @@
    Returns {:traces [Trace ...] :log-weights [MLX-scalar ...]
             :log-ml-estimate MLX-scalar}"
   [{:keys [samples key] :or {samples 100}} model args observations]
-  (let [results (mapv (fn [_]
-                        (let [r (p/generate model args observations)]
+  (let [keys (rng/split-n (rng/ensure-key key) samples)
+        results (mapv (fn [ki]
+                        (let [r (dyn/with-key ki
+                                  #(p/generate model args observations))]
                           (mx/eval! (:weight r) (:score (:trace r)))
                           r))
-                      (range samples))
+                      keys)
         traces     (mapv :trace results)
         log-weights (mapv :weight results)
         ;; log marginal likelihood estimate = logsumexp(weights) - log(N)

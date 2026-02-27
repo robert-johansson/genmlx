@@ -43,7 +43,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn dist-simulate [dist]
-  (let [v  (dist-sample dist nil)
+  (let [v  (dist-sample dist (rng/next-key))
         lp (dist-log-prob dist v)]
     (tr/make-trace {:gen-fn dist :args [] :choices (cm/->Value v)
                     :retval v :score lp})))
@@ -62,7 +62,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn dist-propose [dist]
-  (let [v  (dist-sample dist nil)
+  (let [v  (dist-sample dist (rng/next-key))
         lp (dist-log-prob dist v)]
     {:choices (cm/->Value v) :weight lp :retval v}))
 

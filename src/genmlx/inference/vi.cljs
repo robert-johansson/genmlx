@@ -23,9 +23,7 @@
         log-sigma (mx/slice variational-params d (* 2 d))
         sigma (mx/exp log-sigma)
         ;; Draw samples from q via reparameterization
-        eps (if key
-              (rng/normal key [n-samples d])
-              (mx/random-normal [n-samples d]))
+        eps (rng/normal (rng/ensure-key key) [n-samples d])
         samples (mx/add mu (mx/multiply sigma eps))
         ;; log q(z) for each sample
         log-2pi-scalar (mx/scalar (js/Math.log (* 2 js/Math.PI)))

@@ -41,7 +41,7 @@
 (defrecord DynamicGF [body-fn source]
   p/IGenerativeFunction
   (simulate [this args]
-    (let [key (rng/fresh-key)
+    (let [key (rng/next-key)
           result (h/run-handler h/simulate-handler
                    {:choices cm/EMPTY :score SCORE-ZERO :key key
                     :executor execute-sub}
@@ -57,7 +57,7 @@
 
   p/IGenerate
   (generate [this args constraints]
-    (let [key (rng/fresh-key)
+    (let [key (rng/next-key)
           result (h/run-handler h/generate-handler
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
@@ -77,7 +77,7 @@
 
   p/IUpdate
   (update [this trace constraints]
-    (let [key (rng/fresh-key)
+    (let [key (rng/next-key)
           result (h/run-handler h/update-handler
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
@@ -101,7 +101,7 @@
 
   p/IRegenerate
   (regenerate [this trace selection]
-    (let [key (rng/fresh-key)
+    (let [key (rng/next-key)
           old-score (:score trace)
           result (h/run-handler h/regenerate-handler
                    {:choices cm/EMPTY :score SCORE-ZERO
@@ -127,7 +127,7 @@
 
   p/IAssess
   (assess [this args choices]
-    (let [key (rng/fresh-key)
+    (let [key (rng/next-key)
           result (h/run-handler h/assess-handler
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
@@ -139,7 +139,7 @@
 
   p/IPropose
   (propose [this args]
-    (let [key (rng/fresh-key)
+    (let [key (rng/next-key)
           result (h/run-handler h/simulate-handler
                    {:choices cm/EMPTY :score SCORE-ZERO :key key
                     :executor execute-sub}
@@ -150,7 +150,7 @@
 
   p/IProject
   (project [this trace selection]
-    (let [key (rng/fresh-key)
+    (let [key (rng/next-key)
           result (h/run-handler h/project-handler
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
@@ -227,6 +227,14 @@
   "Call a generative function as a regular function (simulate and return value)."
   [gf & args]
   (:retval (p/simulate gf (vec args))))
+
+(defn with-key
+  "Execute f with a threaded PRNG key for reproducible inference.
+   All DynamicGF GFI methods called within f will draw keys from the
+   threaded key instead of calling rng/fresh-key."
+  [key f]
+  (binding [rng/*prng-key* (volatile! key)]
+    (f)))
 
 ;; ---------------------------------------------------------------------------
 ;; User-facing effect operations called inside gen bodies

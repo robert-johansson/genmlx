@@ -42,12 +42,14 @@
 
    ## Dynamic scope
 
-   Three dynamic vars constitute the complete dynamic scope of the system:
+   Four dynamic vars constitute the complete dynamic scope of the system:
 
      *handler*     — active handler fn, bound by `run-handler`
      *state*       — volatile! holding the handler state map, bound by `run-handler`
      *param-store* — optional parameter store for trainable params,
                      bound by `learning.cljs` and `inference/adev.cljs`
+     *prng-key*    — optional volatile! holding a PRNG key for reproducibility,
+                     bound by `with-key` in dynamic.cljs
 
    No other dynamic vars or global mutable state exists in GenMLX."
   (:require [genmlx.choicemap :as cm]
@@ -58,9 +60,10 @@
             [genmlx.protocols :as p]
             [genmlx.trace :as tr]))
 
-;; The three dynamic vars below are the complete dynamic scope of GenMLX.
+;; The four dynamic vars below are the complete dynamic scope of GenMLX.
 ;; *handler* and *state* are bound exclusively by run-handler.
 ;; *param-store* is bound by learning.cljs and inference/adev.cljs.
+;; rng/*prng-key* is bound by with-key in dynamic.cljs for reproducible inference.
 (def ^:dynamic *handler* nil)
 (def ^:dynamic *state*   nil)
 (def ^:dynamic *param-store* nil)
@@ -361,7 +364,7 @@
   (if *handler*
     (*handler* addr dist)
     ;; Direct execution mode — sample and materialize
-    (let [v (dc/dist-sample dist nil)]
+    (let [v (dc/dist-sample dist (rng/next-key))]
       (mx/eval! v)
       (mx/item v))))
 

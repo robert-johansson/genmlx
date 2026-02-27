@@ -9,6 +9,49 @@
   ([]    (.key mx/random (js/Math.floor (* (js/Math.random) 2147483647))))
   ([seed] (.key mx/random seed)))
 
+;; ---------------------------------------------------------------------------
+;; Threadable PRNG key for reproducible inference
+;; ---------------------------------------------------------------------------
+
+(def ^:dynamic *prng-key*
+  "When bound (to a volatile! holding a PRNG key), all GFI methods draw keys
+   from this threaded key instead of calling fresh-key. Bound via with-key.
+   Note: MLX random functions use a global PRNG state. The key passed to
+   sampling functions (.normal, .uniform, etc.) does NOT override this state.
+   For reproducibility, with-key seeds the global state via .seed()."
+  nil)
+
+(defn key->seed
+  "Derive an integer seed from a PRNG key array for use with .seed().
+   Combines both uint32 elements via XOR to produce a single seed."
+  [key]
+  (mx/eval! key)
+  (let [arr (mx/->clj key)]
+    (bit-xor (int (nth arr 0)) (int (nth arr 1)))))
+
+(defn seed-from-key!
+  "Seed the global MLX PRNG state from a key array.
+   Call this before using MLX random functions to ensure deterministic output."
+  [key]
+  (.seed mx/random (key->seed key)))
+
+(defn next-key
+  "Get the next PRNG key. If *prng-key* is bound (via with-key), splits and
+   advances the threaded key deterministically, seeding the global PRNG state.
+   Otherwise falls back to fresh-key."
+  []
+  (if-let [vol *prng-key*]
+    (let [k @vol
+          ks (.split mx/random k)
+          k1 (.take mx/core ks (mx/scalar 0 mx/int32) 0)
+          k2 (.take mx/core ks (mx/scalar 1 mx/int32) 0)]
+      (vreset! vol k2)
+      ;; Seed the global PRNG state from the derived key so that
+      ;; downstream sampling functions (.normal, .uniform) are deterministic
+      (.seed mx/random (key->seed k1))
+      k1)
+    (fresh-key)))
+
 (defn- extract-row
   "Extract row i from a 2D MLX array as a 1D array."
   [arr i]

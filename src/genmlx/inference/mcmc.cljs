@@ -9,6 +9,7 @@
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist.core :as dc]
+            [genmlx.dynamic :as dyn]
             [genmlx.inference.util :as u]
             [genmlx.inference.kernel :as kern]
             [genmlx.learning :as learn]))
@@ -48,9 +49,10 @@
    (mh-step current-trace selection nil))
   ([current-trace selection key]
    (let [gf (:gen-fn current-trace)
-         result (p/regenerate gf current-trace selection)
+         [regen-key accept-key] (rng/split (rng/ensure-key key))
+         result (dyn/with-key regen-key #(p/regenerate gf current-trace selection))
          w (mx/realize (:weight result))]
-     (if (u/accept-mh? w key)
+     (if (u/accept-mh? w accept-key)
        (:trace result)
        current-trace))))
 
@@ -64,9 +66,11 @@
   [{:keys [samples burn thin selection callback key]
     :or {burn 0 thin 1 selection sel/all}}
    model args observations]
-  (let [{:keys [trace]} (p/generate model args observations)]
+  (let [[init-key chain-key] (rng/split (rng/ensure-key key))
+        {:keys [trace]} (dyn/with-key init-key
+                          #(p/generate model args observations))]
     (kern/collect-samples
-      {:samples samples :burn burn :thin thin :callback callback :key key}
+      {:samples samples :burn burn :thin thin :callback callback :key chain-key}
       (fn [state step-key]
         (let [new-trace (mh-step state selection step-key)]
           {:state new-trace :accepted? (not (identical? new-trace state))}))
@@ -145,10 +149,9 @@
   "One compiled MH step with random-walk Gaussian proposal.
    Operates on flat parameter arrays — no GFI overhead per step."
   [params score-fn proposal-std param-shape key]
-  (let [[propose-key accept-key] (rng/split-or-nils key)
-        noise    (if propose-key
-                   (rng/normal propose-key param-shape)
-                   (mx/random-normal param-shape))
+  (let [key (rng/ensure-key key)
+        [propose-key accept-key] (rng/split key)
+        noise    (rng/normal propose-key param-shape)
         proposal (mx/add params (mx/multiply proposal-std noise))
         score-current  (score-fn params)
         score-proposal (score-fn proposal)
@@ -187,40 +190,45 @@
   "Run compiled MH with loop compilation for burn-in and optional thinning.
    Uses compiled chains for burn-in (block-size steps per dispatch).
    For collection: compiled chain if thin > 1, eager step if thin = 1."
-  [{:keys [samples burn thin callback]} init-params n-params
+  [{:keys [samples burn thin callback key]} init-params n-params
    score-fn proposal-std burn-chain burn-block-size thin-chain]
   (let [param-shape [n-params]
+        rk (rng/ensure-key key)
         ;; Phase 1: Burn-in via compiled chain blocks
-        params (if (and burn-chain (> burn 0))
-                 (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
-                   (loop [p init-params, b 0]
-                     (if (>= b n-blocks) p
-                       (let [noise (mx/random-normal [burn-block-size n-params])
-                             uniforms (mx/random-uniform [burn-block-size])
-                             p' (burn-chain p noise uniforms)]
-                         (mx/eval! p')
-                         (recur p' (inc b))))))
-                 init-params)
+        [params rk]
+        (if (and burn-chain (> burn 0))
+          (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
+            (loop [p init-params, b 0, rk rk]
+              (if (>= b n-blocks) [p rk]
+                (let [[k1 k2 rk'] (rng/split-n rk 3)
+                      noise (rng/normal k1 [burn-block-size n-params])
+                      uniforms (rng/uniform k2 [burn-block-size])
+                      p' (burn-chain p noise uniforms)]
+                  (mx/eval! p')
+                  (recur p' (inc b) rk')))))
+          [init-params rk])
         ;; Phase 2: Collect samples (mx/tidy prevents Metal resource leak)
-        result (loop [p params, acc (transient []), i 0]
+        result (loop [p params, acc (transient []), i 0, rk rk]
                  (if (>= i samples)
                    (persistent! acc)
-                   (let [p' (mx/tidy
+                   (let [[step-key rk'] (rng/split rk)
+                         p' (mx/tidy
                               (fn []
                                 (if thin-chain
                                   ;; thin > 1: compiled chain of thin steps
-                                  (let [noise (mx/random-normal [thin n-params])
-                                        uniforms (mx/random-uniform [thin])
+                                  (let [[k1 k2] (rng/split step-key)
+                                        noise (rng/normal k1 [thin n-params])
+                                        uniforms (rng/uniform k2 [thin])
                                         r (thin-chain p noise uniforms)]
                                     (mx/eval! r) r)
                                   ;; thin = 1: eager step (faster than 1-step compiled)
                                   (let [{:keys [state]} (compiled-mh-step
                                                           p score-fn proposal-std
-                                                          param-shape nil)]
+                                                          param-shape step-key)]
                                     state))))]
                      (when callback
                        (callback {:iter i :value (mx/->clj p')}))
-                     (recur p' (conj! acc (mx/->clj p')) (inc i)))))]
+                     (recur p' (conj! acc (mx/->clj p')) (inc i) rk'))))]
     result))
 
 (defn compiled-mh
@@ -261,7 +269,7 @@
                thin-chain (when (> thin 1)
                             (make-compiled-chain thin score-fn std n-params))]
            (run-loop-compiled-mh
-             {:samples samples :burn burn :thin thin :callback callback}
+             {:samples samples :burn burn :thin thin :callback callback :key key}
              init-params n-params score-fn std
              burn-chain burn-block thin-chain))
          ;; Fallback: per-step eager path
@@ -280,18 +288,15 @@
   "One vectorized MH step for N parallel chains.
    params: [N, D], score-fn returns [N], accept/reject via mx/where."
   [params score-fn proposal-std param-shape n-chains key]
-  (let [[propose-key accept-key] (rng/split-or-nils key)
-        noise    (if propose-key
-                   (rng/normal propose-key param-shape)
-                   (mx/random-normal param-shape))
+  (let [key (rng/ensure-key key)
+        [propose-key accept-key] (rng/split key)
+        noise    (rng/normal propose-key param-shape)
         proposal (mx/add params (mx/multiply proposal-std noise))
         score-current  (score-fn params)
         score-proposal (score-fn proposal)
         _ (mx/eval! score-current score-proposal)
         log-alphas (mx/subtract score-proposal score-current)
-        u (if accept-key
-            (rng/uniform accept-key [n-chains])
-            (mx/random-uniform [n-chains]))
+        u (rng/uniform accept-key [n-chains])
         accept-mask (mx/less (mx/log u) log-alphas)
         _ (mx/eval! accept-mask)
         n-accepted (mx/item (mx/sum accept-mask))
@@ -474,12 +479,11 @@
   "One MALA step. Returns {:state q-next :accepted? bool}.
    val-grad-compiled computes score and gradient in a single compiled pass."
   [q val-grad-compiled eps half-eps2 two-eps-sq q-shape key]
-  (let [[noise-key accept-key] (rng/split-or-nils key)
+  (let [key (rng/ensure-key key)
+        [noise-key accept-key] (rng/split key)
         ;; MALA proposal: q' = q + eps^2/2 * grad + eps * noise
         [_ g] (val-grad-compiled q)
-        noise (if noise-key
-                (rng/normal noise-key q-shape)
-                (mx/random-normal q-shape))
+        noise (rng/normal noise-key q-shape)
         q' (mx/add q (mx/multiply half-eps2 g) (mx/multiply eps noise))
         _ (mx/eval! q' g)
         ;; Compute acceptance ratio with asymmetric proposal correction
@@ -550,39 +554,43 @@
   "Run compiled MALA with loop compilation for burn-in and collection.
    Threads [q, score, grad] across chain blocks, eliminating redundant
    val-grad calls. Uses compiled chains for both burn-in and thinning."
-  [{:keys [samples burn thin callback]} init-q n-params
+  [{:keys [samples burn thin callback key]} init-q n-params
    val-grad-compiled burn-chain burn-block-size thin-chain thin-steps]
-  (let [;; Compute initial score and gradient
+  (let [rk (rng/ensure-key key)
+        ;; Compute initial score and gradient
         [init-score init-grad] (val-grad-compiled init-q)
         _ (mx/eval! init-score init-grad)
         ;; Phase 1: Burn-in via compiled chain blocks
-        [params score grad]
+        [params score grad rk]
         (if (and burn-chain (> burn 0))
           (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
-            (loop [q init-q, sq init-score, gq init-grad, b 0]
-              (if (>= b n-blocks) [q sq gq]
-                (let [noise (mx/random-normal [burn-block-size n-params])
-                      uniforms (mx/random-uniform [burn-block-size])
+            (loop [q init-q, sq init-score, gq init-grad, b 0, rk rk]
+              (if (>= b n-blocks) [q sq gq rk]
+                (let [[k1 k2 rk'] (rng/split-n rk 3)
+                      noise (rng/normal k1 [burn-block-size n-params])
+                      uniforms (rng/uniform k2 [burn-block-size])
                       r (burn-chain q sq gq noise uniforms)
                       q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
                   (mx/eval! q' sq' gq')
-                  (recur q' sq' gq' (inc b))))))
-          [init-q init-score init-grad])
+                  (recur q' sq' gq' (inc b) rk')))))
+          [init-q init-score init-grad rk])
         ;; Phase 2: Collect samples (mx/tidy prevents Metal resource leak)
-        result (loop [q params, sq score, gq grad, acc (transient []), i 0]
+        result (loop [q params, sq score, gq grad, acc (transient []), i 0, rk rk]
                  (if (>= i samples)
                    (persistent! acc)
-                   (let [r (mx/tidy
+                   (let [[step-key rk'] (rng/split rk)
+                         r (mx/tidy
                              (fn []
-                               (let [noise (mx/random-normal [thin-steps n-params])
-                                     uniforms (mx/random-uniform [thin-steps])
+                               (let [[k1 k2] (rng/split step-key)
+                                     noise (rng/normal k1 [thin-steps n-params])
+                                     uniforms (rng/uniform k2 [thin-steps])
                                      r (thin-chain q sq gq noise uniforms)]
                                  (mx/eval! (aget r 0) (aget r 1) (aget r 2))
                                  r)))
                          q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
                      (when callback
                        (callback {:iter i :value (mx/->clj q')}))
-                     (recur q' sq' gq' (conj! acc (mx/->clj q')) (inc i)))))]
+                     (recur q' sq' gq' (conj! acc (mx/->clj q')) (inc i) rk'))))]
     result))
 
 (defn mala
@@ -625,7 +633,7 @@
                thin-chain (make-compiled-mala-chain
                             thin-steps val-grad-fn eps half-eps2 two-eps-sq n-params)]
            (run-loop-compiled-mala
-             {:samples samples :burn burn :thin thin :callback callback}
+             {:samples samples :burn burn :thin thin :callback callback :key key}
              init-q n-params val-grad-compiled
              burn-chain burn-block thin-chain thin-steps))
          ;; Fallback: per-step eager path
@@ -651,14 +659,13 @@
    q: [N,D], grad-fn: [N,D]->[N,D], score-fn: [N,D]->[N].
    Accept/reject via mx/where per chain."
   [q score-fn grad-fn eps half-eps2 two-eps-sq n-chains key]
-  (let [[noise-key accept-key] (rng/split-or-nils key)
+  (let [key (rng/ensure-key key)
+        [noise-key accept-key] (rng/split key)
         param-shape (mx/shape q)
         ;; Gradient at current position
         g (grad-fn q)
         ;; MALA proposal: q' = q + eps^2/2 * grad + eps * noise
-        noise (if noise-key
-                (rng/normal noise-key param-shape)
-                (mx/random-normal param-shape))
+        noise (rng/normal noise-key param-shape)
         q' (mx/add q (mx/multiply half-eps2 g) (mx/multiply eps noise))
         _ (mx/eval! q' g)
         ;; Gradient at proposal
@@ -676,9 +683,7 @@
         ;; Per-chain acceptance ratio [N]
         log-alphas (mx/add (mx/subtract score-q' score-q)
                            (mx/subtract log-bwd log-fwd))
-        u (if accept-key
-            (rng/uniform accept-key [n-chains])
-            (mx/random-uniform [n-chains]))
+        u (rng/uniform accept-key [n-chains])
         accept-mask (mx/less (mx/log u) log-alphas)
         _ (mx/eval! accept-mask)
         n-accepted (mx/item (mx/sum accept-mask))
@@ -746,7 +751,7 @@
    metric vector → diagonal M (scale by sqrt of diagonal).
    metric matrix → dense M (scale by Cholesky factor)."
   [metric q-shape key]
-  (let [z (if key (rng/normal key q-shape) (mx/random-normal q-shape))]
+  (let [z (rng/normal (rng/ensure-key key) q-shape)]
     (cond
       (nil? metric)    z
       (= 1 (count (mx/shape metric)))  ;; diagonal: p = sqrt(diag) * z
@@ -926,41 +931,46 @@
   "Run compiled HMC with loop compilation for burn-in and optional thinning.
    Uses compiled chains for burn-in (block-size steps per dispatch).
    For collection: compiled chain if thin > 1, eager step if thin = 1."
-  [{:keys [samples burn thin callback]} init-q n-params
+  [{:keys [samples burn thin callback key]} init-q n-params
    neg-U-compiled grad-neg-U eps half-eps half q-shape
    leapfrog-steps metric burn-chain burn-block-size thin-chain]
-  (let [;; Phase 1: Burn-in via compiled chain blocks
-        params (if (and burn-chain (> burn 0))
-                 (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
-                   (loop [q init-q, b 0]
-                     (if (>= b n-blocks) q
-                       (let [momentum (mx/random-normal [burn-block-size n-params])
-                             uniforms (mx/random-uniform [burn-block-size])
-                             q' (burn-chain q momentum uniforms)]
-                         (mx/eval! q')
-                         (recur q' (inc b))))))
-                 init-q)
+  (let [rk (rng/ensure-key key)
+        ;; Phase 1: Burn-in via compiled chain blocks
+        [params rk]
+        (if (and burn-chain (> burn 0))
+          (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
+            (loop [q init-q, b 0, rk rk]
+              (if (>= b n-blocks) [q rk]
+                (let [[k1 k2 rk'] (rng/split-n rk 3)
+                      momentum (rng/normal k1 [burn-block-size n-params])
+                      uniforms (rng/uniform k2 [burn-block-size])
+                      q' (burn-chain q momentum uniforms)]
+                  (mx/eval! q')
+                  (recur q' (inc b) rk')))))
+          [init-q rk])
         ;; Phase 2: Collect samples (mx/tidy prevents Metal resource leak)
-        result (loop [q params, acc (transient []), i 0]
+        result (loop [q params, acc (transient []), i 0, rk rk]
                  (if (>= i samples)
                    (persistent! acc)
-                   (let [q' (mx/tidy
+                   (let [[step-key rk'] (rng/split rk)
+                         q' (mx/tidy
                               (fn []
                                 (if thin-chain
                                   ;; thin > 1: compiled chain of thin steps
-                                  (let [momentum (mx/random-normal [thin n-params])
-                                        uniforms (mx/random-uniform [thin])
+                                  (let [[k1 k2] (rng/split step-key)
+                                        momentum (rng/normal k1 [thin n-params])
+                                        uniforms (rng/uniform k2 [thin])
                                         r (thin-chain q momentum uniforms)]
                                     (mx/eval! r) r)
                                   ;; thin = 1: eager step
                                   (let [{:keys [state]}
                                         (hmc-step q neg-U-compiled grad-neg-U
                                                   eps half-eps half q-shape
-                                                  leapfrog-steps metric nil)]
+                                                  leapfrog-steps metric step-key)]
                                     state))))]
                      (when callback
                        (callback {:iter i :value (mx/->clj q')}))
-                     (recur q' (conj! acc (mx/->clj q')) (inc i)))))]
+                     (recur q' (conj! acc (mx/->clj q')) (inc i) rk'))))]
     result))
 
 ;; ---------------------------------------------------------------------------
@@ -1153,7 +1163,7 @@
                               thin neg-U grad-neg-U-raw
                               eps half-eps half n-params leapfrog-steps))]
            (run-loop-compiled-hmc
-             {:samples samples :burn remaining-burn :thin thin :callback callback}
+             {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
              start-q n-params neg-U-compiled grad-neg-U eps half-eps half q-shape
              leapfrog-steps final-metric burn-chain burn-block thin-chain))
          ;; Fallback: per-step eager path (or non-identity metric)
@@ -1201,12 +1211,11 @@
    q: [N,D]. neg-U-fn: [N,D]->[N]. grad-fn: [N,D]->[N,D].
    Accept/reject via mx/where per chain."
   [q neg-U-fn grad-fn eps half-eps half n-chains leapfrog-steps key]
-  (let [[momentum-key accept-key] (rng/split-or-nils key)
+  (let [key (rng/ensure-key key)
+        [momentum-key accept-key] (rng/split key)
         param-shape (mx/shape q)
         ;; Sample [N,D] momentum
-        p0 (if momentum-key
-             (rng/normal momentum-key param-shape)
-             (mx/random-normal param-shape))
+        p0 (rng/normal momentum-key param-shape)
         _ (mx/eval! p0)
         ;; Current Hamiltonian [N] = neg-U(q) + K(p)
         neg-U-q (neg-U-fn q)
@@ -1227,9 +1236,7 @@
         _ (mx/eval! proposed-H)
         ;; Per-chain accept/reject [N]
         log-alphas (mx/subtract current-H proposed-H)
-        u (if accept-key
-            (rng/uniform accept-key [n-chains])
-            (mx/random-uniform [n-chains]))
+        u (rng/uniform accept-key [n-chains])
         accept-mask (mx/less (mx/log u) log-alphas)
         _ (mx/eval! accept-mask)
         n-accepted (mx/item (mx/sum accept-mask))

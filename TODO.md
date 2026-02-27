@@ -239,7 +239,7 @@ wrong results in certain use cases.*
   - **Fix**: Strip `:component-idx` from constraints before passing to component
     (as `update` already does at line 988)
 
-- [ ] **16.6** PRNG keys frequently ignored -- non-reproducible inference
+- [x] **16.6** PRNG keys frequently ignored -- non-reproducible inference
   - **Files**: Multiple
     - `importance-sampling` accepts `key` in opts but never uses it (`importance.cljs:22`)
     - `smcp3-step` generates per-particle keys but never passes them (`smcp3.cljs:116-118`)

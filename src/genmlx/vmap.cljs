@@ -214,7 +214,7 @@
     (let [n (resolve-axis-size args in-axes axis-size)]
       (if (and (:body-fn kernel) (batched-args? args in-axes))
         ;; Fast path: run kernel body once with batched handler
-        (let [key (rng/fresh-key)
+        (let [key (rng/next-key)
               result (h/run-handler h/batched-simulate-handler
                        {:choices cm/EMPTY :score (mx/scalar 0.0)
                         :key key :batch-size n :batched? true}
@@ -248,7 +248,7 @@
           scalar? (scalar-constraints? constraints)]
       (if (and (:body-fn kernel) (= constraints cm/EMPTY) (batched-args? args in-axes))
         ;; Fast path: batched generate with no constraints (all sites simulated)
-        (let [key (rng/fresh-key)
+        (let [key (rng/next-key)
               result (h/run-handler h/batched-generate-handler
                        {:choices cm/EMPTY :score (mx/scalar 0.0)
                         :weight (mx/scalar 0.0)

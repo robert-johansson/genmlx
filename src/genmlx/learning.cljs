@@ -191,6 +191,7 @@
   [model guide args observations guide-addresses]
   (fn [guide-params key]
     (let [indexed-addrs (mapv vector (range) guide-addresses)
+          [k1 k2] (rng/split (rng/ensure-key key))
           loss-fn (fn [params]
                     (let [;; Build guide choicemap from params
                           guide-cm (reduce
@@ -198,11 +199,15 @@
                                        (cm/set-choice cm [addr] (mx/index params i)))
                                      cm/EMPTY indexed-addrs)
                           ;; Sample from guide
-                          {:keys [trace weight]} (p/generate guide args guide-cm)
+                          {:keys [trace weight]}
+                          (binding [rng/*prng-key* (volatile! k1)]
+                            (p/generate guide args guide-cm))
                           ;; Score under model with guide's choices + observations
                           guide-weight weight
                           model-cm (cm/merge-cm (:choices trace) observations)
-                          {:keys [weight]} (p/generate model args model-cm)]
+                          {:keys [weight]}
+                          (binding [rng/*prng-key* (volatile! k2)]
+                            (p/generate model args model-cm))]
                       ;; Negative ELBO: -(log p(x,z) - log q(z|x))
                       (mx/negative (mx/subtract weight guide-weight))))
           grad-fn (mx/grad loss-fn)
@@ -221,8 +226,10 @@
   [model guide args guide-addresses]
   (fn [guide-params key]
     (let [indexed-addrs (mapv vector (range) guide-addresses)
+          [k1 k2] (rng/split (rng/ensure-key key))
           ;; Sample from model prior (simulate)
-          model-trace (p/simulate model args)
+          model-trace (binding [rng/*prng-key* (volatile! k1)]
+                        (p/simulate model args))
           model-choices (:choices model-trace)
           ;; Score guide on model's choices
           loss-fn (fn [params]
@@ -230,8 +237,10 @@
                                      (fn [cm [i addr]]
                                        (cm/set-choice cm [addr] (mx/index params i)))
                                      cm/EMPTY indexed-addrs)
-                          {:keys [weight]} (p/generate guide args
-                                            (cm/merge-cm guide-cm model-choices))]
+                          {:keys [weight]}
+                          (binding [rng/*prng-key* (volatile! k2)]
+                            (p/generate guide args
+                                        (cm/merge-cm guide-cm model-choices)))]
                       ;; Negative log-likelihood of model choices under guide
                       (mx/negative weight)))
           grad-fn (mx/grad loss-fn)

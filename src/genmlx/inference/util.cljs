@@ -148,9 +148,9 @@
    Optional `key` uses functional PRNG; nil falls back to js/Math.random."
   [log-weights n key]
   (let [{:keys [probs]} (normalize-log-weights log-weights)
-        u (if key
-            (/ (mx/realize (rng/uniform key [])) n)
-            (/ (js/Math.random) n))]
+        rk (rng/ensure-key key)
+        _ (rng/seed-from-key! rk)
+        u (/ (mx/realize (rng/uniform rk [])) n)]
     (loop [i 0, cumsum 0.0, j 0, indices (transient [])]
       (if (>= j n)
         (persistent! indices)
@@ -207,9 +207,9 @@
    (accept-mh? log-accept nil))
   ([log-accept key]
    (or (>= log-accept 0)
-       (let [u (if key
-                 (mx/realize (rng/uniform key []))
-                 (js/Math.random))]
+       (let [key (rng/ensure-key key)
+             _ (rng/seed-from-key! key)
+             u (mx/realize (rng/uniform key []))]
          (< (js/Math.log u) log-accept)))))
 
 ;; ---------------------------------------------------------------------------

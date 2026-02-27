@@ -31,9 +31,7 @@
             resid-sum  (reduce + residuals)
             resid-probs (mapv #(/ % resid-sum) residuals)
             ;; Use systematic resampling on the residuals
-            u (if key
-                (/ (mx/realize (rng/uniform key [])) n-resid)
-                (/ (js/Math.random) n-resid))
+            u (/ (mx/realize (rng/uniform (rng/ensure-key key) [])) n-resid)
             resid-indices
               (loop [i 0, cumsum 0.0, j 0, acc (transient [])]
                 (if (>= j n-resid)
@@ -51,11 +49,9 @@
   [log-weights n key]
   (let [{:keys [probs]} (u/normalize-log-weights log-weights)
         ;; Generate N stratified uniforms
-        keys (when key (rng/split-n key n))
+        keys (rng/split-n (rng/ensure-key key) n)
         uniforms (mapv (fn [j]
-                         (let [u (if keys
-                                   (mx/realize (rng/uniform (nth keys j) []))
-                                   (js/Math.random))]
+                         (let [u (mx/realize (rng/uniform (nth keys j) []))]
                            (/ (+ j u) n)))
                        (range n))]
     (loop [i 0, cumsum 0.0, j 0, indices (transient [])]
@@ -330,9 +326,7 @@
               {proposed :vtrace mh-weight :weight}
                 (dyn/vregenerate (:gen-fn vtrace) vtrace selection regen-key)
               _ (mx/eval! mh-weight)
-              u (if accept-key
-                  (rng/uniform accept-key [n])
-                  (mx/random-uniform [n]))
+              u (rng/uniform (rng/ensure-key accept-key) [n])
               accept-mask (mx/less (mx/log u) mh-weight)
               _ (mx/eval! accept-mask)
               vtrace (vec/merge-vtraces-by-mask vtrace proposed accept-mask)]
