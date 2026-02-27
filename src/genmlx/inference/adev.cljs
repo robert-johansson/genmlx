@@ -157,6 +157,7 @@
                                                   gf args cost-fn
                                                   param-names params)
               _ (mx/eval! loss grad)
+              _ (when (zero? (mod i 50)) (mx/clear-cache!))
               loss-val (mx/item loss)
               new-baseline (when baseline-decay
                              (if baseline

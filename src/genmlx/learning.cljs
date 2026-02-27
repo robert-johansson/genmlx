@@ -306,6 +306,7 @@
                         _ (mx/eval! loss grad)
                         [p' os'] (adam-step p grad os {:lr lr})]
                     (recur (inc j) p' os' (conj losses (mx/item loss)) sk2))))]
+          (when (zero? (mod i 50)) (mx/clear-cache!))
           (when callback
             (callback {:iter i :wake-loss (last wl) :sleep-loss (last sl)}))
           (recur (inc i) params'' opt-st''

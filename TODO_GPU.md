@@ -446,15 +446,17 @@ Added `mx/eval!` after each generate in the `mapv` (`importance.cljs`):
 - `vectorized-mala`: periodic `clear-cache!` every 50 iterations
   (step functions already eval internally)
 
-#### Task 2.6 (deferred): Fix step-size adaptation loops
+#### Task 2.6: Step-size adaptation loops — No changes needed ✅
 
-`find-reasonable-epsilon` and `dual-averaging-warmup` have bounded iterations
-(~100 max) and leapfrog-step already uses tidy. Medium risk — deferred to
-future phase.
+`find-reasonable-epsilon` is bounded at ~100 iterations with leapfrog's internal
+tidy. `dual-averaging-warmup` delegates to `hmc-step` which evals internally.
+No cache clearing needed for these bounded loops.
 
-#### Task 2.7 (deferred): Fix `programmable-vi`
+#### Task 2.7: Fix `programmable-vi` ✅
 
-Already has `mx/eval!` on loss/grad. Medium risk — deferred to future phase.
+Added periodic `(mx/clear-cache!)` every 50 iterations after the existing
+`mx/eval!` call. Also added the same pattern to `wake-sleep` outer loop
+(`learning.cljs`) and `adev-optimize` (`adev.cljs`).
 
 ### Phase 3: Reduce Per-Operation Buffer Count ✅ DONE
 

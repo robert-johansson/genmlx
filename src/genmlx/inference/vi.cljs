@@ -391,6 +391,7 @@
         (let [[iter-key next-key] (rng/split-or-nils rk)
               {:keys [loss grad]} (grad-loss params iter-key)
               _ (mx/eval! loss grad)
+              _ (when (zero? (mod i 50)) (mx/clear-cache!))
               loss-val (mx/item loss)
               [params' opt-state'] (learn/adam-step params grad opt-state
                                               {:lr learning-rate})]
