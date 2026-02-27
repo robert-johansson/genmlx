@@ -588,28 +588,21 @@ compatibility and future Bun fixes.
 
 All core tests pass, 165/165 Gen.clj compat, 73/73 GenJAX compat (1 flaky).
 
-### Phase 5: Documentation and User Guidance (Easy, Important)
+### Phase 5: Documentation and User Guidance ✅ DONE
 
-#### Task 5.1: Document the resource limit in README
+#### Task 5.1: Document the resource limit in README ✅
 
-Add a section explaining:
-- The 499K limit exists on all Apple Silicon
-- How to monitor: `(mx/memory-report)`
-- How to mitigate: `(mx/set-cache-limit! ...)`, `(mx/clear-cache!)`
-- Which algorithms are resource-safe vs. which need care
+Added "GPU Resource Management" section to `README.md` covering:
+- The 499K limit and what it means
+- Monitoring APIs (`mx/memory-report`, individual queries)
+- Resource-safe algorithm table (all built-in algorithms)
+- Custom inference loop pattern with `mx/eval!` + periodic `mx/clear-cache!`
 
-#### Task 5.2: Add a troubleshooting guide
+#### Task 5.2: Add a troubleshooting guide ✅
 
-```
-Q: I'm getting "[metal::malloc] Resource limit (499000) exceeded"
-A: This means too many Metal buffers are alive simultaneously.
-   Solutions:
-   1. Use vectorized inference (vectorized-importance-sampling, vsmc)
-   2. Reduce sample count
-   3. Add (mx/set-cache-limit! (* 128 1024 1024)) at program start
-   4. Split long inference runs across multiple calls with (mx/clear-cache!)
-   5. Use compiled inference (compiled-mh, hmc, nuts) which manage resources
-```
+Added "Troubleshooting" section to `README.md` with:
+- `[metal::malloc] Resource limit exceeded` — 5 solutions
+- Slow inference / memory growth — eval and wrapper count diagnostics
 
 ---
 
