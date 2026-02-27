@@ -514,14 +514,13 @@ that maps 1:1 to lambda_MLX theorems and (future) Lean 4 propositions.*
 
 ### Static validator (Level 1: structural correctness)
 
-- [ ] **24.1** `validate-gen-fn` — static analysis of generative functions
-  - **File**: new `src/genmlx/verify.cljs` (~100-150 lines)
-  - **Checks**: address uniqueness (run once, collect addresses, check for dupes),
-    score finiteness, parameter type validity, no side effects detected (heuristic),
-    all code paths return a value
-  - **Returns**: `{:valid? bool :violations [...]}`
-  - **Use case**: Claude Code generates a model, run `validate-gen-fn` before
-    executing any inference. Catches structural bugs immediately.
+- [x] **24.1** `validate-gen-fn` — static analysis of generative functions
+  - **File**: `src/genmlx/verify.cljs` (~110 lines)
+  - **Checks**: execution errors, address uniqueness (via validation handler),
+    score finiteness, empty models, materialization in body (source analysis),
+    multi-trial conditional duplicate detection
+  - **Returns**: `{:valid? bool :violations [...] :trace trace}`
+  - **Test**: `test/genmlx/verify_test.cljs` (8 tests, 20 assertions)
 
 ### GFI contract registry (Level 2: measure-theoretic soundness)
 
@@ -741,7 +740,7 @@ HIGH (correctness — reproducibility):
   22.2  Remove deprecated stateful PRNG            DONE
 
 MEDIUM-HIGH (verification — catches bugs, path to formal proofs):
-  24.1  Static validator (validate-gen-fn)          ~100-150 lines
+  24.1  Static validator (validate-gen-fn)          ~110 lines     DONE
   24.2  GFI contract registry (11 contracts)        ~150 lines
   24.3  verify-gfi-contracts function               ~50 lines
   24.4  Canonical model suite + contract test       ~80 lines, ~5500 checks
