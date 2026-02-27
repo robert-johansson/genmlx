@@ -524,7 +524,7 @@ that maps 1:1 to lambda_MLX theorems and (future) Lean 4 propositions.*
 
 ### GFI contract registry (Level 2: measure-theoretic soundness)
 
-- [ ] **24.2** Data-driven GFI contract registry
+- [x] **24.2** Data-driven GFI contract registry
   - **File**: new `src/genmlx/contracts.cljs` (~150 lines)
   - **Design**: A plain Clojure map of `{keyword -> {:theorem string, :check fn}}`.
     Each `:check` function takes `{:model :args :trace}` and returns boolean.
@@ -741,7 +741,7 @@ HIGH (correctness — reproducibility):
 
 MEDIUM-HIGH (verification — catches bugs, path to formal proofs):
   24.1  Static validator (validate-gen-fn)          ~110 lines     DONE
-  24.2  GFI contract registry (11 contracts)        ~150 lines
+  24.2  GFI contract registry (11 contracts)        ~150 lines     DONE
   24.3  verify-gfi-contracts function               ~50 lines
   24.4  Canonical model suite + contract test       ~80 lines, ~5500 checks
   23.1  Gen.jl reference value generation (Julia)   ~200 lines Julia
