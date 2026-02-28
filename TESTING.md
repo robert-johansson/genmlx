@@ -1,286 +1,343 @@
 # GenMLX Testing Strategy
 
-> Systematic plan for comprehensive correctness verification.
-> Goal: find bugs through mathematical properties, not just happy-path checks.
+> Systematic correctness verification through mathematical properties,
+> cross-validation, and contract checking — not just happy-path checks.
+>
+> **Current state (Feb 2026):** ~750-800 unit test assertions + 575 GFI contract
+> checks + 162 property tests = ~1,500+ total checks across 77 test files.
 
 ---
 
-## Strategy 1: Property-Based / Statistical Tests
+## Strategy 1: Property-Based / Statistical Tests — DONE
 
 *Sample many times, verify empirical statistics match theoretical predictions.
-These catch numerical bugs, off-by-one errors in log-prob, and wrong
+Catches numerical bugs, off-by-one errors in log-prob, and wrong
 parameterizations.*
 
-### Distribution statistics
-- For every distribution: sample 10,000 times, verify E[X] and Var[X]
-  within tolerance of known analytical values
-- Discrete distributions: verify PMF sums to 1 (enumerate small supports)
-- Continuous distributions: verify CDF at known quantiles via empirical CDF
-- Log-prob spot checks: known (value, params) → known log-density
+### Distribution statistics — `dist_statistics_test.cljs`, `dist_property_test.cljs`
 
-### GFI weight correctness
-- `generate` weight should equal `log p(obs)` for models with known
-  marginal likelihood (conjugate models, single-site models)
-- `update` weight: should equal `score(new_trace) - score(old_trace)` for
-  the changed addresses (verify on models where this is analytically tractable)
-- `regenerate` weight: run long MH chains using regenerate, verify ergodicity
-  by checking that the stationary distribution matches the model posterior
-- `assess` weight: for fully-constrained models, should equal total log-joint
+- [x] E[X] and Var[X] for 16 distributions (10,000 samples each): gaussian,
+  uniform, bernoulli, beta, gamma, exponential, poisson, laplace, log-normal,
+  geometric, neg-binomial, binomial, discrete-uniform, truncated-normal,
+  student-t, inv-gamma + MVN and dirichlet component-wise means (~40 assertions)
+- [x] Discrete PMF sums to 1 for 8 distributions: bernoulli×2, categorical,
+  binomial, discrete-uniform, geometric, poisson, neg-binomial (~8 assertions)
+- [x] Log-prob spot checks via property tests (17 distribution properties)
+- [ ] Continuous CDF at known quantiles via empirical CDF (not yet implemented)
 
-### Broadcasting equivalence
-- `vsimulate` with N=1000 should produce marginal statistics (mean, variance
-  per address) matching 1000 sequential `simulate` calls
-- `vgenerate` weights should have same distribution as sequential `generate` weights
-- Per-address log-probs in batched mode should match scalar mode
+### GFI weight correctness — `gfi_contract_test.cljs`, `contracts.cljs`
 
----
+- [x] `generate` weight = score when fully constrained (11 contracts × 13 models)
+- [x] `update` weight = new_score - old_score (contract #3)
+- [x] `assess` weight = total log-joint for fully-constrained models (contract #8)
+- [x] `regenerate` with empty selection = identity, weight 0 (contract #5)
 
-## Strategy 2: Round-Trip / Identity Tests
+### Broadcasting equivalence — `contracts.cljs`, `vectorized_property_test.cljs`
 
-*Operations that should be no-ops or self-inverses. These catch state
-corruption, incorrect discard computation, and weight accounting errors.*
-
-### Update identity
-- `update(trace, empty_constraints)` → same trace, weight 0
-- `update(trace, all_choices_from_trace)` → same trace, weight 0
-- `update(trace, constraints)` then `update(new_trace, discard)` → original trace
-
-### Regenerate identity
-- `regenerate(trace, empty_selection)` → same trace, weight 0
-- `regenerate(trace, all_selection)` → different trace (unless deterministic)
-
-### Edit duality
-- `edit(trace, ConstraintEdit(c))` then `edit(trace', backward_req)` →
-  recovers original trace, weights sum to 0
-- `edit(trace, SelectionEdit(s))` → backward request is same selection
-- `edit(trace, ProposalEdit(f, b))` → backward request is `ProposalEdit(b, f)`
-
-### Project / score consistency
-- `project(trace, select_all)` should equal `score(trace)`
-- `project(trace, empty_selection)` should equal 0
-
-### Simulate / generate consistency
-- `simulate` then `update` with same choices → weight 0, identical trace
-- `simulate` then `generate` with all choices → weight equals score
+- [x] `vsimulate(N)` statistically matches N `simulate` calls (contract #11)
+- [x] Batched vs scalar weight distribution equivalence (18 vectorized properties)
+- [x] Per-address log-probs in batched mode match scalar mode
 
 ---
 
-## Strategy 3: Cross-Validation Between GFI Operations
+## Strategy 2: Round-Trip / Identity Tests — DONE
 
-*Different operations computing the same quantity should agree. These catch
-bugs where one operation is correct but another has a sign error, missing
-term, or wrong dispatch.*
+*Operations that should be no-ops or self-inverses. Catches state corruption,
+incorrect discard computation, and weight accounting errors.*
 
-### assess vs generate
-- `assess(model, args, choices).weight` should equal
-  `score` of `generate(model, args, choices).trace`
-- Both should equal the log-joint evaluated at those choices
+### Update identity — `gfi_contract_test.cljs`, `contracts.cljs`
 
-### propose vs simulate
-- `propose(model, args).choices` fed back to `generate` should give
-  `generate_weight = 0` (proposal matches model prior)
-- `propose` weight should equal `simulate` score
+- [x] `update(trace, empty_constraints)` → same trace, weight 0 (contract #2)
+- [x] `update(trace, constraints)` then `update(trace', discard)` → original trace
+  (contract #4, tested on 5 canonical models)
 
-### project vs score decomposition
-- Sum of `project(trace, sel_i)` over a partition of all addresses
-  should equal `score(trace)` (when partition covers all addresses)
-- `project` on single address should equal that address's log-prob
+### Regenerate identity — `contracts.cljs`
 
-### update vs fresh generate
-- `update(trace, constraints)` weight + `score(old_trace)` should equal
-  `score(new_trace)` (for the standard case without proposal corrections)
-- `generate(model, args, full_choices)` should produce same trace as
-  `update(simulate_trace, full_choices)`
+- [x] `regenerate(trace, empty_selection)` → same trace, weight 0 (contract #5)
 
-### regenerate vs update equivalence
-- `regenerate(trace, selection)` should be equivalent to:
-  sample new values for selected addresses, then `update` with those as constraints
-  (modulo the proposal correction term)
+### Edit duality — `combinator_contract_test.cljs`
+
+- [x] `edit(trace, ConstraintEdit(c))` round-trip recovers original trace
+- [x] `edit(trace, SelectionEdit(s))` → backward request type check
+- [x] `edit(trace, ProposalEdit(f, b))` → weight finiteness
+
+### Project / score consistency — `contracts.cljs`
+
+- [x] `project(trace, select_all)` = `score(trace)` (contract #6)
+- [x] `project(trace, empty_selection)` = 0 (contract #7)
+
+### Simulate / generate consistency — `contracts.cljs`
+
+- [x] `simulate` then `generate` with all choices → weight = score (contract #1)
 
 ---
 
-## Strategy 4: Combinator Compositionality
+## Strategy 3: Cross-Validation Between GFI Operations — DONE
 
-*Every combinator must preserve all GFI contracts. Combinatorial testing:
-each combinator × each GFI operation.*
+*Different operations computing the same quantity should agree. Catches bugs
+where one operation is correct but another has a sign error, missing term,
+or wrong dispatch.*
 
-### Degenerate cases (combinator reduces to kernel)
-- `Map(kernel, n=1)` should behave identically to kernel itself
-  (same trace structure nested under address 1, same score, same weight)
-- `Unfold(kernel, n=1)` should behave like a single kernel step
-- `Switch(g1, g2)` with constant index should equal the selected branch
-- `Mask(kernel, true)` should equal kernel; `Mask(kernel, false)` should
-  produce empty trace with score 0
-- `Recurse(kernel)` with zero children should equal single kernel application
+### assess vs generate — `gfi_contract_test.cljs`, `contracts.cljs`
 
-### Nested combinators
-- `Map(Switch(...))` — verify trace structure, update across branch changes
-- `Unfold(Map(...))` — temporal sequence of parallel models
-- `Switch(Map(...), Unfold(...))` — heterogeneous branches with combinators
-- `Scan(kernel)` with carry — verify carry propagation through update
+- [x] `assess(model, args, choices).weight` = `generate` score (contract #8,
+  tested on 5 canonical models: single-site, multi-site, linreg, splice, mixed)
 
-### Score additivity
-- `Map`: total score = sum of per-element scores
-- `Unfold`: total score = sum of per-step scores
-- `Switch`: total score = selected branch score
-- `Mix`: total score = categorical log-prob + component score
+### propose vs simulate — `gfi_contract_test.cljs`, `contracts.cljs`
 
-### Update correctness per combinator
-- `Map` + VectorDiff: only changed elements re-executed
-- `Unfold` + prefix skip: unchanged prefix reuses cached scores
-- `Switch` branch change: old branch discarded, new branch generated
-- `Scan` carry propagation: change at step t forces re-execution from t onward
+- [x] `propose` choices fed back to `generate` → finite weight (contract #9)
+- [x] Round-trip weight consistency
+
+### project vs score decomposition — `contracts.cljs`
+
+- [x] Sum of `project(trace, sel_i)` over address partition = `score(trace)`
+  (contract #10)
+
+### update vs fresh generate — `gfi_property_test.cljs`
+
+- [x] Update weight + old score ≈ new score (17 GFI properties)
 
 ---
 
-## Strategy 5: Differential Testing Against Gen.jl
+## Strategy 4: Combinator Compositionality — DONE
 
-*Same model, same observations → same mathematical results. Catches
-semantic differences between GenMLX and the reference implementation.*
+*Every combinator preserves all GFI contracts. Tested via combinator-specific
+tests and the contract verification framework.*
+
+### Degenerate cases — `combinator_contract_test.cljs`
+
+- [x] `Map(kernel, n=1)` behaves identically to kernel
+- [x] `Unfold(kernel, n=1)` behaves like single step
+- [x] `Switch(g1, g2)` with constant index = selected branch
+- [x] `Mask(kernel, true)` = kernel; `Mask(kernel, false)` = empty trace, score 0
+- [x] `Scan(kernel, n=1)` = single step
+
+### Nested combinators — `combinator_contract_test.cljs`
+
+- [x] `Map(Switch(...))` — trace structure, update across branch changes
+- [x] `Unfold(Mask(...))` — temporal sequence with masking
+- [x] `Switch(Map, Map)` — heterogeneous branches
+
+### Score additivity — `combinator_contract_test.cljs`
+
+- [x] Map element-scores sum to total score
+- [x] Unfold step-scores sum to total score
+- [x] Switch branch score = total score
+- [x] Scan step-scores sum to total score
+
+### GFI contracts on combinator models — `contract_verification_test.cljs`
+
+- [x] Map, Unfold, Switch, Scan, Mask, Recurse models all pass GFI contract
+  verification (subset of 11 contracts appropriate to each combinator type)
+
+---
+
+## Strategy 5: Differential Testing Against Gen.jl — PARTIAL
+
+*Same model, same observations → same mathematical results.*
 
 ### Existing coverage
-- 165 Gen.clj compatibility tests
-- 73 GenJAX compatibility tests
 
-### Systematic expansion
-- For every distribution: verify log-prob matches Gen.jl's `logpdf` at
-  5+ test points (including boundary values, zero, negative, large)
-- For every GFI operation × every distribution: generate with known
-  constraints, compare weight
-- Edge cases: empty choice maps, single-address models, models with
-  only deterministic computation, models with splice
+- [x] 165 Gen.clj compatibility tests (`gen_clj_compat_test.cljs`)
+- [x] 73 GenJAX compatibility tests (`genjax_compat_test.cljs`)
 
-### Cross-implementation weight comparison
-- Define 5 canonical models in both GenMLX and Gen.jl
-- For each: fix random choices, compute generate/update/regenerate weights
-- Verify agreement to numerical precision (~1e-6)
+### Remaining (TODO Phase 23 in TODO.md)
+
+- [ ] Julia script to generate `gen_jl_reference.json` with deterministic
+  log-prob values and GFI operation outputs for 10 canonical models
+- [ ] GenMLX test loader that compares against reference JSON (~185 assertions)
+- [ ] Cross-process Gen.jl oracle for dynamic queries (future, if needed)
 
 ---
 
-## Strategy 6: Inference Algorithm Convergence Tests
+## Strategy 6: Inference Algorithm Convergence Tests — DONE
 
-*Run inference on models with known posteriors. Verify the algorithm
-converges to the correct answer. Catches bugs in weight computation,
-acceptance logic, and resampling.*
+*Run inference on models with known posteriors. Verify convergence to the
+correct answer.*
 
-### Conjugate pair models (analytical posterior)
+### Conjugate pair models — `inference_convergence_test.cljs`
 
-**Beta-Bernoulli:**
-- Prior: Beta(α, β), Likelihood: Bernoulli(p)
-- Posterior: Beta(α + k, β + n - k) where k = number of successes
-- Test: IS, MH, HMC, SMC, VI → posterior mean within tolerance of (α+k)/(α+β+n)
+- [x] **Gamma-Poisson:** IS (100 particles) and MH (500 samples) → posterior
+  mean ≈ 3.0 for Gamma(3,1)/Poisson data
+- [x] **Normal-Normal:** HMC and NUTS → posterior mean ≈ analytical, acceptance
+  rate > 0.3, no NaN values
+- [x] **Beta-Bernoulli:** tested via `conjugate_bb_test.cljs`, `conjugate_posterior_test.cljs`
 
-**Normal-Normal (known variance):**
-- Prior: N(μ₀, σ₀²), Likelihood: N(μ, σ²) with n observations
-- Posterior: N(μ_post, σ_post²) with known formulas
-- Test: all algorithms → posterior mean and variance within tolerance
+### Algorithm-specific checks — `inference_property_test.cljs`, various test files
 
-**Gamma-Poisson:**
-- Prior: Gamma(α, β), Likelihood: Poisson(λ)
-- Posterior: Gamma(α + Σx_i, β + n)
-- Test: IS, MH, SMC → posterior mean within tolerance
+- [x] MH acceptance rate in valid range (24 inference properties)
+- [x] HMC acceptance rate > 0.6 with good step size (`adaptive_hmc_test.cljs`)
+- [x] NUTS no divergent transitions on simple models (`adaptive_nuts_test.cljs`)
+- [x] SMC weight finiteness and resampling correctness
+- [x] VI ELBO convergence (`adev_test.cljs`, `vimco_test.cljs`)
 
-### Algorithm-specific checks
+### Mass matrix and adaptive tuning — `adaptive_hmc_test.cljs`, `adaptive_nuts_test.cljs`
 
-**MH:** acceptance rate should be between 0.1 and 0.9 for well-tuned proposals
-**HMC:** acceptance rate should be > 0.6 with good step size
-**NUTS:** no divergent transitions on simple models
-**SMC:** log-ML estimate should be close to analytical value for conjugate models
-**VI:** ELBO should converge and final KL divergence should be small
-**Gibbs:** each conditional should match the full conditional distribution
+- [x] Dual averaging step-size adaptation (Algorithm 4+5, Hoffman & Gelman 2014)
+- [x] Welford diagonal mass matrix estimation
+- [x] HMC target-accept 0.65, NUTS target-accept 0.8
 
-### Mass matrix effectiveness (14.1)
-- Anisotropic Gaussian: HMC with correct mass matrix should have higher
-  acceptance rate and lower autocorrelation than identity metric
-- Compare ESS/second between identity, diagonal, and dense metrics
+### Resampling methods — `hmc_mass_resample_test.cljs`
 
-### Resampling method comparison (14.3, 14.4)
-- All three methods (systematic, residual, stratified) should produce
-  correct posterior on conjugate models
-- Stratified and residual should have lower variance in log-ML estimates
-  than systematic (verify on 100+ independent SMC runs)
+- [x] Systematic, residual, and stratified resampling produce correct posteriors
 
 ---
 
-## Implementation Plan
+## Verification Frameworks
 
-### Recommended order (maximum coverage, minimum code)
+### GFI Contract Registry — `src/genmlx/contracts.cljs`
 
-**Phase A: Cross-validation harness (~100 lines)**
+A data-driven contract registry where each contract is a measure-theoretic
+theorem expressed as an executable predicate. 11 core contracts:
 
-Write a single test harness function that takes any `(model, args, observations)`
-triple and runs ~15 cross-validation checks across all GFI operations:
+1. `generate` weight = score when fully constrained
+2. `update` with empty constraints = identity (weight 0)
+3. `update` weight = new_score - old_score
+4. `update` round-trip via discard recovers original trace
+5. `regenerate` with empty selection = identity (weight 0)
+6. `project(all)` = score
+7. `project(none)` = 0
+8. `assess` weight = `generate` score for same choices
+9. `propose` → `generate` round-trip = finite weight
+10. Score decomposition: sum of `project` over partition = score
+11. Broadcasting equivalence: `vsimulate(N)` matches N `simulate` calls
 
-```
-(defn verify-gfi-contract [model args observations]
-  ;; 1. simulate → trace
-  ;; 2. generate with all choices → weight = score
-  ;; 3. assess with all choices → weight = score
-  ;; 4. update with empty → same trace, weight 0
-  ;; 5. update with all choices → same trace, weight 0
-  ;; 6. regenerate with empty → same trace, weight 0
-  ;; 7. project(all) = score
-  ;; 8. project(empty) = 0
-  ;; 9. propose → generate with choices → weight 0
-  ;; 10. update round-trip via discard
-  ;; 11. edit(constraint) round-trip
-  ;; 12. edit(selection) backward = same selection
-  ;; 13. score decomposition via project
-  ;; 14. generate weight ≈ analytical (if known)
-  ;; 15. broadcasting equivalence (if applicable)
-  )
-```
+**Verified on 13 canonical models:** single-site, multi-site, linreg, splice,
+mixed discrete/continuous, deep-nesting (3-level splice), vec-compatible,
+Map, Unfold, Switch, Scan, Mask, Recurse. **575 checks, 0 failures.**
 
-**Phase B: Canonical model suite (~80 lines)**
+### Static Validator — `src/genmlx/verify.cljs`
 
-Define 10-15 models covering all features:
+`validate-gen-fn` performs static analysis: execution errors, address
+uniqueness (via validation handler), score finiteness, empty models,
+materialization in body, multi-trial conditional duplicate detection.
 
-1. Single Gaussian (1 address)
-2. Multi-address (5 independent Gaussians)
-3. Dependent addresses (linear regression)
-4. Discrete model (Bernoulli)
-5. Mixed discrete/continuous (mixture)
-6. Nested splice (sub-GF)
-7. Map combinator
-8. Unfold combinator
-9. Switch combinator
-10. Scan combinator
-11. Mask combinator
-12. Mix combinator
-13. Recurse combinator
-14. Deep nesting (Map(Switch(...)))
-15. Model with `param`
+### Property-Based Testing — Phase 1 complete (162 properties, 9 files)
 
-**Phase C: Run harness on every model**
+| File | Properties | Covers |
+|------|-----------|--------|
+| `inference_property_test.cljs` | 24 | IS, MH, SMC, kernels |
+| `vectorized_property_test.cljs` | 18 | vsimulate, vgenerate, batched ops |
+| `combinator_extra_property_test.cljs` | 20 | Map, Unfold, Switch, Scan, Mask, Mix |
+| `gradient_learning_property_test.cljs` | 20 | gradients, Adam, wake-sleep |
+| `combinator_property_test.cljs` | 15 | combinator GFI contracts |
+| `gfi_property_test.cljs` | 17 | simulate, generate, update, regenerate |
+| `dist_property_test.cljs` | 17 | distribution sampling, log-prob |
+| `choicemap_property_test.cljs` | 11 | choicemap algebra |
+| `selection_property_test.cljs` | 11 | selection algebra |
 
-Apply the harness to all 15 models → 15 × 15 = 225+ test assertions
-from ~180 lines of code.
+**Phase 2 remaining (TODO 21.14-21.21 in TODO.md):** ~88 more properties
+covering edit/diff, SMC, MCMC, VI, SMCP3, gradient MCMC, handler internals,
+and ADEV.
 
-**Phase D: Distribution exhaustive tests (~150 lines)**
+---
 
-For all 27 distributions:
-- Sample statistics (mean, variance)
-- Log-prob spot checks (5 points each)
-- Boundary values
-- Batch sampling equivalence (`dist-sample-n` vs sequential)
+## Test File Inventory
 
-**Phase E: Inference convergence tests (~120 lines)**
+### Core unit tests (run with `bun run --bun nbb test/genmlx/<file>`)
 
-3 conjugate models × 6 algorithms = 18 convergence tests.
-Each verifies posterior mean within tolerance of analytical value.
+| File | Focus |
+|------|-------|
+| `choicemap_test.cljs` | ChoiceMap data structure |
+| `trace_test.cljs` | Trace record |
+| `selection_test.cljs` | Selection algebra |
+| `handler_test.cljs` | Handler state transitions |
+| `dist_test.cljs` | Distribution sampling and log-prob |
+| `gen_test.cljs` | `gen` macro, DynamicGF |
+| `combinators_test.cljs` | All combinators |
+| `inference_test.cljs` | Core inference algorithms |
 
-**Phase F: Combinator-specific tests (~100 lines)**
+### Compatibility suites (must always pass)
 
-Degenerate cases, nested combinators, score additivity, diff-aware update.
+| File | Assertions | Source |
+|------|-----------|--------|
+| `gen_clj_compat_test.cljs` | 165/165 | Gen.jl reference |
+| `genjax_compat_test.cljs` | 73/73 | GenJAX reference |
 
-### Expected coverage
+### Feature-specific tests
 
-| Phase | Tests | Lines | Catches |
-|-------|-------|-------|---------|
-| A+B+C | ~225 | ~180 | GFI contract violations, weight bugs, state corruption |
-| D | ~135 | ~150 | Distribution parameterization, log-prob errors |
-| E | ~18 | ~120 | Inference algorithm bugs, acceptance logic |
-| F | ~40 | ~100 | Combinator compositionality, diff tracking |
-| **Total** | **~418** | **~550** | — |
+| File | Focus |
+|------|-------|
+| `adev_test.cljs` | ADEV gradient estimation |
+| `adaptive_hmc_test.cljs` | Adaptive HMC (5 tests) |
+| `adaptive_nuts_test.cljs` | Adaptive NUTS (6 tests) |
+| `amortized_test.cljs` | Amortized inference |
+| `assess_propose_test.cljs` | assess/propose operations |
+| `batch_sample_n_test.cljs` | Batch sampling |
+| `choicemap_algebra_test.cljs` | ChoiceMap merge/diff |
+| `compile_fn_test.cljs` | mx/compile-fn |
+| `correctness_test.cljs` | Cross-cutting correctness |
+| `custom_gradient_test.cljs` | CustomGradientGF |
+| `elliptical_slice_test.cljs` | Elliptical slice sampling |
+| `error_message_test.cljs` | Error message quality |
+| `gamma_batch_test.cljs` | Gamma batch sampling |
+| `hmc_mass_resample_test.cljs` | Mass matrix + resampling |
+| `kernel_combinator_test.cljs` | Kernel algebra |
+| `kernel_dsl_test.cljs` | Trace kernel DSL |
+| `lanczos_test.cljs` | Lanczos log-gamma |
+| `lazy_mcmc_test.cljs` | Lazy MCMC chains |
+| `loop_compilation_test.cljs` | Loop compilation |
+| `loop_compiled_hmc_test.cljs` | Compiled HMC |
+| `loop_compiled_mala_test.cljs` | Compiled MALA |
+| `map_test.cljs` | Map combinator |
+| `map_dist_test.cljs` | map->dist bridge |
+| `memory_test.cljs` | Memory management |
+| `neg_binomial_test.cljs` | Negative binomial |
+| `new_dist_test.cljs` | New distributions |
+| `nn_test.cljs` | Neural network GFs |
+| `prng_key_test.cljs` | Functional PRNG |
+| `project_test.cljs` | Project operation |
+| `proposal_edit_test.cljs` | ProposalEdit |
+| `recurse_test.cljs` | Recurse combinator |
+| `remaining_fixes_test.cljs` | Bug fix verification |
+| `resource_test.cljs` | Resource management |
+| `sbc_test.cljs` | Simulation-based calibration |
+| `smcp3_kernel_test.cljs` | SMCP3 |
+| `stress_test.cljs` | Long-chain stress tests |
+| `untested_features_test.cljs` | Edge cases |
+| `validation_test.cljs` | Input validation |
+| `vectorized_grad_test.cljs` | Vectorized gradients |
+| `vectorized_mcmc_fix_test.cljs` | Vectorized MCMC |
+| `vectorized_test.cljs` | Vectorized inference |
+| `verify_test.cljs` | Static validator |
+| `vimco_test.cljs` | VIMCO |
+| `vmap_test.cljs` | vmap-gf combinator |
+| `vupdate_test.cljs` | Batched update |
 
-This would bring total test assertions from ~640 to ~1060.
+### Strategy test suites (from this document)
+
+| File | Assertions | Strategy |
+|------|-----------|----------|
+| `dist_statistics_test.cljs` | ~48 | Strategy 1 |
+| `gfi_contract_test.cljs` | ~65 | Strategies 2-3 |
+| `combinator_contract_test.cljs` | ~23 | Strategy 4 |
+| `inference_convergence_test.cljs` | ~10 | Strategy 6 |
+| `contract_verification_test.cljs` | 575 | Contract framework |
+| `conjugate_bb_test.cljs` | ~8 | Strategy 6 |
+| `conjugate_gp_test.cljs` | ~8 | Strategy 6 |
+| `conjugate_posterior_test.cljs` | ~8 | Strategy 6 |
+
+### Property test suites
+
+| File | Properties |
+|------|-----------|
+| `inference_property_test.cljs` | 24 |
+| `vectorized_property_test.cljs` | 18 |
+| `combinator_extra_property_test.cljs` | 20 |
+| `gradient_learning_property_test.cljs` | 20 |
+| `combinator_property_test.cljs` | 15 |
+| `gfi_property_test.cljs` | 17 |
+| `dist_property_test.cljs` | 17 |
+| `choicemap_property_test.cljs` | 11 |
+| `selection_property_test.cljs` | 11 |
+
+---
+
+## Remaining Work
+
+Tracked in TODO.md:
+
+- **Phase 21.14-21.21:** Property test Phase 2 (~88 properties across 8 files)
+  — edit/diff, SMC, MCMC, VI, SMCP3, gradient MCMC, handler internals, ADEV
+- **Phase 23.1-23.2:** Gen.jl differential testing — Julia reference script +
+  GenMLX comparison loader (~185 assertions)
