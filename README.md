@@ -11,7 +11,7 @@ GenMLX implements Gen's **Generative Function Interface (GFI)** — the same arc
 Gen implementations exist for Julia and JAX — but nothing for Apple Silicon's GPU framework. MLX's unified memory model is a natural fit for probabilistic programming: MCMC control flow runs on CPU while all numerics stay on GPU, with zero data transfer cost. ClojureScript on Node.js gives direct access to MLX through a native addon with no FFI overhead, and nbb provides a fast REPL for interactive model development.
 
 - **MLX-native** — unified memory, lazy evaluation, dynamic shapes, `mx/grad` through entire models
-- **~14,000 lines of ClojureScript** — protocols, records, persistent data structures, the whole thing is readable in an afternoon
+- **~17,000 lines of ClojureScript** — protocols, records, persistent data structures, the whole thing is readable in an afternoon
 - **GPU end-to-end** — scores and choice values are MLX arrays throughout, extracted with `mx/item` only at inference boundaries
 
 ## Requirements
@@ -104,17 +104,25 @@ Layer 3: DSL
 
 Layer 4: Distributions
   genmlx.dist         — 27 distributions, each a GFI participant
+  genmlx.custom_gradient — CustomGradientGF (custom gradient gen functions)
+  genmlx.nn           — Neural network generative functions (nn->gen-fn)
 
 Layer 5: Combinators
   genmlx.combinators  — Map, Unfold, Switch, Scan, Mask, Mix, Recurse,
                         Vectorized Switch, Contramap/Dimap
+  genmlx.vmap         — Vmap combinator (vmap-gf / repeat-gf, full GFI)
 
 Layer 6: Inference
   genmlx.inference    — IS, MH, MALA, HMC, NUTS, Gibbs, Elliptical Slice,
-                        Involutive MCMC, MAP, SMC, SMCP3, VI, Kernel Composition
+                        Involutive MCMC, MAP, SMC, SMCP3, VI, ADEV,
+                        Amortized Inference, Kernel Composition
 
 Layer 7: Vectorized
   genmlx.vectorized   — VectorizedTrace, batched execution, dispatch amortization
+
+Layer 8: Verification
+  genmlx.contracts    — GFI contract registry (11 measure-theoretic contracts)
+  genmlx.verify       — Static validator (validate-gen-fn)
 ```
 
 ## Distributions
@@ -165,6 +173,7 @@ Aliases: `normal` → `gaussian`, `flip` → `bernoulli`
 - **SMC** — `smc` (particle filtering with resampling + rejuvenation), `csmc`
 - **SMCP3** — `smcp3` (Sequential Monte Carlo with Probabilistic Program Proposals)
 - **Variational Inference** — `vi` (ADVI with mean-field Gaussian guide), `programmable-vi` with pluggable objectives (`elbo`, `iwelbo`, `wake-sleep`) and gradient estimators (`reinforce`, reparameterization)
+- **ADEV** — automatic differentiation of expected values with reparameterization and REINFORCE strategies, vectorized GPU execution, compiled optimization loops, baseline variance reduction
 - **Kernel Composition** — `chain`, `cycle-kernels`, `mix-kernels`, `repeat-kernel`, `seed`
 - **Diagnostics** — `ess`, `r-hat`, `summarize`, `sample-quantiles`
 
@@ -177,6 +186,7 @@ Aliases: `normal` → `gaussian`, `flip` → `bernoulli`
 - **Mask** — conditionally gate execution on a boolean
 - **Mix** — first-class mixture model support
 - **Recurse** — fixed-point combinator for recursive generative functions
+- **Vmap** — `vmap-gf` / `repeat-gf` with full GFI (simulate, generate, update, regenerate, assess, propose, project)
 - **Vectorized Switch** — executes all branches with `[N]`-shaped arrays, selects via `mx/where`
 - **Contramap / Dimap** — transform arguments and/or return values of generative functions
 
@@ -218,13 +228,8 @@ The key insight: MLX operations broadcast naturally. Sample `[N]` values instead
 ```
 
 - `VectorizedTrace` — choices where leaves hold `[N]`-shaped arrays
-- 10 distributions have native batch sampling (`dist-sample-n`), others fall back to sequential
+- 20 distributions have native batch sampling (`dist-sample-n`), others fall back to sequential
 - Vectorized importance sampling and SMC initialization built on `vgenerate`
-
-**Benchmarks (N=100, 5-site model — dispatch amortization):**
-- vgenerate: 57x
-- Vectorized IS: 53x
-- Vectorized SMC init: 62x
 
 ## Running Tests
 
@@ -271,7 +276,7 @@ bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 
 ## MLX Optimization Strategy
 
-- **Loop compilation** — entire MCMC chains compiled into single Metal dispatches (MH 5.6x, MALA 2.3x, HMC 3.9x speedup)
+- **Loop compilation** — entire MCMC chains compiled into single Metal dispatches via `mx/compile-fn`
 - **`mx/compile-fn`** on score functions — JIT-compiles into cached Metal programs
 - **`mx/value-and-grad`** — fused forward+backward in a single GPU dispatch
 - **Adaptive step-size** — HMC dual averaging (Hoffman & Gelman 2014) auto-tunes during burn-in

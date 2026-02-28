@@ -7,7 +7,7 @@ using Apple's MLX framework for GPU acceleration on Apple Silicon. It implements
 the **Generative Function Interface (GFI)** — the same architecture as Gen.jl
 (Julia) and GenJAX (JAX).
 
-~14,000 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
+~17,000 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
 
 ## How to run things
 
@@ -52,15 +52,22 @@ src/genmlx/
   diff.cljs             Incremental change tracking
   dist.cljs             27 distributions (gaussian, uniform, bernoulli, beta, gamma, ...)
   combinators.cljs      Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Contramap/Dimap
+  vmap.cljs             Vmap combinator (vmap-gf / repeat-gf with full GFI)
   vectorized.cljs       VectorizedTrace, resampling, ESS, log-ML utilities
   gradients.cljs        Choice gradients, score gradients
   learning.cljs         Parameter stores, optimizers (SGD, Adam), wake-sleep
+  custom_gradient.cljs  CustomGradientGF — custom gradient generative functions
+  nn.cljs               Neural network generative functions (nn->gen-fn)
+  contracts.cljs        GFI contract registry (11 measure-theoretic contracts)
+  verify.cljs           Static validator (validate-gen-fn)
   inference/
     importance.cljs     IS, importance resampling, vectorized IS
     mcmc.cljs           MH, MALA, HMC, NUTS, Gibbs, Elliptical Slice, Involutive MCMC, MAP
     smc.cljs            SMC with rejuvenation, csmc
     smcp3.cljs          Sequential Monte Carlo with Probabilistic Program Proposals
     vi.cljs             ADVI, programmable VI (ELBO, IWELBO, wake-sleep)
+    adev.cljs           ADEV gradient estimation (reparam + REINFORCE, vectorized, compiled)
+    amortized.cljs      Amortized inference via trained neural proposals
     kernel.cljs         Kernel composition (chain, cycle, mix, repeat, seed)
     util.cljs           Weight materialization, normalization, MH accept
     diagnostics.cljs    ESS, R-hat, summary statistics
@@ -82,9 +89,10 @@ Layer 1: Core Data          (choicemap, trace, selection)
 Layer 2: GFI & Execution    (protocols, handler, edit, diff)
 Layer 3: DSL                (gen macro, dynamic — DynamicGF, vsimulate, vgenerate)
 Layer 4: Distributions      (dist/core, dist/macros, dist — 27 types)
-Layer 5: Combinators        (Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Contramap/Dimap)
-Layer 6: Inference          (IS, MH, MALA, HMC, NUTS, Gibbs, ESS, SMC, SMCP3, VI, MAP + kernels)
+Layer 5: Combinators        (Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Vmap, Contramap/Dimap)
+Layer 6: Inference          (IS, MH, MALA, HMC, NUTS, Gibbs, ESS, SMC, SMCP3, VI, ADEV, MAP + kernels)
 Layer 7: Vectorized         (VectorizedTrace, batched execution, dispatch amortization)
+Layer 8: Verification       (contracts — 11 GFI contracts, verify — static validator)
 ```
 
 ## Key design principles
@@ -155,12 +163,8 @@ score accumulation, weight computation) just works.
 - Batched handler transitions: structurally identical to scalar ones
 - `VectorizedTrace`: choices where leaves hold `[N]`-shaped arrays
 
-**Benchmarks (N=100, 5-site model — dispatch amortization):**
-- vgenerate: 57x
-- Vectorized IS: 53x
-- Vectorized SMC init: 62x
-
-**Limitations:** No `splice` in batched mode.
+**Limitations:** No `splice` in shape-based batched mode (`vsimulate`/`vgenerate`).
+`vmap-gf` supports splice via combinator fallback.
 
 ## Test conventions
 
@@ -205,6 +209,6 @@ After any change, verify:
 
 - `README.md` — Quick start, examples, public API overview
 - `GAPS.md` — Long-term roadmap, gap analysis vs Gen.jl and GenJAX
-- `TESTING.md` — Testing strategy and verification plan
+- `TESTING.md` — Testing strategy, verification frameworks, and test file inventory
 - `TODO.md` — Master TODO with all remaining work
-- `TODO_OPTIMIZATION.md` — Optimization plan, findings, and step-by-step progress
+- `FEATURE_COMPARISON.md` — GenJAX vs GenMLX feature comparison
