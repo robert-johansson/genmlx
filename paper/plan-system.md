@@ -236,6 +236,119 @@ as a companion paper).
 
 ---
 
+## POPL 2026 Gap (Our Opportunity)
+
+The Becker et al. POPL 2026 paper (GenJAX/λ_GEN) formalizes:
+- λ_GEN calculus: types, terms, QBS denotational semantics
+- Two program transformations only: simulate{−} and assess{−}
+- Proposition 3.1: correctness of simulate and assess
+- vmap_n as source-to-source transformation with logical relations proof
+
+The POPL 2026 paper does **NOT** formalize:
+- generate, update, regenerate, project, propose, edit
+- Handler-based execution (they use JAX tracing, not handlers)
+- Combinators beyond scan (no Map, Unfold, Switch, Mask, Mix, Recurse)
+- Diff-aware incremental computation
+- Broadcasting as an alternative to vmap
+
+This gap is the paper's opportunity. State it clearly in Section 1.
+
+---
+
+## Required Benchmarks (from TOPML expectations)
+
+**Minimum 3 benchmark models:**
+
+1. **Hidden Markov Model (HMM)** — standard PP benchmark. Compare sequential IS,
+   vectorized IS, SMC. Report: log-marginal-likelihood accuracy, wall-clock time,
+   ESS. Exercises Unfold + generate + importance weighting.
+
+2. **Bayesian Linear/Polynomial Regression** — full inference pipeline. Compare
+   MH, HMC, NUTS, VI. Report: posterior accuracy (compare to analytic solution),
+   convergence speed, samples/second.
+
+3. **Gaussian Mixture Model** — exercises Mix/Switch combinator + discrete variables.
+   Compare Gibbs, involutive MCMC (ProposalEdit). Report: mixing time, ESS,
+   correctness of component assignment.
+
+**Minimum 2 system comparisons:**
+- Gen.jl (Julia) — the reference GFI implementation (same hardware, CPU)
+- At least one of: GenJAX, Pyro, NumPyro, Turing.jl
+
+**Required ablation:** Vectorized vs sequential speedup curve (N = 1, 10, 100, 1000).
+
+**Methodology:** Mean ± std over minimum 10 runs. Paired tests for system
+comparisons. Report both time and accuracy.
+
+---
+
+## What Must Be Created
+
+| Item | Effort | Priority |
+|------|--------|----------|
+| Benchmark suite (Models 1-3 with timing harness) | Large | Critical |
+| Gen.jl comparison (install, implement same models, run) | Large | Critical |
+| Figures: architecture diagram, broadcasting dataflow, speedup plots, convergence curves | Medium | Critical |
+| Vectorization scaling study (N=1 to N=1000) | Medium | Critical |
+| Hardware profiling (GPU vs CPU time, memory) | Small | Important |
+| Inference code examples (5-line snippets for §6) | Small | Important |
+| LaTeX manuscript in TOPML template | Medium | Required |
+
+## What Already Exists
+
+| Item | Source |
+|------|--------|
+| System implementation | src/genmlx/ (~10,800 lines) |
+| Compatibility tests | test/genmlx/*_compat_test.cljs |
+| Vectorization speedup numbers | test/genmlx/vectorized_benchmark.cljs |
+| GPU benchmarks (exploratory) | test/genmlx/gpu_benchmark.cljs |
+| Formal proofs (appendix material) | formal/ (17 files, 6,652 lines) |
+| Architecture description | ARCHITECTURE.md, CLAUDE.md |
+| Model examples | README.md, test files |
+| Distribution catalog | src/genmlx/dist.cljs |
+
+---
+
+## Gap Analysis
+
+| Requirement | Status | Gap |
+|---|---|---|
+| Contribution statement | Implicit in draft | Sharpen for abstract; state POPL gap |
+| Evaluation section | Speedup numbers exist, no formal benchmarks | **Major gap**: need proper benchmark suite |
+| Related work | Scattered references | **Major gap**: need 2-3 page structured section |
+| Formal foundations (§5) | formal/ complete | Condense to 3 pages for this paper |
+| Anonymization | Not started | Straightforward |
+| Reproducibility | Code exists, no artifact | Document reproduction steps, PRNG seeds |
+
+---
+
+## Reviewer Objections to Anticipate
+
+1. **"ClojureScript is niche — who will use this?"**
+   Response: The contribution is the broadcasting approach and the formal
+   foundation, not the language choice. The technique applies to any framework
+   with element-wise operations.
+
+2. **"No comparison with GenJAX on NVIDIA hardware."**
+   Response: Acknowledge this limitation. Compare with Gen.jl on the same
+   hardware. The point is "competitive on consumer hardware without CUDA."
+
+3. **"Float32 only — can you do real statistics?"**
+   Response: Float32 is sufficient for most Bayesian inference. Stan uses
+   Float64 but acknowledges Float32 is often adequate. Report any numerical
+   issues encountered.
+
+4. **"The formal proofs are in an appendix — is this really a theory contribution?"**
+   Response: Primary contribution is the system and broadcasting approach. Formal
+   proofs provide confidence. For full treatment, see companion Paper 2.
+
+5. **"Only 27 distributions — Pyro has hundreds."**
+   Response: The `defdist` macro makes adding distributions trivial (10 lines).
+   27 covers the standard set for Bayesian modeling. Open multimethod design
+   means users extend without modifying core.
+
+---
+
 ## Effort Estimate
 
 - Anonymize and reformat for ACM template: 1 day

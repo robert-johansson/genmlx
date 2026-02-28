@@ -313,6 +313,132 @@ of Paper 2; reviewers of Paper 1 will want the full treatment.
 
 ---
 
+## POPL 2026 Gap (What We Extend)
+
+The Becker et al. POPL 2026 paper formalizes λ_GEN with:
+- Simulate{−} and assess{−} program transformations
+- Proposition 3.1: correctness of simulate and assess
+- vmap_n with logical relations proof (Theorem 3.3)
+
+It does **NOT** formalize: generate, update, regenerate, project, propose, edit,
+handler-based execution, combinators beyond scan, diff-aware updates, or
+broadcasting. We formalize all of these.
+
+**Clear rule:** Do not re-prove Prop 3.1 or Theorem 3.3 — cite them.
+State exactly which results are inherited, which are new.
+
+---
+
+## Precise Theorem Requirements (TOPML standard)
+
+### Theorem A (GFI Correctness) — must be fully proved
+
+For each op ∈ {generate, update, regenerate, project, propose, edit}, the
+program transformation op{t} correctly implements the semantic operation.
+Specifically:
+- generate: weight = marginal density of observations under μ
+- update: weight = score(new trace) − score(old trace)
+- regenerate: weight = log MH acceptance ratio
+- project: weight = log-density at selected addresses
+- propose: equivalent to simulate (returns score as weight)
+- edit: weight satisfies edit-specific contract
+
+Proof by structural induction on t. Explicit base case (trace(k, d)) and
+inductive case (do_G{x ← t₁; t₂}). Generate/update must handle all three
+sub-cases (constrained, keep-old, fresh-sample) with explicit density computations.
+
+### Theorem B (Broadcasting Correctness) — must include
+
+1. Define logical relations R_τ precisely
+2. Prove four lemmas (batch sampling, log-prob, score accumulation, handler agnosticism)
+3. State model-body preconditions (no mx/item, no shape-branching)
+4. List excluded distributions and why (wishart, inv-wishart)
+5. Handle splice case
+
+### Theorem C (Edit/Backward Duality) — must include
+
+ProposalEdit proof must:
+1. Define proposal consistency conditions precisely
+2. Derive MH acceptance ratio from w_upd + w_b − w_f
+3. Show backward weight negates forward weight (under consistency)
+4. State when consistency fails (rejection, not incorrectness)
+
+### Theorem D (Combinator Compositionality)
+
+Statement in main body. Map and Unfold proofs in main paper.
+Mix and Recurse proofs can be in appendix but must exist.
+
+---
+
+## Tier 2 Items (Strongly Recommended)
+
+### Handler Soundness Theorem
+`run-handler(m-transition, σ₀, body)` = denotation m{body}(σ₀).
+Must include: volatile! invisibility argument, splice soundness for both
+scalar and batched modes. Already exists in `handler-soundness.md`.
+
+### Diff-Aware Update Correctness
+MapCombinator with VectorDiff(S): update-with-diffs = full update but only
+re-executes elements in S ∪ C. Already exists in `diff-update.md`.
+
+### Metatheorem (Unifying Statement)
+A single theorem subsuming A–D: for any well-typed λ_MLX program composed
+of GFs and combinators, handler execution produces traces/scores/weights equal
+to denotational semantics, and broadcasting preserves correspondence.
+
+### Worked Example (End-to-End)
+Take a 3-site model, walk through: typing derivation → generate{−} transformation
+→ handler execution trace → broadcasting lift to N=4 → weight verification.
+2-3 pages. Dramatically improves readability.
+
+### QBS Construction Verification
+For each type constructor, verify QBS axioms. Cite Heunen et al. 2017 and
+Ścibior et al. 2018 specifically:
+- ⟦G_γ η⟧ = 𝒫_≪(⟦γ⟧) × (⟦γ⟧ → ⟦η⟧) is a QBS
+- ⟦H(σ,τ)⟧ is a QBS morphism space
+- Probability monad (from Heunen et al.) for do_P and do_G
+
+### Numerical Stability Discussion
+- All densities in log-space (no underflow)
+- mx/add for score accumulation (not mx/multiply)
+- logsumexp for mixture weights
+- Measure-zero constraints: log(0) = -∞, weight = -∞, MH rejects (correct)
+
+---
+
+## Non-Negotiable Quality Standards
+
+1. **Every theorem: all hypotheses stated.** No implicit assumptions.
+
+2. **No "by inspection" in proofs.** Replace with explicit case analysis or
+   citation to specific code location with checkable property.
+
+3. **Every weight formula must be derived, not asserted.** The reader must
+   verify weight = log(MH ratio) by following the algebra.
+
+4. **Implementation correspondence must be machine-checkable in principle.**
+   Every formal rule cites specific file and line range.
+
+5. **Do not overclaim.** Broadcasting has exceptions (wishart, inv-wishart).
+   Model body must use broadcastable operations. State limitations clearly.
+
+---
+
+## Gap Analysis
+
+| Requirement | Status | Gap |
+|---|---|---|
+| Theorem A (GFI correctness) | Proof sketches in correctness.md | All hypotheses explicit, all ops proved, no shortcuts |
+| Theorem B (broadcasting) | broadcasting.md with categories | Model-body precondition, full inductive proof, splice case |
+| Theorem C (edit duality) | edit-duality.md with conditions | Full ProposalEdit weight derivation |
+| Theorem D (combinators) | combinators.md | Map + Unfold expanded for main paper |
+| Calculus + semantics | calculus.md + semantics.md complete | Displayed inference rules (not prose) |
+| Handler soundness | handler-soundness.md | Exists, needs polish |
+| Worked example | Does not exist | New work (2-3 pages) |
+| Metatheorem | Does not exist | New work |
+
+---
+
 ## Effort Estimate
 
 - Write introduction and motivation: 1.5 days
