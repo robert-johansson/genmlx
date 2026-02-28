@@ -1265,7 +1265,7 @@
     #(let [;; Build vectorized score and gradient functions
            vec-score-fn (u/make-vectorized-score-fn model args observations addresses)
            neg-U-fn (fn [q] (mx/negative (vec-score-fn q)))
-           grad-fn (u/make-vectorized-grad-score model args observations addresses)
+           grad-fn (mx/compile-fn (u/make-vectorized-grad-score model args observations addresses))
            init-params (u/init-vectorized-params model args observations addresses n-chains)
            eps       (mx/scalar step-size)
            half-eps  (mx/scalar (* 0.5 step-size))

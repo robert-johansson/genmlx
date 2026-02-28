@@ -778,11 +778,11 @@ FINAL RESULTS (2026-02-28, Bun 1.3.9, Apple Silicon, median of 2 runs):
 ├────────────────────────────────┼──────────┼──────────┼─────────┼───────────────────────────────┤
 │ simulate (7-site)              │ 1 ms     │ 1 ms     │ 1.0x    │ At Metal floor                │
 │ generate (7-site)              │ 1-2 ms   │ 1 ms     │ ~1.0x   │ At Metal floor                │
-│ compiled-mh (7-site, 200 st)  │ 25-26 ms │ 38-39 ms │ 0.7x    │ Resource safety added (tidy)  │
+│ compiled-mh (7-site, 200 st)  │ 25-26 ms │ 38 ms    │ 0.7x    │ mx/tidy for resource safety   │
 │ mala (7-site, 50 st)          │ 32-33 ms │ 15-19 ms │ 1.9x    │ Loop compilation + grad cache │
 │ hmc (7-site, 20 st, L=10)     │ 17-18 ms │ 15-19 ms │ ~1.0x   │ Leapfrog unrolling            │
 │ vec-mala N=50 (50 st)          │ 140 ms   │ 135 ms   │ 1.0x    │ 5.6x effective (50 chains)    │
-│ vec-hmc N=10 (20 st)           │ 72-74 ms │ 239-248ms│ 0.3x    │ Resource mgmt overhead        │
+│ vec-hmc N=10 (20 st)           │ 72-74 ms │ 71 ms    │ 1.0x    │ compile-fn restored on grad   │
 │ vec-IS N=100 (5-site)          │ —        │ 1 ms     │ 112x    │ vs 112ms sequential           │
 │ loop-compiled-mh vs eager      │ —        │ 12.8x    │ —       │ The core optimization win     │
 │ loop-compiled-mala vs eager    │ —        │ 3.4x     │ —       │ Score/grad caching + loop     │
@@ -828,14 +828,14 @@ FINAL RESULTS (2026-02-28, Bun 1.3.9, Apple Silicon, median of 2 runs):
 
 **What got slower:**
 
-1. **compiled-mh default path** — 25-26ms → 38-39ms (0.7x). The `mx/tidy` wrapper
-   around each collected sample (Step 6) adds ~0.06ms overhead per step for resource
-   safety. Without it, long chains crash at the Metal 499K limit. This is the correct
-   tradeoff: ~50% slower on short benchmarks, but runs indefinitely on real workloads.
+1. **compiled-mh default path** — 25-26ms → 38ms (0.7x). The `mx/tidy` wrapper
+   around each collected sample adds ~0.06ms overhead per step for resource safety.
+   Without it, long chains crash at the Metal 499K limit. Tested replacing tidy with
+   `mx/eval!` + periodic `mx/clear-cache!` but tidy is actually faster (~38ms vs ~49ms)
+   because it only disposes unreferenced intermediates without forcing full sync.
 
-2. **vectorized-hmc** — 72-74ms → 239-248ms (0.3x). The HMC loop compilation
-   changes (Step 5.4.3) affected the vectorized path. The scalar HMC improved
-   slightly but vectorized regressed. This is a known issue for future investigation.
+2. **vectorized-hmc** — FIXED. Was 239-248ms (0.3x) due to accidentally dropped
+   `mx/compile-fn` on the gradient function. Restored to 71ms (~1.0x baseline).
 
 **The architectural insight:**
 
