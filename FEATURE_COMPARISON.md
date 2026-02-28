@@ -1,25 +1,23 @@
 # GenJAX vs GenMLX Feature Comparison
 
-> Date: 2026-02-25
+> Date: 2026-02-28 (updated)
 > GenJAX: Python/JAX, POPL 2026 artifact (~10k lines)
 > GenMLX: ClojureScript/MLX on Apple Silicon (~14k lines)
+>
+> **Note:** Performance claims in this document have not been independently
+> verified with a rigorous cross-platform benchmark. A proper comparison
+> against Gen.jl and GenJAX is needed before trusting any speedup numbers.
 
 ## GenJAX features GenMLX lacks
 
 ### High priority (core missing capabilities)
 
-1. **ADEV (Automatic Differentiation of Expected Values)**
-   - `@expectation` decorator wrapping ADEV programs
-   - `expectation.grad_estimate(params)` for unbiased gradient of E[f(X)]
-   - Per-distribution gradient strategies:
-     - REINFORCE: `flip_reinforce`, `normal_reinforce`, `geometric_reinforce`, `uniform_reinforce`, `multivariate_normal_reinforce`
-     - Reparameterization: `normal_reparam`, `uniform_reparam`, `multivariate_normal_reparam`
-     - Enumeration: `flip_enum`, `flip_enum_parallel`, `categorical_enum_parallel`
-     - Measure-valued derivatives: `flip_mvd`
-   - `Dual` number system (forward-mode AD with primal+tangent)
-   - `ADEVPrimitive` base class for extensible stochastic primitives with custom JVP
-   - Handles `jax.lax.cond` inside ADEV programs
-   - **This is GenJAX's primary research contribution (POPL 2026)**
+1. ~~**ADEV (Automatic Differentiation of Expected Values)**~~ **PARTIALLY CLOSED** — GenMLX now has ADEV with reparameterization and REINFORCE gradient strategies, vectorized GPU execution (~50-60x over sequential), compiled optimization loops, and baseline variance reduction. What remains different:
+   - GenJAX has per-distribution gradient strategy primitives (`flip_reinforce`, `normal_reparam`, `flip_enum`, `flip_mvd`, etc.) — GenMLX uses a simpler `has-reparam?` dispatch
+   - GenJAX has enumeration and measure-valued derivative strategies — GenMLX only has REINFORCE and reparameterization
+   - GenJAX has `Dual` number system (forward-mode AD) and `ADEVPrimitive` extensibility — GenMLX uses MLX reverse-mode AD
+   - GenJAX handles `jax.lax.cond` inside ADEV programs — GenMLX does not support control flow in ADEV
+   - **ADEV is GenJAX's primary research contribution (POPL 2026)**
 
 2. ~~**`Vmap` as a first-class GFI combinator**~~ **CLOSED** — GenMLX now has `vmap-gf` / `repeat-gf` implementing full GFI (simulate, generate, update, regenerate, assess, propose, project). Supports `in-axes`, scalar constraint broadcast, nested vmap-of-vmap, per-element selection, batched fast path (~7x), and splice in batched mode via combinator fallback.
 
@@ -54,9 +52,7 @@
 8. **`change` operation for SMC**
    - Explicit function for translating particle choices between different model parameterizations during SMC tempering
 
-9. **Address collision detection with file/line info**
-   - Raises `ValueError` with precise location when the same address is used twice
-   - GenMLX does not detect duplicate addresses
+9. ~~**Address collision detection with file/line info**~~ **PARTIALLY CLOSED** — GenMLX now has `validate-gen-fn` which detects duplicate addresses via a validation handler. Does not yet include file/line info in the error message (GenJAX raises `ValueError` with precise location).
 
 10. **`MCMCResult` with integrated diagnostics**
     - `chain` returns structured result with stacked traces, accepts, R-hat (bulk/tail ESS)
@@ -70,9 +66,7 @@
     - `raincloud`, `horizontal_raincloud` (Matplotlib)
     - Publication-quality standardized color palettes and figure sizes
 
-13. **Runtime type checking**
-    - `beartype` + `jaxtyping` for runtime type and shape validation
-    - GenMLX has no runtime validation
+13. ~~**Runtime type checking**~~ **PARTIALLY CLOSED** — GenMLX now has parameter validation on all distributions (sigma>0, lo<hi, etc.) and helpful error messages for common mistakes. Does not have shape-level validation comparable to `beartype` + `jaxtyping`.
 
 ### Low priority / ecosystem
 
@@ -86,7 +80,7 @@
 
 ## GenMLX features GenJAX lacks
 
-1. **NUTS** — No-U-Turn Sampler (neither Gen.jl nor GenJAX ship NUTS)
+1. **NUTS** — No-U-Turn Sampler with adaptive step-size and mass matrix (neither Gen.jl nor GenJAX ship NUTS)
 2. **Involutive MCMC** — with Jacobian computation
 3. **Elliptical Slice Sampling**
 4. **MAP Optimization** — vectorized with N random restarts simultaneously
@@ -98,10 +92,12 @@
 10. **`defdist-transform` macro** — derived distributions via deterministic transforms
 11. **`mixture` constructor** — first-class mixture distribution
 12. **`propose` / `project` GFI operations** — not exposed in GenJAX
-13. **Loop-compiled MCMC chains** — fuse entire chains into single Metal dispatches (10-21x over GenJAX pre-compiled MH)
+13. **Loop-compiled MCMC chains** — fuse entire chains into single Metal dispatches
 14. **`CustomGradientGF`** — `IHasArgumentGrads` protocol for custom gradient gen functions
 15. **MLX unified memory** — zero-copy CPU/GPU sharing on Apple Silicon
 16. **27 distributions** vs GenJAX's ~20 (von Mises, piecewise uniform, discrete uniform, truncated normal, delta, etc.)
+17. **GFI contract verification** — `verify-gfi-contracts` with 11 measure-theoretic contracts, tested on 13 canonical models (575 checks)
+18. **Adaptive HMC/NUTS** — dual averaging step-size tuning + diagonal mass matrix estimation
 
 ## Core GFI protocol comparison
 
@@ -133,7 +129,8 @@
 | Importance Sampling | Yes | Yes |
 | SMC | Yes | Yes |
 | SMCP3 | No | Yes |
-| VI / ELBO | Yes (ADEV) | Yes (MLX autograd) |
+| ADEV | Yes (Jaxpr + modular_vmap) | Yes (shape-based batching) |
+| VI / ELBO | Yes | Yes |
 | Wake-Sleep | No | Yes |
 | Kernel combinators | `chain` only | Full algebra |
 
@@ -153,8 +150,10 @@
 
 ## Bottom line
 
-**ADEV is the biggest gap.** It's the core theoretical contribution of the GenJAX POPL paper and enables sound, unbiased gradient estimation through arbitrary mixes of continuous and discrete distributions — something GenMLX fundamentally cannot do today. The PJAX staging infrastructure is the next most impactful missing feature, enabling Gen functions to compose freely with JAX transforms (JIT, vmap, grad).
+**PJAX staging infrastructure is the biggest remaining architectural gap.** It enables Gen functions to compose freely with JAX transforms (JIT, vmap, grad) — something GenMLX cannot do because SCI-interpreted functions are opaque to MLX's tracer.
 
-The Vmap combinator gap is now closed — GenMLX has both composable `vmap-gf` (full GFI combinator with nesting, per-element selection, batched fast path) and shape-based batching (`vsimulate`/`vgenerate`) for dispatch amortization.
+The ADEV gap is partially closed — GenMLX now has working ADEV with reparameterization, REINFORCE, vectorized GPU execution, and compiled optimization. GenJAX's ADEV is more sophisticated (enumeration, measure-valued derivatives, forward-mode Dual numbers), but for the common case of continuous latent variables, both systems work.
 
-GenMLX compensates with broader inference algorithms (NUTS, SMCP3, Involutive MCMC, etc.), richer combinators (Mix, Recurse, Mask, etc.), and significantly faster execution on Apple Silicon (10-34x across benchmarks).
+GenMLX compensates with broader inference algorithms (NUTS, SMCP3, Involutive MCMC, Elliptical Slice, MAP, etc.), richer combinators (Mix, Recurse, Mask, etc.), and GFI contract verification.
+
+**TODO:** A rigorous cross-platform benchmark comparing GenMLX, GenJAX, and Gen.jl on identical models is needed before making any performance claims.
