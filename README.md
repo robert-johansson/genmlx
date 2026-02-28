@@ -11,7 +11,7 @@ GenMLX implements Gen's **Generative Function Interface (GFI)** — the same arc
 Gen implementations exist for Julia and JAX — but nothing for Apple Silicon's GPU framework. MLX's unified memory model is a natural fit for probabilistic programming: MCMC control flow runs on CPU while all numerics stay on GPU, with zero data transfer cost. ClojureScript on Node.js gives direct access to MLX through a native addon with no FFI overhead, and nbb provides a fast REPL for interactive model development.
 
 - **MLX-native** — unified memory, lazy evaluation, dynamic shapes, `mx/grad` through entire models
-- **~17,000 lines of ClojureScript** — protocols, records, persistent data structures, the whole thing is readable in an afternoon
+- **~10,800 lines of ClojureScript** — protocols, records, persistent data structures, the whole thing is readable in an afternoon
 - **GPU end-to-end** — scores and choice values are MLX arrays throughout, extracted with `mx/item` only at inference boundaries
 
 ## Requirements

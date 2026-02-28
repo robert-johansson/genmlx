@@ -7,7 +7,7 @@ using Apple's MLX framework for GPU acceleration on Apple Silicon. It implements
 the **Generative Function Interface (GFI)** — the same architecture as Gen.jl
 (Julia) and GenJAX (JAX).
 
-~17,000 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
+~10,800 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
 
 ## How to run things
 

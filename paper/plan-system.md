@@ -40,7 +40,7 @@ architectural layers. For TOPML, it needs:
 4. **Formal foundations section** — connects to Paper 2, distinguishes from
    other PPL systems papers
 5. **Corrected claims** (from verification):
-   - Source LOC: ~10,800 (not ~17,000 as in CLAUDE.md; paper already says ~10,400)
+   - Source LOC: ~10,800 (paper already says ~10,400)
    - Distributions: 22 via defdist + 5 via defn = 27 total (correct, but clarify)
    - Property tests: 153 (not 162)
 
