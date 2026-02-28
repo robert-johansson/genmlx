@@ -467,7 +467,7 @@ the pure-MLX version appear faster than it is at realistic model sizes.
 | Step 4: Lowered gradients | **SKIP** | compile-fn already at Metal floor |
 | Step 5: Triple transform | **INVESTIGATE** | vmap may still help by amortizing eval! |
 | Step 6: Remove lazy + tidy | **DO** | Independent, still valuable |
-| Step 9: Lowered simulate/generate | **REASSESS** | 2.6x from compile-fn already; Metal floor limits further gains |
+| Step 9: Lowered simulate/generate | **REMOVED** | compile-fn at Metal floor; vectorized variants exist |
 
 **The real optimization levers are:**
 1. **Minimize eval! calls** — each costs ~0.29ms, dominates everything
@@ -586,14 +586,18 @@ chains instead of N dispatches.
 
 - [x] **5.2.3** Batching mechanism validated ✓
 
-#### Remaining: Inference loop overhead (5.3)
+#### Remaining: Inference loop overhead (5.3) — SUPERSEDED
 
 compiled-mh actual: 0.66ms/step (at 1000 steps) vs manual: 0.375ms/step = 1.76x gap.
 This gap is `collect-samples` infrastructure: PRNG management, `mx/->clj`
 conversions, callback dispatch.
 
-- [ ] **5.3.1** Profile and optimize `collect-samples` hot path
-- [ ] **5.3.2** Benchmark optimized loop
+~~- [ ] **5.3.1** Profile and optimize `collect-samples` hot path~~
+~~- [ ] **5.3.2** Benchmark optimized loop~~
+
+**Superseded by loop compilation (5.4)** which bypasses `collect-samples` entirely
+for compiled inference. The 1.76x gap in `collect-samples` is irrelevant when the
+compiled chain runs K steps in one Metal dispatch.
 
 #### Finding: LOOP COMPILATION WORKS — 5.6x speedup (2026-02-24)
 
@@ -756,87 +760,15 @@ These are small, targeted improvements to distribution hot paths.
 
 ---
 
-### Step 9: Lowered Simulate & Generate (Model Lowering for Full GFI Operations)
-**Time: 3-5 days | Builds on Step 3's recipe + lowering infrastructure**
-
-Steps 3-5 applied model lowering to score functions (the inner loop of inference).
-Step 9 applies the same strategy to `simulate` and `generate` themselves — the
-operations that create traces from scratch. This is where the 350-1200x gap
-to Gen.jl lives.
-
-The lowered simulate/generate functions include sampling (not just scoring):
-- Phase A (trace): Already done in Step 3.1 — the recipe is the same
-- Phase B (lower): Generate a closure that does PRNG splitting, sampling, scoring, and choicemap construction — all via direct MLX op calls
-- Phase C (compile): Wrap in `mx/compile-fn` — the entire model becomes a cached Metal program
-
-For static models, the lowered simulate is: `(fn [key] -> {:choices, :score, :retval})`
-— a pure function of the PRNG key. `mx/compile-fn` caches the topology; only the
-key value changes between calls.
-
-- [ ] **9.1** Implement `lower-simulate` in `compiler.cljs`
-  - Reuses recipe from Step 3.1
-  - Adds: PRNG key splitting, distribution sampling (via direct `dc/dist-sample` calls)
-  - Builds choices as a flat map `{addr -> MLX-array}` (not a choicemap tree — convert at boundary)
-  - ~150 lines
-
-- [ ] **9.2** Implement `lower-generate` in `compiler.cljs`
-  - Extends 9.1 with constraint handling: for constrained sites, use constraint value instead of sampling
-  - Computes importance weight = sum(log-prob at constrained sites)
-  - ~100 lines
-
-- [ ] **9.3** Wrap in `mx/compile-fn` and benchmark
-  - `(def fast-sim (mx/compile-fn (lower-simulate model args)))`
-  - Validated: compile-fn traces once and replays — body never re-enters SCI
-  - Target: **>30x speedup** on 7-site simulate (from ~1.66ms to ~0.05ms)
-  - Target: **>50x with compile** (from ~1.66ms to ~0.02ms)
-  - Note: simulate includes PRNG splitting and choicemap construction that the
-    pure score-fn benchmark didn't measure — targets are more conservative
-
-- [ ] **9.4** Integrate with IS and MH
-  - Importance sampling with lowered generate
-  - MH with lowered generate for initialization
-  - **Verify**: inference results statistically equivalent
-
-**Exit criterion**: Lowered simulate/generate deliver >50x speedup for static models.
-
----
-
-### Step 10: Lowered Vectorized Simulate & Generate
-**Time: 2-3 days | Builds on Step 9**
-
-Apply `vmap` or explicit [N]-shaped lowering to the lowered simulate/generate.
-
-Two approaches (same as Step 5):
-- **vmap approach**: `mx/vmap(lower-simulate)` over N PRNG keys
-- **Explicit approach**: Lower to a function that samples [N]-shaped arrays at each site
-
-- [ ] **10.1** Implement lowered vsimulate (via best approach from Step 5)
-  - Produces `[N]`-shaped arrays at each site
-  - ~80 lines
-
-- [ ] **10.2** Implement lowered vgenerate
-  - ~60 lines (extends 10.1)
-
-- [ ] **10.3** Benchmark: lowered vgenerate vs normal vgenerate
-  - Target: **>5x speedup** on 7-site model (N=100)
-  - Combined with vectorization: approach **hundreds of x** vs SCI scalar simulate
-
-- [ ] **10.4** Integrate with vectorized IS and vectorized SMC
-  - **Verify**: inference results statistically equivalent
-
-**Exit criterion**: Lowered + vectorized operations deliver major speedups.
-
----
-
-### Step 11: Final Benchmark & Assessment
-**Time: 1 day**
+### Step 9: Final Benchmark & Assessment
+**Time: 1 day | No dependencies — ready to execute**
 
 Run the complete benchmark suite from Step 1 with all optimizations enabled.
 
-- [ ] **11.1** Full benchmark: all models × all algorithms × all variants
-- [ ] **11.2** Compare against baseline (Step 1 results)
-- [ ] **11.3** Compute: total speedup per algorithm, GPU utilization, overhead fraction
-- [ ] **11.4** Write honest assessment: what improved, what didn't, what's next
+- [ ] **9.1** Full benchmark: all models × all algorithms × all variants
+- [ ] **9.2** Compare against baseline (Step 1 results)
+- [ ] **9.3** Compute: total speedup per algorithm, GPU utilization, overhead fraction
+- [ ] **9.4** Write honest assessment: what improved, what didn't, what's next
 
 ```
 FINAL RESULTS (to be filled in):
@@ -860,28 +792,25 @@ FINAL RESULTS (to be filled in):
 
 ---
 
-## Future Steps (Only After Steps 0-11 Are Complete)
+## Future Steps
 
-These are listed for reference but should NOT be started until the above steps are verified.
+These are listed for reference but should NOT be started until Step 9 is complete.
 
 ### F1: Native Kernel Addon (genmlx-kernels)
 - Fused leapfrog in C++ (eliminates remaining JS overhead for HMC inner loop)
 - GPU-accelerated systematic resampling
 - Expected: additional 2-3x on HMC after all above optimizations
-- **Only worth doing after Step 11 shows GPU utilization <80%**
-- Note: with model lowering, the SCI overhead is already eliminated — the native addon targets the remaining JS function call overhead
+- **Only worth doing after Step 9 shows GPU utilization <80%**
 
 ### F2: shadow-cljs Production Build
 - AOT compilation of ClojureScript → optimized JS
 - Expected: 10-60x on remaining non-lowered code paths (dynamic models, model definition)
 - **Only worth doing if dynamic models are a significant use case**
-- Note: for static models, model lowering already achieves what AOT compilation would — the production path is lowering, not AOT
 
 ### F3: Deeper vmap Integration
 - vmap rejection-sampled distributions (beta, gamma via GPU-side Marsaglia-Tsang)
 - vmap gradient evaluations in HMC (batched grad eval)
-- The `compile(vmap(grad(lowered)))` triple transform is in Step 5
-- **Only worth doing after Steps 8-10**
+- The `compile(vmap(grad(score-fn)))` triple transform already works (Step 5.2)
 
 ### F4: Adaptive Step-Size (Practical, Not Speed)
 - Dual averaging for HMC/NUTS step-size tuning
@@ -892,11 +821,10 @@ These are listed for reference but should NOT be started until the above steps a
 - For MCMC where only 1-2 sites change per step, skip recomputing unchanged sites
 - Related to self-adjusting computation (Acar et al.) and Gen.jl's static update
 - Expected: 2-10x speedup for GFI MH on large models (20+ sites)
-- **Only worth doing after lowered simulate/generate (Steps 9-10) are proven**
 
 ---
 
-## Dependency Graph (Revised 2026-02-24, post MALA/HMC loop compilation)
+## Dependency Graph (Revised 2026-02-28)
 
 ```
 Step 0 (Bug Fixes) ✅
@@ -910,7 +838,7 @@ Step 0 (Bug Fixes) ✅
   │     ┌── Step 5 (Reduce eval! overhead) ✅ DONE
   │     │     5.1: Micro-batched lazy MH — DEAD END ✅
   │     │     5.2: Triple transform — WORKS ✅
-  │     │     5.3: Inference loop overhead — deprioritized
+  │     │     5.3: Inference loop overhead — SUPERSEDED by 5.4
   │     │     5.4: LOOP COMPILATION ✅
   │     │       compiled-mh: 5.6x ✅
   │     │       MALA: 2.3x ✅ (score+grad caching: 3→1 val-grad calls/step)
@@ -920,20 +848,16 @@ Step 0 (Bug Fixes) ✅
   │     ├── Step 7 (Bun docs) [mostly done]
   │     ├── Step 8 (Distributions) ✅ DONE
   │     │
-  │     ├── Step 9 (Lowered Simulate/Generate) [reassess]
-  │     │     └── Step 10 (Lowered Vectorized Sim/Gen)
-  │     │
-  │     └── Step 11 (Final Benchmark)
+  │     └── Step 9 (Final Benchmark) ← READY
 ```
 
 **Remaining work:**
-- Step 7 (Bun docs) — documentation only
-- Steps 9-10 should be reassessed — loop compilation may be sufficient
-- Step 11 (final benchmark) — blocked on deciding about 9-10
+- Step 7.3 (Bun docs) — documentation only, ~30 min
+- Step 9 (final benchmark) — ready to execute, ~1 day
 
 ---
 
-## Time Estimates (Revised 2026-02-24)
+## Time Estimates (Revised 2026-02-28)
 
 | Step | Effort | Status |
 |------|--------|--------|
@@ -945,13 +869,11 @@ Step 0 (Bug Fixes) ✅
 | 4. Grad lowering | — | SKIPPED (compile-fn handles it) |
 | 5. Reduce eval! overhead | 3-5 days | ✅ DONE (MH 5.6x, MALA 2.3x, HMC 3.9x) |
 | 6. Remove lazy + tidy | 1-2 days | ✅ DONE |
-| 7. Bun docs | 0.5 days | Mostly done |
+| 7. Bun docs | 0.5 days | Mostly done (7.3 remaining) |
 | 8. Distributions | 2 days | ✅ DONE |
-| 9. Lowered sim/gen | 3-5 days | Reassess |
-| 10. Lowered vec sim/gen | 2-3 days | Blocked on 9 |
-| 11. Final benchmark | 1 day | Blocked on all |
+| 9. Final benchmark | 1 day | Ready to execute |
 
-**Remaining: ~1 week** (Step 7 docs + assess Steps 9-11).
+**Remaining: ~1.5 days** (Step 7.3 docs + Step 9 benchmark).
 
 ---
 
@@ -975,13 +897,13 @@ now defined by how effectively we amortize that cost.
 - Loop compilation for all gradient MCMC: compiled-mh 5.6x, MALA 2.3x, HMC 3.9x — ✅
 - Vectorized inference shown to be the primary scaling strategy — ✅
 
-**Full success (Steps 5-11 complete):**
+**Full success (Steps 5-9 complete):**
 - Compiled-mh: **5.6x faster** via loop compilation — ✅ ACHIEVED
 - MALA: **2.3x faster** via loop compilation + score/grad caching — ✅ ACHIEVED
 - HMC: **3.9x faster** via loop compilation + leapfrog unrolling — ✅ ACHIEVED
 - Vectorized MALA N=50: 12x effective (already good)
-- simulate/generate: assessed honestly against Metal floor — TODO
-- Honest report on what Apple Silicon + MLX can and cannot achieve vs Gen.jl — TODO
+- simulate/generate: Metal floor (0.30ms) limits to ~14x of Gen.jl — ASSESSED
+- Honest report on what Apple Silicon + MLX can and cannot achieve vs Gen.jl — Step 9
 
 ---
 
