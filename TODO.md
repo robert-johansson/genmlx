@@ -780,6 +780,48 @@ operation deterministic.*
 
 ---
 
+## Phase 25: Edge-Case Robustness (from VISION.md audit, Feb 2026)
+
+*Minor concerns from the full codebase audit. Not purity violations — these are
+edge-case robustness issues that could surprise users or cause silent failures.*
+
+- [ ] **25.1** Validate `addresses` and `current-vals` dimensions match in `gradients.cljs`
+  - **File**: `gradients.cljs`
+  - **Impact**: Mismatched dimensions fail silently with wrong address order
+  - **Fix**: Add assertion that `(count addresses)` = `(count current-vals)`
+
+- [ ] **25.2** Guard R-hat against `W = 0` (constant chains) in `diagnostics.cljs`
+  - **File**: `diagnostics.cljs:76`
+  - **Impact**: Constant chains produce `W = 0`, R-hat becomes `Inf`
+  - **Fix**: Return `NaN` or `1.0` when `W = 0`
+
+- [ ] **25.3** Document or mitigate `O(N²)` memory in GPU resampling
+  - **File**: `vectorized.cljs`
+  - **Impact**: GPU resampling builds `[N,N]`-shaped index arrays. At large N
+    this can exhaust Metal memory without warning.
+  - **Fix**: Add a warning/fallback when N exceeds a threshold, or implement
+    O(N) resampling
+
+- [ ] **25.4** Eliminate remaining `js/Math.random` calls in inference code
+  - **Files**: `inference/util.cljs:148,205` (explicit fallback),
+    `vectorized.cljs:30` (systematic resampling),
+    `inference/mcmc.cljs:1380,1445,1456,1462,1505,1518,1528` (NUTS tree-building)
+  - **Impact**: Non-reproducible inference even when users provide PRNG keys.
+    The PRNG key threading audit (16.6) and stateful PRNG removal (22.2) missed
+    these call sites.
+  - **Fix**: Thread functional `rng/*` keys through all remaining call sites.
+    NUTS tree-building is the largest gap (~7 calls).
+
+- [ ] **25.5** Document weight implications when SMCP3 backward kernel is nil
+  - **File**: `smcp3.cljs:99-102`
+  - **Impact**: When backward kernel is nil, falls back to constraint edit
+    without explaining that this changes the weight semantics (no backward score
+    subtraction). Users may get biased importance weights without realizing it.
+  - **Fix**: Add a docstring/warning explaining the weight implications, or
+    require explicit opt-in for the nil-backward fallback
+
+---
+
 ## Priority Order
 
 ```
@@ -796,6 +838,10 @@ MEDIUM-HIGH (verification — catches bugs, path to formal proofs):
   23.2  GenMLX differential test loader             ~80 lines, ~185 assertions
 
 MEDIUM (quality and completeness):
+  25.1  Validate gradients address/value dimensions    ~5 lines
+  25.2  Guard R-hat against W=0                        ~5 lines
+  25.4  Eliminate remaining js/Math.random calls        ~50 lines
+  25.5  Document SMCP3 nil-backward weight semantics   ~10 lines
   21.14-21.21  Property test Phase 2 (~88 properties)  8 test files
   18.5  CustomGradientGF gradient-fn wiring            ~20 lines
   14.5  Product distribution                           Small
@@ -805,6 +851,7 @@ MEDIUM (quality and completeness):
   20.3  Minibatch training for amortized             Medium
 
 LOW (cleanup — decision needed):
+  25.3  Document/mitigate O(N²) GPU resampling      Documentation or code
   19.1  Diff infrastructure cleanup                 Remove or use?
   19.4  defdist-transform usage                     Remove or use?
 
@@ -841,7 +888,7 @@ RESEARCH (Lean 4 formalization):
 | 8. Gradient Programming | 2 | 2 | 0 |
 | 9. Incremental Computation | 2 | 1 | 1 |
 | 10. Formal Foundation | 16 | 13 | 3 |
-| 11. Validation | 2 | 1 | 1 |
+| 11. Validation | 2 | 2 | 0 |
 | 12. Ecosystem | 6 | 3 | 3 |
 | 13. Documentation | 3 | 0 | 3 |
 | 14. Gen.jl Parity | 8 | 3 | **5** |
@@ -855,4 +902,5 @@ RESEARCH (Lean 4 formalization):
 | 22. Practical Inference | 3 | 3 | 0 |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 4 | **3** |
-| **Total** | **147** | **110** | **37** |
+| 25. Edge-Case Robustness | 5 | 0 | **5** |
+| **Total** | **152** | **111** | **41** |
