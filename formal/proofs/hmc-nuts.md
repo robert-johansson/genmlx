@@ -169,9 +169,9 @@ The implementation supports three mass matrix types:
 
 | Type | M | K(p) | M^{-1}p | Ref |
 |------|---|------|---------|-----|
-| Identity (nil) | I | ½p^Tp | p | `mcmc.cljs:790-792` |
-| Diagonal | diag(m) | ½Σ pᵢ²/mᵢ | p/m | `mcmc.cljs:793-797` |
-| Dense | M | ½p^T M^{-1} p | solve(M,p) | `mcmc.cljs:798-801` |
+| Identity (nil) | I | ½p^Tp | p | `mcmc.cljs:796` |
+| Diagonal | diag(m) | ½Σ pᵢ²/mᵢ | p/m | `mcmc.cljs:797-798` |
+| Dense | M | ½p^T M^{-1} p | solve(M,p) | `mcmc.cljs:799-801` |
 
 All three preserve the correctness of HMC — the mass matrix only
 affects efficiency (mixing rate), not the stationary distribution.
@@ -322,16 +322,19 @@ collection phase.
 ### 6.1 U-Turn Criterion
 
 The NUTS algorithm (Hoffman & Gelman 2014) automatically selects the
-trajectory length by detecting U-turns. The criterion
-(ref: `mcmc.cljs:1337-1345`) is:
+trajectory length by detecting U-turns. The implementation
+(ref: `mcmc.cljs:1337-1345`) defines `compute-u-turn?` which returns
+**true when no U-turn is detected** (i.e., the trajectory should
+continue expanding):
 
 ```
-u-turn?(q⁻, q⁺, p⁻, p⁺) =
-  (q⁺ - q⁻) · p⁻ < 0  OR  (q⁺ - q⁻) · p⁺ < 0
+no-u-turn?(q⁻, q⁺, p⁻, p⁺) =
+  (q⁺ - q⁻) · p⁻ ≥ 0  AND  (q⁺ - q⁻) · p⁺ ≥ 0
 ```
 
-A U-turn occurs when the trajectory starts curving back, indicated by
-the momentum becoming anti-aligned with the displacement.
+A U-turn is detected (function returns false) when either momentum
+becomes anti-aligned with the displacement, indicating the trajectory
+has started curving back.
 
 ### 6.2 Binary Tree Construction
 
@@ -344,7 +347,7 @@ build-tree(q, p, direction, depth, ε):
     -- Base case: single leapfrog step
     (q', p') = leapfrog-step(q, p, direction · ε)
     n'       = I[H(q₀,p₀) - H(q',p') > log(slice)]
-    return (q⁻=q', q⁺=q', p⁻=p', p⁺=p', q'=q', n'=n', ok=¬u-turn)
+    return (q⁻=q', q⁺=q', p⁻=p', p⁺=p', q'=q', n'=n', ok=no-u-turn?)
 
   else
     -- Build first half-tree
@@ -359,7 +362,7 @@ build-tree(q, p, direction, depth, ε):
       -- Multinomial sampling: accept new candidate with probability n''/(n'+n'')
       if uniform() < n'' / (n' + n'') then q' ← q''
       n' ← n' + n''
-      ok ← ok₂ AND ¬u-turn?(q⁻, q⁺, p⁻, p⁺)
+      ok ← ok₂ AND no-u-turn?(q⁻, q⁺, p⁻, p⁺)
     return (q⁻, q⁺, p⁻, p⁺, q', n', ok)
 ```
 
@@ -511,7 +514,7 @@ Theorem 3.2.
 | Welford update | `(welford-update state x)` | `mcmc.cljs:1047-1055` |
 | Welford variance | `(welford-variance state)` | `mcmc.cljs:1057-1062` |
 | Dual averaging warmup | `(dual-averaging-warmup ...)` | `mcmc.cljs:1069-1111` |
-| U-turn criterion | `(compute-u-turn? ...)` | `mcmc.cljs:1337-1345` |
+| No-U-turn criterion | `(compute-u-turn? ...)` (returns true = no U-turn) | `mcmc.cljs:1337-1345` |
 | NUTS build-tree | `(build-tree ...)` | `mcmc.cljs:1360-1393` |
 | NUTS main loop | `(nuts ...)` | `mcmc.cljs:1395-1542` |
 | Vectorized HMC step | `(vectorized-hmc-step ...)` | `mcmc.cljs:1249-1285` |

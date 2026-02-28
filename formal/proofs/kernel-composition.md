@@ -321,7 +321,7 @@ weight = new_score - old_score) directly as the log acceptance ratio,
 without a separate proposal correction.
 
 **Implementation note:** For multi-address random walks
-(`kernel.cljs:158-172`), the implementation chains single-address walks.
+(`kernel.cljs:155-156, 169-172`), the implementation chains single-address walks.
 By Theorem 3.2, this preserves stationarity.
 
 ---

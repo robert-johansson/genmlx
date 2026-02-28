@@ -284,8 +284,8 @@ training via ADEV or VI.
 | forward-fn | `:forward` in config map | `custom_gradient.cljs:57-63` |
 | gradient-fn | `:gradient` in config map | `custom_gradient.cljs:57-63` |
 | nn.Module forward | `(.forward module input)` | `nn.cljs:40` |
-| score = 0 | `(mx/scalar 0.0)` | `custom_gradient.cljs:19` / `nn.cljs:42` |
-| choices = EMPTY | `cm/EMPTY` | `custom_gradient.cljs:18` / `nn.cljs:41` |
+| score = 0 | `(mx/scalar 0.0)` | `custom_gradient.cljs:20` / `nn.cljs:43` |
+| choices = EMPTY | `cm/EMPTY` | `custom_gradient.cljs:18` / `nn.cljs:42` |
 | weight = 0 | `(mx/scalar 0.0)` | `custom_gradient.cljs:26` / `nn.cljs:47` |
 | IHasArgumentGrads | `has-argument-grads` protocol method | `custom_gradient.cljs:54-55` / `nn.cljs:74` |
 | custom-gradient-gf factory | `(custom-gradient-gf config)` | `custom_gradient.cljs:57-63` |

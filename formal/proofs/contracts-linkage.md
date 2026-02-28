@@ -249,7 +249,7 @@ convergence to the correct posterior.
 ### 3.3 Coverage Summary
 
 ```
-Formal proofs:    17 files covering all 8 gap areas
+Formal files:     16 (13 proofs + 3 specifications) covering all 8 gap areas
 Runtime contracts: 11 contracts covering core GFI operations
 Gap:              5 recommended additional contracts (G1-G5)
 ```
@@ -288,8 +288,9 @@ Layer 4: Statistical tests (inference convergence, distribution tests)
 
 The new proof files close the gap between Layer 1 (which previously
 covered only core GFI and broadcasting) and Layers 2-4 (which test
-kernels, ADEV, VI, SMCP3, and HMC). With 17 formal proof files, every
-major component of GenMLX now has a formal correctness argument.
+kernels, ADEV, VI, SMCP3, and HMC). With 16 formal files (13 proofs
++ 3 specifications), every major component of GenMLX now has a formal
+correctness argument.
 
 ---
 
@@ -298,9 +299,9 @@ major component of GenMLX now has a formal correctness argument.
 | Formal Concept | Implementation | Location |
 |----------------|---------------|----------|
 | 11 GFI contracts | Contract functions | `contracts.cljs:59-180` |
-| Contract registry | `contract-registry` map | `contracts.cljs:182-184` |
+| Contract registry | `contracts` var | `contracts.cljs:55` |
 | Verification runner | `(verify-gfi-contracts ...)` | `contracts.cljs:186-216` |
 | Tolerance checking | `(assert-close ...)` | Test utilities |
-| n=50 default trials | `:n-trials 50` option | `contracts.cljs:189` |
+| n=50 default trials | `:or {n-trials 50}` | `contracts.cljs:192` |
 | ESS computation | `exp(2·logsumexp - logsumexp(2·))` | `vectorized.cljs` |
 | Systematic resampling | `u/systematic-resample` | `inference/util.cljs` |

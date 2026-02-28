@@ -179,7 +179,7 @@ automatic weight computation via the GFI edit interface. ✓ ∎
 
 ### 4.1 Effective Sample Size
 
-The ESS (ref: `smcp3.cljs:88-92`) measures particle diversity:
+The ESS (ref: `smcp3.cljs:85`, via `u/compute-ess`) measures particle diversity:
 
 ```
 ESS = (Σ_k w_k)² / (Σ_k w_k²)
@@ -449,8 +449,8 @@ as generative functions, which:
 | Standard init (no proposal) | `(p/generate model ...)` | `smcp3.cljs:49-52` |
 | ProposalEdit extension | `(p/edit model trace edit-req)` | `smcp3.cljs:99-102` |
 | ConstraintEdit fallback | `(p/update model trace obs)` | `smcp3.cljs:106-108` |
-| ESS computation | `exp(2·logsumexp(lw) - logsumexp(2·lw))` | `smcp3.cljs:88-92` |
-| Systematic resampling | `(u/systematic-resample ...)` | `smcp3.cljs:85-91` |
+| ESS computation | `(u/compute-ess log-weights)` | `smcp3.cljs:85` |
+| ESS check + resampling | `(< ess threshold)` → systematic resample | `smcp3.cljs:86-92` |
 | Rejuvenation | `(rejuvenation-fn trace key)` | `smcp3.cljs:115-117` |
 | Log-ML accumulation | `(mx/add log-ml increment)` | `smcp3.cljs:120-123` |
 | Weight materialization | `(u/materialize-weights weights)` | `smcp3.cljs:56` |
