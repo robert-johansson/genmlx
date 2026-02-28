@@ -1,10 +1,13 @@
 # Property-Based Testing Expansion Plan
 
-## Status: COMPLETE
+## Status: PHASE 1 COMPLETE — PHASE 2 NOT STARTED
 
-Expanded from ~80 properties (5 files) to ~162 properties (9 files) across 4 new test files.
+Phase 1 expanded from ~80 properties (5 files) to ~162 properties (9 files).
+Current coverage is ~30% of public API surface. Significant gaps remain.
 
-## Results
+---
+
+## Phase 1 Results (COMPLETE)
 
 ### File 1: `test/genmlx/inference_property_test.cljs` — 24/24 PASS
 - [x] Importance Sampling (4): log-weights finite, log-ml finite, normalized weights sum to 1, empty constraints weight ~0
@@ -42,7 +45,92 @@ Expanded from ~80 properties (5 files) to ~162 properties (9 files) across 4 new
 - [x] dist_property_test: 17/17
 - [x] combinator_property_test: 15/15
 
-## Notes
+---
+
+## Phase 2 Gap Analysis
+
+### Critical Gaps (0% property coverage)
+
+#### MCMC Algorithms — `inference/mcmc.cljs`
+Untested: `mh-step`, `mh-custom-step`, `mh-custom`, `compiled-mh`, `vectorized-compiled-mh`
+Gradient-based: MALA, HMC, NUTS (most sophisticated MCMC)
+Discrete: Gibbs, involutive MH
+Specialized: Elliptical Slice, MAP optimization
+**Impact:** ~40% of inference LOC, 0% property coverage.
+
+#### Variational Inference — `inference/vi.cljs`
+Untested: `vi` (ADVI), `compiled-vi`, `vectorized-compiled-vi`, `vi-from-model`,
+`elbo-objective`, `iwelbo-objective`, `pwake-objective`, `qwake-objective`,
+`reinforce-estimator`, `vimco-objective`, `vimco`, `programmable-vi`
+**Impact:** 13 public functions, second-most important algorithm class, 0% coverage.
+
+#### SMCP3 — `inference/smcp3.cljs`
+Untested: `smcp3-init`, `smcp3-step`, `smcp3`, `smcp3-with-guidance`
+**Impact:** "Most powerful inference algorithm" per design docs. 0% coverage.
+
+#### Edit Interface — `edit.cljs`
+Untested: `edit-dispatch`, `->ConstraintEdit`, `->SelectionEdit`, `->ProposalEdit`,
+`constraint-edit`, `selection-edit`, `proposal-edit`
+**Impact:** GenJAX's distinguishing feature. Backward-request semantics unverified.
+
+#### Diff Tracking — `diff.cljs`
+Untested: `no-change`, `unknown-change`, `value-change`, `vector-diff`, `map-diff`,
+`no-change?`, `compute-diff`, `compute-vector-diff`, `compute-map-diff`
+**Impact:** Used by `update-with-diffs` for incremental MCMC. Correctness unverified.
+
+#### Handler System — `handler.cljs`
+Untested: `run-handler`, all batched handler transitions, `update-with-diffs` impl
+**Impact:** Heart of GenMLX. Batched execution variants only tested indirectly.
+
+### High Priority Gaps
+
+#### SMC Pipeline — `inference/smc.cljs`
+Only resampling indices tested. Missing: `smc-init-step`, `smc-rejuvenate`, `smc-step`,
+`smc`, `conditional-smc`, residual/stratified resampling variants.
+
+#### ADEV — `inference/adev.cljs`
+Untested: `has-reparam?`, `adev-transition`, `adev-execute`, `adev-loss`, `adev-optimize`
+
+#### Combinator assess — `combinators.cljs`
+Mix, Recurse, Contramap, Dimap all missing `assess` and some `project` properties.
+
+### Medium Priority Gaps
+
+#### NN Integration — `nn.cljs`
+Layer constructors, `NeuralNetGF` record, gradient integration untested.
+
+#### Verify/Contracts — `verify.cljs`, `contracts.cljs`
+`validate-gen-fn`, contract registry, violation checkers untested.
+
+### Low Priority Gaps
+
+#### PRNG — `mlx/random.cljs`
+`split`/`split-n` key splitting tested only indirectly.
+
+#### Multivariate distributions
+Only scalar distributions tested. Any multivariate variants untested.
+
+---
+
+## Phase 2 Proposed Files (if pursued)
+
+### Tier 1 — Most tractable, highest value
+1. `edit_diff_property_test.cljs` (~15 properties) — edit dispatch, diff computation, round-trips
+2. `smc_property_test.cljs` (~12 properties) — SMC init/step, residual/stratified resampling, rejuvenation
+3. `mcmc_property_test.cljs` (~15 properties) — mh-step, mh-custom, Gibbs, Elliptical Slice basic contracts
+
+### Tier 2 — Important but harder (stochastic convergence)
+4. `vi_property_test.cljs` (~12 properties) — ADVI, ELBO finite, programmable VI
+5. `smcp3_property_test.cljs` (~10 properties) — init/step/pipeline, backward proposals
+6. `gradient_mcmc_property_test.cljs` (~10 properties) — MALA/HMC/NUTS produce finite scores, correct shapes
+
+### Tier 3 — Completeness
+7. `handler_property_test.cljs` (~8 properties) — batched transitions, device management
+8. `adev_property_test.cljs` (~6 properties) — reparam detection, surrogate losses
+
+---
+
+## Phase 1 Notes
 
 - `mx/compile-fn` wrapping `mx/grad` or `mx/value-and-grad` produces zero gradients for handler-based models (CLJS side effects invisible to MLX tracer). Used `make-score-fn` + `mx/grad` directly instead.
 - `vgenerate` weight shape depends on model structure: only `[N]` when constrained sites depend on unconstrained ones (broadcasting). Used dependent model (`y ~ gaussian(x, 1)`) for vgenerate tests.
