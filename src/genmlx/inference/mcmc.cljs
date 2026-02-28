@@ -186,10 +186,25 @@
                         (rng/uniform (rng/fresh-key) [k-steps])))
     compiled))
 
+(defn- eager-mh-step
+  "One eager MH step using pre-generated noise and uniform.
+   No PRNG overhead per step — randomness is pre-generated in batches."
+  [params score-fn proposal-std noise uniform-val]
+  (let [proposal (mx/add params (mx/multiply proposal-std noise))
+        score-current  (score-fn params)
+        score-proposal (score-fn proposal)
+        _ (mx/eval! score-current score-proposal)
+        log-alpha (- (mx/item score-proposal) (mx/item score-current))
+        accept? (or (>= log-alpha 0)
+                    (< (js/Math.log uniform-val) log-alpha))]
+    (if accept? proposal params)))
+
 (defn- run-loop-compiled-mh
   "Run compiled MH with loop compilation for burn-in and optional thinning.
    Uses compiled chains for burn-in (block-size steps per dispatch).
-   For collection: compiled chain if thin > 1, eager step if thin = 1."
+   For collection: compiled chain if thin > 1, eager step if thin = 1.
+   Thin=1 path pre-generates noise/uniforms in batches to eliminate
+   per-step PRNG overhead."
   [{:keys [samples burn thin callback key]} init-params n-params
    score-fn proposal-std burn-chain burn-block-size thin-chain]
   (let [param-shape [n-params]
@@ -207,28 +222,53 @@
                   (mx/eval! p')
                   (recur p' (inc b) rk')))))
           [init-params rk])
-        ;; Phase 2: Collect samples (mx/tidy prevents Metal resource leak)
-        result (loop [p params, acc (transient []), i 0, rk rk]
-                 (if (>= i samples)
-                   (persistent! acc)
-                   (let [[step-key rk'] (rng/split rk)
-                         p' (mx/tidy
-                              (fn []
-                                (if thin-chain
-                                  ;; thin > 1: compiled chain of thin steps
-                                  (let [[k1 k2] (rng/split step-key)
-                                        noise (rng/normal k1 [thin n-params])
-                                        uniforms (rng/uniform k2 [thin])
-                                        r (thin-chain p noise uniforms)]
-                                    (mx/eval! r) r)
-                                  ;; thin = 1: eager step (faster than 1-step compiled)
-                                  (let [{:keys [state]} (compiled-mh-step
-                                                          p score-fn proposal-std
-                                                          param-shape step-key)]
-                                    state))))]
-                     (when callback
-                       (callback {:iter i :value (mx/->clj p')}))
-                     (recur p' (conj! acc (mx/->clj p')) (inc i) rk'))))]
+        ;; Phase 2: Collect samples
+        result
+        (if thin-chain
+          ;; thin > 1: compiled chain per sample (with tidy for resource safety)
+          (loop [p params, acc (transient []), i 0, rk rk]
+            (if (>= i samples)
+              (persistent! acc)
+              (let [[k1 k2 rk'] (rng/split-n rk 3)
+                    p' (mx/tidy
+                          (fn []
+                            (let [noise (rng/normal k1 [thin n-params])
+                                  uniforms (rng/uniform k2 [thin])
+                                  r (thin-chain p noise uniforms)]
+                              (mx/eval! r) r)))]
+                (when callback
+                  (callback {:iter i :value (mx/->clj p')}))
+                (recur p' (conj! acc (mx/->clj p')) (inc i) rk'))))
+          ;; thin = 1: eager steps with pre-generated randomness in batches
+          (let [batch-size (min samples 50)]
+            (loop [p params, acc (transient []), i 0, rk rk]
+              (if (>= i samples)
+                (persistent! acc)
+                ;; Generate a batch of noise/uniforms
+                (let [remaining (- samples i)
+                      batch (min batch-size remaining)
+                      [k1 k2 rk'] (rng/split-n rk 3)
+                      noise-batch (rng/normal k1 [batch n-params])
+                      uniforms-batch (rng/uniform k2 [batch])
+                      _ (mx/eval! noise-batch uniforms-batch)
+                      uniforms-js (mx/->clj uniforms-batch)
+                      ;; Inner loop: iterate through pre-generated randomness
+                      [p' acc']
+                      (loop [p p, acc acc, j 0]
+                        (if (>= j batch)
+                          [p acc]
+                          (let [noise (mx/reshape
+                                        (mx/take-idx noise-batch (mx/scalar j mx/int32) 0)
+                                        [n-params])
+                                p' (mx/tidy
+                                      (fn []
+                                        (eager-mh-step p score-fn proposal-std
+                                                       noise (nth uniforms-js j))))]
+                            (when callback
+                              (callback {:iter (+ i j) :value (mx/->clj p')}))
+                            (recur p' (conj! acc (mx/->clj p')) (inc j)))))]
+                  (mx/clear-cache!)
+                  (recur p' acc' (+ i batch) rk'))))))]
     result))
 
 (defn compiled-mh
@@ -1279,6 +1319,7 @@
                  {:keys [state n-accepted]}
                    (vectorized-hmc-step state neg-U-fn grad-fn eps half-eps half
                                          n-chains leapfrog-steps step-key)
+                 _  (when (zero? (mod i 50)) (mx/clear-cache!))
                  past-burn? (>= i burn)
                  keep? (and past-burn? (zero? (mod (- i burn) thin)))]
              (when (and callback keep?)
