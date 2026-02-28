@@ -133,8 +133,8 @@
 
 (run-test "Compiled MH"
   (fn []
-    (let [samples (mcmc/compiled-mh {:samples 300 :burn 200 :addresses [:mu]
-                                      :proposal-std 0.3 :compile? false :device :cpu}
+    (let [samples (mcmc/compiled-mh {:samples 500 :burn 500 :addresses [:mu]
+                                      :proposal-std 2.0 :compile? false :device :cpu}
                                      model [data] observations)
           mu-vals (mapv first samples)
           [mean variance] (sample-stats mu-vals)]

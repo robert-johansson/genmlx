@@ -111,8 +111,8 @@
 ;; Run Compiled MH first (gradient-based, needs more resources)
 (run-test "Compiled MH"
   (fn []
-    (let [samples (mcmc/compiled-mh {:samples 200 :burn 100 :addresses [:p]
-                                      :proposal-std 0.05 :compile? false :device :cpu}
+    (let [samples (mcmc/compiled-mh {:samples 400 :burn 300 :addresses [:p]
+                                      :proposal-std 0.15 :compile? false :device :cpu}
                                      model [data] observations)
           p-vals (mapv first samples)
           [mean variance] (sample-stats p-vals)]

@@ -111,8 +111,8 @@
 ;; Run Compiled MH first (uses score function, needs more resources)
 (run-test "Compiled MH"
   (fn []
-    (let [samples (mcmc/compiled-mh {:samples 200 :burn 100 :addresses [:lambda]
-                                      :proposal-std 0.3 :compile? false :device :cpu}
+    (let [samples (mcmc/compiled-mh {:samples 400 :burn 300 :addresses [:lambda]
+                                      :proposal-std 1.0 :compile? false :device :cpu}
                                      model [data] observations)
           lam-vals (mapv first samples)
           [mean variance] (sample-stats lam-vals)]
