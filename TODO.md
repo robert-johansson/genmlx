@@ -663,6 +663,52 @@ it doesn't work with nbb).*
     update round-trip, regenerate none, propose round-trip, project all/none) on 5
     canonical models (single-site, multi-site, linreg, splice, mixed). ~65 assertions.
 
+### Property-based testing expansion (from PLAN_PROPERTY_TESTS.md)
+
+*Phase 1 complete: 162 properties across 9 test files (~30% public API coverage).
+Phase 2 targets the remaining ~70% — critical gaps in MCMC, VI, SMCP3, edit/diff,
+and handler internals.*
+
+- [x] **21.13** Property test Phase 1 — 162 properties, 9 files
+  - **Done**: inference (24), vectorized (18), combinator extras (20), gradient/learning (20),
+    choicemap (11), selection (11), GFI (17), distributions (17), combinators (15)
+
+- [ ] **21.14** Edit/diff property tests (~15 properties)
+  - edit dispatch, diff computation, round-trips
+  - Covers: `edit.cljs` (ConstraintEdit, SelectionEdit, ProposalEdit), `diff.cljs`
+
+- [ ] **21.15** SMC property tests (~12 properties)
+  - SMC init/step, residual/stratified resampling, rejuvenation
+  - Covers: `inference/smc.cljs`
+
+- [ ] **21.16** MCMC property tests (~15 properties)
+  - mh-step, mh-custom, Gibbs, Elliptical Slice basic contracts
+  - Covers: `inference/mcmc.cljs` (~40% of inference LOC, 0% property coverage)
+
+- [ ] **21.17** VI property tests (~12 properties)
+  - ADVI, ELBO finite, programmable VI
+  - Covers: `inference/vi.cljs` (13 public functions, 0% coverage)
+
+- [ ] **21.18** SMCP3 property tests (~10 properties)
+  - init/step/pipeline, backward proposals
+  - Covers: `inference/smcp3.cljs`
+
+- [ ] **21.19** Gradient MCMC property tests (~10 properties)
+  - MALA/HMC/NUTS produce finite scores, correct shapes
+  - Covers: gradient-based MCMC in `inference/mcmc.cljs`
+
+- [ ] **21.20** Handler property tests (~8 properties)
+  - Batched transitions, device management
+  - Covers: `handler.cljs` internals
+
+- [ ] **21.21** ADEV property tests (~6 properties)
+  - Reparam detection, surrogate losses
+  - Covers: `inference/adev.cljs`
+
+*Notes from Phase 1: `mx/compile-fn` wrapping `mx/grad` produces zero gradients
+for handler-based models (CLJS side effects invisible to MLX tracer). Use
+`make-score-fn` + `mx/grad` directly instead.*
+
 ---
 
 ## Phase 23: Differential Testing Against Gen.jl (reference oracle)
@@ -750,9 +796,9 @@ MEDIUM-HIGH (verification — catches bugs, path to formal proofs):
   23.2  GenMLX differential test loader             ~80 lines, ~185 assertions
 
 MEDIUM (quality and completeness):
-  18.5  CustomGradientGF gradient-fn wiring         ~20 lines
-  20.4  ADEV variance reduction (baseline)          ~15 lines
-  14.5  Product distribution                        Small
+  21.14-21.21  Property test Phase 2 (~88 properties)  8 test files
+  18.5  CustomGradientGF gradient-fn wiring            ~20 lines
+  14.5  Product distribution                           Small
   14.7  Trace serialization                         Medium
   20.1  Vectorize neural-importance-sampling         Significant
   20.2  Non-Gaussian posteriors in amortized         Significant
@@ -805,8 +851,8 @@ RESEARCH (Lean 4 formalization):
 | 18. Distribution Quality | 5 | 4 | **1** |
 | 19. Code Quality | 9 | 7 | **2** |
 | 20. Amortized + GPU ADEV | 7 | 4 | **3** |
-| 21. Testing Strategies | 12 | 12 | 0 |
+| 21. Testing Strategies | 21 | 13 | **8** |
 | 22. Practical Inference | 3 | 3 | 0 |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 4 | **3** |
-| **Total** | **138** | **109** | **29** |
+| **Total** | **147** | **110** | **37** |
