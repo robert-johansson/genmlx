@@ -255,23 +255,25 @@
     (.forEach seen (fn [a] (mx/dispose! a)))))
 
 (defn tidy-step
-  "Run step-fn inside mx/tidy, preserving all arrays in the returned trace.
-   step-fn must return {:state trace :accepted? bool}.
+  "Run step-fn inside mx/tidy, preserving all arrays in the returned state.
+   step-fn must return {:state new-state :accepted? bool}.
+   State can be a Trace (with :choices/:score/:retval) or a plain MLX array.
    mx/tidy disposes all intermediate arrays not in the return value, but
    cannot walk CLJS data structures. We work around this by:
    1. Running the step inside tidy
-   2. Evaluating all trace arrays (detaches computation graphs from intermediates)
+   2. Evaluating all state arrays (detaches computation graphs from intermediates)
    3. Returning those arrays as a JS array for tidy to preserve"
   [step-fn state key]
   (let [result-vol (volatile! nil)]
     (mx/tidy
       (fn []
         (let [result (step-fn state key)
-              arrays (collect-trace-arrays (:state result))]
-          ;; Eval all trace arrays BEFORE tidy disposes intermediates.
-          ;; This detaches computation graphs so intermediates are safe to dispose.
-          (when (seq arrays)
-            (apply mx/eval! arrays))
+              new-state (:state result)
+              arrays (if (mx/array? new-state)
+                       (do (mx/eval! new-state) [new-state])
+                       (let [a (collect-trace-arrays new-state)]
+                         (when (seq a) (apply mx/eval! a))
+                         a))]
           (vreset! result-vol result)
           ;; Return arrays as JS array for tidy to preserve
           (to-array arrays))))
