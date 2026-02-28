@@ -378,3 +378,20 @@ type structure.
 The six new transformations (generate through edit) constitute the core
 novel contribution of λ_MLX beyond λ_GEN. Together with simulate and
 assess, they formalize the complete Generative Function Interface.
+
+### 9.1 Extended Transformations
+
+The following transformations operate on the gradient and inference
+level, building on the GFI operations above:
+
+| Transformation | Input Types | Output Type | Source |
+|---------------|-------------|-------------|--------|
+| adev{G_γ η} | args × Key | σ_adev | `proofs/adev.md` |
+| adev-surrogate | cost × reinforce-lp × baseline | ℝ (surrogate loss) | `proofs/adev.md` §4 |
+| hmc-step{G_γ η} | q × Key × ε × L × M | q' (trace) | `proofs/hmc-nuts.md` §3 |
+| elbo{G_γ η} | q-params × Key × K | ℝ (bound) | `proofs/vi.md` §1 |
+| smcp3-step | traces × weights × obs | traces × weights | `proofs/smcp3.md` §3 |
+
+These are not GFI operations per se (they do not appear in the GFI
+protocol), but they build on GFI operations and have formal correctness
+proofs. See the referenced proof files for details.

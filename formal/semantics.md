@@ -414,6 +414,48 @@ DynamicGF regenerate at `dynamic.cljs:88-108`.
 
 **Implementation**: `project-transition` at `handler.cljs:155-171`.
 
+### 4.6 ADEV Transition (NEW)
+
+```
+⟦trace(a, d)⟧_adev : H(σ_adev, η)
+
+⟦trace(a, d)⟧_adev(σ) =
+  if has-reparam?(d) then
+    -- Reparameterizable: gradients flow through value
+    let (k₁, k₂) = split(σ.key)
+        v         = reparam-sample(d, k₂)         -- v = g(θ, ε)
+    in (v, { key          : k₁,
+              choices      : σ.choices[a ↦ v],
+              score        : σ.score · density_d(v),
+              reinforce-lp : σ.reinforce-lp })     -- unchanged
+
+  else
+    -- Non-reparameterizable: stop gradient, accumulate REINFORCE lp
+    let (k₁, k₂) = split(σ.key)
+        v         = stop_gradient(sample(d, k₂))
+        w         = density_d(v)
+    in (v, { key          : k₁,
+              choices      : σ.choices[a ↦ v],
+              score        : σ.score · w,
+              reinforce-lp : σ.reinforce-lp · w }) -- accumulate
+```
+
+The ADEV transition branches on whether the distribution supports
+reparameterization. For reparameterizable distributions, gradients
+flow through the sampled value (via g(θ, ε)). For non-reparameterizable
+distributions, `stop_gradient` prevents gradient flow and the log-prob
+is accumulated in `reinforce-lp` for the REINFORCE estimator.
+
+See `proofs/adev.md` for the full surrogate loss correctness proof.
+
+**Implementation**: `adev-transition` at `adev.cljs:28-45`.
+
+**Batched ADEV** (`adev.cljs:177-194`) replaces `sample` with
+`sample_n(d, k, N)` and all arithmetic broadcasts over [N]-shaped
+arrays, following the same pattern as §6. The batched surrogate
+equals the mean of N independent scalar surrogates
+(see `proofs/adev.md` §6).
+
 ---
 
 ## 5. Splice Semantics (NEW)

@@ -22,6 +22,13 @@ the complete, rigorous formal specifications and proofs.
 7. **`proofs/combinators.md`** — Combinator compositionality
 8. **`proofs/edit-duality.md`** — Edit/backward duality for reversible kernels
 9. **`proofs/diff-update.md`** — Diff-aware update correctness
+10. **`proofs/kernel-composition.md`** — Markov kernel stationarity and composition
+11. **`proofs/adev.md`** — ADEV gradient estimation (reparam + REINFORCE)
+12. **`proofs/deterministic-gf.md`** — CustomGradientGF and NeuralNetGF correctness
+13. **`proofs/hmc-nuts.md`** — Adaptive HMC, NUTS, and symplectic integration
+14. **`proofs/vi.md`** — Variational inference (ELBO, IWELBO, VIMCO, programmable VI)
+15. **`proofs/smcp3.md`** — SMCP3 weight correctness and log-ML estimation
+16. **`proofs/contracts-linkage.md`** — Contract-theorem mapping and verification power
 
 ## TODO Item Mapping
 
@@ -36,6 +43,13 @@ the complete, rigorous formal specifications and proofs.
 | `proofs/combinators.md` | 10.11 | Combinator compositionality |
 | `proofs/edit-duality.md` | 10.12 | Edit/backward duality |
 | `proofs/diff-update.md` | 10.13 | Diff-aware update correctness |
+| `proofs/kernel-composition.md` | 10.14 | Kernel stationarity and composition |
+| `proofs/adev.md` | 10.15 | ADEV gradient estimation correctness |
+| `proofs/deterministic-gf.md` | 10.16 | Deterministic GF wrapper correctness |
+| `proofs/hmc-nuts.md` | 10.17 | HMC/NUTS detailed balance and adaptation |
+| `proofs/vi.md` | 10.18 | Variational inference objectives |
+| `proofs/smcp3.md` | 10.19 | SMCP3 weight and log-ML correctness |
+| `proofs/contracts-linkage.md` | 10.20 | Contract-theorem mapping |
 
 ## Notation Conventions
 
@@ -56,6 +70,16 @@ the complete, rigorous formal specifications and proofs.
 | dom(f) | Domain of function/map f |
 | Sel(γ) | Selection over trace type γ |
 | Δ | Diff type (NoChange, UnknownChange, etc.) |
+| K | Markov kernel K : Γ × Key → Γ |
+| π | Target distribution |
+| H(q, p) | Hamiltonian (potential + kinetic energy) |
+| U(q) | Potential energy = -log π(q) |
+| K(p) | Kinetic energy = ½p^T M^{-1} p |
+| ELBO | Evidence lower bound = E_q[log p - log q] |
+| IWELBO_K | K-sample importance-weighted ELBO |
+| ∇_θ | Gradient with respect to parameters θ |
+| stop_gradient(·) | Gradient barrier (zero in backward pass) |
+| σ_adev | ADEV handler state (extends σ_sim with reinforce-lp) |
 
 All scores are written in **multiplicative notation** (densities as products)
 in the formal development, matching the paper. The implementation uses
@@ -72,3 +96,16 @@ in the formal development, matching the paper. The implementation uses
 - `src/genmlx/edit.cljs` — Edit interface
 - `src/genmlx/diff.cljs` — Diff types
 - `src/genmlx/combinators.cljs` — Combinator implementations
+- `src/genmlx/inference/kernel.cljs` — Kernel composition
+- `src/genmlx/inference/adev.cljs` — ADEV gradient estimation
+- `src/genmlx/inference/mcmc.cljs` — HMC, NUTS, MALA
+- `src/genmlx/inference/vi.cljs` — Variational inference
+- `src/genmlx/inference/smcp3.cljs` — SMCP3
+- `src/genmlx/custom_gradient.cljs` — Custom gradient GFs
+- `src/genmlx/nn.cljs` — Neural network GFs
+- `src/genmlx/contracts.cljs` — GFI contracts
+- Hastings 1970 — MH sampling
+- Neal 2011 — HMC
+- Hoffman & Gelman 2014 — NUTS, dual averaging
+- Burda et al. 2015 — IWELBO
+- Lew et al. 2023 — ADEV, SMCP3

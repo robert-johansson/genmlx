@@ -90,6 +90,16 @@ Handler state schemas, with exact correspondence to `handler.cljs`:
             constraints : γ }      -- (unused, present for splice compat)
 ```
 
+```
+σ_adev = { key          : Key,
+            choices      : γ,
+            score        : ℝ,
+            reinforce-lp : ℝ }         -- accumulated non-reparam log-probs
+```
+
+**ADEV state:** σ_adev extends σ_sim with a `reinforce-lp` accumulator
+for non-reparameterizable sites. See `proofs/adev.md` for full semantics.
+
 **Batched variants** add two fields:
 
 ```
@@ -177,6 +187,14 @@ Edit/update terms:
        |  edit(tr, req)                                parametric edit
        |  project(tr, sel)                             selected log-weight
        |  propose(args)                                forward sample + score
+
+ADEV terms (internal — gradient estimation):
+       |  adev-surrogate(cost, reinforce-lp, baseline) surrogate loss
+       |  stop-gradient(t)                             gradient barrier
+
+Hamiltonian mechanics terms (internal — HMC/NUTS):
+       |  hamiltonian(q, p, M)                         H(q,p) = U(q) + K(p)
+       |  leapfrog(q, p, ε, L, M)                     L-step symplectic integration
 
 Handler terms (internal — not exposed in DSL):
        |  run-handler(transition, σ₀, body)            execute under handler
