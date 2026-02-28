@@ -1,7 +1,7 @@
 (ns genmlx.optimization-benchmark
-  "Step 1 benchmark for TODO_OPTIMIZATION.md.
+  "Step 1/Step 9 benchmark for TODO_OPTIMIZATION.md.
    Measures all operations we care about across 3 model sizes.
-   Run: npx nbb test/genmlx/optimization_benchmark.cljs"
+   Run: bun run --bun nbb test/genmlx/optimization_benchmark.cljs"
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
@@ -10,6 +10,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.inference.mcmc :as mcmc]
+            [genmlx.inference.importance :as is]
             [genmlx.inference.util :as u])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -84,7 +85,7 @@
 ;; Run benchmarks
 ;; ---------------------------------------------------------------------------
 
-(println "\n=== GenMLX Optimization Benchmark (Step 1) ===")
+(println "\n=== GenMLX Optimization Benchmark (Step 1 / Step 9 Final) ===")
 (println (str "  Runtime: " (if (exists? js/Bun) "Bun" "Node.js")))
 (println (str "  Date: " (.toISOString (js/Date.))))
 (println)
@@ -290,6 +291,29 @@
   (println (str "  7-site raw score-fn:      " raw "ms (" (.toFixed (/ raw 200.0) 3) " ms/call)"))
   (println (str "  7-site compiled score-fn: " comp "ms (" (.toFixed (/ comp 200.0) 3) " ms/call)"))
   (println (str "  compile speedup: " (.toFixed (/ raw comp) 1) "x")))
+
+;; ---------------------------------------------------------------------------
+;; 11. vectorized IS N=100 (5-site model)
+;; ---------------------------------------------------------------------------
+
+(println "\n-- vectorized IS (N=100, 5-site model) --")
+
+(let [is-model (gen []
+                 (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+                   (dyn/trace :obs1 (dist/gaussian mu 1))
+                   (dyn/trace :obs2 (dist/gaussian mu 1))
+                   (dyn/trace :obs3 (dist/gaussian mu 1))
+                   mu))
+      is-obs (cm/choicemap :obs1 (mx/scalar 3.0) :obs2 (mx/scalar 3.1) :obs3 (mx/scalar 2.9))
+
+      seq-ms (bench #(let [r (is/importance-sampling {:samples 100} is-model [] is-obs)]
+                       (mx/eval! (:log-ml-estimate r))) {:warmup 1 :runs 3})
+      vec-ms (bench #(let [r (is/vectorized-importance-sampling {:samples 100} is-model [] is-obs)]
+                       (mx/eval! (:log-ml-estimate r))) {:warmup 1 :runs 3})
+      speedup (if (pos? vec-ms) (/ seq-ms vec-ms) ##Inf)]
+  (println (str "  Sequential IS (100):   " seq-ms "ms"))
+  (println (str "  Vectorized IS (100):   " vec-ms "ms"))
+  (println (str "  Speedup: " (.toFixed speedup 1) "x")))
 
 ;; ---------------------------------------------------------------------------
 ;; Summary

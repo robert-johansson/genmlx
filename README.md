@@ -23,7 +23,14 @@ Gen implementations exist for Julia and JAX — but nothing for Apple Silicon's 
 ## Quick Start
 
 ```bash
-npm install
+bun install          # recommended — Bun is ~1.5x faster than Node.js
+# or: npm install    # Node.js 18+ also works
+```
+
+Run a model:
+
+```bash
+bun run --bun nbb my_model.cljs
 ```
 
 ### Define a model
