@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Tutorial: Neural Probabilistic Models</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Tutorial</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="08-gradients-learning.html">&larr; Prev</a></li><li><a href="10-custom-extensions.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">9. Neural Probabilistic Models</h1>
+
+<p>Neural networks are deterministic functions with trainable parameters.
+Generative functions are stochastic functions with random choices. GenMLX
+bridges the two: you can wrap an MLX neural network as a generative function
+(<code>nn->gen-fn</code>), compose it with stochastic models, and train the
+whole system end-to-end with gradients.</p>
+
+<p>This chapter covers wrapping neural networks as GFs, custom gradient
+generative functions, and amortized inference with trained neural proposals.</p>
+
+
+<!-- ================================================================== -->
+<h2>Neural networks in MLX</h2>
+
+<p>GenMLX provides thin wrappers over MLX&rsquo;s native <code>nn</code>
+module for building neural networks:</p>
+
+<div class="code-block">
+<pre><code>(ns neural-example
+  (:require [genmlx.nn :as nn]
+            [genmlx.mlx :as mx]))
+
+;; Build a simple MLP
+(def encoder
+  (nn/sequential
+    [(nn/linear 784 256)
+     (nn/relu)
+     (nn/linear 256 128)
+     (nn/relu)
+     (nn/linear 128 20)]))  ;; 10 for mu, 10 for log-sigma
+
+;; Forward pass
+(def input (mx/random-normal [1 784]))
+(def output (encoder input))
+(println "Output shape:" (mx/shape output))</code></pre>
+</div>
+<div class="code-output">Output shape: [1 20]</div>
+
+<h3>Available layers</h3>
+
+<table>
+<tr><th>Layer</th><th>Constructor</th><th>Description</th></tr>
+<tr><td>Linear</td><td><code>(nn/linear in out)</code></td><td>Affine transform. Optional <code>{:bias false}</code>.</td></tr>
+<tr><td>Sequential</td><td><code>(nn/sequential [layers])</code></td><td>Chain of layers applied in order.</td></tr>
+<tr><td>ReLU</td><td><code>(nn/relu)</code></td><td>Rectified linear unit.</td></tr>
+<tr><td>GELU</td><td><code>(nn/gelu)</code></td><td>Gaussian error linear unit.</td></tr>
+<tr><td>Tanh</td><td><code>(nn/tanh-act)</code></td><td>Hyperbolic tangent activation.</td></tr>
+<tr><td>Sigmoid</td><td><code>(nn/sigmoid-act)</code></td><td>Sigmoid activation.</td></tr>
+<tr><td>LayerNorm</td><td><code>(nn/layer-norm dims)</code></td><td>Layer normalization.</td></tr>
+<tr><td>Embedding</td><td><code>(nn/embedding vocab dims)</code></td><td>Embedding lookup table.</td></tr>
+<tr><td>Dropout</td><td><code>(nn/dropout p)</code></td><td>Dropout regularization.</td></tr>
+</table>
+
+<h3>Training neural networks</h3>
+
+<div class="code-block">
+<pre><code>;; Create optimizer
+(def optim (nn/optimizer :adam 0.001))
+
+;; Define loss function
+(defn loss-fn [model input target]
+  (let [pred (model input)]
+    (mx/mean (mx/multiply (mx/subtract pred target) (mx/subtract pred target)))))
+
+;; Get value-and-grad function
+(def vg-fn (nn/value-and-grad encoder loss-fn))
+
+;; One training step (mutates module weights in-place)
+(def loss (nn/step! encoder optim vg-fn input target))
+(println "Loss:" loss)</code></pre>
+</div>
+<div class="code-output">Loss: 0.342</div>
+
+
+<!-- ================================================================== -->
+<h2>nn->gen-fn: wrapping neural networks as GFs</h2>
+
+<p>The key bridge between neural networks and probabilistic programming is
+<code>nn->gen-fn</code>. It wraps an MLX <code>nn.Module</code> as a
+<strong>deterministic generative function</strong>:</p>
+
+<div class="code-block">
+<pre><code>(ns nn-gf-example
+  (:require [genmlx.nn :as nn]
+            [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]))
+
+;; Wrap encoder as a generative function
+(def encoder-gf (nn/nn->gen-fn encoder))
+
+;; It implements the full GFI:
+(def trace (p/simulate encoder-gf [(mx/random-normal [1 784])]))
+
+(println "Return value shape:" (mx/shape (:retval trace)))
+(println "Score:" (mx/item (:score trace)))      ;; always 0.0 (deterministic)
+(println "Choices:" (cm/to-map (:choices trace))) ;; empty (no random choices)</code></pre>
+</div>
+<div class="code-output">Return value shape: [1 20]
+Score: 0.0
+Choices: {}</div>
+
+<p>A <code>NeuralNetGF</code> is deterministic: it makes no random choices,
+so its score is always 0 and its choice map is empty. But it participates
+in the GFI &mdash; you can <code>simulate</code>, <code>generate</code>,
+<code>update</code>, and <code>assess</code> it. Most importantly,
+<strong>gradients flow through it</strong> via MLX autograd.</p>
+
+<h3>Composing neural nets with stochastic models</h3>
+
+<p>The real power comes from using neural GFs inside probabilistic models.
+Here&rsquo;s a VAE-style model where the encoder parameterizes the
+approximate posterior:</p>
+
+<div class="code-block">
+<pre><code>;; Encoder: data -> [mu, log-sigma]
+(def encoder-net
+  (nn/sequential
+    [(nn/linear 28 64) (nn/relu)
+     (nn/linear 64 32) (nn/relu)
+     (nn/linear 32 4)]))           ;; 2 for mu, 2 for log-sigma
+
+;; Decoder: latent -> reconstruction
+(def decoder-net
+  (nn/sequential
+    [(nn/linear 2 32) (nn/relu)
+     (nn/linear 32 64) (nn/relu)
+     (nn/linear 64 28)]))
+
+;; Generative model (decoder)
+(def generative-model
+  (gen [decoder]
+    (let [z1 (dyn/trace :z1 (dist/gaussian 0 1))
+          z2 (dyn/trace :z2 (dist/gaussian 0 1))
+          z  (mx/array [z1 z2])
+          reconstruction (decoder (mx/reshape z [1 2]))]
+      ;; Observe each output dimension
+      (doseq [i (range 28)]
+        (dyn/trace (keyword (str "x" i))
+                   (dist/gaussian (mx/slice reconstruction [0 i]) 0.1)))
+      z)))
+
+;; Guide (encoder): data -> approximate posterior
+(def guide
+  (gen [encoder data]
+    (let [params (encoder (mx/reshape data [1 28]))
+          mu1     (mx/slice params [0 0])
+          mu2     (mx/slice params [0 1])
+          lsig1   (mx/slice params [0 2])
+          lsig2   (mx/slice params [0 3])
+          z1 (dyn/trace :z1 (dist/gaussian mu1 (mx/exp lsig1)))
+          z2 (dyn/trace :z2 (dist/gaussian mu2 (mx/exp lsig2)))]
+      [z1 z2])))</code></pre>
+</div>
+
+<p>The encoder maps data to posterior parameters, the decoder maps latent
+codes to reconstructions. Both are differentiable end-to-end through the
+GFI.</p>
+
+
+<!-- ================================================================== -->
+<h2>Custom gradient generative functions</h2>
+
+<p>Sometimes you need a generative function with a manually-specified gradient
+&mdash; for example, wrapping an external differentiable computation, or
+implementing a custom surrogate gradient. <code>custom-gradient-gf</code>
+provides this:</p>
+
+<div class="code-block">
+<pre><code>(ns custom-grad-example
+  (:require [genmlx.custom_gradient :as cg]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]))
+
+;; A deterministic GF with custom gradient
+(def my-transform
+  (cg/custom-gradient-gf
+    {:forward (fn [x]
+                ;; Forward computation
+                (mx/multiply x x))
+     :gradient (fn [args retval cotangent]
+                 ;; Custom backward: return gradient w.r.t. each arg
+                 [(mx/multiply (mx/scalar 2) (first args) cotangent)])
+     :has-argument-grads [true]}))
+
+;; Use it like any GF
+(def trace (p/simulate my-transform [(mx/scalar 3.0)]))
+(println "Result:" (mx/item (:retval trace)))  ;; 9.0
+(println "Score:" (mx/item (:score trace)))    ;; 0.0 (deterministic)</code></pre>
+</div>
+<div class="code-output">Result: 9.0
+Score: 0.0</div>
+
+<p>Like <code>NeuralNetGF</code>, a <code>CustomGradientGF</code> is
+deterministic &mdash; no choices, score is 0. But it carries gradient
+information that flows through when used inside differentiable model
+compositions.</p>
+
+<table>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>:forward</code></td><td>Function</td><td><code>(fn [& args] -&gt; retval)</code>. The computation.</td></tr>
+<tr><td><code>:gradient</code></td><td>Function (optional)</td><td><code>(fn [args retval cotangent] -&gt; arg-grads)</code>. Custom backward pass.</td></tr>
+<tr><td><code>:has-argument-grads</code></td><td>Vector of booleans</td><td>Which arguments have gradients.</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2>Amortized inference</h2>
+
+<p>Traditional inference (MCMC, SMC) runs a separate computation for each
+new observation. <strong>Amortized inference</strong> trains a neural network
+(the <em>encoder</em> or <em>proposal</em>) to map observations directly to
+approximate posterior samples. After training, inference is a single forward
+pass.</p>
+
+<h3>Training an amortized proposal</h3>
+
+<div class="code-block">
+<pre><code>(ns amortized-example
+  (:require [genmlx.inference.amortized :as amort]
+            [genmlx.nn :as nn]
+            [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.choicemap :as cm]))
+
+;; Model: latent z -> observed x
+(def model
+  (gen [x]
+    (let [z (dyn/trace :z (dist/gaussian 0 1))]
+      (dyn/trace :x (dist/gaussian z 0.5))
+      z)))
+
+;; Encoder: maps observed data to approximate posterior parameters
+(def encoder-net
+  (nn/sequential
+    [(nn/linear 1 32) (nn/relu)
+     (nn/linear 32 32) (nn/relu)
+     (nn/linear 32 2)]))  ;; [mu, log-sigma]
+
+;; Create ELBO loss function
+(def loss-fn
+  (amort/make-elbo-loss encoder-net model [:z]
+    {:model-args-fn    (fn [x] [x])
+     :observations-fn  (fn [x] (cm/choicemap :x x))}))
+
+;; Training dataset
+(def dataset (mapv #(mx/array [%]) (range -3.0 3.0 0.1)))
+
+;; Train the encoder
+(def losses
+  (amort/train-proposal! encoder-net loss-fn dataset
+    {:iterations 300
+     :optimizer  :adam
+     :lr         0.01}))
+
+(println "Final ELBO loss:" (last losses))</code></pre>
+</div>
+<div class="code-output">Final ELBO loss: 1.23</div>
+
+<p>The ELBO loss uses the reparameterization trick: the encoder outputs
+\(\mu\) and \(\log \sigma\), then \(z = \mu + \sigma \cdot \varepsilon\)
+where \(\varepsilon \sim \mathcal{N}(0,1)\). The loss is:</p>
+
+\[ \mathcal{L} = -\log p(z, x) + \log q(z \mid x; \theta) \]
+
+<h3>Using the trained proposal</h3>
+
+<p>Once trained, use the encoder as a proposal in importance sampling:</p>
+
+<div class="code-block">
+<pre><code>;; Neural importance sampling with trained encoder
+(def nis-result
+  (amort/neural-importance-sampling {:samples 1000}
+    encoder-net model
+    [(mx/array [2.0])]           ;; guide args (data)
+    [(mx/array [2.0])]           ;; model args
+    (cm/choicemap :x (mx/scalar 2.0))))
+
+(println "Log-ML estimate:" (mx/item (:log-ml-estimate nis-result)))
+(println "Num traces:" (count (:traces nis-result)))</code></pre>
+</div>
+<div class="code-output">Log-ML estimate: -1.87
+Num traces: 1000</div>
+
+<p>The trained encoder produces proposals that are already close to the
+posterior, so the importance weights are more uniform and the ESS is higher
+than with prior proposals.</p>
+
+
+<!-- ================================================================== -->
+<h2>End-to-end workflow</h2>
+
+<p>Here&rsquo;s the complete workflow for neural probabilistic modeling:</p>
+
+<ol>
+  <li><strong>Define the generative model</strong> using <code>gen</code> with
+  stochastic trace sites</li>
+  <li><strong>Build a neural encoder</strong> using <code>nn/sequential</code>
+  and friends</li>
+  <li><strong>Create the ELBO loss</strong> with
+  <code>amort/make-elbo-loss</code></li>
+  <li><strong>Train</strong> with <code>amort/train-proposal!</code></li>
+  <li><strong>Use as proposal</strong> in
+  <code>amort/neural-importance-sampling</code> or as a guide in
+  wake-sleep</li>
+</ol>
+
+<div class="code-block">
+<pre><code>;; Summary of the amortized inference API
+(amort/make-elbo-loss encoder model latent-addrs opts)
+  ;; => (fn [data] -> loss-scalar)
+
+(amort/train-proposal! encoder loss-fn dataset opts)
+  ;; => [loss1 loss2 ...] (training curve)
+
+(amort/neural-importance-sampling {:samples N} encoder model guide-args model-args obs)
+  ;; => {:traces [...] :log-weights [...] :log-ml-estimate scalar}</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Summary</h2>
+
+<ul>
+  <li><strong>nn module</strong> provides thin wrappers over MLX neural
+  network layers (Linear, Sequential, activations, LayerNorm, etc.)</li>
+  <li><strong>nn->gen-fn</strong> wraps an MLX module as a deterministic
+  generative function with full GFI support and gradient flow</li>
+  <li><strong>custom-gradient-gf</strong> creates deterministic GFs with
+  manually-specified forward and backward passes</li>
+  <li><strong>Amortized inference</strong> trains a neural encoder to map
+  data to approximate posterior samples:
+    <ul>
+      <li><code>make-elbo-loss</code> creates a reparameterized ELBO loss</li>
+      <li><code>train-proposal!</code> runs the training loop</li>
+      <li><code>neural-importance-sampling</code> uses the trained encoder</li>
+    </ul>
+  </li>
+  <li>Neural GFs compose with stochastic GFs &mdash; gradients flow through
+  both via MLX autograd</li>
+</ul>
+
+<p>In <a href="10-custom-extensions.html">Chapter 10: Custom Extensions</a>,
+we&rsquo;ll see how to extend GenMLX with custom distributions, verify GFI
+contracts, and validate generative functions.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="08-gradients-learning.html">&larr; Chapter 8: Gradients and Learning</a>
+    <a href="10-custom-extensions.html">Chapter 10: Custom Extensions &rarr;</a>
+  </div>
+</div>
+</body>
+</html>
