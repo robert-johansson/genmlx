@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Reference: Combinators</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="../tutorial/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Reference</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="distributions.html">&larr; Prev</a></li><li><a href="inference.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">Combinators</h1>
+
+<p>Combinators compose generative functions into larger models with structured
+address spaces. Each combinator implements the full GFI (simulate, generate,
+update, regenerate) with efficient incremental computation.
+Source: <code>src/genmlx/combinators.cljs</code>, <code>src/genmlx/vmap.cljs</code></p>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li><a href="#map">Map</a></li>
+    <li><a href="#unfold">Unfold</a></li>
+    <li><a href="#switch">Switch</a></li>
+    <li><a href="#scan">Scan</a></li>
+    <li><a href="#mask">Mask</a></li>
+    <li><a href="#mix">Mix</a></li>
+    <li><a href="#recurse">Recurse</a></li>
+    <li><a href="#transforms">Contramap, MapRetval, Dimap</a></li>
+    <li><a href="#vmap">Vmap &amp; Repeat</a></li>
+  </ol>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="map">Map combinator</h2>
+
+<pre><code>(comb/map-combinator kernel)</code></pre>
+
+<p>Apply <code>kernel</code> independently to each element of the input.
+Each application is addressed by its integer index. Supports incremental
+update: only re-executes changed elements.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>kernel</code></td><td>Generative function</td><td>Applied to each element</td></tr>
+</table>
+
+<p><strong>Arguments:</strong> <code>[n &amp; per-element-args]</code> where each
+per-element arg is a vector of length <code>n</code>.</p>
+
+<p><strong>Address space:</strong> Integer keys <code>0, 1, ..., n-1</code>.
+Choice at address <code>:x</code> in element <code>i</code> is at
+<code>[i :x]</code>.</p>
+
+<div class="code-block">
+<pre><code>(def kernel (gen [x] (dyn/trace :y (dist/gaussian x 1))))
+(def mapped (comb/map-combinator kernel))
+
+(def trace (p/simulate mapped [3 [(mx/scalar 1) (mx/scalar 2) (mx/scalar 3)]]))
+;; Choices at addresses: [0 :y], [1 :y], [2 :y]</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="unfold">Unfold combinator</h2>
+
+<pre><code>(comb/unfold-combinator kernel)</code></pre>
+
+<p>Sequentially apply <code>kernel</code> for <code>n</code> time steps,
+threading state through each step. Models time series, Markov chains, and
+sequential processes.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>kernel</code></td><td>Generative function</td><td>Takes <code>[t state &amp; extra-args]</code>, returns new state</td></tr>
+</table>
+
+<p><strong>Arguments:</strong> <code>[n init-state &amp; extra-args]</code></p>
+
+<p><strong>Address space:</strong> Integer keys <code>1, 2, ..., n</code> (1-indexed).
+Choice <code>:x</code> at step <code>t</code> is at <code>[t :x]</code>.</p>
+
+<div class="code-block">
+<pre><code>(def step (gen [t state]
+           (let [s (dyn/trace :state (dist/gaussian state 0.3))]
+             (dyn/trace :obs (dist/gaussian s 1.0))
+             s)))
+
+(def hmm (comb/unfold-combinator step))
+
+;; Run 5-step HMM from initial state 0
+(def trace (p/simulate hmm [5 (mx/scalar 0.0)]))
+;; Choices at: [1 :state], [1 :obs], [2 :state], [2 :obs], ...</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="switch">Switch combinator</h2>
+
+<pre><code>(comb/switch-combinator &amp; branches)</code></pre>
+
+<p>Select one of several generative functions based on an index argument.
+Models mixture components, regime switching, and conditional structure.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>branches</code></td><td>Generative functions</td><td>One or more branch GFs</td></tr>
+</table>
+
+<p><strong>Arguments:</strong> <code>[index &amp; branch-args]</code> where
+<code>index</code> selects which branch to execute (0-indexed).</p>
+
+<div class="code-block">
+<pre><code>(def branch-a (gen [x] (dyn/trace :y (dist/gaussian x 1))))
+(def branch-b (gen [x] (dyn/trace :y (dist/gaussian x 10))))
+
+(def switched (comb/switch-combinator branch-a branch-b))
+
+(p/simulate switched [0 (mx/scalar 5)])  ;; executes branch-a
+(p/simulate switched [1 (mx/scalar 5)])  ;; executes branch-b</code></pre>
+</div>
+
+<h3>vectorized-switch</h3>
+
+<pre><code>(comb/vectorized-switch branches index branch-args)</code></pre>
+
+<p>Execute all branches with <code>[N]</code> samples each, then select
+results per-particle via <code>[N]</code>-shaped index array. Used in
+vectorized inference with stochastic control flow.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="scan">Scan combinator</h2>
+
+<pre><code>(comb/scan-combinator kernel)</code></pre>
+
+<p>Like <code>unfold</code> but takes external inputs at each step. The kernel
+takes <code>[carry input]</code> and returns <code>[new-carry output]</code>,
+similar to a functional scan/fold.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>kernel</code></td><td>Generative function</td><td>Takes <code>[carry input]</code>, returns <code>[new-carry output]</code></td></tr>
+</table>
+
+<p><strong>Arguments:</strong> <code>[init-carry inputs]</code> where
+<code>inputs</code> is a vector of per-step inputs.</p>
+
+<p><strong>Returns:</strong> <code>[final-carry [output1 output2 ...]]</code></p>
+
+
+<!-- ================================================================== -->
+<h2 id="mask">Mask combinator</h2>
+
+<pre><code>(comb/mask-combinator inner)</code></pre>
+
+<p>Conditionally execute a generative function based on a boolean flag.
+When <code>active?</code> is false, the inner GF is not executed and
+contributes no choices or score.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>inner</code></td><td>Generative function</td><td>GF to conditionally execute</td></tr>
+</table>
+
+<p><strong>Arguments:</strong> <code>[active? &amp; inner-args]</code></p>
+
+
+<!-- ================================================================== -->
+<h2 id="mix">Mix combinator</h2>
+
+<pre><code>(comb/mix-combinator components log-weights-fn)</code></pre>
+
+<p>Create a mixture of generative functions. The log-weights can be a fixed
+array or a function that computes them from the arguments.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>components</code></td><td>Vector of GFs</td><td>Mixture components</td></tr>
+<tr><td><code>log-weights-fn</code></td><td>MLX array or function</td><td>Log mixing weights (fixed or argument-dependent)</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="recurse">Recurse combinator</h2>
+
+<pre><code>(comb/recurse maker)</code></pre>
+
+<p>Create a recursive generative function. The <code>maker</code> receives
+a reference to the GF being defined, enabling self-referential models
+(trees, recursive grammars, etc.).</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>maker</code></td><td>Function</td><td><code>(fn [self] -&gt; GF)</code> where <code>self</code> is the recursive reference</td></tr>
+</table>
+
+<div class="code-block">
+<pre><code>;; Recursive tree model
+(def tree-model
+  (comb/recurse
+    (fn [self]
+      (gen [depth]
+        (let [leaf? (dyn/trace :leaf? (dist/bernoulli 0.3))]
+          (if (or (pos? (mx/item leaf?)) (&gt;= depth 5))
+            (dyn/trace :value (dist/gaussian 0 1))
+            (let [left  (dyn/splice :left self [(inc depth)])
+                  right (dyn/splice :right self [(inc depth)])]
+              (mx/add left right))))))))</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="transforms">Contramap, MapRetval, Dimap</h2>
+
+<p>Functional transforms on generative functions that modify inputs, outputs,
+or both.</p>
+
+<h3>contramap-gf</h3>
+
+<pre><code>(comb/contramap-gf gf f)</code></pre>
+
+<p>Transform arguments before passing to GF. <code>f: (fn [args] -&gt; transformed-args)</code>.</p>
+
+<h3>map-retval</h3>
+
+<pre><code>(comb/map-retval gf g)</code></pre>
+
+<p>Transform the return value of GF. <code>g: (fn [retval] -&gt; transformed-retval)</code>.</p>
+
+<h3>dimap</h3>
+
+<pre><code>(comb/dimap gf f g)</code></pre>
+
+<p>Transform both arguments and return value.
+<code>f</code> transforms inputs, <code>g</code> transforms outputs.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="vmap">Vmap &amp; Repeat</h2>
+
+<p>Source: <code>src/genmlx/vmap.cljs</code></p>
+
+<h3>vmap-gf</h3>
+
+<pre><code>(vmap/vmap-gf kernel &amp; {:keys [in-axes axis-size]})</code></pre>
+
+<p>Create a Vmap combinator that maps <code>kernel</code> over a batch
+dimension of the arguments. Unlike <code>map-combinator</code> (which
+uses integer-indexed sub-traces), <code>vmap-gf</code> supports
+<code>splice</code> and falls back to per-invocation execution when needed.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>kernel</code></td><td>Generative function</td><td>The model to map</td></tr>
+<tr><td><code>:in-axes</code></td><td>Vector</td><td><code>0</code> or <code>nil</code> per argument (0 = batch, nil = broadcast)</td></tr>
+<tr><td><code>:axis-size</code></td><td>Integer</td><td>Explicit batch size N</td></tr>
+</table>
+
+<h3>repeat-gf</h3>
+
+<pre><code>(vmap/repeat-gf kernel n)</code></pre>
+
+<p>Create a Vmap combinator that runs <code>kernel</code> <code>n</code>
+times with no batched arguments. Equivalent to
+<code>(vmap-gf kernel :axis-size n)</code>.</p>
+
+
+  </div>
+  <div class="chapter-nav">
+    <a href="distributions.html">&larr; Distributions</a>
+    <a href="inference.html">Inference &rarr;</a>
+  </div>
+</div>
+</body>
+</html>
