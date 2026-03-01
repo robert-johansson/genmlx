@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Reference: MLX Operations</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="../tutorial/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Reference</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="trace.html">&larr; Prev</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">MLX Operations</h1>
+
+<p>Thin ClojureScript wrapper over Apple&rsquo;s MLX framework
+(<code>@frost-beta/mlx</code>). All operations produce lazy computation graphs;
+call <code>mx/eval!</code> to materialize. Values stay as MLX arrays from
+sampling through scoring through gradient computation.
+Source: <code>src/genmlx/mlx.cljs</code>, <code>src/genmlx/mlx/random.cljs</code></p>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li><a href="#dtypes">Data types</a></li>
+    <li><a href="#creation">Array creation</a></li>
+    <li><a href="#eval">Evaluation &amp; inspection</a></li>
+    <li><a href="#memory">Memory management</a></li>
+    <li><a href="#arithmetic">Arithmetic</a></li>
+    <li><a href="#math">Math functions</a></li>
+    <li><a href="#reductions">Reductions</a></li>
+    <li><a href="#comparison">Comparison &amp; selection</a></li>
+    <li><a href="#shape">Shape manipulation</a></li>
+    <li><a href="#indexing">Indexing &amp; slicing</a></li>
+    <li><a href="#matrix">Matrix operations</a></li>
+    <li><a href="#linalg">Linear algebra</a></li>
+    <li><a href="#autograd">Automatic differentiation</a></li>
+    <li><a href="#transforms">Transforms</a></li>
+    <li><a href="#device">Device &amp; constants</a></li>
+    <li><a href="#random">Random (PRNG)</a></li>
+  </ol>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="dtypes">Data types</h2>
+
+<table>
+<tr><th>Constant</th><th>MLX dtype</th></tr>
+<tr><td><code>mx/float32</code></td><td>32-bit float (default)</td></tr>
+<tr><td><code>mx/float64</code></td><td>64-bit float</td></tr>
+<tr><td><code>mx/int32</code></td><td>32-bit integer</td></tr>
+<tr><td><code>mx/int64</code></td><td>64-bit integer</td></tr>
+<tr><td><code>mx/bool-dt</code></td><td>Boolean</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="creation">Array creation</h2>
+
+<table>
+<tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+<tr><td><code>scalar</code></td><td><code>(mx/scalar v)</code><br><code>(mx/scalar v dtype)</code></td><td>Create scalar (0-dimensional) array</td></tr>
+<tr><td><code>array</code></td><td><code>(mx/array v)</code><br><code>(mx/array v dtype)</code></td><td>Create array from JS/Clojure value</td></tr>
+<tr><td><code>zeros</code></td><td><code>(mx/zeros shape)</code><br><code>(mx/zeros shape dtype)</code></td><td>Array filled with zeros</td></tr>
+<tr><td><code>ones</code></td><td><code>(mx/ones shape)</code><br><code>(mx/ones shape dtype)</code></td><td>Array filled with ones</td></tr>
+<tr><td><code>full</code></td><td><code>(mx/full shape val)</code></td><td>Array filled with <code>val</code></td></tr>
+<tr><td><code>eye</code></td><td><code>(mx/eye n)</code><br><code>(mx/eye n dtype)</code></td><td>Identity matrix</td></tr>
+<tr><td><code>arange</code></td><td><code>(mx/arange stop)</code><br><code>(mx/arange start stop)</code><br><code>(mx/arange start stop step)</code></td><td>Range array</td></tr>
+<tr><td><code>linspace</code></td><td><code>(mx/linspace start stop num)</code></td><td>Evenly spaced values</td></tr>
+</table>
+
+<div class="code-block">
+<pre><code>(mx/scalar 3.14)           ;; => #mlx 3.14 (shape [])
+(mx/array [1 2 3])         ;; => #mlx [1 2 3] (shape [3])
+(mx/zeros [3 4])           ;; => 3x4 zero matrix
+(mx/eye 3)                 ;; => 3x3 identity
+(mx/arange 0 10 2)         ;; => #mlx [0 2 4 6 8]
+(mx/linspace 0 1 5)        ;; => #mlx [0.0 0.25 0.5 0.75 1.0]</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="eval">Evaluation &amp; inspection</h2>
+
+<table>
+<tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+<tr><td><code>eval!</code></td><td><code>(mx/eval! &amp; arrs)</code></td><td>Materialize lazy computation graph. Bounds memory, enables fusion.</td></tr>
+<tr><td><code>item</code></td><td><code>(mx/item a)</code></td><td>Extract scalar JS number from 0-d array</td></tr>
+<tr><td><code>-&gt;clj</code></td><td><code>(mx/-&gt;clj a)</code></td><td>Convert array to ClojureScript value (vector/number)</td></tr>
+<tr><td><code>shape</code></td><td><code>(mx/shape a)</code></td><td>Get shape as vector (e.g. <code>[3 4]</code>)</td></tr>
+<tr><td><code>ndim</code></td><td><code>(mx/ndim a)</code></td><td>Number of dimensions</td></tr>
+<tr><td><code>dtype</code></td><td><code>(mx/dtype a)</code></td><td>Array data type</td></tr>
+<tr><td><code>size</code></td><td><code>(mx/size a)</code></td><td>Total number of elements</td></tr>
+<tr><td><code>array?</code></td><td><code>(mx/array? x)</code></td><td>Check if <code>x</code> is an MLX array</td></tr>
+<tr><td><code>realize</code></td><td><code>(mx/realize x)</code></td><td>Evaluate and return scalar JS value</td></tr>
+<tr><td><code>ensure-array</code></td><td><code>(mx/ensure-array x)</code><br><code>(mx/ensure-array x dtype)</code></td><td>Wrap JS number as scalar; pass through arrays</td></tr>
+</table>
+
+<div class="warning">
+  <strong>Do not call <code>mx/item</code> or <code>mx/eval!</code> inside
+  model bodies</strong> during batched execution &mdash; it breaks vectorization
+  by materializing intermediate values.
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="memory">Memory management</h2>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(mx/tidy f)</code></td><td>Execute <code>f</code> with automatic memory management. Arrays created inside are freed unless returned.</td></tr>
+<tr><td><code>(mx/dispose! a)</code></td><td>Explicitly free array memory</td></tr>
+<tr><td><code>(mx/get-active-memory)</code></td><td>Current active memory in bytes</td></tr>
+<tr><td><code>(mx/get-cache-memory)</code></td><td>Current cache memory in bytes</td></tr>
+<tr><td><code>(mx/get-peak-memory)</code></td><td>Peak memory since last reset</td></tr>
+<tr><td><code>(mx/reset-peak-memory!)</code></td><td>Reset peak memory counter</td></tr>
+<tr><td><code>(mx/get-wrappers-count)</code></td><td>Number of live JS wrapper objects</td></tr>
+<tr><td><code>(mx/set-memory-limit! n)</code></td><td>Set memory limit in bytes</td></tr>
+<tr><td><code>(mx/set-cache-limit! n)</code></td><td>Set cache limit in bytes</td></tr>
+<tr><td><code>(mx/set-wired-limit! n)</code></td><td>Set wired memory limit</td></tr>
+<tr><td><code>(mx/clear-cache!)</code></td><td>Clear memory cache</td></tr>
+<tr><td><code>(mx/metal-is-available?)</code></td><td>Check if Metal GPU is available</td></tr>
+<tr><td><code>(mx/metal-device-info)</code></td><td>Return device info map</td></tr>
+<tr><td><code>(mx/memory-report)</code></td><td>Comprehensive memory usage report</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="arithmetic">Arithmetic</h2>
+
+<p>All arithmetic operations are element-wise and support broadcasting.</p>
+
+<table>
+<tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+<tr><td><code>add</code></td><td><code>(mx/add a b)</code></td><td>\(a + b\)</td></tr>
+<tr><td><code>subtract</code></td><td><code>(mx/subtract a b)</code></td><td>\(a - b\)</td></tr>
+<tr><td><code>multiply</code></td><td><code>(mx/multiply a b)</code></td><td>\(a \times b\)</td></tr>
+<tr><td><code>divide</code></td><td><code>(mx/divide a b)</code></td><td>\(a / b\)</td></tr>
+<tr><td><code>negative</code></td><td><code>(mx/negative a)</code></td><td>\(-a\)</td></tr>
+<tr><td><code>power</code></td><td><code>(mx/power a b)</code></td><td>\(a^b\)</td></tr>
+<tr><td><code>square</code></td><td><code>(mx/square a)</code></td><td>\(a^2\)</td></tr>
+<tr><td><code>sqrt</code></td><td><code>(mx/sqrt a)</code></td><td>\(\sqrt{a}\)</td></tr>
+<tr><td><code>abs</code></td><td><code>(mx/abs a)</code></td><td>\(|a|\)</td></tr>
+<tr><td><code>maximum</code></td><td><code>(mx/maximum a b)</code></td><td>\(\max(a, b)\)</td></tr>
+<tr><td><code>minimum</code></td><td><code>(mx/minimum a b)</code></td><td>\(\min(a, b)\)</td></tr>
+<tr><td><code>clip</code></td><td><code>(mx/clip a lo hi)</code></td><td>Clamp to \([lo, hi]\)</td></tr>
+<tr><td><code>sign</code></td><td><code>(mx/sign a)</code></td><td>Sign function (\(-1, 0, +1\))</td></tr>
+<tr><td><code>reciprocal</code></td><td><code>(mx/reciprocal a)</code></td><td>\(1/a\)</td></tr>
+<tr><td><code>floor-divide</code></td><td><code>(mx/floor-divide a b)</code></td><td>\(\lfloor a/b \rfloor\)</td></tr>
+</table>
+
+<p><code>add</code>, <code>subtract</code>, and <code>multiply</code> accept
+variadic arguments: <code>(mx/add a b c d)</code>.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="math">Math functions</h2>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(mx/exp a)</code></td><td>\(e^a\)</td></tr>
+<tr><td><code>(mx/expm1 a)</code></td><td>\(e^a - 1\) (numerically stable for small \(a\))</td></tr>
+<tr><td><code>(mx/log a)</code></td><td>\(\ln a\)</td></tr>
+<tr><td><code>(mx/log2 a)</code></td><td>\(\log_2 a\)</td></tr>
+<tr><td><code>(mx/log10 a)</code></td><td>\(\log_{10} a\)</td></tr>
+<tr><td><code>(mx/log1p a)</code></td><td>\(\ln(1 + a)\) (numerically stable)</td></tr>
+<tr><td><code>(mx/logaddexp a b)</code></td><td>\(\ln(e^a + e^b)\) (numerically stable)</td></tr>
+<tr><td><code>(mx/sin a)</code></td><td>Sine</td></tr>
+<tr><td><code>(mx/cos a)</code></td><td>Cosine</td></tr>
+<tr><td><code>(mx/tan a)</code></td><td>Tangent</td></tr>
+<tr><td><code>(mx/tanh a)</code></td><td>Hyperbolic tangent</td></tr>
+<tr><td><code>(mx/sigmoid a)</code></td><td>\(\sigma(a) = 1/(1+e^{-a})\)</td></tr>
+<tr><td><code>(mx/softmax a)</code><br><code>(mx/softmax a axis)</code></td><td>Softmax along axis</td></tr>
+<tr><td><code>(mx/erf a)</code></td><td>Error function</td></tr>
+<tr><td><code>(mx/erfinv a)</code></td><td>Inverse error function</td></tr>
+<tr><td><code>(mx/lgamma a)</code></td><td>\(\ln \Gamma(a)\)</td></tr>
+<tr><td><code>(mx/digamma a)</code></td><td>\(\psi(a) = \Gamma'(a)/\Gamma(a)\)</td></tr>
+<tr><td><code>(mx/floor a)</code></td><td>Floor</td></tr>
+<tr><td><code>(mx/ceil a)</code></td><td>Ceiling</td></tr>
+<tr><td><code>(mx/round a)</code></td><td>Round to nearest integer</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="reductions">Reductions</h2>
+
+<p>All reductions accept optional <code>axes</code> (integer or vector) and
+<code>keepdims</code> (boolean) parameters.</p>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(mx/sum a)</code></td><td>Sum all elements</td></tr>
+<tr><td><code>(mx/sum a axes)</code></td><td>Sum along specified axes</td></tr>
+<tr><td><code>(mx/prod a)</code></td><td>Product of all elements</td></tr>
+<tr><td><code>(mx/mean a)</code></td><td>Mean of all elements</td></tr>
+<tr><td><code>(mx/variance a)</code></td><td>Variance</td></tr>
+<tr><td><code>(mx/std a)</code></td><td>Standard deviation</td></tr>
+<tr><td><code>(mx/amax a)</code></td><td>Maximum value</td></tr>
+<tr><td><code>(mx/amin a)</code></td><td>Minimum value</td></tr>
+<tr><td><code>(mx/argmax a)</code><br><code>(mx/argmax a axis)</code></td><td>Index of maximum</td></tr>
+<tr><td><code>(mx/argmin a)</code><br><code>(mx/argmin a axis)</code></td><td>Index of minimum</td></tr>
+<tr><td><code>(mx/logsumexp a)</code></td><td>\(\ln \sum e^{a_i}\) (numerically stable)</td></tr>
+<tr><td><code>(mx/cumsum a)</code><br><code>(mx/cumsum a axis)</code></td><td>Cumulative sum</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="comparison">Comparison &amp; selection</h2>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(mx/equal a b)</code></td><td>Element-wise \(a = b\)</td></tr>
+<tr><td><code>(mx/not-equal a b)</code></td><td>Element-wise \(a \neq b\)</td></tr>
+<tr><td><code>(mx/greater a b)</code></td><td>Element-wise \(a > b\)</td></tr>
+<tr><td><code>(mx/greater-equal a b)</code></td><td>Element-wise \(a \geq b\)</td></tr>
+<tr><td><code>(mx/less a b)</code></td><td>Element-wise \(a < b\)</td></tr>
+<tr><td><code>(mx/less-equal a b)</code></td><td>Element-wise \(a \leq b\)</td></tr>
+<tr><td><code>(mx/where cond a b)</code></td><td>Element-wise conditional: <code>cond ? a : b</code></td></tr>
+<tr><td><code>(mx/isnan a)</code></td><td>Element-wise NaN check</td></tr>
+<tr><td><code>(mx/isinf a)</code></td><td>Element-wise infinity check</td></tr>
+</table>
+
+<div class="note">
+  <strong>Vectorized control flow:</strong> Use <code>mx/where</code> instead
+  of <code>if</code> for conditional values in models that run under
+  vectorized inference, since different particles may take different branches.
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="shape">Shape manipulation</h2>
+
+<table>
+<tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+<tr><td><code>reshape</code></td><td><code>(mx/reshape a shape)</code></td><td>Reshape array to new shape</td></tr>
+<tr><td><code>flatten</code></td><td><code>(mx/flatten a)</code></td><td>Flatten to 1-D</td></tr>
+<tr><td><code>squeeze</code></td><td><code>(mx/squeeze a)</code></td><td>Remove dimensions of size 1</td></tr>
+<tr><td><code>expand-dims</code></td><td><code>(mx/expand-dims a axis)</code></td><td>Add dimension of size 1 at <code>axis</code></td></tr>
+<tr><td><code>transpose</code></td><td><code>(mx/transpose a)</code><br><code>(mx/transpose a axes)</code></td><td>Transpose (swap axes)</td></tr>
+<tr><td><code>stack</code></td><td><code>(mx/stack arrs)</code><br><code>(mx/stack arrs axis)</code></td><td>Stack arrays along new axis</td></tr>
+<tr><td><code>concatenate</code></td><td><code>(mx/concatenate arrs)</code><br><code>(mx/concatenate arrs axis)</code></td><td>Concatenate along existing axis</td></tr>
+<tr><td><code>broadcast-to</code></td><td><code>(mx/broadcast-to a shape)</code></td><td>Broadcast to target shape</td></tr>
+<tr><td><code>tile</code></td><td><code>(mx/tile a reps)</code></td><td>Tile array along axes</td></tr>
+<tr><td><code>repeat-arr</code></td><td><code>(mx/repeat-arr a repeats axis)</code></td><td>Repeat elements along axis</td></tr>
+<tr><td><code>split-arr</code></td><td><code>(mx/split-arr a sections)</code><br><code>(mx/split-arr a sections axis)</code></td><td>Split array into sections</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="indexing">Indexing &amp; slicing</h2>
+
+<table>
+<tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+<tr><td><code>take-idx</code></td><td><code>(mx/take-idx a indices)</code><br><code>(mx/take-idx a indices axis)</code></td><td>Gather elements by index</td></tr>
+<tr><td><code>take-along-axis</code></td><td><code>(mx/take-along-axis a indices axis)</code></td><td>Gather along axis with index array</td></tr>
+<tr><td><code>index</code></td><td><code>(mx/index a i)</code></td><td>Index into first dimension</td></tr>
+<tr><td><code>slice</code></td><td><code>(mx/slice a start stop)</code><br><code>(mx/slice a start stop step)</code></td><td>Slice with start/stop/step vectors</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="matrix">Matrix operations</h2>
+
+<table>
+<tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+<tr><td><code>matmul</code></td><td><code>(mx/matmul a b)</code></td><td>Matrix multiplication</td></tr>
+<tr><td><code>inner</code></td><td><code>(mx/inner a b)</code></td><td>Inner (dot) product</td></tr>
+<tr><td><code>outer</code></td><td><code>(mx/outer a b)</code></td><td>Outer product</td></tr>
+<tr><td><code>diag</code></td><td><code>(mx/diag a)</code></td><td>Extract diagonal or create diagonal matrix</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="linalg">Linear algebra</h2>
+
+<p>Linear algebra operations run on the CPU stream for numerical stability.</p>
+
+<table>
+<tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+<tr><td><code>cholesky</code></td><td><code>(mx/cholesky a)</code></td><td>Cholesky decomposition (lower triangular)</td></tr>
+<tr><td><code>solve</code></td><td><code>(mx/solve a b)</code></td><td>Solve \(Ax = b\)</td></tr>
+<tr><td><code>solve-triangular</code></td><td><code>(mx/solve-triangular a b upper)</code></td><td>Solve triangular system</td></tr>
+<tr><td><code>inv</code></td><td><code>(mx/inv a)</code></td><td>Matrix inverse</td></tr>
+<tr><td><code>tri-inv</code></td><td><code>(mx/tri-inv a upper)</code></td><td>Triangular matrix inverse</td></tr>
+<tr><td><code>qr</code></td><td><code>(mx/qr a)</code></td><td>QR decomposition. Returns <code>[Q R]</code>.</td></tr>
+<tr><td><code>svd</code></td><td><code>(mx/svd a)</code></td><td>Singular value decomposition. Returns <code>[U S V]</code>.</td></tr>
+<tr><td><code>eigh</code></td><td><code>(mx/eigh a)</code></td><td>Eigendecomposition of symmetric matrix. Returns <code>[eigenvalues eigenvectors]</code>.</td></tr>
+<tr><td><code>eigvalsh</code></td><td><code>(mx/eigvalsh a)</code></td><td>Eigenvalues of symmetric matrix</td></tr>
+<tr><td><code>norm</code></td><td><code>(mx/norm a)</code><br><code>(mx/norm a ord)</code></td><td>Matrix or vector norm</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="autograd">Automatic differentiation</h2>
+
+<table>
+<tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+<tr><td><code>grad</code></td><td><code>(mx/grad f)</code><br><code>(mx/grad f argnums)</code></td><td>Return gradient function. <code>argnums</code> selects which args to differentiate.</td></tr>
+<tr><td><code>value-and-grad</code></td><td><code>(mx/value-and-grad f)</code><br><code>(mx/value-and-grad f argnums)</code></td><td>Return function computing <code>[value gradient]</code></td></tr>
+<tr><td><code>jvp</code></td><td><code>(mx/jvp f primals tangents)</code></td><td>Jacobian-vector product (forward-mode AD)</td></tr>
+<tr><td><code>vjp</code></td><td><code>(mx/vjp f primals cotangents)</code></td><td>Vector-Jacobian product (reverse-mode AD)</td></tr>
+<tr><td><code>stop-gradient</code></td><td><code>(mx/stop-gradient a)</code></td><td>Stop gradient flow through array</td></tr>
+</table>
+
+<div class="code-block">
+<pre><code>;; Basic gradient
+(def grad-f (mx/grad (fn [x] (mx/multiply x x))))
+(mx/item (grad-f (mx/scalar 3.0)))  ;; => 6.0
+
+;; Value and gradient together
+(def vg (mx/value-and-grad (fn [x] (mx/power x (mx/scalar 3)))))
+(let [[val grad] (vg (mx/scalar 2.0))]
+  (println "f(2)=" (mx/item val) "f'(2)=" (mx/item grad)))
+;; f(2)= 8.0 f'(2)= 12.0</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="transforms">Transforms</h2>
+
+<table>
+<tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+<tr><td><code>compile-fn</code></td><td><code>(mx/compile-fn f)</code><br><code>(mx/compile-fn f shapeless?)</code></td><td>Compile function into fused computation graph. Set <code>shapeless?</code> to <code>true</code> if shapes may vary.</td></tr>
+<tr><td><code>vmap</code></td><td><code>(mx/vmap f)</code><br><code>(mx/vmap f in-axes)</code><br><code>(mx/vmap f in-axes out-axes)</code></td><td>Vectorize function over a batch dimension</td></tr>
+<tr><td><code>async-eval!</code></td><td><code>(mx/async-eval! &amp; arrays)</code></td><td>Asynchronous evaluation</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="device">Device &amp; constants</h2>
+
+<table>
+<tr><th>Function / Constant</th><th>Description</th></tr>
+<tr><td><code>(mx/default-device)</code></td><td>Get current default device</td></tr>
+<tr><td><code>(mx/set-default-device! d)</code></td><td>Set default device</td></tr>
+<tr><td><code>mx/cpu</code></td><td>CPU device constant</td></tr>
+<tr><td><code>mx/gpu</code></td><td>GPU device constant</td></tr>
+<tr><td><code>mx/pi</code></td><td>\(\pi\)</td></tr>
+<tr><td><code>mx/e-val</code></td><td>\(e\)</td></tr>
+<tr><td><code>mx/inf</code></td><td>\(\infty\)</td></tr>
+<tr><td><code>mx/nan</code></td><td>NaN</td></tr>
+</table>
+
+<h3>Dynamic variables</h3>
+
+<table>
+<tr><th>Variable</th><th>Description</th></tr>
+<tr><td><code>mx/*batched-exec?*</code></td><td>Flag indicating batched execution mode. Set by the handler system.</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="random">Random (PRNG)</h2>
+
+<p>Source: <code>src/genmlx/mlx/random.cljs</code></p>
+
+<p>Functional PRNG with key-based splitting. No global mutable state &mdash;
+all randomness flows through explicit keys.</p>
+
+<h3>Key management</h3>
+
+<table>
+<tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+<tr><td><code>fresh-key</code></td><td><code>(random/fresh-key)</code><br><code>(random/fresh-key seed)</code></td><td>Create fresh PRNG key from optional integer seed</td></tr>
+<tr><td><code>next-key</code></td><td><code>(random/next-key)</code></td><td>Get next key. Splits <code>*prng-key*</code> if bound, else <code>fresh-key</code>.</td></tr>
+<tr><td><code>split</code></td><td><code>(random/split key)</code></td><td>Split into two independent sub-keys. Returns <code>[k1 k2]</code>.</td></tr>
+<tr><td><code>split-n</code></td><td><code>(random/split-n key n)</code></td><td>Split into <code>n</code> independent sub-keys</td></tr>
+<tr><td><code>ensure-key</code></td><td><code>(random/ensure-key key)</code></td><td>Return key if non-nil, else fresh key</td></tr>
+<tr><td><code>key-&gt;seed</code></td><td><code>(random/key-&gt;seed key)</code></td><td>Derive integer seed from key</td></tr>
+<tr><td><code>seed-from-key!</code></td><td><code>(random/seed-from-key! key)</code></td><td>Seed global MLX PRNG from key</td></tr>
+<tr><td><code>split-or-nils</code></td><td><code>(random/split-or-nils key)</code></td><td>Split into <code>[k1 k2]</code> if non-nil, else <code>[nil nil]</code></td></tr>
+<tr><td><code>split-n-or-nils</code></td><td><code>(random/split-n-or-nils key n)</code></td><td>Split into <code>n</code> keys if non-nil, else vector of nils</td></tr>
+</table>
+
+<h3>Sampling</h3>
+
+<table>
+<tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+<tr><td><code>normal</code></td><td><code>(random/normal key shape)</code></td><td>Standard normal samples</td></tr>
+<tr><td><code>uniform</code></td><td><code>(random/uniform key shape)</code></td><td>Uniform [0,1) samples</td></tr>
+<tr><td><code>bernoulli</code></td><td><code>(random/bernoulli key p shape)</code></td><td>Bernoulli samples</td></tr>
+<tr><td><code>categorical</code></td><td><code>(random/categorical key logits)</code></td><td>Categorical sample from log-probabilities</td></tr>
+<tr><td><code>randint</code></td><td><code>(random/randint key lo hi shape)</code></td><td>Random integers in [lo, hi)</td></tr>
+<tr><td><code>gumbel</code></td><td><code>(random/gumbel key shape)</code></td><td>Standard Gumbel samples</td></tr>
+<tr><td><code>laplace</code></td><td><code>(random/laplace key shape)</code></td><td>Standard Laplace samples</td></tr>
+<tr><td><code>truncated-normal</code></td><td><code>(random/truncated-normal key lo hi shape)</code></td><td>Truncated normal in [lo, hi]</td></tr>
+<tr><td><code>multivariate-normal</code></td><td><code>(random/multivariate-normal key mean cov)</code></td><td>Multivariate normal \(\mathcal{N}(\mu, \Sigma)\). Uses CPU stream.</td></tr>
+<tr><td><code>permutation</code></td><td><code>(random/permutation key n)</code><br><code>(random/permutation key arr axis)</code></td><td>Random permutation of integers or array shuffle</td></tr>
+</table>
+
+<h3>Dynamic variable</h3>
+
+<table>
+<tr><th>Variable</th><th>Description</th></tr>
+<tr><td><code>random/*prng-key*</code></td><td>When bound to a volatile PRNG key, all GFI methods draw from this threaded key. Set by <code>dyn/with-key</code>.</td></tr>
+</table>
+
+
+  </div>
+  <div class="chapter-nav">
+    <a href="trace.html">&larr; Traces &amp; Selections</a>
+    <a href="index.html">Reference Index</a>
+  </div>
+</div>
+</body>
+</html>
