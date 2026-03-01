@@ -14,8 +14,10 @@
   <div id="chapter">
     <h1 id="chapter-title">API Reference</h1>
 
-    <p>Complete reference for all GenMLX modules. Each section links to the
-    source file and lists public functions with signatures and descriptions.</p>
+    <p>Complete reference for all GenMLX modules. GenMLX is organized into
+    8 architecture layers, from the MLX foundation through inference and
+    verification. Each module page below documents every public function
+    with signatures, parameters, and return values.</p>
 
     <div class="toc">
       <h3>Modules</h3>
@@ -34,22 +36,129 @@
         </li>
         <li>
           <a href="inference.html">Inference</a>
-          <span class="desc">&mdash; IS, MH, HMC, NUTS, SMC, SMCP3, VI, ADEV, MAP, kernels</span>
+          <span class="desc">&mdash; IS, MH, HMC, NUTS, SMC, SMCP3, VI, ADEV, MAP, kernels, diagnostics</span>
         </li>
         <li>
           <a href="choicemap.html">Choicemaps</a>
           <span class="desc">&mdash; Hierarchical address &rarr; value maps</span>
         </li>
         <li>
-          <a href="trace.html">Traces</a>
-          <span class="desc">&mdash; Immutable execution records</span>
+          <a href="trace.html">Traces &amp; Selections</a>
+          <span class="desc">&mdash; Immutable execution records, address selections, diffs</span>
         </li>
         <li>
           <a href="mlx.html">MLX Operations</a>
-          <span class="desc">&mdash; Array creation, arithmetic, grad, vmap</span>
+          <span class="desc">&mdash; Array creation, arithmetic, linalg, autograd, random</span>
         </li>
       </ol>
     </div>
+
+
+    <!-- ================================================================ -->
+    <h2>Architecture overview</h2>
+
+    <p>GenMLX is ~10,800 lines of ClojureScript organized into 8 layers.
+    Each layer depends only on layers below it.</p>
+
+    <table>
+    <tr><th>Layer</th><th>Modules</th><th>Purpose</th></tr>
+    <tr>
+      <td><strong>0</strong></td>
+      <td><a href="mlx.html"><code>mlx</code></a>, <a href="mlx.html#random"><code>mlx.random</code></a></td>
+      <td>Thin wrapper over <code>@frost-beta/mlx</code>: arrays, ops, grad, vmap, PRNG</td>
+    </tr>
+    <tr>
+      <td><strong>1</strong></td>
+      <td><a href="choicemap.html"><code>choicemap</code></a>, <a href="trace.html"><code>trace</code></a>, <a href="trace.html#selection"><code>selection</code></a></td>
+      <td>Core data structures: hierarchical choicemaps, immutable traces, address selections</td>
+    </tr>
+    <tr>
+      <td><strong>2</strong></td>
+      <td><a href="gfi.html"><code>protocols</code></a>, <code>handler</code>, <code>edit</code>, <a href="trace.html#diff"><code>diff</code></a></td>
+      <td>GFI protocol definitions, handler-based execution engine, parametric edits</td>
+    </tr>
+    <tr>
+      <td><strong>3</strong></td>
+      <td><a href="gfi.html#gen-macro"><code>gen</code></a>, <a href="gfi.html#dynamic"><code>dynamic</code></a></td>
+      <td>DSL: <code>gen</code> macro for defining models, <code>DynamicGF</code> with full GFI</td>
+    </tr>
+    <tr>
+      <td><strong>4</strong></td>
+      <td><a href="distributions.html"><code>dist</code></a>, <code>dist/core</code>, <code>dist/macros</code></td>
+      <td>27 distributions with open multimethods for extensibility</td>
+    </tr>
+    <tr>
+      <td><strong>5</strong></td>
+      <td><a href="combinators.html"><code>combinators</code></a>, <a href="combinators.html#vmap"><code>vmap</code></a></td>
+      <td>Compositional model building: Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Vmap</td>
+    </tr>
+    <tr>
+      <td><strong>6</strong></td>
+      <td><a href="inference.html"><code>inference/*</code></a></td>
+      <td>IS, MH, MALA, HMC, NUTS, Gibbs, SMC, SMCP3, VI, ADEV, MAP, kernels</td>
+    </tr>
+    <tr>
+      <td><strong>7</strong></td>
+      <td><code>vectorized</code>, <code>gradients</code>, <code>learning</code>, <code>nn</code>, <code>contracts</code>, <code>verify</code></td>
+      <td>Batched execution, gradient computation, training, neural GFs, verification</td>
+    </tr>
+    </table>
+
+
+    <!-- ================================================================ -->
+    <h2>Quick reference</h2>
+
+    <p>The most commonly used functions across all modules:</p>
+
+    <h3>Defining models</h3>
+
+<pre><code>(require '[genmlx.gen :refer [gen]]
+         '[genmlx.dynamic :as dyn]
+         '[genmlx.dist :as dist])
+
+;; Define a generative function
+(def model
+  (gen [x]
+    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
+          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+      (dyn/trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
+      slope)))</code></pre>
+
+    <h3>GFI operations</h3>
+
+<pre><code>(require '[genmlx.protocols :as p]
+         '[genmlx.choicemap :as cm])
+
+(p/simulate model [x])                          ;; => Trace
+(p/generate model [x] (cm/choicemap :y obs))     ;; => {:trace :weight}
+(p/update model trace new-constraints)           ;; => {:trace :weight :discard}
+(p/regenerate model trace (sel/select :slope))   ;; => {:trace :weight}
+(p/assess model [x] choices)                     ;; => {:retval :weight}</code></pre>
+
+    <h3>Running inference</h3>
+
+<pre><code>(require '[genmlx.inference.importance :as is]
+         '[genmlx.inference.mcmc :as mcmc]
+         '[genmlx.inference.smc :as smc])
+
+;; Importance sampling
+(is/importance-sampling {:samples 1000} model args obs)
+
+;; MCMC (MH, HMC, NUTS)
+(mcmc/mh {:samples 1000 :burn 200} model args obs)
+(mcmc/hmc {:samples 500 :step-size 0.01 :leapfrog-steps 10} model args obs)
+
+;; Sequential Monte Carlo
+(smc/smc {:particles 500} model args obs-seq)</code></pre>
+
+    <h3>Vectorized inference</h3>
+
+<pre><code>(require '[genmlx.dynamic :as dyn])
+
+;; Runs model body ONCE for N particles
+(dyn/vsimulate model args 1000 key)    ;; => VectorizedTrace
+(dyn/vgenerate model args obs 1000 key) ;; => VectorizedTrace with weights</code></pre>
+
   </div>
 </div>
 </body>

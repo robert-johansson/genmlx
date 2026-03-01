@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Reference: GFI Protocols</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="../tutorial/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Reference</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="../tutorial/index.html">Tutorial</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">GFI Protocols</h1>
+
+<p>The <strong>Generative Function Interface (GFI)</strong> is the core abstraction
+of GenMLX. Every generative function &mdash; whether built with <code>gen</code>,
+a combinator, or <code>nn->gen-fn</code> &mdash; implements these protocols.
+Source: <code>src/genmlx/protocols.cljs</code></p>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li><a href="#protocols">GFI Protocols</a></li>
+    <li><a href="#gen-macro">gen macro</a></li>
+    <li><a href="#dynamic">Dynamic DSL</a></li>
+    <li><a href="#handler">Handler system</a></li>
+    <li><a href="#edit">Parametric edits</a></li>
+  </ol>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="protocols">GFI protocols</h2>
+
+<p>Source: <code>src/genmlx/protocols.cljs</code></p>
+
+
+<h3>IGenerativeFunction &mdash; simulate</h3>
+
+<pre><code>(p/simulate gf args)</code></pre>
+
+<p>Sample all random choices from their prior distributions. Returns a
+<a href="trace.html"><code>Trace</code></a> record.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model to execute</td></tr>
+<tr><td><code>args</code></td><td>Vector</td><td>Arguments passed to the model body</td></tr>
+</table>
+
+<p><strong>Returns:</strong> <code>Trace</code> with <code>{:gen-fn :args :choices :retval :score}</code></p>
+
+
+<h3>IGenerate &mdash; generate</h3>
+
+<pre><code>(p/generate gf args constraints)</code></pre>
+
+<p>Execute the model with some choices constrained to observed values.
+Unconstrained choices are sampled from the prior. Returns a trace and an
+importance weight.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model to execute</td></tr>
+<tr><td><code>args</code></td><td>Vector</td><td>Arguments passed to the model body</td></tr>
+<tr><td><code>constraints</code></td><td><a href="choicemap.html">ChoiceMap</a></td><td>Observed values at specific addresses</td></tr>
+</table>
+
+<p><strong>Returns:</strong> <code>{:trace Trace, :weight MLX-scalar}</code></p>
+
+<p>The weight is \(\log p(\text{constraints}) = \log p(\text{all choices}) - \log p(\text{unconstrained choices})\).</p>
+
+
+<h3>IAssess &mdash; assess</h3>
+
+<pre><code>(p/assess gf args choices)</code></pre>
+
+<p>Score fully-specified choices. All addresses must be present in the choice map.
+No sampling occurs.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model</td></tr>
+<tr><td><code>args</code></td><td>Vector</td><td>Model arguments</td></tr>
+<tr><td><code>choices</code></td><td><a href="choicemap.html">ChoiceMap</a></td><td>Complete choice map (all addresses)</td></tr>
+</table>
+
+<p><strong>Returns:</strong> <code>{:retval any, :weight MLX-scalar}</code> where weight is \(\log p(\text{choices} \mid \text{args})\).</p>
+
+
+<h3>IUpdate &mdash; update</h3>
+
+<pre><code>(p/update gf trace constraints)</code></pre>
+
+<p>Update an existing trace with new constraints. Unchanged choices are reused.
+Returns the updated trace, an incremental weight, and the discarded old values.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model</td></tr>
+<tr><td><code>trace</code></td><td><a href="trace.html">Trace</a></td><td>Previous execution trace</td></tr>
+<tr><td><code>constraints</code></td><td><a href="choicemap.html">ChoiceMap</a></td><td>New constraints to apply</td></tr>
+</table>
+
+<p><strong>Returns:</strong> <code>{:trace Trace, :weight MLX-scalar, :discard ChoiceMap}</code></p>
+
+
+<h3>IRegenerate &mdash; regenerate</h3>
+
+<pre><code>(p/regenerate gf trace selection)</code></pre>
+
+<p>Resample the selected addresses from the prior while keeping unselected
+choices fixed. Used in MH proposals.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model</td></tr>
+<tr><td><code>trace</code></td><td><a href="trace.html">Trace</a></td><td>Previous execution trace</td></tr>
+<tr><td><code>selection</code></td><td><a href="trace.html#selection">Selection</a></td><td>Addresses to resample</td></tr>
+</table>
+
+<p><strong>Returns:</strong> <code>{:trace Trace, :weight MLX-scalar}</code></p>
+
+
+<h3>IPropose &mdash; propose</h3>
+
+<pre><code>(p/propose gf args)</code></pre>
+
+<p>Forward-sample all choices and return them as a choice map with their joint
+log-probability. Used for proposal distributions in inference.</p>
+
+<p><strong>Returns:</strong> <code>{:choices ChoiceMap, :weight MLX-scalar, :retval any}</code></p>
+
+
+<h3>IProject &mdash; project</h3>
+
+<pre><code>(p/project gf trace selection)</code></pre>
+
+<p>Compute the log-probability of the selected choices in the trace, without
+resampling anything.</p>
+
+<p><strong>Returns:</strong> MLX scalar log-weight.</p>
+
+
+<h3>IUpdateWithDiffs &mdash; update-with-diffs</h3>
+
+<pre><code>(p/update-with-diffs gf trace constraints argdiffs)</code></pre>
+
+<p>Like <code>update</code> but with change hints (<a href="trace.html#diff">diffs</a>)
+to skip unchanged sub-computations. Used by combinators for incremental
+re-execution.</p>
+
+<p><strong>Returns:</strong> <code>{:trace Trace, :weight MLX-scalar, :discard ChoiceMap}</code></p>
+
+
+<h3>IHasArgumentGrads</h3>
+
+<pre><code>(p/has-argument-grads gf)</code></pre>
+
+<p>Returns a vector of booleans indicating which argument positions are
+differentiable, or <code>nil</code> if unknown.</p>
+
+
+<h3>IEdit &mdash; edit</h3>
+
+<pre><code>(p/edit gf trace edit-request)</code></pre>
+
+<p>Apply a parametric <a href="#edit">edit request</a> to a trace. Generalizes
+<code>update</code>, <code>regenerate</code>, and proposal-based edits
+into a single interface.</p>
+
+<p><strong>Returns:</strong> <code>{:trace Trace, :weight MLX-scalar, :discard ChoiceMap, :backward-request EditRequest}</code></p>
+
+
+<!-- ================================================================== -->
+<h2 id="gen-macro">gen macro</h2>
+
+<p>Source: <code>src/genmlx/gen.cljc</code></p>
+
+<pre><code>(gen [params ...] body ...)</code></pre>
+
+<p>Define a generative function. The <code>gen</code> macro transforms a
+function body into a <code>DynamicGF</code> that implements the full GFI.
+Inside the body, use <code>dyn/trace</code> to make random choices and
+<code>dyn/splice</code> to call sub-generative-functions.</p>
+
+<div class="code-block">
+<pre><code>(def my-model
+  (gen [x]
+    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
+          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+      (dyn/trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
+      slope)))</code></pre>
+</div>
+
+<p>The return value of the body becomes the trace&rsquo;s <code>:retval</code>.
+The model body runs under a <a href="#handler">handler</a> that intercepts
+<code>trace</code> calls to perform the appropriate GFI operation.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="dynamic">Dynamic DSL</h2>
+
+<p>Source: <code>src/genmlx/dynamic.cljs</code></p>
+
+<p>These functions are used inside <code>gen</code> bodies to interact with the
+execution handler.</p>
+
+
+<h3>trace</h3>
+
+<pre><code>(dyn/trace addr dist)</code></pre>
+
+<p>Sample from (or constrain to) a distribution at the given address. The
+behavior depends on which handler is active: simulate samples from the prior,
+generate constrains if the address is observed, update applies new constraints,
+etc.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>addr</code></td><td>Keyword</td><td>Address for this random choice (e.g. <code>:slope</code>)</td></tr>
+<tr><td><code>dist</code></td><td>Distribution</td><td>Distribution to sample from</td></tr>
+</table>
+
+<p><strong>Returns:</strong> The sampled (or constrained) value.</p>
+
+
+<h3>splice</h3>
+
+<pre><code>(dyn/splice addr gf &amp; args)</code></pre>
+
+<p>Call a sub-generative-function at the given address. The sub-function&rsquo;s
+choices are nested under <code>addr</code> in the trace&rsquo;s choice map.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>addr</code></td><td>Keyword</td><td>Namespace address for the sub-call</td></tr>
+<tr><td><code>gf</code></td><td>Generative function</td><td>Sub-model to invoke</td></tr>
+<tr><td><code>args</code></td><td>Arguments</td><td>Passed to the sub-model</td></tr>
+</table>
+
+
+<h3>param</h3>
+
+<pre><code>(dyn/param name default-value)</code></pre>
+
+<p>Declare or read a trainable parameter. If a parameter store is bound,
+reads from it; otherwise returns the default value. Used for learnable
+model parameters.</p>
+
+
+<h3>call</h3>
+
+<pre><code>(dyn/call gf &amp; args)</code></pre>
+
+<p>Call a generative function as a regular function (simulate and return
+the value). Useful for calling GFs outside of a handler context.</p>
+
+
+<h3>vsimulate</h3>
+
+<pre><code>(dyn/vsimulate gf args n key)</code></pre>
+
+<p>Run the model body <strong>once</strong> with a batched handler that samples
+<code>[n]</code>-shaped arrays at each trace site. Returns a
+<code>VectorizedTrace</code> with all fields having an <code>[n]</code>
+batch dimension.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model</td></tr>
+<tr><td><code>args</code></td><td>Vector</td><td>Model arguments</td></tr>
+<tr><td><code>n</code></td><td>Integer</td><td>Number of particles</td></tr>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+</table>
+
+<p><strong>Returns:</strong> <code>VectorizedTrace</code></p>
+
+
+<h3>vgenerate</h3>
+
+<pre><code>(dyn/vgenerate gf args constraints n key)</code></pre>
+
+<p>Batched <code>generate</code>. Constrained sites use the scalar observation
+(broadcast to all particles); unconstrained sites sample <code>[n]</code> values.</p>
+
+<p><strong>Returns:</strong> <code>VectorizedTrace</code> with <code>[n]</code>-shaped weights.</p>
+
+
+<h3>vupdate</h3>
+
+<pre><code>(dyn/vupdate gf vtrace constraints key)</code></pre>
+
+<p>Batched <code>update</code> on a <code>VectorizedTrace</code>.</p>
+
+
+<h3>vregenerate</h3>
+
+<pre><code>(dyn/vregenerate gf vtrace selection key)</code></pre>
+
+<p>Batched <code>regenerate</code> on a <code>VectorizedTrace</code>.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="handler">Handler system</h2>
+
+<p>Source: <code>src/genmlx/handler.cljs</code></p>
+
+<p>The handler is the heart of GenMLX. When <code>gen</code> body code calls
+<code>dyn/trace</code>, it dispatches to whichever handler is active. Each
+handler is a <strong>pure state transition</strong>
+<code>(fn [state addr dist] -&gt; [value state'])</code> wrapped in a thin
+<code>volatile!</code> dispatcher.</p>
+
+<p>State flows through an immutable map:
+<code>{:choices :score :weight :key :constraints ...}</code>.
+The handler never inspects value shapes &mdash; this is what makes batched
+execution (<code>[N]</code>-shaped arrays) work transparently.</p>
+
+<h3>Entry points (called from gen bodies)</h3>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>trace-choice!(addr, dist)</code></td><td>Dispatch to active handler. Outside a handler context, samples directly.</td></tr>
+<tr><td><code>trace-param!(name, default)</code></td><td>Read trainable parameter from <code>*param-store*</code> if bound, else return default.</td></tr>
+<tr><td><code>trace-gf!(addr, gf, args)</code></td><td>Call sub-generative-function at given address namespace.</td></tr>
+</table>
+
+<h3>run-handler</h3>
+
+<pre><code>(run-handler handler-fn init-state body-fn)</code></pre>
+
+<p>Execute <code>body-fn</code> under <code>handler-fn</code>, returning the
+final state map. Binds <code>*handler*</code>, <code>*state*</code> (volatile!),
+and <code>mx/*batched-exec?*</code>.</p>
+
+<h3>Handler implementations</h3>
+
+<table>
+<tr><th>Handler</th><th>Behavior at each trace site</th></tr>
+<tr><td><code>simulate-handler</code></td><td>Sample from prior, accumulate score</td></tr>
+<tr><td><code>generate-handler</code></td><td>Use constraint if present, otherwise sample</td></tr>
+<tr><td><code>assess-handler</code></td><td>All addresses must be constrained</td></tr>
+<tr><td><code>update-handler</code></td><td>Apply new constraint, keep old, or sample fresh</td></tr>
+<tr><td><code>regenerate-handler</code></td><td>Resample selected addresses, keep unselected</td></tr>
+<tr><td><code>project-handler</code></td><td>Replay old values, accumulate log-prob for selected</td></tr>
+<tr><td><code>batched-simulate-handler</code></td><td>Sample <code>[N]</code> values, accumulate <code>[N]</code>-shaped score</td></tr>
+<tr><td><code>batched-generate-handler</code></td><td>Batched constrained/unconstrained execution</td></tr>
+<tr><td><code>batched-update-handler</code></td><td>Batched update with <code>[N]</code>-shaped old values</td></tr>
+<tr><td><code>batched-regenerate-handler</code></td><td>Batched resample selected <code>[N]</code>-shaped addresses</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="edit">Parametric edits</h2>
+
+<p>Source: <code>src/genmlx/edit.cljs</code></p>
+
+<p>The edit interface generalizes <code>update</code>, <code>regenerate</code>,
+and proposal-based trace modifications into a unified API.</p>
+
+<h3>Edit request types</h3>
+
+<table>
+<tr><th>Type</th><th>Constructor</th><th>Equivalent to</th></tr>
+<tr>
+  <td><code>ConstraintEdit</code></td>
+  <td><code>(constraint-edit constraints)</code></td>
+  <td><code>update</code> &mdash; change observed values</td>
+</tr>
+<tr>
+  <td><code>SelectionEdit</code></td>
+  <td><code>(selection-edit selection)</code></td>
+  <td><code>regenerate</code> &mdash; resample selected addresses</td>
+</tr>
+<tr>
+  <td><code>ProposalEdit</code></td>
+  <td><code>(proposal-edit fwd-gf bwd-gf)</code><br><code>(proposal-edit fwd-gf fwd-args bwd-gf bwd-args)</code></td>
+  <td>Reversible kernel for SMCP3-style proposals</td>
+</tr>
+</table>
+
+<h3>edit-dispatch</h3>
+
+<pre><code>(edit-dispatch gf trace edit-request)</code></pre>
+
+<p>Dispatch edit based on the <code>EditRequest</code> type. Called automatically
+by <code>p/edit</code>.</p>
+
+<p><strong>Returns:</strong> <code>{:trace Trace, :weight MLX-scalar, :discard ChoiceMap, :backward-request EditRequest}</code></p>
+
+
+<!-- ================================================================== -->
+<h2>VectorizedTrace</h2>
+
+<p>Source: <code>src/genmlx/vectorized.cljs</code></p>
+
+<p>Container for batched inference state. Every field has an <code>[N]</code>
+batch dimension.</p>
+
+<pre><code>(defrecord VectorizedTrace
+  [gen-fn      ;; the generative function
+   args        ;; model arguments
+   choices     ;; ChoiceMap with [N]-shaped leaf arrays
+   score       ;; [N]-shaped log-joint scores
+   weight      ;; [N]-shaped importance weights
+   n-particles ;; integer N
+   retval])    ;; return value (shape varies)</code></pre>
+
+<h3>Utility functions</h3>
+
+<table>
+<tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+<tr>
+  <td><code>vtrace-ess</code></td>
+  <td><code>(vtrace-ess vtrace)</code></td>
+  <td>Effective sample size from vtrace weights</td>
+</tr>
+<tr>
+  <td><code>vtrace-log-ml-estimate</code></td>
+  <td><code>(vtrace-log-ml-estimate vtrace)</code></td>
+  <td>Log marginal likelihood: <code>logsumexp(weights) - log(N)</code></td>
+</tr>
+<tr>
+  <td><code>resample-vtrace</code></td>
+  <td><code>(resample-vtrace vtrace key)</code></td>
+  <td>Systematic resampling, returns new vtrace with uniform weights</td>
+</tr>
+<tr>
+  <td><code>merge-vtraces-by-mask</code></td>
+  <td><code>(merge-vtraces-by-mask current proposed mask)</code></td>
+  <td>Per-particle merge using <code>[N]</code> boolean mask (accept/reject)</td>
+</tr>
+<tr>
+  <td><code>systematic-resample-indices</code></td>
+  <td><code>(systematic-resample-indices log-weights n key)</code></td>
+  <td>CPU systematic resampling indices</td>
+</tr>
+<tr>
+  <td><code>systematic-resample-indices-gpu</code></td>
+  <td><code>(systematic-resample-indices-gpu log-weights n key)</code></td>
+  <td>GPU systematic resampling (O(N&sup2;) memory, best for N &le; 10,000)</td>
+</tr>
+</table>
+
+
+  </div>
+  <div class="chapter-nav">
+    <a href="index.html">&larr; Reference Index</a>
+    <a href="distributions.html">Distributions &rarr;</a>
+  </div>
+</div>
+</body>
+</html>
