@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Reference: Distributions</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="../tutorial/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Reference</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="gfi.html">&larr; Prev</a></li><li><a href="combinators.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">Distributions</h1>
+
+<p>GenMLX provides 27 built-in distributions, all implementing the
+<code>Distribution</code> record with open multimethods for extensibility.
+Source: <code>src/genmlx/dist.cljs</code>, <code>src/genmlx/dist/core.cljs</code>,
+<code>src/genmlx/dist/macros.cljc</code></p>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li><a href="#usage">Usage</a></li>
+    <li><a href="#continuous">Continuous distributions</a></li>
+    <li><a href="#discrete">Discrete distributions</a></li>
+    <li><a href="#multivariate">Multivariate distributions</a></li>
+    <li><a href="#special">Special distributions</a></li>
+    <li><a href="#core">Distribution core &amp; multimethods</a></li>
+    <li><a href="#macros">Defining custom distributions</a></li>
+  </ol>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="usage">Usage</h2>
+
+<pre><code>(require '[genmlx.dist :as dist]
+         '[genmlx.dynamic :as dyn])
+
+;; Inside a gen body:
+(dyn/trace :x (dist/gaussian 0 1))
+
+;; Standalone:
+(dist/gaussian 0 1)  ;; => Distribution record</code></pre>
+
+<p>Every distribution constructor returns a <code>Distribution</code> record
+that can be passed to <code>dyn/trace</code>, <code>p/simulate</code>,
+or used with the core multimethods directly.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="continuous">Continuous distributions</h2>
+
+<table>
+<tr><th>Constructor</th><th>Parameters</th><th>Distribution</th></tr>
+<tr>
+  <td><code>(dist/gaussian mu sigma)</code></td>
+  <td>\(\mu\) = mean, \(\sigma\) = std dev</td>
+  <td>\(\mathcal{N}(\mu, \sigma^2)\). Alias: <code>dist/normal</code>. Reparameterizable.</td>
+</tr>
+<tr>
+  <td><code>(dist/uniform lo hi)</code></td>
+  <td>\(a\) = lower, \(b\) = upper</td>
+  <td>\(\text{Uniform}(a, b)\). Reparameterizable.</td>
+</tr>
+<tr>
+  <td><code>(dist/beta-dist alpha beta)</code></td>
+  <td>\(\alpha, \beta > 0\)</td>
+  <td>\(\text{Beta}(\alpha, \beta)\)</td>
+</tr>
+<tr>
+  <td><code>(dist/gamma-dist shape rate)</code></td>
+  <td>\(k > 0\) = shape, \(\lambda > 0\) = rate</td>
+  <td>\(\text{Gamma}(k, \lambda)\). Uses Marsaglia&ndash;Tsang method.</td>
+</tr>
+<tr>
+  <td><code>(dist/exponential rate)</code></td>
+  <td>\(\lambda > 0\)</td>
+  <td>\(\text{Exp}(\lambda)\). Reparameterizable.</td>
+</tr>
+<tr>
+  <td><code>(dist/log-normal mu sigma)</code></td>
+  <td>\(\mu\) = log-mean, \(\sigma\) = log-std</td>
+  <td>\(\text{LogNormal}(\mu, \sigma)\). Transform of Gaussian.</td>
+</tr>
+<tr>
+  <td><code>(dist/cauchy loc scale)</code></td>
+  <td>\(x_0\) = location, \(\gamma\) = scale</td>
+  <td>\(\text{Cauchy}(x_0, \gamma)\)</td>
+</tr>
+<tr>
+  <td><code>(dist/student-t df loc scale)</code></td>
+  <td>\(\nu\) = degrees of freedom, \(\mu, \sigma\)</td>
+  <td>\(t(\nu, \mu, \sigma)\)</td>
+</tr>
+<tr>
+  <td><code>(dist/laplace loc scale)</code></td>
+  <td>\(\mu\) = location, \(b\) = scale</td>
+  <td>\(\text{Laplace}(\mu, b)\). Reparameterizable.</td>
+</tr>
+<tr>
+  <td><code>(dist/inv-gamma shape scale)</code></td>
+  <td>\(\alpha > 0\), \(\beta > 0\)</td>
+  <td>\(\text{Inv-Gamma}(\alpha, \beta)\)</td>
+</tr>
+<tr>
+  <td><code>(dist/half-normal sigma)</code></td>
+  <td>\(\sigma > 0\)</td>
+  <td>Half-normal (positive support). Derived from \(|\mathcal{N}(0, \sigma^2)|\).</td>
+</tr>
+<tr>
+  <td><code>(dist/truncated-normal mu sigma lo hi)</code></td>
+  <td>\(\mu, \sigma, a, b\)</td>
+  <td>\(\mathcal{N}(\mu, \sigma^2)\) truncated to \([a, b]\)</td>
+</tr>
+<tr>
+  <td><code>(dist/weibull shape scale)</code></td>
+  <td>\(k > 0\), \(\lambda > 0\)</td>
+  <td>\(\text{Weibull}(k, \lambda)\)</td>
+</tr>
+<tr>
+  <td><code>(dist/gumbel loc scale)</code></td>
+  <td>\(\mu\), \(\beta > 0\)</td>
+  <td>\(\text{Gumbel}(\mu, \beta)\)</td>
+</tr>
+<tr>
+  <td><code>(dist/logistic loc scale)</code></td>
+  <td>\(\mu\), \(s > 0\)</td>
+  <td>\(\text{Logistic}(\mu, s)\)</td>
+</tr>
+<tr>
+  <td><code>(dist/pareto shape scale)</code></td>
+  <td>\(\alpha > 0\) = shape, \(x_m > 0\) = scale</td>
+  <td>\(\text{Pareto}(\alpha, x_m)\)</td>
+</tr>
+<tr>
+  <td><code>(dist/von-mises mu kappa)</code></td>
+  <td>\(\mu\) = mean direction, \(\kappa > 0\) = concentration</td>
+  <td>\(\text{von Mises}(\mu, \kappa)\). Circular distribution.</td>
+</tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="discrete">Discrete distributions</h2>
+
+<table>
+<tr><th>Constructor</th><th>Parameters</th><th>Distribution</th></tr>
+<tr>
+  <td><code>(dist/bernoulli p)</code></td>
+  <td>\(p \in [0, 1]\)</td>
+  <td>\(\text{Bernoulli}(p)\). Alias: <code>dist/flip</code>.</td>
+</tr>
+<tr>
+  <td><code>(dist/categorical logits)</code></td>
+  <td>MLX array of log-probabilities</td>
+  <td>Categorical over \(k\) categories. Uses Gumbel-max trick.</td>
+</tr>
+<tr>
+  <td><code>(dist/poisson rate)</code></td>
+  <td>\(\lambda > 0\)</td>
+  <td>\(\text{Poisson}(\lambda)\)</td>
+</tr>
+<tr>
+  <td><code>(dist/geometric p)</code></td>
+  <td>\(p \in (0, 1]\)</td>
+  <td>Number of failures before first success.</td>
+</tr>
+<tr>
+  <td><code>(dist/binomial n p)</code></td>
+  <td>\(n\) = trials, \(p\) = success prob</td>
+  <td>\(\text{Binomial}(n, p)\)</td>
+</tr>
+<tr>
+  <td><code>(dist/neg-binomial r p)</code></td>
+  <td>\(r > 0\) = successes, \(p \in (0,1)\)</td>
+  <td>\(\text{NegBinomial}(r, p)\)</td>
+</tr>
+<tr>
+  <td><code>(dist/discrete-uniform lo hi)</code></td>
+  <td>Integers \([a, b]\)</td>
+  <td>Discrete uniform on integers.</td>
+</tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="multivariate">Multivariate distributions</h2>
+
+<table>
+<tr><th>Constructor</th><th>Parameters</th><th>Distribution</th></tr>
+<tr>
+  <td><code>(dist/multivariate-normal mean cov)</code></td>
+  <td>\(\mu\) = <code>[k]</code> mean, \(\Sigma\) = <code>[k k]</code> covariance</td>
+  <td>\(\mathcal{N}(\mu, \Sigma)\). Uses Cholesky decomposition.</td>
+</tr>
+<tr>
+  <td><code>(dist/dirichlet alpha)</code></td>
+  <td>\(\alpha\) = <code>[k]</code> concentration parameters</td>
+  <td>\(\text{Dirichlet}(\alpha)\). Samples via Gamma.</td>
+</tr>
+<tr>
+  <td><code>(dist/wishart df scale)</code></td>
+  <td>\(\nu\) = degrees of freedom, \(V\) = <code>[k k]</code> scale matrix</td>
+  <td>\(\text{Wishart}(\nu, V)\)</td>
+</tr>
+<tr>
+  <td><code>(dist/inv-wishart df scale)</code></td>
+  <td>\(\nu\), \(\Psi\) = <code>[k k]</code> scale matrix</td>
+  <td>\(\text{Inv-Wishart}(\nu, \Psi)\)</td>
+</tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="special">Special distributions</h2>
+
+<table>
+<tr><th>Constructor</th><th>Parameters</th><th>Distribution</th></tr>
+<tr>
+  <td><code>(dist/delta v)</code></td>
+  <td>Any value</td>
+  <td>Point mass at \(v\). Score is 0. Used for deterministic values in traces.</td>
+</tr>
+<tr>
+  <td><code>(dist/broadcasted-normal mu sigma)</code></td>
+  <td>MLX arrays of any matching shape</td>
+  <td>Independent element-wise normal. \(\mu\) and \(\sigma\) can be any shape.</td>
+</tr>
+<tr>
+  <td><code>(dist/beta-uniform-mixture theta alpha beta)</code></td>
+  <td>\(\theta\) = mixing weight, \(\alpha, \beta\)</td>
+  <td>Mixture of \(\text{Beta}(\alpha,\beta)\) and \(\text{Uniform}(0,1)\) with probability \(\theta\).</td>
+</tr>
+<tr>
+  <td><code>(dist/piecewise-uniform bounds probs)</code></td>
+  <td>Sorted boundary points, bin probabilities</td>
+  <td>Piecewise uniform over bins defined by boundary points.</td>
+</tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="core">Distribution core &amp; multimethods</h2>
+
+<p>Source: <code>src/genmlx/dist/core.cljs</code></p>
+
+<p>All distributions share a single <code>Distribution</code> record type.
+Behavior is dispatched via open multimethods keyed by <code>:type</code>.
+This makes it easy to add new distributions without modifying core code.</p>
+
+<h3>Distribution record</h3>
+
+<pre><code>(defrecord Distribution [type params sample log-prob reparam support sample-n])</code></pre>
+
+<h3>Core multimethods</h3>
+
+<table>
+<tr><th>Multimethod</th><th>Dispatch</th><th>Signature</th><th>Description</th></tr>
+<tr>
+  <td><code>dist-sample</code></td>
+  <td><code>:type</code></td>
+  <td><code>(dist-sample dist key)</code></td>
+  <td>Draw one sample. Returns MLX scalar.</td>
+</tr>
+<tr>
+  <td><code>dist-log-prob</code></td>
+  <td><code>:type</code></td>
+  <td><code>(dist-log-prob dist value)</code></td>
+  <td>Compute log-probability. Returns MLX scalar.</td>
+</tr>
+<tr>
+  <td><code>dist-sample-n</code></td>
+  <td><code>:type</code></td>
+  <td><code>(dist-sample-n dist key n)</code></td>
+  <td>Draw <code>n</code> samples as <code>[n]</code>-shaped array. Used by vectorized inference.</td>
+</tr>
+<tr>
+  <td><code>dist-reparam</code></td>
+  <td><code>:type</code></td>
+  <td><code>(dist-reparam dist key)</code></td>
+  <td>Reparameterized sample (for gradient estimation). Returns <code>[sample, log-prob]</code>.</td>
+</tr>
+<tr>
+  <td><code>dist-support</code></td>
+  <td><code>:type</code></td>
+  <td><code>(dist-support dist)</code></td>
+  <td>Return support description (e.g. <code>{:type :real}</code>, <code>{:type :integer :lo 0 :hi n}</code>).</td>
+</tr>
+</table>
+
+<h3>mixture</h3>
+
+<pre><code>(dc/mixture components log-weights)</code></pre>
+
+<p>Create a mixture distribution from a vector of component distributions and
+an MLX array of log mixing weights.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="macros">Defining custom distributions</h2>
+
+<p>Source: <code>src/genmlx/dist/macros.cljc</code></p>
+
+<h3>defdist</h3>
+
+<pre><code>(defdist dist-name [params ...]
+  (sample [key] body)
+  (log-prob [v] body)
+  ;; Optional:
+  (sample-n [key n] body)
+  (reparam [key] body)
+  (support [] body))</code></pre>
+
+<p>Define a new distribution type with a constructor and multimethod implementations.
+Only <code>sample</code> and <code>log-prob</code> are required.</p>
+
+<div class="code-block">
+<pre><code>(defdist my-laplace [loc scale]
+  (sample [key]
+    (let [u (mx/subtract (random/uniform key []) (mx/scalar 0.5))]
+      (mx/add loc (mx/multiply scale (mx/multiply (mx/sign u) (mx/log (mx/abs u)))))))
+  (log-prob [v]
+    (let [z (mx/abs (mx/divide (mx/subtract v loc) scale))]
+      (mx/subtract (mx/negative z) (mx/log (mx/multiply (mx/scalar 2) scale))))))</code></pre>
+</div>
+
+<h3>defdist-transform</h3>
+
+<pre><code>(defdist-transform dist-name [params ...]
+  :base base-dist
+  :forward forward-fn
+  :inverse inverse-fn
+  :log-det-jac log-det-jac-fn)</code></pre>
+
+<p>Define a distribution as a deterministic transform of a base distribution.
+The log-probability is computed via the change-of-variables formula:
+\(\log p_Y(y) = \log p_X(f^{-1}(y)) + \log |J_{f^{-1}}(y)|\).</p>
+
+<div class="code-block">
+<pre><code>;; Example: log-normal as transform of gaussian
+(defdist-transform my-log-normal [mu sigma]
+  :base (dist/gaussian mu sigma)
+  :forward mx/exp
+  :inverse mx/log
+  :log-det-jac (fn [y] (mx/negative (mx/log y))))</code></pre>
+</div>
+
+<h3>Batch sampling</h3>
+
+<p>For vectorized inference, distributions should provide a
+<code>dist-sample-n</code> implementation for efficient batch sampling.
+If not provided, a default fallback loops <code>n</code> times.</p>
+
+<pre><code>(defmethod dc/dist-sample-n :my-dist [dist key n]
+  ;; Return [n]-shaped MLX array
+  (mx/add (:loc (:params dist))
+          (mx/multiply (:scale (:params dist))
+                       (random/normal key [n]))))</code></pre>
+
+<h3>Helper: gamma-sample-n</h3>
+
+<pre><code>(dist/gamma-sample-n shape rate key n)</code></pre>
+
+<p>Vectorized Marsaglia&ndash;Tsang gamma sampling. Exposed for reuse by
+distributions built on Gamma (e.g. Beta, Dirichlet, Chi-squared).</p>
+
+
+  </div>
+  <div class="chapter-nav">
+    <a href="gfi.html">&larr; GFI Protocols</a>
+    <a href="combinators.html">Combinators &rarr;</a>
+  </div>
+</div>
+</body>
+</html>
