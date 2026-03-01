@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Reference: Choicemaps</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="../tutorial/style.css">
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Reference</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="inference.html">&larr; Prev</a></li><li><a href="trace.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">Choicemaps</h1>
+
+<p>Choicemaps are hierarchical, persistent data structures that map addresses
+to values. They store the random choices made during model execution and
+serve as the primary data exchange format for the GFI.
+Source: <code>src/genmlx/choicemap.cljs</code></p>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li><a href="#protocol">IChoiceMap protocol</a></li>
+    <li><a href="#records">Value &amp; Node records</a></li>
+    <li><a href="#construction">Construction</a></li>
+    <li><a href="#access">Access</a></li>
+    <li><a href="#update">Functional update</a></li>
+    <li><a href="#merge">Merge</a></li>
+    <li><a href="#enumeration">Enumeration &amp; conversion</a></li>
+    <li><a href="#batched">Batched operations</a></li>
+  </ol>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="protocol">IChoiceMap protocol</h2>
+
+<p>All choicemap types implement this protocol:</p>
+
+<pre><code>(defprotocol IChoiceMap
+  (-has-value? [cm]       "Does this node hold a leaf value?")
+  (-get-value  [cm]       "Get the leaf value")
+  (-get-submap [cm addr]  "Get sub-choicemap at address")
+  (-submaps    [cm]       "Map of address -> sub-IChoiceMap"))</code></pre>
+
+
+<!-- ================================================================== -->
+<h2 id="records">Value &amp; Node records</h2>
+
+<h3>Value</h3>
+
+<pre><code>(Value. v)</code></pre>
+
+<p>Leaf node holding a single random choice value (typically an MLX scalar).
+<code>has-value?</code> returns <code>true</code>.</p>
+
+<h3>Node</h3>
+
+<pre><code>(Node. m)</code></pre>
+
+<p>Internal node: a persistent map of address &rarr; sub-<code>IChoiceMap</code>.
+<code>has-value?</code> returns <code>false</code>.</p>
+
+<h3>EMPTY</h3>
+
+<pre><code>cm/EMPTY</code></pre>
+
+<p>The empty choice map (a <code>Node</code> with no children). Zero addresses,
+no values.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="construction">Construction</h2>
+
+<h3>choicemap</h3>
+
+<pre><code>(cm/choicemap &amp; kvs)</code></pre>
+
+<p>Smart constructor for building choicemaps from keyword-value pairs.
+Values can be scalars (wrapped in <code>Value</code>) or maps (recursively
+converted to <code>Node</code>).</p>
+
+<div class="code-block">
+<pre><code>;; Flat choicemap
+(cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar 2.0))
+
+;; Nested choicemap
+(cm/choicemap :params {:slope (mx/scalar 0.5) :intercept (mx/scalar 1.2)})
+
+;; Single value
+(cm/choicemap :z (mx/scalar 3.14))</code></pre>
+</div>
+
+
+<h3>from-map</h3>
+
+<pre><code>(cm/from-map m)</code></pre>
+
+<p>Convert a plain Clojure map to a choicemap. Nested maps become <code>Node</code>s;
+leaf values become <code>Value</code>s.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="access">Access</h2>
+
+<h3>has-value?</h3>
+
+<pre><code>(cm/has-value? cm)</code></pre>
+
+<p>Returns <code>true</code> if <code>cm</code> is a <code>Value</code> node
+(holds a leaf value).</p>
+
+
+<h3>get-value</h3>
+
+<pre><code>(cm/get-value cm)</code></pre>
+
+<p>Extract the leaf value from a <code>Value</code> node. Throws if called on
+a <code>Node</code>.</p>
+
+
+<h3>get-submap</h3>
+
+<pre><code>(cm/get-submap cm addr)</code></pre>
+
+<p>Get the sub-choicemap at a single address level. Returns <code>EMPTY</code>
+if the address does not exist.</p>
+
+
+<h3>get-choice</h3>
+
+<pre><code>(cm/get-choice cm path)</code></pre>
+
+<p>Get the value at a path of addresses (vector of keywords). Traverses
+nested <code>Node</code>s and returns the leaf value.</p>
+
+<div class="code-block">
+<pre><code>(def cm (cm/choicemap :params {:slope (mx/scalar 0.5)}))
+
+(cm/get-choice cm [:params :slope])
+;; => #mlx 0.5</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="update">Functional update</h2>
+
+<h3>set-value</h3>
+
+<pre><code>(cm/set-value cm addr value)</code></pre>
+
+<p>Set a <code>Value</code> at a single address in a <code>Node</code>.
+Returns a new choicemap (persistent/immutable).</p>
+
+
+<h3>set-submap</h3>
+
+<pre><code>(cm/set-submap cm addr sub-cm)</code></pre>
+
+<p>Set a sub-choicemap at a single address. Returns a new choicemap.</p>
+
+
+<h3>set-choice</h3>
+
+<pre><code>(cm/set-choice cm path value)</code></pre>
+
+<p>Set a value at a path of addresses, creating intermediate <code>Node</code>s
+as needed. Returns a new choicemap.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="merge">Merge</h2>
+
+<h3>merge-cm</h3>
+
+<pre><code>(cm/merge-cm a b)</code></pre>
+
+<p>Merge two choicemaps. Values in <code>b</code> override values in
+<code>a</code> at the same address. Nested nodes are merged recursively.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="enumeration">Enumeration &amp; conversion</h2>
+
+<h3>addresses</h3>
+
+<pre><code>(cm/addresses cm)</code></pre>
+
+<p>Return all leaf address paths as a vector of vectors.</p>
+
+<div class="code-block">
+<pre><code>(cm/addresses (cm/choicemap :x 1 :params {:a 2 :b 3}))
+;; => [[:x] [:params :a] [:params :b]]</code></pre>
+</div>
+
+
+<h3>to-map</h3>
+
+<pre><code>(cm/to-map cm)</code></pre>
+
+<p>Convert a choicemap to a plain nested Clojure map.</p>
+
+
+<h3>from-map</h3>
+
+<pre><code>(cm/from-map m)</code></pre>
+
+<p>Convert a plain nested map to a choicemap.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="batched">Batched operations</h2>
+
+<p>These functions support vectorized inference by converting between
+scalar choicemaps and choicemaps with <code>[N]</code>-shaped leaf arrays.</p>
+
+
+<h3>stack-choicemaps</h3>
+
+<pre><code>(cm/stack-choicemaps cms mlx-stack-fn)</code></pre>
+
+<p>Stack <code>N</code> choicemaps (all with the same address structure) into
+one choicemap where each leaf is an <code>[N]</code>-shaped array. The
+<code>mlx-stack-fn</code> is typically <code>mx/stack</code>.</p>
+
+
+<h3>unstack-choicemap</h3>
+
+<pre><code>(cm/unstack-choicemap cm n mlx-index-fn scalar-leaf-fn)</code></pre>
+
+<p>Split a choicemap with <code>[N]</code>-shaped leaves into <code>N</code>
+scalar choicemaps. The inverse of <code>stack-choicemaps</code>.</p>
+
+
+  </div>
+  <div class="chapter-nav">
+    <a href="inference.html">&larr; Inference</a>
+    <a href="trace.html">Traces &amp; Selections &rarr;</a>
+  </div>
+</div>
+</body>
+</html>
