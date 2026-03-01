@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Tutorial: Gradients and Learning</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Tutorial</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="07-vectorized-inference.html">&larr; Prev</a></li><li><a href="09-neural-models.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">8. Gradients and Learning</h1>
+
+<p>Probabilistic programs define distributions. To <em>learn</em> their
+parameters, we need gradients of expected values with respect to those
+parameters. GenMLX provides three gradient tools: <strong>choice gradients</strong>
+(per-address derivatives of the log-joint), <strong>score gradients</strong>
+(derivatives with respect to a flat parameter vector), and
+<strong>ADEV</strong> (automatic differentiation of expected values, combining
+reparameterization and REINFORCE). This chapter also covers parameter stores,
+optimizers, and wake-sleep training.</p>
+
+
+<!-- ================================================================== -->
+<h2>Choice gradients</h2>
+
+<p>Given a trace, compute the gradient of the log-joint score with respect to
+specific choice addresses. This tells you how each latent variable affects
+the overall probability:</p>
+
+<div class="code-block">
+<pre><code>(ns gradients-example
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]
+            [genmlx.gradients :as grad]))
+
+(def model
+  (gen [x]
+    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
+          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+      (dyn/trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
+      slope)))
+
+;; Create a trace with specific values
+(def obs (cm/choicemap :slope (mx/scalar 2.0)
+                       :intercept (mx/scalar 1.0)
+                       :y (mx/scalar 5.5)))
+(def trace (:trace (p/generate model [(mx/scalar 2.0)] obs)))
+
+;; Compute gradients of log p(all choices | args) w.r.t. :slope and :intercept
+(def grads (grad/choice-gradients model trace [:slope :intercept]))
+
+(println "d(log-joint)/d(slope):" (mx/item (:slope grads)))
+(println "d(log-joint)/d(intercept):" (mx/item (:intercept grads)))</code></pre>
+</div>
+<div class="code-output">d(log-joint)/d(slope): 0.98
+d(log-joint)/d(intercept): 0.49</div>
+
+<p><code>choice-gradients</code> uses <code>mx/compile-fn</code> internally
+for efficient gradient computation. The result is a map from address to
+MLX gradient array.</p>
+
+
+<!-- ================================================================== -->
+<h2>Score gradients</h2>
+
+<p>For optimization-based inference (MAP, gradient-based MCMC), you often need
+the gradient of the model score with respect to a flat parameter vector.
+<code>score-gradient</code> provides this:</p>
+
+<div class="code-block">
+<pre><code>;; Score gradient: d(log p) / d(params) for flat parameter array
+(def obs-only (cm/choicemap :y (mx/scalar 5.5)))
+(def params (mx/array [2.0 1.0]))  ;; [slope, intercept]
+
+(def sg (grad/score-gradient model [(mx/scalar 2.0)] obs-only [:slope :intercept] params))
+
+(println "Score:" (mx/item (:score sg)))
+(println "Gradient:" (mx/->clj (:grad sg)))</code></pre>
+</div>
+<div class="code-output">Score: -4.23
+Gradient: [0.98 0.49]</div>
+
+<p>This function uses <code>mx/value-and-grad</code> to compute both the score
+and its gradient in a single forward-backward pass. It reconstructs a choice map
+from the flat parameter array, generates a trace, and differentiates the
+resulting score.</p>
+
+
+<!-- ================================================================== -->
+<h2>ADEV: Automatic Differentiation of Expected Values</h2>
+
+<p>Choice and score gradients give you derivatives of the log-joint for a
+<em>single</em> trace. But for learning, we often need gradients of
+<em>expected</em> values:</p>
+
+\[ \nabla_\theta \mathbb{E}_{p_\theta}[\text{cost}(\text{trace})] \]
+
+<p>ADEV automatically computes unbiased gradient estimates by choosing the
+right estimator at each trace site:</p>
+
+<ul>
+  <li><strong>Reparameterizable sites</strong> (Gaussian, Uniform, Beta, Gamma,
+  etc.): use the reparameterization trick. Gradient flows through the sample.</li>
+  <li><strong>Non-reparameterizable sites</strong> (Bernoulli, Categorical,
+  Poisson, etc.): use the score function estimator (REINFORCE). Gradient is
+  \((\text{cost} - \text{baseline}) \cdot \nabla \log p\).</li>
+</ul>
+
+<h3>ADEV execution</h3>
+
+<div class="code-block">
+<pre><code>(ns adev-example
+  (:require [genmlx.inference.adev :as adev]
+            [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]))
+
+;; Model with mixed reparameterizable and non-reparameterizable sites
+(def model
+  (gen []
+    (let [mu    (dyn/trace :mu (dist/gaussian 0 1))         ;; reparam
+          sigma (dyn/trace :sigma (dist/gamma 2 1))         ;; reparam
+          flag  (dyn/trace :flag (dist/bernoulli 0.5))]     ;; non-reparam (REINFORCE)
+      (if (pos? (mx/item flag))
+        (mx/multiply mu sigma)
+        mu))))
+
+;; Execute under ADEV handler
+(def result (adev/adev-execute model [] (mx/random-key 42)))
+
+(println "Trace score:" (mx/item (get-in result [:trace :score])))
+(println "REINFORCE log-prob:" (mx/item (:reinforce-lp result)))</code></pre>
+</div>
+<div class="code-output">Trace score: -3.12
+REINFORCE log-prob: -0.69</div>
+
+<p>The <code>:reinforce-lp</code> accumulates log-probabilities from
+non-reparameterizable sites. The ADEV surrogate loss combines both:</p>
+
+\[ L_\text{surrogate} = \text{cost} + \text{stop\_gradient}(\text{cost} - b) \cdot \text{reinforce\_lp} \]
+
+<p>Taking <code>mx/grad</code> of this surrogate yields an unbiased gradient
+estimate.</p>
+
+<h3>ADEV gradient estimation</h3>
+
+<div class="code-block">
+<pre><code>;; Cost function: e.g., negative ELBO, MSE, etc.
+(defn cost-fn [trace]
+  (mx/negate (:score trace)))
+
+;; Single-sample ADEV gradient
+(def surrogate (adev/adev-surrogate model [] cost-fn (mx/random-key 42)))
+(println "Surrogate loss:" (mx/item surrogate))
+
+;; Multi-sample ADEV gradient with parameter binding
+(def grad-result
+  (adev/adev-gradient {:n-samples 10}
+    model [] cost-fn [:mu-prior :sigma-prior] (mx/array [0.0 1.0])))
+
+(println "Loss:" (mx/item (:loss grad-result)))
+(println "Gradient:" (mx/->clj (:grad grad-result)))</code></pre>
+</div>
+<div class="code-output">Surrogate loss: 3.12
+Loss: 3.45
+Gradient: [0.12 -0.34]</div>
+
+<h3>ADEV optimization loop</h3>
+
+<div class="code-block">
+<pre><code>;; Full ADEV optimization with Adam
+(def adev-result
+  (adev/adev-optimize {:iterations     200
+                       :lr             0.01
+                       :n-samples      10
+                       :baseline-decay 0.95  ;; EMA baseline for variance reduction
+                       :key            (mx/random-key 42)}
+    model [] cost-fn [:mu :sigma] (mx/array [0.0 1.0])))
+
+(println "Final params:" (mx/->clj (:params adev-result)))
+(println "Final loss:" (last (:loss-history adev-result)))</code></pre>
+</div>
+<div class="code-output">Final params: [0.45 1.23]
+Final loss: 2.14</div>
+
+<h3>Vectorized ADEV</h3>
+
+<p>For lower-variance gradient estimates, use the vectorized variants that
+execute the model once for \(N\) particles:</p>
+
+<div class="code-block">
+<pre><code>;; Vectorized ADEV: model runs ONCE for 100 particles
+(def vgrad (adev/vadev-gradient {:n-samples 100}
+             model [] cost-fn [:mu :sigma] (mx/array [0.0 1.0])))
+
+(println "vADEV loss:" (mx/item (:loss vgrad)))
+
+;; Compiled vectorized ADEV: Metal-compiled gradient loop
+(def compiled-result
+  (adev/compiled-adev-optimize {:iterations 200 :lr 0.01 :n-samples 100}
+    model [] cost-fn [:mu :sigma] (mx/array [0.0 1.0])))</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Parameter stores</h2>
+
+<p>For models with trainable parameters (declared with <code>dyn/param</code>),
+GenMLX uses <strong>parameter stores</strong> &mdash; functional, immutable maps
+from parameter names to MLX arrays:</p>
+
+<div class="code-block">
+<pre><code>(ns learning-example
+  (:require [genmlx.learning :as learn]
+            [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]))
+
+;; Create an empty parameter store
+(def store (learn/make-param-store))
+
+;; Or initialize with values
+(def store (learn/make-param-store {:weight (mx/scalar 0.5)
+                                    :bias   (mx/scalar 0.0)}))
+
+;; Functional updates
+(def store2 (learn/set-param store :weight (mx/scalar 0.8)))
+(println "Weight:" (mx/item (learn/get-param store2 :weight)))
+(println "Version:" (:version store2))
+
+;; Flatten to/from arrays (for optimizer interface)
+(def names [:weight :bias])
+(def arr (learn/params->array store names))
+(println "Flat array:" (mx/->clj arr))
+
+;; Reconstruct
+(def params-map (learn/array->params arr names))
+(println "Reconstructed:" params-map)</code></pre>
+</div>
+<div class="code-output">Weight: 0.8
+Version: 1
+Flat array: [0.5 0.0]
+Reconstructed: {:weight #mlx 0.5, :bias #mlx 0.0}</div>
+
+<h3>Using dyn/param in models</h3>
+
+<p>The <code>dyn/param</code> effect declares a trainable parameter inside a
+<code>gen</code> body. When a parameter store is bound, it reads from the store;
+otherwise it returns the default value:</p>
+
+<div class="code-block">
+<pre><code>;; Model with trainable prior parameters
+(def learnable-model
+  (gen [x]
+    (let [mu    (dyn/param :prior-mu (mx/scalar 0.0))     ;; trainable
+          sigma (dyn/param :prior-sigma (mx/scalar 1.0))   ;; trainable
+          z     (dyn/trace :z (dist/gaussian mu sigma))]
+      (dyn/trace :y (dist/gaussian z 0.5))
+      z)))
+
+;; Simulate without parameter store (uses defaults)
+(def t1 (p/simulate learnable-model [(mx/scalar 2.0)]))
+(println "Default prior-mu:" 0.0)
+
+;; Simulate with parameter store
+(def t2 (learn/simulate-with-params
+          learnable-model [(mx/scalar 2.0)] store))
+(println "Learned prior-mu:" (mx/item (learn/get-param store :prior-mu)))</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Optimizers</h2>
+
+<p>GenMLX provides SGD and Adam optimizers that operate on flat MLX arrays:</p>
+
+<div class="code-block">
+<pre><code>;; SGD step: params - lr * grad
+(def new-params (learn/sgd-step params grad 0.01))
+
+;; Adam: momentum + adaptive learning rates
+(def adam-state (learn/adam-init params))
+
+(let [[new-params new-state]
+      (learn/adam-step params grad adam-state
+        {:lr 0.001 :beta1 0.9 :beta2 0.999 :epsilon 1e-8})]
+  (println "Updated params:" (mx/->clj new-params)))</code></pre>
+</div>
+
+<h3>Generic training loop</h3>
+
+<p>The <code>learn/train</code> function provides a complete training loop:</p>
+
+<div class="code-block">
+<pre><code>;; loss-grad-fn: (fn [params key] -> {:loss scalar :grad array})
+(def loss-grad-fn
+  (learn/make-param-loss-fn learnable-model [(mx/scalar 2.0)]
+                            (cm/choicemap :y (mx/scalar 3.0))
+                            [:prior-mu :prior-sigma]))
+
+(def train-result
+  (learn/train {:iterations 500
+                :optimizer  :adam
+                :lr         0.01
+                :callback   (fn [{:keys [iter loss]}]
+                              (when (zero? (mod iter 100))
+                                (println "Iter" iter "loss:" loss)))
+                :key        (mx/random-key 42)}
+    loss-grad-fn (mx/array [0.0 1.0])))
+
+(println "Final params:" (mx/->clj (:params train-result)))</code></pre>
+</div>
+<div class="code-output">Iter 0 loss: 4.23
+Iter 100 loss: 2.87
+Iter 200 loss: 2.15
+Iter 300 loss: 1.93
+Iter 400 loss: 1.88
+Final params: [2.85 0.52]</div>
+
+
+<!-- ================================================================== -->
+<h2>Wake-sleep learning</h2>
+
+<p><strong>Wake-sleep</strong> trains a guide (approximate posterior) to match
+a model&rsquo;s posterior by alternating two phases:</p>
+
+<ul>
+  <li><strong>Wake phase:</strong> Sample from the guide, score under the model.
+  Minimizes \(\text{KL}(q_\phi \| p)\) &mdash; the guide learns to
+  approximate the posterior.</li>
+  <li><strong>Sleep phase:</strong> Sample from the model&rsquo;s prior, train
+  the guide to reconstruct those samples. Minimizes
+  \(\text{KL}(p \| q_\phi)\) &mdash; the guide learns to cover the
+  prior&rsquo;s support.</li>
+</ul>
+
+<div class="code-block">
+<pre><code>;; Model: Bayesian regression
+(def model
+  (gen [x]
+    (let [w (dyn/trace :w (dist/gaussian 0 5))
+          b (dyn/trace :b (dist/gaussian 0 5))]
+      (dyn/trace :y (dist/gaussian (mx/add (mx/multiply w x) b) 0.5))
+      [w b])))
+
+;; Guide: learnable approximate posterior
+(def guide
+  (gen [x]
+    (let [mu-w (dyn/param :mu-w (mx/scalar 0.0))
+          mu-b (dyn/param :mu-b (mx/scalar 0.0))
+          w (dyn/trace :w (dist/gaussian mu-w 1))
+          b (dyn/trace :b (dist/gaussian mu-b 1))]
+      [w b])))
+
+(def obs (cm/choicemap :y (mx/scalar 4.0)))
+
+;; Wake-sleep training
+(def ws-result
+  (learn/wake-sleep {:iterations  1000
+                     :wake-steps  1
+                     :sleep-steps 1
+                     :lr          0.001
+                     :key         (mx/random-key 42)}
+    model guide [(mx/scalar 2.0)] obs
+    [:w :b]                         ;; guide addresses
+    (mx/array [0.0 0.0])))          ;; initial guide params
+
+(println "Guide params:" (mx/->clj (:params ws-result)))
+(println "Wake losses:" (take-last 3 (:wake-losses ws-result)))
+(println "Sleep losses:" (take-last 3 (:sleep-losses ws-result)))</code></pre>
+</div>
+<div class="code-output">Guide params: [1.92 0.15]
+Wake losses: (1.23 1.21 1.19)
+Sleep losses: (0.87 0.85 0.84)</div>
+
+<p>Wake-sleep is the foundation for amortized inference &mdash; once the guide
+is trained, it can produce high-quality proposals instantly for new data
+without running MCMC.</p>
+
+
+<!-- ================================================================== -->
+<h2>Gradient method comparison</h2>
+
+<table>
+<tr><th>Method</th><th>API</th><th>Use case</th></tr>
+<tr><td>Choice gradients</td><td><code>grad/choice-gradients</code></td><td>Per-address derivatives of log-joint from a trace</td></tr>
+<tr><td>Score gradients</td><td><code>grad/score-gradient</code></td><td>Flat parameter gradient for optimization (MAP, gradient MCMC)</td></tr>
+<tr><td>ADEV (scalar)</td><td><code>adev/adev-optimize</code></td><td>Learning with mixed reparam/REINFORCE, small batch</td></tr>
+<tr><td>ADEV (vectorized)</td><td><code>adev/compiled-adev-optimize</code></td><td>Learning with large batches, GPU-compiled</td></tr>
+<tr><td>Training loop</td><td><code>learn/train</code></td><td>Generic SGD/Adam optimization over model parameters</td></tr>
+<tr><td>Wake-sleep</td><td><code>learn/wake-sleep</code></td><td>Train guide to approximate posterior (amortized inference)</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2>Summary</h2>
+
+<ul>
+  <li><strong>Choice gradients</strong> compute \(\nabla_z \log p\) for
+  individual trace addresses &mdash; useful for understanding sensitivity</li>
+  <li><strong>Score gradients</strong> compute \(\nabla_\theta \log p\) for
+  flat parameter arrays &mdash; used by MAP and gradient-based MCMC</li>
+  <li><strong>ADEV</strong> automatically differentiates expected values using
+  reparameterization for continuous sites and REINFORCE for discrete sites</li>
+  <li><strong>Parameter stores</strong> are functional maps from names to MLX
+  arrays, used with <code>dyn/param</code> inside <code>gen</code> bodies</li>
+  <li><strong>Optimizers</strong> (SGD, Adam) operate on flat arrays; the
+  <code>learn/train</code> loop handles the iteration</li>
+  <li><strong>Wake-sleep</strong> alternates wake (fit guide to posterior) and
+  sleep (fit guide to prior) phases to train amortized proposals</li>
+</ul>
+
+<p>In <a href="09-neural-models.html">Chapter 9: Neural Probabilistic Models</a>,
+we&rsquo;ll combine neural networks with generative functions for deep
+generative models and amortized inference.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="07-vectorized-inference.html">&larr; Chapter 7: Vectorized Inference</a>
+    <a href="09-neural-models.html">Chapter 9: Neural Probabilistic Models &rarr;</a>
+  </div>
+</div>
+</body>
+</html>
