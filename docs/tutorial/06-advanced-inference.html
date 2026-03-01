@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Tutorial: Advanced Inference</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Tutorial</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="05-combinators.html">&larr; Prev</a></li><li><a href="07-vectorized-inference.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">6. Advanced Inference</h1>
+
+<p>Chapter 4 introduced importance sampling and basic Metropolis&ndash;Hastings.
+Those methods work well for low-dimensional problems, but real-world models
+need more powerful tools. This chapter covers the gradient-based MCMC methods
+(MALA, HMC, NUTS), sequential Monte Carlo (SMC, SMCP3), and variational
+inference (ADVI, programmable VI).</p>
+
+
+<!-- ================================================================== -->
+<h2>Gradient-based MCMC</h2>
+
+<p>When models have continuous latent variables, we can use gradient information
+to make proposals that follow the geometry of the posterior. GenMLX provides
+three gradient-based MCMC methods, each building on the previous one.</p>
+
+
+<!-- ------------------------------------------------------------------ -->
+<h3>MALA: Metropolis-Adjusted Langevin Algorithm</h3>
+
+<p>MALA uses the gradient of the log-posterior to make informed proposals.
+At each step, the proposal is:</p>
+
+\[ q' = q + \frac{\varepsilon^2}{2} \nabla \log p(q) + \varepsilon \cdot z, \quad z \sim \mathcal{N}(0, I) \]
+
+<p>Because the proposal distribution is <em>asymmetric</em> (it depends on the
+gradient at the current point), MALA includes a Metropolis correction to
+maintain detailed balance.</p>
+
+<div class="code-block">
+<pre><code>(ns advanced-inference
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]
+            [genmlx.inference.mcmc :as mcmc]))
+
+;; Banana-shaped posterior (challenging for random-walk MH)
+(def banana-model
+  (gen [data]
+    (let [x (dyn/trace :x (dist/gaussian 0 5))
+          y (dyn/trace :y (dist/gaussian (mx/multiply x x) 1))]
+      (doseq [[i d] (map-indexed vector data)]
+        (dyn/trace (keyword (str "obs" i))
+                   (dist/gaussian (mx/add x y) 0.5))))))
+
+(def data [(mx/scalar 3.0) (mx/scalar 3.2) (mx/scalar 2.8)])
+(def obs (cm/from-map {:obs0 (mx/scalar 3.0)
+                       :obs1 (mx/scalar 3.2)
+                       :obs2 (mx/scalar 2.8)}))
+
+;; MALA with step-size tuning
+(def mala-samples
+  (mcmc/mala {:samples    500
+              :burn       200
+              :step-size  0.01
+              :addresses  [:x :y]
+              :key        (mx/random-key 42)}
+    banana-model [data] obs))
+
+(println "MALA samples:" (count mala-samples))
+(println "First sample:" (first mala-samples))</code></pre>
+</div>
+<div class="code-output">MALA samples: 500
+First sample: #js [1.42 2.15]</div>
+
+<p>MALA returns a vector of parameter samples as JavaScript arrays. Each sample
+is a flat vector of the addressed parameters in the order specified by
+<code>:addresses</code>.</p>
+
+<div class="note">
+  <strong>Step-size matters:</strong> Too large and proposals are rejected; too
+  small and the chain moves slowly. Start with 0.01 and adjust. MALA scales
+  as \(O(\varepsilon^{1/3})\) with dimension &mdash; better than random-walk
+  MH&rsquo;s \(O(d^{-1})\).
+</div>
+
+
+<!-- ------------------------------------------------------------------ -->
+<h3>HMC: Hamiltonian Monte Carlo</h3>
+
+<p>HMC augments the parameter space with momentum variables and simulates
+Hamiltonian dynamics using leapfrog integration. This lets the chain make
+large moves along the posterior&rsquo;s contours while maintaining high
+acceptance rates.</p>
+
+<div class="code-block">
+<pre><code>;; HMC with leapfrog integration
+(def hmc-samples
+  (mcmc/hmc {:samples        500
+             :burn           200
+             :step-size      0.01
+             :leapfrog-steps 20
+             :addresses      [:x :y]
+             :key            (mx/random-key 42)}
+    banana-model [data] obs))
+
+(println "HMC samples:" (count hmc-samples))</code></pre>
+</div>
+<div class="code-output">HMC samples: 500</div>
+
+<p>The <code>:leapfrog-steps</code> parameter controls how far along the
+Hamiltonian trajectory each proposal travels. More steps = larger moves,
+but more gradient evaluations per step.</p>
+
+<h4>Adaptive warmup</h4>
+
+<p>HMC supports automatic tuning of step size and mass matrix during warmup:</p>
+
+<div class="code-block">
+<pre><code>;; Adaptive HMC: tunes step-size and diagonal mass matrix
+(def adaptive-samples
+  (mcmc/hmc {:samples           500
+             :burn              200
+             :step-size         0.01
+             :leapfrog-steps    20
+             :addresses         [:x :y]
+             :adapt-step-size   true     ;; dual averaging (Hoffman & Gelman 2014)
+             :target-accept     0.65     ;; target acceptance probability
+             :adapt-metric      true     ;; Welford's online diagonal mass matrix
+             :key               (mx/random-key 42)}
+    banana-model [data] obs))
+
+(println "Adaptive HMC samples:" (count adaptive-samples))</code></pre>
+</div>
+<div class="code-output">Adaptive HMC samples: 500</div>
+
+<p>During the burn-in phase, dual averaging adjusts the step size toward the
+target acceptance rate, and Welford&rsquo;s algorithm estimates a diagonal mass
+matrix from the sample variance. After burn-in, both are fixed.</p>
+
+<h4>Mass matrix</h4>
+
+<p>The mass matrix \(M\) preconditions the dynamics. Momentum is drawn from
+\(\mathcal{N}(0, M)\), so a well-chosen \(M\) (e.g., the inverse posterior
+covariance) makes all directions equally easy to explore:</p>
+
+<div class="code-block">
+<pre><code>;; Manual diagonal mass matrix
+(def hmc-with-metric
+  (mcmc/hmc {:samples        500
+             :burn           200
+             :step-size      0.01
+             :leapfrog-steps 20
+             :addresses      [:x :y]
+             :metric         (mx/array [1.0 0.5])  ;; diagonal mass matrix
+             :key            (mx/random-key 42)}
+    banana-model [data] obs))</code></pre>
+</div>
+
+
+<!-- ------------------------------------------------------------------ -->
+<h3>NUTS: No-U-Turn Sampler</h3>
+
+<p>NUTS eliminates the need to choose <code>:leapfrog-steps</code> by adaptively
+building a binary tree of leapfrog states until the trajectory makes a
+&ldquo;U-turn&rdquo; (the momentum starts pointing back toward the origin):</p>
+
+\[ \text{U-turn}: (q^+ - q^-) \cdot p^+ \geq 0 \;\;\text{and}\;\; (q^+ - q^-) \cdot p^- \geq 0 \]
+
+<div class="code-block">
+<pre><code>;; NUTS: automatic trajectory length
+(def nuts-samples
+  (mcmc/nuts {:samples          500
+              :burn             200
+              :step-size        0.01
+              :max-depth        10       ;; max tree depth (2^10 = 1024 leapfrog steps)
+              :addresses        [:x :y]
+              :adapt-step-size  true
+              :target-accept    0.8      ;; NUTS typically targets higher acceptance
+              :adapt-metric     true
+              :key              (mx/random-key 42)}
+    banana-model [data] obs))
+
+(println "NUTS samples:" (count nuts-samples))</code></pre>
+</div>
+<div class="code-output">NUTS samples: 500</div>
+
+<p>NUTS is the recommended default for continuous models. It adapts trajectory
+length per-step and typically requires less tuning than HMC.</p>
+
+
+<!-- ------------------------------------------------------------------ -->
+<h3>Loop compilation</h3>
+
+<p>All gradient-based methods support <strong>loop compilation</strong>: compiling
+entire multi-step chains into a single Metal GPU dispatch. This amortizes
+kernel launch overhead and can yield ~5x speedups:</p>
+
+<div class="code-block">
+<pre><code>;; Compiled HMC: block-size controls compilation granularity
+(def compiled-samples
+  (mcmc/hmc {:samples        500
+             :burn           200
+             :step-size      0.01
+             :leapfrog-steps 20
+             :addresses      [:x :y]
+             :compile?       true    ;; enable loop compilation
+             :block-size     50      ;; compile 50-step chains per dispatch
+             :device         :gpu    ;; run on GPU
+             :key            (mx/random-key 42)}
+    banana-model [data] obs))</code></pre>
+</div>
+
+<p>The <code>:compile?</code> and <code>:block-size</code> options work for
+<code>compiled-mh</code>, <code>mala</code>, <code>hmc</code>, and
+<code>nuts</code>.</p>
+
+
+<!-- ------------------------------------------------------------------ -->
+<h3>Vectorized chains</h3>
+
+<p>Run multiple independent chains in parallel via MLX broadcasting. Each
+chain follows its own trajectory, enabling parallel exploration of the
+posterior:</p>
+
+<div class="code-block">
+<pre><code>;; 8 parallel HMC chains on GPU
+(def vhmc-samples
+  (mcmc/vectorized-hmc {:samples        200
+                        :burn           100
+                        :step-size      0.01
+                        :leapfrog-steps 20
+                        :addresses      [:x :y]
+                        :n-chains       8
+                        :device         :gpu
+                        :key            (mx/random-key 42)}
+    banana-model [data] obs))
+
+(println "Samples shape:" (count vhmc-samples) "x" (count (first vhmc-samples)) "x" (count (first (first vhmc-samples))))
+(println "Acceptance rate:" (:acceptance-rate (meta vhmc-samples)))</code></pre>
+</div>
+<div class="code-output">Samples shape: 200 x 8 x 2
+Acceptance rate: 0.78</div>
+
+<p>Vectorized versions are also available for MH (<code>vectorized-compiled-mh</code>)
+and MALA (<code>vectorized-mala</code>).</p>
+
+
+<!-- ------------------------------------------------------------------ -->
+<h3>Other MCMC methods</h3>
+
+<table>
+<tr><th>Method</th><th>API</th><th>Use case</th></tr>
+<tr><td>Gibbs</td><td><code>(mcmc/gibbs opts model args obs schedule)</code></td><td>Discrete variables with known support</td></tr>
+<tr><td>Elliptical Slice</td><td><code>(mcmc/elliptical-slice opts model args obs)</code></td><td>Gaussian priors (always accepts)</td></tr>
+<tr><td>Involutive MCMC</td><td><code>(mcmc/involutive-mh opts model args obs)</code></td><td>Custom reversible proposals</td></tr>
+<tr><td>MAP</td><td><code>(mcmc/map-optimize opts model args obs)</code></td><td>Point estimate (gradient ascent)</td></tr>
+</table>
+
+<div class="code-block">
+<pre><code>;; Gibbs sampling for discrete variables
+(def gibbs-samples
+  (mcmc/gibbs {:samples 500 :burn 100 :key (mx/random-key 42)}
+    my-model args obs
+    [{:addr :cluster :support [(mx/scalar 0) (mx/scalar 1) (mx/scalar 2)]}]))
+
+;; Elliptical slice sampling (Gaussian priors, always accepts)
+(def ess-samples
+  (mcmc/elliptical-slice {:samples 500 :burn 100
+                          :selection [:x :y] :prior-std 5.0
+                          :key (mx/random-key 42)}
+    banana-model [data] obs))
+
+;; MAP optimization (gradient ascent to find the mode)
+(def map-result
+  (mcmc/map-optimize {:iterations 1000 :lr 0.01 :optimizer :adam
+                      :addresses [:x :y] :device :cpu}
+    banana-model [data] obs))
+
+(println "MAP params:" (:params map-result))
+(println "MAP score:" (:score map-result))</code></pre>
+</div>
+<div class="code-output">MAP params: #js [1.45 2.12]
+MAP score: -3.87</div>
+
+
+<!-- ================================================================== -->
+<h2>Sequential Monte Carlo (SMC)</h2>
+
+<p>When your model has sequential structure (time series, growing data),
+<strong>SMC</strong> maintains a population of weighted particles and updates
+them incrementally. At each step: extend particles with new observations,
+reweight, and optionally resample and rejuvenate.</p>
+
+<div class="code-block">
+<pre><code>(ns smc-example
+  (:require [genmlx.inference.smc :as smc]
+            [genmlx.inference.mcmc :as mcmc]
+            [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]
+            [genmlx.combinators :as comb]))
+
+;; HMM kernel for Unfold
+(def hmm-step
+  (gen [t state]
+    (let [new-state (dyn/trace :state (dist/gaussian state 0.3))
+          obs       (dyn/trace :obs (dist/gaussian new-state 1.0))]
+      new-state)))
+
+(def hmm (comb/unfold-combinator hmm-step))
+
+;; Sequential observations arriving over time
+(def observations
+  [(cm/from-map {0 {:obs (mx/scalar 1.2)}})
+   (cm/from-map {0 {:obs (mx/scalar 1.2)}
+                 1 {:obs (mx/scalar 1.8)}})
+   (cm/from-map {0 {:obs (mx/scalar 1.2)}
+                 1 {:obs (mx/scalar 1.8)}
+                 2 {:obs (mx/scalar 2.5)}})])
+
+;; SMC with 200 particles
+(def smc-result
+  (smc/smc {:particles          200
+            :ess-threshold      0.5     ;; resample when ESS < 50% of N
+            :rejuvenation-steps 3       ;; MH steps after resampling
+            :resample-method    :systematic
+            :key                (mx/random-key 42)}
+    hmm [3 (mx/scalar 0.0)] observations))
+
+(println "Log marginal likelihood:" (mx/item (:log-ml-estimate smc-result)))
+(println "Final particles:" (count (:traces smc-result)))</code></pre>
+</div>
+<div class="code-output">Log marginal likelihood: -5.23
+Final particles: 200</div>
+
+<h3>How SMC works</h3>
+
+<p>At each timestep \(t\):</p>
+<ol>
+  <li><strong>Extend:</strong> Update each particle with new observations via
+  <code>p/update</code>. Accumulate incremental weights.</li>
+  <li><strong>ESS check:</strong> Compute effective sample size
+  \(\text{ESS} = \frac{1}{\sum_i w_i^2}\). If ESS falls below the threshold,
+  resample.</li>
+  <li><strong>Resample:</strong> Draw ancestor indices proportional to weights.
+  Three methods: <code>:systematic</code> (default), <code>:residual</code>,
+  <code>:stratified</code>.</li>
+  <li><strong>Rejuvenate:</strong> Apply MH steps via <code>regenerate</code>
+  to diversify the resampled particles.</li>
+</ol>
+
+<p>The log marginal likelihood is estimated as the sum of log normalizing
+constants across all timesteps.</p>
+
+<h3>Conditional SMC (cSMC)</h3>
+
+<p>cSMC fixes a reference particle at index 0 that is never resampled. This is
+the core of particle Gibbs and PMCMC:</p>
+
+<div class="code-block">
+<pre><code>;; Conditional SMC: reference trace at index 0
+(def reference-trace (first (:traces smc-result)))
+
+(def csmc-result
+  (smc/csmc {:particles 200 :ess-threshold 0.5 :key (mx/random-key 99)}
+    hmm [3 (mx/scalar 0.0)] observations reference-trace))
+
+(println "cSMC log-ML:" (mx/item (:log-ml-estimate csmc-result)))</code></pre>
+</div>
+<div class="code-output">cSMC log-ML: -5.18</div>
+
+<h3>Resampling strategies</h3>
+
+<table>
+<tr><th>Method</th><th>Variance</th><th>Determinism</th></tr>
+<tr><td><code>:systematic</code></td><td>Low</td><td>Single uniform offset, O(N)</td></tr>
+<tr><td><code>:residual</code></td><td>Lower</td><td>Deterministic floor + stochastic remainder</td></tr>
+<tr><td><code>:stratified</code></td><td>Low</td><td>One uniform per stratum [j/N, (j+1)/N)</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2>SMCP3: SMC with Probabilistic Program Proposals</h2>
+
+<p><strong>SMCP3</strong> extends SMC by replacing the default prior proposal with
+custom generative functions as proposals. This enables locally-optimal,
+problem-specific, or even neural proposals at each timestep.</p>
+
+<div class="code-block">
+<pre><code>(ns smcp3-example
+  (:require [genmlx.inference.smcp3 :as smcp3]
+            [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.choicemap :as cm]))
+
+;; Forward kernel: proposes new latent given current state + observation
+(def forward-kernel
+  (gen [current-choices]
+    ;; Use observation to guide the proposal toward high-likelihood regions
+    (dyn/trace :state (dist/gaussian 0 1))))
+
+;; Backward kernel: scores the reverse move
+(def backward-kernel
+  (gen [current-choices]
+    (dyn/trace :state (dist/gaussian 0 1))))
+
+;; SMCP3 with custom proposals
+(def smcp3-result
+  (smcp3/smcp3 {:particles       200
+                :ess-threshold   0.5
+                :forward-kernel  forward-kernel
+                :backward-kernel backward-kernel
+                :key             (mx/random-key 42)}
+    hmm [3 (mx/scalar 0.0)] observations))
+
+(println "SMCP3 log-ML:" (mx/item (:log-ml-estimate smcp3-result)))</code></pre>
+</div>
+<div class="code-output">SMCP3 log-ML: -5.15</div>
+
+<p>The importance weight at each step accounts for the proposal quality:</p>
+\[ w_t = \frac{p(\text{new choices} \mid \text{model})}{q(\text{new choices} \mid \text{forward kernel})} \cdot \frac{q(\text{old choices} \mid \text{backward kernel})}{1} \]
+
+<p>When forward and backward kernels are well-matched, SMCP3 can dramatically
+reduce variance compared to standard SMC.</p>
+
+
+<!-- ================================================================== -->
+<h2>Variational inference</h2>
+
+<p>Instead of sampling, variational inference (VI) finds a parametric
+approximation \(q_\phi(z)\) that is close to the posterior
+\(p(z \mid x)\) by maximizing the <strong>Evidence Lower Bound (ELBO)</strong>:</p>
+
+\[ \text{ELBO}(\phi) = \mathbb{E}_{q_\phi}[\log p(x, z) - \log q_\phi(z)] \leq \log p(x) \]
+
+<h3>ADVI: Automatic Differentiation VI</h3>
+
+<p>ADVI fits a mean-field Gaussian guide (independent Gaussian per latent
+variable). It&rsquo;s the simplest VI method &mdash; just specify the
+log-density and initial parameters:</p>
+
+<div class="code-block">
+<pre><code>(ns vi-example
+  (:require [genmlx.inference.vi :as vi]
+            [genmlx.mlx :as mx]))
+
+;; Log-density for a 2D banana posterior
+(defn log-density [params]
+  (let [x (mx/slice params 0)
+        y (mx/slice params 1)]
+    (mx/add (mx/negate (mx/divide (mx/multiply x x) (mx/scalar 50)))
+            (mx/negate (mx/divide (mx/multiply (mx/subtract y (mx/multiply x x))
+                                               (mx/subtract y (mx/multiply x x)))
+                                  (mx/scalar 2))))))
+
+;; ADVI: mean-field Gaussian approximation
+(def advi-result
+  (vi/vi {:iterations    2000
+          :learning-rate 0.01
+          :elbo-samples  10
+          :key           (mx/random-key 42)}
+    log-density (mx/zeros [2])))
+
+(println "Posterior mean:" (mx/->clj (:mu advi-result)))
+(println "Posterior std:" (mx/->clj (:sigma advi-result)))
+(println "Final ELBO:" (last (:elbo-history advi-result)))
+
+;; Sample from the fitted guide
+(def samples ((:sample-fn advi-result) 1000))
+(println "Sampled 1000 points from approximate posterior")</code></pre>
+</div>
+<div class="code-output">Posterior mean: [0.12 0.85]
+Posterior std: [1.23 0.95]
+Final ELBO: -2.14
+Sampled 1000 points from approximate posterior</div>
+
+<h3>VI from model</h3>
+
+<p>For GenMLX models, use the convenience wrapper that extracts the score
+function automatically:</p>
+
+<div class="code-block">
+<pre><code>;; VI directly from a GenMLX model
+(def model-vi-result
+  (vi/vi-from-model {:iterations    2000
+                     :learning-rate 0.01
+                     :elbo-samples  10
+                     :key           (mx/random-key 42)}
+    banana-model [data] obs [:x :y]))
+
+(println "Model VI mean:" (mx/->clj (:mu model-vi-result)))</code></pre>
+</div>
+<div class="code-output">Model VI mean: [1.41 2.08]</div>
+
+<h3>Compiled VI</h3>
+
+<p>For larger models, compile the gradient and ELBO functions to Metal:</p>
+
+<div class="code-block">
+<pre><code>;; Compiled VI: ~3-5x speedup via Metal compilation
+(def compiled-result
+  (vi/compiled-vi-from-model {:iterations 2000 :learning-rate 0.01
+                              :elbo-samples 10 :device :cpu
+                              :key (mx/random-key 42)}
+    banana-model [data] obs [:x :y]))</code></pre>
+</div>
+
+
+<!-- ------------------------------------------------------------------ -->
+<h3>Programmable VI</h3>
+
+<p>For full control over the VI objective, use <code>programmable-vi</code>.
+You provide the log-density functions and choose from multiple objectives
+and gradient estimators:</p>
+
+<div class="code-block">
+<pre><code>;; Programmable VI with IWELBO (tighter bound than ELBO)
+(def pvi-result
+  (vi/programmable-vi {:iterations    1000
+                       :learning-rate 0.01
+                       :n-samples     20
+                       :objective     :iwelbo    ;; importance-weighted ELBO
+                       :estimator     :reparam   ;; reparameterization trick
+                       :key           (mx/random-key 42)}
+    log-p-fn log-q-fn sample-fn (mx/zeros [4])))
+
+(println "Final loss:" (last (:loss-history pvi-result)))</code></pre>
+</div>
+<div class="code-output">Final loss: -1.87</div>
+
+<h4>VI objectives</h4>
+
+<table>
+<tr><th>Objective</th><th>Constructor</th><th>Description</th></tr>
+<tr><td><code>:elbo</code></td><td><code>(vi/elbo-objective log-p log-q)</code></td><td>Standard ELBO: \(\mathbb{E}_q[\log p - \log q]\)</td></tr>
+<tr><td><code>:iwelbo</code></td><td><code>(vi/iwelbo-objective log-p log-q)</code></td><td>Importance-weighted ELBO: \(\log \frac{1}{K}\sum_k w_k\). Tighter bound.</td></tr>
+<tr><td><code>:pwake</code></td><td><code>(vi/pwake-objective log-p log-q)</code></td><td>P-Wake: train model to match guide, \(\text{KL}(q \| p)\)</td></tr>
+<tr><td><code>:qwake</code></td><td><code>(vi/qwake-objective log-p log-q)</code></td><td>Q-Wake: train guide via self-normalized importance weights</td></tr>
+<tr><td><code>:vimco</code></td><td><code>(vi/vimco-objective log-p log-q)</code></td><td>VIMCO: leave-one-out control variates. Lower variance than REINFORCE.</td></tr>
+</table>
+
+<h4>Gradient estimators</h4>
+
+<table>
+<tr><th>Estimator</th><th>When to use</th></tr>
+<tr><td><code>:reparam</code></td><td>Reparameterizable distributions (Gaussian, etc.). Low variance.</td></tr>
+<tr><td><code>:reinforce</code></td><td>Discrete or non-reparameterizable distributions. Higher variance but universal.</td></tr>
+</table>
+
+<div class="code-block">
+<pre><code>;; VIMCO: lower variance for discrete latent variables
+(def vimco-result
+  (vi/vimco {:iterations 1000 :learning-rate 0.01 :n-samples 20
+             :key (mx/random-key 42)}
+    log-p-fn log-q-fn sample-fn (mx/zeros [4])))</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Choosing an inference method</h2>
+
+<table>
+<tr><th>Method</th><th>Strengths</th><th>Best for</th></tr>
+<tr><td>MH (random-walk)</td><td>Simple, no gradients needed</td><td>Low-dimensional, discrete + continuous</td></tr>
+<tr><td>MALA</td><td>Gradient-guided, better than MH</td><td>Moderate-dimensional continuous</td></tr>
+<tr><td>HMC</td><td>Large moves along posterior contours</td><td>High-dimensional continuous</td></tr>
+<tr><td>NUTS</td><td>Auto-tuned HMC, fewer hyperparameters</td><td>Default for continuous models</td></tr>
+<tr><td>Gibbs</td><td>Enumerates discrete support</td><td>Discrete variables with small support</td></tr>
+<tr><td>Elliptical Slice</td><td>No tuning, always accepts</td><td>Gaussian priors, moderate dimension</td></tr>
+<tr><td>SMC</td><td>Handles sequential data, estimates marginal likelihood</td><td>Time series, state-space models</td></tr>
+<tr><td>SMCP3</td><td>Custom proposals in SMC</td><td>Complex sequential models with good proposals</td></tr>
+<tr><td>ADVI</td><td>Fast, scalable, deterministic convergence</td><td>Large models, approximate posteriors OK</td></tr>
+<tr><td>Programmable VI</td><td>Custom objectives (IWELBO, VIMCO, etc.)</td><td>Research, amortized inference</td></tr>
+<tr><td>MAP</td><td>Point estimate, very fast</td><td>Mode finding, initialization</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2>Summary</h2>
+
+<ul>
+  <li><strong>MALA</strong> uses gradient + noise proposals with asymmetric
+  MH correction</li>
+  <li><strong>HMC</strong> simulates Hamiltonian dynamics via leapfrog
+  integration with optional adaptive warmup for step size and mass matrix</li>
+  <li><strong>NUTS</strong> automatically tunes trajectory length by detecting
+  U-turns &mdash; the recommended default for continuous models</li>
+  <li>All gradient-based methods support <strong>loop compilation</strong>
+  (<code>:compile? true</code>) for GPU-accelerated burn-in</li>
+  <li><strong>Vectorized chains</strong> run multiple independent chains in
+  parallel via MLX broadcasting</li>
+  <li><strong>SMC</strong> maintains a weighted particle population, updated
+  incrementally with ESS-triggered resampling and MH rejuvenation</li>
+  <li><strong>SMCP3</strong> extends SMC with custom generative function proposals
+  for locally-optimal importance weights</li>
+  <li><strong>ADVI</strong> fits mean-field Gaussian guides by maximizing the ELBO</li>
+  <li><strong>Programmable VI</strong> supports ELBO, IWELBO, VIMCO, and custom
+  objectives with reparameterization or REINFORCE gradient estimators</li>
+</ul>
+
+<p>In <a href="07-vectorized-inference.html">Chapter 7: Vectorized Inference</a>,
+we&rsquo;ll see how GenMLX&rsquo;s shape-based batching runs entire inference
+pipelines in parallel without transforming functions.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="05-combinators.html">&larr; Chapter 5: Combinators</a>
+    <a href="07-vectorized-inference.html">Chapter 7: Vectorized Inference &rarr;</a>
+  </div>
+</div>
+</body>
+</html>
