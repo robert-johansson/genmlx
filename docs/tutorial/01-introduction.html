@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Tutorial: Introduction</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Tutorial</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="02-generative-models.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">1. Introduction</h1>
+
+<h2>What is probabilistic programming?</h2>
+
+<p>A probabilistic program is an ordinary program that also makes random choices.
+Rather than computing a single output, it describes a <em>distribution</em> over possible
+outputs. The key insight of probabilistic programming is that we can use these
+programs as <em>models</em> of the world, then ask questions about them by running
+inference &mdash; computing what the random choices must have been, given some
+observed data.</p>
+
+<p>Consider a simple example. Suppose we believe that some coin has an unknown
+bias \(\theta\), and we observe it landing heads 7 out of 10 times. We can
+write a probabilistic program that models this situation:</p>
+
+<div class="code-block">
+<pre><code>(ns intro
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]))
+
+(def coin-model
+  (gen []
+    (let [theta (dyn/trace :theta (dist/beta 1 1))]
+      (doseq [i (range 10)]
+        (dyn/trace (keyword (str "flip" i))
+                   (dist/bernoulli theta)))
+      theta)))</code></pre>
+</div>
+
+<p>This program first samples a bias \(\theta\) from a uniform prior (Beta(1,1)),
+then flips the coin 10 times using that bias. Each flip is <em>traced</em> at a named
+address (<code>:flip0</code>, <code>:flip1</code>, &hellip;), which means we can later
+<em>condition</em> on the outcomes we observed.</p>
+
+<p>The question &ldquo;what is \(\theta\) given 7 heads?&rdquo; is answered by
+<strong>inference</strong>: algorithms that explore the space of possible executions,
+weighted by how well they match the observations. GenMLX provides a full suite
+of inference algorithms &mdash; importance sampling, MCMC, SMC, variational
+inference, and more &mdash; all running on the GPU.</p>
+
+
+<h2>The Generative Function Interface</h2>
+
+<p>GenMLX implements the <strong>Generative Function Interface</strong> (GFI), a
+mathematical framework for probabilistic programming introduced by
+<a href="https://www.gen.dev/">Gen</a>. The GFI defines a small set of
+operations that any generative function must support:</p>
+
+<table>
+<tr><th>Operation</th><th>What it does</th></tr>
+<tr><td><code>simulate</code></td><td>Run the model forward, sampling all choices</td></tr>
+<tr><td><code>generate</code></td><td>Run the model, constraining some choices to observed values</td></tr>
+<tr><td><code>update</code></td><td>Change some choices in an existing trace, get the new trace and weight</td></tr>
+<tr><td><code>regenerate</code></td><td>Resample selected choices, keeping others fixed</td></tr>
+<tr><td><code>assess</code></td><td>Compute the probability of a complete set of choices</td></tr>
+</table>
+
+<p>These five operations are sufficient to implement <em>any</em> inference algorithm.
+Importance sampling uses <code>generate</code>. Metropolis&ndash;Hastings uses
+<code>update</code> or <code>regenerate</code>. SMC uses all of them in sequence.
+The beauty of the GFI is that models and inference are completely decoupled:
+you write a model once, then plug in any inference algorithm.</p>
+
+
+<h2>Why GenMLX?</h2>
+
+<p>GenMLX brings the GFI to <strong>ClojureScript on Apple Silicon</strong>, combining
+three things that don&rsquo;t usually go together:</p>
+
+<ol>
+  <li><strong>A real probabilistic programming language.</strong> Not a DSL that
+  compiles to something else &mdash; GenMLX models are ordinary ClojureScript
+  functions. You have the full power of the language: closures, higher-order
+  functions, persistent data structures, macros.</li>
+
+  <li><strong>GPU acceleration.</strong> All computation happens as
+  <a href="https://github.com/ml-explore/mlx">MLX</a> array operations on
+  Apple&rsquo;s unified GPU. Sampling, scoring, gradient computation, and
+  inference all stay on the GPU. MLX&rsquo;s lazy evaluation fuses operations
+  automatically.</li>
+
+  <li><strong>Purely functional design.</strong> Traces are immutable records.
+  Choicemaps are persistent data structures. The only mutable boundary is a
+  single <code>volatile!</code> inside the handler dispatcher &mdash; everything else
+  is pure functions and data. This makes models easy to test, compose, and
+  reason about.</li>
+</ol>
+
+
+<h2>Architecture overview</h2>
+
+<p>GenMLX is organized in layers, each building on the one below:</p>
+
+<pre><code>Layer 0  MLX Foundation       Arrays, operations, grad, vmap
+Layer 1  Core Data            Choicemaps, traces, selections
+Layer 2  GFI &amp; Execution     Protocols, handler, edit, diff
+Layer 3  DSL                  gen macro, DynamicGF
+Layer 4  Distributions        27 types (gaussian, beta, gamma, ...)
+Layer 5  Combinators          Map, Unfold, Switch, Scan, ...
+Layer 6  Inference            IS, MCMC, SMC, VI, ADEV, MAP
+Layer 7  Vectorized           Batched execution, VectorizedTrace
+Layer 8  Verification         GFI contracts, static validator</code></pre>
+
+<p>As a user, you mostly work at Layers 3&ndash;6: writing models with <code>gen</code>,
+choosing distributions, composing with combinators, and running inference. The
+lower layers handle the plumbing.</p>
+
+
+<h2>A first complete example</h2>
+
+<p>Let&rsquo;s put it all together. Here is a complete program that defines a
+Bayesian linear regression model, observes three data points, and runs
+importance sampling to estimate the slope:</p>
+
+<div class="code-block">
+<pre><code>(ns my-first-model
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.choicemap :as cm]
+            [genmlx.trace :as t]
+            [genmlx.protocols :as p]
+            [genmlx.mlx.random :as random]))
+
+;; 1. Define the model
+(def linear-model
+  (gen [xs]
+    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
+          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+      (doseq [[j x] (map-indexed vector xs)]
+        (dyn/trace (keyword (str "y" j))
+                   (dist/gaussian
+                     (mx/add (mx/multiply slope (mx/scalar x))
+                             intercept)
+                     1)))
+      slope)))
+
+;; 2. Set up observations
+(def xs (mx/array [1 2 3]))
+(def observations
+  (cm/choicemap {:y0 (mx/scalar 2.1)
+                 :y1 (mx/scalar 3.9)
+                 :y2 (mx/scalar 6.0)}))
+
+;; 3. Run importance sampling (1000 particles)
+(def key (random/key 42))
+(def n-particles 1000)
+
+(let [keys   (random/split-n key n-particles)
+      traces (mapv (fn [k]
+                     (let [{:keys [trace weight]}
+                           (binding [random/*key* k]
+                             (p/generate linear-model [xs] observations))]
+                       {:trace trace :weight weight}))
+                   keys)
+      ;; Find the trace with the highest weight
+      best   (apply max-key #(mx/item (:weight %)) traces)]
+  (println "Estimated slope:" (mx/item (t/retval (:trace best))))
+  (println "Log weight:" (mx/item (:weight best))))</code></pre>
+</div>
+<div class="code-output">Estimated slope: 1.987
+Log weight: -3.42</div>
+
+<p>Don&rsquo;t worry if the details aren&rsquo;t clear yet &mdash; the next chapter
+will walk through each piece step by step. The important thing to notice is
+the structure:</p>
+
+<ol>
+  <li><strong>Define</strong> a generative function with <code>gen</code></li>
+  <li><strong>Constrain</strong> some trace addresses with a choicemap</li>
+  <li><strong>Infer</strong> using any GFI-compatible algorithm</li>
+</ol>
+
+<p>This pattern &mdash; model, constrain, infer &mdash; is the core workflow
+of probabilistic programming, and every chapter in this tutorial builds on it.</p>
+
+
+<h2>Running the examples</h2>
+
+<p>Every code example in this tutorial is a complete, runnable program. To try
+them yourself:</p>
+
+<div class="code-block">
+<pre><code># Clone the repo and install dependencies
+git clone https://github.com/robert-johansson/genmlx.git
+cd genmlx
+npm install
+
+# Save any example to a file and run it
+bun run --bun nbb my-first-model.cljs</code></pre>
+</div>
+
+<div class="note">
+  <strong>Note:</strong> GenMLX requires macOS with Apple Silicon (M1 or later) for
+  GPU acceleration via MLX. All examples produce slightly different numerical
+  output on each run due to random sampling.
+</div>
+
+
+<h2>What&rsquo;s next</h2>
+
+<p>In <a href="02-generative-models.html">Chapter 2: Generative Models</a>, we&rsquo;ll
+dive into the <code>gen</code> macro, understand how <code>trace</code> works,
+explore the distribution library, and build models from scratch.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <span></span>
+    <a href="02-generative-models.html">Chapter 2: Generative Models &rarr;</a>
+  </div>
+</div>
+</body>
+</html>

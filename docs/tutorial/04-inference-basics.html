@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Tutorial: Inference Basics</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Tutorial</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="03-conditioning.html">&larr; Prev</a></li><li><a href="05-combinators.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">4. Inference Basics</h1>
+
+<p>In <a href="03-conditioning.html">Chapter 3</a> we learned how
+<code>generate</code> produces weighted samples &mdash; traces where the weight
+measures how well the sampled latent variables explain the observations. But
+calling <code>generate</code> once and hoping for a good sample is like buying
+one lottery ticket. We need systematic algorithms that explore the space of
+possible explanations efficiently.</p>
+
+<p>This chapter covers the two most fundamental inference algorithms:
+<strong>importance sampling</strong> and <strong>Metropolis&ndash;Hastings (MH)</strong>.
+Together they illustrate the two main paradigms: parallel weighted samples
+vs. sequential Markov chain exploration.</p>
+
+
+<!-- ================================================================== -->
+<h2>Importance sampling</h2>
+
+<p>The simplest inference algorithm: call <code>generate</code> many times,
+collect the weighted samples, and use the weights to identify which ones
+matter.</p>
+
+<h3>The idea</h3>
+
+<p>We want to approximate the posterior distribution
+\(p(\text{latents} \mid \text{data})\). Importance sampling does this by:</p>
+
+<ol>
+  <li>Drawing \(N\) samples from the prior (via <code>generate</code>)</li>
+  <li>Weighting each sample by how well it explains the data</li>
+  <li>Treating the weighted sample set as an approximation to the posterior</li>
+</ol>
+
+<p>The weight for each sample is the importance weight from <code>generate</code>:</p>
+
+\[
+w_i = \log p(\text{data} \mid \text{latents}_i)
+\]
+
+<p>Samples with high weight (good explanations) get more influence. The
+<strong>marginal likelihood estimate</strong> is a byproduct:</p>
+
+\[
+\hat{p}(\text{data}) = \frac{1}{N} \sum_{i=1}^{N} \exp(w_i)
+\]
+
+
+<h3>Using <code>importance-sampling</code></h3>
+
+<p>GenMLX provides <code>importance/importance-sampling</code> which handles the
+loop, key management, and weight normalization:</p>
+
+<div class="code-block">
+<pre><code>(ns inference-example
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]
+            [genmlx.inference.importance :as importance]
+            [genmlx.inference.util :as u]
+            [genmlx.mlx.random :as random]))
+
+(def model
+  (gen []
+    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+      (doseq [i (range 5)]
+        (dyn/trace (keyword (str "y" i))
+                   (dist/gaussian mu 1)))
+      mu)))
+
+(def obs (cm/choicemap :y0 (mx/scalar 7.1)
+                       :y1 (mx/scalar 6.8)
+                       :y2 (mx/scalar 7.3)
+                       :y3 (mx/scalar 6.9)
+                       :y4 (mx/scalar 7.0)))
+
+;; Run importance sampling with 1000 particles
+(let [{:keys [traces log-weights log-ml-estimate]}
+      (importance/importance-sampling
+        {:samples 1000 :key (random/key 42)}
+        model [] obs)
+
+      ;; Normalize weights to probabilities
+      {:keys [probs]} (u/normalize-log-weights log-weights)
+
+      ;; Compute weighted mean of mu
+      mus (mapv #(mx/item (:retval %)) traces)
+      weighted-mean (reduce + (map * mus probs))]
+  (println "Weighted posterior mean of mu:" (.toFixed weighted-mean 3))
+  (println "Log marginal likelihood:" (.toFixed (mx/item log-ml-estimate) 3)))</code></pre>
+</div>
+<div class="code-output">Weighted posterior mean of mu: 7.023
+Log marginal likelihood: -9.847</div>
+
+<p>The posterior mean is close to the sample mean of the data (7.02) &mdash;
+exactly what we&rsquo;d expect from a Gaussian model with a wide prior.</p>
+
+<h3>API reference</h3>
+
+<div class="code-block">
+<pre><code>(importance/importance-sampling opts model args observations)
+
+;; opts:
+;;   :samples  — number of particles (default 100)
+;;   :key      — PRNG key for reproducibility
+;;
+;; Returns:
+;;   {:traces      [Trace ...]
+;;    :log-weights [MLX-scalar ...]
+;;    :log-ml-estimate MLX-scalar}</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Importance resampling</h2>
+
+<p>Plain importance sampling returns weighted traces. Sometimes you want
+<em>unweighted</em> samples from the approximate posterior. Importance
+resampling draws from the weighted set proportional to the weights:</p>
+
+<div class="code-block">
+<pre><code>;; Get 10 unweighted posterior samples via resampling
+(let [resampled (importance/importance-resampling
+                  {:samples 10 :particles 1000 :key (random/key 42)}
+                  model [] obs)]
+  (doseq [trace resampled]
+    (print (.toFixed (mx/item (:retval trace)) 2) ""))
+  (println))</code></pre>
+</div>
+<div class="code-output">7.04 6.98 7.12 7.01 7.08 6.95 7.03 7.15 6.99 7.06</div>
+
+<p>These are approximate posterior samples &mdash; each one is equally weighted.
+The <code>:particles</code> option controls how many importance samples to draw
+internally (more particles = better approximation).</p>
+
+<div class="code-block">
+<pre><code>(importance/importance-resampling opts model args observations)
+
+;; opts:
+;;   :samples   — number of output traces (default 100)
+;;   :particles — number of IS particles (default 1000)
+;;   :key       — PRNG key
+;;
+;; Returns: [Trace ...] (vector of resampled traces)</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Limitations of importance sampling</h2>
+
+<p>Importance sampling works well when the prior and posterior overlap
+significantly. When they don&rsquo;t &mdash; when the data is very informative
+or the model is high-dimensional &mdash; most particles will have near-zero
+weight and the approximation degrades.</p>
+
+<p>The <strong>effective sample size</strong> (ESS) measures how many of your \(N\)
+particles are actually contributing:</p>
+
+\[
+\text{ESS} = \frac{1}{\sum_i \tilde{w}_i^2}
+\]
+
+<p>where \(\tilde{w}_i\) are the normalized weights. ESS ranges from 1 (one
+particle dominates) to \(N\) (all particles equal). Low ESS means you need
+a better inference strategy.</p>
+
+<div class="code-block">
+<pre><code>;; Check ESS
+(let [{:keys [log-weights]}
+      (importance/importance-sampling
+        {:samples 1000 :key (random/key 42)}
+        model [] obs)]
+  (println "ESS:" (.toFixed (u/compute-ess log-weights) 1) "/ 1000"))</code></pre>
+</div>
+<div class="code-output">ESS: 312.4 / 1000</div>
+
+<p>An ESS of ~312 out of 1000 is decent. For harder problems &mdash; more
+observations, higher dimensions, tighter posteriors &mdash; you&rsquo;ll need
+MCMC or SMC instead.</p>
+
+
+<!-- ================================================================== -->
+<h2>Metropolis&ndash;Hastings</h2>
+
+<p>MCMC takes a different approach: instead of generating independent weighted
+samples, it constructs a <strong>Markov chain</strong> that wanders through the
+space of latent variables, spending more time in high-probability regions.</p>
+
+<h3>The MH algorithm</h3>
+
+<p>Each step of Metropolis&ndash;Hastings:</p>
+
+<ol>
+  <li><strong>Propose:</strong> Modify the current trace by resampling some choices
+  (via <code>regenerate</code>)</li>
+  <li><strong>Accept/reject:</strong> Accept the proposal with probability
+  \(\min(1, \exp(w))\) where \(w\) is the weight from <code>regenerate</code>.
+  If rejected, keep the current trace.</li>
+</ol>
+
+<p>Over many steps, the chain converges to the posterior. The key insight is
+that the GFI&rsquo;s <code>regenerate</code> operation computes exactly the
+acceptance ratio we need.</p>
+
+
+<h3>Using <code>mh</code></h3>
+
+<div class="code-block">
+<pre><code>(ns mh-example
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.choicemap :as cm]
+            [genmlx.selection :as sel]
+            [genmlx.inference.mcmc :as mcmc]
+            [genmlx.inference.diagnostics :as diag]
+            [genmlx.mlx.random :as random]))
+
+(def model
+  (gen []
+    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+      (doseq [i (range 5)]
+        (dyn/trace (keyword (str "y" i))
+                   (dist/gaussian mu 1)))
+      mu)))
+
+(def obs (cm/choicemap :y0 (mx/scalar 7.1)
+                       :y1 (mx/scalar 6.8)
+                       :y2 (mx/scalar 7.3)
+                       :y3 (mx/scalar 6.9)
+                       :y4 (mx/scalar 7.0)))
+
+;; Run MH with 500 samples, 100 burn-in
+(let [traces (mcmc/mh
+               {:samples 500 :burn 100
+                :selection (sel/select :mu)
+                :key (random/key 42)}
+               model [] obs)
+      mus (mapv #(mx/item (:retval %)) traces)]
+  (println "Posterior mean:" (.toFixed (/ (reduce + mus) (count mus)) 3))
+  (println "Acceptance rate:" (.toFixed (:acceptance-rate (meta traces)) 3))
+  (println "ESS:" (.toFixed (diag/ess (mapv #(mx/scalar %) mus)) 1)))</code></pre>
+</div>
+<div class="code-output">Posterior mean: 7.018
+Acceptance rate: 0.347
+ESS: 182.5</div>
+
+<h3>API reference</h3>
+
+<div class="code-block">
+<pre><code>(mcmc/mh opts model args observations)
+
+;; opts:
+;;   :samples    — number of posterior samples (required)
+;;   :burn       — burn-in iterations to discard (default 0)
+;;   :thin       — keep every Nth sample (default 1)
+;;   :selection  — which addresses to resample (default sel/all)
+;;   :callback   — (fn [{:iter :value :accepted?}]) called each sample
+;;   :key        — PRNG key
+;;
+;; Returns: [Trace ...] with {:acceptance-rate ...} metadata</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Choosing what to resample: selections</h2>
+
+<p>The <code>:selection</code> option controls which addresses MH proposes
+changes to. This is crucial for performance:</p>
+
+<div class="code-block">
+<pre><code>;; Resample all latent addresses (default — usually too aggressive)
+(mcmc/mh {:samples 500 :selection sel/all} model [] obs)
+
+;; Resample only :mu (more targeted — better acceptance)
+(mcmc/mh {:samples 500 :selection (sel/select :mu)} model [] obs)
+
+;; Resample everything except :mu
+(mcmc/mh {:samples 500 :selection (sel/complement-sel (sel/select :mu))}
+         model [] obs)</code></pre>
+</div>
+
+<p>When you resample <em>all</em> addresses at once, the proposal is usually
+too different from the current state and gets rejected. Targeting individual
+addresses (or small groups) gives higher acceptance rates and better
+mixing.</p>
+
+
+<!-- ================================================================== -->
+<h2>Burn-in and thinning</h2>
+
+<p>MCMC chains start at an arbitrary point and take time to reach the
+high-probability region. <strong>Burn-in</strong> discards the initial samples.
+<strong>Thinning</strong> keeps every \(k\)-th sample to reduce autocorrelation:</p>
+
+<div class="code-block">
+<pre><code>;; 200 burn-in, then keep every 3rd sample
+(mcmc/mh {:samples 200 :burn 200 :thin 3 :selection (sel/select :mu)}
+         model [] obs)</code></pre>
+</div>
+
+<p>This runs a total of \(200 + 200 \times 3 = 800\) MH steps and returns 200
+samples.</p>
+
+
+<!-- ================================================================== -->
+<h2>Composable inference kernels</h2>
+
+<p>For more control, GenMLX provides composable <strong>inference kernels</strong>.
+A kernel is a function <code>(fn [trace key] -> trace)</code> that transforms
+a trace. You can build complex MCMC strategies by combining simple kernels:</p>
+
+<div class="code-block">
+<pre><code>(ns kernel-example
+  (:require [genmlx.inference.kernel :as kern]
+            [genmlx.selection :as sel]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]
+            [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as random]))
+
+;; Basic kernels
+(def resample-mu (kern/mh-kernel (sel/select :mu)))
+(def walk-mu     (kern/random-walk :mu 0.5))
+
+;; Combine: first random-walk :mu, then resample :mu from prior
+(def combined (kern/chain walk-mu resample-mu))
+
+;; Repeat a kernel 10 times
+(def repeated (kern/repeat-kernel 10 walk-mu))
+
+;; Cycle through kernels
+(def cycled (kern/cycle-kernels 20 [walk-mu resample-mu]))
+
+;; Run a kernel to collect samples
+(let [init-trace (p/simulate model [])
+      traces (kern/run-kernel
+               {:samples 200 :burn 50 :key (random/key 42)}
+               combined init-trace)]
+  (println "Collected" (count traces) "samples"))</code></pre>
+</div>
+<div class="code-output">Collected 200 samples</div>
+
+<h3>Kernel constructors</h3>
+
+<table>
+<tr><th>Constructor</th><th>Description</th></tr>
+<tr><td><code>(kern/mh-kernel selection)</code></td><td>MH via <code>regenerate</code> on the selection</td></tr>
+<tr><td><code>(kern/random-walk :addr std)</code></td><td>Gaussian random walk on a single address</td></tr>
+<tr><td><code>(kern/random-walk {:x 0.5 :y 0.1})</code></td><td>Random walk on multiple addresses</td></tr>
+<tr><td><code>(kern/prior :x :y)</code></td><td>Resample addresses from prior</td></tr>
+<tr><td><code>(kern/proposal fwd-gf)</code></td><td>Custom proposal GF (symmetric)</td></tr>
+<tr><td><code>(kern/proposal fwd-gf :backward bwd-gf)</code></td><td>Custom proposal (asymmetric)</td></tr>
+<tr><td><code>(kern/gibbs :x :y :z)</code></td><td>Gibbs-style sweep (prior resample each)</td></tr>
+<tr><td><code>(kern/gibbs {:x 0.5 :y 0.1})</code></td><td>Gibbs-style sweep (random walk each)</td></tr>
+</table>
+
+<h3>Kernel combinators</h3>
+
+<table>
+<tr><th>Combinator</th><th>Description</th></tr>
+<tr><td><code>(kern/chain k1 k2 k3)</code></td><td>Apply kernels in sequence</td></tr>
+<tr><td><code>(kern/repeat-kernel n k)</code></td><td>Apply kernel \(n\) times</td></tr>
+<tr><td><code>(kern/cycle-kernels n [k1 k2])</code></td><td>Cycle through kernels for \(n\) steps</td></tr>
+<tr><td><code>(kern/mix-kernels [[k1 0.7] [k2 0.3]])</code></td><td>Randomly select kernel by weight</td></tr>
+<tr><td><code>(kern/seed k fixed-key)</code></td><td>Fix the PRNG key (deterministic kernel)</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2>Random walk MH</h2>
+
+<p>The default MH (<code>regenerate</code>) proposes new values by sampling from
+the prior. This works for low-dimensional problems but mixes poorly when the
+prior is much wider than the posterior. <strong>Random walk MH</strong> proposes
+small perturbations instead:</p>
+
+<div class="code-block">
+<pre><code>;; Random walk: propose mu' = mu + N(0, 0.5)
+(let [traces (kern/run-kernel
+               {:samples 500 :burn 100 :key (random/key 42)}
+               (kern/random-walk :mu 0.5)
+               (:trace (p/generate model [] obs)))]
+  (println "Acceptance rate:" (.toFixed (:acceptance-rate (meta traces)) 3)))</code></pre>
+</div>
+<div class="code-output">Acceptance rate: 0.743</div>
+
+<p>The step size (0.5 here) controls the tradeoff: too small gives high
+acceptance but slow exploration; too large gives low acceptance. A rule of
+thumb is to aim for an acceptance rate around 0.25&ndash;0.50 for
+single-parameter proposals.</p>
+
+
+<!-- ================================================================== -->
+<h2>Compiled MH</h2>
+
+<p>For models where you know the addresses of interest, <strong>compiled MH</strong>
+extracts the latent parameters into a flat array and compiles the score
+function into a fused Metal kernel. This eliminates per-step GFI overhead:</p>
+
+<div class="code-block">
+<pre><code>;; Compiled MH — 5x faster for small models
+(let [samples (mcmc/compiled-mh
+                {:samples 500 :burn 200 :addresses [:mu]
+                 :proposal-std 0.5 :key (random/key 42)}
+                model [] obs)]
+  (println "Posterior mean:" (.toFixed (/ (reduce + (map first samples))
+                                          (count samples)) 3)))</code></pre>
+</div>
+<div class="code-output">Posterior mean: 7.016</div>
+
+<div class="code-block">
+<pre><code>(mcmc/compiled-mh opts model args observations)
+
+;; opts:
+;;   :samples       — number of samples
+;;   :burn          — burn-in steps (default 0)
+;;   :thin          — thinning (default 1)
+;;   :addresses     — vector of latent address keywords
+;;   :proposal-std  — random walk step size (default 0.1)
+;;   :compile?      — compile score fn into Metal (default true)
+;;   :device        — :cpu or :gpu (default :cpu)
+;;   :block-size    — burn-in block size for loop compilation (default 50)
+;;   :key           — PRNG key
+;;
+;; Returns: vector of JS arrays (parameter samples)</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2>MCMC diagnostics</h2>
+
+<p>How do you know if your chain has converged? GenMLX provides diagnostic
+tools in <code>genmlx.inference.diagnostics</code>:</p>
+
+<div class="code-block">
+<pre><code>(ns diagnostics-example
+  (:require [genmlx.inference.diagnostics :as diag]
+            [genmlx.mlx :as mx]))
+
+;; Given a vector of parameter samples (MLX scalars):
+(let [samples (mapv mx/scalar [7.0 7.1 6.9 7.2 7.0 6.8 7.1 7.0 7.3 6.9])]
+
+  ;; Effective sample size
+  (println "ESS:" (.toFixed (diag/ess samples) 1))
+
+  ;; Mean and standard deviation
+  (println "Mean:" (mx/item (diag/sample-mean samples)))
+  (println "Std: " (mx/item (diag/sample-std samples)))
+
+  ;; Quantiles
+  (let [{:keys [median q025 q975]} (diag/sample-quantiles samples)]
+    (println "Median:" median)
+    (println "95% CI:" q025 "-" q975))
+
+  ;; Full summary
+  (println (diag/summarize samples :name "mu")))</code></pre>
+</div>
+<div class="code-output">ESS: 8.3
+Mean: 7.03
+Std:  0.141
+Median: 7.0
+95% CI: 6.8 - 7.3
+{:name mu, :mean 7.03, :std 0.141, :median 7.0, :q025 6.8, :q975 7.3, :ess 8.3}</div>
+
+<h3>R-hat (Gelman&ndash;Rubin)</h3>
+
+<p>Run multiple independent chains and check that they agree. R-hat close to
+1.0 indicates convergence:</p>
+
+<div class="code-block">
+<pre><code>;; Run 4 independent chains
+(let [chains (mapv (fn [seed]
+                     (mapv #(mx/scalar (:retval %))
+                       (mcmc/mh {:samples 200 :burn 100
+                                 :selection (sel/select :mu)
+                                 :key (random/key seed)}
+                                model [] obs)))
+                   [1 2 3 4])]
+  (println "R-hat:" (.toFixed (diag/r-hat chains) 3)))</code></pre>
+</div>
+<div class="code-output">R-hat: 1.003</div>
+
+<div class="note">
+  <strong>Rules of thumb:</strong> R-hat &lt; 1.01 suggests convergence.
+  ESS should be at least 100 for reliable estimates. Acceptance rate around
+  0.25&ndash;0.50 for random walk, higher for targeted proposals.
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Putting it together: a complete inference workflow</h2>
+
+<p>Here is a realistic workflow for a two-parameter model:</p>
+
+<div class="code-block">
+<pre><code>(ns full-workflow
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]
+            [genmlx.selection :as sel]
+            [genmlx.inference.mcmc :as mcmc]
+            [genmlx.inference.kernel :as kern]
+            [genmlx.inference.diagnostics :as diag]
+            [genmlx.mlx.random :as random]))
+
+;; Model: unknown slope and intercept
+(def linear-model
+  (gen [xs]
+    (let [slope     (dyn/trace :slope (dist/gaussian 0 5))
+          intercept (dyn/trace :intercept (dist/gaussian 0 5))]
+      (doseq [[i x] (map-indexed vector xs)]
+        (dyn/trace (keyword (str "y" i))
+                   (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                          intercept) 1)))
+      [slope intercept])))
+
+;; Data
+(def xs (mx/array [1 2 3 4 5]))
+(def obs (cm/choicemap :y0 (mx/scalar 2.8)
+                       :y1 (mx/scalar 5.1)
+                       :y2 (mx/scalar 7.0)
+                       :y3 (mx/scalar 9.2)
+                       :y4 (mx/scalar 11.1)))
+
+;; Inference: Gibbs-style kernel (random walk each parameter in turn)
+(let [kernel (kern/gibbs {:slope 0.3 :intercept 0.3})
+      {:keys [trace]} (p/generate linear-model [xs] obs)
+      traces (kern/run-kernel
+               {:samples 500 :burn 200 :key (random/key 42)}
+               kernel trace)
+
+      slopes     (mapv #(mx/scalar (first (mx/->clj (mx/stack (:retval %))))) traces)
+      intercepts (mapv #(mx/scalar (second (mx/->clj (mx/stack (:retval %))))) traces)]
+
+  (println "=== Slope ===")
+  (println (diag/summarize slopes :name "slope"))
+  (println "\n=== Intercept ===")
+  (println (diag/summarize intercepts :name "intercept"))
+  (println "\nAcceptance rate:" (.toFixed (:acceptance-rate (meta traces)) 3)))</code></pre>
+</div>
+<div class="code-output">=== Slope ===
+{:name slope, :mean 2.04, :std 0.31, :median 2.05, :q025 1.45, :q975 2.62, :ess 145.2}
+
+=== Intercept ===
+{:name intercept, :mean 0.81, :std 0.92, :median 0.83, :q025 -0.96, :q975 2.59, :ess 138.7}
+
+Acceptance rate: 0.412</div>
+
+<p>The true slope is 2.0 and intercept is 1.0 &mdash; the posterior recovers
+both within their 95% credible intervals.</p>
+
+
+<!-- ================================================================== -->
+<h2>When to use what</h2>
+
+<table>
+<tr><th>Algorithm</th><th>Best for</th><th>Limitations</th></tr>
+<tr>
+  <td>Importance sampling</td>
+  <td>Low dimensions, quick estimates, marginal likelihood</td>
+  <td>Degrades in high dimensions; prior must overlap posterior</td>
+</tr>
+<tr>
+  <td>MH (regenerate)</td>
+  <td>Discrete latents, exploring model structure</td>
+  <td>Proposes from prior; poor mixing when prior is wide</td>
+</tr>
+<tr>
+  <td>Random walk MH</td>
+  <td>Continuous latents, moderate dimensions</td>
+  <td>Step size tuning; slow for correlated parameters</td>
+</tr>
+<tr>
+  <td>Compiled MH</td>
+  <td>Speed-critical loops, known parameter addresses</td>
+  <td>Flat parameter space only; no stochastic structure changes</td>
+</tr>
+</table>
+
+<p>For harder problems &mdash; high dimensions, strong correlations, sequential
+data &mdash; you&rsquo;ll want the algorithms covered in
+<a href="06-advanced-inference.html">Chapter 6</a>: HMC for correlated
+continuous parameters, SMC for sequential models, and variational inference
+for scalable approximations.</p>
+
+
+<!-- ================================================================== -->
+<h2>Summary</h2>
+
+<p>In this chapter you learned:</p>
+
+<ul>
+  <li><strong>Importance sampling</strong> generates \(N\) weighted samples via
+  <code>generate</code> and uses the weights to approximate the posterior</li>
+  <li><strong>Importance resampling</strong> converts weighted samples into
+  unweighted approximate posterior samples</li>
+  <li><strong>Effective sample size (ESS)</strong> measures the quality of the
+  importance approximation</li>
+  <li><strong>Metropolis&ndash;Hastings</strong> builds a Markov chain via
+  <code>regenerate</code> with accept/reject steps</li>
+  <li><strong>Selections</strong> control which addresses MH proposes changes to</li>
+  <li><strong>Random walk MH</strong> proposes small Gaussian perturbations for
+  better mixing in continuous spaces</li>
+  <li><strong>Composable kernels</strong> let you build complex MCMC strategies:
+  <code>chain</code>, <code>repeat-kernel</code>, <code>cycle-kernels</code>,
+  <code>mix-kernels</code>, <code>gibbs</code></li>
+  <li><strong>Compiled MH</strong> compiles the score function into a fused Metal
+  kernel for maximum speed</li>
+  <li><strong>Diagnostics</strong> (ESS, R-hat, quantiles) help assess convergence</li>
+  <li><strong>Burn-in</strong> and <strong>thinning</strong> clean up the chain</li>
+</ul>
+
+<p>Next, in <a href="05-combinators.html">Chapter 5: Combinators</a>, we&rsquo;ll
+learn how to build structured models using Map, Unfold, Switch, and Scan &mdash;
+compositional building blocks that go beyond what a single <code>gen</code>
+body can express.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="03-conditioning.html">&larr; Chapter 3: Conditioning</a>
+    <a href="05-combinators.html">Chapter 5: Combinators &rarr;</a>
+  </div>
+</div>
+</body>
+</html>

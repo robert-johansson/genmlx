@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Tutorial</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="../index.html">GenMLX</a></div>
+    <ul id="nav"><li><a href="../index.html">Home</a></li><li><a href="../reference/index.html">Reference</a></li></ul>
+  </div>
+  <div id="chapter">
+    <h1 id="chapter-title">Tutorial: Probabilistic Programming with GenMLX</h1>
+
+    <p>This tutorial introduces probabilistic programming through GenMLX &mdash; a GPU-accelerated
+    implementation of the <em>Generative Function Interface</em> in ClojureScript on Apple Silicon.
+    Each chapter builds on the previous one, progressing from basic concepts to advanced inference.</p>
+
+    <div class="note">
+      <strong>Prerequisites:</strong> macOS with Apple Silicon, Bun (or Node.js 18+),
+      and <code>npm install</code> in the GenMLX repo. Basic familiarity with ClojureScript
+      or any Lisp is helpful but not required.
+    </div>
+
+    <div class="toc">
+      <h3>Chapters</h3>
+      <ol>
+        <li>
+          <a href="01-introduction.html">Introduction</a>
+          <span class="desc">&mdash; What is probabilistic programming? Why GenMLX?</span>
+        </li>
+        <li>
+          <a href="02-generative-models.html">Generative Models</a>
+          <span class="desc">&mdash; Writing models with <code>gen</code>, <code>trace</code>, and distributions</span>
+        </li>
+        <li>
+          <a href="03-conditioning.html">Conditioning</a>
+          <span class="desc">&mdash; Observations, choicemaps, and <code>generate</code></span>
+        </li>
+        <li>
+          <a href="04-inference-basics.html">Inference Basics</a>
+          <span class="desc">&mdash; Importance sampling, Metropolis&ndash;Hastings</span>
+        </li>
+        <li>
+          <a href="05-combinators.html">Combinators</a>
+          <span class="desc">&mdash; Map, Unfold, Switch, Scan, and compositional models</span>
+        </li>
+        <li>
+          <a href="06-advanced-inference.html">Advanced Inference</a>
+          <span class="desc">&mdash; HMC, SMC, SMCP3, variational inference</span>
+        </li>
+        <li>
+          <a href="07-vectorized.html">Vectorized Inference</a>
+          <span class="desc">&mdash; Shape-based batching, <code>vsimulate</code>, <code>vgenerate</code></span>
+        </li>
+        <li>
+          <a href="08-gradients.html">Gradients and Learning</a>
+          <span class="desc">&mdash; Score gradients, ADEV, parameter optimization</span>
+        </li>
+        <li>
+          <a href="09-neural-models.html">Neural Probabilistic Models</a>
+          <span class="desc">&mdash; <code>nn-&gt;gen-fn</code>, amortized inference</span>
+        </li>
+        <li>
+          <a href="10-custom-extensions.html">Custom Extensions</a>
+          <span class="desc">&mdash; <code>defdist</code>, custom combinators, GFI contracts</span>
+        </li>
+      </ol>
+    </div>
+
+    <h2>How to use this tutorial</h2>
+
+    <p>Each chapter contains explanatory text with code examples. To run the examples:</p>
+
+<pre><code><span style="color:#6c7086">;; Save a snippet to a file, e.g. example.cljs, then run:</span>
+bun run --bun nbb example.cljs</code></pre>
+
+    <p>Code blocks show the source followed by a dark output block showing
+    what you would see in your terminal. You can copy any code block by
+    hovering and clicking the copy button.</p>
+
+    <p>The tutorial assumes you have cloned the GenMLX repo and run <code>npm install</code>.
+    All examples use the GenMLX source directly from <code>src/</code>.</p>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Tutorial: Conditioning</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Tutorial</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="02-generative-models.html">&larr; Prev</a></li><li><a href="04-inference-basics.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">3. Conditioning</h1>
+
+<p>In <a href="02-generative-models.html">Chapter 2</a> we wrote models and ran
+them forward with <code>simulate</code> &mdash; sampling all random choices freely.
+But the real power of probabilistic programming comes from <em>conditioning</em>:
+fixing some choices to observed values and asking what the unobserved choices
+must have been.</p>
+
+<p>This chapter introduces the <code>generate</code> operation, explains how
+importance weights work, and shows how to build the choice maps that encode
+observations. We also cover <code>update</code>, <code>regenerate</code>, and
+<code>assess</code> &mdash; the remaining GFI operations that support conditioning
+in different ways.</p>
+
+
+<!-- ================================================================== -->
+<h2>Simulate vs. generate</h2>
+
+<p>Recall the two simplest GFI operations:</p>
+
+<table>
+<tr><th>Operation</th><th>Signature</th><th>Returns</th></tr>
+<tr>
+  <td><code>simulate</code></td>
+  <td><code>(p/simulate gf args)</code></td>
+  <td>Trace (all choices sampled freely)</td>
+</tr>
+<tr>
+  <td><code>generate</code></td>
+  <td><code>(p/generate gf args constraints)</code></td>
+  <td><code>{:trace Trace :weight MLX-scalar}</code></td>
+</tr>
+</table>
+
+<p><code>simulate</code> samples every choice from its prior distribution.
+<code>generate</code> does the same, except that at any address present in the
+<code>constraints</code> choice map it uses the constrained value instead of
+sampling. It also returns a <strong>weight</strong>.</p>
+
+<p>Mathematically, the weight is the log-ratio of the constrained probability
+to the proposal probability. For addresses constrained to observed values
+where the proposal is the prior, this simplifies to:</p>
+
+\[
+\text{weight} = \sum_{\text{addr} \in \text{constraints}} \log p(\text{observed value} \mid \text{distribution parameters})
+\]
+
+<p>In other words, the weight measures how likely the observations are under the
+current sample of the latent variables. High weight = the latent variables explain
+the data well.</p>
+
+
+<!-- ================================================================== -->
+<h2>Building choice maps for observations</h2>
+
+<p>To use <code>generate</code>, you need a <strong>choice map</strong> that maps the
+addresses of observed trace sites to their observed values. The addresses must
+match exactly what your model passes to <code>dyn/trace</code>.</p>
+
+<div class="code-block">
+<pre><code>(ns conditioning-example
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]))
+
+;; A model that samples a mean, then generates 3 data points
+(def model
+  (gen [noise]
+    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+      (doseq [i (range 3)]
+        (dyn/trace (keyword (str "y" i))
+                   (dist/gaussian mu noise)))
+      mu)))
+
+;; We observed y0=5.1, y1=4.9, y2=5.3 — build a choice map
+(def observations
+  (cm/choicemap :y0 (mx/scalar 5.1)
+                :y1 (mx/scalar 4.9)
+                :y2 (mx/scalar 5.3)))</code></pre>
+</div>
+
+<p>The choice map constrains <code>:y0</code>, <code>:y1</code>, and <code>:y2</code>.
+The latent variable <code>:mu</code> is <em>not</em> in the choice map, so
+<code>generate</code> will sample it from the prior.</p>
+
+<div class="note">
+  <strong>Key rule:</strong> Constrained addresses must exist in the model &mdash; they
+  must be addresses that <code>dyn/trace</code> is called with during execution.
+  If you constrain an address that the model never traces, GenMLX will print a
+  warning and ignore it.
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Using <code>generate</code></h2>
+
+<p>Now we can run <code>generate</code> and inspect the result:</p>
+
+<div class="code-block">
+<pre><code>;; Run generate — :mu is sampled, :y0/:y1/:y2 are constrained
+(let [{:keys [trace weight]} (p/generate model [(mx/scalar 1.0)] observations)]
+  (println "Sampled mu:" (mx/item (:retval trace)))
+  (println "Log weight:" (mx/item weight))
+  (println "Score:     " (mx/item (:score trace)))
+  (println "Choices:   " (cm/to-map (:choices trace))))</code></pre>
+</div>
+<div class="code-output">Sampled mu: 3.27
+Log weight: -5.12
+Score:      -5.17
+Choices:    {:mu #mlx/array 3.27, :y0 #mlx/array 5.1, :y1 #mlx/array 4.9, :y2 #mlx/array 5.3}</div>
+
+<p>Notice:</p>
+<ul>
+  <li>The choices include both the sampled <code>:mu</code> and the constrained
+  <code>:y0</code>, <code>:y1</code>, <code>:y2</code></li>
+  <li>The <strong>weight</strong> reflects how well this particular <code>:mu</code>
+  explains the observations (higher = better fit)</li>
+  <li>The <strong>score</strong> is the joint log-probability of <em>all</em> choices
+  (latent + observed)</li>
+</ul>
+
+
+<!-- ================================================================== -->
+<h2>Understanding importance weights</h2>
+
+<p>If we call <code>generate</code> many times, each time we get a different
+sampled \(\mu\) and a different weight. Samples where \(\mu\) is close to
+5.1 will have high weights (the observations are likely), while samples where
+\(\mu\) is far from 5.1 will have low weights.</p>
+
+<div class="code-block">
+<pre><code>;; Generate 5 samples and compare their weights
+(doseq [i (range 5)]
+  (let [{:keys [trace weight]} (p/generate model [(mx/scalar 1.0)] observations)
+        mu (mx/item (:retval trace))
+        w  (mx/item weight)]
+    (println (str "Sample " i ": mu=" (.toFixed mu 2)
+                  "  log-weight=" (.toFixed w 2)))))</code></pre>
+</div>
+<div class="code-output">Sample 0: mu=5.02  log-weight=-2.79
+Sample 1: mu=-1.34  log-weight=-30.57
+Sample 2: mu=4.87  log-weight=-2.85
+Sample 3: mu=7.91  log-weight=-9.23
+Sample 4: mu=5.11  log-weight=-2.77</div>
+
+<p>This is the core idea behind <strong>importance sampling</strong>: generate many
+proposals from the prior, weight them by how well they match the data, and
+concentrate attention on the high-weight samples. We&rsquo;ll formalize this into
+a proper inference algorithm in <a href="04-inference-basics.html">Chapter 4</a>.</p>
+
+<p>The weight formula for <code>generate</code> is:</p>
+
+\[
+w = \sum_{\text{addr} \in \text{constrained}} \log p(v_{\text{addr}} \mid \text{params}_{\text{addr}})
+\]
+
+<p>where \(v_{\text{addr}}\) is the constrained value and \(\text{params}_{\text{addr}}\)
+are the distribution parameters at that address (which may depend on sampled
+latent variables). Unconstrained addresses contribute to the score but
+<em>not</em> to the weight.</p>
+
+
+<!-- ================================================================== -->
+<h2>How the handler makes it work</h2>
+
+<p>Under the hood, <code>generate</code> uses the same handler system as
+<code>simulate</code>. When the model body calls <code>dyn/trace</code>, the
+<strong>generate handler</strong> checks the constraints:</p>
+
+<ul>
+  <li><strong>Address in constraints:</strong> Use the constrained value. Compute
+  its log-probability under the distribution. Add to both <code>score</code> and
+  <code>weight</code>.</li>
+  <li><strong>Address not in constraints:</strong> Sample from the distribution
+  (same as simulate). Add to <code>score</code> only.</li>
+</ul>
+
+<p>This is a pure state transition &mdash; the handler reads the constraints
+and updates an immutable state map. The model code doesn&rsquo;t know whether
+it&rsquo;s being simulated or generated; it just calls <code>dyn/trace</code>
+and gets back a value.</p>
+
+
+<!-- ================================================================== -->
+<h2>Nested choice maps</h2>
+
+<p>When your model uses <code>dyn/splice</code> to call sub-models, the choice
+map must mirror the nesting. Sub-model choices live under their splice
+address:</p>
+
+<div class="code-block">
+<pre><code>(def prior-model
+  (gen []
+    (let [mu    (dyn/trace :mu (dist/gaussian 0 10))
+          sigma (dyn/trace :sigma (dist/gamma 2 1))]
+      [mu sigma])))
+
+(def data-model
+  (gen [xs]
+    (let [[mu sigma] (dyn/splice :prior prior-model)]
+      (doseq [[i x] (map-indexed vector xs)]
+        (dyn/trace (keyword (str "y" i))
+                   (dist/gaussian mu sigma)))
+      mu)))
+
+;; Observations: constrain both top-level and nested addresses
+(def observations
+  (cm/choicemap :y0 (mx/scalar 3.0)
+                :y1 (mx/scalar 3.5)))
+
+;; Constrain the prior's sigma to a known value
+(def constraints-with-prior
+  (cm/from-map {:y0 (mx/scalar 3.0)
+                :y1 (mx/scalar 3.5)
+                :prior {:sigma (mx/scalar 1.0)}}))
+
+(let [{:keys [trace weight]}
+      (p/generate data-model [(mx/array [1 2])] constraints-with-prior)]
+  (println "mu:    " (mx/item (:retval trace)))
+  (println "sigma: " (mx/item (cm/get-choice (:choices trace) [:prior :sigma])))
+  (println "weight:" (mx/item weight)))</code></pre>
+</div>
+<div class="code-output">mu:     2.41
+sigma:  1.0
+weight: -4.83</div>
+
+<p>Here we constrained both the observed data (<code>:y0</code>, <code>:y1</code>)
+and a latent variable (<code>:prior :sigma</code>). The remaining latent
+variable <code>:prior :mu</code> was sampled from the prior.</p>
+
+
+<!-- ================================================================== -->
+<h2>The <code>update</code> operation</h2>
+
+<p>Once you have a trace, you can <em>modify</em> it with <code>update</code>.
+This changes some choices while keeping the rest, and returns the new trace
+along with a weight reflecting the change in probability:</p>
+
+<div class="code-block">
+<pre><code>(let [;; Start with a simulated trace
+      trace (p/simulate model [(mx/scalar 1.0)])
+      _     (println "Before:" (mx/item (cm/get-value
+                (cm/get-submap (:choices trace) :mu))))
+
+      ;; Update: change :mu to 5.0
+      new-constraints (cm/choicemap :mu (mx/scalar 5.0))
+      {:keys [trace weight discard]}
+        (p/update model trace new-constraints)]
+  (println "After: " (mx/item (cm/get-value
+                (cm/get-submap (:choices trace) :mu))))
+  (println "Weight:" (mx/item weight))
+  (println "Discarded:" (cm/to-map discard)))</code></pre>
+</div>
+<div class="code-output">Before: -2.31
+After:  5.0
+Weight: 2.94
+Discarded: {:mu #mlx/array -2.31}</div>
+
+<p><code>update</code> is central to MCMC inference. The Metropolis&ndash;Hastings
+algorithm proposes changes to the trace via <code>update</code>, then accepts
+or rejects based on the weight. The <code>discard</code> choice map tells you
+what the old values were, which is needed for reversible proposals.</p>
+
+<p>The update weight is the ratio of new to old probability for the changed
+addresses:</p>
+
+\[
+w_{\text{update}} = \log p_{\text{new}}(\text{choices}) - \log p_{\text{old}}(\text{choices})
+\]
+
+<p>More precisely, it is the difference in total scores between the new and
+old traces.</p>
+
+
+<!-- ================================================================== -->
+<h2>The <code>regenerate</code> operation</h2>
+
+<p><code>regenerate</code> is like <code>update</code>, but instead of providing
+new values, you specify which addresses to <em>resample</em> from their prior.
+You do this with a <strong>selection</strong>:</p>
+
+<div class="code-block">
+<pre><code>(ns regen-example
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]
+            [genmlx.selection :as sel]))
+
+(def model
+  (gen []
+    (let [a (dyn/trace :a (dist/gaussian 0 1))
+          b (dyn/trace :b (dist/gaussian 0 1))]
+      (mx/add a b))))
+
+(let [trace (p/simulate model [])
+      _     (println "Before:" (cm/to-map (:choices trace)))
+
+      ;; Regenerate: resample :a, keep :b
+      {:keys [trace weight]}
+        (p/regenerate model trace (sel/select :a))]
+  (println "After: " (cm/to-map (:choices trace)))
+  (println "Weight:" (mx/item weight)))</code></pre>
+</div>
+<div class="code-output">Before: {:a #mlx/array 0.52, :b #mlx/array -1.37}
+After:  {:a #mlx/array 1.84, :b #mlx/array -1.37}
+Weight: 0.0</div>
+
+<p>Notice that <code>:b</code> kept its value while <code>:a</code> got a new sample.
+The weight for <code>regenerate</code> with a symmetric proposal (resampling from
+the prior) is zero, because the forward and backward proposal probabilities
+cancel. This makes <code>regenerate</code> convenient for Gibbs-style kernels.</p>
+
+<h3>Selection constructors</h3>
+
+<table>
+<tr><th>Constructor</th><th>What it selects</th></tr>
+<tr><td><code>(sel/select :a :b)</code></td><td>Specific addresses</td></tr>
+<tr><td><code>sel/all</code></td><td>All addresses</td></tr>
+<tr><td><code>sel/none</code></td><td>No addresses</td></tr>
+<tr><td><code>(sel/complement-sel s)</code></td><td>Everything <em>not</em> in <code>s</code></td></tr>
+<tr><td><code>(sel/hierarchical :sub (sel/select :x))</code></td><td>Nested selections for spliced sub-models</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2>The <code>assess</code> operation</h2>
+
+<p><code>assess</code> computes the log-probability of a <em>fully specified</em>
+set of choices &mdash; every traced address must be provided. Unlike
+<code>generate</code>, nothing is sampled:</p>
+
+<div class="code-block">
+<pre><code>(def simple-model
+  (gen []
+    (let [x (dyn/trace :x (dist/gaussian 0 1))]
+      x)))
+
+;; Assess: what is the log-probability of x=0.5?
+(let [choices (cm/choicemap :x (mx/scalar 0.5))
+      {:keys [weight]} (p/assess simple-model [] choices)]
+  (println "log p(x=0.5):" (mx/item weight)))</code></pre>
+</div>
+<div class="code-output">log p(x=0.5): -1.0439</div>
+
+<p>This is useful for computing exact log-probabilities when all choices are
+known. You can verify: the log-density of a standard Gaussian at 0.5 is
+\(\log \frac{1}{\sqrt{2\pi}} e^{-0.5^2/2} = -\frac{1}{2}\log(2\pi) - 0.125 \approx -1.0439\).</p>
+
+<div class="warning">
+  <strong>Important:</strong> <code>assess</code> requires <em>every</em> traced address
+  to be present in the choice map. If any address is missing, it throws an error.
+  Use <code>generate</code> if you only want to constrain some addresses.
+</div>
+
+
+<!-- ================================================================== -->
+<h2>The five GFI operations together</h2>
+
+<p>Here is the complete picture of how the GFI operations relate to conditioning:</p>
+
+<table>
+<tr><th>Operation</th><th>Unconstrained addresses</th><th>Constrained addresses</th><th>Returns</th></tr>
+<tr>
+  <td><code>simulate</code></td>
+  <td>Sample from prior</td>
+  <td><em>n/a (no constraints)</em></td>
+  <td>Trace</td>
+</tr>
+<tr>
+  <td><code>generate</code></td>
+  <td>Sample from prior</td>
+  <td>Use constrained value</td>
+  <td>Trace + weight</td>
+</tr>
+<tr>
+  <td><code>update</code></td>
+  <td>Keep old value (or sample if new)</td>
+  <td>Replace with new value</td>
+  <td>Trace + weight + discard</td>
+</tr>
+<tr>
+  <td><code>regenerate</code></td>
+  <td>Keep old value</td>
+  <td>Resample from prior (via selection)</td>
+  <td>Trace + weight</td>
+</tr>
+<tr>
+  <td><code>assess</code></td>
+  <td><em>Error (all must be provided)</em></td>
+  <td>Score the value</td>
+  <td>Weight (log-prob)</td>
+</tr>
+</table>
+
+<p>Each operation is implemented by a different <strong>handler transition</strong>
+in <code>handler.cljs</code>. The model code is identical in all cases &mdash;
+only the handler changes. This is the key design principle of the GFI: the same
+model supports all inference operations.</p>
+
+
+<!-- ================================================================== -->
+<h2>Complete example: prior vs. posterior</h2>
+
+<p>Let&rsquo;s put it all together with a complete example that shows the
+difference between sampling from the prior (<code>simulate</code>) and
+conditioning on data (<code>generate</code>):</p>
+
+<div class="code-block">
+<pre><code>(ns prior-vs-posterior
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]))
+
+(def model
+  (gen []
+    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+      (doseq [i (range 5)]
+        (dyn/trace (keyword (str "y" i))
+                   (dist/gaussian mu 1)))
+      mu)))
+
+;; Observations: 5 data points clustered around 7
+(def obs (cm/choicemap :y0 (mx/scalar 6.8)
+                       :y1 (mx/scalar 7.2)
+                       :y2 (mx/scalar 6.9)
+                       :y3 (mx/scalar 7.5)
+                       :y4 (mx/scalar 7.1)))
+
+;; Prior samples (simulate)
+(println "=== Prior samples (simulate) ===")
+(doseq [_ (range 5)]
+  (let [trace (p/simulate model [])]
+    (print (.toFixed (mx/item (:retval trace)) 2) "")))
+(println)
+
+;; Posterior-weighted samples (generate)
+(println "\n=== Posterior samples (generate, best of 100) ===")
+(let [results (mapv (fn [_]
+                      (p/generate model [] obs))
+                    (range 100))
+      ;; Show the 5 highest-weight samples
+      top-5 (->> results
+                 (sort-by #(- (mx/item (:weight %))))
+                 (take 5))]
+  (doseq [{:keys [trace weight]} top-5]
+    (println (str "  mu=" (.toFixed (mx/item (:retval trace)) 2)
+                  "  log-weight=" (.toFixed (mx/item weight) 2)))))</code></pre>
+</div>
+<div class="code-output">=== Prior samples (simulate) ===
+-3.72 8.41 -0.24 12.05 1.88
+
+=== Posterior samples (generate, best of 100) ===
+  mu=7.12  log-weight=-5.02
+  mu=6.89  log-weight=-5.18
+  mu=7.34  log-weight=-5.21
+  mu=7.01  log-weight=-5.09
+  mu=6.58  log-weight=-5.57</div>
+
+<p>The prior samples are spread widely around 0 (the prior mean). But when we
+condition on data near 7, the high-weight samples cluster around 7 &mdash;
+they&rsquo;re the ones where the sampled \(\mu\) actually explains the
+observations. This is conditioning in action.</p>
+
+<p>Of course, this brute-force approach (generate 100 samples, pick the best)
+is crude. In <a href="04-inference-basics.html">Chapter 4: Inference Basics</a>,
+we&rsquo;ll see how importance sampling and MCMC do this systematically and
+efficiently.</p>
+
+
+<!-- ================================================================== -->
+<h2>Summary</h2>
+
+<p>In this chapter you learned:</p>
+
+<ul>
+  <li><code>generate</code> runs a model with some choices constrained to observed
+  values, returning a trace and an importance weight</li>
+  <li><strong>Choice maps</strong> encode observations by mapping trace addresses to
+  fixed values, supporting nested structure via <code>cm/from-map</code></li>
+  <li>The <strong>weight</strong> measures how well the sampled latent variables
+  explain the constrained observations</li>
+  <li><code>update</code> modifies specific choices in an existing trace and returns
+  a weight and discarded values &mdash; the basis for MCMC</li>
+  <li><code>regenerate</code> resamples selected addresses using
+  <strong>selections</strong> (<code>sel/select</code>, <code>sel/all</code>,
+  <code>sel/complement-sel</code>, <code>sel/hierarchical</code>)</li>
+  <li><code>assess</code> scores a fully-specified set of choices without sampling</li>
+  <li>All five GFI operations share the same model code &mdash; only the handler
+  transition differs</li>
+</ul>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="02-generative-models.html">&larr; Chapter 2: Generative Models</a>
+    <a href="04-inference-basics.html">Chapter 4: Inference Basics &rarr;</a>
+  </div>
+</div>
+</body>
+</html>

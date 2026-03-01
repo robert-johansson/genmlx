@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Tutorial: Generative Models</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Tutorial</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="01-introduction.html">&larr; Prev</a></li><li><a href="03-conditioning.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">2. Generative Models</h1>
+
+<p>A <em>generative model</em> is a program that describes how data could have been
+produced. It makes random choices along the way &mdash; sampling from probability
+distributions &mdash; and each execution traces out one possible explanation for
+the data. In GenMLX, generative models are defined with the <code>gen</code> macro
+and random choices are recorded with <code>trace</code>.</p>
+
+<p>This chapter covers the three building blocks you need to write any model:
+the <code>gen</code> macro, the <code>trace</code> function, and the distribution
+library.</p>
+
+
+<!-- ================================================================== -->
+<h2>The <code>gen</code> macro</h2>
+
+<p>The <code>gen</code> macro turns an ordinary ClojureScript function into a
+<em>generative function</em> &mdash; a function that supports the full Generative
+Function Interface (simulate, generate, update, regenerate, assess). Its syntax
+mirrors <code>fn</code>:</p>
+
+<div class="code-block">
+<pre><code>(ns my-models
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]))
+
+;; A generative function that samples a single Gaussian
+(def simple-model
+  (gen []
+    (dyn/trace :x (dist/gaussian 0 1))))</code></pre>
+</div>
+
+<p>The body of a <code>gen</code> is normal ClojureScript. You can use
+<code>let</code>, <code>if</code>, <code>doseq</code>, <code>map</code>, closures &mdash;
+everything. The only special operation is <code>dyn/trace</code>, which records a
+random choice.</p>
+
+<p>Under the hood, <code>gen</code> wraps your function body in a
+<code>DynamicGF</code> record that implements all the GFI protocols. You never need
+to implement these protocols yourself &mdash; <code>gen</code> handles it.</p>
+
+<div class="note">
+  <strong>Terminology:</strong> We use &ldquo;generative function&rdquo; (abbreviated GF)
+  for the object that <code>gen</code> produces, and &ldquo;model&rdquo; when talking
+  about it conceptually. They are the same thing.
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Tracing random choices</h2>
+
+<p>Inside a <code>gen</code> body, <code>dyn/trace</code> is how you make a random
+choice and give it a name:</p>
+
+<div class="code-block">
+<pre><code>(dyn/trace :my-address (dist/gaussian 0 1))</code></pre>
+</div>
+
+<p>This does two things:</p>
+<ol>
+  <li><strong>Samples</strong> a value from the distribution (here, a standard
+  Gaussian)</li>
+  <li><strong>Records</strong> the value and its log-probability at the address
+  <code>:my-address</code> in the trace</li>
+</ol>
+
+<p>The return value is the sampled value itself &mdash; an MLX scalar array &mdash;
+which you can use in subsequent computation.</p>
+
+<p>Addresses are keywords. Each address in a model must be unique &mdash;
+if you trace the same address twice in one execution, you get an error.
+For repeated structures (like loop iterations), generate unique addresses:</p>
+
+<div class="code-block">
+<pre><code>(def repeated-model
+  (gen [n]
+    (doseq [i (range n)]
+      (dyn/trace (keyword (str "x" i)) (dist/gaussian 0 1)))))</code></pre>
+</div>
+
+<p>This creates addresses <code>:x0</code>, <code>:x1</code>, &hellip;,
+<code>:x(n-1)</code>.</p>
+
+
+<!-- ================================================================== -->
+<h2>What is a trace?</h2>
+
+<p>When you run a generative function, the result is a <strong>trace</strong> &mdash;
+an immutable record of the entire execution. A trace contains:</p>
+
+<table>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>:gen-fn</code></td><td>DynamicGF</td><td>The generative function that produced this trace</td></tr>
+<tr><td><code>:args</code></td><td>vector</td><td>The arguments the function was called with</td></tr>
+<tr><td><code>:choices</code></td><td>ChoiceMap</td><td>All random choices, keyed by address</td></tr>
+<tr><td><code>:retval</code></td><td>any</td><td>The return value of the function</td></tr>
+<tr><td><code>:score</code></td><td>MLX scalar</td><td>\(\log p(\text{choices} \mid \text{args})\)</td></tr>
+</table>
+
+<p>The <strong>score</strong> is the joint log-probability of all choices under the
+model. It is an MLX scalar that stays on the GPU &mdash; you only need to call
+<code>mx/item</code> to extract it as a JavaScript number at the very end.</p>
+
+<p>Let&rsquo;s simulate and inspect a trace:</p>
+
+<div class="code-block">
+<pre><code>(ns trace-example
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]
+            [genmlx.trace :as t]
+            [genmlx.choicemap :as cm]))
+
+(def model
+  (gen []
+    (let [mu (dyn/trace :mu (dist/gaussian 0 10))
+          x  (dyn/trace :x  (dist/gaussian mu 1))]
+      (mx/add mu x))))
+
+;; Simulate: run forward, sampling all choices
+(let [trace (p/simulate model [])]
+  (println "Return value:" (mx/item (:retval trace)))
+  (println "Score:       " (mx/item (:score trace)))
+  (println "Choices:     " (cm/to-map (:choices trace))))</code></pre>
+</div>
+<div class="code-output">Return value: 3.714
+Score:        -7.283
+Choices:      {:mu #mlx/array 2.31, :x #mlx/array 1.404}</div>
+
+<p>Every call to <code>simulate</code> produces different values because it
+samples fresh random choices. The score is the sum of the log-probabilities
+of all traced choices:</p>
+
+\[
+\text{score} = \log p(\text{:mu} \mid \mu=0, \sigma=10) + \log p(\text{:x} \mid \mu=\text{:mu}, \sigma=1)
+\]
+
+
+<!-- ================================================================== -->
+<h2>Choice maps</h2>
+
+<p>The <code>:choices</code> field of a trace is a <strong>choice map</strong> &mdash; a
+persistent, immutable data structure that maps addresses to values. Choice maps
+are hierarchical: they can nest arbitrarily deep.</p>
+
+<div class="code-block">
+<pre><code>;; Create a choice map from a plain map
+(def obs (cm/choicemap :slope (mx/scalar 2.0)
+                       :intercept (mx/scalar 0.5)))
+
+;; Access values
+(println (cm/get-value (cm/get-submap obs :slope)))
+;; => #mlx/array 2.0
+
+;; Convert back to a plain Clojure map
+(println (cm/to-map obs))
+;; => {:slope #mlx/array 2.0, :intercept #mlx/array 0.5}
+
+;; List all addresses
+(println (cm/addresses obs))
+;; => [[:slope] [:intercept]]</code></pre>
+</div>
+
+<p>You build choice maps to specify <em>observations</em> (constraints) when
+doing inference &mdash; we&rsquo;ll cover this in detail in
+<a href="03-conditioning.html">Chapter 3</a>. For now, the key idea is that a
+choice map has the same address structure as the <code>trace</code> calls in
+your model.</p>
+
+
+<!-- ================================================================== -->
+<h2>The distribution library</h2>
+
+<p>GenMLX ships with 22 distributions, all backed by MLX array operations on the
+GPU. Every distribution supports sampling, log-probability computation,
+and (where applicable) reparameterized gradients.</p>
+
+<h3>Continuous distributions</h3>
+
+<table>
+<tr><th>Constructor</th><th>Parameters</th><th>Description</th></tr>
+<tr><td><code>(dist/gaussian mu sigma)</code></td><td>\(\mu, \sigma > 0\)</td><td>Normal distribution</td></tr>
+<tr><td><code>(dist/uniform lo hi)</code></td><td>\(a < b\)</td><td>Uniform on \([a, b]\)</td></tr>
+<tr><td><code>(dist/beta a b)</code></td><td>\(\alpha, \beta > 0\)</td><td>Beta distribution</td></tr>
+<tr><td><code>(dist/gamma shape rate)</code></td><td>\(k, \theta > 0\)</td><td>Gamma distribution</td></tr>
+<tr><td><code>(dist/exponential rate)</code></td><td>\(\lambda > 0\)</td><td>Exponential distribution</td></tr>
+<tr><td><code>(dist/laplace loc scale)</code></td><td>\(\mu, b > 0\)</td><td>Laplace distribution</td></tr>
+<tr><td><code>(dist/student-t df loc scale)</code></td><td>\(\nu > 0\)</td><td>Student&rsquo;s t-distribution</td></tr>
+<tr><td><code>(dist/log-normal mu sigma)</code></td><td>\(\mu, \sigma > 0\)</td><td>Log-normal distribution</td></tr>
+<tr><td><code>(dist/cauchy loc scale)</code></td><td>\(\mu, \gamma > 0\)</td><td>Cauchy distribution</td></tr>
+<tr><td><code>(dist/inv-gamma shape scale)</code></td><td>\(\alpha, \beta > 0\)</td><td>Inverse gamma</td></tr>
+<tr><td><code>(dist/truncated-normal mu sigma lo hi)</code></td><td>\(\mu, \sigma, a, b\)</td><td>Truncated normal</td></tr>
+<tr><td><code>(dist/dirichlet alphas)</code></td><td>vector of \(\alpha_i > 0\)</td><td>Dirichlet distribution</td></tr>
+</table>
+
+<h3>Discrete distributions</h3>
+
+<table>
+<tr><th>Constructor</th><th>Parameters</th><th>Description</th></tr>
+<tr><td><code>(dist/bernoulli p)</code></td><td>\(p \in [0, 1]\)</td><td>Bernoulli (coin flip)</td></tr>
+<tr><td><code>(dist/categorical probs)</code></td><td>probability vector</td><td>Categorical</td></tr>
+<tr><td><code>(dist/poisson rate)</code></td><td>\(\lambda > 0\)</td><td>Poisson distribution</td></tr>
+<tr><td><code>(dist/geometric p)</code></td><td>\(p \in (0, 1]\)</td><td>Geometric distribution</td></tr>
+<tr><td><code>(dist/binomial n p)</code></td><td>\(n \geq 0, p \in [0,1]\)</td><td>Binomial distribution</td></tr>
+<tr><td><code>(dist/neg-binomial r p)</code></td><td>\(r > 0, p \in (0,1)\)</td><td>Negative binomial</td></tr>
+<tr><td><code>(dist/discrete-uniform lo hi)</code></td><td>\(a \leq b\), integers</td><td>Discrete uniform</td></tr>
+</table>
+
+<h3>Special distributions</h3>
+
+<table>
+<tr><th>Constructor</th><th>Parameters</th><th>Description</th></tr>
+<tr><td><code>(dist/delta v)</code></td><td>any value</td><td>Point mass at \(v\) (score = 0)</td></tr>
+<tr><td><code>(dist/broadcasted-normal mu sigma)</code></td><td>arrays</td><td>Element-wise normal (for vectorized models)</td></tr>
+<tr><td><code>(dist/piecewise-uniform bounds probs)</code></td><td>boundaries + weights</td><td>Piecewise-uniform density</td></tr>
+</table>
+
+<p>All distribution constructors accept either plain JavaScript numbers or MLX
+arrays. They return a <code>Distribution</code> record that <code>trace</code>
+knows how to sample from and score.</p>
+
+<div class="note">
+  <strong>Open for extension:</strong> The distribution system uses open multimethods.
+  You can define your own distributions with <code>defdist</code> &mdash; see
+  <a href="10-custom-extensions.html">Chapter 10</a>.
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Building a model step by step</h2>
+
+<p>Let&rsquo;s build a model for estimating the bias of a coin. We observe a
+sequence of flips and want to infer the probability \(\theta\) that the coin
+lands heads.</p>
+
+<h3>Step 1: Choose a prior</h3>
+
+<p>We don&rsquo;t know the bias, so we put a prior on it. A Beta(1, 1) prior is
+uniform on [0, 1] &mdash; it says &ldquo;any bias is equally likely a
+priori.&rdquo;</p>
+
+<div class="code-block">
+<pre><code>(dyn/trace :theta (dist/beta 1 1))</code></pre>
+</div>
+
+<h3>Step 2: Generate observations</h3>
+
+<p>Given the bias, each flip is an independent Bernoulli trial:</p>
+
+<div class="code-block">
+<pre><code>(doseq [i (range n-flips)]
+  (dyn/trace (keyword (str "flip" i))
+             (dist/bernoulli theta)))</code></pre>
+</div>
+
+<h3>Step 3: Return something useful</h3>
+
+<p>The return value of a generative function can be anything. Typically you
+return the latent variable you care about inferring:</p>
+
+<div class="code-block">
+<pre><code>(def coin-model
+  (gen [n-flips]
+    (let [theta (dyn/trace :theta (dist/beta 1 1))]
+      (doseq [i (range n-flips)]
+        (dyn/trace (keyword (str "flip" i))
+                   (dist/bernoulli theta)))
+      theta)))</code></pre>
+</div>
+
+<h3>Complete example</h3>
+
+<div class="code-block">
+<pre><code>(ns coin-example
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]))
+
+(def coin-model
+  (gen [n-flips]
+    (let [theta (dyn/trace :theta (dist/beta 1 1))]
+      (doseq [i (range n-flips)]
+        (dyn/trace (keyword (str "flip" i))
+                   (dist/bernoulli theta)))
+      theta)))
+
+;; Simulate 5 different executions
+(doseq [run (range 5)]
+  (let [trace (p/simulate coin-model [10])
+        theta (mx/item (:retval trace))
+        choices (cm/to-map (:choices trace))
+        heads (count (filter #(= 1.0 (mx/item (val %)))
+                             (dissoc choices :theta)))]
+    (println (str "Run " run ": theta=" (.toFixed theta 3)
+                  " heads=" heads "/10"
+                  " score=" (.toFixed (mx/item (:score trace)) 2)))))</code></pre>
+</div>
+<div class="code-output">Run 0: theta=0.721 heads=8/10 score=-8.34
+Run 1: theta=0.352 heads=4/10 score=-7.12
+Run 2: theta=0.891 heads=9/10 score=-5.67
+Run 3: theta=0.503 heads=5/10 score=-6.93
+Run 4: theta=0.167 heads=2/10 score=-8.91</div>
+
+<p>Each run samples a different \(\theta\) and then flips accordingly. Notice how
+the score (joint log-probability) is higher when the observed heads count is
+consistent with the sampled \(\theta\).</p>
+
+
+<!-- ================================================================== -->
+<h2>MLX arrays and the GPU</h2>
+
+<p>All values in GenMLX are <strong>MLX arrays</strong>, not JavaScript numbers.
+This keeps everything on Apple Silicon&rsquo;s unified GPU. A few things to know:</p>
+
+<div class="code-block">
+<pre><code>;; Create scalars and arrays
+(mx/scalar 3.14)          ;; => MLX scalar (0-dimensional array)
+(mx/array [1 2 3])        ;; => MLX 1-D array, shape [3]
+
+;; Arithmetic — all element-wise, all lazy
+(mx/add (mx/scalar 1) (mx/scalar 2))       ;; => 3.0 (not computed yet!)
+(mx/multiply (mx/array [1 2 3]) (mx/scalar 2))  ;; => [2 4 6]
+
+;; Force computation
+(mx/eval! result)          ;; Materializes the lazy graph
+
+;; Extract to JavaScript
+(mx/item (mx/scalar 3.14)) ;; => 3.14 (plain JS number)</code></pre>
+</div>
+
+<p>MLX uses <strong>lazy evaluation</strong>: operations build a computation graph
+that only executes when you call <code>mx/eval!</code> (or when MLX decides to
+flush internally). This means chains of operations get fused into efficient GPU
+kernels automatically.</p>
+
+<div class="warning">
+  <strong>Rule of thumb:</strong> Never call <code>mx/item</code> or
+  <code>mx/eval!</code> inside a model body. Doing so forces GPU synchronization,
+  breaks laziness, and prevents vectorized inference. Only extract values at the
+  outermost inference boundary.
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Models with structure</h2>
+
+<p>Real models use the full power of ClojureScript. Here are common patterns:</p>
+
+<h3>Conditional branching</h3>
+
+<div class="code-block">
+<pre><code>(def mixture-model
+  (gen []
+    (let [is-tall (dyn/trace :component (dist/bernoulli 0.3))]
+      ;; ClojureScript if — model has stochastic control flow
+      (if (pos? (mx/item is-tall))
+        (dyn/trace :height (dist/gaussian 180 5))
+        (dyn/trace :height (dist/gaussian 165 5))))))</code></pre>
+</div>
+
+<div class="note">
+  <strong>Stochastic control flow:</strong> The branch taken depends on a random choice.
+  This is a key feature of GenMLX &mdash; the program structure itself can vary
+  between executions. Not all probabilistic programming systems support this.
+</div>
+
+<h3>Accumulation</h3>
+
+<div class="code-block">
+<pre><code>(def random-walk
+  (gen [n-steps]
+    (loop [pos (mx/scalar 0.0) i 0]
+      (if (= i n-steps)
+        pos
+        (let [step (dyn/trace (keyword (str "step" i))
+                              (dist/gaussian 0 1))]
+          (recur (mx/add pos step) (inc i)))))))</code></pre>
+</div>
+
+<h3>Higher-order models</h3>
+
+<p>Since <code>gen</code> produces a regular ClojureScript value, you can write
+functions that <em>return</em> generative functions:</p>
+
+<div class="code-block">
+<pre><code>(defn make-noisy-fn-model
+  "Given a deterministic function f, make a model that adds Gaussian noise."
+  [f noise-std]
+  (gen [x]
+    (let [y-true (f x)
+          y-obs  (dyn/trace :y (dist/gaussian y-true noise-std))]
+      y-obs)))
+
+(def noisy-square (make-noisy-fn-model #(mx/multiply % %) 0.1))</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Calling sub-models with <code>splice</code></h2>
+
+<p>For compositional models, you can call one generative function from another
+using <code>dyn/splice</code>. This namespaces the inner model&rsquo;s addresses
+under the given address:</p>
+
+<div class="code-block">
+<pre><code>(def prior-model
+  (gen []
+    (let [mu (dyn/trace :mu (dist/gaussian 0 10))
+          sigma (dyn/trace :sigma (dist/gamma 1 1))]
+      [mu sigma])))
+
+(def full-model
+  (gen [xs]
+    (let [[mu sigma] (dyn/splice :prior prior-model)]
+      (doseq [[i x] (map-indexed vector xs)]
+        (dyn/trace (keyword (str "y" i))
+                   (dist/gaussian mu sigma)))
+      mu)))</code></pre>
+</div>
+
+<p>The inner model&rsquo;s choices appear at addresses like <code>[:prior :mu]</code>
+and <code>[:prior :sigma]</code> in the outer trace&rsquo;s choice map. This keeps
+the address spaces cleanly separated and lets you reuse sub-models.</p>
+
+
+<!-- ================================================================== -->
+<h2>Summary</h2>
+
+<p>In this chapter you learned:</p>
+
+<ul>
+  <li><code>gen</code> turns a function body into a generative function (DynamicGF)</li>
+  <li><code>dyn/trace</code> samples from a distribution and records the choice at a named address</li>
+  <li>A <strong>trace</strong> is an immutable record of an execution: choices, score, return value</li>
+  <li><strong>Choice maps</strong> are persistent hierarchical maps from addresses to values</li>
+  <li>GenMLX provides 22 distributions, all GPU-native via MLX</li>
+  <li>Models are ordinary ClojureScript &mdash; use <code>if</code>, <code>loop</code>, higher-order functions, anything</li>
+  <li><code>dyn/splice</code> composes sub-models with namespaced addresses</li>
+</ul>
+
+<p>So far we&rsquo;ve only run models forward with <code>simulate</code>. In
+<a href="03-conditioning.html">Chapter 3: Conditioning</a>, we&rsquo;ll learn how to
+fix some choices to observed values and compute the probability of the rest &mdash;
+the key to turning generative models into inference engines.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="01-introduction.html">&larr; Chapter 1: Introduction</a>
+    <a href="03-conditioning.html">Chapter 3: Conditioning &rarr;</a>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>GenMLX</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; max-width: 860px; margin: 0 auto; padding: 20px; color: #1a1a1a; }
+    h1 a { color: inherit; text-decoration: none; }
+    .subtitle { color: #666; font-size: 1.1em; margin-top: -8px; }
+    .description { color: #444; line-height: 1.6; }
+    pre { background: #f0f0f0; padding: 16px; border-radius: 6px; font-size: 13px; overflow-x: auto; font-family: 'Menlo', 'Monaco', 'Consolas', monospace; }
+    code { font-family: 'Menlo', 'Monaco', 'Consolas', monospace; font-size: 14px; background: #f0f0f0; padding: 1px 5px; border-radius: 3px; }
+    footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e5e5; color: #888; font-size: 13px; text-align: center; }
+    footer a { color: #3b82f6; }
+
+    section { margin: 32px 0; }
+    section h2 { font-size: 1.3em; margin-bottom: 12px; }
+
+    .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 600px) { .card-grid { grid-template-columns: 1fr; } }
+    .card { border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; text-decoration: none; color: inherit; display: block; transition: border-color 0.15s, box-shadow 0.15s; }
+    a.card:hover { border-color: #3b82f6; box-shadow: 0 2px 8px rgba(59,130,246,0.1); }
+    .card h3 { margin: 0 0 6px 0; font-size: 1.05em; }
+    .card p { margin: 0; color: #555; font-size: 0.9em; line-height: 1.4; }
+    .card .badge { display: inline-block; font-size: 0.7em; padding: 2px 8px; border-radius: 10px; margin-left: 8px; vertical-align: middle; font-weight: normal; }
+    .badge-live { background: #dcfce7; color: #166534; }
+    .badge-soon { background: #f0f0f0; color: #888; }
+    .card.card-muted { border-style: dashed; border-color: #d0d0d0; }
+    .card.card-muted h3 { color: #999; }
+
+    .hero-code { margin: 24px 0; }
+    .hero-code pre { background: #1e1e2e; color: #cdd6f4; padding: 24px; border-radius: 8px; line-height: 1.5; }
+    .hero-code .comment { color: #6c7086; }
+    .hero-code .keyword { color: #cba6f7; }
+    .hero-code .string { color: #a6e3a1; }
+    .hero-code .fn { color: #89b4fa; }
+    .hero-code .number { color: #fab387; }
+
+    .features { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin: 24px 0; }
+    @media (max-width: 600px) { .features { grid-template-columns: 1fr; } }
+    .feature { padding: 16px; }
+    .feature h4 { margin: 0 0 4px 0; font-size: 0.95em; }
+    .feature p { margin: 0; color: #555; font-size: 0.85em; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <h1><a href="https://github.com/robert-johansson/genmlx">GenMLX</a></h1>
+  <p class="subtitle">Probabilistic programming in ClojureScript on Apple Silicon</p>
+  <p class="description">
+    A GPU-accelerated probabilistic programming language implementing the
+    <strong>Generative Function Interface</strong> (GFI) &mdash; the same architecture as
+    <a href="https://www.gen.dev/">Gen.jl</a> and
+    <a href="https://github.com/probcomp/genjax">GenJAX</a>.
+    Built on Apple&rsquo;s <a href="https://github.com/ml-explore/mlx">MLX</a> framework.
+    ~10,800 lines of ClojureScript.
+  </p>
+
+  <div class="features">
+    <div class="feature">
+      <h4>Purely Functional</h4>
+      <p>Immutable traces, persistent choicemaps, handler-based execution.</p>
+    </div>
+    <div class="feature">
+      <h4>GPU End-to-End</h4>
+      <p>MLX arrays from sampling through scoring through gradient computation.</p>
+    </div>
+    <div class="feature">
+      <h4>Full GFI</h4>
+      <p>simulate, generate, update, regenerate, assess, project, edit.</p>
+    </div>
+  </div>
+
+  <div class="hero-code">
+<pre><span class="comment">;; Define a Bayesian linear regression model</span>
+(<span class="keyword">def</span> model
+  (<span class="fn">gen</span> [xs]
+    (<span class="keyword">let</span> [slope     (<span class="fn">dyn/trace</span> <span class="string">:slope</span> (<span class="fn">dist/gaussian</span> <span class="number">0</span> <span class="number">10</span>))
+          intercept (<span class="fn">dyn/trace</span> <span class="string">:intercept</span> (<span class="fn">dist/gaussian</span> <span class="number">0</span> <span class="number">10</span>))]
+      (<span class="keyword">doseq</span> [[j x] (<span class="fn">map-indexed</span> vector xs)]
+        (<span class="fn">dyn/trace</span> (<span class="fn">keyword</span> (<span class="fn">str</span> <span class="string">"y"</span> j))
+                   (<span class="fn">dist/gaussian</span> (<span class="fn">mx/add</span> (<span class="fn">mx/multiply</span> slope (<span class="fn">mx/scalar</span> x))
+                                          intercept) <span class="number">1</span>)))
+      slope)))
+
+<span class="comment">;; Run importance sampling with 1000 particles</span>
+(<span class="keyword">let</span> [observations (<span class="fn">cm/choicemap</span> {<span class="string">:y0</span> <span class="number">2.1</span> <span class="string">:y1</span> <span class="number">3.9</span> <span class="string">:y2</span> <span class="number">6.0</span>})
+      result       (<span class="fn">importance/resampling</span> model [(<span class="fn">mx/array</span> [<span class="number">1 2 3</span>])]
+                                           observations <span class="number">1000</span> key)]
+  (<span class="fn">println</span> <span class="string">"Estimated slope:"</span> (<span class="fn">mx/item</span> (<span class="fn">t/retval</span> result))))</pre>
+  </div>
+
+  <section>
+    <h2>Learn</h2>
+    <div class="card-grid">
+      <a class="card" href="tutorial/index.html">
+        <h3>Tutorial <span class="badge badge-live">10 chapters</span></h3>
+        <p>Progressive introduction to probabilistic programming with GenMLX. From first models to advanced inference.</p>
+      </a>
+      <a class="card" href="examples/index.html">
+        <h3>Examples <span class="badge badge-soon">coming soon</span></h3>
+        <p>Standalone worked examples: linear regression, HMMs, Bayesian neural nets, planning agents.</p>
+      </a>
+    </div>
+  </section>
+
+  <section>
+    <h2>Reference</h2>
+    <div class="card-grid">
+      <a class="card" href="reference/index.html">
+        <h3>API Reference <span class="badge badge-live">live</span></h3>
+        <p>Distributions, combinators, inference algorithms, and the GFI protocol.</p>
+      </a>
+      <a class="card card-muted" href="https://github.com/robert-johansson/genmlx">
+        <h3>Source Code</h3>
+        <p>Browse the full source on GitHub.</p>
+      </a>
+    </div>
+  </section>
+
+  <section>
+    <h2>Quick Start</h2>
+<pre>
+<span style="color:#888"># Requirements: macOS with Apple Silicon, Bun (or Node.js 18+)</span>
+git clone https://github.com/robert-johansson/genmlx.git
+cd genmlx
+npm install
+bun run --bun nbb examples/linear_regression.cljs
+</pre>
+  </section>
+
+  <footer>
+    <a href="https://github.com/robert-johansson/genmlx">GitHub</a>
+  </footer>
+</body>
+</html>
