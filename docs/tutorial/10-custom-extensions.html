@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Tutorial: Custom Extensions</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Tutorial</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="09-neural-models.html">&larr; Prev</a></li><li><a href="index.html">Index</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">10. Custom Extensions</h1>
+
+<p>GenMLX is designed to be <strong>open for extension</strong>. Distributions
+are a single record type with open multimethods. Generative functions are
+protocols that any record can implement. This chapter shows how to add custom
+distributions with the <code>defdist</code> macro, verify generative functions
+against the 11 GFI contracts, and use the static validator to catch common
+mistakes.</p>
+
+
+<!-- ================================================================== -->
+<h2>defdist: custom distributions</h2>
+
+<p>The <code>defdist</code> macro generates everything needed for a new
+distribution: a constructor function, and multimethod implementations for
+sampling, log-probability, and optionally reparameterization and support
+enumeration.</p>
+
+<div class="code-block">
+<pre><code>(ns custom-dist-example
+  (:require [genmlx.dist.macros :refer [defdist]]
+            [genmlx.dist.core :as dc]
+            [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
+            [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.protocols :as p]))
+
+;; Define a Laplace distribution
+(defdist laplace
+  "Laplace (double exponential) distribution."
+  [loc scale]
+  (sample [key]
+    ;; Sample via inverse CDF: loc - scale * sign(u - 0.5) * ln(1 - 2|u - 0.5|)
+    (let [u (rng/uniform key (mx/shape loc))
+          half (mx/scalar 0.5)
+          centered (mx/subtract u half)
+          abs-centered (mx/abs centered)
+          sign (mx/sign centered)]
+      (mx/subtract loc
+        (mx/multiply scale
+          (mx/multiply sign
+            (mx/log (mx/subtract (mx/scalar 1.0)
+                                 (mx/multiply (mx/scalar 2.0) abs-centered))))))))
+  (log-prob [v]
+    ;; log p(v) = -|v - loc|/scale - log(2*scale)
+    (mx/subtract
+      (mx/negate (mx/divide (mx/abs (mx/subtract v loc)) scale))
+      (mx/log (mx/multiply (mx/scalar 2.0) scale))))
+  (reparam [key]
+    ;; Reparameterized sample: loc + scale * noise
+    (let [u (rng/uniform key (mx/shape loc))
+          half (mx/scalar 0.5)
+          centered (mx/subtract u half)
+          sign (mx/sign centered)
+          abs-centered (mx/abs centered)
+          noise (mx/multiply sign
+                  (mx/log (mx/subtract (mx/scalar 1.0)
+                                       (mx/multiply (mx/scalar 2.0) abs-centered))))]
+      (mx/subtract loc (mx/multiply scale noise)))))</code></pre>
+</div>
+
+<p>Now <code>laplace</code> works everywhere distributions are used:</p>
+
+<div class="code-block">
+<pre><code>;; Use the custom distribution in a model
+(def robust-model
+  (gen [x]
+    (let [slope (dyn/trace :slope (laplace (mx/scalar 0) (mx/scalar 2)))
+          noise (dyn/trace :y (laplace (mx/multiply slope x) (mx/scalar 0.5)))]
+      slope)))
+
+(def trace (p/simulate robust-model [(mx/scalar 3.0)]))
+(println "Slope:" (mx/item (:retval trace)))
+(println "Score:" (mx/item (:score trace)))</code></pre>
+</div>
+<div class="code-output">Slope: 1.34
+Score: -3.87</div>
+
+<h3>defdist clauses</h3>
+
+<table>
+<tr><th>Clause</th><th>Required?</th><th>Signature</th><th>Description</th></tr>
+<tr><td><code>sample</code></td><td>Yes</td><td><code>[key] -&gt; value</code></td><td>Draw a sample. <code>key</code> is a PRNG key.</td></tr>
+<tr><td><code>log-prob</code></td><td>Yes</td><td><code>[v] -&gt; scalar</code></td><td>Log-probability of value <code>v</code>.</td></tr>
+<tr><td><code>reparam</code></td><td>No</td><td><code>[key] -&gt; value</code></td><td>Reparameterized sample (gradient flows through).</td></tr>
+<tr><td><code>support</code></td><td>No</td><td><code>[] -&gt; [values]</code></td><td>Enumerate support (for discrete distributions).</td></tr>
+</table>
+
+<p>All distribution parameters are automatically converted to MLX arrays by
+the generated constructor. The distribution type keyword is derived from the
+name (e.g., <code>:laplace</code>).</p>
+
+<h3>Batch sampling</h3>
+
+<p>For vectorized inference, you can optionally add a batch sampling method:</p>
+
+<div class="code-block">
+<pre><code>;; Add batch sampling for vectorized inference
+(defmethod dc/dist-sample-n :laplace
+  [dist n key]
+  (let [{:keys [loc scale]} (.-params dist)
+        u    (rng/uniform key [n])
+        half (mx/scalar 0.5)
+        centered (mx/subtract u half)
+        sign (mx/sign centered)
+        abs-c (mx/abs centered)
+        noise (mx/multiply sign
+                (mx/log (mx/subtract (mx/scalar 1.0)
+                                     (mx/multiply (mx/scalar 2.0) abs-c))))]
+    (mx/subtract loc (mx/multiply scale noise))))</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Transformed distributions</h2>
+
+<p>For distributions defined as transformations of a base distribution,
+<code>defdist-transform</code> handles the change-of-variables automatically:</p>
+
+<div class="code-block">
+<pre><code>(ns transform-example
+  (:require [genmlx.dist.macros :refer [defdist-transform]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]))
+
+;; Log-normal: exp transform of a Gaussian
+(defdist-transform log-normal-custom
+  "Log-normal via transform of Gaussian."
+  [mu sigma]
+  :base     (dist/gaussian mu sigma)
+  :forward  (fn [x] (mx/exp x))
+  :inverse  (fn [y] (mx/log y))
+  :log-det-jac (fn [y] (mx/negate (mx/log y))))
+
+;; Sample is: exp(gaussian(mu, sigma))
+;; Log-prob is: gaussian-log-prob(log(y)) + log|d(log)/dy|
+;;            = gaussian-log-prob(log(y)) - log(y)</code></pre>
+</div>
+
+<p>The macro generates <code>sample</code> (apply forward to base sample) and
+<code>log-prob</code> (apply inverse, compute base log-prob, add
+log-determinant-Jacobian).</p>
+
+
+<!-- ================================================================== -->
+<h2>GFI contracts</h2>
+
+<p>GenMLX includes 11 <strong>measure-theoretic contracts</strong> that every
+correct generative function should satisfy. These are the mathematical
+invariants of the GFI &mdash; if your custom GF passes all 11, it interoperates
+correctly with all inference algorithms.</p>
+
+<div class="code-block">
+<pre><code>(ns contracts-example
+  (:require [genmlx.contracts :as contracts]
+            [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]))
+
+(def model
+  (gen [x]
+    (let [z (dyn/trace :z (dist/gaussian 0 1))]
+      (dyn/trace :y (dist/gaussian z 1))
+      z)))
+
+;; Verify all 11 GFI contracts
+(def result
+  (contracts/verify-gfi-contracts model [(mx/scalar 2.0)]
+    {:n-trials 50}))
+
+(println "All pass?" (:all-pass? result))
+(println "Total pass:" (:total-pass result) "/" (+ (:total-pass result) (:total-fail result)))
+(doseq [[k v] (:results result)]
+  (println (str "  " (name k) ": " (:pass v) "/" (+ (:pass v) (:fail v))
+               " — " (:theorem v))))</code></pre>
+</div>
+<div class="code-output">All pass? true
+Total pass: 550 / 550
+  generate-weight-equals-score: 50/50 — generate with full constraints recovers trace score
+  update-empty-identity: 50/50 — update with same choices has weight ≈ 0
+  update-weight-correctness: 50/50 — update weight = new_score - old_score
+  update-round-trip: 50/50 — update then update-with-discard recovers original
+  regenerate-empty-identity: 50/50 — regenerate with sel/none has weight ≈ 0
+  project-all-equals-score: 50/50 — project(sel/all) ≈ trace.score
+  project-none-equals-zero: 50/50 — project(sel/none) ≈ 0
+  assess-equals-generate-score: 50/50 — assess weight ≈ generate score
+  propose-generate-round-trip: 50/50 — proposed choices are valid for generate
+  score-decomposition: 50/50 — sum of per-address projections ≈ total score
+  broadcast-equivalence: 50/50 — vsimulate produces [N]-shaped scores</div>
+
+<h3>The 11 contracts</h3>
+
+<table>
+<tr><th>#</th><th>Contract</th><th>Invariant</th></tr>
+<tr><td>1</td><td><code>:generate-weight-equals-score</code></td><td><code>generate</code> with all choices constrained has weight \(\approx\) trace score</td></tr>
+<tr><td>2</td><td><code>:update-empty-identity</code></td><td><code>update</code> with unchanged choices produces weight \(\approx 0\)</td></tr>
+<tr><td>3</td><td><code>:update-weight-correctness</code></td><td><code>update</code> weight \(= \text{new\_score} - \text{old\_score}\)</td></tr>
+<tr><td>4</td><td><code>:update-round-trip</code></td><td><code>update</code> then <code>update</code> with discarded choices recovers original trace</td></tr>
+<tr><td>5</td><td><code>:regenerate-empty-identity</code></td><td><code>regenerate</code> with empty selection has weight \(\approx 0\)</td></tr>
+<tr><td>6</td><td><code>:project-all-equals-score</code></td><td><code>project</code> on all addresses \(\approx\) trace score</td></tr>
+<tr><td>7</td><td><code>:project-none-equals-zero</code></td><td><code>project</code> on no addresses \(\approx 0\)</td></tr>
+<tr><td>8</td><td><code>:assess-equals-generate-score</code></td><td><code>assess</code> weight \(\approx\) fully-constrained <code>generate</code> score</td></tr>
+<tr><td>9</td><td><code>:propose-generate-round-trip</code></td><td>Choices from <code>propose</code> are valid for <code>generate</code></td></tr>
+<tr><td>10</td><td><code>:score-decomposition</code></td><td>Sum of per-address <code>project</code> values \(\approx\) total score</td></tr>
+<tr><td>11</td><td><code>:broadcast-equivalence</code></td><td><code>vsimulate</code> produces \([N]\)-shaped scores matching scalar execution</td></tr>
+</table>
+
+<p>Each contract is checked multiple times (default 50 trials) with random
+traces to catch probabilistic edge cases. Comparisons use tolerance-based
+floating-point matching (0.01&ndash;0.05).</p>
+
+<h3>Testing specific contracts</h3>
+
+<div class="code-block">
+<pre><code>;; Test only specific contracts
+(def partial-result
+  (contracts/verify-gfi-contracts model [(mx/scalar 2.0)]
+    {:n-trials     20
+     :contract-keys [:generate-weight-equals-score
+                     :update-weight-correctness
+                     :assess-equals-generate-score]}))
+
+(println "Tested:" (count (:results partial-result)) "contracts")</code></pre>
+</div>
+<div class="code-output">Tested: 3 contracts</div>
+
+
+<!-- ================================================================== -->
+<h2>Static validator</h2>
+
+<p>The <code>validate-gen-fn</code> function catches common mistakes
+<em>before</em> inference, through both static analysis of the model source
+and dynamic execution checks:</p>
+
+<div class="code-block">
+<pre><code>(ns validate-example
+  (:require [genmlx.verify :as verify]
+            [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]))
+
+;; A correct model
+(def good-model
+  (gen [x]
+    (let [z (dyn/trace :z (dist/gaussian 0 1))]
+      (dyn/trace :y (dist/gaussian z 1))
+      z)))
+
+(def result (verify/validate-gen-fn good-model [(mx/scalar 2.0)]))
+(println "Valid?" (:valid? result))
+(println "Violations:" (:violations result))</code></pre>
+</div>
+<div class="code-output">Valid? true
+Violations: []</div>
+
+<h3>What the validator catches</h3>
+
+<div class="code-block">
+<pre><code>;; BAD: duplicate addresses
+(def dup-model
+  (gen [x]
+    (dyn/trace :z (dist/gaussian 0 1))
+    (dyn/trace :z (dist/gaussian 0 1))))  ;; DUPLICATE!
+
+(def r1 (verify/validate-gen-fn dup-model [(mx/scalar 1.0)]))
+(println "Valid?" (:valid? r1))
+(println "Violation:" (first (:violations r1)))</code></pre>
+</div>
+<div class="code-output">Valid? false
+Violation: {:type :duplicate-address, :severity :error, :message "Duplicate address: :z", :addr :z}</div>
+
+<div class="code-block">
+<pre><code>;; BAD: mx/eval! inside model body (breaks vectorization)
+(def eval-model
+  (gen [x]
+    (let [z (dyn/trace :z (dist/gaussian 0 1))]
+      (mx/eval! z)  ;; WARNING: materializes graph
+      z)))
+
+(def r2 (verify/validate-gen-fn eval-model [(mx/scalar 1.0)]))
+(println "Violations:" (:violations r2))</code></pre>
+</div>
+<div class="code-output">Violations: [{:type :materialization-in-body, :severity :warning, :message "Model body contains eval! or item — this breaks vectorized inference"}]</div>
+
+<h3>Validation checks</h3>
+
+<table>
+<tr><th>Check</th><th>Type</th><th>Severity</th><th>Description</th></tr>
+<tr><td>Duplicate addresses</td><td>Dynamic</td><td>Error</td><td>Same address traced twice in one execution</td></tr>
+<tr><td>Non-finite scores</td><td>Dynamic</td><td>Error</td><td>NaN or Inf from distribution log-probs</td></tr>
+<tr><td>Empty model</td><td>Dynamic</td><td>Error</td><td>No <code>dyn/trace</code> calls at all</td></tr>
+<tr><td>Execution error</td><td>Dynamic</td><td>Error</td><td>Runtime exception during simulation</td></tr>
+<tr><td>Materialization</td><td>Static</td><td>Warning</td><td><code>eval!</code> or <code>item</code> in model source</td></tr>
+</table>
+
+<p>Use <code>:n-trials</code> to run multiple executions &mdash; this catches
+conditional duplicates that only occur in certain branches:</p>
+
+<div class="code-block">
+<pre><code>;; Multiple trials catch branch-dependent issues
+(def r3 (verify/validate-gen-fn branching-model [(mx/scalar 1.0)]
+          {:n-trials 100}))
+(println "Valid?" (:valid? r3))</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Putting it all together</h2>
+
+<p>Here&rsquo;s a workflow for building and validating a custom extension:</p>
+
+<div class="code-block">
+<pre><code>;; 1. Define a custom distribution
+(defdist truncated-normal
+  "Gaussian truncated to [lo, hi]."
+  [mu sigma lo hi]
+  (sample [key]
+    ;; Rejection sampling
+    (loop [k key]
+      (let [[k1 k2] (rng/split k)
+            x (mx/add mu (mx/multiply sigma (rng/standard-normal k1)))]
+        (if (and (>= (mx/item x) (mx/item lo))
+                 (<= (mx/item x) (mx/item hi)))
+          x
+          (recur k2)))))
+  (log-prob [v]
+    ;; log p(v) = log N(v; mu, sigma) - log(Phi(hi) - Phi(lo))
+    ;; (simplified: unnormalized)
+    (if (and (>= (mx/item v) (mx/item lo))
+             (<= (mx/item v) (mx/item hi)))
+      (let [z (mx/divide (mx/subtract v mu) sigma)]
+        (mx/subtract (mx/negate (mx/divide (mx/multiply z z) (mx/scalar 2)))
+                     (mx/log sigma)))
+      (mx/scalar ##-Inf))))
+
+;; 2. Use it in a model
+(def my-model
+  (gen [x]
+    (let [z (dyn/trace :z (truncated-normal (mx/scalar 0) (mx/scalar 1)
+                                             (mx/scalar -2) (mx/scalar 2)))]
+      (dyn/trace :y (dist/gaussian z 0.5))
+      z)))
+
+;; 3. Validate the model
+(def validation (verify/validate-gen-fn my-model [(mx/scalar 1.0)] {:n-trials 10}))
+(println "Valid?" (:valid? validation))
+
+;; 4. Verify GFI contracts
+(def contracts (contracts/verify-gfi-contracts my-model [(mx/scalar 1.0)] {:n-trials 20}))
+(println "All contracts pass?" (:all-pass? contracts))</code></pre>
+</div>
+<div class="code-output">Valid? true
+All contracts pass? true</div>
+
+
+<!-- ================================================================== -->
+<h2>Summary</h2>
+
+<ul>
+  <li><strong>defdist</strong> creates custom distributions with zero
+  boilerplate &mdash; just provide <code>sample</code> and
+  <code>log-prob</code> clauses</li>
+  <li><strong>defdist-transform</strong> creates distributions via
+  change-of-variables from a base distribution</li>
+  <li>Add <code>dist-sample-n</code> multimethod for vectorized batch
+  sampling</li>
+  <li><strong>11 GFI contracts</strong> verify measure-theoretic correctness:
+  weight consistency, update round-trips, score decomposition, and
+  broadcasting equivalence</li>
+  <li><strong>validate-gen-fn</strong> catches common errors: duplicate
+  addresses, non-finite scores, empty models, and materialization inside
+  model bodies</li>
+  <li>The recommended workflow: define, validate, verify contracts, then
+  use in inference</li>
+</ul>
+
+<p>This concludes the GenMLX tutorial. You now have the tools to build
+probabilistic models with the <code>gen</code> macro, condition them on data,
+run inference (from importance sampling through NUTS and SMC to variational
+methods), compose models with combinators, train parameters with gradients,
+integrate neural networks, and extend the system with custom distributions
+and verified generative functions.</p>
+
+<p>For API reference, see the <a href="../reference/index.html">Reference</a>
+section. For complete examples, see <a href="../examples/index.html">Examples</a>.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="09-neural-models.html">&larr; Chapter 9: Neural Probabilistic Models</a>
+    <a href="index.html">Back to Tutorial Index</a>
+  </div>
+</div>
+</body>
+</html>
