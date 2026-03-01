@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Reference: Inference</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="../tutorial/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Reference</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="combinators.html">&larr; Prev</a></li><li><a href="choicemap.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">Inference</h1>
+
+<p>GenMLX provides a comprehensive inference library spanning importance sampling,
+MCMC (MH, MALA, HMC, NUTS, Gibbs), SMC, SMCP3, variational inference, ADEV
+gradient estimation, MAP optimization, composable kernels, and diagnostics.
+Source: <code>src/genmlx/inference/*.cljs</code></p>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li><a href="#importance">Importance sampling</a></li>
+    <li><a href="#mcmc">MCMC</a></li>
+    <li><a href="#smc">SMC</a></li>
+    <li><a href="#smcp3">SMCP3</a></li>
+    <li><a href="#vi">Variational inference</a></li>
+    <li><a href="#adev">ADEV gradient estimation</a></li>
+    <li><a href="#map">MAP optimization</a></li>
+    <li><a href="#kernels">Composable kernels</a></li>
+    <li><a href="#gradients">Gradients</a></li>
+    <li><a href="#learning">Learning &amp; parameter training</a></li>
+    <li><a href="#nn">Neural generative functions</a></li>
+    <li><a href="#amortized">Amortized inference</a></li>
+    <li><a href="#diagnostics">Diagnostics</a></li>
+    <li><a href="#util">Utilities</a></li>
+    <li><a href="#contracts">Verification &amp; contracts</a></li>
+  </ol>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="importance">Importance sampling</h2>
+
+<p>Source: <code>src/genmlx/inference/importance.cljs</code></p>
+
+
+<h3>importance-sampling</h3>
+
+<pre><code>(is/importance-sampling {:samples N :key key} model args observations)</code></pre>
+
+<p>Draw <code>N</code> weighted samples from the model conditioned on
+observations. Returns traces with importance weights and a log marginal
+likelihood estimate.</p>
+
+<table>
+<tr><th>Option</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>:samples</code></td><td>Integer</td><td>Number of samples to draw</td></tr>
+<tr><td><code>:key</code></td><td>MLX array (optional)</td><td>PRNG key for reproducibility</td></tr>
+</table>
+
+<p><strong>Returns:</strong> <code>{:traces [...] :log-weights [...] :log-ml-estimate scalar}</code></p>
+
+
+<h3>importance-resampling</h3>
+
+<pre><code>(is/importance-resampling {:samples N :particles M :key key} model args observations)</code></pre>
+
+<p>Importance sampling followed by resampling to produce <code>M</code>
+unweighted particles from <code>N</code> weighted samples.</p>
+
+
+<h3>vectorized-importance-sampling</h3>
+
+<pre><code>(is/vectorized-importance-sampling {:samples N :key key} model args observations)</code></pre>
+
+<p>Runs the model body <strong>once</strong> for all <code>N</code> particles
+simultaneously using shape-based batching. 50&ndash;200x faster than
+scalar IS for models with many trace sites.</p>
+
+<p><strong>Returns:</strong> <code>{:vtrace VectorizedTrace :log-ml-estimate scalar}</code></p>
+
+
+<!-- ================================================================== -->
+<h2 id="mcmc">MCMC</h2>
+
+<p>Source: <code>src/genmlx/inference/mcmc.cljs</code></p>
+
+
+<h3>mh &mdash; Metropolis&ndash;Hastings</h3>
+
+<pre><code>(mcmc/mh opts model args observations)</code></pre>
+
+<table>
+<tr><th>Option</th><th>Default</th><th>Description</th></tr>
+<tr><td><code>:samples</code></td><td>&mdash;</td><td>Number of post-burn samples</td></tr>
+<tr><td><code>:burn</code></td><td>0</td><td>Burn-in samples to discard</td></tr>
+<tr><td><code>:thin</code></td><td>1</td><td>Keep every <code>thin</code>-th sample</td></tr>
+<tr><td><code>:selection</code></td><td><code>sel/all</code></td><td>Addresses to resample each step</td></tr>
+<tr><td><code>:callback</code></td><td><code>nil</code></td><td><code>(fn [i trace] ...)</code> called each iteration</td></tr>
+<tr><td><code>:key</code></td><td>random</td><td>PRNG key</td></tr>
+</table>
+
+<p><strong>Returns:</strong> Vector of <code>Trace</code> records.</p>
+
+
+<h3>mh-step</h3>
+
+<pre><code>(mcmc/mh-step trace selection)
+(mcmc/mh-step trace selection key)</code></pre>
+
+<p>Single MH step: regenerate the selection, accept/reject with probability
+\(\min(1, e^w)\) where \(w\) is the weight from <code>regenerate</code>.</p>
+
+
+<h3>mh-custom / mh-custom-step</h3>
+
+<pre><code>(mcmc/mh-custom opts model args observations)
+(mcmc/mh-custom-step trace model proposal-gf key)</code></pre>
+
+<p>MH with a custom proposal generative function instead of the prior.</p>
+
+<table>
+<tr><th>Extra option</th><th>Description</th></tr>
+<tr><td><code>:proposal-gf</code></td><td>Custom proposal generative function</td></tr>
+<tr><td><code>:backward-gf</code></td><td>Optional backward proposal for asymmetric kernels</td></tr>
+</table>
+
+
+<h3>compiled-mh</h3>
+
+<pre><code>(mcmc/compiled-mh opts model args observations)</code></pre>
+
+<p>MH with loop compilation for faster iteration. Compiles the score function
+and proposal into a tight MLX computation graph.</p>
+
+<table>
+<tr><th>Extra option</th><th>Default</th><th>Description</th></tr>
+<tr><td><code>:addresses</code></td><td>&mdash;</td><td>Vector of address keywords to sample</td></tr>
+<tr><td><code>:proposal-std</code></td><td>1.0</td><td>Gaussian random walk standard deviation</td></tr>
+<tr><td><code>:compile?</code></td><td><code>true</code></td><td>Whether to compile the inner loop</td></tr>
+<tr><td><code>:block-size</code></td><td>1</td><td>Number of steps per compiled block</td></tr>
+</table>
+
+
+<h3>vectorized-compiled-mh</h3>
+
+<pre><code>(mcmc/vectorized-compiled-mh opts model args observations)</code></pre>
+
+<p>Run <code>N</code> parallel compiled MH chains simultaneously using
+shape-based batching.</p>
+
+<table>
+<tr><th>Extra option</th><th>Description</th></tr>
+<tr><td><code>:n-chains</code></td><td>Number of parallel chains</td></tr>
+</table>
+
+
+<h3>mala &mdash; Metropolis-Adjusted Langevin</h3>
+
+<pre><code>(mcmc/mala opts model args observations)</code></pre>
+
+<p>Gradient-informed MCMC. Proposals follow the score gradient:
+\(x' = x + \frac{\epsilon^2}{2}\nabla \log p(x) + \epsilon \cdot z\)
+where \(z \sim \mathcal{N}(0, I)\).</p>
+
+<table>
+<tr><th>Extra option</th><th>Default</th><th>Description</th></tr>
+<tr><td><code>:step-size</code></td><td>0.01</td><td>Langevin step size \(\epsilon\)</td></tr>
+<tr><td><code>:addresses</code></td><td>&mdash;</td><td>Continuous addresses to update</td></tr>
+<tr><td><code>:compile?</code></td><td><code>true</code></td><td>Compile inner loop</td></tr>
+</table>
+
+
+<h3>vectorized-mala</h3>
+
+<pre><code>(mcmc/vectorized-mala opts model args observations)</code></pre>
+
+<p>N parallel MALA chains with batched gradient computation.</p>
+
+
+<h3>hmc &mdash; Hamiltonian Monte Carlo</h3>
+
+<pre><code>(mcmc/hmc opts model args observations)</code></pre>
+
+<p>HMC with leapfrog integration. Simulates Hamiltonian dynamics to make
+distant, low-correlation proposals.</p>
+
+<table>
+<tr><th>Option</th><th>Default</th><th>Description</th></tr>
+<tr><td><code>:step-size</code></td><td>0.01</td><td>Leapfrog step size</td></tr>
+<tr><td><code>:leapfrog-steps</code></td><td>10</td><td>Number of leapfrog steps per proposal</td></tr>
+<tr><td><code>:addresses</code></td><td>&mdash;</td><td>Continuous addresses to update</td></tr>
+<tr><td><code>:metric</code></td><td><code>nil</code></td><td>Mass matrix (diagonal or dense)</td></tr>
+<tr><td><code>:adapt-step-size</code></td><td><code>false</code></td><td>Dual averaging step-size adaptation</td></tr>
+<tr><td><code>:target-accept</code></td><td>0.65</td><td>Target acceptance rate for adaptation</td></tr>
+<tr><td><code>:adapt-metric</code></td><td><code>false</code></td><td>Adapt mass matrix during warmup</td></tr>
+</table>
+
+<p><strong>Returns:</strong> Vector of <code>Trace</code> records.</p>
+
+
+<h3>vectorized-hmc</h3>
+
+<pre><code>(mcmc/vectorized-hmc opts model args observations)</code></pre>
+
+<p>N parallel HMC chains with batched leapfrog integration.</p>
+
+
+<h3>nuts &mdash; No-U-Turn Sampler</h3>
+
+<pre><code>(mcmc/nuts opts model args observations)</code></pre>
+
+<p>NUTS automatically tunes the number of leapfrog steps by building a
+binary tree until a U-turn is detected. Same options as <code>hmc</code>
+plus:</p>
+
+<table>
+<tr><th>Extra option</th><th>Default</th><th>Description</th></tr>
+<tr><td><code>:max-tree-depth</code></td><td>10</td><td>Maximum binary tree depth</td></tr>
+</table>
+
+
+<h3>gibbs &mdash; Gibbs sampling</h3>
+
+<pre><code>(mcmc/gibbs opts model args observations schedule)</code></pre>
+
+<p>Systematic Gibbs sampling over discrete addresses with explicit support
+enumeration.</p>
+
+<table>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>schedule</code></td><td>Vector of <code>{:addr :support}</code></td><td>Addresses and their finite support values</td></tr>
+</table>
+
+
+<h3>gibbs-step-with-support</h3>
+
+<pre><code>(mcmc/gibbs-step-with-support trace addr support-values key)</code></pre>
+
+<p>Single Gibbs step: enumerate all support values for <code>addr</code>,
+compute conditional probabilities, sample one.</p>
+
+
+<h3>involutive-mh</h3>
+
+<pre><code>(mcmc/involutive-mh opts model args observations)</code></pre>
+
+<p>Involutive MCMC with auxiliary variables. The <code>involution</code>
+function maps <code>(trace, aux) &rarr; (trace', aux')</code> and must
+be its own inverse.</p>
+
+<table>
+<tr><th>Extra option</th><th>Description</th></tr>
+<tr><td><code>:proposal-gf</code></td><td>Proposal for auxiliary variables</td></tr>
+<tr><td><code>:involution</code></td><td><code>(fn [trace aux] -&gt; [trace' aux'])</code></td></tr>
+</table>
+
+
+<h3>elliptical-slice</h3>
+
+<pre><code>(mcmc/elliptical-slice opts model args observations)</code></pre>
+
+<p>Elliptical slice sampling for models with Gaussian priors. No tuning
+parameters required.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="smc">SMC &mdash; Sequential Monte Carlo</h2>
+
+<p>Source: <code>src/genmlx/inference/smc.cljs</code></p>
+
+
+<h3>smc</h3>
+
+<pre><code>(smc/smc opts model args observations-seq)</code></pre>
+
+<p>Particle filter with adaptive resampling and optional MCMC rejuvenation.</p>
+
+<table>
+<tr><th>Option</th><th>Default</th><th>Description</th></tr>
+<tr><td><code>:particles</code></td><td>&mdash;</td><td>Number of particles</td></tr>
+<tr><td><code>:ess-threshold</code></td><td>0.5</td><td>Resample when ESS/N falls below this</td></tr>
+<tr><td><code>:rejuvenation-steps</code></td><td>0</td><td>MH rejuvenation steps after resampling</td></tr>
+<tr><td><code>:rejuvenation-selection</code></td><td><code>sel/all</code></td><td>Addresses to rejuvenate</td></tr>
+<tr><td><code>:resample-method</code></td><td><code>:systematic</code></td><td>Resampling method</td></tr>
+<tr><td><code>:callback</code></td><td><code>nil</code></td><td><code>(fn [step particles] ...)</code></td></tr>
+<tr><td><code>:key</code></td><td>random</td><td>PRNG key</td></tr>
+</table>
+
+<p><strong>Returns:</strong> <code>{:traces [...] :log-weights [...] :log-ml-estimate scalar}</code></p>
+
+
+<h3>csmc &mdash; Conditional SMC</h3>
+
+<pre><code>(smc/csmc opts model args observations-seq reference-trace)</code></pre>
+
+<p>Like <code>smc</code> but retains a reference trace as one of the particles
+throughout. Used for particle MCMC (PMCMC).</p>
+
+
+<h3>vsmc &mdash; Vectorized SMC</h3>
+
+<pre><code>(smc/vsmc opts model args observations-seq)</code></pre>
+
+<p>SMC with shape-based batching. The model body runs <strong>once</strong>
+per timestep for all particles simultaneously.</p>
+
+
+<h3>vsmc-init</h3>
+
+<pre><code>(smc/vsmc-init model args observations particles key)</code></pre>
+
+<p>Initialize vectorized SMC state. Returns initial <code>VectorizedTrace</code>.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="smcp3">SMCP3 &mdash; SMC with Probabilistic Program Proposals</h2>
+
+<p>Source: <code>src/genmlx/inference/smcp3.cljs</code></p>
+
+
+<h3>smcp3</h3>
+
+<pre><code>(smcp3/smcp3 opts model args observations-seq)</code></pre>
+
+<p>SMC with learned or hand-crafted proposal programs instead of the prior.
+Uses forward and backward kernels for proper weight computation.</p>
+
+<table>
+<tr><th>Option</th><th>Description</th></tr>
+<tr><td><code>:particles</code></td><td>Number of particles</td></tr>
+<tr><td><code>:forward-kernel</code></td><td>Proposal GF for extending particles</td></tr>
+<tr><td><code>:backward-kernel</code></td><td>Backward kernel for weight correction</td></tr>
+<tr><td><code>:init-proposal</code></td><td>Proposal for initial particles</td></tr>
+<tr><td><code>:rejuvenation-fn</code></td><td>Optional MCMC rejuvenation function</td></tr>
+<tr><td><code>:ess-threshold</code></td><td>Resample threshold</td></tr>
+</table>
+
+
+<h3>smcp3-init / smcp3-step</h3>
+
+<pre><code>(smcp3/smcp3-init model args observations proposal-gf particles key)
+(smcp3/smcp3-step traces log-weights model observations
+                  forward-kernel backward-kernel particles
+                  ess-threshold rejuvenation-fn key)</code></pre>
+
+<p>Low-level init and step functions for building custom SMCP3 loops.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="vi">Variational inference</h2>
+
+<p>Source: <code>src/genmlx/inference/vi.cljs</code></p>
+
+
+<h3>vi &mdash; ADVI</h3>
+
+<pre><code>(vi/vi opts log-density init-params)</code></pre>
+
+<p>Automatic differentiation variational inference. Optimizes variational
+parameters to maximize the ELBO.</p>
+
+<table>
+<tr><th>Option</th><th>Default</th><th>Description</th></tr>
+<tr><td><code>:iterations</code></td><td>&mdash;</td><td>Number of optimization steps</td></tr>
+<tr><td><code>:learning-rate</code></td><td>0.01</td><td>Adam learning rate</td></tr>
+<tr><td><code>:elbo-samples</code></td><td>1</td><td>Monte Carlo samples per ELBO estimate</td></tr>
+<tr><td><code>:callback</code></td><td><code>nil</code></td><td><code>(fn [i params elbo] ...)</code></td></tr>
+</table>
+
+<p><strong>Returns:</strong> <code>{:params final-params :elbos [...]}</code></p>
+
+
+<h3>compiled-vi</h3>
+
+<pre><code>(vi/compiled-vi opts log-density init-params)</code></pre>
+
+<p>Like <code>vi</code> but compiles the ELBO computation for faster iteration.</p>
+
+
+<h3>vi-from-model / compiled-vi-from-model</h3>
+
+<pre><code>(vi/vi-from-model opts model args observations addresses)
+(vi/compiled-vi-from-model opts model args observations addresses)</code></pre>
+
+<p>Convenience wrappers that construct the log-density from a generative
+model, observations, and target addresses.</p>
+
+
+<h3>Programmable VI</h3>
+
+<pre><code>(vi/programmable-vi opts log-p-fn log-q-fn sample-fn init-params)
+(vi/compiled-programmable-vi opts log-p-fn log-q-fn sample-fn init-params)</code></pre>
+
+<p>Fully programmable VI with custom objectives and gradient estimators.</p>
+
+<table>
+<tr><th>Extra option</th><th>Description</th></tr>
+<tr><td><code>:objective</code></td><td>Objective function (default: ELBO)</td></tr>
+<tr><td><code>:estimator</code></td><td>Gradient estimator (default: reparameterization)</td></tr>
+<tr><td><code>:n-samples</code></td><td>Samples per gradient estimate</td></tr>
+</table>
+
+
+<h3>Objective functions</h3>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(vi/elbo-objective log-p log-q)</code></td><td>Standard ELBO: \(\mathbb{E}_q[\log p - \log q]\)</td></tr>
+<tr><td><code>(vi/iwelbo-objective log-p log-q)</code></td><td>Importance-weighted ELBO (tighter bound)</td></tr>
+<tr><td><code>(vi/pwake-objective log-p log-q)</code></td><td>P-Wake: train model to match guide</td></tr>
+<tr><td><code>(vi/qwake-objective log-p log-q)</code></td><td>Q-Wake: train guide via importance weights</td></tr>
+<tr><td><code>(vi/vimco-objective log-p log-q)</code></td><td>VIMCO with leave-one-out control variates</td></tr>
+</table>
+
+
+<h3>Gradient estimators</h3>
+
+<pre><code>(vi/reinforce-estimator objective-fn log-q-fn)</code></pre>
+
+<p>REINFORCE (score function) gradient estimator. Works for non-reparameterizable
+distributions.</p>
+
+
+<h3>vimco</h3>
+
+<pre><code>(vi/vimco opts log-p-fn log-q-fn sample-fn init-params)</code></pre>
+
+<p>VIMCO convenience wrapper combining the VIMCO objective with appropriate
+gradient estimation.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="adev">ADEV gradient estimation</h2>
+
+<p>Source: <code>src/genmlx/inference/adev.cljs</code></p>
+
+<p>Automatic Differentiation Expectation-Value (ADEV) estimation. Automatically
+selects reparameterization for continuous distributions and REINFORCE for
+discrete ones.</p>
+
+
+<h3>adev-gradient</h3>
+
+<pre><code>(adev/adev-gradient opts gf args cost-fn param-names params-array)</code></pre>
+
+<p>Compute gradient of \(\mathbb{E}[\text{cost}]\) w.r.t. parameters.</p>
+
+<table>
+<tr><th>Option</th><th>Description</th></tr>
+<tr><td><code>:n-samples</code></td><td>Monte Carlo samples for gradient estimate</td></tr>
+<tr><td><code>:baseline</code></td><td>Control variate baseline (reduces variance)</td></tr>
+</table>
+
+
+<h3>adev-optimize</h3>
+
+<pre><code>(adev/adev-optimize opts gf args cost-fn param-names init-params)</code></pre>
+
+<p>Optimize \(\mathbb{E}[\text{cost}]\) via ADEV gradients with Adam.</p>
+
+<table>
+<tr><th>Option</th><th>Default</th><th>Description</th></tr>
+<tr><td><code>:iterations</code></td><td>&mdash;</td><td>Number of optimization steps</td></tr>
+<tr><td><code>:lr</code></td><td>0.01</td><td>Learning rate</td></tr>
+<tr><td><code>:n-samples</code></td><td>1</td><td>Samples per gradient</td></tr>
+<tr><td><code>:baseline-decay</code></td><td>0.9</td><td>Exponential moving average decay for baseline</td></tr>
+</table>
+
+
+<h3>compiled-adev-optimize</h3>
+
+<pre><code>(adev/compiled-adev-optimize opts gf args cost-fn param-names init-params)</code></pre>
+
+<p>Compiled vectorized ADEV optimization for maximum performance.</p>
+
+
+<h3>Low-level functions</h3>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(adev/has-reparam? dist)</code></td><td>Check if distribution supports reparameterization</td></tr>
+<tr><td><code>(adev/adev-execute gf args key)</code></td><td>Execute GF under ADEV handler</td></tr>
+<tr><td><code>(adev/adev-surrogate gf args cost-fn key)</code></td><td>Build surrogate loss for single sample</td></tr>
+<tr><td><code>(adev/vadev-execute gf args n key)</code></td><td>Vectorized ADEV execution (N particles)</td></tr>
+<tr><td><code>(adev/vadev-surrogate gf args cost-fn n key)</code></td><td>Vectorized surrogate loss</td></tr>
+<tr><td><code>(adev/vadev-gradient opts gf args cost-fn param-names params-array)</code></td><td>Vectorized ADEV gradient</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="map">MAP optimization</h2>
+
+<pre><code>(mcmc/map-optimize opts model args observations)</code></pre>
+
+<p>Find the maximum a posteriori (MAP) estimate via gradient ascent on the
+log joint density.</p>
+
+<table>
+<tr><th>Option</th><th>Default</th><th>Description</th></tr>
+<tr><td><code>:addresses</code></td><td>&mdash;</td><td>Addresses to optimize</td></tr>
+<tr><td><code>:samples</code></td><td>&mdash;</td><td>Number of gradient steps</td></tr>
+<tr><td><code>:step-size</code></td><td>0.01</td><td>Learning rate</td></tr>
+<tr><td><code>:compile?</code></td><td><code>true</code></td><td>Compile the gradient computation</td></tr>
+</table>
+
+
+<h3>vectorized-map-optimize</h3>
+
+<pre><code>(mcmc/vectorized-map-optimize opts model args observations)</code></pre>
+
+<p>N parallel MAP optimizations with batched gradient computation.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="kernels">Composable kernels</h2>
+
+<p>Source: <code>src/genmlx/inference/kernel.cljs</code></p>
+
+<p>Kernels are composable inference building blocks. Each kernel is a function
+<code>(fn [trace key] -&gt; trace')</code>.</p>
+
+<h3>Kernel constructors</h3>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(kern/mh-kernel selection)</code></td><td>MH kernel regenerating the given selection</td></tr>
+<tr><td><code>(kern/update-kernel constraints)</code></td><td>Kernel applying fixed constraints</td></tr>
+<tr><td><code>(kern/random-walk addr std)</code></td><td>Gaussian random-walk MH kernel</td></tr>
+<tr><td><code>(kern/prior &amp; addrs)</code></td><td>MH kernel resampling from prior</td></tr>
+<tr><td><code>(kern/proposal fwd-gf)</code></td><td>MH kernel with custom proposal GF</td></tr>
+<tr><td><code>(kern/gibbs &amp; args)</code></td><td>Gibbs kernel pattern</td></tr>
+</table>
+
+<h3>Kernel combinators</h3>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(kern/chain &amp; kernels)</code></td><td>Apply kernels sequentially</td></tr>
+<tr><td><code>(kern/repeat-kernel n kernel)</code></td><td>Apply kernel <code>n</code> times</td></tr>
+<tr><td><code>(kern/cycle-kernels n kernels)</code></td><td>Cycle through kernels for <code>n</code> total applications</td></tr>
+<tr><td><code>(kern/mix-kernels kernel-weights)</code></td><td>Randomly select kernel each step</td></tr>
+<tr><td><code>(kern/seed kernel fixed-key)</code></td><td>Fix the PRNG key for a kernel</td></tr>
+</table>
+
+<h3>Running kernels</h3>
+
+<pre><code>(kern/run-kernel {:samples N :burn B :thin T :key key} kernel init-trace)</code></pre>
+
+<p>Run an inference kernel for <code>N</code> samples with burn-in and thinning.</p>
+
+<pre><code>(kern/collect-samples {:samples N :burn B :thin T :key key}
+                      step-fn extract-fn init-state)</code></pre>
+
+<p>Generic sample collection with a custom step function and extractor.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="gradients">Gradients</h2>
+
+<p>Source: <code>src/genmlx/gradients.cljs</code></p>
+
+<h3>choice-gradients</h3>
+
+<pre><code>(grad/choice-gradients model trace addresses)</code></pre>
+
+<p>Compute per-choice gradients of \(\log p\) w.r.t. the specified trace
+addresses. Returns a map from address to MLX gradient array.</p>
+
+<h3>score-gradient</h3>
+
+<pre><code>(grad/score-gradient model args observations addresses params)</code></pre>
+
+<p>Gradient of the model score w.r.t. a flat parameter array. Used by
+compiled MCMC and optimization methods.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="learning">Learning &amp; parameter training</h2>
+
+<p>Source: <code>src/genmlx/learning.cljs</code></p>
+
+<h3>Parameter stores</h3>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(learn/make-param-store)</code></td><td>Create empty functional parameter store</td></tr>
+<tr><td><code>(learn/make-param-store init)</code></td><td>Create store from initial parameter map</td></tr>
+<tr><td><code>(learn/get-param store name)</code></td><td>Get parameter value</td></tr>
+<tr><td><code>(learn/set-param store name value)</code></td><td>Set parameter value</td></tr>
+<tr><td><code>(learn/update-params store updates)</code></td><td>Apply map of parameter updates</td></tr>
+<tr><td><code>(learn/param-names store)</code></td><td>List all parameter names</td></tr>
+<tr><td><code>(learn/params-&gt;array store names)</code></td><td>Flatten named params to 1-D array</td></tr>
+<tr><td><code>(learn/array-&gt;params arr names)</code></td><td>Unflatten 1-D array to named params</td></tr>
+</table>
+
+<h3>Optimizers</h3>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(learn/sgd-step params grad lr)</code></td><td>SGD step: \(\theta' = \theta - \eta \nabla\)</td></tr>
+<tr><td><code>(learn/adam-init params)</code></td><td>Initialize Adam optimizer state</td></tr>
+<tr><td><code>(learn/adam-step params grad state {:keys [lr beta1 beta2 epsilon]})</code></td><td>One Adam step with momentum and RMSProp</td></tr>
+</table>
+
+<h3>Training</h3>
+
+<pre><code>(learn/train opts loss-grad-fn init-params)</code></pre>
+
+<p>Generic parameter training loop with Adam or SGD.</p>
+
+<table>
+<tr><th>Option</th><th>Description</th></tr>
+<tr><td><code>:iterations</code></td><td>Number of training steps</td></tr>
+<tr><td><code>:optimizer</code></td><td><code>:adam</code> or <code>:sgd</code></td></tr>
+<tr><td><code>:lr</code></td><td>Learning rate</td></tr>
+<tr><td><code>:callback</code></td><td><code>(fn [i params loss] ...)</code></td></tr>
+</table>
+
+<h3>Model-aware training</h3>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(learn/simulate-with-params model args store)</code></td><td>Simulate with parameter store binding</td></tr>
+<tr><td><code>(learn/generate-with-params model args obs store)</code></td><td>Generate with parameter store binding</td></tr>
+<tr><td><code>(learn/make-param-loss-fn model args obs param-names)</code></td><td>Create loss-gradient function for training</td></tr>
+</table>
+
+<h3>Wake-sleep</h3>
+
+<pre><code>(learn/wake-sleep opts model guide args observations guide-addresses init-guide-params)</code></pre>
+
+<table>
+<tr><th>Option</th><th>Description</th></tr>
+<tr><td><code>:iterations</code></td><td>Number of wake-sleep iterations</td></tr>
+<tr><td><code>:wake-steps</code></td><td>Wake phase gradient steps per iteration</td></tr>
+<tr><td><code>:sleep-steps</code></td><td>Sleep phase gradient steps per iteration</td></tr>
+<tr><td><code>:lr</code></td><td>Learning rate</td></tr>
+</table>
+
+<p>Helper loss functions:</p>
+<ul>
+  <li><code>(learn/wake-phase-loss model guide args obs guide-addrs)</code></li>
+  <li><code>(learn/sleep-phase-loss model guide args guide-addrs)</code></li>
+</ul>
+
+
+<!-- ================================================================== -->
+<h2 id="nn">Neural generative functions</h2>
+
+<p>Source: <code>src/genmlx/nn.cljs</code>, <code>src/genmlx/custom_gradient.cljs</code></p>
+
+<h3>Neural network layers</h3>
+
+<table>
+<tr><th>Constructor</th><th>Description</th></tr>
+<tr><td><code>(nn/linear in out)</code></td><td>Affine transform. Optional <code>{:bias false}</code>.</td></tr>
+<tr><td><code>(nn/sequential [layers])</code></td><td>Chain of layers applied in order</td></tr>
+<tr><td><code>(nn/relu)</code></td><td>ReLU activation</td></tr>
+<tr><td><code>(nn/gelu)</code></td><td>GELU activation</td></tr>
+<tr><td><code>(nn/tanh-act)</code></td><td>Tanh activation</td></tr>
+<tr><td><code>(nn/sigmoid-act)</code></td><td>Sigmoid activation</td></tr>
+<tr><td><code>(nn/layer-norm dims)</code></td><td>Layer normalization</td></tr>
+<tr><td><code>(nn/embedding vocab dims)</code></td><td>Embedding lookup table</td></tr>
+<tr><td><code>(nn/dropout p)</code></td><td>Dropout regularization</td></tr>
+</table>
+
+<h3>nn-&gt;gen-fn</h3>
+
+<pre><code>(nn/nn-&gt;gen-fn module)</code></pre>
+
+<p>Wrap an MLX <code>nn.Module</code> as a <strong>deterministic generative
+function</strong>. The wrapped function implements the full GFI: score is
+always 0, choice map is empty, but gradients flow through via MLX autograd.</p>
+
+<h3>Training helpers</h3>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(nn/value-and-grad module loss-fn)</code></td><td>Create value-and-grad function for an nn module</td></tr>
+<tr><td><code>(nn/optimizer type lr)</code></td><td>Create optimizer (<code>:adam</code>, <code>:sgd</code>, <code>:adamw</code>)</td></tr>
+<tr><td><code>(nn/step! module optim vg-fn &amp; inputs)</code></td><td>One training step: compute loss+gradients, update weights</td></tr>
+</table>
+
+<h3>custom-gradient-gf</h3>
+
+<pre><code>(cg/custom-gradient-gf {:forward f :gradient g :has-argument-grads [true ...]})</code></pre>
+
+<p>Create a deterministic GF with manually-specified forward and backward passes.
+Useful for wrapping external differentiable computations or implementing
+surrogate gradients.</p>
+
+<table>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>:forward</code></td><td>Function</td><td><code>(fn [&amp; args] -&gt; retval)</code></td></tr>
+<tr><td><code>:gradient</code></td><td>Function (optional)</td><td><code>(fn [args retval cotangent] -&gt; arg-grads)</code></td></tr>
+<tr><td><code>:has-argument-grads</code></td><td>Vector of booleans</td><td>Which arguments have gradients</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="amortized">Amortized inference</h2>
+
+<p>Source: <code>src/genmlx/inference/amortized.cljs</code></p>
+
+
+<h3>make-elbo-loss</h3>
+
+<pre><code>(amort/make-elbo-loss encoder model latent-addrs
+  {:model-args-fn f :observations-fn g})</code></pre>
+
+<p>Create an ELBO loss function for training a neural proposal encoder.</p>
+
+
+<h3>train-proposal!</h3>
+
+<pre><code>(amort/train-proposal! encoder loss-fn dataset
+  {:iterations N :optimizer :adam :lr 0.01})</code></pre>
+
+<p>Train the encoder on a dataset. Returns the training loss curve.</p>
+
+
+<h3>neural-importance-sampling</h3>
+
+<pre><code>(amort/neural-importance-sampling {:samples N}
+  encoder model guide-args model-args observations)</code></pre>
+
+<p>Importance sampling using a trained neural guide as the proposal.</p>
+
+<p><strong>Returns:</strong> <code>{:traces [...] :log-weights [...] :log-ml-estimate scalar}</code></p>
+
+
+<!-- ================================================================== -->
+<h2 id="diagnostics">Diagnostics</h2>
+
+<p>Source: <code>src/genmlx/inference/diagnostics.cljs</code></p>
+
+<table>
+<tr><th>Function</th><th>Signature</th><th>Description</th></tr>
+<tr><td><code>ess</code></td><td><code>(diag/ess samples)</code></td><td>Effective sample size from autocorrelation</td></tr>
+<tr><td><code>r-hat</code></td><td><code>(diag/r-hat chains)</code></td><td>Gelman&ndash;Rubin convergence diagnostic (\(\hat{R}\))</td></tr>
+<tr><td><code>sample-mean</code></td><td><code>(diag/sample-mean samples)</code></td><td>Mean of parameter samples</td></tr>
+<tr><td><code>sample-std</code></td><td><code>(diag/sample-std samples)</code></td><td>Standard deviation of samples</td></tr>
+<tr><td><code>sample-quantiles</code></td><td><code>(diag/sample-quantiles samples)</code></td><td>Median and 2.5%&ndash;97.5% quantiles</td></tr>
+<tr><td><code>summarize</code></td><td><code>(diag/summarize samples &amp; {:keys [name]})</code></td><td>Print summary statistics table</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="util">Utilities</h2>
+
+<p>Source: <code>src/genmlx/inference/util.cljs</code></p>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(u/materialize-weights log-weights)</code></td><td>Evaluate log-weights to single MLX array</td></tr>
+<tr><td><code>(u/normalize-log-weights log-weights)</code></td><td>Log-softmax normalize weights</td></tr>
+<tr><td><code>(u/compute-ess log-weights)</code></td><td>Effective sample size from log-weights</td></tr>
+<tr><td><code>(u/systematic-resample log-weights n key)</code></td><td>Systematic resampling algorithm</td></tr>
+<tr><td><code>(u/accept-mh? log-accept)</code></td><td>MH accept/reject decision</td></tr>
+<tr><td><code>(u/extract-params trace addresses)</code></td><td>Extract parameter values from trace</td></tr>
+<tr><td><code>(u/collect-trace-arrays trace)</code></td><td>Collect all MLX arrays from a trace</td></tr>
+<tr><td><code>(u/eval-state! state)</code></td><td>Evaluate all arrays in inference state</td></tr>
+<tr><td><code>(u/dispose-trace! trace)</code></td><td>Dispose MLX arrays in trace(s)</td></tr>
+<tr><td><code>(u/force-gc!)</code></td><td>Force synchronous garbage collection</td></tr>
+<tr><td><code>(u/tidy-step step-fn state key)</code></td><td>Run step inside <code>mx/tidy</code> with state preservation</td></tr>
+</table>
+
+<h3>Score function builders</h3>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(u/make-score-fn model args obs addrs)</code></td><td>Build score function from model + observations</td></tr>
+<tr><td><code>(u/make-vectorized-score-fn model args obs addrs)</code></td><td>Vectorized score function</td></tr>
+<tr><td><code>(u/make-compiled-score-fn model args obs addrs)</code></td><td>Compiled score function</td></tr>
+<tr><td><code>(u/make-compiled-grad-score model args obs addrs)</code></td><td>Compiled gradient of score</td></tr>
+<tr><td><code>(u/make-compiled-val-grad model args obs addrs)</code></td><td>Compiled value-and-grad of score</td></tr>
+<tr><td><code>(u/make-vectorized-grad-score model args obs addrs)</code></td><td>Per-chain gradients via sum trick</td></tr>
+<tr><td><code>(u/make-compiled-vectorized-score-and-grad ...)</code></td><td>Compiled vectorized score and gradient</td></tr>
+<tr><td><code>(u/make-compiled-vectorized-val-grad ...)</code></td><td>Compiled vectorized value-and-grad</td></tr>
+<tr><td><code>(u/init-vectorized-params model args obs addrs n)</code></td><td>Initialize <code>[N,D]</code> parameter matrix for N chains</td></tr>
+</table>
+
+
+<!-- ================================================================== -->
+<h2 id="contracts">Verification &amp; contracts</h2>
+
+<p>Source: <code>src/genmlx/contracts.cljs</code>, <code>src/genmlx/verify.cljs</code></p>
+
+<h3>verify-gfi-contracts</h3>
+
+<pre><code>(contracts/verify-gfi-contracts model args
+  &amp; {:keys [n-trials contract-keys]})</code></pre>
+
+<p>Run the 11 measure-theoretic GFI contracts over random trials.
+Verifies score consistency, weight correctness, update/regenerate
+invariants, and more. Returns a map of contract results.</p>
+
+<h3>validate-gen-fn</h3>
+
+<pre><code>(verify/validate-gen-fn gf args)
+(verify/validate-gen-fn gf args {:key key :n-trials n})</code></pre>
+
+<p>Static validator that checks a generative function satisfies the GFI
+by exercising all operations and verifying consistency.</p>
+
+
+  </div>
+  <div class="chapter-nav">
+    <a href="combinators.html">&larr; Combinators</a>
+    <a href="choicemap.html">Choicemaps &rarr;</a>
+  </div>
+</div>
+</body>
+</html>
