@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Reference: Traces &amp; Selections</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="../tutorial/style.css">
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Reference</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="choicemap.html">&larr; Prev</a></li><li><a href="mlx.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">Traces &amp; Selections</h1>
+
+<p>Traces are immutable records of model execution. Selections specify which
+addresses to target in inference operations. Diffs track incremental changes
+for efficient re-execution.
+Source: <code>src/genmlx/trace.cljs</code>, <code>src/genmlx/selection.cljs</code>,
+<code>src/genmlx/diff.cljs</code></p>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li><a href="#trace">Trace record</a></li>
+    <li><a href="#selection">Selections</a></li>
+    <li><a href="#diff">Diffs</a></li>
+  </ol>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="trace">Trace record</h2>
+
+<p>Source: <code>src/genmlx/trace.cljs</code></p>
+
+<pre><code>(defrecord Trace [gen-fn args choices retval score])</code></pre>
+
+<table>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>:gen-fn</code></td><td>Generative function</td><td>The model that produced this trace</td></tr>
+<tr><td><code>:args</code></td><td>Vector</td><td>Arguments passed to the model</td></tr>
+<tr><td><code>:choices</code></td><td><a href="choicemap.html">ChoiceMap</a></td><td>All random choices made during execution</td></tr>
+<tr><td><code>:retval</code></td><td>Any</td><td>Return value of the model body</td></tr>
+<tr><td><code>:score</code></td><td>MLX scalar</td><td>Log-joint probability: \(\log p(\text{choices} \mid \text{args})\)</td></tr>
+</table>
+
+<h3>make-trace</h3>
+
+<pre><code>(make-trace {:gen-fn gf :args args :choices cm :retval rv :score s})</code></pre>
+
+<p>Create a <code>Trace</code> from a map. All fields are required.</p>
+
+<h3>Accessing trace data</h3>
+
+<div class="code-block">
+<pre><code>(def trace (p/simulate model [x]))
+
+;; Direct field access
+(:retval trace)           ;; return value
+(:score trace)            ;; log p(choices | args)
+(:choices trace)          ;; ChoiceMap
+(:gen-fn trace)           ;; the model
+(:args trace)             ;; [x]
+
+;; Get a specific choice value
+(cm/get-value (cm/get-submap (:choices trace) :slope))
+;; Or use get-choice with a path
+(cm/get-choice (:choices trace) [:slope])</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2 id="selection">Selections</h2>
+
+<p>Source: <code>src/genmlx/selection.cljs</code></p>
+
+<p>Selections specify which addresses to target in operations like
+<code>regenerate</code>, <code>project</code>, and MCMC proposals.</p>
+
+
+<h3>ISelection protocol</h3>
+
+<pre><code>(defprotocol ISelection
+  (selected?       [s addr]  "Is this address selected?")
+  (get-subselection [s addr]  "Get selection for sub-addresses"))</code></pre>
+
+
+<h3>Predefined selections</h3>
+
+<table>
+<tr><th>Constant</th><th>Description</th></tr>
+<tr><td><code>sel/all</code></td><td>Select all addresses at all depths</td></tr>
+<tr><td><code>sel/none</code></td><td>Select no addresses</td></tr>
+</table>
+
+
+<h3>select</h3>
+
+<pre><code>(sel/select &amp; addrs)</code></pre>
+
+<p>Create a selection of specific flat addresses.</p>
+
+<div class="code-block">
+<pre><code>(sel/select :slope :intercept)
+;; Selects :slope and :intercept but not :y, :x, etc.</code></pre>
+</div>
+
+
+<h3>from-set</h3>
+
+<pre><code>(sel/from-set #{:slope :intercept})</code></pre>
+
+<p>Create a selection from a set of addresses.</p>
+
+
+<h3>hierarchical</h3>
+
+<pre><code>(sel/hierarchical &amp; kvs)</code></pre>
+
+<p>Create a hierarchical selection mapping parent addresses to
+sub-selections.</p>
+
+<div class="code-block">
+<pre><code>;; Select :x under :sub1, everything under :sub2
+(sel/hierarchical :sub1 (sel/select :x :y) :sub2 sel/all)</code></pre>
+</div>
+
+
+<h3>complement-sel</h3>
+
+<pre><code>(sel/complement-sel s)</code></pre>
+
+<p>Create the complement of a selection: selects everything <em>not</em>
+selected by <code>s</code>.</p>
+
+
+<!-- ================================================================== -->
+<h2 id="diff">Diffs</h2>
+
+<p>Source: <code>src/genmlx/diff.cljs</code></p>
+
+<p>Diffs represent incremental changes to arguments or data structures.
+Used by <code>update-with-diffs</code> and combinators to skip unchanged
+sub-computations.</p>
+
+<h3>Diff types</h3>
+
+<table>
+<tr><th>Constructor / Constant</th><th>Description</th></tr>
+<tr><td><code>diff/no-change</code></td><td>Value has not changed</td></tr>
+<tr><td><code>diff/unknown-change</code></td><td>Value may have changed (conservative)</td></tr>
+<tr><td><code>(diff/value-change old new)</code></td><td>Value changed from <code>old</code> to <code>new</code></td></tr>
+<tr><td><code>(diff/vector-diff changed-indices)</code></td><td>Changes at specific vector indices</td></tr>
+<tr><td><code>(diff/map-diff changed added removed)</code></td><td>Changes to specific map keys</td></tr>
+</table>
+
+<h3>Predicates</h3>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(diff/no-change? d)</code></td><td>True if diff indicates no change</td></tr>
+<tr><td><code>(diff/unknown-change? d)</code></td><td>True if diff type is unknown</td></tr>
+<tr><td><code>(diff/changed? d)</code></td><td>True if diff indicates any change</td></tr>
+</table>
+
+<h3>Diff computation</h3>
+
+<table>
+<tr><th>Function</th><th>Description</th></tr>
+<tr><td><code>(diff/compute-diff old new)</code></td><td>Compute diff between two values</td></tr>
+<tr><td><code>(diff/compute-vector-diff old-vec new-vec)</code></td><td>Compute diff between two vectors</td></tr>
+<tr><td><code>(diff/compute-map-diff old-map new-map)</code></td><td>Compute diff between two maps</td></tr>
+<tr><td><code>(diff/should-recompute? argdiff addr)</code></td><td>Whether an address needs recomputation</td></tr>
+</table>
+
+
+  </div>
+  <div class="chapter-nav">
+    <a href="choicemap.html">&larr; Choicemaps</a>
+    <a href="mlx.html">MLX Operations &rarr;</a>
+  </div>
+</div>
+</body>
+</html>
