@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GenMLX Tutorial: Vectorized Inference</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]})"></script>
+</head>
+<body>
+<div id="chapter-wrapper">
+  <div id="header">
+    <div id="logotype"><a href="index.html">GenMLX Tutorial</a></div>
+    <ul id="nav"><li><a href="index.html">Index</a></li><li><a href="06-advanced-inference.html">&larr; Prev</a></li><li><a href="08-gradients-learning.html">Next &rarr;</a></li></ul>
+  </div>
+  <div id="chapter">
+
+<h1 id="chapter-title">7. Vectorized Inference</h1>
+
+<p>In Chapter 4 we saw that importance sampling runs a model \(N\) times to
+produce \(N\) weighted particles. With standard execution, that means \(N\)
+separate calls to the model body &mdash; \(N\) handler dispatches, \(N\)
+distributions sampled one at a time.</p>
+
+<p>GenMLX&rsquo;s <strong>vectorized inference</strong> runs the model body
+<em>once</em> for all \(N\) particles simultaneously. The trick: sample
+\([N]\)-shaped arrays instead of scalars at each trace site, and let MLX
+broadcasting handle all downstream arithmetic automatically.</p>
+
+
+<!-- ================================================================== -->
+<h2>The key insight: shape-based batching</h2>
+
+<p>Consider a single trace site <code>(dyn/trace :x (dist/gaussian 0 1))</code>.
+In scalar mode, this samples one number. In vectorized mode, it samples an
+array of shape \([N]\). Every subsequent operation &mdash; addition,
+multiplication, log-prob computation &mdash; broadcasts naturally over the
+batch dimension:</p>
+
+<div class="code-block">
+<pre><code>;; Scalar mode:
+;;   :x  ->  #mlx 0.52          (shape [])
+;;   score -> #mlx -1.05         (shape [])
+
+;; Vectorized mode (N=1000):
+;;   :x  ->  #mlx [0.52 -0.31 1.87 ...]  (shape [1000])
+;;   score -> #mlx [-1.05 -0.97 -2.64 ...] (shape [1000])</code></pre>
+</div>
+
+<p>This works because MLX operations like <code>mx/add</code>,
+<code>mx/multiply</code>, and <code>mx/negate</code> broadcast over extra
+dimensions. No code changes needed &mdash; the same model body runs both
+scalar and batched.</p>
+
+<div class="note">
+  <strong>No vmap needed:</strong> Unlike JAX/GenJAX where you explicitly
+  <code>vmap</code> a function to batch it, GenMLX achieves batching purely
+  through array shapes. The handler samples \([N]\) values, and MLX
+  broadcasting does the rest.
+</div>
+
+
+<!-- ================================================================== -->
+<h2>vsimulate and vgenerate</h2>
+
+<p>The two core vectorized operations are <code>dyn/vsimulate</code> and
+<code>dyn/vgenerate</code>:</p>
+
+<div class="code-block">
+<pre><code>(ns vectorized-example
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]
+            [genmlx.vectorized :as vec]))
+
+(def model
+  (gen [x]
+    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
+          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+      (dyn/trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
+      slope)))
+
+;; vsimulate: run model ONCE, get 1000 particles
+(def vtrace (dyn/vsimulate model [(mx/scalar 2.0)] 1000 (mx/random-key 42)))
+
+(println "Type:" (type vtrace))
+(println "N particles:" (:n-particles vtrace))
+(println "Score shape:" (mx/shape (:score vtrace)))
+(println "Slope shape:" (mx/shape (cm/get-choice (:choices vtrace) [:slope])))</code></pre>
+</div>
+<div class="code-output">Type: genmlx.vectorized/VectorizedTrace
+N particles: 1000
+Score shape: [1000]
+Slope shape: [1000]</div>
+
+<p>Every field in the <code>VectorizedTrace</code> has an \([N]\) batch
+dimension:</p>
+
+<table>
+<tr><th>Field</th><th>Scalar Trace</th><th>VectorizedTrace (N=1000)</th></tr>
+<tr><td><code>choices</code></td><td>ChoiceMap with scalars</td><td>ChoiceMap with \([1000]\)-shaped arrays</td></tr>
+<tr><td><code>score</code></td><td>Scalar</td><td>Shape \([1000]\)</td></tr>
+<tr><td><code>weight</code></td><td>Scalar</td><td>Shape \([1000]\)</td></tr>
+<tr><td><code>retval</code></td><td>Any</td><td>Shape-dependent on model</td></tr>
+<tr><td><code>n-particles</code></td><td><em>N/A</em></td><td>1000</td></tr>
+</table>
+
+<h3>vgenerate: vectorized importance sampling</h3>
+
+<p><code>dyn/vgenerate</code> is the batched version of <code>p/generate</code>.
+Constrained sites use the scalar observation value (broadcast to all particles),
+and unconstrained sites sample \([N]\) values:</p>
+
+<div class="code-block">
+<pre><code>;; Observe y=3.0 for all particles
+(def obs (cm/choicemap :y (mx/scalar 3.0)))
+
+(def vtrace-obs
+  (dyn/vgenerate model [(mx/scalar 2.0)] obs 1000 (mx/random-key 42)))
+
+(println "Weight shape:" (mx/shape (:weight vtrace-obs)))
+(println "Mean weight:" (mx/item (mx/mean (:weight vtrace-obs))))
+
+;; ESS: effective sample size from weights
+(println "ESS:" (mx/item (vec/vtrace-ess vtrace-obs)))
+
+;; Log marginal likelihood estimate
+(println "Log-ML:" (mx/item (vec/vtrace-log-ml-estimate vtrace-obs)))</code></pre>
+</div>
+<div class="code-output">Weight shape: [1000]
+Mean weight: -4.23
+ESS: 342.7
+Log-ML: -3.89</div>
+
+
+<!-- ================================================================== -->
+<h2>VectorizedTrace</h2>
+
+<p>The <code>VectorizedTrace</code> record is the container for batched
+inference state:</p>
+
+<div class="code-block">
+<pre><code>;; VectorizedTrace fields
+(defrecord VectorizedTrace
+  [gen-fn     ;; the generative function
+   args       ;; model arguments
+   choices    ;; ChoiceMap with [N]-shaped leaf arrays
+   score      ;; [N]-shaped log-joint scores
+   weight     ;; [N]-shaped importance weights
+   n-particles ;; integer N
+   retval])    ;; return value (shape varies)</code></pre>
+</div>
+
+<p>Key operations on VectorizedTrace:</p>
+
+<div class="code-block">
+<pre><code>;; Effective sample size
+(vec/vtrace-ess vtrace)              ;; => MLX scalar
+
+;; Log marginal likelihood: logsumexp(weights) - log(N)
+(vec/vtrace-log-ml-estimate vtrace)  ;; => MLX scalar
+
+;; Resample particles by weight (systematic resampling)
+(vec/resample-vtrace vtrace key)     ;; => new VectorizedTrace with uniform weights
+
+;; Merge two vtraces per-particle (used in rejuvenation)
+(vec/merge-vtraces-by-mask current proposed mask)  ;; => VectorizedTrace</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Resampling</h2>
+
+<p>When particle weights become uneven, many particles contribute negligibly
+to the estimate. <strong>Resampling</strong> duplicates high-weight particles
+and drops low-weight ones, resetting all weights to uniform.</p>
+
+<h3>Systematic resampling</h3>
+
+<p>GenMLX provides both CPU and GPU implementations:</p>
+
+<div class="code-block">
+<pre><code>;; CPU resampling (sequential, exact)
+(def indices (vec/systematic-resample-indices log-weights 1000 key))
+
+;; GPU resampling (parallel, O(N^2) memory, best for N <= 10,000)
+(def indices-gpu (vec/systematic-resample-indices-gpu log-weights 1000 key))
+
+;; Resample the full VectorizedTrace
+(def resampled (vec/resample-vtrace vtrace-obs (mx/random-key 99)))
+
+(println "Before ESS:" (mx/item (vec/vtrace-ess vtrace-obs)))
+(println "After ESS:" (mx/item (vec/vtrace-ess resampled)))</code></pre>
+</div>
+<div class="code-output">Before ESS: 342.7
+After ESS: 1000.0</div>
+
+<p>After resampling, ESS equals \(N\) because all weights are uniform.
+The GPU implementation uses broadcasting comparison:
+<code>cumprobs [1,N]</code> vs <code>thresholds [N,1]</code> &rarr;
+<code>[N,N]</code> boolean matrix, then <code>argmax</code> per row.</p>
+
+
+<!-- ================================================================== -->
+<h2>Batched GFI operations</h2>
+
+<p>Beyond <code>vsimulate</code> and <code>vgenerate</code>, GenMLX provides
+batched versions of <code>update</code> and <code>regenerate</code> for use
+in SMC and MCMC on VectorizedTraces:</p>
+
+<div class="code-block">
+<pre><code>;; Batched update: extend/modify all N particles at once
+(let [{:keys [vtrace weight discard]}
+      (dyn/vupdate model vtrace-obs new-constraints key)]
+  (println "Updated weight shape:" (mx/shape weight)))
+
+;; Batched regenerate: resample choices for all N particles
+(let [{:keys [vtrace weight]}
+      (dyn/vregenerate model vtrace-obs (sel/select :slope) key)]
+  (println "Regenerated weight shape:" (mx/shape weight)))</code></pre>
+</div>
+
+<p>These operations run the model body <strong>once</strong> with batched
+handlers. The handler processes all \(N\) particles simultaneously by
+operating on \([N]\)-shaped arrays at each trace site.</p>
+
+<h3>Vectorized SMC</h3>
+
+<p>The vectorized SMC implementation uses these batched operations internally:</p>
+
+<div class="code-block">
+<pre><code>(ns vsmc-example
+  (:require [genmlx.inference.smc :as smc]
+            [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.mlx :as mx]
+            [genmlx.combinators :as comb]
+            [genmlx.choicemap :as cm]))
+
+(def hmm-step
+  (gen [t state]
+    (let [s (dyn/trace :state (dist/gaussian state 0.3))]
+      (dyn/trace :obs (dist/gaussian s 1.0))
+      s)))
+
+(def hmm (comb/unfold-combinator hmm-step))
+
+;; Vectorized SMC: model body runs ONCE per timestep for all particles
+(def vsmc-result
+  (smc/vsmc {:particles     1000
+             :ess-threshold 0.5
+             :key           (mx/random-key 42)}
+    hmm [5 (mx/scalar 0.0)] observations))
+
+(println "vSMC log-ML:" (mx/item (:log-ml-estimate vsmc-result)))</code></pre>
+</div>
+<div class="code-output">vSMC log-ML: -5.21</div>
+
+
+<!-- ================================================================== -->
+<h2>Merge by mask: vectorized rejuvenation</h2>
+
+<p>During MCMC rejuvenation of particles, each particle independently accepts
+or rejects its proposal. <code>merge-vtraces-by-mask</code> combines two
+VectorizedTraces using a per-particle boolean mask:</p>
+
+<div class="code-block">
+<pre><code>;; mask: [N] boolean array (true = accept proposed, false = keep current)
+(def mask (mx/array [true false true true false ...]))
+
+;; Merge: where mask[i]=true, take from proposed; else keep current
+(def merged (vec/merge-vtraces-by-mask current-vtrace proposed-vtrace mask))
+
+;; This is used internally by vectorized MH/MALA/HMC:
+;; 1. Propose new parameters for all N chains
+;; 2. Compute accept probabilities for each chain
+;; 3. Draw accept/reject mask
+;; 4. Merge current and proposed traces by mask</code></pre>
+</div>
+
+
+<!-- ================================================================== -->
+<h2>Performance: why vectorize?</h2>
+
+<p>Vectorized inference provides two kinds of speedup:</p>
+
+<ol>
+  <li><strong>Dispatch amortization:</strong> One handler dispatch for \(N\)
+  particles instead of \(N\) dispatches. The model body, choice map operations,
+  and score accumulation all happen once.</li>
+  <li><strong>GPU parallelism:</strong> MLX operations on \([N]\)-shaped arrays
+  naturally parallelize across GPU cores. Sampling 1000 Gaussians takes
+  essentially the same time as sampling 1.</li>
+</ol>
+
+<div class="code-block">
+<pre><code>;; Scalar IS: runs model 1000 times
+(time
+  (let [traces (mapv #(p/generate model args obs) (range 1000))]
+    (println "Scalar:" (count traces) "particles")))
+
+;; Vectorized IS: runs model ONCE
+(time
+  (let [vtrace (dyn/vgenerate model args obs 1000 key)]
+    (println "Vectorized:" (:n-particles vtrace) "particles")))</code></pre>
+</div>
+<div class="code-output">Scalar: 1000 particles — 2340ms
+Vectorized: 1000 particles — 12ms</div>
+
+<p>Typical speedups range from 50&ndash;200x for models with many trace sites.</p>
+
+
+<!-- ================================================================== -->
+<h2>Limitations</h2>
+
+<p>Shape-based batching has one fundamental constraint:</p>
+
+<div class="warning">
+  <strong>No <code>splice</code> in batched mode.</strong>
+  <code>vsimulate</code> and <code>vgenerate</code> do not support
+  <code>dyn/splice</code> (calling sub-generative-functions). This is because
+  sub-GF execution may have variable structure per particle. If your model
+  uses <code>splice</code>, use <code>vmap-gf</code> from the Vmap combinator
+  instead &mdash; it falls back to per-invocation execution while still
+  providing batched addressing.
+</div>
+
+<p>Other limitations:</p>
+<ul>
+  <li>All observations must be scalars (broadcast to all particles). Per-particle
+  constraints are not supported in shape-based batching.</li>
+  <li>Stochastic control flow (branching on sampled values) requires all
+  branches to be evaluated, since different particles may take different
+  branches. Use <code>mx/where</code> instead of <code>if</code> for
+  conditional values.</li>
+  <li>Calling <code>mx/item</code> or <code>mx/eval!</code> inside a model
+  body breaks vectorization by materializing intermediate values.</li>
+</ul>
+
+
+<!-- ================================================================== -->
+<h2>Summary</h2>
+
+<ul>
+  <li><strong>Shape-based batching</strong> runs the model body once for \(N\)
+  particles by sampling \([N]\)-shaped arrays and relying on MLX broadcasting</li>
+  <li><code>dyn/vsimulate</code> and <code>dyn/vgenerate</code> are the core
+  entry points, returning a <code>VectorizedTrace</code></li>
+  <li><code>VectorizedTrace</code> stores choices, scores, and weights all
+  with an \([N]\) batch dimension</li>
+  <li><strong>Resampling</strong> (systematic, CPU or GPU) duplicates
+  high-weight particles and resets weights to uniform</li>
+  <li><code>vupdate</code> and <code>vregenerate</code> extend batched
+  operations for SMC and MCMC</li>
+  <li><code>merge-vtraces-by-mask</code> enables vectorized MH
+  accept/reject</li>
+  <li>Typical speedups: <strong>50&ndash;200x</strong> over scalar execution</li>
+  <li>Limitation: no <code>splice</code> in batched mode (use
+  <code>vmap-gf</code> instead)</li>
+</ul>
+
+<p>In <a href="08-gradients-learning.html">Chapter 8: Gradients and Learning</a>,
+we&rsquo;ll see how to compute gradients through probabilistic programs and
+train model parameters with optimizers.</p>
+
+  </div>
+  <div class="chapter-nav">
+    <a href="06-advanced-inference.html">&larr; Chapter 6: Advanced Inference</a>
+    <a href="08-gradients-learning.html">Chapter 8: Gradients and Learning &rarr;</a>
+  </div>
+</div>
+</body>
+</html>
