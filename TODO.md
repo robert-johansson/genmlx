@@ -409,23 +409,24 @@ performance.*
 
 *The amortized inference module works but has significant limitations.*
 
-- [ ] **20.1** Vectorize `neural-importance-sampling`
-  - **File**: `inference/amortized.cljs:113-127`
-  - **Impact**: Currently sequential (`mapv` over samples). Misses the 60-120x speedups
-    from vectorized IS.
-  - **Fix**: Use `dyn/vgenerate` with neural proposal as constraint source
-
-- [ ] **20.2** Support non-Gaussian posteriors in amortized inference
+- [x] **20.1** Vectorize `neural-importance-sampling`
   - **File**: `inference/amortized.cljs`
-  - **Impact**: The encoder must output `[mu, log-sigma]` pairs -- only Gaussian posteriors
-    are supported. No mixture of Gaussians, normalizing flows, or discrete latents.
-  - **Scope**: Significant -- requires abstracting the reparameterization and log-q computation
+  - **Done**: `vectorized-neural-importance-sampling` runs guide N times, stacks choicemaps,
+    runs `dyn/vgenerate` ONCE for GPU-parallel model scoring. Returns VectorizedTrace
+    with [N]-shaped log-weights.
 
-- [ ] **20.3** Add minibatch training support
-  - **File**: `inference/amortized.cljs:71-92`
-  - **Impact**: `train-proposal!` cycles through individual data points one at a time.
-    No minibatch training.
-  - **Fix**: Accept batch size parameter, group dataset into minibatches
+- [x] **20.2** Support non-Gaussian posteriors in amortized inference
+  - **File**: `inference/amortized.cljs`
+  - **Done**: Factored posterior logic into "posterior family" specs with `:n-params`,
+    `:sample`, `:log-prob`. Built-in families: `gaussian-posterior` (default),
+    `log-normal-posterior` (for positive latents). `make-elbo-loss` accepts
+    `:posterior-family` option.
+
+- [x] **20.3** Add minibatch training support
+  - **File**: `inference/amortized.cljs`
+  - **Done**: `train-proposal` accepts `:batch-size` (default 1, backward compatible)
+    and `:shuffle` options. Batch mode averages loss over minibatch, tracks epochs,
+    reshuffles at epoch boundaries.
 
 - [x] **20.4** Add ADEV variance reduction (baseline subtraction)
   - **File**: `inference/adev.cljs`
@@ -839,9 +840,9 @@ MEDIUM (quality and completeness):
   18.5  CustomGradientGF gradient-fn wiring            ~20 lines      DONE
   14.5  Product distribution                           Small
   14.7  Trace serialization                         Medium
-  20.1  Vectorize neural-importance-sampling         Significant
-  20.2  Non-Gaussian posteriors in amortized         Significant
-  20.3  Minibatch training for amortized             Medium
+  20.1  Vectorize neural-importance-sampling         DONE
+  20.2  Non-Gaussian posteriors in amortized         DONE
+  20.3  Minibatch training for amortized             DONE
 
 LOW (cleanup — decision needed):
   25.3  Document/mitigate O(N²) GPU resampling      Documentation or code
@@ -890,10 +891,10 @@ RESEARCH (Lean 4 formalization):
 | 17. Missing Protocols | 6 | 6 | 0 |
 | 18. Distribution Quality | 5 | 4 | **1** |
 | 19. Code Quality | 9 | 8 | **1** |
-| 20. Amortized + GPU ADEV | 7 | 4 | **3** |
+| 20. Amortized + GPU ADEV | 7 | 7 | 0 |
 | 21. Testing Strategies | 21 | 13 | **8** |
 | 22. Practical Inference | 3 | 3 | 0 |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 4 | **3** |
 | 25. Edge-Case Robustness | 5 | 0 | **5** |
-| **Total** | **152** | **113** | **39** |
+| **Total** | **152** | **116** | **36** |
