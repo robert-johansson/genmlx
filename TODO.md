@@ -154,13 +154,13 @@ beta-uniform-mixture, wishart, inv-wishart, broadcasted-normal
 ## Phase 14: Gen.jl Parity (from survey)
 
 - [x] **14.1** HMC mass matrix support
-- [ ] **14.2** Enumerative / grid-based inference
+- [x] **14.2** Enumerative / grid-based inference
 - [x] **14.3** Residual resampling for SMC
 - [x] **14.4** Stratified resampling for SMC
 - [x] **14.5** Product distribution
-- [ ] **14.6** Kernel reversal declarations
+- [x] **14.6** Kernel reversal declarations
 - [x] **14.7** Trace serialization
-- [ ] **14.8** Directional statistics distributions
+- [x] **14.8** Directional statistics distributions
 
 ---
 
@@ -856,9 +856,6 @@ FUTURE (new features, lower priority):
   11.1  Malli schemas
   12.3-12.4, 12.6  Ecosystem features
   13.1-13.3  Documentation & packaging
-  14.2  Enumerative / grid-based inference
-  14.6  Kernel reversal declarations
-  14.8  Directional statistics distributions
 
 RESEARCH (Lean 4 formalization):
   24.5  Formalize lambda_MLX types in Lean 4       Research-level
