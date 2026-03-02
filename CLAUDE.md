@@ -217,7 +217,9 @@ After any change, verify:
 - Don't call `mx/eval!`, `mx/materialize!`, or `mx/item` on values inside
   model bodies during batched execution (breaks vectorization).
 - Don't use `mx/eval!` or `mx/tidy` directly outside `mlx.cljs` — use the
-  boundary helpers (`materialize!`, `tidy-materialize`, `tidy-run`).
+  boundary helpers (`materialize!`, `tidy-materialize`, `tidy-run`) — except
+  in inference hot loops (Layer 6) where tidy scope and per-iteration cleanup
+  are performance-critical.
 - Don't introduce mutable state outside the runtime's `volatile!` in `runtime.cljs`.
 - Don't import `genmlx.dynamic` from `genmlx.handler` (circular dependency).
 - Don't modify existing GFI protocol signatures — everything downstream depends

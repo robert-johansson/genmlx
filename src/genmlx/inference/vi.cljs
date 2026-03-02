@@ -91,12 +91,14 @@
                             (mapv #(mx/item (mx/index samples %)) (range n))
                             (mx/->clj samples))))})
         (let [[iter-key next-key] (rng/split-or-nils rk)
-              g (mx/tidy-materialize #(grad-neg-elbo vp))
+              g (let [g (mx/tidy (fn [] (grad-neg-elbo vp)))]
+                  (mx/eval! g) g)
               [vp' opt-state'] (learn/adam-step vp g opt-state
                                           {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
               elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
-                         (mx/realize (mx/tidy-materialize
-                                       #(elbo-estimate vp' log-density elbo-samples d vmapped-log-density iter-key))))]
+                         (let [e (mx/tidy (fn [] (elbo-estimate vp' log-density elbo-samples d vmapped-log-density iter-key)))]
+                           (mx/eval! e)
+                           (mx/item e)))]
           (when (and callback elbo-val)
             (callback {:iter i :elbo elbo-val :params (mx/->clj vp')}))
           (recur (inc i) vp' opt-state'
@@ -170,12 +172,14 @@
                                 (mapv (fn [idx] (mx/item (mx/index samples idx))) (range n))
                                 (mx/->clj samples))))})
             (let [[iter-key next-key] (rng/split-or-nils rk)
-                  g (mx/tidy-materialize #(grad-neg-elbo vp))
+                  g (let [g (mx/tidy (fn [] (grad-neg-elbo vp)))]
+                      (mx/eval! g) g)
                   [vp' opt-state'] (learn/adam-step vp g opt-state
                                               {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
                   elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
-                             (mx/realize (mx/tidy-materialize
-                                           #(mx/negative (neg-elbo-compiled vp')))))]
+                             (let [e (mx/tidy (fn [] (mx/negative (neg-elbo-compiled vp'))))]
+                               (mx/eval! e)
+                               (mx/item e)))]
               (when (and callback elbo-val)
                 (callback {:iter i :elbo elbo-val :params (mx/->clj vp')}))
               (recur (inc i) vp' opt-state'

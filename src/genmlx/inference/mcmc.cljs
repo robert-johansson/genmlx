@@ -229,10 +229,12 @@
             (if (>= i samples)
               (persistent! acc)
               (let [[k1 k2 rk'] (rng/split-n rk 3)
-                    p' (mx/tidy-materialize
-                          #(let [noise (rng/normal k1 [thin n-params])
-                                 uniforms (rng/uniform k2 [thin])]
-                             (thin-chain p noise uniforms)))]
+                    p' (mx/tidy
+                          (fn []
+                            (let [noise (rng/normal k1 [thin n-params])
+                                  uniforms (rng/uniform k2 [thin])
+                                  r (thin-chain p noise uniforms)]
+                              (mx/eval! r) r)))]
                 (when callback
                   (callback {:iter i :value (mx/->clj p')}))
                 (recur p' (conj! acc (mx/->clj p')) (inc i) rk'))))
@@ -257,9 +259,11 @@
                           (let [noise (mx/reshape
                                         (mx/take-idx noise-batch (mx/scalar j mx/int32) 0)
                                         [n-params])
-                                p' (mx/tidy-materialize
-                                      #(eager-mh-step p score-fn proposal-std
-                                                      noise (nth uniforms-js j)))]
+                                p' (mx/tidy
+                                      (fn []
+                                        (let [r (eager-mh-step p score-fn proposal-std
+                                                               noise (nth uniforms-js j))]
+                                          (mx/eval! r) r)))]
                             (when callback
                               (callback {:iter (+ i j) :value (mx/->clj p')}))
                             (recur p' (conj! acc (mx/->clj p')) (inc j)))))]
@@ -615,13 +619,14 @@
                  (if (>= i samples)
                    (persistent! acc)
                    (let [[step-key rk'] (rng/split rk)
-                         r (mx/tidy-run
+                         r (mx/tidy
                              (fn []
                                (let [[k1 k2] (rng/split step-key)
                                      noise (rng/normal k1 [thin-steps n-params])
-                                     uniforms (rng/uniform k2 [thin-steps])]
-                                 (thin-chain q sq gq noise uniforms)))
-                             (fn [r] [(aget r 0) (aget r 1) (aget r 2)]))
+                                     uniforms (rng/uniform k2 [thin-steps])
+                                     r (thin-chain q sq gq noise uniforms)]
+                                 (mx/eval! (aget r 0) (aget r 1) (aget r 2))
+                                 r)))
                          q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
                      (when callback
                        (callback {:iter i :value (mx/->clj q')}))
@@ -841,15 +846,16 @@
    Returns [q p] Clojure vector."
   ([grad-U q p eps half-eps] (leapfrog-step grad-U q p eps half-eps nil))
   ([grad-U q p eps half-eps metric]
-   (mx/tidy-run
-     (fn []
-       (let [g (grad-U q)
-             p (mx/subtract p (mx/multiply half-eps g))
-             q (mx/add q (mx/multiply eps (inv-mass-multiply p metric)))
-             g (grad-U q)
-             p (mx/subtract p (mx/multiply half-eps g))]
-         [q p]))
-     (fn [[q p]] [q p]))))
+   (let [r (mx/tidy
+             (fn []
+               (let [g (grad-U q)
+                     p (mx/subtract p (mx/multiply half-eps g))
+                     q (mx/add q (mx/multiply eps (inv-mass-multiply p metric)))
+                     g (grad-U q)
+                     p (mx/subtract p (mx/multiply half-eps g))]
+                 (mx/eval! q p)
+                 #js [q p])))]
+     [(aget r 0) (aget r 1)])))
 
 (defn- leapfrog-trajectory
   "Run L leapfrog steps (unfused, used by NUTS)."
@@ -896,11 +902,14 @@
         ;; Current Hamiltonian
         current-H (hamiltonian neg-U-compiled q p0 half metric)
         ;; Fused leapfrog — L+1 gradient evals, one lazy graph
-        [q' p'] (mx/tidy-run
-                  #(leapfrog-trajectory-fused
-                     grad-neg-U q p0 eps half-eps
-                     leapfrog-steps metric)
-                  (fn [[q p]] [q p]))
+        [q' p'] (let [r (mx/tidy
+                          (fn []
+                            (let [[q' p'] (leapfrog-trajectory-fused
+                                            grad-neg-U q p0 eps half-eps
+                                            leapfrog-steps metric)]
+                              (mx/eval! q' p')
+                              #js [q' p'])))]
+                  [(aget r 0) (aget r 1)])
         ;; Proposed Hamiltonian
         proposed-H (hamiltonian neg-U-compiled q' p' half metric)
         ;; Accept/reject
@@ -985,19 +994,21 @@
                  (if (>= i samples)
                    (persistent! acc)
                    (let [[step-key rk'] (rng/split rk)
-                         q' (if thin-chain
-                              ;; thin > 1: compiled chain of thin steps (with tidy)
-                              (mx/tidy-materialize
-                                #(let [[k1 k2] (rng/split step-key)
-                                       momentum (rng/normal k1 [thin n-params])
-                                       uniforms (rng/uniform k2 [thin])]
-                                   (thin-chain q momentum uniforms)))
-                              ;; thin = 1: eager step
-                              (let [{:keys [state]}
-                                    (hmc-step q neg-U-compiled grad-neg-U
-                                              eps half-eps half q-shape
-                                              leapfrog-steps metric step-key)]
-                                state))]
+                         q' (mx/tidy
+                              (fn []
+                                (let [r (if thin-chain
+                                          ;; thin > 1: compiled chain of thin steps
+                                          (let [[k1 k2] (rng/split step-key)
+                                                momentum (rng/normal k1 [thin n-params])
+                                                uniforms (rng/uniform k2 [thin])]
+                                            (thin-chain q momentum uniforms))
+                                          ;; thin = 1: eager step
+                                          (let [{:keys [state]}
+                                                (hmc-step q neg-U-compiled grad-neg-U
+                                                          eps half-eps half q-shape
+                                                          leapfrog-steps metric step-key)]
+                                            state))]
+                                  (mx/eval! r) r)))]
                      (when callback
                        (callback {:iter i :value (mx/->clj q')}))
                      (recur q' (conj! acc (mx/->clj q')) (inc i) rk'))))]
@@ -1727,7 +1738,7 @@
               :score-history (persistent! history)})
            ;; Gradient step for all N restarts simultaneously
            ;; Use mx/tidy to free intermediate arrays each iteration
-           (let [r (mx/tidy-run
+           (let [r (mx/tidy
                      (fn []
                        (let [grad (grad-fn params)
                              neg-grad (mx/negative grad)
@@ -1747,11 +1758,10 @@
                                            upd (mx/divide m-hat (mx/add (mx/sqrt v-hat) eps-s))
                                            new-p (mx/subtract params (mx/multiply lr-s upd))]
                                        [new-p {:m m :v v :t t}]))]
-                         {:params new-params :opt-st new-opt-st :best-score best-score}))
-                     (fn [{:keys [params opt-st]}]
-                       (if opt-st
-                         [params (:m opt-st) (:v opt-st)]
-                         [params])))
+                             (if new-opt-st
+                               (mx/eval! new-params (:m new-opt-st) (:v new-opt-st))
+                               (mx/eval! new-params))
+                             {:params new-params :opt-st new-opt-st :best-score best-score})))
                  new-params (:params r)
                  new-opt-st (:opt-st r)
                  best-score (:best-score r)]
