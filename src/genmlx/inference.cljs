@@ -9,7 +9,8 @@
             [genmlx.inference.kernel :as kern]
             [genmlx.inference.diagnostics :as diag]
             [genmlx.inference.adev :as adev-ns]
-            [genmlx.inference.amortized :as amortized-ns]))
+            [genmlx.inference.amortized :as amortized-ns]
+            [genmlx.inference.enumerate :as enum]))
 
 ;; ---------------------------------------------------------------------------
 ;; Importance sampling
@@ -79,6 +80,13 @@
 (def mix-kernels kern/mix-kernels)
 (def run-kernel kern/run-kernel)
 
+;; Kernel reversal
+(def with-reversal kern/with-reversal)
+(def symmetric-kernel kern/symmetric-kernel)
+(def reversal kern/reversal)
+(def symmetric? kern/symmetric?)
+(def reversed kern/reversed)
+
 ;; ---------------------------------------------------------------------------
 ;; Diagnostics
 ;; ---------------------------------------------------------------------------
@@ -107,3 +115,11 @@
 (def make-elbo-loss amortized-ns/make-elbo-loss)
 (def train-proposal amortized-ns/train-proposal)
 (def neural-importance-sampling amortized-ns/neural-importance-sampling)
+
+;; ---------------------------------------------------------------------------
+;; Enumerative inference
+;; ---------------------------------------------------------------------------
+
+(def enumerate-joint enum/enumerate-joint)
+(def enumerate-marginals enum/enumerate-marginals)
+(def enumerate-marginal-likelihood enum/enumerate-marginal-likelihood)

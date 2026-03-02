@@ -1178,3 +1178,151 @@
 ;; ---------------------------------------------------------------------------
 
 (def product dc/product)
+
+;; ---------------------------------------------------------------------------
+;; Log Bessel I₀ — Abramowitz & Stegun polynomial approximation
+;; ---------------------------------------------------------------------------
+
+(defn- log-bessel-i0
+  "Log of modified Bessel function I₀(κ). Operates on JS numbers.
+   Polynomial approximation from Abramowitz & Stegun §9.8."
+  [kappa]
+  (if (<= kappa 3.75)
+    ;; Polynomial in t = (κ/3.75)²
+    (let [t (let [r (/ kappa 3.75)] (* r r))]
+      (js/Math.log
+        (+ 1.0
+           (* t (+ 3.5156229
+                   (* t (+ 3.0899424
+                           (* t (+ 1.2067492
+                                   (* t (+ 0.2659732
+                                           (* t (+ 0.0360768
+                                                   (* t 0.0045813))))))))))))))
+    ;; Asymptotic: log(I₀(κ)) ≈ κ - 0.5*log(2πκ) + log(polynomial)
+    (let [t (/ 3.75 kappa)]
+      (+ kappa
+         (* -0.5 (js/Math.log (* 2.0 js/Math.PI kappa)))
+         (js/Math.log
+           (+ 0.39894228
+              (* t (+ 0.01328592
+                      (* t (+ 0.00225319
+                              (* t (+ -0.00157565
+                                      (* t (+ 0.00916281
+                                              (* t (+ -0.02057706
+                                                      (* t (+ 0.02635537
+                                                              (* t (+ -0.01647633
+                                                                      (* t 0.00392377)))))))))))))))))))))
+
+;; ---------------------------------------------------------------------------
+;; Von Mises — circular distribution
+;; ---------------------------------------------------------------------------
+
+(defn- wrap-angle
+  "Wrap value to [-π, π)."
+  [x]
+  (mx/subtract x
+    (mx/multiply (mx/scalar (* 2.0 js/Math.PI))
+                 (mx/floor (mx/divide (mx/add x MLX-PI)
+                                      (mx/scalar (* 2.0 js/Math.PI)))))))
+
+(defdist von-mises
+  "Von Mises distribution on [-π, π) with mean direction mu and concentration kappa."
+  [mu kappa]
+  (sample [key]
+    ;; Best's rejection algorithm
+    (let [k-val (mx/realize kappa)
+          tau (* 2.0 (js/Math.atan2 1.0 (js/Math.sqrt (+ (* 4.0 k-val k-val) 1.0))))
+          ;; tau is a modified parameter; we use the standard algorithm:
+          ;; τ = 1 + sqrt(1 + 4κ²), ρ = (τ - sqrt(2τ))/(2κ), r = (1 + ρ²)/(2ρ)
+          tau2 (+ 1.0 (js/Math.sqrt (+ 1.0 (* 4.0 k-val k-val))))
+          rho (/ (- tau2 (js/Math.sqrt (* 2.0 tau2))) (* 2.0 k-val))
+          r (/ (+ 1.0 (* rho rho)) (* 2.0 rho))]
+      (loop [k key]
+        (let [[k1 k2 k3] (rng/split-n k 3)
+              u1 (mx/realize (rng/uniform k1 []))
+              z (js/Math.cos (* js/Math.PI u1))
+              f (/ (+ 1.0 (* r z)) (+ r z))
+              c (* k-val (- r f))
+              u2 (mx/realize (rng/uniform k2 []))]
+          (if (or (>= c (- (* 2.0 (js/Math.log u2)) c 1.0))
+                  (>= (js/Math.log c) (+ (js/Math.log u2) 1.0 (- c))))
+            ;; Accept: angle = sign(u3 - 0.5) * acos(f) + mu
+            (let [u3 (mx/realize (rng/uniform k3 []))
+                  theta (* (js/Math.sign (- u3 0.5)) (js/Math.acos f))]
+              (wrap-angle (mx/add (mx/scalar theta) mu)))
+            (recur k3))))))
+  (log-prob [v]
+    ;; log p(x) = κ cos(x - μ) - log(2π) - log(I₀(κ))
+    (let [k-val (mx/realize kappa)
+          log-norm (+ LOG-2PI (log-bessel-i0 k-val))]
+      (mx/subtract (mx/multiply kappa (mx/cos (mx/subtract v mu)))
+                   (mx/scalar log-norm)))))
+
+(defmethod dc/dist-sample-n* :von-mises [d key n]
+  (let [{:keys [mu kappa]} (:params d)
+        key (rng/ensure-key key)
+        keys (rng/split-n key n)]
+    (mx/stack (mapv #(dc/dist-sample d %) keys))))
+
+;; ---------------------------------------------------------------------------
+;; Wrapped Cauchy — closed-form circular distribution
+;; ---------------------------------------------------------------------------
+
+(defdist wrapped-cauchy
+  "Wrapped Cauchy distribution on [-π, π) with mean mu and concentration rho (0 < ρ < 1)."
+  [mu rho]
+  (sample [key]
+    ;; Inverse CDF: mu + 2*atan2((1-rho)*tan(π*(u-0.5)), (1+rho))
+    (let [u (mx/realize (rng/uniform key []))
+          r (mx/realize rho)
+          theta (+ (mx/realize mu)
+                   (* 2.0 (js/Math.atan2
+                            (* (- 1.0 r) (js/Math.tan (* js/Math.PI (- u 0.5))))
+                            (+ 1.0 r))))]
+      (wrap-angle (mx/scalar theta))))
+  (log-prob [v]
+    ;; log(1 - ρ²) - log(2π) - log(1 - 2ρ cos(x - μ) + ρ²)
+    (let [rho-sq (mx/square rho)]
+      (mx/subtract
+        (mx/subtract (mx/log (mx/subtract ONE rho-sq))
+                     (mx/scalar LOG-2PI))
+        (mx/log (mx/add (mx/subtract ONE
+                                     (mx/multiply (mx/multiply TWO rho)
+                                                  (mx/cos (mx/subtract v mu))))
+                        rho-sq))))))
+
+(defmethod dc/dist-sample-n* :wrapped-cauchy [d key n]
+  (let [key (rng/ensure-key key)
+        keys (rng/split-n key n)]
+    (mx/stack (mapv #(dc/dist-sample d %) keys))))
+
+;; ---------------------------------------------------------------------------
+;; Wrapped Normal — Gaussian wrapped onto circle
+;; ---------------------------------------------------------------------------
+
+(defdist wrapped-normal
+  "Wrapped normal distribution on [-π, π) with mean mu and std sigma."
+  [mu sigma]
+  (sample [key]
+    ;; Sample from N(μ, σ), wrap to [-π, π)
+    (let [x (mx/add mu (mx/multiply sigma (rng/normal key [])))]
+      (wrap-angle x)))
+  (log-prob [v]
+    ;; Series sum: log Σ_{k=-K}^{K} exp(normal-log-prob(x + 2πk; μ, σ))
+    ;; Truncated at K=3 terms
+    (let [two-pi (mx/scalar (* 2.0 js/Math.PI))
+          terms (mapv (fn [k]
+                        (let [shifted (mx/add v (mx/multiply two-pi (mx/scalar k)))
+                              z (mx/divide (mx/subtract shifted mu) sigma)]
+                          (mx/negative
+                            (mx/add LOG-2PI-HALF
+                                    (mx/log sigma)
+                                    (mx/multiply HALF (mx/square z))))))
+                      (range -3 4))]
+      ;; logsumexp over the 7 terms
+      (reduce mx/logaddexp terms))))
+
+(defmethod dc/dist-sample-n* :wrapped-normal [d key n]
+  (let [{:keys [mu sigma]} (:params d)
+        key (rng/ensure-key key)]
+    (wrap-angle (mx/add mu (mx/multiply sigma (rng/normal key [n]))))))

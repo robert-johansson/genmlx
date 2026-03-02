@@ -11,20 +11,55 @@
             [genmlx.inference.util :as u]))
 
 ;; ---------------------------------------------------------------------------
+;; Kernel reversal declarations
+;; ---------------------------------------------------------------------------
+
+(defn with-reversal
+  "Declare that reverse-kernel is the reversal of kernel.
+   Sets metadata on both directions so (reversal (reversal k)) = k."
+  [kernel reverse-kernel]
+  (let [fwd (vary-meta kernel assoc ::reversal reverse-kernel)
+        bwd (vary-meta reverse-kernel assoc ::reversal fwd)]
+    ;; Update fwd's reversal to point to the updated bwd
+    (vary-meta fwd assoc ::reversal bwd)))
+
+(defn symmetric-kernel
+  "Declare kernel as symmetric (its own reversal)."
+  [kernel]
+  (vary-meta kernel assoc ::symmetric true ::reversal kernel))
+
+(defn reversal
+  "Get the declared reversal of a kernel, or nil."
+  [kernel]
+  (::reversal (meta kernel)))
+
+(defn symmetric?
+  "Check if kernel is declared symmetric."
+  [kernel]
+  (boolean (::symmetric (meta kernel))))
+
+(defn reversed
+  "Return the reversal of a kernel. Throws if no reversal declared."
+  [kernel]
+  (or (reversal kernel)
+      (throw (ex-info "No reversal declared for kernel" {}))))
+
+;; ---------------------------------------------------------------------------
 ;; Core kernel constructors
 ;; ---------------------------------------------------------------------------
 
 (defn mh-kernel
   "Create an MH kernel that regenerates the given selection.
-   Returns (fn [trace key] -> trace)."
+   Returns (fn [trace key] -> trace). Symmetric by default."
   [selection]
-  (fn [trace key]
-    (let [gf (dyn/auto-key (:gen-fn trace))
-          result (p/regenerate gf trace selection)
-          w (mx/realize (:weight result))]
-      (if (u/accept-mh? w key)
-        (:trace result)
-        trace))))
+  (symmetric-kernel
+    (fn [trace key]
+      (let [gf (dyn/auto-key (:gen-fn trace))
+            result (p/regenerate gf trace selection)
+            w (mx/realize (:weight result))]
+        (if (u/accept-mh? w key)
+          (:trace result)
+          trace)))))
 
 (defn update-kernel
   "Create a kernel that updates with given constraints.
@@ -39,11 +74,9 @@
 ;; Kernel combinators
 ;; ---------------------------------------------------------------------------
 
-(defn chain
-  "Compose inference kernels sequentially.
-   (chain k1 k2 k3) applies k1, then k2, then k3.
-   Each kernel is (fn [trace key] -> trace)."
-  [& kernels]
+(defn- chain-raw
+  "Internal: compose kernels without reversal propagation."
+  [kernels]
   (fn [trace key]
     (let [keys (rng/split-n (rng/ensure-key key) (count kernels))]
       (reduce (fn [t [kernel ki]]
@@ -51,9 +84,22 @@
               trace
               (map vector kernels keys)))))
 
-(defn repeat-kernel
-  "Apply kernel n times sequentially.
-   Returns (fn [trace key] -> trace)."
+(defn chain
+  "Compose inference kernels sequentially.
+   (chain k1 k2 k3) applies k1, then k2, then k3.
+   Each kernel is (fn [trace key] -> trace).
+   If all input kernels have reversals, the composite does too:
+   reversal(chain(k1, k2, k3)) = chain(reversal(k3), reversal(k2), reversal(k1))."
+  [& kernels]
+  (let [result (chain-raw kernels)
+        reversals (mapv reversal kernels)]
+    (if (every? some? reversals)
+      (let [rev (chain-raw (reverse reversals))]
+        (with-reversal result rev))
+      result)))
+
+(defn- repeat-raw
+  "Internal: repeat kernel n times without reversal propagation."
   [n kernel]
   (fn [trace key]
     (let [keys (rng/split-n (rng/ensure-key key) n)]
@@ -61,19 +107,38 @@
               trace
               keys))))
 
-(defn seed
-  "Fix the PRNG key for a kernel. The same key is used every call.
-   Returns (fn [trace _key] -> trace)."
+(defn repeat-kernel
+  "Apply kernel n times sequentially.
+   Returns (fn [trace key] -> trace).
+   If kernel has a reversal, the composite does too."
+  [n kernel]
+  (let [result (repeat-raw n kernel)
+        rev (reversal kernel)]
+    (if rev
+      (with-reversal result (repeat-raw n rev))
+      result)))
+
+(defn- seed-raw
+  "Internal: seed kernel without reversal propagation."
   [kernel fixed-key]
   (fn [trace _key]
     (kernel trace fixed-key)))
 
-(defn cycle-kernels
-  "Cycle through kernels repeatedly for n total applications.
-   (cycle-kernels 10 [k1 k2 k3]) applies k1, k2, k3, k1, k2, k3, k1, k2, k3, k1."
-  [n kernels]
-  (let [kernel-vec (vec kernels)
-        k (count kernel-vec)]
+(defn seed
+  "Fix the PRNG key for a kernel. The same key is used every call.
+   Returns (fn [trace _key] -> trace).
+   If kernel has a reversal, the composite does too."
+  [kernel fixed-key]
+  (let [result (seed-raw kernel fixed-key)
+        rev (reversal kernel)]
+    (if rev
+      (with-reversal result (seed-raw rev fixed-key))
+      result)))
+
+(defn- cycle-raw
+  "Internal: cycle kernels without reversal propagation."
+  [n kernel-vec]
+  (let [k (count kernel-vec)]
     (fn [trace key]
       (let [keys (rng/split-n (rng/ensure-key key) n)]
         (reduce (fn [t [i ki]]
@@ -81,18 +146,40 @@
                 trace
                 (map-indexed vector keys))))))
 
-(defn mix-kernels
-  "Randomly select one kernel per step from a weighted collection.
-   kernel-weights: vector of [kernel weight] pairs.
-   Returns (fn [trace key] -> trace)."
-  [kernel-weights]
-  (let [kernels (mapv first kernel-weights)
-        weights (mx/array (mapv second kernel-weights))
-        log-weights (mx/log weights)]
+(defn cycle-kernels
+  "Cycle through kernels repeatedly for n total applications.
+   (cycle-kernels 10 [k1 k2 k3]) applies k1, k2, k3, k1, k2, k3, k1, k2, k3, k1.
+   If all kernels have reversals, the composite does too."
+  [n kernels]
+  (let [kernel-vec (vec kernels)
+        result (cycle-raw n kernel-vec)
+        reversals (mapv reversal kernel-vec)]
+    (if (every? some? reversals)
+      (with-reversal result (cycle-raw n (vec (reverse reversals))))
+      result)))
+
+(defn- mix-raw
+  "Internal: mix kernels without reversal propagation."
+  [kernels weights-arr]
+  (let [log-weights (mx/log weights-arr)]
     (fn [trace key]
       (let [[k1 k2] (rng/split (rng/ensure-key key))
             idx (mx/realize (rng/categorical k1 log-weights))]
         ((nth kernels (int idx)) trace k2)))))
+
+(defn mix-kernels
+  "Randomly select one kernel per step from a weighted collection.
+   kernel-weights: vector of [kernel weight] pairs.
+   Returns (fn [trace key] -> trace).
+   If all kernels have reversals, the composite does too."
+  [kernel-weights]
+  (let [kernels (mapv first kernel-weights)
+        weights-arr (mx/array (mapv second kernel-weights))
+        result (mix-raw kernels weights-arr)
+        reversals (mapv #(reversal (first %)) kernel-weights)]
+    (if (every? some? reversals)
+      (with-reversal result (mix-raw reversals weights-arr))
+      result)))
 
 ;; ---------------------------------------------------------------------------
 ;; Kernel execution
@@ -149,25 +236,26 @@
 ;; ---------------------------------------------------------------------------
 
 (defn random-walk
-  "Gaussian random-walk MH kernel.
+  "Gaussian random-walk MH kernel. Symmetric by default.
    Single address: (random-walk :x 0.5) — proposes x' = x + N(0, 0.5).
    Multi-address:  (random-walk {:x 0.5 :y 0.1}) — chains per-address walks."
   ([addr-or-map std]
    (if (map? addr-or-map)
      (apply chain (map (fn [[a s]] (random-walk a s)) addr-or-map))
-     (fn [trace key]
-       (let [gf (dyn/auto-key (:gen-fn trace))
-             [k1 k2] (rng/split (rng/ensure-key key))
-             cur-val (cm/get-choice (:choices trace) [addr-or-map])
-             noise   (mx/multiply (rng/normal k1 (mx/shape cur-val))
-                                  (mx/scalar std))
-             proposed (mx/add cur-val noise)
-             constraints (cm/choicemap addr-or-map proposed)
-             result (p/update gf trace constraints)
-             w (mx/realize (:weight result))]
-         (if (u/accept-mh? w k2)
-           (:trace result)
-           trace)))))
+     (symmetric-kernel
+       (fn [trace key]
+         (let [gf (dyn/auto-key (:gen-fn trace))
+               [k1 k2] (rng/split (rng/ensure-key key))
+               cur-val (cm/get-choice (:choices trace) [addr-or-map])
+               noise   (mx/multiply (rng/normal k1 (mx/shape cur-val))
+                                    (mx/scalar std))
+               proposed (mx/add cur-val noise)
+               constraints (cm/choicemap addr-or-map proposed)
+               result (p/update gf trace constraints)
+               w (mx/realize (:weight result))]
+           (if (u/accept-mh? w k2)
+             (:trace result)
+             trace))))))
   ([addr-map]
    (if (map? addr-map)
      (apply chain (map (fn [[a s]] (random-walk a s)) addr-map))
@@ -180,42 +268,49 @@
   [& addrs]
   (mh-kernel (apply sel/select addrs)))
 
+(defn- proposal-asymmetric-raw
+  "Internal: build asymmetric proposal kernel without reversal metadata."
+  [fwd-gf backward]
+  (fn [trace key]
+    (let [gf (dyn/auto-key (:gen-fn trace))
+          [_k1 _k2 k3] (rng/split-n (rng/ensure-key key) 3)
+          fwd-result    (p/propose fwd-gf [(:choices trace)])
+          fwd-choices   (:choices fwd-result)
+          fwd-score     (:weight fwd-result)
+          update-result (p/update gf trace fwd-choices)
+          trace'        (:trace update-result)
+          update-weight (:weight update-result)
+          bwd-result    (p/assess backward [(:choices trace')] (:discard update-result))
+          bwd-score     (:weight bwd-result)
+          _             (mx/materialize! update-weight fwd-score bwd-score)
+          log-alpha     (- (+ (mx/item update-weight) (mx/item bwd-score))
+                           (mx/item fwd-score))]
+      (if (u/accept-mh? log-alpha k3)
+        trace'
+        trace))))
+
 (defn proposal
   "MH kernel with a custom proposal generative function.
    The proposal-gf takes [current-trace-choices] as args and proposes new choices.
-   Symmetric:  (proposal my-gf)
-   Asymmetric: (proposal fwd-gf :backward bwd-gf)"
+   Symmetric:  (proposal my-gf) — marked symmetric
+   Asymmetric: (proposal fwd-gf :backward bwd-gf) — forward/backward reversal pair"
   [fwd-gf & {:keys [backward]}]
   (if backward
-    ;; Asymmetric: weight = update-weight + backward-score - forward-score
-    (fn [trace key]
-      (let [gf (dyn/auto-key (:gen-fn trace))
-            [_k1 _k2 k3] (rng/split-n (rng/ensure-key key) 3)
-            fwd-result    (p/propose fwd-gf [(:choices trace)])
-            fwd-choices   (:choices fwd-result)
-            fwd-score     (:weight fwd-result)
-            update-result (p/update gf trace fwd-choices)
-            trace'        (:trace update-result)
-            update-weight (:weight update-result)
-            bwd-result    (p/assess backward [(:choices trace')] (:discard update-result))
-            bwd-score     (:weight bwd-result)
-            _             (mx/materialize! update-weight fwd-score bwd-score)
-            log-alpha     (- (+ (mx/item update-weight) (mx/item bwd-score))
-                             (mx/item fwd-score))]
-        (if (u/accept-mh? log-alpha k3)
-          trace'
-          trace)))
+    (let [fwd-kern (proposal-asymmetric-raw fwd-gf backward)
+          bwd-kern (proposal-asymmetric-raw backward fwd-gf)]
+      (with-reversal fwd-kern bwd-kern))
     ;; Symmetric: weight = update-weight (forward and backward cancel)
-    (fn [trace key]
-      (let [gf (dyn/auto-key (:gen-fn trace))
-            [_k1 k2]     (rng/split (rng/ensure-key key))
-            fwd-result    (p/propose fwd-gf [(:choices trace)])
-            fwd-choices   (:choices fwd-result)
-            update-result (p/update gf trace fwd-choices)
-            w             (mx/realize (:weight update-result))]
-        (if (u/accept-mh? w k2)
-          (:trace update-result)
-          trace)))))
+    (symmetric-kernel
+      (fn [trace key]
+        (let [gf (dyn/auto-key (:gen-fn trace))
+              [_k1 k2]     (rng/split (rng/ensure-key key))
+              fwd-result    (p/propose fwd-gf [(:choices trace)])
+              fwd-choices   (:choices fwd-result)
+              update-result (p/update gf trace fwd-choices)
+              w             (mx/realize (:weight update-result))]
+          (if (u/accept-mh? w k2)
+            (:trace update-result)
+            trace))))))
 
 (defn gibbs
   "Convenience for the Gibbs cycling pattern.
