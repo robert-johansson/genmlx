@@ -673,36 +673,36 @@ and handler internals.*
   - **Done**: inference (24), vectorized (18), combinator extras (20), gradient/learning (20),
     choicemap (11), selection (11), GFI (17), distributions (17), combinators (15)
 
-- [ ] **21.14** Edit/diff property tests (~15 properties)
+- [x] **21.14** Edit/diff property tests (15 properties)
   - edit dispatch, diff computation, round-trips
   - Covers: `edit.cljs` (ConstraintEdit, SelectionEdit, ProposalEdit), `diff.cljs`
 
-- [ ] **21.15** SMC property tests (~12 properties)
-  - SMC init/step, residual/stratified resampling, rejuvenation
+- [x] **21.15** SMC property tests (12 properties)
+  - SMC init/step, residual/stratified resampling, rejuvenation, vectorized SMC
   - Covers: `inference/smc.cljs`
 
-- [ ] **21.16** MCMC property tests (~15 properties)
-  - mh-step, mh-custom, Gibbs, Elliptical Slice basic contracts
-  - Covers: `inference/mcmc.cljs` (~40% of inference LOC, 0% property coverage)
+- [x] **21.16** MCMC property tests (15 properties)
+  - mh-step, mh-custom, compiled MH, Gibbs, involutive MCMC
+  - Covers: `inference/mcmc.cljs`
 
-- [ ] **21.17** VI property tests (~12 properties)
-  - ADVI, ELBO finite, programmable VI
-  - Covers: `inference/vi.cljs` (13 public functions, 0% coverage)
+- [x] **21.17** VI property tests (12 properties)
+  - ADVI, compiled VI, ELBO/IWELBO/PWake objectives, programmable VI, REINFORCE
+  - Covers: `inference/vi.cljs`
 
-- [ ] **21.18** SMCP3 property tests (~10 properties)
-  - init/step/pipeline, backward proposals
+- [x] **21.18** SMCP3 property tests (10 properties)
+  - init with/without proposal, step, full pipeline
   - Covers: `inference/smcp3.cljs`
 
-- [ ] **21.19** Gradient MCMC property tests (~10 properties)
-  - MALA/HMC/NUTS produce finite scores, correct shapes
+- [x] **21.19** Gradient MCMC property tests (10 properties)
+  - MALA, vectorized MALA, HMC, NUTS: sample counts, finiteness, acceptance
   - Covers: gradient-based MCMC in `inference/mcmc.cljs`
 
-- [ ] **21.20** Handler property tests (~8 properties)
-  - Batched transitions, device management
+- [x] **21.20** Handler property tests (8 properties)
+  - simulate/generate/update/batched transitions, merge-sub-result
   - Covers: `handler.cljs` internals
 
-- [ ] **21.21** ADEV property tests (~6 properties)
-  - Reparam detection, surrogate losses
+- [x] **21.21** ADEV property tests (6 properties)
+  - Reparam detection, adev-execute, surrogate, vadev shapes, optimization
   - Covers: `inference/adev.cljs`
 
 *Notes from Phase 1: `mx/compile-fn` wrapping `mx/grad` produces zero gradients
@@ -842,7 +842,7 @@ MEDIUM (quality and completeness):
   25.2  Guard R-hat against W=0                        ~5 lines
   25.4  Eliminate remaining js/Math.random calls        ~50 lines
   25.5  Document SMCP3 nil-backward weight semantics   ~10 lines
-  21.14-21.21  Property test Phase 2 (~88 properties)  8 test files
+  21.14-21.21  Property test Phase 2 (88 properties)   8 test files     DONE
   18.5  CustomGradientGF gradient-fn wiring            ~20 lines
   14.5  Product distribution                           Small
   14.7  Trace serialization                         Medium

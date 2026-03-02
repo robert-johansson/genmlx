@@ -56,7 +56,8 @@
 
    Returns {:mu MLX-array :sigma MLX-array :elbo-history [numbers]
             :sample-fn (fn [n] -> samples)}"
-  [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback key]
+  [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback key
+           vectorized-log-density]
     :or {iterations 1000 learning-rate 0.01 elbo-samples 10
          beta1 0.9 beta2 0.999 epsilon 1e-8}}
    log-density init-params]
@@ -67,7 +68,7 @@
         init-log-sigma (mx/zeros [d])
         init-vp (mx/tidy-materialize
                   #(mx/concatenate [init-mu init-log-sigma]))
-        vmapped-log-density (mx/vmap log-density)
+        vmapped-log-density (or vectorized-log-density (mx/vmap log-density))
         neg-elbo-fn (fn [vp]
                       (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
         grad-neg-elbo (mx/compile-fn (mx/grad neg-elbo-fn))]
@@ -131,7 +132,8 @@
    Returns {:mu MLX-array :sigma MLX-array :elbo-history [numbers]
             :sample-fn (fn [n] -> samples)}
    Default device: :cpu (faster for scalar parameters)."
-  [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback key device]
+  [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback key device
+           vectorized-log-density]
     :or {iterations 1000 learning-rate 0.01 elbo-samples 10
          beta1 0.9 beta2 0.999 epsilon 1e-8 device :cpu}}
    log-density init-params]
@@ -144,7 +146,7 @@
             init-log-sigma (mx/zeros [d])
             init-vp (mx/tidy-materialize
                       #(mx/concatenate [init-mu init-log-sigma]))
-            vmapped-log-density (mx/vmap log-density)
+            vmapped-log-density (or vectorized-log-density (mx/vmap log-density))
             neg-elbo-fn (fn [vp]
                           (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
             grad-neg-elbo (mx/compile-fn (mx/grad neg-elbo-fn))
@@ -187,6 +189,13 @@
 ;; VI from model (convenience)
 ;; ---------------------------------------------------------------------------
 
+(defn- loop-over-rows
+  "Apply a scalar function f: [D] -> scalar to each row of [N,D] matrix.
+   Returns [N] stacked results. Compatible with mx/grad differentiation."
+  [f mat]
+  (let [n (first (mx/shape mat))]
+    (mx/stack (mapv (fn [i] (f (mx/index mat i))) (range n)))))
+
 (defn vi-from-model
   "Run VI on a generative model with observations.
 
@@ -199,21 +208,19 @@
   [opts model args observations addresses]
   (let [model (dyn/auto-key model)
         score-fn (u/make-score-fn model args observations addresses)
+        vec-score-fn (fn [samples] (loop-over-rows score-fn samples))
         {:keys [trace]} (p/generate model args observations)
         init-q (u/extract-params trace addresses)]
-    (vi opts score-fn init-q)))
+    (vi (assoc opts :vectorized-log-density vec-score-fn) score-fn init-q)))
 
 (defn compiled-vi-from-model
   "Run compiled VI on a generative model with observations.
-   Same as `vi-from-model` but uses compiled-vi and compiles the score function.
+   Falls back to non-compiled vi internally since mx/compile-fn cannot
+   handle GFI score functions (which use volatile! in the handler).
 
-   Returns same as compiled-vi."
+   Returns same as vi."
   [opts model args observations addresses]
-  (let [model (dyn/auto-key model)
-        score-fn (mx/compile-fn (u/make-score-fn model args observations addresses))
-        {:keys [trace]} (p/generate model args observations)
-        init-q (u/extract-params trace addresses)]
-    (compiled-vi opts score-fn init-q)))
+  (vi-from-model opts model args observations addresses))
 
 ;; ---------------------------------------------------------------------------
 ;; Programmable VI Objectives

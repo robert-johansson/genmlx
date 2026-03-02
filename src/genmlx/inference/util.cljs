@@ -42,24 +42,31 @@
                  indexed-addrs)]
         (:weight (p/generate model args cm))))))
 
-(defn make-vectorized-score-fn
-  "Build a vectorized score function for N parallel chains.
-   Returns a fn: (params [N,D]) -> [N]-shaped MLX log-weight array."
+(defn make-batched-score-fn
+  "Build a batched score function via shape-based batching.
+   Takes [N,D] params, passes [N]-shaped constraints to a single p/generate call,
+   and returns [N]-shaped weights. No mx/vmap — uses MLX broadcasting instead.
+   Not wrapped in compile-fn, so it can be nested inside mx/grad and mx/compile-fn."
   [model args observations addresses]
   (let [model (dyn/auto-key model)
         indexed-addrs (mapv vector (range) addresses)
         idx-scalars (mapv #(mx/scalar % mx/int32) (range (count addresses)))]
-    (mx/compile-fn
-      (fn [params]
-        (let [params-t (mx/transpose params)
-              cm (reduce
-                   (fn [cm [i addr]]
-                     ;; take-idx with axis=0 extracts row i of [D,N] → [N]-shaped
-                     (cm/set-choice cm [addr]
-                       (mx/take-idx params-t (nth idx-scalars i) 0)))
-                   observations
-                   indexed-addrs)]
-          (:weight (p/generate model args cm)))))))
+    (fn [params]
+      (let [params-t (mx/transpose params)
+            cm (reduce
+                 (fn [cm [i addr]]
+                   ;; take-idx with axis=0 extracts row i of [D,N] → [N]-shaped
+                   (cm/set-choice cm [addr]
+                     (mx/take-idx params-t (nth idx-scalars i) 0)))
+                 observations
+                 indexed-addrs)]
+        (:weight (p/generate model args cm))))))
+
+(defn make-vectorized-score-fn
+  "Build a compiled vectorized score function for N parallel chains.
+   Returns a compiled fn: (params [N,D]) -> [N]-shaped MLX log-weight array."
+  [model args observations addresses]
+  (mx/compile-fn (make-batched-score-fn model args observations addresses)))
 
 (defn make-compiled-score-fn
   "Build a compiled score function from a model + observations + addresses.
