@@ -25,19 +25,19 @@
 (defmulti dist-support   (fn [d] (:type d)))
 (defmulti dist-sample-n* (fn [d _key _n] (:type d)))
 
-;; Public API — single place for the seed! side effect
+;; Public API — delegates to multimethod after ensuring key.
+;; Note: rng/seed! is called once per GFI method (in dynamic.cljs),
+;; NOT per sample. This avoids forcing mx/eval! on every trace site.
 (defn dist-sample
-  "Sample from distribution d using PRNG key. Calls rng/seed! then dispatches."
+  "Sample from distribution d using PRNG key."
   [d key]
   (let [key (rng/ensure-key key)]
-    (rng/seed! key)
     (dist-sample* d key)))
 
 (defn dist-sample-n
-  "Batch-sample n values from distribution d using PRNG key. Calls rng/seed! then dispatches."
+  "Batch-sample n values from distribution d using PRNG key."
   [d key n]
   (let [key (rng/ensure-key key)]
-    (rng/seed! key)
     (dist-sample-n* d key n)))
 
 ;; Defaults: helpful errors
@@ -50,7 +50,6 @@
                   {:type (:type d)})))
 
 ;; Default dist-sample-n*: sequential fallback for distributions that can't batch.
-;; Calls dist-sample (public wrapper) which handles seed! per-call.
 (defmethod dist-sample-n* :default [d key n]
   (let [keys (rng/split-n (rng/ensure-key key) n)]
     (mx/stack (mapv #(dist-sample d %) keys))))
@@ -61,6 +60,7 @@
 
 (defn dist-simulate [dist]
   (let [key (or (:genmlx.dynamic/key (meta dist)) (rng/fresh-key))
+        _ (rng/seed! key)
         v  (dist-sample dist key)
         lp (dist-log-prob dist v)]
     (tr/make-trace {:gen-fn dist :args [] :choices (cm/->Value v)
@@ -81,6 +81,7 @@
 
 (defn dist-propose [dist]
   (let [key (or (:genmlx.dynamic/key (meta dist)) (rng/fresh-key))
+        _ (rng/seed! key)
         v  (dist-sample dist key)
         lp (dist-log-prob dist v)]
     {:choices (cm/->Value v) :weight lp :retval v}))

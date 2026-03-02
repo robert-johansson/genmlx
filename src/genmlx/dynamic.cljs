@@ -46,6 +46,7 @@
                 k k
                 :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
                                       {:gen-fn (.-source this)}))))
+          _ (rng/seed! key)
           result (rt/run-handler h/simulate-transition
                    {:choices cm/EMPTY :score SCORE-ZERO :key key
                     :executor execute-sub
@@ -68,6 +69,7 @@
                 k k
                 :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
                                       {:gen-fn (.-source this)}))))
+          _ (rng/seed! key)
           result (rt/run-handler h/generate-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
@@ -96,6 +98,7 @@
                 k k
                 :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
                                       {:gen-fn (.-source this)}))))
+          _ (rng/seed! key)
           result (rt/run-handler h/update-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
@@ -128,6 +131,7 @@
                 k k
                 :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
                                       {:gen-fn (.-source this)}))))
+          _ (rng/seed! key)
           old-score (:score trace)
           result (rt/run-handler h/regenerate-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
@@ -160,6 +164,7 @@
                 k k
                 :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
                                       {:gen-fn (.-source this)}))))
+          _ (rng/seed! key)
           result (rt/run-handler h/assess-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
@@ -178,6 +183,7 @@
                 k k
                 :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
                                       {:gen-fn (.-source this)}))))
+          _ (rng/seed! key)
           result (rt/run-handler h/simulate-transition
                    {:choices cm/EMPTY :score SCORE-ZERO :key key
                     :executor execute-sub
@@ -195,6 +201,7 @@
                 k k
                 :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
                                       {:gen-fn (.-source this)}))))
+          _ (rng/seed! key)
           result (rt/run-handler h/project-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
@@ -315,6 +322,7 @@
    gf: DynamicGF, args: model args, n: number of particles, key: PRNG key."
   [gf args n key]
   (let [key (rng/ensure-key key)
+        _ (rng/seed! key)
         result (rt/run-handler h/batched-simulate-transition
                  {:choices cm/EMPTY :score SCORE-ZERO
                   :key key :batch-size n :batched? true
@@ -332,6 +340,7 @@
    n: number of particles, key: PRNG key."
   [gf args constraints n key]
   (let [key (rng/ensure-key key)
+        _ (rng/seed! key)
         result (rt/run-handler h/batched-generate-transition
                  {:choices cm/EMPTY :score SCORE-ZERO
                   :weight SCORE-ZERO :key key
@@ -348,6 +357,7 @@
    Returns new VectorizedTrace with updated weights."
   [gf vtrace constraints key]
   (let [key (rng/ensure-key key)
+        _ (rng/seed! key)
         n (:n-particles vtrace)
         result (rt/run-handler h/batched-update-transition
                  {:choices cm/EMPTY :score SCORE-ZERO
@@ -371,6 +381,7 @@
    Returns new VectorizedTrace with resampled selected addresses."
   [gf vtrace selection key]
   (let [key (rng/ensure-key key)
+        _ (rng/seed! key)
         n (:n-particles vtrace)
         old-score (:score vtrace)
         result (rt/run-handler h/batched-regenerate-transition
