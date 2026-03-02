@@ -93,6 +93,8 @@
    (mh-custom-step current-trace model proposal-gf nil key))
   ([current-trace model proposal-gf backward-gf key]
    (let [model (dyn/auto-key model)
+         proposal-gf (dyn/auto-key proposal-gf)
+         backward-gf (when backward-gf (dyn/auto-key backward-gf))
          [k1 k2 k3] (rng/split-n (rng/ensure-key key) 3)
          ;; 1. Run propose on the proposal GF → forward choices + forward score
          proposal-args [(:choices current-trace)]
@@ -459,6 +461,7 @@
    key: PRNG key."
   [current-trace model proposal-gf involution key]
   (let [model (dyn/auto-key model)
+        proposal-gf (dyn/auto-key proposal-gf)
         [k1 k2] (rng/split (rng/ensure-key key))
         ;; 1. Propose auxiliary choices
         fwd-result (p/propose proposal-gf [(:choices current-trace)])
