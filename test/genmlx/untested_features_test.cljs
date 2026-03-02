@@ -46,11 +46,11 @@
 ;; Proposal: given current choices, propose mu ~ N(current_mu, 0.5)
 ;; Posterior mu should be near 5.0 (with 5 observations).
 (let [model (gen []
-              (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+              (let [mu (trace :mu (dist/gaussian 0 10))]
                 (mx/eval! mu)
                 (let [mu-val (mx/item mu)]
                   (doseq [i (range 5)]
-                    (dyn/trace (keyword (str "obs" i))
+                    (trace (keyword (str "obs" i))
                                (dist/gaussian mu-val 1)))
                   mu-val)))
       observations (reduce (fn [cm i]
@@ -60,7 +60,7 @@
       ;; Symmetric proposal: sample from N(current_mu, 0.5)
       proposal (gen [current-choices]
                  (let [current-mu (mx/realize (cm/get-choice current-choices [:mu]))]
-                   (dyn/trace :mu (dist/gaussian current-mu 0.5))))
+                   (trace :mu (dist/gaussian current-mu 0.5))))
       traces (mcmc/mh-custom
                {:samples 200 :burn 100 :proposal-gf proposal}
                model [] observations)
@@ -84,14 +84,14 @@
 ;; Involution: swap x with x+aux, swap aux with -aux (its own inverse)
 ;; This should mix and concentrate x near 2.
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))]
                 (mx/eval! x)
-                (dyn/trace :y (dist/gaussian (mx/item x) 0.1))
+                (trace :y (dist/gaussian (mx/item x) 0.1))
                 (mx/item x)))
       observations (cm/choicemap :y (mx/scalar 2.0))
       ;; Proposal: sample auxiliary noise
       proposal (gen [current-choices]
-                 (dyn/trace :aux (dist/gaussian 0 0.5)))
+                 (trace :aux (dist/gaussian 0 0.5)))
       ;; Involution: x' = x + aux, aux' = -aux (its own inverse)
       involution (fn [trace-cm aux-cm]
                    (let [x-val (mx/realize (cm/get-choice trace-cm [:x]))
@@ -121,7 +121,7 @@
 ;; Model: x ~ N(0, 1). Generate with x=3.
 ;; d(log p(x))/dx = d(-x²/2 - ...)/dx = -x = -3 at x=3
 (let [model (gen [mu]
-              (dyn/trace :x (dist/gaussian mu 1)))
+              (trace :x (dist/gaussian mu 1)))
       constraints (cm/choicemap :x (mx/scalar 3.0))
       {:keys [trace]} (p/generate model [0] constraints)
       result (grad/choice-gradients model trace [:x])]
@@ -134,7 +134,7 @@
 ;; score-gradient: params overwrite observations at the given addresses
 ;; d/d(obs) log N(obs; mu=0, 1) = -(obs - mu) = -obs at obs=5 → gradient = -5
 (let [model (gen [mu]
-              (dyn/trace :obs (dist/gaussian mu 1)))
+              (trace :obs (dist/gaussian mu 1)))
       result (grad/score-gradient model [0]
                (cm/choicemap :obs (mx/scalar 5.0))
                [:obs] (mx/array [5.0]))]
@@ -304,10 +304,10 @@
 ;; Guide: z ~ N(mu_q, 1) where mu_q is the trainable parameter.
 ;; Wake phase should push mu_q toward 3.
 (let [model (gen []
-              (let [z (dyn/trace :z (dist/gaussian 3 0.5))]
+              (let [z (trace :z (dist/gaussian 3 0.5))]
                 (mx/eval! z) (mx/item z)))
       guide (gen []
-              (let [z (dyn/trace :z (dist/gaussian 0 1))]
+              (let [z (trace :z (dist/gaussian 0 1))]
                 (mx/eval! z) (mx/item z)))
       init-params (mx/array [0.0])  ;; guide starts at mu=0
       result (learn/wake-sleep

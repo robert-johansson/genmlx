@@ -28,8 +28,8 @@
 ;; Simple Gaussian model: mu ~ N(0, σ), obs ~ N(mu, 1)
 (def model
   (gen [mu-prior-std]
-    (let [mu (dyn/trace :mu (dist/gaussian 0 mu-prior-std))]
-      (dyn/trace :obs (dist/gaussian mu 1))
+    (let [mu (trace :mu (dist/gaussian 0 mu-prior-std))]
+      (trace :obs (dist/gaussian mu 1))
       mu)))
 
 (def observations (cm/choicemap :obs (mx/scalar 3.0)))

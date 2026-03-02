@@ -71,7 +71,7 @@
 
 ;; GFI: use inside gen body
 (let [model (gen []
-              (dyn/trace :x (dist/broadcasted-normal (mx/array [0.0 0.0])
+              (trace :x (dist/broadcasted-normal (mx/array [0.0 0.0])
                                                       (mx/array [1.0 1.0]))))
       trace (p/simulate model [])]
   (assert-true "broadcasted-normal works in gen body" (some? trace)))
@@ -108,7 +108,7 @@
 
 ;; GFI
 (let [model (gen []
-              (dyn/trace :p (dist/beta-uniform-mixture 0.5 2.0 5.0)))
+              (trace :p (dist/beta-uniform-mixture 0.5 2.0 5.0)))
       trace (p/simulate model [])]
   (assert-true "beta-uniform-mixture works in gen body" (some? trace)))
 
@@ -157,7 +157,7 @@
 
 ;; GFI
 (let [model (gen []
-              (dyn/trace :x (dist/piecewise-uniform (mx/array [0.0 1.0 2.0])
+              (trace :x (dist/piecewise-uniform (mx/array [0.0 1.0 2.0])
                                                      (mx/array [1.0 1.0]))))
       trace (p/simulate model [])]
   (assert-true "piecewise-uniform works in gen body" (some? trace)))

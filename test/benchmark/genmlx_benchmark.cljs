@@ -64,10 +64,10 @@
 ;; Model A: Gaussian Conjugate (4 sites)
 (def model-a
   (gen []
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
-      (dyn/trace :y0 (dist/gaussian mu 1))
-      (dyn/trace :y1 (dist/gaussian mu 1))
-      (dyn/trace :y2 (dist/gaussian mu 1))
+    (let [mu (trace :mu (dist/gaussian 0 10))]
+      (trace :y0 (dist/gaussian mu 1))
+      (trace :y1 (dist/gaussian mu 1))
+      (trace :y2 (dist/gaussian mu 1))
       mu)))
 
 (def obs-a
@@ -76,10 +76,10 @@
 ;; Model B: Linear Regression (11 sites)
 (def model-b
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
       (doseq [[j x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" j))
+        (trace (keyword (str "y" j))
                    (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                           intercept) 1)))
       slope)))
@@ -103,13 +103,13 @@
 (def model-c
   (gen []
     (let [zs (mapv (fn [i]
-                     (dyn/trace (keyword (str "z" i)) (dist/gaussian 0 1)))
+                     (trace (keyword (str "z" i)) (dist/gaussian 0 1)))
                    (range 50))
           z-arr (mx/array (mapv mx/item zs))
           mean-z (mx/mean z-arr)
           var-z  (mx/mean (mx/square (mx/subtract z-arr mean-z)))]
-      (dyn/trace :obs_mean (dist/gaussian mean-z 0.1))
-      (dyn/trace :obs_var (dist/gaussian var-z 0.1))
+      (trace :obs_mean (dist/gaussian mean-z 0.1))
+      (trace :obs_var (dist/gaussian var-z 0.1))
       mean-z)))
 
 (def obs-c

@@ -113,7 +113,7 @@
          ;; 4. Accept/reject using update weight
          ;; log-alpha = update-weight + backward_score - forward_score
          update-weight (:weight update-result)
-         _ (mx/eval! update-weight forward-score backward-score)
+         _ (mx/materialize! update-weight forward-score backward-score)
          log-alpha (mx/realize (mx/add update-weight
                                  (mx/subtract backward-score forward-score)))]
      (if (u/accept-mh? log-alpha k3)
@@ -154,7 +154,7 @@
         proposal (mx/add params (mx/multiply proposal-std noise))
         score-current  (score-fn params)
         score-proposal (score-fn proposal)
-        _ (mx/eval! score-current score-proposal)
+        _ (mx/materialize! score-current score-proposal)
         log-alpha (- (mx/item score-proposal) (mx/item score-current))
         accept? (u/accept-mh? log-alpha accept-key)]
     {:state (if accept? proposal params) :accepted? accept?}))
@@ -180,7 +180,7 @@
                 (recur (mx/where accept? proposal p) (inc i))))))
         compiled (mx/compile-fn chain-fn)]
     ;; Trace call to cache the Metal program
-    (mx/eval! (compiled (mx/array (vec (repeat n-params 0.0)))
+    (mx/materialize! (compiled (mx/array (vec (repeat n-params 0.0)))
                         (rng/normal (rng/fresh-key) [k-steps n-params])
                         (rng/uniform (rng/fresh-key) [k-steps])))
     compiled))
@@ -192,7 +192,7 @@
   (let [proposal (mx/add params (mx/multiply proposal-std noise))
         score-current  (score-fn params)
         score-proposal (score-fn proposal)
-        _ (mx/eval! score-current score-proposal)
+        _ (mx/materialize! score-current score-proposal)
         log-alpha (- (mx/item score-proposal) (mx/item score-current))
         accept? (or (>= log-alpha 0)
                     (< (js/Math.log uniform-val) log-alpha))]
@@ -218,7 +218,7 @@
                       noise (rng/normal k1 [burn-block-size n-params])
                       uniforms (rng/uniform k2 [burn-block-size])
                       p' (burn-chain p noise uniforms)]
-                  (mx/eval! p')
+                  (mx/materialize! p')
                   (recur p' (inc b) rk')))))
           [init-params rk])
         ;; Phase 2: Collect samples
@@ -229,12 +229,10 @@
             (if (>= i samples)
               (persistent! acc)
               (let [[k1 k2 rk'] (rng/split-n rk 3)
-                    p' (mx/tidy
-                          (fn []
-                            (let [noise (rng/normal k1 [thin n-params])
-                                  uniforms (rng/uniform k2 [thin])
-                                  r (thin-chain p noise uniforms)]
-                              (mx/eval! r) r)))]
+                    p' (mx/tidy-materialize
+                          #(let [noise (rng/normal k1 [thin n-params])
+                                 uniforms (rng/uniform k2 [thin])]
+                             (thin-chain p noise uniforms)))]
                 (when callback
                   (callback {:iter i :value (mx/->clj p')}))
                 (recur p' (conj! acc (mx/->clj p')) (inc i) rk'))))
@@ -249,7 +247,7 @@
                       [k1 k2 rk'] (rng/split-n rk 3)
                       noise-batch (rng/normal k1 [batch n-params])
                       uniforms-batch (rng/uniform k2 [batch])
-                      _ (mx/eval! noise-batch uniforms-batch)
+                      _ (mx/materialize! noise-batch uniforms-batch)
                       uniforms-js (mx/->clj uniforms-batch)
                       ;; Inner loop: iterate through pre-generated randomness
                       [p' acc']
@@ -259,10 +257,9 @@
                           (let [noise (mx/reshape
                                         (mx/take-idx noise-batch (mx/scalar j mx/int32) 0)
                                         [n-params])
-                                p' (mx/tidy
-                                      (fn []
-                                        (eager-mh-step p score-fn proposal-std
-                                                       noise (nth uniforms-js j))))]
+                                p' (mx/tidy-materialize
+                                      #(eager-mh-step p score-fn proposal-std
+                                                      noise (nth uniforms-js j)))]
                             (when callback
                               (callback {:iter (+ i j) :value (mx/->clj p')}))
                             (recur p' (conj! acc (mx/->clj p')) (inc j)))))]
@@ -333,14 +330,14 @@
         proposal (mx/add params (mx/multiply proposal-std noise))
         score-current  (score-fn params)
         score-proposal (score-fn proposal)
-        _ (mx/eval! score-current score-proposal)
+        _ (mx/materialize! score-current score-proposal)
         log-alphas (mx/subtract score-proposal score-current)
         u (rng/uniform accept-key [n-chains])
         accept-mask (mx/less (mx/log u) log-alphas)
-        _ (mx/eval! accept-mask)
+        _ (mx/materialize! accept-mask)
         n-accepted (mx/item (mx/sum accept-mask))
         new-params (mx/where (mx/expand-dims accept-mask 1) proposal params)
-        _ (mx/eval! new-params)]
+        _ (mx/materialize! new-params)]
     {:state new-params :n-accepted (int n-accepted)}))
 
 (defn vectorized-compiled-mh
@@ -477,7 +474,7 @@
         bwd-score (:weight bwd-result)
         ;; 5. Accept/reject: log-alpha = update-weight + bwd_score - fwd_score + log|det J|
         update-weight (:weight update-result)
-        _ (mx/eval! update-weight fwd-score bwd-score log-abs-det-J)
+        _ (mx/materialize! update-weight fwd-score bwd-score log-abs-det-J)
         log-alpha (mx/realize (mx/add (mx/add update-weight
                                         (mx/subtract bwd-score fwd-score))
                                 log-abs-det-J))]
@@ -524,10 +521,10 @@
         [_ g] (val-grad-compiled q)
         noise (rng/normal noise-key q-shape)
         q' (mx/add q (mx/multiply half-eps2 g) (mx/multiply eps noise))
-        _ (mx/eval! q' g)
+        _ (mx/materialize! q' g)
         ;; Compute acceptance ratio with asymmetric proposal correction
         [score-q' g'] (val-grad-compiled q')
-        _ (mx/eval! score-q' g')
+        _ (mx/materialize! score-q' g')
         ;; Forward/backward proposal log-densities
         fwd-mean (mx/add q (mx/multiply half-eps2 g))
         bwd-mean (mx/add q' (mx/multiply half-eps2 g'))
@@ -535,7 +532,7 @@
         log-bwd (log-proposal-density q bwd-mean two-eps-sq)
         ;; Score at q — reuse val-grad
         [score-q _] (val-grad-compiled q)
-        _ (mx/eval! log-fwd log-bwd score-q)
+        _ (mx/materialize! log-fwd log-bwd score-q)
         log-accept (+ (- (mx/item score-q') (mx/item score-q))
                      (- (mx/item log-bwd) (mx/item log-fwd)))
         accept? (u/accept-mh? log-accept accept-key)
@@ -583,8 +580,8 @@
     ;; Warm-up trace call to cache the Metal program
     (let [init-q (mx/zeros [n-params])
           [init-s init-g] (val-grad-fn init-q)]
-      (mx/eval! init-s init-g)
-      (mx/eval! (compiled init-q init-s init-g
+      (mx/materialize! init-s init-g)
+      (mx/materialize! (compiled init-q init-s init-g
                           (rng/normal (rng/fresh-key) [k-steps n-params])
                           (rng/uniform (rng/fresh-key) [k-steps]))))
     compiled))
@@ -598,7 +595,7 @@
   (let [rk (rng/ensure-key key)
         ;; Compute initial score and gradient
         [init-score init-grad] (val-grad-compiled init-q)
-        _ (mx/eval! init-score init-grad)
+        _ (mx/materialize! init-score init-grad)
         ;; Phase 1: Burn-in via compiled chain blocks
         [params score grad rk]
         (if (and burn-chain (> burn 0))
@@ -610,7 +607,7 @@
                       uniforms (rng/uniform k2 [burn-block-size])
                       r (burn-chain q sq gq noise uniforms)
                       q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
-                  (mx/eval! q' sq' gq')
+                  (mx/materialize! q' sq' gq')
                   (recur q' sq' gq' (inc b) rk')))))
           [init-q init-score init-grad rk])
         ;; Phase 2: Collect samples (mx/tidy prevents Metal resource leak)
@@ -618,14 +615,13 @@
                  (if (>= i samples)
                    (persistent! acc)
                    (let [[step-key rk'] (rng/split rk)
-                         r (mx/tidy
+                         r (mx/tidy-run
                              (fn []
                                (let [[k1 k2] (rng/split step-key)
                                      noise (rng/normal k1 [thin-steps n-params])
-                                     uniforms (rng/uniform k2 [thin-steps])
-                                     r (thin-chain q sq gq noise uniforms)]
-                                 (mx/eval! (aget r 0) (aget r 1) (aget r 2))
-                                 r)))
+                                     uniforms (rng/uniform k2 [thin-steps])]
+                                 (thin-chain q sq gq noise uniforms)))
+                             (fn [r] [(aget r 0) (aget r 1) (aget r 2)]))
                          q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
                      (when callback
                        (callback {:iter i :value (mx/->clj q')}))
@@ -706,10 +702,10 @@
         ;; MALA proposal: q' = q + eps^2/2 * grad + eps * noise
         noise (rng/normal noise-key param-shape)
         q' (mx/add q (mx/multiply half-eps2 g) (mx/multiply eps noise))
-        _ (mx/eval! q' g)
+        _ (mx/materialize! q' g)
         ;; Gradient at proposal
         g' (grad-fn q')
-        _ (mx/eval! g')
+        _ (mx/materialize! g')
         ;; Forward/backward proposal log-densities [N]
         fwd-mean (mx/add q (mx/multiply half-eps2 g))
         bwd-mean (mx/add q' (mx/multiply half-eps2 g'))
@@ -718,17 +714,17 @@
         ;; Scores [N]
         score-q  (score-fn q)
         score-q' (score-fn q')
-        _ (mx/eval! log-fwd log-bwd score-q score-q')
+        _ (mx/materialize! log-fwd log-bwd score-q score-q')
         ;; Per-chain acceptance ratio [N]
         log-alphas (mx/add (mx/subtract score-q' score-q)
                            (mx/subtract log-bwd log-fwd))
         u (rng/uniform accept-key [n-chains])
         accept-mask (mx/less (mx/log u) log-alphas)
-        _ (mx/eval! accept-mask)
+        _ (mx/materialize! accept-mask)
         n-accepted (mx/item (mx/sum accept-mask))
         ;; Per-chain select: expand mask [N] -> [N,1] for broadcasting against [N,D]
         new-q (mx/where (mx/expand-dims accept-mask 1) q' q)
-        _ (mx/eval! new-q)]
+        _ (mx/materialize! new-q)]
     {:state new-q :n-accepted (int n-accepted)}))
 
 (defn vectorized-mala
@@ -831,7 +827,7 @@
   ([neg-U-fn q p half metric]
    (let [neg-U (neg-U-fn q)
          K (kinetic-energy p metric half)]
-     (mx/eval! neg-U K)
+     (mx/materialize! neg-U K)
      (+ (mx/item neg-U) (mx/item K)))))
 
 ;; ---------------------------------------------------------------------------
@@ -845,16 +841,15 @@
    Returns [q p] Clojure vector."
   ([grad-U q p eps half-eps] (leapfrog-step grad-U q p eps half-eps nil))
   ([grad-U q p eps half-eps metric]
-   (let [r (mx/tidy
-             (fn []
-               (let [g (grad-U q)
-                     p (mx/subtract p (mx/multiply half-eps g))
-                     q (mx/add q (mx/multiply eps (inv-mass-multiply p metric)))
-                     g (grad-U q)
-                     p (mx/subtract p (mx/multiply half-eps g))]
-                 (mx/eval! q p)
-                 #js [q p])))]
-     [(aget r 0) (aget r 1)])))
+   (mx/tidy-run
+     (fn []
+       (let [g (grad-U q)
+             p (mx/subtract p (mx/multiply half-eps g))
+             q (mx/add q (mx/multiply eps (inv-mass-multiply p metric)))
+             g (grad-U q)
+             p (mx/subtract p (mx/multiply half-eps g))]
+         [q p]))
+     (fn [[q p]] [q p]))))
 
 (defn- leapfrog-trajectory
   "Run L leapfrog steps (unfused, used by NUTS)."
@@ -896,18 +891,16 @@
   [q neg-U-compiled grad-neg-U eps half-eps half q-shape leapfrog-steps metric key]
   (let [[momentum-key accept-key] (rng/split-or-nils key)
         ;; Sample momentum from N(0, M)
-        p0 (doto (sample-momentum metric q-shape momentum-key) mx/eval!)
+        p0 (let [p (sample-momentum metric q-shape momentum-key)]
+             (mx/materialize! p) p)
         ;; Current Hamiltonian
         current-H (hamiltonian neg-U-compiled q p0 half metric)
         ;; Fused leapfrog — L+1 gradient evals, one lazy graph
-        [q' p'] (let [r (mx/tidy
-                          (fn []
-                            (let [[q' p'] (leapfrog-trajectory-fused
-                                            grad-neg-U q p0 eps half-eps
-                                            leapfrog-steps metric)]
-                              (mx/eval! q' p')
-                              #js [q' p'])))]
-                  [(aget r 0) (aget r 1)])
+        [q' p'] (mx/tidy-run
+                  #(leapfrog-trajectory-fused
+                     grad-neg-U q p0 eps half-eps
+                     leapfrog-steps metric)
+                  (fn [[q p]] [q p]))
         ;; Proposed Hamiltonian
         proposed-H (hamiltonian neg-U-compiled q' p' half metric)
         ;; Accept/reject
@@ -961,7 +954,7 @@
                 (recur (mx/where accept? q-lf q) (inc k))))))
         compiled (mx/compile-fn chain-fn)]
     ;; Warm-up trace call
-    (mx/eval! (compiled (mx/zeros [n-params])
+    (mx/materialize! (compiled (mx/zeros [n-params])
                         (rng/normal (rng/fresh-key) [k-steps n-params])
                         (rng/uniform (rng/fresh-key) [k-steps])))
     compiled))
@@ -984,7 +977,7 @@
                       momentum (rng/normal k1 [burn-block-size n-params])
                       uniforms (rng/uniform k2 [burn-block-size])
                       q' (burn-chain q momentum uniforms)]
-                  (mx/eval! q')
+                  (mx/materialize! q')
                   (recur q' (inc b) rk')))))
           [init-q rk])
         ;; Phase 2: Collect samples (mx/tidy prevents Metal resource leak)
@@ -992,21 +985,19 @@
                  (if (>= i samples)
                    (persistent! acc)
                    (let [[step-key rk'] (rng/split rk)
-                         q' (mx/tidy
-                              (fn []
-                                (if thin-chain
-                                  ;; thin > 1: compiled chain of thin steps
-                                  (let [[k1 k2] (rng/split step-key)
-                                        momentum (rng/normal k1 [thin n-params])
-                                        uniforms (rng/uniform k2 [thin])
-                                        r (thin-chain q momentum uniforms)]
-                                    (mx/eval! r) r)
-                                  ;; thin = 1: eager step
-                                  (let [{:keys [state]}
-                                        (hmc-step q neg-U-compiled grad-neg-U
-                                                  eps half-eps half q-shape
-                                                  leapfrog-steps metric step-key)]
-                                    state))))]
+                         q' (if thin-chain
+                              ;; thin > 1: compiled chain of thin steps (with tidy)
+                              (mx/tidy-materialize
+                                #(let [[k1 k2] (rng/split step-key)
+                                       momentum (rng/normal k1 [thin n-params])
+                                       uniforms (rng/uniform k2 [thin])]
+                                   (thin-chain q momentum uniforms)))
+                              ;; thin = 1: eager step
+                              (let [{:keys [state]}
+                                    (hmc-step q neg-U-compiled grad-neg-U
+                                              eps half-eps half q-shape
+                                              leapfrog-steps metric step-key)]
+                                state))]
                      (when callback
                        (callback {:iter i :value (mx/->clj q')}))
                      (recur q' (conj! acc (mx/->clj q')) (inc i) rk'))))]
@@ -1022,7 +1013,7 @@
   (let [half (mx/scalar 0.5)
         test-accept
         (fn [eps]
-          (let [p0 (doto (sample-momentum metric q-shape nil) mx/eval!)
+          (let [p0 (let [p (sample-momentum metric q-shape nil)] (mx/materialize! p) p)
                 current-H (hamiltonian neg-U-fn q p0 half metric)
                 [q' p'] (leapfrog-step grad-neg-U q p0
                                        (mx/scalar eps) (mx/scalar (* 0.5 eps)) metric)
@@ -1255,32 +1246,32 @@
         param-shape (mx/shape q)
         ;; Sample [N,D] momentum
         p0 (rng/normal momentum-key param-shape)
-        _ (mx/eval! p0)
+        _ (mx/materialize! p0)
         ;; Current Hamiltonian [N] = neg-U(q) + K(p)
         neg-U-q (neg-U-fn q)
         K-current (vectorized-kinetic-energy p0 half)
         current-H (mx/add neg-U-q K-current)
-        _ (mx/eval! current-H)
+        _ (mx/materialize! current-H)
         ;; Fused leapfrog — grad-fn uses sum trick for [N,D] gradients
         ;; Note: grad-fn computes d(score)/d(params), neg-U = -score,
         ;; so gradient of neg-U = -grad-fn. Leapfrog subtracts grad of neg-U,
         ;; which is subtracting (-grad-fn) = adding grad-fn. We negate here.
         neg-grad-fn (fn [q] (mx/negative (grad-fn q)))
         [q' p'] (vectorized-leapfrog-fused neg-grad-fn q p0 eps half-eps leapfrog-steps)
-        _ (mx/eval! q' p')
+        _ (mx/materialize! q' p')
         ;; Proposed Hamiltonian [N]
         neg-U-q' (neg-U-fn q')
         K-proposed (vectorized-kinetic-energy p' half)
         proposed-H (mx/add neg-U-q' K-proposed)
-        _ (mx/eval! proposed-H)
+        _ (mx/materialize! proposed-H)
         ;; Per-chain accept/reject [N]
         log-alphas (mx/subtract current-H proposed-H)
         u (rng/uniform accept-key [n-chains])
         accept-mask (mx/less (mx/log u) log-alphas)
-        _ (mx/eval! accept-mask)
+        _ (mx/materialize! accept-mask)
         n-accepted (mx/item (mx/sum accept-mask))
         new-q (mx/where (mx/expand-dims accept-mask 1) q' q)
-        _ (mx/eval! new-q)]
+        _ (mx/materialize! new-q)]
     {:state new-q :n-accepted (int n-accepted)}))
 
 (defn vectorized-hmc
@@ -1339,7 +1330,7 @@
   (let [diff (mx/subtract q-plus q-minus)
         check-fwd (mx/sum (mx/multiply diff p-plus))
         check-bwd (mx/sum (mx/multiply diff p-minus))]
-    (mx/eval! check-fwd check-bwd)
+    (mx/materialize! check-fwd check-bwd)
     (and (>= (mx/item check-fwd) 0)
          (>= (mx/item check-bwd) 0))))
 
@@ -1439,7 +1430,7 @@
                                       :half half-mx :metric m}
                            warmup-key (rng/fresh-key)
                            [momentum-key slice-key dir-key tree-key] (rng/split-n warmup-key 4)
-                           p0 (doto (sample-momentum m q-shape momentum-key) mx/eval!)
+                           p0 (let [p (sample-momentum m q-shape momentum-key)] (mx/materialize! p) p)
                            current-H (hamiltonian neg-ld-compiled q p0 half-mx m)
                            log-u (+ (js/Math.log (mx/realize (rng/uniform slice-key []))) (- current-H))]
                        (loop [j 0
@@ -1503,7 +1494,7 @@
         (let [step-key (rng/ensure-key step-key)
               [momentum-key slice-key dir-key tree-key]
               (rng/split-n step-key 4)
-              p0 (doto (sample-momentum final-metric q-shape momentum-key) mx/eval!)
+              p0 (let [p (sample-momentum final-metric q-shape momentum-key)] (mx/materialize! p) p)
               current-H (hamiltonian neg-ld-compiled q p0 half final-metric)
               log-u (+ (js/Math.log (mx/realize (rng/uniform slice-key [])))
                        (- current-H))
@@ -1565,7 +1556,7 @@
         [k1 k2 k3] (rng/split-n (rng/ensure-key key) 3)
         ;; 1. nu ~ N(0, σ²I)
         nu (mx/multiply (mx/scalar prior-std) (rng/normal k1 [d]))
-        _ (mx/eval! nu)
+        _ (mx/materialize! nu)
         ;; 2. Current log-likelihood = total score - prior log-prob
         current-score (mx/realize (:score current-trace))
         current-ll (- current-score (log-prior-gaussian f prior-std d))
@@ -1584,7 +1575,7 @@
       (let [;; Propose: f' = f*cos(θ) + nu*sin(θ)
             f' (mx/add (mx/multiply f (mx/scalar (js/Math.cos theta)))
                        (mx/multiply nu (mx/scalar (js/Math.sin theta))))
-            _ (mx/eval! f')
+            _ (mx/materialize! f')
             ;; Update trace at selected addresses
             constraints (reduce (fn [cm [i addr]]
                                   (cm/set-choice cm [addr] (mx/index f' i)))
@@ -1662,7 +1653,7 @@
               :score-history (persistent! history)})
            (let [[score grad] (val-grad params)
                  neg-grad (mx/negative grad)
-                 _ (mx/eval! score neg-grad)
+                 _ (mx/materialize! score neg-grad)
                  score-val (mx/item score)
                  [new-params new-opt-st]
                  (case optimizer
@@ -1718,7 +1709,7 @@
          (if (>= i iterations)
            ;; Find best restart
            (let [final-scores (score-fn params)
-                 _ (mx/eval! final-scores params)
+                 _ (mx/materialize! final-scores params)
                  best-idx (mx/item (mx/argmax final-scores))
                  best-params (mx/take-idx params (mx/array best-idx mx/int32))
                  best-score (mx/item (mx/index final-scores best-idx))
@@ -1736,18 +1727,16 @@
               :score-history (persistent! history)})
            ;; Gradient step for all N restarts simultaneously
            ;; Use mx/tidy to free intermediate arrays each iteration
-           (let [r (mx/tidy
+           (let [r (mx/tidy-run
                      (fn []
                        (let [grad (grad-fn params)
                              neg-grad (mx/negative grad)
                              scores (score-fn params)
-                             _ (mx/eval! scores neg-grad)
-                             best-score (mx/item (mx/amax scores))
+                             best-score (do (mx/materialize! scores neg-grad)
+                                            (mx/item (mx/amax scores)))
                              [new-params new-opt-st]
                              (case optimizer
-                               :sgd (let [new-p (mx/subtract params (mx/multiply lr-s neg-grad))]
-                                      (mx/eval! new-p)
-                                      [new-p nil])
+                               :sgd [(mx/subtract params (mx/multiply lr-s neg-grad)) nil]
                                :adam (let [t (inc (:t opt-st))
                                            m (mx/add (mx/multiply b1-s (:m opt-st))
                                                      (mx/multiply b1c-s neg-grad))
@@ -1757,12 +1746,15 @@
                                            v-hat (mx/divide v (mx/scalar (- 1.0 (js/Math.pow 0.999 t))))
                                            upd (mx/divide m-hat (mx/add (mx/sqrt v-hat) eps-s))
                                            new-p (mx/subtract params (mx/multiply lr-s upd))]
-                                       (mx/eval! new-p m v)
                                        [new-p {:m m :v v :t t}]))]
-                         #js [new-params new-opt-st best-score])))
-                 new-params (aget r 0)
-                 new-opt-st (aget r 1)
-                 best-score (aget r 2)]
+                         {:params new-params :opt-st new-opt-st :best-score best-score}))
+                     (fn [{:keys [params opt-st]}]
+                       (if opt-st
+                         [params (:m opt-st) (:v opt-st)]
+                         [params])))
+                 new-params (:params r)
+                 new-opt-st (:opt-st r)
+                 best-score (:best-score r)]
              (when callback
                (callback {:iter i :best-score best-score}))
              (recur (inc i) new-params new-opt-st

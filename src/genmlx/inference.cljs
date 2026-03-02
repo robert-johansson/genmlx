@@ -105,5 +105,5 @@
 ;; ---------------------------------------------------------------------------
 
 (def make-elbo-loss amortized-ns/make-elbo-loss)
-(def train-proposal! amortized-ns/train-proposal!)
+(def train-proposal amortized-ns/train-proposal)
 (def neural-importance-sampling amortized-ns/neural-importance-sampling)

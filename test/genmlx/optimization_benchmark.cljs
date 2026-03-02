@@ -38,8 +38,8 @@
 ;; 2-site: 2 latents, 0 observations (simplest possible)
 (def model-2
   (gen []
-    (let [a (dyn/trace :a (dist/gaussian 0 10))
-          b (dyn/trace :b (dist/gaussian a 1))]
+    (let [a (trace :a (dist/gaussian 0 10))
+          b (trace :b (dist/gaussian a 1))]
       b)))
 
 (def obs-2 (cm/choicemap :b (mx/scalar 3.0)))
@@ -47,10 +47,10 @@
 ;; 7-site: 2 latents, 5 observations (linear regression)
 (def model-7
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
       (doseq [[j x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" j))
+        (trace (keyword (str "y" j))
                    (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                           intercept) 1)))
       slope)))
@@ -65,10 +65,10 @@
 ;; 20-site: 2 latents, 18 observations
 (def model-20
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
       (doseq [[j x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" j))
+        (trace (keyword (str "y" j))
                    (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                           intercept) 1)))
       slope)))
@@ -299,10 +299,10 @@
 (println "\n-- vectorized IS (N=100, 5-site model) --")
 
 (let [is-model (gen []
-                 (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
-                   (dyn/trace :obs1 (dist/gaussian mu 1))
-                   (dyn/trace :obs2 (dist/gaussian mu 1))
-                   (dyn/trace :obs3 (dist/gaussian mu 1))
+                 (let [mu (trace :mu (dist/gaussian 0 10))]
+                   (trace :obs1 (dist/gaussian mu 1))
+                   (trace :obs2 (dist/gaussian mu 1))
+                   (trace :obs3 (dist/gaussian mu 1))
                    mu))
       is-obs (cm/choicemap :obs1 (mx/scalar 3.0) :obs2 (mx/scalar 3.1) :obs3 (mx/scalar 2.9))
 

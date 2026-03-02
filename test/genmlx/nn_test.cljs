@@ -165,8 +165,8 @@
 (let [net (nn/linear 3 1)
       net-gf (nn/nn->gen-fn net)
       model (gen [x]
-              (let [mu (dyn/splice :net net-gf x)]
-                (dyn/trace :y (dist/gaussian mu 1))
+              (let [mu (splice :net net-gf x)]
+                (trace :y (dist/gaussian mu 1))
                 mu))
       x (rng/normal (rng/fresh-key) [3])
       ;; Compute expected output

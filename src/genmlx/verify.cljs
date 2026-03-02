@@ -83,7 +83,7 @@
                                 :retval (:retval result)
                                 :score (:score result)})
           ;; Check score finiteness
-          _ (mx/eval! (:score result))
+          _ (mx/materialize! (:score result))
           score-val (mx/item (:score result))
           violations (if (js/Number.isFinite score-val)
                        violations

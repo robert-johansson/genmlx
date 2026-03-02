@@ -39,8 +39,8 @@
 ;; Model A: simple Gaussian (1 latent, 1 observation)
 (def simple-model
   (gen []
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
-      (dyn/trace :obs (dist/gaussian mu 1))
+    (let [mu (trace :mu (dist/gaussian 0 10))]
+      (trace :obs (dist/gaussian mu 1))
       mu)))
 
 (def simple-obs (cm/choicemap :obs (mx/scalar 3.0)))
@@ -48,10 +48,10 @@
 ;; Model B: linear regression (2 latents, 5 observations)
 (def linreg-model
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
       (doseq [[j x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" j))
+        (trace (keyword (str "y" j))
                    (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                           intercept) 1)))
       slope)))

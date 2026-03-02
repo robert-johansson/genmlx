@@ -69,7 +69,7 @@
 ;; Training loop
 ;; ---------------------------------------------------------------------------
 
-(defn train-proposal!
+(defn train-proposal
   "Train a neural proposal encoder via reparameterized ELBO.
 
    encoder: nn.Module

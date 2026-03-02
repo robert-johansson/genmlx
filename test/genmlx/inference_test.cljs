@@ -27,11 +27,11 @@
 ;; Simple model: coin flip
 (println "-- Importance sampling (coin flip) --")
 (let [model (gen []
-              (let [p (dyn/trace :p (dist/uniform 0.01 0.99))]
+              (let [p (trace :p (dist/uniform 0.01 0.99))]
                 (mx/eval! p)
                 (let [p-val (mx/item p)]
                   (doseq [i (range 10)]
-                    (dyn/trace (keyword (str "flip" i))
+                    (trace (keyword (str "flip" i))
                                (dist/bernoulli p-val)))
                   p-val)))
       ;; All heads (10/10) -> posterior should concentrate near p=1
@@ -54,11 +54,11 @@
 ;; MH on simple model
 (println "\n-- MH (Gaussian posterior) --")
 (let [model (gen []
-              (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+              (let [mu (trace :mu (dist/gaussian 0 10))]
                 (mx/eval! mu)
                 (let [mu-val (mx/item mu)]
                   (doseq [i (range 5)]
-                    (dyn/trace (keyword (str "obs" i))
+                    (trace (keyword (str "obs" i))
                                (dist/gaussian mu-val 1)))
                   mu-val)))
       ;; All observations near 3.0

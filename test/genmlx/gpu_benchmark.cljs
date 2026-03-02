@@ -231,7 +231,7 @@
 (doseq [d [10 20]]
   (let [model (gen [d]
                 (let [params (mapv (fn [i]
-                                    (dyn/trace (keyword (str "x" i))
+                                    (trace (keyword (str "x" i))
                                                (dist/gaussian 0 1)))
                                   (range d))]
                   params))

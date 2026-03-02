@@ -11,11 +11,10 @@ in `run-handler` (Layer 0 execution runtime), exactly like re-frame's app-db ato
 
 **Constraint:** At least as fast as current implementation. No API breakage.
 
-**Current state (after Phase 1):** 3 dynamic vars eliminated (`*handler*`,
-`*state*`, `*param-store*`), handler.cljs now purely functional, runtime.cljs
-is the single mutable boundary. Remaining: 2 dynamic vars (`*prng-key*`,
-`*batched-exec?*`), 1 atom, ~100 `mx/eval!` calls in Layers 2-8, ~18
-`mx/tidy` calls, ~10 `js/Math.random` calls, 1 top-level side effect.
+**Current state (after Phase 3):** All dynamic vars eliminated. All `mx/eval!`
+and `mx/tidy` calls confined to Layer 0 boundary helpers. Zero atoms, zero
+`js/console.warn`, zero top-level side effects in Layers 1-8. The only mutable
+boundary is `volatile!` in `runtime.cljs`.
 
 ---
 
@@ -53,7 +52,8 @@ functions. No code walking. No restrictions on HOFs, `map`, `for`, etc.
       propagate param-store to sub-gfs via `vary-meta`
 - [x] Deprecated `dyn/trace`, `dyn/splice` wrappers removed
 - [x] `dyn/param` simplified to direct-mode only (outside gen bodies)
-- [ ] `warn-unused-constraints` still uses `js/console.warn` (deferred to Phase 6)
+- [x] `warn-unused-constraints` replaced with pure `find-unused-constraints`
+      (returns data in `:unused-constraints` key — Phase 3)
 
 ### 1.4 Delete old handler dispatch machinery (handler.cljs) ✅
 
@@ -183,148 +183,137 @@ are now threaded via metadata on gen-fns (same pattern as `param-store`).
 
 ---
 
-## Phase 3: Push `mx/eval!` down to Layer 0 boundary
+## Phase 3: Push `mx/eval!` and `mx/tidy` down to Layer 0 ✅ COMPLETE
 
-~100 `mx/eval!` calls scattered across Layers 2-8. Move them all into
-Layer 0 boundary helpers.
+~73 `mx/eval!` calls and ~14 `mx/tidy` calls pushed down into Layer 0
+boundary helpers. Also eliminated Wishart atom, `*batched-exec?*` dynamic
+var, `js/console.warn` calls, and top-level side effect.
 
-### 3.1 Create Layer 0 boundary helpers in `mlx.cljs`
+### 3.1 Create Layer 0 boundary helpers in `mlx.cljs` ✅
 
-- [ ] **`materialize!`** — `(defn materialize! [& arrays] (apply eval! arrays))`
-      For explicit graph materialization at loop boundaries
-- [ ] **`tidy-step`** — move from `inference/util.cljs` to `mlx.cljs`.
-      Wraps a step function in `mx/tidy`, smuggling result out via volatile
-      (the volatile is a Layer 0 implementation detail)
-- [ ] **`realize-clj`** — `(defn realize-clj [x] (eval! x) (->clj x))`
-      For extracting values to ClojureScript
-- [ ] **`eval-state!`** — move from `inference/util.cljs` to `mlx.cljs`.
-      Evaluates all arrays in a trace/state
+- [x] **`materialize!`** — variadic, calls `(apply eval! arrs)`
+- [x] **`realize-clj`** — `(eval! x) (->clj x)`
+- [x] **`tidy-materialize`** — `(let [r (tidy f)] (eval! r) r)`
+- [x] **`tidy-run`** — generic tidy wrapper with volatile + collect-fn
+- [x] Moved `force-gc!`, `with-resource-guard`, `DEFAULT-CACHE-LIMIT`
+      from `inference/util.cljs`
+- [x] Moved `training-step!` from `nn.cljs` (was `step!`)
+- [x] Removed `*batched-exec?*` dynamic var (Phase 5)
+- [x] Removed `js/console.warn` guards from `eval!`/`item` (Phase 6)
+- [x] Top-level `(set-cache-limit! DEFAULT-CACHE-LIMIT)` moved here (Phase 7)
 
-### 3.2 Refactor training (learning.cljs, nn.cljs)
+### 3.2 Refactor training (learning.cljs, nn.cljs) ✅
 
-- [ ] `adam-step` line 92: move `mx/eval!` into a separate boundary call at
-      the loop level in `train`
-- [ ] `train` loop line 125: single `materialize!` per iteration
-- [ ] `wake-sleep` lines 305, 315: `materialize!` at loop boundary
-- [ ] `nn/step!`: move to `mlx.cljs` — it wraps MLX nn.Module mutation,
-      which is inherently Layer 0
+- [x] `adam-step`: `mx/eval!` → `mx/materialize!`
+- [x] `train` loop: `mx/eval!` → `mx/materialize!`
+- [x] `wake-sleep` (2 sites): `mx/eval!` → `mx/materialize!`
+- [x] `nn/step!` → `def step! mx/training-step!` (alias to Layer 0)
 
-### 3.3 Refactor inference (mcmc.cljs — ~38 eval sites)
+### 3.3 Refactor inference (mcmc.cljs — ~20 eval + ~8 tidy sites) ✅
 
-- [ ] `mh` / `mh-step`: pure step logic + 1 `materialize!` per iteration
-- [ ] `compiled-mh`: same
-- [ ] `mala` / `mala-step`: same
-- [ ] `hmc` / `hmc-step`: same
-- [ ] `nuts` / `nuts-step`: batch evals in tree recursion
-- [ ] `gibbs` / `enumerative-gibbs`: same
-- [ ] `elliptical-slice-step`: same
-- [ ] `map-optimize`: same
-- [ ] Vectorized variants: same pattern
-- [ ] Target: 1 `materialize!` call per loop iteration
+- [x] All ~20 `mx/eval!` → `mx/materialize!`
+- [x] `leapfrog-step`: `mx/tidy` → `mx/tidy-run`
+- [x] `hmc-step`: `mx/tidy` → `mx/tidy-run`
+- [x] `run-loop-compiled-mh` tidy: → `mx/tidy-materialize`
+- [x] `run-loop-compiled-mala` tidy: → `mx/tidy-run`
+- [x] `run-loop-compiled-hmc` tidy: → `mx/tidy-materialize`
+- [x] `vectorized-map-optimize` tidy: → `mx/tidy-run`
+- [x] `doto ... mx/eval!` patterns → explicit `let` + `materialize!`
 
-### 3.4 Refactor inference (vi.cljs — ~16 eval sites)
+### 3.4 Refactor inference (vi.cljs — ~12 eval + ~8 tidy sites) ✅
 
-- [ ] `advi`: 1 boundary per iteration
-- [ ] `compiled-advi`: same
-- [ ] `programmable-vi`: same
-- [ ] `compiled-programmable-vi`: same
+- [x] All `mx/eval!` → `mx/materialize!`
+- [x] `vi`/`compiled-vi` init: `mx/tidy` → `mx/tidy-materialize`
+- [x] Gradient computation: `doto (mx/tidy ...) mx/eval!` → `mx/tidy-materialize`
+- [x] ELBO evaluation: `mx/tidy` + eval + item → `mx/realize` + `mx/tidy-materialize`
+- [x] `compiled-programmable-vi`: `mx/tidy` → `mx/tidy-materialize`
 
-### 3.5 Refactor inference (smc.cljs, smcp3.cljs)
+### 3.5 Refactor inference (smc.cljs, smcp3.cljs, adev.cljs) ✅
 
-- [ ] `smc` / `smc-step`: 1 boundary per step
-- [ ] `csmc`: same
-- [ ] `smc-rejuvenate`: same
-- [ ] `smcp3-step`: same
+- [x] `smc.cljs`: 8 `mx/eval!` → `mx/materialize!`
+- [x] `smcp3.cljs`: 4 `mx/eval!` → `mx/materialize!`
+- [x] `adev.cljs`: 2 `mx/eval!` → `mx/materialize!`, 1 tidy → `mx/tidy-run`
 
-### 3.6 Refactor inference utilities (inference/util.cljs)
+### 3.6 Refactor inference utilities (inference/util.cljs) ✅
 
-- [ ] `materialize-weights`: keep (already a boundary helper)
-- [ ] `normalize-log-weights`: reduce to 1 eval call
-- [ ] Move `eval-state!`, `tidy-step`, `dispose-trace!`, `force-gc!`,
-      `with-resource-guard` to `mlx.cljs`
-- [ ] Top-level side effect line 221 `(mx/set-cache-limit!)`: move to
-      `mlx.cljs` module init
+- [x] `materialize-weights`: `mx/eval!` → `mx/materialize!`
+- [x] `normalize-log-weights`: `mx/eval!` → `mx/materialize!`
+- [x] `eval-state!` → renamed `materialize-state`, `mx/eval!` → `mx/materialize!`
+- [x] `dispose-trace!` → renamed `dispose-trace`
+- [x] `tidy-step` → rewritten using `mx/tidy-run`
+- [x] Moved `force-gc!`, `with-resource-guard`, `DEFAULT-CACHE-LIMIT`,
+      top-level `(mx/set-cache-limit!)` to `mlx.cljs`
+- [x] Backwards-compatible aliases: `(def force-gc! mx/force-gc!)`,
+      `(def with-resource-guard mx/with-resource-guard)`
 
-### 3.7 Refactor distributions (dist.cljs)
+### 3.7 Refactor distributions (dist.cljs) ✅
 
-- [ ] Categorical line 408: `mx/eval!` for shape — use Layer 0 helper
-- [ ] Multivariate normal lines 915, 923: Cholesky — use Layer 0 helper
-- [ ] Wishart/Inverse-Wishart lines 1058-1155: matrix ops — use Layer 0 helpers
+- [x] All ~11 `mx/eval!` → `mx/materialize!`
+- [x] Wishart atom eliminated — replaced with indexed `reduce` over pre-split keys
 
-### 3.8 Refactor remaining files
+### 3.8 Refactor remaining files ✅
 
-- [ ] `gradients.cljs` lines 38, 67: callers do the eval, or use `materialize!`
-- [ ] `contracts.cljs` lines 19, 177: use `mx/realize` helper
-- [ ] `vectorized.cljs` lines 25, 60, 97, 151: use boundary helpers
+- [x] `gradients.cljs` (2 sites): `mx/eval!` → `mx/materialize!`
+- [x] `contracts.cljs`: `ev` helper → `mx/realize`, broadcast eval → `mx/materialize!`
+- [x] `verify.cljs` (1 site): `mx/eval!` → `mx/materialize!`
+- [x] `vectorized.cljs` (4 sites): `mx/eval!` → `mx/materialize!`
+- [x] `importance.cljs` (1 site): `mx/eval!` → `mx/materialize!`
+- [x] `diagnostics.cljs` (4 sites): `mx/eval!` → `mx/materialize!`
+- [x] `kernel.cljs` (1 site): `mx/eval!` → `mx/materialize!`
 
-### 3.9 Rename/move `!` functions out of Layers 1-8
+### 3.9 Rename/move `!` functions out of Layers 1-8 ✅
 
 - [x] `trace-choice!` → eliminated (Phase 1)
 - [x] `trace-param!` → eliminated (Phase 1)
 - [x] `trace-gf!` → eliminated (Phase 1)
-- [ ] `nn/step!` → move to `mlx.cljs`
-- [ ] `eval-state!` → move to `mlx.cljs`
-- [ ] `force-gc!` → move to `mlx.cljs`
-- [ ] `dispose-trace!` → move to `mlx.cljs`
-- [ ] `train-proposal!` → rename to `train-proposal` (calls Layer 0 boundary)
+- [x] `nn/step!` → `def step! mx/training-step!` (delegates to Layer 0)
+- [x] `eval-state!` → renamed `materialize-state` (no `!` suffix)
+- [x] `force-gc!` → moved to `mlx.cljs` (Layer 0)
+- [x] `dispose-trace!` → renamed `dispose-trace` (no `!` suffix)
+- [x] `train-proposal!` → renamed `train-proposal`
 
-### 3.10 Run full test suite
+### 3.10 Additional cleanups (Phases 4-7) ✅
 
-- [ ] All tests pass
-- [ ] Run benchmarks — verify no regression
-- [ ] Memory profiling — verify no Metal buffer leaks
+- [x] **Phase 4 — Wishart atom:** Replaced `(atom 0)` + `swap!` with indexed
+      `reduce` over pre-split keys. Zero atoms in codebase.
+- [x] **Phase 5 — `*batched-exec?*`:** Deleted dynamic var from `mlx.cljs`,
+      removed `binding` from `runtime.cljs`. Zero dynamic vars.
+- [x] **Phase 6 — `js/console.warn`:** Removed from `eval!`/`item` (Phase 5).
+      `dynamic.cljs` `warn-unused-constraints` → pure `find-unused-constraints`
+      (returns data in `:unused-constraints` key). Zero console output.
+- [x] **Phase 7 — Top-level side effect:** `(mx/set-cache-limit!)` moved from
+      `inference/util.cljs` to `mlx.cljs`.
 
----
+### 3.11 Run full test suite ✅
 
-## Phase 4: Remove Wishart atom
-
-- [ ] `dist.cljs` line 1074-1075: replace `(atom 0)` / `(swap! ki inc)` with
-      indexed `loop` or `reduce` over pre-split keys
-- [ ] Zero atoms in codebase
-- [ ] Run distribution tests
-
----
-
-## Phase 5: Remove `*batched-exec?*` dynamic var
-
-- [ ] This var is only used for dev warnings in `mx/eval!` and `mx/item`
-- [ ] After Phase 3, Layers 1-8 never call `mx/eval!` directly — warning is moot
-- [ ] Delete `(def ^:dynamic *batched-exec?* false)` from `mlx.cljs`
-- [ ] Delete the `when *batched-exec?*` checks from `mx/eval!` and `mx/item`
-- [ ] Remove `binding [mx/*batched-exec?*]` from `runtime.cljs`
+- [x] All core tests pass (handler, dist, gen, combinators, inference, vectorized)
+- [x] `gen_clj_compat_test.cljs`: 165/165
+- [x] `genjax_compat_test.cljs`: 73/73
+- [x] ADEV, contracts tests: pass
+- [ ] Run benchmarks — verify no regression (not yet done)
 
 ---
 
-## Phase 6: Remove `js/console.warn`
+## Phases 4-7: Folded into Phase 3 ✅ COMPLETE
 
-- [ ] `mlx.cljs` lines 74, 82: removed with Phase 5
-- [ ] `dynamic.cljs` line 35: replace with pure validation (return unused
-      constraint addresses as metadata, or separate validation function)
-
----
-
-## Phase 7: Remove top-level side effect
-
-- [ ] `inference/util.cljs` line 221: `(mx/set-cache-limit! DEFAULT-CACHE-LIMIT)`.
-      Move to `mlx.cljs` module init or explicit `init!` function.
+All completed as part of Phase 3 above:
+- Phase 4: Wishart atom → indexed reduce
+- Phase 5: `*batched-exec?*` → deleted
+- Phase 6: `js/console.warn` → pure data
+- Phase 7: Top-level side effect → moved to `mlx.cljs`
 
 ---
 
 ## Phase 8: Verify and document
 
-### 8.1 Final audit
+### 8.1 Final audit ✅
 
-- [ ] `grep 'vreset!\|vswap!\|volatile!' src/genmlx/` — only in `runtime.cljs`
-- [ ] `grep 'set!' src/genmlx/` — only in `runtime.cljs`
-- [ ] `grep 'def.*\^:dynamic' src/genmlx/` — zero hits
-- [ ] `grep 'binding \[' src/genmlx/` — zero hits
-- [ ] `grep 'atom\|swap!\|reset!' src/genmlx/` — zero hits
-- [ ] `grep 'defn.*!' src/genmlx/ --include='*.cljs'` — only in `mlx.cljs`,
-      `mlx/random.cljs`, `runtime.cljs`
-- [ ] `grep 'mx/eval!' src/genmlx/` — only in `mlx.cljs` and `runtime.cljs`
-- [ ] `grep 'mx/tidy' src/genmlx/` — only in `mlx.cljs` and `runtime.cljs`
-- [ ] `grep 'js/Math.random' src/genmlx/` — only in `rng/fresh-key`
-- [ ] `grep 'js/console' src/genmlx/` — zero hits
+- [x] `grep 'def.*\^:dynamic' src/genmlx/` — zero hits
+- [x] `grep 'atom\|swap!\|reset!' src/genmlx/` — zero hits (only volatile!)
+- [x] `grep 'defn.*!' src/genmlx/` — only in `mlx.cljs`, `mlx/random.cljs`
+- [x] `grep 'mx/eval!' src/genmlx/` — only in `mlx.cljs`, `mlx/random.cljs`
+- [x] `grep 'mx/tidy[^-]' src/genmlx/` — only in `mlx.cljs` (+ comments)
+- [x] `grep 'js/console' src/genmlx/` — zero hits
 
 ### 8.2 Performance verification
 
@@ -334,13 +323,13 @@ Layer 0 boundary helpers.
 - [ ] Micro-benchmark: JS property access (rt.trace) vs dynamic var lookup
 - [ ] Verify Metal buffer memory profile unchanged
 
-### 8.3 Test suite
+### 8.3 Test suite ✅
 
-- [ ] All core tests pass
-- [ ] `gen_clj_compat_test.cljs`: 165/165
-- [ ] `genjax_compat_test.cljs`: 73/73
-- [ ] `vectorized_test.cljs`: all pass
-- [ ] `vectorized_benchmark.cljs`: no regression
+- [x] All core tests pass
+- [x] `gen_clj_compat_test.cljs`: 165/165
+- [x] `genjax_compat_test.cljs`: 73/73
+- [x] `vectorized_test.cljs`: all pass
+- [ ] `vectorized_benchmark.cljs`: no regression (not yet run)
 
 ### 8.4 Update documentation
 
@@ -362,37 +351,28 @@ Layer 0 boundary helpers.
 
 ---
 
-## Summary: What gets eliminated
+## Summary: What was eliminated
 
-| What | Before | After Phase 1 | After All | Where |
-|------|--------|---------------|-----------|-------|
-| Dynamic vars | 5 | **2** | 0 | `*prng-key*`, `*batched-exec?*` remain |
-| `volatile!` / `set!` | 8+17 sites | **1** | 1 | `runtime.cljs` (encapsulated) |
-| `vreset!` / `vswap!` | 21 sites | **2** | 0 | `runtime.cljs` only |
-| `atom` / `swap!` | 1 each | 1 each | 0 | Wishart (Phase 4) |
-| `binding` forms | 12 | **3** | 0 | `runtime.cljs` (1), `dynamic.cljs` (1), `learning.cljs` (1) |
-| `!` functions (Layers 1-8) | 8 | **5** | 0 | Phase 3 eliminates rest |
-| `mx/eval!` (Layers 1-8) | ~100 | ~100 | 0 | Phase 3 |
-| `mx/tidy` (Layers 1-8) | ~18 | ~18 | 0 | Phase 3 |
-| `js/Math.random` | ~10 | ~10 | 1 | Phase 2 |
-| `js/console.warn` | 3 | 3 | 0 | Phase 6 |
-| Top-level side effects | 1 | 1 | 0 | Phase 7 |
-| Gen macro complexity | 1 line | **~10 lines** | ~10 lines | zero code walking |
-
-**Phase 1 eliminated:** 3 dynamic vars, 10 handler wrappers, 3 `!`-dispatch
-functions, ~15 `vreset!/vswap!` sites, ~9 `binding` forms. handler.cljs is
-now purely functional.
+| What | Before | After P1 | After P2 | After P3 | Where |
+|------|--------|----------|----------|----------|-------|
+| Dynamic vars | 5 | **2** | **1** | **0** | All eliminated |
+| `volatile!` | 25 sites | **1** | **1** | **1** | `runtime.cljs` only |
+| `atom`/`swap!` | 1 each | 1 | 1 | **0** | Wishart removed |
+| `binding` forms | 12 | **3** | **1** | **0** | All eliminated |
+| `!` fns (L1-8) | 8 | **5** | **5** | **0** | All in Layer 0 |
+| `mx/eval!` (L1-8) | ~100 | ~100 | ~73 | **0** | Via `materialize!` |
+| `mx/tidy` (L1-8) | ~18 | ~18 | ~14 | **0** | Via `tidy-*` helpers |
+| `js/Math.random` | ~10 | ~10 | **1** | **1** | `rng/fresh-key` only |
+| `js/console.warn` | 3 | 3 | 3 | **0** | Pure data instead |
+| Top-level effects | 1 | 1 | 1 | **0** | Moved to Layer 0 |
 
 ## Estimated effort
 
 | Phase | Effort | Risk | Status |
 |-------|--------|------|--------|
 | 1. Runtime-as-parameter | 2-3 days | Low | **✅ COMPLETE** |
-| 2. Eliminate PRNG vars | 2-3 days | Medium (audit sampling paths) | |
-| 3. Push eval to Layer 0 | 3-5 days | Medium (many files, same pattern) | |
-| 4. Remove Wishart atom | 15 min | None | |
-| 5. Remove batched var | 30 min | None | |
-| 6. Remove console.warn | 30 min | None | |
-| 7. Remove top-level effect | 30 min | None | |
-| 8. Verify and document | 1-2 days | None | |
-| **Total** | **9-14 days** | | |
+| 2. Eliminate PRNG vars | 2-3 days | Medium | **✅ COMPLETE** |
+| 3. Push eval to Layer 0 | 3-5 days | Medium | **✅ COMPLETE** |
+| 4-7. Cleanup | 1 hour | None | **✅ COMPLETE** (folded into P3) |
+| 8. Verify and document | 1-2 days | None | Audit ✅, benchmarks pending |
+| **Total** | **9-14 days** | | **Functionally complete** |

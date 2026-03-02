@@ -32,8 +32,8 @@
 
 (def model
   (gen [x]
-    (let [z (dyn/trace :z (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))]
-      (dyn/trace :x (dist/gaussian z (mx/scalar 0.5)))
+    (let [z (trace :z (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))]
+      (trace :x (dist/gaussian z (mx/scalar 0.5)))
       z)))
 
 ;; Encoder: 1 input -> 2 outputs (mu, log-sigma)
@@ -78,7 +78,7 @@
                         ;; x|z ~ N(z, 0.5), so sample x for various z values
                         (mx/array [(+ (* 3.0 (- (js/Math.random) 0.5)) 1.5)])))
                     (range 20))
-      losses (amort/train-proposal!
+      losses (amort/train-proposal
                train-encoder loss-fn dataset
                :iterations 300 :lr 0.01)]
   (let [early-loss (nth losses 5)
@@ -103,7 +103,7 @@
                                    (cm/choicemap :x (mx/squeeze data))))
       ;; Train on x values near 3.0
       dataset (mapv (fn [_] (mx/array [(+ 2.5 (js/Math.random))])) (range 20))
-      _losses (amort/train-proposal!
+      _losses (amort/train-proposal
                 posterior-encoder loss-fn dataset
                 :iterations 500 :lr 0.005)]
   ;; Query encoder at x=3
@@ -126,11 +126,11 @@
 ;; Build a guide gen fn that uses the trained posterior-encoder
 (let [net-gf (nn/nn->gen-fn posterior-encoder)
       guide (gen [x]
-              (let [out (dyn/splice :enc net-gf (mx/reshape x [1]))
+              (let [out (splice :enc net-gf (mx/reshape x [1]))
                     mu      (mx/index out 0)
                     log-sig (mx/index out 1)
                     sig     (mx/exp log-sig)]
-                (dyn/trace :z (dist/gaussian mu sig))))
+                (trace :z (dist/gaussian mu sig))))
       x-val (mx/scalar 3.0)
       obs (cm/choicemap :x x-val)
       {:keys [traces log-weights log-ml-estimate]}
@@ -152,11 +152,11 @@
 
 (let [net-gf (nn/nn->gen-fn posterior-encoder)
       guide (gen [x]
-              (let [out (dyn/splice :enc net-gf (mx/reshape x [1]))
+              (let [out (splice :enc net-gf (mx/reshape x [1]))
                     mu      (mx/index out 0)
                     log-sig (mx/index out 1)
                     sig     (mx/exp log-sig)]
-                (dyn/trace :z (dist/gaussian mu sig))))
+                (trace :z (dist/gaussian mu sig))))
       x-val (mx/scalar 3.0)
       obs (cm/choicemap :x x-val)
       ;; Neural IS

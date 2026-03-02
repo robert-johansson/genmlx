@@ -24,7 +24,7 @@
 ;; Simple kernel used across tests
 (def simple-kernel
   (gen [x]
-    (let [y (dyn/trace :y (dist/gaussian x 1))]
+    (let [y (trace :y (dist/gaussian x 1))]
       (mx/eval! y)
       (mx/item y))))
 
@@ -54,7 +54,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- Unfold propose --")
 (let [step (gen [t state]
-             (let [next (dyn/trace :x (dist/gaussian state 0.1))]
+             (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
                (mx/item next)))
       unfold (comb/unfold-combinator step)
@@ -66,7 +66,7 @@
 
 (println "\n-- Unfold assess --")
 (let [step (gen [t state]
-             (let [next (dyn/trace :x (dist/gaussian state 0.1))]
+             (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
                (mx/item next)))
       unfold (comb/unfold-combinator step)
@@ -81,9 +81,9 @@
 ;; SwitchCombinator
 ;; ---------------------------------------------------------------------------
 (println "\n-- Switch propose --")
-(let [b0 (gen [] (let [x (dyn/trace :x (dist/gaussian 0 1))]
+(let [b0 (gen [] (let [x (trace :x (dist/gaussian 0 1))]
                    (mx/eval! x) (mx/item x)))
-      b1 (gen [] (let [x (dyn/trace :x (dist/gaussian 10 1))]
+      b1 (gen [] (let [x (trace :x (dist/gaussian 10 1))]
                    (mx/eval! x) (mx/item x)))
       sw (comb/switch-combinator b0 b1)
       r0 (p/propose sw [0])
@@ -95,7 +95,7 @@
   (assert-true "switch propose branch 0 has choices" (not= (:choices r0) cm/EMPTY)))
 
 (println "\n-- Switch assess --")
-(let [b0 (gen [] (let [x (dyn/trace :x (dist/gaussian 0 1))]
+(let [b0 (gen [] (let [x (trace :x (dist/gaussian 0 1))]
                    (mx/eval! x) (mx/item x)))
       sw (comb/switch-combinator b0)
       {:keys [choices weight]} (p/propose sw [0])
@@ -110,7 +110,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- Scan propose --")
 (let [kernel (gen [carry input]
-               (let [x (dyn/trace :x (dist/gaussian (mx/add carry input) 0.1))]
+               (let [x (trace :x (dist/gaussian (mx/add carry input) 0.1))]
                  (mx/eval! x)
                  [(mx/item x) (mx/item x)]))
       scan (comb/scan-combinator kernel)
@@ -124,7 +124,7 @@
 
 (println "\n-- Scan assess --")
 (let [kernel (gen [carry input]
-               (let [x (dyn/trace :x (dist/gaussian (mx/add carry input) 0.1))]
+               (let [x (trace :x (dist/gaussian (mx/add carry input) 0.1))]
                  (mx/eval! x)
                  [(mx/item x) (mx/item x)]))
       scan (comb/scan-combinator kernel)
@@ -170,7 +170,7 @@
 (let [rec (comb/recurse
             (fn [self]
               (gen [depth]
-                (let [x (dyn/trace :x (dist/gaussian 0 1))]
+                (let [x (trace :x (dist/gaussian 0 1))]
                   (mx/eval! x) (mx/item x)))))
       {:keys [choices weight retval]} (p/propose rec [0])]
   (mx/eval! weight)
@@ -182,7 +182,7 @@
 (let [rec (comb/recurse
             (fn [self]
               (gen [depth]
-                (let [x (dyn/trace :x (dist/gaussian 0 1))]
+                (let [x (trace :x (dist/gaussian 0 1))]
                   (mx/eval! x) (mx/item x)))))
       {:keys [choices weight]} (p/propose rec [0])
       assess-result (p/assess rec [0] choices)]
@@ -235,9 +235,9 @@
 ;; MixCombinator
 ;; ---------------------------------------------------------------------------
 (println "\n-- Mix propose --")
-(let [c0 (gen [] (let [x (dyn/trace :x (dist/gaussian 0 1))]
+(let [c0 (gen [] (let [x (trace :x (dist/gaussian 0 1))]
                    (mx/eval! x) (mx/item x)))
-      c1 (gen [] (let [x (dyn/trace :x (dist/gaussian 10 1))]
+      c1 (gen [] (let [x (trace :x (dist/gaussian 10 1))]
                    (mx/eval! x) (mx/item x)))
       mix (comb/mix-combinator [c0 c1] (mx/log (mx/array [0.5 0.5])))
       {:keys [choices weight retval]} (p/propose mix [])]
@@ -248,9 +248,9 @@
     (some? (cm/get-choice choices [:component-idx]))))
 
 (println "\n-- Mix assess --")
-(let [c0 (gen [] (let [x (dyn/trace :x (dist/gaussian 0 1))]
+(let [c0 (gen [] (let [x (trace :x (dist/gaussian 0 1))]
                    (mx/eval! x) (mx/item x)))
-      c1 (gen [] (let [x (dyn/trace :x (dist/gaussian 10 1))]
+      c1 (gen [] (let [x (trace :x (dist/gaussian 10 1))]
                    (mx/eval! x) (mx/item x)))
       mix (comb/mix-combinator [c0 c1] (mx/log (mx/array [0.5 0.5])))
       {:keys [choices weight]} (p/propose mix [])

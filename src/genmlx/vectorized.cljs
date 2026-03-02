@@ -22,7 +22,7 @@
   [log-weights n key]
   (let [log-probs (mx/subtract log-weights (mx/logsumexp log-weights))
         probs     (mx/exp log-probs)
-        _         (mx/eval! probs)
+        _         (mx/materialize! probs)
         probs-clj (mx/->clj probs)
         ;; Single uniform offset
         u0        (/ (mx/realize (rng/uniform (rng/ensure-key key) [1])) n)
@@ -55,7 +55,7 @@
                      (mx/reshape cumprobs [1 n])
                      (mx/reshape thresholds [n 1]))
         indices (mx/argmax comparison 1)]
-    (mx/eval! indices)
+    (mx/materialize! indices)
     indices))
 
 ;; ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@
     (let [new-choices (reindex-choicemap choices indices)
           new-score (mx/take-idx score indices)
           new-weight (mx/zeros [n-particles])]
-      (mx/eval! new-score new-weight)
+      (mx/materialize! new-score new-weight)
       (assoc vtrace
              :choices new-choices
              :score   new-score
@@ -146,6 +146,6 @@
   (let [w (:weight vtrace)
         log-probs (mx/subtract w (mx/logsumexp w))
         probs     (mx/exp log-probs)
-        _         (mx/eval! probs)
+        _         (mx/materialize! probs)
         probs-clj (mx/->clj probs)]
     (/ 1.0 (reduce + (map #(* % %) probs-clj)))))

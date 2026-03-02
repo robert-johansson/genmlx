@@ -61,8 +61,8 @@
 (println "-- Mix combinator --")
 
 ;; Two Gaussian components with equal log-weights
-(def mix-comp1 (gen [] (dyn/trace :y (dist/gaussian 0 1))))
-(def mix-comp2 (gen [] (dyn/trace :y (dist/gaussian 5 2))))
+(def mix-comp1 (gen [] (trace :y (dist/gaussian 0 1))))
+(def mix-comp2 (gen [] (trace :y (dist/gaussian 5 2))))
 (def mix-equal-weights (mx/log (mx/array [0.5 0.5])))
 (def mixed (comb/mix-combinator [mix-comp1 mix-comp2] mix-equal-weights))
 
@@ -118,7 +118,7 @@
   (comb/recurse
     (fn [self]
       (gen [depth]
-        (let [v (dyn/trace :v (dist/gaussian 0 1))]
+        (let [v (trace :v (dist/gaussian 0 1))]
           (mx/eval! v)
           (mx/item v))))))
 
@@ -172,7 +172,7 @@
 
 (def inner-gf
   (gen [x]
-    (let [y (dyn/trace :y (dist/gaussian x 1))]
+    (let [y (trace :y (dist/gaussian x 1))]
       (mx/eval! y) (mx/item y))))
 
 ;; Identity contramap: passes args unchanged

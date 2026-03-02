@@ -108,12 +108,8 @@
     :sgd   (new (.-SGD mx/optim-mod) lr)
     :adamw (new (.-AdamW mx/optim-mod) lr)))
 
-(defn step!
+(def step!
   "One training step: compute loss+grads, update module parameters.
-   Returns the loss value (JS number)."
-  [module optim vg-fn & inputs]
-  (let [[loss grads] (apply vg-fn inputs)]
-    (.update optim module grads)
-    (mx/eval! module)
-    (mx/eval! loss)
-    (mx/item loss)))
+   Returns the loss value (JS number).
+   Delegates to mx/training-step! (Layer 0)."
+  mx/training-step!)

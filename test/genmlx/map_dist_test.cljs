@@ -68,7 +68,7 @@
                                  (mx/scalar (+ (* 0.5 (js/Math.log (* 2 js/Math.PI)))
                                                (js/Math.log 0.1))))))})
       model (gen []
-              (let [x (dyn/trace :x my-dist)]
+              (let [x (trace :x my-dist)]
                 (mx/eval! x) (mx/item x)))
       ;; simulate
       trace (p/simulate model [])

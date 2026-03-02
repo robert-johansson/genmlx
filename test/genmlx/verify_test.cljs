@@ -27,8 +27,8 @@
 ;; 1. Valid model
 (println "-- valid model --")
 (let [model (gen [mu]
-              (dyn/trace :x (dist/gaussian mu 1))
-              (dyn/trace :y (dist/gaussian 0 1)))
+              (trace :x (dist/gaussian mu 1))
+              (trace :y (dist/gaussian 0 1)))
       result (verify/validate-gen-fn model [0.0])]
   (assert-true "valid model returns valid" (:valid? result))
   (assert-equal "no violations" 0 (count (:violations result)))
@@ -37,8 +37,8 @@
 ;; 2. Duplicate address
 (println "\n-- duplicate address --")
 (let [model (gen []
-              (dyn/trace :x (dist/gaussian 0 1))
-              (dyn/trace :x (dist/gaussian 0 1)))
+              (trace :x (dist/gaussian 0 1))
+              (trace :x (dist/gaussian 0 1)))
       result (verify/validate-gen-fn model [])]
   (assert-true "duplicate detected as invalid" (not (:valid? result)))
   (assert-true "has duplicate-address violation" (has-violation? result :duplicate-address))
@@ -48,7 +48,7 @@
 ;; 3. Non-finite score (MLX scalar sigma bypasses JS number check)
 (println "\n-- non-finite score --")
 (let [model (gen []
-              (dyn/trace :x (dist/gaussian 0 (mx/scalar 0.0))))
+              (trace :x (dist/gaussian 0 (mx/scalar 0.0))))
       result (verify/validate-gen-fn model [])]
   (assert-true "non-finite detected as invalid" (not (:valid? result)))
   (assert-true "has non-finite-score violation" (has-violation? result :non-finite-score)))
@@ -66,7 +66,7 @@
 ;; 5. Source analysis for eval!/item
 (println "\n-- materialization in body --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))]
                 (mx/eval! x)
                 (mx/item x)))
       result (verify/validate-gen-fn model [])]
@@ -87,12 +87,12 @@
 ;; 7. Conditional duplicate (needs multiple trials)
 (println "\n-- conditional duplicate (multi-trial) --")
 (let [model (gen []
-              (let [flip (dyn/trace :flip (dist/bernoulli 0.5))]
+              (let [flip (trace :flip (dist/bernoulli 0.5))]
                 (mx/eval! flip)
                 (if (> (mx/item flip) 0.5)
-                  (do (dyn/trace :a (dist/gaussian 0 1))
-                      (dyn/trace :a (dist/gaussian 0 1)))
-                  (dyn/trace :b (dist/gaussian 0 1)))))
+                  (do (trace :a (dist/gaussian 0 1))
+                      (trace :a (dist/gaussian 0 1)))
+                  (trace :b (dist/gaussian 0 1)))))
       ;; Single trial might miss the dup; many trials should catch it
       result (verify/validate-gen-fn model [] {:n-trials 20})]
   (assert-true "conditional dup caught with multi-trial"
@@ -101,10 +101,10 @@
 ;; 8. Multi-site valid model
 (println "\n-- multi-site valid model --")
 (let [model (gen [xs]
-              (let [slope (dyn/trace :slope (dist/gaussian 0 10))
-                    intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+              (let [slope (trace :slope (dist/gaussian 0 10))
+                    intercept (trace :intercept (dist/gaussian 0 10))]
                 (doseq [[j x] (map-indexed vector xs)]
-                  (dyn/trace (keyword (str "y" j))
+                  (trace (keyword (str "y" j))
                              (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                                     intercept) 1)))
                 slope))

@@ -28,11 +28,11 @@
 (let [countdown
       (comb/recurse (fn [self]
         (gen [depth]
-          (let [v (dyn/trace :v (dist/gaussian 0 1))]
+          (let [v (trace :v (dist/gaussian 0 1))]
             (mx/eval! v)
             (if (> depth 0)
               {:v (mx/item v)
-               :child (dyn/splice :child self (dec depth))}
+               :child (splice :child self (dec depth))}
               {:v (mx/item v)})))))
       trace (p/simulate countdown [2])]
   (assert-true "returns trace" (instance? tr/Trace trace))
@@ -49,12 +49,12 @@
 (let [tree
       (comb/recurse (fn [self]
         (gen [depth]
-          (let [v (dyn/trace :v (dist/gaussian 0 1))]
+          (let [v (trace :v (dist/gaussian 0 1))]
             (mx/eval! v)
             (if (> depth 0)
               {:v (mx/item v)
-               :left (dyn/splice :left self (dec depth))
-               :right (dyn/splice :right self (dec depth))}
+               :left (splice :left self (dec depth))
+               :right (splice :right self (dec depth))}
               {:v (mx/item v)})))))
       trace (p/simulate tree [1])]
   (assert-true "tree trace exists" (instance? tr/Trace trace))
@@ -69,11 +69,11 @@
 (let [countdown
       (comb/recurse (fn [self]
         (gen [depth]
-          (let [v (dyn/trace :v (dist/gaussian 0 1))]
+          (let [v (trace :v (dist/gaussian 0 1))]
             (mx/eval! v)
             (if (> depth 0)
               {:v (mx/item v)
-               :child (dyn/splice :child self (dec depth))}
+               :child (splice :child self (dec depth))}
               {:v (mx/item v)})))))
       obs (-> cm/EMPTY
               (cm/set-choice [:v] (mx/scalar 0.5))
@@ -92,11 +92,11 @@
 (let [countdown
       (comb/recurse (fn [self]
         (gen [depth]
-          (let [v (dyn/trace :v (dist/gaussian 0 1))]
+          (let [v (trace :v (dist/gaussian 0 1))]
             (mx/eval! v)
             (if (> depth 0)
               {:v (mx/item v)
-               :child (dyn/splice :child self (dec depth))}
+               :child (splice :child self (dec depth))}
               {:v (mx/item v)})))))
       obs (cm/choicemap :v (mx/scalar 1.0)
                          :child (cm/choicemap :v (mx/scalar 2.0)))
@@ -117,11 +117,11 @@
 (let [countdown
       (comb/recurse (fn [self]
         (gen [depth]
-          (let [v (dyn/trace :v (dist/gaussian 0 1))]
+          (let [v (trace :v (dist/gaussian 0 1))]
             (mx/eval! v)
             (if (> depth 0)
               {:v (mx/item v)
-               :child (dyn/splice :child self (dec depth))}
+               :child (splice :child self (dec depth))}
               {:v (mx/item v)})))))
       obs (cm/choicemap :v (mx/scalar 1.0)
                          :child (cm/choicemap :v (mx/scalar 2.0)))
@@ -141,13 +141,13 @@
 (let [geo-list
       (comb/recurse (fn [self]
         (gen [p]
-          (let [v (dyn/trace :v (dist/gaussian 0 1))
-                cont (dyn/trace :cont (dist/bernoulli p))]
+          (let [v (trace :v (dist/gaussian 0 1))
+                cont (trace :cont (dist/bernoulli p))]
             (mx/eval! v)
             (mx/eval! cont)
             (if (> (mx/item cont) 0.5)
               {:v (mx/item v)
-               :next (dyn/splice :next self p)}
+               :next (splice :next self p)}
               {:v (mx/item v)})))))
       trace (p/simulate geo-list [0.3])]
   (assert-true "geo-list trace exists" (instance? tr/Trace trace))

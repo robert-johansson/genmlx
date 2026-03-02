@@ -38,9 +38,9 @@
 
 (def model
   (gen [n]
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+    (let [mu (trace :mu (dist/gaussian 0 10))]
       (dotimes [i n]
-        (dyn/trace (keyword (str "y" i)) (dist/gaussian mu 1)))
+        (trace (keyword (str "y" i)) (dist/gaussian mu 1)))
       mu)))
 
 (def obs (cm/choicemap :y0 5.0 :y1 5.5 :y2 4.8))

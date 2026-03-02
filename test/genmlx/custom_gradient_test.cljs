@@ -142,9 +142,9 @@
                    :has-argument-grads [true]})
       ;; Model that uses the transform
       model (gen [x]
-              (let [tx (dyn/splice :transform transform x)]
+              (let [tx (splice :transform transform x)]
                 ;; Observe y ~ gaussian(transform(x), 1)
-                (dyn/trace :y (dist/gaussian tx 1))
+                (trace :y (dist/gaussian tx 1))
                 tx))
       x (mx/scalar 5.0)
       obs (cm/choicemap :y (mx/scalar 13.0))]  ;; 2*5+3 = 13
@@ -171,9 +171,9 @@
                     {:forward (fn [a b] (mx/multiply a b))
                      :has-argument-grads [true true]})
       model (gen [x]
-              (let [slope (dyn/trace :slope (dist/gaussian 0 10))
-                    pred  (dyn/splice :mul multiply-gf slope x)]
-                (dyn/trace :y (dist/gaussian pred 1))
+              (let [slope (trace :slope (dist/gaussian 0 10))
+                    pred  (splice :mul multiply-gf slope x)]
+                (trace :y (dist/gaussian pred 1))
                 pred))
       x (mx/scalar 2.0)
       obs (cm/choicemap :y (mx/scalar 6.0))

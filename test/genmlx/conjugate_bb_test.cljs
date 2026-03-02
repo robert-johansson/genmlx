@@ -94,9 +94,9 @@
 
 (def model
   (gen [data]
-    (let [p (dyn/trace :p (dist/beta-dist 2 2))]
+    (let [p (trace :p (dist/beta-dist 2 2))]
       (doseq [[i x] (map-indexed vector data)]
-        (dyn/trace (keyword (str "x" i)) (dist/bernoulli p)))
+        (trace (keyword (str "x" i)) (dist/bernoulli p)))
       p)))
 
 (def data [1 1 1 0 1 1 0 1 1 1])

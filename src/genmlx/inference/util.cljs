@@ -13,7 +13,7 @@
    realizing each weight individually."
   [log-weights]
   (let [stacked (mx/stack (vec log-weights))]
-    (mx/eval! stacked)
+    (mx/materialize! stacked)
     stacked))
 
 (defn normalize-log-weights
@@ -23,7 +23,7 @@
   [log-weights]
   (let [w-arr    (materialize-weights log-weights)
         log-probs (mx/subtract w-arr (mx/logsumexp w-arr))
-        _         (mx/eval! log-probs)
+        _         (mx/materialize! log-probs)
         probs     (mx/->clj (mx/exp log-probs))]
     {:log-probs log-probs :probs probs}))
 
@@ -187,16 +187,16 @@
       (when (mx/array? r) (vswap! arrays conj! r)))
     (persistent! @arrays)))
 
-(defn eval-state!
+(defn materialize-state
   "Evaluate ALL arrays in an inference state to materialize computation graphs
    and detach graph nodes, making intermediate arrays GC-eligible.
    Handles both MLX arrays (param vectors) and Trace records (walks choices)."
   [state]
   (if (mx/array? state)
-    (mx/eval! state)
+    (mx/materialize! state)
     (let [arrays (collect-trace-arrays state)]
       (when (seq arrays)
-        (apply mx/eval! arrays)))))
+        (apply mx/materialize! arrays)))))
 
 (defn accept-mh?
   "Metropolis-Hastings accept/reject decision.
@@ -211,35 +211,14 @@
          (< (js/Math.log u) log-accept)))))
 
 ;; ---------------------------------------------------------------------------
-;; Resource guard — disable Metal buffer caching during long inference loops
+;; Resource guard — delegated to mx/with-resource-guard (Layer 0)
 ;; ---------------------------------------------------------------------------
 
-(def ^:private DEFAULT-CACHE-LIMIT (* 256 1024 1024))
+;; Backwards-compatible aliases
+(def force-gc! mx/force-gc!)
+(def with-resource-guard mx/with-resource-guard)
 
-(mx/set-cache-limit! DEFAULT-CACHE-LIMIT)
-
-(def ^:private gc-fn
-  "Synchronous GC function (Bun.gc or global.gc if available)."
-  (or (when (exists? js/Bun) (.-gc js/Bun))
-      (.-gc js/globalThis)))
-
-(defn force-gc!
-  "Force a synchronous garbage collection cycle to release Metal buffers.
-   Uses Bun.gc(true) or global.gc() if available; no-op otherwise."
-  []
-  (when gc-fn (gc-fn true)))
-
-(defn with-resource-guard
-  "Run f with cache-limit=0 to prevent Metal buffer accumulation.
-   Freed buffers are released immediately instead of being cached."
-  [f]
-  (let [prev-limit (mx/set-cache-limit! 0)]
-    (try (f)
-      (finally
-        (mx/clear-cache!)
-        (mx/set-cache-limit! prev-limit)))))
-
-(defn dispose-trace!
+(defn dispose-trace
   "Dispose all MLX arrays in a trace (or collection of traces), freeing Metal
    buffers immediately. Handles shared arrays safely by deduplicating first."
   [trace-or-traces]
@@ -262,17 +241,8 @@
    2. Evaluating all state arrays (detaches computation graphs from intermediates)
    3. Returning those arrays as a JS array for tidy to preserve"
   [step-fn state key]
-  (let [result-vol (volatile! nil)]
-    (mx/tidy
-      (fn []
-        (let [result (step-fn state key)
-              new-state (:state result)
-              arrays (if (mx/array? new-state)
-                       (do (mx/eval! new-state) [new-state])
-                       (let [a (collect-trace-arrays new-state)]
-                         (when (seq a) (apply mx/eval! a))
-                         a))]
-          (vreset! result-vol result)
-          ;; Return arrays as JS array for tidy to preserve
-          (to-array arrays))))
-    @result-vol))
+  (mx/tidy-run
+    #(step-fn state key)
+    (fn [result]
+      (let [s (:state result)]
+        (if (mx/array? s) [s] (collect-trace-arrays s))))))

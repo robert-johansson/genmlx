@@ -25,10 +25,10 @@
 
 (def linreg
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
-          intercept (dyn/trace :intercept (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+    (let [slope     (trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
+          intercept (trace :intercept (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
       (doseq [[j x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" j))
+        (trace (keyword (str "y" j))
                    (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                           intercept)
                                   (mx/scalar 1))))

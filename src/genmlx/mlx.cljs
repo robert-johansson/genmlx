@@ -67,22 +67,10 @@
 ;; Evaluation / materialization
 ;; ---------------------------------------------------------------------------
 
-(def ^:dynamic *batched-exec?* false)
-
 (defn eval! [& arrs]
-  (when *batched-exec?*
-    (js/console.warn
-      (str "mx/eval! called during batched execution. This materializes the computation "
-           "graph and may produce incorrect results or break vectorization. Move eval!/item "
-           "calls outside the gen body, or use scalar execution instead of vsimulate/vgenerate.")))
   (apply (.-eval core) arrs))
 
 (defn item [a]
-  (when *batched-exec?*
-    (js/console.warn
-      (str "mx/item called during batched execution. This materializes the computation "
-           "graph and may produce incorrect results or break vectorization. Move eval!/item "
-           "calls outside the gen body, or use scalar execution instead of vsimulate/vgenerate.")))
   (.item a))
 
 (defn ->clj [a]
@@ -424,6 +412,88 @@
 (defn realize
   "Evaluate a lazy MLX array and return its scalar JS value."
   [x] (eval! x) (item x))
+
+;; ---------------------------------------------------------------------------
+;; Layer 0 boundary helpers — ALL eval!/tidy calls in Layers 1-8 flow
+;; through these. Keeps side-effectful materialization confined to mlx.cljs.
+;; ---------------------------------------------------------------------------
+
+(defn materialize!
+  "Evaluate MLX arrays, materializing the computation graph.
+   Use at inference/training loop boundaries to bound graph size."
+  [& arrs]
+  (apply eval! arrs))
+
+(defn realize-clj
+  "Evaluate an MLX array and convert to ClojureScript data."
+  [x]
+  (eval! x)
+  (->clj x))
+
+(defn tidy-materialize
+  "Run f inside mx/tidy, materialize the result, return it.
+   For simple cases where f returns a single MLX array or JS array."
+  [f]
+  (let [r (tidy f)]
+    (eval! r)
+    r))
+
+(defn tidy-run
+  "Run f inside mx/tidy. Call collect-fn on the result to get arrays
+   to preserve. Materializes those arrays (detaching from computation
+   graph intermediates). Returns the result of f.
+   collect-fn: (result) -> [array1, array2, ...]"
+  [f collect-fn]
+  (let [result-vol (volatile! nil)]
+    (tidy (fn []
+      (let [result (f)
+            arrays (collect-fn result)]
+        (when (seq arrays) (apply eval! arrays))
+        (vreset! result-vol result)
+        (to-array arrays))))
+    @result-vol))
+
+;; ---------------------------------------------------------------------------
+;; Resource management (moved from inference/util.cljs)
+;; ---------------------------------------------------------------------------
+
+(def ^:private gc-fn
+  "Synchronous GC function (Bun.gc or global.gc if available)."
+  (or (when (exists? js/Bun) (.-gc js/Bun))
+      (.-gc js/globalThis)))
+
+(defn force-gc!
+  "Force a synchronous garbage collection cycle to release Metal buffers.
+   Uses Bun.gc(true) or global.gc() if available; no-op otherwise."
+  []
+  (when gc-fn (gc-fn true)))
+
+(def ^:private DEFAULT-CACHE-LIMIT (* 256 1024 1024))
+
+(set-cache-limit! DEFAULT-CACHE-LIMIT)
+
+(defn with-resource-guard
+  "Run f with cache-limit=0 to prevent Metal buffer accumulation.
+   Freed buffers are released immediately instead of being cached."
+  [f]
+  (let [prev-limit (set-cache-limit! 0)]
+    (try (f)
+      (finally
+        (clear-cache!)
+        (set-cache-limit! prev-limit)))))
+
+;; ---------------------------------------------------------------------------
+;; NN training step (moved from nn.cljs)
+;; ---------------------------------------------------------------------------
+
+(defn training-step!
+  "One NN training step: compute loss+grads, update module. Returns loss (JS number)."
+  [module optim vg-fn & inputs]
+  (let [[loss grads] (apply vg-fn inputs)]
+    (.update optim module grads)
+    (eval! module)
+    (eval! loss)
+    (item loss)))
 
 (defn ensure-array
   "Wrap a JS number as an MLX scalar array; pass through existing arrays.

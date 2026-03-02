@@ -29,11 +29,11 @@
 ;; Posterior: mu ~ N(3, ~0.45)
 (def model
   (gen []
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+    (let [mu (trace :mu (dist/gaussian 0 10))]
       (mx/eval! mu)
       (let [mu-val (mx/item mu)]
         (doseq [i (range 5)]
-          (dyn/trace (keyword (str "obs" i))
+          (trace (keyword (str "obs" i))
                      (dist/gaussian mu-val 1)))
         mu-val))))
 
@@ -71,12 +71,12 @@
 (println "\n-- random-walk: multi-address (map form) --")
 (def model2
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
       (mx/eval! slope intercept)
       (let [s (mx/item slope) b (mx/item intercept)]
         (doseq [[j x] (map-indexed vector xs)]
-          (dyn/trace (keyword (str "y" j))
+          (trace (keyword (str "y" j))
                      (dist/gaussian (+ (* s x) b) 1)))
         s))))
 
@@ -120,7 +120,7 @@
   (gen [current-choices]
     (let [cur-mu (cm/get-value (cm/get-submap current-choices :mu))]
       (mx/eval! cur-mu)
-      (dyn/trace :mu (dist/gaussian (mx/item cur-mu) 0.5)))))
+      (trace :mu (dist/gaussian (mx/item cur-mu) 0.5)))))
 
 (let [{:keys [trace]} (p/generate model [] observations)
       k (kern/proposal sym-proposal)
@@ -142,13 +142,13 @@
   (gen [current-choices]
     (let [cur-mu (cm/get-value (cm/get-submap current-choices :mu))]
       (mx/eval! cur-mu)
-      (dyn/trace :mu (dist/gaussian (+ (mx/item cur-mu) 0.1) 0.5)))))
+      (trace :mu (dist/gaussian (+ (mx/item cur-mu) 0.1) 0.5)))))
 
 (def bwd-proposal
   (gen [current-choices]
     (let [cur-mu (cm/get-value (cm/get-submap current-choices :mu))]
       (mx/eval! cur-mu)
-      (dyn/trace :mu (dist/gaussian (+ (mx/item cur-mu) 0.1) 0.5)))))
+      (trace :mu (dist/gaussian (+ (mx/item cur-mu) 0.1) 0.5)))))
 
 (let [{:keys [trace]} (p/generate model [] observations)
       k (kern/proposal fwd-proposal :backward bwd-proposal)

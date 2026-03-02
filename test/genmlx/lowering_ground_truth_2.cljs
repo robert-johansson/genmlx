@@ -9,6 +9,8 @@
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.gen :refer [gen]]
+            [genmlx.handler :as h]
+            [genmlx.runtime :as rt]
             [genmlx.inference.mcmc :as mcmc]))
 
 ;; ---------------------------------------------------------------------------
@@ -19,10 +21,10 @@
 
 (def linreg
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
-          intercept (dyn/trace :intercept (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+    (let [slope     (trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
+          intercept (trace :intercept (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
       (doseq [[j x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" j))
+        (trace (keyword (str "y" j))
                    (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                           intercept)
                                   (mx/scalar 1))))
@@ -265,11 +267,11 @@
       ;; Let's test: wrap the body-fn + handler in a function
       sim-fn (fn [key-arr]
                (let [key (rng/ensure-key key-arr)
-                     result (genmlx.handler/run-handler
-                              genmlx.handler/simulate-handler
+                     result (rt/run-handler
+                              h/simulate-transition
                               {:choices cm/EMPTY :score (mx/scalar 0.0) :key key
                                :executor nil}
-                              #(apply (:body-fn linreg) [xs]))]
+                              (fn [rt] (apply (:body-fn linreg) rt [xs])))]
                  (:score result)))
       ;; Test if this is compilable
       test-key (rng/fresh-key)

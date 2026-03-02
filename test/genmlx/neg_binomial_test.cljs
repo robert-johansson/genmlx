@@ -77,7 +77,7 @@
 ;; -- Generate weight = log-prob --
 (println "\n-- generate weight --")
 (let [model (gen []
-              (dyn/trace :k (dist/neg-binomial 5 0.5)))
+              (trace :k (dist/neg-binomial 5 0.5)))
       obs (cm/choicemap :k (mx/scalar 3))
       {:keys [trace weight]} (p/generate model [] obs)]
   (mx/eval! weight)

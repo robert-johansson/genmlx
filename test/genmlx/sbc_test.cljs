@@ -130,8 +130,8 @@
 (def single-gaussian
   {:name "single-gaussian"
    :model (gen []
-            (let [mu (dyn/trace :mu (dist/gaussian 0 2))]
-              (dyn/trace :obs (dist/gaussian mu 1))
+            (let [mu (trace :mu (dist/gaussian 0 2))]
+              (trace :obs (dist/gaussian mu 1))
               mu))
    :args []
    :param-addrs [:mu]
@@ -144,10 +144,10 @@
 (def two-gaussians
   {:name "two-gaussians"
    :model (gen []
-            (let [a (dyn/trace :a (dist/gaussian 0 2))
-                  b (dyn/trace :b (dist/gaussian 0 2))]
-              (dyn/trace :obs-a (dist/gaussian a 1))
-              (dyn/trace :obs-b (dist/gaussian b 1))
+            (let [a (trace :a (dist/gaussian 0 2))
+                  b (trace :b (dist/gaussian 0 2))]
+              (trace :obs-a (dist/gaussian a 1))
+              (trace :obs-b (dist/gaussian b 1))
               [a b]))
    :args []
    :param-addrs [:a :b]
@@ -160,10 +160,10 @@
 (def gaussian-multi-obs
   {:name "gaussian-multi-obs"
    :model (gen []
-            (let [mu (dyn/trace :mu (dist/gaussian 0 2))]
-              (dyn/trace :y0 (dist/gaussian mu 1))
-              (dyn/trace :y1 (dist/gaussian mu 1))
-              (dyn/trace :y2 (dist/gaussian mu 1))
+            (let [mu (trace :mu (dist/gaussian 0 2))]
+              (trace :y0 (dist/gaussian mu 1))
+              (trace :y1 (dist/gaussian mu 1))
+              (trace :y2 (dist/gaussian mu 1))
               mu))
    :args []
    :param-addrs [:mu]
@@ -176,10 +176,10 @@
 (def exponential-spec
   {:name "exponential"
    :model (gen []
-            (let [rate (dyn/trace :rate (dist/gamma-dist (mx/scalar 2) (mx/scalar 1)))]
+            (let [rate (trace :rate (dist/gamma-dist (mx/scalar 2) (mx/scalar 1)))]
               (mx/eval! rate)
               (let [rate-val (mx/item rate)]
-                (dyn/trace :obs (dist/exponential (mx/scalar rate-val)))
+                (trace :obs (dist/exponential (mx/scalar rate-val)))
                 rate-val)))
    :args []
    :param-addrs [:rate]
@@ -191,11 +191,11 @@
 (def coin-flip
   {:name "coin-flip"
    :model (gen []
-            (let [p-val (dyn/trace :p (dist/uniform 0.01 0.99))]
+            (let [p-val (trace :p (dist/uniform 0.01 0.99))]
               (mx/eval! p-val)
               (let [p-num (mx/item p-val)]
                 (doseq [i (range 5)]
-                  (dyn/trace (keyword (str "flip" i)) (dist/bernoulli p-num)))
+                  (trace (keyword (str "flip" i)) (dist/bernoulli p-num)))
                 p-num)))
    :args []
    :param-addrs [:p]
@@ -207,10 +207,10 @@
 (def linear-regression
   {:name "linear-regression"
    :model (gen [xs]
-            (let [slope     (dyn/trace :slope (dist/gaussian 0 2))
-                  intercept (dyn/trace :intercept (dist/gaussian 0 2))]
+            (let [slope     (trace :slope (dist/gaussian 0 2))
+                  intercept (trace :intercept (dist/gaussian 0 2))]
               (doseq [[j x] (map-indexed vector xs)]
-                (dyn/trace (keyword (str "y" j))
+                (trace (keyword (str "y" j))
                            (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                                   intercept) 1)))
               [slope intercept]))
@@ -224,9 +224,9 @@
 (def hierarchical
   {:name "hierarchical"
    :model (gen []
-            (let [mu (dyn/trace :mu (dist/gaussian 0 2))
-                  x  (dyn/trace :x (dist/gaussian mu 1))]
-              (dyn/trace :obs (dist/gaussian x 1))
+            (let [mu (trace :mu (dist/gaussian 0 2))
+                  x  (trace :x (dist/gaussian mu 1))]
+              (trace :obs (dist/gaussian x 1))
               x))
    :args []
    :param-addrs [:x]

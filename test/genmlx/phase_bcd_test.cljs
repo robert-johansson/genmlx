@@ -41,8 +41,8 @@
 
 (println "-- Edit: ConstraintEdit == update --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 (mx/eval! x y)
                 (+ (mx/item x) (mx/item y))))
       trace (p/simulate model [])
@@ -60,7 +60,7 @@
 
 (println "\n-- Edit: SelectionEdit == regenerate --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))]
                 (mx/eval! x) (mx/item x)))
       trace (p/simulate model [])
       sel (sel/select :x)
@@ -77,7 +77,7 @@
 (println "\n-- Scan: carry accumulates correctly --")
 (let [;; Deterministic scan: carry += input (no randomness)
       step-fn (gen [carry input]
-                (let [noise (dyn/trace :noise (dist/delta 0.0))]
+                (let [noise (trace :noise (dist/delta 0.0))]
                   [(+ carry input) (+ carry input)]))
       scan (comb/scan-combinator step-fn)
       trace (p/simulate scan [0.0 [1.0 2.0 3.0]])
@@ -91,7 +91,7 @@
 
 (println "\n-- Scan generate: constraining a step --")
 (let [step-fn (gen [carry input]
-                (let [noise (dyn/trace :noise (dist/gaussian 0 0.1))]
+                (let [noise (trace :noise (dist/gaussian 0 0.1))]
                   (mx/eval! noise)
                   (let [new-carry (+ carry (mx/item noise) input)]
                     [new-carry new-carry])))
@@ -113,7 +113,7 @@
 (println "\n-- Contramap: argument transformation --")
 (let [;; Model samples near its argument
       model (gen [x]
-              (let [y (dyn/trace :y (dist/gaussian x 0.01))]
+              (let [y (trace :y (dist/gaussian x 0.01))]
                 (mx/eval! y) (mx/item y)))
       ;; Contramap doubles the argument
       doubled (comb/contramap-gf model (fn [args] [(* 2 (first args))]))
@@ -124,7 +124,7 @@
 
 (println "\n-- Map retval: return value transformation --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/delta 3.0))]
+              (let [x (trace :x (dist/delta 3.0))]
                 (mx/eval! x) (mx/item x)))
       squared (comb/map-retval model #(* % %))
       trace (p/simulate squared [])]
@@ -157,11 +157,11 @@
 
 (println "\n-- Kernel composition: MH chain converges to posterior --")
 (let [model (gen []
-              (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+              (let [mu (trace :mu (dist/gaussian 0 10))]
                 (mx/eval! mu)
                 (let [mu-val (mx/item mu)]
                   (doseq [i (range 5)]
-                    (dyn/trace (keyword (str "obs" i))
+                    (trace (keyword (str "obs" i))
                                (dist/gaussian mu-val 1)))
                   mu-val)))
       observations (reduce (fn [cm i]
@@ -189,9 +189,9 @@
 
 (println "\n-- Conditional SMC: reference particle present --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))]
                 (mx/eval! x)
-                (dyn/trace :obs (dist/gaussian (mx/item x) 0.5))
+                (trace :obs (dist/gaussian (mx/item x) 0.5))
                 (mx/item x)))
       observations [(cm/choicemap :obs (mx/scalar 3.0))]
       {:keys [trace]} (p/generate model [] (first observations))
@@ -206,9 +206,9 @@
 
 (println "\n-- SMCP3: log-ml estimate consistent --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))]
                 (mx/eval! x)
-                (dyn/trace :obs (dist/gaussian (mx/item x) 0.5))
+                (trace :obs (dist/gaussian (mx/item x) 0.5))
                 (mx/item x)))
       observations [(cm/choicemap :obs (mx/scalar 2.0))]
       ;; Run twice with more/fewer particles
@@ -227,8 +227,8 @@
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- Mix combinator: components activated --")
-(let [c0 (gen [] (let [x (dyn/trace :x (dist/delta -10.0))] (mx/eval! x) (mx/item x)))
-      c1 (gen [] (let [x (dyn/trace :x (dist/delta 10.0))] (mx/eval! x) (mx/item x)))
+(let [c0 (gen [] (let [x (trace :x (dist/delta -10.0))] (mx/eval! x) (mx/item x)))
+      c1 (gen [] (let [x (trace :x (dist/delta 10.0))] (mx/eval! x) (mx/item x)))
       mix (comb/mix-combinator [c0 c1]
             (mx/array [(js/Math.log 0.5) (js/Math.log 0.5)]))
       ;; Sample many times, should get both -10 and 10
@@ -244,7 +244,7 @@
 
 (println "\n-- Choice gradients: gradient points toward observation --")
 (let [model (gen [mu]
-              (dyn/trace :obs (dist/gaussian mu 1)))
+              (trace :obs (dist/gaussian mu 1)))
       ;; If mu=0 and obs=5, gradient of log p w.r.t. mu should be positive
       ;; (increasing mu increases log-prob)
       trace (let [{:keys [trace]} (p/generate model [0]

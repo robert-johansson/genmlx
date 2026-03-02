@@ -94,9 +94,9 @@
 
 (def model
   (gen [data]
-    (let [lam (dyn/trace :lambda (dist/gamma-dist 3 1))]
+    (let [lam (trace :lambda (dist/gamma-dist 3 1))]
       (doseq [[i x] (map-indexed vector data)]
-        (dyn/trace (keyword (str "x" i)) (dist/poisson lam)))
+        (trace (keyword (str "x" i)) (dist/poisson lam)))
       lam)))
 
 (def data [2 4 3 5 1])

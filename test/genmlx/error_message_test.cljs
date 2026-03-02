@@ -118,8 +118,8 @@
 
 (def simple-model
   (gen [x]
-    (let [slope (dyn/trace :slope (dist/gaussian 0 10))]
-      (dyn/trace :obs (dist/gaussian (mx/multiply slope (mx/scalar x)) 1))
+    (let [slope (trace :slope (dist/gaussian 0 10))]
+      (trace :obs (dist/gaussian (mx/multiply slope (mx/scalar x)) 1))
       slope)))
 
 ;; Generate with a typo constraint
@@ -155,7 +155,7 @@
 
 (def eval-in-model
   (gen []
-    (let [x (dyn/trace :x (dist/gaussian 0 1))]
+    (let [x (trace :x (dist/gaussian 0 1))]
       (mx/eval! x)
       x)))
 
@@ -179,7 +179,7 @@
 
 (def regen-model
   (gen []
-    (dyn/trace :x (dist/gaussian 0 1))))
+    (trace :x (dist/gaussian 0 1))))
 
 ;; Create a trace with empty choices, then regenerate
 ;; The model visits :x, which is NOT selected and NOT in old-choices → nil error
@@ -198,7 +198,7 @@
 
 (def poisson-model
   (gen []
-    (dyn/trace :x (dist/poisson (mx/scalar 3.0)))))
+    (trace :x (dist/poisson (mx/scalar 3.0)))))
 
 (let [key (rng/fresh-key)
       vt (dyn/vsimulate poisson-model [] 5 key)
@@ -209,7 +209,7 @@
 
 (def neg-binom-model
   (gen []
-    (dyn/trace :x (dist/neg-binomial (mx/scalar 5.0) (mx/scalar 0.4)))))
+    (trace :x (dist/neg-binomial (mx/scalar 5.0) (mx/scalar 0.4)))))
 
 (let [key (rng/fresh-key)
       vt (dyn/vsimulate neg-binom-model [] 5 key)
@@ -220,7 +220,7 @@
 
 (def binomial-model
   (gen []
-    (dyn/trace :x (dist/binomial (mx/scalar 10) (mx/scalar 0.3)))))
+    (trace :x (dist/binomial (mx/scalar 10) (mx/scalar 0.3)))))
 
 (let [key (rng/fresh-key)
       vt (dyn/vsimulate binomial-model [] 5 key)
@@ -231,7 +231,7 @@
 
 (def piecewise-model
   (gen []
-    (dyn/trace :x (dist/piecewise-uniform
+    (trace :x (dist/piecewise-uniform
                     (mx/array [0.0 1.0 2.0 3.0])
                     (mx/array [1.0 2.0 1.0])))))
 

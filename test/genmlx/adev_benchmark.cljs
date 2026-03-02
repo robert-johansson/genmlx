@@ -29,29 +29,29 @@
 (def model-5g
   "5 gaussian trace sites (pure reparam)."
   (gen []
-    (let [mu (dyn/param :mu 0.0)]
-      (dyn/trace :x0 (dist/gaussian mu (mx/scalar 1.0)))
-      (dyn/trace :x1 (dist/gaussian mu (mx/scalar 1.0)))
-      (dyn/trace :x2 (dist/gaussian mu (mx/scalar 1.0)))
-      (dyn/trace :x3 (dist/gaussian mu (mx/scalar 1.0)))
-      (dyn/trace :x4 (dist/gaussian mu (mx/scalar 1.0))))))
+    (let [mu (param :mu 0.0)]
+      (trace :x0 (dist/gaussian mu (mx/scalar 1.0)))
+      (trace :x1 (dist/gaussian mu (mx/scalar 1.0)))
+      (trace :x2 (dist/gaussian mu (mx/scalar 1.0)))
+      (trace :x3 (dist/gaussian mu (mx/scalar 1.0)))
+      (trace :x4 (dist/gaussian mu (mx/scalar 1.0))))))
 
 (def model-mixed
   "3 gaussian + 2 bernoulli (reparam + REINFORCE)."
   (gen []
-    (let [mu (dyn/param :mu 0.0)]
-      (dyn/trace :x0 (dist/gaussian mu (mx/scalar 1.0)))
-      (dyn/trace :x1 (dist/gaussian mu (mx/scalar 1.0)))
-      (dyn/trace :x2 (dist/gaussian mu (mx/scalar 1.0)))
-      (dyn/trace :b0 (dist/bernoulli 0.5))
-      (dyn/trace :b1 (dist/bernoulli 0.5)))))
+    (let [mu (param :mu 0.0)]
+      (trace :x0 (dist/gaussian mu (mx/scalar 1.0)))
+      (trace :x1 (dist/gaussian mu (mx/scalar 1.0)))
+      (trace :x2 (dist/gaussian mu (mx/scalar 1.0)))
+      (trace :b0 (dist/bernoulli 0.5))
+      (trace :b1 (dist/bernoulli 0.5)))))
 
 (def model-20g
   "20 gaussian trace sites (stress test)."
   (gen []
-    (let [mu (dyn/param :mu 0.0)]
+    (let [mu (param :mu 0.0)]
       (doseq [i (range 20)]
-        (dyn/trace (keyword (str "x" i)) (dist/gaussian mu (mx/scalar 1.0))))
+        (trace (keyword (str "x" i)) (dist/gaussian mu (mx/scalar 1.0))))
       mu)))
 
 (def cost-fn-scalar (fn [trace] (mx/square (:retval trace))))

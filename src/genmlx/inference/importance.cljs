@@ -23,7 +23,7 @@
   (let [keys (rng/split-n (rng/ensure-key key) samples)
         results (mapv (fn [ki]
                         (let [r (p/generate (dyn/with-key model ki) args observations)]
-                          (mx/eval! (:weight r) (:score (:trace r)))
+                          (mx/materialize! (:weight r) (:score (:trace r)))
                           r))
                       keys)
         traces     (mapv :trace results)

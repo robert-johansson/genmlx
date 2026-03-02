@@ -13,7 +13,7 @@
   [samples]
   (let [n (count samples)
         stacked (mx/stack samples)
-        _ (mx/eval! stacked)
+        _ (mx/materialize! stacked)
         raw-vals (mx/->clj stacked)
         ;; For scalar params
         flat-vals (vec (if (number? (first raw-vals)) raw-vals (map first raw-vals)))
@@ -55,7 +55,7 @@
         ;; Extract scalar values
         chain-vals (mapv (fn [chain]
                            (mapv (fn [s]
-                                   (mx/eval! s)
+                                   (mx/materialize! s)
                                    (if (mx/array? s) (mx/item s) s))
                                  chain))
                          chains)
@@ -97,7 +97,7 @@
   [samples]
   (let [stacked (mx/stack samples)
         n (first (mx/shape stacked))]
-    (mx/eval! stacked)
+    (mx/materialize! stacked)
     (let [raw-vals (mx/->clj stacked)
           flat-vals (if (number? (first raw-vals)) raw-vals (map first raw-vals))
           sorted-vals (sort flat-vals)
@@ -115,7 +115,7 @@
         sd (sample-std samples)
         {:keys [median q025 q975]} (sample-quantiles samples)
         effective (ess samples)]
-    (mx/eval! mu sd)
+    (mx/materialize! mu sd)
     {:name name
      :mean (mx/item mu)
      :std (mx/item sd)

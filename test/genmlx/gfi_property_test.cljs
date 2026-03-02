@@ -68,7 +68,7 @@
 
 (def single-gaussian
   {:model (gen []
-            (let [x (dyn/trace :x (dist/gaussian 0 1))]
+            (let [x (trace :x (dist/gaussian 0 1))]
               (mx/eval! x) (mx/item x)))
    :args []
    :addrs #{:x}
@@ -76,8 +76,8 @@
 
 (def two-gaussian
   {:model (gen []
-            (let [x (dyn/trace :x (dist/gaussian 0 1))
-                  y (dyn/trace :y (dist/gaussian 0 1))]
+            (let [x (trace :x (dist/gaussian 0 1))
+                  y (trace :y (dist/gaussian 0 1))]
               (mx/eval! x y)
               (+ (mx/item x) (mx/item y))))
    :args []
@@ -86,9 +86,9 @@
 
 (def gaussian-chain
   {:model (gen []
-            (let [x (dyn/trace :x (dist/gaussian 0 1))]
+            (let [x (trace :x (dist/gaussian 0 1))]
               (mx/eval! x)
-              (let [y (dyn/trace :y (dist/gaussian (mx/item x) 1))]
+              (let [y (trace :y (dist/gaussian (mx/item x) 1))]
                 (mx/eval! y)
                 (mx/item y))))
    :args []
@@ -97,9 +97,9 @@
 
 (def three-site
   {:model (gen []
-            (let [a (dyn/trace :a (dist/gaussian 0 2))
-                  b (dyn/trace :b (dist/gaussian 0 2))
-                  c (dyn/trace :c (dist/gaussian 0 2))]
+            (let [a (trace :a (dist/gaussian 0 2))
+                  b (trace :b (dist/gaussian 0 2))
+                  c (trace :c (dist/gaussian 0 2))]
               (mx/eval! a b c)
               (+ (mx/item a) (mx/item b) (mx/item c))))
    :args []
@@ -108,7 +108,7 @@
 
 (def uniform-model
   {:model (gen []
-            (let [x (dyn/trace :x (dist/uniform 0 1))]
+            (let [x (trace :x (dist/uniform 0 1))]
               (mx/eval! x) (mx/item x)))
    :args []
    :addrs #{:x}
@@ -116,8 +116,8 @@
 
 (def mixed-continuous
   {:model (gen []
-            (let [x (dyn/trace :x (dist/gaussian 0 1))
-                  y (dyn/trace :y (dist/exponential 1))]
+            (let [x (trace :x (dist/gaussian 0 1))
+                  y (trace :y (dist/exponential 1))]
               (mx/eval! x y)
               (+ (mx/item x) (mx/item y))))
    :args []

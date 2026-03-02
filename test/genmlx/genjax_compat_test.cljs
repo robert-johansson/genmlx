@@ -50,8 +50,8 @@
 (println "\n-- 1.1 Simulate/Generate consistency --")
 
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 [x y]))
       trace (p/simulate model [])
       choices (:choices trace)
@@ -67,11 +67,11 @@
 
 ;; With a more complex model
 (let [model (gen [n]
-              (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+              (let [mu (trace :mu (dist/gaussian 0 10))]
                 (mx/eval! mu)
                 (let [m (mx/item mu)]
                   (doseq [i (range n)]
-                    (dyn/trace (keyword (str "y" i)) (dist/gaussian m 1)))
+                    (trace (keyword (str "y" i)) (dist/gaussian m 1)))
                   m)))
       trace (p/simulate model [5])
       choices (:choices trace)
@@ -84,7 +84,7 @@
 ;; -- 1.2: Generate with empty constraints == simulate (weight ≈ 0) --
 (println "\n-- 1.2 Generate with empty constraints --")
 
-(let [model (gen [] (dyn/trace :x (dist/gaussian 0 1)))
+(let [model (gen [] (trace :x (dist/gaussian 0 1)))
       {:keys [weight]} (p/generate model [] cm/EMPTY)
       w (ev weight)]
   (check "empty constraints: weight ≈ 0" (approx= w 0.0 1e-10)))
@@ -93,7 +93,7 @@
 ;; For update: weight = new_trace.score - old_trace.score (for fully changed choices)
 (println "\n-- 1.3 Update weight invariant --")
 
-(let [model (gen [] (dyn/trace :x (dist/gaussian 0 1)))
+(let [model (gen [] (trace :x (dist/gaussian 0 1)))
       trace (p/simulate model [])
       old-score (ev (:score trace))
       new-val (mx/scalar 2.5)
@@ -106,8 +106,8 @@
 
 ;; Multi-address update
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 [x y]))
       trace (p/simulate model [])
       old-score (ev (:score trace))
@@ -119,7 +119,7 @@
          (approx= w (- new-score old-score) 1e-5)))
 
 ;; Update with same value → weight ≈ 0
-(let [model (gen [] (dyn/trace :x (dist/gaussian 0 1)))
+(let [model (gen [] (trace :x (dist/gaussian 0 1)))
       trace (p/simulate model [])
       old-val (cm/get-value (cm/get-submap (:choices trace) :x))
       constraints (cm/choicemap :x old-val)
@@ -132,8 +132,8 @@
 
 ;; Regenerate with no selection → weight ≈ 0, choices unchanged
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 [x y]))
       trace (p/simulate model [])
       old-x (ev (cm/get-value (cm/get-submap (:choices trace) :x)))
@@ -145,8 +145,8 @@
 
 ;; Regenerate selected: unselected addresses preserved
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 [x y]))
       trace (p/simulate model [])
       old-y (ev (cm/get-value (cm/get-submap (:choices trace) :y)))
@@ -171,10 +171,10 @@
 ;; -- 1.6: Nested addressing --
 (println "\n-- 1.6 Nested addressing --")
 
-(let [inner (gen [] (dyn/trace :z (dist/gaussian 0 1)))
+(let [inner (gen [] (trace :z (dist/gaussian 0 1)))
       outer (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 10))]
-                (dyn/splice :inner inner)
+              (let [x (trace :x (dist/gaussian 0 10))]
+                (splice :inner inner)
                 x))
       trace (p/simulate outer [])
       choices (:choices trace)]
@@ -213,11 +213,11 @@
       post-std (js/Math.sqrt post-var)
       ;; Model
       model (gen [xs sigma]
-              (let [mu (dyn/trace :mu (dist/gaussian 0 sigma0))]
+              (let [mu (trace :mu (dist/gaussian 0 sigma0))]
                 (mx/eval! mu)
                 (let [m (mx/item mu)]
                   (doseq [[i x] (map-indexed vector xs)]
-                    (dyn/trace (keyword (str "y" i)) (dist/gaussian m sigma)))
+                    (trace (keyword (str "y" i)) (dist/gaussian m sigma)))
                   m)))
       observations (reduce (fn [cm [i x]]
                              (cm/set-choice cm [(keyword (str "y" i))] (mx/scalar x)))
@@ -246,9 +246,9 @@
       post-mean (* post-var (/ (reduce + xs) (* sigma sigma)))
       ;; HMC-compatible model: no eval!/item in body
       model (gen [xs sigma]
-              (let [mu (dyn/trace :mu (dist/gaussian 0 sigma0))]
+              (let [mu (trace :mu (dist/gaussian 0 sigma0))]
                 (doseq [[i x] (map-indexed vector xs)]
-                  (dyn/trace (keyword (str "y" i)) (dist/gaussian mu sigma)))
+                  (trace (keyword (str "y" i)) (dist/gaussian mu sigma)))
                 mu))
       observations (reduce (fn [cm [i x]]
                              (cm/set-choice cm [(keyword (str "y" i))] (mx/scalar x)))
@@ -272,9 +272,9 @@
       post-var (/ 1.0 (+ (/ 1.0 (* sigma0 sigma0)) (/ n (* sigma sigma))))
       post-mean (* post-var (/ (reduce + xs) (* sigma sigma)))
       model (gen [xs sigma]
-              (let [mu (dyn/trace :mu (dist/gaussian 0 sigma0))]
+              (let [mu (trace :mu (dist/gaussian 0 sigma0))]
                 (doseq [[i x] (map-indexed vector xs)]
-                  (dyn/trace (keyword (str "y" i)) (dist/gaussian mu sigma)))
+                  (trace (keyword (str "y" i)) (dist/gaussian mu sigma)))
                 mu))
       observations (reduce (fn [cm [i x]]
                              (cm/set-choice cm [(keyword (str "y" i))] (mx/scalar x)))
@@ -301,11 +301,11 @@
       post-mean (/ alpha-post (+ alpha-post beta-post))
       ;; Model
       model (gen [n]
-              (let [p (dyn/trace :p (dist/beta-dist alpha-prior beta-prior))]
+              (let [p (trace :p (dist/beta-dist alpha-prior beta-prior))]
                 (mx/eval! p)
                 (let [pv (mx/item p)]
                   (doseq [i (range n)]
-                    (dyn/trace (keyword (str "x" i)) (dist/bernoulli pv)))
+                    (trace (keyword (str "x" i)) (dist/bernoulli pv)))
                   pv)))
       observations (reduce (fn [cm [i x]]
                              (cm/set-choice cm [(keyword (str "x" i))] (mx/scalar x)))
@@ -327,11 +327,11 @@
 
 (let [;; Model with observations that create likelihood tension
       model (gen []
-              (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+              (let [mu (trace :mu (dist/gaussian 0 10))]
                 (mx/eval! mu)
                 (let [m (mx/item mu)]
-                  (dyn/trace :y0 (dist/gaussian m 1))
-                  (dyn/trace :y1 (dist/gaussian m 1))
+                  (trace :y0 (dist/gaussian m 1))
+                  (trace :y1 (dist/gaussian m 1))
                   m)))
       obs (cm/choicemap :y0 (mx/scalar 3.0) :y1 (mx/scalar 3.5))
       {:keys [trace]} (p/generate model [] obs)
@@ -350,7 +350,7 @@
 ;; -- 2.6: Chain stationarity --
 (println "\n-- 2.6 Chain stationarity --")
 
-(let [model (gen [] (dyn/trace :x (dist/gaussian 3 1)))
+(let [model (gen [] (trace :x (dist/gaussian 3 1)))
       obs (cm/choicemap :x (mx/scalar 3.0))
       traces (mcmc/mh {:samples 200 :burn 50
                         :selection (sel/select :x)}
@@ -377,9 +377,9 @@
 (println "\n-- 3.1 IS log-ML convergence with particles --")
 
 (let [model (gen []
-              (let [mu (dyn/trace :mu (dist/gaussian 0 5))]
+              (let [mu (trace :mu (dist/gaussian 0 5))]
                 (mx/eval! mu)
-                (dyn/trace :y (dist/gaussian (mx/item mu) 1))
+                (trace :y (dist/gaussian (mx/item mu) 1))
                 mu))
       obs (cm/choicemap :y (mx/scalar 2.0))
       ;; Run IS with increasing particles and check convergence
@@ -400,9 +400,9 @@
 (println "\n-- 3.2 IS posterior concentration --")
 
 (let [model (gen []
-              (let [mu (dyn/trace :mu (dist/gaussian 0 5))]
+              (let [mu (trace :mu (dist/gaussian 0 5))]
                 (mx/eval! mu)
-                (dyn/trace :y (dist/gaussian (mx/item mu) 0.1))
+                (trace :y (dist/gaussian (mx/item mu) 0.1))
                 mu))
       obs (cm/choicemap :y (mx/scalar 3.0))
       ;; With tight likelihood, posterior should concentrate near y=3
@@ -425,9 +425,9 @@
 (println "\n-- 3.3 Importance resampling --")
 
 (let [model (gen []
-              (let [mu (dyn/trace :mu (dist/gaussian 0 5))]
+              (let [mu (trace :mu (dist/gaussian 0 5))]
                 (mx/eval! mu)
-                (dyn/trace :y (dist/gaussian (mx/item mu) 1))
+                (trace :y (dist/gaussian (mx/item mu) 1))
                 mu))
       obs (cm/choicemap :y (mx/scalar 2.0))
       resampled (is/importance-resampling {:samples 50 :particles 200}
@@ -445,11 +445,11 @@
 (println "\n-- 3.4 SMC sequential --")
 
 (let [model (gen [xs]
-              (let [mu (dyn/trace :mu (dist/gaussian 0 5))]
+              (let [mu (trace :mu (dist/gaussian 0 5))]
                 (mx/eval! mu)
                 (let [m (mx/item mu)]
                   (doseq [[i x] (map-indexed vector xs)]
-                    (dyn/trace (keyword (str "y" i)) (dist/gaussian m 1)))
+                    (trace (keyword (str "y" i)) (dist/gaussian m 1)))
                   m)))
       ;; Sequential observations
       obs-seq [(cm/choicemap :y0 (mx/scalar 2.0))
@@ -526,7 +526,7 @@
 ;; -- 5.1: Map combinator --
 (println "\n-- 5.1 Map combinator GFI --")
 
-(let [kernel (gen [x] (dyn/trace :y (dist/gaussian x 1)))
+(let [kernel (gen [x] (trace :y (dist/gaussian x 1)))
       mapped (comb/map-combinator kernel)
       ;; Simulate
       trace (p/simulate mapped [[1.0 2.0 3.0]])
@@ -561,7 +561,7 @@
 (println "\n-- 5.2 Unfold combinator GFI --")
 
 (let [step (gen [t state]
-             (let [noise (dyn/trace :noise (dist/gaussian 0 0.1))]
+             (let [noise (trace :noise (dist/gaussian 0 0.1))]
                (mx/eval! noise)
                (+ state (mx/item noise))))
       unfolded (comb/unfold-combinator step)
@@ -581,8 +581,8 @@
 ;; -- 5.3: Switch combinator --
 (println "\n-- 5.3 Switch combinator GFI --")
 
-(let [branch-a (gen [] (dyn/trace :v (dist/gaussian 0 1)))
-      branch-b (gen [] (dyn/trace :v (dist/gaussian 10 1)))
+(let [branch-a (gen [] (trace :v (dist/gaussian 0 1)))
+      branch-b (gen [] (trace :v (dist/gaussian 10 1)))
       switched (comb/switch-combinator branch-a branch-b)]
   ;; Branch 0
   (let [trace (p/simulate switched [0])
@@ -619,7 +619,7 @@
 (println "\n-- 6.2 Gradient through model score --")
 
 (let [model (gen []
-              (dyn/trace :x (dist/gaussian 0 1)))
+              (trace :x (dist/gaussian 0 1)))
       score-fn (fn [x-val]
                  (:weight (p/generate model []
                             (cm/choicemap :x x-val))))
@@ -647,8 +647,8 @@
 (println "\n-- 6.4 Multi-address score gradient --")
 
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 [x y]))
       score-fn (fn [params]
                  (let [cm (cm/choicemap :x (mx/index params 0)
@@ -794,11 +794,11 @@
 
 (let [n 10
       model (gen [n]
-              (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+              (let [mu (trace :mu (dist/gaussian 0 10))]
                 (mx/eval! mu)
                 (let [m (mx/item mu)]
                   (doseq [i (range n)]
-                    (dyn/trace (keyword (str "y" i)) (dist/gaussian m 1)))
+                    (trace (keyword (str "y" i)) (dist/gaussian m 1)))
                   m)))
       trace (p/simulate model [n])
       score (ev (:score trace))]
@@ -835,12 +835,12 @@
 (println "\n-- 9.1 Hierarchical model round-trip --")
 
 (let [model (gen [xs]
-              (let [slope (dyn/trace :slope (dist/gaussian 0 10))
-                    intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+              (let [slope (trace :slope (dist/gaussian 0 10))
+                    intercept (trace :intercept (dist/gaussian 0 10))]
                 (mx/eval! slope intercept)
                 (let [s (mx/item slope) i (mx/item intercept)]
                   (doseq [[j x] (map-indexed vector xs)]
-                    (dyn/trace (keyword (str "y" j))
+                    (trace (keyword (str "y" j))
                                (dist/gaussian (+ (* s x) i) 1)))
                   [s i])))
       xs [1.0 2.0 3.0]
@@ -856,8 +856,8 @@
 (println "\n-- 9.2 Update with no-op --")
 
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 [x y]))
       trace (p/simulate model [])
       old-score (ev (:score trace))
@@ -876,7 +876,7 @@
 ;; generating directly with those new values
 (println "\n-- 9.3 Generate/Update consistency --")
 
-(let [model (gen [] (dyn/trace :x (dist/gaussian 0 1)))
+(let [model (gen [] (trace :x (dist/gaussian 0 1)))
       val-a (mx/scalar 1.0)
       val-b (mx/scalar 3.0)
       ;; Path 1: generate with val-a, then update to val-b

@@ -20,16 +20,16 @@
 ;; Standard model (with eval!/item — works for scalar GFI ops)
 (def two-site
   (gen []
-    (let [x (dyn/trace :x (dist/gaussian 0 1))
-          y (dyn/trace :y (dist/gaussian 0 1))]
+    (let [x (trace :x (dist/gaussian 0 1))
+          y (trace :y (dist/gaussian 0 1))]
       (mx/eval! x y)
       (mx/item x))))
 
 ;; Vectorization-compatible model (no eval!/item in body)
 (def two-site-vec
   (gen []
-    (let [x (dyn/trace :x (dist/gaussian 0 1))
-          y (dyn/trace :y (dist/gaussian 0 1))]
+    (let [x (trace :x (dist/gaussian 0 1))
+          y (trace :y (dist/gaussian 0 1))]
       x)))
 
 (def model two-site)

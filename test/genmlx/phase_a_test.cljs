@@ -45,7 +45,7 @@
 
 (println "\n-- IPropose on DynamicGF: weight = sum of log-probs --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))]
                 x))
       {:keys [choices weight retval]} (p/propose model [])
       ;; propose weight should equal the trace score
@@ -71,8 +71,8 @@
 
 (println "\n-- IAssess on DynamicGF: all choices specified --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 (mx/add x y)))
       choices (cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar 2.0))
       {:keys [weight]} (p/assess model [] choices)]
@@ -170,7 +170,7 @@
 
 (println "\n-- Unfold update: score changes when constraint changes --")
 (let [step (gen [t state]
-             (let [next (dyn/trace :x (dist/gaussian state 0.1))]
+             (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
                (mx/item next)))
       unfold (comb/unfold-combinator step)
@@ -185,8 +185,8 @@
   (assert-true "unfold update weight != 0" (not= 0.0 (mx/item weight))))
 
 (println "\n-- Switch update and regenerate --")
-(let [b0 (gen [] (let [x (dyn/trace :x (dist/gaussian 0 1))] (mx/eval! x) (mx/item x)))
-      b1 (gen [] (let [x (dyn/trace :x (dist/gaussian 10 1))] (mx/eval! x) (mx/item x)))
+(let [b0 (gen [] (let [x (trace :x (dist/gaussian 0 1))] (mx/eval! x) (mx/item x)))
+      b1 (gen [] (let [x (trace :x (dist/gaussian 10 1))] (mx/eval! x) (mx/item x)))
       sw (comb/switch-combinator b0 b1)
       trace (p/simulate sw [0])
       ;; Update: change :x to 2.0
@@ -203,8 +203,8 @@
 
 (println "\n-- Vectorized regenerate: changes selected addresses --")
 (let [model (gen []
-              (dyn/trace :x (dist/gaussian 0 1))
-              (dyn/trace :y (dist/gaussian 0 1)))
+              (trace :x (dist/gaussian 0 1))
+              (trace :y (dist/gaussian 0 1)))
       n 50
       key (rng/fresh-key)
       vtrace (dyn/vsimulate model [] n key)
@@ -229,7 +229,7 @@
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- Mask combinator: active vs inactive --")
-(let [inner (gen [] (let [x (dyn/trace :x (dist/gaussian 5 0.1))] (mx/eval! x) (mx/item x)))
+(let [inner (gen [] (let [x (trace :x (dist/gaussian 5 0.1))] (mx/eval! x) (mx/item x)))
       masked (comb/mask-combinator inner)
       active-trace (p/simulate masked [true])
       inactive-trace (p/simulate masked [false])]
@@ -252,11 +252,11 @@
 
 (println "\n-- Gibbs: posterior on binary latent --")
 (let [model (gen []
-              (let [z (dyn/trace :z (dist/bernoulli 0.5))]
+              (let [z (trace :z (dist/bernoulli 0.5))]
                 (mx/eval! z)
                 (let [z-val (mx/item z)
                       mu (if (> z-val 0.5) 5 -5)]
-                  (dyn/trace :x (dist/gaussian mu 1))
+                  (trace :x (dist/gaussian mu 1))
                   z-val)))
       ;; x=4.5 is much more likely under z=1 (mu=5) than z=0 (mu=-5)
       observations (cm/choicemap :x (mx/scalar 4.5))

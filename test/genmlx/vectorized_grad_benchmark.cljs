@@ -52,8 +52,8 @@
 ;; Model A: simple Gaussian (1 latent, 1 obs) — fast per-step, overhead-dominated
 (def simple-model
   (gen []
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
-      (dyn/trace :obs (dist/gaussian mu 1))
+    (let [mu (trace :mu (dist/gaussian 0 10))]
+      (trace :obs (dist/gaussian mu 1))
       mu)))
 
 (def simple-obs (cm/choicemap :obs (mx/scalar 3.0)))
@@ -61,10 +61,10 @@
 ;; Model B: linear regression (2 latents, 5 obs) — standard benchmark model
 (def linreg-model
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
       (doseq [[j x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" j))
+        (trace (keyword (str "y" j))
                    (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                           intercept) 1)))
       slope)))
@@ -79,16 +79,16 @@
 ;; Model C: wider model (5 latents, 10 obs) — more compute per gradient
 (def wide-model
   (gen [xs]
-    (let [a (dyn/trace :a (dist/gaussian 0 10))
-          b (dyn/trace :b (dist/gaussian 0 10))
-          c (dyn/trace :c (dist/gaussian 0 10))
-          d (dyn/trace :d (dist/gaussian 0 5))
-          e (dyn/trace :e (dist/gaussian 0 5))]
+    (let [a (trace :a (dist/gaussian 0 10))
+          b (trace :b (dist/gaussian 0 10))
+          c (trace :c (dist/gaussian 0 10))
+          d (trace :d (dist/gaussian 0 5))
+          e (trace :e (dist/gaussian 0 5))]
       (doseq [[j x] (map-indexed vector xs)]
         (let [pred (mx/add (mx/multiply a (mx/scalar x))
                            (mx/multiply b (mx/scalar (* x x 0.01)))
                            c)]
-          (dyn/trace (keyword (str "y" j))
+          (trace (keyword (str "y" j))
                      (dist/gaussian pred (mx/add (mx/abs d) (mx/scalar 0.1))))))
       a)))
 

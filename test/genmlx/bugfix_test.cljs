@@ -51,8 +51,8 @@
 
 (let [;; Model: mu drawn, then obs depends on mu
       model (gen [obs-val]
-              (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
-                (dyn/trace :obs (dist/gaussian mu 1))
+              (let [mu (trace :mu (dist/gaussian 0 10))]
+                (trace :obs (dist/gaussian mu 1))
                 mu))
 
       ;; Generate a trace with mu=0 and obs=5
@@ -83,8 +83,8 @@
 (println "\n-- Update weight: MapCombinator --")
 
 (let [kernel (gen [x]
-              (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
-                (dyn/trace :obs (dist/gaussian mu 1))
+              (let [mu (trace :mu (dist/gaussian 0 10))]
+                (trace :obs (dist/gaussian mu 1))
                 mu))
       model (comb/map-combinator kernel)
       args [[0.0 0.0]]  ;; 2 elements
@@ -114,8 +114,8 @@
 (println "\n-- Update weight: ScanCombinator --")
 
 (let [kernel (gen [carry input]
-              (let [x (dyn/trace :x (dist/gaussian carry 1))]
-                (dyn/trace :obs (dist/gaussian x 0.5))
+              (let [x (trace :x (dist/gaussian carry 1))]
+                (trace :obs (dist/gaussian x 0.5))
                 [x x]))
       model (comb/scan-combinator kernel)
       args [(mx/scalar 0.0) [1 2]]  ;; init carry=0, 2 steps
@@ -203,8 +203,8 @@
 
 (let [;; Simple model
       model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 10))]
-                (dyn/trace :obs (dist/gaussian x 1))
+              (let [x (trace :x (dist/gaussian 0 10))]
+                (trace :obs (dist/gaussian x 1))
                 x))
 
       ;; Create a reference trace with a distinctive x value

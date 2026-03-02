@@ -122,8 +122,8 @@
 (println "\n-- vsimulate --")
 
 (let [model (gen []
-              (dyn/trace :x (dist/gaussian 0 1))
-              (dyn/trace :y (dist/uniform -1 1))
+              (trace :x (dist/gaussian 0 1))
+              (trace :y (dist/uniform -1 1))
               nil)
       n 100
       key (rng/fresh-key)
@@ -151,8 +151,8 @@
 (println "\n-- vgenerate --")
 
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))]
-                (dyn/trace :y (dist/gaussian x 0.1))
+              (let [x (trace :x (dist/gaussian 0 1))]
+                (trace :y (dist/gaussian x 0.1))
                 nil))
       n 100
       key (rng/fresh-key)
@@ -193,7 +193,7 @@
 (println "\n-- statistical equivalence --")
 
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 5.0 2.0))]
+              (let [x (trace :x (dist/gaussian 5.0 2.0))]
                 x))
       n 500
 
@@ -219,7 +219,7 @@
 (println "\n-- resample-vtrace --")
 
 (let [model (gen []
-              (dyn/trace :x (dist/gaussian 0 1))
+              (trace :x (dist/gaussian 0 1))
               nil)
       n 50
       key (rng/fresh-key)
@@ -243,8 +243,8 @@
 (println "\n-- vectorized importance sampling --")
 
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 10))]
-                (dyn/trace :obs (dist/gaussian x 1))
+              (let [x (trace :x (dist/gaussian 0 10))]
+                (trace :obs (dist/gaussian x 1))
                 x))
       obs (cm/choicemap :obs (mx/scalar 5.0))
       {:keys [vtrace log-ml-estimate]}
@@ -264,8 +264,8 @@
 (println "\n-- vsmc-init --")
 
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 10))]
-                (dyn/trace :obs (dist/gaussian x 1))
+              (let [x (trace :x (dist/gaussian 0 10))]
+                (trace :obs (dist/gaussian x 1))
                 x))
       obs (cm/choicemap :obs (mx/scalar 3.0))
       {:keys [vtrace log-ml-estimate]}
@@ -282,12 +282,12 @@
 (println "\n-- vectorized splice: vsimulate --")
 
 (let [sub-model (gen []
-                  (dyn/trace :z (dist/gaussian 0 1))
-                  (dyn/trace :w (dist/uniform -1 1))
+                  (trace :z (dist/gaussian 0 1))
+                  (trace :w (dist/uniform -1 1))
                   nil)
       model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 10))]
-                (dyn/splice :sub sub-model)
+              (let [x (trace :x (dist/gaussian 0 10))]
+                (splice :sub sub-model)
                 x))
       n 50
       key (rng/fresh-key)
@@ -313,11 +313,11 @@
 (println "\n-- vectorized splice: vgenerate --")
 
 (let [sub-model (gen [mu]
-                  (dyn/trace :z (dist/gaussian mu 1))
+                  (trace :z (dist/gaussian mu 1))
                   nil)
       model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 10))]
-                (dyn/splice :sub sub-model x)
+              (let [x (trace :x (dist/gaussian 0 10))]
+                (splice :sub sub-model x)
                 x))
       n 50
       key (rng/fresh-key)
@@ -343,11 +343,11 @@
 (println "\n-- vectorized splice: vupdate --")
 
 (let [sub-model (gen []
-                  (dyn/trace :z (dist/gaussian 0 1))
+                  (trace :z (dist/gaussian 0 1))
                   nil)
       model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 10))]
-                (dyn/splice :sub sub-model)
+              (let [x (trace :x (dist/gaussian 0 10))]
+                (splice :sub sub-model)
                 x))
       n 50
       key (rng/fresh-key)
@@ -370,11 +370,11 @@
 (println "\n-- vectorized splice: vregenerate --")
 
 (let [sub-model (gen []
-                  (dyn/trace :z (dist/gaussian 0 1))
+                  (trace :z (dist/gaussian 0 1))
                   nil)
       model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 10))]
-                (dyn/splice :sub sub-model)
+              (let [x (trace :x (dist/gaussian 0 10))]
+                (splice :sub sub-model)
                 x))
       n 50
       key (rng/fresh-key)
@@ -398,7 +398,7 @@
 
 (let [;; A distribution used as a GF has no :body-fn — uses combinator fallback
       model (gen []
-              (dyn/splice :d (dist/gaussian 0 1))
+              (splice :d (dist/gaussian 0 1))
               nil)
       vtrace (dyn/vsimulate model [] 10 nil)
       d-sub (cm/get-submap (:choices vtrace) :d)]
@@ -410,13 +410,13 @@
 (println "\n-- vectorized splice: nested (3 levels) --")
 
 (let [inner (gen []
-              (dyn/trace :a (dist/gaussian 0 1)))
+              (trace :a (dist/gaussian 0 1)))
       middle (gen []
-               (dyn/trace :b (dist/uniform -1 1))
-               (dyn/splice :inner inner))
+               (trace :b (dist/uniform -1 1))
+               (splice :inner inner))
       outer (gen []
-              (dyn/trace :c (dist/exponential 1.0))
-              (dyn/splice :mid middle)
+              (trace :c (dist/exponential 1.0))
+              (splice :mid middle)
               nil)
       n 50
       key (rng/fresh-key)

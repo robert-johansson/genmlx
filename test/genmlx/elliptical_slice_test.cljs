@@ -36,9 +36,9 @@
       ;; Posterior mean = obs * prior_std^2 / (prior_std^2 + 1)
       posterior-mean (/ (* obs-val prior-std prior-std) (+ (* prior-std prior-std) 1))
       model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 prior-std))]
+              (let [x (trace :x (dist/gaussian 0 prior-std))]
                 (mx/eval! x)
-                (dyn/trace :obs (dist/gaussian (mx/item x) 1))
+                (trace :obs (dist/gaussian (mx/item x) 1))
                 (mx/item x)))
       observations (cm/choicemap :obs (mx/scalar obs-val))
       traces (mcmc/elliptical-slice
@@ -61,11 +61,11 @@
 (println "\n-- ESS convergence: two addresses --")
 (let [prior-std 5.0
       model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 prior-std))
-                    z (dyn/trace :z (dist/gaussian 0 prior-std))]
+              (let [x (trace :x (dist/gaussian 0 prior-std))
+                    z (trace :z (dist/gaussian 0 prior-std))]
                 (mx/eval! x z)
-                (dyn/trace :obs-x (dist/gaussian (mx/item x) 1))
-                (dyn/trace :obs-z (dist/gaussian (mx/item z) 1))
+                (trace :obs-x (dist/gaussian (mx/item x) 1))
+                (trace :obs-z (dist/gaussian (mx/item z) 1))
                 [(mx/item x) (mx/item z)]))
       observations (cm/merge-cm
                      (cm/choicemap :obs-x (mx/scalar 3.0))

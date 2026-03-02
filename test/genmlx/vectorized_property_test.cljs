@@ -59,16 +59,16 @@
 ;; Independent model — for vsimulate tests
 (def ind-model
   (gen []
-    (let [x (dyn/trace :x (dist/gaussian 0 1))
-          y (dyn/trace :y (dist/gaussian 0 1))]
+    (let [x (trace :x (dist/gaussian 0 1))
+          y (trace :y (dist/gaussian 0 1))]
       (mx/add x y))))
 
 ;; Dependent model — for vgenerate tests (y depends on x)
 ;; This ensures weight is [N]-shaped when :y is constrained and :x is unconstrained
 (def dep-model
   (gen []
-    (let [x (dyn/trace :x (dist/gaussian 0 1))
-          y (dyn/trace :y (dist/gaussian x 1))]
+    (let [x (trace :x (dist/gaussian 0 1))
+          y (trace :y (dist/gaussian x 1))]
       y)))
 
 (def n-pool [5 10 15 20])

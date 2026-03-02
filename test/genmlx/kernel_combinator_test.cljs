@@ -29,11 +29,11 @@
 ;; Posterior: x ~ N(3, ~0.45)
 (def model
   (gen []
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+    (let [mu (trace :mu (dist/gaussian 0 10))]
       (mx/eval! mu)
       (let [mu-val (mx/item mu)]
         (doseq [i (range 5)]
-          (dyn/trace (keyword (str "obs" i))
+          (trace (keyword (str "obs" i))
                      (dist/gaussian mu-val 1)))
         mu-val))))
 

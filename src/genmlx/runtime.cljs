@@ -149,6 +149,5 @@
         ;; Build runtime object
         rt #js {:trace trace-fn :splice splice-fn :param param-fn}]
 
-    (binding [mx/*batched-exec?* (boolean (:batched? init-state))]
-      (let [retval (body-fn rt)]
-        (assoc @vol :retval retval)))))
+    (let [retval (body-fn rt)]
+      (assoc @vol :retval retval))))

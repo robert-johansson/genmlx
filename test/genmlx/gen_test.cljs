@@ -26,7 +26,7 @@
 ;; Test basic gen macro
 (println "-- basic gen --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))]
                 (mx/eval! x)
                 (mx/item x)))
       trace (p/simulate model [])]
@@ -38,7 +38,7 @@
 ;; Test gen with args
 (println "\n-- gen with args --")
 (let [model (gen [mu]
-              (let [x (dyn/trace :x (dist/gaussian mu 1))]
+              (let [x (trace :x (dist/gaussian mu 1))]
                 (mx/eval! x)
                 (mx/item x)))
       trace (p/simulate model [5.0])]
@@ -48,7 +48,7 @@
 ;; Test generate with constraints
 (println "\n-- generate with constraints --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))]
                 (mx/eval! x)
                 (mx/item x)))
       constraints (cm/choicemap :x (mx/scalar 2.0))
@@ -62,8 +62,8 @@
 ;; Test update
 (println "\n-- update --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 (mx/eval! x y)
                 (+ (mx/item x) (mx/item y))))
       trace (p/simulate model [])
@@ -79,8 +79,8 @@
 ;; Test regenerate
 (println "\n-- regenerate --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 (mx/eval! x y)
                 (+ (mx/item x) (mx/item y))))
       trace (p/simulate model [])
@@ -97,7 +97,7 @@
 ;; Test call
 (println "\n-- call --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))]
                 (mx/eval! x)
                 (mx/item x)))
       result (dyn/call model)]

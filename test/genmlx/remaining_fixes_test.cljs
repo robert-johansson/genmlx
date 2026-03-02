@@ -14,7 +14,6 @@
             [genmlx.edit :as edit]
             [genmlx.diff :as diff]
             [genmlx.combinators :as comb]
-            [genmlx.handler :as h]
             [genmlx.learning :as learn]))
 
 ;; ---------------------------------------------------------------------------
@@ -45,8 +44,8 @@
 (println "-- Edit interface: ConstraintEdit on DynamicGF --")
 
 (let [model (gen [obs-val]
-              (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
-                (dyn/trace :obs (dist/gaussian mu 1))
+              (let [mu (trace :mu (dist/gaussian 0 10))]
+                (trace :obs (dist/gaussian mu 1))
                 mu))
       obs-val 5.0
       init-cm (cm/choicemap :mu (mx/scalar 2.0) :obs (mx/scalar obs-val))
@@ -78,8 +77,8 @@
 (println "\n-- Edit interface: SelectionEdit on DynamicGF --")
 
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 [x y]))
       init-cm (cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar 2.0))
       {:keys [trace]} (p/generate model [] init-cm)
@@ -104,8 +103,8 @@
 (println "\n-- Edit interface: ConstraintEdit on MapCombinator --")
 
 (let [kernel (gen [x]
-              (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
-                (dyn/trace :obs (dist/gaussian mu 1))
+              (let [mu (trace :mu (dist/gaussian 0 10))]
+                (trace :obs (dist/gaussian mu 1))
                 mu))
       model (comb/map-combinator kernel)
       args [[0.0 0.0]]
@@ -129,7 +128,7 @@
 (println "\n-- Argdiffs: DynamicGF no-change shortcut --")
 
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))]
                 x))
       init-cm (cm/choicemap :x (mx/scalar 3.0))
       {:keys [trace]} (p/generate model [] init-cm)
@@ -148,8 +147,8 @@
 (println "\n-- Argdiffs: MapCombinator vector-diff optimization --")
 
 (let [kernel (gen [x]
-              (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
-                (dyn/trace :obs (dist/gaussian mu 1))
+              (let [mu (trace :mu (dist/gaussian 0 10))]
+                (trace :obs (dist/gaussian mu 1))
                 mu))
       model (comb/map-combinator kernel)
       args [[0.0 0.0 0.0]]  ;; 3 elements
@@ -197,8 +196,8 @@
 (println "\n-- Argdiffs: MapCombinator no-change with constraints --")
 
 (let [kernel (gen [x]
-              (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
-                (dyn/trace :obs (dist/gaussian mu 1))
+              (let [mu (trace :mu (dist/gaussian 0 10))]
+                (trace :obs (dist/gaussian mu 1))
                 mu))
       model (comb/map-combinator kernel)
       args [[0.0 0.0]]
@@ -227,35 +226,39 @@
 ;; Test 3: Trainable Parameters — dyn/param
 ;; =========================================================================
 
-(println "\n-- Trainable params: dyn/param with default value --")
+(println "\n-- Trainable params: param with default value --")
 
 ;; Outside any handler, param returns default
 (let [val (dyn/param :theta 3.0)]
   (assert-close "param outside handler returns default"
                 3.0 (mx/realize val) 0.001))
 
-(println "\n-- Trainable params: dyn/param with param store --")
+(println "\n-- Trainable params: param with param store via simulate-with-params --")
 
-;; With param store bound
-(let [store (learn/make-param-store {:theta 7.0 :sigma 2.0})
-      val (binding [h/*param-store* store]
-            (dyn/param :theta 0.0))]
+;; With param store via simulate-with-params
+(let [param-model (gen []
+                    (let [v (param :theta 0.0)]
+                      v))
+      store (learn/make-param-store {:theta 7.0 :sigma 2.0})
+      trace (learn/simulate-with-params param-model [] store)]
   (assert-close "param with store reads stored value"
-                7.0 (mx/realize val) 0.001))
+                7.0 (mx/realize (:retval trace)) 0.001))
 
 ;; Missing param falls back to default
-(let [store (learn/make-param-store {:theta 7.0})
-      val (binding [h/*param-store* store]
-            (dyn/param :missing-param 99.0))]
+(let [param-model (gen []
+                    (let [v (param :missing-param 99.0)]
+                      v))
+      store (learn/make-param-store {:theta 7.0})
+      trace (learn/simulate-with-params param-model [] store)]
   (assert-close "param missing from store returns default"
-                99.0 (mx/realize val) 0.001))
+                99.0 (mx/realize (:retval trace)) 0.001))
 
 (println "\n-- Trainable params: dyn/param inside gen body --")
 
 ;; Model that uses dyn/param for its mean
 (let [model (gen [obs-val]
-              (let [mu (dyn/param :mu 0.0)]
-                (dyn/trace :obs (dist/gaussian mu 1))
+              (let [mu (param :mu 0.0)]
+                (trace :obs (dist/gaussian mu 1))
                 mu))
 
       ;; Without param store: mu = 0.0 (default)
@@ -275,8 +278,8 @@
 (println "\n-- Trainable params: generate-with-params --")
 
 (let [model (gen [obs-val]
-              (let [mu (dyn/param :mu 0.0)]
-                (dyn/trace :obs (dist/gaussian mu 1))
+              (let [mu (param :mu 0.0)]
+                (trace :obs (dist/gaussian mu 1))
                 mu))
       store (learn/make-param-store {:mu 5.0})
       obs (cm/choicemap :obs (mx/scalar 5.0))
@@ -292,8 +295,8 @@
 
 ;; Test that gradient computation works with params
 (let [model (gen [obs-val]
-              (let [mu (dyn/param :mu 0.0)]
-                (dyn/trace :obs (dist/gaussian mu 0.1))
+              (let [mu (param :mu 0.0)]
+                (trace :obs (dist/gaussian mu 0.1))
                 mu))
       obs (cm/choicemap :obs (mx/scalar 5.0))
       loss-grad-fn (learn/make-param-loss-fn model [5.0] obs [:mu])

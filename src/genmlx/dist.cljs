@@ -405,7 +405,7 @@
           log-probs (mx/subtract logits (mx/logsumexp logits))]
       (mx/take-idx log-probs v)))
   (support []
-    (let [n (do (mx/eval! logits) (first (mx/shape logits)))]
+    (let [n (do (mx/materialize! logits) (first (mx/shape logits)))]
       (mapv #(mx/scalar (int %) mx/int32) (range n)))))
 
 (defmethod dc/dist-sample-n :categorical [d key n]
@@ -912,7 +912,7 @@
                    (mx/reshape cov [k k]))
                  cov)
         L (mx/cholesky cov-2d)
-        _ (mx/eval! L)
+        _ (mx/materialize! L)
         Li (mx/tri-inv L false)
         k (first (mx/shape mu))
         log-det-sigma (mx/multiply TWO
@@ -920,7 +920,7 @@
         nc (mx/multiply (mx/scalar -0.5)
                         (mx/add (mx/scalar (* k LOG-2PI)) log-det-sigma))
         neg-half (mx/scalar -0.5)]
-    (mx/eval! Li nc)
+    (mx/materialize! Li nc)
     (dc/->Distribution :multivariate-normal
                        {:mean-vec mu :cov-matrix cov-2d :cholesky-L L
                         :L-inv Li :k k :norm-const nc :neg-half neg-half})))
@@ -1055,11 +1055,11 @@
                   (mx/reshape V [k k]))
                 V)
         L (mx/cholesky V-2d)
-        _ (mx/eval! L)
+        _ (mx/materialize! L)
         k (first (mx/shape V-2d))
         V-inv (mx/inv V-2d)
         log-det-V (mx/multiply TWO (mx/sum (mx/log (mx/diag L))))
-        _ (mx/eval! V-inv log-det-V)]
+        _ (mx/materialize! V-inv log-det-V)]
     (dc/->Distribution :wishart
                         {:df df-val :scale-matrix V-2d :cholesky-L L
                          :V-inv V-inv :log-det-V log-det-V :k k})))
@@ -1067,32 +1067,41 @@
 (defmethod dc/dist-sample :wishart [d key]
   (let [{:keys [df cholesky-L k]} (:params d)
         key (rng/ensure-key key)
-        keys (rng/split-n key (+ k (* k (dec k) (/ 2))))
+        ;; Pre-split enough keys for all samples: k diagonal + k*(k-1)/2 off-diagonal
+        n-keys (+ k (quot (* k (dec k)) 2))
+        keys (rng/split-n key n-keys)
         ;; Build lower-triangular A (Bartlett decomposition)
         ;; Diagonal: A_ii ~ sqrt(chi²(df - i + 1)), chi²(n) = Gamma(n/2, 1/2)
         ;; Off-diagonal: A_ij ~ N(0,1)
-        ki (atom 0)
-        next-key! (fn [] (let [i @ki] (swap! ki inc) (nth keys i)))
-        A-data (for [i (range k)]
-                 (for [j (range k)]
-                   (cond
-                     (= i j) ;; diagonal: sqrt(chi²(df - i))
-                     (let [chi2-df (- df i)
-                           ;; chi²(n) = Gamma(n/2, 2) but we sample Gamma(n/2, 1) * 2
-                           g (dc/dist-sample (gamma-dist (mx/scalar (/ chi2-df 2.0))
-                                                          ONE)
-                                             (next-key!))]
-                       (mx/sqrt (mx/multiply TWO g)))
-                     (> i j) ;; below diagonal: N(0,1)
-                     (rng/normal (next-key!) [])
-                     :else ;; above diagonal: 0
-                     ZERO)))
+        ;; Index keys sequentially without mutable state
+        [A-data _]
+        (reduce
+          (fn [[rows ki] i]
+            (let [[row ki']
+                  (reduce
+                    (fn [[cols ki] j]
+                      (cond
+                        (= i j) ;; diagonal: sqrt(chi²(df - i))
+                        (let [chi2-df (- df i)
+                              g (dc/dist-sample (gamma-dist (mx/scalar (/ chi2-df 2.0))
+                                                             ONE)
+                                                (nth keys ki))]
+                          [(conj cols (mx/sqrt (mx/multiply TWO g))) (inc ki)])
+                        (> i j) ;; below diagonal: N(0,1)
+                        [(conj cols (rng/normal (nth keys ki) [])) (inc ki)]
+                        :else ;; above diagonal: 0
+                        [(conj cols ZERO) ki]))
+                    [[] ki]
+                    (range k))]
+              [(conj rows row) ki']))
+          [[] 0]
+          (range k))
         ;; Build A matrix
         A (mx/reshape (mx/stack (mapv (fn [row] (mx/stack (vec row))) A-data)) [k k])
         ;; W = L * A * A^T * L^T
         LA (mx/matmul cholesky-L A)
         W (mx/matmul LA (mx/transpose LA))]
-    (do (mx/eval! W) W)))
+    (do (mx/materialize! W) W)))
 
 (defmethod dc/dist-log-prob :wishart [d x]
   (let [{:keys [df V-inv log-det-V k]} (:params d)
@@ -1100,7 +1109,7 @@
         x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
         log-det-X (mx/multiply TWO
                                (mx/sum (mx/log (mx/diag (mx/cholesky x-2d)))))
-        _ (mx/eval! log-det-X)
+        _ (mx/materialize! log-det-X)
         ;; log p(X) = ((df-k-1)/2)*log|X| - (1/2)*tr(V^{-1}X) - (df*k/2)*log(2)
         ;;            - (df/2)*log|V| - log_multivariate_gamma(df/2, k)
         half-df (/ df 2.0)
@@ -1128,14 +1137,14 @@
                   Psi)
         k (first (mx/shape Psi-2d))
         Psi-inv (mx/inv Psi-2d)
-        _ (mx/eval! Psi-inv)
+        _ (mx/materialize! Psi-inv)
         ;; Build internal Wishart(df, Psi^{-1}) for sampling
         wish (wishart df-val Psi-inv)
         ;; Precompute log|Psi| for log-prob
         L-psi (mx/cholesky Psi-2d)
-        _ (mx/eval! L-psi)
+        _ (mx/materialize! L-psi)
         log-det-Psi (mx/multiply TWO (mx/sum (mx/log (mx/diag L-psi))))
-        _ (mx/eval! log-det-Psi)]
+        _ (mx/materialize! log-det-Psi)]
     (dc/->Distribution :inv-wishart
                         {:df df-val :scale-matrix Psi-2d :k k
                          :wish wish :log-det-Psi log-det-Psi})))
@@ -1152,7 +1161,7 @@
         X-inv (mx/inv x-2d)
         log-det-X (mx/multiply TWO
                                (mx/sum (mx/log (mx/diag (mx/cholesky x-2d)))))
-        _ (mx/eval! log-det-X)
+        _ (mx/materialize! log-det-X)
         ;; log p(X) = (df/2)*log|Psi| - (df*k/2)*log(2) - log_multivariate_gamma(df/2, k)
         ;;            - ((df+k+1)/2)*log|X| - (1/2)*tr(Psi * X^{-1})
         half-df (/ df 2.0)

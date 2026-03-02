@@ -44,11 +44,11 @@
                             {:keys [trace weight]} (p/generate model args merged)
                             ;; Importance weight = model-weight - proposal-score
                             iw (mx/subtract weight proposal-score)]
-                        (mx/eval! iw (:score trace))
+                        (mx/materialize! iw (:score trace))
                         {:trace trace :weight iw})
                       ;; No proposal: standard importance sampling
                       (let [r (p/generate model args observations)]
-                        (mx/eval! (:weight r) (:score (:trace r)))
+                        (mx/materialize! (:weight r) (:score (:trace r)))
                         r)))
                   keys)
         traces (mapv :trace results)
@@ -101,11 +101,11 @@
                                       ;; Without backward kernel, fall back to constraint update
                                       (edit/constraint-edit observations))
                             result (edit/edit (:gen-fn trace) trace edit-req)]
-                        (mx/eval! (:weight result))
+                        (mx/materialize! (:weight result))
                         {:trace (:trace result) :weight (:weight result)})
                       ;; Standard update
                       (let [result (p/update (:gen-fn trace) trace observations)]
-                        (mx/eval! (:weight result))
+                        (mx/materialize! (:weight result))
                         {:trace (:trace result) :weight (:weight result)})))
                   traces' step-keys)
         new-traces (mapv :trace results)

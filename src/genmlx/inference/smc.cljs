@@ -79,7 +79,7 @@
   [model args obs particles]
   (let [results    (mapv (fn [_]
                           (let [r (p/generate model args obs)]
-                            (mx/eval! (:weight r) (:score (:trace r)))
+                            (mx/materialize! (:weight r) (:score (:trace r)))
                             r))
                         (range particles))
         traces     (mapv :trace results)
@@ -126,7 +126,7 @@
         ;; Update each particle with new observations
         results       (mapv (fn [trace]
                               (let [r (p/update (:gen-fn trace) trace obs)]
-                                (mx/eval! (:weight r) (:score (:trace r)))
+                                (mx/materialize! (:weight r) (:score (:trace r)))
                                 r))
                             traces')
         new-traces    (mapv :trace results)
@@ -243,12 +243,12 @@
             ;; Init step: reference trace at index 0, rest from prior
             (let [other-results (mapv (fn [_]
                                         (let [r (p/generate model args obs-t)]
-                                          (mx/eval! (:weight r) (:score (:trace r)))
+                                          (mx/materialize! (:weight r) (:score (:trace r)))
                                           r))
                                       (range (dec particles)))
                   ;; Use reference trace at index 0 (the core of cSMC)
                   ref-result (let [r (p/generate model args (:choices reference-trace))]
-                               (mx/eval! (:weight r) (:score (:trace r)))
+                               (mx/materialize! (:weight r) (:score (:trace r)))
                                r)
                   traces (into [(:trace ref-result)] (mapv :trace other-results))
                   log-weights (into [(:weight ref-result)] (mapv :weight other-results))
@@ -275,7 +275,7 @@
                   ;; Update all particles
                   results (mapv (fn [trace]
                                   (let [r (p/update (:gen-fn trace) trace obs-t)]
-                                    (mx/eval! (:weight r) (:score (:trace r)))
+                                    (mx/materialize! (:weight r) (:score (:trace r)))
                                     r))
                                 traces')
                   new-traces (mapv :trace results)
@@ -325,10 +325,10 @@
               n (:n-particles vtrace)
               {proposed :vtrace mh-weight :weight}
                 (dyn/vregenerate (:gen-fn vtrace) vtrace selection regen-key)
-              _ (mx/eval! mh-weight)
+              _ (mx/materialize! mh-weight)
               u (rng/uniform (rng/ensure-key accept-key) [n])
               accept-mask (mx/less (mx/log u) mh-weight)
-              _ (mx/eval! accept-mask)
+              _ (mx/materialize! accept-mask)
               vtrace (vec/merge-vtraces-by-mask vtrace proposed accept-mask)]
           (recur (inc k) vtrace next-key))))))
 
@@ -373,7 +373,7 @@
                 (dyn/vupdate (:gen-fn vtrace) vtrace (nth obs-vec t) update-key)
               ;; 3. Accumulate weights
               cumul-weights (mx/add prev-weights update-weight)
-              _ (mx/eval! cumul-weights)
+              _ (mx/materialize! cumul-weights)
               vtrace (assoc updated-vtrace :weight cumul-weights)
               ;; 4. Log-ML increment
               log-ml-inc (vec/vtrace-log-ml-estimate vtrace)

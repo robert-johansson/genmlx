@@ -32,8 +32,8 @@
 ;; MAP estimate ≈ 4.95
 (println "-- Gaussian posterior --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 10))]
-                (dyn/trace :y (dist/gaussian x 1))
+              (let [x (trace :x (dist/gaussian 0 10))]
+                (trace :y (dist/gaussian x 1))
                 x))
       obs (cm/choicemap :y (mx/scalar 5.0))
       result (mcmc/map-optimize
@@ -49,10 +49,10 @@
 ;; observe y1 ~ N(x, 0.5) at 3.0, y2 ~ N(z, 0.5) at -2.0
 (println "\n-- multi-parameter --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 10))
-                    z (dyn/trace :z (dist/gaussian 0 10))]
-                (dyn/trace :y1 (dist/gaussian x 0.5))
-                (dyn/trace :y2 (dist/gaussian z 0.5))
+              (let [x (trace :x (dist/gaussian 0 10))
+                    z (trace :z (dist/gaussian 0 10))]
+                (trace :y1 (dist/gaussian x 0.5))
+                (trace :y2 (dist/gaussian z 0.5))
                 [x z]))
       obs (cm/merge-cm (cm/choicemap :y1 (mx/scalar 3.0))
                        (cm/choicemap :y2 (mx/scalar -2.0)))
@@ -67,8 +67,8 @@
 ;; Score should generally increase (non-decreasing after initial convergence)
 (println "\n-- score monotonicity --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 10))]
-                (dyn/trace :y (dist/gaussian x 1))
+              (let [x (trace :x (dist/gaussian 0 10))]
+                (trace :y (dist/gaussian x 1))
                 x))
       obs (cm/choicemap :y (mx/scalar 5.0))
       result (mcmc/map-optimize
@@ -84,8 +84,8 @@
 ;; -- SGD option --
 (println "\n-- SGD optimizer --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 10))]
-                (dyn/trace :y (dist/gaussian x 1))
+              (let [x (trace :x (dist/gaussian 0 10))]
+                (trace :y (dist/gaussian x 1))
                 x))
       obs (cm/choicemap :y (mx/scalar 5.0))
       result (mcmc/map-optimize

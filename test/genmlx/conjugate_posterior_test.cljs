@@ -99,9 +99,9 @@
 
 (def model
   (gen [data]
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+    (let [mu (trace :mu (dist/gaussian 0 10))]
       (doseq [[i x] (map-indexed vector data)]
-        (dyn/trace (keyword (str "obs" i)) (dist/gaussian mu 1)))
+        (trace (keyword (str "obs" i)) (dist/gaussian mu 1)))
       mu)))
 
 (def data [2.8 3.1 2.9 3.3 2.7])

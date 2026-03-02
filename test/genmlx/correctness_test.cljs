@@ -84,8 +84,8 @@
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- 17.6: MixCombinator update-with-diffs --")
-(let [comp1 (gen [x] (dyn/trace :v (dist/gaussian (mx/scalar 0.0) 1)))
-      comp2 (gen [x] (dyn/trace :v (dist/gaussian (mx/scalar 10.0) 1)))
+(let [comp1 (gen [x] (trace :v (dist/gaussian (mx/scalar 0.0) 1)))
+      comp2 (gen [x] (trace :v (dist/gaussian (mx/scalar 10.0) 1)))
       mix (comb/mix-combinator [comp1 comp2]
                                 (mx/log (mx/array [0.5 0.5])))
       trace (p/simulate mix [(mx/scalar 0.0)])]
@@ -110,7 +110,7 @@
 
 (println "\n-- 16.1: Map combinator sub-trace scores --")
 (let [kernel (gen [x]
-               (let [v (dyn/trace :v (dist/gaussian x 1))]
+               (let [v (trace :v (dist/gaussian x 1))]
                  v))
       mapper (comb/map-combinator kernel)
       ;; Generate with known values so we can verify scores
@@ -138,7 +138,7 @@
 
 (println "\n-- 16.1: Unfold combinator sub-trace scores --")
 (let [kernel (gen [t state]
-               (let [v (dyn/trace :v (dist/gaussian state 1))]
+               (let [v (trace :v (dist/gaussian state 1))]
                  (mx/eval! v)
                  (mx/item v)))
       unfolder (comb/unfold-combinator kernel)
@@ -161,8 +161,8 @@
 
 (println "\n-- 16.3: assess validates all choices --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 [x y]))]
   ;; Complete choices: should succeed
   (let [choices (cm/choicemap :x (mx/scalar 1.0)
@@ -184,10 +184,10 @@
 
 (println "\n-- 16.2: splice score tracking --")
 (let [sub-model (gen [mu]
-                  (dyn/trace :z (dist/gaussian mu 1)))
+                  (trace :z (dist/gaussian mu 1)))
       outer-model (gen []
-                    (let [x (dyn/trace :x (dist/gaussian 0 10))]
-                      (dyn/splice :sub sub-model x)
+                    (let [x (trace :x (dist/gaussian 0 10))]
+                      (splice :sub sub-model x)
                       x))
       ;; Generate with known values
       constraints (-> (cm/choicemap :x (mx/scalar 2.0))

@@ -44,16 +44,16 @@
 ;; Model 1: Single Gaussian (1 site) — matches model1_single_gaussian
 (def model-1site
   (gen []
-    (let [x (dyn/trace :x (dist/gaussian 0 1))]
+    (let [x (trace :x (dist/gaussian 0 1))]
       x)))
 
 ;; Model 2: Linear Regression (7 sites) — matches model2_linear_regression
 (def model-linreg
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
       (doseq [[j x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" j))
+        (trace (keyword (str "y" j))
                    (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                           intercept) 1)))
       slope)))
@@ -61,9 +61,9 @@
 ;; Model 6: Many addresses (11 sites) — matches model6_many_addresses
 (def model-many
   (gen []
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+    (let [mu (trace :mu (dist/gaussian 0 10))]
       (doseq [i (range 10)]
-        (dyn/trace (keyword (str "y" i))
+        (trace (keyword (str "y" i))
                    (dist/gaussian mu 1)))
       mu)))
 

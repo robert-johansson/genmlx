@@ -57,13 +57,13 @@
 
 (let [;; Simple model: x ~ Normal(0, 1), y ~ Normal(x, 0.5)
       model (gen [_]
-              (let [x (dyn/trace :x (dist/gaussian 0.0 1.0))]
-                (dyn/trace :y (dist/gaussian x 0.5))
+              (let [x (trace :x (dist/gaussian 0.0 1.0))]
+                (trace :y (dist/gaussian x 0.5))
                 x))
       ;; Simple symmetric proposal: propose new x from Normal(current_x, 0.3)
       proposal (gen [current-choices]
                  (let [old-x (mx/item (cm/get-choice current-choices [:x]))]
-                   (dyn/trace :x (dist/gaussian old-x 0.3))))
+                   (trace :x (dist/gaussian old-x 0.3))))
       obs (cm/choicemap :y 2.0)
       key (rng/fresh-key 42)
       ;; Run custom MH — should work without errors
@@ -79,12 +79,12 @@
 
 ;; Test with backward-gf (asymmetric proposal)
 (let [model (gen [_]
-              (dyn/trace :x (dist/gaussian 0.0 1.0)))
+              (trace :x (dist/gaussian 0.0 1.0)))
       ;; Asymmetric proposal: always proposes from N(0.5, 0.5)
       forward (gen [current-choices]
-                (dyn/trace :x (dist/gaussian 0.5 0.5)))
+                (trace :x (dist/gaussian 0.5 0.5)))
       backward (gen [current-choices]
-                 (dyn/trace :x (dist/gaussian 0.5 0.5)))
+                 (trace :x (dist/gaussian 0.5 0.5)))
       key (rng/fresh-key 99)
       samples (mcmc/mh-custom
                 {:samples 30 :burn 10 :proposal-gf forward :backward-gf backward :key key}
@@ -99,12 +99,12 @@
 
 ;; Test volume-preserving involution (2-tuple return, log|det J| = 0)
 (let [model (gen [_]
-              (let [x (dyn/trace :x (dist/gaussian 0.0 1.0))
-                    y (dyn/trace :y (dist/gaussian 0.0 1.0))]
+              (let [x (trace :x (dist/gaussian 0.0 1.0))
+                    y (trace :y (dist/gaussian 0.0 1.0))]
                 [x y]))
       ;; Proposal: sample auxiliary u ~ Normal(0, 0.3)
       proposal (gen [current-choices]
-                 (dyn/trace :u (dist/gaussian 0.0 0.3)))
+                 (trace :u (dist/gaussian 0.0 0.3)))
       ;; Swap involution: x' = y + u, y' = x - u, u' = -u
       involution (fn [trace-cm aux-cm]
                    (let [x (cm/get-choice trace-cm [:x])
@@ -122,10 +122,10 @@
 
 ;; Test non-volume-preserving involution (3-tuple return with log|det J|)
 (let [model (gen [_]
-              (dyn/trace :x (dist/gaussian 0.0 2.0)))
+              (trace :x (dist/gaussian 0.0 2.0)))
       ;; Proposal: sample scale factor
       proposal (gen [current-choices]
-                 (dyn/trace :s (dist/gaussian 0.0 0.3)))
+                 (trace :s (dist/gaussian 0.0 0.3)))
       ;; Scaling involution: x' = x * exp(s), s' = -s
       ;; Jacobian: dx'/dx = exp(s), so log|det J| = s
       involution (fn [trace-cm aux-cm]
@@ -154,7 +154,7 @@
 
 (let [;; Inner model: x ~ Normal(mean, 1)
       inner-model (gen [mean]
-                    (dyn/trace :x (dist/gaussian mean 1.0)))
+                    (trace :x (dist/gaussian mean 1.0)))
       ;; Contramap: transforms [offset] -> [offset + 5] before passing to inner
       contra-model (comb/contramap-gf inner-model (fn [args] [(+ (first args) 5.0)]))
       ;; Simulate
@@ -178,7 +178,7 @@
 
 (let [;; MapRetval: transform return value
       inner-model (gen [_]
-                    (dyn/trace :x (dist/gaussian 0.0 1.0)))
+                    (trace :x (dist/gaussian 0.0 1.0)))
       retval-model (comb/map-retval inner-model #(* % 10))
       trace (p/simulate retval-model [])
       _ (assert-true "map-retval simulate works" (some? trace))
@@ -194,7 +194,7 @@
 
 ;; Test dimap (both contramap + map-retval)
 (let [inner-model (gen [x]
-                    (dyn/trace :z (dist/gaussian x 1.0)))
+                    (trace :z (dist/gaussian x 1.0)))
       dimap-model (comb/dimap inner-model
                               (fn [args] [(* (first args) 2.0)])
                               (fn [retval] (+ retval 100)))
@@ -213,9 +213,9 @@
 
 (let [;; Two component GFs
       comp-a (gen [_]
-               (dyn/trace :val (dist/gaussian -5.0 1.0)))
+               (trace :val (dist/gaussian -5.0 1.0)))
       comp-b (gen [_]
-               (dyn/trace :val (dist/gaussian 5.0 1.0)))
+               (trace :val (dist/gaussian 5.0 1.0)))
       log-w (mx/array [0.0 0.0])  ;; equal weights
       mix-model (comb/mix-combinator [comp-a comp-b] log-w)
       ;; Generate with component 0 constrained
@@ -309,11 +309,11 @@
 
 (let [;; Simple model
       model (gen [_]
-              (let [x (dyn/trace :x (dist/gaussian 0.0 1.0))]
-                (dyn/trace :y (dist/gaussian x 0.5))))
+              (let [x (trace :x (dist/gaussian 0.0 1.0))]
+                (trace :y (dist/gaussian x 0.5))))
       ;; Guide with two addresses
       guide (gen [_]
-              (dyn/trace :x (dist/gaussian 0.0 1.0)))
+              (trace :x (dist/gaussian 0.0 1.0)))
       obs (cm/choicemap :y 2.0)
       ;; Test with explicit guide-addresses (existing behavior)
       result-explicit (learn/wake-sleep
@@ -332,12 +332,12 @@
 
 ;; Test auto-discovery with multi-address guide
 (let [model (gen [_]
-              (let [a (dyn/trace :a (dist/gaussian 0.0 1.0))
-                    b (dyn/trace :b (dist/gaussian 0.0 1.0))]
-                (dyn/trace :obs (dist/gaussian (mx/add a b) 0.5))))
+              (let [a (trace :a (dist/gaussian 0.0 1.0))
+                    b (trace :b (dist/gaussian 0.0 1.0))]
+                (trace :obs (dist/gaussian (mx/add a b) 0.5))))
       guide (gen [_]
-              (dyn/trace :a (dist/gaussian 0.0 1.0))
-              (dyn/trace :b (dist/gaussian 0.0 1.0)))
+              (trace :a (dist/gaussian 0.0 1.0))
+              (trace :b (dist/gaussian 0.0 1.0)))
       obs (cm/choicemap :obs 3.0)
       result (learn/wake-sleep
                {:iterations 3 :lr 0.01 :key (rng/fresh-key 77)}

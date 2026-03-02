@@ -35,18 +35,18 @@
 ;; Simple 2D Gaussian with different scales — good for testing mass matrices
 (def aniso-model
   (gen [_]
-    (let [x (dyn/trace :x (dist/gaussian 0 1))
-          y (dyn/trace :y (dist/gaussian 0 10))]
+    (let [x (trace :x (dist/gaussian 0 1))
+          y (trace :y (dist/gaussian 0 10))]
       [x y])))
 
 ;; Simple model for SMC testing
 (def coin-model
   (gen [n]
-    (let [p (dyn/trace :p (dist/uniform 0.01 0.99))]
+    (let [p (trace :p (dist/uniform 0.01 0.99))]
       (mx/eval! p)
       (let [pv (mx/item p)]
         (doseq [i (range n)]
-          (dyn/trace (keyword (str "y" i))
+          (trace (keyword (str "y" i))
                      (dist/bernoulli pv)))
         pv))))
 

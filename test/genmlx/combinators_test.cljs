@@ -27,7 +27,7 @@
 ;; Map combinator
 (println "-- Map combinator --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 1))]
+               (let [y (trace :y (dist/gaussian x 1))]
                  (mx/eval! y)
                  (mx/item y)))
       mapped (comb/map-combinator kernel)
@@ -39,7 +39,7 @@
 ;; Map combinator with generate
 (println "\n-- Map combinator generate --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  (mx/eval! y)
                  (mx/item y)))
       mapped (comb/map-combinator kernel)
@@ -52,7 +52,7 @@
 ;; Unfold combinator
 (println "\n-- Unfold combinator --")
 (let [step (gen [t state]
-             (let [next (dyn/trace :x (dist/gaussian state 0.1))]
+             (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
                (mx/item next)))
       unfold (comb/unfold-combinator step)
@@ -64,11 +64,11 @@
 ;; Switch combinator
 (println "\n-- Switch combinator --")
 (let [branch0 (gen []
-                (let [x (dyn/trace :x (dist/gaussian 0 1))]
+                (let [x (trace :x (dist/gaussian 0 1))]
                   (mx/eval! x)
                   (mx/item x)))
       branch1 (gen []
-                (let [x (dyn/trace :x (dist/gaussian 10 1))]
+                (let [x (trace :x (dist/gaussian 10 1))]
                   (mx/eval! x)
                   (mx/item x)))
       sw (comb/switch-combinator branch0 branch1)
@@ -82,7 +82,7 @@
 ;; Mask combinator
 (println "\n-- Mask combinator --")
 (let [inner (gen [x]
-              (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+              (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
                 (mx/item y)))
       masked (comb/mask-combinator inner)
@@ -98,7 +98,7 @@
 ;; Mask combinator update (active)
 (println "\n-- Mask update (active) --")
 (let [inner (gen [x]
-              (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+              (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
                 (mx/item y)))
       masked (comb/mask-combinator inner)
@@ -119,7 +119,7 @@
 ;; Mask combinator update (inactive)
 (println "\n-- Mask update (inactive) --")
 (let [inner (gen [x]
-              (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+              (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
                 (mx/item y)))
       masked (comb/mask-combinator inner)
@@ -133,7 +133,7 @@
 ;; Mask combinator regenerate (active)
 (println "\n-- Mask regenerate (active) --")
 (let [inner (gen [x]
-              (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+              (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
                 (mx/item y)))
       masked (comb/mask-combinator inner)
@@ -149,7 +149,7 @@
 ;; Mask combinator regenerate (inactive)
 (println "\n-- Mask regenerate (inactive) --")
 (let [inner (gen [x]
-              (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+              (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
                 (mx/item y)))
       masked (comb/mask-combinator inner)
@@ -162,7 +162,7 @@
 ;; Mask combinator update-with-diffs (no change fast path)
 (println "\n-- Mask update-with-diffs --")
 (let [inner (gen [x]
-              (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+              (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
                 (mx/item y)))
       masked (comb/mask-combinator inner)
@@ -178,7 +178,7 @@
 ;; Contramap update-with-diffs (no change fast path)
 (println "\n-- Contramap update-with-diffs --")
 (let [inner (gen [x]
-              (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+              (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
                 (mx/item y)))
       cmapped (comb/contramap-gf inner identity)
@@ -192,7 +192,7 @@
 ;; MapRetval update-with-diffs (no change fast path)
 (println "\n-- MapRetval update-with-diffs --")
 (let [inner (gen [x]
-              (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+              (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
                 (mx/item y)))
       mr (comb/map-retval inner (fn [v] (* v 2)))
@@ -209,7 +209,7 @@
 
 (println "\n-- Unfold step-scores metadata --")
 (let [step (gen [t state]
-             (let [next (dyn/trace :x (dist/gaussian state 0.1))]
+             (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
                (mx/item next)))
       unfold (comb/unfold-combinator step)
@@ -233,7 +233,7 @@
 
 (println "\n-- Unfold prefix skip --")
 (let [step (gen [t state]
-             (let [next (dyn/trace :x (dist/gaussian state 0.1))]
+             (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
                (mx/item next)))
       unfold (comb/unfold-combinator step)
@@ -277,7 +277,7 @@
 
 (println "\n-- Unfold update with empty constraints --")
 (let [step (gen [t state]
-             (let [next (dyn/trace :x (dist/gaussian state 0.1))]
+             (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
                (mx/item next)))
       unfold (comb/unfold-combinator step)
@@ -296,7 +296,7 @@
 
 (println "\n-- Scan step metadata --")
 (let [kernel (gen [carry input]
-               (let [x (dyn/trace :x (dist/gaussian (mx/add carry input) 0.1))]
+               (let [x (trace :x (dist/gaussian (mx/add carry input) 0.1))]
                  (mx/eval! x)
                  [(mx/item x) (mx/item x)]))
       scan (comb/scan-combinator kernel)
@@ -324,7 +324,7 @@
 
 (println "\n-- Scan prefix skip --")
 (let [kernel (gen [carry input]
-               (let [x (dyn/trace :x (dist/gaussian (mx/add carry input) 0.1))]
+               (let [x (trace :x (dist/gaussian (mx/add carry input) 0.1))]
                  (mx/eval! x)
                  [(mx/item x) (mx/item x)]))
       scan (comb/scan-combinator kernel)
@@ -360,7 +360,7 @@
 
 (println "\n-- Scan update with empty constraints --")
 (let [kernel (gen [carry input]
-               (let [x (dyn/trace :x (dist/gaussian (mx/add carry input) 0.1))]
+               (let [x (trace :x (dist/gaussian (mx/add carry input) 0.1))]
                  (mx/eval! x)
                  [(mx/item x) (mx/item x)]))
       scan (comb/scan-combinator kernel)
@@ -379,11 +379,11 @@
 
 (println "\n-- Switch update same branch --")
 (let [branch0 (gen []
-                (let [x (dyn/trace :x (dist/gaussian 0 1))]
+                (let [x (trace :x (dist/gaussian 0 1))]
                   (mx/eval! x)
                   (mx/item x)))
       branch1 (gen []
-                (let [x (dyn/trace :x (dist/gaussian 10 1))]
+                (let [x (trace :x (dist/gaussian 10 1))]
                   (mx/eval! x)
                   (mx/item x)))
       sw (comb/switch-combinator branch0 branch1)
@@ -408,11 +408,11 @@
 
 (println "\n-- Switch update branch change --")
 (let [branch0 (gen []
-                (let [x (dyn/trace :x (dist/gaussian 0 1))]
+                (let [x (trace :x (dist/gaussian 0 1))]
                   (mx/eval! x)
                   (mx/item x)))
       branch1 (gen []
-                (let [x (dyn/trace :x (dist/gaussian 10 1))]
+                (let [x (trace :x (dist/gaussian 10 1))]
                   (mx/eval! x)
                   (mx/item x)))
       sw (comb/switch-combinator branch0 branch1)
@@ -448,7 +448,7 @@
 
 (println "\n-- Switch metadata preserved --")
 (let [branch0 (gen []
-                (let [x (dyn/trace :x (dist/gaussian 0 1))]
+                (let [x (trace :x (dist/gaussian 0 1))]
                   (mx/eval! x)
                   (mx/item x)))
       sw (comb/switch-combinator branch0)

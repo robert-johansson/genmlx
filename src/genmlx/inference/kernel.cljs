@@ -196,7 +196,7 @@
             update-weight (:weight update-result)
             bwd-result    (p/assess backward [(:choices trace')] (:discard update-result))
             bwd-score     (:weight bwd-result)
-            _             (mx/eval! update-weight fwd-score bwd-score)
+            _             (mx/materialize! update-weight fwd-score bwd-score)
             log-alpha     (- (+ (mx/item update-weight) (mx/item bwd-score))
                              (mx/item fwd-score))]
         (if (u/accept-mh? log-alpha k3)

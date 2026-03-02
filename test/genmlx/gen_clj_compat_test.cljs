@@ -324,7 +324,7 @@
 (println "\n-- Bernoulli generate weight (from Gen.clj) --")
 
 ;; Generate with constraint then check weight
-(let [gf (gen [] (dyn/trace :x (dist/bernoulli 0.3)))
+(let [gf (gen [] (trace :x (dist/bernoulli 0.3)))
       {:keys [trace weight]} (p/generate gf [] (cm/choicemap :x (mx/scalar 1.0)))]
   (mx/eval! weight)
   ;; Weight = log(0.3) for constraining bernoulli(0.3) to true
@@ -334,7 +334,7 @@
     f32-tol))
 
 ;; Update via gen model (not raw distribution)
-(let [gf (gen [] (dyn/trace :x (dist/bernoulli 0.3)))
+(let [gf (gen [] (trace :x (dist/bernoulli 0.3)))
       {:keys [trace]} (p/generate gf [] (cm/choicemap :x (mx/scalar 1.0)))
       ;; Update with same value
       {:keys [weight]} (p/update gf trace (cm/choicemap :x (mx/scalar 1.0)))]
@@ -343,7 +343,7 @@
     1.0 (js/Math.exp (mx/item weight)) f32-tol))
 
 ;; Update from true to false => weight = log(0.7) - log(0.3)
-(let [gf (gen [] (dyn/trace :x (dist/bernoulli 0.3)))
+(let [gf (gen [] (trace :x (dist/bernoulli 0.3)))
       {:keys [trace]} (p/generate gf [] (cm/choicemap :x (mx/scalar 1.0)))
       {:keys [weight]} (p/update gf trace (cm/choicemap :x (mx/scalar 0.0)))]
   (mx/eval! weight)
@@ -382,7 +382,7 @@
 ;; trace! creates choices
 (println "\n-- Nested tracing semantics (from Gen.clj) --")
 (let [gf (gen [p]
-           (dyn/trace :addr (dist/bernoulli p)))
+           (trace :addr (dist/bernoulli p)))
       trace (p/simulate gf [0.5])]
   (let [choices (:choices trace)
         retval  (:retval trace)]
@@ -393,8 +393,8 @@
         (mx/item retval) (mx/item v) sym-tol))))
 
 ;; splice! bubbles up choices (from Gen.clj's "trace inside splice should bubble up")
-(let [gf0 (gen [] (dyn/trace :addr (dist/bernoulli 0.5)))
-      gf1 (gen [] (dyn/splice :sub gf0))
+(let [gf0 (gen [] (trace :addr (dist/bernoulli 0.5)))
+      gf1 (gen [] (splice :sub gf0))
       trace (p/simulate gf1 [])]
   (let [choices (:choices trace)
         sub-map (cm/get-submap choices :sub)]
@@ -405,8 +405,8 @@
         (cm/has-value? addr-val)))))
 
 ;; trace inside trace nests (from Gen.clj's "trace inside of trace should nest")
-(let [inner (gen [] (dyn/trace :inner (dist/bernoulli 0.5)))
-      outer (gen [] (dyn/splice :outer inner))
+(let [inner (gen [] (trace :inner (dist/bernoulli 0.5)))
+      outer (gen [] (splice :outer inner))
       trace (p/simulate outer [])]
   (let [choices (:choices trace)
         outer-sub (cm/get-submap choices :outer)
@@ -417,8 +417,8 @@
       (cm/has-value? inner-val))))
 
 ;; Generate through splice preserves structure
-(let [inner (gen [] (dyn/trace :addr (dist/bernoulli 0.5)))
-      outer (gen [] (dyn/splice :sub inner))
+(let [inner (gen [] (trace :addr (dist/bernoulli 0.5)))
+      outer (gen [] (splice :sub inner))
       {:keys [trace]} (p/generate outer [] cm/EMPTY)]
   (let [choices (:choices trace)
         sub-map (cm/get-submap choices :sub)
@@ -429,7 +429,7 @@
 ;; Score correctness (from Gen.clj's score test)
 (println "\n-- Score computation (from Gen.clj) --")
 (let [trace (p/simulate
-              (gen [] (dyn/trace :addr (dist/bernoulli 0.5)))
+              (gen [] (trace :addr (dist/bernoulli 0.5)))
               [])]
   (let [score (:score trace)]
     (mx/eval! score)
@@ -447,7 +447,7 @@
 
 ;; Update with constraint => old value in discard
 (let [gf (gen []
-           (dyn/trace :x (dist/bernoulli 0.5)))
+           (trace :x (dist/bernoulli 0.5)))
       trace (p/simulate gf [])
       old-x (let [v (cm/get-value (cm/get-submap (:choices trace) :x))]
               (mx/eval! v) (mx/item v))
@@ -467,7 +467,7 @@
 
 ;; Update weight for bernoulli (via gen model)
 (let [gf (gen []
-           (dyn/trace :x (dist/bernoulli 0.3)))
+           (trace :x (dist/bernoulli 0.3)))
       {:keys [trace]} (p/generate gf [] (cm/choicemap :x (mx/scalar 1.0)))
       {:keys [weight]} (p/update gf trace (cm/choicemap :x (mx/scalar 1.0)))]
   (mx/eval! weight)
@@ -476,8 +476,8 @@
 
 ;; Update with two addresses, only constrain one
 (let [gf (gen []
-           (dyn/trace :kept (dist/bernoulli 0.5))
-           (dyn/trace :changed (dist/bernoulli 0.5)))
+           (trace :kept (dist/bernoulli 0.5))
+           (trace :changed (dist/bernoulli 0.5)))
       trace (p/simulate gf [])
       old-kept (let [v (cm/get-value (cm/get-submap (:choices trace) :kept))]
                  (mx/eval! v) (mx/item v))
@@ -500,7 +500,7 @@
 (println "\n-- Generate semantics (from Gen.clj) --")
 
 ;; Generate with empty constraints = simulate (weight ~ 0)
-(let [gf (gen [] (dyn/trace :x (dist/gaussian 0 1)))
+(let [gf (gen [] (trace :x (dist/gaussian 0 1)))
       {:keys [trace weight]} (p/generate gf [] cm/EMPTY)]
   (mx/eval! weight)
   (assert-close "generate empty constraints: weight = 0"
@@ -508,8 +508,8 @@
 
 ;; Generate with constraint
 (let [gf (gen []
-           (dyn/trace :x (dist/gaussian 0 1))
-           (dyn/trace :y (dist/gaussian 0 1)))
+           (trace :x (dist/gaussian 0 1))
+           (trace :y (dist/gaussian 0 1)))
       constraints (cm/choicemap :x (mx/scalar 2.0))
       {:keys [trace weight]} (p/generate gf [] constraints)]
   ;; x should be constrained to 2.0
@@ -532,8 +532,8 @@
 
 ;; Regenerate keeps unselected addresses
 (let [gf (gen []
-           (let [x (dyn/trace :x (dist/gaussian 0 1))
-                 y (dyn/trace :y (dist/gaussian 0 1))]
+           (let [x (trace :x (dist/gaussian 0 1))
+                 y (trace :y (dist/gaussian 0 1))]
              (mx/eval! x y)
              [(mx/item x) (mx/item y)]))
       trace (p/simulate gf [])
@@ -558,11 +558,11 @@
 ;; Model that causes some particles to have low weight
 ;; (bernoulli branch structure with observation)
 (let [model (gen []
-              (let [foo (dyn/trace :foo (dist/bernoulli 0.5))]
+              (let [foo (trace :foo (dist/bernoulli 0.5))]
                 (mx/eval! foo)
                 (if (> (mx/item foo) 0.5)
-                  (dyn/trace :bar (dist/bernoulli 0.99))
-                  (dyn/trace :bar (dist/bernoulli 0.01)))))
+                  (trace :bar (dist/bernoulli 0.99))
+                  (trace :bar (dist/bernoulli 0.01)))))
       observations (cm/choicemap :bar (mx/scalar 1.0))
       ;; importance-resampling returns a vector of traces
       traces (importance/importance-resampling
@@ -610,12 +610,12 @@
 (println "\n-- End-to-end line model (from Gen.clj) --")
 
 (let [line-model (gen [xs]
-                   (let [slope     (dyn/trace :slope (dist/gaussian 0 1))
-                         intercept (dyn/trace :intercept (dist/gaussian 0 2))]
+                   (let [slope     (trace :slope (dist/gaussian 0 1))
+                         intercept (trace :intercept (dist/gaussian 0 2))]
                      (mx/eval! slope intercept)
                      (let [s (mx/item slope) i (mx/item intercept)]
                        (doseq [[idx x] (map-indexed vector xs)]
-                         (dyn/trace (keyword (str "y" idx))
+                         (trace (keyword (str "y" idx))
                                    (dist/gaussian (+ (* s x) i) 0.1)))
                        (fn [x] (+ (* s x) i)))))
       xs (range -5 6)
@@ -636,12 +636,12 @@
 
 ;; Generate with observations should constrain ys
 (let [line-model (gen [xs]
-                   (let [slope     (dyn/trace :slope (dist/gaussian 0 1))
-                         intercept (dyn/trace :intercept (dist/gaussian 0 2))]
+                   (let [slope     (trace :slope (dist/gaussian 0 1))
+                         intercept (trace :intercept (dist/gaussian 0 2))]
                      (mx/eval! slope intercept)
                      (let [s (mx/item slope) i (mx/item intercept)]
                        (doseq [[idx x] (map-indexed vector xs)]
-                         (dyn/trace (keyword (str "y" idx))
+                         (trace (keyword (str "y" idx))
                                    (dist/gaussian (+ (* s x) i) 0.1)))
                        [s i])))
       xs [1.0 2.0 3.0]

@@ -64,11 +64,8 @@
                   (mx/reshape init-params [1])
                   init-params)
         init-log-sigma (mx/zeros [d])
-        init-vp (mx/tidy
-                  (fn []
-                    (let [vp (mx/concatenate [init-mu init-log-sigma])]
-                      (mx/eval! vp)
-                      vp)))
+        init-vp (mx/tidy-materialize
+                  #(mx/concatenate [init-mu init-log-sigma]))
         vmapped-log-density (mx/vmap log-density)
         neg-elbo-fn (fn [vp]
                       (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
@@ -81,7 +78,7 @@
         (let [final-mu (mx/slice vp 0 d)
               final-log-sigma (mx/slice vp d (* 2 d))
               final-sigma (mx/exp final-log-sigma)]
-          (mx/eval! final-mu final-sigma)
+          (mx/materialize! final-mu final-sigma)
           {:mu final-mu
            :sigma final-sigma
            :elbo-history (persistent! elbo-history)
@@ -89,18 +86,17 @@
                         (let [sample-key (if rk rk (rng/fresh-key))
                               eps (rng/normal sample-key [n d])
                               samples (mx/add final-mu (mx/multiply final-sigma eps))]
-                          (mx/eval! samples)
+                          (mx/materialize! samples)
                           (if (= d 1)
                             (mapv #(mx/item (mx/index samples %)) (range n))
                             (mx/->clj samples))))})
         (let [[iter-key next-key] (rng/split-or-nils rk)
-              g (doto (mx/tidy (fn [] (grad-neg-elbo vp))) mx/eval!)
+              g (mx/tidy-materialize #(grad-neg-elbo vp))
               [vp' opt-state'] (learn/adam-step vp g opt-state
                                           {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
               elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
-                         (let [e (mx/tidy (fn [] (elbo-estimate vp' log-density elbo-samples d vmapped-log-density iter-key)))]
-                           (mx/eval! e)
-                           (mx/item e)))]
+                         (mx/realize (mx/tidy-materialize
+                                       #(elbo-estimate vp' log-density elbo-samples d vmapped-log-density iter-key))))]
           (when (and callback elbo-val)
             (callback {:iter i :elbo elbo-val :params (mx/->clj vp')}))
           (recur (inc i) vp' opt-state'
@@ -146,11 +142,8 @@
                       (mx/reshape init-params [1])
                       init-params)
             init-log-sigma (mx/zeros [d])
-            init-vp (mx/tidy
-                      (fn []
-                        (let [vp (mx/concatenate [init-mu init-log-sigma])]
-                          (mx/eval! vp)
-                          vp)))
+            init-vp (mx/tidy-materialize
+                      #(mx/concatenate [init-mu init-log-sigma]))
             vmapped-log-density (mx/vmap log-density)
             neg-elbo-fn (fn [vp]
                           (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
@@ -164,7 +157,7 @@
             (let [final-mu (mx/slice vp 0 d)
                   final-log-sigma (mx/slice vp d (* 2 d))
                   final-sigma (mx/exp final-log-sigma)]
-              (mx/eval! final-mu final-sigma)
+              (mx/materialize! final-mu final-sigma)
               {:mu final-mu
                :sigma final-sigma
                :elbo-history (persistent! elbo-history)
@@ -172,18 +165,17 @@
                             (let [sample-key (if rk rk (rng/fresh-key))
                                   eps (rng/normal sample-key [n d])
                                   samples (mx/add final-mu (mx/multiply final-sigma eps))]
-                              (mx/eval! samples)
+                              (mx/materialize! samples)
                               (if (= d 1)
                                 (mapv (fn [idx] (mx/item (mx/index samples idx))) (range n))
                                 (mx/->clj samples))))})
             (let [[iter-key next-key] (rng/split-or-nils rk)
-                  g (doto (mx/tidy (fn [] (grad-neg-elbo vp))) mx/eval!)
+                  g (mx/tidy-materialize #(grad-neg-elbo vp))
                   [vp' opt-state'] (learn/adam-step vp g opt-state
                                               {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
                   elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
-                             (let [e (mx/tidy (fn [] (mx/negative (neg-elbo-compiled vp'))))]
-                               (mx/eval! e)
-                               (mx/item e)))]
+                             (mx/realize (mx/tidy-materialize
+                                           #(mx/negative (neg-elbo-compiled vp')))))]
               (when (and callback elbo-val)
                 (callback {:iter i :elbo elbo-val :params (mx/->clj vp')}))
               (recur (inc i) vp' opt-state'
@@ -388,7 +380,7 @@
         {:params params :loss-history (persistent! losses)}
         (let [[iter-key next-key] (rng/split-or-nils rk)
               {:keys [loss grad]} (grad-loss params iter-key)
-              _ (mx/eval! loss grad)
+              _ (mx/materialize! loss grad)
               _ (when (zero? (mod i 50)) (mx/clear-cache!))
               loss-val (mx/item loss)
               [params' opt-state'] (learn/adam-step params grad opt-state
@@ -436,9 +428,8 @@
             {:params params :loss-history (persistent! losses)}
             (let [[iter-key next-key] (rng/split-or-nils rk)
                   samples (sample-fn params iter-key n-samples)
-                  grad (doto (mx/tidy (fn [] (grad-loss params samples))) mx/eval!)
-                  loss (mx/tidy (fn [] (loss-compiled params samples)))
-                  _ (mx/eval! loss)
+                  grad (mx/tidy-materialize #(grad-loss params samples))
+                  loss (mx/tidy-materialize #(loss-compiled params samples))
                   loss-val (mx/item loss)
                   [params' opt-state'] (learn/adam-step params grad opt-state
                                                   {:lr learning-rate})]

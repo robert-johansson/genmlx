@@ -24,11 +24,11 @@
 (println "\n=== Stress Test 7.2: MH on Beta-Bernoulli (5000 samples, 2000 burn) ===")
 
 (let [model (gen [n-obs]
-              (let [p (dyn/trace :p (dist/beta-dist 2 2))]
+              (let [p (trace :p (dist/beta-dist 2 2))]
                 (mx/eval! p)
                 (let [p-val (mx/item p)]
                   (doseq [i (range n-obs)]
-                    (dyn/trace (keyword (str "obs" i))
+                    (trace (keyword (str "obs" i))
                                (dist/bernoulli p-val)))
                   p-val)))
       n-obs 10
@@ -60,7 +60,7 @@
       (println "  Posterior mean p (last 100):" p-mean "(expected ~0.857)")
       (assert-true "Posterior mean near 0.857" (< (js/Math.abs (- p-mean 0.857)) 0.15)))
     ;; Dispose collected traces to free Metal buffers for subsequent tests
-    (u/dispose-trace! traces)))
+    (u/dispose-trace traces)))
 
 ;; Clean up between tests
 (mx/clear-cache!)
@@ -74,7 +74,7 @@
 (println "\n=== Stress Test 7.5: Long MH chain (10000 samples, 5000 burn, Beta) ===")
 
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/beta-dist 2 2))]
+              (let [x (trace :x (dist/beta-dist 2 2))]
                 x))
       obs (cm/choicemap)]
 
@@ -102,7 +102,7 @@
       (println "  Posterior mean x (last 200):" x-mean "(expected ~0.5)")
       (assert-true "Posterior mean near 0.5" (< (js/Math.abs (- x-mean 0.5)) 0.15)))
     ;; Dispose collected traces to free Metal buffers for subsequent tests
-    (u/dispose-trace! traces)))
+    (u/dispose-trace traces)))
 
 ;; Clean up between tests
 (mx/clear-cache!)
@@ -116,11 +116,11 @@
 (println "\n=== Stress Test 7.3: SMC with 50 timesteps, 100 particles ===")
 
 (let [model (gen [xs]
-              (let [mu (dyn/trace :mu (dist/gaussian 0 5))]
+              (let [mu (trace :mu (dist/gaussian 0 5))]
                 (mx/eval! mu)
                 (let [m (mx/item mu)]
                   (doseq [[i x] (map-indexed vector xs)]
-                    (dyn/trace (keyword (str "y" i)) (dist/gaussian m 1)))
+                    (trace (keyword (str "y" i)) (dist/gaussian m 1)))
                   m)))
       ;; Build 20 timesteps of cumulative observations
       n-timesteps 20

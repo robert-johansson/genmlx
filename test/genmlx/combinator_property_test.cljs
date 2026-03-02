@@ -67,7 +67,7 @@
 
 (def kernel
   (gen [x]
-    (let [y (dyn/trace :y (dist/gaussian x 1))]
+    (let [y (trace :y (dist/gaussian x 1))]
       (mx/eval! y)
       (mx/item y))))
 
@@ -88,7 +88,7 @@
 ;; Unfold combinator pool
 (def unfold-step
   (gen [t state]
-    (let [y (dyn/trace :y (dist/gaussian state 1))]
+    (let [y (trace :y (dist/gaussian state 1))]
       (mx/eval! y)
       (mx/item y))))
 
@@ -102,8 +102,8 @@
 (def gen-unfold-spec (gen/elements unfold-pool))
 
 ;; Switch combinator pool
-(def switch-g1 (gen [] (dyn/trace :y (dist/gaussian 0 1))))
-(def switch-g2 (gen [] (dyn/trace :y (dist/gaussian 5 2))))
+(def switch-g1 (gen [] (trace :y (dist/gaussian 0 1))))
+(def switch-g2 (gen [] (trace :y (dist/gaussian 5 2))))
 (def switched (comb/switch-combinator switch-g1 switch-g2))
 
 (def switch-pool
@@ -115,7 +115,7 @@
 ;; Scan combinator pool
 (def scan-kernel
   (gen [carry x]
-    (let [y (dyn/trace :y (dist/gaussian carry 1))]
+    (let [y (trace :y (dist/gaussian carry 1))]
       (mx/eval! y)
       [(mx/item y) (mx/item y)])))
 

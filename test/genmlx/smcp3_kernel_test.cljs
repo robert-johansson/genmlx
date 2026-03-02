@@ -26,22 +26,22 @@
 ;; Model: x ~ N(0, 1), y ~ N(x, 0.5)
 (def model
   (gen []
-    (let [x (dyn/trace :x (dist/gaussian 0 1))]
+    (let [x (trace :x (dist/gaussian 0 1))]
       (mx/eval! x)
-      (dyn/trace :y (dist/gaussian (mx/item x) 0.5))
+      (trace :y (dist/gaussian (mx/item x) 0.5))
       (mx/item x))))
 
 ;; Forward kernel: random-walk propose new :x near current :x
 (def fwd-kernel
   (gen [choices]
     (let [cur-x (mx/realize (cm/get-choice choices [:x]))]
-      (dyn/trace :x (dist/gaussian cur-x 0.5)))))
+      (trace :x (dist/gaussian cur-x 0.5)))))
 
 ;; Backward kernel: symmetric (same structure)
 (def bwd-kernel
   (gen [choices]
     (let [new-x (mx/realize (cm/get-choice choices [:x]))]
-      (dyn/trace :x (dist/gaussian new-x 0.5)))))
+      (trace :x (dist/gaussian new-x 0.5)))))
 
 ;; Two observation steps (step 1 triggers kernel path)
 (def obs-seq [(cm/choicemap :y (mx/scalar 3.0))

@@ -34,8 +34,8 @@
 ;; Model: x ~ N(0, 1), y ~ N(x, 0.5)
 (def model
   (gen []
-    (let [x (dyn/trace :x (dist/gaussian 0 1))]
-      (dyn/trace :y (dist/gaussian x 0.5))
+    (let [x (trace :x (dist/gaussian 0 1))]
+      (trace :y (dist/gaussian x 0.5))
       x)))
 
 (def n 50)

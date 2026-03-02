@@ -22,9 +22,9 @@
 (declare execute-sub-project)
 (declare execute-sub-assess)
 
-(defn- warn-unused-constraints
-  "Warn if any top-level constraint keys were not consumed by the trace."
-  [op-name constraints result-choices]
+(defn- find-unused-constraints
+  "Return set of top-level constraint keys not consumed by the trace, or nil."
+  [constraints result-choices]
   (when (and constraints
              (not= constraints cm/EMPTY)
              (instance? cm/Node constraints))
@@ -32,12 +32,7 @@
           trace-keys (when (instance? cm/Node result-choices)
                        (set (keys (:m result-choices))))
           unused (clojure.set/difference constraint-keys (or trace-keys #{}))]
-      (when (seq unused)
-        (js/console.warn
-          (str op-name ": constraint address(es) not found in trace: "
-               (vec (sort unused)) ". "
-               "Trace addresses: " (vec (sort (or trace-keys []))) ". "
-               "Unused constraints are ignored."))))))
+      (when (seq unused) unused))))
 
 (defrecord DynamicGF [body-fn source]
   p/IGenerativeFunction
@@ -72,11 +67,13 @@
                    :choices (:choices result)
                    :retval  (:retval result)
                    :score   (:score result)})]
-      (warn-unused-constraints "generate" constraints (:choices result))
-      {:trace (if-let [ss (:splice-scores result)]
-                (with-meta trace {::splice-scores ss})
-                trace)
-       :weight (:weight result)}))
+      (let [result-map {:trace (if-let [ss (:splice-scores result)]
+                                (with-meta trace {::splice-scores ss})
+                                trace)
+                        :weight (:weight result)}]
+        (if-let [unused (find-unused-constraints constraints (:choices result))]
+          (assoc result-map :unused-constraints unused)
+          result-map))))
 
   p/IUpdate
   (update [this trace constraints]
@@ -96,12 +93,14 @@
                        :choices (:choices result)
                        :retval  (:retval result)
                        :score   (:score result)})]
-      (warn-unused-constraints "update" constraints (:choices result))
-      {:trace (if-let [ss (:splice-scores result)]
-                (with-meta new-trace {::splice-scores ss})
-                new-trace)
-       :weight  (mx/subtract (:score result) (:score trace))
-       :discard (:discard result)}))
+      (let [result-map {:trace (if-let [ss (:splice-scores result)]
+                                (with-meta new-trace {::splice-scores ss})
+                                new-trace)
+                        :weight  (mx/subtract (:score result) (:score trace))
+                        :discard (:discard result)}]
+        (if-let [unused (find-unused-constraints constraints (:choices result))]
+          (assoc result-map :unused-constraints unused)
+          result-map))))
 
   p/IRegenerate
   (regenerate [this trace selection]

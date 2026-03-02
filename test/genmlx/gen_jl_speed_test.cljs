@@ -86,15 +86,15 @@
 ;; Model 1: Single Gaussian (1 site)
 (def single-gaussian
   (gen []
-    (dyn/trace :x (dist/gaussian 0 1))))
+    (trace :x (dist/gaussian 0 1))))
 
 ;; Model 2: Linear Regression (5 obs + 2 latents = 7 sites)
 (def linear-regression
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
       (doseq [[j x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" j))
+        (trace (keyword (str "y" j))
                    (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                           intercept) 1)))
       slope)))
@@ -104,33 +104,33 @@
 ;; Model 3: Mixed discrete/continuous (2 sites)
 (def mixed-model
   (gen []
-    (let [coin (dyn/trace :coin (dist/bernoulli 0.5))
+    (let [coin (trace :coin (dist/bernoulli 0.5))
           _ (mx/eval! coin)
           coin-val (mx/item coin)]
       (if (> coin-val 0.5)
-        (dyn/trace :x (dist/gaussian 10 1))
-        (dyn/trace :x (dist/gaussian 0 1))))))
+        (trace :x (dist/gaussian 10 1))
+        (trace :x (dist/gaussian 0 1))))))
 
 ;; Model 4: Map combinator (3 elements)
 (def map-kernel
   (gen [x]
-    (dyn/trace :y (dist/gaussian (mx/scalar x) 1))))
+    (trace :y (dist/gaussian (mx/scalar x) 1))))
 
 (def map-model (comb/map-combinator map-kernel))
 
 ;; Model 5: Unfold combinator (3 steps)
 (def unfold-kernel
   (gen [t state]
-    (dyn/trace :x (dist/gaussian state 1))))
+    (trace :x (dist/gaussian state 1))))
 
 (def unfold-model (comb/unfold-combinator unfold-kernel))
 
 ;; Model 6: Many addresses (11 sites)
 (def many-addresses
   (gen []
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+    (let [mu (trace :mu (dist/gaussian 0 10))]
       (doseq [i (range 10)]
-        (dyn/trace (keyword (str "y" i))
+        (trace (keyword (str "y" i))
                    (dist/gaussian mu 1)))
       mu)))
 

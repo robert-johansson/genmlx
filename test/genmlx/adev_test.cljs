@@ -51,7 +51,7 @@
 
 (println "\n-- Pure reparam model (ADEV execute) --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))]
                 x))
       key (rng/fresh-key)
       {:keys [trace reinforce-lp]} (adev/adev-execute model [] key)]
@@ -66,8 +66,8 @@
 
 (println "\n-- Mixed model (reparam + REINFORCE) --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    b (dyn/trace :b (dist/bernoulli 0.5))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    b (trace :b (dist/bernoulli 0.5))]
                 (mx/add x b)))
       key (rng/fresh-key)
       {:keys [trace reinforce-lp]} (adev/adev-execute model [] key)]
@@ -84,8 +84,8 @@
 
 (println "\n-- ADEV surrogate loss --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    b (dyn/trace :b (dist/bernoulli 0.5))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    b (trace :b (dist/bernoulli 0.5))]
                 (mx/add x b)))
       cost-fn (fn [trace] (mx/square (:retval trace)))
       key (rng/fresh-key)
@@ -102,8 +102,8 @@
 (let [;; Model: sample x ~ gaussian(mu, 1), cost = (x - 3)^2
       ;; Optimal mu = 3
       model (gen []
-              (let [mu (dyn/param :mu 0.0)
-                    x (dyn/trace :x (dist/gaussian mu (mx/scalar 1.0)))]
+              (let [mu (param :mu 0.0)
+                    x (trace :x (dist/gaussian mu (mx/scalar 1.0)))]
                 x))
       cost-fn (fn [trace]
                 (mx/square (mx/subtract (:retval trace) (mx/scalar 3.0))))
@@ -126,8 +126,8 @@
 (let [;; Model: x ~ gaussian(mu, 1), cost = (x - 5)^2
       ;; Optimal mu = 5
       model (gen []
-              (let [mu (dyn/param :mu 0.0)
-                    x (dyn/trace :x (dist/gaussian mu (mx/scalar 1.0)))]
+              (let [mu (param :mu 0.0)
+                    x (trace :x (dist/gaussian mu (mx/scalar 1.0)))]
                 x))
       cost-fn (fn [trace]
                 (mx/square (mx/subtract (:retval trace) (mx/scalar 5.0))))
@@ -150,8 +150,8 @@
 (let [;; Model: x ~ gaussian(mu, 1), cost = x^2
       ;; E[cost] = mu^2 + 1, so ∇_mu E[cost] = 2*mu
       model (gen []
-              (let [mu (dyn/param :mu 0.0)
-                    x (dyn/trace :x (dist/gaussian mu (mx/scalar 1.0)))]
+              (let [mu (param :mu 0.0)
+                    x (trace :x (dist/gaussian mu (mx/scalar 1.0)))]
                 x))
       cost-fn (fn [trace] (mx/square (:retval trace)))
       param-names [:mu]
@@ -173,8 +173,8 @@
 
 (println "\n-- Vectorized ADEV gradient (vadev-gradient) --")
 (let [model (gen []
-              (let [mu (dyn/param :mu 0.0)
-                    x (dyn/trace :x (dist/gaussian mu (mx/scalar 1.0)))]
+              (let [mu (param :mu 0.0)
+                    x (trace :x (dist/gaussian mu (mx/scalar 1.0)))]
                 x))
       cost-fn (fn [result]
                 (mx/square (mx/subtract (:retval result) (mx/scalar 3.0))))
@@ -195,8 +195,8 @@
 
 (println "\n-- vadev-gradient vs adev-gradient agreement --")
 (let [model (gen []
-              (let [mu (dyn/param :mu 0.0)
-                    x (dyn/trace :x (dist/gaussian mu (mx/scalar 1.0)))]
+              (let [mu (param :mu 0.0)
+                    x (trace :x (dist/gaussian mu (mx/scalar 1.0)))]
                 x))
       cost-fn-scalar (fn [trace]
                        (mx/square (mx/subtract (:retval trace) (mx/scalar 0.0))))
@@ -224,8 +224,8 @@
 
 (println "\n-- compiled-adev-optimize convergence --")
 (let [model (gen []
-              (let [mu (dyn/param :mu 0.0)
-                    x (dyn/trace :x (dist/gaussian mu (mx/scalar 1.0)))]
+              (let [mu (param :mu 0.0)
+                    x (trace :x (dist/gaussian mu (mx/scalar 1.0)))]
                 x))
       cost-fn (fn [result]
                 (mx/square (mx/subtract (:retval result) (mx/scalar 5.0))))
@@ -246,9 +246,9 @@
 
 (println "\n-- baseline reduces variance (mixed model) --")
 (let [model (gen []
-              (let [mu (dyn/param :mu 0.0)
-                    x (dyn/trace :x (dist/gaussian mu (mx/scalar 1.0)))
-                    b (dyn/trace :b (dist/bernoulli 0.5))]
+              (let [mu (param :mu 0.0)
+                    x (trace :x (dist/gaussian mu (mx/scalar 1.0)))
+                    b (trace :b (dist/bernoulli 0.5))]
                 (mx/add x b)))
       cost-fn (fn [result]
                 (mx/square (mx/subtract (:retval result) (mx/scalar 5.0))))
@@ -286,8 +286,8 @@
 
 (println "\n-- compiled-adev-optimize with baseline convergence --")
 (let [model (gen []
-              (let [mu (dyn/param :mu 0.0)
-                    x (dyn/trace :x (dist/gaussian mu (mx/scalar 1.0)))]
+              (let [mu (param :mu 0.0)
+                    x (trace :x (dist/gaussian mu (mx/scalar 1.0)))]
                 x))
       cost-fn (fn [result]
                 (mx/square (mx/subtract (:retval result) (mx/scalar 5.0))))

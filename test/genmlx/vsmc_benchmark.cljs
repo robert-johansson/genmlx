@@ -29,8 +29,8 @@
 ;; Time-series model: mu ~ N(0,10), y_t ~ N(mu, 1) at each timestep
 (def ts-model
   (gen [t]
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
-      (dyn/trace :y (dist/gaussian mu 1))
+    (let [mu (trace :mu (dist/gaussian 0 10))]
+      (trace :y (dist/gaussian mu 1))
       mu)))
 
 ;; ---------------------------------------------------------------------------

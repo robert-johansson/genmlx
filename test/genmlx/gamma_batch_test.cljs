@@ -161,13 +161,13 @@
 (println "\n-- vgenerate: Bayesian model with gamma/beta priors (N=200) --")
 
 (let [model (gen []
-              (let [noise-prec (dyn/trace :noise-prec (dist/gamma-dist (mx/scalar 2.0) (mx/scalar 1.0)))
+              (let [noise-prec (trace :noise-prec (dist/gamma-dist (mx/scalar 2.0) (mx/scalar 1.0)))
                     noise-std  (mx/divide (mx/scalar 1.0) (mx/sqrt noise-prec))
-                    weight     (dyn/trace :weight (dist/gaussian 0 5))
-                    bias       (dyn/trace :bias (dist/gaussian 0 5))]
-                (dyn/trace :y0 (dist/gaussian (mx/add bias weight) noise-std))
-                (dyn/trace :y1 (dist/gaussian (mx/add bias (mx/multiply weight (mx/scalar 2.0))) noise-std))
-                (dyn/trace :y2 (dist/gaussian (mx/add bias (mx/multiply weight (mx/scalar 3.0))) noise-std))
+                    weight     (trace :weight (dist/gaussian 0 5))
+                    bias       (trace :bias (dist/gaussian 0 5))]
+                (trace :y0 (dist/gaussian (mx/add bias weight) noise-std))
+                (trace :y1 (dist/gaussian (mx/add bias (mx/multiply weight (mx/scalar 2.0))) noise-std))
+                (trace :y2 (dist/gaussian (mx/add bias (mx/multiply weight (mx/scalar 3.0))) noise-std))
                 nil))
       obs (cm/choicemap :y0 (mx/scalar 2.1) :y1 (mx/scalar 3.9) :y2 (mx/scalar 6.2))
       n 200

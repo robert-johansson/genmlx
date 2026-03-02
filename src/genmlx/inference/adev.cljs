@@ -7,7 +7,7 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist.core :as dc]
-            [genmlx.handler :as h]
+            [genmlx.runtime :as rt]
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
             [genmlx.learning :as learn]))
@@ -44,13 +44,6 @@
              (cond-> (not reparam?)
                (update :reinforce-lp #(mx/add % lp))))]))
 
-(defn- adev-handler
-  "Handler wrapper for ADEV execution."
-  [addr dist]
-  (let [[value state'] (adev-transition @h/*state* addr dist)]
-    (vreset! h/*state* state')
-    value))
-
 ;; ---------------------------------------------------------------------------
 ;; ADEV execution
 ;; ---------------------------------------------------------------------------
@@ -60,13 +53,14 @@
    Returns {:trace Trace, :reinforce-lp MLX-scalar}."
   [gf args key]
   (let [key (rng/ensure-key key)
-        result (h/run-handler adev-handler
+        result (rt/run-handler adev-transition
                  {:choices cm/EMPTY
                   :score (mx/scalar 0.0)
                   :reinforce-lp (mx/scalar 0.0)
                   :key key
-                  :executor nil}
-                 #(apply (:body-fn gf) args))]
+                  :executor nil
+                  :param-store (:genmlx.dynamic/param-store (meta gf))}
+                 (fn [rt] (apply (:body-fn gf) rt args)))]
     {:trace (tr/make-trace
               {:gen-fn gf :args args
                :choices (:choices result)
@@ -110,10 +104,10 @@
                                         (map-indexed
                                           (fn [i nm] [nm (mx/index p i)])
                                           param-names))}
+                        gf' (vary-meta gf assoc :genmlx.dynamic/param-store store)
                         keys (rng/split-n (rng/fresh-key) n-samples)
                         surrogates (mapv (fn [k]
-                                          (binding [h/*param-store* store]
-                                            (adev-surrogate gf args cost-fn k bl)))
+                                          (adev-surrogate gf' args cost-fn k bl))
                                         keys)]
                     ;; Average over samples
                     (mx/divide (reduce mx/add surrogates)
@@ -156,7 +150,7 @@
                                                    :baseline baseline}
                                                   gf args cost-fn
                                                   param-names params)
-              _ (mx/eval! loss grad)
+              _ (mx/materialize! loss grad)
               _ (when (zero? (mod i 50)) (mx/clear-cache!))
               loss-val (mx/item loss)
               new-baseline (when baseline-decay
@@ -193,27 +187,21 @@
              (cond-> (not reparam?)
                (update :reinforce-lp #(mx/add % lp))))]))
 
-(defn- vadev-handler
-  "Handler wrapper for batched ADEV execution."
-  [addr dist]
-  (let [[value state'] (vadev-transition @h/*state* addr dist)]
-    (vreset! h/*state* state')
-    value))
-
 (defn vadev-execute
   "Execute a generative function under the batched ADEV handler.
    Returns {:choices :score :reinforce-lp :retval} with [N]-shaped arrays."
   [gf args n key]
   (let [key (rng/ensure-key key)
-        result (h/run-handler vadev-handler
+        result (rt/run-handler vadev-transition
                  {:choices cm/EMPTY
                   :score (mx/zeros [n])
                   :reinforce-lp (mx/zeros [n])
                   :key key
                   :batch-size n
                   :batched? true
-                  :executor nil}
-                 #(apply (:body-fn gf) args))]
+                  :executor nil
+                  :param-store (:genmlx.dynamic/param-store (meta gf))}
+                 (fn [rt] (apply (:body-fn gf) rt args)))]
     {:choices (:choices result)
      :score (:score result)
      :reinforce-lp (:reinforce-lp result)
@@ -242,9 +230,9 @@
                                         (map-indexed
                                           (fn [i nm] [nm (mx/index p i)])
                                           param-names))}
+                        gf' (vary-meta gf assoc :genmlx.dynamic/param-store store)
                         key (rng/fresh-key)]
-                    (binding [h/*param-store* store]
-                      (vadev-surrogate gf args cost-fn n-samples key))))
+                    (vadev-surrogate gf' args cost-fn n-samples key)))
         vg (mx/value-and-grad loss-fn)
         [loss grad] (vg params-array)]
     {:loss loss :grad grad}))
@@ -270,9 +258,9 @@
                   (let [store {:params (into {}
                                         (map-indexed
                                           (fn [i nm] [nm (mx/index p i)])
-                                          param-names))}]
-                    (binding [h/*param-store* store]
-                      (vadev-surrogate gf args cost-fn n-samples key bl))))
+                                          param-names))}
+                        gf' (vary-meta gf assoc :genmlx.dynamic/param-store store)]
+                    (vadev-surrogate gf' args cost-fn n-samples key bl)))
         grad-fn (fn [p key bl]
                   (let [[loss grad] ((mx/value-and-grad loss-fn) p key bl)]
                     [loss grad]))
@@ -286,8 +274,9 @@
         {:params params :loss-history (persistent! losses)}
         (let [key (rng/fresh-key)
               bl (when baseline (mx/scalar baseline))
-              [loss grad] (mx/tidy (fn [] (grad-fn params key bl)))
-              _ (mx/eval! loss grad)
+              [loss grad] (mx/tidy-run
+                            #(grad-fn params key bl)
+                            (fn [[l g]] [l g]))
               loss-val (mx/item loss)
               new-baseline (when baseline-decay
                              (if baseline

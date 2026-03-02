@@ -16,8 +16,7 @@
 (defn- ev
   "Evaluate an MLX array and extract its scalar value."
   [x]
-  (mx/eval! x)
-  (mx/item x))
+  (mx/realize x))
 
 (defn- approx=
   "True if |a - b| <= tol."
@@ -174,7 +173,7 @@
             key (rng/fresh-key 42)
             vtrace (dyn/vsimulate model args n key)
             scores (:score vtrace)]
-        (mx/eval! scores)
+        (mx/materialize! scores)
         (let [shape (mx/shape scores)]
           (and (= (vec shape) [n])
                (every? finite? (mx/->clj scores))))))}})

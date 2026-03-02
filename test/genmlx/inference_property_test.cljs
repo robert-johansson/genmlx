@@ -59,8 +59,8 @@
 
 (def model
   (gen []
-    (let [x (dyn/trace :x (dist/gaussian 0 1))
-          y (dyn/trace :y (dist/gaussian 0 1))]
+    (let [x (trace :x (dist/gaussian 0 1))
+          y (trace :y (dist/gaussian 0 1))]
       (mx/eval! x y)
       (+ (mx/item x) (mx/item y)))))
 

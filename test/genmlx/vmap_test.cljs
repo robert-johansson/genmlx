@@ -29,7 +29,7 @@
 ;; ---------------------------------------------------------------------------
 (println "-- Basic simulate --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 1))]
+               (let [y (trace :y (dist/gaussian x 1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       trace (p/simulate vmodel [(mx/array [1.0 2.0 3.0])])]
@@ -47,7 +47,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- Generate with constraints --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       obs (cm/choicemap :y (mx/array [1.0 2.0 3.0]))
@@ -71,7 +71,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- Update --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       obs1 (cm/choicemap :y (mx/array [1.0 2.0 3.0]))
@@ -94,7 +94,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- Regenerate --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       obs (cm/choicemap :y (mx/array [1.0 2.0 3.0]))
@@ -117,7 +117,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- in-axes [0 nil] --")
 (let [kernel (gen [x shared]
-               (let [y (dyn/trace :y (dist/gaussian (mx/add x shared) 0.1))]
+               (let [y (trace :y (dist/gaussian (mx/add x shared) 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel :in-axes [0 nil])
       xs (mx/array [1.0 2.0 3.0])
@@ -137,7 +137,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- repeat-gf --")
 (let [kernel (gen []
-               (let [z (dyn/trace :z (dist/gaussian 0 1))]
+               (let [z (trace :z (dist/gaussian 0 1))]
                  z))
       iid (vmap/repeat-gf kernel 50)
       trace (p/simulate iid [])]
@@ -153,11 +153,11 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- Nested splice --")
 (let [obs-kernel (gen [x]
-                   (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+                   (let [y (trace :y (dist/gaussian x 0.1))]
                      y))
       outer (gen [xs]
-              (let [slope (dyn/trace :slope (dist/gaussian 0 10))]
-                (dyn/splice :ys (vmap/vmap-gf obs-kernel) xs)
+              (let [slope (trace :slope (dist/gaussian 0 10))]
+                (splice :ys (vmap/vmap-gf obs-kernel) xs)
                 slope))
       trace (p/simulate outer [(mx/array [1.0 2.0 3.0])])]
   (assert-true "nested splice returns trace" (instance? tr/Trace trace))
@@ -174,7 +174,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- Assess --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       choices (cm/choicemap :y (mx/array [1.0 2.0 3.0]))
@@ -193,7 +193,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- Propose --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       {:keys [choices weight retval]} (p/propose vmodel [(mx/array [1.0 2.0 3.0])])]
@@ -209,7 +209,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- Project --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       obs (cm/choicemap :y (mx/array [1.0 2.0 3.0]))
@@ -250,7 +250,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- Sequence args --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       ;; Pass a Clojure vector of scalars
@@ -265,7 +265,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- E1: Scalar constraint broadcast --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       ;; Scalar observation: same constraint for all 3 elements
@@ -284,7 +284,7 @@
 
 (println "\n-- E1: EMPTY constraints still work --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       {:keys [trace weight]} (p/generate vmodel [(mx/array [1.0 2.0 3.0])] cm/EMPTY)]
@@ -297,7 +297,7 @@
 
 (println "\n-- E1: Scalar constraint in assess --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       scalar-obs (cm/choicemap :y (mx/scalar 5.0))
@@ -310,7 +310,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- E3: Shared selection (backward compat) --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       obs (cm/choicemap :y (mx/array [1.0 2.0 3.0]))
@@ -325,7 +325,7 @@
 
 (println "\n-- E3: Per-element selection --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       obs (cm/choicemap :y (mx/array [100.0 200.0 300.0]))
@@ -344,7 +344,7 @@
 
 (println "\n-- E3: Per-element project --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       obs (cm/choicemap :y (mx/array [1.0 2.0 3.0]))
@@ -364,7 +364,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- E2: Nested simulate [N,M]-shaped leaves --")
 (let [inner-kernel (gen []
-                     (let [z (dyn/trace :z (dist/gaussian 0 1))]
+                     (let [z (trace :z (dist/gaussian 0 1))]
                        z))
       inner-vmap (vmap/repeat-gf inner-kernel 3)
       outer-vmap (vmap/repeat-gf inner-vmap 4)
@@ -379,7 +379,7 @@
 
 (println "\n-- E2: Nested generate with [N,M]-shaped constraints --")
 (let [inner-kernel (gen []
-                     (let [z (dyn/trace :z (dist/gaussian 0 1))]
+                     (let [z (trace :z (dist/gaussian 0 1))]
                        z))
       inner-vmap (vmap/repeat-gf inner-kernel 3)
       outer-vmap (vmap/repeat-gf inner-vmap 4)
@@ -396,7 +396,7 @@
 
 (println "\n-- E2: Nested update --")
 (let [inner-kernel (gen []
-                     (let [z (dyn/trace :z (dist/gaussian 0 1))]
+                     (let [z (trace :z (dist/gaussian 0 1))]
                        z))
       inner-vmap (vmap/repeat-gf inner-kernel 3)
       outer-vmap (vmap/repeat-gf inner-vmap 4)
@@ -413,7 +413,7 @@
 
 (println "\n-- E2: Nested regenerate --")
 (let [inner-kernel (gen []
-                     (let [z (dyn/trace :z (dist/gaussian 0 1))]
+                     (let [z (trace :z (dist/gaussian 0 1))]
                        z))
       inner-vmap (vmap/repeat-gf inner-kernel 3)
       outer-vmap (vmap/repeat-gf inner-vmap 4)
@@ -432,7 +432,7 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- E4: Fast-path simulate --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 1))]
+               (let [y (trace :y (dist/gaussian x 1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       trace (p/simulate vmodel [(mx/array [1.0 2.0 3.0])])]
@@ -446,7 +446,7 @@
 
 (println "\n-- E4: Generate with scalar constraints (slow path) --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       obs (cm/choicemap :y (mx/scalar 5.0))
@@ -461,7 +461,7 @@
 
 (println "\n-- E4: Fast-path with EMPTY constraints --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       {:keys [trace weight]} (p/generate vmodel [(mx/array [1.0 2.0 3.0])] cm/EMPTY)]
@@ -471,7 +471,7 @@
 
 (println "\n-- E4: Fast-path in-axes [0 nil] --")
 (let [kernel (gen [x shared]
-               (let [y (dyn/trace :y (dist/gaussian (mx/add x shared) 0.1))]
+               (let [y (trace :y (dist/gaussian (mx/add x shared) 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel :in-axes [0 nil])
       xs (mx/array [1.0 2.0 3.0])
@@ -495,7 +495,7 @@
 
 (println "\n-- E4: Update after fast-path simulate --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel (vmap/vmap-gf kernel)
       ;; Simulate uses fast path (all [N]-shaped leaves)
@@ -511,7 +511,7 @@
 
 (println "\n-- E4: Performance comparison --")
 (let [kernel (gen [x]
-               (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+               (let [y (trace :y (dist/gaussian x 0.1))]
                  y))
       vmodel-fast (vmap/vmap-gf kernel)
       ;; Slow path: distribution kernel (no body-fn)
@@ -538,11 +538,11 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- E5: vsimulate with vmap splice --")
 (let [obs-kernel (gen [x]
-                   (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+                   (let [y (trace :y (dist/gaussian x 0.1))]
                      y))
       outer (gen [xs]
-              (let [slope (dyn/trace :slope (dist/gaussian 0 10))]
-                (dyn/splice :obs (vmap/vmap-gf obs-kernel) xs)
+              (let [slope (trace :slope (dist/gaussian 0 10))]
+                (splice :obs (vmap/vmap-gf obs-kernel) xs)
                 slope))
       vtrace (dyn/vsimulate outer [(mx/array [1.0 2.0 3.0])] 5 nil)]
   (assert-true "vsimulate with vmap splice returns vtrace"
@@ -560,11 +560,11 @@
 
 (println "\n-- E5: vgenerate with vmap splice and constraints --")
 (let [obs-kernel (gen [x]
-                   (let [y (dyn/trace :y (dist/gaussian x 0.1))]
+                   (let [y (trace :y (dist/gaussian x 0.1))]
                      y))
       outer (gen [xs]
-              (let [slope (dyn/trace :slope (dist/gaussian 0 10))]
-                (dyn/splice :obs (vmap/vmap-gf obs-kernel) xs)
+              (let [slope (trace :slope (dist/gaussian 0 10))]
+                (splice :obs (vmap/vmap-gf obs-kernel) xs)
                 slope))
       ;; Constrain slope (scalar observation broadcast to all N particles)
       obs (cm/choicemap :slope (mx/scalar 2.0))

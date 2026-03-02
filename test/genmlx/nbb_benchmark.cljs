@@ -74,9 +74,9 @@
 (println "\n--- Model execution ---")
 (def simple-model
   (gen [x]
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))
-          sigma (dyn/trace :sigma (dist/exponential 1))]
-      (dyn/trace :y (dist/gaussian mu sigma))
+    (let [mu (trace :mu (dist/gaussian 0 10))
+          sigma (trace :sigma (dist/exponential 1))]
+      (trace :y (dist/gaussian mu sigma))
       mu)))
 
 (bench "simulate (3-site model)" 200
@@ -95,10 +95,10 @@
 ;; 6. Larger model
 (def line-model
   (gen [xs]
-    (let [slope (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+    (let [slope (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
       (doseq [[j x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" j))
+        (trace (keyword (str "y" j))
                    (dist/gaussian (mx/add (mx/multiply slope (mx/scalar (float x)))
                                           intercept) 1)))
       slope)))

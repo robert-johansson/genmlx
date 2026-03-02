@@ -22,8 +22,8 @@
 ;; Benchmark 1: Simulate throughput
 (println "-- Simulate throughput --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 (mx/eval! x y)
                 (+ (mx/item x) (mx/item y))))]
   (time-it "1000 simulations"
@@ -32,8 +32,8 @@
 ;; Benchmark 2: Generate + score
 (println "\n-- Generate throughput --")
 (let [model (gen []
-              (let [x (dyn/trace :x (dist/gaussian 0 1))
-                    y (dyn/trace :y (dist/gaussian 0 1))]
+              (let [x (trace :x (dist/gaussian 0 1))
+                    y (trace :y (dist/gaussian 0 1))]
                 (mx/eval! x y)
                 (+ (mx/item x) (mx/item y))))
       constraints (cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar 2.0))]
@@ -43,12 +43,12 @@
 ;; Benchmark 3: MH on 5-param model
 (println "\n-- MH inference (5-param model) --")
 (let [model (gen [xs]
-              (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-                    intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+              (let [slope     (trace :slope (dist/gaussian 0 10))
+                    intercept (trace :intercept (dist/gaussian 0 10))]
                 (mx/eval! slope intercept)
                 (let [s (mx/item slope) i (mx/item intercept)]
                   (doseq [[j x] (map-indexed vector xs)]
-                    (dyn/trace (keyword (str "y" j))
+                    (trace (keyword (str "y" j))
                                (dist/gaussian (+ (* s x) i) 1)))
                   [s i])))
       xs [1.0 2.0 3.0 4.0 5.0]
