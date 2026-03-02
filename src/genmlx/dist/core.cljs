@@ -183,3 +183,100 @@
                           (nth component-lps i))))
               (mx/add (mx/index log-norm-w 0) (first component-lps))
               (range 1 n)))))
+
+;; ---------------------------------------------------------------------------
+;; Product distribution
+;; ---------------------------------------------------------------------------
+
+(defn product
+  "Create a product (joint independent) distribution from a vector or map
+   of component distributions. Sampling is independent; log-prob is the sum.
+   Vector form returns a vector of MLX values; map form returns a map."
+  [components]
+  (cond
+    (vector? components)
+    (->Distribution :product {:form :vector :components components})
+
+    (map? components)
+    (->Distribution :product {:form :map :components components})
+
+    :else
+    (throw (ex-info "product requires a vector or map of distributions"
+                    {:got (type components)}))))
+
+(defmethod dist-sample* :product [d key]
+  (let [{:keys [form components]} (:params d)
+        key (rng/ensure-key key)]
+    (if (= form :vector)
+      (let [keys (rng/split-n key (count components))]
+        (mapv (fn [comp k] (dist-sample comp k))
+              components keys))
+      ;; map form
+      (let [entries (vec components)
+            keys (rng/split-n key (count entries))]
+        (into {}
+          (map-indexed (fn [i [k comp]]
+                         [k (dist-sample comp (nth keys i))])
+                       entries))))))
+
+(defmethod dist-log-prob :product [d value]
+  (let [{:keys [form components]} (:params d)]
+    (if (= form :vector)
+      (reduce mx/add
+              (map-indexed (fn [i comp]
+                             (dist-log-prob comp (nth value i)))
+                           components))
+      ;; map form
+      (reduce mx/add
+              (map (fn [[k comp]]
+                     (dist-log-prob comp (get value k)))
+                   components)))))
+
+(defmethod dist-reparam :product [d key]
+  (let [{:keys [form components]} (:params d)
+        key (rng/ensure-key key)]
+    (if (= form :vector)
+      (let [keys (rng/split-n key (count components))]
+        (mapv (fn [comp k] (dist-reparam comp k))
+              components keys))
+      (let [entries (vec components)
+            keys (rng/split-n key (count entries))]
+        (into {}
+          (map-indexed (fn [i [k comp]]
+                         [k (dist-reparam comp (nth keys i))])
+                       entries))))))
+
+(defmethod dist-support :product [d]
+  (let [{:keys [form components]} (:params d)]
+    (if (= form :vector)
+      ;; Cartesian product of component supports
+      (let [supports (mapv dist-support components)]
+        (reduce (fn [acc s]
+                  (for [prefix acc, v s]
+                    (conj prefix v)))
+                (mapv vector (first supports))
+                (rest supports)))
+      ;; Map form: Cartesian product with keys
+      (let [entries (vec components)
+            ks (mapv first entries)
+            supports (mapv (fn [[_ comp]] (dist-support comp)) entries)
+            value-seqs (reduce (fn [acc s]
+                                 (for [prefix acc, v s]
+                                   (conj prefix v)))
+                               (mapv vector (first supports))
+                               (rest supports))]
+        (mapv (fn [vals] (zipmap ks vals)) value-seqs)))))
+
+(defmethod dist-sample-n* :product [d key n]
+  (let [{:keys [form components]} (:params d)
+        key (rng/ensure-key key)]
+    (if (= form :vector)
+      (let [keys (rng/split-n key (count components))]
+        (mapv (fn [comp k] (dist-sample-n comp k n))
+              components keys))
+      (let [entries (vec components)
+            keys (rng/split-n key (count entries))]
+        (into {}
+          (map-indexed (fn [i [k comp]]
+                         [k (dist-sample-n comp (nth keys i) n)])
+                       entries))))))

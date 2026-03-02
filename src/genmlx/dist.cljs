@@ -1172,3 +1172,9 @@
         tr-PsiXinv (mx/sum (mx/multiply scale-matrix (mx/transpose X-inv)))
         term5 (mx/multiply (mx/scalar -0.5) tr-PsiXinv)]
     (mx/add term1 term2 term3 term4 term5)))
+
+;; ---------------------------------------------------------------------------
+;; Product distribution (re-export from dist.core)
+;; ---------------------------------------------------------------------------
+
+(def product dc/product)

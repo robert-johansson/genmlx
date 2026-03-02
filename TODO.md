@@ -112,7 +112,7 @@ beta-uniform-mixture, wishart, inv-wishart, broadcasted-normal
 ## Phase 9: Incremental Computation
 
 - [x] **9.1** Per-step optimization for Unfold/Scan
-- [ ] **9.2** Handler-level diff awareness for DynamicGF *(low priority)*
+- [x] **9.2** ~~Handler-level diff awareness for DynamicGF~~ Won't do — removed scaffolding; can reintroduce if needed
 
 ---
 
@@ -157,9 +157,9 @@ beta-uniform-mixture, wishart, inv-wishart, broadcasted-normal
 - [ ] **14.2** Enumerative / grid-based inference
 - [x] **14.3** Residual resampling for SMC
 - [x] **14.4** Stratified resampling for SMC
-- [ ] **14.5** Product distribution
+- [x] **14.5** Product distribution
 - [ ] **14.6** Kernel reversal declarations
-- [ ] **14.7** Trace serialization
+- [x] **14.7** Trace serialization
 - [ ] **14.8** Directional statistics distributions
 
 ---
@@ -331,7 +331,7 @@ performance.*
     mass lies beyond k=100. Enumeration-based inference (Gibbs) will miss this mass.
   - **Fix**: Compute support dynamically based on `p`, e.g., up to the 0.999 quantile
 
-- [ ] **18.5** Wire `CustomGradientGF`'s `gradient-fn` into the autograd system
+- [x] **18.5** Wire `CustomGradientGF`'s `gradient-fn` into the autograd system
   - **File**: `custom_gradient.cljs`
   - **Impact**: The `gradient-fn` field is stored on the record and accessible via tests,
     but no code in the GFI pipeline dispatches to it. The custom gradient is effectively
@@ -345,13 +345,11 @@ performance.*
 
 *Technical debt, dead code, and code duplication identified during review.*
 
-- [ ] **19.1** Remove or complete the diff infrastructure
+- [x] **19.1** Remove unused diff infrastructure
   - **File**: `diff.cljs`
-  - **Status**: Only `no-change`, `no-change?`, and `changed?` are used in production.
-    Everything else (`vector-diff`, `map-diff`, `value-change`, `compute-vector-diff`,
-    `compute-map-diff`, `should-recompute?`, `unknown-change`) is only used in tests.
-  - **Decision needed**: Either build the incremental computation system that uses these
-    (Phase 9.2), or remove the unused infrastructure to reduce dead code
+  - **Done**: Removed unused infrastructure (`unknown-change`, `value-change`, `vector-diff`,
+    `map-diff`, `compute-diff`, `compute-vector-diff`, `compute-map-diff`, `should-recompute?`);
+    kept `no-change`, `no-change?`, `changed?` which are used in production
 
 - [x] **19.2** Deduplicate resampling code
   - **Files**: `inference/util.cljs`, `inference/smc.cljs`, `inference/smcp3.cljs`
@@ -365,7 +363,7 @@ performance.*
     differences from the learning.cljs version.
   - **Fix**: Have `vi.cljs` import from `learning.cljs`
 
-- [ ] **19.4** Remove or test `defdist-transform` macro
+- [x] **19.4** Remove `defdist-transform` macro (unused; log-normal implemented directly)
   - **File**: `dist/macros.cljc`
   - **Status**: The macro is defined and tested in `untested_features_test.cljs`, but is
     never used in production code. The most obvious candidate (log-normal) is defined
@@ -785,12 +783,12 @@ operation deterministic.*
 *Minor concerns from the full codebase audit. Not purity violations — these are
 edge-case robustness issues that could surprise users or cause silent failures.*
 
-- [ ] **25.1** Validate `addresses` and `current-vals` dimensions match in `gradients.cljs`
+- [x] **25.1** Validate `addresses` and `current-vals` dimensions match in `gradients.cljs`
   - **File**: `gradients.cljs`
   - **Impact**: Mismatched dimensions fail silently with wrong address order
   - **Fix**: Add assertion that `(count addresses)` = `(count current-vals)`
 
-- [ ] **25.2** Guard R-hat against `W = 0` (constant chains) in `diagnostics.cljs`
+- [x] **25.2** Guard R-hat against `W = 0` (constant chains) in `diagnostics.cljs`
   - **File**: `diagnostics.cljs:76`
   - **Impact**: Constant chains produce `W = 0`, R-hat becomes `Inf`
   - **Fix**: Return `NaN` or `1.0` when `W = 0`
@@ -802,17 +800,12 @@ edge-case robustness issues that could surprise users or cause silent failures.*
   - **Fix**: Add a warning/fallback when N exceeds a threshold, or implement
     O(N) resampling
 
-- [ ] **25.4** Eliminate remaining `js/Math.random` calls in inference code
-  - **Files**: `inference/util.cljs:148,205` (explicit fallback),
-    `vectorized.cljs:30` (systematic resampling),
-    `inference/mcmc.cljs:1380,1445,1456,1462,1505,1518,1528` (NUTS tree-building)
-  - **Impact**: Non-reproducible inference even when users provide PRNG keys.
-    The PRNG key threading audit (16.6) and stateful PRNG removal (22.2) missed
-    these call sites.
-  - **Fix**: Thread functional `rng/*` keys through all remaining call sites.
-    NUTS tree-building is the largest gap (~7 calls).
+- [x] **25.4** Eliminate remaining `js/Math.random` calls in inference code
+  - All `js/Math.random` calls in inference code eliminated in previous refactors.
+    Only the bootstrap `fresh-key` in `mlx/random.cljs` remains (unavoidable for
+    nondeterministic PRNG initialization).
 
-- [ ] **25.5** Document weight implications when SMCP3 backward kernel is nil
+- [x] **25.5** Document weight implications when SMCP3 backward kernel is nil
   - **File**: `smcp3.cljs:99-102`
   - **Impact**: When backward kernel is nil, falls back to constraint edit
     without explaining that this changes the weight semantics (no backward score
@@ -838,12 +831,12 @@ MEDIUM-HIGH (verification — catches bugs, path to formal proofs):
   23.2  GenMLX differential test loader             ~80 lines, ~185 assertions
 
 MEDIUM (quality and completeness):
-  25.1  Validate gradients address/value dimensions    ~5 lines
-  25.2  Guard R-hat against W=0                        ~5 lines
-  25.4  Eliminate remaining js/Math.random calls        ~50 lines
-  25.5  Document SMCP3 nil-backward weight semantics   ~10 lines
+  25.1  Validate gradients address/value dimensions    ~5 lines       DONE
+  25.2  Guard R-hat against W=0                        ~5 lines       DONE
+  25.4  Eliminate remaining js/Math.random calls        ~50 lines      DONE
+  25.5  Document SMCP3 nil-backward weight semantics   ~10 lines      DONE
   21.14-21.21  Property test Phase 2 (88 properties)   8 test files     DONE
-  18.5  CustomGradientGF gradient-fn wiring            ~20 lines
+  18.5  CustomGradientGF gradient-fn wiring            ~20 lines      DONE
   14.5  Product distribution                           Small
   14.7  Trace serialization                         Medium
   20.1  Vectorize neural-importance-sampling         Significant
@@ -852,12 +845,12 @@ MEDIUM (quality and completeness):
 
 LOW (cleanup — decision needed):
   25.3  Document/mitigate O(N²) GPU resampling      Documentation or code
-  19.1  Diff infrastructure cleanup                 Remove or use?
-  19.4  defdist-transform usage                     Remove or use?
+  19.1  Diff infrastructure cleanup                 DONE
+  19.4  defdist-transform usage                     Removed (unused)    DONE
 
 FUTURE (new features, lower priority):
   7.8   GenJAX benchmark comparison
-  9.2   Handler-level diff awareness
+  9.2   Handler-level diff awareness                DONE (won't do)
   10.14-10.16  Formal foundation completion
   11.1  Malli schemas
   12.3-12.4, 12.6  Ecosystem features
@@ -886,21 +879,21 @@ RESEARCH (Lean 4 formalization):
 | 6. Testing Gaps | 5 | 5 | 0 |
 | 7. Vectorization & Perf | 9 | 8 | 1 |
 | 8. Gradient Programming | 2 | 2 | 0 |
-| 9. Incremental Computation | 2 | 1 | 1 |
+| 9. Incremental Computation | 2 | 2 | 0 |
 | 10. Formal Foundation | 16 | 13 | 3 |
 | 11. Validation | 2 | 2 | 0 |
 | 12. Ecosystem | 6 | 3 | 3 |
 | 13. Documentation | 3 | 0 | 3 |
-| 14. Gen.jl Parity | 8 | 3 | **5** |
+| 14. Gen.jl Parity | 8 | 5 | **3** |
 | 15. Confirmed Bugs | 5 | 5 | 0 |
 | 16. Correctness Concerns | 6 | 6 | 0 |
 | 17. Missing Protocols | 6 | 6 | 0 |
 | 18. Distribution Quality | 5 | 4 | **1** |
-| 19. Code Quality | 9 | 7 | **2** |
+| 19. Code Quality | 9 | 8 | **1** |
 | 20. Amortized + GPU ADEV | 7 | 4 | **3** |
 | 21. Testing Strategies | 21 | 13 | **8** |
 | 22. Practical Inference | 3 | 3 | 0 |
 | 23. Gen.jl Differential Testing | 3 | 0 | **3** |
 | 24. Verified PPL | 7 | 4 | **3** |
 | 25. Edge-Case Robustness | 5 | 0 | **5** |
-| **Total** | **152** | **111** | **41** |
+| **Total** | **152** | **113** | **39** |
