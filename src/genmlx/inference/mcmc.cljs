@@ -50,7 +50,7 @@
   ([current-trace selection key]
    (let [gf (:gen-fn current-trace)
          [regen-key accept-key] (rng/split (rng/ensure-key key))
-         result (dyn/with-key regen-key #(p/regenerate gf current-trace selection))
+         result (p/regenerate (dyn/with-key gf regen-key) current-trace selection)
          w (mx/realize (:weight result))]
      (if (u/accept-mh? w accept-key)
        (:trace result)
@@ -67,8 +67,7 @@
     :or {burn 0 thin 1 selection sel/all}}
    model args observations]
   (let [[init-key chain-key] (rng/split (rng/ensure-key key))
-        {:keys [trace]} (dyn/with-key init-key
-                          #(p/generate model args observations))]
+        {:keys [trace]} (p/generate (dyn/with-key model init-key) args observations)]
     (kern/collect-samples
       {:samples samples :burn burn :thin thin :callback callback :key chain-key}
       (fn [state step-key]
@@ -1364,7 +1363,8 @@
   [ctx q p log-u v j current-H key]
   (if (zero? j)
     (nuts-base-case ctx q p v log-u current-H)
-    (let [[k1 k2 k3] (rng/split-n-or-nils key 3)
+    (let [key (rng/ensure-key key)
+          [k1 k2 k3] (rng/split-n key 3)
           tree1 (build-tree ctx q p log-u v (dec j) current-H k1)]
       (if (not (:s' tree1))
         tree1
@@ -1374,11 +1374,8 @@
               tree2 (build-tree ctx q2 p2 log-u v (dec j) current-H k2)
               total-n (+ (:n' tree1) (:n' tree2))
               accept-subtree? (and (pos? total-n)
-                                   (if k3
-                                     (< (mx/realize (rng/uniform k3 []))
-                                        (/ (:n' tree2) total-n))
-                                     (< (js/Math.random)
-                                        (/ (:n' tree2) total-n))))
+                                   (< (mx/realize (rng/uniform k3 []))
+                                      (/ (:n' tree2) total-n)))
               q' (if accept-subtree? (:q' tree2) (:q' tree1))
               q-minus (if (pos? v) (:q-minus tree1) (:q-minus tree2))
               p-minus (if (pos? v) (:p-minus tree1) (:p-minus tree2))
@@ -1440,27 +1437,33 @@
                            local-ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld
                                       :eps eps-mx :half-eps half-eps-mx
                                       :half half-mx :metric m}
-                           p0 (doto (sample-momentum m q-shape nil) mx/eval!)
+                           warmup-key (rng/fresh-key)
+                           [momentum-key slice-key dir-key tree-key] (rng/split-n warmup-key 4)
+                           p0 (doto (sample-momentum m q-shape momentum-key) mx/eval!)
                            current-H (hamiltonian neg-ld-compiled q p0 half-mx m)
-                           log-u (+ (js/Math.log (js/Math.random)) (- current-H))]
+                           log-u (+ (js/Math.log (mx/realize (rng/uniform slice-key []))) (- current-H))]
                        (loop [j 0
                               q-minus q, p-minus p0
                               q-plus q, p-plus p0
                               q' q, depth-n 1, continue? true
-                              total-alpha 0.0, total-n-alpha 0]
+                              total-alpha 0.0, total-n-alpha 0
+                              dk dir-key, tk tree-key]
                          (if (or (not continue?) (>= j max-depth))
                            {:state q'
                             :accept-stat (if (pos? total-n-alpha)
                                            (/ total-alpha total-n-alpha)
                                            0.0)}
-                           (let [v (if (< (js/Math.random) 0.5) -1 1)
+                           (let [[dk1 dk-next] (rng/split dk)
+                                 [tk1 tk-next] (rng/split tk)
+                                 v (if (< (mx/realize (rng/uniform dk1 [])) 0.5) -1 1)
                                  [qs ps] (if (pos? v)
                                            [q-plus p-plus]
                                            [q-minus p-minus])
-                                 tree (build-tree local-ctx qs ps log-u v j current-H nil)
+                                 tree (build-tree local-ctx qs ps log-u v j current-H tk1)
                                  accept? (and (:s' tree)
-                                              (< (js/Math.random)
-                                                 (/ (:n' tree) (max 1 depth-n))))
+                                              (let [[ak _] (rng/split tk1)]
+                                                (< (mx/realize (rng/uniform ak []))
+                                                   (/ (:n' tree) (max 1 depth-n)))))
                                  q'' (if accept? (:q' tree) q')
                                  qm' (if (neg? v) (:q-minus tree) q-minus)
                                  pm' (if (neg? v) (:p-minus tree) p-minus)
@@ -1471,7 +1474,8 @@
                              (recur (inc j) qm' pm' qp' pp' q''
                                     (+ depth-n (:n' tree)) cont?
                                     (+ total-alpha (:alpha tree))
-                                    (+ total-n-alpha (:n-alpha tree))))))))
+                                    (+ total-n-alpha (:n-alpha tree))
+                                    dk-next tk-next))))))
                    init-eps (if adapt-step-size
                               (find-reasonable-epsilon init-q neg-ld-compiled grad-neg-ld
                                                        q-shape metric)
@@ -1496,13 +1500,12 @@
        (kern/collect-samples
          {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
          (fn [q step-key]
-        (let [[momentum-key slice-key dir-key tree-key]
-              (rng/split-n-or-nils step-key 4)
+        (let [step-key (rng/ensure-key step-key)
+              [momentum-key slice-key dir-key tree-key]
+              (rng/split-n step-key 4)
               p0 (doto (sample-momentum final-metric q-shape momentum-key) mx/eval!)
               current-H (hamiltonian neg-ld-compiled q p0 half final-metric)
-              log-u (+ (if slice-key
-                         (js/Math.log (mx/realize (rng/uniform slice-key [])))
-                         (js/Math.log (js/Math.random)))
+              log-u (+ (js/Math.log (mx/realize (rng/uniform slice-key [])))
                        (- current-H))
               new-q (loop [j 0
                            q-minus q, p-minus p0
@@ -1511,21 +1514,16 @@
                            dk dir-key, tk tree-key]
                       (if (or (not continue?) (>= j max-depth))
                         q'
-                        (let [[dk1 dk-next] (rng/split-or-nils dk)
-                              [tk1 tk-next] (rng/split-or-nils tk)
-                              v (if dk1
-                                  (if (< (mx/realize (rng/uniform dk1 [])) 0.5) -1 1)
-                                  (if (< (js/Math.random) 0.5) -1 1))
+                        (let [[dk1 dk-next] (rng/split dk)
+                              [tk1 tk-next] (rng/split tk)
+                              v (if (< (mx/realize (rng/uniform dk1 [])) 0.5) -1 1)
                               [qs ps] (if (pos? v)
                                         [q-plus p-plus]
                                         [q-minus p-minus])
                               tree (build-tree ctx qs ps log-u v j current-H tk1)
                               accept? (and (:s' tree)
-                                           (if tk1
-                                             (let [[ak _] (rng/split tk1)]
-                                               (< (mx/realize (rng/uniform ak []))
-                                                  (/ (:n' tree) (max 1 depth-n))))
-                                             (< (js/Math.random)
+                                           (let [[ak _] (rng/split tk1)]
+                                             (< (mx/realize (rng/uniform ak []))
                                                 (/ (:n' tree) (max 1 depth-n)))))
                               q'' (if accept? (:q' tree) q')
                               qm' (if (neg? v) (:q-minus tree) q-minus)

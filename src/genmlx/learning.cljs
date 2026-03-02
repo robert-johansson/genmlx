@@ -4,8 +4,7 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.protocols :as p]
-            [genmlx.choicemap :as cm]
-            [genmlx.handler :as h]))
+            [genmlx.choicemap :as cm]))
 
 ;; ---------------------------------------------------------------------------
 ;; Parameter Store
@@ -139,16 +138,14 @@
 
 (defn simulate-with-params
   "Simulate a generative function with a param store bound.
-   Parameters declared via dyn/param inside the model will read from the store."
+   Parameters declared via param inside the model will read from the store."
   [model args param-store]
-  (binding [h/*param-store* param-store]
-    (p/simulate model args)))
+  (p/simulate (vary-meta model assoc :genmlx.dynamic/param-store param-store) args))
 
 (defn generate-with-params
   "Generate from a generative function with a param store bound."
   [model args constraints param-store]
-  (binding [h/*param-store* param-store]
-    (p/generate model args constraints)))
+  (p/generate (vary-meta model assoc :genmlx.dynamic/param-store param-store) args constraints))
 
 (defn make-param-loss-fn
   "Create a loss-gradient function for training model parameters.
@@ -165,11 +162,11 @@
                     (let [store {:params (into {}
                                           (map-indexed
                                             (fn [i nm] [nm (mx/index p i)])
-                                            param-names-vec))}]
-                      (binding [h/*param-store* store]
-                        (let [{:keys [weight]} (p/generate model args observations)]
-                          ;; Negative log-joint (minimize)
-                          (mx/negative weight)))))
+                                            param-names-vec))}
+                          model' (vary-meta model assoc :genmlx.dynamic/param-store store)
+                          {:keys [weight]} (p/generate model' args observations)]
+                      ;; Negative log-joint (minimize)
+                      (mx/negative weight)))
           grad-fn (mx/grad loss-fn)
           loss (loss-fn params-array)
           grad (grad-fn params-array)]
@@ -200,14 +197,12 @@
                                      cm/EMPTY indexed-addrs)
                           ;; Sample from guide
                           {:keys [trace weight]}
-                          (binding [rng/*prng-key* (volatile! k1)]
-                            (p/generate guide args guide-cm))
+                          (p/generate (vary-meta guide assoc :genmlx.dynamic/key k1) args guide-cm)
                           ;; Score under model with guide's choices + observations
                           guide-weight weight
                           model-cm (cm/merge-cm (:choices trace) observations)
                           {:keys [weight]}
-                          (binding [rng/*prng-key* (volatile! k2)]
-                            (p/generate model args model-cm))]
+                          (p/generate (vary-meta model assoc :genmlx.dynamic/key k2) args model-cm)]
                       ;; Negative ELBO: -(log p(x,z) - log q(z|x))
                       (mx/negative (mx/subtract weight guide-weight))))
           grad-fn (mx/grad loss-fn)
@@ -228,8 +223,7 @@
     (let [indexed-addrs (mapv vector (range) guide-addresses)
           [k1 k2] (rng/split (rng/ensure-key key))
           ;; Sample from model prior (simulate)
-          model-trace (binding [rng/*prng-key* (volatile! k1)]
-                        (p/simulate model args))
+          model-trace (p/simulate (vary-meta model assoc :genmlx.dynamic/key k1) args)
           model-choices (:choices model-trace)
           ;; Score guide on model's choices
           loss-fn (fn [params]
@@ -238,9 +232,8 @@
                                        (cm/set-choice cm [addr] (mx/index params i)))
                                      cm/EMPTY indexed-addrs)
                           {:keys [weight]}
-                          (binding [rng/*prng-key* (volatile! k2)]
-                            (p/generate guide args
-                                        (cm/merge-cm guide-cm model-choices)))]
+                          (p/generate (vary-meta guide assoc :genmlx.dynamic/key k2) args
+                                      (cm/merge-cm guide-cm model-choices))]
                       ;; Negative log-likelihood of model choices under guide
                       (mx/negative weight)))
           grad-fn (mx/grad loss-fn)

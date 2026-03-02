@@ -43,7 +43,9 @@
 ;; ---------------------------------------------------------------------------
 
 (defn dist-simulate [dist]
-  (let [v  (dist-sample dist (rng/next-key))
+  (let [key (or (:genmlx.dynamic/key (meta dist)) (rng/fresh-key))
+        _ (rng/seed! key)
+        v  (dist-sample dist key)
         lp (dist-log-prob dist v)]
     (tr/make-trace {:gen-fn dist :args [] :choices (cm/->Value v)
                     :retval v :score lp})))
@@ -62,7 +64,9 @@
 ;; ---------------------------------------------------------------------------
 
 (defn dist-propose [dist]
-  (let [v  (dist-sample dist (rng/next-key))
+  (let [key (or (:genmlx.dynamic/key (meta dist)) (rng/fresh-key))
+        _ (rng/seed! key)
+        v  (dist-sample dist key)
         lp (dist-log-prob dist v)]
     {:choices (cm/->Value v) :weight lp :retval v}))
 

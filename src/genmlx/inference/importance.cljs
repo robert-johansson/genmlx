@@ -22,8 +22,7 @@
   [{:keys [samples key] :or {samples 100}} model args observations]
   (let [keys (rng/split-n (rng/ensure-key key) samples)
         results (mapv (fn [ki]
-                        (let [r (dyn/with-key ki
-                                  #(p/generate model args observations))]
+                        (let [r (p/generate (dyn/with-key model ki) args observations)]
                           (mx/eval! (:weight r) (:score (:trace r)))
                           r))
                       keys)

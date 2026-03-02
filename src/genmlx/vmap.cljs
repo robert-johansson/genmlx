@@ -8,7 +8,8 @@
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.selection :as sel]
-            [genmlx.handler :as h]))
+            [genmlx.handler :as h]
+            [genmlx.runtime :as rt]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -214,11 +215,11 @@
     (let [n (resolve-axis-size args in-axes axis-size)]
       (if (and (:body-fn kernel) (batched-args? args in-axes))
         ;; Fast path: run kernel body once with batched handler
-        (let [key (rng/next-key)
-              result (h/run-handler h/batched-simulate-handler
+        (let [key (rng/fresh-key)
+              result (rt/run-handler h/batched-simulate-transition
                        {:choices cm/EMPTY :score (mx/scalar 0.0)
                         :key key :batch-size n :batched? true}
-                       #(apply (:body-fn kernel) args))
+                       (fn [rt] (apply (:body-fn kernel) rt args)))
               ;; score is [N]-shaped, sum for total
               total-score (mx/sum (:score result))
               element-scores (mapv #(mx/index (:score result) %) (range n))]
@@ -248,13 +249,13 @@
           scalar? (scalar-constraints? constraints)]
       (if (and (:body-fn kernel) (= constraints cm/EMPTY) (batched-args? args in-axes))
         ;; Fast path: batched generate with no constraints (all sites simulated)
-        (let [key (rng/next-key)
-              result (h/run-handler h/batched-generate-handler
+        (let [key (rng/fresh-key)
+              result (rt/run-handler h/batched-generate-transition
                        {:choices cm/EMPTY :score (mx/scalar 0.0)
                         :weight (mx/scalar 0.0)
                         :key key :constraints cm/EMPTY
                         :batch-size n :batched? true}
-                       #(apply (:body-fn kernel) args))
+                       (fn [rt] (apply (:body-fn kernel) rt args)))
               total-score (mx/sum (:score result))
               total-weight (mx/sum (:weight result))
               element-scores (mapv #(mx/index (:score result) %) (range n))]

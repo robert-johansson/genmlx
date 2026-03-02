@@ -3,6 +3,7 @@
    handler-based execution."
   (:require [genmlx.protocols :as p]
             [genmlx.handler :as h]
+            [genmlx.runtime :as rt]
             [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
@@ -41,11 +42,12 @@
 (defrecord DynamicGF [body-fn source]
   p/IGenerativeFunction
   (simulate [this args]
-    (let [key (rng/next-key)
-          result (h/run-handler h/simulate-handler
+    (let [key (or (::key (meta this)) (rng/fresh-key))
+          result (rt/run-handler h/simulate-transition
                    {:choices cm/EMPTY :score SCORE-ZERO :key key
-                    :executor execute-sub}
-                   #(apply body-fn args))
+                    :executor execute-sub
+                    :param-store (::param-store (meta this))}
+                   (fn [rt] (apply body-fn rt args)))
           trace (tr/make-trace
                   {:gen-fn this :args args
                    :choices (:choices result)
@@ -57,13 +59,14 @@
 
   p/IGenerate
   (generate [this args constraints]
-    (let [key (rng/next-key)
-          result (h/run-handler h/generate-handler
+    (let [key (or (::key (meta this)) (rng/fresh-key))
+          result (rt/run-handler h/generate-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
                     :key key :constraints constraints
-                    :executor execute-sub}
-                   #(apply body-fn args))
+                    :executor execute-sub
+                    :param-store (::param-store (meta this))}
+                   (fn [rt] (apply body-fn rt args)))
           trace (tr/make-trace
                   {:gen-fn this :args args
                    :choices (:choices result)
@@ -77,16 +80,17 @@
 
   p/IUpdate
   (update [this trace constraints]
-    (let [key (rng/next-key)
-          result (h/run-handler h/update-handler
+    (let [key (or (::key (meta this)) (rng/fresh-key))
+          result (rt/run-handler h/update-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
                     :key key :constraints constraints
                     :old-choices (:choices trace)
                     :old-splice-scores (::splice-scores (meta trace))
                     :discard cm/EMPTY
-                    :executor execute-sub}
-                   #(apply body-fn (:args trace)))
+                    :executor execute-sub
+                    :param-store (::param-store (meta this))}
+                   (fn [rt] (apply body-fn rt (:args trace))))
           new-trace (tr/make-trace
                       {:gen-fn this :args (:args trace)
                        :choices (:choices result)
@@ -101,16 +105,17 @@
 
   p/IRegenerate
   (regenerate [this trace selection]
-    (let [key (rng/next-key)
+    (let [key (or (::key (meta this)) (rng/fresh-key))
           old-score (:score trace)
-          result (h/run-handler h/regenerate-handler
+          result (rt/run-handler h/regenerate-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO  ;; tracks proposal ratio
                     :key key :selection selection
                     :old-choices (:choices trace)
                     :old-splice-scores (::splice-scores (meta trace))
-                    :executor execute-sub}
-                   #(apply body-fn (:args trace)))
+                    :executor execute-sub
+                    :param-store (::param-store (meta this))}
+                   (fn [rt] (apply body-fn rt (:args trace))))
           new-score (:score result)
           proposal-ratio (:weight result)
           ;; Gen.jl regenerate weight = new_score - old_score - proposal_ratio
@@ -127,84 +132,95 @@
 
   p/IAssess
   (assess [this args choices]
-    (let [key (rng/next-key)
-          result (h/run-handler h/assess-handler
+    (let [key (or (::key (meta this)) (rng/fresh-key))
+          result (rt/run-handler h/assess-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
                     :key key :constraints choices
-                    :executor execute-sub-assess}
-                   #(apply body-fn args))]
+                    :executor execute-sub-assess
+                    :param-store (::param-store (meta this))}
+                   (fn [rt] (apply body-fn rt args)))]
       {:retval (:retval result)
        :weight (:score result)}))
 
   p/IPropose
   (propose [this args]
-    (let [key (rng/next-key)
-          result (h/run-handler h/simulate-handler
+    (let [key (or (::key (meta this)) (rng/fresh-key))
+          result (rt/run-handler h/simulate-transition
                    {:choices cm/EMPTY :score SCORE-ZERO :key key
-                    :executor execute-sub}
-                   #(apply body-fn args))]
+                    :executor execute-sub
+                    :param-store (::param-store (meta this))}
+                   (fn [rt] (apply body-fn rt args)))]
       {:choices (:choices result)
        :weight  (:score result)
        :retval  (:retval result)}))
 
   p/IProject
   (project [this trace selection]
-    (let [key (rng/next-key)
-          result (h/run-handler h/project-handler
+    (let [key (or (::key (meta this)) (rng/fresh-key))
+          result (rt/run-handler h/project-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
                     :key key :selection selection
                     :old-choices (:choices trace)
                     :constraints cm/EMPTY
-                    :executor execute-sub-project}
-                   #(apply body-fn (:args trace)))]
+                    :executor execute-sub-project
+                    :param-store (::param-store (meta this))}
+                   (fn [rt] (apply body-fn rt (:args trace))))]
       (:weight result)))
 
 )
 
 (defn- execute-sub
   "Execute a sub-generative-function during handler execution.
-   Delegates to the sub-gf's own GFI methods."
-  [gf args {:keys [constraints old-choices selection key old-splice-score]}]
-  (cond
-    ;; Regenerate mode
-    selection
-    (let [{:keys [trace weight]}
-          (p/regenerate gf
-            (tr/make-trace {:gen-fn gf :args args
-                            :choices (or old-choices cm/EMPTY)
-                            :retval nil :score (or old-splice-score SCORE-ZERO)})
-            selection)]
-      {:choices (:choices trace) :retval (:retval trace)
-       :score (:score trace) :weight weight})
+   Delegates to the sub-gf's own GFI methods.
+   Propagates param-store and key to sub-gfs via metadata."
+  [gf args {:keys [constraints old-choices selection key old-splice-score param-store]}]
+  (let [gf (cond-> gf
+             key (vary-meta assoc ::key key)
+             param-store (vary-meta assoc ::param-store param-store))]
+    (cond
+      ;; Regenerate mode
+      selection
+      (let [{:keys [trace weight]}
+            (p/regenerate gf
+              (tr/make-trace {:gen-fn gf :args args
+                              :choices (or old-choices cm/EMPTY)
+                              :retval nil :score (or old-splice-score SCORE-ZERO)})
+              selection)]
+        {:choices (:choices trace) :retval (:retval trace)
+         :score (:score trace) :weight weight})
 
-    ;; Update mode: has old-choices (possibly with new constraints)
-    (and old-choices (not= old-choices cm/EMPTY))
-    (let [old-trace (tr/make-trace {:gen-fn gf :args args
-                                    :choices old-choices
-                                    :retval nil :score (or old-splice-score SCORE-ZERO)})
-          {:keys [trace weight discard]} (p/update gf old-trace
-                                                    (or constraints cm/EMPTY))]
-      {:choices (:choices trace) :retval (:retval trace)
-       :score (:score trace) :weight weight :discard discard})
+      ;; Update mode: has old-choices (possibly with new constraints)
+      (and old-choices (not= old-choices cm/EMPTY))
+      (let [old-trace (tr/make-trace {:gen-fn gf :args args
+                                      :choices old-choices
+                                      :retval nil :score (or old-splice-score SCORE-ZERO)})
+            {:keys [trace weight discard]} (p/update gf old-trace
+                                                      (or constraints cm/EMPTY))]
+        {:choices (:choices trace) :retval (:retval trace)
+         :score (:score trace) :weight weight :discard discard})
 
-    ;; Generate with constraints
-    (and constraints (not= constraints cm/EMPTY))
-    (let [{:keys [trace weight]} (p/generate gf args constraints)]
-      {:choices (:choices trace) :retval (:retval trace)
-       :score (:score trace) :weight weight})
+      ;; Generate with constraints
+      (and constraints (not= constraints cm/EMPTY))
+      (let [{:keys [trace weight]} (p/generate gf args constraints)]
+        {:choices (:choices trace) :retval (:retval trace)
+         :score (:score trace) :weight weight})
 
-    ;; Plain simulate
-    :else
-    (let [trace (p/simulate gf args)]
-      {:choices (:choices trace) :retval (:retval trace)
-       :score (:score trace)})))
+      ;; Plain simulate
+      :else
+      (let [trace (p/simulate gf args)]
+        {:choices (:choices trace) :retval (:retval trace)
+         :score (:score trace)}))))
 
 (defn- execute-sub-project
-  "Execute sub-GF in project mode: replay via generate, then project."
-  [gf args {:keys [old-choices selection]}]
-  (let [{:keys [trace]} (p/generate gf args (or old-choices cm/EMPTY))
+  "Execute sub-GF in project mode: replay via generate, then project.
+   Propagates param-store and key via metadata."
+  [gf args {:keys [old-choices selection key param-store]}]
+  (let [gf (cond-> gf
+             key (vary-meta assoc ::key key)
+             param-store (vary-meta assoc ::param-store param-store))
+        {:keys [trace]} (p/generate gf args (or old-choices cm/EMPTY))
         weight (p/project gf trace (or selection sel/none))]
     {:choices (:choices trace)
      :retval (:retval trace)
@@ -212,9 +228,13 @@
      :weight weight}))
 
 (defn- execute-sub-assess
-  "Execute a sub-GF in assess mode: all choices must be provided."
-  [gf args {:keys [constraints]}]
-  (let [{:keys [retval weight]} (p/assess gf args (or constraints cm/EMPTY))]
+  "Execute a sub-GF in assess mode: all choices must be provided.
+   Propagates param-store and key via metadata."
+  [gf args {:keys [constraints key param-store]}]
+  (let [gf (cond-> gf
+             key (vary-meta assoc ::key key)
+             param-store (vary-meta assoc ::param-store param-store))
+        {:keys [retval weight]} (p/assess gf args (or constraints cm/EMPTY))]
     {:choices (or constraints cm/EMPTY) :retval retval
      :score weight :weight weight}))
 
@@ -229,33 +249,14 @@
   (:retval (p/simulate gf (vec args))))
 
 (defn with-key
-  "Execute f with a threaded PRNG key for reproducible inference.
-   All DynamicGF GFI methods called within f will draw keys from the
-   threaded key instead of calling rng/fresh-key."
-  [key f]
-  (binding [rng/*prng-key* (volatile! key)]
-    (f)))
+  "Return a copy of gf with the given PRNG key for reproducible execution.
+   The key is stored as metadata and read by DynamicGF GFI methods."
+  [gf key]
+  (vary-meta gf assoc ::key key))
 
 ;; ---------------------------------------------------------------------------
-;; User-facing effect operations called inside gen bodies
-;;
-;; These three functions — trace, splice, param — are the COMPLETE set of
-;; effectful operations available within a `gen` body.  Everything else in a
-;; gen body is pure ClojureScript.  Each dispatches to the active handler
-;; (see handler.cljs) which performs the appropriate state transition.
+;; Direct-mode param access (outside gen bodies)
 ;; ---------------------------------------------------------------------------
-
-(defn trace
-  "Sample from or constrain a distribution at the given address.
-   Used inside gen bodies: (trace :addr (gaussian 0 10))"
-  [addr dist]
-  (h/trace-choice! addr dist))
-
-(defn splice
-  "Call a sub-generative-function at the given address namespace.
-   Used inside gen bodies: (splice :sub-model my-model args...)"
-  [addr gf & args]
-  (h/trace-gf! addr gf (vec args)))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized execution (batched: N particles in one model run)
@@ -267,11 +268,12 @@
    gf: DynamicGF, args: model args, n: number of particles, key: PRNG key."
   [gf args n key]
   (let [key (rng/ensure-key key)
-        result (h/run-handler h/batched-simulate-handler
+        result (rt/run-handler h/batched-simulate-transition
                  {:choices cm/EMPTY :score SCORE-ZERO
                   :key key :batch-size n :batched? true
-                  :executor execute-sub}
-                 #(apply (:body-fn gf) args))]
+                  :executor execute-sub
+                  :param-store (::param-store (meta gf))}
+                 (fn [rt] (apply (:body-fn gf) rt args)))]
     (vec/->VectorizedTrace gf args (:choices result) (:score result)
                            (mx/zeros [n]) n (:retval result))))
 
@@ -283,12 +285,13 @@
    n: number of particles, key: PRNG key."
   [gf args constraints n key]
   (let [key (rng/ensure-key key)
-        result (h/run-handler h/batched-generate-handler
+        result (rt/run-handler h/batched-generate-transition
                  {:choices cm/EMPTY :score SCORE-ZERO
                   :weight SCORE-ZERO :key key
                   :constraints constraints :batch-size n :batched? true
-                  :executor execute-sub}
-                 #(apply (:body-fn gf) args))]
+                  :executor execute-sub
+                  :param-store (::param-store (meta gf))}
+                 (fn [rt] (apply (:body-fn gf) rt args)))]
     (vec/->VectorizedTrace gf args (:choices result) (:score result)
                            (:weight result) n (:retval result))))
 
@@ -299,15 +302,16 @@
   [gf vtrace constraints key]
   (let [key (rng/ensure-key key)
         n (:n-particles vtrace)
-        result (h/run-handler h/batched-update-handler
+        result (rt/run-handler h/batched-update-transition
                  {:choices cm/EMPTY :score SCORE-ZERO
                   :weight SCORE-ZERO :key key
                   :constraints constraints
                   :old-choices (:choices vtrace)
                   :discard cm/EMPTY
                   :batch-size n :batched? true
-                  :executor execute-sub}
-                 #(apply (:body-fn gf) (:args vtrace)))]
+                  :executor execute-sub
+                  :param-store (::param-store (meta gf))}
+                 (fn [rt] (apply (:body-fn gf) rt (:args vtrace))))]
     {:vtrace (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
                                      (:score result) (:weight result)
                                      n (:retval result))
@@ -322,14 +326,15 @@
   (let [key (rng/ensure-key key)
         n (:n-particles vtrace)
         old-score (:score vtrace)
-        result (h/run-handler h/batched-regenerate-handler
+        result (rt/run-handler h/batched-regenerate-transition
                  {:choices cm/EMPTY :score SCORE-ZERO
                   :weight SCORE-ZERO :key key
                   :selection selection
                   :old-choices (:choices vtrace)
                   :batch-size n :batched? true
-                  :executor execute-sub}
-                 #(apply (:body-fn gf) (:args vtrace)))
+                  :executor execute-sub
+                  :param-store (::param-store (meta gf))}
+                 (fn [rt] (apply (:body-fn gf) rt (:args vtrace))))
         new-score (:score result)
         proposal-ratio (:weight result)
         weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)]
@@ -359,17 +364,13 @@
       ;; Otherwise delegate to regular update (body must be re-executed)
       (p/update gf trace constraints))))
 
-;; ---------------------------------------------------------------------------
-;; Trainable parameter support
-;; ---------------------------------------------------------------------------
-
 (defn param
-  "Declare/read a trainable parameter inside a gen body.
-   name: parameter name (keyword)
-   default-value: default parameter value (used when no param store is active)
-   Returns the parameter value as an MLX array."
+  "Read a trainable parameter outside a gen body.
+   Returns the default value as an MLX array (no param store available
+   outside gen body execution). Inside gen bodies, use the param local
+   binding from the gen macro instead."
   [name default-value]
-  (h/trace-param! name default-value))
+  (if (mx/array? default-value) default-value (mx/scalar default-value)))
 
 ;; ---------------------------------------------------------------------------
 ;; IHasArgumentGrads — DynamicGF does not declare argument differentiability

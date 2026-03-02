@@ -145,11 +145,10 @@
 
 (defn systematic-resample
   "Systematic resampling of particles. Returns vector of indices.
-   Optional `key` uses functional PRNG; nil falls back to js/Math.random."
+   Uses functional PRNG key (falls back to fresh-key if nil)."
   [log-weights n key]
   (let [{:keys [probs]} (normalize-log-weights log-weights)
         rk (rng/ensure-key key)
-        _ (rng/seed-from-key! rk)
         u (/ (mx/realize (rng/uniform rk [])) n)]
     (loop [i 0, cumsum 0.0, j 0, indices (transient [])]
       (if (>= j n)
@@ -202,13 +201,12 @@
 (defn accept-mh?
   "Metropolis-Hastings accept/reject decision.
    `log-accept` is a JS number (the log acceptance ratio).
-   Optional `key` uses the functional PRNG; nil falls back to js/Math.random."
+   Uses functional PRNG key (falls back to fresh-key if nil)."
   ([log-accept]
    (accept-mh? log-accept nil))
   ([log-accept key]
    (or (>= log-accept 0)
        (let [key (rng/ensure-key key)
-             _ (rng/seed-from-key! key)
              u (mx/realize (rng/uniform key []))]
          (< (js/Math.log u) log-accept)))))
 

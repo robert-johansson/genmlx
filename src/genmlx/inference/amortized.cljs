@@ -43,7 +43,7 @@
             log-sigs (mx/slice out d (* 2 d))
             sigs     (mx/exp log-sigs)
             ;; Reparameterized sample: z = μ + σε
-            eps (rng/normal (rng/next-key) [d])
+            eps (rng/normal (rng/fresh-key) [d])
             zs  (mx/add mus (mx/multiply sigs eps))
             ;; Build constraint choicemap: latent values + observations
             obs (observations-fn data)

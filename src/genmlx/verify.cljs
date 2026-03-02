@@ -12,7 +12,7 @@
 
    Multiple trials can catch conditional duplicates that only appear in
    some execution paths."
-  (:require [genmlx.handler :as h]
+  (:require [genmlx.runtime :as rt]
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
@@ -35,14 +35,14 @@
                         :message (str "Found " s " in model body — breaks vectorized execution")})))))
 
 ;; ---------------------------------------------------------------------------
-;; Validation handler (wraps simulate logic + address tracking)
+;; Pure validation transition (replaces validate-handler)
 ;; ---------------------------------------------------------------------------
 
-(defn- validate-handler
-  "Like simulate-handler but tracks seen addresses for duplicate detection."
-  [addr dist]
-  (let [state @h/*state*
-        seen (:seen-addrs state)
+(defn- validate-transition
+  "Pure state transition for validation: like simulate-transition but
+   tracks seen addresses for duplicate detection."
+  [state addr dist]
+  (let [seen (:seen-addrs state)
         violations (:violations state)
         violations' (if (contains? seen addr)
                       (conj violations {:type :duplicate-address
@@ -53,14 +53,12 @@
         [k1 k2] (rng/split (:key state))
         value (dc/dist-sample dist k2)
         lp (dc/dist-log-prob dist value)]
-    (vreset! h/*state*
-      (-> state
-          (assoc :key k1)
-          (update :choices cm/set-value addr value)
-          (update :score #(mx/add % lp))
-          (assoc :seen-addrs (conj seen addr))
-          (assoc :violations violations')))
-    value))
+    [value (-> state
+              (assoc :key k1)
+              (update :choices cm/set-value addr value)
+              (update :score #(mx/add % lp))
+              (assoc :seen-addrs (conj seen addr))
+              (assoc :violations violations'))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Single-trial validation
@@ -71,14 +69,14 @@
    {:violations [{:type :execution-error ...}]} on exception."
   [gf args key]
   (try
-    (let [result (h/run-handler validate-handler
+    (let [result (rt/run-handler validate-transition
                    {:choices cm/EMPTY
                     :score (mx/scalar 0.0)
                     :key key
                     :seen-addrs #{}
                     :violations []
                     :executor nil}
-                   #(apply (:body-fn gf) args))
+                   (fn [rt] (apply (:body-fn gf) rt args)))
           violations (:violations result)
           trace (tr/make-trace {:gen-fn gf :args args
                                 :choices (:choices result)
@@ -122,7 +120,7 @@
    (let [;; Source analysis (static, no execution)
          source-violations (check-source-materialization (:source gf))
          ;; Run trials
-         base-key (or key (rng/next-key))
+         base-key (or key (rng/fresh-key))
          trial-keys (rng/split-n (rng/ensure-key base-key) n-trials)
          trial-results (mapv #(run-validation-trial gf args %) trial-keys)
          ;; Merge violations across trials (dedupe by type+addr)
