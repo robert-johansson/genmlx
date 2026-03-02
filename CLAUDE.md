@@ -43,7 +43,8 @@ src/genmlx/
   trace.cljs            Immutable Trace record {gen-fn, args, choices, retval, score}
   selection.cljs        Composable address selection algebra
   protocols.cljs        GFI protocols: simulate, generate, update, regenerate, assess
-  handler.cljs          Handler-based execution: pure transitions + volatile! dispatch
+  handler.cljs          Pure state transitions (simulate, generate, update, regenerate, ...)
+  runtime.cljs          Execution runtime: run-handler with volatile! dispatch
   gen.cljc              gen macro (converts fn bodies into DynamicGF)
   dynamic.cljs          DynamicGF record (full GFI via handlers), vsimulate, vgenerate
   dist/core.cljs        Distribution record + open multimethods (sample, log-prob, sample-n)
@@ -84,15 +85,15 @@ test/genmlx/
 ## Architecture layers
 
 ```
-Layer 0: MLX Foundation     (mlx, mlx.random)
-Layer 1: Core Data          (choicemap, trace, selection)
-Layer 2: GFI & Execution    (protocols, handler, edit, diff)
-Layer 3: DSL                (gen macro, dynamic — DynamicGF, vsimulate, vgenerate)
-Layer 4: Distributions      (dist/core, dist/macros, dist — 27 types)
-Layer 5: Combinators        (Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Vmap, Contramap/Dimap)
-Layer 6: Inference          (IS, MH, MALA, HMC, NUTS, Gibbs, ESS, SMC, SMCP3, VI, ADEV, MAP + kernels)
-Layer 7: Vectorized         (VectorizedTrace, batched execution, dispatch amortization)
-Layer 8: Verification       (contracts — 11 GFI contracts, verify — static validator)
+Layer 0: MLX + Runtime    (mlx.cljs, mlx/random.cljs, runtime.cljs — mutable boundary)
+Layer 1: Core Data        (choicemap, trace, selection — pure)
+Layer 2: GFI & Execution  (protocols, handler, edit, diff — pure)
+Layer 3: DSL              (gen macro, dynamic — pure)
+Layer 4: Distributions    (dist/core, dist/macros, dist — 27 types, pure)
+Layer 5: Combinators      (Map, Unfold, Switch, etc. — pure)
+Layer 6: Inference        (IS, MCMC, SMC, VI, ADEV, MAP + kernels — pure)
+Layer 7: Vectorized       (batched execution — pure)
+Layer 8: Verification     (contracts, verify — pure)
 ```
 
 ## Key design principles
@@ -109,7 +110,8 @@ Layer 8: Verification       (contracts — 11 GFI contracts, verify — static v
    `mx/item` at inference boundaries.
 
 4. **Lazy graph + explicit eval.** MLX operations build a computation graph.
-   Call `mx/eval!` explicitly to materialize (bounds memory, enables fusion).
+   Call `mx/materialize!` at inference boundaries to evaluate. Direct
+   `mx/eval!` and `mx/tidy` are confined to Layer 0 (`mlx.cljs`).
 
 5. **Shape-based batching.** Vectorized inference works by changing array shapes
    (`[N]` instead of `[]`), not by transforming functions with `vmap`. MLX
@@ -120,12 +122,12 @@ Layer 8: Verification       (contracts — 11 GFI contracts, verify — static v
 ```clojure
 (def model
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
       (doseq [[j x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" j))
-                   (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
-                                          intercept) 1)))
+        (trace (keyword (str "y" j))
+               (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                      intercept) 1)))
       slope)))
 
 ;; GFI operations
@@ -144,14 +146,28 @@ Layer 8: Verification       (contracts — 11 GFI contracts, verify — static v
 
 ## How the handler system works
 
-The handler is the heart of GenMLX. When `gen` body code calls `dyn/trace`,
-it dispatches to whichever handler is active (simulate, generate, update,
-regenerate, or batched variants). Each handler is a **pure state transition**
-`(fn [state addr dist] -> [value state'])` wrapped in a thin volatile! dispatcher.
+The handler system has two parts:
+
+1. **Pure transitions** in `handler.cljs` — 10 state transition functions
+   (simulate, generate, update, regenerate, assess, project, plus batched
+   variants). Each is `(fn [state addr dist] -> [value state'])`. Zero
+   side effects.
+
+2. **Execution runtime** in `runtime.cljs` — `run-handler` wraps a transition
+   in a single `volatile!` cell, creating closure-based `trace`/`splice`/`param`
+   operations that the `gen` macro binds as local names. Analogous to
+   re-frame's app-db: one encapsulated mutable cell, everything else pure.
+
+The `gen` macro injects a hidden runtime parameter. Inside gen bodies,
+`trace`, `splice`, and `param` are local bindings (not namespace-qualified
+calls), so they work with all Clojure constructs: `map`, `for`, HOFs, closures.
 
 State flows through an immutable map: `{:choices :score :weight :key :constraints ...}`.
 The handler never inspects value shapes — this is what makes batched execution
 (`[N]`-shaped arrays) work transparently.
+
+PRNG keys are threaded via metadata on gen-fns (`::key`). The single entropy
+injection point is `rng/fresh-key` in `mlx/random.cljs`.
 
 ## Vectorized inference
 
@@ -198,9 +214,11 @@ After any change, verify:
 
 ## What to avoid
 
-- Don't call `mx/eval!` or `mx/item` on values inside model bodies during
-  batched execution (breaks vectorization).
-- Don't introduce mutable state outside the handler's `volatile!`.
+- Don't call `mx/eval!`, `mx/materialize!`, or `mx/item` on values inside
+  model bodies during batched execution (breaks vectorization).
+- Don't use `mx/eval!` or `mx/tidy` directly outside `mlx.cljs` — use the
+  boundary helpers (`materialize!`, `tidy-materialize`, `tidy-run`).
+- Don't introduce mutable state outside the runtime's `volatile!` in `runtime.cljs`.
 - Don't import `genmlx.dynamic` from `genmlx.handler` (circular dependency).
 - Don't modify existing GFI protocol signatures — everything downstream depends
   on them.

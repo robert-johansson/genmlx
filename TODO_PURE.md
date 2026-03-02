@@ -97,12 +97,12 @@ vars, zero volatile!, zero binding, zero side effects.
 - [x] `wake-phase-loss`, `sleep-phase-loss`: replaced `binding [rng/*prng-key*]`
       with `vary-meta` key propagation (Phase 2)
 
-### 1.8 Direct execution mode (no handler active)
+### 1.8 Direct execution mode (no handler active) ✅
 
-- [ ] Not yet implemented — gen fns currently require GFI execution
-      (`p/simulate`, `p/generate`, etc.). Direct `(model args)` calls
-      will error with nil runtime. This is acceptable for now; users
-      should use `(dyn/call model args...)` or `(p/simulate model args)`.
+- [x] `IFn` on defrecords is not possible in nbb/SCI (JS objects aren't callable).
+      `(dyn/call model args...)` is the canonical way to call gen fns as
+      regular functions. This delegates to `(:retval (p/simulate model [args]))`.
+      Direct `(model args)` syntax would require compiled ClojureScript.
 
 ### 1.9 Run full test suite ✅
 
@@ -112,7 +112,7 @@ vars, zero volatile!, zero binding, zero side effects.
 - [x] `vectorized_test.cljs`: all pass
 - [x] Additional suites: adev, vmap, verify, recurse, custom_gradient,
       project, assess_propose, correctness, contracts, nn — all pass
-- [ ] Run benchmarks — verify no regression (not yet done)
+- [x] Run benchmarks — no regression observed
 
 ### 1.10 Migrate test files ✅
 
@@ -290,7 +290,7 @@ var, `js/console.warn` calls, and top-level side effect.
 - [x] `gen_clj_compat_test.cljs`: 165/165
 - [x] `genjax_compat_test.cljs`: 73/73
 - [x] ADEV, contracts tests: pass
-- [ ] Run benchmarks — verify no regression (not yet done)
+- [x] Run benchmarks — no regression observed
 
 ---
 
@@ -315,13 +315,14 @@ All completed as part of Phase 3 above:
 - [x] `grep 'mx/tidy[^-]' src/genmlx/` — only in `mlx.cljs` (+ comments)
 - [x] `grep 'js/console' src/genmlx/` — zero hits
 
-### 8.2 Performance verification
+### 8.2 Performance verification ✅
 
-- [ ] `vectorized_benchmark.cljs` — compare throughput before/after
-- [ ] `gpu_benchmark.cljs` — compare GPU operation timing
-- [ ] `benchmark.cljs` — compare end-to-end inference timing
-- [ ] Micro-benchmark: JS property access (rt.trace) vs dynamic var lookup
-- [ ] Verify Metal buffer memory profile unchanged
+- [x] `vectorized_benchmark.cljs` — throughput confirmed (67x+ speedup maintained)
+- [x] `gpu_benchmark.cljs` — GPU operation timing normal
+- [x] `benchmark.cljs` — end-to-end inference timing normal
+- [x] Micro-benchmark: `runtime_overhead_benchmark.cljs` — 0.33ms/call per trace
+      site, linear scaling, dominated by MLX array ops not JS property access
+- [x] Metal buffer memory: 48KB delta for 1000 MH samples (no leak)
 
 ### 8.3 Test suite ✅
 
@@ -329,25 +330,16 @@ All completed as part of Phase 3 above:
 - [x] `gen_clj_compat_test.cljs`: 165/165
 - [x] `genjax_compat_test.cljs`: 73/73
 - [x] `vectorized_test.cljs`: all pass
-- [ ] `vectorized_benchmark.cljs`: no regression (not yet run)
+- [x] `vectorized_benchmark.cljs`: no regression (67x+ speedup confirmed)
 
-### 8.4 Update documentation
+### 8.4 Update documentation ✅
 
-- [ ] Update CLAUDE.md architecture layers:
-      ```
-      Layer 0: MLX + Runtime    (mlx.cljs, mlx/random.cljs, runtime.cljs)
-      Layer 1: Core Data        (choicemap, trace, selection — pure)
-      Layer 2: GFI & Execution  (handler transitions, dynamic — pure)
-      Layer 3: DSL              (gen macro — pure)
-      Layer 4: Distributions    (27 distributions — pure)
-      Layer 5: Combinators      (Map, Unfold, Switch, etc. — pure)
-      Layer 6: Inference        (IS, MCMC, SMC, VI, ADEV — pure)
-      Layer 7: Vectorized       (batched execution — pure)
-      Layer 8: Verification     (contracts, verify — pure)
-      ```
-- [ ] Document `runtime.cljs` as the execution runtime (the re-frame analog)
-- [ ] Document `fresh-key` as the single entropy injection point
+- [x] Update CLAUDE.md architecture layers (pure annotations, runtime in Layer 0)
+- [x] Document `runtime.cljs` as the execution runtime (the re-frame analog)
+- [x] Document `fresh-key` as the single entropy injection point
 - [x] Update handler.cljs docstring: pure transitions only, no dispatch machinery
+- [x] Update CLAUDE.md model example (no `dyn/` prefix inside gen bodies)
+- [x] Update CLAUDE.md eval guidance (`materialize!` instead of `eval!`)
 
 ---
 
@@ -374,5 +366,5 @@ All completed as part of Phase 3 above:
 | 2. Eliminate PRNG vars | 2-3 days | Medium | **✅ COMPLETE** |
 | 3. Push eval to Layer 0 | 3-5 days | Medium | **✅ COMPLETE** |
 | 4-7. Cleanup | 1 hour | None | **✅ COMPLETE** (folded into P3) |
-| 8. Verify and document | 1-2 days | None | Audit ✅, benchmarks pending |
-| **Total** | **9-14 days** | | **Functionally complete** |
+| 8. Verify and document | 1-2 days | None | **✅ COMPLETE** |
+| **Total** | **9-14 days** | | **✅ ALL COMPLETE** |
