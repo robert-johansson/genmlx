@@ -21,36 +21,36 @@
 
 ;; Benchmark 1: Simulate throughput
 (println "-- Simulate throughput --")
-(let [model (gen []
-              (let [x (trace :x (dist/gaussian 0 1))
-                    y (trace :y (dist/gaussian 0 1))]
-                (mx/eval! x y)
-                (+ (mx/item x) (mx/item y))))]
+(let [model (dyn/auto-key
+              (gen []
+                (let [x (trace :x (dist/gaussian 0 1))
+                      y (trace :y (dist/gaussian 0 1))]
+                  (mx/add x y))))]
   (time-it "1000 simulations"
     (fn [] (dotimes [_ 1000] (p/simulate model [])))))
 
 ;; Benchmark 2: Generate + score
 (println "\n-- Generate throughput --")
-(let [model (gen []
-              (let [x (trace :x (dist/gaussian 0 1))
-                    y (trace :y (dist/gaussian 0 1))]
-                (mx/eval! x y)
-                (+ (mx/item x) (mx/item y))))
+(let [model (dyn/auto-key
+              (gen []
+                (let [x (trace :x (dist/gaussian 0 1))
+                      y (trace :y (dist/gaussian 0 1))]
+                  (mx/add x y))))
       constraints (cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar 2.0))]
   (time-it "1000 generates"
     (fn [] (dotimes [_ 1000] (p/generate model [] constraints)))))
 
 ;; Benchmark 3: MH on 5-param model
 (println "\n-- MH inference (5-param model) --")
-(let [model (gen [xs]
-              (let [slope     (trace :slope (dist/gaussian 0 10))
-                    intercept (trace :intercept (dist/gaussian 0 10))]
-                (mx/eval! slope intercept)
-                (let [s (mx/item slope) i (mx/item intercept)]
+(let [model (dyn/auto-key
+              (gen [xs]
+                (let [slope     (trace :slope (dist/gaussian 0 10))
+                      intercept (trace :intercept (dist/gaussian 0 10))]
                   (doseq [[j x] (map-indexed vector xs)]
                     (trace (keyword (str "y" j))
-                               (dist/gaussian (+ (* s x) i) 1)))
-                  [s i])))
+                           (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                                  intercept) 1)))
+                  [slope intercept])))
       xs [1.0 2.0 3.0 4.0 5.0]
       observations (reduce (fn [cm [j y]]
                              (cm/set-choice cm [(keyword (str "y" j))] (mx/scalar y)))
@@ -71,6 +71,6 @@
         (let [c (mx/add a b)
               d (mx/multiply c a)
               e (mx/exp d)]
-          (mx/eval! e))))))
+          (mx/materialize! e))))))
 
 (println "\nBenchmarks complete.")
