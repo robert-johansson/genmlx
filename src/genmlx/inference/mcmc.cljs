@@ -231,12 +231,10 @@
             (if (>= i samples)
               (persistent! acc)
               (let [[k1 k2 rk'] (rng/split-n rk 3)
-                    p' (mx/tidy
-                          (fn []
-                            (let [noise (rng/normal k1 [thin n-params])
-                                  uniforms (rng/uniform k2 [thin])
-                                  r (thin-chain p noise uniforms)]
-                              (mx/eval! r) r)))]
+                    p' (mx/tidy-materialize
+                         #(let [noise (rng/normal k1 [thin n-params])
+                                uniforms (rng/uniform k2 [thin])]
+                            (thin-chain p noise uniforms)))]
                 (when callback
                   (callback {:iter i :value (mx/->clj p')}))
                 (recur p' (conj! acc (mx/->clj p')) (inc i) rk'))))
@@ -261,11 +259,9 @@
                           (let [noise (mx/reshape
                                         (mx/take-idx noise-batch (mx/scalar j mx/int32) 0)
                                         [n-params])
-                                p' (mx/tidy
-                                      (fn []
-                                        (let [r (eager-mh-step p score-fn proposal-std
-                                                               noise (nth uniforms-js j))]
-                                          (mx/eval! r) r)))]
+                                p' (mx/tidy-materialize
+                                     #(eager-mh-step p score-fn proposal-std
+                                                     noise (nth uniforms-js j)))]
                             (when callback
                               (callback {:iter (+ i j) :value (mx/->clj p')}))
                             (recur p' (conj! acc (mx/->clj p')) (inc j)))))]
@@ -621,19 +617,17 @@
                   (mx/materialize! q' sq' gq')
                   (recur q' sq' gq' (inc b) rk')))))
           [init-q init-score init-grad rk])
-        ;; Phase 2: Collect samples (mx/tidy prevents Metal resource leak)
+        ;; Phase 2: Collect samples (tidy-run prevents Metal resource leak)
         result (loop [q params, sq score, gq grad, acc (transient []), i 0, rk rk]
                  (if (>= i samples)
                    (persistent! acc)
                    (let [[step-key rk'] (rng/split rk)
-                         r (mx/tidy
-                             (fn []
-                               (let [[k1 k2] (rng/split step-key)
-                                     noise (rng/normal k1 [thin-steps n-params])
-                                     uniforms (rng/uniform k2 [thin-steps])
-                                     r (thin-chain q sq gq noise uniforms)]
-                                 (mx/eval! (aget r 0) (aget r 1) (aget r 2))
-                                 r)))
+                         r (mx/tidy-run
+                             #(let [[k1 k2] (rng/split step-key)
+                                    noise (rng/normal k1 [thin-steps n-params])
+                                    uniforms (rng/uniform k2 [thin-steps])]
+                                (thin-chain q sq gq noise uniforms))
+                             (fn [r] [(aget r 0) (aget r 1) (aget r 2)]))
                          q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
                      (when callback
                        (callback {:iter i :value (mx/->clj q')}))
@@ -855,15 +849,14 @@
    Returns [q p] Clojure vector."
   ([grad-U q p eps half-eps] (leapfrog-step grad-U q p eps half-eps nil))
   ([grad-U q p eps half-eps metric]
-   (let [r (mx/tidy
-             (fn []
-               (let [g (grad-U q)
-                     p (mx/subtract p (mx/multiply half-eps g))
-                     q (mx/add q (mx/multiply eps (inv-mass-multiply p metric)))
-                     g (grad-U q)
-                     p (mx/subtract p (mx/multiply half-eps g))]
-                 (mx/eval! q p)
-                 #js [q p])))]
+   (let [r (mx/tidy-run
+             #(let [g (grad-U q)
+                    p (mx/subtract p (mx/multiply half-eps g))
+                    q (mx/add q (mx/multiply eps (inv-mass-multiply p metric)))
+                    g (grad-U q)
+                    p (mx/subtract p (mx/multiply half-eps g))]
+                #js [q p])
+             (fn [r] [(aget r 0) (aget r 1)]))]
      [(aget r 0) (aget r 1)])))
 
 (defn- leapfrog-trajectory
@@ -911,13 +904,12 @@
         ;; Current Hamiltonian
         current-H (hamiltonian neg-U-compiled q p0 half metric)
         ;; Fused leapfrog — L+1 gradient evals, one lazy graph
-        [q' p'] (let [r (mx/tidy
-                          (fn []
-                            (let [[q' p'] (leapfrog-trajectory-fused
-                                            grad-neg-U q p0 eps half-eps
-                                            leapfrog-steps metric)]
-                              (mx/eval! q' p')
-                              #js [q' p'])))]
+        [q' p'] (let [r (mx/tidy-run
+                          #(let [[q' p'] (leapfrog-trajectory-fused
+                                           grad-neg-U q p0 eps half-eps
+                                           leapfrog-steps metric)]
+                             #js [q' p'])
+                          (fn [r] [(aget r 0) (aget r 1)]))]
                   [(aget r 0) (aget r 1)])
         ;; Proposed Hamiltonian
         proposed-H (hamiltonian neg-U-compiled q' p' half metric)
@@ -998,26 +990,24 @@
                   (mx/materialize! q')
                   (recur q' (inc b) rk')))))
           [init-q rk])
-        ;; Phase 2: Collect samples (mx/tidy prevents Metal resource leak)
+        ;; Phase 2: Collect samples (tidy-materialize prevents Metal resource leak)
         result (loop [q params, acc (transient []), i 0, rk rk]
                  (if (>= i samples)
                    (persistent! acc)
                    (let [[step-key rk'] (rng/split rk)
-                         q' (mx/tidy
-                              (fn []
-                                (let [r (if thin-chain
-                                          ;; thin > 1: compiled chain of thin steps
-                                          (let [[k1 k2] (rng/split step-key)
-                                                momentum (rng/normal k1 [thin n-params])
-                                                uniforms (rng/uniform k2 [thin])]
-                                            (thin-chain q momentum uniforms))
-                                          ;; thin = 1: eager step
-                                          (let [{:keys [state]}
-                                                (hmc-step q neg-U-compiled grad-neg-U
-                                                          eps half-eps half q-shape
-                                                          leapfrog-steps metric step-key)]
-                                            state))]
-                                  (mx/eval! r) r)))]
+                         q' (mx/tidy-materialize
+                              #(if thin-chain
+                                 ;; thin > 1: compiled chain of thin steps
+                                 (let [[k1 k2] (rng/split step-key)
+                                       momentum (rng/normal k1 [thin n-params])
+                                       uniforms (rng/uniform k2 [thin])]
+                                   (thin-chain q momentum uniforms))
+                                 ;; thin = 1: eager step
+                                 (let [{:keys [state]}
+                                       (hmc-step q neg-U-compiled grad-neg-U
+                                                 eps half-eps half q-shape
+                                                 leapfrog-steps metric step-key)]
+                                   state)))]
                      (when callback
                        (callback {:iter i :value (mx/->clj q')}))
                      (recur q' (conj! acc (mx/->clj q')) (inc i) rk'))))]
@@ -1752,31 +1742,31 @@
               :all-scores (mx/->clj final-scores)
               :score-history (persistent! history)})
            ;; Gradient step for all N restarts simultaneously
-           ;; Use mx/tidy to free intermediate arrays each iteration
-           (let [r (mx/tidy
-                     (fn []
-                       (let [grad (grad-fn params)
-                             neg-grad (mx/negative grad)
-                             scores (score-fn params)
-                             best-score (do (mx/materialize! scores neg-grad)
-                                            (mx/item (mx/amax scores)))
-                             [new-params new-opt-st]
-                             (case optimizer
-                               :sgd [(mx/subtract params (mx/multiply lr-s neg-grad)) nil]
-                               :adam (let [t (inc (:t opt-st))
-                                           m (mx/add (mx/multiply b1-s (:m opt-st))
-                                                     (mx/multiply b1c-s neg-grad))
-                                           v (mx/add (mx/multiply b2-s (:v opt-st))
-                                                     (mx/multiply b2c-s (mx/square neg-grad)))
-                                           m-hat (mx/divide m (mx/scalar (- 1.0 (js/Math.pow 0.9 t))))
-                                           v-hat (mx/divide v (mx/scalar (- 1.0 (js/Math.pow 0.999 t))))
-                                           upd (mx/divide m-hat (mx/add (mx/sqrt v-hat) eps-s))
-                                           new-p (mx/subtract params (mx/multiply lr-s upd))]
-                                       [new-p {:m m :v v :t t}]))]
-                             (if new-opt-st
-                               (mx/eval! new-params (:m new-opt-st) (:v new-opt-st))
-                               (mx/eval! new-params))
-                             {:params new-params :opt-st new-opt-st :best-score best-score})))
+           ;; Use tidy-run to free intermediate arrays each iteration
+           (let [r (mx/tidy-run
+                     (fn [] (let [grad (grad-fn params)
+                            neg-grad (mx/negative grad)
+                            scores (score-fn params)
+                            best-score (do (mx/materialize! scores neg-grad)
+                                           (mx/item (mx/amax scores)))
+                            [new-params new-opt-st]
+                            (case optimizer
+                              :sgd [(mx/subtract params (mx/multiply lr-s neg-grad)) nil]
+                              :adam (let [t (inc (:t opt-st))
+                                          m (mx/add (mx/multiply b1-s (:m opt-st))
+                                                    (mx/multiply b1c-s neg-grad))
+                                          v (mx/add (mx/multiply b2-s (:v opt-st))
+                                                    (mx/multiply b2c-s (mx/square neg-grad)))
+                                          m-hat (mx/divide m (mx/scalar (- 1.0 (js/Math.pow 0.9 t))))
+                                          v-hat (mx/divide v (mx/scalar (- 1.0 (js/Math.pow 0.999 t))))
+                                          upd (mx/divide m-hat (mx/add (mx/sqrt v-hat) eps-s))
+                                          new-p (mx/subtract params (mx/multiply lr-s upd))]
+                                      [new-p {:m m :v v :t t}]))]
+                        {:params new-params :opt-st new-opt-st :best-score best-score}))
+                     (fn [{:keys [params opt-st]}]
+                       (if opt-st
+                         [params (:m opt-st) (:v opt-st)]
+                         [params])))
                  new-params (:params r)
                  new-opt-st (:opt-st r)
                  best-score (:best-score r)]
