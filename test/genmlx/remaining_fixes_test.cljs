@@ -49,14 +49,14 @@
                 mu))
       obs-val 5.0
       init-cm (cm/choicemap :mu (mx/scalar 2.0) :obs (mx/scalar obs-val))
-      {:keys [trace]} (p/generate model [obs-val] init-cm)
+      {:keys [trace]} (p/generate (dyn/auto-key model) [obs-val] init-cm)
 
       ;; Use edit with ConstraintEdit (should work like update)
       edit-req (edit/constraint-edit (cm/choicemap :mu (mx/scalar 4.0)))
-      edit-result (edit/edit (:gen-fn trace) trace edit-req)
+      edit-result (edit/edit (dyn/auto-key (:gen-fn trace)) trace edit-req)
 
       ;; Also do regular update for comparison
-      update-result (p/update (:gen-fn trace) trace (cm/choicemap :mu (mx/scalar 4.0)))
+      update-result (p/update (dyn/auto-key (:gen-fn trace)) trace (cm/choicemap :mu (mx/scalar 4.0)))
 
       ;; Edit weight should match update weight
       edit-weight (mx/realize (:weight edit-result))
@@ -81,12 +81,12 @@
                     y (trace :y (dist/gaussian 0 1))]
                 [x y]))
       init-cm (cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar 2.0))
-      {:keys [trace]} (p/generate model [] init-cm)
+      {:keys [trace]} (p/generate (dyn/auto-key model) [] init-cm)
 
       ;; Edit with SelectionEdit (should work like regenerate)
       sel (sel/select :x)
       edit-req (edit/selection-edit sel)
-      edit-result (edit/edit (:gen-fn trace) trace edit-req)]
+      edit-result (edit/edit (dyn/auto-key (:gen-fn trace)) trace edit-req)]
 
   (assert-true "SelectionEdit produces a trace"
                (some? (:trace edit-result)))
@@ -106,7 +106,7 @@
               (let [mu (trace :mu (dist/gaussian 0 10))]
                 (trace :obs (dist/gaussian mu 1))
                 mu))
-      model (comb/map-combinator kernel)
+      model (comb/map-combinator (dyn/auto-key kernel))
       args [[0.0 0.0]]
       constraints (cm/choicemap
                     0 (cm/choicemap :mu (mx/scalar 1.0) :obs (mx/scalar 5.0))
@@ -131,11 +131,11 @@
               (let [x (trace :x (dist/gaussian 0 1))]
                 x))
       init-cm (cm/choicemap :x (mx/scalar 3.0))
-      {:keys [trace]} (p/generate model [] init-cm)
+      {:keys [trace]} (p/generate (dyn/auto-key model) [] init-cm)
       old-x (mx/realize (cm/get-choice (:choices trace) [:x]))
 
       ;; Update with no-change argdiff and no constraints: trace should be unchanged
-      result (p/update-with-diffs model trace cm/EMPTY diff/no-change)]
+      result (p/update-with-diffs (dyn/auto-key model) trace cm/EMPTY diff/no-change)]
 
   (assert-close "no-change: weight = 0"
                 0.0 (mx/realize (:weight result)) 0.001)
@@ -150,7 +150,7 @@
               (let [mu (trace :mu (dist/gaussian 0 10))]
                 (trace :obs (dist/gaussian mu 1))
                 mu))
-      model (comb/map-combinator kernel)
+      model (comb/map-combinator (dyn/auto-key kernel))
       args [[0.0 0.0 0.0]]  ;; 3 elements
       constraints (cm/choicemap
                     0 (cm/choicemap :mu (mx/scalar 1.0) :obs (mx/scalar 5.0))
@@ -199,7 +199,7 @@
               (let [mu (trace :mu (dist/gaussian 0 10))]
                 (trace :obs (dist/gaussian mu 1))
                 mu))
-      model (comb/map-combinator kernel)
+      model (comb/map-combinator (dyn/auto-key kernel))
       args [[0.0 0.0]]
       constraints (cm/choicemap
                     0 (cm/choicemap :mu (mx/scalar 1.0) :obs (mx/scalar 5.0))
@@ -262,7 +262,7 @@
                 mu))
 
       ;; Without param store: mu = 0.0 (default)
-      trace-no-store (p/simulate model [5.0])
+      trace-no-store (p/simulate (dyn/auto-key model) [5.0])
       retval-default (mx/realize (:retval trace-no-store))]
 
   (assert-close "gen body: param default = 0.0"

@@ -58,11 +58,12 @@
 ;; ---------------------------------------------------------------------------
 
 (def model
-  (gen []
-    (let [x (trace :x (dist/gaussian 0 1))
-          y (trace :y (dist/gaussian 0 1))]
-      (mx/eval! x y)
-      (+ (mx/item x) (mx/item y)))))
+  (dyn/auto-key
+    (gen []
+      (let [x (trace :x (dist/gaussian 0 1))
+            y (trace :y (dist/gaussian 0 1))]
+        (mx/eval! x y)
+        (+ (mx/item x) (mx/item y))))))
 
 (def obs-pool
   [(cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar 0.5))

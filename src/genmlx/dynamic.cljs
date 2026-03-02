@@ -22,6 +22,9 @@
 (declare execute-sub-project)
 (declare execute-sub-assess)
 
+;; Sentinel value for auto-key: generates a fresh key per GFI call
+(def ^:private auto-key-sentinel ::auto-key)
+
 (defn- find-unused-constraints
   "Return set of top-level constraint keys not consumed by the trace, or nil."
   [constraints result-choices]
@@ -37,7 +40,12 @@
 (defrecord DynamicGF [body-fn source]
   p/IGenerativeFunction
   (simulate [this args]
-    (let [key (or (::key (meta this)) (rng/fresh-key))
+    (let [key (let [k (::key (meta this))]
+              (cond
+                (= k auto-key-sentinel) (rng/fresh-key)
+                k k
+                :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
+                                      {:gen-fn (.-source this)}))))
           result (rt/run-handler h/simulate-transition
                    {:choices cm/EMPTY :score SCORE-ZERO :key key
                     :executor execute-sub
@@ -54,7 +62,12 @@
 
   p/IGenerate
   (generate [this args constraints]
-    (let [key (or (::key (meta this)) (rng/fresh-key))
+    (let [key (let [k (::key (meta this))]
+              (cond
+                (= k auto-key-sentinel) (rng/fresh-key)
+                k k
+                :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
+                                      {:gen-fn (.-source this)}))))
           result (rt/run-handler h/generate-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
@@ -77,7 +90,12 @@
 
   p/IUpdate
   (update [this trace constraints]
-    (let [key (or (::key (meta this)) (rng/fresh-key))
+    (let [key (let [k (::key (meta this))]
+              (cond
+                (= k auto-key-sentinel) (rng/fresh-key)
+                k k
+                :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
+                                      {:gen-fn (.-source this)}))))
           result (rt/run-handler h/update-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
@@ -104,7 +122,12 @@
 
   p/IRegenerate
   (regenerate [this trace selection]
-    (let [key (or (::key (meta this)) (rng/fresh-key))
+    (let [key (let [k (::key (meta this))]
+              (cond
+                (= k auto-key-sentinel) (rng/fresh-key)
+                k k
+                :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
+                                      {:gen-fn (.-source this)}))))
           old-score (:score trace)
           result (rt/run-handler h/regenerate-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
@@ -131,7 +154,12 @@
 
   p/IAssess
   (assess [this args choices]
-    (let [key (or (::key (meta this)) (rng/fresh-key))
+    (let [key (let [k (::key (meta this))]
+              (cond
+                (= k auto-key-sentinel) (rng/fresh-key)
+                k k
+                :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
+                                      {:gen-fn (.-source this)}))))
           result (rt/run-handler h/assess-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
@@ -144,7 +172,12 @@
 
   p/IPropose
   (propose [this args]
-    (let [key (or (::key (meta this)) (rng/fresh-key))
+    (let [key (let [k (::key (meta this))]
+              (cond
+                (= k auto-key-sentinel) (rng/fresh-key)
+                k k
+                :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
+                                      {:gen-fn (.-source this)}))))
           result (rt/run-handler h/simulate-transition
                    {:choices cm/EMPTY :score SCORE-ZERO :key key
                     :executor execute-sub
@@ -156,7 +189,12 @@
 
   p/IProject
   (project [this trace selection]
-    (let [key (or (::key (meta this)) (rng/fresh-key))
+    (let [key (let [k (::key (meta this))]
+              (cond
+                (= k auto-key-sentinel) (rng/fresh-key)
+                k k
+                :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
+                                      {:gen-fn (.-source this)}))))
           result (rt/run-handler h/project-transition
                    {:choices cm/EMPTY :score SCORE-ZERO
                     :weight SCORE-ZERO
@@ -242,16 +280,26 @@
   [body-fn source]
   (->DynamicGF body-fn source))
 
-(defn call
-  "Call a generative function as a regular function (simulate and return value)."
-  [gf & args]
-  (:retval (p/simulate gf (vec args))))
-
 (defn with-key
   "Return a copy of gf with the given PRNG key for reproducible execution.
    The key is stored as metadata and read by DynamicGF GFI methods."
   [gf key]
   (vary-meta gf assoc ::key key))
+
+(defn auto-key
+  "Mark a gen-fn to auto-generate fresh PRNG keys for each GFI call.
+   For REPL, tests, and interactive use. Each call to simulate/generate/etc.
+   gets a fresh key, so repeated calls produce different results.
+   Inference entry points manage keys automatically — use this only
+   when calling GFI methods directly."
+  [gf]
+  (vary-meta gf assoc ::key auto-key-sentinel))
+
+(defn call
+  "Call a generative function as a regular function (simulate and return value).
+   Auto-keys the gen-fn for convenience."
+  [gf & args]
+  (:retval (p/simulate (auto-key gf) (vec args))))
 
 ;; ---------------------------------------------------------------------------
 ;; Direct-mode param access (outside gen bodies)

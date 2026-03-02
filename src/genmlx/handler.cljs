@@ -54,7 +54,6 @@
   "Pure: given state, addr, dist -> [value state']."
   [state addr dist]
   (let [[k1 k2] (rng/split (:key state))
-        _ (rng/seed! k2)
         value (dc/dist-sample dist k2)
         lp    (dc/dist-log-prob dist value)]
     [value (-> state
@@ -128,7 +127,6 @@
     (if (and sel (sel/selected? sel addr))
       ;; Selected: resample, compute weight adjustment
       (let [[k1 k2] (rng/split (:key state))
-            _ (rng/seed! k2)
             new-val (dc/dist-sample dist k2)
             new-lp  (dc/dist-log-prob dist new-val)
             old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
@@ -177,7 +175,6 @@
   [state addr dist]
   (let [n (:batch-size state)
         [k1 k2] (rng/split (:key state))
-        _ (rng/seed! k2)
         value (dc/dist-sample-n dist k2 n)
         lp    (dc/dist-log-prob dist value)]
     [value (-> state
@@ -240,7 +237,6 @@
     (if (and sel (sel/selected? sel addr))
       ;; Selected: resample [N] values, compute [N]-shaped weight adjustment
       (let [[k1 k2] (rng/split (:key state))
-            _ (rng/seed! k2)
             new-val (dc/dist-sample-n dist k2 n)
             new-lp  (dc/dist-log-prob dist new-val)
             old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))

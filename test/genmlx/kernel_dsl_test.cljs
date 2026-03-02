@@ -28,14 +28,15 @@
 ;; Shared model: mu ~ N(0, 10), obs_i ~ N(mu, 1) for i=0..4, all obs=3.0
 ;; Posterior: mu ~ N(3, ~0.45)
 (def model
-  (gen []
-    (let [mu (trace :mu (dist/gaussian 0 10))]
-      (mx/eval! mu)
-      (let [mu-val (mx/item mu)]
-        (doseq [i (range 5)]
-          (trace (keyword (str "obs" i))
-                     (dist/gaussian mu-val 1)))
-        mu-val))))
+  (dyn/auto-key
+    (gen []
+      (let [mu (trace :mu (dist/gaussian 0 10))]
+        (mx/eval! mu)
+        (let [mu-val (mx/item mu)]
+          (doseq [i (range 5)]
+            (trace (keyword (str "obs" i))
+                       (dist/gaussian mu-val 1)))
+          mu-val)))))
 
 (def observations
   (reduce (fn [cm i]
@@ -70,15 +71,16 @@
 
 (println "\n-- random-walk: multi-address (map form) --")
 (def model2
-  (gen [xs]
-    (let [slope     (trace :slope (dist/gaussian 0 10))
-          intercept (trace :intercept (dist/gaussian 0 10))]
-      (mx/eval! slope intercept)
-      (let [s (mx/item slope) b (mx/item intercept)]
-        (doseq [[j x] (map-indexed vector xs)]
-          (trace (keyword (str "y" j))
-                     (dist/gaussian (+ (* s x) b) 1)))
-        s))))
+  (dyn/auto-key
+    (gen [xs]
+      (let [slope     (trace :slope (dist/gaussian 0 10))
+            intercept (trace :intercept (dist/gaussian 0 10))]
+        (mx/eval! slope intercept)
+        (let [s (mx/item slope) b (mx/item intercept)]
+          (doseq [[j x] (map-indexed vector xs)]
+            (trace (keyword (str "y" j))
+                       (dist/gaussian (+ (* s x) b) 1)))
+          s)))))
 
 (let [xs [1.0 2.0 3.0 4.0 5.0]
       ;; True slope=2, intercept=1 → y = 2x+1

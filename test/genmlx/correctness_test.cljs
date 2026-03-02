@@ -86,7 +86,7 @@
 (println "\n-- 17.6: MixCombinator update-with-diffs --")
 (let [comp1 (gen [x] (trace :v (dist/gaussian (mx/scalar 0.0) 1)))
       comp2 (gen [x] (trace :v (dist/gaussian (mx/scalar 10.0) 1)))
-      mix (comb/mix-combinator [comp1 comp2]
+      mix (comb/mix-combinator [(dyn/auto-key comp1) (dyn/auto-key comp2)]
                                 (mx/log (mx/array [0.5 0.5])))
       trace (p/simulate mix [(mx/scalar 0.0)])]
   ;; No-change path
@@ -112,7 +112,7 @@
 (let [kernel (gen [x]
                (let [v (trace :v (dist/gaussian x 1))]
                  v))
-      mapper (comb/map-combinator kernel)
+      mapper (comb/map-combinator (dyn/auto-key kernel))
       ;; Generate with known values so we can verify scores
       constraints (-> cm/EMPTY
                       (cm/set-choice [0 :v] (mx/scalar 1.0))
@@ -141,7 +141,7 @@
                (let [v (trace :v (dist/gaussian state 1))]
                  (mx/eval! v)
                  (mx/item v)))
-      unfolder (comb/unfold-combinator kernel)
+      unfolder (comb/unfold-combinator (dyn/auto-key kernel))
       ;; Generate with known values
       constraints (-> cm/EMPTY
                       (cm/set-choice [0 :v] (mx/scalar 1.0))
@@ -160,10 +160,10 @@
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- 16.3: assess validates all choices --")
-(let [model (gen []
+(let [model (dyn/auto-key (gen []
               (let [x (trace :x (dist/gaussian 0 1))
                     y (trace :y (dist/gaussian 0 1))]
-                [x y]))]
+                [x y])))]
   ;; Complete choices: should succeed
   (let [choices (cm/choicemap :x (mx/scalar 1.0)
                               :y (mx/scalar 2.0))
@@ -185,10 +185,10 @@
 (println "\n-- 16.2: splice score tracking --")
 (let [sub-model (gen [mu]
                   (trace :z (dist/gaussian mu 1)))
-      outer-model (gen []
+      outer-model (dyn/auto-key (gen []
                     (let [x (trace :x (dist/gaussian 0 10))]
                       (splice :sub sub-model x)
-                      x))
+                      x)))
       ;; Generate with known values
       constraints (-> (cm/choicemap :x (mx/scalar 2.0))
                       (cm/set-choice [:sub :z] (mx/scalar 3.0)))

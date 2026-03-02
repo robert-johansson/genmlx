@@ -136,7 +136,7 @@
     (check-positive "gaussian" "sigma" sigma)
     (gaussian-raw mu sigma)))
 
-(defmethod dc/dist-sample-n :gaussian [d key n]
+(defmethod dc/dist-sample-n* :gaussian [d key n]
   (let [{:keys [mu sigma]} (:params d)
         key (rng/ensure-key key)]
     (mx/add mu (mx/multiply sigma (rng/normal key [n])))))
@@ -166,7 +166,7 @@
     (check-less-than "uniform" "lo" lo "hi" hi)
     (uniform-raw lo hi)))
 
-(defmethod dc/dist-sample-n :uniform [d key n]
+(defmethod dc/dist-sample-n* :uniform [d key n]
   (let [{:keys [lo hi]} (:params d)
         key (rng/ensure-key key)]
     (mx/add lo (mx/multiply (mx/subtract hi lo) (rng/uniform key [n])))))
@@ -187,7 +187,7 @@
                          (mx/log (mx/subtract ONE p)))))
   (support [] BERNOULLI-SUPPORT))
 
-(defmethod dc/dist-sample-n :bernoulli [d key n]
+(defmethod dc/dist-sample-n* :bernoulli [d key n]
   (let [{:keys [p]} (:params d)
         key (rng/ensure-key key)
         u (rng/uniform key [n])]
@@ -329,13 +329,13 @@
               done (mx/where newly-done ONE done)]
           (recur (inc iter) result done k3))))))
 
-(defmethod dc/dist-sample-n :gamma [d key n]
+(defmethod dc/dist-sample-n* :gamma [d key n]
   (let [{:keys [shape-param rate]} (:params d)
         shape-val (mx/realize shape-param)]
     (gamma-sample-n shape-val rate key n)))
 
 ;; Beta batch sampling via two independent gamma samples
-(defmethod dc/dist-sample-n :beta-dist [d key n]
+(defmethod dc/dist-sample-n* :beta-dist [d key n]
   (let [{:keys [alpha beta-param]} (:params d)
         key (rng/ensure-key key)
         [k1 k2] (rng/split key)
@@ -345,7 +345,7 @@
     (mx/divide g1 (mx/add g1 g2))))
 
 ;; Dirichlet batch sampling via k independent gamma samples, then normalize
-(defmethod dc/dist-sample-n :dirichlet [d key n]
+(defmethod dc/dist-sample-n* :dirichlet [d key n]
   (let [{:keys [alpha]} (:params d)
         key (rng/ensure-key key)
         alpha-vals (mx/->clj alpha)
@@ -385,7 +385,7 @@
     (check-positive "exponential" "rate" rate)
     (exponential-raw rate)))
 
-(defmethod dc/dist-sample-n :exponential [d key n]
+(defmethod dc/dist-sample-n* :exponential [d key n]
   (let [{:keys [rate]} (:params d)
         key (rng/ensure-key key)
         u (rng/uniform key [n])]
@@ -408,7 +408,7 @@
     (let [n (do (mx/materialize! logits) (first (mx/shape logits)))]
       (mapv #(mx/scalar (int %) mx/int32) (range n)))))
 
-(defmethod dc/dist-sample-n :categorical [d key n]
+(defmethod dc/dist-sample-n* :categorical [d key n]
   (let [{:keys [logits]} (:params d)
         key (rng/ensure-key key)
         k (first (mx/shape logits))
@@ -464,7 +464,7 @@
   (reparam [key]
     (laplace-icdf loc scale (mx/subtract (rng/uniform key []) HALF))))
 
-(defmethod dc/dist-sample-n :laplace [d key n]
+(defmethod dc/dist-sample-n* :laplace [d key n]
   (let [{:keys [loc scale]} (:params d)
         key (rng/ensure-key key)]
     (laplace-icdf loc scale (mx/subtract (rng/uniform key [n]) HALF))))
@@ -507,7 +507,7 @@
                                     (mx/log (mx/add ONE
                                                     (mx/divide (mx/square z) df)))))))))
 
-(defmethod dc/dist-sample-n :student-t [d key n]
+(defmethod dc/dist-sample-n* :student-t [d key n]
   (let [{:keys [df loc scale]} (:params d)
         df-val (int (mx/realize df))
         [k1 k2] (rng/split (rng/ensure-key key))
@@ -548,7 +548,7 @@
   (reparam [key]
     (mx/exp (mx/add mu (mx/multiply sigma (rng/normal key []))))))
 
-(defmethod dc/dist-sample-n :log-normal [d key n]
+(defmethod dc/dist-sample-n* :log-normal [d key n]
   (let [{:keys [mu sigma]} (:params d)
         key (rng/ensure-key key)]
     (mx/exp (mx/add mu (mx/multiply sigma (rng/normal key [n]))))))
@@ -600,7 +600,7 @@
       (mx/where eq ZERO NEG-INF)))
   (support [] [v]))
 
-(defmethod dc/dist-sample-n :delta [d _key n]
+(defmethod dc/dist-sample-n* :delta [d _key n]
   (let [{:keys [v]} (:params d)]
     (mx/broadcast-to v [n])))
 
@@ -632,7 +632,7 @@
                     (mx/divide (mx/sin (mx/multiply (mx/scalar js/Math.PI) z))
                                (mx/cos (mx/multiply (mx/scalar js/Math.PI) z))))))))
 
-(defmethod dc/dist-sample-n :cauchy [d key n]
+(defmethod dc/dist-sample-n* :cauchy [d key n]
   (let [{:keys [loc scale]} (:params d)
         key (rng/ensure-key key)
         u (rng/uniform key [n])
@@ -666,7 +666,7 @@
         (mx/subtract (mx/multiply (mx/add shape-param ONE) (mx/log v)))
         (mx/subtract (mx/divide scale-param v)))))
 
-(defmethod dc/dist-sample-n :inv-gamma [d key n]
+(defmethod dc/dist-sample-n* :inv-gamma [d key n]
   (let [{:keys [shape-param scale-param]} (:params d)
         g (gamma-sample-n (mx/realize shape-param) ONE key n)]
     (mx/divide scale-param g)))
@@ -703,7 +703,7 @@
                                                  (js/Math.log (- 1.0 p-val))))))]
       (mapv #(mx/scalar % mx/int32) (range (inc max-k))))))
 
-(defmethod dc/dist-sample-n :geometric [d key n]
+(defmethod dc/dist-sample-n* :geometric [d key n]
   (let [{:keys [p]} (:params d)
         key (rng/ensure-key key)
         u (rng/uniform key [n])
@@ -786,7 +786,7 @@
     (let [nt (int (mx/realize n-trials))]
       (mapv #(mx/scalar % mx/int32) (range (inc nt))))))
 
-(defmethod dc/dist-sample-n :binomial [d key n]
+(defmethod dc/dist-sample-n* :binomial [d key n]
   (let [{:keys [n-trials p]} (:params d)
         nt (int (mx/realize n-trials))
         key (rng/ensure-key key)
@@ -825,7 +825,7 @@
           hi-val (int (mx/realize hi))]
       (mapv #(mx/scalar % mx/int32) (range lo-val (inc hi-val))))))
 
-(defmethod dc/dist-sample-n :discrete-uniform [d key n]
+(defmethod dc/dist-sample-n* :discrete-uniform [d key n]
   (let [{:keys [lo hi]} (:params d)
         key (rng/ensure-key key)]
     (rng/randint key (int (mx/realize lo)) (inc (int (mx/realize hi))) [n])))
@@ -880,7 +880,7 @@
               [])]
       (mx/add mu (mx/multiply sigma z)))))
 
-(defmethod dc/dist-sample-n :truncated-normal [d key n]
+(defmethod dc/dist-sample-n* :truncated-normal [d key n]
   (let [{:keys [mu sigma lo hi]} (:params d)
         key (rng/ensure-key key)
         a (mx/divide (mx/subtract lo mu) sigma)
@@ -925,7 +925,7 @@
                        {:mean-vec mu :cov-matrix cov-2d :cholesky-L L
                         :L-inv Li :k k :norm-const nc :neg-half neg-half})))
 
-(defmethod dc/dist-sample :multivariate-normal [d key]
+(defmethod dc/dist-sample* :multivariate-normal [d key]
   (let [{:keys [mean-vec cholesky-L k]} (:params d)
         key (rng/ensure-key key)
         z (rng/normal key [k])]
@@ -947,7 +947,7 @@
     (mx/add mean-vec
             (mx/flatten (mx/matmul cholesky-L (mx/reshape z [k 1]))))))
 
-(defmethod dc/dist-sample-n :multivariate-normal [d key n]
+(defmethod dc/dist-sample-n* :multivariate-normal [d key n]
   (let [{:keys [mean-vec cholesky-L k]} (:params d)
         key (rng/ensure-key key)
         z (rng/normal key [n k])
@@ -977,7 +977,7 @@
     (let [sh (mx/shape mu)]
       (mx/add mu (mx/multiply sigma (rng/normal key sh))))))
 
-(defmethod dc/dist-sample-n :broadcasted-normal [d key n]
+(defmethod dc/dist-sample-n* :broadcasted-normal [d key n]
   (let [{:keys [mu sigma]} (:params d)
         key (rng/ensure-key key)
         sh (mx/shape mu)]
@@ -1064,7 +1064,7 @@
                         {:df df-val :scale-matrix V-2d :cholesky-L L
                          :V-inv V-inv :log-det-V log-det-V :k k})))
 
-(defmethod dc/dist-sample :wishart [d key]
+(defmethod dc/dist-sample* :wishart [d key]
   (let [{:keys [df cholesky-L k]} (:params d)
         key (rng/ensure-key key)
         ;; Pre-split enough keys for all samples: k diagonal + k*(k-1)/2 off-diagonal
@@ -1149,7 +1149,7 @@
                         {:df df-val :scale-matrix Psi-2d :k k
                          :wish wish :log-det-Psi log-det-Psi})))
 
-(defmethod dc/dist-sample :inv-wishart [d key]
+(defmethod dc/dist-sample* :inv-wishart [d key]
   (let [{:keys [wish]} (:params d)
         W (dc/dist-sample wish key)]
     (mx/inv W)))

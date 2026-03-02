@@ -27,13 +27,13 @@
 (println "-- Countdown (simulate) --")
 (let [countdown
       (comb/recurse (fn [self]
-        (gen [depth]
+        (dyn/auto-key (gen [depth]
           (let [v (trace :v (dist/gaussian 0 1))]
             (mx/eval! v)
             (if (> depth 0)
               {:v (mx/item v)
                :child (splice :child self (dec depth))}
-              {:v (mx/item v)})))))
+              {:v (mx/item v)}))))))
       trace (p/simulate countdown [2])]
   (assert-true "returns trace" (instance? tr/Trace trace))
   (assert-true "has :v at root" (cm/has-value? (cm/get-submap (:choices trace) :v)))
@@ -48,14 +48,14 @@
 (println "\n-- Binary tree (simulate) --")
 (let [tree
       (comb/recurse (fn [self]
-        (gen [depth]
+        (dyn/auto-key (gen [depth]
           (let [v (trace :v (dist/gaussian 0 1))]
             (mx/eval! v)
             (if (> depth 0)
               {:v (mx/item v)
                :left (splice :left self (dec depth))
                :right (splice :right self (dec depth))}
-              {:v (mx/item v)})))))
+              {:v (mx/item v)}))))))
       trace (p/simulate tree [1])]
   (assert-true "tree trace exists" (instance? tr/Trace trace))
   (assert-true "root :v exists" (cm/has-value? (cm/get-submap (:choices trace) :v)))
@@ -68,13 +68,13 @@
 (println "\n-- Generate with constraints --")
 (let [countdown
       (comb/recurse (fn [self]
-        (gen [depth]
+        (dyn/auto-key (gen [depth]
           (let [v (trace :v (dist/gaussian 0 1))]
             (mx/eval! v)
             (if (> depth 0)
               {:v (mx/item v)
                :child (splice :child self (dec depth))}
-              {:v (mx/item v)})))))
+              {:v (mx/item v)}))))))
       obs (-> cm/EMPTY
               (cm/set-choice [:v] (mx/scalar 0.5))
               (cm/set-choice [:child] (cm/choicemap :v (mx/scalar -0.3))))
@@ -91,13 +91,13 @@
 (println "\n-- Update --")
 (let [countdown
       (comb/recurse (fn [self]
-        (gen [depth]
+        (dyn/auto-key (gen [depth]
           (let [v (trace :v (dist/gaussian 0 1))]
             (mx/eval! v)
             (if (> depth 0)
               {:v (mx/item v)
                :child (splice :child self (dec depth))}
-              {:v (mx/item v)})))))
+              {:v (mx/item v)}))))))
       obs (cm/choicemap :v (mx/scalar 1.0)
                          :child (cm/choicemap :v (mx/scalar 2.0)))
       {:keys [trace]} (p/generate countdown [1] obs)
@@ -116,13 +116,13 @@
 (println "\n-- Regenerate --")
 (let [countdown
       (comb/recurse (fn [self]
-        (gen [depth]
+        (dyn/auto-key (gen [depth]
           (let [v (trace :v (dist/gaussian 0 1))]
             (mx/eval! v)
             (if (> depth 0)
               {:v (mx/item v)
                :child (splice :child self (dec depth))}
-              {:v (mx/item v)})))))
+              {:v (mx/item v)}))))))
       obs (cm/choicemap :v (mx/scalar 1.0)
                          :child (cm/choicemap :v (mx/scalar 2.0)))
       {:keys [trace]} (p/generate countdown [1] obs)
@@ -140,7 +140,7 @@
 (println "\n-- Random-depth recursion --")
 (let [geo-list
       (comb/recurse (fn [self]
-        (gen [p]
+        (dyn/auto-key (gen [p]
           (let [v (trace :v (dist/gaussian 0 1))
                 cont (trace :cont (dist/bernoulli p))]
             (mx/eval! v)
@@ -148,7 +148,7 @@
             (if (> (mx/item cont) 0.5)
               {:v (mx/item v)
                :next (splice :next self p)}
-              {:v (mx/item v)})))))
+              {:v (mx/item v)}))))))
       trace (p/simulate geo-list [0.3])]
   (assert-true "geo-list trace exists" (instance? tr/Trace trace))
   (assert-true "geo-list score finite" (js/isFinite (mx/item (:score trace)))))

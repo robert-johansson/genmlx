@@ -55,11 +55,12 @@
 ;; ---------------------------------------------------------------------------
 
 (def model
-  (gen []
-    (let [x (trace :x (dist/gaussian 0 1))
-          y (trace :y (dist/gaussian 0 1))]
-      (mx/eval! x y)
-      (+ (mx/item x) (mx/item y)))))
+  (dyn/auto-key
+    (gen []
+      (let [x (trace :x (dist/gaussian 0 1))
+            y (trace :y (dist/gaussian 0 1))]
+        (mx/eval! x y)
+        (+ (mx/item x) (mx/item y))))))
 
 (def key-pool (mapv #(rng/fresh-key %) [42 99 123 7 255]))
 (def gen-key (gen/elements key-pool))

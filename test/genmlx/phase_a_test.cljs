@@ -47,9 +47,9 @@
 (let [model (gen []
               (let [x (trace :x (dist/gaussian 0 1))]
                 x))
-      {:keys [choices weight retval]} (p/propose model [])
+      {:keys [choices weight retval]} (p/propose (dyn/auto-key model) [])
       ;; propose weight should equal the trace score
-      trace (p/simulate model [])
+      trace (p/simulate (dyn/auto-key model) [])
       ;; Re-run with same choices to verify score consistency
       x-val (cm/get-value (cm/get-submap choices :x))
       _ (mx/eval! x-val weight)
@@ -75,7 +75,7 @@
                     y (trace :y (dist/gaussian 0 1))]
                 (mx/add x y)))
       choices (cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar 2.0))
-      {:keys [weight]} (p/assess model [] choices)]
+      {:keys [weight]} (p/assess (dyn/auto-key model) [] choices)]
   (mx/eval! weight)
   ;; weight should be log p(x=1, y=2) = log N(1;0,1) + log N(2;0,1)
   (let [lp-x (mx/item (do (let [v (dist/log-prob (dist/gaussian 0 1) (mx/scalar 1.0))] (mx/eval! v) v)))
@@ -173,7 +173,7 @@
              (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
                (mx/item next)))
-      unfold (comb/unfold-combinator step)
+      unfold (comb/unfold-combinator (dyn/auto-key step))
       trace (p/simulate unfold [3 0.0])
       ;; Constrain step 1's :x to a specific value
       new-constraints (cm/set-choice cm/EMPTY [1] (cm/choicemap :x (mx/scalar 5.0)))
@@ -187,7 +187,7 @@
 (println "\n-- Switch update and regenerate --")
 (let [b0 (gen [] (let [x (trace :x (dist/gaussian 0 1))] (mx/eval! x) (mx/item x)))
       b1 (gen [] (let [x (trace :x (dist/gaussian 10 1))] (mx/eval! x) (mx/item x)))
-      sw (comb/switch-combinator b0 b1)
+      sw (comb/switch-combinator (dyn/auto-key b0) (dyn/auto-key b1))
       trace (p/simulate sw [0])
       ;; Update: change :x to 2.0
       {:keys [trace weight]} (p/update sw trace (cm/choicemap :x (mx/scalar 2.0)))
@@ -230,7 +230,7 @@
 
 (println "\n-- Mask combinator: active vs inactive --")
 (let [inner (gen [] (let [x (trace :x (dist/gaussian 5 0.1))] (mx/eval! x) (mx/item x)))
-      masked (comb/mask-combinator inner)
+      masked (comb/mask-combinator (dyn/auto-key inner))
       active-trace (p/simulate masked [true])
       inactive-trace (p/simulate masked [false])]
   ;; Active: retval near 5, choices populated, score nonzero

@@ -12,6 +12,7 @@
             [genmlx.nn :as nn]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
+            [genmlx.dynamic :as dyn]
             [genmlx.inference.util :as u]))
 
 ;; ---------------------------------------------------------------------------
@@ -35,7 +36,8 @@
   [encoder model latent-addrs & {:keys [model-args-fn observations-fn]
                                   :or {model-args-fn (fn [x] [x])
                                        observations-fn (fn [_] cm/EMPTY)}}]
-  (let [d (count latent-addrs)]
+  (let [model (dyn/auto-key model)
+        d (count latent-addrs)]
     (fn [data]
       (let [;; Forward through encoder
             out (.forward encoder data)
@@ -89,7 +91,7 @@
         n   (count dataset)]
     (mapv (fn [i]
             (let [data (nth dataset (mod i n))]
-              (nn/step! encoder opt vg data)))
+              (mx/training-step! encoder opt vg data)))
           (range iterations))))
 
 ;; ---------------------------------------------------------------------------
@@ -111,7 +113,9 @@
    Returns {:traces [Trace ...] :log-weights [MLX-scalar ...]
             :log-ml-estimate MLX-scalar}"
   [{:keys [samples] :or {samples 100}} guide model guide-args model-args observations]
-  (let [results
+  (let [model (dyn/auto-key model)
+        guide (dyn/auto-key guide)
+        results
         (mapv
           (fn [_]
             (let [;; Propose from guide

@@ -92,7 +92,8 @@
   ([current-trace model proposal-gf key]
    (mh-custom-step current-trace model proposal-gf nil key))
   ([current-trace model proposal-gf backward-gf key]
-   (let [[k1 k2 k3] (rng/split-n (rng/ensure-key key) 3)
+   (let [model (dyn/auto-key model)
+         [k1 k2 k3] (rng/split-n (rng/ensure-key key) 3)
          ;; 1. Run propose on the proposal GF → forward choices + forward score
          proposal-args [(:choices current-trace)]
          forward-result (p/propose proposal-gf proposal-args)
@@ -131,7 +132,8 @@
   [{:keys [samples burn thin proposal-gf backward-gf callback key]
     :or {burn 0 thin 1}}
    model args observations]
-  (let [{:keys [trace]} (p/generate model args observations)]
+  (let [model (dyn/auto-key model)
+        {:keys [trace]} (p/generate model args observations)]
     (kern/collect-samples
       {:samples samples :burn burn :thin thin :callback callback :key key}
       (fn [state step-key]
@@ -294,10 +296,11 @@
     :or {burn 0 thin 1 proposal-std 0.1 compile? true device :cpu
          block-size 50}}
    model args observations]
-  (with-device device
-    #(let [score-fn  (u/make-score-fn model args observations addresses)
-           score-fn  (if compile? (mx/compile-fn score-fn) score-fn)
-           {:keys [trace]} (p/generate model args observations)
+  (let [model (dyn/auto-key model)]
+    (with-device device
+      #(let [score-fn  (u/make-score-fn model args observations addresses)
+             score-fn  (if compile? (mx/compile-fn score-fn) score-fn)
+             {:keys [trace]} (p/generate model args observations)
            init-params (u/extract-params trace addresses)
            n-params (count addresses)
            std (mx/scalar proposal-std)]
@@ -318,7 +321,7 @@
            (fn [params step-key]
              (compiled-mh-step params score-fn std (mx/shape init-params) step-key))
            mx/->clj
-           init-params)))))
+           init-params))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized Compiled MH (N parallel chains)
@@ -361,35 +364,36 @@
   [{:keys [samples burn thin addresses proposal-std compile? n-chains callback key device]
     :or {burn 0 thin 1 proposal-std 0.1 compile? true n-chains 10 device :gpu}}
    model args observations]
-  (with-device device
-    #(let [score-fn (u/make-vectorized-score-fn model args observations addresses)
-        ;; Initialize N chains from independent generate calls
-        init-params (mx/stack
-                      (mapv (fn [_]
-                              (let [{:keys [trace]} (p/generate model args observations)]
-                                (u/extract-params trace addresses)))
-                            (range n-chains)))
-        param-shape (mx/shape init-params)
-        std (mx/scalar proposal-std)
-        total-iters (+ burn (* samples thin))
-        d (count addresses)]
-    (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
-      (if (>= n samples)
-        (with-meta (persistent! acc)
-          {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
-        (let [[step-key next-key] (rng/split-or-nils rk)
-              {:keys [state n-accepted]} (vectorized-mh-step
-                                           state score-fn std param-shape n-chains step-key)
-              _  (when (zero? (mod i 50)) (mx/clear-cache!))
-              past-burn? (>= i burn)
-              keep? (and past-burn? (zero? (mod (- i burn) thin)))]
-          (when (and callback keep?)
-            (callback {:iter n :value (mx/->clj state) :n-accepted n-accepted}))
-          (recur (inc i) state
-                 (if keep? (conj! acc (mx/->clj state)) acc)
-                 (if keep? (inc n) n)
-                 (+ total-accepted n-accepted)
-                 next-key)))))))
+  (let [model (dyn/auto-key model)]
+    (with-device device
+      #(let [score-fn (u/make-vectorized-score-fn model args observations addresses)
+          ;; Initialize N chains from independent generate calls
+          init-params (mx/stack
+                        (mapv (fn [_]
+                                (let [{:keys [trace]} (p/generate model args observations)]
+                                  (u/extract-params trace addresses)))
+                              (range n-chains)))
+          param-shape (mx/shape init-params)
+          std (mx/scalar proposal-std)
+          total-iters (+ burn (* samples thin))
+          d (count addresses)]
+      (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
+        (if (>= n samples)
+          (with-meta (persistent! acc)
+            {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
+          (let [[step-key next-key] (rng/split-or-nils rk)
+                {:keys [state n-accepted]} (vectorized-mh-step
+                                             state score-fn std param-shape n-chains step-key)
+                _  (when (zero? (mod i 50)) (mx/clear-cache!))
+                past-burn? (>= i burn)
+                keep? (and past-burn? (zero? (mod (- i burn) thin)))]
+            (when (and callback keep?)
+              (callback {:iter n :value (mx/->clj state) :n-accepted n-accepted}))
+            (recur (inc i) state
+                   (if keep? (conj! acc (mx/->clj state)) acc)
+                   (if keep? (inc n) n)
+                   (+ total-accepted n-accepted)
+                   next-key))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Enumerative Gibbs Sampling
@@ -429,7 +433,8 @@
   [{:keys [samples burn thin callback key]
     :or {burn 0 thin 1}}
    model args observations schedule]
-  (let [{:keys [trace]} (p/generate model args observations)]
+  (let [model (dyn/auto-key model)
+        {:keys [trace]} (p/generate model args observations)]
     (kern/collect-samples
       {:samples samples :burn burn :thin thin :callback callback :key key}
       (fn [state step-key]
@@ -457,7 +462,8 @@
    current-trace: the current model trace.
    key: PRNG key."
   [current-trace model proposal-gf involution key]
-  (let [[k1 k2] (rng/split (rng/ensure-key key))
+  (let [model (dyn/auto-key model)
+        [k1 k2] (rng/split (rng/ensure-key key))
         ;; 1. Propose auxiliary choices
         fwd-result (p/propose proposal-gf [(:choices current-trace)])
         aux-choices (:choices fwd-result)
@@ -497,7 +503,8 @@
   [{:keys [samples burn thin proposal-gf involution callback key]
     :or {burn 0 thin 1}}
    model args observations]
-  (let [{:keys [trace]} (p/generate model args observations)]
+  (let [model (dyn/auto-key model)
+        {:keys [trace]} (p/generate model args observations)]
     (kern/collect-samples
       {:samples samples :burn burn :thin thin :callback callback :key key}
       (fn [state step-key]
@@ -652,8 +659,9 @@
     :or {step-size 0.01 burn 0 thin 1 compile? true device :cpu
          block-size 50}}
    model args observations]
-  (with-device device
-    #(let [score-fn          (u/make-score-fn model args observations addresses)
+  (let [model (dyn/auto-key model)]
+    (with-device device
+      #(let [score-fn          (u/make-score-fn model args observations addresses)
            val-grad-fn       (mx/value-and-grad score-fn)
            val-grad-compiled (mx/compile-fn val-grad-fn)
            eps              (mx/scalar step-size)
@@ -682,7 +690,7 @@
            (fn [q step-key]
              (mala-step q val-grad-compiled eps half-eps2 two-eps-sq q-shape step-key))
            mx/->clj
-           init-q)))))
+           init-q))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized MALA (N parallel chains)
@@ -750,32 +758,33 @@
   [{:keys [samples burn thin step-size addresses compile? n-chains callback key device]
     :or {burn 0 thin 1 step-size 0.01 compile? true n-chains 10 device :gpu}}
    model args observations]
-  (with-device device
-    #(let [{:keys [score-fn grad-fn]}
-           (u/make-compiled-vectorized-score-and-grad model args observations addresses)
-           init-params (u/init-vectorized-params model args observations addresses n-chains)
-           eps       (mx/scalar step-size)
-           half-eps2 (mx/scalar (* 0.5 step-size step-size))
-           two-eps-sq (mx/scalar (* 2.0 step-size step-size))
-           total-iters (+ burn (* samples thin))]
-       (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
-         (if (>= n samples)
-           (with-meta (persistent! acc)
-             {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
-           (let [[step-key next-key] (rng/split-or-nils rk)
-                 {:keys [state n-accepted]}
-                   (vectorized-mala-step state score-fn grad-fn eps half-eps2 two-eps-sq
-                                         n-chains step-key)
-                 _  (when (zero? (mod i 50)) (mx/clear-cache!))
-                 past-burn? (>= i burn)
-                 keep? (and past-burn? (zero? (mod (- i burn) thin)))]
-             (when (and callback keep?)
-               (callback {:iter n :value (mx/->clj state) :n-accepted n-accepted}))
-             (recur (inc i) state
-                    (if keep? (conj! acc (mx/->clj state)) acc)
-                    (if keep? (inc n) n)
-                    (+ total-accepted n-accepted)
-                    next-key)))))))
+  (let [model (dyn/auto-key model)]
+    (with-device device
+      #(let [{:keys [score-fn grad-fn]}
+             (u/make-compiled-vectorized-score-and-grad model args observations addresses)
+             init-params (u/init-vectorized-params model args observations addresses n-chains)
+             eps       (mx/scalar step-size)
+             half-eps2 (mx/scalar (* 0.5 step-size step-size))
+             two-eps-sq (mx/scalar (* 2.0 step-size step-size))
+             total-iters (+ burn (* samples thin))]
+         (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
+           (if (>= n samples)
+             (with-meta (persistent! acc)
+               {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
+             (let [[step-key next-key] (rng/split-or-nils rk)
+                   {:keys [state n-accepted]}
+                     (vectorized-mala-step state score-fn grad-fn eps half-eps2 two-eps-sq
+                                           n-chains step-key)
+                   _  (when (zero? (mod i 50)) (mx/clear-cache!))
+                   past-burn? (>= i burn)
+                   keep? (and past-burn? (zero? (mod (- i burn) thin)))]
+               (when (and callback keep?)
+                 (callback {:iter n :value (mx/->clj state) :n-accepted n-accepted}))
+               (recur (inc i) state
+                      (if keep? (conj! acc (mx/->clj state)) acc)
+                      (if keep? (inc n) n)
+                      (+ total-accepted n-accepted)
+                      next-key))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Shared Hamiltonian helper
@@ -1148,13 +1157,14 @@
          device :cpu block-size 20 adapt-step-size false target-accept 0.65
          adapt-metric false}}
    model args observations]
-  (with-device device
-    #(let [score-fn (u/make-score-fn model args observations addresses)
-           neg-U    (fn [q] (mx/negative (score-fn q)))
-           grad-neg-U-raw (mx/grad neg-U)
-           grad-neg-U (if compile? (mx/compile-fn grad-neg-U-raw) grad-neg-U-raw)
-           neg-U-compiled (if compile? (mx/compile-fn neg-U) neg-U)
-           {:keys [trace]} (p/generate model args observations)
+  (let [model (dyn/auto-key model)]
+    (with-device device
+      #(let [score-fn (u/make-score-fn model args observations addresses)
+             neg-U    (fn [q] (mx/negative (score-fn q)))
+             grad-neg-U-raw (mx/grad neg-U)
+             grad-neg-U (if compile? (mx/compile-fn grad-neg-U-raw) grad-neg-U-raw)
+             neg-U-compiled (if compile? (mx/compile-fn neg-U) neg-U)
+             {:keys [trace]} (p/generate model args observations)
            init-q (u/extract-params trace addresses)
            n-params (count addresses)
            q-shape (mx/shape init-q)
@@ -1214,7 +1224,7 @@
              (hmc-step q neg-U-compiled grad-neg-U eps half-eps half q-shape
                        leapfrog-steps final-metric step-key))
            mx/->clj
-           start-q)))))
+           start-q))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized HMC (N parallel chains)
@@ -1302,34 +1312,35 @@
   [{:keys [samples burn thin step-size leapfrog-steps addresses n-chains callback key device]
     :or {burn 100 thin 1 step-size 0.01 leapfrog-steps 20 n-chains 10 device :gpu}}
    model args observations]
-  (with-device device
-    #(let [;; Build vectorized score and gradient functions
-           vec-score-fn (u/make-vectorized-score-fn model args observations addresses)
-           neg-U-fn (fn [q] (mx/negative (vec-score-fn q)))
-           grad-fn (mx/compile-fn (u/make-vectorized-grad-score model args observations addresses))
-           init-params (u/init-vectorized-params model args observations addresses n-chains)
-           eps       (mx/scalar step-size)
-           half-eps  (mx/scalar (* 0.5 step-size))
-           half      (mx/scalar 0.5)
-           total-iters (+ burn (* samples thin))]
-       (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
-         (if (>= n samples)
-           (with-meta (persistent! acc)
-             {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
-           (let [[step-key next-key] (rng/split-or-nils rk)
-                 {:keys [state n-accepted]}
-                   (vectorized-hmc-step state neg-U-fn grad-fn eps half-eps half
-                                         n-chains leapfrog-steps step-key)
-                 _  (when (zero? (mod i 50)) (mx/clear-cache!))
-                 past-burn? (>= i burn)
-                 keep? (and past-burn? (zero? (mod (- i burn) thin)))]
-             (when (and callback keep?)
-               (callback {:iter n :value (mx/->clj state) :n-accepted n-accepted}))
-             (recur (inc i) state
-                    (if keep? (conj! acc (mx/->clj state)) acc)
-                    (if keep? (inc n) n)
-                    (+ total-accepted n-accepted)
-                    next-key)))))))
+  (let [model (dyn/auto-key model)]
+    (with-device device
+      #(let [;; Build vectorized score and gradient functions
+             vec-score-fn (u/make-vectorized-score-fn model args observations addresses)
+             neg-U-fn (fn [q] (mx/negative (vec-score-fn q)))
+             grad-fn (mx/compile-fn (u/make-vectorized-grad-score model args observations addresses))
+             init-params (u/init-vectorized-params model args observations addresses n-chains)
+             eps       (mx/scalar step-size)
+             half-eps  (mx/scalar (* 0.5 step-size))
+             half      (mx/scalar 0.5)
+             total-iters (+ burn (* samples thin))]
+         (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
+           (if (>= n samples)
+             (with-meta (persistent! acc)
+               {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
+             (let [[step-key next-key] (rng/split-or-nils rk)
+                   {:keys [state n-accepted]}
+                     (vectorized-hmc-step state neg-U-fn grad-fn eps half-eps half
+                                           n-chains leapfrog-steps step-key)
+                   _  (when (zero? (mod i 50)) (mx/clear-cache!))
+                   past-burn? (>= i burn)
+                   keep? (and past-burn? (zero? (mod (- i burn) thin)))]
+               (when (and callback keep?)
+                 (callback {:iter n :value (mx/->clj state) :n-accepted n-accepted}))
+               (recur (inc i) state
+                      (if keep? (conj! acc (mx/->clj state)) acc)
+                      (if keep? (inc n) n)
+                      (+ total-accepted n-accepted)
+                      next-key))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; NUTS (No-U-Turn Sampler)
@@ -1418,13 +1429,14 @@
     :or {step-size 0.01 max-depth 10 burn 0 thin 1 compile? true device :cpu
          adapt-step-size false target-accept 0.8 adapt-metric false}}
    model args observations]
-  (with-device device
-    #(let [score-fn (u/make-score-fn model args observations addresses)
-           neg-log-density (fn [q] (mx/negative (score-fn q)))
-           grad-neg-ld (let [g (mx/grad neg-log-density)]
-                         (if compile? (mx/compile-fn g) g))
-           neg-ld-compiled (if compile? (mx/compile-fn neg-log-density) neg-log-density)
-           {:keys [trace]} (p/generate model args observations)
+  (let [model (dyn/auto-key model)]
+    (with-device device
+      #(let [score-fn (u/make-score-fn model args observations addresses)
+             neg-log-density (fn [q] (mx/negative (score-fn q)))
+             grad-neg-ld (let [g (mx/grad neg-log-density)]
+                           (if compile? (mx/compile-fn g) g))
+             neg-ld-compiled (if compile? (mx/compile-fn neg-log-density) neg-log-density)
+             {:keys [trace]} (p/generate model args observations)
            init-q (u/extract-params trace addresses)
            n-params (count addresses)
            q-shape (mx/shape init-q)
@@ -1539,7 +1551,7 @@
                                  dk-next tk-next))))]
           {:state new-q :accepted? (not (identical? new-q q))}))
          mx/->clj
-         start-q))))
+         start-q)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Elliptical Slice Sampling (Murray, Adams, MacKay 2010)
@@ -1613,7 +1625,8 @@
   [{:keys [samples burn thin selection prior-std key]
     :or {burn 0 thin 1 prior-std 1.0}}
    model args observations]
-  (let [{:keys [trace]} (p/generate model args observations)]
+  (let [model (dyn/auto-key model)
+        {:keys [trace]} (p/generate model args observations)]
     (kern/collect-samples
       {:samples samples :burn burn :thin thin :key key}
       (fn [state step-key]
@@ -1641,10 +1654,11 @@
   [{:keys [iterations optimizer lr addresses callback device]
     :or {iterations 1000 optimizer :adam lr 0.01 device :cpu}}
    model args observations]
-  (with-device device
-    #(let [score-fn   (u/make-score-fn model args observations addresses)
-           val-grad   (mx/compile-fn (mx/value-and-grad score-fn))
-           {:keys [trace]} (p/generate model args observations)
+  (let [model (dyn/auto-key model)]
+    (with-device device
+      #(let [score-fn   (u/make-score-fn model args observations addresses)
+             val-grad   (mx/compile-fn (mx/value-and-grad score-fn))
+             {:keys [trace]} (p/generate model args observations)
            init-params (u/extract-params trace addresses)
            opt-state   (when (= optimizer :adam) (learn/adam-init init-params))]
        (loop [i 0
@@ -1673,7 +1687,7 @@
              (when callback
                (callback {:iter i :score score-val :params (mx/->clj params)}))
              (recur (inc i) new-params new-opt-st
-                    (conj! history score-val))))))))
+                    (conj! history score-val)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized MAP (N random restarts in parallel)
@@ -1699,10 +1713,11 @@
   [{:keys [iterations optimizer lr addresses n-restarts callback device]
     :or {iterations 1000 optimizer :adam lr 0.01 n-restarts 10 device :gpu}}
    model args observations]
-  (with-device device
-    #(let [{:keys [score-fn grad-fn]}
-           (u/make-compiled-vectorized-score-and-grad model args observations addresses)
-           init-params (u/init-vectorized-params model args observations addresses n-restarts)
+  (let [model (dyn/auto-key model)]
+    (with-device device
+      #(let [{:keys [score-fn grad-fn]}
+             (u/make-compiled-vectorized-score-and-grad model args observations addresses)
+             init-params (u/init-vectorized-params model args observations addresses n-restarts)
            ;; Adam state: m and v are [N,D] — element-wise ops broadcast naturally
            opt-state (when (= optimizer :adam)
                        {:m (mx/zeros (mx/shape init-params))
@@ -1768,4 +1783,4 @@
              (when callback
                (callback {:iter i :best-score best-score}))
              (recur (inc i) new-params new-opt-st
-                    (conj! history best-score))))))))
+                    (conj! history best-score)))))))))

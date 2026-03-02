@@ -178,7 +178,7 @@
           v-mean (/ (reduce + v-scores) n)
           ;; Sequential
           seq-scores (mapv (fn [_]
-                             (let [t (p/simulate ind-model [])
+                             (let [t (p/simulate (dyn/auto-key ind-model) [])
                                    _ (mx/eval! (:score t))]
                                (mx/item (:score t))))
                            (range n))

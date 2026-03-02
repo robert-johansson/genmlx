@@ -156,7 +156,7 @@
       inner-model (gen [mean]
                     (trace :x (dist/gaussian mean 1.0)))
       ;; Contramap: transforms [offset] -> [offset + 5] before passing to inner
-      contra-model (comb/contramap-gf inner-model (fn [args] [(+ (first args) 5.0)]))
+      contra-model (comb/contramap-gf (dyn/auto-key inner-model) (fn [args] [(+ (first args) 5.0)]))
       ;; Simulate
       trace (p/simulate contra-model [3.0])
       _ (assert-true "contramap simulate works" (some? (:choices trace)))
@@ -179,7 +179,7 @@
 (let [;; MapRetval: transform return value
       inner-model (gen [_]
                     (trace :x (dist/gaussian 0.0 1.0)))
-      retval-model (comb/map-retval inner-model #(* % 10))
+      retval-model (comb/map-retval (dyn/auto-key inner-model) #(* % 10))
       trace (p/simulate retval-model [])
       _ (assert-true "map-retval simulate works" (some? trace))
       ;; Update
@@ -195,7 +195,7 @@
 ;; Test dimap (both contramap + map-retval)
 (let [inner-model (gen [x]
                     (trace :z (dist/gaussian x 1.0)))
-      dimap-model (comb/dimap inner-model
+      dimap-model (comb/dimap (dyn/auto-key inner-model)
                               (fn [args] [(* (first args) 2.0)])
                               (fn [retval] (+ retval 100)))
       trace (p/simulate dimap-model [3.0])
@@ -217,7 +217,7 @@
       comp-b (gen [_]
                (trace :val (dist/gaussian 5.0 1.0)))
       log-w (mx/array [0.0 0.0])  ;; equal weights
-      mix-model (comb/mix-combinator [comp-a comp-b] log-w)
+      mix-model (comb/mix-combinator [(dyn/auto-key comp-a) (dyn/auto-key comp-b)] log-w)
       ;; Generate with component 0 constrained
       {:keys [trace]} (p/generate mix-model [] (cm/choicemap :component-idx (mx/scalar 0 mx/int32)
                                                              :val -4.0))

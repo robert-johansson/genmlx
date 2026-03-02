@@ -5,7 +5,8 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.protocols :as p]
-            [genmlx.choicemap :as cm]))
+            [genmlx.choicemap :as cm]
+            [genmlx.dynamic :as dyn]))
 
 (defn materialize-weights
   "Evaluate a vector of MLX log-weight scalars and return them as a single
@@ -31,7 +32,8 @@
   "Build a score function from a model + observations + addresses.
    Returns a fn: (params-array) -> MLX scalar log-weight."
   [model args observations addresses]
-  (let [indexed-addrs (mapv vector (range) addresses)]
+  (let [model (dyn/auto-key model)
+        indexed-addrs (mapv vector (range) addresses)]
     (fn [params]
       (let [cm (reduce
                  (fn [cm [i addr]]
@@ -44,7 +46,8 @@
   "Build a vectorized score function for N parallel chains.
    Returns a fn: (params [N,D]) -> [N]-shaped MLX log-weight array."
   [model args observations addresses]
-  (let [indexed-addrs (mapv vector (range) addresses)
+  (let [model (dyn/auto-key model)
+        indexed-addrs (mapv vector (range) addresses)
         idx-scalars (mapv #(mx/scalar % mx/int32) (range (count addresses)))]
     (mx/compile-fn
       (fn [params]
@@ -91,7 +94,8 @@
    selectors, which is fully differentiable.
    Returns fn: [N,D] -> [N]-shaped scores."
   [model args observations addresses]
-  (let [d (count addresses)
+  (let [model (dyn/auto-key model)
+        d (count addresses)
         indexed-addrs (mapv vector (range) addresses)
         ;; Pre-build one-hot column selectors [D,1] for each address
         one-hots (mapv (fn [i]
@@ -137,11 +141,12 @@
 (defn init-vectorized-params
   "Initialize [N,D] parameter matrix from N independent generates."
   [model args observations addresses n-chains]
-  (mx/stack
-    (mapv (fn [_]
-            (let [{:keys [trace]} (p/generate model args observations)]
-              (extract-params trace addresses)))
-          (range n-chains))))
+  (let [model (dyn/auto-key model)]
+    (mx/stack
+      (mapv (fn [_]
+              (let [{:keys [trace]} (p/generate model args observations)]
+                (extract-params trace addresses)))
+            (range n-chains)))))
 
 (defn systematic-resample
   "Systematic resampling of particles. Returns vector of indices.
@@ -209,14 +214,6 @@
        (let [key (rng/ensure-key key)
              u (mx/realize (rng/uniform key []))]
          (< (js/Math.log u) log-accept)))))
-
-;; ---------------------------------------------------------------------------
-;; Resource guard — delegated to mx/with-resource-guard (Layer 0)
-;; ---------------------------------------------------------------------------
-
-;; Backwards-compatible aliases
-(def force-gc! mx/force-gc!)
-(def with-resource-guard mx/with-resource-guard)
 
 (defn dispose-trace
   "Dispose all MLX arrays in a trace (or collection of traces), freeing Metal

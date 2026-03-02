@@ -25,21 +25,21 @@
 
 ;; Model: x ~ N(0, 10), y ~ N(x, 1)
 (def model
-  (gen []
+  (dyn/auto-key (gen []
     (let [x (trace :x (dist/gaussian 0 10))]
       (mx/eval! x)
       (trace :y (dist/gaussian (mx/item x) 1))
-      (mx/item x))))
+      (mx/item x)))))
 
 ;; Forward kernel: propose new :x ~ N(4.0, 0.5)
 (def forward-gf
-  (gen [choices]
-    (trace :x (dist/gaussian 4.0 0.5))))
+  (dyn/auto-key (gen [choices]
+    (trace :x (dist/gaussian 4.0 0.5)))))
 
 ;; Backward kernel: score old :x under N(4.0, 0.5)
 (def backward-gf
-  (gen [choices]
-    (trace :x (dist/gaussian 4.0 0.5))))
+  (dyn/auto-key (gen [choices]
+    (trace :x (dist/gaussian 4.0 0.5)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Test 1: Structure — edit returns correct keys + backward-request
@@ -102,13 +102,13 @@
 ;; ---------------------------------------------------------------------------
 (println "\n-- Data-dependent proposals --")
 (let [;; Forward: propose near current x (random walk)
-      dep-forward (gen [choices]
+      dep-forward (dyn/auto-key (gen [choices]
                     (let [cur-x (mx/realize (cm/get-choice choices [:x]))]
-                      (trace :x (dist/gaussian cur-x 0.5))))
+                      (trace :x (dist/gaussian cur-x 0.5)))))
       ;; Backward: score under same random-walk (symmetric)
-      dep-backward (gen [choices]
+      dep-backward (dyn/auto-key (gen [choices]
                      (let [new-x (mx/realize (cm/get-choice choices [:x]))]
-                       (trace :x (dist/gaussian new-x 0.5))))
+                       (trace :x (dist/gaussian new-x 0.5)))))
       obs (cm/choicemap :y (mx/scalar 5.0))
       {:keys [trace]} (p/generate model [] obs)
       edit-req (edit/proposal-edit dep-forward dep-backward)
@@ -122,12 +122,12 @@
 ;; Test 5: MH loop — 100 iterations with ProposalEdit
 ;; ---------------------------------------------------------------------------
 (println "\n-- MH loop with ProposalEdit --")
-(let [dep-forward (gen [choices]
+(let [dep-forward (dyn/auto-key (gen [choices]
                     (let [cur-x (mx/realize (cm/get-choice choices [:x]))]
-                      (trace :x (dist/gaussian cur-x 1.0))))
-      dep-backward (gen [choices]
+                      (trace :x (dist/gaussian cur-x 1.0)))))
+      dep-backward (dyn/auto-key (gen [choices]
                      (let [new-x (mx/realize (cm/get-choice choices [:x]))]
-                       (trace :x (dist/gaussian new-x 1.0))))
+                       (trace :x (dist/gaussian new-x 1.0)))))
       obs (cm/choicemap :y (mx/scalar 5.0))
       {:keys [trace]} (p/generate model [] obs)
       n-iter 100

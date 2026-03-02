@@ -26,10 +26,10 @@
 
 ;; Map combinator
 (println "-- Map combinator --")
-(let [kernel (gen [x]
+(let [kernel (dyn/auto-key (gen [x]
                (let [y (trace :y (dist/gaussian x 1))]
                  (mx/eval! y)
-                 (mx/item y)))
+                 (mx/item y))))
       mapped (comb/map-combinator kernel)
       trace (p/simulate mapped [[1.0 2.0 3.0]])]
   (assert-true "map returns trace" (instance? tr/Trace trace))
@@ -38,10 +38,10 @@
 
 ;; Map combinator with generate
 (println "\n-- Map combinator generate --")
-(let [kernel (gen [x]
+(let [kernel (dyn/auto-key (gen [x]
                (let [y (trace :y (dist/gaussian x 0.1))]
                  (mx/eval! y)
-                 (mx/item y)))
+                 (mx/item y))))
       mapped (comb/map-combinator kernel)
       constraints (cm/set-choice cm/EMPTY [0] (cm/choicemap :y (mx/scalar 1.5)))
       {:keys [trace weight]} (p/generate mapped [[1.0 2.0]] constraints)]
@@ -51,10 +51,10 @@
 
 ;; Unfold combinator
 (println "\n-- Unfold combinator --")
-(let [step (gen [t state]
+(let [step (dyn/auto-key (gen [t state]
              (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
-               (mx/item next)))
+               (mx/item next))))
       unfold (comb/unfold-combinator step)
       trace (p/simulate unfold [5 0.0])]
   (assert-true "unfold returns trace" (instance? tr/Trace trace))
@@ -63,14 +63,14 @@
 
 ;; Switch combinator
 (println "\n-- Switch combinator --")
-(let [branch0 (gen []
+(let [branch0 (dyn/auto-key (gen []
                 (let [x (trace :x (dist/gaussian 0 1))]
                   (mx/eval! x)
-                  (mx/item x)))
-      branch1 (gen []
+                  (mx/item x))))
+      branch1 (dyn/auto-key (gen []
                 (let [x (trace :x (dist/gaussian 10 1))]
                   (mx/eval! x)
-                  (mx/item x)))
+                  (mx/item x))))
       sw (comb/switch-combinator branch0 branch1)
       trace0 (p/simulate sw [0])
       trace1 (p/simulate sw [1])]
@@ -81,10 +81,10 @@
 
 ;; Mask combinator
 (println "\n-- Mask combinator --")
-(let [inner (gen [x]
+(let [inner (dyn/auto-key (gen [x]
               (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
-                (mx/item y)))
+                (mx/item y))))
       masked (comb/mask-combinator inner)
       ;; Active mask
       trace-active (p/simulate masked [true 5.0])
@@ -97,10 +97,10 @@
 
 ;; Mask combinator update (active)
 (println "\n-- Mask update (active) --")
-(let [inner (gen [x]
+(let [inner (dyn/auto-key (gen [x]
               (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
-                (mx/item y)))
+                (mx/item y))))
       masked (comb/mask-combinator inner)
       obs (cm/choicemap :y (mx/scalar 5.0))
       {:keys [trace]} (p/generate masked [true 5.0] obs)
@@ -118,10 +118,10 @@
 
 ;; Mask combinator update (inactive)
 (println "\n-- Mask update (inactive) --")
-(let [inner (gen [x]
+(let [inner (dyn/auto-key (gen [x]
               (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
-                (mx/item y)))
+                (mx/item y))))
       masked (comb/mask-combinator inner)
       trace (p/simulate masked [false 5.0])
       {:keys [trace weight discard]} (p/update masked trace cm/EMPTY)]
@@ -132,10 +132,10 @@
 
 ;; Mask combinator regenerate (active)
 (println "\n-- Mask regenerate (active) --")
-(let [inner (gen [x]
+(let [inner (dyn/auto-key (gen [x]
               (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
-                (mx/item y)))
+                (mx/item y))))
       masked (comb/mask-combinator inner)
       obs (cm/choicemap :y (mx/scalar 5.0))
       {:keys [trace]} (p/generate masked [true 5.0] obs)
@@ -148,10 +148,10 @@
 
 ;; Mask combinator regenerate (inactive)
 (println "\n-- Mask regenerate (inactive) --")
-(let [inner (gen [x]
+(let [inner (dyn/auto-key (gen [x]
               (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
-                (mx/item y)))
+                (mx/item y))))
       masked (comb/mask-combinator inner)
       trace (p/simulate masked [false 5.0])
       {:keys [trace weight]} (p/regenerate masked trace (sel/select :y))]
@@ -161,10 +161,10 @@
 
 ;; Mask combinator update-with-diffs (no change fast path)
 (println "\n-- Mask update-with-diffs --")
-(let [inner (gen [x]
+(let [inner (dyn/auto-key (gen [x]
               (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
-                (mx/item y)))
+                (mx/item y))))
       masked (comb/mask-combinator inner)
       obs (cm/choicemap :y (mx/scalar 5.0))
       {:keys [trace]} (p/generate masked [true 5.0] obs)
@@ -177,10 +177,10 @@
 
 ;; Contramap update-with-diffs (no change fast path)
 (println "\n-- Contramap update-with-diffs --")
-(let [inner (gen [x]
+(let [inner (dyn/auto-key (gen [x]
               (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
-                (mx/item y)))
+                (mx/item y))))
       cmapped (comb/contramap-gf inner identity)
       obs (cm/choicemap :y (mx/scalar 3.0))
       {:keys [trace]} (p/generate cmapped [3.0] obs)
@@ -191,10 +191,10 @@
 
 ;; MapRetval update-with-diffs (no change fast path)
 (println "\n-- MapRetval update-with-diffs --")
-(let [inner (gen [x]
+(let [inner (dyn/auto-key (gen [x]
               (let [y (trace :y (dist/gaussian x 0.1))]
                 (mx/eval! y)
-                (mx/item y)))
+                (mx/item y))))
       mr (comb/map-retval inner (fn [v] (* v 2)))
       obs (cm/choicemap :y (mx/scalar 3.0))
       {:keys [trace]} (p/generate mr [3.0] obs)
@@ -208,10 +208,10 @@
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- Unfold step-scores metadata --")
-(let [step (gen [t state]
+(let [step (dyn/auto-key (gen [t state]
              (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
-               (mx/item next)))
+               (mx/item next))))
       unfold (comb/unfold-combinator step)
       ;; simulate
       trace-sim (p/simulate unfold [5 0.0])
@@ -232,10 +232,10 @@
     (count (::comb/step-scores gen-meta))))
 
 (println "\n-- Unfold prefix skip --")
-(let [step (gen [t state]
+(let [step (dyn/auto-key (gen [t state]
              (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
-               (mx/item next)))
+               (mx/item next))))
       unfold (comb/unfold-combinator step)
       ;; Initial trace with constraints at steps 3 and 4
       init-obs (-> cm/EMPTY
@@ -276,10 +276,10 @@
       (< (js/Math.abs (- (mx/item old-val) (mx/item new-val))) 1e-6))))
 
 (println "\n-- Unfold update with empty constraints --")
-(let [step (gen [t state]
+(let [step (dyn/auto-key (gen [t state]
              (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
-               (mx/item next)))
+               (mx/item next))))
       unfold (comb/unfold-combinator step)
       trace (p/simulate unfold [5 0.0])
       ;; Update with no constraints — should be fast path
@@ -295,10 +295,10 @@
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- Scan step metadata --")
-(let [kernel (gen [carry input]
+(let [kernel (dyn/auto-key (gen [carry input]
                (let [x (trace :x (dist/gaussian (mx/add carry input) 0.1))]
                  (mx/eval! x)
-                 [(mx/item x) (mx/item x)]))
+                 [(mx/item x) (mx/item x)])))
       scan (comb/scan-combinator kernel)
       inputs [(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)
               (mx/scalar 4.0) (mx/scalar 5.0)]
@@ -323,10 +323,10 @@
     (some? (::comb/step-carries gen-meta))))
 
 (println "\n-- Scan prefix skip --")
-(let [kernel (gen [carry input]
+(let [kernel (dyn/auto-key (gen [carry input]
                (let [x (trace :x (dist/gaussian (mx/add carry input) 0.1))]
                  (mx/eval! x)
-                 [(mx/item x) (mx/item x)]))
+                 [(mx/item x) (mx/item x)])))
       scan (comb/scan-combinator kernel)
       inputs [(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)
               (mx/scalar 4.0) (mx/scalar 5.0)]
@@ -359,10 +359,10 @@
       (< (js/Math.abs (- (mx/item new-val) 20.0)) 0.01))))
 
 (println "\n-- Scan update with empty constraints --")
-(let [kernel (gen [carry input]
+(let [kernel (dyn/auto-key (gen [carry input]
                (let [x (trace :x (dist/gaussian (mx/add carry input) 0.1))]
                  (mx/eval! x)
-                 [(mx/item x) (mx/item x)]))
+                 [(mx/item x) (mx/item x)])))
       scan (comb/scan-combinator kernel)
       inputs [(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)]
       trace (p/simulate scan [(mx/scalar 0.0) inputs])
@@ -378,14 +378,14 @@
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- Switch update same branch --")
-(let [branch0 (gen []
+(let [branch0 (dyn/auto-key (gen []
                 (let [x (trace :x (dist/gaussian 0 1))]
                   (mx/eval! x)
-                  (mx/item x)))
-      branch1 (gen []
+                  (mx/item x))))
+      branch1 (dyn/auto-key (gen []
                 (let [x (trace :x (dist/gaussian 10 1))]
                   (mx/eval! x)
-                  (mx/item x)))
+                  (mx/item x))))
       sw (comb/switch-combinator branch0 branch1)
       obs (cm/choicemap :x (mx/scalar 1.0))
       {:keys [trace]} (p/generate sw [0] obs)
@@ -407,14 +407,14 @@
   (assert-true "switch same-branch update has discard" (some? discard)))
 
 (println "\n-- Switch update branch change --")
-(let [branch0 (gen []
+(let [branch0 (dyn/auto-key (gen []
                 (let [x (trace :x (dist/gaussian 0 1))]
                   (mx/eval! x)
-                  (mx/item x)))
-      branch1 (gen []
+                  (mx/item x))))
+      branch1 (dyn/auto-key (gen []
                 (let [x (trace :x (dist/gaussian 10 1))]
                   (mx/eval! x)
-                  (mx/item x)))
+                  (mx/item x))))
       sw (comb/switch-combinator branch0 branch1)
       ;; Generate trace on branch 0
       obs (cm/choicemap :x (mx/scalar 1.0))
@@ -447,10 +447,10 @@
     (some? discard)))
 
 (println "\n-- Switch metadata preserved --")
-(let [branch0 (gen []
+(let [branch0 (dyn/auto-key (gen []
                 (let [x (trace :x (dist/gaussian 0 1))]
                   (mx/eval! x)
-                  (mx/item x)))
+                  (mx/item x))))
       sw (comb/switch-combinator branch0)
       trace (p/simulate sw [0])]
   (assert-true "simulate has ::switch-idx metadata"

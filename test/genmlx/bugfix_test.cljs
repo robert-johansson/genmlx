@@ -50,10 +50,10 @@
 (println "-- Update weight: dependent variables --")
 
 (let [;; Model: mu drawn, then obs depends on mu
-      model (gen [obs-val]
+      model (dyn/auto-key (gen [obs-val]
               (let [mu (trace :mu (dist/gaussian 0 10))]
                 (trace :obs (dist/gaussian mu 1))
-                mu))
+                mu)))
 
       ;; Generate a trace with mu=0 and obs=5
       obs-val 5.0
@@ -86,7 +86,7 @@
               (let [mu (trace :mu (dist/gaussian 0 10))]
                 (trace :obs (dist/gaussian mu 1))
                 mu))
-      model (comb/map-combinator kernel)
+      model (comb/map-combinator (dyn/auto-key kernel))
       args [[0.0 0.0]]  ;; 2 elements
       ;; Generate with specific values
       constraints (cm/choicemap
@@ -117,7 +117,7 @@
               (let [x (trace :x (dist/gaussian carry 1))]
                 (trace :obs (dist/gaussian x 0.5))
                 [x x]))
-      model (comb/scan-combinator kernel)
+      model (comb/scan-combinator (dyn/auto-key kernel))
       args [(mx/scalar 0.0) [1 2]]  ;; init carry=0, 2 steps
       constraints (cm/choicemap
                     0 (cm/choicemap :x (mx/scalar 1.0) :obs (mx/scalar 3.0))
@@ -202,10 +202,10 @@
 (println "\n-- Conditional SMC: reference trace used --")
 
 (let [;; Simple model
-      model (gen []
+      model (dyn/auto-key (gen []
               (let [x (trace :x (dist/gaussian 0 10))]
                 (trace :obs (dist/gaussian x 1))
-                x))
+                x)))
 
       ;; Create a reference trace with a distinctive x value
       ref-x 42.0

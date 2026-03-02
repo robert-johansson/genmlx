@@ -20,7 +20,8 @@
    Returns {:traces [Trace ...] :log-weights [MLX-scalar ...]
             :log-ml-estimate MLX-scalar}"
   [{:keys [samples key] :or {samples 100}} model args observations]
-  (let [keys (rng/split-n (rng/ensure-key key) samples)
+  (let [model (dyn/auto-key model)
+        keys (rng/split-n (rng/ensure-key key) samples)
         results (mapv (fn [ki]
                         (let [r (p/generate (dyn/with-key model ki) args observations)]
                           (mx/materialize! (:weight r) (:score (:trace r)))
@@ -44,7 +45,8 @@
    Returns vector of N resampled traces."
   [{:keys [samples particles key] :or {samples 100 particles 1000}}
    model args observations]
-  (let [{:keys [traces log-weights]}
+  (let [model (dyn/auto-key model)
+        {:keys [traces log-weights]}
         (importance-sampling {:samples particles :key key} model args observations)
         ;; Normalize weights via log-softmax
         {:keys [probs]} (u/normalize-log-weights log-weights)
@@ -74,7 +76,8 @@
 
    Returns {:vtrace VectorizedTrace :log-ml-estimate MLX-scalar}"
   [{:keys [samples key] :or {samples 100}} model args observations]
-  (let [key (rng/ensure-key key)
+  (let [model (dyn/auto-key model)
+        key (rng/ensure-key key)
         vtrace (dyn/vgenerate model args observations samples key)]
     {:vtrace vtrace
      :log-ml-estimate (vec/vtrace-log-ml-estimate vtrace)}))

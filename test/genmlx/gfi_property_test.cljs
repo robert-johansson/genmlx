@@ -67,59 +67,59 @@
 ;; Each entry: {:model gf, :args vec, :addrs #{keywords}, :label string}
 
 (def single-gaussian
-  {:model (gen []
+  {:model (dyn/auto-key (gen []
             (let [x (trace :x (dist/gaussian 0 1))]
-              (mx/eval! x) (mx/item x)))
+              (mx/eval! x) (mx/item x))))
    :args []
    :addrs #{:x}
    :label "single-gaussian"})
 
 (def two-gaussian
-  {:model (gen []
+  {:model (dyn/auto-key (gen []
             (let [x (trace :x (dist/gaussian 0 1))
                   y (trace :y (dist/gaussian 0 1))]
               (mx/eval! x y)
-              (+ (mx/item x) (mx/item y))))
+              (+ (mx/item x) (mx/item y)))))
    :args []
    :addrs #{:x :y}
    :label "two-gaussian"})
 
 (def gaussian-chain
-  {:model (gen []
+  {:model (dyn/auto-key (gen []
             (let [x (trace :x (dist/gaussian 0 1))]
               (mx/eval! x)
               (let [y (trace :y (dist/gaussian (mx/item x) 1))]
                 (mx/eval! y)
-                (mx/item y))))
+                (mx/item y)))))
    :args []
    :addrs #{:x :y}
    :label "gaussian-chain"})
 
 (def three-site
-  {:model (gen []
+  {:model (dyn/auto-key (gen []
             (let [a (trace :a (dist/gaussian 0 2))
                   b (trace :b (dist/gaussian 0 2))
                   c (trace :c (dist/gaussian 0 2))]
               (mx/eval! a b c)
-              (+ (mx/item a) (mx/item b) (mx/item c))))
+              (+ (mx/item a) (mx/item b) (mx/item c)))))
    :args []
    :addrs #{:a :b :c}
    :label "three-site"})
 
 (def uniform-model
-  {:model (gen []
+  {:model (dyn/auto-key (gen []
             (let [x (trace :x (dist/uniform 0 1))]
-              (mx/eval! x) (mx/item x)))
+              (mx/eval! x) (mx/item x))))
    :args []
    :addrs #{:x}
    :label "uniform"})
 
 (def mixed-continuous
-  {:model (gen []
+  {:model (dyn/auto-key (gen []
             (let [x (trace :x (dist/gaussian 0 1))
                   y (trace :y (dist/exponential 1))]
               (mx/eval! x y)
-              (+ (mx/item x) (mx/item y))))
+              (+ (mx/item x) (mx/item y)))))
    :args []
    :addrs #{:x :y}
    :label "mixed-continuous"})

@@ -173,7 +173,7 @@
       n 200
 
       ;; Warm up both paths
-      _ (do (let [{:keys [trace weight]} (p/generate model [] obs)]
+      _ (do (let [{:keys [trace weight]} (p/generate (dyn/auto-key model) [] obs)]
               (mx/eval! (:score trace) weight))
             (let [vt (dyn/vgenerate model [] obs n nil)]
               (mx/eval! (:score vt) (:weight vt))))
@@ -181,7 +181,7 @@
       ;; Sequential: N separate generates
       t0 (js/Date.now)
       _ (doseq [_ (range n)]
-          (let [{:keys [trace weight]} (p/generate model [] obs)]
+          (let [{:keys [trace weight]} (p/generate (dyn/auto-key model) [] obs)]
             (mx/eval! (:score trace) weight)))
       t1 (js/Date.now)
 

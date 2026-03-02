@@ -79,7 +79,7 @@
 (let [model (gen []
               (trace :k (dist/neg-binomial 5 0.5)))
       obs (cm/choicemap :k (mx/scalar 3))
-      {:keys [trace weight]} (p/generate model [] obs)]
+      {:keys [trace weight]} (p/generate (dyn/auto-key model) [] obs)]
   (mx/eval! weight)
   (let [w (mx/item weight)
         lp (dist/log-prob (dist/neg-binomial 5 0.5) (mx/scalar 3))]

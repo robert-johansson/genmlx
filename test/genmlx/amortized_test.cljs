@@ -31,10 +31,10 @@
 ;; ---------------------------------------------------------------------------
 
 (def model
-  (gen [x]
+  (dyn/auto-key (gen [x]
     (let [z (trace :z (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))]
       (trace :x (dist/gaussian z (mx/scalar 0.5)))
-      z)))
+      z))))
 
 ;; Encoder: 1 input -> 2 outputs (mu, log-sigma)
 (def encoder (nn/sequential [(nn/linear 1 16) (nn/relu) (nn/linear 16 2)]))

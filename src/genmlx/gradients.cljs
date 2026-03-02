@@ -4,7 +4,8 @@
    Foundation for gradient-based learning, parameter training, and VI."
   (:require [genmlx.mlx :as mx]
             [genmlx.choicemap :as cm]
-            [genmlx.protocols :as p]))
+            [genmlx.protocols :as p]
+            [genmlx.dynamic :as dyn]))
 
 (defn choice-gradients
   "Compute gradients of the model's log-probability w.r.t. specified choices.
@@ -17,7 +18,8 @@
    The gradient is d(log p(all choices | args)) / d(choice at address).
    Uses MLX's grad through the generate interface."
   [model trace addresses]
-  (let [args (:args trace)
+  (let [model (dyn/auto-key model)
+        args (:args trace)
         choices (:choices trace)
         ;; Build a score function parameterized by the target choices
         indexed-addrs (mapv vector (range) addresses)
@@ -54,7 +56,8 @@
 
    Returns {:score MLX-scalar :grad MLX-array}."
   [model args observations addresses params]
-  (let [indexed-addrs (mapv vector (range) addresses)
+  (let [model (dyn/auto-key model)
+        indexed-addrs (mapv vector (range) addresses)
         score-fn (fn [p]
                    (let [cm (reduce
                               (fn [cm [i addr]]

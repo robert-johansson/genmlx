@@ -43,7 +43,7 @@
       n-chains 5
       ;; Create N independent parameter sets
       params-list (mapv (fn [_]
-                          (let [{:keys [trace]} (p/generate model [10] observations)]
+                          (let [{:keys [trace]} (p/generate (dyn/auto-key model) [10] observations)]
                             (u/extract-params trace addresses)))
                         (range n-chains))
       ;; Scalar gradients (N independent calls)

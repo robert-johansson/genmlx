@@ -189,7 +189,8 @@
      :contract-keys — subset of contract keys to run (default: all)"
   [model args & {:keys [n-trials contract-keys]
                  :or   {n-trials 50}}]
-  (let [selected (if contract-keys
+  (let [model (dyn/auto-key model)
+        selected (if contract-keys
                    (select-keys contracts contract-keys)
                    contracts)
         results  (into {}

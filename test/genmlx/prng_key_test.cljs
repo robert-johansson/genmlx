@@ -141,8 +141,8 @@
     (assert-equal "MH: same key → same trace sequence" x1 x2)))
 
 (println "\n-- without with-key: non-deterministic (sanity check) --")
-(let [trace1 (p/simulate simple-model [(mx/scalar 0)])
-      trace2 (p/simulate simple-model [(mx/scalar 0)])]
+(let [trace1 (p/simulate (dyn/auto-key simple-model) [(mx/scalar 0)])
+      trace2 (p/simulate (dyn/auto-key simple-model) [(mx/scalar 0)])]
   (mx/eval! (:score trace1) (:score trace2))
   (let [c1 (choices->map (:choices trace1))
         c2 (choices->map (:choices trace2))]

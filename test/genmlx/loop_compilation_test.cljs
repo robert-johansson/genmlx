@@ -39,7 +39,7 @@
                                   (mx/scalar 1))))
       slope)))
 
-(def init-trace (p/simulate linreg [xs]))
+(def init-trace (p/simulate (dyn/auto-key linreg) [xs]))
 (def observations
   (reduce (fn [cm k]
             (cm/set-choice cm [k] (cm/get-choice (:choices init-trace) [k])))

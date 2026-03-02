@@ -7,6 +7,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
+            [genmlx.dynamic :as dyn]
             [genmlx.inference.util :as u]
             [genmlx.learning :as learn]))
 
@@ -202,7 +203,8 @@
 
    Returns same as vi."
   [opts model args observations addresses]
-  (let [score-fn (u/make-score-fn model args observations addresses)
+  (let [model (dyn/auto-key model)
+        score-fn (u/make-score-fn model args observations addresses)
         {:keys [trace]} (p/generate model args observations)
         init-q (u/extract-params trace addresses)]
     (vi opts score-fn init-q)))
@@ -213,7 +215,8 @@
 
    Returns same as compiled-vi."
   [opts model args observations addresses]
-  (let [score-fn (mx/compile-fn (u/make-score-fn model args observations addresses))
+  (let [model (dyn/auto-key model)
+        score-fn (mx/compile-fn (u/make-score-fn model args observations addresses))
         {:keys [trace]} (p/generate model args observations)
         init-q (u/extract-params trace addresses)]
     (compiled-vi opts score-fn init-q)))

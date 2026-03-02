@@ -23,10 +23,11 @@
 
 ;; Simple kernel used across tests
 (def simple-kernel
-  (gen [x]
-    (let [y (trace :y (dist/gaussian x 1))]
-      (mx/eval! y)
-      (mx/item y))))
+  (dyn/auto-key
+    (gen [x]
+      (let [y (trace :y (dist/gaussian x 1))]
+        (mx/eval! y)
+        (mx/item y)))))
 
 ;; ---------------------------------------------------------------------------
 ;; MapCombinator
@@ -53,10 +54,10 @@
 ;; UnfoldCombinator
 ;; ---------------------------------------------------------------------------
 (println "\n-- Unfold propose --")
-(let [step (gen [t state]
+(let [step (dyn/auto-key (gen [t state]
              (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
-               (mx/item next)))
+               (mx/item next))))
       unfold (comb/unfold-combinator step)
       {:keys [choices weight retval]} (p/propose unfold [3 0.0])]
   (mx/eval! weight)
@@ -65,10 +66,10 @@
   (assert-true "unfold propose has 3 retvals" (= 3 (count retval))))
 
 (println "\n-- Unfold assess --")
-(let [step (gen [t state]
+(let [step (dyn/auto-key (gen [t state]
              (let [next (trace :x (dist/gaussian state 0.1))]
                (mx/eval! next)
-               (mx/item next)))
+               (mx/item next))))
       unfold (comb/unfold-combinator step)
       {:keys [choices weight]} (p/propose unfold [3 0.0])
       assess-result (p/assess unfold [3 0.0] choices)]
@@ -81,10 +82,10 @@
 ;; SwitchCombinator
 ;; ---------------------------------------------------------------------------
 (println "\n-- Switch propose --")
-(let [b0 (gen [] (let [x (trace :x (dist/gaussian 0 1))]
-                   (mx/eval! x) (mx/item x)))
-      b1 (gen [] (let [x (trace :x (dist/gaussian 10 1))]
-                   (mx/eval! x) (mx/item x)))
+(let [b0 (dyn/auto-key (gen [] (let [x (trace :x (dist/gaussian 0 1))]
+                   (mx/eval! x) (mx/item x))))
+      b1 (dyn/auto-key (gen [] (let [x (trace :x (dist/gaussian 10 1))]
+                   (mx/eval! x) (mx/item x))))
       sw (comb/switch-combinator b0 b1)
       r0 (p/propose sw [0])
       r1 (p/propose sw [1])]
@@ -95,8 +96,8 @@
   (assert-true "switch propose branch 0 has choices" (not= (:choices r0) cm/EMPTY)))
 
 (println "\n-- Switch assess --")
-(let [b0 (gen [] (let [x (trace :x (dist/gaussian 0 1))]
-                   (mx/eval! x) (mx/item x)))
+(let [b0 (dyn/auto-key (gen [] (let [x (trace :x (dist/gaussian 0 1))]
+                   (mx/eval! x) (mx/item x))))
       sw (comb/switch-combinator b0)
       {:keys [choices weight]} (p/propose sw [0])
       assess-result (p/assess sw [0] choices)]
@@ -109,10 +110,10 @@
 ;; ScanCombinator
 ;; ---------------------------------------------------------------------------
 (println "\n-- Scan propose --")
-(let [kernel (gen [carry input]
+(let [kernel (dyn/auto-key (gen [carry input]
                (let [x (trace :x (dist/gaussian (mx/add carry input) 0.1))]
                  (mx/eval! x)
-                 [(mx/item x) (mx/item x)]))
+                 [(mx/item x) (mx/item x)])))
       scan (comb/scan-combinator kernel)
       inputs [(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)]
       {:keys [choices weight retval]} (p/propose scan [(mx/scalar 0.0) inputs])]
@@ -123,10 +124,10 @@
   (assert-true "scan propose has 3 outputs" (= 3 (count (:outputs retval)))))
 
 (println "\n-- Scan assess --")
-(let [kernel (gen [carry input]
+(let [kernel (dyn/auto-key (gen [carry input]
                (let [x (trace :x (dist/gaussian (mx/add carry input) 0.1))]
                  (mx/eval! x)
-                 [(mx/item x) (mx/item x)]))
+                 [(mx/item x) (mx/item x)])))
       scan (comb/scan-combinator kernel)
       inputs [(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)]
       {:keys [choices weight]} (p/propose scan [(mx/scalar 0.0) inputs])
@@ -169,9 +170,9 @@
 (println "\n-- Recurse propose --")
 (let [rec (comb/recurse
             (fn [self]
-              (gen [depth]
+              (dyn/auto-key (gen [depth]
                 (let [x (trace :x (dist/gaussian 0 1))]
-                  (mx/eval! x) (mx/item x)))))
+                  (mx/eval! x) (mx/item x))))))
       {:keys [choices weight retval]} (p/propose rec [0])]
   (mx/eval! weight)
   (assert-true "recurse propose has choices" (not= choices cm/EMPTY))
@@ -181,9 +182,9 @@
 (println "\n-- Recurse assess --")
 (let [rec (comb/recurse
             (fn [self]
-              (gen [depth]
+              (dyn/auto-key (gen [depth]
                 (let [x (trace :x (dist/gaussian 0 1))]
-                  (mx/eval! x) (mx/item x)))))
+                  (mx/eval! x) (mx/item x))))))
       {:keys [choices weight]} (p/propose rec [0])
       assess-result (p/assess rec [0] choices)]
   (mx/eval! weight)
@@ -235,10 +236,10 @@
 ;; MixCombinator
 ;; ---------------------------------------------------------------------------
 (println "\n-- Mix propose --")
-(let [c0 (gen [] (let [x (trace :x (dist/gaussian 0 1))]
-                   (mx/eval! x) (mx/item x)))
-      c1 (gen [] (let [x (trace :x (dist/gaussian 10 1))]
-                   (mx/eval! x) (mx/item x)))
+(let [c0 (dyn/auto-key (gen [] (let [x (trace :x (dist/gaussian 0 1))]
+                   (mx/eval! x) (mx/item x))))
+      c1 (dyn/auto-key (gen [] (let [x (trace :x (dist/gaussian 10 1))]
+                   (mx/eval! x) (mx/item x))))
       mix (comb/mix-combinator [c0 c1] (mx/log (mx/array [0.5 0.5])))
       {:keys [choices weight retval]} (p/propose mix [])]
   (mx/eval! weight)
@@ -248,10 +249,10 @@
     (some? (cm/get-choice choices [:component-idx]))))
 
 (println "\n-- Mix assess --")
-(let [c0 (gen [] (let [x (trace :x (dist/gaussian 0 1))]
-                   (mx/eval! x) (mx/item x)))
-      c1 (gen [] (let [x (trace :x (dist/gaussian 10 1))]
-                   (mx/eval! x) (mx/item x)))
+(let [c0 (dyn/auto-key (gen [] (let [x (trace :x (dist/gaussian 0 1))]
+                   (mx/eval! x) (mx/item x))))
+      c1 (dyn/auto-key (gen [] (let [x (trace :x (dist/gaussian 10 1))]
+                   (mx/eval! x) (mx/item x))))
       mix (comb/mix-combinator [c0 c1] (mx/log (mx/array [0.5 0.5])))
       {:keys [choices weight]} (p/propose mix [])
       assess-result (p/assess mix [] choices)]

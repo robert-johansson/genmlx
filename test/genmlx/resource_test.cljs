@@ -45,7 +45,7 @@
 (let [_ (mx/clear-cache!)
       _ (mx/reset-peak-memory!)
       ;; Warm up
-      {:keys [trace]} (p/generate model [xs] observations)
+      {:keys [trace]} (p/generate (dyn/auto-key model) [xs] observations)
       _ (mx/eval! (:score trace))
       ;; Run MH for 50 iterations, check memory
       _ (mcmc/mh {:samples 50 :selection (sel/select :slope :intercept)}

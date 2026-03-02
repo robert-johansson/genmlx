@@ -70,9 +70,9 @@
     (assert-close "broadcasted-normal mean[1] ≈ -3" -3.0 (second means) 0.2)))
 
 ;; GFI: use inside gen body
-(let [model (gen []
+(let [model (dyn/auto-key (gen []
               (trace :x (dist/broadcasted-normal (mx/array [0.0 0.0])
-                                                      (mx/array [1.0 1.0]))))
+                                                      (mx/array [1.0 1.0])))))
       trace (p/simulate model [])]
   (assert-true "broadcasted-normal works in gen body" (some? trace)))
 
@@ -107,8 +107,8 @@
   (assert-close "beta-uniform-mixture mean ≈ 0.39" 0.393 mean 0.05))
 
 ;; GFI
-(let [model (gen []
-              (trace :p (dist/beta-uniform-mixture 0.5 2.0 5.0)))
+(let [model (dyn/auto-key (gen []
+              (trace :p (dist/beta-uniform-mixture 0.5 2.0 5.0))))
       trace (p/simulate model [])]
   (assert-true "beta-uniform-mixture works in gen body" (some? trace)))
 
@@ -156,9 +156,9 @@
                (= ##-Inf (mx/item lp))))
 
 ;; GFI
-(let [model (gen []
+(let [model (dyn/auto-key (gen []
               (trace :x (dist/piecewise-uniform (mx/array [0.0 1.0 2.0])
-                                                     (mx/array [1.0 1.0]))))
+                                                     (mx/array [1.0 1.0])))))
       trace (p/simulate model [])]
   (assert-true "piecewise-uniform works in gen body" (some? trace)))
 

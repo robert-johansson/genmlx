@@ -71,20 +71,20 @@
               (let [x (trace :x my-dist)]
                 (mx/eval! x) (mx/item x)))
       ;; simulate
-      trace (p/simulate model [])
+      trace (p/simulate (dyn/auto-key model) [])
       retval (:retval trace)]
   (assert-true "simulate: retval near 5" (< (js/Math.abs (- retval 5)) 1.0))
   (assert-true "simulate: score finite" (js/isFinite (mx/realize (:score trace))))
 
   ;; generate with constraint
-  (let [{:keys [trace weight]} (p/generate model [] (cm/choicemap :x (mx/scalar 5.0)))]
+  (let [{:keys [trace weight]} (p/generate (dyn/auto-key model) [] (cm/choicemap :x (mx/scalar 5.0)))]
     (mx/eval! weight)
     (assert-true "generate: weight finite" (js/isFinite (mx/realize weight)))
     (assert-close "generate: constrained value" 5.0
       (mx/realize (cm/get-value (cm/get-submap (:choices trace) :x))) 1e-6))
 
   ;; assess
-  (let [{:keys [weight]} (p/assess model [] (cm/choicemap :x (mx/scalar 5.0)))]
+  (let [{:keys [weight]} (p/assess (dyn/auto-key model) [] (cm/choicemap :x (mx/scalar 5.0)))]
     (mx/eval! weight)
     (assert-true "assess: weight finite" (js/isFinite (mx/realize weight)))))
 

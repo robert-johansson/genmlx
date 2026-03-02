@@ -141,11 +141,11 @@
                                             (mx/scalar 3.0)))
                    :has-argument-grads [true]})
       ;; Model that uses the transform
-      model (gen [x]
+      model (dyn/auto-key (gen [x]
               (let [tx (splice :transform transform x)]
                 ;; Observe y ~ gaussian(transform(x), 1)
                 (trace :y (dist/gaussian tx 1))
-                tx))
+                tx)))
       x (mx/scalar 5.0)
       obs (cm/choicemap :y (mx/scalar 13.0))]  ;; 2*5+3 = 13
 
@@ -170,11 +170,11 @@
       multiply-gf (cg/custom-gradient-gf
                     {:forward (fn [a b] (mx/multiply a b))
                      :has-argument-grads [true true]})
-      model (gen [x]
+      model (dyn/auto-key (gen [x]
               (let [slope (trace :slope (dist/gaussian 0 10))
                     pred  (splice :mul multiply-gf slope x)]
                 (trace :y (dist/gaussian pred 1))
-                pred))
+                pred)))
       x (mx/scalar 2.0)
       obs (cm/choicemap :y (mx/scalar 6.0))
       ;; Compute choice gradient w.r.t. :slope

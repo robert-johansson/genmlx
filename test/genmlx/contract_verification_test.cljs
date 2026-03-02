@@ -54,19 +54,19 @@
 
 ;; 1. Single-site gaussian
 (def single-site
-  (gen [] (let [x (trace :x (dist/gaussian 0 1))]
-            (mx/eval! x) (mx/item x))))
+  (dyn/auto-key (gen [] (let [x (trace :x (dist/gaussian 0 1))]
+            (mx/eval! x) (mx/item x)))))
 
 ;; 2. Multi-site dependent (x → y)
 (def multi-site
-  (gen [] (let [x (trace :x (dist/gaussian 0 1))]
+  (dyn/auto-key (gen [] (let [x (trace :x (dist/gaussian 0 1))]
             (mx/eval! x)
             (let [y (trace :y (dist/gaussian (mx/item x) 1))]
-              (mx/eval! y) (mx/item y)))))
+              (mx/eval! y) (mx/item y))))))
 
 ;; 3. Linear regression (5 addresses: slope, intercept, y0, y1, y2)
 (def linreg
-  (gen [xs]
+  (dyn/auto-key (gen [xs]
     (let [slope (trace :slope (dist/gaussian 0 10))
           intercept (trace :intercept (dist/gaussian 0 10))]
       (mx/eval! slope intercept)
@@ -74,79 +74,79 @@
         (doseq [[j x] (map-indexed vector xs)]
           (trace (keyword (str "y" j))
                      (dist/gaussian (+ (* sv x) iv) 1)))
-        sv))))
+        sv)))))
 
 ;; 4. Splice (sub-GF via splice)
 (def inner-gf
-  (gen [] (let [z (trace :z (dist/gaussian 0 1))]
-            (mx/eval! z) (mx/item z))))
+  (dyn/auto-key (gen [] (let [z (trace :z (dist/gaussian 0 1))]
+            (mx/eval! z) (mx/item z)))))
 
 (def splice-model
-  (gen [] (let [x (trace :x (dist/gaussian 0 10))]
+  (dyn/auto-key (gen [] (let [x (trace :x (dist/gaussian 0 10))]
             (mx/eval! x)
             (splice :inner inner-gf)
-            (mx/item x))))
+            (mx/item x)))))
 
 ;; 5. Mixed discrete/continuous
 (def mixed-model
-  (gen [] (let [b (trace :b (dist/bernoulli 0.5))]
+  (dyn/auto-key (gen [] (let [b (trace :b (dist/bernoulli 0.5))]
             (mx/eval! b)
             (let [y (trace :y (dist/gaussian (if (> (mx/item b) 0.5) 5.0 -5.0) 1))]
-              (mx/eval! y) (mx/item y)))))
+              (mx/eval! y) (mx/item y))))))
 
 ;; 6. Deep nesting (3-level splice chain: x, inner/y, inner/mid/z)
-(def level2 (gen [] (let [z (trace :z (dist/gaussian 0 1))]
-                      (mx/eval! z) (mx/item z))))
-(def level1 (gen [] (splice :mid level2)
+(def level2 (dyn/auto-key (gen [] (let [z (trace :z (dist/gaussian 0 1))]
+                      (mx/eval! z) (mx/item z)))))
+(def level1 (dyn/auto-key (gen [] (splice :mid level2)
                     (let [y (trace :y (dist/gaussian 0 1))]
-                      (mx/eval! y) (mx/item y))))
+                      (mx/eval! y) (mx/item y)))))
 (def deep-nesting
-  (gen [] (splice :inner level1)
+  (dyn/auto-key (gen [] (splice :inner level1)
           (let [x (trace :x (dist/gaussian 0 1))]
-            (mx/eval! x) (mx/item x))))
+            (mx/eval! x) (mx/item x)))))
 
 ;; 7. Two-site vectorization-compatible (no eval!/item in body)
 (def two-site-vec
-  (gen [] (let [x (trace :x (dist/gaussian 0 1))
+  (dyn/auto-key (gen [] (let [x (trace :x (dist/gaussian 0 1))
                 y (trace :y (dist/gaussian 0 1))]
-            y)))
+            y))))
 
 ;; 8. Map combinator
-(def map-kernel (gen [x] (let [y (trace :y (dist/gaussian x 1))]
-                            (mx/eval! y) (mx/item y))))
+(def map-kernel (dyn/auto-key (gen [x] (let [y (trace :y (dist/gaussian x 1))]
+                            (mx/eval! y) (mx/item y)))))
 (def map-model (comb/map-combinator map-kernel))
 
 ;; 9. Unfold combinator
-(def unfold-step (gen [t state] (let [y (trace :y (dist/gaussian state 1))]
-                                  (mx/eval! y) (mx/item y))))
+(def unfold-step (dyn/auto-key (gen [t state] (let [y (trace :y (dist/gaussian state 1))]
+                                  (mx/eval! y) (mx/item y)))))
 (def unfold-model (comb/unfold-combinator unfold-step))
 
 ;; 10. Switch combinator (flat choices — branch has keyword addr)
-(def branch-a (gen [] (trace :x (dist/gaussian 0 1))))
-(def branch-b (gen [] (trace :x (dist/gaussian 5 1))))
+(def branch-a (dyn/auto-key (gen [] (trace :x (dist/gaussian 0 1)))))
+(def branch-b (dyn/auto-key (gen [] (trace :x (dist/gaussian 5 1)))))
 (def switch-model (comb/switch-combinator branch-a branch-b))
 
 ;; 11. Scan combinator
-(def scan-step (gen [carry x] (let [y (trace :y (dist/gaussian carry 1))]
+(def scan-step (dyn/auto-key (gen [carry x] (let [y (trace :y (dist/gaussian carry 1))]
                                  (mx/eval! y)
-                                 [(mx/item y) (mx/item y)])))
+                                 [(mx/item y) (mx/item y)]))))
 (def scan-model (comb/scan-combinator scan-step))
 
 ;; 12. Mask combinator (active=true exposes inner choices)
-(def mask-inner (gen [] (let [y (trace :y (dist/gaussian 0 1))]
-                          (mx/eval! y) (mx/item y))))
+(def mask-inner (dyn/auto-key (gen [] (let [y (trace :y (dist/gaussian 0 1))]
+                          (mx/eval! y) (mx/item y)))))
 (def mask-model (comb/mask-combinator mask-inner))
 
 ;; 13. Recurse combinator (depth-2 tree, leaf addr :v)
 (def recurse-model
   (comb/recurse
     (fn [self]
-      (gen [depth]
+      (dyn/auto-key (gen [depth]
         (let [v (trace :v (dist/gaussian 0 1))]
           (mx/eval! v)
           (when (> depth 0)
             (splice :child self (dec depth)))
-          (mx/item v))))))
+          (mx/item v)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Model suite (data-driven)

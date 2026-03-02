@@ -59,7 +59,7 @@
           ~(when-let [sample-clause (get clause-map 'sample)]
              (let [[sample-args & sample-body] sample-clause
                    key-sym (first sample-args)]
-               `(defmethod genmlx.dist.core/dist-sample ~type-kw [~'d ~'raw-key#]
+               `(defmethod genmlx.dist.core/dist-sample* ~type-kw [~'d ~'raw-key#]
                   (let [~@params-let
                         ~key-sym (genmlx.mlx.random/ensure-key ~'raw-key#)]
                     ~@sample-body))))
@@ -135,7 +135,7 @@
                                   params)]
                     ~ctor-body))))
 
-          (defmethod genmlx.dist.core/dist-sample ~type-kw [~'d ~'raw-key#]
+          (defmethod genmlx.dist.core/dist-sample* ~type-kw [~'d ~'raw-key#]
             (let [params# (:params ~'d)
                   base-d# (apply (:base-dist-fn params#)
                                   (mapv #(get params# %) ~(mapv keyword (map name params))))

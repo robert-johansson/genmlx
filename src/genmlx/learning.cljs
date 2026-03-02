@@ -4,7 +4,8 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.protocols :as p]
-            [genmlx.choicemap :as cm]))
+            [genmlx.choicemap :as cm]
+            [genmlx.dynamic :as dyn]))
 
 ;; ---------------------------------------------------------------------------
 ;; Parameter Store
@@ -140,12 +141,12 @@
   "Simulate a generative function with a param store bound.
    Parameters declared via param inside the model will read from the store."
   [model args param-store]
-  (p/simulate (vary-meta model assoc :genmlx.dynamic/param-store param-store) args))
+  (p/simulate (vary-meta (dyn/auto-key model) assoc :genmlx.dynamic/param-store param-store) args))
 
 (defn generate-with-params
   "Generate from a generative function with a param store bound."
   [model args constraints param-store]
-  (p/generate (vary-meta model assoc :genmlx.dynamic/param-store param-store) args constraints))
+  (p/generate (vary-meta (dyn/auto-key model) assoc :genmlx.dynamic/param-store param-store) args constraints))
 
 (defn make-param-loss-fn
   "Create a loss-gradient function for training model parameters.
@@ -157,7 +158,8 @@
    Returns (fn [params-array key] -> {:loss :grad})
    where params-array is a flat MLX array matching param-names-vec."
   [model args observations param-names-vec]
-  (fn [params-array key]
+  (let [model (dyn/auto-key model)]
+    (fn [params-array key]
     (let [loss-fn (fn [p]
                     (let [store {:params (into {}
                                           (map-indexed
@@ -170,7 +172,7 @@
           grad-fn (mx/grad loss-fn)
           loss (loss-fn params-array)
           grad (grad-fn params-array)]
-      {:loss loss :grad grad})))
+      {:loss loss :grad grad}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Wake-Sleep Learning
@@ -186,29 +188,30 @@
 
    Returns (fn [guide-params key] -> {:loss :grad})"
   [model guide args observations guide-addresses]
-  (fn [guide-params key]
-    (let [indexed-addrs (mapv vector (range) guide-addresses)
-          [k1 k2] (rng/split (rng/ensure-key key))
-          loss-fn (fn [params]
-                    (let [;; Build guide choicemap from params
-                          guide-cm (reduce
-                                     (fn [cm [i addr]]
-                                       (cm/set-choice cm [addr] (mx/index params i)))
-                                     cm/EMPTY indexed-addrs)
-                          ;; Sample from guide
-                          {:keys [trace weight]}
-                          (p/generate (vary-meta guide assoc :genmlx.dynamic/key k1) args guide-cm)
-                          ;; Score under model with guide's choices + observations
-                          guide-weight weight
-                          model-cm (cm/merge-cm (:choices trace) observations)
-                          {:keys [weight]}
-                          (p/generate (vary-meta model assoc :genmlx.dynamic/key k2) args model-cm)]
+  (let [model (dyn/auto-key model)]
+    (fn [guide-params key]
+      (let [indexed-addrs (mapv vector (range) guide-addresses)
+            [k1 k2] (rng/split (rng/ensure-key key))
+            loss-fn (fn [params]
+                      (let [;; Build guide choicemap from params
+                            guide-cm (reduce
+                                       (fn [cm [i addr]]
+                                         (cm/set-choice cm [addr] (mx/index params i)))
+                                       cm/EMPTY indexed-addrs)
+                            ;; Sample from guide
+                            {:keys [trace weight]}
+                            (p/generate (vary-meta guide assoc :genmlx.dynamic/key k1) args guide-cm)
+                            ;; Score under model with guide's choices + observations
+                            guide-weight weight
+                            model-cm (cm/merge-cm (:choices trace) observations)
+                            {:keys [weight]}
+                            (p/generate (vary-meta model assoc :genmlx.dynamic/key k2) args model-cm)]
                       ;; Negative ELBO: -(log p(x,z) - log q(z|x))
                       (mx/negative (mx/subtract weight guide-weight))))
           grad-fn (mx/grad loss-fn)
           loss (loss-fn guide-params)
           grad (grad-fn guide-params)]
-      {:loss loss :grad grad})))
+      {:loss loss :grad grad}))))
 
 (defn sleep-phase-loss
   "Sleep phase: minimize KL(p||q) by optimizing guide to match model's prior.
@@ -219,11 +222,12 @@
 
    Returns (fn [guide-params key] -> {:loss :grad})"
   [model guide args guide-addresses]
-  (fn [guide-params key]
-    (let [indexed-addrs (mapv vector (range) guide-addresses)
-          [k1 k2] (rng/split (rng/ensure-key key))
-          ;; Sample from model prior (simulate)
-          model-trace (p/simulate (vary-meta model assoc :genmlx.dynamic/key k1) args)
+  (let [model (dyn/auto-key model)]
+    (fn [guide-params key]
+      (let [indexed-addrs (mapv vector (range) guide-addresses)
+            [k1 k2] (rng/split (rng/ensure-key key))
+            ;; Sample from model prior (simulate)
+            model-trace (p/simulate (vary-meta model assoc :genmlx.dynamic/key k1) args)
           model-choices (:choices model-trace)
           ;; Score guide on model's choices
           loss-fn (fn [params]
@@ -239,7 +243,7 @@
           grad-fn (mx/grad loss-fn)
           loss (loss-fn guide-params)
           grad (grad-fn guide-params)]
-      {:loss loss :grad grad})))
+      {:loss loss :grad grad}))))
 
 (defn- discover-guide-addresses
   "Simulate the guide once to discover all trace addresses."
@@ -270,7 +274,8 @@
   [{:keys [iterations wake-steps sleep-steps lr callback key]
     :or {iterations 1000 wake-steps 1 sleep-steps 1 lr 0.001}}
    model guide args observations guide-addresses init-guide-params]
-  (let [;; Auto-discover guide addresses if not provided
+  (let [model (dyn/auto-key model)
+        ;; Auto-discover guide addresses if not provided
         guide-addresses (or guide-addresses
                             (discover-guide-addresses guide args))
         init-guide-params (or init-guide-params

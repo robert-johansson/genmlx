@@ -49,10 +49,10 @@
 ;; Generating with ALL choices from a simulate trace should give weight == score
 (println "\n-- 1.1 Simulate/Generate consistency --")
 
-(let [model (gen []
+(let [model (dyn/auto-key (gen []
               (let [x (trace :x (dist/gaussian 0 1))
                     y (trace :y (dist/gaussian 0 1))]
-                [x y]))
+                [x y])))
       trace (p/simulate model [])
       choices (:choices trace)
       score (ev (:score trace))
@@ -66,13 +66,13 @@
          (approx= gen-score score 1e-5)))
 
 ;; With a more complex model
-(let [model (gen [n]
+(let [model (dyn/auto-key (gen [n]
               (let [mu (trace :mu (dist/gaussian 0 10))]
                 (mx/eval! mu)
                 (let [m (mx/item mu)]
                   (doseq [i (range n)]
                     (trace (keyword (str "y" i)) (dist/gaussian m 1)))
-                  m)))
+                  m))))
       trace (p/simulate model [5])
       choices (:choices trace)
       score (ev (:score trace))
@@ -84,7 +84,7 @@
 ;; -- 1.2: Generate with empty constraints == simulate (weight ≈ 0) --
 (println "\n-- 1.2 Generate with empty constraints --")
 
-(let [model (gen [] (trace :x (dist/gaussian 0 1)))
+(let [model (dyn/auto-key (gen [] (trace :x (dist/gaussian 0 1))))
       {:keys [weight]} (p/generate model [] cm/EMPTY)
       w (ev weight)]
   (check "empty constraints: weight ≈ 0" (approx= w 0.0 1e-10)))
@@ -93,7 +93,7 @@
 ;; For update: weight = new_trace.score - old_trace.score (for fully changed choices)
 (println "\n-- 1.3 Update weight invariant --")
 
-(let [model (gen [] (trace :x (dist/gaussian 0 1)))
+(let [model (dyn/auto-key (gen [] (trace :x (dist/gaussian 0 1))))
       trace (p/simulate model [])
       old-score (ev (:score trace))
       new-val (mx/scalar 2.5)
@@ -105,10 +105,10 @@
          (approx= w (- new-score old-score) 1e-5)))
 
 ;; Multi-address update
-(let [model (gen []
+(let [model (dyn/auto-key (gen []
               (let [x (trace :x (dist/gaussian 0 1))
                     y (trace :y (dist/gaussian 0 1))]
-                [x y]))
+                [x y])))
       trace (p/simulate model [])
       old-score (ev (:score trace))
       constraints (cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar 2.0))
@@ -119,7 +119,7 @@
          (approx= w (- new-score old-score) 1e-5)))
 
 ;; Update with same value → weight ≈ 0
-(let [model (gen [] (trace :x (dist/gaussian 0 1)))
+(let [model (dyn/auto-key (gen [] (trace :x (dist/gaussian 0 1))))
       trace (p/simulate model [])
       old-val (cm/get-value (cm/get-submap (:choices trace) :x))
       constraints (cm/choicemap :x old-val)
@@ -131,10 +131,10 @@
 (println "\n-- 1.4 Regenerate invariants --")
 
 ;; Regenerate with no selection → weight ≈ 0, choices unchanged
-(let [model (gen []
+(let [model (dyn/auto-key (gen []
               (let [x (trace :x (dist/gaussian 0 1))
                     y (trace :y (dist/gaussian 0 1))]
-                [x y]))
+                [x y])))
       trace (p/simulate model [])
       old-x (ev (cm/get-value (cm/get-submap (:choices trace) :x)))
       {:keys [trace weight]} (p/regenerate model trace sel/none)
@@ -144,10 +144,10 @@
   (check "regenerate none: choices unchanged" (approx= old-x new-x 1e-10)))
 
 ;; Regenerate selected: unselected addresses preserved
-(let [model (gen []
+(let [model (dyn/auto-key (gen []
               (let [x (trace :x (dist/gaussian 0 1))
                     y (trace :y (dist/gaussian 0 1))]
-                [x y]))
+                [x y])))
       trace (p/simulate model [])
       old-y (ev (cm/get-value (cm/get-submap (:choices trace) :y)))
       {:keys [trace]} (p/regenerate model trace (sel/select :x))
@@ -172,10 +172,10 @@
 (println "\n-- 1.6 Nested addressing --")
 
 (let [inner (gen [] (trace :z (dist/gaussian 0 1)))
-      outer (gen []
+      outer (dyn/auto-key (gen []
               (let [x (trace :x (dist/gaussian 0 10))]
                 (splice :inner inner)
-                x))
+                x)))
       trace (p/simulate outer [])
       choices (:choices trace)]
   (check "nested: top-level :x exists"
@@ -186,7 +186,7 @@
 ;; -- 1.7: Deterministic computation (no random choices) --
 (println "\n-- 1.7 Deterministic computation --")
 
-(let [model (gen [x] (* x x))
+(let [model (dyn/auto-key (gen [x] (* x x)))
       trace (p/simulate model [5])
       score (ev (:score trace))]
   (check "deterministic: retval = 25" (= (:retval trace) 25))
@@ -326,13 +326,13 @@
 (println "\n-- 2.5 Acceptance rate validation --")
 
 (let [;; Model with observations that create likelihood tension
-      model (gen []
+      model (dyn/auto-key (gen []
               (let [mu (trace :mu (dist/gaussian 0 10))]
                 (mx/eval! mu)
                 (let [m (mx/item mu)]
                   (trace :y0 (dist/gaussian m 1))
                   (trace :y1 (dist/gaussian m 1))
-                  m)))
+                  m))))
       obs (cm/choicemap :y0 (mx/scalar 3.0) :y1 (mx/scalar 3.5))
       {:keys [trace]} (p/generate model [] obs)
       ;; Run MH and count acceptances
@@ -527,7 +527,7 @@
 (println "\n-- 5.1 Map combinator GFI --")
 
 (let [kernel (gen [x] (trace :y (dist/gaussian x 1)))
-      mapped (comb/map-combinator kernel)
+      mapped (comb/map-combinator (dyn/auto-key kernel))
       ;; Simulate
       trace (p/simulate mapped [[1.0 2.0 3.0]])
       retvals (:retval trace)
@@ -564,7 +564,7 @@
              (let [noise (trace :noise (dist/gaussian 0 0.1))]
                (mx/eval! noise)
                (+ state (mx/item noise))))
-      unfolded (comb/unfold-combinator step)
+      unfolded (comb/unfold-combinator (dyn/auto-key step))
       trace (p/simulate unfolded [5 0.0])
       states (:retval trace)
       score (ev (:score trace))]
@@ -583,7 +583,7 @@
 
 (let [branch-a (gen [] (trace :v (dist/gaussian 0 1)))
       branch-b (gen [] (trace :v (dist/gaussian 10 1)))
-      switched (comb/switch-combinator branch-a branch-b)]
+      switched (comb/switch-combinator (dyn/auto-key branch-a) (dyn/auto-key branch-b))]
   ;; Branch 0
   (let [trace (p/simulate switched [0])
         v (ev (cm/get-value (cm/get-submap (:choices trace) :v)))
@@ -618,8 +618,8 @@
 ;; -- 6.2: Gradient through model score function --
 (println "\n-- 6.2 Gradient through model score --")
 
-(let [model (gen []
-              (trace :x (dist/gaussian 0 1)))
+(let [model (dyn/auto-key (gen []
+              (trace :x (dist/gaussian 0 1))))
       score-fn (fn [x-val]
                  (:weight (p/generate model []
                             (cm/choicemap :x x-val))))
@@ -646,10 +646,10 @@
 ;; -- 6.4: Gradient of multi-address score --
 (println "\n-- 6.4 Multi-address score gradient --")
 
-(let [model (gen []
+(let [model (dyn/auto-key (gen []
               (let [x (trace :x (dist/gaussian 0 1))
                     y (trace :y (dist/gaussian 0 1))]
-                [x y]))
+                [x y])))
       score-fn (fn [params]
                  (let [cm (cm/choicemap :x (mx/index params 0)
                                         :y (mx/index params 1))]
@@ -793,13 +793,13 @@
 (println "\n-- 8.3 Large model --")
 
 (let [n 10
-      model (gen [n]
+      model (dyn/auto-key (gen [n]
               (let [mu (trace :mu (dist/gaussian 0 10))]
                 (mx/eval! mu)
                 (let [m (mx/item mu)]
                   (doseq [i (range n)]
                     (trace (keyword (str "y" i)) (dist/gaussian m 1)))
-                  m)))
+                  m))))
       trace (p/simulate model [n])
       score (ev (:score trace))]
   (check (str "10-obs model: score finite (" (.toFixed score 1) ")")
@@ -834,7 +834,7 @@
 ;; -- 9.1: Simulate → Generate round-trip for hierarchical model --
 (println "\n-- 9.1 Hierarchical model round-trip --")
 
-(let [model (gen [xs]
+(let [model (dyn/auto-key (gen [xs]
               (let [slope (trace :slope (dist/gaussian 0 10))
                     intercept (trace :intercept (dist/gaussian 0 10))]
                 (mx/eval! slope intercept)
@@ -842,7 +842,7 @@
                   (doseq [[j x] (map-indexed vector xs)]
                     (trace (keyword (str "y" j))
                                (dist/gaussian (+ (* s x) i) 1)))
-                  [s i])))
+                  [s i]))))
       xs [1.0 2.0 3.0]
       trace (p/simulate model [xs])
       choices (:choices trace)
@@ -855,10 +855,10 @@
 ;; -- 9.2: Update preserves score when no change --
 (println "\n-- 9.2 Update with no-op --")
 
-(let [model (gen []
+(let [model (dyn/auto-key (gen []
               (let [x (trace :x (dist/gaussian 0 1))
                     y (trace :y (dist/gaussian 0 1))]
-                [x y]))
+                [x y])))
       trace (p/simulate model [])
       old-score (ev (:score trace))
       ;; Update with same values
@@ -876,7 +876,7 @@
 ;; generating directly with those new values
 (println "\n-- 9.3 Generate/Update consistency --")
 
-(let [model (gen [] (trace :x (dist/gaussian 0 1)))
+(let [model (dyn/auto-key (gen [] (trace :x (dist/gaussian 0 1))))
       val-a (mx/scalar 1.0)
       val-b (mx/scalar 3.0)
       ;; Path 1: generate with val-a, then update to val-b

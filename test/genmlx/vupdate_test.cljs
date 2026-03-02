@@ -129,8 +129,8 @@
       obs2 (cm/choicemap :y (mx/scalar 3.0))
       ;; Sequential: generate n traces, then update each
       seq-weights (mapv (fn [_]
-                          (let [{:keys [trace]} (p/generate model [] obs1)
-                                {:keys [weight]} (p/update model trace obs2)]
+                          (let [{:keys [trace]} (p/generate (dyn/auto-key model) [] obs1)
+                                {:keys [weight]} (p/update (dyn/auto-key model) trace obs2)]
                             (mx/realize weight)))
                         (range n-test))
       seq-mean-w (/ (reduce + seq-weights) n-test)

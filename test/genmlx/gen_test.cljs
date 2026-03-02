@@ -25,10 +25,10 @@
 
 ;; Test basic gen macro
 (println "-- basic gen --")
-(let [model (gen []
+(let [model (dyn/auto-key (gen []
               (let [x (trace :x (dist/gaussian 0 1))]
                 (mx/eval! x)
-                (mx/item x)))
+                (mx/item x))))
       trace (p/simulate model [])]
   (assert-true "gen creates DynamicGF" (instance? dyn/DynamicGF model))
   (assert-true "simulate returns trace" (instance? tr/Trace trace))
@@ -37,20 +37,20 @@
 
 ;; Test gen with args
 (println "\n-- gen with args --")
-(let [model (gen [mu]
+(let [model (dyn/auto-key (gen [mu]
               (let [x (trace :x (dist/gaussian mu 1))]
                 (mx/eval! x)
-                (mx/item x)))
+                (mx/item x))))
       trace (p/simulate model [5.0])]
   (assert-true "gen with args returns trace" (instance? tr/Trace trace))
   (assert-true "args stored in trace" (= [5.0] (:args trace))))
 
 ;; Test generate with constraints
 (println "\n-- generate with constraints --")
-(let [model (gen []
+(let [model (dyn/auto-key (gen []
               (let [x (trace :x (dist/gaussian 0 1))]
                 (mx/eval! x)
-                (mx/item x)))
+                (mx/item x))))
       constraints (cm/choicemap :x (mx/scalar 2.0))
       {:keys [trace weight]} (p/generate model [] constraints)]
   (let [x-val (cm/get-value (cm/get-submap (:choices trace) :x))]
@@ -61,11 +61,11 @@
 
 ;; Test update
 (println "\n-- update --")
-(let [model (gen []
+(let [model (dyn/auto-key (gen []
               (let [x (trace :x (dist/gaussian 0 1))
                     y (trace :y (dist/gaussian 0 1))]
                 (mx/eval! x y)
-                (+ (mx/item x) (mx/item y))))
+                (+ (mx/item x) (mx/item y)))))
       trace (p/simulate model [])
       new-constraints (cm/choicemap :x (mx/scalar 3.0))
       {:keys [trace weight discard]} (p/update model trace new-constraints)]
@@ -78,11 +78,11 @@
 
 ;; Test regenerate
 (println "\n-- regenerate --")
-(let [model (gen []
+(let [model (dyn/auto-key (gen []
               (let [x (trace :x (dist/gaussian 0 1))
                     y (trace :y (dist/gaussian 0 1))]
                 (mx/eval! x y)
-                (+ (mx/item x) (mx/item y))))
+                (+ (mx/item x) (mx/item y)))))
       trace (p/simulate model [])
       old-y (let [v (cm/get-value (cm/get-submap (:choices trace) :y))]
               (mx/eval! v) (mx/item v))

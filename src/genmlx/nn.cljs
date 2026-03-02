@@ -108,8 +108,3 @@
     :sgd   (new (.-SGD mx/optim-mod) lr)
     :adamw (new (.-AdamW mx/optim-mod) lr)))
 
-(def step!
-  "One training step: compute loss+grads, update module parameters.
-   Returns the loss value (JS number).
-   Delegates to mx/training-step! (Layer 0)."
-  mx/training-step!)

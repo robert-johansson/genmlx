@@ -45,11 +45,11 @@
                     y (trace :y (dist/gaussian 0 1))]
                 (mx/eval! x y)
                 (+ (mx/item x) (mx/item y))))
-      trace (p/simulate model [])
+      trace (p/simulate (dyn/auto-key model) [])
       constraints (cm/choicemap :x (mx/scalar 3.0))
       ;; Compare edit vs direct update
-      update-result (p/update model trace constraints)
-      edit-result (edit/edit-dispatch model trace (edit/constraint-edit constraints))]
+      update-result (p/update (dyn/auto-key model) trace constraints)
+      edit-result (edit/edit-dispatch (dyn/auto-key model) trace (edit/constraint-edit constraints))]
   (mx/eval! (:weight update-result) (:weight edit-result))
   (assert-close "constraint-edit weight == update weight"
     (mx/item (:weight update-result))
@@ -62,9 +62,9 @@
 (let [model (gen []
               (let [x (trace :x (dist/gaussian 0 1))]
                 (mx/eval! x) (mx/item x)))
-      trace (p/simulate model [])
+      trace (p/simulate (dyn/auto-key model) [])
       sel (sel/select :x)
-      edit-result (edit/edit-dispatch model trace (edit/selection-edit sel))]
+      edit-result (edit/edit-dispatch (dyn/auto-key model) trace (edit/selection-edit sel))]
   (mx/eval! (:weight edit-result))
   (assert-true "selection-edit weight is finite" (js/isFinite (mx/item (:weight edit-result))))
   (assert-true "backward request is SelectionEdit"
@@ -79,7 +79,7 @@
       step-fn (gen [carry input]
                 (let [noise (trace :noise (dist/delta 0.0))]
                   [(+ carry input) (+ carry input)]))
-      scan (comb/scan-combinator step-fn)
+      scan (comb/scan-combinator (dyn/auto-key step-fn))
       trace (p/simulate scan [0.0 [1.0 2.0 3.0]])
       retval (:retval trace)]
   ;; carry should be 0+1+2+3 = 6
@@ -95,7 +95,7 @@
                   (mx/eval! noise)
                   (let [new-carry (+ carry (mx/item noise) input)]
                     [new-carry new-carry])))
-      scan (comb/scan-combinator step-fn)
+      scan (comb/scan-combinator (dyn/auto-key step-fn))
       ;; Constrain noise at step 1 to 0.0
       constraints (cm/set-choice cm/EMPTY [1] (cm/choicemap :noise (mx/scalar 0.0)))
       {:keys [trace weight]} (p/generate scan [0.0 [1.0 2.0 3.0]] constraints)]
@@ -116,7 +116,7 @@
               (let [y (trace :y (dist/gaussian x 0.01))]
                 (mx/eval! y) (mx/item y)))
       ;; Contramap doubles the argument
-      doubled (comb/contramap-gf model (fn [args] [(* 2 (first args))]))
+      doubled (comb/contramap-gf (dyn/auto-key model) (fn [args] [(* 2 (first args))]))
       trace (p/simulate doubled [5.0])]
   ;; retval should be near 10 (2*5), not near 5
   (assert-true "contramap: retval near 10" (< (js/Math.abs (- (:retval trace) 10)) 0.5))
@@ -126,7 +126,7 @@
 (let [model (gen []
               (let [x (trace :x (dist/delta 3.0))]
                 (mx/eval! x) (mx/item x)))
-      squared (comb/map-retval model #(* % %))
+      squared (comb/map-retval (dyn/auto-key model) #(* % %))
       trace (p/simulate squared [])]
   (assert-close "map-retval: 3^2=9" 9.0 (:retval trace) 1e-5))
 
@@ -168,7 +168,7 @@
                               (cm/set-choice cm [(keyword (str "obs" i))]
                                              (mx/scalar 3.0)))
                             cm/EMPTY (range 5))
-      {:keys [trace]} (p/generate model [] observations)
+      {:keys [trace]} (p/generate (dyn/auto-key model) [] observations)
       k (kern/repeat-kernel 3 (kern/mh-kernel (sel/select :mu)))
       traces (kern/run-kernel {:samples 100 :burn 50} k trace)
       ;; Extract posterior mu samples
@@ -194,7 +194,7 @@
                 (trace :obs (dist/gaussian (mx/item x) 0.5))
                 (mx/item x)))
       observations [(cm/choicemap :obs (mx/scalar 3.0))]
-      {:keys [trace]} (p/generate model [] (first observations))
+      {:keys [trace]} (p/generate (dyn/auto-key model) [] (first observations))
       result (smc/csmc {:particles 20} model [] observations trace)]
   (assert-true "csmc: 20 traces" (= 20 (count (:traces result))))
   (mx/eval! (:log-ml-estimate result))
@@ -229,7 +229,7 @@
 (println "\n-- Mix combinator: components activated --")
 (let [c0 (gen [] (let [x (trace :x (dist/delta -10.0))] (mx/eval! x) (mx/item x)))
       c1 (gen [] (let [x (trace :x (dist/delta 10.0))] (mx/eval! x) (mx/item x)))
-      mix (comb/mix-combinator [c0 c1]
+      mix (comb/mix-combinator [(dyn/auto-key c0) (dyn/auto-key c1)]
             (mx/array [(js/Math.log 0.5) (js/Math.log 0.5)]))
       ;; Sample many times, should get both -10 and 10
       retvals (mapv (fn [_] (:retval (p/simulate mix []))) (range 50))
@@ -247,7 +247,7 @@
               (trace :obs (dist/gaussian mu 1)))
       ;; If mu=0 and obs=5, gradient of log p w.r.t. mu should be positive
       ;; (increasing mu increases log-prob)
-      trace (let [{:keys [trace]} (p/generate model [0]
+      trace (let [{:keys [trace]} (p/generate (dyn/auto-key model) [0]
                     (cm/choicemap :obs (mx/scalar 5.0)))]
               trace)
       ;; Use the score-gradient utility

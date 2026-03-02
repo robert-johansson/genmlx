@@ -18,11 +18,27 @@
 ;; Open multimethods — dispatch on (:type dist)
 ;; ---------------------------------------------------------------------------
 
-(defmulti dist-sample   (fn [d _key] (:type d)))
-(defmulti dist-log-prob (fn [d _value] (:type d)))
-(defmulti dist-reparam  (fn [d _key] (:type d)))
+;; Internal multimethods — distributions implement these
+(defmulti dist-sample*   (fn [d _key] (:type d)))
+(defmulti dist-log-prob  (fn [d _value] (:type d)))
+(defmulti dist-reparam   (fn [d _key] (:type d)))
 (defmulti dist-support   (fn [d] (:type d)))
-(defmulti dist-sample-n  (fn [d _key _n] (:type d)))
+(defmulti dist-sample-n* (fn [d _key _n] (:type d)))
+
+;; Public API — single place for the seed! side effect
+(defn dist-sample
+  "Sample from distribution d using PRNG key. Calls rng/seed! then dispatches."
+  [d key]
+  (let [key (rng/ensure-key key)]
+    (rng/seed! key)
+    (dist-sample* d key)))
+
+(defn dist-sample-n
+  "Batch-sample n values from distribution d using PRNG key. Calls rng/seed! then dispatches."
+  [d key n]
+  (let [key (rng/ensure-key key)]
+    (rng/seed! key)
+    (dist-sample-n* d key n)))
 
 ;; Defaults: helpful errors
 (defmethod dist-reparam :default [d _]
@@ -33,8 +49,9 @@
   (throw (ex-info (str "Distribution " (:type d) " is not enumerable")
                   {:type (:type d)})))
 
-;; Default dist-sample-n: sequential fallback for distributions that can't batch
-(defmethod dist-sample-n :default [d key n]
+;; Default dist-sample-n*: sequential fallback for distributions that can't batch.
+;; Calls dist-sample (public wrapper) which handles seed! per-call.
+(defmethod dist-sample-n* :default [d key n]
   (let [keys (rng/split-n (rng/ensure-key key) n)]
     (mx/stack (mapv #(dist-sample d %) keys))))
 
@@ -44,7 +61,6 @@
 
 (defn dist-simulate [dist]
   (let [key (or (:genmlx.dynamic/key (meta dist)) (rng/fresh-key))
-        _ (rng/seed! key)
         v  (dist-sample dist key)
         lp (dist-log-prob dist v)]
     (tr/make-trace {:gen-fn dist :args [] :choices (cm/->Value v)
@@ -65,7 +81,6 @@
 
 (defn dist-propose [dist]
   (let [key (or (:genmlx.dynamic/key (meta dist)) (rng/fresh-key))
-        _ (rng/seed! key)
         v  (dist-sample dist key)
         lp (dist-log-prob dist v)]
     {:choices (cm/->Value v) :weight lp :retval v}))
@@ -121,14 +136,14 @@
      :sample-n  - (fn [key n] -> MLX-array) batch sampling"
   [{:keys [type sample log-prob reparam support sample-n]}]
   (let [type-kw (or type (keyword (gensym "custom-dist")))]
-    (defmethod dist-sample type-kw [_ key] (sample key))
+    (defmethod dist-sample* type-kw [_ key] (sample key))
     (defmethod dist-log-prob type-kw [_ value] (log-prob value))
     (when reparam
       (defmethod dist-reparam type-kw [_ key] (reparam key)))
     (when support
       (defmethod dist-support type-kw [_] (support)))
     (when sample-n
-      (defmethod dist-sample-n type-kw [_ key n] (sample-n key n)))
+      (defmethod dist-sample-n* type-kw [_ key n] (sample-n key n)))
     (->Distribution type-kw {})))
 
 ;; ---------------------------------------------------------------------------
@@ -143,7 +158,7 @@
   (let [log-w (if (mx/array? log-weights) log-weights (mx/array log-weights))]
     (->Distribution :mixture {:components components :log-weights log-w})))
 
-(defmethod dist-sample :mixture [d key]
+(defmethod dist-sample* :mixture [d key]
   (let [{:keys [components log-weights]} (:params d)
         key (rng/ensure-key key)
         [k1 k2] (rng/split key)

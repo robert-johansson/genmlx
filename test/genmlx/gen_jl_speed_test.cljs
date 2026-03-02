@@ -85,54 +85,60 @@
 
 ;; Model 1: Single Gaussian (1 site)
 (def single-gaussian
-  (gen []
-    (trace :x (dist/gaussian 0 1))))
+  (dyn/auto-key
+    (gen []
+      (trace :x (dist/gaussian 0 1)))))
 
 ;; Model 2: Linear Regression (5 obs + 2 latents = 7 sites)
 (def linear-regression
-  (gen [xs]
-    (let [slope     (trace :slope (dist/gaussian 0 10))
-          intercept (trace :intercept (dist/gaussian 0 10))]
-      (doseq [[j x] (map-indexed vector xs)]
-        (trace (keyword (str "y" j))
-                   (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
-                                          intercept) 1)))
-      slope)))
+  (dyn/auto-key
+    (gen [xs]
+      (let [slope     (trace :slope (dist/gaussian 0 10))
+            intercept (trace :intercept (dist/gaussian 0 10))]
+        (doseq [[j x] (map-indexed vector xs)]
+          (trace (keyword (str "y" j))
+                     (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                            intercept) 1)))
+        slope))))
 
 (def linreg-xs [1.0 2.0 3.0 4.0 5.0])
 
 ;; Model 3: Mixed discrete/continuous (2 sites)
 (def mixed-model
-  (gen []
-    (let [coin (trace :coin (dist/bernoulli 0.5))
-          _ (mx/eval! coin)
-          coin-val (mx/item coin)]
-      (if (> coin-val 0.5)
-        (trace :x (dist/gaussian 10 1))
-        (trace :x (dist/gaussian 0 1))))))
+  (dyn/auto-key
+    (gen []
+      (let [coin (trace :coin (dist/bernoulli 0.5))
+            _ (mx/eval! coin)
+            coin-val (mx/item coin)]
+        (if (> coin-val 0.5)
+          (trace :x (dist/gaussian 10 1))
+          (trace :x (dist/gaussian 0 1)))))))
 
 ;; Model 4: Map combinator (3 elements)
 (def map-kernel
-  (gen [x]
-    (trace :y (dist/gaussian (mx/scalar x) 1))))
+  (dyn/auto-key
+    (gen [x]
+      (trace :y (dist/gaussian (mx/scalar x) 1)))))
 
 (def map-model (comb/map-combinator map-kernel))
 
 ;; Model 5: Unfold combinator (3 steps)
 (def unfold-kernel
-  (gen [t state]
-    (trace :x (dist/gaussian state 1))))
+  (dyn/auto-key
+    (gen [t state]
+      (trace :x (dist/gaussian state 1)))))
 
 (def unfold-model (comb/unfold-combinator unfold-kernel))
 
 ;; Model 6: Many addresses (11 sites)
 (def many-addresses
-  (gen []
-    (let [mu (trace :mu (dist/gaussian 0 10))]
-      (doseq [i (range 10)]
-        (trace (keyword (str "y" i))
-                   (dist/gaussian mu 1)))
-      mu)))
+  (dyn/auto-key
+    (gen []
+      (let [mu (trace :mu (dist/gaussian 0 10))]
+        (doseq [i (range 10)]
+          (trace (keyword (str "y" i))
+                     (dist/gaussian mu 1)))
+        mu))))
 
 ;; ---------------------------------------------------------------------------
 ;; Constraint builders

@@ -123,7 +123,7 @@
 (let [model (gen [mu]
               (trace :x (dist/gaussian mu 1)))
       constraints (cm/choicemap :x (mx/scalar 3.0))
-      {:keys [trace]} (p/generate model [0] constraints)
+      {:keys [trace]} (p/generate (dyn/auto-key model) [0] constraints)
       result (grad/choice-gradients model trace [:x])]
   (mx/eval! (:x result))
   (let [grad-val (mx/item (:x result))]

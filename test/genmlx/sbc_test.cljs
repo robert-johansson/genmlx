@@ -129,10 +129,10 @@
 ;; 1. Single Gaussian
 (def single-gaussian
   {:name "single-gaussian"
-   :model (gen []
+   :model (dyn/auto-key (gen []
             (let [mu (trace :mu (dist/gaussian 0 2))]
               (trace :obs (dist/gaussian mu 1))
-              mu))
+              mu)))
    :args []
    :param-addrs [:mu]
    :obs-addrs [:obs]
@@ -143,12 +143,12 @@
 ;; 2. Two independent Gaussians
 (def two-gaussians
   {:name "two-gaussians"
-   :model (gen []
+   :model (dyn/auto-key (gen []
             (let [a (trace :a (dist/gaussian 0 2))
                   b (trace :b (dist/gaussian 0 2))]
               (trace :obs-a (dist/gaussian a 1))
               (trace :obs-b (dist/gaussian b 1))
-              [a b]))
+              [a b])))
    :args []
    :param-addrs [:a :b]
    :obs-addrs [:obs-a :obs-b]
@@ -159,12 +159,12 @@
 ;; 3. Gaussian with multiple observations
 (def gaussian-multi-obs
   {:name "gaussian-multi-obs"
-   :model (gen []
+   :model (dyn/auto-key (gen []
             (let [mu (trace :mu (dist/gaussian 0 2))]
               (trace :y0 (dist/gaussian mu 1))
               (trace :y1 (dist/gaussian mu 1))
               (trace :y2 (dist/gaussian mu 1))
-              mu))
+              mu)))
    :args []
    :param-addrs [:mu]
    :obs-addrs [:y0 :y1 :y2]
@@ -175,12 +175,12 @@
 ;; 4. Exponential prior (mx/eval! in body — standard MH for positivity)
 (def exponential-spec
   {:name "exponential"
-   :model (gen []
+   :model (dyn/auto-key (gen []
             (let [rate (trace :rate (dist/gamma-dist (mx/scalar 2) (mx/scalar 1)))]
               (mx/eval! rate)
               (let [rate-val (mx/item rate)]
                 (trace :obs (dist/exponential (mx/scalar rate-val)))
-                rate-val)))
+                rate-val))))
    :args []
    :param-addrs [:rate]
    :obs-addrs [:obs]
@@ -190,13 +190,13 @@
 ;; 5. Coin flip (mx/item in body — standard MH for bounded support)
 (def coin-flip
   {:name "coin-flip"
-   :model (gen []
+   :model (dyn/auto-key (gen []
             (let [p-val (trace :p (dist/uniform 0.01 0.99))]
               (mx/eval! p-val)
               (let [p-num (mx/item p-val)]
                 (doseq [i (range 5)]
                   (trace (keyword (str "flip" i)) (dist/bernoulli p-num)))
-                p-num)))
+                p-num))))
    :args []
    :param-addrs [:p]
    :obs-addrs [:flip0 :flip1 :flip2 :flip3 :flip4]
@@ -206,14 +206,14 @@
 ;; 6. Linear regression (HMC only — correlated params)
 (def linear-regression
   {:name "linear-regression"
-   :model (gen [xs]
+   :model (dyn/auto-key (gen [xs]
             (let [slope     (trace :slope (dist/gaussian 0 2))
                   intercept (trace :intercept (dist/gaussian 0 2))]
               (doseq [[j x] (map-indexed vector xs)]
                 (trace (keyword (str "y" j))
                            (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                                   intercept) 1)))
-              [slope intercept]))
+              [slope intercept])))
    :args [[(mx/scalar 0.0) (mx/scalar 1.0) (mx/scalar 2.0)]]
    :param-addrs [:slope :intercept]
    :obs-addrs [:y0 :y1 :y2]
@@ -223,11 +223,11 @@
 ;; 7. Hierarchical model (HMC only — correlated params)
 (def hierarchical
   {:name "hierarchical"
-   :model (gen []
+   :model (dyn/auto-key (gen []
             (let [mu (trace :mu (dist/gaussian 0 2))
                   x  (trace :x (dist/gaussian mu 1))]
               (trace :obs (dist/gaussian x 1))
-              x))
+              x)))
    :args []
    :param-addrs [:x]
    :obs-addrs [:obs]

@@ -28,14 +28,15 @@
 ;; Shared model: x ~ N(0, 10), obs_i ~ N(x, 1) for i=0..4, all obs=3.0
 ;; Posterior: x ~ N(3, ~0.45)
 (def model
-  (gen []
-    (let [mu (trace :mu (dist/gaussian 0 10))]
-      (mx/eval! mu)
-      (let [mu-val (mx/item mu)]
-        (doseq [i (range 5)]
-          (trace (keyword (str "obs" i))
-                     (dist/gaussian mu-val 1)))
-        mu-val))))
+  (dyn/auto-key
+    (gen []
+      (let [mu (trace :mu (dist/gaussian 0 10))]
+        (mx/eval! mu)
+        (let [mu-val (mx/item mu)]
+          (doseq [i (range 5)]
+            (trace (keyword (str "obs" i))
+                       (dist/gaussian mu-val 1)))
+          mu-val)))))
 
 (def observations
   (reduce (fn [cm i]

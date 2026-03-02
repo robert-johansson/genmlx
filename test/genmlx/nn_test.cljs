@@ -164,10 +164,10 @@
 
 (let [net (nn/linear 3 1)
       net-gf (nn/nn->gen-fn net)
-      model (gen [x]
+      model (dyn/auto-key (gen [x]
               (let [mu (splice :net net-gf x)]
                 (trace :y (dist/gaussian mu 1))
-                mu))
+                mu)))
       x (rng/normal (rng/fresh-key) [3])
       ;; Compute expected output
       expected (.forward net x)
@@ -230,7 +230,7 @@
   ;; Train for 200 steps
   (dotimes [_ 200]
     (let [x (mx/subtract (mx/multiply (rng/uniform (rng/fresh-key) [10 1]) (mx/scalar 2.0)) (mx/scalar 1.0))]
-      (nn/step! lin opt vg x)))
+      (mx/training-step! lin opt vg x)))
 
   ;; Check final parameters
   (let [w (.-weight lin)

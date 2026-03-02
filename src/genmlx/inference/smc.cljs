@@ -168,7 +168,8 @@
     :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0
          rejuvenation-selection sel/all}}
    model args observations-seq]
-  (let [obs-vec (vec observations-seq)
+  (let [model (dyn/auto-key model)
+        obs-vec (vec observations-seq)
         n-steps (count obs-vec)]
     (loop [t 0
            traces nil
@@ -224,7 +225,8 @@
     :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0
          rejuvenation-selection sel/all}}
    model args observations-seq reference-trace]
-  (let [obs-vec (vec observations-seq)
+  (let [model (dyn/auto-key model)
+        obs-vec (vec observations-seq)
         n-steps (count obs-vec)
         ref-idx 0]  ;; reference particle is always at index 0
     (loop [t 0
@@ -348,7 +350,8 @@
     :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0
          rejuvenation-selection sel/all}}
    model args observations-seq]
-  (let [obs-vec (vec observations-seq)
+  (let [model (dyn/auto-key model)
+        obs-vec (vec observations-seq)
         n-steps (count obs-vec)
         [init-key next-key] (rng/split-or-nils key)
         ;; Step 0: batched init
@@ -400,7 +403,8 @@
 
    Returns {:vtrace VectorizedTrace :log-ml-estimate MLX-scalar}"
   [model args observations particles key]
-  (let [key (rng/ensure-key key)
+  (let [model (dyn/auto-key model)
+        key (rng/ensure-key key)
         vtrace (dyn/vgenerate model args observations particles key)
         log-ml (vec/vtrace-log-ml-estimate vtrace)]
     {:vtrace vtrace :log-ml-estimate log-ml}))

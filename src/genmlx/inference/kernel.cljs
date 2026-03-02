@@ -7,6 +7,7 @@
             [genmlx.selection :as sel]
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
+            [genmlx.dynamic :as dyn]
             [genmlx.inference.util :as u]))
 
 ;; ---------------------------------------------------------------------------
@@ -18,7 +19,7 @@
    Returns (fn [trace key] -> trace)."
   [selection]
   (fn [trace key]
-    (let [gf (:gen-fn trace)
+    (let [gf (dyn/auto-key (:gen-fn trace))
           result (p/regenerate gf trace selection)
           w (mx/realize (:weight result))]
       (if (u/accept-mh? w key)
@@ -30,7 +31,7 @@
    Returns (fn [trace key] -> trace)."
   [constraints]
   (fn [trace _key]
-    (let [gf (:gen-fn trace)
+    (let [gf (dyn/auto-key (:gen-fn trace))
           result (p/update gf trace constraints)]
       (:trace result))))
 
@@ -106,7 +107,7 @@
   [{:keys [samples burn thin callback key]
     :or {burn 0 thin 1}}
    step-fn extract-fn init-state]
-  (u/with-resource-guard
+  (mx/with-resource-guard
     (fn []
       (let [total-iters (+ burn (* samples thin))]
         (loop [i 0, state init-state, acc (transient []), n 0, n-accepted 0, rk key]
@@ -155,13 +156,14 @@
    (if (map? addr-or-map)
      (apply chain (map (fn [[a s]] (random-walk a s)) addr-or-map))
      (fn [trace key]
-       (let [[k1 k2] (rng/split (rng/ensure-key key))
+       (let [gf (dyn/auto-key (:gen-fn trace))
+             [k1 k2] (rng/split (rng/ensure-key key))
              cur-val (cm/get-choice (:choices trace) [addr-or-map])
              noise   (mx/multiply (rng/normal k1 (mx/shape cur-val))
                                   (mx/scalar std))
              proposed (mx/add cur-val noise)
              constraints (cm/choicemap addr-or-map proposed)
-             result (p/update (:gen-fn trace) trace constraints)
+             result (p/update gf trace constraints)
              w (mx/realize (:weight result))]
          (if (u/accept-mh? w k2)
            (:trace result)
@@ -187,11 +189,12 @@
   (if backward
     ;; Asymmetric: weight = update-weight + backward-score - forward-score
     (fn [trace key]
-      (let [[_k1 _k2 k3] (rng/split-n (rng/ensure-key key) 3)
+      (let [gf (dyn/auto-key (:gen-fn trace))
+            [_k1 _k2 k3] (rng/split-n (rng/ensure-key key) 3)
             fwd-result    (p/propose fwd-gf [(:choices trace)])
             fwd-choices   (:choices fwd-result)
             fwd-score     (:weight fwd-result)
-            update-result (p/update (:gen-fn trace) trace fwd-choices)
+            update-result (p/update gf trace fwd-choices)
             trace'        (:trace update-result)
             update-weight (:weight update-result)
             bwd-result    (p/assess backward [(:choices trace')] (:discard update-result))
@@ -204,10 +207,11 @@
           trace)))
     ;; Symmetric: weight = update-weight (forward and backward cancel)
     (fn [trace key]
-      (let [[_k1 k2]     (rng/split (rng/ensure-key key))
+      (let [gf (dyn/auto-key (:gen-fn trace))
+            [_k1 k2]     (rng/split (rng/ensure-key key))
             fwd-result    (p/propose fwd-gf [(:choices trace)])
             fwd-choices   (:choices fwd-result)
-            update-result (p/update (:gen-fn trace) trace fwd-choices)
+            update-result (p/update gf trace fwd-choices)
             w             (mx/realize (:weight update-result))]
         (if (u/accept-mh? w k2)
           (:trace update-result)

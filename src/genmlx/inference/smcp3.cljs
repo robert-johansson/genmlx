@@ -12,6 +12,7 @@
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.edit :as edit]
+            [genmlx.dynamic :as dyn]
             [genmlx.inference.util :as u]))
 
 
@@ -30,7 +31,9 @@
 
    Returns {:traces :log-weights :log-ml-increment}"
   [model args observations proposal-gf particles key]
-  (let [keys (rng/split-n (rng/ensure-key key) particles)
+  (let [model (dyn/auto-key model)
+        proposal-gf (when proposal-gf (dyn/auto-key proposal-gf))
+        keys (rng/split-n (rng/ensure-key key) particles)
         results (mapv
                   (fn [ki]
                     (if proposal-gf
@@ -149,7 +152,11 @@
            init-proposal rejuvenation-fn callback key]
     :or {particles 100 ess-threshold 0.5}}
    model args observations-seq]
-  (let [obs-vec (vec observations-seq)
+  (let [model (dyn/auto-key model)
+        forward-kernel (when forward-kernel (dyn/auto-key forward-kernel))
+        backward-kernel (when backward-kernel (dyn/auto-key backward-kernel))
+        init-proposal (when init-proposal (dyn/auto-key init-proposal))
+        obs-vec (vec observations-seq)
         n-steps (count obs-vec)]
     (loop [t 0
            traces nil

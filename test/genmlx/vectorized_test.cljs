@@ -198,7 +198,7 @@
       n 500
 
       ;; Sequential: N separate generate calls
-      seq-results (mapv (fn [_] (p/generate model [] cm/EMPTY)) (range n))
+      seq-results (mapv (fn [_] (p/generate (dyn/auto-key model) [] cm/EMPTY)) (range n))
       seq-scores  (mapv (fn [r] (mx/realize (:score (:trace r)))) seq-results)
       seq-mean-score (/ (reduce + seq-scores) n)
 

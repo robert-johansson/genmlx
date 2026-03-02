@@ -117,10 +117,10 @@
 (println "\n-- Unused constraint warnings --")
 
 (def simple-model
-  (gen [x]
+  (dyn/auto-key (gen [x]
     (let [slope (trace :slope (dist/gaussian 0 10))]
       (trace :obs (dist/gaussian (mx/multiply slope (mx/scalar x)) 1))
-      slope)))
+      slope))))
 
 ;; Generate with a typo constraint
 (let [warnings (with-warn-capture
@@ -154,10 +154,10 @@
 (println "\n-- Batched eval!/item warning --")
 
 (def eval-in-model
-  (gen []
+  (dyn/auto-key (gen []
     (let [x (trace :x (dist/gaussian 0 1))]
       (mx/eval! x)
-      x)))
+      x))))
 
 (let [key (rng/fresh-key)
       warnings (with-warn-capture
@@ -178,8 +178,8 @@
 (println "\n-- Regenerate nil error --")
 
 (def regen-model
-  (gen []
-    (trace :x (dist/gaussian 0 1))))
+  (dyn/auto-key (gen []
+    (trace :x (dist/gaussian 0 1)))))
 
 ;; Create a trace with empty choices, then regenerate
 ;; The model visits :x, which is NOT selected and NOT in old-choices → nil error

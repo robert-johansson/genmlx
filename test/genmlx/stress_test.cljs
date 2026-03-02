@@ -64,7 +64,7 @@
 
 ;; Clean up between tests
 (mx/clear-cache!)
-(u/force-gc!)
+(mx/force-gc!)
 
 ;; ---------------------------------------------------------------------------
 ;; §7.5 — Long inference chains (10000 MH samples on Beta model)
@@ -106,7 +106,7 @@
 
 ;; Clean up between tests
 (mx/clear-cache!)
-(u/force-gc!)
+(mx/force-gc!)
 
 ;; ---------------------------------------------------------------------------
 ;; §7.3 — SMC doesn't hit resource limit (many timesteps)
