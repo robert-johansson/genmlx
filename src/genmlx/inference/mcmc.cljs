@@ -1058,11 +1058,13 @@
     [mean' m2' n']))
 
 (defn- welford-variance
-  "Compute variance from Welford state. Returns MLX diagonal array or nil if n < 10."
+  "Compute mass matrix from Welford state. Returns MLX diagonal array or nil if n < 10.
+   Mass matrix M = 1/Var(q), so that M^{-1} = Var(q) — parameters with larger
+   posterior variance get proportionally larger position updates in leapfrog."
   [m2-vec n]
   (when (>= n 10)
-    (let [var-vec (mapv (fn [m2] (max (/ m2 (dec n)) 1e-3)) m2-vec)]
-      (mx/array var-vec))))
+    (let [inv-var-vec (mapv (fn [m2] (/ 1.0 (max (/ m2 (dec n)) 1e-3))) m2-vec)]
+      (mx/array inv-var-vec))))
 
 ;; ---------------------------------------------------------------------------
 ;; Dual averaging step-size adaptation (Hoffman & Gelman 2014, Algorithm 5)
@@ -1093,8 +1095,13 @@
         {:step-size (js/Math.exp log-eps-bar)
          :state q
          :metric (when welford (welford-variance (second welford) (nth welford 2)))}
-        (let [{:keys [state accept-stat]}
-              (step-fn q current-eps warmup-metric nil)
+        (let [;; Wrap step-fn in tidy-run to clean up intermediate MLX arrays
+              ;; (NUTS builds ~10K arrays per step via binary tree — OOMs without cleanup)
+              result (mx/tidy-run
+                       #(step-fn q current-eps warmup-metric nil)
+                       (fn [{:keys [state]}] [state]))
+              _ (mx/clear-cache!)
+              {:keys [state accept-stat]} result
               alpha (if (js/isNaN accept-stat) 0.0 (min 1.0 accept-stat))
               ;; Update dual averaging statistics
               w (/ 1.0 (+ m t0))
@@ -1184,8 +1191,8 @@
                             burn target-accept init-q hmc-step-fn n-params init-eps
                             adapt-metric (when-not adapt-metric metric))]
                {:adapted-eps (when adapt-step-size (:step-size result))
-                :warmup-q (:state result)
-                :adapted-metric (:metric result)})
+               :warmup-q (:state result)
+               :adapted-metric (:metric result)})
              {:adapted-eps nil :warmup-q nil :adapted-metric nil})
            ;; Use adapted values if available
            final-metric (or adapted-metric metric)

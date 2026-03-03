@@ -1,0 +1,18 @@
+\begin{table}[t]
+\centering
+\caption{Bayesian linear regression: posterior accuracy across five inference algorithms.}
+\label{tab:linreg}
+\begin{tabular}{l c c c c r}
+\toprule
+Algorithm & Slope Mean & Slope Err & ESS & $\hat{R}$ & Time (ms) \\
+\midrule
+Compiled MH & 2.086 & 0.004 & 664 & 1.000 & 19514 \\
+HMC & 2.091 & 0.001 & 1000 & 1.000 & 23386 \\
+NUTS & 2.087 & 0.003 & 574 & 1.000 & 23800 \\
+ADVI & 2.087 & 0.003 & --- & --- & 2217 \\
+Vectorized IS & 2.087 & 0.003 & 119 & --- & 2 \\
+\midrule
+Analytic & 2.090 & --- & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
