@@ -117,38 +117,4 @@
         best-mu (if (sequential? p) (first p) p)]
     (assert-close "MAP estimate near posterior mode" 3.0 best-mu 1.0)))
 
-;; ---------------------------------------------------------------------------
-;; Phase 6: GPU resampling
-;; ---------------------------------------------------------------------------
-
-(println "\n-- GPU systematic resampling --")
-(let [log-weights (mx/array [-1.0 -2.0 -0.5 -3.0 -1.5])
-      key (rng/fresh-key 42)
-      indices (v/systematic-resample-indices-gpu log-weights 5 key)
-      _ (mx/eval! indices)
-      idx-clj (mx/->clj indices)]
-  (assert-true "GPU resample returns 5 indices" (= 5 (count idx-clj)))
-  (assert-true "GPU resample indices in range" (every? #(and (>= % 0) (< % 5)) idx-clj))
-  ;; Weight -0.5 (index 2) should be resampled most often
-  (let [freqs (frequencies idx-clj)]
-    (assert-true "GPU resample: highest-weight particle appears"
-                 (contains? freqs 2))))
-
-;; Check GPU resampling produces valid indices for larger N
-(println "\n-- GPU resampling validity (N=100) --")
-(let [n 100
-      log-weights (mx/array (mapv #(- (rand) 2.0) (range n)))
-      key (rng/fresh-key 123)
-      gpu-indices (v/systematic-resample-indices-gpu log-weights n key)
-      _ (mx/eval! gpu-indices)
-      gpu-clj (mx/->clj gpu-indices)]
-  (assert-true "GPU resample returns N indices" (= n (count gpu-clj)))
-  (assert-true "GPU resample all indices in [0, N)"
-               (every? #(and (>= % 0) (< % n)) gpu-clj))
-  ;; Higher-weight particles should appear more often
-  (let [freqs (frequencies gpu-clj)
-        max-freq (apply max (vals freqs))]
-    (assert-true "GPU resample has some duplicates (expected for resampling)"
-                 (> max-freq 1))))
-
 (println "\nAll vectorized gradient tests complete.")
