@@ -111,6 +111,11 @@
     (throw (ex-info (str dist-name ": " param-name " must be in [0,1], got " v)
                     {:distribution dist-name :parameter param-name :value v}))))
 
+(defn- check-open-probability [dist-name param-name v]
+  (when (and (number? v) (or (<= v 0) (>= v 1)))
+    (throw (ex-info (str dist-name ": " param-name " must be in (0,1), got " v)
+                    {:distribution dist-name :parameter param-name :value v}))))
+
 ;; ---------------------------------------------------------------------------
 ;; Gaussian
 ;; ---------------------------------------------------------------------------
@@ -1258,6 +1263,13 @@
       (mx/subtract (mx/multiply kappa (mx/cos (mx/subtract v mu)))
                    (mx/scalar log-norm)))))
 
+(let [von-mises-raw von-mises]
+  (defn von-mises
+    "Von Mises distribution on [-π, π) with mean direction mu and concentration kappa."
+    [mu kappa]
+    (check-positive "von-mises" "kappa" kappa)
+    (von-mises-raw mu kappa)))
+
 (defmethod dc/dist-sample-n* :von-mises [d key n]
   (let [{:keys [mu kappa]} (:params d)
         key (rng/ensure-key key)
@@ -1291,6 +1303,13 @@
                                                   (mx/cos (mx/subtract v mu))))
                         rho-sq))))))
 
+(let [wrapped-cauchy-raw wrapped-cauchy]
+  (defn wrapped-cauchy
+    "Wrapped Cauchy distribution on [-π, π) with mean mu and concentration rho (0 < ρ < 1)."
+    [mu rho]
+    (check-open-probability "wrapped-cauchy" "rho" rho)
+    (wrapped-cauchy-raw mu rho)))
+
 (defmethod dc/dist-sample-n* :wrapped-cauchy [d key n]
   (let [key (rng/ensure-key key)
         keys (rng/split-n key n)]
@@ -1321,6 +1340,13 @@
                       (range -3 4))]
       ;; logsumexp over the 7 terms
       (reduce mx/logaddexp terms))))
+
+(let [wrapped-normal-raw wrapped-normal]
+  (defn wrapped-normal
+    "Wrapped normal distribution on [-π, π) with mean mu and std sigma."
+    [mu sigma]
+    (check-positive "wrapped-normal" "sigma" sigma)
+    (wrapped-normal-raw mu sigma)))
 
 (defmethod dc/dist-sample-n* :wrapped-normal [d key n]
   (let [{:keys [mu sigma]} (:params d)

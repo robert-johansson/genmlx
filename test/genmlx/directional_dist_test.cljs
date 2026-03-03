@@ -188,4 +188,66 @@
       batch (dc/dist-sample-n d key 50)]
   (assert-true "batch shape is [50]" (= [50] (mx/shape batch))))
 
+(mx/clear-cache!)
+
+;; ---------------------------------------------------------------------------
+;; Parameter validation tests
+;; ---------------------------------------------------------------------------
+
+(println "\n== Parameter validation ==")
+
+(println "\n-- von-mises rejects invalid kappa --")
+(let [threw-zero? (try (dist/von-mises 0 0) false (catch :default _ true))
+      threw-neg? (try (dist/von-mises 0 -1) false (catch :default _ true))]
+  (assert-true "von-mises rejects kappa=0" threw-zero?)
+  (assert-true "von-mises rejects kappa<0" threw-neg?))
+
+(println "\n-- wrapped-cauchy rejects invalid rho --")
+(let [threw-zero? (try (dist/wrapped-cauchy 0 0) false (catch :default _ true))
+      threw-one? (try (dist/wrapped-cauchy 0 1) false (catch :default _ true))
+      threw-neg? (try (dist/wrapped-cauchy 0 -0.5) false (catch :default _ true))]
+  (assert-true "wrapped-cauchy rejects rho=0" threw-zero?)
+  (assert-true "wrapped-cauchy rejects rho=1" threw-one?)
+  (assert-true "wrapped-cauchy rejects rho<0" threw-neg?))
+
+(println "\n-- wrapped-normal rejects invalid sigma --")
+(let [threw-zero? (try (dist/wrapped-normal 0 0) false (catch :default _ true))
+      threw-neg? (try (dist/wrapped-normal 0 -1) false (catch :default _ true))]
+  (assert-true "wrapped-normal rejects sigma=0" threw-zero?)
+  (assert-true "wrapped-normal rejects sigma<0" threw-neg?))
+
+;; ---------------------------------------------------------------------------
+;; Edge case tests
+;; ---------------------------------------------------------------------------
+
+(println "\n== Edge cases ==")
+
+(println "\n-- von-mises: very small kappa (0.01) --")
+(let [d (dist/von-mises 0 0.01)
+      key (rng/fresh-key)
+      s (mx/item (dc/dist-sample d key))]
+  (assert-true "sample is finite with small kappa" (js/isFinite s)))
+
+(mx/clear-cache!)
+
+(println "\n-- von-mises: very large kappa (100) --")
+(let [d (dist/von-mises 1.0 100)
+      key (rng/fresh-key)
+      samples (mapv (fn [k] (mx/item (dc/dist-sample d k)))
+                    (rng/split-n key 200))
+      cm (circular-mean samples)]
+  (assert-close "concentrated near mu=1 with large kappa" 1.0 cm 0.1))
+
+(mx/clear-cache!)
+
+(println "\n-- wrapped-cauchy: rho near 0 and near 1 --")
+(let [d-low (dist/wrapped-cauchy 0 0.01)
+      d-high (dist/wrapped-cauchy 0 0.99)
+      key (rng/fresh-key)
+      [k1 k2] (rng/split key)
+      s1 (mx/item (dc/dist-sample d-low k1))
+      s2 (mx/item (dc/dist-sample d-high k2))]
+  (assert-true "sample finite with rho near 0" (js/isFinite s1))
+  (assert-true "sample finite with rho near 1" (js/isFinite s2)))
+
 (println "\n== All directional distribution tests complete ==")

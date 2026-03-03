@@ -26,12 +26,13 @@
 (defn symmetric-kernel
   "Declare kernel as symmetric (its own reversal)."
   [kernel]
-  (vary-meta kernel assoc ::symmetric true ::reversal kernel))
+  (vary-meta kernel assoc ::symmetric true ::reversal ::self))
 
 (defn reversal
   "Get the declared reversal of a kernel, or nil."
   [kernel]
-  (::reversal (meta kernel)))
+  (let [r (::reversal (meta kernel))]
+    (if (= r ::self) kernel r)))
 
 (defn symmetric?
   "Check if kernel is declared symmetric."

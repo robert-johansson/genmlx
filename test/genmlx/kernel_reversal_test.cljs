@@ -40,7 +40,20 @@
   (assert-true "reversal exists"
     (some? (kern/reversal k)))
   (assert-true "reversal is a function"
-    (fn? (kern/reversal k))))
+    (fn? (kern/reversal k)))
+  (assert-true "reversal of symmetric-kernel is symmetric"
+    (kern/symmetric? (kern/reversal k)))
+  (assert-true "reversal returns the decorated kernel itself (identical?)"
+    (identical? k (kern/reversal k))))
+
+(println "\n-- with-reversal: double reversal --")
+(let [k-fwd (fn [trace key] trace)
+      k-bwd (fn [trace key] trace)
+      k (kern/with-reversal k-fwd k-bwd)
+      rev (kern/reversal k)
+      rev-rev (kern/reversal rev)]
+  (assert-true "double reversal is callable" (fn? rev-rev))
+  (assert-true "double reversal has a reversal itself" (some? (kern/reversal rev-rev))))
 
 (println "\n-- reversed throws on undecorated --")
 (let [k (fn [trace key] trace)
@@ -155,5 +168,19 @@
     (some? (:gen-fn result-trace)))
   (assert-true "reversed kernel returns a trace with choices"
     (some? (:choices result-trace))))
+
+(println "\n-- integration: run-kernel with reversed symmetric kernel (10 samples) --")
+(let [model (gen []
+              (let [x (trace :x (dist/gaussian 0 10))]
+                x))
+      model (dyn/auto-key model)
+      init-trace (:trace (p/generate model [] (cm/choicemap :x (mx/scalar 0.0))))
+      sk (kern/mh-kernel (sel/select :x))
+      rev (kern/reversal sk)]
+  (assert-true "mh-kernel is symmetric" (kern/symmetric? sk))
+  (assert-true "reversal of mh-kernel is symmetric" (kern/symmetric? rev))
+  (let [samples (kern/run-kernel {:samples 10 :burn 5} rev init-trace)]
+    (assert-true "run-kernel with reversed symmetric kernel produces 10 samples"
+      (= 10 (count samples)))))
 
 (println "\n== All kernel reversal tests complete ==")

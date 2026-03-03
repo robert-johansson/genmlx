@@ -119,4 +119,46 @@
                    (boolean (re-find #"10000" msg)))))]
   (assert-true "throws on too-large Cartesian product" threw?))
 
+;; ---------------------------------------------------------------------------
+;; Custom :max-combinations option
+;; ---------------------------------------------------------------------------
+
+(println "\n-- custom :max-combinations --")
+;; two-coins has 2*2 = 4 combinations
+(let [supports {:c1 [(mx/scalar 0) (mx/scalar 1)]
+                :c2 [(mx/scalar 0) (mx/scalar 1)]}
+      ;; max-combinations=3 should reject 4 combos
+      threw? (try
+               (enum/enumerate-joint (dyn/auto-key two-coins) [] nil supports
+                                     {:max-combinations 3})
+               false
+               (catch :default _ true))]
+  (assert-true ":max-combinations 3 rejects 4 combos" threw?))
+
+(let [supports {:c1 [(mx/scalar 0) (mx/scalar 1)]
+                :c2 [(mx/scalar 0) (mx/scalar 1)]}
+      ;; max-combinations=100 should allow 4 combos
+      joint (enum/enumerate-joint (dyn/auto-key two-coins) [] nil supports
+                                  {:max-combinations 100})]
+  (assert-true ":max-combinations 100 allows 4 combos" (= 4 (count joint))))
+
+(mx/clear-cache!)
+
+(println "\n-- enumerate-marginals accepts opts --")
+(let [supports {:c1 [(mx/scalar 0) (mx/scalar 1)]
+                :c2 [(mx/scalar 0) (mx/scalar 1)]}
+      marginals (enum/enumerate-marginals (dyn/auto-key two-coins) [] nil supports
+                                          {:max-combinations 100})]
+  (assert-close "P(c1=0) = 0.5 with opts" 0.5 (get-in marginals [:c1 0.0]) 1e-6))
+
+(mx/clear-cache!)
+
+(println "\n-- enumerate-marginal-likelihood accepts opts --")
+(let [supports {:c1 [(mx/scalar 0) (mx/scalar 1)]
+                :c2 [(mx/scalar 0) (mx/scalar 1)]}
+      log-ml (mx/item (enum/enumerate-marginal-likelihood
+                         (dyn/auto-key two-coins) [] nil supports
+                         {:max-combinations 100}))]
+  (assert-true "marginal-likelihood is finite with opts" (js/isFinite log-ml)))
+
 (println "\n== All enumerative inference tests complete ==")

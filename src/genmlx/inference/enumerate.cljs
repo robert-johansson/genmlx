@@ -28,30 +28,30 @@
 (defn- enumerate-all
   "Enumerate all combinations and score each.
    addr-supports: map of {addr [values...]}
+   opts: optional map with :max-combinations (default 10000)
    Returns vector of {:choices choicemap :log-weight MLX-scalar}."
-  [model args observations addr-supports]
+  [model args observations addr-supports opts]
   (let [model (dyn/auto-key model)
         addrs (vec (keys addr-supports))
         supports (mapv #(get addr-supports %) addrs)
         combos (cartesian-product supports)
-        n-combos (count combos)]
-    (when (> n-combos 10000)
+        n-combos (count combos)
+        max-combos (or (:max-combinations opts) 10000)]
+    (when (> n-combos max-combos)
       (throw (ex-info (str "Enumeration: Cartesian product has " n-combos
-                           " combinations (max 10000). Reduce support sizes or "
+                           " combinations (max " max-combos "). Reduce support sizes or "
                            "use approximate inference.")
                       {:n-combinations n-combos
+                       :max-combinations max-combos
                        :addr-supports (into {} (map (fn [[a s]] [a (count s)]) addr-supports))})))
     (mapv (fn [combo]
             (let [combo-cm (reduce (fn [acc [addr val]]
                                     (cm/merge-cm acc (cm/choicemap addr val)))
-                                  (or observations (cm/choicemap))
+                                  (cm/choicemap)
                                   (map vector addrs combo))
-                  {:keys [weight]} (p/generate model args combo-cm)]
-              {:choices (reduce (fn [acc [addr val]]
-                                  (cm/merge-cm acc (cm/choicemap addr val)))
-                                (cm/choicemap)
-                                (map vector addrs combo))
-               :log-weight weight}))
+                  full-cm (if observations (cm/merge-cm observations combo-cm) combo-cm)
+                  {:keys [weight]} (p/generate model args full-cm)]
+              {:choices combo-cm :log-weight weight}))
           combos)))
 
 ;; ---------------------------------------------------------------------------
@@ -64,11 +64,14 @@
    args: model arguments
    observations: choicemap of observed data (or nil)
    addr-supports: map of {addr [values...]}
+   opts: optional map with :max-combinations (default 10000)
 
    Returns vector of {:choices choicemap :log-prob MLX-scalar :prob JS-number}
    sorted by descending probability."
-  [model args observations addr-supports]
-  (let [entries (enumerate-all model args observations addr-supports)
+  ([model args observations addr-supports]
+   (enumerate-joint model args observations addr-supports nil))
+  ([model args observations addr-supports opts]
+  (let [entries (enumerate-all model args observations addr-supports opts)
         ;; Realize all weights and extract as JS numbers
         lw-vals (mapv (fn [{:keys [log-weight]}]
                         (mx/materialize! log-weight)
@@ -84,7 +87,7 @@
                 :prob (js/Math.exp lp)}))
            entries)
          vec
-         (sort-by :prob >))))
+         (sort-by :prob >)))))
 
 (defn enumerate-marginals
   "Exact posterior marginals for discrete addresses.
@@ -92,11 +95,14 @@
    args: model arguments
    observations: choicemap of observed data (or nil)
    addr-supports: map of {addr [values...]}
+   opts: optional map with :max-combinations (default 10000)
 
    Returns map of {addr {value posterior-prob}} where probabilities
    are JS numbers summing to 1.0 for each address."
-  [model args observations addr-supports]
-  (let [joint (enumerate-joint model args observations addr-supports)
+  ([model args observations addr-supports]
+   (enumerate-marginals model args observations addr-supports nil))
+  ([model args observations addr-supports opts]
+  (let [joint (enumerate-joint model args observations addr-supports opts)
         addrs (keys addr-supports)]
     (into {}
       (map (fn [addr]
@@ -109,7 +115,7 @@
                             {}
                             joint)]
                 marginal-map)])
-           addrs))))
+           addrs)))))
 
 (defn enumerate-marginal-likelihood
   "Exact marginal likelihood by summing over all discrete configurations.
@@ -118,12 +124,15 @@
    model: generative function
    args: model arguments
    observations: choicemap of observed data (or nil)
-   addr-supports: map of {addr [values...]}"
-  [model args observations addr-supports]
-  (let [entries (enumerate-all model args observations addr-supports)
+   addr-supports: map of {addr [values...]}
+   opts: optional map with :max-combinations (default 10000)"
+  ([model args observations addr-supports]
+   (enumerate-marginal-likelihood model args observations addr-supports nil))
+  ([model args observations addr-supports opts]
+  (let [entries (enumerate-all model args observations addr-supports opts)
         lw-vals (mapv (fn [{:keys [log-weight]}]
                         (mx/materialize! log-weight)
                         (mx/item log-weight))
                       entries)
         w-arr (mx/array (into-array lw-vals))]
-    (mx/logsumexp w-arr)))
+    (mx/logsumexp w-arr))))
