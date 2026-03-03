@@ -989,6 +989,36 @@
     (mx/add mu (mx/multiply sigma (rng/normal key (into [n] sh))))))
 
 ;; ---------------------------------------------------------------------------
+;; Gaussian Vec — independent Gaussians, log-prob summed over last axis
+;; ---------------------------------------------------------------------------
+
+(defdist gaussian-vec
+  "Vector of independent Gaussians with shared or element-wise sigma.
+   log-prob sums over the last axis, so:
+     [D]-shaped value -> scalar log-prob (scalar mode)
+     [N,D]-shaped value -> [N]-shaped log-prob (batched mode)
+   Ideal for vectorized inference with one trace site per latent vector."
+  [mu sigma]
+  (sample [key]
+    (mx/add mu (mx/multiply sigma (rng/normal key (mx/shape mu)))))
+  (log-prob [v]
+    (let [z (mx/divide (mx/subtract v mu) sigma)]
+      (mx/sum
+        (mx/negative
+          (mx/add LOG-2PI-HALF
+                  (mx/log sigma)
+                  (mx/multiply HALF (mx/square z))))
+        [-1])))
+  (reparam [key]
+    (mx/add mu (mx/multiply sigma (rng/normal key (mx/shape mu))))))
+
+(defmethod dc/dist-sample-n* :gaussian-vec [d key n]
+  (let [{:keys [mu sigma]} (:params d)
+        key (rng/ensure-key key)
+        sh (mx/shape mu)]
+    (mx/add mu (mx/multiply sigma (rng/normal key (into [n] sh))))))
+
+;; ---------------------------------------------------------------------------
 ;; Beta-Uniform Mixture — convenience wrapper
 ;; ---------------------------------------------------------------------------
 
