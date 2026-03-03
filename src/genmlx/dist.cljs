@@ -1185,40 +1185,6 @@
 (def product dc/product)
 
 ;; ---------------------------------------------------------------------------
-;; Log Bessel I₀ — Abramowitz & Stegun polynomial approximation
-;; ---------------------------------------------------------------------------
-
-(defn- log-bessel-i0
-  "Log of modified Bessel function I₀(κ). Operates on JS numbers.
-   Polynomial approximation from Abramowitz & Stegun §9.8."
-  [kappa]
-  (if (<= kappa 3.75)
-    ;; Polynomial in t = (κ/3.75)²
-    (let [t (let [r (/ kappa 3.75)] (* r r))]
-      (js/Math.log
-        (+ 1.0
-           (* t (+ 3.5156229
-                   (* t (+ 3.0899424
-                           (* t (+ 1.2067492
-                                   (* t (+ 0.2659732
-                                           (* t (+ 0.0360768
-                                                   (* t 0.0045813))))))))))))))
-    ;; Asymptotic: log(I₀(κ)) ≈ κ - 0.5*log(2πκ) + log(polynomial)
-    (let [t (/ 3.75 kappa)]
-      (+ kappa
-         (* -0.5 (js/Math.log (* 2.0 js/Math.PI kappa)))
-         (js/Math.log
-           (+ 0.39894228
-              (* t (+ 0.01328592
-                      (* t (+ 0.00225319
-                              (* t (+ -0.00157565
-                                      (* t (+ 0.00916281
-                                              (* t (+ -0.02057706
-                                                      (* t (+ 0.02635537
-                                                              (* t (+ -0.01647633
-                                                                      (* t 0.00392377)))))))))))))))))))))
-
-;; ---------------------------------------------------------------------------
 ;; Von Mises — circular distribution
 ;; ---------------------------------------------------------------------------
 
@@ -1258,10 +1224,11 @@
             (recur k3))))))
   (log-prob [v]
     ;; log p(x) = κ cos(x - μ) - log(2π) - log(I₀(κ))
-    (let [k-val (mx/realize kappa)
-          log-norm (+ LOG-2PI (log-bessel-i0 k-val))]
+    ;; log(I₀(κ)) = log(i0e(κ)) + |κ|  since i0e(κ) = exp(-|κ|) I₀(κ)
+    (let [log-I0 (mx/add (mx/log (mx/bessel-i0e kappa)) (mx/abs kappa))
+          log-norm (mx/add (mx/scalar LOG-2PI) log-I0)]
       (mx/subtract (mx/multiply kappa (mx/cos (mx/subtract v mu)))
-                   (mx/scalar log-norm)))))
+                   log-norm))))
 
 (let [von-mises-raw von-mises]
   (defn von-mises
@@ -1273,8 +1240,48 @@
 (defmethod dc/dist-sample-n* :von-mises [d key n]
   (let [{:keys [mu kappa]} (:params d)
         key (rng/ensure-key key)
-        keys (rng/split-n key n)]
-    (mx/stack (mapv #(dc/dist-sample d %) keys))))
+        ;; Pre-compute scalar rejection params (same for all n samples)
+        k-val (mx/realize kappa)
+        tau2 (+ 1.0 (js/Math.sqrt (+ 1.0 (* 4.0 k-val k-val))))
+        rho (/ (- tau2 (js/Math.sqrt (* 2.0 tau2))) (* 2.0 k-val))
+        r (/ (+ 1.0 (* rho rho)) (* 2.0 rho))
+        r-arr (mx/scalar r)
+        k-arr (mx/scalar k-val)
+        max-iter 20]
+    (loop [iter 0
+           result (mx/zeros [n])
+           done (mx/zeros [n])    ;; float 0.0/1.0 mask (same as gamma)
+           k key]
+      (if (>= iter max-iter)
+        (wrap-angle (mx/add result mu))
+        (let [[k1 k2 k3 k4] (rng/split-n k 4)
+              u1 (rng/uniform k1 [n])
+              u2 (rng/uniform k2 [n])
+              u3 (rng/uniform k3 [n])
+              ;; z = cos(π u1), f = (1 + r*z)/(r + z), c = κ(r - f)
+              z (mx/cos (mx/multiply MLX-PI u1))
+              f (mx/divide (mx/add ONE (mx/multiply r-arr z))
+                           (mx/add r-arr z))
+              c (mx/multiply k-arr (mx/subtract r-arr f))
+              ;; Accept condition (float masks, OR via maximum):
+              log-u2 (mx/log u2)
+              safe-c (mx/maximum c (mx/scalar 1e-30))
+              cond1 (mx/greater-equal c
+                      (mx/subtract (mx/multiply (mx/scalar 2.0) log-u2)
+                                   (mx/add c ONE)))
+              cond2 (mx/greater-equal (mx/log safe-c)
+                      (mx/subtract (mx/add log-u2 ONE) c))
+              accepted (mx/maximum cond1 cond2)
+              ;; theta = sign(u3 - 0.5) * arccos(clamp(f))
+              sign-u3 (mx/sign (mx/subtract u3 HALF))
+              safe-f (mx/clip f (mx/scalar -1.0) ONE)
+              theta (mx/multiply sign-u3 (mx/arccos safe-f))
+              ;; Only fill not-yet-done slots
+              not-done (mx/equal done ZERO)
+              newly-done (mx/multiply accepted not-done)
+              result (mx/where newly-done theta result)
+              done (mx/where newly-done ONE done)]
+          (recur (inc iter) result done k4))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Wrapped Cauchy — closed-form circular distribution
