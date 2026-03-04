@@ -1,0 +1,14 @@
+\begin{table}[t]
+\centering
+\caption{GenMLX verification ladder: four levels of correctness evidence.}
+\label{tab:verification}
+\begin{tabular}{l l r r l}
+\toprule
+Level & What & Count & Pass & Validates \\
+\midrule
+Runtime contracts & Executable checks & 10 $\times$ 5 & 100\% & GFI invariants \\
+Gen.clj compat & Regression suite & 165 & 100\% & Cross-implementation \\
+GenJAX compat & Regression suite & 73 & 100\% & Cross-implementation \\
+\bottomrule
+\end{tabular}
+\end{table}

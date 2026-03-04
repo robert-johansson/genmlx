@@ -1,0 +1,43 @@
+{
+  "benchmark": "method_speedup",
+  "n_particles": 1000,
+  "methodology": "performance.now, warmup, min-of-inner, mean+std-of-outer",
+  "results": [
+    {
+      "method": "dist-sample-n",
+      "sequential": {
+        "mean": 251.07053319999977,
+        "std": 3.614020250684656
+      },
+      "batched": {
+        "mean": 0.24656699999904957,
+        "std": 0.007558770481830984
+      },
+      "speedup": 1018.2649470568549
+    },
+    {
+      "method": "importance_sampling",
+      "sequential": {
+        "mean": 1618.2857749999996,
+        "std": 2.311407791392148
+      },
+      "batched": {
+        "mean": 0.8033250000007683,
+        "std": 0.020561008273154116
+      },
+      "speedup": 2014.4845174723205
+    },
+    {
+      "method": "smc_init",
+      "sequential": {
+        "mean": 1182.713883000001,
+        "std": 3.5046514212217423
+      },
+      "batched": {
+        "mean": 0.7683168000017758,
+        "std": 0.027009660394009146
+      },
+      "speedup": 1539.3570503694145
+    }
+  ]
+}

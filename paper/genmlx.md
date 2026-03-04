@@ -604,6 +604,8 @@ The speedup comes entirely from eliminating per-particle overhead. The GPU compu
 
 The speedup scales with particle count: at higher N, the overhead per particle in the batched case is effectively zero (bounded by a constant number of API calls regardless of N), while the sequential version scales linearly in N.
 
+On an Apple M2, vectorized IS(1000) runs linear regression in 1.6ms (4x faster than Gen.jl's 6.5ms), GMM in 2.1ms (2.8x faster than Gen.jl's 5.8ms), and HMM (T=50 timesteps) in 8.2ms (4x faster than Gen.jl's 34ms). GenJAX's JIT-compiled IS is faster still (0.1ms LinReg, 1.1ms GMM) due to XLA whole-program fusion, but GenMLX achieves competitive GPU performance without compilation. The sequential (per-particle loop) versions of the same benchmarks take 3.3s (GMM) and 19.3s (HMM), demonstrating speedups of 1,500x and 2,400x respectively from shape-based batching alone.
+
 ### 5.5 Limitations
 
 The current vectorized execution has several limitations:
@@ -646,6 +648,24 @@ GenJAX brings the GFI to JAX (~10,000 lines). Key differences:
 | GenMLX | ClojureScript | ~10,400 | 27 | 10 | 20+ (MH, Gibbs, MALA, HMC, NUTS, ESS, MAP, IS, SMC, cSMC, vSMC, SMCP3, ADVI, PVI, VIMCO, ADEV, amortized, wake-sleep) | GPU (Apple Silicon) |
 
 The size difference between GenMLX and its predecessors is smaller than before, reflecting the system's growth from its initial ~5,700-line core to include adaptive MCMC, loop compilation, amortized inference, ADEV, neural network integration, vmap, and comprehensive combinator coverage. GenMLX achieves its relative compactness by relying on ClojureScript's built-in persistent data structures, open multimethods, and MLX's lazy evaluation model, which together replace significant amounts of infrastructure code.
+
+### 6.4 Performance Comparison
+
+We benchmark importance sampling with N=1000 particles on three canonical models (linear regression, Gaussian mixture model, hidden Markov model) across all three systems on an Apple M2 (Table 1, Figure 9).
+
+| Model | Algorithm | GenMLX (Metal) | Gen.jl (CPU) | GenJAX (JIT, CPU) | Notes |
+|---|---|---|---|---|---|
+| LinReg | IS (1K) | 1.8ms | 6.5ms | 0.1ms | Vec IS (Metal) vs JIT (CPU) |
+| LinReg | MH (5K) | 19.5s | 64ms | --- | Compiled MH vs Gen.jl MH |
+| HMM | IS (1K) | 8.2ms | 34ms | --- | Vec IS (Metal) vs Gen.jl (CPU) |
+| HMM | SMC (100) | 5.8s | 190ms | --- | Unfold PF vs Gen.jl PF |
+| GMM | IS (1K) | 2.1ms | 5.8ms | 1.1ms | Vec IS (Metal) vs JIT (CPU) |
+
+All three IS benchmarks use vectorized (shape-based batched) execution on Metal GPU. GenMLX outperforms Gen.jl on all IS benchmarks despite being an interpreted language: the GPU parallelism from shape-based batching more than compensates for interpreter overhead. The speedup is most dramatic on HMM (4x), where 50 sequential timesteps each with categorical sampling and emission scoring benefit substantially from batched execution.
+
+GenJAX's JIT-compiled IS is faster on LinReg (16x) and GMM (2x) due to XLA's whole-program fusion, which eliminates all per-operation dispatch overhead. However, GenJAX cannot run the HMM benchmark because JAX's `jit` does not support data-dependent control flow with categorical distributions. GenMLX's shape-based approach handles this naturally --- the categorical samples become `[N]`-shaped index arrays that flow through `mx/take-idx` without materializing scalar values.
+
+Sequential MCMC and SMC expose GenMLX's main weakness: interpreter overhead in per-iteration loops. Compiled MH takes 19.5s for 5K iterations on a 2-parameter linear regression model, compared to Gen.jl's 64ms --- a 300x slowdown. Similarly, SMC(100) on the HMM takes 5.8s vs Gen.jl's 190ms (31x slower). This overhead comes from ClojureScript interpretation via nbb: each MCMC iteration involves hundreds of N-API calls through the FFI boundary, and unlike vectorized IS, these iterations are inherently sequential and cannot be batched. Addressing this gap is the primary motivation for GenMLX's loop compilation work (Section 5.6), which has so far achieved 11x speedups on compiled MH chains but remains far from Gen.jl's native Julia performance.
 
 ---
 

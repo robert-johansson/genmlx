@@ -1,0 +1,51 @@
+{
+  "bench1_gfi_mh_vs_compiled_mh": {
+    "gfi_mh": {
+      "mean": 1338.1086500000001,
+      "std": 32.905253421916754
+    },
+    "compiled_mh": {
+      "mean": 122.37107742857135,
+      "std": 1.1473864246081176
+    },
+    "speedup": 10.93484406706365
+  },
+  "bench2_score_fn_compilation": {
+    "uncompiled": {
+      "mean": 66.99743329999947,
+      "std": 0.3745543754227824
+    },
+    "compiled": {
+      "mean": 9.261633200001961,
+      "std": 0.7867767193402025
+    },
+    "speedup": 7.233868136775842
+  },
+  "bench3_hmc_genmlx_vs_handcoded": {
+    "genmlx_hmc": {
+      "mean": 441.5483750000006,
+      "std": 8.830533897656544
+    },
+    "handcoded_hmc": {
+      "mean": 438.5998035714292,
+      "std": 1.869785481225273
+    },
+    "overhead": 1.0067226920864116
+  },
+  "bench4_serial_vs_vectorized_mh": {
+    "one_chain": {
+      "mean": 74.1730712857139,
+      "std": 0.7970077575674455
+    },
+    "serial_extrapolated": {
+      "mean": 741.730712857139,
+      "std": 7.970077575674455
+    },
+    "vectorized": {
+      "mean": 152.29286314285648,
+      "std": 2.8835871634463075
+    },
+    "speedup": 4.870423324836749,
+    "n_chains": 10
+  }
+}
