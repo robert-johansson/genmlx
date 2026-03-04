@@ -25,7 +25,9 @@
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
-            [genmlx.inference.mcmc :as mcmc])
+            [genmlx.inference.mcmc :as mcmc]
+            [genmlx.inference.importance :as is]
+            [genmlx.vectorized :as vec])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; ---------------------------------------------------------------------------
@@ -67,6 +69,7 @@
                       (js/Math.log (/ 1.0 3.0))])
 (def log-weights (mx/array (clj->js log-weights-vec)))
 (def means-arr (mx/array (clj->js component-means)))
+(def sigma-arr (mx/scalar sigma))
 
 ;; ---------------------------------------------------------------------------
 ;; Data generation (fixed seed 42)
@@ -111,6 +114,15 @@
               z-val (mx/item z)
               mu (mx/take-idx means-arr (mx/scalar (int z-val) mx/int32))
               _ (trace (keyword (str "y" i)) (dist/gaussian mu (mx/scalar sigma)))])))))
+
+;; Vectorized GMM model: no mx/eval!, no mx/item — shapes flow through
+(def gmm-vec-model
+  (gen [ys]
+    (let [n (count ys)]
+      (doseq [i (range n)]
+        (let [z (trace (keyword (str "z" i)) (dist/categorical log-weights))
+              mu (mx/take-idx means-arr z)
+              _ (trace (keyword (str "y" i)) (dist/gaussian mu sigma-arr))])))))
 
 ;; Observations choicemap
 (def observations
@@ -350,6 +362,47 @@
 (mx/force-gc!)
 
 ;; ---------------------------------------------------------------------------
+;; Algorithm 1b: Vectorized IS (N=1000)
+;; ---------------------------------------------------------------------------
+
+(defn run-vec-is-experiment
+  "Run vectorized IS — single vgenerate call for all particles."
+  [n-particles seed]
+  (let [start (perf-now)
+        result (is/vectorized-importance-sampling
+                 {:samples n-particles :key (rng/fresh-key seed)}
+                 gmm-vec-model [ys-data] observations)
+        log-ml (mx/realize (:log-ml-estimate result))
+        ess (vec/vtrace-ess (:vtrace result))
+        elapsed (- (perf-now) start)]
+    (mx/clear-cache!) (mx/force-gc!)
+    {:log-ml log-ml :ess ess :time-ms elapsed}))
+
+(println "\n-- Algorithm 1b: Vectorized IS (N=1000, 10 runs) --")
+
+(def vec-is-runs
+  (vec (for [i (range n-runs)]
+         (do
+           (when (zero? (mod i 5)) (println (str "  run " i "...")))
+           (run-vec-is-experiment 1000 (+ base-seed 100 i))))))
+
+(let [log-mls (mapv :log-ml vec-is-runs)
+      errors (mapv #(js/Math.abs (- % exact-log-ml)) log-mls)
+      ess-vals (mapv :ess vec-is-runs)
+      times (mapv :time-ms vec-is-runs)
+      is-mean-time (mean-fn (mapv :time-ms is-runs))
+      vec-mean-time (mean-fn times)
+      speedup (/ is-mean-time (max vec-mean-time 0.001))]
+  (println (str "  log-ML: " (.toFixed (mean-fn log-mls) 2) " +/- " (.toFixed (std-fn log-mls) 2)))
+  (println (str "  |error|: " (.toFixed (mean-fn errors) 2) " +/- " (.toFixed (std-fn errors) 2)))
+  (println (str "  ESS: " (.toFixed (mean-fn ess-vals) 1) " +/- " (.toFixed (std-fn ess-vals) 1)))
+  (println (str "  time: " (.toFixed (mean-fn times) 0) " ms"))
+  (println (str "  speedup vs sequential IS: " (.toFixed speedup 1) "x")))
+
+(mx/clear-cache!)
+(mx/force-gc!)
+
+;; ---------------------------------------------------------------------------
 ;; Algorithm 2: Gibbs (500 sweeps, 100 burn-in, 10 runs)
 ;; ---------------------------------------------------------------------------
 
@@ -383,6 +436,10 @@
       is-errors (mapv #(js/Math.abs (- (:log-ml %) exact-log-ml)) is-runs)
       is-ess-vals (mapv :ess is-runs)
       is-times (mapv :time-ms is-runs)
+      vec-is-log-mls (mapv :log-ml vec-is-runs)
+      vec-is-errors (mapv #(js/Math.abs (- (:log-ml %) exact-log-ml)) vec-is-runs)
+      vec-is-ess-vals (mapv :ess vec-is-runs)
+      vec-is-times (mapv :time-ms vec-is-runs)
       gibbs-accuracies (mapv :accuracy gibbs-runs)
       gibbs-maes (mapv :marginal-mae gibbs-runs)
       gibbs-times (mapv :time-ms gibbs-runs)
@@ -414,6 +471,18 @@
          :raw_log_mls (vec is-log-mls)
          :raw_errors (vec is-errors)
          :raw_ess (vec is-ess-vals)}
+        {:algorithm "Vec_IS_1000" :method "vectorized-is" :particles 1000
+         :log_ml (mean-fn vec-is-log-mls)
+         :log_ml_std (std-fn vec-is-log-mls)
+         :error (mean-fn vec-is-errors)
+         :error_std (std-fn vec-is-errors)
+         :ess (mean-fn vec-is-ess-vals)
+         :ess_std (std-fn vec-is-ess-vals)
+         :time_ms (mean-fn vec-is-times)
+         :time_ms_std (std-fn vec-is-times)
+         :raw_log_mls (vec vec-is-log-mls)
+         :raw_errors (vec vec-is-errors)
+         :raw_ess (vec vec-is-ess-vals)}
         {:algorithm "Gibbs_500" :method "gibbs" :sweeps 500 :burn 100
          :accuracy (mean-fn gibbs-accuracies)
          :accuracy_std (std-fn gibbs-accuracies)
@@ -433,6 +502,10 @@
       is-errors (mapv #(js/Math.abs (- (:log-ml %) exact-log-ml)) is-runs)
       is-ess-vals (mapv :ess is-runs)
       is-times (mapv :time-ms is-runs)
+      vec-is-log-mls (mapv :log-ml vec-is-runs)
+      vec-is-errors (mapv #(js/Math.abs (- (:log-ml %) exact-log-ml)) vec-is-runs)
+      vec-is-ess-vals (mapv :ess vec-is-runs)
+      vec-is-times (mapv :time-ms vec-is-runs)
       gibbs-accuracies (mapv :accuracy gibbs-runs)
       gibbs-maes (mapv :marginal-mae gibbs-runs)
       gibbs-times (mapv :time-ms gibbs-runs)
@@ -443,16 +516,25 @@
               "**Exact log P(y):** " (.toFixed exact-log-ml 4) " (enumeration over 6561 configs)\n\n"
               "## Methods\n\n"
               "- **Enumeration:** Exact marginal likelihood + posterior marginals (3^8 = 6561 configs)\n"
-              "- **IS (N=1000):** GenMLX GFI `p/generate` with prior proposal\n"
+              "- **IS (N=1000):** GenMLX GFI `p/generate` with prior proposal (sequential)\n"
+              "- **Vectorized IS (N=1000):** Shape-based batched `vgenerate` — single model call\n"
               "- **Gibbs (500 sweeps, 100 burn):** `mcmc/gibbs` with discrete support schedule\n\n"
               "## Results (10 runs each)\n\n"
-              "### IS\n\n"
+              "### IS (sequential)\n\n"
               "| Metric | Mean | Std |\n"
               "|--------|------|-----|\n"
               "| log-ML | " (.toFixed (mean-fn is-log-mls) 2) " | " (.toFixed (std-fn is-log-mls) 2) " |\n"
               "| |Error| | " (.toFixed (mean-fn is-errors) 2) " | " (.toFixed (std-fn is-errors) 2) " |\n"
               "| ESS | " (.toFixed (mean-fn is-ess-vals) 1) " | " (.toFixed (std-fn is-ess-vals) 1) " |\n"
               "| Time (ms) | " (.toFixed (mean-fn is-times) 0) " | " (.toFixed (std-fn is-times) 0) " |\n\n"
+              "### Vectorized IS\n\n"
+              "| Metric | Mean | Std |\n"
+              "|--------|------|-----|\n"
+              "| log-ML | " (.toFixed (mean-fn vec-is-log-mls) 2) " | " (.toFixed (std-fn vec-is-log-mls) 2) " |\n"
+              "| |Error| | " (.toFixed (mean-fn vec-is-errors) 2) " | " (.toFixed (std-fn vec-is-errors) 2) " |\n"
+              "| ESS | " (.toFixed (mean-fn vec-is-ess-vals) 1) " | " (.toFixed (std-fn vec-is-ess-vals) 1) " |\n"
+              "| Time (ms) | " (.toFixed (mean-fn vec-is-times) 0) " | " (.toFixed (std-fn vec-is-times) 0) " |\n"
+              "| Speedup vs seq IS | " (.toFixed (/ (mean-fn is-times) (max (mean-fn vec-is-times) 0.001)) 1) "x | — |\n\n"
               "### Gibbs\n\n"
               "| Metric | Mean | Std |\n"
               "|--------|------|-----|\n"
@@ -463,9 +545,12 @@
               "The GMM with known parameters has a finite discrete posterior over component "
               "assignments (3^8 = 6561 configurations). Exact enumeration provides the ground "
               "truth marginal likelihood and posterior marginals.\n\n"
-              "IS with prior proposals achieves reasonable but imperfect log-ML estimates — "
+              "Sequential IS with prior proposals achieves reasonable but imperfect log-ML estimates — "
               "the prior assigns equal probability to all 3 components, so many particles "
               "propose incorrect assignments.\n\n"
+              "Vectorized IS runs the model body ONCE for all 1000 particles using shape-based "
+              "batching, achieving massive speedup over sequential IS with identical statistical "
+              "properties.\n\n"
               "Gibbs sampling exploits the discrete structure by sweeping over each z_i "
               "conditioned on all others, converging to the exact posterior marginals. "
               "This demonstrates that structure-exploiting inference (Gibbs) outperforms "
@@ -483,10 +568,19 @@
 (println "")
 
 (let [is-errors (mapv #(js/Math.abs (- (:log-ml %) exact-log-ml)) is-runs)]
-  (println (str "IS (1000):   log-ML error=" (.toFixed (mean-fn is-errors) 2)
-                "  ESS=" (.toFixed (mean-fn (mapv :ess is-runs)) 1))))
+  (println (str "IS (1000):       log-ML error=" (.toFixed (mean-fn is-errors) 2)
+                "  ESS=" (.toFixed (mean-fn (mapv :ess is-runs)) 1)
+                "  time=" (.toFixed (mean-fn (mapv :time-ms is-runs)) 0) "ms")))
 
-(println (str "Gibbs (500): accuracy=" (.toFixed (mean-fn (mapv :accuracy gibbs-runs)) 3)
+(let [vec-is-errors (mapv #(js/Math.abs (- (:log-ml %) exact-log-ml)) vec-is-runs)
+      is-time (mean-fn (mapv :time-ms is-runs))
+      vec-time (mean-fn (mapv :time-ms vec-is-runs))]
+  (println (str "Vec IS (1000):   log-ML error=" (.toFixed (mean-fn vec-is-errors) 2)
+                "  ESS=" (.toFixed (mean-fn (mapv :ess vec-is-runs)) 1)
+                "  time=" (.toFixed vec-time 0) "ms"
+                "  speedup=" (.toFixed (/ is-time (max vec-time 0.001)) 1) "x")))
+
+(println (str "Gibbs (500):     accuracy=" (.toFixed (mean-fn (mapv :accuracy gibbs-runs)) 3)
               "  MAE=" (.toFixed (mean-fn (mapv :marginal-mae gibbs-runs)) 4)))
 
 (println "\nAll benchmarks complete.")

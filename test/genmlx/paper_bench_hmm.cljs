@@ -26,6 +26,8 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.inference.smc :as smc]
+            [genmlx.inference.importance :as is]
+            [genmlx.vectorized :as vec]
             [genmlx.combinators :as comb])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -79,6 +81,7 @@
 (def emission-means-vec [-2.0 2.0])
 (def emission-means (mx/array (clj->js emission-means-vec)))
 (def sigma-obs 1.0)
+(def sigma-obs-arr (mx/scalar sigma-obs))
 
 ;; ---------------------------------------------------------------------------
 ;; Data generation (fixed seed 42)
@@ -204,6 +207,27 @@
           mu (mx/take-idx emission-means z)
           _ (trace :y (dist/gaussian mu (mx/scalar sigma-obs)))]
       z)))
+
+;; Flat vectorized HMM model: unrolled loop, flat address keys
+;; t=0: logits [K] → z [N]; t>0: logits [N,K] → z [N]
+(def hmm-vec-model
+  (gen [T-steps]
+    (loop [t 0, z nil]
+      (if (>= t T-steps)
+        z
+        (let [logits (if (nil? z)
+                       init-logits
+                       (mx/take-idx transition-logits z 0))
+              z-new (trace (keyword (str "z" t)) (dist/categorical logits))
+              mu (mx/take-idx emission-means z-new)
+              _ (trace (keyword (str "y" t)) (dist/gaussian mu sigma-obs-arr))]
+          (recur (inc t) z-new))))))
+
+;; Flat observations for vectorized IS (flat keys :y0, :y1, ... not [0 :y])
+(def vec-observations
+  (reduce (fn [cm t]
+            (cm/set-choice cm [(keyword (str "y" t))] (mx/scalar (nth ys-data t))))
+          cm/EMPTY (range T)))
 
 (def hmm-unfold (comb/unfold-combinator (dyn/auto-key hmm-kernel)))
 
@@ -450,6 +474,42 @@
 (mx/force-gc!)
 
 ;; ---------------------------------------------------------------------------
+;; Algorithm 7: Vectorized IS (N=1000)
+;; ---------------------------------------------------------------------------
+
+(defn run-vec-is-experiment
+  "Run vectorized IS — single vgenerate call for all particles."
+  [n-particles seed]
+  (let [start (perf-now)
+        result (is/vectorized-importance-sampling
+                 {:samples n-particles :key (rng/fresh-key seed)}
+                 hmm-vec-model [T] vec-observations)
+        log-ml (mx/realize (:log-ml-estimate result))
+        ess (vec/vtrace-ess (:vtrace result))
+        elapsed (- (perf-now) start)]
+    (mx/clear-cache!) (mx/force-gc!)
+    {:log-ml log-ml :ess ess :time-ms elapsed}))
+
+(println "\n-- Algorithm 7: Vectorized IS (N=1000, 10 runs) --")
+
+(def vec-is-1000-runs
+  (vec (for [i (range n-runs)]
+         (do
+           (when (zero? (mod i 5)) (println (str "  run " i "...")))
+           (run-vec-is-experiment 1000 (+ base-seed 700 i))))))
+
+(def vec-is-1000-summary (summarize-runs vec-is-1000-runs))
+(print-summary "Vec-IS-1000" vec-is-1000-summary)
+
+(let [is-time (get-in is-1000-summary [:time-ms :mean])
+      vec-time (get-in vec-is-1000-summary [:time-ms :mean])
+      speedup (/ is-time (max vec-time 0.001))]
+  (println (str "  speedup vs sequential IS: " (.toFixed speedup 1) "x")))
+
+(mx/clear-cache!)
+(mx/force-gc!)
+
+;; ---------------------------------------------------------------------------
 ;; Write results JSON
 ;; ---------------------------------------------------------------------------
 
@@ -540,7 +600,19 @@
          :time_ms_std (get-in batched-smc-1000-summary [:time-ms :std])
          :raw_log_mls (:raw-log-mls batched-smc-1000-summary)
          :raw_errors (:raw-errors batched-smc-1000-summary)
-         :raw_ess (:raw-ess batched-smc-1000-summary)}]}]
+         :raw_ess (:raw-ess batched-smc-1000-summary)}
+        {:algorithm "Vec_IS_1000" :method "vectorized-is" :particles 1000
+         :log_ml (get-in vec-is-1000-summary [:log-ml :mean])
+         :log_ml_std (get-in vec-is-1000-summary [:log-ml :std])
+         :error (get-in vec-is-1000-summary [:error :mean])
+         :error_std (get-in vec-is-1000-summary [:error :std])
+         :ess (get-in vec-is-1000-summary [:ess :mean])
+         :ess_std (get-in vec-is-1000-summary [:ess :std])
+         :time_ms (get-in vec-is-1000-summary [:time-ms :mean])
+         :time_ms_std (get-in vec-is-1000-summary [:time-ms :std])
+         :raw_log_mls (:raw-log-mls vec-is-1000-summary)
+         :raw_errors (:raw-errors vec-is-1000-summary)
+         :raw_ess (:raw-ess vec-is-1000-summary)}]}]
   (write-json "hmm_results.json" all-results))
 
 ;; ---------------------------------------------------------------------------
@@ -548,19 +620,21 @@
 ;; ---------------------------------------------------------------------------
 
 (let [summaries [["IS (N=1000)" is-1000-summary]
+                 ["Vec IS (N=1000)" vec-is-1000-summary]
                  ["SMC (N=100)" smc-100-summary]
                  ["SMC (N=250)" smc-250-summary]
                  ["Batched SMC (N=100)" batched-smc-100-summary]
                  ["Batched SMC (N=250)" batched-smc-250-summary]
                  ["Batched SMC (N=1000)" batched-smc-1000-summary]]
       md (str "# Experiment 3B: HMM — IS vs SMC\n\n"
-              "**Date:** 2026-03-03\n"
+              "**Date:** 2026-03-04\n"
               "**Model:** 2-state Gaussian-emission HMM, T=50 timesteps\n"
               "**Transition:** A = [[0.9, 0.1], [0.1, 0.9]] (sticky)\n"
               "**Emission:** y_t | z_t=k ~ N(mu_k, 1.0), mu = [-2, 2]\n"
               "**Exact log P(y):** " (.toFixed exact-log-ml 4) " (forward algorithm)\n\n"
               "## Methods\n\n"
               "- **IS:** GenMLX GFI `p/generate` on Unfold combinator (all T observations at once)\n"
+              "- **Vectorized IS:** Shape-based batched `vgenerate` on flat model — single model call\n"
               "- **SMC:** Unfold combinator + `smc-unfold` (sequential, one observation per step)\n"
               "- **Batched SMC:** `batched-smc-unfold` (one vgenerate per timestep for all particles)\n\n"
               "## Results (10 runs each)\n\n"
@@ -580,6 +654,10 @@
               "IS with prior proposals suffers exponential weight degeneracy for sequential "
               "models (T=50 timesteps). Even with 1000 particles, ESS collapses near 1 "
               "and log-ML estimates are highly variable.\n\n"
+              "Vectorized IS runs the flat model body ONCE for all 1000 particles using "
+              "shape-based batching, achieving massive speedup over sequential IS. Note: ESS "
+              "is still ~1 due to inherent weight degeneracy — vectorization speeds up "
+              "computation, not statistical efficiency.\n\n"
               "SMC via the Unfold combinator exploits the sequential structure: at each "
               "timestep, only one new observation is incorporated, and resampling prevents "
               "catastrophic weight collapse. With just 100 particles, SMC achieves dramatically "
@@ -596,23 +674,32 @@
 (println "\n=== Summary ===")
 (println (str "Exact log-ML: " (.toFixed exact-log-ml 4)))
 (println "")
-(println (str "IS (1000):  error=" (.toFixed (get-in is-1000-summary [:error :mean]) 2)
-              "  ESS=" (.toFixed (get-in is-1000-summary [:ess :mean]) 1)))
-(println (str "SMC (100):  error=" (.toFixed (get-in smc-100-summary [:error :mean]) 2)
+(println (str "IS (1000):     error=" (.toFixed (get-in is-1000-summary [:error :mean]) 2)
+              "  ESS=" (.toFixed (get-in is-1000-summary [:ess :mean]) 1)
+              "  time=" (.toFixed (get-in is-1000-summary [:time-ms :mean]) 0) "ms"))
+(println (str "Vec IS (1000): error=" (.toFixed (get-in vec-is-1000-summary [:error :mean]) 2)
+              "  ESS=" (.toFixed (get-in vec-is-1000-summary [:ess :mean]) 1)
+              "  time=" (.toFixed (get-in vec-is-1000-summary [:time-ms :mean]) 0) "ms"))
+(println (str "SMC (100):     error=" (.toFixed (get-in smc-100-summary [:error :mean]) 2)
               "  ESS=" (.toFixed (get-in smc-100-summary [:ess :mean]) 1)))
-(println (str "SMC (250):  error=" (.toFixed (get-in smc-250-summary [:error :mean]) 2)
+(println (str "SMC (250):     error=" (.toFixed (get-in smc-250-summary [:error :mean]) 2)
               "  ESS=" (.toFixed (get-in smc-250-summary [:ess :mean]) 1)))
-(println (str "B-SMC(100): error=" (.toFixed (get-in batched-smc-100-summary [:error :mean]) 2)
+(println (str "B-SMC(100):    error=" (.toFixed (get-in batched-smc-100-summary [:error :mean]) 2)
               "  time=" (.toFixed (get-in batched-smc-100-summary [:time-ms :mean]) 0) "ms"))
-(println (str "B-SMC(250): error=" (.toFixed (get-in batched-smc-250-summary [:error :mean]) 2)
+(println (str "B-SMC(250):    error=" (.toFixed (get-in batched-smc-250-summary [:error :mean]) 2)
               "  time=" (.toFixed (get-in batched-smc-250-summary [:time-ms :mean]) 0) "ms"))
-(println (str "B-SMC(1k):  error=" (.toFixed (get-in batched-smc-1000-summary [:error :mean]) 2)
+(println (str "B-SMC(1k):     error=" (.toFixed (get-in batched-smc-1000-summary [:error :mean]) 2)
               "  time=" (.toFixed (get-in batched-smc-1000-summary [:time-ms :mean]) 0) "ms"))
+
+(let [is-time (get-in is-1000-summary [:time-ms :mean])
+      vec-time (get-in vec-is-1000-summary [:time-ms :mean])
+      speedup (/ is-time (max vec-time 0.001))]
+  (println (str "\nIS(1000)/Vec-IS(1000) speedup: " (.toFixed speedup 1) "x")))
 
 (let [smc-time (get-in smc-100-summary [:time-ms :mean])
       batched-time (get-in batched-smc-100-summary [:time-ms :mean])
       speedup (/ smc-time (max batched-time 0.001))]
-  (println (str "\nSMC(100)/Batched-SMC(100) speedup: " (.toFixed speedup 1) "x")))
+  (println (str "SMC(100)/Batched-SMC(100) speedup: " (.toFixed speedup 1) "x")))
 
 (let [is-err (get-in is-1000-summary [:error :mean])
       smc-err (get-in smc-250-summary [:error :mean])
