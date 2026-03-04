@@ -74,7 +74,12 @@
    observations: new observations for this timestep
    forward-kernel: GF that takes [current-trace-choices] and proposes extensions
    backward-kernel: (optional) GF for computing backward proposal score.
-                    If nil, uses the edit interface's automatic backward computation.
+                    If nil, falls back to constraint-based update (plain p/update)
+                    — the forward-kernel is NOT used in this case.
+                    Weight semantics change:
+                      with backward:    weight = update + backward_score - forward_score
+                      without backward: weight = update_weight only (no proposal correction)
+                    Pass nil for both kernels for standard SMC.
    particles: number of particles
    ess-threshold: resample when ESS < threshold * N
    rejuvenation-fn: (optional) fn [trace key] -> trace for MCMC rejuvenation
@@ -101,7 +106,9 @@
                       ;; Use proposal edit
                       (let [edit-req (if backward-kernel
                                       (edit/proposal-edit forward-kernel backward-kernel)
-                                      ;; Without backward kernel, fall back to constraint update
+                                      ;; Without backward kernel, fall back to constraint update.
+                                      ;; This changes weight semantics: no backward/forward proposal
+                                      ;; correction is applied — weight is pure update weight only.
                                       (edit/constraint-edit observations))
                             result (edit/edit (:gen-fn trace) trace edit-req)]
                         (mx/materialize! (:weight result))
@@ -148,11 +155,11 @@
    args: model arguments
 
    Returns {:traces :log-weights :log-ml-estimate}"
-  [{:keys [particles ess-threshold forward-kernel backward-kernel
-           init-proposal rejuvenation-fn callback key]
-    :or {particles 100 ess-threshold 0.5}}
-   model args observations-seq]
-  (let [model (dyn/auto-key model)
+  [opts model args observations-seq]
+  (let [{:keys [particles ess-threshold forward-kernel backward-kernel
+                init-proposal rejuvenation-fn callback key]
+         :or {particles 100 ess-threshold 0.5}} opts
+        model (dyn/auto-key model)
         forward-kernel (when forward-kernel (dyn/auto-key forward-kernel))
         backward-kernel (when backward-kernel (dyn/auto-key backward-kernel))
         init-proposal (when init-proposal (dyn/auto-key init-proposal))

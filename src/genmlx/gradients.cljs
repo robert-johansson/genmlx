@@ -21,6 +21,11 @@
   (let [model (dyn/auto-key model)
         args (:args trace)
         choices (:choices trace)
+        _ (doseq [addr addresses]
+            (when-not (cm/has-value? (cm/get-submap choices addr))
+              (throw (ex-info (str "choice-gradients: address " (pr-str addr)
+                                   " not found in trace choices")
+                              {:address addr}))))
         ;; Build a score function parameterized by the target choices
         indexed-addrs (mapv vector (range) addresses)
         ;; Extract current values
@@ -57,6 +62,13 @@
    Returns {:score MLX-scalar :grad MLX-array}."
   [model args observations addresses params]
   (let [model (dyn/auto-key model)
+        _ (let [n-addr (count addresses)
+                n-param (first (mx/shape params))]
+            (when-not (= n-addr n-param)
+              (throw (ex-info (str "score-gradient: addresses count (" n-addr
+                                   ") != params dimension (" n-param ")")
+                              {:addresses-count n-addr
+                               :params-shape (mx/shape params)}))))
         indexed-addrs (mapv vector (range) addresses)
         score-fn (fn [p]
                    (let [cm (reduce

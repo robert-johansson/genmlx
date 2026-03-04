@@ -7,7 +7,8 @@
             [genmlx.mlx.random :as rng]
             [genmlx.inference.util :as u]
             [genmlx.dynamic :as dyn]
-            [genmlx.vectorized :as vec]))
+            [genmlx.vectorized :as vec]
+            [genmlx.combinators :as comb]))
 
 
 (defn- residual-resample
@@ -308,6 +309,65 @@
                 (callback {:step t :ess ess :resampled? resample?}))
               (recur (inc t) final-traces new-weights
                      (mx/add log-ml ml-inc) next-key))))))))
+
+;; ---------------------------------------------------------------------------
+;; Unfold-based SMC — incremental particle filter via unfold-extend
+;; ---------------------------------------------------------------------------
+
+(defn smc-unfold
+  "Always-resample bootstrap particle filter using Unfold combinator.
+   Extends traces one step at a time via unfold-extend, giving O(1) per step
+   and staying well under Metal buffer limits.
+
+   kernel: a generative function taking [t state & extra] → new-state
+   init-state: initial state passed to the kernel
+   observations-seq: sequence of kernel-level choice maps, one per timestep
+
+   opts: {:particles N :key prng-key}
+
+   Returns {:log-ml MLX-scalar :traces [Trace ...] :final-ess number}"
+  [{:keys [particles key] :or {particles 100}}
+   kernel init-state observations-seq]
+  (let [unfold-gf (comb/unfold-combinator kernel)
+        obs-vec (vec observations-seq)
+        n-steps (count obs-vec)
+        init-traces (vec (repeat particles (comb/unfold-empty-trace unfold-gf init-state)))]
+    (loop [t 0
+           traces init-traces
+           log-ml (mx/scalar 0.0)
+           rk (rng/ensure-key key)]
+      (if (>= t n-steps)
+        {:log-ml log-ml :traces traces
+         :final-ess (u/compute-ess (mapv (fn [_] (mx/scalar 0.0)) traces))}
+        (let [[step-key next-rk] (rng/split rk)
+              [extend-key resample-key] (rng/split step-key)
+              ;; Extend all particles and resample inside tidy to free intermediates
+              step-result
+              (mx/tidy-run
+                (fn []
+                  (let [particle-keys (rng/split-n extend-key particles)
+                        results (mapv (fn [tr pk]
+                                        (comb/unfold-extend tr (nth obs-vec t) pk))
+                                      traces particle-keys)
+                        step-weights (mapv :weight results)
+                        new-traces (mapv :trace results)
+                        w-arr (u/materialize-weights step-weights)
+                        ml-inc (mx/subtract (mx/logsumexp w-arr)
+                                            (mx/scalar (js/Math.log particles)))
+                        _ (mx/materialize! ml-inc)
+                        indices (u/systematic-resample step-weights particles resample-key)
+                        resampled (mapv #(nth new-traces %) indices)]
+                    {:traces resampled :ml-inc ml-inc}))
+                (fn [result]
+                  ;; Preserve resampled trace arrays and ml-inc
+                  (into (vec (mapcat u/collect-trace-arrays (:traces result)))
+                        [(:ml-inc result)])))
+              new-log-ml (mx/add log-ml (:ml-inc step-result))
+              ;; Periodic cleanup (every 2 steps to stay under Metal buffer limits)
+              _ (when (zero? (mod (inc t) 2))
+                  (mx/force-gc!)
+                  (mx/clear-cache!))]
+          (recur (inc t) (:traces step-result) new-log-ml next-rk))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized SMC — multi-step batched particle filtering

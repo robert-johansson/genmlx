@@ -10,6 +10,20 @@
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]))
 
+(defn- wrap-with-custom-grad
+  "Wrap forward-fn so MLX autograd uses gradient-fn for backward pass.
+   Uses stop-gradient trick: output = sg(f(x)) + surrogate - sg(surrogate)
+   where surrogate is a linear function with the desired gradient."
+  [forward-fn gradient-fn]
+  (fn [& args]
+    (let [fwd (apply forward-fn args)
+          grads (gradient-fn (vec args) fwd (mx/scalar 1.0))
+          surrogate (reduce mx/add (mx/scalar 0.0)
+                      (map (fn [g a] (mx/multiply (mx/stop-gradient g) a))
+                           grads args))]
+      (mx/add (mx/stop-gradient fwd)
+              (mx/subtract surrogate (mx/stop-gradient surrogate))))))
+
 (defrecord CustomGradientGF [forward-fn gradient-fn arg-grads]
   p/IGenerativeFunction
   (simulate [this args]
@@ -60,7 +74,10 @@
    :gradient           — optional (fn [args retval cotangent] -> arg-grads-vec)
    :has-argument-grads — vector of booleans per argument position"
   [{:keys [forward gradient has-argument-grads]}]
-  (->CustomGradientGF forward gradient has-argument-grads))
+  (->CustomGradientGF
+    (if gradient (wrap-with-custom-grad forward gradient) forward)
+    gradient
+    has-argument-grads))
 
 (defn accepts-arg-grads?
   "Returns true if gf implements IHasArgumentGrads and has non-nil grads."
