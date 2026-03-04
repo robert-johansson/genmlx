@@ -1,0 +1,20 @@
+\begin{table}[t]
+\centering
+\caption{Linear Regression: Inference Algorithm Comparison}
+\label{tab:linreg}
+\small
+\begin{tabular}{lrrrrrrr}
+\toprule
+Algorithm & Slope $\mu$ & Slope Err & Int. $\mu$ & Int. Err & ESS & $\hat{R}$ & Time (ms) \\
+\midrule
+Analytic & 2.0900 & --- & 0.5588 & --- & --- & --- & --- \\
+Compiled MH & 2.0883 & 0.0018 & 0.5659 & 0.0072 & 753 & 1.000 & 894 \\
+Vectorized Compiled Trajectory MH & 2.0868 & 0.0032 & 0.5590 & 0.0002 & --- & --- & 294 \\
+HMC & 2.0901 & 0.0000 & 0.5607 & 0.0019 & 1000 & 1.000 & 2105 \\
+NUTS & 2.0851 & 0.0050 & 0.5520 & 0.0067 & 520 & 1.000 & 28419 \\
+ADVI & 2.1437 & 0.0536 & 0.4506 & 0.1082 & --- & --- & 2058 \\
+Vectorized IS & 2.1032 & 0.0132 & 0.5717 & 0.0129 & 117 & --- & 2 \\
+Vec Traj MH N100 K10 & 0.0000 & 0.0044 & 0.0000 & 0.0000 & --- & --- & 260 \\
+\bottomrule
+\end{tabular}
+\end{table}

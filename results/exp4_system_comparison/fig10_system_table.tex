@@ -1,0 +1,16 @@
+\begin{table}[t]
+\centering
+\caption{System comparison on Apple M2: GenMLX (Metal GPU), Gen.jl (CPU), GenJAX (JIT, CPU).}
+\label{tab:system-comparison}
+\begin{tabular}{l l r r r l}
+\toprule
+Model & Algorithm & GenMLX & Gen.jl & GenJAX & Notes \\
+\midrule
+LinReg & IS (1K) & 1.8 & 6.5 & 0.10 & Vec IS (Metal) vs JIT (CPU) \\
+LinReg & MH (5K) & 19.5s & 64 & --- & Compiled MH vs Gen.jl MH \\
+HMM & IS (1K) & 8.2 & 34 & --- & Vec IS (Metal) vs Gen.jl (CPU) \\
+HMM & SMC (100) & 5.8s & 190 & --- & Unfold PF vs Gen.jl PF \\
+GMM & IS (1K) & 2.1 & 5.8 & 1.1 & Vec IS (Metal) vs JIT (CPU) \\
+\bottomrule
+\end{tabular}
+\end{table}

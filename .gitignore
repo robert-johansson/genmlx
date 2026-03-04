@@ -4,3 +4,22 @@ node_modules/
 .nbb/
 *.pdf
 node-mlx/
+
+# OS
+.DS_Store
+
+# External repos (cloned for comparison)
+genjax/
+genstudio/
+
+# Python
+__pycache__/
+
+# Planning docs (not for repo)
+TODO_RESULTS.md
+TODO_BETTER.md
+feedback1.md
+paper/plan-*.md
+paper/genmlx.md
+paper/FORMAL_PAPER_PLAN.md
+paper/MANUSCRIPT_PLAN.md

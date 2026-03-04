@@ -1,0 +1,15 @@
+\begin{table}[t]
+\centering
+\caption{Compilation and loop fusion speedups.}
+\label{tab:compilation}
+\begin{tabular}{l r r r}
+\toprule
+Benchmark & Baseline (ms) & Compiled (ms) & Speedup \\
+\midrule
+GFI MH vs Compiled MH & 1326 & 119 & 11.1$\times$ \\
+Score-fn compilation & 69.5 & 8.7 & 8.0$\times$ \\
+HMC GenMLX vs hand-coded & 460 & 432 & 1.06$\times$ \\
+Serial vs Vec.\ MH (10 chains) & 535 & 160 & 3.3$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
