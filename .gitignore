@@ -16,10 +16,5 @@ genstudio/
 __pycache__/
 
 # Planning docs (not for repo)
-TODO_RESULTS.md
-TODO_BETTER.md
-feedback1.md
-paper/plan-*.md
-paper/genmlx.md
 paper/FORMAL_PAPER_PLAN.md
 paper/MANUSCRIPT_PLAN.md
