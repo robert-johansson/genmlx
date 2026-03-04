@@ -44,10 +44,13 @@ bun install
 > ops required by GenMLX's distributions. Once these are merged upstream, the
 > standard `@frost-beta/mlx` npm package will work.
 
-Run a model:
+Run the included example:
 
 ```bash
-bun run --bun nbb my_model.cljs
+bun run --bun nbb examples/linear_regression.cljs
+# => Running MH inference (500 samples, 100 burn-in)...
+# => Posterior slope mean:     ~2.0 (true: ~2.0)
+# => Posterior intercept mean: ~0.1 (true: ~0.1)
 ```
 
 ### Define a model
@@ -56,7 +59,6 @@ bun run --bun nbb my_model.cljs
 (ns my-model
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
-            [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.inference.mcmc :as mcmc])
@@ -73,12 +75,8 @@ bun run --bun nbb my_model.cljs
                (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                       intercept) 1)))
       slope)))
-```
 
-### Run inference
-
-```clojure
-;; Observations — choicemap constructor takes keyword-value pairs
+;; Observations — data generated from y = 2x + 0.1 + noise
 (def xs [1.0 2.0 3.0 4.0 5.0])
 (def observations
   (cm/choicemap :y0 (mx/scalar 2.1) :y1 (mx/scalar 3.9) :y2 (mx/scalar 6.2)
@@ -90,7 +88,7 @@ bun run --bun nbb my_model.cljs
             :selection (sel/select :slope :intercept)}
            model [xs] observations))
 
-;; Examine posterior — traces are records, choices are hierarchical maps
+;; Examine posterior
 (let [slopes (mapv #(mx/item (cm/get-choice (:choices %) [:slope])) traces)]
   (println "Posterior slope mean:" (/ (reduce + slopes) (count slopes))))
 ;; => ~2.0 (true slope)
