@@ -60,6 +60,9 @@ table { border-collapse: collapse; margin: 1.2em 0; width: 100%; font-size: 15px
 th, td { border: 1px solid var(--code-border); padding: 8px 12px; text-align: left; }
 th { background: var(--code-bg); font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-weight: 600; }
 
+/* Syntax highlighting — override highlight.js theme to match our code-bg */
+pre code.hljs { background: var(--code-bg); }
+
 /* Responsive */
 @media (max-width: 600px) {
   #chapter-wrapper { padding: 10px 16px 40px; }
