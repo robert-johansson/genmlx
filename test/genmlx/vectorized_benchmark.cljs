@@ -86,13 +86,14 @@
 
 (println "\n-- Benchmark 2: generate vs vgenerate (5-site model, N=100) --")
 
-(let [model (gen []
-              (let [x1 (trace :x1 (dist/gaussian 0 1))
-                    x2 (trace :x2 (dist/gaussian 0 1))
-                    x3 (trace :x3 (dist/gaussian 0 1))
-                    x4 (trace :x4 (dist/gaussian 0 1))
-                    x5 (trace :x5 (dist/gaussian 0 1))]
-                nil))
+(let [model (dyn/auto-key
+               (gen []
+                 (let [x1 (trace :x1 (dist/gaussian 0 1))
+                       x2 (trace :x2 (dist/gaussian 0 1))
+                       x3 (trace :x3 (dist/gaussian 0 1))
+                       x4 (trace :x4 (dist/gaussian 0 1))
+                       x5 (trace :x5 (dist/gaussian 0 1))]
+                   nil)))
       n 100
       obs (cm/choicemap :x5 (mx/scalar 2.0))
 
@@ -121,12 +122,13 @@
 
 (println "\n-- Benchmark 3: IS vs vectorized IS (5-site model, N=100) --")
 
-(let [model (gen []
-              (let [mu (trace :mu (dist/gaussian 0 10))]
-                (trace :obs1 (dist/gaussian mu 1))
-                (trace :obs2 (dist/gaussian mu 1))
-                (trace :obs3 (dist/gaussian mu 1))
-                mu))
+(let [model (dyn/auto-key
+               (gen []
+                 (let [mu (trace :mu (dist/gaussian 0 10))]
+                   (trace :obs1 (dist/gaussian mu 1))
+                   (trace :obs2 (dist/gaussian mu 1))
+                   (trace :obs3 (dist/gaussian mu 1))
+                   mu)))
       obs (cm/choicemap :obs1 (mx/scalar 3.0) :obs2 (mx/scalar 3.1) :obs3 (mx/scalar 2.9))
       n 100
 
@@ -162,11 +164,12 @@
 
 (println "\n-- Benchmark 4: SMC init vs vsmc-init (5-site, N=100) --")
 
-(let [model (gen []
-              (let [mu (trace :mu (dist/gaussian 0 10))]
-                (trace :obs1 (dist/gaussian mu 1))
-                (trace :obs2 (dist/gaussian mu 1))
-                mu))
+(let [model (dyn/auto-key
+               (gen []
+                 (let [mu (trace :mu (dist/gaussian 0 10))]
+                   (trace :obs1 (dist/gaussian mu 1))
+                   (trace :obs2 (dist/gaussian mu 1))
+                   mu)))
       obs (cm/choicemap :obs1 (mx/scalar 3.0) :obs2 (mx/scalar 3.1))
       n 100
 

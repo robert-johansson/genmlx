@@ -126,6 +126,9 @@
   (.resolve path-mod (js/process.cwd)
             "genjax/examples/perfbench/data_cpu/curvefit_large/genmlx"))
 
+(def results-dir
+  (.resolve path-mod (js/process.cwd) "results/exp2_ffi_bottleneck"))
+
 (defn ensure-dir [dir]
   (when-not (.existsSync fs dir)
     (.mkdirSync fs dir #js {:recursive true})))
@@ -236,18 +239,36 @@
         (println (str "  Fast model IS OK: log-ML="
                       (.toFixed (mx/realize (:log-ml-estimate r)) 2)))))
 
-    ;; Run benchmarks — fast variant
-    (println "\n--- Gaussian-vec (fast) benchmarks ---")
-    (let [fast-results
+    ;; Run benchmarks — per-site variant
+    (println "\n--- Per-site benchmarks ---")
+    (let [per-site-results
           (doall (for [D D-values]
-                   (run-is-benchmark-fast D n-particles bench-opts)))]
+                   (run-is-benchmark D n-particles bench-opts)))]
 
-      ;; Summary table
-      (println "\n=== Summary ===")
-      (println "D\tgaussian-vec (ms)")
-      (doseq [r fast-results]
-        (println (str (:n_features r) "\t"
-                      (.toFixed (* (:mean_time r) 1000) 1))))))
+      ;; Run benchmarks — fast variant
+      (println "\n--- Gaussian-vec (fast) benchmarks ---")
+      (let [fast-results
+            (doall (for [D D-values]
+                     (run-is-benchmark-fast D n-particles bench-opts)))]
+
+        ;; Copy results to results/ dir
+        (ensure-dir results-dir)
+        (doseq [D D-values]
+          (doseq [prefix ["is_" "is_fast_"]]
+            (let [fname (str prefix "D" D "_n" n-particles ".json")
+                  src (str output-dir "/" fname)
+                  dst (str results-dir "/" fname)]
+              (when (.existsSync fs src)
+                (.copyFileSync fs src dst)
+                (println (str "  Copied: " dst))))))
+
+        ;; Summary table
+        (println "\n=== Summary ===")
+        (println "D\tper-site (ms)\tgaussian-vec (ms)")
+        (doseq [[ps fst] (map vector per-site-results fast-results)]
+          (println (str (:n_features ps) "\t"
+                        (.toFixed (* (:mean_time ps) 1000) 1) "\t\t"
+                        (.toFixed (* (:mean_time fst) 1000) 1)))))))
 
   (println "\n=== Done ===")
   (.exit js/process 0))

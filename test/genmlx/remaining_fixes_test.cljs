@@ -166,7 +166,7 @@
 
       ;; Update only element 0 with vector-diff
       new-constraints (cm/choicemap 0 (cm/choicemap :mu (mx/scalar 5.0)))
-      vdiff (diff/vector-diff #{0})
+      vdiff {:diff-type :vector-diff :changed #{0}}
       result (p/update-with-diffs model trace new-constraints vdiff)
       new-trace (:trace result)
 
@@ -319,46 +319,6 @@
   (let [g (mx/realize (mx/index grad 0))]
     (assert-true "gradient points toward obs (negative for mu < obs)"
                  (< g 0))))
-
-;; =========================================================================
-;; Test 4: diff.cljs utilities are functional
-;; =========================================================================
-
-(println "\n-- Diff utilities: basic operations --")
-
-(assert-true "no-change predicate"
-             (diff/no-change? diff/no-change))
-(assert-true "unknown-change predicate"
-             (diff/unknown-change? diff/unknown-change))
-(assert-true "nil is unknown"
-             (diff/unknown-change? nil))
-(assert-true "no-change is not changed"
-             (not (diff/changed? diff/no-change)))
-(assert-true "unknown-change is changed"
-             (diff/changed? diff/unknown-change))
-
-(let [d (diff/value-change 1 2)]
-  (assert-true "value-change is changed" (diff/changed? d))
-  (assert-true "value-change old" (= (:old d) 1))
-  (assert-true "value-change new" (= (:new d) 2)))
-
-(let [vd (diff/compute-vector-diff [1 2 3] [1 2 4])]
-  (assert-true "vector-diff detects index 2"
-               (= (:changed vd) #{2})))
-
-(let [md (diff/compute-map-diff {:a 1 :b 2} {:a 1 :b 3 :c 4})]
-  (assert-true "map-diff: b changed" (contains? (:changed md) :b))
-  (assert-true "map-diff: c added" (contains? (:added md) :c))
-  (assert-true "map-diff: nothing removed" (empty? (:removed md))))
-
-(assert-true "should-recompute? false for no-change"
-             (not (diff/should-recompute? diff/no-change :any)))
-(assert-true "should-recompute? true for unknown-change"
-             (diff/should-recompute? diff/unknown-change :any))
-(assert-true "should-recompute? true for changed index in vector-diff"
-             (diff/should-recompute? (diff/vector-diff #{2}) 2))
-(assert-true "should-recompute? false for unchanged index"
-             (not (diff/should-recompute? (diff/vector-diff #{2}) 1)))
 
 ;; =========================================================================
 ;; Summary
