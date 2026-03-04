@@ -157,13 +157,13 @@ approximate posterior:</p>
 ;; Generative model (decoder)
 (def generative-model
   (gen [decoder]
-    (let [z1 (dyn/trace :z1 (dist/gaussian 0 1))
-          z2 (dyn/trace :z2 (dist/gaussian 0 1))
+    (let [z1 (trace :z1 (dist/gaussian 0 1))
+          z2 (trace :z2 (dist/gaussian 0 1))
           z  (mx/array [z1 z2])
           reconstruction (decoder (mx/reshape z [1 2]))]
       ;; Observe each output dimension
       (doseq [i (range 28)]
-        (dyn/trace (keyword (str "x" i))
+        (trace (keyword (str "x" i))
                    (dist/gaussian (mx/slice reconstruction [0 i]) 0.1)))
       z)))
 
@@ -175,8 +175,8 @@ approximate posterior:</p>
           mu2     (mx/slice params [0 1])
           lsig1   (mx/slice params [0 2])
           lsig2   (mx/slice params [0 3])
-          z1 (dyn/trace :z1 (dist/gaussian mu1 (mx/exp lsig1)))
-          z2 (dyn/trace :z2 (dist/gaussian mu2 (mx/exp lsig2)))]
+          z1 (trace :z1 (dist/gaussian mu1 (mx/exp lsig1)))
+          z2 (trace :z2 (dist/gaussian mu2 (mx/exp lsig2)))]
       [z1 z2])))</code></pre>
 </div>
 
@@ -255,8 +255,8 @@ pass.</p>
 ;; Model: latent z -> observed x
 (def model
   (gen [x]
-    (let [z (dyn/trace :z (dist/gaussian 0 1))]
-      (dyn/trace :x (dist/gaussian z 0.5))
+    (let [z (trace :z (dist/gaussian 0 1))]
+      (trace :x (dist/gaussian z 0.5))
       z)))
 
 ;; Encoder: maps observed data to approximate posterior parameters

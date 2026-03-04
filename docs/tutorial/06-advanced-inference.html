@@ -63,10 +63,10 @@ maintain detailed balance.</p>
 ;; Banana-shaped posterior (challenging for random-walk MH)
 (def banana-model
   (gen [data]
-    (let [x (dyn/trace :x (dist/gaussian 0 5))
-          y (dyn/trace :y (dist/gaussian (mx/multiply x x) 1))]
+    (let [x (trace :x (dist/gaussian 0 5))
+          y (trace :y (dist/gaussian (mx/multiply x x) 1))]
       (doseq [[i d] (map-indexed vector data)]
-        (dyn/trace (keyword (str "obs" i))
+        (trace (keyword (str "obs" i))
                    (dist/gaussian (mx/add x y) 0.5))))))
 
 (def data [(mx/scalar 3.0) (mx/scalar 3.2) (mx/scalar 2.8)])
@@ -323,8 +323,8 @@ reweight, and optionally resample and rejuvenate.</p>
 ;; HMM kernel for Unfold
 (def hmm-step
   (gen [t state]
-    (let [new-state (dyn/trace :state (dist/gaussian state 0.3))
-          obs       (dyn/trace :obs (dist/gaussian new-state 1.0))]
+    (let [new-state (trace :state (dist/gaussian state 0.3))
+          obs       (trace :obs (dist/gaussian new-state 1.0))]
       new-state)))
 
 (def hmm (comb/unfold-combinator hmm-step))
@@ -419,12 +419,12 @@ problem-specific, or even neural proposals at each timestep.</p>
 (def forward-kernel
   (gen [current-choices]
     ;; Use observation to guide the proposal toward high-likelihood regions
-    (dyn/trace :state (dist/gaussian 0 1))))
+    (trace :state (dist/gaussian 0 1))))
 
 ;; Backward kernel: scores the reverse move
 (def backward-kernel
   (gen [current-choices]
-    (dyn/trace :state (dist/gaussian 0 1))))
+    (trace :state (dist/gaussian 0 1))))
 
 ;; SMCP3 with custom proposals
 (def smcp3-result

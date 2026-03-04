@@ -78,7 +78,7 @@ the data well.</p>
 
 <p>To use <code>generate</code>, you need a <strong>choice map</strong> that maps the
 addresses of observed trace sites to their observed values. The addresses must
-match exactly what your model passes to <code>dyn/trace</code>.</p>
+match exactly what your model passes to <code>trace</code>.</p>
 
 <div class="code-block">
 <pre><code>(ns conditioning-example
@@ -92,9 +92,9 @@ match exactly what your model passes to <code>dyn/trace</code>.</p>
 ;; A model that samples a mean, then generates 3 data points
 (def model
   (gen [noise]
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+    (let [mu (trace :mu (dist/gaussian 0 10))]
       (doseq [i (range 3)]
-        (dyn/trace (keyword (str "y" i))
+        (trace (keyword (str "y" i))
                    (dist/gaussian mu noise)))
       mu)))
 
@@ -111,7 +111,7 @@ The latent variable <code>:mu</code> is <em>not</em> in the choice map, so
 
 <div class="note">
   <strong>Key rule:</strong> Constrained addresses must exist in the model &mdash; they
-  must be addresses that <code>dyn/trace</code> is called with during execution.
+  must be addresses that <code>trace</code> is called with during execution.
   If you constrain an address that the model never traces, GenMLX will print a
   warning and ignore it.
 </div>
@@ -190,7 +190,7 @@ latent variables). Unconstrained addresses contribute to the score but
 <h2>How the handler makes it work</h2>
 
 <p>Under the hood, <code>generate</code> uses the same handler system as
-<code>simulate</code>. When the model body calls <code>dyn/trace</code>, the
+<code>simulate</code>. When the model body calls <code>trace</code>, the
 <strong>generate handler</strong> checks the constraints:</p>
 
 <ul>
@@ -203,29 +203,29 @@ latent variables). Unconstrained addresses contribute to the score but
 
 <p>This is a pure state transition &mdash; the handler reads the constraints
 and updates an immutable state map. The model code doesn&rsquo;t know whether
-it&rsquo;s being simulated or generated; it just calls <code>dyn/trace</code>
+it&rsquo;s being simulated or generated; it just calls <code>trace</code>
 and gets back a value.</p>
 
 
 <!-- ================================================================== -->
 <h2>Nested choice maps</h2>
 
-<p>When your model uses <code>dyn/splice</code> to call sub-models, the choice
+<p>When your model uses <code>splice</code> to call sub-models, the choice
 map must mirror the nesting. Sub-model choices live under their splice
 address:</p>
 
 <div class="code-block">
 <pre><code>(def prior-model
   (gen []
-    (let [mu    (dyn/trace :mu (dist/gaussian 0 10))
-          sigma (dyn/trace :sigma (dist/gamma 2 1))]
+    (let [mu    (trace :mu (dist/gaussian 0 10))
+          sigma (trace :sigma (dist/gamma 2 1))]
       [mu sigma])))
 
 (def data-model
   (gen [xs]
-    (let [[mu sigma] (dyn/splice :prior prior-model)]
+    (let [[mu sigma] (splice :prior prior-model)]
       (doseq [[i x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" i))
+        (trace (keyword (str "y" i))
                    (dist/gaussian mu sigma)))
       mu)))
 
@@ -317,8 +317,8 @@ You do this with a <strong>selection</strong>:</p>
 
 (def model
   (gen []
-    (let [a (dyn/trace :a (dist/gaussian 0 1))
-          b (dyn/trace :b (dist/gaussian 0 1))]
+    (let [a (trace :a (dist/gaussian 0 1))
+          b (trace :b (dist/gaussian 0 1))]
       (mx/add a b))))
 
 (let [trace (p/simulate model [])
@@ -361,7 +361,7 @@ set of choices &mdash; every traced address must be provided. Unlike
 <div class="code-block">
 <pre><code>(def simple-model
   (gen []
-    (let [x (dyn/trace :x (dist/gaussian 0 1))]
+    (let [x (trace :x (dist/gaussian 0 1))]
       x)))
 
 ;; Assess: what is the log-probability of x=0.5?
@@ -445,9 +445,9 @@ conditioning on data (<code>generate</code>):</p>
 
 (def model
   (gen []
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+    (let [mu (trace :mu (dist/gaussian 0 10))]
       (doseq [i (range 5)]
-        (dyn/trace (keyword (str "y" i))
+        (trace (keyword (str "y" i))
                    (dist/gaussian mu 1)))
       mu)))
 

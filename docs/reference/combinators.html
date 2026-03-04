@@ -66,7 +66,7 @@ Choice at address <code>:x</code> in element <code>i</code> is at
 <code>[i :x]</code>.</p>
 
 <div class="code-block">
-<pre><code>(def kernel (gen [x] (dyn/trace :y (dist/gaussian x 1))))
+<pre><code>(def kernel (gen [x] (trace :y (dist/gaussian x 1))))
 (def mapped (comb/map-combinator kernel))
 
 (def trace (p/simulate mapped [3 [(mx/scalar 1) (mx/scalar 2) (mx/scalar 3)]]))
@@ -95,8 +95,8 @@ Choice <code>:x</code> at step <code>t</code> is at <code>[t :x]</code>.</p>
 
 <div class="code-block">
 <pre><code>(def step (gen [t state]
-           (let [s (dyn/trace :state (dist/gaussian state 0.3))]
-             (dyn/trace :obs (dist/gaussian s 1.0))
+           (let [s (trace :state (dist/gaussian state 0.3))]
+             (trace :obs (dist/gaussian s 1.0))
              s)))
 
 (def hmm (comb/unfold-combinator step))
@@ -124,8 +124,8 @@ Models mixture components, regime switching, and conditional structure.</p>
 <code>index</code> selects which branch to execute (0-indexed).</p>
 
 <div class="code-block">
-<pre><code>(def branch-a (gen [x] (dyn/trace :y (dist/gaussian x 1))))
-(def branch-b (gen [x] (dyn/trace :y (dist/gaussian x 10))))
+<pre><code>(def branch-a (gen [x] (trace :y (dist/gaussian x 1))))
+(def branch-b (gen [x] (trace :y (dist/gaussian x 10))))
 
 (def switched (comb/switch-combinator branch-a branch-b))
 
@@ -214,11 +214,11 @@ a reference to the GF being defined, enabling self-referential models
   (comb/recurse
     (fn [self]
       (gen [depth]
-        (let [leaf? (dyn/trace :leaf? (dist/bernoulli 0.3))]
+        (let [leaf? (trace :leaf? (dist/bernoulli 0.3))]
           (if (or (pos? (mx/item leaf?)) (&gt;= depth 5))
-            (dyn/trace :value (dist/gaussian 0 1))
-            (let [left  (dyn/splice :left self [(inc depth)])
-                  right (dyn/splice :right self [(inc depth)])]
+            (trace :value (dist/gaussian 0 1))
+            (let [left  (splice :left self [(inc depth)])
+                  right (splice :right self [(inc depth)])]
               (mx/add left right))))))))</code></pre>
 </div>
 

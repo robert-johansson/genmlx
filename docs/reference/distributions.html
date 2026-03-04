@@ -49,13 +49,13 @@ Source: <code>src/genmlx/dist.cljs</code>, <code>src/genmlx/dist/core.cljs</code
          '[genmlx.dynamic :as dyn])
 
 ;; Inside a gen body:
-(dyn/trace :x (dist/gaussian 0 1))
+(trace :x (dist/gaussian 0 1))
 
 ;; Standalone:
 (dist/gaussian 0 1)  ;; => Distribution record</code></pre>
 
 <p>Every distribution constructor returns a <code>Distribution</code> record
-that can be passed to <code>dyn/trace</code>, <code>p/simulate</code>,
+that can be passed to <code>trace</code>, <code>p/simulate</code>,
 or used with the core multimethods directly.</p>
 
 

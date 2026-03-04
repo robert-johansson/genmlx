@@ -87,9 +87,9 @@ loop, key management, and weight normalization:</p>
 
 (def model
   (gen []
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+    (let [mu (trace :mu (dist/gaussian 0 10))]
       (doseq [i (range 5)]
-        (dyn/trace (keyword (str "y" i))
+        (trace (keyword (str "y" i))
                    (dist/gaussian mu 1)))
       mu)))
 
@@ -244,9 +244,9 @@ acceptance ratio we need.</p>
 
 (def model
   (gen []
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))]
+    (let [mu (trace :mu (dist/gaussian 0 10))]
       (doseq [i (range 5)]
-        (dyn/trace (keyword (str "y" i))
+        (trace (keyword (str "y" i))
                    (dist/gaussian mu 1)))
       mu)))
 
@@ -536,10 +536,10 @@ Median: 7.0
 ;; Model: unknown slope and intercept
 (def linear-model
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 5))
-          intercept (dyn/trace :intercept (dist/gaussian 0 5))]
+    (let [slope     (trace :slope (dist/gaussian 0 5))
+          intercept (trace :intercept (dist/gaussian 0 5))]
       (doseq [[i x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" i))
+        (trace (keyword (str "y" i))
                    (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                           intercept) 1)))
       [slope intercept])))

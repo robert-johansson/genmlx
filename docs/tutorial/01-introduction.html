@@ -45,9 +45,9 @@ write a probabilistic program that models this situation:</p>
 
 (def coin-model
   (gen []
-    (let [theta (dyn/trace :theta (dist/beta 1 1))]
+    (let [theta (trace :theta (dist/beta 1 1))]
       (doseq [i (range 10)]
-        (dyn/trace (keyword (str "flip" i))
+        (trace (keyword (str "flip" i))
                    (dist/bernoulli theta)))
       theta)))</code></pre>
 </div>
@@ -151,10 +151,10 @@ importance sampling to estimate the slope:</p>
 ;; 1. Define the model
 (def linear-model
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
       (doseq [[j x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" j))
+        (trace (keyword (str "y" j))
                    (dist/gaussian
                      (mx/add (mx/multiply slope (mx/scalar x))
                              intercept)

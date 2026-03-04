@@ -89,8 +89,8 @@ enumeration.</p>
 <pre><code>;; Use the custom distribution in a model
 (def robust-model
   (gen [x]
-    (let [slope (dyn/trace :slope (laplace (mx/scalar 0) (mx/scalar 2)))
-          noise (dyn/trace :y (laplace (mx/multiply slope x) (mx/scalar 0.5)))]
+    (let [slope (trace :slope (laplace (mx/scalar 0) (mx/scalar 2)))
+          noise (trace :y (laplace (mx/multiply slope x) (mx/scalar 0.5)))]
       slope)))
 
 (def trace (p/simulate robust-model [(mx/scalar 3.0)]))
@@ -184,8 +184,8 @@ correctly with all inference algorithms.</p>
 
 (def model
   (gen [x]
-    (let [z (dyn/trace :z (dist/gaussian 0 1))]
-      (dyn/trace :y (dist/gaussian z 1))
+    (let [z (trace :z (dist/gaussian 0 1))]
+      (trace :y (dist/gaussian z 1))
       z)))
 
 ;; Verify all 11 GFI contracts
@@ -268,8 +268,8 @@ and dynamic execution checks:</p>
 ;; A correct model
 (def good-model
   (gen [x]
-    (let [z (dyn/trace :z (dist/gaussian 0 1))]
-      (dyn/trace :y (dist/gaussian z 1))
+    (let [z (trace :z (dist/gaussian 0 1))]
+      (trace :y (dist/gaussian z 1))
       z)))
 
 (def result (verify/validate-gen-fn good-model [(mx/scalar 2.0)]))
@@ -285,8 +285,8 @@ Violations: []</div>
 <pre><code>;; BAD: duplicate addresses
 (def dup-model
   (gen [x]
-    (dyn/trace :z (dist/gaussian 0 1))
-    (dyn/trace :z (dist/gaussian 0 1))))  ;; DUPLICATE!
+    (trace :z (dist/gaussian 0 1))
+    (trace :z (dist/gaussian 0 1))))  ;; DUPLICATE!
 
 (def r1 (verify/validate-gen-fn dup-model [(mx/scalar 1.0)]))
 (println "Valid?" (:valid? r1))
@@ -299,7 +299,7 @@ Violation: {:type :duplicate-address, :severity :error, :message "Duplicate addr
 <pre><code>;; BAD: mx/eval! inside model body (breaks vectorization)
 (def eval-model
   (gen [x]
-    (let [z (dyn/trace :z (dist/gaussian 0 1))]
+    (let [z (trace :z (dist/gaussian 0 1))]
       (mx/eval! z)  ;; WARNING: materializes graph
       z)))
 
@@ -314,7 +314,7 @@ Violation: {:type :duplicate-address, :severity :error, :message "Duplicate addr
 <tr><th>Check</th><th>Type</th><th>Severity</th><th>Description</th></tr>
 <tr><td>Duplicate addresses</td><td>Dynamic</td><td>Error</td><td>Same address traced twice in one execution</td></tr>
 <tr><td>Non-finite scores</td><td>Dynamic</td><td>Error</td><td>NaN or Inf from distribution log-probs</td></tr>
-<tr><td>Empty model</td><td>Dynamic</td><td>Error</td><td>No <code>dyn/trace</code> calls at all</td></tr>
+<tr><td>Empty model</td><td>Dynamic</td><td>Error</td><td>No <code>trace</code> calls at all</td></tr>
 <tr><td>Execution error</td><td>Dynamic</td><td>Error</td><td>Runtime exception during simulation</td></tr>
 <tr><td>Materialization</td><td>Static</td><td>Warning</td><td><code>eval!</code> or <code>item</code> in model source</td></tr>
 </table>
@@ -362,9 +362,9 @@ conditional duplicates that only occur in certain branches:</p>
 ;; 2. Use it in a model
 (def my-model
   (gen [x]
-    (let [z (dyn/trace :z (truncated-normal (mx/scalar 0) (mx/scalar 1)
+    (let [z (trace :z (truncated-normal (mx/scalar 0) (mx/scalar 1)
                                              (mx/scalar -2) (mx/scalar 2)))]
-      (dyn/trace :y (dist/gaussian z 0.5))
+      (trace :y (dist/gaussian z 0.5))
       z)))
 
 ;; 3. Validate the model

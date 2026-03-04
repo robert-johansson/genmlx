@@ -192,15 +192,15 @@ into a single interface.</p>
 
 <p>Define a generative function. The <code>gen</code> macro transforms a
 function body into a <code>DynamicGF</code> that implements the full GFI.
-Inside the body, use <code>dyn/trace</code> to make random choices and
-<code>dyn/splice</code> to call sub-generative-functions.</p>
+Inside the body, use <code>trace</code> to make random choices and
+<code>splice</code> to call sub-generative-functions.</p>
 
 <div class="code-block">
 <pre><code>(def my-model
   (gen [x]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
-      (dyn/trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
+      (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
       slope)))</code></pre>
 </div>
 
@@ -220,7 +220,7 @@ execution handler.</p>
 
 <h3>trace</h3>
 
-<pre><code>(dyn/trace addr dist)</code></pre>
+<pre><code>(trace addr dist)</code></pre>
 
 <p>Sample from (or constrain to) a distribution at the given address. The
 behavior depends on which handler is active: simulate samples from the prior,
@@ -238,7 +238,7 @@ etc.</p>
 
 <h3>splice</h3>
 
-<pre><code>(dyn/splice addr gf &amp; args)</code></pre>
+<pre><code>(splice addr gf &amp; args)</code></pre>
 
 <p>Call a sub-generative-function at the given address. The sub-function&rsquo;s
 choices are nested under <code>addr</code> in the trace&rsquo;s choice map.</p>
@@ -253,7 +253,7 @@ choices are nested under <code>addr</code> in the trace&rsquo;s choice map.</p>
 
 <h3>param</h3>
 
-<pre><code>(dyn/param name default-value)</code></pre>
+<pre><code>(param name default-value)</code></pre>
 
 <p>Declare or read a trainable parameter. If a parameter store is bound,
 reads from it; otherwise returns the default value. Used for learnable
@@ -318,7 +318,7 @@ batch dimension.</p>
 <p>Source: <code>src/genmlx/handler.cljs</code></p>
 
 <p>The handler is the heart of GenMLX. When <code>gen</code> body code calls
-<code>dyn/trace</code>, it dispatches to whichever handler is active. Each
+<code>trace</code>, it dispatches to whichever handler is active. Each
 handler is a <strong>pure state transition</strong>
 <code>(fn [state addr dist] -&gt; [value state'])</code> wrapped in a thin
 <code>volatile!</code> dispatcher.</p>

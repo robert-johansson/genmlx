@@ -123,9 +123,9 @@
 ;; Define a generative function
 (def model
   (gen [x]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
-      (dyn/trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
+      (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
       slope)))</code></pre>
 
     <h3>GFI operations</h3>

@@ -56,7 +56,6 @@ bun run --bun nbb my_model.cljs
 (ns my-model
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
-            [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
@@ -64,14 +63,15 @@ bun run --bun nbb my_model.cljs
   (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; Bayesian linear regression — all values stay as MLX arrays
+;; Inside gen bodies, trace/splice/param are local bindings injected by the macro
 (def model
   (gen [xs]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
       (doseq [[j x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" j))
-                   (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
-                                          intercept) 1)))
+        (trace (keyword (str "y" j))
+               (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                      intercept) 1)))
       slope)))
 ```
 

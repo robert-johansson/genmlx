@@ -52,9 +52,9 @@ the overall probability:</p>
 
 (def model
   (gen [x]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
-      (dyn/trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
+      (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
       slope)))
 
 ;; Create a trace with specific values
@@ -136,9 +136,9 @@ right estimator at each trace site:</p>
 ;; Model with mixed reparameterizable and non-reparameterizable sites
 (def model
   (gen []
-    (let [mu    (dyn/trace :mu (dist/gaussian 0 1))         ;; reparam
-          sigma (dyn/trace :sigma (dist/gamma 2 1))         ;; reparam
-          flag  (dyn/trace :flag (dist/bernoulli 0.5))]     ;; non-reparam (REINFORCE)
+    (let [mu    (trace :mu (dist/gaussian 0 1))         ;; reparam
+          sigma (trace :sigma (dist/gamma 2 1))         ;; reparam
+          flag  (trace :flag (dist/bernoulli 0.5))]     ;; non-reparam (REINFORCE)
       (if (pos? (mx/item flag))
         (mx/multiply mu sigma)
         mu))))
@@ -223,7 +223,7 @@ execute the model once for \(N\) particles:</p>
 <!-- ================================================================== -->
 <h2>Parameter stores</h2>
 
-<p>For models with trainable parameters (declared with <code>dyn/param</code>),
+<p>For models with trainable parameters (declared with <code>param</code>),
 GenMLX uses <strong>parameter stores</strong> &mdash; functional, immutable maps
 from parameter names to MLX arrays:</p>
 
@@ -262,9 +262,9 @@ Version: 1
 Flat array: [0.5 0.0]
 Reconstructed: {:weight #mlx 0.5, :bias #mlx 0.0}</div>
 
-<h3>Using dyn/param in models</h3>
+<h3>Using param in models</h3>
 
-<p>The <code>dyn/param</code> effect declares a trainable parameter inside a
+<p>The <code>param</code> effect declares a trainable parameter inside a
 <code>gen</code> body. When a parameter store is bound, it reads from the store;
 otherwise it returns the default value:</p>
 
@@ -272,10 +272,10 @@ otherwise it returns the default value:</p>
 <pre><code>;; Model with trainable prior parameters
 (def learnable-model
   (gen [x]
-    (let [mu    (dyn/param :prior-mu (mx/scalar 0.0))     ;; trainable
-          sigma (dyn/param :prior-sigma (mx/scalar 1.0))   ;; trainable
-          z     (dyn/trace :z (dist/gaussian mu sigma))]
-      (dyn/trace :y (dist/gaussian z 0.5))
+    (let [mu    (param :prior-mu (mx/scalar 0.0))     ;; trainable
+          sigma (param :prior-sigma (mx/scalar 1.0))   ;; trainable
+          z     (trace :z (dist/gaussian mu sigma))]
+      (trace :y (dist/gaussian z 0.5))
       z)))
 
 ;; Simulate without parameter store (uses defaults)
@@ -358,18 +358,18 @@ a model&rsquo;s posterior by alternating two phases:</p>
 <pre><code>;; Model: Bayesian regression
 (def model
   (gen [x]
-    (let [w (dyn/trace :w (dist/gaussian 0 5))
-          b (dyn/trace :b (dist/gaussian 0 5))]
-      (dyn/trace :y (dist/gaussian (mx/add (mx/multiply w x) b) 0.5))
+    (let [w (trace :w (dist/gaussian 0 5))
+          b (trace :b (dist/gaussian 0 5))]
+      (trace :y (dist/gaussian (mx/add (mx/multiply w x) b) 0.5))
       [w b])))
 
 ;; Guide: learnable approximate posterior
 (def guide
   (gen [x]
-    (let [mu-w (dyn/param :mu-w (mx/scalar 0.0))
-          mu-b (dyn/param :mu-b (mx/scalar 0.0))
-          w (dyn/trace :w (dist/gaussian mu-w 1))
-          b (dyn/trace :b (dist/gaussian mu-b 1))]
+    (let [mu-w (param :mu-w (mx/scalar 0.0))
+          mu-b (param :mu-b (mx/scalar 0.0))
+          w (trace :w (dist/gaussian mu-w 1))
+          b (trace :b (dist/gaussian mu-b 1))]
       [w b])))
 
 (def obs (cm/choicemap :y (mx/scalar 4.0)))
@@ -423,7 +423,7 @@ without running MCMC.</p>
   <li><strong>ADEV</strong> automatically differentiates expected values using
   reparameterization for continuous sites and REINFORCE for discrete sites</li>
   <li><strong>Parameter stores</strong> are functional maps from names to MLX
-  arrays, used with <code>dyn/param</code> inside <code>gen</code> bodies</li>
+  arrays, used with <code>param</code> inside <code>gen</code> bodies</li>
   <li><strong>Optimizers</strong> (SGD, Adam) operate on flat arrays; the
   <code>learn/train</code> loop handles the iteration</li>
   <li><strong>Wake-sleep</strong> alternates wake (fit guide to posterior) and

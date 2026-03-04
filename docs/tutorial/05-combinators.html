@@ -77,7 +77,7 @@ analog of <code>mapv</code>.</p>
 ;; A kernel that generates one noisy observation
 (def noisy-obs
   (gen [x noise-std]
-    (dyn/trace :y (dist/gaussian x noise-std))))
+    (trace :y (dist/gaussian x noise-std))))
 
 ;; Map it across a sequence of inputs
 (def mapped-obs (comb/map-combinator noisy-obs))
@@ -131,7 +131,7 @@ returns a new state.</p>
 <pre><code>;; A random walk step kernel
 (def walk-step
   (gen [t state]
-    (let [step (dyn/trace :step (dist/gaussian 0 1))]
+    (let [step (trace :step (dist/gaussian 0 1))]
       (mx/add state step))))
 
 (def random-walk (comb/unfold-combinator walk-step))
@@ -157,9 +157,9 @@ transitions and emits noisy observations:</p>
 <pre><code>(def hmm-step
   (gen [t state]
     ;; Transition: random walk on the latent state
-    (let [new-state (dyn/trace :state (dist/gaussian state 0.5))
+    (let [new-state (trace :state (dist/gaussian state 0.5))
           ;; Emission: noisy observation
-          obs (dyn/trace :obs (dist/gaussian new-state 1.0))]
+          obs (trace :obs (dist/gaussian new-state 1.0))]
       new-state)))
 
 (def hmm (comb/unfold-combinator hmm-step))
@@ -211,8 +211,8 @@ functions based on an index. It is the combinatorial analog of
 
 <div class="code-block">
 <pre><code>;; Two alternative models for height
-(def short-model (gen [] (dyn/trace :height (dist/gaussian 165 5))))
-(def tall-model  (gen [] (dyn/trace :height (dist/gaussian 185 5))))
+(def short-model (gen [] (trace :height (dist/gaussian 165 5))))
+(def tall-model  (gen [] (trace :height (dist/gaussian 185 5))))
 
 (def height-model (comb/switch-combinator short-model tall-model))
 
@@ -254,7 +254,7 @@ and <code>jax.lax.scan</code>.</p>
 <pre><code>;; Scan kernel: carry is running sum, input is the data point
 (def accumulate-step
   (gen [carry input]
-    (let [noise (dyn/trace :noise (dist/gaussian 0 0.1))
+    (let [noise (trace :noise (dist/gaussian 0 0.1))
           new-carry (mx/add carry (mx/add input noise))
           output new-carry]
       [new-carry output])))
@@ -300,9 +300,9 @@ component generative functions and mixing weights. It traces a
 
 <div class="code-block">
 <pre><code>;; Gaussian mixture model with 3 components
-(def comp-a (gen [] (dyn/trace :x (dist/gaussian -3 0.5))))
-(def comp-b (gen [] (dyn/trace :x (dist/gaussian  0 0.5))))
-(def comp-c (gen [] (dyn/trace :x (dist/gaussian  3 0.5))))
+(def comp-a (gen [] (trace :x (dist/gaussian -3 0.5))))
+(def comp-b (gen [] (trace :x (dist/gaussian  0 0.5))))
+(def comp-c (gen [] (trace :x (dist/gaussian  3 0.5))))
 
 ;; Equal mixing weights (in log space)
 (def gmm (comb/mix-combinator
@@ -347,13 +347,13 @@ that receives a reference to the recursive GF:</p>
   (comb/recurse
     (fn [self]
       (gen [depth]
-        (let [continue (dyn/trace :continue (dist/bernoulli 0.5))]
+        (let [continue (trace :continue (dist/bernoulli 0.5))]
           (if (and (pos? (mx/item continue)) (< depth 5))
-            (let [left  (dyn/splice :left self [(inc depth)])
-                  right (dyn/splice :right self [(inc depth)])]
-              {:value (dyn/trace :value (dist/gaussian 0 1))
+            (let [left  (splice :left self [(inc depth)])
+                  right (splice :right self [(inc depth)])]
+              {:value (trace :value (dist/gaussian 0 1))
                :left left :right right})
-            {:value (dyn/trace :value (dist/gaussian 0 1))
+            {:value (trace :value (dist/gaussian 0 1))
              :left nil :right nil}))))))
 
 (let [trace (p/simulate tree-model [0])]
@@ -366,7 +366,7 @@ that receives a reference to the recursive GF:</p>
 
 ;; maker-fn: (fn [self] -> gen-fn)
 ;;   self is a reference to the recursive GF being defined
-;; The returned gen-fn can call (dyn/splice :addr self args)</code></pre>
+;; The returned gen-fn can call (splice :addr self args)</code></pre>
 </div>
 
 
@@ -380,7 +380,7 @@ generative function. <strong>Map-retval</strong> transforms the return value.
 <div class="code-block">
 <pre><code>;; A model that takes [x]
 (def base-model
-  (gen [x] (dyn/trace :y (dist/gaussian x 1))))
+  (gen [x] (trace :y (dist/gaussian x 1))))
 
 ;; Transform args: double the input before passing to the model
 (def doubled (comb/contramap-gf base-model (fn [[x]] [(mx/multiply x (mx/scalar 2))])))
@@ -416,7 +416,7 @@ for <code>splice</code> via combinator fallback:</p>
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]))
 
-(def kernel (gen [x] (dyn/trace :y (dist/gaussian x 1))))
+(def kernel (gen [x] (trace :y (dist/gaussian x 1))))
 
 ;; Vmap: run kernel on each element of a batched input
 (def vmapped (vmap/vmap-gf kernel))
@@ -425,7 +425,7 @@ for <code>splice</code> via combinator fallback:</p>
   (println "Choices:" (cm/to-map (:choices trace))))
 
 ;; repeat-gf: shorthand for running kernel N times with no batched args
-(def repeated (vmap/repeat-gf (gen [] (dyn/trace :x (dist/gaussian 0 1))) 10))
+(def repeated (vmap/repeat-gf (gen [] (trace :x (dist/gaussian 0 1))) 10))
 
 (let [trace (p/simulate repeated [])]
   (println "10 samples:" (cm/to-map (:choices trace))))</code></pre>
@@ -473,8 +473,8 @@ Map models, or nest them arbitrarily. Each level maintains full GFI support:</p>
 (def single-ts
   (comb/unfold-combinator
     (gen [t state]
-      (let [new-state (dyn/trace :state (dist/gaussian state 0.1))]
-        (dyn/trace :obs (dist/gaussian new-state 1.0))
+      (let [new-state (trace :state (dist/gaussian state 0.1))]
+        (trace :obs (dist/gaussian new-state 1.0))
         new-state))))
 
 (def multi-ts (comb/map-combinator single-ts))

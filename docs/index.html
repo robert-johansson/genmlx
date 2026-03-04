@@ -78,10 +78,10 @@
 <pre><span class="comment">;; Define a Bayesian linear regression model</span>
 (<span class="keyword">def</span> model
   (<span class="fn">gen</span> [xs]
-    (<span class="keyword">let</span> [slope     (<span class="fn">dyn/trace</span> <span class="string">:slope</span> (<span class="fn">dist/gaussian</span> <span class="number">0</span> <span class="number">10</span>))
-          intercept (<span class="fn">dyn/trace</span> <span class="string">:intercept</span> (<span class="fn">dist/gaussian</span> <span class="number">0</span> <span class="number">10</span>))]
+    (<span class="keyword">let</span> [slope     (<span class="fn">trace</span> <span class="string">:slope</span> (<span class="fn">dist/gaussian</span> <span class="number">0</span> <span class="number">10</span>))
+          intercept (<span class="fn">trace</span> <span class="string">:intercept</span> (<span class="fn">dist/gaussian</span> <span class="number">0</span> <span class="number">10</span>))]
       (<span class="keyword">doseq</span> [[j x] (<span class="fn">map-indexed</span> vector xs)]
-        (<span class="fn">dyn/trace</span> (<span class="fn">keyword</span> (<span class="fn">str</span> <span class="string">"y"</span> j))
+        (<span class="fn">trace</span> (<span class="fn">keyword</span> (<span class="fn">str</span> <span class="string">"y"</span> j))
                    (<span class="fn">dist/gaussian</span> (<span class="fn">mx/add</span> (<span class="fn">mx/multiply</span> slope (<span class="fn">mx/scalar</span> x))
                                           intercept) <span class="number">1</span>)))
       slope)))

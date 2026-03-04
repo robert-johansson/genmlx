@@ -52,12 +52,12 @@ mirrors <code>fn</code>:</p>
 ;; A generative function that samples a single Gaussian
 (def simple-model
   (gen []
-    (dyn/trace :x (dist/gaussian 0 1))))</code></pre>
+    (trace :x (dist/gaussian 0 1))))</code></pre>
 </div>
 
 <p>The body of a <code>gen</code> is normal ClojureScript. You can use
 <code>let</code>, <code>if</code>, <code>doseq</code>, <code>map</code>, closures &mdash;
-everything. The only special operation is <code>dyn/trace</code>, which records a
+everything. The only special operation is <code>trace</code>, which records a
 random choice.</p>
 
 <p>Under the hood, <code>gen</code> wraps your function body in a
@@ -74,11 +74,11 @@ to implement these protocols yourself &mdash; <code>gen</code> handles it.</p>
 <!-- ================================================================== -->
 <h2>Tracing random choices</h2>
 
-<p>Inside a <code>gen</code> body, <code>dyn/trace</code> is how you make a random
+<p>Inside a <code>gen</code> body, <code>trace</code> is how you make a random
 choice and give it a name:</p>
 
 <div class="code-block">
-<pre><code>(dyn/trace :my-address (dist/gaussian 0 1))</code></pre>
+<pre><code>(trace :my-address (dist/gaussian 0 1))</code></pre>
 </div>
 
 <p>This does two things:</p>
@@ -100,7 +100,7 @@ For repeated structures (like loop iterations), generate unique addresses:</p>
 <pre><code>(def repeated-model
   (gen [n]
     (doseq [i (range n)]
-      (dyn/trace (keyword (str "x" i)) (dist/gaussian 0 1)))))</code></pre>
+      (trace (keyword (str "x" i)) (dist/gaussian 0 1)))))</code></pre>
 </div>
 
 <p>This creates addresses <code>:x0</code>, <code>:x1</code>, &hellip;,
@@ -140,8 +140,8 @@ model. It is an MLX scalar that stays on the GPU &mdash; you only need to call
 
 (def model
   (gen []
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))
-          x  (dyn/trace :x  (dist/gaussian mu 1))]
+    (let [mu (trace :mu (dist/gaussian 0 10))
+          x  (trace :x  (dist/gaussian mu 1))]
       (mx/add mu x))))
 
 ;; Simulate: run forward, sampling all choices
@@ -267,7 +267,7 @@ uniform on [0, 1] &mdash; it says &ldquo;any bias is equally likely a
 priori.&rdquo;</p>
 
 <div class="code-block">
-<pre><code>(dyn/trace :theta (dist/beta 1 1))</code></pre>
+<pre><code>(trace :theta (dist/beta 1 1))</code></pre>
 </div>
 
 <h3>Step 2: Generate observations</h3>
@@ -276,7 +276,7 @@ priori.&rdquo;</p>
 
 <div class="code-block">
 <pre><code>(doseq [i (range n-flips)]
-  (dyn/trace (keyword (str "flip" i))
+  (trace (keyword (str "flip" i))
              (dist/bernoulli theta)))</code></pre>
 </div>
 
@@ -288,9 +288,9 @@ return the latent variable you care about inferring:</p>
 <div class="code-block">
 <pre><code>(def coin-model
   (gen [n-flips]
-    (let [theta (dyn/trace :theta (dist/beta 1 1))]
+    (let [theta (trace :theta (dist/beta 1 1))]
       (doseq [i (range n-flips)]
-        (dyn/trace (keyword (str "flip" i))
+        (trace (keyword (str "flip" i))
                    (dist/bernoulli theta)))
       theta)))</code></pre>
 </div>
@@ -308,9 +308,9 @@ return the latent variable you care about inferring:</p>
 
 (def coin-model
   (gen [n-flips]
-    (let [theta (dyn/trace :theta (dist/beta 1 1))]
+    (let [theta (trace :theta (dist/beta 1 1))]
       (doseq [i (range n-flips)]
-        (dyn/trace (keyword (str "flip" i))
+        (trace (keyword (str "flip" i))
                    (dist/bernoulli theta)))
       theta)))
 
@@ -381,11 +381,11 @@ kernels automatically.</p>
 <div class="code-block">
 <pre><code>(def mixture-model
   (gen []
-    (let [is-tall (dyn/trace :component (dist/bernoulli 0.3))]
+    (let [is-tall (trace :component (dist/bernoulli 0.3))]
       ;; ClojureScript if — model has stochastic control flow
       (if (pos? (mx/item is-tall))
-        (dyn/trace :height (dist/gaussian 180 5))
-        (dyn/trace :height (dist/gaussian 165 5))))))</code></pre>
+        (trace :height (dist/gaussian 180 5))
+        (trace :height (dist/gaussian 165 5))))))</code></pre>
 </div>
 
 <div class="note">
@@ -402,7 +402,7 @@ kernels automatically.</p>
     (loop [pos (mx/scalar 0.0) i 0]
       (if (= i n-steps)
         pos
-        (let [step (dyn/trace (keyword (str "step" i))
+        (let [step (trace (keyword (str "step" i))
                               (dist/gaussian 0 1))]
           (recur (mx/add pos step) (inc i)))))))</code></pre>
 </div>
@@ -418,7 +418,7 @@ functions that <em>return</em> generative functions:</p>
   [f noise-std]
   (gen [x]
     (let [y-true (f x)
-          y-obs  (dyn/trace :y (dist/gaussian y-true noise-std))]
+          y-obs  (trace :y (dist/gaussian y-true noise-std))]
       y-obs)))
 
 (def noisy-square (make-noisy-fn-model #(mx/multiply % %) 0.1))</code></pre>
@@ -429,21 +429,21 @@ functions that <em>return</em> generative functions:</p>
 <h2>Calling sub-models with <code>splice</code></h2>
 
 <p>For compositional models, you can call one generative function from another
-using <code>dyn/splice</code>. This namespaces the inner model&rsquo;s addresses
+using <code>splice</code>. This namespaces the inner model&rsquo;s addresses
 under the given address:</p>
 
 <div class="code-block">
 <pre><code>(def prior-model
   (gen []
-    (let [mu (dyn/trace :mu (dist/gaussian 0 10))
-          sigma (dyn/trace :sigma (dist/gamma 1 1))]
+    (let [mu (trace :mu (dist/gaussian 0 10))
+          sigma (trace :sigma (dist/gamma 1 1))]
       [mu sigma])))
 
 (def full-model
   (gen [xs]
-    (let [[mu sigma] (dyn/splice :prior prior-model)]
+    (let [[mu sigma] (splice :prior prior-model)]
       (doseq [[i x] (map-indexed vector xs)]
-        (dyn/trace (keyword (str "y" i))
+        (trace (keyword (str "y" i))
                    (dist/gaussian mu sigma)))
       mu)))</code></pre>
 </div>
@@ -460,12 +460,12 @@ the address spaces cleanly separated and lets you reuse sub-models.</p>
 
 <ul>
   <li><code>gen</code> turns a function body into a generative function (DynamicGF)</li>
-  <li><code>dyn/trace</code> samples from a distribution and records the choice at a named address</li>
+  <li><code>trace</code> samples from a distribution and records the choice at a named address</li>
   <li>A <strong>trace</strong> is an immutable record of an execution: choices, score, return value</li>
   <li><strong>Choice maps</strong> are persistent hierarchical maps from addresses to values</li>
   <li>GenMLX provides 22 distributions, all GPU-native via MLX</li>
   <li>Models are ordinary ClojureScript &mdash; use <code>if</code>, <code>loop</code>, higher-order functions, anything</li>
-  <li><code>dyn/splice</code> composes sub-models with namespaced addresses</li>
+  <li><code>splice</code> composes sub-models with namespaced addresses</li>
 </ul>
 
 <p>So far we&rsquo;ve only run models forward with <code>simulate</code>. In

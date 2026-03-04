@@ -37,7 +37,7 @@ broadcasting handle all downstream arithmetic automatically.</p>
 <!-- ================================================================== -->
 <h2>The key insight: shape-based batching</h2>
 
-<p>Consider a single trace site <code>(dyn/trace :x (dist/gaussian 0 1))</code>.
+<p>Consider a single trace site <code>(trace :x (dist/gaussian 0 1))</code>.
 In scalar mode, this samples one number. In vectorized mode, it samples an
 array of shape \([N]\). Every subsequent operation &mdash; addition,
 multiplication, log-prob computation &mdash; broadcasts naturally over the
@@ -84,9 +84,9 @@ scalar and batched.</p>
 
 (def model
   (gen [x]
-    (let [slope     (dyn/trace :slope (dist/gaussian 0 10))
-          intercept (dyn/trace :intercept (dist/gaussian 0 10))]
-      (dyn/trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
+      (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
       slope)))
 
 ;; vsimulate: run model ONCE, get 1000 particles
@@ -249,8 +249,8 @@ operating on \([N]\)-shaped arrays at each trace site.</p>
 
 (def hmm-step
   (gen [t state]
-    (let [s (dyn/trace :state (dist/gaussian state 0.3))]
-      (dyn/trace :obs (dist/gaussian s 1.0))
+    (let [s (trace :state (dist/gaussian state 0.3))]
+      (trace :obs (dist/gaussian s 1.0))
       s)))
 
 (def hmm (comb/unfold-combinator hmm-step))
@@ -328,7 +328,7 @@ Vectorized: 1000 particles — 12ms</div>
 <div class="warning">
   <strong>No <code>splice</code> in batched mode.</strong>
   <code>vsimulate</code> and <code>vgenerate</code> do not support
-  <code>dyn/splice</code> (calling sub-generative-functions). This is because
+  <code>splice</code> (calling sub-generative-functions). This is because
   sub-GF execution may have variable structure per particle. If your model
   uses <code>splice</code>, use <code>vmap-gf</code> from the Vmap combinator
   instead &mdash; it falls back to per-invocation execution while still
