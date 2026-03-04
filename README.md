@@ -17,20 +17,22 @@ Gen implementations exist for Julia and JAX — but nothing for Apple Silicon's 
 ## Requirements
 
 - macOS with Apple Silicon (M1/M2/M3/M4)
-- [Bun](https://bun.sh/) (recommended) or Node.js 18+
-- [nbb](https://github.com/babashka/nbb) (`npm install -g nbb`)
-- CMake and a C++ compiler (Xcode command line tools)
+- Xcode Command Line Tools — `xcode-select --install` (provides CMake, clang++)
+- [Bun](https://bun.sh/) — `curl -fsSL https://bun.sh/install | bash`
+- [nbb](https://github.com/babashka/nbb) — `npm install -g nbb`
 
 ## Quick Start
 
 ```bash
-git clone --recursive https://github.com/robert-johansson/genmlx
+# Clone with the node-mlx submodule (includes MLX C++ source)
+git clone https://github.com/robert-johansson/genmlx
 cd genmlx
+git submodule update --init --recursive node-mlx
 
-# Build node-mlx (compiles MLX C++ and the Node.js native addon)
-cd node-mlx && npm run build && cd ..
+# Build node-mlx (installs devDependencies, compiles MLX C++ and Node.js native addon)
+cd node-mlx && npm install && npm run build && cd ..
 
-# Install dependencies (links local node-mlx as @frost-beta/mlx)
+# Install GenMLX dependencies (links local node-mlx as @frost-beta/mlx)
 bun install
 ```
 
