@@ -73,7 +73,7 @@
              m)
         ;; R-hat
         var-hat (+ (* (/ (dec n) n) W) (/ B n))]
-    (js/Math.sqrt (/ var-hat W))))
+    (if (zero? W) 1.0 (js/Math.sqrt (/ var-hat W)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Summary statistics

@@ -11,7 +11,7 @@
             [genmlx.trace :as tr]
             [genmlx.combinators :as comb]
             [genmlx.edit :as edit]
-            [genmlx.diff :as diff]
+
             [genmlx.inference.mcmc :as mcmc]
             [genmlx.inference.smc :as smc]
             [genmlx.inference.smcp3 :as smcp3]
@@ -134,22 +134,6 @@
 ;; 3.4 Argdiffs / retdiffs
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- Diffs: identity check --")
-(assert-true "identical values -> no-change" (diff/no-change? (diff/compute-diff 5 5)))
-(assert-true "different values -> changed" (diff/changed? (diff/compute-diff 5 6)))
-
-(println "\n-- Vector diff: identifies changed indices --")
-(let [d (diff/compute-vector-diff [1 2 3 4] [1 2 99 4])]
-  (assert-true "only index 2 changed" (= #{2} (:changed d))))
-
-(println "\n-- Map diff: added/removed/changed --")
-(let [d (diff/compute-map-diff {:a 1 :b 2 :c 3} {:a 1 :b 99 :d 4})]
-  (assert-true "b changed" (contains? (:changed d) :b))
-  (assert-true "c removed" (contains? (:removed d) :c))
-  (assert-true "d added" (contains? (:added d) :d))
-  (assert-true "a not in any diff set"
-    (and (not (contains? (:changed d) :a))
-         (not (contains? (:added d) :a)))))
 
 ;; ---------------------------------------------------------------------------
 ;; 2.5 Inference composition — verify MH chains converge

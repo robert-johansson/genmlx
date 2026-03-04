@@ -406,9 +406,16 @@
   (sample [key]
     (rng/categorical key logits))
   (log-prob [v]
-    (let [v (mx/ensure-array v mx/int32)
-          log-probs (mx/subtract logits (mx/logsumexp logits))]
-      (mx/take-idx log-probs v)))
+    (let [v (mx/ensure-array v mx/int32)]
+      (if (> (count (mx/shape logits)) 1)
+        ;; Batched: logits [N,K], v [N]
+        (let [lse (mx/expand-dims (mx/logsumexp logits [-1]) -1)
+              log-probs (mx/subtract logits lse)
+              v-col (mx/expand-dims v -1)]
+          (mx/squeeze (mx/take-along-axis log-probs v-col 1)))
+        ;; Scalar: logits [K], v scalar or [N]
+        (let [log-probs (mx/subtract logits (mx/logsumexp logits))]
+          (mx/take-idx log-probs v)))))
   (support []
     (let [n (do (mx/materialize! logits) (first (mx/shape logits)))]
       (mapv #(mx/scalar (int %) mx/int32) (range n)))))
@@ -416,7 +423,7 @@
 (defmethod dc/dist-sample-n* :categorical [d key n]
   (let [{:keys [logits]} (:params d)
         key (rng/ensure-key key)
-        k (first (mx/shape logits))
+        k (last (mx/shape logits))
         ;; Gumbel-max trick: argmax(logits + Gumbel_noise) ~ Categorical(softmax(logits))
         ;; Gumbel noise = -log(-log(U)), U ~ Uniform(0,1)
         u (rng/uniform key [n k])

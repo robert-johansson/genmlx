@@ -288,6 +288,55 @@
   [kernel]
   (->UnfoldCombinator kernel))
 
+(defn unfold-empty-trace
+  "Create a valid T=0 Unfold trace (no steps executed).
+   Used to initialize particles for incremental unfold-extend."
+  [unfold-gf init-state & extra-args]
+  (let [args (into [0 init-state] extra-args)]
+    (with-meta
+      (tr/make-trace {:gen-fn unfold-gf :args args
+                      :choices cm/EMPTY :retval [] :score (mx/scalar 0.0)})
+      {::step-scores []})))
+
+(defn unfold-extend
+  "Extend an Unfold trace by ONE step, returning {:trace :weight}.
+   The step-constraints are applied to the kernel's generate call.
+   Calls mx/materialize! on weight and score to break lazy graph accumulation."
+  [trace step-constraints key]
+  (let [unfold-gf (:gen-fn trace)
+        kern (:kernel unfold-gf)
+        old-args (:args trace)
+        [old-n init-state & extra] old-args
+        prev-state (if (seq (:retval trace))
+                     (last (:retval trace))
+                     init-state)
+        ;; Attach PRNG key — must use :genmlx.dynamic/key (not ::key)
+        keyed-kern (vary-meta kern assoc :genmlx.dynamic/key key)
+        ;; Generate one kernel step: t=old-n (0-indexed)
+        kernel-args (into [old-n prev-state] extra)
+        result (p/generate keyed-kern kernel-args step-constraints)
+        step-trace (:trace result)
+        step-weight (:weight result)
+        step-score (:score step-trace)
+        new-state (:retval step-trace)
+        ;; Materialize to break lazy graph — critical for Metal buffer management
+        _ (mx/materialize! step-weight step-score)
+        ;; Build extended trace
+        old-choices (:choices trace)
+        old-score (:score trace)
+        old-retval (:retval trace)
+        old-step-scores (::step-scores (meta trace))
+        new-choices (cm/set-choice old-choices [old-n] (:choices step-trace))
+        new-score (mx/add old-score step-score)
+        new-retval (conj old-retval new-state)
+        new-step-scores (conj (vec old-step-scores) step-score)
+        new-args (into [(inc old-n) init-state] extra)]
+    {:trace (with-meta
+              (tr/make-trace {:gen-fn unfold-gf :args new-args
+                              :choices new-choices :retval new-retval :score new-score})
+              {::step-scores new-step-scores})
+     :weight step-weight}))
+
 ;; ---------------------------------------------------------------------------
 ;; Switch Combinator
 ;; ---------------------------------------------------------------------------

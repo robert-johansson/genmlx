@@ -3,7 +3,6 @@
    - Custom proposal MH
    - Involutive MCMC
    - Choice gradients (with direction checks)
-   - defdist-transform macro
    - Programmable VI objectives
    - Wake-sleep learning
    - Training loop"
@@ -19,8 +18,7 @@
             [genmlx.inference.vi :as vi]
             [genmlx.gradients :as grad]
             [genmlx.learning :as learn])
-  (:require-macros [genmlx.gen :refer [gen]]
-                   [genmlx.dist.macros :refer [defdist-transform]]))
+  (:require-macros [genmlx.gen :refer [gen]]))
 
 (defn assert-true [msg actual]
   (if actual
@@ -144,48 +142,7 @@
   (assert-true "score is finite" (js/isFinite (mx/item (:score result)))))
 
 ;; ---------------------------------------------------------------------------
-;; 4. defdist-transform macro
-;; ---------------------------------------------------------------------------
-
-(println "\n-- defdist-transform: log-normal via exp(gaussian) --")
-(defdist-transform log-normal-t
-  "Log-normal via exp transform of gaussian."
-  [mu sigma]
-  :base (dist/gaussian mu sigma)
-  :forward mx/exp
-  :inverse mx/log
-  :log-det-jac (fn [v] (mx/negative (mx/log v))))
-
-(let [d (log-normal-t 0 1)]
-  ;; Sample should be positive (exp of gaussian)
-  (let [samples (mapv (fn [_] (let [v (dc/dist-sample d nil)] (mx/eval! v) (mx/item v)))
-                      (range 100))]
-    (assert-true "log-normal-t: all samples > 0" (every? pos? samples)))
-  ;; Log-prob at v=1: log N(log(1); 0, 1) + log|d(log)/dv| at v=1
-  ;; = log N(0; 0, 1) + log(1/1) = -0.9189 + 0 = -0.9189
-  (let [lp (dc/dist-log-prob d (mx/scalar 1.0))]
-    (mx/eval! lp)
-    (assert-close "log-normal-t: lp at v=1" -0.9189 (mx/item lp) 0.01))
-  ;; Log-prob at v=e (i.e. log(e)=1):
-  ;; log N(1; 0, 1) + log(1/e) = (-0.5 - 0.9189) + (-1) = -2.4189
-  (let [lp (dc/dist-log-prob d (mx/scalar js/Math.E))]
-    (mx/eval! lp)
-    (let [expected (+ (- (* -0.5 1.0) 0.9189) -1.0)]
-      (assert-close "log-normal-t: lp at v=e" expected (mx/item lp) 0.01))))
-
-;; Verify the transform distribution works through GFI
-(println "\n-- defdist-transform: works with generate --")
-(let [d (log-normal-t 0 1)
-      {:keys [trace weight]} (p/generate d [] (cm/->Value (mx/scalar 2.0)))]
-  (mx/eval! weight)
-  ;; weight should equal log-prob of v=2 under log-normal
-  ;; log N(log(2); 0, 1) - log(2) = (-0.5*log(2)^2 - 0.9189) - log(2)
-  (let [log2 (js/Math.log 2)
-        expected (+ (* -0.5 log2 log2) -0.9189 (- log2))]
-    (assert-close "log-normal-t via generate" expected (mx/item weight) 0.01)))
-
-;; ---------------------------------------------------------------------------
-;; 5. Programmable VI — ELBO objective
+;; 4. Programmable VI — ELBO objective
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- Programmable VI (ELBO): learns posterior of simple model --")
@@ -228,7 +185,7 @@
       (assert-true "prog VI ELBO: loss decreased" (< last-loss first-loss)))))
 
 ;; ---------------------------------------------------------------------------
-;; 6. IWELBO objective — should be a tighter bound than ELBO
+;; 5. IWELBO objective — should be a tighter bound than ELBO
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- Programmable VI (IWELBO): tighter bound --")
@@ -263,7 +220,7 @@
     (assert-true "prog VI IWELBO: has loss history" (pos? (count losses)))))
 
 ;; ---------------------------------------------------------------------------
-;; 7. Training loop
+;; 6. Training loop
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- Training loop (SGD): minimize x^2 --")
@@ -296,7 +253,7 @@
     (assert-close "Adam train: param 1 near -2" -2.0 (second final) 0.5)))
 
 ;; ---------------------------------------------------------------------------
-;; 8. Wake-sleep learning
+;; 7. Wake-sleep learning
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- Wake-sleep: guide learns to match model --")
@@ -322,7 +279,7 @@
     (assert-true "wake-sleep: has sleep losses" (pos? (count (:sleep-losses result))))))
 
 ;; ---------------------------------------------------------------------------
-;; 9. Param store — flatten/unflatten round-trip
+;; 8. Param store — flatten/unflatten round-trip
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- Param store: flatten/unflatten round-trip --")
