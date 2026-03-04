@@ -18,6 +18,7 @@ Gen implementations exist for Julia and JAX — but nothing for Apple Silicon's 
 
 - macOS with Apple Silicon (M1/M2/M3/M4)
 - Xcode Command Line Tools — `xcode-select --install` (provides CMake, clang++)
+- Metal Toolchain — `xcodebuild -downloadComponent MetalToolchain` (required on macOS 26+)
 - [Bun](https://bun.sh/) — `curl -fsSL https://bun.sh/install | bash`
 - [nbb](https://github.com/babashka/nbb) — `npm install -g nbb`
 
