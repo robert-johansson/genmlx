@@ -19,13 +19,26 @@ Gen implementations exist for Julia and JAX — but nothing for Apple Silicon's 
 - macOS with Apple Silicon (M1/M2/M3/M4)
 - [Bun](https://bun.sh/) (recommended) or Node.js 18+
 - [nbb](https://github.com/babashka/nbb) (`npm install -g nbb`)
+- CMake and a C++ compiler (Xcode command line tools)
 
 ## Quick Start
 
 ```bash
-bun install          # recommended — Bun is ~1.5x faster than Node.js
-# or: npm install    # Node.js 18+ also works
+git clone --recursive https://github.com/robert-johansson/genmlx
+cd genmlx
+
+# Build node-mlx (compiles MLX C++ and the Node.js native addon)
+cd node-mlx && npm run build && cd ..
+
+# Install dependencies (links local node-mlx as @frost-beta/mlx)
+bun install
 ```
+
+> **Note:** GenMLX uses a [fork of node-mlx](https://github.com/robert-johansson/node-mlx)
+> that includes `lgamma`, `digamma` ([ml-explore/mlx#3181](https://github.com/ml-explore/mlx/pull/3181))
+> and `bessel_i0e`, `bessel_i1e` ([ml-explore/mlx#3193](https://github.com/ml-explore/mlx/pull/3193))
+> ops required by GenMLX's distributions. Once these are merged upstream, the
+> standard `@frost-beta/mlx` npm package will work.
 
 Run a model:
 

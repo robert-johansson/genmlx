@@ -3,7 +3,6 @@ node_modules/
 .cpcache/
 .nbb/
 *.pdf
-node-mlx/
 
 # OS
 .DS_Store
