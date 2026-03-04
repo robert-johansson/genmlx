@@ -1,0 +1,17 @@
+\begin{table}[t]
+\centering
+\caption{FFI Bottleneck: IS Time (ms) at N=10,000 Particles}
+\label{tab:ffi}
+\small
+\begin{tabular}{rrrrrr}
+\toprule
+D & Per-site & gaussian-vec & GenJAX & vec/ps & vec/GenJAX \\
+\midrule
+10 & 7.8 & 0.7 & 1.9 & 10.5$\times$ & 2.6$\times$ \\
+25 & 15.3 & 0.8 & 4.5 & 19.6$\times$ & 5.8$\times$ \\
+50 & 31.2 & 0.9 & 9.1 & 33.9$\times$ & 9.9$\times$ \\
+100 & 113.0 & 1.3 & 18.6 & 87.2$\times$ & 14.3$\times$ \\
+200 & 275.7 & 2.4 & 34.5 & 116.0$\times$ & 14.5$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}

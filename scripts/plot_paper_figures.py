@@ -496,7 +496,7 @@ def compilation_table():
 
 def fig0_architecture():
     layers = [
-        ('Layer 0', 'MLX + Runtime', 'mlx.cljs, random.cljs, runtime.cljs', 'mutable boundary'),
+        ('Layer 0', 'MLX + Runtime', 'mlx.cljs, random.cljs', 'mutable'),
         ('Layer 1', 'Core Data', 'ChoiceMap, Trace, Selection', 'pure'),
         ('Layer 2', 'GFI \\& Execution', 'protocols, handler, edit, diff', 'pure'),
         ('Layer 3', 'DSL', 'gen macro, DynamicGF', 'pure'),
@@ -506,8 +506,8 @@ def fig0_architecture():
         ('Layer 7', 'Verification', 'contracts, verify', 'pure'),
     ]
 
-    fig, ax = plt.subplots(figsize=(5.0, 3.5))
-    ax.set_xlim(0, 10)
+    fig, ax = plt.subplots(figsize=(6.5, 3.5))
+    ax.set_xlim(0, 13)
     ax.set_ylim(-0.5, len(layers) * 1.1 + 0.3)
     ax.axis('off')
 
@@ -517,16 +517,16 @@ def fig0_architecture():
 
     for i, (num, name, desc, purity) in enumerate(layers):
         y = i * 1.1
-        rect = plt.Rectangle((0.3, y), 7.0, 0.85, facecolor=colors[i],
+        rect = plt.Rectangle((0.3, y), 10.0, 0.85, facecolor=colors[i],
                               edgecolor='#333333', linewidth=0.8, zorder=2)
         ax.add_patch(rect)
-        ax.text(0.6, y + 0.43, f'\\textbf{{{num}: {name}}}', fontsize=7.5,
+        ax.text(0.6, y + 0.43, f'{num}: {name}', fontsize=7.5, fontweight='bold',
                 va='center', ha='left', zorder=3)
-        ax.text(4.8, y + 0.43, desc, fontsize=6, va='center', ha='center',
+        ax.text(5.8, y + 0.43, desc, fontsize=6, va='center', ha='left',
                 color='#444444', zorder=3)
-        # Purity annotation on right
+        # Purity annotation on right edge, inside the rectangle
         style = 'italic' if purity == 'mutable boundary' else 'normal'
-        ax.text(7.6, y + 0.43, purity, fontsize=6, va='center', ha='left',
+        ax.text(10.1, y + 0.43, purity, fontsize=6, va='center', ha='right',
                 fontstyle=style, color='#666666', zorder=3)
 
     ax.set_title('GenMLX Architecture Stack', fontsize=11, pad=8)

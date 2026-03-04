@@ -1,0 +1,16 @@
+\begin{table}[t]
+\centering
+\caption{Loop Compilation Speedups}
+\label{tab:compilation}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Benchmark & Baseline (ms) & Compiled (ms) & Speedup \\
+\midrule
+GFI MH vs Compiled MH & 1338 & 122 & 10.9$\times$ \\
+Score function compilation & 67 & 9 & 7.2$\times$ \\
+HMC: GenMLX vs hand-optimized & 442 & 439 & 1.01$\times$ \\
+Serial vs vectorized 10-chain MH & 742 & 152 & 4.9$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
