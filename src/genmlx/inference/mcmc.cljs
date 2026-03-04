@@ -457,6 +457,155 @@
                    next-key))))))))
 
 ;; ---------------------------------------------------------------------------
+;; Vectorized Compiled Trajectory MH (N chains × K steps per dispatch)
+;; ---------------------------------------------------------------------------
+
+(defn- make-vectorized-compiled-chain
+  "Build a compiled K-step MH chain for [N,D]-shaped params as one Metal dispatch.
+   Returns compiled fn: (params [N,D], noise [K,N,D], uniforms [K,N]) → params [N,D]."
+  [k-steps score-fn proposal-std n-chains n-params]
+  (let [chain-fn
+        (fn [params noise-3d uniforms-2d]
+          (loop [p params, i 0]
+            (if (>= i k-steps) p
+              (let [row (mx/reshape
+                          (mx/take-idx noise-3d (mx/array [i] mx/int32) 0)
+                          [n-chains n-params])
+                    proposal (mx/add p (mx/multiply proposal-std row))
+                    s-cur (score-fn p)
+                    s-prop (score-fn proposal)
+                    log-alpha (mx/subtract s-prop s-cur)
+                    u-row (mx/reshape
+                            (mx/take-idx uniforms-2d (mx/array [i] mx/int32) 0)
+                            [n-chains])
+                    log-u (mx/log u-row)
+                    accept? (mx/greater log-alpha log-u)
+                    p' (mx/where (mx/expand-dims accept? 1) proposal p)]
+                (recur p' (inc i))))))
+        compiled (mx/compile-fn chain-fn)]
+    ;; Warmup: trace call to cache the Metal program
+    (mx/materialize! (compiled (mx/zeros [n-chains n-params])
+                        (rng/normal (rng/fresh-key) [k-steps n-chains n-params])
+                        (rng/uniform (rng/fresh-key) [k-steps n-chains])))
+    compiled))
+
+(defn- make-vectorized-compiled-trajectory
+  "Build a compiled K-step MH trajectory for [N,D]-shaped params.
+   Returns compiled fn: (params [N,D], noise [K,N,D], uniforms [K,N]) → [K,N,D]."
+  [k-steps score-fn proposal-std n-chains n-params]
+  (let [traj-fn
+        (fn [params noise-3d uniforms-2d]
+          (loop [p params, i 0, traj []]
+            (if (>= i k-steps)
+              (mx/stack traj)
+              (let [row (mx/reshape
+                          (mx/take-idx noise-3d (mx/array [i] mx/int32) 0)
+                          [n-chains n-params])
+                    proposal (mx/add p (mx/multiply proposal-std row))
+                    s-cur (score-fn p)
+                    s-prop (score-fn proposal)
+                    log-alpha (mx/subtract s-prop s-cur)
+                    u-row (mx/reshape
+                            (mx/take-idx uniforms-2d (mx/array [i] mx/int32) 0)
+                            [n-chains])
+                    log-u (mx/log u-row)
+                    accept? (mx/greater log-alpha log-u)
+                    p' (mx/where (mx/expand-dims accept? 1) proposal p)]
+                (recur p' (inc i) (conj traj p'))))))
+        compiled (mx/compile-fn traj-fn)]
+    ;; Warmup: trace call to cache the Metal program
+    (mx/materialize! (compiled (mx/zeros [n-chains n-params])
+                        (rng/normal (rng/fresh-key) [k-steps n-chains n-params])
+                        (rng/uniform (rng/fresh-key) [k-steps n-chains])))
+    compiled))
+
+(defn vectorized-compiled-trajectory-mh
+  "Vectorized compiled trajectory MH: N parallel chains with K steps per
+   Metal dispatch. Combines multi-chain parallelism with loop compilation.
+   Samples are pooled across chains. Returns vector of [D] JS arrays.
+
+   Uses a single compiled trajectory chain for both burn-in and collection,
+   avoiding a second Metal program compilation. Burn-in discards trajectories;
+   collection pools K*N samples per dispatch.
+
+   opts: {:samples N :burn B :addresses [addr...] :proposal-std s
+          :n-chains C :callback fn :key prng-key :device :cpu|:gpu
+          :block-size K}
+
+   Default device: :gpu."
+  [{:keys [samples burn addresses proposal-std n-chains callback key device
+           block-size]
+    :or {burn 0 proposal-std 0.1 n-chains 10 device :gpu
+         block-size 10}}
+   model args observations]
+  (let [model (dyn/auto-key model)]
+    (with-device device
+      (fn []
+        (let [score-fn (u/make-vectorized-score-fn model args observations addresses)
+              ;; Init: replicate one generate across N chains (faster than N generates)
+              {:keys [trace]} (p/generate model args observations)
+              seed-params (u/extract-params trace addresses)
+              n-params (count addresses)
+              init-params (mx/broadcast-to (mx/expand-dims seed-params 0)
+                                           [n-chains n-params])
+              std (mx/scalar proposal-std)
+              k block-size
+
+              ;; Single compiled trajectory chain for both phases
+              chain (make-vectorized-compiled-trajectory
+                      k score-fn std n-chains n-params)
+
+              rk (rng/ensure-key key)
+
+              ;; Phase 1: Burn-in — run trajectory blocks, keep only final state
+              [params rk]
+              (if (> burn 0)
+                (let [n-burn-blocks (js/Math.ceil (/ burn k))]
+                  (loop [p init-params, b 0, rk rk]
+                    (if (>= b n-burn-blocks) [p rk]
+                      (let [[k1 k2 rk'] (rng/split-n rk 3)
+                            noise (rng/normal k1 [k n-chains n-params])
+                            uniforms (rng/uniform k2 [k n-chains])
+                            traj (chain p noise uniforms)]
+                        (mx/materialize! traj)
+                        ;; Extract last step [N,D] from trajectory [K,N,D]
+                        (let [p' (mx/reshape
+                                   (mx/take-idx traj (mx/array [(dec k)] mx/int32) 0)
+                                   [n-chains n-params])]
+                          (recur p' (inc b) rk'))))))
+                [init-params rk])
+
+              ;; Phase 2: Collect via trajectory blocks, pool across chains
+              samples-per-chain (js/Math.ceil (/ samples n-chains))
+              n-collect-blocks (js/Math.ceil (/ samples-per-chain k))]
+          (loop [p params, acc [], b 0, rk rk]
+            (if (or (>= b n-collect-blocks) (>= (count acc) samples))
+              (let [result (vec (take samples acc))]
+                (when callback
+                  (callback {:total (count result)}))
+                result)
+              (let [[k1 k2 rk'] (rng/split-n rk 3)
+                    noise (rng/normal k1 [k n-chains n-params])
+                    uniforms (rng/uniform k2 [k n-chains])
+                    traj (chain p noise uniforms)]
+                (mx/materialize! traj)
+                (let [traj-js (mx/->clj traj) ;; [K][N][D] nested JS
+                      remaining (- samples (count acc))
+                      block-k (min k (js/Math.ceil (/ remaining n-chains)))
+                      ;; Pool: for each step k, take all N chains
+                      block-samples
+                      (loop [ki 0, s []]
+                        (if (>= ki block-k) s
+                          (let [step-k (nth traj-js ki)]
+                            (recur (inc ki)
+                                   (into s (map (fn [n] (nth step-k n))
+                                                (range n-chains)))))))
+                      ;; Last params for next block
+                      p' (mx/array (nth traj-js (dec k)))]
+                  (when (zero? (mod b 10)) (mx/clear-cache!))
+                  (recur p' (into acc block-samples) (inc b) rk'))))))))))
+
+;; ---------------------------------------------------------------------------
 ;; Enumerative Gibbs Sampling
 ;; ---------------------------------------------------------------------------
 

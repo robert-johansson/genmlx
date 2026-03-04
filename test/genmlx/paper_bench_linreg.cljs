@@ -223,6 +223,47 @@
                   :slope_samples (vec slope-samples)}))
 
 ;; ---------------------------------------------------------------------------
+;; Algorithm 1b: Vectorized Compiled Trajectory MH
+;; ---------------------------------------------------------------------------
+
+(println "\n-- Algorithm 1b: Vectorized Compiled Trajectory MH (5000 samples, N=50 chains) --")
+
+(let [start (perf-now)
+      param-samples (mcmc/vectorized-compiled-trajectory-mh
+                      {:samples 5000 :burn 1000
+                       :addresses [:slope :intercept]
+                       :proposal-std 0.3 :n-chains 50
+                       :block-size 10}
+                      model [xs-data] observations)
+      elapsed (- (perf-now) start)
+      _ (mx/clear-cache!)
+
+      ;; param-samples is vec of JS arrays [slope, intercept]
+      slope-samples (mapv #(nth % 0) param-samples)
+      intercept-samples (mapv #(nth % 1) param-samples)
+
+      slope-mean (/ (reduce + slope-samples) (count slope-samples))
+      slope-std (js/Math.sqrt (/ (reduce + (map #(let [d (- % slope-mean)] (* d d)) slope-samples))
+                                 (count slope-samples)))
+      intercept-mean (/ (reduce + intercept-samples) (count intercept-samples))
+      intercept-std (js/Math.sqrt (/ (reduce + (map #(let [d (- % intercept-mean)] (* d d)) intercept-samples))
+                                     (count intercept-samples)))
+
+      slope-err (js/Math.abs (- slope-mean (get-in analytic [:slope :mean])))
+      intercept-err (js/Math.abs (- intercept-mean (get-in analytic [:intercept :mean])))]
+  (println (str "  slope:     mean=" (.toFixed slope-mean 4) " std=" (.toFixed slope-std 4)
+                " err=" (.toFixed slope-err 4)))
+  (println (str "  intercept: mean=" (.toFixed intercept-mean 4) " std=" (.toFixed intercept-std 4)
+                " err=" (.toFixed intercept-err 4)))
+  (println (str "  time=" (.toFixed elapsed 0) "ms"))
+  (println (str "  Speedup vs compiled-mh: " (.toFixed (/ (:time_ms mh-result) elapsed) 1) "x"))
+  (def vec-traj-mh-result {:algorithm "Vectorized_Compiled_Trajectory_MH"
+                            :samples 5000 :burn 1000 :n_chains 50
+                            :slope {:mean slope-mean :std slope-std :error slope-err}
+                            :intercept {:mean intercept-mean :std intercept-std :error intercept-err}
+                            :time_ms elapsed}))
+
+;; ---------------------------------------------------------------------------
 ;; Algorithm 2: HMC
 ;; ---------------------------------------------------------------------------
 
@@ -436,14 +477,14 @@
                    :data {:n_obs n-obs :true_slope true-slope :true_intercept true-intercept
                           :sigma_obs sigma-obs :sigma_prior sigma-prior
                           :xs xs-data :ys ys-data}
-                   :algorithms [mh-result hmc-result nuts-result advi-result vis-result]}]
+                   :algorithms [mh-result vec-traj-mh-result hmc-result nuts-result advi-result vis-result]}]
   (write-json "linreg_results.json" all-results))
 
 ;; ---------------------------------------------------------------------------
 ;; Write SUMMARY.md
 ;; ---------------------------------------------------------------------------
 
-(let [results [mh-result hmc-result nuts-result advi-result vis-result]
+(let [results [mh-result vec-traj-mh-result hmc-result nuts-result advi-result vis-result]
       summary
       (str "# Experiment 3A: Linear Regression Correctness\n\n"
            "**Date:** 2026-03-03\n"
