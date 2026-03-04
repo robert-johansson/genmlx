@@ -194,6 +194,17 @@
           _ (trace :y (dist/gaussian mu (mx/scalar sigma-obs)))]
       z-val)))
 
+;; Vectorized kernel: no mx/eval!, no mx/item — shapes flow through
+(def hmm-kernel-vec
+  (gen [t z-prev]
+    (let [logits (if (nil? z-prev)
+                   init-logits
+                   (mx/take-idx transition-logits z-prev 0))
+          z (trace :z (dist/categorical logits))
+          mu (mx/take-idx emission-means z)
+          _ (trace :y (dist/gaussian mu (mx/scalar sigma-obs)))]
+      z)))
+
 (def hmm-unfold (comb/unfold-combinator (dyn/auto-key hmm-kernel)))
 
 ;; Full observations choicemap for IS (Unfold address structure: integer keys)
@@ -262,6 +273,24 @@
         result (smc/smc-unfold {:particles n-particles
                                 :key (rng/fresh-key seed)}
                                (dyn/auto-key hmm-kernel) nil smc-obs-seq)
+        elapsed (- (perf-now) start)]
+    (mx/clear-cache!)
+    (mx/force-gc!)
+    {:log-ml (mx/item (:log-ml result))
+     :ess (:final-ess result)
+     :time-ms elapsed}))
+
+;; ---------------------------------------------------------------------------
+;; Batched SMC experiment: one vgenerate per timestep for all particles
+;; ---------------------------------------------------------------------------
+
+(defn run-batched-smc-experiment
+  "Run batched SMC and return {:log-ml :ess :time-ms}."
+  [n-particles seed]
+  (let [start (perf-now)
+        result (smc/batched-smc-unfold {:particles n-particles
+                                        :key (rng/fresh-key seed)}
+                                       (dyn/auto-key hmm-kernel-vec) nil smc-obs-seq)
         elapsed (- (perf-now) start)]
     (mx/clear-cache!)
     (mx/force-gc!)
@@ -343,15 +372,70 @@
 (def smc-250-summary (summarize-runs smc-250-runs))
 (print-summary "SMC-250" smc-250-summary)
 
+;; Aggressive cleanup before batched SMC
+(mx/clear-cache!)
+(mx/force-gc!)
+
+;; ---------------------------------------------------------------------------
+;; Algorithm 3: Batched SMC (N=100)
+;; ---------------------------------------------------------------------------
+
+(println "\n-- Algorithm 3: Batched SMC (N=100, 10 runs) --")
+
+(def batched-smc-100-runs
+  (vec (for [i (range n-runs)]
+         (do
+           (when (zero? (mod i 5)) (println (str "  run " i "...")))
+           (run-batched-smc-experiment 100 (+ base-seed 400 i))))))
+
+(def batched-smc-100-summary (summarize-runs batched-smc-100-runs))
+(print-summary "Batched-SMC-100" batched-smc-100-summary)
+
+(mx/clear-cache!)
+(mx/force-gc!)
+
+;; ---------------------------------------------------------------------------
+;; Algorithm 4: Batched SMC (N=250)
+;; ---------------------------------------------------------------------------
+
+(println "\n-- Algorithm 4: Batched SMC (N=250, 10 runs) --")
+
+(def batched-smc-250-runs
+  (vec (for [i (range n-runs)]
+         (do
+           (when (zero? (mod i 5)) (println (str "  run " i "...")))
+           (run-batched-smc-experiment 250 (+ base-seed 500 i))))))
+
+(def batched-smc-250-summary (summarize-runs batched-smc-250-runs))
+(print-summary "Batched-SMC-250" batched-smc-250-summary)
+
+(mx/clear-cache!)
+(mx/force-gc!)
+
+;; ---------------------------------------------------------------------------
+;; Algorithm 5: Batched SMC (N=1000)
+;; ---------------------------------------------------------------------------
+
+(println "\n-- Algorithm 5: Batched SMC (N=1000, 10 runs) --")
+
+(def batched-smc-1000-runs
+  (vec (for [i (range n-runs)]
+         (do
+           (when (zero? (mod i 5)) (println (str "  run " i "...")))
+           (run-batched-smc-experiment 1000 (+ base-seed 600 i))))))
+
+(def batched-smc-1000-summary (summarize-runs batched-smc-1000-runs))
+(print-summary "Batched-SMC-1000" batched-smc-1000-summary)
+
 ;; Aggressive cleanup before IS (which creates many Metal buffers)
 (mx/clear-cache!)
 (mx/force-gc!)
 
 ;; ---------------------------------------------------------------------------
-;; Algorithm 3: IS (N=1000)
+;; Algorithm 6: IS (N=1000)
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- Algorithm 3: IS (N=1000, 10 runs) --")
+(println "\n-- Algorithm 6: IS (N=1000, 10 runs) --")
 
 (def is-1000-runs
   (vec (for [i (range n-runs)]
@@ -420,7 +504,43 @@
          :time_ms_std (get-in smc-250-summary [:time-ms :std])
          :raw_log_mls (:raw-log-mls smc-250-summary)
          :raw_errors (:raw-errors smc-250-summary)
-         :raw_ess (:raw-ess smc-250-summary)}]}]
+         :raw_ess (:raw-ess smc-250-summary)}
+        {:algorithm "Batched_SMC_100" :method "batched-smc" :particles 100
+         :log_ml (get-in batched-smc-100-summary [:log-ml :mean])
+         :log_ml_std (get-in batched-smc-100-summary [:log-ml :std])
+         :error (get-in batched-smc-100-summary [:error :mean])
+         :error_std (get-in batched-smc-100-summary [:error :std])
+         :ess (get-in batched-smc-100-summary [:ess :mean])
+         :ess_std (get-in batched-smc-100-summary [:ess :std])
+         :time_ms (get-in batched-smc-100-summary [:time-ms :mean])
+         :time_ms_std (get-in batched-smc-100-summary [:time-ms :std])
+         :raw_log_mls (:raw-log-mls batched-smc-100-summary)
+         :raw_errors (:raw-errors batched-smc-100-summary)
+         :raw_ess (:raw-ess batched-smc-100-summary)}
+        {:algorithm "Batched_SMC_250" :method "batched-smc" :particles 250
+         :log_ml (get-in batched-smc-250-summary [:log-ml :mean])
+         :log_ml_std (get-in batched-smc-250-summary [:log-ml :std])
+         :error (get-in batched-smc-250-summary [:error :mean])
+         :error_std (get-in batched-smc-250-summary [:error :std])
+         :ess (get-in batched-smc-250-summary [:ess :mean])
+         :ess_std (get-in batched-smc-250-summary [:ess :std])
+         :time_ms (get-in batched-smc-250-summary [:time-ms :mean])
+         :time_ms_std (get-in batched-smc-250-summary [:time-ms :std])
+         :raw_log_mls (:raw-log-mls batched-smc-250-summary)
+         :raw_errors (:raw-errors batched-smc-250-summary)
+         :raw_ess (:raw-ess batched-smc-250-summary)}
+        {:algorithm "Batched_SMC_1000" :method "batched-smc" :particles 1000
+         :log_ml (get-in batched-smc-1000-summary [:log-ml :mean])
+         :log_ml_std (get-in batched-smc-1000-summary [:log-ml :std])
+         :error (get-in batched-smc-1000-summary [:error :mean])
+         :error_std (get-in batched-smc-1000-summary [:error :std])
+         :ess (get-in batched-smc-1000-summary [:ess :mean])
+         :ess_std (get-in batched-smc-1000-summary [:ess :std])
+         :time_ms (get-in batched-smc-1000-summary [:time-ms :mean])
+         :time_ms_std (get-in batched-smc-1000-summary [:time-ms :std])
+         :raw_log_mls (:raw-log-mls batched-smc-1000-summary)
+         :raw_errors (:raw-errors batched-smc-1000-summary)
+         :raw_ess (:raw-ess batched-smc-1000-summary)}]}]
   (write-json "hmm_results.json" all-results))
 
 ;; ---------------------------------------------------------------------------
@@ -429,7 +549,10 @@
 
 (let [summaries [["IS (N=1000)" is-1000-summary]
                  ["SMC (N=100)" smc-100-summary]
-                 ["SMC (N=250)" smc-250-summary]]
+                 ["SMC (N=250)" smc-250-summary]
+                 ["Batched SMC (N=100)" batched-smc-100-summary]
+                 ["Batched SMC (N=250)" batched-smc-250-summary]
+                 ["Batched SMC (N=1000)" batched-smc-1000-summary]]
       md (str "# Experiment 3B: HMM — IS vs SMC\n\n"
               "**Date:** 2026-03-03\n"
               "**Model:** 2-state Gaussian-emission HMM, T=50 timesteps\n"
@@ -438,7 +561,8 @@
               "**Exact log P(y):** " (.toFixed exact-log-ml 4) " (forward algorithm)\n\n"
               "## Methods\n\n"
               "- **IS:** GenMLX GFI `p/generate` on Unfold combinator (all T observations at once)\n"
-              "- **SMC:** Unfold combinator + `smc-unfold` (sequential, one observation per step)\n\n"
+              "- **SMC:** Unfold combinator + `smc-unfold` (sequential, one observation per step)\n"
+              "- **Batched SMC:** `batched-smc-unfold` (one vgenerate per timestep for all particles)\n\n"
               "## Results (10 runs each)\n\n"
               "| Method | log-ML (mean +/- std) | |Error| (mean +/- std) | ESS (mean) | Time (ms) |\n"
               "|--------|----------------------|----------------------|------------|----------|\n"
@@ -478,11 +602,22 @@
               "  ESS=" (.toFixed (get-in smc-100-summary [:ess :mean]) 1)))
 (println (str "SMC (250):  error=" (.toFixed (get-in smc-250-summary [:error :mean]) 2)
               "  ESS=" (.toFixed (get-in smc-250-summary [:ess :mean]) 1)))
+(println (str "B-SMC(100): error=" (.toFixed (get-in batched-smc-100-summary [:error :mean]) 2)
+              "  time=" (.toFixed (get-in batched-smc-100-summary [:time-ms :mean]) 0) "ms"))
+(println (str "B-SMC(250): error=" (.toFixed (get-in batched-smc-250-summary [:error :mean]) 2)
+              "  time=" (.toFixed (get-in batched-smc-250-summary [:time-ms :mean]) 0) "ms"))
+(println (str "B-SMC(1k):  error=" (.toFixed (get-in batched-smc-1000-summary [:error :mean]) 2)
+              "  time=" (.toFixed (get-in batched-smc-1000-summary [:time-ms :mean]) 0) "ms"))
+
+(let [smc-time (get-in smc-100-summary [:time-ms :mean])
+      batched-time (get-in batched-smc-100-summary [:time-ms :mean])
+      speedup (/ smc-time (max batched-time 0.001))]
+  (println (str "\nSMC(100)/Batched-SMC(100) speedup: " (.toFixed speedup 1) "x")))
 
 (let [is-err (get-in is-1000-summary [:error :mean])
       smc-err (get-in smc-250-summary [:error :mean])
       ratio (/ is-err (max smc-err 0.001))]
-  (println (str "\nIS(1000)/SMC(250) error ratio: " (.toFixed ratio 1) "x")))
+  (println (str "IS(1000)/SMC(250) error ratio: " (.toFixed ratio 1) "x")))
 
 (println "\nAll benchmarks complete.")
 (.exit js/process 0)
