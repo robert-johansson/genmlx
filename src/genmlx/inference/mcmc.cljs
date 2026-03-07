@@ -240,7 +240,9 @@
   [{:keys [samples burn thin callback key]} init-params n-params
    score-fn proposal-std burn-chain burn-block-size thin-chain
    {:keys [collect-chain block-size-collect]}]
-  (let [param-shape [n-params]
+  (mx/with-resource-guard
+   (fn []
+    (let [param-shape [n-params]
         rk (rng/ensure-key key)
         ;; Phase 1: Burn-in via compiled chain blocks
         [params rk]
@@ -253,6 +255,7 @@
                       uniforms (rng/uniform k2 [burn-block-size])
                       p' (burn-chain p noise uniforms)]
                   (mx/materialize! p')
+                  (mx/clear-cache!)
                   (recur p' (inc b) rk')))))
           [init-params rk])
         ;; Phase 2: Collect samples
@@ -324,7 +327,7 @@
                               (recur p' (conj! acc (mx/->clj p')) (inc j)))))]
                     (mx/clear-cache!)
                     (recur p' acc' (+ i batch) rk')))))))]
-    result))
+    result))))
 
 (defn compiled-mh
   "Compiled MH inference with random-walk Gaussian proposal.
@@ -356,21 +359,23 @@
    model args observations]
   (let [model (dyn/auto-key model)]
     (with-device device
-      #(let [score-fn  (u/make-score-fn model args observations addresses)
-             score-fn  (if compile? (mx/compile-fn score-fn) score-fn)
-             {:keys [trace]} (p/generate model args observations)
-           init-params (u/extract-params trace addresses)
-           n-params (count addresses)
+      #(let [{:keys [trace]} (p/generate model args observations)
+             layout       (u/compute-param-layout trace addresses)
+             raw-score-fn (u/make-score-fn model args observations addresses layout)
+             score-fn     (if compile? (mx/compile-fn raw-score-fn) raw-score-fn)
+           init-params (u/extract-params trace addresses layout)
+           n-params (:total-size layout)
            std (mx/scalar proposal-std)]
        (if compile?
          ;; Loop-compiled path: compiled chains for burn-in + optional thin/trajectory
+         ;; Pass raw-score-fn to chain builders (they compile internally — avoid double compilation)
          (let [burn-block (min (max burn 1) block-size)
                burn-chain (when (> burn 0)
-                            (make-compiled-chain burn-block score-fn std n-params))
+                            (make-compiled-chain burn-block raw-score-fn std n-params))
                thin-chain (when (> thin 1)
-                            (make-compiled-chain thin score-fn std n-params))
+                            (make-compiled-chain thin raw-score-fn std n-params))
                collect-chain (when (= thin 1)
-                               (make-compiled-trajectory block-size-collect score-fn std n-params))]
+                               (make-compiled-trajectory block-size-collect raw-score-fn std n-params))]
            (run-loop-compiled-mh
              {:samples samples :burn burn :thin thin :callback callback :key key}
              init-params n-params score-fn std
@@ -541,7 +546,7 @@
   (let [model (dyn/auto-key model)]
     (with-device device
       (fn []
-        (let [score-fn (u/make-vectorized-score-fn model args observations addresses)
+        (let [raw-score-fn (u/make-batched-score-fn model args observations addresses)
               ;; Init: replicate one generate across N chains (faster than N generates)
               {:keys [trace]} (p/generate model args observations)
               seed-params (u/extract-params trace addresses)
@@ -552,8 +557,9 @@
               k block-size
 
               ;; Single compiled trajectory chain for both phases
+              ;; Pass raw (uncompiled) score-fn — chain builder compiles internally
               chain (make-vectorized-compiled-trajectory
-                      k score-fn std n-chains n-params)
+                      k raw-score-fn std n-chains n-params)
 
               rk (rng/ensure-key key)
 
@@ -814,7 +820,9 @@
    val-grad calls. Uses compiled chains for both burn-in and thinning."
   [{:keys [samples burn thin callback key]} init-q n-params
    val-grad-compiled burn-chain burn-block-size thin-chain thin-steps]
-  (let [rk (rng/ensure-key key)
+  (mx/with-resource-guard
+   (fn []
+    (let [rk (rng/ensure-key key)
         ;; Compute initial score and gradient
         [init-score init-grad] (val-grad-compiled init-q)
         _ (mx/materialize! init-score init-grad)
@@ -830,6 +838,7 @@
                       r (burn-chain q sq gq noise uniforms)
                       q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
                   (mx/materialize! q' sq' gq')
+                  (mx/clear-cache!)
                   (recur q' sq' gq' (inc b) rk')))))
           [init-q init-score init-grad rk])
         ;; Phase 2: Collect samples (tidy-run prevents Metal resource leak)
@@ -847,7 +856,7 @@
                      (when callback
                        (callback {:iter i :value (mx/->clj q')}))
                      (recur q' sq' gq' (conj! acc (mx/->clj q')) (inc i) rk'))))]
-    result))
+    result))))
 
 (defn mala
   "MALA inference using gradient information for proposals.
@@ -870,15 +879,16 @@
    model args observations]
   (let [model (dyn/auto-key model)]
     (with-device device
-      #(let [score-fn          (u/make-score-fn model args observations addresses)
+      #(let [{:keys [trace]} (p/generate model args observations)
+           layout           (u/compute-param-layout trace addresses)
+           score-fn          (u/make-score-fn model args observations addresses layout)
            val-grad-fn       (mx/value-and-grad score-fn)
            val-grad-compiled (mx/compile-fn val-grad-fn)
            eps              (mx/scalar step-size)
            half-eps2        (mx/scalar (* 0.5 step-size step-size))
            two-eps-sq       (mx/scalar (* 2.0 step-size step-size))
-           {:keys [trace]} (p/generate model args observations)
-           init-q           (u/extract-params trace addresses)
-           n-params         (count addresses)
+           init-q           (u/extract-params trace addresses layout)
+           n-params         (:total-size layout)
            q-shape          (mx/shape init-q)]
        (if compile?
          ;; Loop-compiled path
@@ -1191,7 +1201,9 @@
   [{:keys [samples burn thin callback key]} init-q n-params
    neg-U-compiled grad-neg-U eps half-eps half q-shape
    leapfrog-steps metric burn-chain burn-block-size thin-chain]
-  (let [rk (rng/ensure-key key)
+  (mx/with-resource-guard
+   (fn []
+    (let [rk (rng/ensure-key key)
         ;; Phase 1: Burn-in via compiled chain blocks
         [params rk]
         (if (and burn-chain (> burn 0))
@@ -1203,6 +1215,7 @@
                       uniforms (rng/uniform k2 [burn-block-size])
                       q' (burn-chain q momentum uniforms)]
                   (mx/materialize! q')
+                  (mx/clear-cache!)
                   (recur q' (inc b) rk')))))
           [init-q rk])
         ;; Phase 2: Collect samples (tidy-materialize prevents Metal resource leak)
@@ -1226,7 +1239,7 @@
                      (when callback
                        (callback {:iter i :value (mx/->clj q')}))
                      (recur q' (conj! acc (mx/->clj q')) (inc i) rk'))))]
-    result))
+    result))))
 
 ;; ---------------------------------------------------------------------------
 ;; Find reasonable initial step-size (Hoffman & Gelman 2014, Algorithm 4)
@@ -1371,14 +1384,15 @@
    model args observations]
   (let [model (dyn/auto-key model)]
     (with-device device
-      #(let [score-fn (u/make-score-fn model args observations addresses)
+      #(let [{:keys [trace]} (p/generate model args observations)
+             layout   (u/compute-param-layout trace addresses)
+             score-fn (u/make-score-fn model args observations addresses layout)
              neg-U    (fn [q] (mx/negative (score-fn q)))
              grad-neg-U-raw (mx/grad neg-U)
              grad-neg-U (if compile? (mx/compile-fn grad-neg-U-raw) grad-neg-U-raw)
              neg-U-compiled (if compile? (mx/compile-fn neg-U) neg-U)
-             {:keys [trace]} (p/generate model args observations)
-           init-q (u/extract-params trace addresses)
-           n-params (count addresses)
+           init-q (u/extract-params trace addresses layout)
+           n-params (:total-size layout)
            q-shape (mx/shape init-q)
            ;; Adaptive warmup: dual averaging + optional metric estimation
            {:keys [adapted-eps warmup-q adapted-metric]}
@@ -1643,14 +1657,15 @@
    model args observations]
   (let [model (dyn/auto-key model)]
     (with-device device
-      #(let [score-fn (u/make-score-fn model args observations addresses)
+      #(let [{:keys [trace]} (p/generate model args observations)
+             layout (u/compute-param-layout trace addresses)
+             score-fn (u/make-score-fn model args observations addresses layout)
              neg-log-density (fn [q] (mx/negative (score-fn q)))
              grad-neg-ld (let [g (mx/grad neg-log-density)]
                            (if compile? (mx/compile-fn g) g))
              neg-ld-compiled (if compile? (mx/compile-fn neg-log-density) neg-log-density)
-             {:keys [trace]} (p/generate model args observations)
-           init-q (u/extract-params trace addresses)
-           n-params (count addresses)
+           init-q (u/extract-params trace addresses layout)
+           n-params (:total-size layout)
            q-shape (mx/shape init-q)
            ;; Adaptive warmup: dual averaging + optional metric estimation
            {:keys [adapted-eps warmup-q adapted-metric]}
@@ -1863,43 +1878,60 @@
      :device      - :cpu|:gpu (default :cpu)
 
    Returns {:trace Trace :score number :params [numbers] :score-history [numbers]}"
-  [{:keys [iterations optimizer lr addresses callback device]
-    :or {iterations 1000 optimizer :adam lr 0.01 device :cpu}}
+  [{:keys [iterations optimizer lr addresses callback device compile?]
+    :or {iterations 1000 optimizer :adam lr 0.01 device :cpu compile? true}}
    model args observations]
   (let [model (dyn/auto-key model)]
     (with-device device
-      #(let [score-fn   (u/make-score-fn model args observations addresses)
-             val-grad   (mx/compile-fn (mx/value-and-grad score-fn))
-             {:keys [trace]} (p/generate model args observations)
-           init-params (u/extract-params trace addresses)
-           opt-state   (when (= optimizer :adam) (learn/adam-init init-params))]
+      #(mx/with-resource-guard
+        (fn []
+         (let [{:keys [trace]} (p/generate model args observations)
+             layout      (u/compute-param-layout trace addresses)
+             score-fn    (u/make-score-fn model args observations addresses layout)
+             val-grad-fn (mx/value-and-grad score-fn)
+             val-grad    (if compile? (mx/compile-fn val-grad-fn) val-grad-fn)
+             init-params (u/extract-params trace addresses layout)
+             opt-state   (when (= optimizer :adam) (learn/adam-init init-params))]
        (loop [i 0
               params init-params
               opt-st opt-state
               history (transient [])]
          (if (>= i iterations)
-           (let [final-cm (reduce (fn [cm [j addr]]
-                                    (cm/set-choice cm [addr] (mx/index params j)))
-                                  observations
-                                  (map-indexed vector addresses))
+           ;; Reconstruct final choicemap using layout
+           (let [final-cm (if (:array-valued? layout)
+                            (reduce (fn [cm {:keys [addr shape offset size]}]
+                                      (let [v (if (= size 1)
+                                                (mx/index params offset)
+                                                (mx/reshape (mx/slice params offset (+ offset size)) shape))]
+                                        (cm/set-choice cm [addr] v)))
+                                    observations
+                                    (:layout layout))
+                            (reduce (fn [cm [j addr]]
+                                      (cm/set-choice cm [addr] (mx/index params j)))
+                                    observations
+                                    (map-indexed vector addresses)))
                  {:keys [trace]} (p/generate model args final-cm)
                  score (mx/realize (:score trace))]
              {:trace trace
               :score score
               :params (mx/->clj params)
               :score-history (persistent! history)})
-           (let [[score grad] (val-grad params)
-                 neg-grad (mx/negative grad)
-                 _ (mx/materialize! score neg-grad)
-                 score-val (mx/item score)
-                 [new-params new-opt-st]
-                 (case optimizer
-                   :sgd [(learn/sgd-step params neg-grad lr) nil]
-                   :adam (learn/adam-step params neg-grad opt-st {:lr lr}))]
+           (let [[score-val new-params new-opt-st]
+                 (mx/tidy-materialize
+                   (fn []
+                     (let [[score grad] (val-grad params)
+                           neg-grad (mx/negative grad)]
+                       (mx/materialize! score neg-grad)
+                       (let [sv (mx/item score)
+                             [np nos]
+                             (case optimizer
+                               :sgd [(learn/sgd-step params neg-grad lr) nil]
+                               :adam (learn/adam-step params neg-grad opt-st {:lr lr}))]
+                         [sv np nos]))))]
              (when callback
-               (callback {:iter i :score score-val :params (mx/->clj params)}))
+               (callback {:iter i :score score-val :params params}))
              (recur (inc i) new-params new-opt-st
-                    (conj! history score-val)))))))))
+                    (conj! history score-val)))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized MAP (N random restarts in parallel)

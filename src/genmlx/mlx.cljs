@@ -409,7 +409,9 @@
 
 (defn array? [x]
   (and (some? x)
-       (some? (.-shape x))
+       (not (coll? x))
+       (try (some? (.-shape x))
+         (catch :default _ false))
        (.-item x)))
 
 (defn realize

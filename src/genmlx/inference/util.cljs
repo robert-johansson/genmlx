@@ -28,19 +28,54 @@
         probs     (mx/->clj (mx/exp log-probs))]
     {:log-probs log-probs :probs probs}))
 
+(defn compute-param-layout
+  "Compute the flatten/unflatten layout for addresses that may hold array-valued choices.
+   Returns {:layout [{:addr :shape :offset :size} ...] :total-size int :array-valued? bool}."
+  [trace addresses]
+  (loop [addrs addresses, offset 0, layout [], any-array? false]
+    (if (empty? addrs)
+      {:layout layout :total-size offset :array-valued? any-array?}
+      (let [addr (first addrs)
+            v (cm/get-choice (:choices trace) [addr])
+            sh (mx/shape v)
+            arr? (pos? (count sh))
+            size (if arr? (reduce * sh) 1)]
+        (recur (rest addrs) (+ offset size)
+               (conj layout {:addr addr :shape sh :offset offset :size size})
+               (or any-array? arr?))))))
+
 (defn make-score-fn
   "Build a score function from a model + observations + addresses.
-   Returns a fn: (params-array) -> MLX scalar log-weight."
-  [model args observations addresses]
-  (let [model (dyn/auto-key model)
-        indexed-addrs (mapv vector (range) addresses)]
-    (fn [params]
-      (let [cm (reduce
-                 (fn [cm [i addr]]
-                   (cm/set-choice cm [addr] (mx/index params i)))
-                 observations
-                 indexed-addrs)]
-        (:weight (p/generate model args cm))))))
+   Returns a fn: (params-array) -> MLX scalar log-weight.
+   Supports both scalar and array-valued choices at each address.
+   If layout is provided (from compute-param-layout), uses it to unflatten
+   the 1-D params array into original shapes. Otherwise assumes all scalar."
+  ([model args observations addresses]
+   (make-score-fn model args observations addresses nil))
+  ([model args observations addresses layout]
+   (let [model (dyn/auto-key model)]
+     (if (and layout (:array-valued? layout))
+       ;; Array-valued path: unflatten params into original shapes
+       (let [entries (:layout layout)]
+         (fn [params]
+           (let [cm (reduce
+                      (fn [cm {:keys [addr shape offset size]}]
+                        (let [v (if (= size 1)
+                                  (mx/index params offset)
+                                  (mx/reshape (mx/slice params offset (+ offset size)) shape))]
+                          (cm/set-choice cm [addr] v)))
+                      observations
+                      entries)]
+             (:weight (p/generate model args cm)))))
+       ;; Scalar-only path (original, unchanged)
+       (let [indexed-addrs (mapv vector (range) addresses)]
+         (fn [params]
+           (let [cm (reduce
+                      (fn [cm [i addr]]
+                        (cm/set-choice cm [addr] (mx/index params i)))
+                      observations
+                      indexed-addrs)]
+             (:weight (p/generate model args cm)))))))))
 
 (defn make-batched-score-fn
   "Build a batched score function via shape-based batching.
@@ -88,11 +123,25 @@
 
 (defn extract-params
   "Extract parameter values from a trace at the given addresses.
-   Returns an MLX 1-D array of realized scalar values."
-  [trace addresses]
-  (mx/array (mapv #(let [v (cm/get-choice (:choices trace) [%])]
-                     (mx/realize v))
-                  addresses)))
+   Returns an MLX 1-D array. Handles both scalar and array-valued choices:
+   scalar choices contribute 1 element, array choices are flattened."
+  ([trace addresses]
+   (extract-params trace addresses nil))
+  ([trace addresses layout]
+   (if (and layout (:array-valued? layout))
+     ;; Array-valued path: flatten all choices into single 1-D array
+     (let [parts (mapv (fn [{:keys [addr size]}]
+                         (let [v (cm/get-choice (:choices trace) [addr])]
+                           (mx/eval! v)
+                           (if (= size 1)
+                             (mx/reshape v [1])
+                             (mx/reshape v [-1]))))
+                       (:layout layout))]
+       (mx/concatenate parts))
+     ;; Scalar-only path (original)
+     (mx/array (mapv #(let [v (cm/get-choice (:choices trace) [%])]
+                        (mx/realize v))
+                     addresses)))))
 
 (defn- make-differentiable-vectorized-score-fn
   "Like make-vectorized-score-fn but uses differentiable column extraction.
@@ -177,8 +226,18 @@
   (let [{:keys [probs]} (normalize-log-weights log-weights)]
     (/ 1.0 (reduce + (map #(* % %) probs)))))
 
+(defn- walk-value-arrays
+  "Recursively find all MLX arrays in a value that may be a scalar, vector, or map."
+  [v arrays]
+  (cond
+    (mx/array? v) (vswap! arrays conj! v)
+    (map? v) (doseq [[_ val] v] (walk-value-arrays val arrays))
+    (sequential? v) (doseq [item v] (walk-value-arrays item arrays))
+    :else nil))
+
 (defn collect-trace-arrays
-  "Collect all MLX arrays from a trace for bulk evaluation."
+  "Collect all MLX arrays from a trace for bulk evaluation.
+   Recursively walks retval to find arrays inside maps/vectors (e.g., Unfold state)."
   [trace]
   (let [arrays (volatile! (transient []))]
     (letfn [(walk [cm]
@@ -196,7 +255,7 @@
     (when-let [s (:score trace)]
       (when (mx/array? s) (vswap! arrays conj! s)))
     (when-let [r (:retval trace)]
-      (when (mx/array? r) (vswap! arrays conj! r)))
+      (walk-value-arrays r arrays))
     (persistent! @arrays)))
 
 (defn materialize-state
@@ -222,18 +281,49 @@
              u (mx/realize (rng/uniform key []))]
          (< (js/Math.log u) log-accept)))))
 
+(defn collect-choicemap-arrays
+  "Collect all MLX arrays from a choicemap (e.g., observations).
+   Returns a JS Set of arrays (by identity) for fast lookup."
+  [choicemap]
+  (let [seen (js/Set.)]
+    (letfn [(walk [cm]
+              (cond
+                (nil? cm) nil
+                (cm/has-value? cm)
+                (let [v (cm/get-value cm)]
+                  (when (mx/array? v) (.add seen v)))
+                (instance? cm/Node cm)
+                (doseq [[_ sub] (cm/-submaps cm)]
+                  (walk sub))
+                :else nil))]
+      (walk choicemap))
+    seen))
+
 (defn dispose-trace
   "Dispose all MLX arrays in a trace (or collection of traces), freeing Metal
-   buffers immediately. Handles shared arrays safely by deduplicating first."
-  [trace-or-traces]
-  (let [traces (if (sequential? trace-or-traces) trace-or-traces [trace-or-traces])
-        ;; Use a JS Set to deduplicate by identity (shared obs arrays appear once)
-        seen (js/Set.)]
-    (doseq [t traces
-            a (collect-trace-arrays t)]
-      (when-not (.has seen a)
-        (.add seen a)))
-    (.forEach seen (fn [a] (mx/dispose! a)))))
+   buffers immediately. Handles shared arrays safely by deduplicating first.
+
+   Optional second arg `preserve` can be:
+   - a choicemap (e.g., the observation choicemap) — arrays in it are skipped
+   - a JS Set of arrays to skip
+   - nil (dispose everything, original behavior)"
+  ([trace-or-traces]
+   (dispose-trace trace-or-traces nil))
+  ([trace-or-traces preserve]
+   (let [traces (if (sequential? trace-or-traces) trace-or-traces [trace-or-traces])
+         skip (cond
+                (nil? preserve) nil
+                (instance? js/Set preserve) preserve
+                ;; Assume it's a choicemap
+                :else (collect-choicemap-arrays preserve))
+         seen (js/Set.)]
+     (doseq [t traces
+             a (collect-trace-arrays t)]
+       (when-not (.has seen a)
+         (.add seen a)))
+     (.forEach seen (fn [a]
+                      (when-not (and skip (.has skip a))
+                        (mx/dispose! a)))))))
 
 (defn tidy-step
   "Run step-fn inside mx/tidy, preserving all arrays in the returned state.
