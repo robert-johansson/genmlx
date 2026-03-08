@@ -100,10 +100,7 @@
   [{:keys [n-samples baseline] :or {n-samples 1}} gf args cost-fn param-names params-array]
   (let [bl (when baseline (mx/scalar baseline))
         loss-fn (fn [p]
-                  (let [store {:params (into {}
-                                        (map-indexed
-                                          (fn [i nm] [nm (mx/index p i)])
-                                          param-names))}
+                  (let [store {:params (learn/array->params p param-names)}
                         gf' (vary-meta gf assoc :genmlx.dynamic/param-store store)
                         keys (rng/split-n (rng/fresh-key) n-samples)
                         surrogates (mapv (fn [k]
@@ -178,10 +175,7 @@
    Returns {:loss MLX-scalar, :grad MLX-array}."
   [{:keys [n-samples] :or {n-samples 100}} gf args cost-fn param-names params-array]
   (let [loss-fn (fn [p]
-                  (let [store {:params (into {}
-                                        (map-indexed
-                                          (fn [i nm] [nm (mx/index p i)])
-                                          param-names))}
+                  (let [store {:params (learn/array->params p param-names)}
                         gf' (vary-meta gf assoc :genmlx.dynamic/param-store store)
                         key (rng/fresh-key)]
                     (vadev-surrogate gf' args cost-fn n-samples key)))
@@ -264,10 +258,7 @@
     :or {iterations 100 lr 0.01 n-samples 100}}
    gf args cost-fn param-names init-params]
   (let [loss-fn (fn [p key bl]
-                  (let [store {:params (into {}
-                                        (map-indexed
-                                          (fn [i nm] [nm (mx/index p i)])
-                                          param-names))}
+                  (let [store {:params (learn/array->params p param-names)}
                         gf' (vary-meta gf assoc :genmlx.dynamic/param-store store)]
                     (vadev-surrogate gf' args cost-fn n-samples key bl)))
         grad-fn (fn [p key bl]

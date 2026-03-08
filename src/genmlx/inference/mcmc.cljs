@@ -1963,15 +1963,8 @@
              (u/make-compiled-vectorized-score-and-grad model args observations addresses)
              init-params (u/init-vectorized-params model args observations addresses n-restarts)
            ;; Adam state: m and v are [N,D] — element-wise ops broadcast naturally
-           opt-state (when (= optimizer :adam)
-                       {:m (mx/zeros (mx/shape init-params))
-                        :v (mx/zeros (mx/shape init-params))
-                        :t 0})
-           ;; Hoist constants outside loop to reduce per-iteration allocations
-           lr-s (mx/scalar lr)
-           b1-s (mx/scalar 0.9)  b1c-s (mx/scalar 0.1)
-           b2-s (mx/scalar 0.999) b2c-s (mx/scalar 0.001)
-           eps-s (mx/scalar 1e-8)]
+           opt-state (when (= optimizer :adam) (learn/adam-init init-params))
+           lr-s (mx/scalar lr)]
        (loop [i 0
               params init-params
               opt-st opt-state
@@ -2006,16 +1999,7 @@
                             [new-params new-opt-st]
                             (case optimizer
                               :sgd [(mx/subtract params (mx/multiply lr-s neg-grad)) nil]
-                              :adam (let [t (inc (:t opt-st))
-                                          m (mx/add (mx/multiply b1-s (:m opt-st))
-                                                    (mx/multiply b1c-s neg-grad))
-                                          v (mx/add (mx/multiply b2-s (:v opt-st))
-                                                    (mx/multiply b2c-s (mx/square neg-grad)))
-                                          m-hat (mx/divide m (mx/scalar (- 1.0 (js/Math.pow 0.9 t))))
-                                          v-hat (mx/divide v (mx/scalar (- 1.0 (js/Math.pow 0.999 t))))
-                                          upd (mx/divide m-hat (mx/add (mx/sqrt v-hat) eps-s))
-                                          new-p (mx/subtract params (mx/multiply lr-s upd))]
-                                      [new-p {:m m :v v :t t}]))]
+                              :adam (learn/adam-step params neg-grad opt-st {:lr lr}))]
                         {:params new-params :opt-st new-opt-st :best-score best-score}))
                      (fn [{:keys [params opt-st]}]
                        (if opt-st

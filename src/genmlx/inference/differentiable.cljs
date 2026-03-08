@@ -1,11 +1,15 @@
 (ns genmlx.inference.differentiable
   "Differentiable inference: gradient of log-ML w.r.t. model parameters.
-   Composes vectorized importance sampling with mx/value-and-grad to enable
-   automatic parameter learning (empirical Bayes, hyperparameter optimization).
+   Composes vectorized IS with mx/value-and-grad for automatic parameter
+   learning (empirical Bayes, hyperparameter optimization).
 
-   Key idea: wrap vgenerate in a differentiable loss function, then use
-   mx/value-and-grad to get ∂(log-ML) / ∂θ. All operations are MLX ops,
-   so autograd traces through the entire importance sampling pipeline."
+   Two core primitives:
+   - make-is-loss-fn: fixed-key loss function (params → neg-log-ML)
+   - make-is-loss-grad-fn: variable-key loss+gradient (params, key → {:loss :grad})
+
+   Higher-level functions compose on these:
+   - log-ml-gradient: one-shot gradient estimate
+   - optimize-params: full optimization via learning/train"
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dynamic :as dyn]
@@ -13,93 +17,80 @@
             [genmlx.learning :as learn]))
 
 ;; ---------------------------------------------------------------------------
-;; Core: gradient of log-ML w.r.t. model parameters
+;; Core: IS-based loss functions for parameter learning
 ;; ---------------------------------------------------------------------------
 
-(defn- build-param-store
-  "Build a param-store map from a flat params array and param names.
-   Each param is a slice of the array (differentiable via mx/index)."
-  [params-array param-names]
-  {:params (into {}
-             (map-indexed (fn [i nm] [nm (mx/index params-array i)])
-                          param-names))})
+(defn make-is-loss-fn
+  "Build a differentiable loss function: params → neg-log-ML via IS.
+   Key is frozen in closure (same particles every call).
+   For use with mx/grad, mx/value-and-grad, or mx/compile-fn."
+  [model args observations param-names n-particles key]
+  (let [model (dyn/auto-key model)]
+    (fn [p]
+      (let [store {:params (learn/array->params p param-names)}
+            gf (vary-meta model assoc :genmlx.dynamic/param-store store)
+            vtrace (dyn/vgenerate gf args observations n-particles key)]
+        (mx/negative (vec/vtrace-log-ml-estimate vtrace))))))
+
+(defn make-is-loss-grad-fn
+  "Build (fn [params key] -> {:loss :grad}) for IS-based log-ML gradient.
+   Creates value-and-grad once; key is a regular argument.
+   Gradient is w.r.t. params only (argnums=[0])."
+  [model args observations param-names n-particles]
+  (let [model (dyn/auto-key model)
+        raw-fn (fn [p key]
+                 (let [store {:params (learn/array->params p param-names)}
+                       gf (vary-meta model assoc :genmlx.dynamic/param-store store)
+                       vtrace (dyn/vgenerate gf args observations n-particles key)]
+                   (mx/negative (vec/vtrace-log-ml-estimate vtrace))))
+        vg (mx/value-and-grad raw-fn [0])]
+    (fn [params key]
+      (let [[loss grad] (vg params key)]
+        {:loss loss :grad grad}))))
+
+;; ---------------------------------------------------------------------------
+;; One-shot gradient estimate
+;; ---------------------------------------------------------------------------
 
 (defn log-ml-gradient
-  "Compute log-ML and its gradient w.r.t. model parameters via vectorized IS.
-
-   model: DynamicGF using (param :name default) for learnable parameters
-   args: model arguments
-   observations: ChoiceMap of observed values
-   param-names: vector of parameter name keywords
-   params-array: flat [D]-shaped MLX array of parameter values
-   opts:
-     :n-particles  - number of IS particles (default 1000)
-     :key          - PRNG key (default: fresh)
-
+  "Estimate log p(y;θ) and ∇_θ log p(y;θ) via vectorized IS + autodiff.
    Returns {:log-ml MLX-scalar, :grad [D]-shaped MLX array}.
 
-   The gradient is ∇_θ log p(observations; θ), estimated via the
-   log-mean-exp of importance weights from N particles."
+   opts:
+     :n-particles  - IS particles (default 1000)
+     :key          - PRNG key (default: fresh)"
   [{:keys [n-particles key] :or {n-particles 1000}}
    model args observations param-names params-array]
-  (let [model (dyn/auto-key model)
-        key (rng/ensure-key key)
-        loss-fn (fn [p]
-                  (let [store (build-param-store p param-names)
-                        gf (vary-meta model assoc :genmlx.dynamic/param-store store)
-                        vtrace (dyn/vgenerate gf args observations n-particles key)]
-                    ;; Negative log-ML (minimize)
-                    (mx/negative (vec/vtrace-log-ml-estimate vtrace))))
-        vg (mx/value-and-grad loss-fn)
-        [neg-log-ml grad] (vg params-array)]
-    {:log-ml (mx/negative neg-log-ml)
-     :grad grad}))
+  (let [key (rng/ensure-key key)
+        loss-grad-fn (make-is-loss-grad-fn model args observations param-names n-particles)
+        {:keys [loss grad]} (loss-grad-fn params-array key)]
+    {:log-ml (mx/negative loss) :grad grad}))
 
 ;; ---------------------------------------------------------------------------
-;; Optimization loop
+;; Parameter optimization via learning/train
 ;; ---------------------------------------------------------------------------
 
 (defn optimize-params
-  "Optimize model parameters by maximizing log p(observations; θ) via
-   gradient ascent on the log-ML estimated by vectorized importance sampling.
+  "Maximize log p(y;θ) via Adam on IS-estimated log-ML gradient.
+   Delegates to learning/train.
 
    opts:
-     :iterations   - number of optimization steps (default 200)
+     :iterations   - optimization steps (default 200)
      :lr           - learning rate (default 0.01)
-     :n-particles  - IS particles per gradient estimate (default 1000)
-     :callback     - (fn [{:iter :log-ml :params}]) called each step
+     :n-particles  - IS particles per step (default 1000)
+     :callback     - (fn [{:iter :log-ml :params}]) per step
      :key          - PRNG key
 
-   model: DynamicGF with (param ...) sites
-   args: model arguments
-   observations: ChoiceMap of observed values
-   param-names: vector of parameter name keywords
-   init-params: flat [D]-shaped MLX initial parameter array
-
-   Returns {:params final-params, :log-ml-history [numbers...]}"
+   Returns {:params final-params, :log-ml-history [numbers...]}."
   [{:keys [iterations lr n-particles callback key]
     :or {iterations 200 lr 0.01 n-particles 1000}}
    model args observations param-names init-params]
-  (let [model (dyn/auto-key model)
-        opt-state (learn/adam-init init-params)]
-    (loop [i 0
-           params init-params
-           opt-st opt-state
-           history (transient [])]
-      (if (>= i iterations)
-        {:params params :log-ml-history (persistent! history)}
-        (let [step-key (rng/fresh-key)
-              {:keys [log-ml grad]}
-              (log-ml-gradient {:n-particles n-particles :key step-key}
-                               model args observations param-names params)
-              ;; Negate grad: log-ml-gradient returns ∂(-log-ML)/∂θ,
-              ;; but Adam minimizes, so we pass grad directly (it's already
-              ;; the gradient of the negative log-ML)
-              _ (mx/materialize! log-ml grad)
-              _ (when (zero? (mod i 50)) (mx/clear-cache!))
-              log-ml-val (mx/item log-ml)
-              [new-params new-opt-st] (learn/adam-step params grad opt-st {:lr lr})]
-          (when callback
-            (callback {:iter i :log-ml log-ml-val :params new-params}))
-          (recur (inc i) new-params new-opt-st
-                 (conj! history log-ml-val)))))))
+  (let [loss-grad-fn (make-is-loss-grad-fn model args observations param-names n-particles)
+        result (learn/train
+                 {:iterations iterations :lr lr :key key
+                  :callback (when callback
+                              (fn [{:keys [iter loss params]}]
+                                (callback {:iter iter :log-ml (- loss) :params params})))}
+                 loss-grad-fn init-params)]
+    {:params (:params result)
+     :log-ml-history (mapv - (:loss-history result))}))
