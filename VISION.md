@@ -55,35 +55,52 @@ Map, Unfold, Switch, Scan in `combinators.cljs` — all use `mapv` internally, c
 
 GenJAX's key advantage: lower an entire inference loop to a single XLA dispatch. GenMLX has `mx/compile-fn` for individual functions (gradients, MH scores) but not for whole inference sweeps. The gap is **whole-program compilation**.
 
-### Static Analysis
+### Static Analysis — The Middle Path
 
-- **Static DSL** — Gen.jl has static generative functions with compile-time-known trace structure. Enables: pre-allocated traces, compiled update, zero choicemap overhead.
-- **Trace type schemas** — Would enable compile-time verification and optimization. (Already in TODO as items 10.14-10.15.)
+Gen.jl has two DSLs: Dynamic (arbitrary control flow, trace structure discovered at runtime) and Static (compile-time-known trace structure as a DAG). GenJAX inherits this split.
+
+A full static DSL for GenMLX would restrict what you can write: no data-dependent branching, no variable-length loops, no dynamic `splice`. This would break the `switch`/`mix` combinators, any model where trace sites depend on data, and the amortized combinator search idea (3d).
+
+**The middle path: trace-once compilation.** Instead of a second DSL, we compile standard `gen` functions by tracing them:
+
+1. **Trace-once analysis**: Run the model once under a special "schema discovery" handler that records execution order, trace addresses, distribution types, and shapes — but doesn't sample or score.
+2. **Schema validation**: Verify the schema is structurally static (same addresses every execution). If the model has data-dependent branching, fail gracefully with a clear error.
+3. **Code generation**: From the schema, auto-generate a pure MLX step function that does the same sampling + scoring as flat tensor operations. Distribution-specific transforms convert noise to samples (Gaussian: `noise * std + mean`, etc.).
+4. **GFI bridge**: Wrap the compiled function in a `CompiledGF` record that implements `simulate`, `generate`, `update` — converting between flat tensors and standard Trace/choicemap at the boundary.
+
+```clojure
+;; User writes normal gen code
+(def model
+  (gen [x]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
+      (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
+      slope)))
+
+;; compile-gen traces once, discovers schema, builds compiled version
+(def fast-model (compile-gen model))
+;; fast-model implements full GFI: simulate, generate, update
+;; Internally: single Metal dispatch, flat tensor trace, no handler overhead
+
+;; Falls back gracefully for dynamic models:
+(compile-gen dynamic-branching-model)
+;; => Error: "Model has data-dependent trace structure at address :branch.
+;;    Cannot compile. Use the dynamic path instead."
+```
+
+**Why this is better than a static DSL:**
+- One language, one way of writing models. Compilation is an optimization pass, not a different programming model.
+- Models work without compilation (dynamic path). Compilation makes them faster.
+- No new syntax to learn. No restrictions on what you *write* — only on what you *compile*.
+- JAX's `jit` works the same way: trace once, compile, replay. Proven pattern.
+
+**What's needed:** ~500-800 lines. Schema discovery handler, per-distribution noise transforms (Gaussian is trivial; beta/gamma need inverse CDF or rejection), flat trace representation, GFI bridge protocol implementations.
 
 ---
 
 ## 3. New Ideas — Where GenMLX Can Lead
 
 GenMLX sits at a unique intersection: purely functional ClojureScript + MLX's lazy computation graph + Apple Silicon GPU. This enables things neither Gen.jl nor GenJAX can easily do.
-
-### A. Compiled Generative Functions ("Static Gen on MLX")
-
-**Insight:** MLX builds a lazy computation graph before evaluating. A gen fn body *is* a graph builder. Trace it once, capture the graph, re-execute without handler overhead.
-
-```clojure
-;; Current: every call builds choicemaps, runs handler transitions
-(def model (gen [x] (trace :z (dist/gaussian 0 1))))
-
-;; Proposed: compile to a single MLX graph
-(def compiled-model (compile-gen model {:trace-schema {:z :float32}}))
-;; compiled-model.simulate = ONE MLX dispatch
-;; Trace is a flat tensor [z_value, z_score, total_score]
-;; No choicemaps, no handler, no volatile!
-```
-
-**Why uniquely GenMLX:** MLX's lazy eval means compilation is natural — you're just not breaking the graph. The handler's `volatile!` is the only mutable part; replace it with pure graph accumulation.
-
-**Impact:** 180 patients x 10 timesteps x 20K particles — inner model body becomes a single Metal kernel dispatch instead of 10 handler transitions per execution.
 
 ### B. Lazy Inference Graphs
 
@@ -198,21 +215,21 @@ Critical for: daily data (T=63 days), item-level data (many more parameters per 
 
 ### Tier 1: Engineering (immediate GPU wins)
 
-| # | Item | Lines | Impact |
-|---|------|-------|--------|
-| 1a | Vectorize SMC init + step (use vgenerate + batched handler) | ~200 | 10-50x SMC speedup |
-| 1b | GPU resampling (cumsum + searchsorted) | ~30 | Remove CPU bottleneck in all particle methods |
-| 1c | Population-level flat [P*K] batching | ~165 | 180 patients on GPU simultaneously |
-| 1d | Default to vectorized variants for IS, ADEV | ~20 | Users get GPU by default |
-| 1e | Structured state resampling (walk map, take-idx each array) | ~15 | Unblock SMC with structured state |
+| # | Item | Status | Result |
+|---|------|--------|--------|
+| 1a | Vectorize SMC init + step (vgenerate + batched handler) | **DONE** | 20-231x SMC speedup |
+| 1b | GPU resampling (cumsum + broadcasting) | **DONE** | O(N²) mem, fine for N≤20K |
+| 1c | Population-level flat [P*K] batching | Deferred | Implement with 3a when needed |
+| 1d | Default to vectorized variants for IS, ADEV | **DONE** | 352-1520x IS speedup |
+| 1e | Structured state resampling (walk map, take-idx each array) | **DONE** | Unblocks SMC with structured state |
 
 ### Tier 2: Compilation (eliminate overhead)
 
-| # | Item | Lines | Impact |
-|---|------|-------|--------|
-| 2a | Compiled unfold (single Metal dispatch for T steps) | ~100 | 5-10x temporal models |
-| 2b | Compiled gen fn (trace-schema → flat tensor) | ~500 | Eliminate handler overhead |
-| 2c | Lazy inference graphs (pre-generate noise, single eval) | ~300 | Whole-sweep compilation |
+| # | Item | Status | Result |
+|---|------|--------|--------|
+| 2a | Compiled unfold (single Metal dispatch for T steps) | **DONE** | 6-15x vs standard unfold |
+| 2b | Compiled gen fn (trace-once → auto-compiled) | Not started | See "Middle Path" above |
+| 2c | Compiled particle filter (whole SMC sweep, one dispatch) | **DONE** | 14-15x vs batched-smc-unfold |
 
 ### Tier 3: Research contributions
 
