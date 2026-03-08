@@ -96,6 +96,69 @@ A full static DSL for GenMLX would restrict what you can write: no data-dependen
 
 **What's needed:** ~500-800 lines. Schema discovery handler, per-distribution noise transforms (Gaussian is trivial; beta/gamma need inverse CDF or rejection), flat trace representation, GFI bridge protocol implementations.
 
+### Progressive Compilation — Beyond Pass/Fail
+
+The trace-once approach doesn't have to be all-or-nothing. `compile-gen` can progressively handle more complex models through four levels:
+
+**Level 1: Diagnostic feedback.** When compilation fails, explain *why* and *where* — not just "can't compile" but "address `:branch` at line 12 depends on the value of `:mode`. The 3 other trace sites are structurally static. Consider: wrap the branching in a switch combinator."
+
+**Level 2: Partial compilation.** Compile the static parts, interpret only the dynamic parts. If a model has 10 trace sites and one data-dependent branch, compile 9 sites as a single Metal dispatch and drop into the dynamic handler only for the branch. Still faster than fully dynamic.
+
+```clojure
+(def model
+  (gen [x]
+    (let [slope (trace :slope (dist/gaussian 0 10))          ;; compiled
+          intercept (trace :intercept (dist/gaussian 0 10))  ;; compiled
+          mode (trace :mode (dist/bernoulli 0.5))]           ;; compiled
+      ;; Dynamic branch — drops to handler here
+      (if (pos? (mx/item mode))
+        (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
+        (trace :y (dist/gaussian intercept 2))))))
+
+(compile-gen model)
+;; => Partially compiled: 3/4 sites compiled, 1 dynamic branch
+;;    Speedup: ~3x (overhead eliminated on compiled sites)
+```
+
+**Level 3: Automatic rewriting.** The compiler recognizes patterns it can make branchless. Data-dependent `if` over trace sites with the same address becomes `mx/where`:
+
+```clojure
+;; User writes:
+(if (pos? mode)
+  (trace :y (dist/gaussian mean1 std1))
+  (trace :y (dist/gaussian mean2 std2)))
+
+;; Compiler rewrites to:
+(trace :y (dist/gaussian
+            (mx/where mode-mask mean1 mean2)
+            (mx/where mode-mask std1 std2)))
+;; Now fully compilable — mx/where is a pure MLX op, no branching
+```
+
+This is what the `switch` combinator already does conceptually. The compiler automates the transformation.
+
+**Level 4: Combinator-aware compilation.** The compiler understands combinator structure and applies compositional compilation strategies:
+
+- `unfold` → compiled scan (single dispatch for T steps)
+- `switch` → compute all branches in parallel, `mx/where` to select
+- `mix` → pre-compile each component, weight at runtime
+- `map` over patients → reshape to [P*K] flat batch
+
+Each combinator encodes a compilation strategy. A model built from `unfold(switch(mix(...)))` gets compiled by composing the strategies for each layer. The combinators aren't just programming abstractions — they're compilation hints.
+
+```clojure
+;; This model has dynamic branching (switch) inside temporal structure (unfold)
+;; Level 4 handles it compositionally:
+;;   unfold → compiled scan
+;;   switch inside each step → compute both branches, mx/where to select
+;;   Result: single Metal dispatch for the entire T-step model with branching
+(compile-gen (unfold (switch [engage-kernel avoid-kernel])))
+```
+
+**Why this is uniquely GenMLX.** Neither Gen.jl nor GenJAX can do progressive compilation because they lack the combination of: (1) lazy computation graph (MLX) that makes partial compilation natural — compiled and interpreted sections produce the same lazy arrays, (2) pure handler transitions that make rewriting safe — no hidden state to corrupt, (3) combinator algebra that encodes compilation strategies — the model structure *is* the compilation plan.
+
+The key insight: the static/dynamic distinction is a property of the *model*, not the *language*. A linear regression is structurally static whether written in a static DSL or a dynamic one. GenMLX detects this automatically — and when a model is *partially* static, it compiles what it can.
+
 ---
 
 ## 3. New Ideas — Where GenMLX Can Lead
