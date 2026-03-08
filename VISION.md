@@ -155,9 +155,27 @@ Each combinator encodes a compilation strategy. A model built from `unfold(switc
 (compile-gen (unfold (switch [engage-kernel avoid-kernel])))
 ```
 
-**Why this is uniquely GenMLX.** Neither Gen.jl nor GenJAX can do progressive compilation because they lack the combination of: (1) lazy computation graph (MLX) that makes partial compilation natural — compiled and interpreted sections produce the same lazy arrays, (2) pure handler transitions that make rewriting safe — no hidden state to corrupt, (3) combinator algebra that encodes compilation strategies — the model structure *is* the compilation plan.
+**The deep idea: models that compile themselves.**
 
-The key insight: the static/dynamic distinction is a property of the *model*, not the *language*. A linear regression is structurally static whether written in a static DSL or a dynamic one. GenMLX detects this automatically — and when a model is *partially* static, it compiles what it can.
+In a traditional compiler, source code is opaque text that must be parsed, analyzed, and transformed into an execution plan. The compiler does all the work.
+
+In GenMLX at Level 4, the model *is* the execution plan. When you write `(unfold (switch [kernel-a kernel-b]))`, you're not writing code that a compiler must analyze — you're directly composing compilation strategies:
+
+- `unfold` says "I am a sequential scan — compile me as a loop over timesteps"
+- `switch` says "I have parallel branches — compute all of them, select with `mx/where`"
+- Each leaf kernel says "I am a fixed set of trace sites — compile me as flat tensor ops"
+
+The combinators are simultaneously: (1) a probabilistic model specification, (2) an abstract syntax tree, and (3) a GPU compilation plan. No analysis needed — the structure carries its meaning.
+
+This is possible because the GFI is so constrained. A generative function can only `trace` (sample + score), `splice` (call a sub-model), and `return`. The combinators compose these in known patterns. There is no arbitrary control flow to analyze — the combinator *is* the control flow. Composition of combinators = composition of compilation strategies.
+
+**Why this is uniquely GenMLX.** Neither Gen.jl nor GenJAX can do this because they lack the combination of:
+
+1. **Lazy computation graph** (MLX) — compiled and interpreted sections produce the same lazy arrays, so partial compilation is natural
+2. **Pure handler transitions** — no hidden state to corrupt, so rewriting is safe
+3. **Combinator algebra as compilation IR** — the model structure *is* the compilation plan, no separate analysis pass needed
+
+The static/dynamic distinction becomes a property of the *model*, not the *language*. GenMLX detects it automatically — and when a model is *partially* static, it compiles what it can.
 
 ---
 
@@ -317,21 +335,32 @@ Critical for: daily data (T=63 days), item-level data (many more parameters per 
 
 ## 5. The Unifying Vision
 
-**GenMLX should be a system where models, inference, and compilation are all expressed in the same purely functional language, and MLX's lazy computation graph optimizes the entire pipeline end-to-end.**
+**In GenMLX, models compile themselves.**
 
-The key insight: MLX's lazy evaluation is not just a performance trick — it's a *semantic match* for probabilistic programming. A generative function builds a computation graph (the model). Inference builds a larger graph around it (the algorithm). Compilation fuses them into minimal Metal dispatches (the execution).
+A generative function is three things at once:
+1. **A probabilistic model** — it specifies a distribution over data
+2. **A computation graph** — MLX's lazy evaluation captures it as a sequence of GPU operations
+3. **A compilation plan** — the combinator structure says how to compile it
+
+When you write `(unfold (switch [kernel-a kernel-b]))`, you are simultaneously defining a temporal switching model, building an MLX computation graph, and encoding the GPU execution strategy (scan over timesteps, parallel branch evaluation, `mx/where` selection). No separate compiler pass is needed because the program structure *is* the compilation IR.
 
 ```
-Model (gen macro)           → MLX lazy graph (sampling + scoring)
-Inference (SMC/IS/MCMC)     → MLX lazy graph (weighting + resampling)
-Compilation (compile-gen)   → MLX lazy graph (everything fused)
-                                    ↓
-                            Single Metal dispatch
+gen macro       → what to compute (model specification)
+combinators     → how to compute it (compilation strategy)
+MLX lazy graph  → the actual Metal program (GPU execution)
+
+Model = Specification = Compilation Plan
 ```
 
-ClojureScript's purely functional nature makes this possible: no hidden mutation means the graph is always valid. MLX's lazy evaluation makes it efficient: operations accumulate without executing until needed. Apple Silicon's unified memory means no CPU↔GPU transfers.
+This is possible because of three properties unique to GenMLX's design:
 
-The result: a PPL where writing `(gen [...] ...)` and running `(smc model obs)` compiles to GPU code as efficient as hand-written Metal shaders, while remaining a 10-line ClojureScript program.
+- **Constrained interface.** The GFI allows only three operations: `trace`, `splice`, `return`. Combinators compose these in known patterns. There is no arbitrary control flow — the combinator *is* the control flow, and each combinator knows how to compile itself.
+
+- **Pure handler transitions.** The handler is `(state, addr, dist) → (value, state')` with no side effects. Compilation, interpretation, and mixed execution all produce the same lazy arrays. You can compile some trace sites and interpret others in the same model.
+
+- **Lazy computation graph.** MLX operations build a graph that isn't evaluated until needed. A `gen` body that runs under the dynamic handler and one that runs under a compiled handler both produce the same lazy arrays — they just take different paths to get there. Compilation eliminates the ClojureScript scaffolding (choicemaps, handler state, volatile!) and keeps only the MLX graph.
+
+The result: a PPL where writing `(gen [...] ...)` and running `(smc model obs)` compiles to GPU code as efficient as hand-written Metal shaders, while remaining a 10-line ClojureScript program. The user never thinks about compilation — the model's own structure determines it.
 
 ---
 
