@@ -59,9 +59,9 @@
     (nil? choice-map) choice-map
     (cm/has-value? choice-map)
     (let [v (cm/get-value choice-map)]
-      (if (mx/array? v)
+      (if (and (mx/array? v) (pos? (count (mx/shape v))))
         (cm/->Value (reindex-value v indices))
-        choice-map))
+        choice-map))  ;; scalar constraints stay unchanged
     (instance? cm/Node choice-map)
     (cm/->Node (into {} (map (fn [[k sub]]
                                [k (reindex-choicemap sub indices)])
@@ -121,7 +121,10 @@
   [current proposed mask]
   (cond
     (cm/has-value? current)
-    (cm/->Value (mx/where mask (cm/get-value proposed) (cm/get-value current)))
+    (let [cv (cm/get-value current)]
+      (if (and (mx/array? cv) (pos? (count (mx/shape cv))))
+        (cm/->Value (mx/where mask (cm/get-value proposed) cv))
+        current))  ;; scalar constraints stay unchanged
 
     (instance? cm/Node current)
     (cm/->Node (into {} (map (fn [[k sub]]
