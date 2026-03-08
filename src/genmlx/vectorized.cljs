@@ -18,23 +18,30 @@
 
 (defn systematic-resample-indices
   "Systematic resampling from [N]-shaped log-weights.
-   Returns [N] int32 MLX array of ancestor indices."
+   Returns [N] int32 MLX array of ancestor indices.
+   GPU-accelerated: uses cumsum + broadcasting (no JS loops).
+   Note: creates [N,N] temporary matrix, so O(N^2) memory.
+   Fine for N up to ~20K. For larger N, would need searchsorted."
   [log-weights n key]
   (let [log-probs (mx/subtract log-weights (mx/logsumexp log-weights))
         probs     (mx/exp log-probs)
-        _         (mx/materialize! probs)
-        probs-clj (mx/->clj probs)
-        ;; Single uniform offset
-        u0        (/ (mx/realize (rng/uniform (rng/ensure-key key) [1])) n)
-        indices   (loop [i 0 cumsum 0.0 j 0 acc (transient [])]
-                    (if (>= j n)
-                      (persistent! acc)
-                      (let [threshold (+ u0 (/ j n))
-                            cumsum'   (+ cumsum (nth probs-clj i))]
-                        (if (>= cumsum' threshold)
-                          (recur i cumsum (inc j) (conj! acc i))
-                          (recur (inc i) cumsum' j acc)))))]
-    (mx/array indices mx/int32)))
+        ;; Cumulative sum on GPU: [N] array
+        cdf       (mx/cumsum probs)
+        ;; Systematic thresholds: u0 + j/N for j=0..N-1
+        u0        (mx/divide (rng/uniform (rng/ensure-key key) [1])
+                             (mx/scalar n))
+        thresholds (mx/add u0 (mx/divide (mx/arange 0 n 1)
+                                          (mx/scalar (float n))))
+        ;; For each threshold j, find smallest i where cdf[i] >= threshold[j].
+        ;; Equivalent: count how many cdf values are strictly less than threshold.
+        ;; cdf [N,1] < thresholds [1,N] => [N,N] bool matrix
+        ;; sum along axis 0 gives the index for each threshold.
+        lt      (mx/less (mx/reshape cdf [n 1])
+                         (mx/reshape thresholds [1 n]))
+        indices (mx/sum lt 0)
+        ;; Clamp to [0, N-1] for safety
+        indices (mx/minimum indices (mx/scalar (dec n)))]
+    (.astype indices mx/int32)))
 
 ;; ---------------------------------------------------------------------------
 ;; Reindex choicemap leaves
