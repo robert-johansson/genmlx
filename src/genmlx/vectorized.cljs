@@ -68,6 +68,24 @@
                              (cm/-submaps choice-map))))
     :else choice-map))
 
+(defn reindex-state
+  "Reindex a structured state (plain ClojureScript map or MLX array) by ancestor indices.
+   Walks the structure recursively: maps have their values reindexed,
+   MLX arrays are reindexed via take-idx, other values pass through.
+   Used by SMC unfold where state is {:logit-succ [N], :neg-bias [N], ...}."
+  [state indices]
+  (cond
+    (mx/array? state)
+    (mx/take-idx state indices)
+
+    (map? state)
+    (into {} (map (fn [[k v]] [k (reindex-state v indices)]) state))
+
+    (vector? state)
+    (mapv #(reindex-state % indices) state)
+
+    :else state))
+
 (defn resample-vtrace
   "Resample a VectorizedTrace using systematic resampling.
    Returns a new VectorizedTrace with reindexed choices, uniform weights."
