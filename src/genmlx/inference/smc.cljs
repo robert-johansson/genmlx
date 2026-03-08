@@ -78,9 +78,10 @@
   "First timestep: generate particles from prior with constraints.
    Returns {:traces :log-weights :log-ml-increment}."
   [model args obs particles]
-  (let [results    (mapv (fn [_]
+  (let [results    (mapv (fn [i]
                           (let [r (p/generate model args obs)]
                             (mx/materialize! (:weight r) (:score (:trace r)))
+                            (when (zero? (mod (inc i) 50)) (mx/sweep-dead-arrays!))
                             r))
                         (range particles))
         traces     (mapv :trace results)
@@ -125,11 +126,13 @@
                                 (vec (repeat particles (mx/scalar 0.0)))])
                              [traces log-weights])
         ;; Update each particle with new observations
-        results       (mapv (fn [trace]
-                              (let [r (p/update (:gen-fn trace) trace obs)]
-                                (mx/materialize! (:weight r) (:score (:trace r)))
-                                r))
-                            traces')
+        results       (into [] (map-indexed
+                        (fn [i trace]
+                          (let [r (p/update (:gen-fn trace) trace obs)]
+                            (mx/materialize! (:weight r) (:score (:trace r)))
+                            (when (zero? (mod (inc i) 50)) (mx/sweep-dead-arrays!))
+                            r))
+                        traces'))
         new-traces    (mapv :trace results)
         update-weights (mapv :weight results)
         new-weights   (mapv mx/add weights' update-weights)
@@ -183,7 +186,8 @@
          :log-ml-estimate log-ml}
         (let [obs-t (nth obs-vec t)
               [step-key next-key] (rng/split-or-nils rk)
-              _ (when (and (pos? t) (zero? (mod t 10))) (mx/clear-cache!))]
+              _ (when (pos? t) (mx/sweep-dead-arrays!))
+              _ (when (and (pos? t) (zero? (mod t 5))) (mx/clear-cache!))]
           (if (zero? t)
             (let [{:keys [traces log-weights log-ml-increment]}
                   (smc-init-step model args obs-t particles)]
@@ -241,7 +245,8 @@
          :log-ml-estimate log-ml}
         (let [obs-t (nth obs-vec t)
               [step-key next-key] (rng/split-or-nils rk)
-              _ (when (and (pos? t) (zero? (mod t 10))) (mx/clear-cache!))]
+              _ (when (pos? t) (mx/sweep-dead-arrays!))
+              _ (when (and (pos? t) (zero? (mod t 5))) (mx/clear-cache!))]
           (if (zero? t)
             ;; Init step: reference trace at index 0, rest from prior
             (let [other-results (mapv (fn [_]
