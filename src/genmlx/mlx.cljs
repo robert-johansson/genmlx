@@ -99,6 +99,11 @@
 (defn get-peak-memory [] (.getPeakMemory core))
 (defn reset-peak-memory! [] (.resetPeakMemory core))
 (defn get-wrappers-count [] (.getWrappersCount core))
+(defn sweep-dead-arrays!
+  "Synchronously free Metal buffers for arrays whose JS wrappers have been GC'd
+   but whose deferred N-API finalizers haven't run yet. Returns count swept.
+   Call this in synchronous loops where event loop yields are rare."
+  [] (.sweepDeadArrays core))
 
 ;; Memory control
 (defn set-memory-limit! [n] (.setMemoryLimit core n))
@@ -468,10 +473,14 @@
       (.-gc js/globalThis)))
 
 (defn force-gc!
-  "Force a synchronous garbage collection cycle to release Metal buffers.
-   Uses Bun.gc(true) or global.gc() if available; no-op otherwise."
+  "Force a synchronous garbage collection cycle and immediately sweep dead
+   array wrappers to release Metal buffers. The sweep step is critical because
+   N-API finalizers are deferred to the event loop — without sweeping, Metal
+   buffers accumulate even after GC marks their JS wrappers as dead.
+   Uses Bun.gc(true) or global.gc() if available; sweep always runs."
   []
-  (when gc-fn (gc-fn true)))
+  (when gc-fn (gc-fn true))
+  (sweep-dead-arrays!))
 
 (def ^:private DEFAULT-CACHE-LIMIT (* 256 1024 1024))
 
