@@ -10,7 +10,8 @@
    all finite difference evaluations)."
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.inference.differentiable :as diff]))
+            [genmlx.inference.differentiable :as diff]
+            [genmlx.compiled-gen :as cg]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -59,9 +60,10 @@
      :key          - PRNG key (fixed for deterministic Hessian)
      :epsilon      - override adaptive epsilon with fixed value (optional)
      :damping      - diagonal damping λ (default: trace-adaptive 1e-4·tr(F)/D)
+     :compiled?    - use mx/compile-fn for ~5x faster gradient evals (default false)
 
    Returns {:fisher [D,D] MLX array, :log-ml MLX scalar}."
-  [{:keys [n-particles key epsilon damping] :or {n-particles 2000}}
+  [{:keys [n-particles key epsilon damping compiled?] :or {n-particles 2000}}
    model args observations param-names params-array]
   (let [key (rng/ensure-key key)
         D (first (mx/shape params-array))
@@ -70,21 +72,30 @@
                   (mx/multiply (mx/scalar epsilon) (mx/ones [D]))
                   (adaptive-epsilon params-array))
         _ (mx/materialize! eps-vec)
+        ;; Optionally compile gradient for faster repeated evaluation
+        compiled-vg (when compiled?
+                      (cg/compile-log-ml-gradient
+                        {:n-particles n-particles :key key}
+                        model args observations param-names))
+        ;; Gradient evaluation function (compiled or interpreted)
+        grad-fn (if compiled-vg
+                  (fn [p]
+                    (let [[neg-lml g] (compiled-vg p)]
+                      (mx/materialize! neg-lml g)
+                      {:grad g :log-ml (mx/negative neg-lml)}))
+                  (fn [p]
+                    (eval-grad model args observations param-names
+                               p n-particles key)))
         ;; Evaluate gradient at center point for log-ML value
-        {:keys [log-ml]} (eval-grad model args observations param-names
-                                    params-array n-particles key)
+        {:keys [log-ml]} (grad-fn params-array)
         ;; Central finite differences on gradient: 2D evaluations
         hessian-cols
         (mapv (fn [i]
                 (let [eps-i (mx/item (mx/index eps-vec i))
                       perturbation (mx/multiply (mx/scalar eps-i) (basis-vector i D))
-                      {:keys [grad]} (eval-grad model args observations param-names
-                                                (mx/add params-array perturbation)
-                                                n-particles key)
+                      {:keys [grad]} (grad-fn (mx/add params-array perturbation))
                       grad-plus grad
-                      {:keys [grad]} (eval-grad model args observations param-names
-                                                (mx/subtract params-array perturbation)
-                                                n-particles key)
+                      {:keys [grad]} (grad-fn (mx/subtract params-array perturbation))
                       grad-minus grad
                       ;; H[*,i] = (∇f(θ+ε·eᵢ) - ∇f(θ-ε·eᵢ)) / (2ε)
                       ;; Note: grad is ∂(-log-ML)/∂θ, so H is Hessian of -log-ML
