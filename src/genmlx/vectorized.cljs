@@ -43,6 +43,24 @@
         indices (mx/minimum indices (mx/scalar (dec n)))]
     (.astype indices mx/int32)))
 
+(defn systematic-resample-indices-deterministic
+  "Systematic resampling with pre-generated uniform u0.
+   Like systematic-resample-indices but takes u0 [1]-shaped MLX array
+   instead of a PRNG key. Suitable for use inside mx/compile-fn where
+   random generation must happen outside the compiled function."
+  [log-weights n u0]
+  (let [log-probs (mx/subtract log-weights (mx/logsumexp log-weights))
+        probs     (mx/exp log-probs)
+        cdf       (mx/cumsum probs)
+        u0-scaled (mx/divide u0 (mx/scalar n))
+        thresholds (mx/add u0-scaled (mx/divide (mx/arange 0 n 1)
+                                                  (mx/scalar (float n))))
+        lt      (mx/less (mx/reshape cdf [n 1])
+                         (mx/reshape thresholds [1 n]))
+        indices (mx/sum lt 0)
+        indices (mx/minimum indices (mx/scalar (dec n)))]
+    (.astype indices mx/int32)))
+
 ;; ---------------------------------------------------------------------------
 ;; Reindex choicemap leaves
 ;; ---------------------------------------------------------------------------
