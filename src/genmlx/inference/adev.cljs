@@ -22,7 +22,7 @@
   (contains? (methods dc/dist-reparam) (:type dist)))
 
 ;; ---------------------------------------------------------------------------
-;; ADEV handler transition
+;; ADEV handler transition (sequential)
 ;; ---------------------------------------------------------------------------
 
 (defn- adev-transition
@@ -45,7 +45,7 @@
                (update :reinforce-lp #(mx/add % lp))))]))
 
 ;; ---------------------------------------------------------------------------
-;; ADEV execution
+;; ADEV execution (sequential)
 ;; ---------------------------------------------------------------------------
 
 (defn adev-execute
@@ -69,7 +69,7 @@
      :reinforce-lp (:reinforce-lp result)}))
 
 ;; ---------------------------------------------------------------------------
-;; Surrogate loss
+;; Surrogate loss (sequential)
 ;; ---------------------------------------------------------------------------
 
 (defn adev-surrogate
@@ -87,7 +87,7 @@
     (mx/add cost (mx/multiply reinforce-mult reinforce-lp))))
 
 ;; ---------------------------------------------------------------------------
-;; Gradient estimation with param-store integration
+;; Gradient estimation (sequential)
 ;; ---------------------------------------------------------------------------
 
 (defn adev-gradient
@@ -115,54 +115,6 @@
         vg (mx/value-and-grad loss-fn)
         [loss grad] (vg params-array)]
     {:loss loss :grad grad}))
-
-;; ---------------------------------------------------------------------------
-;; Optimization loop
-;; ---------------------------------------------------------------------------
-
-(defn adev-optimize
-  "Optimize E[cost] via ADEV gradient estimation with Adam.
-   opts:
-     :iterations     - number of steps (default 100)
-     :lr             - learning rate (default 0.01)
-     :n-samples      - samples per gradient estimate (default 1)
-     :baseline-decay - EMA decay for variance-reduction baseline (default nil = off)
-     :callback       - (fn [{:iter :loss :params}]) called each step
-     :key            - PRNG key (unused, kept for API consistency)
-   gf: DynamicGF model
-   args: model arguments
-   cost-fn: (fn [trace] -> MLX-scalar)
-   param-names: vector of parameter name keywords
-   init-params: initial flat MLX parameter array
-   Returns {:params final-params, :loss-history [numbers...]}."
-  [{:keys [iterations lr n-samples baseline-decay callback key]
-    :or {iterations 100 lr 0.01 n-samples 1}}
-   gf args cost-fn param-names init-params]
-  (let [opt-state (learn/adam-init init-params)]
-    (loop [i 0
-           params init-params
-           opt-st opt-state
-           baseline nil
-           losses (transient [])]
-      (if (>= i iterations)
-        {:params params :loss-history (persistent! losses)}
-        (let [{:keys [loss grad]} (adev-gradient {:n-samples n-samples
-                                                   :baseline baseline}
-                                                  gf args cost-fn
-                                                  param-names params)
-              _ (mx/materialize! loss grad)
-              _ (when (zero? (mod i 50)) (mx/clear-cache!))
-              loss-val (mx/item loss)
-              new-baseline (when baseline-decay
-                             (if baseline
-                               (+ (* baseline-decay baseline)
-                                  (* (- 1.0 baseline-decay) loss-val))
-                               loss-val))
-              [new-params new-opt-st] (learn/adam-step params grad opt-st {:lr lr})]
-          (when callback
-            (callback {:iter i :loss loss-val :params new-params}))
-          (recur (inc i) new-params new-opt-st new-baseline
-                 (conj! losses loss-val)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized ADEV (batched: single model execution for N particles)
@@ -236,6 +188,63 @@
         vg (mx/value-and-grad loss-fn)
         [loss grad] (vg params-array)]
     {:loss loss :grad grad}))
+
+;; ---------------------------------------------------------------------------
+;; Optimization loop (uses vectorized path by default)
+;; ---------------------------------------------------------------------------
+
+(defn adev-optimize
+  "Optimize E[cost] via ADEV gradient estimation with Adam.
+   Uses vectorized (batched) execution by default — runs model body ONCE
+   for all n-samples particles on GPU. Set :sequential true to use the
+   sequential path (needed for models with splice).
+   opts:
+     :iterations     - number of steps (default 100)
+     :lr             - learning rate (default 0.01)
+     :n-samples      - samples per gradient estimate (default 1)
+     :baseline-decay - EMA decay for variance-reduction baseline (default nil = off)
+     :callback       - (fn [{:iter :loss :params}]) called each step
+     :sequential     - force sequential adev-gradient (default false)
+     :key            - PRNG key (unused, kept for API consistency)
+   gf: DynamicGF model
+   args: model arguments
+   cost-fn: (fn [trace-or-result] -> MLX-scalar)
+     Sequential: receives a Trace record.
+     Vectorized: receives {:choices :score :reinforce-lp :retval} with [N]-shaped arrays.
+   param-names: vector of parameter name keywords
+   init-params: initial flat MLX parameter array
+   Returns {:params final-params, :loss-history [numbers...]}."
+  [{:keys [iterations lr n-samples baseline-decay callback sequential key]
+    :or {iterations 100 lr 0.01 n-samples 1}}
+   gf args cost-fn param-names init-params]
+  (let [opt-state (learn/adam-init init-params)
+        use-vectorized? (not sequential)]
+    (loop [i 0
+           params init-params
+           opt-st opt-state
+           baseline nil
+           losses (transient [])]
+      (if (>= i iterations)
+        {:params params :loss-history (persistent! losses)}
+        (let [{:keys [loss grad]}
+              (if use-vectorized?
+                (vadev-gradient {:n-samples n-samples}
+                                gf args cost-fn param-names params)
+                (adev-gradient {:n-samples n-samples :baseline baseline}
+                               gf args cost-fn param-names params))
+              _ (mx/materialize! loss grad)
+              _ (when (zero? (mod i 50)) (mx/clear-cache!))
+              loss-val (mx/item loss)
+              new-baseline (when baseline-decay
+                             (if baseline
+                               (+ (* baseline-decay baseline)
+                                  (* (- 1.0 baseline-decay) loss-val))
+                               loss-val))
+              [new-params new-opt-st] (learn/adam-step params grad opt-st {:lr lr})]
+          (when callback
+            (callback {:iter i :loss loss-val :params new-params}))
+          (recur (inc i) new-params new-opt-st new-baseline
+                 (conj! losses loss-val)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Compiled ADEV optimization (mx/compile-fn + mx/tidy)
