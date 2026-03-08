@@ -1,7 +1,7 @@
 (ns genmlx.compiled
-  "Compiled execution for temporal models (Tier 2a).
-   Eliminates handler overhead by compiling T-step unfold loops into single
-   Metal dispatches via mx/compile-fn.
+  "Compiled execution for temporal models (Tier 2a + 2c).
+   Eliminates handler overhead by compiling T-step unfold loops and full
+   inference sweeps into single Metal dispatches via mx/compile-fn.
 
    Pattern: user provides a pure MLX step-fn, we pre-generate noise and
    unroll the loop. All randomness injected as input tensors.
@@ -10,7 +10,8 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.choicemap :as cm]
-            [genmlx.trace :as tr]))
+            [genmlx.trace :as tr]
+            [genmlx.vectorized :as vec]))
 
 ;; ---------------------------------------------------------------------------
 ;; Core: compiled unfold step loop
@@ -225,3 +226,135 @@
           ;; score = transition + observation, weight = observation
           score (mx/add t-lp o-lp)]
       [new-state score o-lp])))
+
+;; ===========================================================================
+;; Tier 2c: Compiled Inference Graphs
+;; ===========================================================================
+;; Full inference sweeps compiled into single Metal dispatches.
+;; All randomness pre-generated, no materialization between steps.
+
+;; ---------------------------------------------------------------------------
+;; Compiled bootstrap particle filter
+;; ---------------------------------------------------------------------------
+
+(defn make-compiled-particle-filter
+  "Build a compiled T-step bootstrap particle filter as one Metal dispatch.
+
+   particle-step-fn: (fn [states noise obs-row] -> [new-states, log-weights])
+     states:     [N, state-dim] MLX array (batched particle states)
+     noise:      [N, noise-dim] MLX array (per-particle noise for this step)
+     obs-row:    [obs-dim] MLX array (observation at this timestep)
+     Returns:    [new-states [N,state-dim], log-weights [N]] where log-weights
+                 are the importance weights for this step (typically observation
+                 log-probs under a bootstrap filter).
+
+   n-steps:    number of timesteps T
+   n-particles: number of particles N
+   state-dim:  state vector dimension
+   noise-dim:  noise per particle per step
+   obs-dim:    observation dimension per step
+
+   Returns compiled fn:
+     (init-states [N,D], noise [T,N,noise-dim], obs [T,obs-dim], uniforms [T,1])
+     -> [final-states [N,D], log-ml scalar]
+
+   The uniforms [T,1] are used for deterministic systematic resampling at each step.
+   Pre-compile warms up the Metal program cache."
+  [particle-step-fn n-steps n-particles state-dim noise-dim obs-dim]
+  (let [pf-fn
+        (fn [init-states noise-3d obs-2d uniforms-2d]
+          (loop [t 0
+                 states init-states
+                 log-ml (mx/scalar 0.0)]
+            (if (>= t n-steps)
+              [states log-ml]
+              (let [;; Extract noise for this step: [N, noise-dim]
+                    noise-t (mx/reshape
+                              (mx/take-idx noise-3d (mx/array [t] mx/int32) 0)
+                              [n-particles noise-dim])
+                    ;; Extract observation: [obs-dim]
+                    obs-t (mx/reshape
+                            (mx/take-idx obs-2d (mx/array [t] mx/int32) 0)
+                            [obs-dim])
+                    ;; Extract uniform for resampling: [1]
+                    u0 (mx/reshape
+                         (mx/take-idx uniforms-2d (mx/array [t] mx/int32) 0)
+                         [1])
+                    ;; 1. Extend particles
+                    [new-states log-weights] (particle-step-fn states noise-t obs-t)
+                    ;; 2. Log-ML increment: logsumexp(w) - log(N)
+                    ml-inc (mx/subtract (mx/logsumexp log-weights)
+                                        (mx/scalar (js/Math.log n-particles)))
+                    ;; 3. Resample (deterministic with pre-generated u0)
+                    indices (vec/systematic-resample-indices-deterministic
+                              log-weights n-particles u0)
+                    resampled (mx/take-idx new-states indices 0)]
+                (recur (inc t)
+                       resampled
+                       (mx/add log-ml ml-inc))))))
+        compiled (mx/compile-fn pf-fn)]
+    ;; Warm up
+    (let [dummy-states (mx/zeros [n-particles state-dim])
+          dummy-noise (mx/zeros [n-steps n-particles noise-dim])
+          dummy-obs (mx/zeros [n-steps obs-dim])
+          dummy-u (mx/ones [n-steps 1])]
+      (let [[s ml] (compiled dummy-states dummy-noise dummy-obs dummy-u)]
+        (mx/materialize! s ml)))
+    compiled))
+
+(defn compiled-particle-filter
+  "Run a compiled bootstrap particle filter.
+
+   particle-step-fn: (fn [states [N,D], noise [N,K], obs [M]]
+                       -> [new-states [N,D], log-weights [N]])
+   n-steps:    T
+   n-particles: N
+   state-dim:  D
+   noise-dim:  K (noise per particle per step)
+   obs-dim:    M
+   init-states: [N, D] initial particle states
+   obs:         [T, M] observation tensor
+   key:         PRNG key
+
+   Returns {:final-states [N,D], :log-ml scalar (JS number)}"
+  [{:keys [particle-step-fn n-steps n-particles state-dim noise-dim obs-dim]}
+   init-states obs key]
+  (let [key (rng/ensure-key key)
+        [noise-key uniform-key] (rng/split key)
+        compiled (make-compiled-particle-filter
+                   particle-step-fn n-steps n-particles state-dim noise-dim obs-dim)
+        noise (rng/normal noise-key [n-steps n-particles noise-dim])
+        uniforms (rng/uniform uniform-key [n-steps 1])
+        [final-states log-ml] (compiled init-states noise obs uniforms)]
+    (mx/materialize! final-states log-ml)
+    {:final-states final-states
+     :log-ml (mx/item log-ml)}))
+
+;; ---------------------------------------------------------------------------
+;; Convenience: Gaussian bootstrap particle filter
+;; ---------------------------------------------------------------------------
+
+(defn make-gaussian-particle-step
+  "Build a particle-step-fn for a linear-Gaussian state-space model.
+   transition-fn: (fn [states [N,D]] -> [mean [N,D], std [D]])
+   observation-fn: (fn [states [N,D]] -> [obs-mean [N,M], obs-std [M]])
+   Returns particle-step-fn for compiled-particle-filter."
+  [transition-fn observation-fn state-dim obs-dim]
+  (fn [states noise obs-row]
+    (let [;; Transition: states [N,D], noise [N,D]
+          [t-mean t-std] (transition-fn states)
+          new-states (mx/add t-mean (mx/multiply t-std noise))
+          ;; Observation log-prob per particle
+          [o-mean o-std] (observation-fn new-states)
+          ;; obs-row is [M], o-mean is [N,M] — broadcast subtraction
+          o-diff (mx/subtract obs-row o-mean)
+          ;; Per-particle log-prob: sum over obs dimensions
+          log-weights (mx/subtract
+                        (mx/subtract
+                          (mx/multiply (mx/scalar -0.5)
+                                       (mx/sum (mx/divide (mx/multiply o-diff o-diff)
+                                                          (mx/multiply o-std o-std))
+                                                1))  ;; sum along obs dim
+                          (mx/sum (mx/log o-std)))    ;; this is scalar, broadcasts
+                        (mx/scalar (* 0.5 obs-dim (js/Math.log (* 2 js/Math.PI)))))]
+      [new-states log-weights])))
