@@ -284,16 +284,24 @@
 (defn take-along-axis [a indices axis]
   (.takeAlongAxis core a indices axis))
 
-(defn index [a i]
-  (.take core a (scalar i int32)))
+(defn index
+  "Index along axis 0. For 1D: returns scalar element. For 2D: returns row."
+  [a i]
+  (.take core a (scalar i int32) 0))
 
 (defn slice
+  "Slice along axis 0. For 1D: returns sub-array. For 2D: returns sub-rows."
   ([a start stop]
    (let [indices (.arange core start stop 1 int32)]
-     (.take core a indices)))
+     (.take core a indices 0)))
   ([a start stop step]
    (let [indices (.arange core start stop step int32)]
-     (.take core a indices))))
+     (.take core a indices 0))))
+
+(defn mat-get
+  "Get element [i,j] from a 2D array. Returns a scalar MLX array."
+  [a i j]
+  (.take core (.take core a (scalar i int32) 0) (scalar j int32) 0))
 
 ;; ---------------------------------------------------------------------------
 ;; Matrix operations

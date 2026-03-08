@@ -22,12 +22,6 @@
       (println (str "  PASS: " label " (expected " (.toFixed expected 3) ", got " (.toFixed actual 3) ")"))
       (println (str "  FAIL: " label " (expected " (.toFixed expected 3) ", got " (.toFixed actual 3) ")")))))
 
-(defn mat-get
-  "Get element [i,j] from a 2D MLX array via mx/->clj."
-  [mat i j]
-  (let [rows (mx/->clj mat)]
-    (nth (nth rows i) j)))
-
 ;; ---------------------------------------------------------------------------
 ;; Test 1: Analytical Fisher for single Gaussian
 ;; ---------------------------------------------------------------------------
@@ -61,7 +55,7 @@
                                  {:n-particles 5000 :key (rng/fresh-key 42)}
                                  model-1 [] obs-1 [:mu] params)]
   (mx/materialize! fisher)
-  (let [f-val (mat-get fisher 0 0)]
+  (let [f-val (mx/item (mx/mat-get fisher 0 0))]
     (println (str "  Observed Fisher: " (.toFixed f-val 2) " (analytical: " K-obs ".00)"))
     (println (str "  log-ML: " (.toFixed (mx/item log-ml) 2)))
     (assert-close "Fisher ≈ K" (double K-obs) f-val 2.0)))
@@ -94,9 +88,9 @@
                                  {:n-particles 5000 :key (rng/fresh-key 77)}
                                  model-2 [] obs-1 [:mu :log-sigma] params)]
   (mx/materialize! fisher)
-  (let [f00 (mat-get fisher 0 0)
-        f11 (mat-get fisher 1 1)
-        f01 (mat-get fisher 0 1)]
+  (let [f00 (mx/item (mx/mat-get fisher 0 0))
+        f11 (mx/item (mx/mat-get fisher 1 1))
+        f01 (mx/item (mx/mat-get fisher 0 1))]
     (println (str "  F[0,0] (mu,mu): " (.toFixed f00 2) " (analytical: " (.toFixed (/ K-obs (* sigma-val sigma-val)) 2) ")"))
     ;; SS = Σ(y_i - mu)² = Σ(0.5*(i-4.5))² for i=0..9
     (let [SS (reduce + (map (fn [y] (* (- y true-mu) (- y true-mu))) obs-data))
@@ -181,14 +175,13 @@
                          {:n-particles 5000 :key (rng/fresh-key 77)}
                          model-2 [] obs-1 [:mu :log-sigma] params)]
   (mx/materialize! fisher)
-  (let [f00 (mat-get fisher 0 0)
-        f11 (mat-get fisher 1 1)
-        f01 (mat-get fisher 0 1)
-        f10 (mat-get fisher 1 0)
+  (let [f00 (mx/item (mx/mat-get fisher 0 0))
+        f11 (mx/item (mx/mat-get fisher 1 1))
+        f01 (mx/item (mx/mat-get fisher 0 1))
+        f10 (mx/item (mx/mat-get fisher 1 0))
         ;; Check symmetry: |F01 - F10| < ε
         sym-diff (js/Math.abs (- f01 f10))
         ;; Check positive definiteness: diagonal elements > 0
-        ;; (necessary condition for positive definiteness)
         det-val (- (* f00 f11) (* f01 f10))]
     (println (str "  |F[0,1] - F[1,0]| = " (.toFixed sym-diff 4)))
     (println (str "  det(F) = " (.toFixed det-val 2)))
