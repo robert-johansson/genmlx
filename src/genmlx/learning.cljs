@@ -130,6 +130,11 @@
                 :adam (adam-step params grad opt-st {:lr lr}))]
           (when callback
             (callback {:iter i :loss loss-val :params new-params}))
+          ;; Periodic resource cleanup — critical for models with large
+          ;; computation graphs (e.g. Kalman filters, temporal models)
+          (when (zero? (mod i 10))
+            (mx/clear-cache!)
+            (mx/sweep-dead-arrays!))
           (recur (inc i) new-params new-opt-st
                  (conj! losses loss-val) next-key))))))
 
