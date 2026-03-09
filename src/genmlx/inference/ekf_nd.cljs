@@ -69,6 +69,38 @@
         (dist/gaussian (obs-fn latent-values) noise-std)
         v))))
 
+;; --- Analytical Jacobian variants (no nested autodiff) ---
+
+(defdist ekf-nd-latent-j
+  "Like ekf-nd-latent but with analytical Jacobian.
+   jacobian-fn: (fn [z] -> df/dz) — returns scalar derivative.
+   Eliminates mx/grad in predict step."
+  [transition-fn jacobian-fn prev-value process-noise]
+  (sample [key]
+    (dc/dist-sample
+      (dist/gaussian (transition-fn prev-value) process-noise)
+      key))
+  (log-prob [v]
+    (dc/dist-log-prob
+      (dist/gaussian (transition-fn prev-value) process-noise)
+      v)))
+
+(defdist ekf-nd-obs-j
+  "Like ekf-nd-obs but with analytical Jacobian.
+   jacobian-fn: (fn [latent-map] -> {addr -> dh/dz_addr}).
+   Missing addrs default to zero derivative.
+   Eliminates N mx/grad calls per observation update."
+  [obs-fn jacobian-fn latent-values noise-std mask]
+  (sample [key]
+    (dc/dist-sample
+      (dist/gaussian (obs-fn latent-values) noise-std)
+      key))
+  (log-prob [v]
+    (mx/multiply mask
+      (dc/dist-log-prob
+        (dist/gaussian (obs-fn latent-values) noise-std)
+        v))))
+
 ;; ---------------------------------------------------------------------------
 ;; State initialization
 ;; ---------------------------------------------------------------------------
@@ -102,20 +134,10 @@
 
 (def ^:private LOG-2PI 1.8378770664093453)
 
-(defn ekf-nd-predict-one
-  "EKF predict for one latent component.
-
-   Linearizes transition-fn at the current belief mean, updates this
-   component's mean and all covariance entries involving it. Sequential
-   prediction across all components produces the correct full predict:
-   P_ij final = A_i * A_j * P_ij_orig + Q_i^2 * delta_ij.
-
-   Returns [predicted-mean new-means new-covs]."
-  [addrs addr means covs f q]
-  (let [z0 (get means addr)
-        f-z0 (f z0)
-        A ((mx/grad (fn [z] (mx/sum (f z)))) z0)
-        new-means (assoc means addr f-z0)
+(defn- predict-one-core
+  "Shared predict logic given pre-computed f(z0) and Jacobian A."
+  [addrs addr means covs f-z0 A q]
+  (let [new-means (assoc means addr f-z0)
         new-covs (reduce
                    (fn [cs other]
                      (let [k (cov-key addrs addr other)
@@ -127,23 +149,37 @@
                    covs addrs)]
     [f-z0 new-means new-covs]))
 
-(defn ekf-nd-update
-  "ND EKF update: incorporate one observation into all latent beliefs.
+(defn ekf-nd-predict-one
+  "EKF predict for one latent component (auto-diff Jacobian).
 
-   Computes Jacobian [dh/dz_1, ..., dh/dz_N] via mx/grad (one call per
-   latent). Uses scalar-decomposed Joseph form:
-   P_ij <- P_ij - mask * PH_i * PH_j / S
+   Linearizes transition-fn at the current belief mean, updates this
+   component's mean and all covariance entries involving it. Sequential
+   prediction across all components produces the correct full predict:
+   P_ij final = A_i * A_j * P_ij_orig + Q_i^2 * delta_ij.
 
-   Returns {:means :covs :ll}."
-  [addrs means covs obs obs-fn noise-std mask]
+   Returns [predicted-mean new-means new-covs]."
+  [addrs addr means covs f q]
+  (let [z0 (get means addr)]
+    (predict-one-core addrs addr means covs
+                      (f z0)
+                      ((mx/grad (fn [z] (mx/sum (f z)))) z0)
+                      q)))
+
+(defn ekf-nd-predict-one-j
+  "EKF predict with analytical Jacobian. No mx/grad.
+   jacobian-fn: (fn [z] -> df/dz), returns [P]-shaped derivative."
+  [addrs addr means covs f jacobian-fn q]
+  (let [z0 (get means addr)]
+    (predict-one-core addrs addr means covs
+                      (f z0) (jacobian-fn z0) q)))
+
+(defn- update-core
+  "Shared ND EKF update given pre-computed Jacobian vector H.
+   H: vector of [P]-shaped derivatives, one per latent in addrs order.
+   Uses scalar-decomposed Joseph form: P_ij -= mask * PH_i * PH_j / S."
+  [addrs means covs obs pred H noise-std mask]
   (let [N (count addrs)
-        pred (obs-fn means)
         innov (mx/subtract obs pred)
-        ;; Jacobian: dh/dz_i for each latent
-        H (mapv (fn [addr]
-                  (let [g (mx/grad (fn [zi] (mx/sum (obs-fn (assoc means addr zi)))))]
-                    (g (get means addr))))
-               addrs)
         ;; PH_i = sum_j P_ij * H_j
         PH (mapv (fn [i]
                    (reduce
@@ -187,14 +223,69 @@
                    (mx/divide (mx/multiply innov innov) S)))))]
     {:means new-means :covs new-covs :ll ll}))
 
+(defn ekf-nd-update
+  "ND EKF update with auto-diff Jacobian (one mx/grad call per latent).
+   Returns {:means :covs :ll}."
+  [addrs means covs obs obs-fn noise-std mask]
+  (let [H (mapv (fn [addr]
+                  (let [g (mx/grad (fn [zi] (mx/sum (obs-fn (assoc means addr zi)))))]
+                    (g (get means addr))))
+               addrs)]
+    (update-core addrs means covs obs (obs-fn means) H noise-std mask)))
+
+(defn ekf-nd-update-j
+  "ND EKF update with analytical Jacobian. No mx/grad — no nested autodiff.
+   jacobian-fn: (fn [latent-map] -> {addr -> dh/dz_addr}).
+   Missing addrs default to zero derivative.
+   Returns {:means :covs :ll}."
+  [addrs means covs obs obs-fn jacobian-fn noise-std mask]
+  (let [H-map (jacobian-fn means)
+        H (mapv (fn [addr] (or (get H-map addr) (mx/scalar 0.0))) addrs)]
+    (update-core addrs means covs obs (obs-fn means) H noise-std mask)))
+
 ;; ---------------------------------------------------------------------------
 ;; Handler middleware
 ;; ---------------------------------------------------------------------------
+
+(defn- make-latent-handler
+  "Shared latent handler logic for both auto-diff and analytical variants."
+  [latent-addrs addr-set predict-fn]
+  (fn [state addr dist]
+    (if (contains? addr-set addr)
+      (let [n (:ekf-nd-n state)
+            means (or (:ekf-nd-means state) (make-zero-means latent-addrs n))
+            covs (or (:ekf-nd-covs state) (make-zero-covs latent-addrs n))
+            [val new-means new-covs] (predict-fn latent-addrs addr means covs dist)]
+        [val (-> state
+                 (assoc :ekf-nd-means new-means
+                        :ekf-nd-covs new-covs)
+                 (update :choices cm/set-value addr val))])
+      nil)))
+
+(defn- make-obs-handler
+  "Shared obs handler logic for both auto-diff and analytical variants."
+  [latent-addrs update-fn]
+  (fn [state addr dist]
+    (let [n (:ekf-nd-n state)
+          means (:ekf-nd-means state)
+          covs (:ekf-nd-covs state)
+          constraint (cm/get-submap (:constraints state) addr)
+          obs (cm/get-value constraint)
+          result (update-fn latent-addrs means covs obs dist)]
+      [obs (-> state
+               (assoc :ekf-nd-means (:means result)
+                      :ekf-nd-covs (:covs result))
+               (update :choices cm/set-value addr obs)
+               (update :ekf-nd-ll
+                 #(mx/add (or % (mx/zeros [n])) (:ll result))))])))
 
 (defn make-multi-ekf-dispatch
   "Create multi-dim EKF dispatch map for use with wrap-analytical.
 
    latent-addrs: vector of keyword addresses, e.g. [:z0 :z1 :z2]
+
+   Handles both auto-diff types (ekf-nd-latent, ekf-nd-obs) and
+   analytical Jacobian types (ekf-nd-latent-j, ekf-nd-obs-j).
 
    State keys:
    - :ekf-nd-means  {addr -> [P]-shaped mean}
@@ -204,38 +295,31 @@
   [latent-addrs]
   (let [addr-set (set latent-addrs)]
     {:ekf-nd-latent
-     (fn [state addr dist]
-       (if (contains? addr-set addr)
-         (let [{:keys [transition-fn process-noise]} (:params dist)
-               n (:ekf-nd-n state)
-               means (or (:ekf-nd-means state) (make-zero-means latent-addrs n))
-               covs (or (:ekf-nd-covs state) (make-zero-covs latent-addrs n))
-               [val new-means new-covs]
-               (ekf-nd-predict-one latent-addrs addr means covs
-                                   transition-fn process-noise)]
-           [val (-> state
-                    (assoc :ekf-nd-means new-means
-                           :ekf-nd-covs new-covs)
-                    (update :choices cm/set-value addr val))])
-         nil))
+     (make-latent-handler latent-addrs addr-set
+       (fn [addrs addr means covs dist]
+         (let [{:keys [transition-fn process-noise]} (:params dist)]
+           (ekf-nd-predict-one addrs addr means covs
+                               transition-fn process-noise))))
+
+     :ekf-nd-latent-j
+     (make-latent-handler latent-addrs addr-set
+       (fn [addrs addr means covs dist]
+         (let [{:keys [transition-fn jacobian-fn process-noise]} (:params dist)]
+           (ekf-nd-predict-one-j addrs addr means covs
+                                 transition-fn jacobian-fn process-noise))))
 
      :ekf-nd-obs
-     (fn [state addr dist]
-       (let [{:keys [obs-fn noise-std mask]} (:params dist)
-             n (:ekf-nd-n state)
-             means (:ekf-nd-means state)
-             covs (:ekf-nd-covs state)
-             constraint (cm/get-submap (:constraints state) addr)
-             obs (cm/get-value constraint)
-             result (ekf-nd-update latent-addrs means covs
-                                   obs obs-fn noise-std mask)]
-         [obs (-> state
-                  (assoc :ekf-nd-means (:means result)
-                         :ekf-nd-covs (:covs result))
-                  (update :choices cm/set-value addr obs)
-                  (update :ekf-nd-ll
-                    #(mx/add (or % (mx/zeros [n])) (:ll result))))]))}))
+     (make-obs-handler latent-addrs
+       (fn [addrs means covs obs dist]
+         (let [{:keys [obs-fn noise-std mask]} (:params dist)]
+           (ekf-nd-update addrs means covs obs obs-fn noise-std mask))))
 
+     :ekf-nd-obs-j
+     (make-obs-handler latent-addrs
+       (fn [addrs means covs obs dist]
+         (let [{:keys [obs-fn jacobian-fn noise-std mask]} (:params dist)]
+           (ekf-nd-update-j addrs means covs obs obs-fn jacobian-fn
+                            noise-std mask))))}))
 (defn make-multi-ekf-transition
   "Handler middleware: wraps generate-transition for multi-dim EKF."
   [latent-addrs]

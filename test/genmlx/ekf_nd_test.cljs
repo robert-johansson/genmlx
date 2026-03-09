@@ -451,4 +451,217 @@
   (println "  P_aa:" (.toFixed (mx/item (get covs [:za :za])) 4)
            "(was 2.0) P_bb:" (.toFixed (mx/item (get covs [:zb :zb])) 4) "(was 2.0)"))
 
+;; =========================================================================
+;; Analytical Jacobian variant tests
+;; =========================================================================
+
+;; -- 16. ekf-nd-latent-j: standard handler fallback --
+(println "\n-- 16. ekf-nd-latent-j under standard handler --")
+(let [d (ekf-nd/ekf-nd-latent-j tanh-f
+          (fn [z] (mx/multiply (mx/scalar rho-a)
+                    (mx/subtract (mx/scalar 1.0)
+                      (mx/multiply (mx/tanh (mx/multiply (mx/scalar rho-a) z))
+                                   (mx/tanh (mx/multiply (mx/scalar rho-a) z))))))
+          (mx/scalar 1.0) (mx/scalar q))
+      sample (dc/dist-sample d (rng/fresh-key 99))
+      lp (dc/dist-log-prob d sample)]
+  (mx/eval! sample)
+  (mx/eval! lp)
+  (assert-true "samples are finite" (js/isFinite (mx/item sample)))
+  (assert-true "log-prob is finite" (js/isFinite (mx/item lp)))
+  (println "  sample:" (.toFixed (mx/item sample) 4) "lp:" (.toFixed (mx/item lp) 4)))
+
+;; -- 17. ekf-nd-obs-j: standard handler fallback --
+(println "\n-- 17. ekf-nd-obs-j under standard handler --")
+(let [obs-fn (fn [{:keys [za zb]}]
+               (mx/add (mx/multiply (mx/scalar 2.0) za) zb))
+      jac-fn (fn [_] {:za (mx/scalar 2.0) :zb (mx/scalar 1.0)})
+      vals {:za (mx/scalar 0.5) :zb (mx/scalar -0.3)}
+      d (ekf-nd/ekf-nd-obs-j obs-fn jac-fn vals (mx/scalar 0.3) (mx/scalar 1.0))
+      sample (dc/dist-sample d (rng/fresh-key 99))
+      lp (dc/dist-log-prob d (mx/scalar 1.0))]
+  (mx/eval! sample)
+  (mx/eval! lp)
+  (assert-true "samples are finite" (js/isFinite (mx/item sample)))
+  (assert-true "log-prob is finite" (js/isFinite (mx/item lp)))
+  (println "  sample:" (.toFixed (mx/item sample) 4) "lp:" (.toFixed (mx/item lp) 4)))
+
+;; -- 18. Analytical predict matches auto-diff predict --
+(println "\n-- 18. Analytical predict matches auto-diff --")
+(let [addrs [:za :zb]
+      means {:za (mx/scalar 1.5) :zb (mx/scalar -0.8)}
+      covs {[:za :za] (mx/scalar 1.0)
+            [:za :zb] (mx/scalar 0.2)
+            [:zb :zb] (mx/scalar 0.6)}
+      ;; tanh dynamics for za
+      fa tanh-f
+      jac-fa (fn [z] (mx/multiply (mx/scalar rho-a)
+                       (mx/subtract (mx/scalar 1.0)
+                         (mx/multiply (mx/tanh (mx/multiply (mx/scalar rho-a) z))
+                                      (mx/tanh (mx/multiply (mx/scalar rho-a) z))))))
+      ;; Auto-diff predict za
+      [_ m1-ad c1-ad] (ekf-nd/ekf-nd-predict-one addrs :za means covs fa (mx/scalar q))
+      ;; Analytical predict za
+      [_ m1-an c1-an] (ekf-nd/ekf-nd-predict-one-j addrs :za means covs fa jac-fa (mx/scalar q))]
+  (mx/eval! (get m1-ad :za))
+  (mx/eval! (get m1-an :za))
+  (mx/eval! (get c1-ad [:za :za]))
+  (mx/eval! (get c1-an [:za :za]))
+  (mx/eval! (get c1-ad [:za :zb]))
+  (mx/eval! (get c1-an [:za :zb]))
+  (let [mean-diff (js/Math.abs (- (mx/item (get m1-ad :za)) (mx/item (get m1-an :za))))
+        paa-diff (js/Math.abs (- (mx/item (get c1-ad [:za :za])) (mx/item (get c1-an [:za :za]))))
+        pab-diff (js/Math.abs (- (mx/item (get c1-ad [:za :zb])) (mx/item (get c1-an [:za :zb]))))]
+    (assert-close "means match" 0.0 mean-diff 1e-5)
+    (assert-close "P_aa match" 0.0 paa-diff 1e-5)
+    (assert-close "P_ab match" 0.0 pab-diff 1e-5)
+    (println "  diffs — mean:" (.toFixed mean-diff 8)
+             "P_aa:" (.toFixed paa-diff 8) "P_ab:" (.toFixed pab-diff 8))))
+
+;; -- 19. Analytical update matches auto-diff update (linear obs) --
+(println "\n-- 19. Analytical update matches auto-diff (linear) --")
+(let [addrs [:za :zb]
+      means {:za (mx/scalar 1.0) :zb (mx/scalar -0.5)}
+      covs {[:za :za] (mx/scalar 1.0)
+            [:za :zb] (mx/scalar 0.3)
+            [:zb :zb] (mx/scalar 0.8)}
+      obs (mx/scalar 2.5)
+      noise-std (mx/scalar 0.4)
+      mask (mx/scalar 1.0)
+      ;; h = 2*za + 3*zb, Jacobian is constant
+      obs-fn (fn [{:keys [za zb]}]
+               (mx/add (mx/multiply (mx/scalar 2.0) za)
+                       (mx/multiply (mx/scalar 3.0) zb)))
+      jac-fn (fn [_] {:za (mx/scalar 2.0) :zb (mx/scalar 3.0)})
+      ad-r (ekf-nd/ekf-nd-update addrs means covs obs obs-fn noise-std mask)
+      an-r (ekf-nd/ekf-nd-update-j addrs means covs obs obs-fn jac-fn noise-std mask)]
+  (mx/eval! (get (:means ad-r) :za))
+  (mx/eval! (get (:means an-r) :za))
+  (mx/eval! (get (:means ad-r) :zb))
+  (mx/eval! (get (:means an-r) :zb))
+  (mx/eval! (:ll ad-r))
+  (mx/eval! (:ll an-r))
+  (let [za-diff (js/Math.abs (- (mx/item (get (:means ad-r) :za))
+                                (mx/item (get (:means an-r) :za))))
+        zb-diff (js/Math.abs (- (mx/item (get (:means ad-r) :zb))
+                                (mx/item (get (:means an-r) :zb))))
+        ll-diff (js/Math.abs (- (mx/item (:ll ad-r)) (mx/item (:ll an-r))))]
+    (assert-close "za match" 0.0 za-diff 1e-5)
+    (assert-close "zb match" 0.0 zb-diff 1e-5)
+    (assert-close "LL match" 0.0 ll-diff 1e-5)
+    (println "  diffs — za:" (.toFixed za-diff 8)
+             "zb:" (.toFixed zb-diff 8) "ll:" (.toFixed ll-diff 8))))
+
+;; -- 20. Analytical update matches auto-diff (sigmoid obs) --
+(println "\n-- 20. Analytical update matches auto-diff (sigmoid) --")
+(let [addrs [:za :zb]
+      means {:za (mx/scalar 0.5) :zb (mx/scalar -0.3)}
+      covs {[:za :za] (mx/scalar 1.0)
+            [:za :zb] (mx/scalar 0.0)
+            [:zb :zb] (mx/scalar 1.0)}
+      obs (mx/scalar 1.5)
+      noise-std (mx/scalar 0.2)
+      mask (mx/scalar 1.0)
+      ;; h = 2*sigmoid(za) + sigmoid(zb)
+      obs-fn (fn [{:keys [za zb]}]
+               (mx/add (mx/multiply (mx/scalar 2.0) (mx/sigmoid za))
+                       (mx/sigmoid zb)))
+      jac-fn (fn [{:keys [za zb]}]
+               (let [sa (mx/sigmoid za)
+                     sb (mx/sigmoid zb)
+                     one (mx/scalar 1.0)]
+                 {:za (mx/multiply (mx/scalar 2.0)
+                        (mx/multiply sa (mx/subtract one sa)))
+                  :zb (mx/multiply sb (mx/subtract one sb))}))
+      ad-r (ekf-nd/ekf-nd-update addrs means covs obs obs-fn noise-std mask)
+      an-r (ekf-nd/ekf-nd-update-j addrs means covs obs obs-fn jac-fn noise-std mask)]
+  (mx/eval! (get (:means ad-r) :za))
+  (mx/eval! (get (:means an-r) :za))
+  (mx/eval! (:ll ad-r))
+  (mx/eval! (:ll an-r))
+  (let [za-diff (js/Math.abs (- (mx/item (get (:means ad-r) :za))
+                                (mx/item (get (:means an-r) :za))))
+        ll-diff (js/Math.abs (- (mx/item (:ll ad-r)) (mx/item (:ll an-r))))]
+    (assert-close "za match (sigmoid)" 0.0 za-diff 1e-4)
+    (assert-close "LL match (sigmoid)" 0.0 ll-diff 1e-4)
+    (println "  diffs — za:" (.toFixed za-diff 8) "ll:" (.toFixed ll-diff 8))))
+
+;; -- 21. Full fold: analytical -j variants match auto-diff --
+(println "\n-- 21. Full fold: -j variants match auto-diff --")
+
+(def step-2d-j
+  (gen [obs-a-val obs-b-val]
+    (let [za (trace :za (ekf-nd/ekf-nd-latent-j
+                          linear-fa
+                          (fn [_] (mx/scalar rho-a))
+                          (mx/scalar 0.0) (mx/scalar q)))
+          zb (trace :zb (ekf-nd/ekf-nd-latent-j
+                          linear-fb
+                          (fn [_] (mx/scalar rho-b))
+                          (mx/scalar 0.0) (mx/scalar q)))
+          latents {:za za :zb zb}
+          _ (trace :obs-a (ekf-nd/ekf-nd-obs-j
+                            (fn [{:keys [za]}]
+                              (mx/add (mx/scalar 1.0) (mx/multiply (mx/scalar 2.0) za)))
+                            (fn [_] {:za (mx/scalar 2.0)})
+                            latents (mx/scalar 0.5) (mx/scalar 1.0)))
+          _ (trace :obs-b (ekf-nd/ekf-nd-obs-j
+                            (fn [{:keys [za zb]}]
+                              (mx/add (mx/multiply (mx/scalar 1.5) za)
+                                      (mx/multiply (mx/scalar 0.8) zb)))
+                            (fn [_] {:za (mx/scalar 1.5) :zb (mx/scalar 0.8)})
+                            latents (mx/scalar 0.3) (mx/scalar 1.0)))]
+      {:za za :zb zb})))
+
+(let [T 5
+      obs-as [(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 2.5) (mx/scalar 2.8) (mx/scalar 3.0)]
+      obs-bs [(mx/scalar 0.5) (mx/scalar 0.8) (mx/scalar 1.2) (mx/scalar 1.0) (mx/scalar 1.3)]
+      context-fn (fn [t]
+                   {:args [nil nil]
+                    :constraints (-> cm/EMPTY
+                                     (cm/set-value :obs-a (nth obs-as t))
+                                     (cm/set-value :obs-b (nth obs-bs t)))})
+      ;; Auto-diff fold (test 10 used step-2d)
+      ad-r (ekf-nd/ekf-nd-fold step-2d [:za :zb] 1 T context-fn)
+      ;; Analytical fold
+      an-r (ekf-nd/ekf-nd-fold step-2d-j [:za :zb] 1 T context-fn)]
+  (mx/eval! (:ll ad-r))
+  (mx/eval! (:ll an-r))
+  (let [ll-diff (js/Math.abs (- (mx/item (:ll ad-r)) (mx/item (:ll an-r))))]
+    (assert-close "fold LL matches" 0.0 ll-diff 1e-3)
+    (println "  auto-diff LL:" (.toFixed (mx/item (:ll ad-r)) 4)
+             "analytical LL:" (.toFixed (mx/item (:ll an-r)) 4)
+             "diff:" (.toFixed ll-diff 8)))
+  (mx/eval! (get (:means ad-r) :za))
+  (mx/eval! (get (:means an-r) :za))
+  (let [za-diff (js/Math.abs (- (mx/item (get (:means ad-r) :za))
+                                (mx/item (get (:means an-r) :za))))]
+    (assert-close "final za matches" 0.0 za-diff 1e-3)
+    (println "  final za diff:" (.toFixed za-diff 8))))
+
+;; -- 22. Jacobian-fn with missing addrs defaults to zero --
+(println "\n-- 22. Partial Jacobian (missing addr = zero) --")
+(let [addrs [:za :zb :zc]
+      means {:za (mx/scalar 1.0) :zb (mx/scalar 0.5) :zc (mx/scalar -0.3)}
+      covs {[:za :za] (mx/scalar 1.0) [:za :zb] (mx/scalar 0.0)
+            [:za :zc] (mx/scalar 0.0) [:zb :zb] (mx/scalar 1.0)
+            [:zb :zc] (mx/scalar 0.0) [:zc :zc] (mx/scalar 1.0)}
+      obs (mx/scalar 2.0)
+      noise-std (mx/scalar 0.5)
+      mask (mx/scalar 1.0)
+      ;; Only loads on za — zb, zc Jacobians should be zero
+      obs-fn (fn [{:keys [za]}] (mx/multiply (mx/scalar 3.0) za))
+      jac-fn (fn [_] {:za (mx/scalar 3.0)})  ;; zb, zc missing → zero
+      {:keys [means covs]} (ekf-nd/ekf-nd-update-j addrs means covs obs obs-fn jac-fn noise-std mask)]
+  (mx/eval! (get means :za))
+  (mx/eval! (get means :zb))
+  (mx/eval! (get means :zc))
+  ;; Only za should update (no cross-cov initially)
+  (assert-true "za updated" (not= 1.0 (mx/item (get means :za))))
+  (assert-close "zb unchanged" 0.5 (mx/item (get means :zb)) 1e-6)
+  (assert-close "zc unchanged" -0.3 (mx/item (get means :zc)) 1e-6)
+  (println "  za:" (.toFixed (mx/item (get means :za)) 4)
+           "zb:" (.toFixed (mx/item (get means :zb)) 4)
+           "zc:" (.toFixed (mx/item (get means :zc)) 4)))
+
 (println "\n=== Done ===")
