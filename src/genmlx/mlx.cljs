@@ -519,14 +519,20 @@
 
 (defn ensure-array
   "Wrap a JS number as an MLX scalar array; pass through existing arrays.
-   Vectors and sequences are converted to MLX arrays."
+   Vectors and sequences are converted to MLX arrays.
+   Functions and keywords are passed through (for distributions carrying
+   closures or address references)."
   ([x]
    (cond
      (array? x) x
+     (fn? x) x
+     (keyword? x) x
      (or (vector? x) (seq? x) (sequential? x)) (array x)
      :else (scalar x)))
   ([x dtype]
    (cond
      (array? x) x
+     (fn? x) x
+     (keyword? x) x
      (or (vector? x) (seq? x) (sequential? x)) (array x dtype)
      :else (scalar x dtype))))

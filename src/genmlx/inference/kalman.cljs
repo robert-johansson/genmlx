@@ -174,8 +174,8 @@
           (-> state
               (assoc :kalman-belief new-belief)
               (update :choices cm/set-value addr (:mean new-belief)))])
-       ;; Not our latent addr — fall through to base
-       (h/generate-transition state addr dist)))
+       ;; Not our latent addr — return nil to fall through via wrap-analytical
+       nil))
 
    :kalman-obs
    (fn [state addr dist]
