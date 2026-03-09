@@ -118,6 +118,12 @@
                   (vreset! vol state')
                   (:retval sub-result))
 
+                ;; Combinator with batched fast path
+                (satisfies? p/IBatchedSplice gf)
+                (let [[state' retval] (p/batched-splice gf state addr (vec args))]
+                  (vreset! vol state')
+                  retval)
+
                 ;; Combinator / other GFI: scalar fallback per particle
                 (satisfies? p/IGenerativeFunction gf)
                 (let [[state' retval] (h/combinator-batched-fallback state addr gf (vec args))]

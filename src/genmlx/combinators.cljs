@@ -5,7 +5,10 @@
             [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             [genmlx.selection :as sel]
+            [genmlx.handler :as h]
+            [genmlx.runtime :as rt]
             [genmlx.dist.core :as dc]
             [genmlx.edit :as edit]
             [genmlx.diff :as diff]))
@@ -287,6 +290,72 @@
    The kernel takes [t state & extra-args] and returns new-state."
   [kernel]
   (->UnfoldCombinator kernel))
+
+;; ---------------------------------------------------------------------------
+;; Batched Unfold — IBatchedSplice for vectorized inference
+;; ---------------------------------------------------------------------------
+;; When spliced inside a batched handler (vsimulate/vgenerate), loops T times
+;; running the kernel body-fn ONCE per step with all N particles via the
+;; batched handler. O(T) kernel executions instead of O(N*T).
+
+(def ^:private ZERO (mx/scalar 0.0))
+
+(extend-type UnfoldCombinator
+  p/IBatchedSplice
+  (batched-splice [this state addr args]
+    (let [kern (:kernel this)]
+      (if-not (:body-fn kern)
+        ;; Kernel is not a DynamicGF — fall back to generic slow path
+        (h/combinator-batched-fallback state addr this (vec args))
+        ;; Fast path: loop T times with batched handler
+        (let [[n-steps init-state & extra] args
+              batch-size (:batch-size state)
+              sub-constraints (cm/get-submap (:constraints state) addr)
+              [k1 k2] (rng/split (:key state))
+              batch-zero (mx/zeros [batch-size])]
+          (loop [t 0
+                 carry init-state
+                 acc-choices cm/EMPTY
+                 acc-score batch-zero
+                 acc-weight batch-zero
+                 key k2]
+            (if (>= t n-steps)
+              ;; Merge accumulated result into parent state
+              (let [sub-result {:choices acc-choices
+                                :score acc-score
+                                :weight (when (contains? state :weight) acc-weight)}
+                    state' (-> state
+                             (assoc :key k1)
+                             (h/merge-sub-result addr sub-result))]
+                [state' carry])
+              ;; Run one kernel step with batched handler
+              (let [[sk nk] (rng/split key)
+                    step-constraints (cm/get-submap sub-constraints t)
+                    has-constraints? (and step-constraints
+                                         (not= step-constraints cm/EMPTY))
+                    [transition init-sub]
+                    (if has-constraints?
+                      [h/batched-generate-transition
+                       {:choices cm/EMPTY :score ZERO :weight ZERO
+                        :key sk :constraints step-constraints
+                        :batch-size batch-size :batched? true}]
+                      [h/batched-simulate-transition
+                       {:choices cm/EMPTY :score ZERO
+                        :key sk :batch-size batch-size :batched? true}])
+                    init-sub (if-let [ps (:param-store state)]
+                               (assoc init-sub :param-store ps)
+                               init-sub)
+                    step-result (rt/run-handler transition init-sub
+                                  (fn [rt] (apply (:body-fn kern) rt
+                                             (into [t carry] extra))))
+                    step-retval (:retval step-result)]
+                (recur (inc t)
+                       step-retval
+                       (cm/set-submap acc-choices t (:choices step-result))
+                       (mx/add acc-score (:score step-result))
+                       (mx/add acc-weight (or (:weight step-result) ZERO))
+                       nk)))))))))
+
 
 (defn unfold-empty-trace
   "Create a valid T=0 Unfold trace (no steps executed).

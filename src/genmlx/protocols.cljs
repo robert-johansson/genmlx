@@ -44,3 +44,11 @@
   (has-argument-grads [gf]
     "Vector of booleans: true if that argument position is differentiable.
      Returns nil if unknown."))
+
+(defprotocol IBatchedSplice
+  (batched-splice [gf state addr args]
+    "Execute this combinator in batched mode within a parent handler.
+     state: parent handler state (with :batched? true, :batch-size N, etc.)
+     addr: the splice address in the parent
+     args: arguments to this combinator
+     Returns [state' retval]."))
