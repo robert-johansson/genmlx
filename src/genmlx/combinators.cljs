@@ -1268,6 +1268,117 @@
               (fn [_] log-weights-fn))]
     (->MixCombinator components lwf)))
 
+;; ---------------------------------------------------------------------------
+;; Batched Mix — IBatchedSplice for vectorized inference
+;; ---------------------------------------------------------------------------
+;; Like Switch: runs ALL components once with batched handler, mask-selects
+;; per particle. Additionally samples [N]-shaped component indices from the
+;; categorical distribution over log-weights and accounts for index score.
+
+(extend-type MixCombinator
+  p/IBatchedSplice
+  (batched-splice [this state addr args]
+    (let [comps (:components this)
+          all-dynamic? (every? :body-fn comps)]
+      (if-not all-dynamic?
+        (h/combinator-batched-fallback state addr this (vec args))
+        ;; Fast path
+        (let [batch-size (:batch-size state)
+              log-w ((:log-weights-fn this) args)
+              sub-constraints (cm/get-submap (:constraints state) addr)
+              ;; Check if component-idx is constrained
+              idx-constraint (when (and sub-constraints
+                                        (not= sub-constraints cm/EMPTY))
+                               (cm/get-submap sub-constraints :component-idx))
+              ;; Sample or constrain [N]-shaped component indices
+              cat-dist (dc/->Distribution :categorical {:logits log-w})
+              [k1 k2] (rng/split (:key state))
+              [idx-vals idx-score idx-weight]
+              (if (and idx-constraint (cm/has-value? idx-constraint))
+                ;; Constrained: fixed value, weight = log-prob
+                (let [v (cm/get-value idx-constraint)
+                      lp (dc/dist-log-prob cat-dist v)]
+                  [v lp lp])
+                ;; Unconstrained: sample [N] indices
+                (let [sampled (dc/dist-sample-n cat-dist k2 batch-size)
+                      lp (dc/dist-log-prob cat-dist sampled)]
+                  [sampled lp (mx/zeros [batch-size])]))
+              ;; Inner constraints = everything except :component-idx
+              inner-constraints
+              (if (and sub-constraints (not= sub-constraints cm/EMPTY)
+                       (instance? cm/Node sub-constraints))
+                (let [inner-m (dissoc (:m sub-constraints) :component-idx)]
+                  (if (empty? inner-m) cm/EMPTY (cm/->Node inner-m)))
+                (or sub-constraints cm/EMPTY))
+              batch-zero (mx/zeros [batch-size])
+              ;; Run each component once with batched handler
+              comp-results
+              (loop [i 0 results [] key k1]
+                (if (>= i (count comps))
+                  results
+                  (let [[ck nk] (rng/split key)
+                        has-inner? (and inner-constraints
+                                        (not= inner-constraints cm/EMPTY))
+                        [transition init-sub]
+                        (if has-inner?
+                          [h/batched-generate-transition
+                           {:choices cm/EMPTY :score batch-zero :weight batch-zero
+                            :key ck :constraints inner-constraints
+                            :batch-size batch-size :batched? true}]
+                          [h/batched-simulate-transition
+                           {:choices cm/EMPTY :score batch-zero
+                            :key ck :batch-size batch-size :batched? true}])
+                        init-sub (if-let [ps (:param-store state)]
+                                   (assoc init-sub :param-store ps)
+                                   init-sub)
+                        result (rt/run-handler transition init-sub
+                                 (fn [rt] (apply (:body-fn (nth comps i)) rt
+                                            (vec args))))]
+                    (recur (inc i) (conj results result) nk))))
+              ;; Combine per-particle results using mx/where on idx-vals
+              combined-score
+              (reduce-kv
+                (fn [acc i cr]
+                  (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
+                    (mx/where mask (:score cr) acc)))
+                batch-zero comp-results)
+              combined-weight
+              (when (contains? state :weight)
+                (reduce-kv
+                  (fn [acc i cr]
+                    (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
+                      (mx/where mask (or (:weight cr) batch-zero) acc)))
+                  batch-zero comp-results))
+              combined-choices
+              (reduce-kv
+                (fn [acc i cr]
+                  (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
+                    (if (zero? i)
+                      (:choices cr)
+                      (where-select-choicemap mask (:choices cr) acc))))
+                cm/EMPTY comp-results)
+              combined-retval
+              (let [rvs (mapv :retval comp-results)]
+                (when (mx/array? (first rvs))
+                  (reduce-kv
+                    (fn [acc i rv]
+                      (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
+                        (mx/where mask rv acc)))
+                    (first rvs) rvs)))
+              ;; Add component-idx to choices + add idx-score to combined score
+              final-choices (cm/set-value combined-choices :component-idx idx-vals)
+              final-score (mx/add combined-score idx-score)
+              final-weight (when combined-weight
+                             (mx/add combined-weight idx-weight))
+              ;; Merge into parent state
+              sub-result {:choices final-choices
+                          :score final-score
+                          :weight final-weight}
+              state' (-> state
+                       (assoc :key k2)
+                       (h/merge-sub-result addr sub-result))]
+          [state' combined-retval])))))
+
 (extend-type MixCombinator
   p/IUpdate
   (update [this trace constraints]
