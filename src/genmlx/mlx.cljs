@@ -527,6 +527,7 @@
      (array? x) x
      (fn? x) x
      (keyword? x) x
+     (map? x) x
      (or (vector? x) (seq? x) (sequential? x)) (array x)
      :else (scalar x)))
   ([x dtype]
@@ -534,5 +535,6 @@
      (array? x) x
      (fn? x) x
      (keyword? x) x
+     (map? x) x
      (or (vector? x) (seq? x) (sequential? x)) (array x dtype)
      :else (scalar x dtype))))
