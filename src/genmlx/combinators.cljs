@@ -499,6 +499,102 @@
   (->SwitchCombinator (vec branches)))
 
 ;; ---------------------------------------------------------------------------
+;; Batched Switch — IBatchedSplice for vectorized inference
+;; ---------------------------------------------------------------------------
+;; Runs ALL branches once with the batched handler, then mask-selects
+;; results per particle using mx/where on the [N]-shaped index.
+
+(defn- where-select-choicemap
+  "Combine two choicemaps using mx/where on a boolean mask.
+   Where mask is true, use cm-true; otherwise use cm-false.
+   Requires both choicemaps to have the same address structure."
+  [mask cm-true cm-false]
+  (let [addrs (cm/addresses cm-true)]
+    (reduce
+      (fn [acc addr-path]
+        (let [v-t (cm/get-choice cm-true addr-path)
+              v-f (cm/get-choice cm-false addr-path)]
+          (cm/set-choice acc addr-path (mx/where mask v-t v-f))))
+      cm/EMPTY addrs)))
+
+(extend-type SwitchCombinator
+  p/IBatchedSplice
+  (batched-splice [this state addr args]
+    (let [brs (:branches this)
+          all-dynamic? (every? :body-fn brs)]
+      (if-not all-dynamic?
+        ;; Not all branches are DynamicGF — fall back to slow path
+        (h/combinator-batched-fallback state addr this (vec args))
+        ;; Fast path: run all branches with batched handler, mx/where combine
+        (let [[index & branch-args] args
+              batch-size (:batch-size state)
+              sub-constraints (cm/get-submap (:constraints state) addr)
+              [k1 k2] (rng/split (:key state))
+              batch-zero (mx/zeros [batch-size])
+              ;; Run each branch once with batched handler
+              branch-results
+              (loop [i 0 results [] key k2]
+                (if (>= i (count brs))
+                  results
+                  (let [[bk nk] (rng/split key)
+                        has-constraints? (and sub-constraints
+                                              (not= sub-constraints cm/EMPTY))
+                        [transition init-sub]
+                        (if has-constraints?
+                          [h/batched-generate-transition
+                           {:choices cm/EMPTY :score batch-zero :weight batch-zero
+                            :key bk :constraints sub-constraints
+                            :batch-size batch-size :batched? true}]
+                          [h/batched-simulate-transition
+                           {:choices cm/EMPTY :score batch-zero
+                            :key bk :batch-size batch-size :batched? true}])
+                        init-sub (if-let [ps (:param-store state)]
+                                   (assoc init-sub :param-store ps)
+                                   init-sub)
+                        result (rt/run-handler transition init-sub
+                                 (fn [rt] (apply (:body-fn (nth brs i)) rt
+                                            (vec branch-args))))]
+                    (recur (inc i) (conj results result) nk))))
+              ;; Combine results using mx/where based on [N]-shaped index
+              combined-score
+              (reduce-kv
+                (fn [acc i br]
+                  (let [mask (mx/equal index (mx/scalar i mx/int32))]
+                    (mx/where mask (:score br) acc)))
+                batch-zero branch-results)
+              combined-weight
+              (when (contains? state :weight)
+                (reduce-kv
+                  (fn [acc i br]
+                    (let [mask (mx/equal index (mx/scalar i mx/int32))]
+                      (mx/where mask (or (:weight br) batch-zero) acc)))
+                  batch-zero branch-results))
+              combined-choices
+              (reduce-kv
+                (fn [acc i br]
+                  (let [mask (mx/equal index (mx/scalar i mx/int32))]
+                    (if (zero? i)
+                      (:choices br)
+                      (where-select-choicemap mask (:choices br) acc))))
+                cm/EMPTY branch-results)
+              combined-retval
+              (let [rvs (mapv :retval branch-results)]
+                (when (mx/array? (first rvs))
+                  (reduce-kv
+                    (fn [acc i rv]
+                      (let [mask (mx/equal index (mx/scalar i mx/int32))]
+                        (mx/where mask rv acc)))
+                    (first rvs) rvs)))
+              ;; Merge into parent state
+              sub-result {:choices combined-choices
+                          :score combined-score
+                          :weight combined-weight}
+              state' (-> state
+                       (assoc :key k1)
+                       (h/merge-sub-result addr sub-result))]
+          [state' combined-retval])))))
+
+;; ---------------------------------------------------------------------------
 ;; Mask Combinator
 ;; ---------------------------------------------------------------------------
 ;; Gates execution of a generative function on a boolean condition.
@@ -939,6 +1035,62 @@
    threading carry-state and accumulating outputs."
   [kernel]
   (->ScanCombinator kernel))
+
+;; ---------------------------------------------------------------------------
+;; Batched Scan — IBatchedSplice for vectorized inference
+;; ---------------------------------------------------------------------------
+
+(extend-type ScanCombinator
+  p/IBatchedSplice
+  (batched-splice [this state addr args]
+    (let [kern (:kernel this)]
+      (if-not (:body-fn kern)
+        (h/combinator-batched-fallback state addr this (vec args))
+        (let [[init-carry inputs] args
+              n-steps (count inputs)
+              batch-size (:batch-size state)
+              sub-constraints (cm/get-submap (:constraints state) addr)
+              [k1 k2] (rng/split (:key state))
+              batch-zero (mx/zeros [batch-size])]
+          (loop [t 0
+                 carry init-carry
+                 acc-choices cm/EMPTY
+                 acc-score batch-zero
+                 acc-weight batch-zero
+                 key k2]
+            (if (>= t n-steps)
+              (let [sub-result {:choices acc-choices
+                                :score acc-score
+                                :weight (when (contains? state :weight) acc-weight)}
+                    state' (-> state
+                             (assoc :key k1)
+                             (h/merge-sub-result addr sub-result))]
+                [state' carry])
+              (let [[sk nk] (rng/split key)
+                    step-constraints (cm/get-submap sub-constraints t)
+                    has-constraints? (and step-constraints
+                                         (not= step-constraints cm/EMPTY))
+                    [transition init-sub]
+                    (if has-constraints?
+                      [h/batched-generate-transition
+                       {:choices cm/EMPTY :score batch-zero :weight batch-zero
+                        :key sk :constraints step-constraints
+                        :batch-size batch-size :batched? true}]
+                      [h/batched-simulate-transition
+                       {:choices cm/EMPTY :score batch-zero
+                        :key sk :batch-size batch-size :batched? true}])
+                    init-sub (if-let [ps (:param-store state)]
+                               (assoc init-sub :param-store ps)
+                               init-sub)
+                    step-result (rt/run-handler transition init-sub
+                                  (fn [rt] ((:body-fn kern) rt carry (nth inputs t))))
+                    [new-carry _output] (:retval step-result)]
+                (recur (inc t)
+                       new-carry
+                       (cm/set-submap acc-choices t (:choices step-result))
+                       (mx/add acc-score (:score step-result))
+                       (mx/add acc-weight (or (:weight step-result) batch-zero))
+                       nk)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Map / Contramap / Dimap Combinators
