@@ -51,7 +51,7 @@
                                       {:gen-fn (.-source this)}))))
           _ (rng/seed! key)]
       (if-let [compiled-sim (:compiled-simulate schema)]
-        ;; Compiled path: pure function → build trace from result
+        ;; L1-M2: full compiled path → build trace from result
         (let [result (compiled-sim key (vec args))
               choices (reduce-kv
                         (fn [cm addr val] (cm/set-value cm addr val))
@@ -62,20 +62,37 @@
              :choices choices
              :retval  (:retval result)
              :score   (:score result)}))
-        ;; Handler path: unchanged
-        (let [result (rt/run-handler h/simulate-transition
-                       {:choices cm/EMPTY :score SCORE-ZERO :key key
-                        :executor execute-sub
-                        :param-store (::param-store (meta this))}
-                       (fn [rt] (apply body-fn rt args)))
-              trace (tr/make-trace
-                      {:gen-fn this :args args
-                       :choices (:choices result)
-                       :retval  (:retval result)
-                       :score   (:score result)})]
-          (if-let [ss (:splice-scores result)]
-            (with-meta trace {::splice-scores ss})
-            trace)))))
+        (if-let [compiled-pfx (:compiled-prefix schema)]
+          ;; L1-M3: compiled prefix + replay handler
+          (let [result (compiled-pfx key (vec args))
+                replay (compiled/make-replay-simulate-transition (:values result))
+                handler-result (rt/run-handler replay
+                                 {:choices cm/EMPTY :score (:score result) :key key
+                                  :executor execute-sub
+                                  :param-store (::param-store (meta this))}
+                                 (fn [rt] (apply body-fn rt args)))
+                trace (tr/make-trace
+                        {:gen-fn this :args args
+                         :choices (:choices handler-result)
+                         :retval  (:retval handler-result)
+                         :score   (:score handler-result)})]
+            (if-let [ss (:splice-scores handler-result)]
+              (with-meta trace {::splice-scores ss})
+              trace))
+          ;; L0: handler path
+          (let [result (rt/run-handler h/simulate-transition
+                         {:choices cm/EMPTY :score SCORE-ZERO :key key
+                          :executor execute-sub
+                          :param-store (::param-store (meta this))}
+                         (fn [rt] (apply body-fn rt args)))
+                trace (tr/make-trace
+                        {:gen-fn this :args args
+                         :choices (:choices result)
+                         :retval  (:retval result)
+                         :score   (:score result)})]
+            (if-let [ss (:splice-scores result)]
+              (with-meta trace {::splice-scores ss})
+              trace))))))
 
   p/IGenerate
   (generate [this args constraints]
@@ -301,14 +318,39 @@
 (defn make-gen-fn
   "Create a DynamicGF from a body function and its source form.
    Extracts schema from the source form for Level 1 compilation.
-   For static models, attempts to build a compiled simulate function."
+   For static models, attempts L1-M2 (full compiled simulate).
+   For branch models, attempts L1-M4 (branch rewriting).
+   For non-static models, attempts L1-M3 (compiled prefix)."
   [body-fn source]
   (let [schema (schema/extract-schema source)
-        schema (if (and schema (:static? schema))
+        schema (cond
+                 ;; L1-M2: static models → try full compiled simulate
+                 (and schema (:static? schema))
                  (if-let [csim (compiled/make-compiled-simulate schema source)]
                    (assoc schema :compiled-simulate csim)
                    schema)
-                 schema)]
+
+                 ;; L1-M4: branch models → try branch rewriting
+                 (and schema (:has-branches? schema))
+                 (if-let [csim (compiled/make-branch-rewritten-simulate schema source)]
+                   (assoc schema :compiled-simulate csim)
+                   ;; M4 failed → fall through to M3
+                   (if-let [result (compiled/make-compiled-prefix schema source)]
+                     (assoc schema
+                       :compiled-prefix (:fn result)
+                       :compiled-prefix-addrs (:addrs result))
+                     schema))
+
+                 ;; L1-M3: non-static models → try compiled prefix
+                 schema
+                 (if-let [result (compiled/make-compiled-prefix schema source)]
+                   (assoc schema
+                     :compiled-prefix (:fn result)
+                     :compiled-prefix-addrs (:addrs result))
+                   schema)
+
+                 ;; No schema
+                 :else schema)]
     (->DynamicGF body-fn source schema)))
 
 (defn with-key

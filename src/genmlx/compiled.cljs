@@ -2,7 +2,7 @@
   "Compiled execution paths for GenMLX.
 
    Level 0: Compiled unfold loops and particle filters (temporal models).
-   Level 1: Compiled gen functions for static models (L1-M2).
+   Level 1: Compiled gen functions — static models (L1-M2), partial prefix (L1-M3).
 
    Level 0 pattern: user provides a pure MLX step-fn, we pre-generate noise
    and unroll the loop. All randomness injected as input tensors.
@@ -16,7 +16,8 @@
             [genmlx.trace :as tr]
             [genmlx.vectorized :as vec]
             [genmlx.dist :as dist]
-            [genmlx.dist.core :as dc]))
+            [genmlx.dist.core :as dc]
+            [genmlx.handler :as h]))
 
 ;; ---------------------------------------------------------------------------
 ;; Core: compiled unfold step loop
@@ -553,6 +554,7 @@
 (def ^:private ONE (mx/scalar 1.0))
 (def ^:private ZERO (mx/scalar 0.0))
 (def ^:private NEG-INF (mx/scalar ##-Inf))
+(def ^:private TWO (mx/scalar 2.0))
 (def ^:private LOG-2 (mx/scalar (js/Math.log 2.0)))
 (def ^:private LOG-PI (mx/scalar (js/Math.log js/Math.PI)))
 (def ^:private MLX-PI (mx/scalar js/Math.PI))
@@ -614,11 +616,13 @@
    :laplace
    {:noise-fn  (fn [key] (rng/uniform key []))
     :transform (fn [noise loc scale]
+                 ;; Inverse CDF: loc - scale * sign(u) * log(1 - 2*|u|)
+                 ;; where u = noise - 0.5, matches dist.cljs laplace-icdf
                  (let [u (mx/subtract noise HALF)]
                    (mx/subtract loc
                      (mx/multiply scale
                        (mx/multiply (mx/sign u)
-                         (mx/log1p (mx/negative (mx/abs u))))))))
+                         (mx/log (mx/subtract ONE (mx/multiply TWO (mx/abs u)))))))))
     :log-prob  (fn [v loc scale]
                  (mx/subtract
                    (mx/negative (mx/divide (mx/abs (mx/subtract v loc)) scale))
@@ -627,9 +631,13 @@
    :cauchy
    {:noise-fn  (fn [key] (rng/uniform key []))
     :transform (fn [noise loc scale]
-                 (let [z (mx/subtract noise HALF)]
+                 ;; Inverse CDF: loc + scale * tan(pi * (u - 0.5))
+                 ;; Use sin/cos to match dist.cljs exactly
+                 (let [z (mx/subtract noise HALF)
+                       pz (mx/multiply MLX-PI z)]
                    (mx/add loc
-                     (mx/multiply scale (mx/tan (mx/multiply MLX-PI z))))))
+                     (mx/multiply scale
+                       (mx/divide (mx/sin pz) (mx/cos pz))))))
     :log-prob  (fn [v loc scale]
                  (let [z (mx/divide (mx/subtract v loc) scale)]
                    (mx/negative
@@ -783,4 +791,495 @@
                :score score
                :retval (when retval-fn
                          (retval-fn values args-vec))})))))))
+
+;; ===========================================================================
+;; Level 1-M3: Partial Compilation for Dynamic Models
+;; ===========================================================================
+;;
+;; Architecture: compiled static prefix + replay transition for handler
+;;
+;;   Source form (from gen macro)
+;;     │ extract-prefix-sites → static trace sites before first dynamic construct
+;;     ▼
+;;   make-compiled-prefix
+;;     │ builds pure fn for prefix sites (noise transforms + mx/compile-fn)
+;;     │ truncates at first non-compilable site
+;;     ▼
+;;   DynamicGF.simulate (in dynamic.cljs)
+;;     │ Phase 1: run compiled prefix → values + partial score
+;;     │ Phase 2: run-handler with replay transition (replay prefix, simulate rest)
+;;     ▼
+;;   Trace (shared data type)
+
+;; ---------------------------------------------------------------------------
+;; Prefix extraction: walk source form, collect static prefix sites
+;; ---------------------------------------------------------------------------
+
+(defn- contains-gen-call-any?
+  "Does this form recursively contain any trace, splice, or param calls?"
+  [form]
+  (cond
+    (and (seq? form) (seq form))
+    (let [head (first form)]
+      (or (and (symbol? head)
+               (let [n (name head)]
+                 (or (= n "trace") (= n "splice") (= n "param"))))
+          (some contains-gen-call-any? form)))
+    (and (vector? form) (seq form))
+    (some contains-gen-call-any? form)
+    :else false))
+
+(defn- simple-trace-call?
+  "Is form exactly (trace :keyword dist-expr)?"
+  [form]
+  (and (seq? form) (seq form)
+       (symbol? (first form))
+       (= "trace" (name (first form)))
+       (keyword? (second form))
+       (= 3 (count form))))
+
+(defn- extract-dist-info
+  "Extract dist-type and dist-args from a dist constructor form.
+   (dist/gaussian 0 10) → {:dist-type :gaussian :dist-args [0 10]}"
+  [dist-form]
+  (when (and (seq? dist-form) (seq dist-form) (symbol? (first dist-form)))
+    (let [sym (first dist-form)
+          ns-part (namespace sym)
+          name-part (name sym)]
+      (when (or (nil? ns-part)
+                (= ns-part "dist")
+                (= ns-part "genmlx.dist")
+                (and (string? ns-part) (.endsWith ns-part ".dist")))
+        {:dist-type (keyword name-part)
+         :dist-args (vec (rest dist-form))}))))
+
+(declare walk-prefix-forms)
+
+(defn- walk-prefix-bindings
+  "Walk let bindings, collecting prefix trace sites.
+   Returns {:prefix [...] :stopped boolean}."
+  [bindings prefix]
+  (if-not (seq bindings)
+    {:prefix prefix :stopped false}
+    (let [[_sym val-form] (first bindings)]
+      (if (simple-trace-call? val-form)
+        ;; Static trace in binding → add to prefix
+        (let [addr (second val-form)
+              dist-form (nth val-form 2)
+              info (extract-dist-info dist-form)]
+          (if info
+            (recur (rest bindings) (conj prefix (assoc info :addr addr)))
+            ;; Unrecognizable dist form → stop
+            {:prefix prefix :stopped true}))
+        ;; Not a simple trace
+        (if (contains-gen-call-any? val-form)
+          {:prefix prefix :stopped true}
+          (recur (rest bindings) prefix))))))
+
+(defn- walk-prefix-forms
+  "Walk body forms sequentially, collecting prefix trace sites.
+   Stops at the first form containing gen calls (traces in branches/loops,
+   splice, param, or dynamic-address traces)."
+  [forms prefix]
+  (if-not (seq forms)
+    prefix
+    (let [form (first forms)
+          rest-forms (rest forms)]
+      (cond
+        ;; let form: walk bindings, then body
+        (and (seq? form) (seq form) (symbol? (first form))
+             (= "let" (name (first form)))
+             (vector? (second form)))
+        (let [result (walk-prefix-bindings (partition 2 (second form)) prefix)]
+          (if (:stopped result)
+            (:prefix result)
+            ;; Bindings done → walk let body + remaining forms
+            (walk-prefix-forms (concat (drop 2 form) rest-forms) (:prefix result))))
+
+        ;; do form: walk children
+        (and (seq? form) (seq form) (symbol? (first form))
+             (= "do" (name (first form))))
+        (walk-prefix-forms (concat (rest form) rest-forms) prefix)
+
+        ;; Simple trace at top level
+        (simple-trace-call? form)
+        (let [addr (second form)
+              dist-form (nth form 2)
+              info (extract-dist-info dist-form)]
+          (if info
+            (walk-prefix-forms rest-forms (conj prefix (assoc info :addr addr)))
+            prefix))
+
+        ;; Contains gen calls → STOP
+        (contains-gen-call-any? form)
+        prefix
+
+        ;; Pure expression → continue
+        :else
+        (walk-prefix-forms rest-forms prefix)))))
+
+(defn extract-prefix-sites
+  "Walk gen source form, collect static trace sites in execution order
+   until a dynamic construct is encountered.
+   Returns [{:addr :dist-type :dist-args [...]} ...] in execution order.
+
+   source: (params-vec body-form1 body-form2 ...) as captured by gen macro."
+  [source]
+  (walk-prefix-forms (rest source) []))
+
+;; ---------------------------------------------------------------------------
+;; Compiled prefix function
+;; ---------------------------------------------------------------------------
+
+(defn make-compiled-prefix
+  "Build a compiled prefix function from a gen schema and source.
+
+   Returns {:fn (fn [key args-vec] -> {:values {addr->val} :score scalar})
+            :addrs [keyword...]}
+   or nil if partial compilation isn't applicable.
+
+   Compilation applies when:
+   - Model is NOT static (static models use L1-M2 make-compiled-simulate)
+   - Model has trace sites but no splice/param sites
+   - At least 1 prefix trace site has a compilable noise transform
+
+   Reuses L1-M2 infrastructure: build-binding-env, compile-expr,
+   noise-transforms-full, build-site-step, mx/compile-fn."
+  [schema source]
+  (when (and (not (:static? schema))
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [raw-prefix (extract-prefix-sites source)]
+      (when (seq raw-prefix)
+        (let [binding-env (build-binding-env source)
+              ;; Try to compile each prefix site, stop at first failure
+              compiled-sites
+              (reduce
+                (fn [acc site]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args site))
+                        nt (get noise-transforms-full (:dist-type site))]
+                    (if (and nt (every? some? cargs))
+                      (conj acc (assoc site :compiled-args cargs))
+                      (reduced acc))))
+                []
+                raw-prefix)]
+          (when (seq compiled-sites)
+            (let [step-fns (mapv build-site-step compiled-sites)
+                  addrs (mapv :addr compiled-sites)
+                  n-sites (count compiled-sites)]
+              (when (every? some? step-fns)
+                (let [inner-fn
+                      (fn [key args-vec]
+                        (let [result
+                              (reduce
+                                (fn [state step-fn]
+                                  (step-fn state args-vec))
+                                {:values {} :score (mx/scalar 0.0) :key key}
+                                step-fns)
+                              vals (mapv #(get (:values result) %) addrs)]
+                          (to-array (conj vals (:score result)))))
+                      n-params (count (first source))
+                      ;; mx/compile-fn for 0-param models (no risk of complex args).
+                      ;; For models with params, use raw noise transforms (still
+                      ;; faster than multimethod dispatch, just without Metal fusion).
+                      compiled-inner
+                      (if (zero? n-params)
+                        (let [f (fn [key] (inner-fn key []))
+                              cf (mx/compile-fn f)]
+                          (fn [key _args] (cf key)))
+                        (fn [key args] (inner-fn key args)))]
+                  {:fn (fn compiled-prefix [key args-vec]
+                         (let [;; Safe: only convert numbers/arrays, pass complex args through
+                               mlx-args (mapv (fn [a]
+                                                (cond (mx/array? a) a
+                                                      (number? a) (mx/scalar a)
+                                                      :else a))
+                                              args-vec)
+                               result (compiled-inner key mlx-args)
+                               values (loop [i 0 m {}]
+                                        (if (= i n-sites)
+                                          m
+                                          (recur (inc i)
+                                                 (assoc m (nth addrs i) (aget result i)))))
+                               score (aget result n-sites)]
+                           {:values values :score score}))
+                   :addrs addrs})))))))))
+
+;; ---------------------------------------------------------------------------
+;; Replay transition for partial compilation
+;; ---------------------------------------------------------------------------
+
+(defn make-replay-simulate-transition
+  "Build a replay transition for partial compilation.
+   At prefix sites: split key (PRNG consistency), return pre-computed value.
+   Log-prob NOT added (already counted in compiled prefix score).
+   At other sites: delegate to h/simulate-transition."
+  [compiled-values]
+  (fn [state addr dist]
+    (if (contains? compiled-values addr)
+      ;; Replay: split key for PRNG consistency, return pre-computed value
+      (let [[k1 _k2] (rng/split (:key state))
+            value (get compiled-values addr)]
+        [value (-> state
+                 (assoc :key k1)
+                 (update :choices cm/set-value addr value))])
+      ;; Dynamic site: standard simulate
+      (h/simulate-transition state addr dist))))
+
+;; ===========================================================================
+;; Level 1-M4: Automatic Branch Rewriting
+;; ===========================================================================
+;;
+;; Detects if/if-not where both branches trace the same address with the
+;; same distribution type. Rewrites dist args with mx/where to eliminate
+;; branching. Result compiles fully via L1-M2 infrastructure.
+;;
+;;   Source form (with branch)
+;;     │ analyze-rewritable-branch → detect rewritable pattern
+;;     │ extract-rewritable-sites → all sites (standard + rewritten)
+;;     ▼
+;;   make-branch-rewritten-simulate
+;;     │ compile cond/args, wrap in mx/where, build step fns
+;;     │ wraps in mx/compile-fn → single Metal kernel
+;;     ▼
+;;   DynamicGF.simulate (in dynamic.cljs)
+;;     │ dispatches: compiled path (same as M2)
+;;     ▼
+;;   Trace (shared data type)
+
+(defn- analyze-rewritable-branch
+  "Analyze an if/if-not form for branch rewriting (L1-M4).
+   Both branches must be bare (trace :addr (dist/type args...)) calls
+   with the same address and same distribution type.
+   Returns {:addr :dist-type :cond-form :true-dist-args :false-dist-args :flipped?}
+   or nil."
+  [form]
+  (when (and (seq? form) (seq form) (symbol? (first form))
+             (= (count form) 4))
+    (let [head (name (first form))
+          flipped? (= head "if-not")]
+      (when (or (= head "if") flipped?)
+        (let [cond-form (nth form 1)
+              true-form (nth form 2)
+              false-form (nth form 3)]
+          (when (and (simple-trace-call? true-form)
+                     (simple-trace-call? false-form))
+            (let [t-addr (second true-form)
+                  f-addr (second false-form)
+                  t-info (extract-dist-info (nth true-form 2))
+                  f-info (extract-dist-info (nth false-form 2))]
+              (when (and t-info f-info
+                         (= t-addr f-addr)
+                         (= (:dist-type t-info) (:dist-type f-info))
+                         (= (count (:dist-args t-info)) (count (:dist-args f-info))))
+                {:addr t-addr
+                 :dist-type (:dist-type t-info)
+                 :cond-form cond-form
+                 :true-dist-args (:dist-args t-info)
+                 :false-dist-args (:dist-args f-info)
+                 :flipped? flipped?}))))))))
+
+;; ---------------------------------------------------------------------------
+;; Source form walker for branch rewriting
+;; ---------------------------------------------------------------------------
+
+(declare walk-rewrite-forms)
+
+(defn- walk-rewrite-bindings
+  "Walk let bindings, collecting sites (standard + rewritten branches).
+   Returns {:sites [...] :failed? boolean}."
+  [bindings sites]
+  (if-not (seq bindings)
+    {:sites sites :failed? false}
+    (let [[_sym val-form] (first bindings)]
+      (cond
+        ;; Simple trace binding
+        (simple-trace-call? val-form)
+        (let [addr (second val-form)
+              dist-form (nth val-form 2)
+              info (extract-dist-info dist-form)]
+          (if info
+            (recur (rest bindings) (conj sites (assoc info :addr addr)))
+            {:sites sites :failed? true}))
+
+        :else
+        (if-let [branch (analyze-rewritable-branch val-form)]
+          ;; Rewritable branch binding
+          (recur (rest bindings) (conj sites branch))
+          ;; Not a rewritable branch — check for gen calls
+          (if (contains-gen-call-any? val-form)
+            {:sites sites :failed? true}
+            ;; Pure binding → continue
+            (recur (rest bindings) sites)))))))
+
+(defn- walk-rewrite-forms
+  "Walk body forms, collecting sites (standard + rewritten branches).
+   Returns sites vector or nil if any form can't be handled."
+  [forms sites]
+  (if-not (seq forms)
+    sites
+    (let [form (first forms)
+          rest-forms (rest forms)]
+      (cond
+        ;; let form
+        (and (seq? form) (seq form) (symbol? (first form))
+             (= "let" (name (first form)))
+             (vector? (second form)))
+        (let [result (walk-rewrite-bindings (partition 2 (second form)) sites)]
+          (if (:failed? result)
+            nil
+            (walk-rewrite-forms (concat (drop 2 form) rest-forms) (:sites result))))
+
+        ;; do form
+        (and (seq? form) (seq form) (symbol? (first form))
+             (= "do" (name (first form))))
+        (walk-rewrite-forms (concat (rest form) rest-forms) sites)
+
+        ;; Simple trace at top level
+        (simple-trace-call? form)
+        (let [addr (second form)
+              dist-form (nth form 2)
+              info (extract-dist-info dist-form)]
+          (if info
+            (walk-rewrite-forms rest-forms (conj sites (assoc info :addr addr)))
+            nil))
+
+        ;; if/if-not → try to rewrite
+        (and (seq? form) (seq form) (symbol? (first form))
+             (let [n (name (first form))] (or (= n "if") (= n "if-not"))))
+        (if-let [branch (analyze-rewritable-branch form)]
+          (walk-rewrite-forms rest-forms (conj sites branch))
+          nil)
+
+        ;; Contains gen calls → fail
+        (contains-gen-call-any? form)
+        nil
+
+        ;; Pure expression → continue
+        :else
+        (walk-rewrite-forms rest-forms sites)))))
+
+(defn extract-rewritable-sites
+  "Walk gen source form, collect all trace sites including rewritten branches.
+   Returns vector of site specs if ALL sites are compilable, or nil."
+  [source]
+  (walk-rewrite-forms (rest source) []))
+
+;; ---------------------------------------------------------------------------
+;; Compiled simulate for branch-rewritten models
+;; ---------------------------------------------------------------------------
+
+(defn make-branch-rewritten-simulate
+  "Build a compiled simulate for models with rewritable branches (L1-M4).
+
+   Detects if/if-not where both branches trace the same address with the
+   same dist-type, and rewrites dist args using mx/where.
+
+   Returns (fn [key args-vec] -> {:values :score :retval :key}) or nil.
+
+   Reuses M2 infrastructure: build-binding-env, compile-expr, build-site-step,
+   noise-transforms, mx/compile-fn."
+  [schema source]
+  (when (and (:has-branches? schema)
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema))
+             (not (:has-loops? schema))
+             (not (:dynamic-addresses? schema)))
+    (when-let [raw-sites (extract-rewritable-sites source)]
+      (when (seq raw-sites)
+        (let [;; Build binding env with branch-aware let bindings
+              base-env (build-binding-env source)
+              binding-env
+              (reduce-kv
+                (fn [env k v]
+                  (if (= (:kind v) :expr)
+                    (if-let [branch (analyze-rewritable-branch (:form v))]
+                      (assoc env k {:kind :trace :addr (:addr branch)})
+                      env)
+                    env))
+                base-env base-env)
+
+              ;; Compile each site's args (standard or where-wrapped)
+              site-specs
+              (mapv
+                (fn [site]
+                  (if (:cond-form site)
+                    ;; Rewritten branch: wrap dist args in mx/where.
+                    ;; Safety: condition must be a JS value (parameter or literal),
+                    ;; not an MLX array. MLX arrays are always truthy in CLJS's if,
+                    ;; so mx/where would disagree with the handler path.
+                    (let [cf (:cond-form site)
+                          safe-cond? (or (boolean? cf) (number? cf)
+                                        (and (symbol? cf)
+                                             (= :param (:kind (get binding-env (name cf))))))]
+                      (when safe-cond?
+                        (let [cond-fn (compile-expr cf binding-env #{})
+                              true-fns (mapv #(compile-expr % binding-env #{}) (:true-dist-args site))
+                              false-fns (mapv #(compile-expr % binding-env #{}) (:false-dist-args site))
+                              flipped? (:flipped? site)]
+                          (when (and cond-fn (every? some? true-fns) (every? some? false-fns))
+                            (let [[sel-t sel-f] (if flipped? [false-fns true-fns] [true-fns false-fns])
+                                  compiled-args
+                                  (mapv (fn [tf ff]
+                                          (fn [values args-vec]
+                                            (mx/where (mx/ensure-array (cond-fn values args-vec))
+                                                      (mx/ensure-array (tf values args-vec))
+                                                      (mx/ensure-array (ff values args-vec)))))
+                                        sel-t sel-f)]
+                              {:addr (:addr site)
+                               :compiled-args compiled-args
+                               :dist-type (:dist-type site)})))))
+                    ;; Standard site
+                    (let [cargs (mapv #(compile-expr % binding-env #{}) (:dist-args site))]
+                      (when (every? some? cargs)
+                        {:addr (:addr site)
+                         :compiled-args cargs
+                         :dist-type (:dist-type site)}))))
+                raw-sites)]
+          (when (every? some? site-specs)
+            (let [step-fns (mapv build-site-step site-specs)]
+              (when (every? some? step-fns)
+                (let [;; Compile return form (handle if/if-not as return)
+                      return-expr (extract-return-expr (:return-form schema))
+                      retval-fn
+                      (or
+                        (when (and (seq? return-expr) (seq return-expr)
+                                   (symbol? (first return-expr)))
+                          (when-let [branch (analyze-rewritable-branch return-expr)]
+                            (let [addr (:addr branch)]
+                              (fn [v _a] (get v addr)))))
+                        (compile-expr return-expr binding-env #{}))
+                      addrs (mapv :addr site-specs)
+                      n-sites (count site-specs)
+                      inner-fn
+                      (fn [key args-vec]
+                        (let [result
+                              (reduce
+                                (fn [state step-fn]
+                                  (step-fn state args-vec))
+                                {:values {} :score (mx/scalar 0.0) :key key}
+                                step-fns)
+                              vals (mapv #(get (:values result) %) addrs)]
+                          (to-array (conj vals (:score result)))))
+                      n-params (count (first source))
+                      ;; Skip mx/compile-fn for M4 — mx/where args vary per call
+                      ;; and compile-fn traces with fixed values on first call.
+                      ;; Raw noise transforms still bypass multimethod dispatch.
+                      compiled-inner
+                      (fn [key args] (inner-fn key args))]
+                  (fn compiled-branch-simulate [key args-vec]
+                    (let [mlx-args (mapv mx/ensure-array args-vec)
+                          result (compiled-inner key mlx-args)
+                          values (loop [i 0 m {}]
+                                   (if (= i n-sites)
+                                     m
+                                     (recur (inc i)
+                                            (assoc m (nth addrs i) (aget result i)))))
+                          score (aget result n-sites)]
+                      {:values values
+                       :score score
+                       :retval (when retval-fn
+                                 (retval-fn values args-vec))})))))))))))
 
