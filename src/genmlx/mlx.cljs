@@ -42,6 +42,11 @@
   ([v]      (.array core (clj->js v)))
   ([v dtype] (.array core (clj->js v) dtype)))
 
+(defn astype
+  "Cast array to the given dtype."
+  [a dtype]
+  (.astype a dtype))
+
 (defn zeros
   ([sh]       (.zeros core (clj->js sh)))
   ([sh dtype] (.zeros core (clj->js sh) dtype)))
@@ -532,7 +537,7 @@
      :else (scalar x)))
   ([x dtype]
    (cond
-     (array? x) x
+     (array? x) (if (= (.-dtype x) dtype) x (astype x dtype))
      (fn? x) x
      (keyword? x) x
      (map? x) x
