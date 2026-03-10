@@ -1,6 +1,7 @@
 (ns genmlx.dynamic
   "DynamicDSLFunction — implements the full GFI by delegating to
-   handler-based execution."
+   handler-based execution, with optional compiled fast path for
+   static models (Level 1)."
   (:require [genmlx.protocols :as p]
             [genmlx.handler :as h]
             [genmlx.runtime :as rt]
@@ -12,6 +13,8 @@
             [genmlx.vectorized :as vec]
             [genmlx.edit :as edit]
             [genmlx.diff :as diff]
+            [genmlx.schema :as schema]
+            [genmlx.compiled :as compiled]
             [clojure.set]))
 
 ;; Cached zero constant for init states (MLX scalars are immutable)
@@ -37,7 +40,7 @@
           unused (clojure.set/difference constraint-keys (or trace-keys #{}))]
       (when (seq unused) unused))))
 
-(defrecord DynamicGF [body-fn source]
+(defrecord DynamicGF [body-fn source schema]
   p/IGenerativeFunction
   (simulate [this args]
     (let [key (let [k (::key (meta this))]
@@ -46,20 +49,33 @@
                 k k
                 :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
                                       {:gen-fn (.-source this)}))))
-          _ (rng/seed! key)
-          result (rt/run-handler h/simulate-transition
-                   {:choices cm/EMPTY :score SCORE-ZERO :key key
-                    :executor execute-sub
-                    :param-store (::param-store (meta this))}
-                   (fn [rt] (apply body-fn rt args)))
-          trace (tr/make-trace
-                  {:gen-fn this :args args
-                   :choices (:choices result)
-                   :retval  (:retval result)
-                   :score   (:score result)})]
-      (if-let [ss (:splice-scores result)]
-        (with-meta trace {::splice-scores ss})
-        trace)))
+          _ (rng/seed! key)]
+      (if-let [compiled-sim (:compiled-simulate schema)]
+        ;; Compiled path: pure function → build trace from result
+        (let [result (compiled-sim key (vec args))
+              choices (reduce-kv
+                        (fn [cm addr val] (cm/set-value cm addr val))
+                        cm/EMPTY
+                        (:values result))]
+          (tr/make-trace
+            {:gen-fn this :args args
+             :choices choices
+             :retval  (:retval result)
+             :score   (:score result)}))
+        ;; Handler path: unchanged
+        (let [result (rt/run-handler h/simulate-transition
+                       {:choices cm/EMPTY :score SCORE-ZERO :key key
+                        :executor execute-sub
+                        :param-store (::param-store (meta this))}
+                       (fn [rt] (apply body-fn rt args)))
+              trace (tr/make-trace
+                      {:gen-fn this :args args
+                       :choices (:choices result)
+                       :retval  (:retval result)
+                       :score   (:score result)})]
+          (if-let [ss (:splice-scores result)]
+            (with-meta trace {::splice-scores ss})
+            trace)))))
 
   p/IGenerate
   (generate [this args constraints]
@@ -283,9 +299,17 @@
      :score weight :weight weight}))
 
 (defn make-gen-fn
-  "Create a DynamicGF from a body function and its source form."
+  "Create a DynamicGF from a body function and its source form.
+   Extracts schema from the source form for Level 1 compilation.
+   For static models, attempts to build a compiled simulate function."
   [body-fn source]
-  (->DynamicGF body-fn source))
+  (let [schema (schema/extract-schema source)
+        schema (if (and schema (:static? schema))
+                 (if-let [csim (compiled/make-compiled-simulate schema source)]
+                   (assoc schema :compiled-simulate csim)
+                   schema)
+                 schema)]
+    (->DynamicGF body-fn source schema)))
 
 (defn with-key
   "Return a copy of gf with the given PRNG key for reproducible execution.

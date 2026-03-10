@@ -1,17 +1,22 @@
 (ns genmlx.compiled
-  "Compiled execution for temporal models (Tier 2a + 2c).
-   Eliminates handler overhead by compiling T-step unfold loops and full
-   inference sweeps into single Metal dispatches via mx/compile-fn.
+  "Compiled execution paths for GenMLX.
 
-   Pattern: user provides a pure MLX step-fn, we pre-generate noise and
-   unroll the loop. All randomness injected as input tensors.
+   Level 0: Compiled unfold loops and particle filters (temporal models).
+   Level 1: Compiled gen functions for static models (L1-M2).
 
-   Reference: make-compiled-chain in inference/mcmc.cljs uses the same approach."
+   Level 0 pattern: user provides a pure MLX step-fn, we pre-generate noise
+   and unroll the loop. All randomness injected as input tensors.
+
+   Level 1 pattern: schema → noise-transform-based pure function → mx/compile-fn.
+   Distribution-specific noise transforms bypass multimethod dispatch,
+   enabling fusion into a single Metal kernel. No mutable state, no handler."
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
-            [genmlx.vectorized :as vec]))
+            [genmlx.vectorized :as vec]
+            [genmlx.dist :as dist]
+            [genmlx.dist.core :as dc]))
 
 ;; ---------------------------------------------------------------------------
 ;; Core: compiled unfold step loop
@@ -358,3 +363,424 @@
                           (mx/sum (mx/log o-std)))    ;; this is scalar, broadcasts
                         (mx/scalar (* 0.5 obs-dim (js/Math.log (* 2 js/Math.PI)))))]
       [new-states log-weights])))
+
+;; ===========================================================================
+;; Level 1-M2: Compiled Gen Functions for Static Models
+;; ===========================================================================
+;;
+;; Architecture: schema → noise-transform pure function → mx/compile-fn
+;;
+;;   Schema (from gen macro)
+;;     │ trace-sites, dist-types, dist-args, dep-order
+;;     ▼
+;;   make-compiled-simulate
+;;     │ builds pure fn using noise transforms (not multimethod dispatch)
+;;     │ wraps in mx/compile-fn → single Metal kernel
+;;     ▼
+;;   DynamicGF.simulate (in dynamic.cljs)
+;;     │ dispatches: compiled path or handler fallback
+;;     │ builds Trace + ChoiceMap from compiled result
+;;     ▼
+;;   Trace (shared data type)
+
+;; ---------------------------------------------------------------------------
+;; Function resolution: source-form symbols → actual functions
+;; ---------------------------------------------------------------------------
+
+(def ^:private mx-fns
+  "MLX function name → actual function."
+  {"add" mx/add "subtract" mx/subtract "multiply" mx/multiply
+   "divide" mx/divide "negative" mx/negative "scalar" mx/scalar
+   "log" mx/log "exp" mx/exp "sqrt" mx/sqrt "abs" mx/abs
+   "power" mx/power "square" mx/square "sum" mx/sum "mean" mx/mean
+   "maximum" mx/maximum "minimum" mx/minimum "where" mx/where
+   "sigmoid" mx/sigmoid "tanh" mx/tanh "sin" mx/sin "cos" mx/cos
+   "reshape" mx/reshape "matmul" mx/matmul "logaddexp" mx/logaddexp
+   "log1p" mx/log1p "expm1" mx/expm1 "reciprocal" mx/reciprocal
+   "floor" mx/floor "ceil" mx/ceil "clip" mx/clip
+   "softmax" mx/softmax "ensure-array" mx/ensure-array
+   "array" mx/array "zeros" mx/zeros "ones" mx/ones
+   "stack" mx/stack "concatenate" mx/concatenate
+   "transpose" mx/transpose "inner" mx/inner "outer" mx/outer
+   "sign" mx/sign "tan" mx/tan "less-equal" mx/less-equal
+   "less" mx/less "equal" mx/equal "lgamma" mx/lgamma})
+
+(def ^:private cljs-fns
+  "ClojureScript core math → MLX equivalents."
+  {"+" mx/add "-" mx/subtract "*" mx/multiply "/" mx/divide})
+
+(defn- resolve-fn
+  "Resolve a namespace-qualified symbol to an actual function.
+   Handles mx/ alias, genmlx.mlx/ full, and unqualified ClojureScript ops."
+  [sym]
+  (let [ns-part (namespace sym)
+        n (name sym)]
+    (cond
+      (or (= ns-part "mx") (= ns-part "genmlx.mlx")) (get mx-fns n)
+      (nil? ns-part) (get cljs-fns n)
+      :else nil)))
+
+;; ---------------------------------------------------------------------------
+;; Binding environment: walk source → symbol resolution map
+;; ---------------------------------------------------------------------------
+
+(defn- trace-call?
+  "Is form a (trace :addr ...) call?"
+  [form]
+  (and (seq? form) (seq form)
+       (symbol? (first form))
+       (= "trace" (name (first form)))
+       (keyword? (second form))))
+
+(declare walk-binding-forms)
+
+(defn- walk-binding-form
+  "Walk a single form, collecting let/do bindings into env."
+  [env form]
+  (cond
+    ;; let form: process bindings sequentially, then walk body
+    (and (seq? form) (seq form) (symbol? (first form))
+         (= "let" (name (first form)))
+         (vector? (second form)))
+    (let [pairs (partition 2 (second form))
+          env' (reduce
+                 (fn [env [sym val-form]]
+                   (if (symbol? sym)
+                     (assoc env (name sym)
+                            (if (trace-call? val-form)
+                              {:kind :trace :addr (second val-form)}
+                              {:kind :expr :form val-form}))
+                     env))
+                 env pairs)]
+      (walk-binding-forms env' (drop 2 form)))
+
+    ;; do form
+    (and (seq? form) (seq form) (symbol? (first form))
+         (= "do" (name (first form))))
+    (walk-binding-forms env (rest form))
+
+    ;; Other sequences: walk children for nested lets
+    (seq? form) (walk-binding-forms env form)
+    (vector? form) (walk-binding-forms env form)
+    :else env))
+
+(defn- walk-binding-forms [env forms]
+  (reduce walk-binding-form env forms))
+
+(defn build-binding-env
+  "Walk gen source form, build symbol → resolution map.
+   source: (params-vec body-forms...)
+   Returns: {name-string → {:kind :param/:trace/:expr ...}}"
+  [source]
+  (let [params (first source)
+        param-env (into {} (map-indexed
+                             (fn [i p] [(name p) {:kind :param :index i}])
+                             params))]
+    (walk-binding-forms param-env (rest source))))
+
+;; ---------------------------------------------------------------------------
+;; Expression compiler: source form → pure closure
+;; ---------------------------------------------------------------------------
+
+(defn compile-expr
+  "Compile a source form into (fn [values-map args-vec] -> value).
+   Returns nil if the form contains unsupported constructs.
+   binding-env: {name-string → {:kind :param/:trace/:expr ...}}
+   visited: set of symbol names for cycle detection on :expr bindings."
+  [form binding-env visited]
+  (cond
+    (number? form)  (fn [_v _a] form)
+    (boolean? form) (fn [_v _a] form)
+    (keyword? form) (fn [_v _a] form)
+    (string? form)  (fn [_v _a] form)
+    (nil? form)     (fn [_v _a] nil)
+
+    ;; Symbol → resolve through binding env
+    (symbol? form)
+    (let [info (get binding-env (name form))]
+      (case (:kind info)
+        :param (let [i (:index info)] (fn [_v a] (nth a i)))
+        :trace (let [addr (:addr info)] (fn [v _a] (get v addr)))
+        :expr  (when-not (contains? visited (name form))
+                 (compile-expr (:form info) binding-env
+                               (conj visited (name form))))
+        nil))
+
+    ;; Function call (or trace reference in return position)
+    (and (seq? form) (seq form) (symbol? (first form)))
+    (let [head-name (name (first form))]
+      (cond
+        ;; (trace :addr ...) → look up the sampled value
+        (and (= head-name "trace") (keyword? (second form)))
+        (let [addr (second form)]
+          (fn [v _a] (get v addr)))
+
+        ;; Regular function call
+        :else
+        (let [f (resolve-fn (first form))
+              cargs (mapv #(compile-expr % binding-env visited) (rest form))]
+          (when (and f (every? some? cargs))
+            (case (count cargs)
+              0 (fn [_v _a] (f))
+              1 (let [c0 (nth cargs 0)]
+                  (fn [v a] (f (c0 v a))))
+              2 (let [c0 (nth cargs 0) c1 (nth cargs 1)]
+                  (fn [v a] (f (c0 v a) (c1 v a))))
+              3 (let [c0 (nth cargs 0) c1 (nth cargs 1) c2 (nth cargs 2)]
+                  (fn [v a] (f (c0 v a) (c1 v a) (c2 v a))))
+              (fn [v a] (apply f (mapv #(% v a) cargs))))))))
+
+    ;; Vector literal
+    (vector? form)
+    (let [celems (mapv #(compile-expr % binding-env visited) form)]
+      (when (every? some? celems)
+        (fn [v a] (mapv #(% v a) celems))))
+
+    :else nil))
+
+;; ---------------------------------------------------------------------------
+;; Noise transform registry
+;; ---------------------------------------------------------------------------
+;; Each distribution that can be compiled defines:
+;;   :noise-fn   — (fn [key] -> noise-array) base random draw
+;;   :transform  — (fn [noise arg1 arg2 ...] -> sample) pure MLX ops
+;;   :log-prob   — (fn [value arg1 arg2 ...] -> scalar) pure MLX ops
+;;
+;; Distributions NOT in this map fall back to dc/dist-sample (no compilation).
+
+(def ^:private LOG-2PI-HALF (mx/scalar (* 0.5 (js/Math.log (* 2.0 js/Math.PI)))))
+(def ^:private HALF (mx/scalar 0.5))
+(def ^:private ONE (mx/scalar 1.0))
+(def ^:private ZERO (mx/scalar 0.0))
+(def ^:private NEG-INF (mx/scalar ##-Inf))
+(def ^:private LOG-2 (mx/scalar (js/Math.log 2.0)))
+(def ^:private LOG-PI (mx/scalar (js/Math.log js/Math.PI)))
+(def ^:private MLX-PI (mx/scalar js/Math.PI))
+
+(def ^:private noise-transforms
+  {:gaussian
+   {:noise-fn  (fn [key] (rng/normal key []))
+    :transform (fn [noise mu sigma] (mx/add mu (mx/multiply sigma noise)))
+    :log-prob  (fn [v mu sigma]
+                 (let [z (mx/divide (mx/subtract v mu) sigma)]
+                   (mx/negative
+                     (mx/add LOG-2PI-HALF (mx/log sigma)
+                             (mx/multiply HALF (mx/square z))))))}
+
+   :uniform
+   {:noise-fn  (fn [key] (rng/uniform key []))
+    :transform (fn [noise lo hi]
+                 (mx/add lo (mx/multiply (mx/subtract hi lo) noise)))
+    :log-prob  (fn [v lo hi]
+                 (mx/where (mx/multiply (mx/less-equal lo v)
+                                        (mx/less-equal v hi))
+                           (mx/negative (mx/log (mx/subtract hi lo)))
+                           NEG-INF))}
+
+   :bernoulli
+   {:noise-fn  (fn [key] (rng/uniform key []))
+    :transform (fn [noise p]
+                 (mx/where (mx/less noise p) ONE ZERO))
+    :log-prob  (fn [v p]
+                 (mx/add (mx/multiply v (mx/log p))
+                         (mx/multiply (mx/subtract ONE v)
+                                      (mx/log (mx/subtract ONE p)))))}
+
+   :exponential
+   {:noise-fn  (fn [key] (rng/uniform key []))
+    :transform (fn [noise rate]
+                 (mx/divide (mx/negative (mx/log (mx/subtract ONE noise)))
+                            rate))
+    :log-prob  (fn [v rate]
+                 (mx/subtract (mx/log rate) (mx/multiply rate v)))}
+
+   :log-normal
+   {:noise-fn  (fn [key] (rng/normal key []))
+    :transform (fn [noise mu sigma]
+                 (mx/exp (mx/add mu (mx/multiply sigma noise))))
+    :log-prob  (fn [v mu sigma]
+                 (let [log-v (mx/log v)
+                       z (mx/divide (mx/subtract log-v mu) sigma)]
+                   (mx/negative
+                     (mx/add LOG-2PI-HALF (mx/log sigma) log-v
+                             (mx/multiply HALF (mx/square z))))))}
+
+   :delta
+   {:noise-fn  nil  ;; no randomness
+    :transform nil  ;; value = first dist-arg
+    :log-prob  (fn [v param]
+                 (mx/where (mx/equal v param) ZERO NEG-INF))}
+
+   :laplace
+   {:noise-fn  (fn [key] (rng/uniform key []))
+    :transform (fn [noise loc scale]
+                 (let [u (mx/subtract noise HALF)]
+                   (mx/subtract loc
+                     (mx/multiply scale
+                       (mx/multiply (mx/sign u)
+                         (mx/log1p (mx/negative (mx/abs u))))))))
+    :log-prob  (fn [v loc scale]
+                 (mx/subtract
+                   (mx/negative (mx/divide (mx/abs (mx/subtract v loc)) scale))
+                   (mx/add LOG-2 (mx/log scale))))}
+
+   :cauchy
+   {:noise-fn  (fn [key] (rng/uniform key []))
+    :transform (fn [noise loc scale]
+                 (let [z (mx/subtract noise HALF)]
+                   (mx/add loc
+                     (mx/multiply scale (mx/tan (mx/multiply MLX-PI z))))))
+    :log-prob  (fn [v loc scale]
+                 (let [z (mx/divide (mx/subtract v loc) scale)]
+                   (mx/negative
+                     (mx/add LOG-PI (mx/log scale)
+                             (mx/log (mx/add ONE (mx/square z)))))))}})
+
+;; Aliases
+(def ^:private noise-transforms-full
+  (assoc noise-transforms
+    :normal (:gaussian noise-transforms)
+    :flip   (:bernoulli noise-transforms)))
+
+;; ---------------------------------------------------------------------------
+;; Return form extraction
+;; ---------------------------------------------------------------------------
+
+(defn- extract-return-expr
+  "Peel through let/do wrappers to find the leaf return expression."
+  [form]
+  (cond
+    (and (seq? form) (seq form) (symbol? (first form))
+         (= "let" (name (first form))))
+    (extract-return-expr (last (drop 2 form)))
+
+    (and (seq? form) (seq form) (symbol? (first form))
+         (= "do" (name (first form))))
+    (extract-return-expr (last (rest form)))
+
+    :else form))
+
+;; ---------------------------------------------------------------------------
+;; Compiled simulate: schema → noise-transform pure function → mx/compile-fn
+;; ---------------------------------------------------------------------------
+
+(defn- build-site-step
+  "Build the reduce step function for one trace site using noise transforms.
+   Returns (fn [{:keys [values score key]} values-map args-vec] -> state)
+   or nil if the site can't use noise transforms."
+  [site-spec]
+  (let [{:keys [addr compiled-args dist-type]} site-spec
+        nt (get noise-transforms-full dist-type)]
+    (when nt
+      (if (:noise-fn nt)
+        ;; Standard distribution: generate noise, transform, score
+        (let [noise-fn (:noise-fn nt)
+              transform-fn (:transform nt)
+              log-prob-fn (:log-prob nt)]
+          (fn [{:keys [values score key]} args-vec]
+            (let [eval-args (mapv #(% values args-vec) compiled-args)
+                  [k1 k2] (rng/split key)
+                  noise (noise-fn k2)
+                  value (apply transform-fn noise eval-args)
+                  lp (apply log-prob-fn value eval-args)]
+              {:values (assoc values addr value)
+               :score (mx/add score lp)
+               :key k1})))
+        ;; Delta: no noise, value = first arg, lp = 0 (in simulate, value always matches)
+        ;; Still consume a key split for PRNG equivalence with handler
+        (fn [{:keys [values score key]} args-vec]
+          (let [eval-args (mapv #(% values args-vec) compiled-args)
+                [k1 _k2] (rng/split key)
+                value (first eval-args)]
+            {:values (assoc values addr value)
+             :score score  ;; delta log-prob is 0 in simulate
+             :key k1}))))))
+
+(defn make-compiled-simulate
+  "Build a compiled simulate function from a gen schema and source.
+
+   Returns (fn [key args-vec] -> {:values {addr->val} :score :retval :key})
+   or nil if the model can't be compiled.
+
+   Uses noise transforms for inline sampling/scoring (bypasses multimethod
+   dispatch). Wraps in mx/compile-fn for single Metal kernel dispatch.
+
+   Compilation fails (returns nil) when:
+   - Schema is not static (dynamic addresses, branches, loops)
+   - Model has splice sites or param sites
+   - Any dist-arg expression uses unsupported constructs
+   - A distribution type has no known noise transform"
+  [schema source]
+  (when (and (:static? schema)
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [binding-env (build-binding-env source)
+          static-sites (filterv :static? (:trace-sites schema))
+          ;; Build compiled arg evaluators and check noise transform support
+          site-specs
+          (mapv (fn [ts]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args ts))]
+                    (when (every? some? cargs)
+                      {:addr (:addr ts)
+                       :compiled-args cargs
+                       :dist-type (:dist-type ts)})))
+                static-sites)
+          ;; Build step functions for each site
+          step-fns (when (every? some? site-specs)
+                     (mapv build-site-step site-specs))
+          ;; Compile return form
+          return-expr (extract-return-expr (:return-form schema))
+          retval-fn (compile-expr return-expr binding-env #{})
+          ;; Address ordering for result unpacking
+          addrs (mapv :addr static-sites)
+          n-sites (count static-sites)]
+      ;; All sites must have noise transforms, and return expr must compile
+      (when (and step-fns (every? some? step-fns) retval-fn)
+        ;; Build the inner pure function (all MLX ops, no multimethod dispatch)
+        (let [inner-fn
+              (fn [key args-vec]
+                (let [result
+                      (reduce
+                        (fn [state step-fn]
+                          (step-fn state args-vec))
+                        {:values {} :score (mx/scalar 0.0) :key key}
+                        step-fns)
+                      vals (mapv #(get (:values result) %) addrs)]
+                  ;; Return flat JS array: [v0 v1 ... vN score]
+                  (to-array (conj vals (:score result)))))
+              ;; Build arity-specific wrapper for mx/compile-fn
+              n-params (count (first source))
+              compiled-inner
+              (case n-params
+                0 (let [f (fn [key] (inner-fn key []))
+                        cf (mx/compile-fn f)]
+                    (fn [key _args] (cf key)))
+                1 (let [f (fn [key a0] (inner-fn key [a0]))
+                        cf (mx/compile-fn f)]
+                    (fn [key args] (cf key (nth args 0))))
+                2 (let [f (fn [key a0 a1] (inner-fn key [a0 a1]))
+                        cf (mx/compile-fn f)]
+                    (fn [key args] (cf key (nth args 0) (nth args 1))))
+                3 (let [f (fn [key a0 a1 a2] (inner-fn key [a0 a1 a2]))
+                        cf (mx/compile-fn f)]
+                    (fn [key args] (cf key (nth args 0) (nth args 1) (nth args 2))))
+                ;; >3 params: no mx/compile-fn, use raw noise transforms
+                (fn [key args] (inner-fn key args)))]
+          ;; Outer wrapper: GenMLX interface
+          (fn compiled-simulate [key args-vec]
+            (let [mlx-args (mapv mx/ensure-array args-vec)
+                  result (compiled-inner key mlx-args)
+                  ;; Unpack flat JS array → values map
+                  values (loop [i 0 m {}]
+                           (if (= i n-sites)
+                             m
+                             (recur (inc i)
+                                    (assoc m (nth addrs i) (aget result i)))))
+                  score (aget result n-sites)]
+              {:values values
+               :score score
+               :retval (when retval-fn
+                         (retval-fn values args-vec))})))))))
+
