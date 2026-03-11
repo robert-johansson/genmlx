@@ -32,10 +32,10 @@ lazy graph. Each level subsumes the previous.
 
 ```
 Level 0 (done):   Model body is one graph, inference loop is host-driven
-Level 1 (next):   Compiled gen fn — model compiles to single Metal dispatch
-Level 2:          Compiled inference — full SMC/MCMC sweep is one graph
-Level 3:          Auto-analytical — macro detects structure, eliminates sampling
-Level 4:          Everything is one graph — model + inference + optimization
+Level 1 (done):   Compiled gen fn — model compiles to single Metal dispatch
+Level 2 (done):   Compiled inference — full SMC/MCMC sweep is one graph
+Level 3 (done):   Auto-analytical — macro detects structure, eliminates sampling
+Level 4 (next):   Everything is one graph — model + inference + optimization
 ```
 
 ---
@@ -220,7 +220,7 @@ compilation, because XLA still materializes between traced functions.
 
 ---
 
-## Level 3: Automatic Analytical Elimination
+## Level 3: Automatic Analytical Elimination (DONE)
 
 **What it is:** The `gen` macro analyzes model structure and automatically
 applies analytical middleware — eliminating sampling entirely for substructure
@@ -230,37 +230,26 @@ that has closed-form solutions. The system infers more and samples less.
 Everything with a closed form has been algebraically eliminated. The graph
 is smaller, the variance is lower, the inference is faster.
 
-### The middleware is already built
+**Status:** Complete. 426 tests across 6 new files, 7 investigation gates passed.
 
-GenMLX already has composable analytical middleware:
-- Kalman filter (linear-Gaussian latent dynamics)
-- EKF (nonlinear latent dynamics via linearization)
-- HMM forward algorithm (discrete latent states)
-- Conjugate prior updates (Normal-Normal, Beta-Binomial, Gamma-Poisson)
+### How it works
 
-These are manually composed today:
-```clojure
-(compose-middleware h/generate-transition
-  kalman-dispatch hmm-dispatch conjugate-dispatch)
-```
+The user writes standard `gen` functions with standard distributions. At
+construction time, the system automatically:
 
-The missing piece is **automatic detection and wiring**.
-
-### Milestones
-
-**L3-M1: Conjugacy detection in gen macro.**
-At macro-expansion time, scan trace site pairs. When a site's distribution
-parameters include another site's value, check if the pair forms a known
-conjugate family (Gaussian-Gaussian, Beta-Bernoulli, Gamma-Poisson, etc.).
-Emit metadata tagging conjugate pairs.
-
-**L3-M2: Auto-wiring conjugate middleware.**
-Use the conjugacy metadata from L3-M1 to automatically construct the
-`compose-middleware` call. The user writes a normal `gen` function; the
-system detects conjugacy and applies analytical inference without annotation.
+1. **Detects conjugate pairs** — scans trace site dependencies to find
+   known conjugate families (Normal-Normal, Beta-Bernoulli, Gamma-Poisson,
+   Gamma-Exponential, Dirichlet-Categorical)
+2. **Classifies dependency types** — determines if the link between prior
+   and likelihood is `:direct`, `:affine`, or `:nonlinear`
+3. **Builds analytical handlers** — address-based dispatch that intercepts
+   `p/generate` at conjugate sites, computing exact marginal likelihoods
+   instead of sampling
+4. **Wires handlers automatically** — no annotations, no manual middleware
+   composition. The `gen` macro does everything.
 
 ```clojure
-;; User writes:
+;; User writes exactly this — no annotations:
 (def model
   (gen [x]
     (let [mu    (trace :mu (dist/gaussian 0 10))
@@ -268,47 +257,79 @@ system detects conjugacy and applies analytical inference without annotation.
       (trace :y (dist/gaussian mu 1)))))
 
 ;; System detects: :mu → :y is Normal-Normal conjugate
-;; Auto-generates middleware that analytically marginalizes :mu
+;; p/generate analytically marginalizes :mu
 ;; Only :sigma needs sampling
+;; Weight = exact marginal log-likelihood (zero variance)
 ```
 
-**L3-M3: Linear-Gaussian substructure detection.**
-Analyze the operations between latent and observed trace sites. If the
-computation graph consists only of affine operations (add, multiply, subtract
-with constants), the substructure is linear-Gaussian. Auto-apply Kalman
-middleware. This subsumes conjugacy detection for the Gaussian case and
-extends to temporal models.
+### Architecture
 
-**L3-M4: Dependency graph for conditional independence.**
-Build a full dependency graph from the gen body at macro time. Identify
-conditionally independent subgraphs. These can be:
-- Compiled independently (separate Metal dispatches that run in parallel)
-- Updated independently in MCMC (parallel Gibbs blocks)
-- Eliminated independently (each subgraph checked for analytical solutions)
+**Address-based dispatch, not distribution-type dispatch.** L3 intercepts
+standard distributions (`dist/gaussian`, `dist/beta-dist`, etc.) at specific
+trace addresses detected as conjugate pairs. This means existing model code
+works unchanged — no special distribution types needed.
 
-**L3-M5: Algebraic graph rewriting.**
-Handlers operate on the MLX computation graph, not just values. A handler
-that sees a conjugate pair can replace two stochastic nodes with one
-deterministic posterior computation and a marginal likelihood term. This is
-Rao-Blackwellization as graph rewriting — applied automatically by the
-middleware stack.
+**Score accounting:**
+- Prior sites (marginalized): no score/weight contribution
+- Observation sites (constrained): marginal LL added to both `:score` and `:weight`
+- Observation sites (unconstrained): fallthrough to standard handler
 
-### The rewrite engine vision
+**Fallthrough design:** Non-conjugate sites, unconstrained observations, and
+dynamic models all fall through to the standard L2/L1/L0 handler paths.
+A model that is 70% conjugate gets 70% eliminated and 30% sampled.
 
-The middleware stack becomes a rewrite engine that progressively simplifies
-the model's computation graph:
+### Completed work
 
-```
-Layer 1: Conjugacy elimination    → merge conjugate pairs into closed form
-Layer 2: Linear-Gaussian collapse → Kalman where applicable
-Layer 3: Discrete elimination     → HMM forward where applicable
-Layer 4: Independence detection   → parallelize independent subgraphs
-Layer 5: Everything else          → sample normally (compiled from Level 1)
-```
+| Component | File | Lines |
+|-----------|------|-------|
+| Conjugacy detection (5 families) | `conjugacy.cljs` | 165 |
+| Affine expression analysis | `affine.cljs` | 379 |
+| Dependency graph + d-separation | `dep_graph.cljs` | 262 |
+| Graph rewriting engine (3 rule types) | `rewrite.cljs` | 225 |
+| Address-based analytical handlers | `inference/auto_analytical.cljs` | 393 |
+| Auto-wiring in DynamicGF | `dynamic.cljs` | +133 |
 
-Each layer reduces the graph. What emerges is the **minimal stochastic
-computation** — the irreducible core that must be sampled because no
-analytical solution exists. Inference runs only on this residual.
+**Rewrite rules** (applied in priority order):
+1. **KalmanRule** — collapse linear-Gaussian chains via Kalman filter
+2. **ConjugacyRule** — eliminate conjugate prior via marginalization
+3. **RaoBlackwellRule** — sample from posterior mean (variance reduction)
+
+### Benchmark results
+
+Evaluation benchmark (`l3_evaluation_benchmark.cljs`) comparing L3 analytical
+elimination against L2 standard prior-proposal IS:
+
+**Observation scaling** (Normal-Normal, prior std=10):
+
+| Obs | L3 log-ML | L2 IS (200 particles) | L2 ESS | ESS/N |
+|-----|-----------|----------------------|--------|-------|
+| 5 | -7.708 (exact) | -7.93 +/- 0.40 | 11.4 | 5.7% |
+| 10 | -12.649 (exact) | -12.92 +/- 0.41 | 7.8 | 3.9% |
+| 20 | -22.184 (exact) | -22.50 +/- 0.41 | 5.2 | 2.6% |
+| 50 | -50.211 (exact) | -50.54 +/- 0.42 | 3.1 | 1.6% |
+
+L3 is exact at every scale. L2 ESS degrades as observations increase.
+
+**Multi-group Rao-Blackwellization** (3 NN groups + 2 non-conjugate params,
+200 particles x 15 trials):
+
+| | L3 (3/5 dims eliminated) | L2 (all 5 dims sampled) |
+|---|---|---|
+| log-ML std | **0.44** | 14.73 |
+| ESS | **7.7** / 200 | 1.1 / 200 |
+
+**33.5x lower variance**, **7.2x higher ESS**. L2 is essentially collapsed
+(ESS=1.1); L3 still functions by eliminating the conjugate substructure.
+
+### What Level 3 can't do
+
+- **MCMC:** Auto-handlers intercept `p/generate` and `p/assess` only, not
+  `p/regenerate`. MCMC methods using regenerate don't directly benefit.
+- **Combinators:** No combinator-aware conjugacy detection (deferred to L3.5).
+- **Multivariate:** Only 1D conjugacy currently; matrix-valued priors need
+  matrix infrastructure.
+- **Non-static models:** Dynamic addresses (loops, data-dependent branching)
+  prevent conjugacy detection.
 
 ---
 
@@ -455,22 +476,51 @@ infrastructure needed — the stack is the compiler.
 
 ## Status
 
-### Completed
+### Level 0: COMPLETE
 
-- Level 0: Full shape-based GPU batching, all combinators, all inference algorithms
+- Full shape-based GPU batching, all combinators, all inference algorithms
 - Analytical middleware: Kalman, EKF (1D + ND), HMM forward, conjugate priors
 - Compiled combinators: unfold, particle filter
 - Differentiable inference, Fisher information, PMCMC
 - Formal verification: 10 GFI contracts, Lean mechanization (Phase A)
 
-### In progress
+### Level 1: COMPLETE
 
-- Depression modeling (D/E models) — testbed for middleware composition
-- Formal verification Phase B — kernel and inference correctness proofs
+- L1-M1: Schema extraction from gen bodies (174/174 tests)
+- L1-M2: Compiled simulate/generate for static models (82/82 tests)
+- L1-M3: Partial compilation for dynamic models (92/92 tests)
+- L1-M4: Automatic branch rewriting via mx/where
+- L1-M5: Combinator-aware compilation — unfold, scan, map, switch, mix (90/90 tests)
+- Performance: 3-5x simulate speedup, compiled gen fns as single Metal dispatch
+
+### Level 2: COMPLETE
+
+- L2-M1: Pre-generated randomness for SMC and MCMC sweeps
+- L2-M2: Compiled SMC — bootstrap particle filter, 77.5x speedup over handler
+- L2-M3: Differentiable resampling — Gumbel-top-k (hard) + Gumbel-softmax (differentiable)
+- L2-M4: Compiled MCMC chains with tensor-native score, 15.6x speedup
+- L2-M5: Gradient through full inference — MH chains and SMC sweeps, sublinear memory
+- New infrastructure: TensorTrace, TensorChoiceMap, tensor-native score function
+- Bonus: fixed pre-existing PRNG seed bug affecting all multi-particle inference
+- 881+ tests green across L0/L1/L2, all 6 investigation gates passed
+
+Note: L2-M2 materializes at step boundaries for resampling (host-side systematic
+resampling breaks the graph). With Gumbel-softmax resampling, larger chunks can
+stay lazy, but true single-mx/eval! SMC sweep is not yet achieved.
+
+### Level 3: COMPLETE
+
+- WP-0: Conjugacy detection — 5 families (NN, BB, GP, GE, DC), dependency classification
+- WP-1: Address-based analytical handlers — reuses conjugate.cljs math, address dispatch
+- WP-2: Auto-wiring in DynamicGF — zero-annotation conjugate elimination in p/generate
+- WP-3: Affine expression analysis + auto-Kalman — linear-Gaussian chain detection
+- WP-4: Dependency graph + conditional independence — d-separation, Markov blankets
+- WP-5: Algebraic graph rewriting — 3 rule types (Kalman, Conjugacy, RaoBlackwell)
+- Memory fix: auto-sweep dead arrays in p/simulate and p/generate (prevents Metal exhaustion)
+- 426 tests across 6 test files, 7 investigation gates passed
+- Benchmark: 33.5x variance reduction, 7.2x ESS improvement on multi-group mixed models
 
 ### Next
 
-- Level 1: Macro-time program analysis and compiled gen functions
-- Level 2: Compiled inference sweeps with differentiable resampling
-- Level 3: Automatic conjugacy detection and middleware wiring
 - Level 4: End-to-end differentiable probabilistic programming
+- L3.5: Combinator-aware conjugacy, multivariate priors, MCMC integration
