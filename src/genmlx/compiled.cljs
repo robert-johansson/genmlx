@@ -1028,6 +1028,25 @@
       ;; Dynamic site: standard simulate
       (h/simulate-transition state addr dist))))
 
+(defn make-replay-generate-transition
+  "Build a replay transition for partial generate compilation.
+   At prefix sites: replay pre-computed value, advance key correctly.
+     - Unconstrained prefix: split key (matches simulate-transition)
+     - Constrained prefix: no key split (matches generate-transition)
+     - Score/weight NOT modified (already counted in prefix result)
+   At other sites: delegate to h/generate-transition."
+  [compiled-values]
+  (fn [state addr dist]
+    (if (contains? compiled-values addr)
+      ;; Replay prefix site: set value, advance key per constraint status
+      (let [value (get compiled-values addr)
+            constrained? (cm/has-value? (cm/get-submap (:constraints state) addr))]
+        [value (cond-> (update state :choices cm/set-value addr value)
+                 (not constrained?) (#(let [[k1 _k2] (rng/split (:key %))]
+                                        (assoc % :key k1))))])
+      ;; Dynamic site: standard generate
+      (h/generate-transition state addr dist))))
+
 ;; ===========================================================================
 ;; Level 1-M4: Automatic Branch Rewriting
 ;; ===========================================================================
@@ -1168,8 +1187,75 @@
   (walk-rewrite-forms (rest source) []))
 
 ;; ---------------------------------------------------------------------------
-;; Compiled simulate for branch-rewritten models
+;; Compiled branch-rewritten models: shared pipeline + simulate/generate
 ;; ---------------------------------------------------------------------------
+
+(defn- compile-branch-rewritten-site-specs
+  "Shared pipeline for branch-rewritten models (L1-M4).
+   Builds binding env, compiles site args (standard or mx/where-wrapped),
+   and compiles return expression.
+   Returns {:site-specs [...] :retval-fn fn :addrs [...]} or nil."
+  [schema source raw-sites]
+  (let [base-env (build-binding-env source)
+        binding-env
+        (reduce-kv
+          (fn [env k v]
+            (if (= (:kind v) :expr)
+              (if-let [branch (analyze-rewritable-branch (:form v))]
+                (assoc env k {:kind :trace :addr (:addr branch)})
+                env)
+              env))
+          base-env base-env)
+        ;; Compile each site's args (standard or where-wrapped)
+        site-specs
+        (mapv
+          (fn [site]
+            (if (:cond-form site)
+              ;; Rewritten branch: wrap dist args in mx/where.
+              ;; Safety: condition must be a JS value (parameter or literal),
+              ;; not an MLX array. MLX arrays are always truthy in CLJS's if,
+              ;; so mx/where would disagree with the handler path.
+              (let [cf (:cond-form site)
+                    safe-cond? (or (boolean? cf) (number? cf)
+                                  (and (symbol? cf)
+                                       (= :param (:kind (get binding-env (name cf))))))]
+                (when safe-cond?
+                  (let [cond-fn (compile-expr cf binding-env #{})
+                        true-fns (mapv #(compile-expr % binding-env #{}) (:true-dist-args site))
+                        false-fns (mapv #(compile-expr % binding-env #{}) (:false-dist-args site))
+                        flipped? (:flipped? site)]
+                    (when (and cond-fn (every? some? true-fns) (every? some? false-fns))
+                      (let [[sel-t sel-f] (if flipped? [false-fns true-fns] [true-fns false-fns])
+                            compiled-args
+                            (mapv (fn [tf ff]
+                                    (fn [values args-vec]
+                                      (mx/where (mx/ensure-array (cond-fn values args-vec))
+                                                (mx/ensure-array (tf values args-vec))
+                                                (mx/ensure-array (ff values args-vec)))))
+                                  sel-t sel-f)]
+                        {:addr (:addr site)
+                         :compiled-args compiled-args
+                         :dist-type (:dist-type site)})))))
+              ;; Standard site
+              (let [cargs (mapv #(compile-expr % binding-env #{}) (:dist-args site))]
+                (when (every? some? cargs)
+                  {:addr (:addr site)
+                   :compiled-args cargs
+                   :dist-type (:dist-type site)}))))
+          raw-sites)]
+    (when (every? some? site-specs)
+      (let [return-expr (extract-return-expr (:return-form schema))
+            retval-fn
+            (or
+              (when (and (seq? return-expr) (seq return-expr)
+                         (symbol? (first return-expr)))
+                (when-let [branch (analyze-rewritable-branch return-expr)]
+                  (let [addr (:addr branch)]
+                    (fn [v _a] (get v addr)))))
+              (compile-expr return-expr binding-env #{}))]
+        {:site-specs site-specs
+         :retval-fn retval-fn
+         :addrs (mapv :addr site-specs)}))))
 
 (defn make-branch-rewritten-simulate
   "Build a compiled simulate for models with rewritable branches (L1-M4).
@@ -1189,97 +1275,245 @@
              (not (:dynamic-addresses? schema)))
     (when-let [raw-sites (extract-rewritable-sites source)]
       (when (seq raw-sites)
-        (let [;; Build binding env with branch-aware let bindings
-              base-env (build-binding-env source)
-              binding-env
-              (reduce-kv
-                (fn [env k v]
-                  (if (= (:kind v) :expr)
-                    (if-let [branch (analyze-rewritable-branch (:form v))]
-                      (assoc env k {:kind :trace :addr (:addr branch)})
-                      env)
-                    env))
-                base-env base-env)
+        (when-let [{:keys [site-specs retval-fn addrs]}
+                   (compile-branch-rewritten-site-specs schema source raw-sites)]
+          (let [step-fns (mapv build-site-step site-specs)]
+            (when (every? some? step-fns)
+              (let [n-sites (count site-specs)
+                    inner-fn
+                    (fn [key args-vec]
+                      (let [result
+                            (reduce
+                              (fn [state step-fn]
+                                (step-fn state args-vec))
+                              {:values {} :score (mx/scalar 0.0) :key key}
+                              step-fns)
+                            vals (mapv #(get (:values result) %) addrs)]
+                        (to-array (conj vals (:score result)))))
+                    ;; Skip mx/compile-fn for M4 — mx/where args vary per call
+                    ;; and compile-fn traces with fixed values on first call.
+                    ;; Raw noise transforms still bypass multimethod dispatch.
+                    compiled-inner
+                    (fn [key args] (inner-fn key args))]
+                (fn compiled-branch-simulate [key args-vec]
+                  (let [mlx-args (mapv mx/ensure-array args-vec)
+                        result (compiled-inner key mlx-args)
+                        values (loop [i 0 m {}]
+                                 (if (= i n-sites)
+                                   m
+                                   (recur (inc i)
+                                          (assoc m (nth addrs i) (aget result i)))))
+                        score (aget result n-sites)]
+                    {:values values
+                     :score score
+                     :retval (when retval-fn
+                               (retval-fn values args-vec))}))))))))))
+;; ===========================================================================
+;; WP-1: Compiled Generate for Static Models
+;; ===========================================================================
+;;
+;; Architecture: same as compiled simulate, but with per-site constraint
+;; checking and weight accumulation. No mx/compile-fn (constraint checks
+;; are data-dependent branches). Raw noise transforms only.
 
-              ;; Compile each site's args (standard or where-wrapped)
-              site-specs
-              (mapv
-                (fn [site]
-                  (if (:cond-form site)
-                    ;; Rewritten branch: wrap dist args in mx/where.
-                    ;; Safety: condition must be a JS value (parameter or literal),
-                    ;; not an MLX array. MLX arrays are always truthy in CLJS's if,
-                    ;; so mx/where would disagree with the handler path.
-                    (let [cf (:cond-form site)
-                          safe-cond? (or (boolean? cf) (number? cf)
-                                        (and (symbol? cf)
-                                             (= :param (:kind (get binding-env (name cf))))))]
-                      (when safe-cond?
-                        (let [cond-fn (compile-expr cf binding-env #{})
-                              true-fns (mapv #(compile-expr % binding-env #{}) (:true-dist-args site))
-                              false-fns (mapv #(compile-expr % binding-env #{}) (:false-dist-args site))
-                              flipped? (:flipped? site)]
-                          (when (and cond-fn (every? some? true-fns) (every? some? false-fns))
-                            (let [[sel-t sel-f] (if flipped? [false-fns true-fns] [true-fns false-fns])
-                                  compiled-args
-                                  (mapv (fn [tf ff]
-                                          (fn [values args-vec]
-                                            (mx/where (mx/ensure-array (cond-fn values args-vec))
-                                                      (mx/ensure-array (tf values args-vec))
-                                                      (mx/ensure-array (ff values args-vec)))))
-                                        sel-t sel-f)]
-                              {:addr (:addr site)
-                               :compiled-args compiled-args
-                               :dist-type (:dist-type site)})))))
-                    ;; Standard site
-                    (let [cargs (mapv #(compile-expr % binding-env #{}) (:dist-args site))]
-                      (when (every? some? cargs)
-                        {:addr (:addr site)
-                         :compiled-args cargs
-                         :dist-type (:dist-type site)}))))
-                raw-sites)]
-          (when (every? some? site-specs)
-            (let [step-fns (mapv build-site-step site-specs)]
+(defn- build-generate-site-step
+  "Build the generate step for one trace site.
+   Returns (fn [state args-vec constraints] -> state) where state has
+   {:values :score :weight :key}.
+   Constrained: use constraint value, add log-prob to score AND weight.
+   Unconstrained: sample via noise transform, add log-prob to score only."
+  [site-spec]
+  (let [{:keys [addr compiled-args dist-type]} site-spec
+        nt (get noise-transforms-full dist-type)]
+    (when nt
+      (let [log-prob-fn (:log-prob nt)]
+        (if (:noise-fn nt)
+          ;; Standard distribution with noise transform
+          (let [noise-fn (:noise-fn nt)
+                transform-fn (:transform nt)]
+            (fn [{:keys [values score weight key] :as state} args-vec constraints]
+              (let [constraint (cm/get-submap constraints addr)]
+                (if (cm/has-value? constraint)
+                  ;; Constrained: use value, score + weight, no key split
+                  (let [value (cm/get-value constraint)
+                        eval-args (mapv #(% values args-vec) compiled-args)
+                        lp (apply log-prob-fn value eval-args)]
+                    {:values (assoc values addr value)
+                     :score (mx/add score lp)
+                     :weight (mx/add weight lp)
+                     :key key})
+                  ;; Unconstrained: sample via noise transform
+                  (let [eval-args (mapv #(% values args-vec) compiled-args)
+                        [k1 k2] (rng/split key)
+                        noise (noise-fn k2)
+                        value (apply transform-fn noise eval-args)
+                        lp (apply log-prob-fn value eval-args)]
+                    {:values (assoc values addr value)
+                     :score (mx/add score lp)
+                     :weight weight
+                     :key k1})))))
+          ;; Delta distribution: no noise transform
+          (fn [{:keys [values score weight key] :as state} args-vec constraints]
+            (let [constraint (cm/get-submap constraints addr)]
+              (if (cm/has-value? constraint)
+                ;; Constrained delta: log-prob is 0 if value matches, -inf otherwise
+                (let [value (cm/get-value constraint)
+                      eval-args (mapv #(% values args-vec) compiled-args)
+                      lp (apply log-prob-fn value eval-args)]
+                  {:values (assoc values addr value)
+                   :score (mx/add score lp)
+                   :weight (mx/add weight lp)
+                   :key key})
+                ;; Unconstrained delta: value = first arg, lp = 0
+                ;; Split key for PRNG equivalence with handler
+                (let [eval-args (mapv #(% values args-vec) compiled-args)
+                      [k1 _k2] (rng/split key)
+                      value (first eval-args)]
+                  {:values (assoc values addr value)
+                   :score score
+                   :weight weight
+                   :key k1})))))))))
+
+(defn make-compiled-generate
+  "Build a compiled generate function from a gen schema and source.
+
+   Returns (fn [key args-vec constraints] -> {:values :score :weight :retval})
+   or nil if the model can't be compiled.
+
+   Same gates as make-compiled-simulate. Uses noise transforms for sampling
+   and log-prob computation (bypasses multimethod dispatch).
+
+   No mx/compile-fn: constraint checks are data-dependent branches that
+   prevent graph tracing. Still faster than handler (no ChoiceMap construction
+   per site, no multimethod dispatch)."
+  [schema source]
+  (when (and (:static? schema)
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [binding-env (build-binding-env source)
+          static-sites (filterv :static? (:trace-sites schema))
+          site-specs
+          (mapv (fn [ts]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args ts))]
+                    (when (every? some? cargs)
+                      {:addr (:addr ts)
+                       :compiled-args cargs
+                       :dist-type (:dist-type ts)})))
+                static-sites)
+          step-fns (when (every? some? site-specs)
+                     (mapv build-generate-site-step site-specs))
+          return-expr (extract-return-expr (:return-form schema))
+          retval-fn (compile-expr return-expr binding-env #{})
+          addrs (mapv :addr static-sites)
+          n-sites (count static-sites)]
+      (when (and step-fns (every? some? step-fns) retval-fn)
+        (fn compiled-generate [key args-vec constraints]
+          (let [mlx-args (mapv mx/ensure-array args-vec)
+                result
+                (reduce
+                  (fn [state step-fn]
+                    (step-fn state mlx-args constraints))
+                  {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
+                  step-fns)]
+            {:values (:values result)
+             :score (:score result)
+             :weight (:weight result)
+             :retval (when retval-fn
+                       (retval-fn (:values result) mlx-args))}))))))
+
+(defn make-branch-rewritten-generate
+  "Build a compiled generate for models with rewritable branches (L1-M4).
+   Reuses compile-branch-rewritten-site-specs for the shared pipeline.
+   Uses build-generate-site-step for constraint-aware weight accumulation.
+   No mx/compile-fn (constraint checks are data-dependent).
+   Returns (fn [key args-vec constraints] -> {:values :score :weight :retval}) or nil."
+  [schema source]
+  (when (and (:has-branches? schema)
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema))
+             (not (:has-loops? schema))
+             (not (:dynamic-addresses? schema)))
+    (when-let [raw-sites (extract-rewritable-sites source)]
+      (when (seq raw-sites)
+        (when-let [{:keys [site-specs retval-fn addrs]}
+                   (compile-branch-rewritten-site-specs schema source raw-sites)]
+          (let [step-fns (mapv build-generate-site-step site-specs)]
+            (when (every? some? step-fns)
+              (fn compiled-branch-generate [key args-vec constraints]
+                (let [mlx-args (mapv mx/ensure-array args-vec)
+                      result
+                      (reduce
+                        (fn [state step-fn]
+                          (step-fn state mlx-args constraints))
+                        {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
+                        step-fns)]
+                  {:values (:values result)
+                   :score (:score result)
+                   :weight (:weight result)
+                   :retval (when retval-fn
+                             (retval-fn (:values result) mlx-args))})))))))))
+
+(defn make-compiled-prefix-generate
+  "Build a compiled prefix generate function from a gen schema and source.
+   Returns {:fn (fn [key args-vec constraints] -> {:values :score :weight})
+            :addrs [keyword...]}
+   or nil if partial compilation isn't applicable.
+   Same gates as make-compiled-prefix. Uses build-generate-site-step for
+   constraint-aware weight accumulation. No mx/compile-fn."
+  [schema source]
+  (when (and (not (:static? schema))
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [raw-prefix (extract-prefix-sites source)]
+      (when (seq raw-prefix)
+        (let [binding-env (build-binding-env source)
+              compiled-sites
+              (reduce
+                (fn [acc site]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args site))
+                        nt (get noise-transforms-full (:dist-type site))]
+                    (if (and nt (every? some? cargs))
+                      (conj acc (assoc site :compiled-args cargs))
+                      (reduced acc))))
+                []
+                raw-prefix)]
+          (when (seq compiled-sites)
+            (let [step-fns (mapv build-generate-site-step compiled-sites)
+                  addrs (mapv :addr compiled-sites)]
               (when (every? some? step-fns)
-                (let [;; Compile return form (handle if/if-not as return)
-                      return-expr (extract-return-expr (:return-form schema))
-                      retval-fn
-                      (or
-                        (when (and (seq? return-expr) (seq return-expr)
-                                   (symbol? (first return-expr)))
-                          (when-let [branch (analyze-rewritable-branch return-expr)]
-                            (let [addr (:addr branch)]
-                              (fn [v _a] (get v addr)))))
-                        (compile-expr return-expr binding-env #{}))
-                      addrs (mapv :addr site-specs)
-                      n-sites (count site-specs)
-                      inner-fn
-                      (fn [key args-vec]
-                        (let [result
-                              (reduce
-                                (fn [state step-fn]
-                                  (step-fn state args-vec))
-                                {:values {} :score (mx/scalar 0.0) :key key}
-                                step-fns)
-                              vals (mapv #(get (:values result) %) addrs)]
-                          (to-array (conj vals (:score result)))))
-                      n-params (count (first source))
-                      ;; Skip mx/compile-fn for M4 — mx/where args vary per call
-                      ;; and compile-fn traces with fixed values on first call.
-                      ;; Raw noise transforms still bypass multimethod dispatch.
-                      compiled-inner
-                      (fn [key args] (inner-fn key args))]
-                  (fn compiled-branch-simulate [key args-vec]
-                    (let [mlx-args (mapv mx/ensure-array args-vec)
-                          result (compiled-inner key mlx-args)
-                          values (loop [i 0 m {}]
-                                   (if (= i n-sites)
-                                     m
-                                     (recur (inc i)
-                                            (assoc m (nth addrs i) (aget result i)))))
-                          score (aget result n-sites)]
-                      {:values values
-                       :score score
-                       :retval (when retval-fn
-                                 (retval-fn values args-vec))})))))))))))
+                {:fn (fn compiled-prefix-generate [key args-vec constraints]
+                       (let [mlx-args (mapv (fn [a]
+                                              (cond (mx/array? a) a
+                                                    (number? a) (mx/scalar a)
+                                                    :else a))
+                                            args-vec)
+                             result
+                             (reduce
+                               (fn [state step-fn]
+                                 (step-fn state mlx-args constraints))
+                               {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
+                               step-fns)]
+                         {:values (:values result)
+                          :score (:score result)
+                          :weight (:weight result)}))
+                 :addrs addrs}))))))))
+
+(defn get-compiled-generate
+  "Returns the compiled-generate function for a gen-fn, or nil."
+  [gf]
+  (:compiled-generate (:schema gf)))
+
+;; ===========================================================================
+;; Level 1-M5: Combinator-Aware Compilation Utility
+;; ===========================================================================
+
+(defn get-compiled-simulate
+  "Returns the compiled-simulate function for a gen-fn, or nil if not compilable.
+   Checks :compiled-simulate on (:schema gf)."
+  [gf]
+  (:compiled-simulate (:schema gf)))
 

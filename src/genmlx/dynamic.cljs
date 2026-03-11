@@ -102,26 +102,63 @@
                 k k
                 :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
                                       {:gen-fn (.-source this)}))))
-          _ (rng/seed! key)
-          result (rt/run-handler h/generate-transition
-                   {:choices cm/EMPTY :score SCORE-ZERO
-                    :weight SCORE-ZERO
-                    :key key :constraints constraints
-                    :executor execute-sub
-                    :param-store (::param-store (meta this))}
-                   (fn [rt] (apply body-fn rt args)))
-          trace (tr/make-trace
-                  {:gen-fn this :args args
-                   :choices (:choices result)
-                   :retval  (:retval result)
-                   :score   (:score result)})]
-      (let [result-map {:trace (if-let [ss (:splice-scores result)]
-                                (with-meta trace {::splice-scores ss})
-                                trace)
-                        :weight (:weight result)}]
-        (if-let [unused (find-unused-constraints constraints (:choices result))]
-          (assoc result-map :unused-constraints unused)
-          result-map))))
+          _ (rng/seed! key)]
+      (if-let [compiled-gen (:compiled-generate schema)]
+        ;; WP-1/M4: compiled generate path (static or branch-rewritten)
+        (let [result (compiled-gen key (vec args) constraints)
+              choices (reduce-kv
+                        (fn [cm addr val] (cm/set-value cm addr val))
+                        cm/EMPTY
+                        (:values result))
+              trace (tr/make-trace
+                      {:gen-fn this :args args
+                       :choices choices
+                       :retval  (:retval result)
+                       :score   (:score result)})]
+          {:trace trace :weight (:weight result)})
+        (if-let [compiled-pfx-gen (:compiled-prefix-generate schema)]
+          ;; WP-2/M3: compiled prefix generate + replay handler
+          (let [result (compiled-pfx-gen key (vec args) constraints)
+                replay (compiled/make-replay-generate-transition (:values result))
+                handler-result (rt/run-handler replay
+                                 {:choices cm/EMPTY :score (:score result)
+                                  :weight (:weight result)
+                                  :key key :constraints constraints
+                                  :executor execute-sub
+                                  :param-store (::param-store (meta this))}
+                                 (fn [rt] (apply body-fn rt args)))
+                trace (tr/make-trace
+                        {:gen-fn this :args args
+                         :choices (:choices handler-result)
+                         :retval  (:retval handler-result)
+                         :score   (:score handler-result)})]
+            (let [result-map {:trace (if-let [ss (:splice-scores handler-result)]
+                                      (with-meta trace {::splice-scores ss})
+                                      trace)
+                              :weight (:weight handler-result)}]
+              (if-let [unused (find-unused-constraints constraints (:choices handler-result))]
+                (assoc result-map :unused-constraints unused)
+                result-map)))
+          ;; L0: handler path
+          (let [result (rt/run-handler h/generate-transition
+                         {:choices cm/EMPTY :score SCORE-ZERO
+                          :weight SCORE-ZERO
+                          :key key :constraints constraints
+                          :executor execute-sub
+                          :param-store (::param-store (meta this))}
+                         (fn [rt] (apply body-fn rt args)))
+                trace (tr/make-trace
+                        {:gen-fn this :args args
+                         :choices (:choices result)
+                         :retval  (:retval result)
+                         :score   (:score result)})]
+            (let [result-map {:trace (if-let [ss (:splice-scores result)]
+                                      (with-meta trace {::splice-scores ss})
+                                      trace)
+                              :weight (:weight result)}]
+              (if-let [unused (find-unused-constraints constraints (:choices result))]
+                (assoc result-map :unused-constraints unused)
+                result-map)))))))
 
   p/IUpdate
   (update [this trace constraints]
@@ -324,30 +361,46 @@
   [body-fn source]
   (let [schema (schema/extract-schema source)
         schema (cond
-                 ;; L1-M2: static models → try full compiled simulate
+                 ;; L1-M2: static models → try full compiled simulate + generate
                  (and schema (:static? schema))
-                 (if-let [csim (compiled/make-compiled-simulate schema source)]
-                   (assoc schema :compiled-simulate csim)
+                 (let [schema (if-let [csim (compiled/make-compiled-simulate schema source)]
+                                (assoc schema :compiled-simulate csim)
+                                schema)
+                       schema (if-let [cgen (compiled/make-compiled-generate schema source)]
+                                (assoc schema :compiled-generate cgen)
+                                schema)]
                    schema)
 
                  ;; L1-M4: branch models → try branch rewriting
                  (and schema (:has-branches? schema))
                  (if-let [csim (compiled/make-branch-rewritten-simulate schema source)]
-                   (assoc schema :compiled-simulate csim)
+                   ;; M4 simulate succeeded → also try M4 generate
+                   (let [schema (assoc schema :compiled-simulate csim)]
+                     (if-let [cgen (compiled/make-branch-rewritten-generate schema source)]
+                       (assoc schema :compiled-generate cgen)
+                       schema))
                    ;; M4 failed → fall through to M3
-                   (if-let [result (compiled/make-compiled-prefix schema source)]
-                     (assoc schema
-                       :compiled-prefix (:fn result)
-                       :compiled-prefix-addrs (:addrs result))
-                     schema))
+                   (let [schema (if-let [result (compiled/make-compiled-prefix schema source)]
+                                  (assoc schema
+                                    :compiled-prefix (:fn result)
+                                    :compiled-prefix-addrs (:addrs result))
+                                  schema)]
+                     (if-let [result (compiled/make-compiled-prefix-generate schema source)]
+                       (assoc schema
+                         :compiled-prefix-generate (:fn result))
+                       schema)))
 
                  ;; L1-M3: non-static models → try compiled prefix
                  schema
-                 (if-let [result (compiled/make-compiled-prefix schema source)]
-                   (assoc schema
-                     :compiled-prefix (:fn result)
-                     :compiled-prefix-addrs (:addrs result))
-                   schema)
+                 (let [schema (if-let [result (compiled/make-compiled-prefix schema source)]
+                                (assoc schema
+                                  :compiled-prefix (:fn result)
+                                  :compiled-prefix-addrs (:addrs result))
+                                schema)]
+                   (if-let [result (compiled/make-compiled-prefix-generate schema source)]
+                     (assoc schema
+                       :compiled-prefix-generate (:fn result))
+                     schema))
 
                  ;; No schema
                  :else schema)]
