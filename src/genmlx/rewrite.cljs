@@ -121,11 +121,8 @@
 
    Priority: Kalman > Conjugacy > RaoBlackwell
    (more structure eliminated first)"
-  [schema conjugate-pairs]
-  (let [;; Detect Kalman chains
-        chains (affine/detect-kalman-chains conjugate-pairs)
-
-        kalman-rules (mapv ->KalmanRule chains)
+  [schema conjugate-pairs chains]
+  (let [kalman-rules (mapv ->KalmanRule chains)
 
         ;; Addresses already claimed by Kalman chains
         kalman-latents (set (mapcat :latent-addrs chains))
@@ -207,11 +204,12 @@
   "Analyze model and build the optimal analytical execution plan.
    schema must already have :conjugate-pairs (from augment-schema-with-conjugacy).
 
-   Returns {:rewrite-result :auto-transition :stats}"
+   Returns {:rewrite-result :auto-transition :kalman-chains :stats}"
   [schema]
   (let [pairs (or (:conjugate-pairs schema) [])
         graph (dep-graph/build-dep-graph schema)
-        rules (generate-rewrite-rules schema pairs)
+        chains (affine/detect-kalman-chains pairs)
+        rules (generate-rewrite-rules schema pairs chains)
         result (apply-rewrites graph schema nil rules)
         auto-transition (when (seq (:handlers result))
                           (auto/make-address-dispatch
@@ -219,6 +217,7 @@
                             (:handlers result)))]
     {:rewrite-result result
      :auto-transition auto-transition
+     :kalman-chains chains
      :stats {:total-sites (count (:nodes graph))
              :eliminated (count (:eliminated result))
              :residual (count (:nodes (:residual-graph result)))

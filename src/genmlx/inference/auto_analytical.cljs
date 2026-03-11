@@ -124,8 +124,8 @@
             (when (cm/has-value? constraint)
               ;; Only handle constrained obs analytically
               (let [obs-value (cm/get-value constraint)
-                    posterior (get-in state [:auto-posteriors prior-addr])
-                    {:keys [posterior ll]} (update-step posterior obs-value (:params dist))
+                    current-posterior (get-in state [:auto-posteriors prior-addr])
+                    {:keys [posterior ll]} (update-step current-posterior obs-value (:params dist))
                     post-mean (posterior-mean posterior)]
                 [obs-value (-> state
                                (assoc-in [:auto-posteriors prior-addr] posterior)
@@ -231,118 +231,119 @@
      state
      (range (inc step-idx) n))))
 
-(defn make-auto-kalman-handlers
-  "Build address-based handlers for a Kalman chain.
-   Reuses the same math as kalman.cljs but dispatches on address.
+(defn- resolve-loading-offset
+  "Compute loading coefficient and offset for a Kalman observation dep type."
+  [dep-type]
+  [(if (= :direct (:type dep-type))
+     (mx/scalar 1.0)
+     (let [c (:coefficient dep-type)] (if (number? c) (mx/scalar c) c)))
+   (if (= :direct (:type dep-type))
+     (mx/scalar 0.0)
+     (let [o (:offset dep-type)]
+       (if (number? o) (mx/scalar o) (if (= 0 o) (mx/scalar 0.0) o))))])
 
-   chain: output of detect-kalman-chains, a chain descriptor with :steps
-   Each step has :latent, :observations, :transition, :noise-std.
+(defn- kalman-init-belief
+  "Initialize or predict Kalman belief for step i."
+  [i steps state params]
+  (let [prev-latent (when (> i 0) (:latent (nth steps (dec i))))
+        prev-belief (when prev-latent
+                      (get-in state [:auto-kalman-beliefs prev-latent]))]
+    (if (nil? prev-belief)
+      {:mean (:mu params) :var (mx/multiply (:sigma params) (:sigma params))}
+      (kalman-predict-belief prev-belief (:transition (nth steps (dec i)))
+                             (mx/multiply (:sigma params) (:sigma params))))))
 
-   Stores per-step beliefs in :auto-kalman-beliefs keyed by latent address.
-   After each observation update, cascades re-prediction through downstream
-   latents so the Kalman filter processes observations sequentially even when
-   the gen body executes all latents before all observations.
+(defn- kalman-obs-update
+  "Pure Kalman observation update math.
+   Returns {:ll :new-belief} given current belief, obs value, obs variance, dep type."
+  [belief obs-value obs-var dep-type]
+  (let [[loading offset] (resolve-loading-offset dep-type)
+        pred-obs (mx/add offset (mx/multiply loading (:mean belief)))
+        innov (mx/subtract obs-value pred-obs)
+        S (mx/add (mx/multiply loading (mx/multiply loading (:var belief))) obs-var)
+        K (mx/divide (mx/multiply loading (:var belief)) S)
+        ll (mx/multiply (mx/scalar -0.5)
+                        (mx/add (mx/scalar LOG-2PI)
+                                (mx/add (mx/log S)
+                                        (mx/divide (mx/multiply innov innov) S))))
+        new-mean (mx/add (:mean belief) (mx/multiply K innov))
+        new-var (mx/subtract (:var belief) (mx/multiply K (mx/multiply loading (:var belief))))]
+    {:ll ll :new-belief {:mean new-mean :var new-var}}))
 
-   Returns {addr handler-fn} for all latent and observation addresses."
-  [chain]
+(defn- make-kalman-handlers-core
+  "Build Kalman handlers parameterized by mode.
+   :generate — latent returns predicted mean, obs reads :constraints, ll → :score + :weight
+   :regenerate — latent checks selection/uses old-val, obs reads :old-choices, ll → :score only"
+  [chain mode]
   (let [steps (:steps chain)
         n-steps (count steps)
-        ;; Map latent addr -> step index for cascade lookup
         latent->idx (into {} (map-indexed (fn [i s] [(:latent s) i]) steps))
-        ;; Map from obs addr to its parent latent addr and dep type
         obs-to-latent (into {}
                             (mapcat (fn [step]
                                       (map (fn [oa odt] [oa {:latent (:latent step) :dep-type odt}])
                                            (:observations step)
                                            (:obs-dep-types step)))
                                     steps))
-        ;; Build latent handlers — one per step
+        regenerate? (= mode :regenerate)
+
         latent-handlers
         (into {}
               (map-indexed
                (fn [i step]
                  [(:latent step)
                   (fn [state addr dist]
-                    (let [params (:params dist)
-                          prev-latent (when (> i 0) (:latent (nth steps (dec i))))
-                          prev-belief (when prev-latent
-                                        (get-in state [:auto-kalman-beliefs prev-latent]))
-                          new-belief
-                          (if (nil? prev-belief)
-                         ;; Root: initialize from prior parameters
-                            (let [prior-mean (:mu params)
-                                  prior-std (:sigma params)
-                                  prior-var (mx/multiply prior-std prior-std)]
-                              {:mean prior-mean :var prior-var})
-                         ;; Non-root: Kalman predict step
-                            (let [transition (:transition (nth steps (dec i)))
-                                  noise-std (:sigma params)
-                                  noise-var (mx/multiply noise-std noise-std)]
-                              (kalman-predict-belief prev-belief transition noise-var)))]
-                   ;; Store noise-var for cascade re-prediction
-                      [(:mean new-belief)
-                       (-> state
-                           (assoc-in [:auto-kalman-beliefs addr] new-belief)
-                           (assoc-in [:auto-kalman-noise-vars i]
-                                     (mx/multiply (:sigma params) (:sigma params)))
-                           (update :choices cm/set-value addr (:mean new-belief)))]))])
+                    (when-not (and regenerate? (:selection state)
+                                   (sel/selected? (:selection state) addr))
+                      (let [params (:params dist)
+                            new-belief (kalman-init-belief i steps state params)
+                            value (if regenerate?
+                                    (cm/get-value (cm/get-submap (:old-choices state) addr))
+                                    (:mean new-belief))
+                            noise-var (mx/multiply (:sigma params) (:sigma params))]
+                        [value (-> state
+                                   (assoc-in [:auto-kalman-beliefs addr] new-belief)
+                                   (assoc-in [:auto-kalman-noise-vars i] noise-var)
+                                   (update :choices cm/set-value addr value))])))])
                steps))
 
-        ;; Build observation handlers
         obs-handlers
         (into {}
               (map
                (fn [[obs-addr {:keys [latent dep-type]}]]
                  [obs-addr
                   (fn [state addr dist]
-                    (let [constraint (cm/get-submap (:constraints state) addr)]
-                      (when (cm/has-value? constraint)
-                        (let [obs-value (cm/get-value constraint)
-                              params (:params dist)
-                              obs-std (:sigma params)
-                              obs-var (mx/multiply obs-std obs-std)
-                              loading (if (= :direct (:type dep-type))
-                                        (mx/scalar 1.0)
-                                        (let [c (:coefficient dep-type)]
-                                          (if (number? c) (mx/scalar c) c)))
-                              offset (if (= :direct (:type dep-type))
-                                       (mx/scalar 0.0)
-                                       (let [o (:offset dep-type)]
-                                         (if (number? o) (mx/scalar o)
-                                             (if (= 0 o) (mx/scalar 0.0) o))))
-                           ;; Get belief for THIS latent step
-                              belief (get-in state [:auto-kalman-beliefs latent])
-                           ;; Kalman update
-                              pred-obs (mx/add offset (mx/multiply loading (:mean belief)))
-                              innov (mx/subtract obs-value pred-obs)
-                              S (mx/add (mx/multiply loading
-                                                     (mx/multiply loading (:var belief)))
-                                        obs-var)
-                              K (mx/divide (mx/multiply loading (:var belief)) S)
-                              ll (mx/multiply (mx/scalar -0.5)
-                                              (mx/add (mx/scalar LOG-2PI)
-                                                      (mx/add (mx/log S)
-                                                              (mx/divide (mx/multiply innov innov) S))))
-                              new-mean (mx/add (:mean belief) (mx/multiply K innov))
-                              new-var (mx/subtract (:var belief)
-                                                   (mx/multiply K (mx/multiply loading (:var belief))))
-                              new-belief {:mean new-mean :var new-var}
-                              step-idx (get latent->idx latent)
-                           ;; Update this latent's belief
-                              state' (-> state
-                                         (assoc-in [:auto-kalman-beliefs latent] new-belief)
-                                         (update :choices cm/set-value addr obs-value)
-                                         (update :score #(mx/add % ll))
-                                         (update :weight #(mx/add % ll))
-                                         (update :choices cm/set-value latent new-mean))
-                           ;; Cascade re-prediction to all downstream latents
-                              noise-vars (:auto-kalman-noise-vars state')
-                              state'' (if (and noise-vars (< (inc step-idx) n-steps))
-                                        (cascade-predictions steps step-idx state' noise-vars)
-                                        state')]
-                          [obs-value state'']))))])
+                    (when-let [belief (get-in state [:auto-kalman-beliefs latent])]
+                      (when-not (and regenerate? (:selection state)
+                                     (sel/selected? (:selection state) addr))
+                        (let [obs-value
+                              (if regenerate?
+                                (let [s (cm/get-submap (:old-choices state) addr)]
+                                  (when (cm/has-value? s) (cm/get-value s)))
+                                (let [s (cm/get-submap (:constraints state) addr)]
+                                  (when (cm/has-value? s) (cm/get-value s))))]
+                          (when obs-value
+                            (let [obs-var (mx/multiply (:sigma (:params dist)) (:sigma (:params dist)))
+                                  {:keys [ll new-belief]} (kalman-obs-update belief obs-value obs-var dep-type)
+                                  step-idx (get latent->idx latent)
+                                  state' (cond-> (-> state
+                                                     (assoc-in [:auto-kalman-beliefs latent] new-belief)
+                                                     (update :choices cm/set-value addr obs-value)
+                                                     (update :score #(mx/add % ll))
+                                                     (update :choices cm/set-value latent (:mean new-belief)))
+                                           (not regenerate?)
+                                           (update :weight #(mx/add % ll)))
+                                  noise-vars (:auto-kalman-noise-vars state')
+                                  state'' (if (and noise-vars (< (inc step-idx) n-steps))
+                                            (cascade-predictions steps step-idx state' noise-vars)
+                                            state')]
+                              [obs-value state'']))))))])
                obs-to-latent))]
     (merge latent-handlers obs-handlers)))
+
+(defn make-auto-kalman-handlers
+  "Build address-based handlers for a Kalman chain (generate mode)."
+  [chain]
+  (make-kalman-handlers-core chain :generate))
 
 (defn build-auto-kalman-handlers
   "Build address-based handlers for all detected Kalman chains.
@@ -401,14 +402,14 @@
             ll (mx/multiply (mx/scalar -0.5)
                             (mx/add (mx/scalar (* d LOG-2PI))
                                     (mx/add log-det-M mahal)))
-            ;; Posterior: S1 = (S0^-1 + R^-1)^-1, m1 = S1*(S0^-1*m0 + R^-1*y)
-            S0-inv (mx/inv cov-matrix)
-            R-inv (mx/inv obs-cov)
-            S1 (mx/inv (mx/add S0-inv R-inv))
-            m1 (mx/flatten
-                (mx/matmul S1
-                           (mx/add (mx/matmul S0-inv (mx/reshape mean-vec [d 1]))
-                                   (mx/matmul R-inv (mx/reshape obs-value [d 1])))))]
+            ;; Posterior via Kalman gain form (avoids 3x mx/inv):
+            ;; K = S0 * M^{-1}, m1 = m0 + K*(y-m0), S1 = S0 - K*S0
+            ;; Use mx/solve instead of mx/inv for numerical stability
+            M-inv-S0 (mx/solve M cov-matrix) ;; M^{-1} * S0, shape [d,d]
+            S0-M-inv-diff (mx/flatten ;; S0 * M^{-1} * (y-m0)
+                           (mx/matmul cov-matrix (mx/reshape M-inv-diff [d 1])))
+            m1 (mx/add mean-vec S0-M-inv-diff)
+            S1 (mx/subtract cov-matrix (mx/matmul cov-matrix M-inv-S0))]
         {:mean-vec m1 :cov-matrix S1 :ll ll}))))
 
 (defn make-auto-mvn-handlers
@@ -499,8 +500,7 @@
                          (sel/selected? (:selection state) addr))
             ;; Case B: prior NOT selected → use old value, init posterior, 0 score
             (let [old-val (cm/get-value (cm/get-submap (:old-choices state) addr))
-                  posterior (init-posterior (:params dist))
-                  post-mean (posterior-mean posterior)]
+                  posterior (init-posterior (:params dist))]
               [old-val (-> state
                            (assoc-in [:auto-posteriors prior-addr] posterior)
                            (update :choices cm/set-value addr old-val))])))
@@ -508,7 +508,7 @@
         obs-handler
         (fn [state addr dist]
           ;; If prior was selected (no posterior initialized) → fall through
-          (when-let [posterior (get-in state [:auto-posteriors prior-addr])]
+          (when-let [current-posterior (get-in state [:auto-posteriors prior-addr])]
             ;; Check old-choices directly (no regen-constraints needed)
             ;; Skip if this obs is in the selection (being resampled)
             (when-not (and (:selection state)
@@ -518,7 +518,7 @@
                   ;; Obs is constrained → compute marginal LL
                   ;; Add to :score ONLY, not :weight (weight tracks proposal ratio)
                   (let [obs-value (cm/get-value old-sub)
-                        {:keys [posterior ll]} (update-step posterior obs-value (:params dist))
+                        {:keys [posterior ll]} (update-step current-posterior obs-value (:params dist))
                         post-mean (posterior-mean posterior)]
                     [obs-value (-> state
                                    (assoc-in [:auto-posteriors prior-addr] posterior)
@@ -638,104 +638,9 @@
 ;; Regenerate-specific Kalman handlers
 
 (defn make-regenerate-kalman-handlers
-  "Build regenerate-specific Kalman handlers.
-   Same as make-auto-kalman-handlers but with regenerate weight semantics:
-   - Latent: use old value, init belief, 0 score. Nil if selected.
-   - Obs: marginal LL → :score ONLY (not :weight). Nil if latent was selected."
+  "Build regenerate-specific Kalman handlers (regenerate mode)."
   [chain]
-  (let [steps (:steps chain)
-        n-steps (count steps)
-        latent->idx (into {} (map-indexed (fn [i s] [(:latent s) i]) steps))
-        obs-to-latent (into {}
-                            (mapcat (fn [step]
-                                      (map (fn [oa odt] [oa {:latent (:latent step) :dep-type odt}])
-                                           (:observations step)
-                                           (:obs-dep-types step)))
-                                    steps))
-
-        latent-handlers
-        (into {}
-              (map-indexed
-               (fn [i step]
-                 [(:latent step)
-                  (fn [state addr dist]
-                 ;; If selected → fall through (Case A)
-                    (when-not (and (:selection state)
-                                   (sel/selected? (:selection state) addr))
-                   ;; Use old value, init belief, 0 score
-                      (let [old-val (cm/get-value (cm/get-submap (:old-choices state) addr))
-                            params (:params dist)
-                            prev-latent (when (> i 0) (:latent (nth steps (dec i))))
-                            prev-belief (when prev-latent
-                                          (get-in state [:auto-kalman-beliefs prev-latent]))
-                            new-belief
-                            (if (nil? prev-belief)
-                              {:mean (:mu params)
-                               :var (mx/multiply (:sigma params) (:sigma params))}
-                              (let [transition (:transition (nth steps (dec i)))
-                                    noise-var (mx/multiply (:sigma params) (:sigma params))]
-                                (kalman-predict-belief prev-belief transition noise-var)))]
-                        [old-val (-> state
-                                     (assoc-in [:auto-kalman-beliefs addr] new-belief)
-                                     (assoc-in [:auto-kalman-noise-vars i]
-                                               (mx/multiply (:sigma params) (:sigma params)))
-                                     (update :choices cm/set-value addr old-val))])))])
-               steps))
-
-        obs-handlers
-        (into {}
-              (map
-               (fn [[obs-addr {:keys [latent dep-type]}]]
-                 [obs-addr
-                  (fn [state addr dist]
-                 ;; If latent was selected (no belief initialized) → fall through
-                    (when-let [belief (get-in state [:auto-kalman-beliefs latent])]
-                   ;; Read from old-choices directly, skip if obs is selected
-                      (when-not (and (:selection state)
-                                     (sel/selected? (:selection state) addr))
-                        (let [old-sub (cm/get-submap (:old-choices state) addr)]
-                          (when (cm/has-value? old-sub)
-                            (let [obs-value (cm/get-value old-sub)
-                                  params (:params dist)
-                                  obs-std (:sigma params)
-                                  obs-var (mx/multiply obs-std obs-std)
-                                  loading (if (= :direct (:type dep-type))
-                                            (mx/scalar 1.0)
-                                            (let [c (:coefficient dep-type)]
-                                              (if (number? c) (mx/scalar c) c)))
-                                  offset (if (= :direct (:type dep-type))
-                                           (mx/scalar 0.0)
-                                           (let [o (:offset dep-type)]
-                                             (if (number? o) (mx/scalar o)
-                                                 (if (= 0 o) (mx/scalar 0.0) o))))
-                                  pred-obs (mx/add offset (mx/multiply loading (:mean belief)))
-                                  innov (mx/subtract obs-value pred-obs)
-                                  S (mx/add (mx/multiply loading
-                                                         (mx/multiply loading (:var belief)))
-                                            obs-var)
-                                  K (mx/divide (mx/multiply loading (:var belief)) S)
-                                  ll (mx/multiply (mx/scalar -0.5)
-                                                  (mx/add (mx/scalar LOG-2PI)
-                                                          (mx/add (mx/log S)
-                                                                  (mx/divide (mx/multiply innov innov) S))))
-                                  new-mean (mx/add (:mean belief) (mx/multiply K innov))
-                                  new-var (mx/subtract (:var belief)
-                                                       (mx/multiply K (mx/multiply loading (:var belief))))
-                                  new-belief {:mean new-mean :var new-var}
-                                  step-idx (get latent->idx latent)
-                             ;; Score only, NOT weight
-                                  state' (-> state
-                                             (assoc-in [:auto-kalman-beliefs latent] new-belief)
-                                             (update :choices cm/set-value addr obs-value)
-                                             (update :score #(mx/add % ll))
-                                             (update :choices cm/set-value latent new-mean))
-                                  noise-vars (:auto-kalman-noise-vars state')
-                                  state'' (if (and noise-vars (< (inc step-idx) n-steps))
-                                            (cascade-predictions steps step-idx state' noise-vars)
-                                            state')]
-                              [obs-value state'']))))))])
-               obs-to-latent))]
-    (merge latent-handlers obs-handlers)))
+  (make-kalman-handlers-core chain :regenerate))
 
 (defn build-regenerate-kalman-handlers
   "Build regenerate-specific Kalman handlers for all chains."
@@ -752,22 +657,19 @@
 
 (defn build-all-regenerate-handlers
   "Build all regenerate-specific handlers from conjugate pairs.
-   Mirrors the rewrite engine's logic: detects Kalman chains, builds
-   regenerate-specific handlers for both chain and non-chain pairs.
+   Mirrors the rewrite engine's logic: builds regenerate-specific handlers
+   for both chain and non-chain pairs.
+   Optional :chains kwarg avoids re-detecting Kalman chains (reuse from plan).
    Returns merged {addr handler-fn}."
-  [conjugate-pairs]
-  (let [;; Detect Kalman chains (same as rewrite engine)
-        chains (affine/detect-kalman-chains conjugate-pairs)
+  [conjugate-pairs & {:keys [chains]}]
+  (let [chains (or chains (affine/detect-kalman-chains conjugate-pairs))
         kalman-handlers (build-regenerate-kalman-handlers chains)
-        ;; Addresses claimed by Kalman chains
         kalman-addrs (set (concat (mapcat :latent-addrs chains)
                                   (mapcat :obs-addrs chains)))
-        ;; Remaining pairs (not in Kalman chains)
         remaining (remove (fn [p]
                             (or (contains? kalman-addrs (:prior-addr p))
                                 (contains? kalman-addrs (:obs-addr p))))
                           conjugate-pairs)
-        ;; Build regenerate handlers for remaining pairs
         non-chain-handlers (build-regenerate-handlers remaining)]
     (merge kalman-handlers non-chain-handlers)))
 

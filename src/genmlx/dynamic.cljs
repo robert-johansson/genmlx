@@ -639,7 +639,8 @@
                    (if (:has-conjugate? augmented)
                      (let [plan (rewrite/build-analytical-plan augmented)
                            regen-handlers (auto-analytical/build-all-regenerate-handlers
-                                           (:conjugate-pairs augmented))
+                                           (:conjugate-pairs augmented)
+                                           :chains (:kalman-chains plan))
                            ;; Opt 1: precompute dispatch transition once at construction
                            regen-transition (when (seq regen-handlers)
                                              (auto-analytical/make-address-dispatch
