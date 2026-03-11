@@ -2194,3 +2194,326 @@
   [gf]
   (:compiled-simulate (:schema gf)))
 
+;; ===========================================================================
+;; WP-9B: Fused Loop Compilation
+;; ===========================================================================
+;;
+;; Fuses unfold/scan loops into single mx/compile-fn invocations.
+;; Pre-generates noise [T, K] on host, passes to compiled function.
+;; The compiled function unrolls T steps with noise-indexed site steps.
+
+(def ^:private noise-type-map
+  "Maps distribution types to their noise source type (:normal or :uniform)."
+  {:gaussian :normal, :normal :normal, :log-normal :normal,
+   :uniform :uniform, :bernoulli :uniform, :flip :uniform,
+   :exponential :uniform, :laplace :uniform, :cauchy :uniform})
+
+(defn- build-fused-site-step
+  "Build a site step that reads noise from noise-row[noise-index]
+   instead of generating from a PRNG key.
+   Returns (fn [{:keys [values score]} args-vec noise-row] -> {:values :score})
+   or nil if the dist-type has no noise transform.
+   For delta sites, noise-index is ignored (no noise consumed)."
+  [site-spec noise-index]
+  (let [{:keys [addr compiled-args dist-type]} site-spec
+        nt (get noise-transforms-full dist-type)]
+    (when nt
+      (if (:noise-fn nt)
+        ;; Standard distribution: extract noise from row at noise-index
+        (let [transform-fn (:transform nt)
+              log-prob-fn (:log-prob nt)]
+          (fn [{:keys [values score]} args-vec noise-row]
+            (let [eval-args (mapv #(% values args-vec) compiled-args)
+                  noise (mx/index noise-row noise-index)
+                  value (apply transform-fn noise eval-args)
+                  lp (apply log-prob-fn value eval-args)]
+              {:values (assoc values addr value)
+               :score (mx/add score lp)})))
+        ;; Delta: no noise needed
+        (fn [{:keys [values score]} args-vec _noise-row]
+          (let [eval-args (mapv #(% values args-vec) compiled-args)
+                value (first eval-args)]
+            {:values (assoc values addr value)
+             :score score}))))))
+
+(defn generate-noise-matrix
+  "Generate [T, K] noise matrix where each column has the correct distribution.
+   noise-site-types: vector of {:dist-type ...} for noise-consuming sites.
+   Returns [T, K] MLX array."
+  [key T noise-site-types]
+  (if (empty? noise-site-types)
+    (mx/zeros [T 1])
+    (let [cols (loop [sites noise-site-types, k key, cols []]
+                 (if (empty? sites)
+                   cols
+                   (let [[k1 k2] (rng/split k)
+                         site (first sites)
+                         col (case (get noise-type-map (:dist-type site))
+                               :normal (rng/normal k1 [T])
+                               :uniform (rng/uniform k1 [T]))]
+                     (recur (rest sites) k2 (conj cols col)))))]
+      (if (= 1 (count cols))
+        (mx/reshape (first cols) [T 1])
+        (mx/stack cols 1)))))
+
+(defn make-fused-unfold-simulate
+  "Build a fused unfold simulate: T steps as single mx/compile-fn invocation.
+   Auto-generates step function from kernel schema.
+   Returns {:compiled-fn :noise-dim :addr-order :noise-site-types :extra-args}
+   or nil if kernel can't be fused.
+
+   The compiled-fn signature:
+     (fn [init-state noise-2d] -> [outputs-tensor [T,K+1], step-scores [T], total-score])
+   where outputs columns 0..K-1 are site values in addr-order, column K is retval."
+  [schema source T extra-args]
+  (when (and (:static? schema)
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [binding-env (build-binding-env source)
+          static-sites (filterv :static? (:trace-sites schema))
+          ;; Build site specs with compiled args
+          site-specs
+          (mapv (fn [ts]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args ts))]
+                    (when (every? some? cargs)
+                      {:addr (:addr ts)
+                       :compiled-args cargs
+                       :dist-type (:dist-type ts)})))
+                static-sites)
+          ;; Assign noise indices in dep-order with running counter
+          noise-indices (let [idx (atom -1)]
+                          (mapv (fn [s]
+                                  (when s
+                                    (if (:noise-fn (get noise-transforms-full (:dist-type s)))
+                                      (swap! idx inc)
+                                      nil)))
+                                site-specs))
+          noise-site-types (filterv
+                             (fn [s] (and s (:noise-fn (get noise-transforms-full (:dist-type s)))))
+                             site-specs)
+          noise-dim (count noise-site-types)
+          ;; Build fused step functions
+          fused-steps (mapv (fn [spec ni] (build-fused-site-step spec ni))
+                            site-specs noise-indices)
+          ;; Compile return expression
+          return-expr (extract-return-expr (:return-form schema))
+          retval-fn (compile-expr return-expr binding-env #{})
+          addr-order (mapv :addr static-sites)
+          n-sites (count static-sites)]
+      (when (and (every? some? site-specs)
+                 (every? some? fused-steps)
+                 retval-fn
+                 (pos? noise-dim))
+        (let [extra-arrs (mapv mx/ensure-array extra-args)
+              ;; Build the fused loop function
+              unfold-fn
+              (fn [init-state noise-2d]
+                (loop [t 0
+                       state init-state
+                       total-score (mx/scalar 0.0)
+                       outputs []
+                       scores []]
+                  (if (>= t T)
+                    [(mx/stack outputs) (mx/stack scores) total-score]
+                    (let [t-arr (mx/scalar (float t))
+                          args-vec (into [t-arr state] extra-arrs)
+                          noise-row (mx/index noise-2d t)
+                          result (reduce
+                                   (fn [st step-f] (step-f st args-vec noise-row))
+                                   {:values {} :score (mx/scalar 0.0)}
+                                   fused-steps)
+                          new-state (retval-fn (:values result) args-vec)
+                          step-score (:score result)
+                          ;; Pack site values + retval into one row
+                          site-vals (mapv #(get (:values result) %) addr-order)
+                          row (mx/stack (conj site-vals new-state))]
+                      (recur (inc t)
+                             new-state
+                             (mx/add total-score step-score)
+                             (conj outputs row)
+                             (conj scores step-score))))))
+              compiled (mx/compile-fn unfold-fn)]
+          ;; Warm up with dummy data
+          (let [dummy-state (mx/scalar 0.0)
+                dummy-noise (mx/zeros [T (max 1 noise-dim)])]
+            (let [[outputs scores sc] (compiled dummy-state dummy-noise)]
+              (mx/materialize! outputs scores sc)))
+          {:compiled-fn compiled
+           :noise-dim noise-dim
+           :addr-order addr-order
+           :noise-site-types noise-site-types
+           :extra-args extra-args})))))
+
+(defn make-fused-scan-simulate
+  "Build a fused scan simulate: T steps as single mx/compile-fn invocation.
+   Scan kernel takes [carry input] and returns [new-carry output].
+   Returns {:compiled-fn :noise-dim :addr-order :noise-site-types}
+   or nil if kernel can't be fused.
+
+   The compiled-fn signature:
+     (fn [init-carry inputs-tensor noise-2d] -> [outputs-tensor [T,K+2], step-scores [T], total-score])
+   where outputs columns: 0..K-1 site values, K carry, K+1 output."
+  [schema source T]
+  (when (and (:static? schema)
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [binding-env (build-binding-env source)
+          static-sites (filterv :static? (:trace-sites schema))
+          site-specs
+          (mapv (fn [ts]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args ts))]
+                    (when (every? some? cargs)
+                      {:addr (:addr ts)
+                       :compiled-args cargs
+                       :dist-type (:dist-type ts)})))
+                static-sites)
+          noise-indices (let [idx (atom -1)]
+                          (mapv (fn [s]
+                                  (when s
+                                    (if (:noise-fn (get noise-transforms-full (:dist-type s)))
+                                      (swap! idx inc)
+                                      nil)))
+                                site-specs))
+          noise-site-types (filterv
+                             (fn [s] (and s (:noise-fn (get noise-transforms-full (:dist-type s)))))
+                             site-specs)
+          noise-dim (count noise-site-types)
+          fused-steps (mapv (fn [spec ni] (build-fused-site-step spec ni))
+                            site-specs noise-indices)
+          ;; For scan, return form should be a vector [carry-expr output-expr]
+          return-expr (extract-return-expr (:return-form schema))
+          carry-fn (when (vector? return-expr)
+                     (compile-expr (first return-expr) binding-env #{}))
+          output-fn (when (vector? return-expr)
+                      (compile-expr (second return-expr) binding-env #{}))
+          addr-order (mapv :addr static-sites)
+          n-sites (count static-sites)]
+      (when (and (every? some? site-specs)
+                 (every? some? fused-steps)
+                 carry-fn output-fn
+                 (pos? noise-dim))
+        (let [scan-fn
+              (fn [init-carry inputs-tensor noise-2d]
+                (loop [t 0
+                       carry init-carry
+                       total-score (mx/scalar 0.0)
+                       outputs []
+                       scores []]
+                  (if (>= t T)
+                    [(mx/stack outputs) (mx/stack scores) total-score]
+                    (let [input-t (mx/index inputs-tensor t)
+                          args-vec [carry input-t]
+                          noise-row (mx/index noise-2d t)
+                          result (reduce
+                                   (fn [st step-f] (step-f st args-vec noise-row))
+                                   {:values {} :score (mx/scalar 0.0)}
+                                   fused-steps)
+                          new-carry (carry-fn (:values result) args-vec)
+                          output-val (output-fn (:values result) args-vec)
+                          step-score (:score result)
+                          site-vals (mapv #(get (:values result) %) addr-order)
+                          row (mx/stack (into (conj site-vals new-carry) [output-val]))]
+                      (recur (inc t)
+                             new-carry
+                             (mx/add total-score step-score)
+                             (conj outputs row)
+                             (conj scores step-score))))))
+              compiled (mx/compile-fn scan-fn)]
+          ;; Warm up
+          (let [dummy-carry (mx/scalar 0.0)
+                dummy-inputs (mx/zeros [T])
+                dummy-noise (mx/zeros [T (max 1 noise-dim)])]
+            (let [[outputs scores sc] (compiled dummy-carry dummy-inputs dummy-noise)]
+              (mx/materialize! outputs scores sc)))
+          {:compiled-fn compiled
+           :noise-dim noise-dim
+           :addr-order addr-order
+           :noise-site-types noise-site-types})))))
+
+(defn fusable-kernel?
+  "Check if a kernel can be fused into a single Metal dispatch.
+   Returns true if the kernel has a static schema with noise transforms
+   for all non-delta trace sites."
+  [gf]
+  (let [schema (:schema gf)]
+    (and schema
+         (:static? schema)
+         (seq (:trace-sites schema))
+         (empty? (:splice-sites schema))
+         (empty? (:param-sites schema))
+         (let [static-sites (filterv :static? (:trace-sites schema))]
+           (every? #(some? (get noise-transforms-full (:dist-type %))) static-sites))
+         ;; At least one non-delta site (otherwise no benefit)
+         (some #(:noise-fn (get noise-transforms-full (:dist-type %)))
+               (filterv :static? (:trace-sites schema))))))
+
+(defn make-fused-map-simulate
+  "Build a fused map simulate that processes all N elements in one call.
+   No mx/compile-fn needed — MLX broadcasting handles [N]-shaped arrays.
+   Stacks element args into [N]-shaped arrays, pre-generates [N] noise per site,
+   runs site steps once with broadcasting.
+
+   Returns (fn [key stacked-args] -> {:values {addr -> [N]-arr} :scores [N]-arr :retval [N]-arr})
+   or nil if kernel can't be fused.
+
+   stacked-args: vector of [N]-shaped arrays (one per kernel param)."
+  [schema source]
+  (when (and (:static? schema)
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [binding-env (build-binding-env source)
+          static-sites (filterv :static? (:trace-sites schema))
+          site-specs
+          (mapv (fn [ts]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args ts))]
+                    (when (every? some? cargs)
+                      {:addr (:addr ts)
+                       :compiled-args cargs
+                       :dist-type (:dist-type ts)})))
+                static-sites)
+          ;; Assign noise indices in dep-order
+          noise-indices (let [idx (atom -1)]
+                          (mapv (fn [s]
+                                  (when s
+                                    (if (:noise-fn (get noise-transforms-full (:dist-type s)))
+                                      (swap! idx inc)
+                                      nil)))
+                                site-specs))
+          noise-site-types (filterv
+                             (fn [s] (and s (:noise-fn (get noise-transforms-full (:dist-type s)))))
+                             site-specs)
+          noise-dim (count noise-site-types)
+          ;; Build fused steps — same as unfold/scan, but noise-row will be [N]-shaped
+          fused-steps (mapv (fn [spec ni] (build-fused-site-step spec ni))
+                            site-specs noise-indices)
+          return-expr (extract-return-expr (:return-form schema))
+          retval-fn (compile-expr return-expr binding-env #{})
+          addr-order (mapv :addr static-sites)]
+      (when (and (every? some? site-specs)
+                 (every? some? fused-steps)
+                 retval-fn
+                 (pos? noise-dim))
+        {:fused-fn
+         (fn [key stacked-args N]
+           ;; stacked-args: vector of [N]-shaped arrays (one per kernel param)
+           ;; Pre-generate [N, K] noise, transpose to [K, N] so mx/index returns [N]
+           (let [noise-2d (generate-noise-matrix key N noise-site-types)
+                 ;; Transpose: [N, K] → [K, N]. mx/index on [K, N] at idx i → [N]
+                 noise-cols (mx/transpose noise-2d)
+                 result (reduce
+                          (fn [st step-f] (step-f st stacked-args noise-cols))
+                          {:values {} :score (mx/zeros [N])}
+                          fused-steps)
+                 retval (retval-fn (:values result) stacked-args)]
+             {:values (:values result)
+              :scores (:score result)
+              :retval retval}))
+         :noise-site-types noise-site-types
+         :addr-order addr-order}))))
+
