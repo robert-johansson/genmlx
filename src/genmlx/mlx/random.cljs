@@ -10,12 +10,15 @@
   ([seed] (.key mx/random seed)))
 
 (defn key->seed
-  "Derive an integer seed from a PRNG key array.
-   Combines both uint32 elements via XOR to produce a single seed."
+  "Derive a non-negative integer seed from a PRNG key array.
+   Combines both uint32 elements via XOR, then masks to 31 bits.
+   MLX's JS binding treats negative seeds as 0, so we must ensure
+   the seed is always non-negative."
   [key]
   (mx/eval! key)
   (let [arr (mx/->clj key)]
-    (bit-xor (int (nth arr 0)) (int (nth arr 1)))))
+    (bit-and (bit-xor (int (nth arr 0)) (int (nth arr 1)))
+             0x7FFFFFFF)))
 
 (defn seed!
   "Seed the global MLX PRNG state from a key array.

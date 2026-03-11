@@ -6,7 +6,9 @@
             [genmlx.mlx.random :as rng]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
-            [genmlx.dynamic :as dyn]))
+            [genmlx.dynamic :as dyn]
+            [genmlx.compiled :as compiled]
+            [genmlx.tensor-trace :as tt]))
 
 (defn materialize-weights
   "Evaluate a vector of MLX log-weight scalars and return them as a single
@@ -340,3 +342,70 @@
     (fn [result]
       (let [s (:state result)]
         (if (mx/array? s) [s] (collect-trace-arrays s))))))
+
+;; ===========================================================================
+;; Level 2: Tensor-native score function (tries compiled, falls back to GFI)
+;; ===========================================================================
+
+(defn make-tensor-score-fn
+  "Try to build a tensor-native score function from model schema.
+   Falls back to GFI-based make-score-fn if the model can't be compiled.
+
+   Returns {:score-fn (fn [K-tensor] -> scalar)
+            :latent-index {addr -> int}
+            :tensor-native? bool}
+
+   When tensor-native? is true, score-fn takes a [K]-shaped latent tensor.
+   When false, score-fn takes a [D]-shaped params array (same as make-score-fn)
+   and latent-index is built from the addresses."
+  [model args observations addresses]
+  (let [schema (:schema model)
+        source (:source model)]
+    (if-let [result (compiled/make-tensor-score-with-index
+                      schema source (vec args) observations)]
+      (assoc result :tensor-native? true)
+      ;; Fall back to GFI-based score
+      (let [gfi-fn (make-score-fn model args observations addresses)
+            latent-index (into {} (map-indexed (fn [i a] [a i]) addresses))]
+        {:score-fn gfi-fn
+         :latent-index latent-index
+         :tensor-native? false}))))
+
+(defn extract-params-by-index
+  "Extract parameter values from a trace using latent-index ordering.
+   Returns [K] MLX array matching the latent-index mapping."
+  [trace latent-index]
+  (let [choices (:choices trace)
+        pairs (sort-by val latent-index)]
+    (mx/stack (mapv (fn [[addr _]]
+                      (cm/get-value (cm/get-submap choices addr)))
+                    pairs))))
+
+(defn prepare-mcmc-score
+  "Prepare score function + init params for compiled MCMC.
+   Tries tensor-native score first (bypasses GFI), falls back to GFI-based.
+
+   Returns {:score-fn    (fn [D-tensor] -> scalar)
+            :init-params [D] MLX array
+            :n-params    int
+            :tensor-native? bool}
+
+   The returned score-fn and init-params always use the same indexing,
+   whether tensor-native or GFI-based."
+  [model args observations addresses trace]
+  (let [{:keys [score-fn latent-index tensor-native?]}
+        (make-tensor-score-fn model args observations addresses)]
+    (if tensor-native?
+      ;; Tensor-native: params packed in dep-order (latent-index)
+      {:score-fn score-fn
+       :init-params (extract-params-by-index trace latent-index)
+       :n-params (count latent-index)
+       :tensor-native? true
+       :latent-index latent-index}
+      ;; GFI fallback: use existing layout machinery
+      (let [layout (compute-param-layout trace addresses)]
+        {:score-fn score-fn
+         :init-params (extract-params trace addresses layout)
+         :n-params (:total-size layout)
+         :tensor-native? false
+         :latent-index latent-index}))))

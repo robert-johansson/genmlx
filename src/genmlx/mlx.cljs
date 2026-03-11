@@ -232,6 +232,24 @@
   ([a]      (.argmin core a))
   ([a axis] (.argmin core a axis)))
 
+(defn argsort
+  "Return indices that sort the array along the given axis (default: last axis).
+   Requires custom MLX build with argsort support."
+  ([a]      (.argsort core a))
+  ([a axis] (.argsort core a axis)))
+
+(defn sort-arr
+  "Sort array along the given axis (default: last axis).
+   Requires custom MLX build with sort support."
+  ([a]      (.sort core a))
+  ([a axis] (.sort core a axis)))
+
+(defn topk
+  "Return the top-k largest values along the last axis.
+   Requires custom MLX build with topk support."
+  [a k]
+  (.topk core a k))
+
 (defn logsumexp
   ([a]      (.logsumexp core a))
   ([a axes] (.logsumexp core a (clj->js axes))))

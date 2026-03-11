@@ -2342,3 +2342,204 @@
          :noise-site-types noise-site-types
          :addr-order addr-order}))))
 
+;; ===========================================================================
+;; Level 2: Tensor-Native Score Function
+;; ===========================================================================
+;;
+;; Bypasses GFI protocol entirely. Takes a [K] tensor of latent values,
+;; uses L1 noise-transform :log-prob closures to compute total log-prob.
+;; Observations are baked in as constants.
+;;
+;; This is the key building block for Level 2 compiled inference:
+;; - Compiled MCMC inner loops use tensor-score instead of p/generate
+;; - Compiled SMC extend steps use tensor-score for weight computation
+
+(defn make-tensor-score
+  "Build a tensor-native score function: [K]-tensor → scalar log-prob.
+   Bypasses GFI protocol — uses L1 noise-transform log-prob closures directly.
+   Observations are baked in as constants. Only latent values come from the tensor.
+
+   Returns (fn [latent-tensor] -> MLX scalar) or nil if model can't be compiled.
+
+   latent-tensor: [K] MLX array where K = number of latent sites.
+   The addr-index for the tensor is returned as metadata via make-tensor-score-with-index.
+
+   schema: the :schema from a DynamicGF
+   source: the :source from a DynamicGF
+   args: argument vector (will be converted to MLX arrays)
+   observations: ChoiceMap of observed values"
+  [schema source args observations]
+  (when (and schema (:static? schema)
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [binding-env (build-binding-env source)
+          static-sites (filterv :static? (:trace-sites schema))
+          site-specs (build-fused-site-specs static-sites binding-env)]
+      (when (every? some? site-specs)
+        (let [mlx-args (ensure-mlx-args (vec args))
+              ;; Separate observed vs latent using source-order static-sites
+              ;; (matches L1 compiled paths in prepare-static-sites)
+              all-addrs (mapv :addr static-sites)
+              obs-addrs (set (map first (cm/addresses observations)))
+              latent-addrs (vec (remove obs-addrs all-addrs))
+              latent-index (into {} (map-indexed (fn [i a] [a i]) latent-addrs))
+              ;; Pre-extract observed values
+              obs-values (into {} (keep (fn [addr]
+                                          (when (obs-addrs addr)
+                                            (let [sub (cm/get-submap observations addr)]
+                                              (when (cm/has-value? sub)
+                                                [addr (cm/get-value sub)]))))
+                                  all-addrs))
+              ;; Build per-site log-prob step functions
+              ;; Each returns (fn [values-map] -> log-prob-scalar) or nil
+              site-lp-fns
+              (mapv
+                (fn [site-spec]
+                  (let [{:keys [addr compiled-args dist-type]} site-spec
+                        nt (get noise-transforms-full dist-type)]
+                    (when nt
+                      (let [log-prob-fn (:log-prob nt)]
+                        (fn [values-map]
+                          (let [eval-args (mapv #(% values-map mlx-args) compiled-args)]
+                            (apply log-prob-fn (get values-map addr) eval-args)))))))
+                site-specs)]
+          (when (every? some? site-lp-fns)
+            ;; Build the tensor-score closure
+            (let [dep-order (:dep-order schema)]
+              (fn tensor-score [latent-tensor]
+                ;; Build values-map: latent from tensor, observed baked in
+                (let [values-map
+                      (reduce
+                        (fn [vm addr]
+                          (assoc vm addr
+                                 (if-let [idx (get latent-index addr)]
+                                   (mx/index latent-tensor idx)
+                                   (get obs-values addr))))
+                        {}
+                        dep-order)]
+                  ;; Sum all site log-probs
+                  (reduce
+                    (fn [score lp-fn]
+                      (mx/add score (lp-fn values-map)))
+                    (mx/scalar 0.0)
+                    site-lp-fns))))))))))
+
+(defn make-tensor-score-with-index
+  "Like make-tensor-score but also returns the latent addr-index.
+   Returns {:score-fn (fn [K-tensor] -> scalar) :latent-index {addr -> int}} or nil."
+  [schema source args observations]
+  (when (and schema (:static? schema)
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [static-sites (filterv :static? (:trace-sites schema))
+          obs-addrs (set (map first (cm/addresses observations)))
+          latent-addrs (vec (remove obs-addrs (mapv :addr static-sites)))
+          latent-index (into {} (map-indexed (fn [i a] [a i]) latent-addrs))
+          score-fn (make-tensor-score schema source args observations)]
+      (when score-fn
+        {:score-fn score-fn
+         :latent-index latent-index}))))
+
+;; =========================================================================
+;; Compiled SMC extend step (L2 WP-2)
+;; =========================================================================
+
+(defn make-smc-extend-step
+  "Build a compiled SMC extend step for a kernel's schema.
+   Returns (fn [noise-slice kernel-args observations]
+              -> {:values-map {addr -> [N]-array} :log-prob [N]-array})
+   or nil if kernel can't be compiled.
+
+   noise-slice: [N,K_latent] standard normal noise
+   kernel-args: vector of kernel arguments (will be converted to MLX)
+   observations: ChoiceMap of observed values for this step
+
+   The returned values-map maps each address to an [N]-shaped MLX array.
+   log-prob is [N]-shaped total log-probability per particle."
+  [schema source]
+  (when (and schema (:static? schema)
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [binding-env (build-binding-env source)
+          static-sites (filterv :static? (:trace-sites schema))
+          site-specs (build-fused-site-specs static-sites binding-env)]
+      (when (every? some? site-specs)
+        (let [dep-order (:dep-order schema)
+              all-addrs (mapv :addr static-sites)
+              addr-index (into {} (map-indexed (fn [i a] [a i]) all-addrs))
+              K (count all-addrs)
+              ;; Compile the return expression for state propagation
+              retval-fn (when-let [rf (:return-form schema)]
+                          (compile-expr rf binding-env #{}))]
+          (fn smc-extend [noise-slice kernel-args observations]
+            (let [N (first (mx/shape noise-slice))
+                  mlx-args (ensure-mlx-args (vec kernel-args))
+                  ;; Figure out latent vs observed
+                  obs-addrs (set (map first (cm/addresses observations)))
+                  latent-addrs (vec (remove obs-addrs all-addrs))
+                  latent-index (into {} (map-indexed (fn [i a] [a i]) latent-addrs))
+                  ;; Pre-extract noise columns: transpose [N,K] → [K,N], index rows
+                  noise-transposed (mx/transpose noise-slice)
+                  noise-cols (mapv (fn [k] (mx/index noise-transposed k))
+                                   (range (count latent-addrs)))
+                  ;; Pre-extract observed values, broadcast to [N]
+                  obs-values (into {} (keep (fn [addr]
+                                              (when (obs-addrs addr)
+                                                (let [sub (cm/get-submap observations addr)]
+                                                  (when (cm/has-value? sub)
+                                                    (let [v (cm/get-value sub)]
+                                                      [addr (mx/broadcast-to v [N])])))))
+                                            all-addrs))
+                  ;; Build values-map in dependency order
+                  ;; Latent sites: propose via noise transform
+                  ;; Observed sites: use baked-in value (already [N])
+                  values-map
+                  (reduce
+                    (fn [vm addr]
+                      (if-let [idx (get latent-index addr)]
+                        ;; Latent: noise transform
+                        (let [site-idx (get addr-index addr)
+                              site-spec (nth site-specs site-idx)
+                              nt (get noise-transforms-full (:dist-type site-spec))
+                              noise-col (nth noise-cols idx)]
+                          (if (:noise-fn nt)
+                            (let [eval-args (mapv #(% vm mlx-args) (:compiled-args site-spec))
+                                  proposed (apply (:transform nt) noise-col eval-args)]
+                              (assoc vm addr proposed))
+                            ;; Delta: value = first dist arg
+                            (let [eval-args (mapv #(% vm mlx-args) (:compiled-args site-spec))]
+                              (assoc vm addr (first eval-args)))))
+                        ;; Observed: bake in constant
+                        (assoc vm addr (get obs-values addr))))
+                    {}
+                    dep-order)
+                  ;; Single-pass log-prob accumulation split by latent vs observed
+                  ;; For bootstrap PF: weight = obs log-prob only
+                  {:keys [latent-log-prob obs-log-prob]}
+                  (reduce
+                    (fn [{:keys [latent-log-prob obs-log-prob]} ss]
+                      (let [{:keys [addr compiled-args dist-type]} ss
+                            nt (get noise-transforms-full dist-type)
+                            v (get values-map addr)
+                            eval-args (mapv #(% values-map mlx-args) compiled-args)
+                            lp (apply (:log-prob nt) v eval-args)]
+                        (if (obs-addrs addr)
+                          {:latent-log-prob latent-log-prob
+                           :obs-log-prob (mx/add obs-log-prob lp)}
+                          {:latent-log-prob (mx/add latent-log-prob lp)
+                           :obs-log-prob obs-log-prob})))
+                    {:latent-log-prob (mx/zeros [N])
+                     :obs-log-prob (mx/zeros [N])}
+                    site-specs)
+                  total-log-prob (mx/add latent-log-prob obs-log-prob)]
+              {:values-map values-map
+               :log-prob total-log-prob
+               :latent-log-prob latent-log-prob
+               :obs-log-prob obs-log-prob
+               :addr-index addr-index
+               :all-addrs all-addrs
+               :retval (when retval-fn (retval-fn values-map mlx-args))})))))))
+

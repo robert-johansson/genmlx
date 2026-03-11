@@ -360,11 +360,10 @@
   (let [model (dyn/auto-key model)]
     (with-device device
       #(let [{:keys [trace]} (p/generate model args observations)
-             layout       (u/compute-param-layout trace addresses)
-             raw-score-fn (u/make-score-fn model args observations addresses layout)
+             {:keys [score-fn init-params n-params]}
+             (u/prepare-mcmc-score model args observations addresses trace)
+             raw-score-fn score-fn
              score-fn     (if compile? (mx/compile-fn raw-score-fn) raw-score-fn)
-           init-params (u/extract-params trace addresses layout)
-           n-params (:total-size layout)
            std (mx/scalar proposal-std)]
        (if compile?
          ;; Loop-compiled path: compiled chains for burn-in + optional thin/trajectory
@@ -880,15 +879,14 @@
   (let [model (dyn/auto-key model)]
     (with-device device
       #(let [{:keys [trace]} (p/generate model args observations)
-           layout           (u/compute-param-layout trace addresses)
-           score-fn          (u/make-score-fn model args observations addresses layout)
+           {:keys [score-fn init-params n-params]}
+           (u/prepare-mcmc-score model args observations addresses trace)
            val-grad-fn       (mx/value-and-grad score-fn)
            val-grad-compiled (mx/compile-fn val-grad-fn)
            eps              (mx/scalar step-size)
            half-eps2        (mx/scalar (* 0.5 step-size step-size))
            two-eps-sq       (mx/scalar (* 2.0 step-size step-size))
-           init-q           (u/extract-params trace addresses layout)
-           n-params         (:total-size layout)
+           init-q           init-params
            q-shape          (mx/shape init-q)]
        (if compile?
          ;; Loop-compiled path
@@ -1385,14 +1383,13 @@
   (let [model (dyn/auto-key model)]
     (with-device device
       #(let [{:keys [trace]} (p/generate model args observations)
-             layout   (u/compute-param-layout trace addresses)
-             score-fn (u/make-score-fn model args observations addresses layout)
+             {:keys [score-fn init-params n-params]}
+             (u/prepare-mcmc-score model args observations addresses trace)
              neg-U    (fn [q] (mx/negative (score-fn q)))
              grad-neg-U-raw (mx/grad neg-U)
              grad-neg-U (if compile? (mx/compile-fn grad-neg-U-raw) grad-neg-U-raw)
              neg-U-compiled (if compile? (mx/compile-fn neg-U) neg-U)
-           init-q (u/extract-params trace addresses layout)
-           n-params (:total-size layout)
+           init-q init-params
            q-shape (mx/shape init-q)
            ;; Adaptive warmup: dual averaging + optional metric estimation
            {:keys [adapted-eps warmup-q adapted-metric]}
@@ -1658,14 +1655,13 @@
   (let [model (dyn/auto-key model)]
     (with-device device
       #(let [{:keys [trace]} (p/generate model args observations)
-             layout (u/compute-param-layout trace addresses)
-             score-fn (u/make-score-fn model args observations addresses layout)
+             {:keys [score-fn init-params n-params]}
+             (u/prepare-mcmc-score model args observations addresses trace)
              neg-log-density (fn [q] (mx/negative (score-fn q)))
              grad-neg-ld (let [g (mx/grad neg-log-density)]
                            (if compile? (mx/compile-fn g) g))
              neg-ld-compiled (if compile? (mx/compile-fn neg-log-density) neg-log-density)
-           init-q (u/extract-params trace addresses layout)
-           n-params (:total-size layout)
+           init-q init-params
            q-shape (mx/shape init-q)
            ;; Adaptive warmup: dual averaging + optional metric estimation
            {:keys [adapted-eps warmup-q adapted-metric]}
@@ -1886,30 +1882,37 @@
       #(mx/with-resource-guard
         (fn []
          (let [{:keys [trace]} (p/generate model args observations)
+             {:keys [score-fn init-params n-params latent-index]}
+             (u/prepare-mcmc-score model args observations addresses trace)
              layout      (u/compute-param-layout trace addresses)
-             score-fn    (u/make-score-fn model args observations addresses layout)
              val-grad-fn (mx/value-and-grad score-fn)
              val-grad    (if compile? (mx/compile-fn val-grad-fn) val-grad-fn)
-             init-params (u/extract-params trace addresses layout)
              opt-state   (when (= optimizer :adam) (learn/adam-init init-params))]
        (loop [i 0
               params init-params
               opt-st opt-state
               history (transient [])]
          (if (>= i iterations)
-           ;; Reconstruct final choicemap using layout
-           (let [final-cm (if (:array-valued? layout)
-                            (reduce (fn [cm {:keys [addr shape offset size]}]
-                                      (let [v (if (= size 1)
-                                                (mx/index params offset)
-                                                (mx/reshape (mx/slice params offset (+ offset size)) shape))]
-                                        (cm/set-choice cm [addr] v)))
+           ;; Reconstruct final choicemap from params
+           (let [final-cm (if latent-index
+                            ;; Tensor-native: unpack using latent-index ordering
+                            (reduce (fn [cm [addr idx]]
+                                      (cm/set-choice cm [addr] (mx/index params idx)))
                                     observations
-                                    (:layout layout))
-                            (reduce (fn [cm [j addr]]
-                                      (cm/set-choice cm [addr] (mx/index params j)))
-                                    observations
-                                    (map-indexed vector addresses)))
+                                    latent-index)
+                            ;; GFI fallback: unpack using layout/addresses
+                            (if (:array-valued? layout)
+                              (reduce (fn [cm {:keys [addr shape offset size]}]
+                                        (let [v (if (= size 1)
+                                                  (mx/index params offset)
+                                                  (mx/reshape (mx/slice params offset (+ offset size)) shape))]
+                                          (cm/set-choice cm [addr] v)))
+                                      observations
+                                      (:layout layout))
+                              (reduce (fn [cm [j addr]]
+                                        (cm/set-choice cm [addr] (mx/index params j)))
+                                      observations
+                                      (map-indexed vector addresses))))
                  {:keys [trace]} (p/generate model args final-cm)
                  score (mx/realize (:score trace))]
              {:trace trace
