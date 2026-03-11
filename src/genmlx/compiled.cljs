@@ -1596,6 +1596,100 @@
   [gf]
   (:compiled-update (:schema gf)))
 
+(defn make-branch-rewritten-update
+  "Build a compiled update for models with rewritable branches (L1-M4).
+   Reuses compile-branch-rewritten-site-specs for the shared pipeline.
+   Uses build-update-site-step for constraint/old-choice handling.
+   Returns (fn [key args-vec constraints old-choices]
+             -> {:values :score :discard :retval}) or nil."
+  [schema source]
+  (when (and (:has-branches? schema)
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema))
+             (not (:has-loops? schema))
+             (not (:dynamic-addresses? schema)))
+    (when-let [raw-sites (extract-rewritable-sites source)]
+      (when (seq raw-sites)
+        (when-let [{:keys [site-specs retval-fn addrs]}
+                   (compile-branch-rewritten-site-specs schema source raw-sites)]
+          (let [step-fns (mapv build-update-site-step site-specs)]
+            (when (every? some? step-fns)
+              (fn compiled-branch-update [key args-vec constraints old-choices]
+                (let [mlx-args (mapv mx/ensure-array args-vec)
+                      result
+                      (reduce
+                        (fn [state step-fn]
+                          (step-fn state mlx-args constraints old-choices))
+                        {:values {} :score (mx/scalar 0.0) :discard {} :key key}
+                        step-fns)]
+                  {:values (:values result)
+                   :score (:score result)
+                   :discard (:discard result)
+                   :retval (when retval-fn
+                             (retval-fn (:values result) mlx-args))})))))))))
+
+(defn make-compiled-prefix-update
+  "Build a compiled prefix update function from a gen schema and source.
+   Returns {:fn (fn [key args-vec constraints old-choices]
+                  -> {:values :score :discard})
+            :addrs [keyword...]}
+   or nil if partial compilation isn't applicable.
+   Same gates as make-compiled-prefix. Uses build-update-site-step."
+  [schema source]
+  (when (and (not (:static? schema))
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [raw-prefix (extract-prefix-sites source)]
+      (when (seq raw-prefix)
+        (let [binding-env (build-binding-env source)
+              compiled-sites
+              (reduce
+                (fn [acc site]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args site))
+                        nt (get noise-transforms-full (:dist-type site))]
+                    (if (and nt (every? some? cargs))
+                      (conj acc (assoc site :compiled-args cargs))
+                      (reduced acc))))
+                []
+                raw-prefix)]
+          (when (seq compiled-sites)
+            (let [step-fns (mapv build-update-site-step compiled-sites)
+                  addrs (mapv :addr compiled-sites)]
+              (when (every? some? step-fns)
+                {:fn (fn compiled-prefix-update [key args-vec constraints old-choices]
+                       (let [mlx-args (mapv (fn [a]
+                                              (cond (mx/array? a) a
+                                                    (number? a) (mx/scalar a)
+                                                    :else a))
+                                            args-vec)
+                             result
+                             (reduce
+                               (fn [state step-fn]
+                                 (step-fn state mlx-args constraints old-choices))
+                               {:values {} :score (mx/scalar 0.0) :discard {} :key key}
+                               step-fns)]
+                         {:values (:values result)
+                          :score (:score result)
+                          :discard (:discard result)}))
+                 :addrs addrs}))))))))
+
+(defn make-replay-update-transition
+  "Build a replay transition for partial update compilation.
+   At prefix sites: return pre-computed value, no key split, no score/discard
+   modification (already counted in compiled prefix).
+   At other sites: delegate to h/update-transition."
+  [compiled-values]
+  (fn [state addr dist]
+    (if (contains? compiled-values addr)
+      ;; Replay: set pre-computed value. No key split (update never splits keys
+      ;; for constrained/unconstrained-with-old-choice cases).
+      (let [value (get compiled-values addr)]
+        [value (update state :choices cm/set-value addr value)])
+      ;; Dynamic site: standard update
+      (h/update-transition state addr dist))))
+
 ;; ===========================================================================
 ;; Level 1-M5: Combinator-Aware Compilation Utility
 ;; ===========================================================================
