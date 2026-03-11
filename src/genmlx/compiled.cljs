@@ -17,7 +17,8 @@
             [genmlx.vectorized :as vec]
             [genmlx.dist :as dist]
             [genmlx.dist.core :as dc]
-            [genmlx.handler :as h]))
+            [genmlx.handler :as h]
+            [genmlx.selection :as sel]))
 
 ;; ---------------------------------------------------------------------------
 ;; Core: compiled unfold step loop
@@ -1689,6 +1690,499 @@
         [value (update state :choices cm/set-value addr value)])
       ;; Dynamic site: standard update
       (h/update-transition state addr dist))))
+
+;; ===========================================================================
+;; WP-5: Compiled Assess
+;; ===========================================================================
+;;
+;; Assess: all choices provided, compute total log-prob. No sampling, no key.
+;; Simplest compiled operation — only log-prob functions needed.
+
+(defn- build-assess-site-step
+  "Build the assess step for one trace site.
+   Returns (fn [state args-vec choices] -> state) where state has
+   {:values :score}. Extracts value from choices, computes log-prob."
+  [site-spec]
+  (let [{:keys [addr compiled-args dist-type]} site-spec
+        nt (get noise-transforms-full dist-type)]
+    (when nt
+      (let [log-prob-fn (:log-prob nt)]
+        (fn [{:keys [values score]} args-vec choices]
+          (let [value (cm/get-value (cm/get-submap choices addr))
+                eval-args (mapv #(% values args-vec) compiled-args)
+                lp (apply log-prob-fn value eval-args)]
+            {:values (assoc values addr value)
+             :score (mx/add score lp)}))))))
+
+(defn make-compiled-assess
+  "Build a compiled assess function from a gen schema and source.
+   Returns (fn [args-vec choices] -> {:score :retval}) or nil.
+   No key parameter — assess never samples."
+  [schema source]
+  (when (and (:static? schema)
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [binding-env (build-binding-env source)
+          static-sites (filterv :static? (:trace-sites schema))
+          site-specs
+          (mapv (fn [ts]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args ts))]
+                    (when (every? some? cargs)
+                      {:addr (:addr ts)
+                       :compiled-args cargs
+                       :dist-type (:dist-type ts)})))
+                static-sites)
+          step-fns (when (every? some? site-specs)
+                     (mapv build-assess-site-step site-specs))
+          return-expr (extract-return-expr (:return-form schema))
+          retval-fn (compile-expr return-expr binding-env #{})]
+      (when (and step-fns (every? some? step-fns) retval-fn)
+        (fn compiled-assess [args-vec choices]
+          (let [mlx-args (mapv mx/ensure-array args-vec)
+                result
+                (reduce
+                  (fn [state step-fn]
+                    (step-fn state mlx-args choices))
+                  {:values {} :score (mx/scalar 0.0)}
+                  step-fns)]
+            {:score (:score result)
+             :retval (retval-fn (:values result) mlx-args)}))))))
+
+(defn make-branch-rewritten-assess
+  "Build a compiled assess for models with rewritable branches (L1-M4).
+   Returns (fn [args-vec choices] -> {:score :retval}) or nil."
+  [schema source]
+  (when (and (:has-branches? schema)
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema))
+             (not (:has-loops? schema))
+             (not (:dynamic-addresses? schema)))
+    (when-let [raw-sites (extract-rewritable-sites source)]
+      (when (seq raw-sites)
+        (when-let [{:keys [site-specs retval-fn addrs]}
+                   (compile-branch-rewritten-site-specs schema source raw-sites)]
+          (let [step-fns (mapv build-assess-site-step site-specs)]
+            (when (every? some? step-fns)
+              (fn compiled-branch-assess [args-vec choices]
+                (let [mlx-args (mapv mx/ensure-array args-vec)
+                      result
+                      (reduce
+                        (fn [state step-fn]
+                          (step-fn state mlx-args choices))
+                        {:values {} :score (mx/scalar 0.0)}
+                        step-fns)]
+                  {:score (:score result)
+                   :retval (when retval-fn
+                             (retval-fn (:values result) mlx-args))})))))))))
+
+(defn make-compiled-prefix-assess
+  "Build a compiled prefix assess function.
+   Returns {:fn (fn [args-vec choices] -> {:values :score})
+            :addrs [keyword...]} or nil."
+  [schema source]
+  (when (and (not (:static? schema))
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [raw-prefix (extract-prefix-sites source)]
+      (when (seq raw-prefix)
+        (let [binding-env (build-binding-env source)
+              compiled-sites
+              (reduce
+                (fn [acc site]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args site))
+                        nt (get noise-transforms-full (:dist-type site))]
+                    (if (and nt (every? some? cargs))
+                      (conj acc (assoc site :compiled-args cargs))
+                      (reduced acc))))
+                []
+                raw-prefix)]
+          (when (seq compiled-sites)
+            (let [step-fns (mapv build-assess-site-step compiled-sites)
+                  addrs (mapv :addr compiled-sites)]
+              (when (every? some? step-fns)
+                {:fn (fn compiled-prefix-assess [args-vec choices]
+                       (let [mlx-args (mapv (fn [a]
+                                              (cond (mx/array? a) a
+                                                    (number? a) (mx/scalar a)
+                                                    :else a))
+                                            args-vec)
+                             result
+                             (reduce
+                               (fn [state step-fn]
+                                 (step-fn state mlx-args choices))
+                               {:values {} :score (mx/scalar 0.0)}
+                               step-fns)]
+                         {:values (:values result)
+                          :score (:score result)}))
+                 :addrs addrs}))))))))
+
+(defn make-replay-assess-transition
+  "Build a replay transition for partial assess compilation.
+   At prefix sites: return pre-computed value, no key split, no score
+   modification (already counted in compiled prefix).
+   At other sites: delegate to h/assess-transition."
+  [compiled-values]
+  (fn [state addr dist]
+    (if (contains? compiled-values addr)
+      (let [value (get compiled-values addr)]
+        [value (update state :choices cm/set-value addr value)])
+      (h/assess-transition state addr dist))))
+
+(defn get-compiled-assess
+  "Returns the compiled-assess function for a gen-fn, or nil."
+  [gf]
+  (:compiled-assess (:schema gf)))
+
+;; ===========================================================================
+;; WP-5: Compiled Project
+;; ===========================================================================
+;;
+;; Project: compute log-prob of selected addresses in a trace. No sampling.
+
+(defn- build-project-site-step
+  "Build the project step for one trace site.
+   Returns (fn [state args-vec old-choices selection] -> state) where state has
+   {:values :score :weight}. Replays value from old-choices, accumulates
+   log-prob in score and (if selected) in weight."
+  [site-spec]
+  (let [{:keys [addr compiled-args dist-type]} site-spec
+        nt (get noise-transforms-full dist-type)]
+    (when nt
+      (let [log-prob-fn (:log-prob nt)]
+        (fn [{:keys [values score weight]} args-vec old-choices selection]
+          (let [value (cm/get-value (cm/get-submap old-choices addr))
+                eval-args (mapv #(% values args-vec) compiled-args)
+                lp (apply log-prob-fn value eval-args)]
+            {:values (assoc values addr value)
+             :score (mx/add score lp)
+             :weight (if (sel/selected? selection addr)
+                       (mx/add weight lp)
+                       weight)}))))))
+
+(defn make-compiled-project
+  "Build a compiled project function from a gen schema and source.
+   Returns (fn [args-vec old-choices selection] -> scalar) or nil.
+   No key parameter — project never samples."
+  [schema source]
+  (when (and (:static? schema)
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [binding-env (build-binding-env source)
+          static-sites (filterv :static? (:trace-sites schema))
+          site-specs
+          (mapv (fn [ts]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args ts))]
+                    (when (every? some? cargs)
+                      {:addr (:addr ts)
+                       :compiled-args cargs
+                       :dist-type (:dist-type ts)})))
+                static-sites)
+          step-fns (when (every? some? site-specs)
+                     (mapv build-project-site-step site-specs))]
+      (when (and step-fns (every? some? step-fns))
+        (fn compiled-project [args-vec old-choices selection]
+          (let [mlx-args (mapv mx/ensure-array args-vec)
+                result
+                (reduce
+                  (fn [state step-fn]
+                    (step-fn state mlx-args old-choices selection))
+                  {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0)}
+                  step-fns)]
+            (:weight result)))))))
+
+(defn make-branch-rewritten-project
+  "Build a compiled project for models with rewritable branches (L1-M4).
+   Returns (fn [args-vec old-choices selection] -> scalar) or nil."
+  [schema source]
+  (when (and (:has-branches? schema)
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema))
+             (not (:has-loops? schema))
+             (not (:dynamic-addresses? schema)))
+    (when-let [raw-sites (extract-rewritable-sites source)]
+      (when (seq raw-sites)
+        (when-let [{:keys [site-specs retval-fn addrs]}
+                   (compile-branch-rewritten-site-specs schema source raw-sites)]
+          (let [step-fns (mapv build-project-site-step site-specs)]
+            (when (every? some? step-fns)
+              (fn compiled-branch-project [args-vec old-choices selection]
+                (let [mlx-args (mapv mx/ensure-array args-vec)
+                      result
+                      (reduce
+                        (fn [state step-fn]
+                          (step-fn state mlx-args old-choices selection))
+                        {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0)}
+                        step-fns)]
+                  (:weight result))))))))))
+
+(defn make-compiled-prefix-project
+  "Build a compiled prefix project function.
+   Returns {:fn (fn [args-vec old-choices selection] -> {:values :weight})
+            :addrs [keyword...]} or nil."
+  [schema source]
+  (when (and (not (:static? schema))
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [raw-prefix (extract-prefix-sites source)]
+      (when (seq raw-prefix)
+        (let [binding-env (build-binding-env source)
+              compiled-sites
+              (reduce
+                (fn [acc site]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args site))
+                        nt (get noise-transforms-full (:dist-type site))]
+                    (if (and nt (every? some? cargs))
+                      (conj acc (assoc site :compiled-args cargs))
+                      (reduced acc))))
+                []
+                raw-prefix)]
+          (when (seq compiled-sites)
+            (let [step-fns (mapv build-project-site-step compiled-sites)
+                  addrs (mapv :addr compiled-sites)]
+              (when (every? some? step-fns)
+                {:fn (fn compiled-prefix-project [args-vec old-choices selection]
+                       (let [mlx-args (mapv (fn [a]
+                                              (cond (mx/array? a) a
+                                                    (number? a) (mx/scalar a)
+                                                    :else a))
+                                            args-vec)
+                             result
+                             (reduce
+                               (fn [state step-fn]
+                                 (step-fn state mlx-args old-choices selection))
+                               {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0)}
+                               step-fns)]
+                         {:values (:values result)
+                          :weight (:weight result)}))
+                 :addrs addrs}))))))))
+
+(defn make-replay-project-transition
+  "Build a replay transition for partial project compilation.
+   At prefix sites: return pre-computed value, no key split, no score/weight
+   modification (already counted in compiled prefix).
+   At other sites: delegate to h/project-transition."
+  [compiled-values]
+  (fn [state addr dist]
+    (if (contains? compiled-values addr)
+      (let [value (get compiled-values addr)]
+        [value (update state :choices cm/set-value addr value)])
+      (h/project-transition state addr dist))))
+
+(defn get-compiled-project
+  "Returns the compiled-project function for a gen-fn, or nil."
+  [gf]
+  (:compiled-project (:schema gf)))
+
+;; ===========================================================================
+;; WP-6: Compiled Regenerate
+;; ===========================================================================
+;;
+;; Regenerate: resample selected sites, keep unselected. Compute proposal ratio
+;; (weight) = sum over selected sites of (new-lp - old-lp). DynamicGF computes
+;; final weight = new_score - old_score - proposal_ratio.
+;; No mx/compile-fn: selection check is data-dependent.
+
+(defn- build-regenerate-site-step
+  "Build the regenerate step for one trace site.
+   Returns (fn [state args-vec old-choices selection] -> state) where state has
+   {:values :score :weight :key}.
+   Selected: resample via noise transform, weight += new-lp - old-lp.
+   Unselected: keep old value, score old-lp, weight unchanged, NO key split."
+  [site-spec]
+  (let [{:keys [addr compiled-args dist-type]} site-spec
+        nt (get noise-transforms-full dist-type)]
+    (when nt
+      (let [log-prob-fn (:log-prob nt)]
+        (if (:noise-fn nt)
+          ;; Standard distribution with noise transform
+          (let [noise-fn (:noise-fn nt)
+                transform-fn (:transform nt)]
+            (fn [{:keys [values score weight key]} args-vec old-choices selection]
+              (let [eval-args (mapv #(% values args-vec) compiled-args)]
+                (if (sel/selected? selection addr)
+                  ;; Selected: resample via noise transform
+                  (let [[k1 k2] (rng/split key)
+                        noise (noise-fn k2)
+                        new-val (apply transform-fn noise eval-args)
+                        new-lp (apply log-prob-fn new-val eval-args)
+                        old-val (cm/get-value (cm/get-submap old-choices addr))
+                        old-lp (apply log-prob-fn old-val eval-args)]
+                    {:values (assoc values addr new-val)
+                     :score (mx/add score new-lp)
+                     :weight (mx/add weight (mx/subtract new-lp old-lp))
+                     :key k1})
+                  ;; Not selected: keep old value, no key split
+                  (let [val (cm/get-value (cm/get-submap old-choices addr))
+                        lp (apply log-prob-fn val eval-args)]
+                    {:values (assoc values addr val)
+                     :score (mx/add score lp)
+                     :weight weight
+                     :key key})))))
+          ;; Delta distribution: no noise, value = first arg
+          (fn [{:keys [values score weight key]} args-vec old-choices selection]
+            (let [eval-args (mapv #(% values args-vec) compiled-args)]
+              (if (sel/selected? selection addr)
+                ;; Selected delta: "resample" = same value (deterministic), lp = 0
+                ;; Split key for PRNG equivalence with handler
+                (let [[k1 _k2] (rng/split key)
+                      new-val (first eval-args)]
+                  ;; new-lp = 0, old-lp = 0 for delta → weight += 0
+                  {:values (assoc values addr new-val)
+                   :score score
+                   :weight weight
+                   :key k1})
+                ;; Not selected: keep old value, lp = 0
+                (let [val (cm/get-value (cm/get-submap old-choices addr))]
+                  {:values (assoc values addr val)
+                   :score score
+                   :weight weight
+                   :key key})))))))))
+
+(defn make-compiled-regenerate
+  "Build a compiled regenerate function from a gen schema and source.
+   Returns (fn [key args-vec old-choices selection]
+             -> {:values :score :weight :retval})
+   or nil if the model can't be compiled.
+   :weight = proposal ratio (NOT final weight — DynamicGF computes that)."
+  [schema source]
+  (when (and (:static? schema)
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [binding-env (build-binding-env source)
+          static-sites (filterv :static? (:trace-sites schema))
+          site-specs
+          (mapv (fn [ts]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args ts))]
+                    (when (every? some? cargs)
+                      {:addr (:addr ts)
+                       :compiled-args cargs
+                       :dist-type (:dist-type ts)})))
+                static-sites)
+          step-fns (when (every? some? site-specs)
+                     (mapv build-regenerate-site-step site-specs))
+          return-expr (extract-return-expr (:return-form schema))
+          retval-fn (compile-expr return-expr binding-env #{})]
+      (when (and step-fns (every? some? step-fns) retval-fn)
+        (fn compiled-regenerate [key args-vec old-choices selection]
+          (let [mlx-args (mapv mx/ensure-array args-vec)
+                result
+                (reduce
+                  (fn [state step-fn]
+                    (step-fn state mlx-args old-choices selection))
+                  {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
+                  step-fns)]
+            {:values (:values result)
+             :score (:score result)
+             :weight (:weight result)
+             :retval (when retval-fn
+                       (retval-fn (:values result) mlx-args))}))))))
+
+(defn make-branch-rewritten-regenerate
+  "Build a compiled regenerate for models with rewritable branches (L1-M4).
+   Returns (fn [key args-vec old-choices selection]
+             -> {:values :score :weight :retval}) or nil."
+  [schema source]
+  (when (and (:has-branches? schema)
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema))
+             (not (:has-loops? schema))
+             (not (:dynamic-addresses? schema)))
+    (when-let [raw-sites (extract-rewritable-sites source)]
+      (when (seq raw-sites)
+        (when-let [{:keys [site-specs retval-fn addrs]}
+                   (compile-branch-rewritten-site-specs schema source raw-sites)]
+          (let [step-fns (mapv build-regenerate-site-step site-specs)]
+            (when (every? some? step-fns)
+              (fn compiled-branch-regenerate [key args-vec old-choices selection]
+                (let [mlx-args (mapv mx/ensure-array args-vec)
+                      result
+                      (reduce
+                        (fn [state step-fn]
+                          (step-fn state mlx-args old-choices selection))
+                        {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
+                        step-fns)]
+                  {:values (:values result)
+                   :score (:score result)
+                   :weight (:weight result)
+                   :retval (when retval-fn
+                             (retval-fn (:values result) mlx-args))})))))))))
+
+(defn make-compiled-prefix-regenerate
+  "Build a compiled prefix regenerate function.
+   Returns {:fn (fn [key args-vec old-choices selection]
+                  -> {:values :score :weight})
+            :addrs [keyword...]}
+   or nil if partial compilation isn't applicable."
+  [schema source]
+  (when (and (not (:static? schema))
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [raw-prefix (extract-prefix-sites source)]
+      (when (seq raw-prefix)
+        (let [binding-env (build-binding-env source)
+              compiled-sites
+              (reduce
+                (fn [acc site]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args site))
+                        nt (get noise-transforms-full (:dist-type site))]
+                    (if (and nt (every? some? cargs))
+                      (conj acc (assoc site :compiled-args cargs))
+                      (reduced acc))))
+                []
+                raw-prefix)]
+          (when (seq compiled-sites)
+            (let [step-fns (mapv build-regenerate-site-step compiled-sites)
+                  addrs (mapv :addr compiled-sites)]
+              (when (every? some? step-fns)
+                {:fn (fn compiled-prefix-regenerate [key args-vec old-choices selection]
+                       (let [mlx-args (mapv (fn [a]
+                                              (cond (mx/array? a) a
+                                                    (number? a) (mx/scalar a)
+                                                    :else a))
+                                            args-vec)
+                             result
+                             (reduce
+                               (fn [state step-fn]
+                                 (step-fn state mlx-args old-choices selection))
+                               {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
+                               step-fns)]
+                         {:values (:values result)
+                          :score (:score result)
+                          :weight (:weight result)}))
+                 :addrs addrs}))))))))
+
+(defn make-replay-regenerate-transition
+  "Build a replay transition for partial regenerate compilation.
+   At prefix sites: replay pre-computed value, split key for selected sites
+   (matching handler's regenerate-transition), no split for unselected.
+   Score/weight NOT modified (already counted in prefix result).
+   At other sites: delegate to h/regenerate-transition."
+  [compiled-values]
+  (fn [state addr dist]
+    (if (contains? compiled-values addr)
+      (let [value (get compiled-values addr)
+            selected? (sel/selected? (:selection state) addr)]
+        [value (cond-> (update state :choices cm/set-value addr value)
+                 selected? (#(let [[k1 _] (rng/split (:key %))]
+                               (assoc % :key k1))))])
+      (h/regenerate-transition state addr dist))))
+
+(defn get-compiled-regenerate
+  "Returns the compiled-regenerate function for a gen-fn, or nil."
+  [gf]
+  (:compiled-regenerate (:schema gf)))
 
 ;; ===========================================================================
 ;; Level 1-M5: Combinator-Aware Compilation Utility
