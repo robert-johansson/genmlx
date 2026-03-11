@@ -36,10 +36,7 @@
 (defn- values->choices
   "Convert compiled result {:values {addr->val}} to a ChoiceMap."
   [values]
-  (reduce-kv
-   (fn [cm addr val] (cm/set-value cm addr val))
-   cm/EMPTY
-   values))
+  (cm/from-flat-map values))
 
 ;; ---------------------------------------------------------------------------
 ;; Map Combinator
@@ -65,67 +62,78 @@
                (cm/set-choice choices [i] elem-cm)
                (conj element-scores elem-score))))))
 
+(defn- map-simulate-fused
+  "Fused Map simulate: all N elements in one call via broadcasting."
+  [this args kernel fused-fn addr-order]
+  (let [n (count (first args))
+        key (rng/fresh-key)
+        stacked-args (mapv (fn [arg-col]
+                             (mx/stack (mapv mx/ensure-array arg-col)))
+                           args)
+        {:keys [values scores retval]}
+        (fused-fn key stacked-args n)
+        _ (mx/materialize! scores retval)
+        total-score (mx/sum scores)
+        _ (mx/materialize! total-score)
+        {:keys [choices element-scores]}
+        (unpack-fused-map-outputs values scores n addr-order)
+        retvals (mapv #(mx/index retval %) (range n))]
+    (with-meta
+      (tr/make-trace {:gen-fn this :args args
+                      :choices choices :retval retvals :score total-score})
+      {::element-scores element-scores ::compiled-path true ::fused true})))
+
+(defn- map-simulate-compiled
+  "Compiled Map simulate: call compiled-simulate per element."
+  [this args kernel csim]
+  (let [n (count (first args))
+        init-key (rng/fresh-key)
+        results (loop [i 0 key init-key acc []]
+                  (if (>= i n)
+                    acc
+                    (let [[k1 k2] (rng/split key)
+                          elem-args (mapv #(nth % i) args)
+                          result (csim k1 (vec elem-args))]
+                      (recur (inc i) k2 (conj acc result)))))
+        choices (reduce (fn [cm [i r]]
+                          (reduce-kv (fn [cm2 addr val]
+                                       (cm/set-choice cm2 [i addr] val))
+                                     cm (:values r)))
+                        cm/EMPTY (map-indexed vector results))
+        retvals (mapv :retval results)
+        score (reduce (fn [acc r] (mx/add acc (:score r)))
+                      (mx/scalar 0.0) results)
+        element-scores (mapv :score results)]
+    (with-meta
+      (tr/make-trace {:gen-fn this :args args
+                      :choices choices :retval retvals :score score})
+      {::element-scores element-scores ::compiled-path true})))
+
+(defn- map-simulate-handler
+  "Handler Map simulate: delegate to kernel per element."
+  [this args kernel]
+  (let [n (count (first args))
+        results (mapv (fn [i]
+                        (p/simulate kernel (mapv #(nth % i) args)))
+                      (range n))
+        choices (assemble-choices results :choices)
+        retvals (mapv :retval results)
+        score (sum-field results :score)
+        element-scores (mapv :score results)]
+    (with-meta
+      (tr/make-trace {:gen-fn this :args args
+                      :choices choices :retval retvals :score score})
+      {::element-scores element-scores})))
+
 (defrecord MapCombinator [kernel]
   p/IGenerativeFunction
   (simulate [this args]
     (if-let [{:keys [fused-fn addr-order]} (compiled/make-fused-map-simulate
                                             (:schema kernel) (:source kernel))]
-      ;; WP-9C: fused path — all N elements in one call via broadcasting
-      (let [n (count (first args))
-            key (rng/fresh-key)
-            ;; Stack element args into [N]-shaped arrays
-            stacked-args (mapv (fn [arg-col]
-                                 (mx/stack (mapv mx/ensure-array arg-col)))
-                               args)
-            {:keys [values scores retval]}
-            (fused-fn key stacked-args n)
-            _ (mx/materialize! scores retval)
-            total-score (mx/sum scores)
-            _ (mx/materialize! total-score)
-            {:keys [choices element-scores]}
-            (unpack-fused-map-outputs values scores n addr-order)
-            retvals (mapv #(mx/index retval %) (range n))]
-        (with-meta
-          (tr/make-trace {:gen-fn this :args args
-                          :choices choices :retval retvals :score total-score})
-          {::element-scores element-scores ::compiled-path true ::fused true}))
+      (map-simulate-fused this args kernel fused-fn addr-order)
       (if-let [csim (compiled/get-compiled-simulate kernel)]
-        ;; L1-M5: compiled path — call compiled-simulate directly per element
-        (let [n (count (first args))
-              init-key (rng/fresh-key)
-              results (loop [i 0 key init-key acc []]
-                        (if (>= i n)
-                          acc
-                          (let [[k1 k2] (rng/split key)
-                                elem-args (mapv #(nth % i) args)
-                                result (csim k1 (vec elem-args))]
-                            (recur (inc i) k2 (conj acc result)))))
-              choices (reduce (fn [cm [i r]]
-                                (reduce-kv (fn [cm2 addr val]
-                                             (cm/set-choice cm2 [i addr] val))
-                                           cm (:values r)))
-                              cm/EMPTY (map-indexed vector results))
-              retvals (mapv :retval results)
-              score (reduce (fn [acc r] (mx/add acc (:score r)))
-                            (mx/scalar 0.0) results)
-              element-scores (mapv :score results)]
-          (with-meta
-            (tr/make-trace {:gen-fn this :args args
-                            :choices choices :retval retvals :score score})
-            {::element-scores element-scores ::compiled-path true}))
-        ;; L0: handler path
-        (let [n (count (first args))
-              results (mapv (fn [i]
-                              (p/simulate kernel (mapv #(nth % i) args)))
-                            (range n))
-              choices (assemble-choices results :choices)
-              retvals (mapv :retval results)
-              score (sum-field results :score)
-              element-scores (mapv :score results)]
-          (with-meta
-            (tr/make-trace {:gen-fn this :args args
-                            :choices choices :retval retvals :score score})
-            {::element-scores element-scores})))))
+        (map-simulate-compiled this args kernel csim)
+        (map-simulate-handler this args kernel))))
 
   p/IGenerate
   (generate [this args constraints]
@@ -330,13 +338,14 @@
 (defn- extras-match?
   "Check if cached extra args match current extra args."
   [cached-extras current-extras]
-  (and (= (count cached-extras) (count current-extras))
-       (every? true?
-               (map (fn [a b]
-                      (let [av (mx/item (mx/ensure-array a))
-                            bv (mx/item (mx/ensure-array b))]
-                        (== av bv)))
-                    cached-extras current-extras))))
+  (or (identical? cached-extras current-extras)
+      (and (= (count cached-extras) (count current-extras))
+           (every? true?
+                   (map (fn [a b]
+                          (let [av (mx/item (mx/ensure-array a))
+                                bv (mx/item (mx/ensure-array b))]
+                            (== av bv)))
+                        cached-extras current-extras)))))
 
 (defn- get-or-build-fused-unfold
   "Get cached or build new fused unfold simulate.
@@ -353,66 +362,75 @@
           (swap! cache assoc T fused)
           fused)))))
 
+(defn- unfold-simulate-fused
+  "Fused Unfold simulate: 2 Metal dispatches for T steps."
+  [this args kernel fused-cache n init-state extra]
+  (let [{:keys [compiled-fn noise-dim addr-order noise-site-types]}
+        (get-or-build-fused-unfold fused-cache kernel n extra)
+        key (rng/fresh-key)
+        noise (compiled/generate-noise-matrix key n noise-site-types)
+        [outputs-tensor scores-tensor total-score]
+        (compiled-fn (mx/ensure-array init-state) noise)
+        _ (mx/materialize! outputs-tensor scores-tensor total-score)
+        {:keys [choices states step-scores]}
+        (unpack-fused-outputs outputs-tensor scores-tensor n addr-order)]
+    (with-meta
+      (tr/make-trace {:gen-fn this :args args
+                      :choices choices :retval states :score total-score})
+      {::step-scores step-scores ::compiled-path true ::fused true})))
+
+(defn- unfold-simulate-compiled
+  "Compiled Unfold simulate: call compiled-simulate per step."
+  [this args kernel n init-state extra csim]
+  (let [init-key (rng/fresh-key)]
+    (loop [t 0 state init-state key init-key
+           choices cm/EMPTY score (mx/scalar 0.0)
+           states [] step-scores []]
+      (if (>= t n)
+        (with-meta
+          (tr/make-trace {:gen-fn this :args args
+                          :choices choices :retval states :score score})
+          {::step-scores step-scores ::compiled-path true})
+        (let [[k1 k2] (rng/split key)
+              result (csim k1 (into [t state] extra))
+              new-state (:retval result)
+              step-choices (cm/from-flat-map (:values result))]
+          (recur (inc t)
+                 new-state k2
+                 (cm/set-choice choices [t] step-choices)
+                 (mx/add score (:score result))
+                 (conj states new-state)
+                 (conj step-scores (:score result))))))))
+
+(defn- unfold-simulate-handler
+  "Handler Unfold simulate: delegate to kernel per step."
+  [this args kernel n init-state extra]
+  (loop [t 0 state init-state
+         choices cm/EMPTY score (mx/scalar 0.0)
+         states [] step-scores []]
+    (if (>= t n)
+      (with-meta
+        (tr/make-trace {:gen-fn this :args args
+                        :choices choices :retval states :score score})
+        {::step-scores step-scores})
+      (let [trace (p/simulate kernel (into [t state] extra))
+            new-state (:retval trace)]
+        (recur (inc t)
+               new-state
+               (cm/set-choice choices [t] (:choices trace))
+               (mx/add score (:score trace))
+               (conj states new-state)
+               (conj step-scores (:score trace)))))))
+
 (defrecord UnfoldCombinator [kernel fused-cache]
   p/IGenerativeFunction
   (simulate [this args]
-    ;; args: [n init-state & extra-args]
-    ;; kernel takes [t state & extra-args] and returns new-state
     (let [[n init-state & extra] args]
-      (if-let [{:keys [compiled-fn noise-dim addr-order noise-site-types]}
-               (get-or-build-fused-unfold fused-cache kernel n extra)]
-        ;; WP-9B: fused path — 2 Metal dispatches
-        (let [key (rng/fresh-key)
-              noise (compiled/generate-noise-matrix key n noise-site-types)
-              [outputs-tensor scores-tensor total-score]
-              (compiled-fn (mx/ensure-array init-state) noise)
-              _ (mx/materialize! outputs-tensor scores-tensor total-score)
-              {:keys [choices states step-scores]}
-              (unpack-fused-outputs outputs-tensor scores-tensor n addr-order)]
-          (with-meta
-            (tr/make-trace {:gen-fn this :args args
-                            :choices choices :retval states :score total-score})
-            {::step-scores step-scores ::compiled-path true ::fused true}))
+      (if-let [_fused (get-or-build-fused-unfold fused-cache kernel n extra)]
+        (unfold-simulate-fused this args kernel fused-cache n init-state extra)
         (if-let [csim (compiled/get-compiled-simulate kernel)]
-          ;; L1-M5: compiled path — call compiled-simulate directly per step
-          (let [init-key (rng/fresh-key)]
-            (loop [t 0 state init-state key init-key
-                   choices cm/EMPTY score (mx/scalar 0.0)
-                   states [] step-scores []]
-              (if (>= t n)
-                (with-meta
-                  (tr/make-trace {:gen-fn this :args args
-                                  :choices choices :retval states :score score})
-                  {::step-scores step-scores ::compiled-path true})
-                (let [[k1 k2] (rng/split key)
-                      result (csim k1 (into [t state] extra))
-                      new-state (:retval result)
-                      step-choices (reduce-kv
-                                    (fn [cm addr val] (cm/set-value cm addr val))
-                                    cm/EMPTY (:values result))]
-                  (recur (inc t)
-                         new-state k2
-                         (cm/set-choice choices [t] step-choices)
-                         (mx/add score (:score result))
-                         (conj states new-state)
-                         (conj step-scores (:score result)))))))
-          ;; L0: handler path
-          (loop [t 0 state init-state
-                 choices cm/EMPTY score (mx/scalar 0.0)
-                 states [] step-scores []]
-            (if (>= t n)
-              (with-meta
-                (tr/make-trace {:gen-fn this :args args
-                                :choices choices :retval states :score score})
-                {::step-scores step-scores})
-              (let [trace (p/simulate kernel (into [t state] extra))
-                    new-state (:retval trace)]
-                (recur (inc t)
-                       new-state
-                       (cm/set-choice choices [t] (:choices trace))
-                       (mx/add score (:score trace))
-                       (conj states new-state)
-                       (conj step-scores (:score trace))))))))))
+          (unfold-simulate-compiled this args kernel n init-state extra csim)
+          (unfold-simulate-handler this args kernel n init-state extra)))))
 
   p/IGenerate
   (generate [this args constraints]
@@ -739,9 +757,7 @@
         ;; L1-M5: compiled path
         (let [key (rng/fresh-key)
               result (csim key (vec branch-args))
-              choices (reduce-kv
-                       (fn [cm addr val] (cm/set-value cm addr val))
-                       cm/EMPTY (:values result))]
+              choices (cm/from-flat-map (:values result))]
           (with-meta
             (tr/make-trace {:gen-fn this :args args
                             :choices choices
@@ -1272,87 +1288,98 @@
 
 (defn- get-or-build-fused-scan
   "Get cached or build new fused scan simulate."
-  [cache kernel T inputs]
+  [cache kernel T]
   (when (and (pos? T) (compiled/fusable-kernel? kernel))
     (let [cached (get @cache T)]
       (if cached
         cached
         (when-let [fused (compiled/make-fused-scan-simulate
-                          (:schema kernel) (:source kernel) T inputs)]
+                          (:schema kernel) (:source kernel) T)]
           (swap! cache assoc T fused)
           fused)))))
+
+(defn- scan-simulate-fused
+  "Fused Scan simulate: compiled fn over all T steps."
+  [this args kernel fused-cache init-carry inputs n]
+  (let [{:keys [compiled-fn noise-dim addr-order noise-site-types]}
+        (get-or-build-fused-scan fused-cache kernel n)
+        key (rng/fresh-key)
+        noise (compiled/generate-noise-matrix key n noise-site-types)
+        [outputs-tensor scores-tensor total-score]
+        (compiled-fn (mx/ensure-array init-carry)
+                     (mx/stack (mapv mx/ensure-array inputs))
+                     noise)
+        _ (mx/materialize! outputs-tensor scores-tensor total-score)
+        {:keys [choices carries outputs step-scores]}
+        (unpack-fused-scan-outputs outputs-tensor scores-tensor n addr-order)]
+    (with-meta
+      (tr/make-trace {:gen-fn this :args args
+                      :choices choices
+                      :retval {:carry (last carries) :outputs outputs}
+                      :score total-score})
+      {::step-scores step-scores ::step-carries carries
+       ::compiled-path true ::fused true})))
+
+(defn- scan-simulate-compiled
+  "Compiled Scan simulate: call compiled-simulate per step."
+  [this args kernel init-carry inputs n csim]
+  (let [init-key (rng/fresh-key)]
+    (loop [t 0 carry init-carry key init-key
+           choices cm/EMPTY score (mx/scalar 0.0)
+           outputs [] step-scores [] step-carries []]
+      (if (>= t n)
+        (with-meta
+          (tr/make-trace {:gen-fn this :args args
+                          :choices choices
+                          :retval {:carry carry :outputs outputs}
+                          :score score})
+          {::step-scores step-scores ::step-carries step-carries
+           ::compiled-path true})
+        (let [[k1 k2] (rng/split key)
+              result (csim k1 [carry (nth inputs t)])
+              [new-carry output] (:retval result)
+              step-choices (cm/from-flat-map (:values result))]
+          (recur (inc t)
+                 new-carry k2
+                 (cm/set-choice choices [t] step-choices)
+                 (mx/add score (:score result))
+                 (conj outputs output)
+                 (conj step-scores (:score result))
+                 (conj step-carries new-carry)))))))
+
+(defn- scan-simulate-handler
+  "Handler Scan simulate: delegate to kernel per step."
+  [this args kernel init-carry inputs n]
+  (loop [t 0 carry init-carry
+         choices cm/EMPTY score (mx/scalar 0.0)
+         outputs [] step-scores [] step-carries []]
+    (if (>= t n)
+      (with-meta
+        (tr/make-trace {:gen-fn this :args args
+                        :choices choices
+                        :retval {:carry carry :outputs outputs}
+                        :score score})
+        {::step-scores step-scores ::step-carries step-carries})
+      (let [trace (p/simulate kernel [carry (nth inputs t)])
+            [new-carry output] (:retval trace)]
+        (recur (inc t)
+               new-carry
+               (cm/set-choice choices [t] (:choices trace))
+               (mx/add score (:score trace))
+               (conj outputs output)
+               (conj step-scores (:score trace))
+               (conj step-carries new-carry))))))
 
 (defrecord ScanCombinator [kernel fused-cache]
   p/IGenerativeFunction
   (simulate [this args]
-    ;; args: [init-carry inputs] where inputs is a vector
-    ;; kernel takes [carry input] and returns [new-carry output]
     (let [[init-carry inputs] args
           n (count inputs)]
-      (if-let [{:keys [compiled-fn noise-dim addr-order noise-site-types]}
-               (get-or-build-fused-scan fused-cache kernel n inputs)]
-        ;; WP-9B: fused scan path
-        (let [key (rng/fresh-key)
-              noise (compiled/generate-noise-matrix key n noise-site-types)
-              [outputs-tensor scores-tensor total-score]
-              (compiled-fn (mx/ensure-array init-carry) noise)
-              _ (mx/materialize! outputs-tensor scores-tensor total-score)
-              {:keys [choices carries outputs step-scores]}
-              (unpack-fused-scan-outputs outputs-tensor scores-tensor n addr-order)]
-          (with-meta
-            (tr/make-trace {:gen-fn this :args args
-                            :choices choices
-                            :retval {:carry (last carries) :outputs outputs}
-                            :score total-score})
-            {::step-scores step-scores ::step-carries carries
-             ::compiled-path true ::fused true}))
+      (if-let [_fused (get-or-build-fused-scan fused-cache kernel n)]
+        (scan-simulate-fused this args kernel fused-cache init-carry inputs n)
         (if-let [csim (compiled/get-compiled-simulate kernel)]
-          ;; L1-M5: compiled path
-          (let [init-key (rng/fresh-key)]
-            (loop [t 0 carry init-carry key init-key
-                   choices cm/EMPTY score (mx/scalar 0.0)
-                   outputs [] step-scores [] step-carries []]
-              (if (>= t n)
-                (with-meta
-                  (tr/make-trace {:gen-fn this :args args
-                                  :choices choices
-                                  :retval {:carry carry :outputs outputs}
-                                  :score score})
-                  {::step-scores step-scores ::step-carries step-carries
-                   ::compiled-path true})
-                (let [[k1 k2] (rng/split key)
-                      result (csim k1 [carry (nth inputs t)])
-                      [new-carry output] (:retval result)
-                      step-choices (reduce-kv
-                                    (fn [cm addr val] (cm/set-value cm addr val))
-                                    cm/EMPTY (:values result))]
-                  (recur (inc t)
-                         new-carry k2
-                         (cm/set-choice choices [t] step-choices)
-                         (mx/add score (:score result))
-                         (conj outputs output)
-                         (conj step-scores (:score result))
-                         (conj step-carries new-carry))))))
-          ;; L0: handler path
-          (loop [t 0 carry init-carry
-                 choices cm/EMPTY score (mx/scalar 0.0)
-                 outputs [] step-scores [] step-carries []]
-            (if (>= t n)
-              (with-meta
-                (tr/make-trace {:gen-fn this :args args
-                                :choices choices
-                                :retval {:carry carry :outputs outputs}
-                                :score score})
-                {::step-scores step-scores ::step-carries step-carries})
-              (let [trace (p/simulate kernel [carry (nth inputs t)])
-                    [new-carry output] (:retval trace)]
-                (recur (inc t)
-                       new-carry
-                       (cm/set-choice choices [t] (:choices trace))
-                       (mx/add score (:score trace))
-                       (conj outputs output)
-                       (conj step-scores (:score trace))
-                       (conj step-carries new-carry)))))))))
+          (scan-simulate-compiled this args kernel init-carry inputs n csim)
+          (scan-simulate-handler this args kernel init-carry inputs n)))))
 
   p/IGenerate
   (generate [this args constraints]
@@ -1763,9 +1790,7 @@
         ;; L1-M5: compiled path
         (let [key (rng/fresh-key)
               result (csim key (vec args))
-              choices (reduce-kv
-                       (fn [cm addr val] (cm/set-value cm addr val))
-                       cm/EMPTY (:values result))
+              choices (cm/from-flat-map (:values result))
               choices (cm/set-choice choices [:component-idx]
                                      (mx/scalar (int idx) mx/int32))]
           (with-meta

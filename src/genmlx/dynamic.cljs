@@ -53,10 +53,7 @@
       (if-let [compiled-sim (:compiled-simulate schema)]
         ;; L1-M2: full compiled path → build trace from result
         (let [result (compiled-sim key (vec args))
-              choices (reduce-kv
-                        (fn [cm addr val] (cm/set-value cm addr val))
-                        cm/EMPTY
-                        (:values result))]
+              choices (cm/from-flat-map (:values result))]
           (tr/make-trace
             {:gen-fn this :args args
              :choices choices
@@ -106,10 +103,7 @@
       (if-let [compiled-gen (:compiled-generate schema)]
         ;; WP-1/M4: compiled generate path (static or branch-rewritten)
         (let [result (compiled-gen key (vec args) constraints)
-              choices (reduce-kv
-                        (fn [cm addr val] (cm/set-value cm addr val))
-                        cm/EMPTY
-                        (:values result))
+              choices (cm/from-flat-map (:values result))
               trace (tr/make-trace
                       {:gen-fn this :args args
                        :choices choices
@@ -172,14 +166,8 @@
       (if-let [compiled-upd (:compiled-update schema)]
         ;; WP-3/M4: compiled update path (static or branch-rewritten)
         (let [result (compiled-upd key (vec (:args trace)) constraints (:choices trace))
-              choices (reduce-kv
-                        (fn [cm addr val] (cm/set-value cm addr val))
-                        cm/EMPTY
-                        (:values result))
-              discard (reduce-kv
-                        (fn [cm addr val] (cm/set-value cm addr val))
-                        cm/EMPTY
-                        (:discard result))
+              choices (cm/from-flat-map (:values result))
+              discard (cm/from-flat-map (:discard result))
               new-trace (tr/make-trace
                           {:gen-fn this :args (:args trace)
                            :choices choices
@@ -191,8 +179,7 @@
         (if-let [compiled-pfx-upd (:compiled-prefix-update schema)]
           ;; WP-4/M3: compiled prefix update + replay handler
           (let [result (compiled-pfx-upd key (vec (:args trace)) constraints (:choices trace))
-                prefix-discard (reduce-kv (fn [cm a v] (cm/set-value cm a v))
-                                          cm/EMPTY (:discard result))
+                prefix-discard (cm/from-flat-map (:discard result))
                 replay (compiled/make-replay-update-transition (:values result))
                 handler-result (rt/run-handler replay
                                  {:choices cm/EMPTY :score (:score result)
@@ -257,10 +244,7 @@
               new-score (:score result)
               proposal-ratio (:weight result)
               weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)
-              choices (reduce-kv
-                        (fn [cm addr val] (cm/set-value cm addr val))
-                        cm/EMPTY
-                        (:values result))
+              choices (cm/from-flat-map (:values result))
               new-trace (tr/make-trace
                           {:gen-fn this :args (:args trace)
                            :choices choices
@@ -490,6 +474,52 @@
     {:choices (or constraints cm/EMPTY) :retval retval
      :score weight :weight weight}))
 
+(defn- attach-compiled-ops
+  "Try all compiled operations for a model type. Each [schema-key builder-fn]
+   pair calls (builder-fn schema source); non-nil results are assoc'd onto schema."
+  [schema source ops]
+  (reduce (fn [s [k builder]]
+            (if-let [result (builder schema source)]
+              (assoc s k result)
+              s))
+          schema ops))
+
+(def ^:private static-ops
+  [[:compiled-simulate   compiled/make-compiled-simulate]
+   [:compiled-generate   compiled/make-compiled-generate]
+   [:compiled-update     compiled/make-compiled-update]
+   [:compiled-assess     compiled/make-compiled-assess]
+   [:compiled-project    compiled/make-compiled-project]
+   [:compiled-regenerate compiled/make-compiled-regenerate]])
+
+(def ^:private branch-ops
+  [[:compiled-simulate   compiled/make-branch-rewritten-simulate]
+   [:compiled-generate   compiled/make-branch-rewritten-generate]
+   [:compiled-update     compiled/make-branch-rewritten-update]
+   [:compiled-assess     compiled/make-branch-rewritten-assess]
+   [:compiled-project    compiled/make-branch-rewritten-project]
+   [:compiled-regenerate compiled/make-branch-rewritten-regenerate]])
+
+(def ^:private prefix-ops
+  [[:compiled-prefix             compiled/make-compiled-prefix            :compiled-prefix-addrs]
+   [:compiled-prefix-generate    compiled/make-compiled-prefix-generate   nil]
+   [:compiled-prefix-update      compiled/make-compiled-prefix-update     nil]
+   [:compiled-prefix-assess      compiled/make-compiled-prefix-assess     nil]
+   [:compiled-prefix-project     compiled/make-compiled-prefix-project    nil]
+   [:compiled-prefix-regenerate  compiled/make-compiled-prefix-regenerate nil]])
+
+(defn- attach-prefix-ops
+  "Try all prefix-compiled operations. Each entry is [fn-key builder addrs-key].
+   Builder returns {:fn compiled-fn :addrs addr-vec} or nil.
+   The :fn is stored under fn-key; :addrs under addrs-key when non-nil."
+  [schema source]
+  (reduce (fn [s [fn-key builder addrs-key]]
+            (if-let [result (builder schema source)]
+              (cond-> (assoc s fn-key (:fn result))
+                addrs-key (assoc addrs-key (:addrs result)))
+              s))
+          schema prefix-ops))
+
 (defn make-gen-fn
   "Create a DynamicGF from a body function and its source form.
    Extracts schema from the source form for Level 1 compilation.
@@ -499,97 +529,18 @@
   [body-fn source]
   (let [schema (schema/extract-schema source)
         schema (cond
-                 ;; L1-M2: static models → try full compiled simulate + generate + update + assess + project
                  (and schema (:static? schema))
-                 (let [schema (if-let [csim (compiled/make-compiled-simulate schema source)]
-                                (assoc schema :compiled-simulate csim)
-                                schema)
-                       schema (if-let [cgen (compiled/make-compiled-generate schema source)]
-                                (assoc schema :compiled-generate cgen)
-                                schema)
-                       schema (if-let [cupd (compiled/make-compiled-update schema source)]
-                                (assoc schema :compiled-update cupd)
-                                schema)
-                       schema (if-let [ca (compiled/make-compiled-assess schema source)]
-                                (assoc schema :compiled-assess ca)
-                                schema)
-                       schema (if-let [cp (compiled/make-compiled-project schema source)]
-                                (assoc schema :compiled-project cp)
-                                schema)
-                       schema (if-let [cr (compiled/make-compiled-regenerate schema source)]
-                                (assoc schema :compiled-regenerate cr)
-                                schema)]
-                   schema)
+                 (attach-compiled-ops schema source static-ops)
 
-                 ;; L1-M4: branch models → try branch rewriting
                  (and schema (:has-branches? schema))
                  (if-let [csim (compiled/make-branch-rewritten-simulate schema source)]
-                   ;; M4 simulate succeeded → also try M4 generate + update + assess + project
-                   (let [schema (assoc schema :compiled-simulate csim)
-                         schema (if-let [cgen (compiled/make-branch-rewritten-generate schema source)]
-                                  (assoc schema :compiled-generate cgen)
-                                  schema)
-                         schema (if-let [cupd (compiled/make-branch-rewritten-update schema source)]
-                                  (assoc schema :compiled-update cupd)
-                                  schema)
-                         schema (if-let [ca (compiled/make-branch-rewritten-assess schema source)]
-                                  (assoc schema :compiled-assess ca)
-                                  schema)
-                         schema (if-let [cp (compiled/make-branch-rewritten-project schema source)]
-                                  (assoc schema :compiled-project cp)
-                                  schema)
-                         schema (if-let [cr (compiled/make-branch-rewritten-regenerate schema source)]
-                                  (assoc schema :compiled-regenerate cr)
-                                  schema)]
-                     schema)
-                   ;; M4 failed → fall through to M3
-                   (let [schema (if-let [result (compiled/make-compiled-prefix schema source)]
-                                  (assoc schema
-                                    :compiled-prefix (:fn result)
-                                    :compiled-prefix-addrs (:addrs result))
-                                  schema)
-                         schema (if-let [result (compiled/make-compiled-prefix-generate schema source)]
-                                  (assoc schema :compiled-prefix-generate (:fn result))
-                                  schema)
-                         schema (if-let [result (compiled/make-compiled-prefix-update schema source)]
-                                  (assoc schema :compiled-prefix-update (:fn result))
-                                  schema)
-                         schema (if-let [result (compiled/make-compiled-prefix-assess schema source)]
-                                  (assoc schema :compiled-prefix-assess (:fn result))
-                                  schema)
-                         schema (if-let [result (compiled/make-compiled-prefix-project schema source)]
-                                  (assoc schema :compiled-prefix-project (:fn result))
-                                  schema)
-                         schema (if-let [result (compiled/make-compiled-prefix-regenerate schema source)]
-                                  (assoc schema :compiled-prefix-regenerate (:fn result))
-                                  schema)]
-                     schema))
+                   (attach-compiled-ops (assoc schema :compiled-simulate csim)
+                                        source (rest branch-ops))
+                   (attach-prefix-ops schema source))
 
-                 ;; L1-M3: non-static models → try compiled prefix
                  schema
-                 (let [schema (if-let [result (compiled/make-compiled-prefix schema source)]
-                                (assoc schema
-                                  :compiled-prefix (:fn result)
-                                  :compiled-prefix-addrs (:addrs result))
-                                schema)
-                       schema (if-let [result (compiled/make-compiled-prefix-generate schema source)]
-                                (assoc schema :compiled-prefix-generate (:fn result))
-                                schema)
-                       schema (if-let [result (compiled/make-compiled-prefix-update schema source)]
-                                (assoc schema :compiled-prefix-update (:fn result))
-                                schema)
-                       schema (if-let [result (compiled/make-compiled-prefix-assess schema source)]
-                                (assoc schema :compiled-prefix-assess (:fn result))
-                                schema)
-                       schema (if-let [result (compiled/make-compiled-prefix-project schema source)]
-                                (assoc schema :compiled-prefix-project (:fn result))
-                                schema)
-                       schema (if-let [result (compiled/make-compiled-prefix-regenerate schema source)]
-                                (assoc schema :compiled-prefix-regenerate (:fn result))
-                                schema)]
-                   schema)
+                 (attach-prefix-ops schema source)
 
-                 ;; No schema
                  :else schema)]
     (->DynamicGF body-fn source schema)))
 
