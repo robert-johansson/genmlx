@@ -2236,6 +2236,36 @@
             {:values (assoc values addr value)
              :score score}))))))
 
+(defn- build-fused-site-specs
+  "Build site-specs with compiled args for fused compilation.
+   Returns vector of {:addr :compiled-args :dist-type} or nil per site."
+  [static-sites binding-env]
+  (mapv (fn [ts]
+          (let [cargs (mapv #(compile-expr % binding-env #{})
+                            (:dist-args ts))]
+            (when (every? some? cargs)
+              {:addr (:addr ts)
+               :compiled-args cargs
+               :dist-type (:dist-type ts)})))
+        static-sites))
+
+(defn- assign-noise-indices
+  "Assign sequential noise indices to site-specs that have noise-fns.
+   Returns vector of indices (nil for delta/unsupported sites)."
+  [site-specs]
+  (second
+    (reduce (fn [[idx acc] s]
+              (if (and s (:noise-fn (get noise-transforms-full (:dist-type s))))
+                [(inc idx) (conj acc idx)]
+                [idx (conj acc nil)]))
+            [0 []] site-specs)))
+
+(defn- extract-noise-site-types
+  "Filter site-specs to those with noise-fns."
+  [site-specs]
+  (filterv (fn [s] (and s (:noise-fn (get noise-transforms-full (:dist-type s)))))
+           site-specs))
+
 (defn generate-noise-matrix
   "Generate [T, K] noise matrix where each column has the correct distribution.
    noise-site-types: vector of {:dist-type ...} for noise-consuming sites.
@@ -2272,29 +2302,10 @@
              (empty? (:param-sites schema)))
     (let [binding-env (build-binding-env source)
           static-sites (filterv :static? (:trace-sites schema))
-          ;; Build site specs with compiled args
-          site-specs
-          (mapv (fn [ts]
-                  (let [cargs (mapv #(compile-expr % binding-env #{})
-                                    (:dist-args ts))]
-                    (when (every? some? cargs)
-                      {:addr (:addr ts)
-                       :compiled-args cargs
-                       :dist-type (:dist-type ts)})))
-                static-sites)
-          ;; Assign noise indices in dep-order with running counter
-          noise-indices (let [idx (atom -1)]
-                          (mapv (fn [s]
-                                  (when s
-                                    (if (:noise-fn (get noise-transforms-full (:dist-type s)))
-                                      (swap! idx inc)
-                                      nil)))
-                                site-specs))
-          noise-site-types (filterv
-                             (fn [s] (and s (:noise-fn (get noise-transforms-full (:dist-type s)))))
-                             site-specs)
+          site-specs (build-fused-site-specs static-sites binding-env)
+          noise-indices (assign-noise-indices site-specs)
+          noise-site-types (extract-noise-site-types site-specs)
           noise-dim (count noise-site-types)
-          ;; Build fused step functions
           fused-steps (mapv (fn [spec ni] (build-fused-site-step spec ni))
                             site-specs noise-indices)
           ;; Compile return expression
@@ -2362,25 +2373,9 @@
              (empty? (:param-sites schema)))
     (let [binding-env (build-binding-env source)
           static-sites (filterv :static? (:trace-sites schema))
-          site-specs
-          (mapv (fn [ts]
-                  (let [cargs (mapv #(compile-expr % binding-env #{})
-                                    (:dist-args ts))]
-                    (when (every? some? cargs)
-                      {:addr (:addr ts)
-                       :compiled-args cargs
-                       :dist-type (:dist-type ts)})))
-                static-sites)
-          noise-indices (let [idx (atom -1)]
-                          (mapv (fn [s]
-                                  (when s
-                                    (if (:noise-fn (get noise-transforms-full (:dist-type s)))
-                                      (swap! idx inc)
-                                      nil)))
-                                site-specs))
-          noise-site-types (filterv
-                             (fn [s] (and s (:noise-fn (get noise-transforms-full (:dist-type s)))))
-                             site-specs)
+          site-specs (build-fused-site-specs static-sites binding-env)
+          noise-indices (assign-noise-indices site-specs)
+          noise-site-types (extract-noise-site-types site-specs)
           noise-dim (count noise-site-types)
           fused-steps (mapv (fn [spec ni] (build-fused-site-step spec ni))
                             site-specs noise-indices)
@@ -2445,11 +2440,10 @@
          (seq (:trace-sites schema))
          (empty? (:splice-sites schema))
          (empty? (:param-sites schema))
-         (let [static-sites (filterv :static? (:trace-sites schema))]
-           (every? #(some? (get noise-transforms-full (:dist-type %))) static-sites))
-         ;; At least one non-delta site (otherwise no benefit)
-         (some #(:noise-fn (get noise-transforms-full (:dist-type %)))
-               (filterv :static? (:trace-sites schema))))))
+         (let [nts (mapv #(get noise-transforms-full (:dist-type %))
+                         (filterv :static? (:trace-sites schema)))]
+           (and (every? some? nts)
+                (some :noise-fn nts))))))
 
 (defn make-fused-map-simulate
   "Build a fused map simulate that processes all N elements in one call.
@@ -2468,28 +2462,10 @@
              (empty? (:param-sites schema)))
     (let [binding-env (build-binding-env source)
           static-sites (filterv :static? (:trace-sites schema))
-          site-specs
-          (mapv (fn [ts]
-                  (let [cargs (mapv #(compile-expr % binding-env #{})
-                                    (:dist-args ts))]
-                    (when (every? some? cargs)
-                      {:addr (:addr ts)
-                       :compiled-args cargs
-                       :dist-type (:dist-type ts)})))
-                static-sites)
-          ;; Assign noise indices in dep-order
-          noise-indices (let [idx (atom -1)]
-                          (mapv (fn [s]
-                                  (when s
-                                    (if (:noise-fn (get noise-transforms-full (:dist-type s)))
-                                      (swap! idx inc)
-                                      nil)))
-                                site-specs))
-          noise-site-types (filterv
-                             (fn [s] (and s (:noise-fn (get noise-transforms-full (:dist-type s)))))
-                             site-specs)
+          site-specs (build-fused-site-specs static-sites binding-env)
+          noise-indices (assign-noise-indices site-specs)
+          noise-site-types (extract-noise-site-types site-specs)
           noise-dim (count noise-site-types)
-          ;; Build fused steps — same as unfold/scan, but noise-row will be [N]-shaped
           fused-steps (mapv (fn [spec ni] (build-fused-site-step spec ni))
                             site-specs noise-indices)
           return-expr (extract-return-expr (:return-form schema))
