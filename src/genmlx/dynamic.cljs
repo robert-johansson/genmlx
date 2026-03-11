@@ -15,6 +15,9 @@
             [genmlx.diff :as diff]
             [genmlx.schema :as schema]
             [genmlx.compiled :as compiled]
+            [genmlx.conjugacy :as conjugacy]
+            [genmlx.rewrite :as rewrite]
+            [genmlx.inference.auto-analytical :as auto-analytical]
             [clojure.set]))
 
 ;; Cached zero constant for init states (MLX scalars are immutable)
@@ -100,59 +103,87 @@
                 :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
                                       {:gen-fn (.-source this)}))))
           _ (rng/seed! key)]
-      (if-let [compiled-gen (:compiled-generate schema)]
-        ;; WP-1/M4: compiled generate path (static or branch-rewritten)
-        (let [result (compiled-gen key (vec args) constraints)
-              choices (cm/from-flat-map (:values result))
+      (if (and (:auto-handlers schema)
+               (auto-analytical/some-conjugate-obs-constrained?
+                 (:conjugate-pairs schema) constraints))
+        ;; L3: auto-analytical handler (address-based conjugate elimination)
+        (let [transition (auto-analytical/make-address-dispatch
+                           h/generate-transition (:auto-handlers schema))
+              result (rt/run-handler transition
+                       {:choices cm/EMPTY :score SCORE-ZERO
+                        :weight SCORE-ZERO
+                        :key key :constraints constraints
+                        :auto-posteriors {}
+                        :auto-kalman-beliefs {}
+                        :auto-kalman-noise-vars {}
+                        :executor execute-sub
+                        :param-store (::param-store (meta this))}
+                       (fn [rt] (apply body-fn rt args)))
               trace (tr/make-trace
                       {:gen-fn this :args args
-                       :choices choices
+                       :choices (:choices result)
                        :retval  (:retval result)
                        :score   (:score result)})]
-          {:trace trace :weight (:weight result)})
-        (if-let [compiled-pfx-gen (:compiled-prefix-generate schema)]
-          ;; WP-2/M3: compiled prefix generate + replay handler
-          (let [result (compiled-pfx-gen key (vec args) constraints)
-                replay (compiled/make-replay-generate-transition (:values result))
-                handler-result (rt/run-handler replay
-                                 {:choices cm/EMPTY :score (:score result)
-                                  :weight (:weight result)
-                                  :key key :constraints constraints
-                                  :executor execute-sub
-                                  :param-store (::param-store (meta this))}
-                                 (fn [rt] (apply body-fn rt args)))
+          (let [result-map {:trace (if-let [ss (:splice-scores result)]
+                                    (with-meta trace {::splice-scores ss})
+                                    trace)
+                            :weight (:weight result)}]
+            (if-let [unused (find-unused-constraints constraints (:choices result))]
+              (assoc result-map :unused-constraints unused)
+              result-map)))
+        (if-let [compiled-gen (:compiled-generate schema)]
+          ;; WP-1/M4: compiled generate path (static or branch-rewritten)
+          (let [result (compiled-gen key (vec args) constraints)
+                choices (cm/from-flat-map (:values result))
                 trace (tr/make-trace
                         {:gen-fn this :args args
-                         :choices (:choices handler-result)
-                         :retval  (:retval handler-result)
-                         :score   (:score handler-result)})]
-            (let [result-map {:trace (if-let [ss (:splice-scores handler-result)]
-                                      (with-meta trace {::splice-scores ss})
-                                      trace)
-                              :weight (:weight handler-result)}]
-              (if-let [unused (find-unused-constraints constraints (:choices handler-result))]
-                (assoc result-map :unused-constraints unused)
-                result-map)))
-          ;; L0: handler path
-          (let [result (rt/run-handler h/generate-transition
-                         {:choices cm/EMPTY :score SCORE-ZERO
-                          :weight SCORE-ZERO
-                          :key key :constraints constraints
-                          :executor execute-sub
-                          :param-store (::param-store (meta this))}
-                         (fn [rt] (apply body-fn rt args)))
-                trace (tr/make-trace
-                        {:gen-fn this :args args
-                         :choices (:choices result)
+                         :choices choices
                          :retval  (:retval result)
                          :score   (:score result)})]
-            (let [result-map {:trace (if-let [ss (:splice-scores result)]
-                                      (with-meta trace {::splice-scores ss})
-                                      trace)
-                              :weight (:weight result)}]
-              (if-let [unused (find-unused-constraints constraints (:choices result))]
-                (assoc result-map :unused-constraints unused)
-                result-map)))))))
+            {:trace trace :weight (:weight result)})
+          (if-let [compiled-pfx-gen (:compiled-prefix-generate schema)]
+            ;; WP-2/M3: compiled prefix generate + replay handler
+            (let [result (compiled-pfx-gen key (vec args) constraints)
+                  replay (compiled/make-replay-generate-transition (:values result))
+                  handler-result (rt/run-handler replay
+                                   {:choices cm/EMPTY :score (:score result)
+                                    :weight (:weight result)
+                                    :key key :constraints constraints
+                                    :executor execute-sub
+                                    :param-store (::param-store (meta this))}
+                                   (fn [rt] (apply body-fn rt args)))
+                  trace (tr/make-trace
+                          {:gen-fn this :args args
+                           :choices (:choices handler-result)
+                           :retval  (:retval handler-result)
+                           :score   (:score handler-result)})]
+              (let [result-map {:trace (if-let [ss (:splice-scores handler-result)]
+                                        (with-meta trace {::splice-scores ss})
+                                        trace)
+                                :weight (:weight handler-result)}]
+                (if-let [unused (find-unused-constraints constraints (:choices handler-result))]
+                  (assoc result-map :unused-constraints unused)
+                  result-map)))
+            ;; L0: handler path
+            (let [result (rt/run-handler h/generate-transition
+                           {:choices cm/EMPTY :score SCORE-ZERO
+                            :weight SCORE-ZERO
+                            :key key :constraints constraints
+                            :executor execute-sub
+                            :param-store (::param-store (meta this))}
+                           (fn [rt] (apply body-fn rt args)))
+                  trace (tr/make-trace
+                          {:gen-fn this :args args
+                           :choices (:choices result)
+                           :retval  (:retval result)
+                           :score   (:score result)})]
+              (let [result-map {:trace (if-let [ss (:splice-scores result)]
+                                        (with-meta trace {::splice-scores ss})
+                                        trace)
+                                :weight (:weight result)}]
+                (if-let [unused (find-unused-constraints constraints (:choices result))]
+                  (assoc result-map :unused-constraints unused)
+                  result-map))))))))
 
   p/IUpdate
   (update [this trace constraints]
@@ -541,7 +572,17 @@
                  schema
                  (attach-prefix-ops schema source)
 
-                 :else schema)]
+                 :else schema)
+        ;; L3: full rewrite engine (Kalman > Conjugacy > RaoBlackwell)
+        schema (if schema
+                 (let [augmented (conjugacy/augment-schema-with-conjugacy schema)]
+                   (if (:has-conjugate? augmented)
+                     (let [plan (rewrite/build-analytical-plan augmented)]
+                       (-> augmented
+                           (assoc :auto-handlers (get-in plan [:rewrite-result :handlers]))
+                           (assoc :analytical-plan plan)))
+                     augmented))
+                 schema)]
     (->DynamicGF body-fn source schema)))
 
 (defn with-key
