@@ -429,7 +429,8 @@
   [{:keys [samples burn thin addresses proposal-std compile? n-chains callback key device]
     :or {burn 0 thin 1 proposal-std 0.1 compile? true n-chains 10 device :gpu}}
    model args observations]
-  (let [model (dyn/auto-key model)]
+  (let [model (dyn/auto-key model)
+        addresses (u/filter-addresses addresses (u/get-eliminated-addresses model))]
     (with-device device
       #(let [score-fn (u/make-vectorized-score-fn model args observations addresses)
           ;; Initialize N chains from independent generate calls
@@ -542,7 +543,8 @@
     :or {burn 0 proposal-std 0.1 n-chains 10 device :gpu
          block-size 10}}
    model args observations]
-  (let [model (dyn/auto-key model)]
+  (let [model (dyn/auto-key model)
+        addresses (u/filter-addresses addresses (u/get-eliminated-addresses model))]
     (with-device device
       (fn []
         (let [raw-score-fn (u/make-batched-score-fn model args observations addresses)
@@ -975,7 +977,8 @@
   [{:keys [samples burn thin step-size addresses compile? n-chains callback key device]
     :or {burn 0 thin 1 step-size 0.01 compile? true n-chains 10 device :gpu}}
    model args observations]
-  (let [model (dyn/auto-key model)]
+  (let [model (dyn/auto-key model)
+        addresses (u/filter-addresses addresses (u/get-eliminated-addresses model))]
     (with-device device
       #(let [{:keys [score-fn grad-fn]}
              (u/make-compiled-vectorized-score-and-grad model args observations addresses)
@@ -1535,7 +1538,8 @@
   [{:keys [samples burn thin step-size leapfrog-steps addresses n-chains callback key device]
     :or {burn 100 thin 1 step-size 0.01 leapfrog-steps 20 n-chains 10 device :gpu}}
    model args observations]
-  (let [model (dyn/auto-key model)]
+  (let [model (dyn/auto-key model)
+        addresses (u/filter-addresses addresses (u/get-eliminated-addresses model))]
     (with-device device
       #(let [;; Build vectorized score and gradient functions
              vec-score-fn (u/make-vectorized-score-fn model args observations addresses)

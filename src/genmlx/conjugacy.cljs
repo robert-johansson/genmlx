@@ -58,6 +58,14 @@
     :obs-logits-key :logits
     :natural-param-idx 0}
 
+   [:multivariate-normal :multivariate-normal]
+   {:family :mvn-normal
+    :prior-mean-key :mean-vec
+    :prior-cov-key :cov-matrix
+    :obs-mean-key :mean-vec
+    :obs-cov-key :cov-matrix
+    :natural-param-idx 0}
+
    ;; Explicitly NOT conjugate
    [:gaussian :bernoulli] nil
    [:beta-dist :gaussian] nil

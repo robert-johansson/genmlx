@@ -344,6 +344,42 @@
         (if (mx/array? s) [s] (collect-trace-arrays s))))))
 
 ;; ===========================================================================
+;; Level 3.5: Conjugate-aware score functions
+;; ===========================================================================
+
+(defn get-eliminated-addresses
+  "Return the set of addresses analytically eliminated by L3 auto-handlers.
+   Returns nil if the model has no analytical plan."
+  [model]
+  (get-in (:schema model) [:analytical-plan :rewrite-result :eliminated]))
+
+(defn filter-addresses
+  "Remove analytically eliminated addresses from an address list.
+   If no addresses are eliminated, returns the original list unchanged."
+  [addresses eliminated]
+  (if (seq eliminated)
+    (vec (remove eliminated addresses))
+    addresses))
+
+(defn make-conjugate-aware-score-fn
+  "Build a score function that excludes analytically marginalized parameters.
+   The auto-handlers in p/generate handle eliminated addresses automatically,
+   so they need not be in the parameter vector.
+
+   Returns {:score-fn      (fn [params] -> scalar)
+            :addresses     filtered address list
+            :eliminated    set of eliminated addresses (may be nil)
+            :reduced?      true if dimension was reduced}."
+  [model args observations addresses]
+  (let [eliminated (get-eliminated-addresses model)
+        filtered (filter-addresses addresses eliminated)
+        reduced? (< (count filtered) (count addresses))]
+    {:score-fn (make-score-fn model args observations filtered)
+     :addresses filtered
+     :eliminated eliminated
+     :reduced? reduced?}))
+
+;; ===========================================================================
 ;; Level 2: Tensor-native score function (tries compiled, falls back to GFI)
 ;; ===========================================================================
 
@@ -384,6 +420,7 @@
 (defn prepare-mcmc-score
   "Prepare score function + init params for compiled MCMC.
    Tries tensor-native score first (bypasses GFI), falls back to GFI-based.
+   Automatically filters out analytically eliminated addresses (L3.5).
 
    Returns {:score-fn    (fn [D-tensor] -> scalar)
             :init-params [D] MLX array
@@ -393,7 +430,10 @@
    The returned score-fn and init-params always use the same indexing,
    whether tensor-native or GFI-based."
   [model args observations addresses trace]
-  (let [{:keys [score-fn latent-index tensor-native?]}
+  (let [;; L3.5: filter out conjugate prior addresses
+        eliminated (get-eliminated-addresses model)
+        addresses (filter-addresses addresses eliminated)
+        {:keys [score-fn latent-index tensor-native?]}
         (make-tensor-score-fn model args observations addresses)]
     (if tensor-native?
       ;; Tensor-native: params packed in dep-order (latent-index)

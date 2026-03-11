@@ -274,111 +274,165 @@
                 :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
                                       {:gen-fn (.-source this)}))))
           _ (rng/seed! key)
-          old-score (:score trace)]
-      (if-let [cregen (:compiled-regenerate schema)]
-        ;; WP-6: fully compiled regenerate (M2/M4)
-        (let [result (cregen key (vec (:args trace)) (:choices trace) selection)
+          old-score (:score trace)
+          ;; L3.5 Opt 3: O(1) check for precomputed transition
+          has-regen-analytical? (boolean (:auto-regenerate-transition schema))]
+      (if has-regen-analytical?
+        ;; L3.5: auto-analytical regenerate (Case B: prior not selected)
+        ;; Opt 1: use precomputed transition (no per-step make-address-dispatch)
+        ;; Opt 2b: no regen-constraints map — handlers read from :old-choices directly
+        (let [result (rt/run-handler (:auto-regenerate-transition schema)
+                       {:choices cm/EMPTY :score SCORE-ZERO
+                        :weight SCORE-ZERO
+                        :key key :selection selection
+                        :old-choices (:choices trace)
+                        :auto-posteriors {}
+                        :auto-kalman-beliefs {}
+                        :auto-kalman-noise-vars {}
+                        :old-splice-scores (::splice-scores (meta trace))
+                        :executor execute-sub
+                        :param-store (::param-store (meta this))}
+                       (fn [rt] (apply body-fn rt (:args trace))))
               new-score (:score result)
               proposal-ratio (:weight result)
               weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)
-              choices (cm/from-flat-map (:values result))
               new-trace (tr/make-trace
                           {:gen-fn this :args (:args trace)
-                           :choices choices
+                           :choices (:choices result)
                            :retval  (:retval result)
                            :score   new-score})]
-          {:trace new-trace :weight weight})
-        (if-let [prefix-regen (:compiled-prefix-regenerate schema)]
-          ;; WP-6: M3 prefix regenerate + replay handler
-          (let [prefix-result (prefix-regen key (vec (:args trace))
-                                            (:choices trace) selection)
-                replay (compiled/make-replay-regenerate-transition (:values prefix-result))
-                handler-result (rt/run-handler replay
-                                 {:choices cm/EMPTY :score (:score prefix-result)
-                                  :weight (:weight prefix-result)
-                                  :key key :selection selection
-                                  :old-choices (:choices trace)
-                                  :executor execute-sub
-                                  :param-store (::param-store (meta this))}
-                                 (fn [rt] (apply body-fn rt (:args trace))))
-                new-score (:score handler-result)
-                proposal-ratio (:weight handler-result)
-                weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)
-                new-trace (tr/make-trace
-                            {:gen-fn this :args (:args trace)
-                             :choices (:choices handler-result)
-                             :retval  (:retval handler-result)
-                             :score   new-score})]
-            {:trace (if-let [ss (:splice-scores handler-result)]
-                      (with-meta new-trace {::splice-scores ss})
-                      new-trace)
-             :weight weight})
-          ;; Handler fallback
-          (let [result (rt/run-handler h/regenerate-transition
-                         {:choices cm/EMPTY :score SCORE-ZERO
-                          :weight SCORE-ZERO  ;; tracks proposal ratio
-                          :key key :selection selection
-                          :old-choices (:choices trace)
-                          :old-splice-scores (::splice-scores (meta trace))
-                          :executor execute-sub
-                          :param-store (::param-store (meta this))}
-                         (fn [rt] (apply body-fn rt (:args trace))))
+          {:trace (if-let [ss (:splice-scores result)]
+                    (with-meta new-trace {::splice-scores ss})
+                    new-trace)
+           :weight weight})
+        (if-let [cregen (:compiled-regenerate schema)]
+          ;; WP-6: fully compiled regenerate (M2/M4)
+          (let [result (cregen key (vec (:args trace)) (:choices trace) selection)
                 new-score (:score result)
                 proposal-ratio (:weight result)
                 weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)
+                choices (cm/from-flat-map (:values result))
                 new-trace (tr/make-trace
                             {:gen-fn this :args (:args trace)
-                             :choices (:choices result)
+                             :choices choices
                              :retval  (:retval result)
                              :score   new-score})]
-            {:trace (if-let [ss (:splice-scores result)]
-                      (with-meta new-trace {::splice-scores ss})
-                      new-trace)
-             :weight weight})))))
+            {:trace new-trace :weight weight})
+          (if-let [prefix-regen (:compiled-prefix-regenerate schema)]
+            ;; WP-6: M3 prefix regenerate + replay handler
+            (let [prefix-result (prefix-regen key (vec (:args trace))
+                                              (:choices trace) selection)
+                  replay (compiled/make-replay-regenerate-transition (:values prefix-result))
+                  handler-result (rt/run-handler replay
+                                   {:choices cm/EMPTY :score (:score prefix-result)
+                                    :weight (:weight prefix-result)
+                                    :key key :selection selection
+                                    :old-choices (:choices trace)
+                                    :executor execute-sub
+                                    :param-store (::param-store (meta this))}
+                                   (fn [rt] (apply body-fn rt (:args trace))))
+                  new-score (:score handler-result)
+                  proposal-ratio (:weight handler-result)
+                  weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)
+                  new-trace (tr/make-trace
+                              {:gen-fn this :args (:args trace)
+                               :choices (:choices handler-result)
+                               :retval  (:retval handler-result)
+                               :score   new-score})]
+              {:trace (if-let [ss (:splice-scores handler-result)]
+                        (with-meta new-trace {::splice-scores ss})
+                        new-trace)
+               :weight weight})
+            ;; Handler fallback
+            (let [result (rt/run-handler h/regenerate-transition
+                           {:choices cm/EMPTY :score SCORE-ZERO
+                            :weight SCORE-ZERO  ;; tracks proposal ratio
+                            :key key :selection selection
+                            :old-choices (:choices trace)
+                            :old-splice-scores (::splice-scores (meta trace))
+                            :executor execute-sub
+                            :param-store (::param-store (meta this))}
+                           (fn [rt] (apply body-fn rt (:args trace))))
+                  new-score (:score result)
+                  proposal-ratio (:weight result)
+                  weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)
+                  new-trace (tr/make-trace
+                              {:gen-fn this :args (:args trace)
+                               :choices (:choices result)
+                               :retval  (:retval result)
+                               :score   new-score})]
+              {:trace (if-let [ss (:splice-scores result)]
+                        (with-meta new-trace {::splice-scores ss})
+                        new-trace)
+               :weight weight}))))))
 
   p/IAssess
   (assess [this args choices]
-    (if-let [cassess (:compiled-assess schema)]
-      ;; WP-5: fully compiled assess (M2/M4)
-      (let [result (cassess (vec args) choices)]
+    (if (and (:auto-handlers schema)
+             (auto-analytical/some-conjugate-obs-constrained?
+               (:conjugate-pairs schema) choices))
+      ;; L3.5: auto-analytical handler (address-based conjugate elimination)
+      (let [key (let [k (::key (meta this))]
+                  (cond
+                    (= k auto-key-sentinel) (rng/fresh-key)
+                    k k
+                    :else (throw (ex-info "No PRNG key on gen-fn." {:gen-fn (.-source this)}))))
+            _ (rng/seed! key)
+            transition (auto-analytical/make-address-dispatch
+                         h/assess-transition (:auto-handlers schema))
+            result (rt/run-handler transition
+                     {:choices cm/EMPTY :score SCORE-ZERO
+                      :weight SCORE-ZERO
+                      :key key :constraints choices
+                      :auto-posteriors {}
+                      :auto-kalman-beliefs {}
+                      :auto-kalman-noise-vars {}
+                      :executor execute-sub-assess
+                      :param-store (::param-store (meta this))}
+                     (fn [rt] (apply body-fn rt args)))]
         {:retval (:retval result)
          :weight (:score result)})
-      (if-let [prefix-assess (:compiled-prefix-assess schema)]
-        ;; WP-5: M3 prefix assess + replay
-        (let [key (let [k (::key (meta this))]
-                    (cond
-                      (= k auto-key-sentinel) (rng/fresh-key)
-                      k k
-                      :else (throw (ex-info "No PRNG key on gen-fn." {:gen-fn (.-source this)}))))
-              _ (rng/seed! key)
-              prefix-result (prefix-assess (vec args) choices)
-              replay-transition (compiled/make-replay-assess-transition (:values prefix-result))
-              result (rt/run-handler replay-transition
-                       {:choices cm/EMPTY :score (:score prefix-result)
-                        :weight (:score prefix-result)
-                        :key key :constraints choices
-                        :executor execute-sub-assess
-                        :param-store (::param-store (meta this))}
-                       (fn [rt] (apply body-fn rt args)))]
+      (if-let [cassess (:compiled-assess schema)]
+        ;; WP-5: fully compiled assess (M2/M4)
+        (let [result (cassess (vec args) choices)]
           {:retval (:retval result)
            :weight (:score result)})
-        ;; Handler fallback
-        (let [key (let [k (::key (meta this))]
-                    (cond
-                      (= k auto-key-sentinel) (rng/fresh-key)
-                      k k
-                      :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
-                                            {:gen-fn (.-source this)}))))
-              _ (rng/seed! key)
-              result (rt/run-handler h/assess-transition
-                       {:choices cm/EMPTY :score SCORE-ZERO
-                        :weight SCORE-ZERO
-                        :key key :constraints choices
-                        :executor execute-sub-assess
-                        :param-store (::param-store (meta this))}
-                       (fn [rt] (apply body-fn rt args)))]
-          {:retval (:retval result)
-           :weight (:score result)}))))
+        (if-let [prefix-assess (:compiled-prefix-assess schema)]
+          ;; WP-5: M3 prefix assess + replay
+          (let [key (let [k (::key (meta this))]
+                      (cond
+                        (= k auto-key-sentinel) (rng/fresh-key)
+                        k k
+                        :else (throw (ex-info "No PRNG key on gen-fn." {:gen-fn (.-source this)}))))
+                _ (rng/seed! key)
+                prefix-result (prefix-assess (vec args) choices)
+                replay-transition (compiled/make-replay-assess-transition (:values prefix-result))
+                result (rt/run-handler replay-transition
+                         {:choices cm/EMPTY :score (:score prefix-result)
+                          :weight (:score prefix-result)
+                          :key key :constraints choices
+                          :executor execute-sub-assess
+                          :param-store (::param-store (meta this))}
+                         (fn [rt] (apply body-fn rt args)))]
+            {:retval (:retval result)
+             :weight (:score result)})
+          ;; Handler fallback
+          (let [key (let [k (::key (meta this))]
+                      (cond
+                        (= k auto-key-sentinel) (rng/fresh-key)
+                        k k
+                        :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
+                                              {:gen-fn (.-source this)}))))
+                _ (rng/seed! key)
+                result (rt/run-handler h/assess-transition
+                         {:choices cm/EMPTY :score SCORE-ZERO
+                          :weight SCORE-ZERO
+                          :key key :constraints choices
+                          :executor execute-sub-assess
+                          :param-store (::param-store (meta this))}
+                         (fn [rt] (apply body-fn rt args)))]
+            {:retval (:retval result)
+             :weight (:score result)})))))
 
   p/IPropose
   (propose [this args]
@@ -583,9 +637,17 @@
         schema (if schema
                  (let [augmented (conjugacy/augment-schema-with-conjugacy schema)]
                    (if (:has-conjugate? augmented)
-                     (let [plan (rewrite/build-analytical-plan augmented)]
+                     (let [plan (rewrite/build-analytical-plan augmented)
+                           regen-handlers (auto-analytical/build-all-regenerate-handlers
+                                           (:conjugate-pairs augmented))
+                           ;; Opt 1: precompute dispatch transition once at construction
+                           regen-transition (when (seq regen-handlers)
+                                             (auto-analytical/make-address-dispatch
+                                               h/regenerate-transition regen-handlers))]
                        (-> augmented
                            (assoc :auto-handlers (get-in plan [:rewrite-result :handlers]))
+                           (assoc :auto-regenerate-handlers regen-handlers)
+                           (assoc :auto-regenerate-transition regen-transition)
                            (assoc :analytical-plan plan)))
                      augmented))
                  schema)]
