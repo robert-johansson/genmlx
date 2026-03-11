@@ -1508,6 +1508,95 @@
   (:compiled-generate (:schema gf)))
 
 ;; ===========================================================================
+;; WP-3: Compiled Update for Static Models
+;; ===========================================================================
+;;
+;; Architecture: same as compiled generate, but NO sampling. Values come from
+;; constraints (case 1) or old-choices (case 2). Log-prob computed with CURRENT
+;; distribution params (which may differ from old trace if upstream changed).
+;; Weight = new-score - old-score, computed in DynamicGF.update (not here).
+
+(defn- build-update-site-step
+  "Build the update step for one trace site.
+   Returns (fn [state args-vec constraints old-choices] -> state) where state has
+   {:values :score :discard :key}, or nil if dist-type has no noise transform."
+  [site-spec]
+  (let [{:keys [addr compiled-args dist-type]} site-spec
+        nt (get noise-transforms-full dist-type)]
+    (when nt
+      (let [log-prob-fn (:log-prob nt)]
+        (fn [{:keys [values score discard key]} args-vec constraints old-choices]
+          (let [constraint (cm/get-submap constraints addr)
+                eval-args (mapv #(% values args-vec) compiled-args)]
+            (if (cm/has-value? constraint)
+              ;; Case 1: Constrained — use new value, discard old
+              (let [value (cm/get-value constraint)
+                    lp (apply log-prob-fn value eval-args)
+                    old-val (cm/get-value (cm/get-submap old-choices addr))]
+                {:values (assoc values addr value)
+                 :score (mx/add score lp)
+                 :discard (assoc discard addr old-val)
+                 :key key})
+              ;; Case 2: Unconstrained — keep old value, re-score with current params
+              (let [value (cm/get-value (cm/get-submap old-choices addr))
+                    lp (apply log-prob-fn value eval-args)]
+                {:values (assoc values addr value)
+                 :score (mx/add score lp)
+                 :discard discard
+                 :key key}))))))))
+
+
+(defn make-compiled-update
+  "Build a compiled update function from a gen schema and source.
+
+   Returns (fn [key args-vec constraints old-choices]
+             -> {:values {addr->val} :score :discard {addr->old-val} :retval})
+   or nil if the model can't be compiled.
+
+   Same gates as make-compiled-simulate/generate. No sampling, no key splitting.
+   Values come from constraints or old-choices. Log-prob computed with current
+   distribution params. No mx/compile-fn (constraint checks are data-dependent)."
+  [schema source]
+  (when (and (:static? schema)
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (let [binding-env (build-binding-env source)
+          static-sites (filterv :static? (:trace-sites schema))
+          site-specs
+          (mapv (fn [ts]
+                  (let [cargs (mapv #(compile-expr % binding-env #{})
+                                    (:dist-args ts))]
+                    (when (every? some? cargs)
+                      {:addr (:addr ts)
+                       :compiled-args cargs
+                       :dist-type (:dist-type ts)})))
+                static-sites)
+          step-fns (when (every? some? site-specs)
+                     (mapv build-update-site-step site-specs))
+          return-expr (extract-return-expr (:return-form schema))
+          retval-fn (compile-expr return-expr binding-env #{})]
+      (when (and step-fns (every? some? step-fns) retval-fn)
+        (fn compiled-update [key args-vec constraints old-choices]
+          (let [mlx-args (mapv mx/ensure-array args-vec)
+                result
+                (reduce
+                  (fn [state step-fn]
+                    (step-fn state mlx-args constraints old-choices))
+                  {:values {} :score (mx/scalar 0.0) :discard {} :key key}
+                  step-fns)]
+            {:values (:values result)
+             :score (:score result)
+             :discard (:discard result)
+             :retval (when retval-fn
+                       (retval-fn (:values result) mlx-args))}))))))
+
+(defn get-compiled-update
+  "Returns the compiled-update function for a gen-fn, or nil."
+  [gf]
+  (:compiled-update (:schema gf)))
+
+;; ===========================================================================
 ;; Level 1-M5: Combinator-Aware Compilation Utility
 ;; ===========================================================================
 

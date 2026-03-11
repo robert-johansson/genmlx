@@ -168,30 +168,50 @@
                 k k
                 :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
                                       {:gen-fn (.-source this)}))))
-          _ (rng/seed! key)
-          result (rt/run-handler h/update-transition
-                   {:choices cm/EMPTY :score SCORE-ZERO
-                    :weight SCORE-ZERO
-                    :key key :constraints constraints
-                    :old-choices (:choices trace)
-                    :old-splice-scores (::splice-scores (meta trace))
-                    :discard cm/EMPTY
-                    :executor execute-sub
-                    :param-store (::param-store (meta this))}
-                   (fn [rt] (apply body-fn rt (:args trace))))
-          new-trace (tr/make-trace
-                      {:gen-fn this :args (:args trace)
-                       :choices (:choices result)
-                       :retval  (:retval result)
-                       :score   (:score result)})]
-      (let [result-map {:trace (if-let [ss (:splice-scores result)]
-                                (with-meta new-trace {::splice-scores ss})
-                                new-trace)
-                        :weight  (mx/subtract (:score result) (:score trace))
-                        :discard (:discard result)}]
-        (if-let [unused (find-unused-constraints constraints (:choices result))]
-          (assoc result-map :unused-constraints unused)
-          result-map))))
+          _ (rng/seed! key)]
+      (if-let [compiled-upd (:compiled-update schema)]
+        ;; WP-3: compiled update path (static models)
+        (let [result (compiled-upd key (vec (:args trace)) constraints (:choices trace))
+              choices (reduce-kv
+                        (fn [cm addr val] (cm/set-value cm addr val))
+                        cm/EMPTY
+                        (:values result))
+              discard (reduce-kv
+                        (fn [cm addr val] (cm/set-value cm addr val))
+                        cm/EMPTY
+                        (:discard result))
+              new-trace (tr/make-trace
+                          {:gen-fn this :args (:args trace)
+                           :choices choices
+                           :retval  (:retval result)
+                           :score   (:score result)})]
+          {:trace new-trace
+           :weight (mx/subtract (:score result) (:score trace))
+           :discard discard})
+        ;; L0: handler path
+        (let [result (rt/run-handler h/update-transition
+                       {:choices cm/EMPTY :score SCORE-ZERO
+                        :weight SCORE-ZERO
+                        :key key :constraints constraints
+                        :old-choices (:choices trace)
+                        :old-splice-scores (::splice-scores (meta trace))
+                        :discard cm/EMPTY
+                        :executor execute-sub
+                        :param-store (::param-store (meta this))}
+                       (fn [rt] (apply body-fn rt (:args trace))))
+              new-trace (tr/make-trace
+                          {:gen-fn this :args (:args trace)
+                           :choices (:choices result)
+                           :retval  (:retval result)
+                           :score   (:score result)})]
+          (let [result-map {:trace (if-let [ss (:splice-scores result)]
+                                    (with-meta new-trace {::splice-scores ss})
+                                    new-trace)
+                            :weight  (mx/subtract (:score result) (:score trace))
+                            :discard (:discard result)}]
+            (if-let [unused (find-unused-constraints constraints (:choices result))]
+              (assoc result-map :unused-constraints unused)
+              result-map))))))
 
   p/IRegenerate
   (regenerate [this trace selection]
@@ -368,6 +388,9 @@
                                 schema)
                        schema (if-let [cgen (compiled/make-compiled-generate schema source)]
                                 (assoc schema :compiled-generate cgen)
+                                schema)
+                       schema (if-let [cupd (compiled/make-compiled-update schema source)]
+                                (assoc schema :compiled-update cupd)
                                 schema)]
                    schema)
 
