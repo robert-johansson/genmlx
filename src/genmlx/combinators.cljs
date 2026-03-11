@@ -37,9 +37,9 @@
   "Convert compiled result {:values {addr->val}} to a ChoiceMap."
   [values]
   (reduce-kv
-    (fn [cm addr val] (cm/set-value cm addr val))
-    cm/EMPTY
-    values))
+   (fn [cm addr val] (cm/set-value cm addr val))
+   cm/EMPTY
+   values))
 
 ;; ---------------------------------------------------------------------------
 ;; Map Combinator
@@ -170,9 +170,9 @@
             results (mapv (fn [i]
                             (let [kernel-args (mapv #(nth % i) args)
                                   old-trace (tr/make-trace
-                                              {:gen-fn kernel :args kernel-args
-                                               :choices (cm/get-submap old-choices i)
-                                               :retval nil :score (if old-element-scores (nth old-element-scores i) (mx/scalar 0.0))})]
+                                             {:gen-fn kernel :args kernel-args
+                                              :choices (cm/get-submap old-choices i)
+                                              :retval nil :score (if old-element-scores (nth old-element-scores i) (mx/scalar 0.0))})]
                               (p/update kernel old-trace (cm/get-submap constraints i))))
                           (range n))
             choices (assemble-choices results (comp :choices :trace))
@@ -180,8 +180,8 @@
             score (sum-field results (comp :score :trace))
             weight (mx/subtract score (:score trace))
             discard (assemble-choices
-                      (filter :discard results)
-                      :discard)
+                     (filter :discard results)
+                     :discard)
             element-scores (mapv (comp :score :trace) results)]
         {:trace (with-meta
                   (tr/make-trace {:gen-fn this :args args
@@ -191,29 +191,64 @@
 
   p/IRegenerate
   (regenerate [this trace selection]
-    (let [old-choices (:choices trace)
-          args (:args trace)
-          n (count (first args))
-          old-element-scores (::element-scores (meta trace))
-          results (mapv (fn [i]
-                          (let [kernel-args (mapv #(nth % i) args)
-                                old-trace (tr/make-trace
-                                            {:gen-fn kernel :args kernel-args
-                                             :choices (cm/get-submap old-choices i)
-                                             :retval nil :score (if old-element-scores (nth old-element-scores i) (mx/scalar 0.0))})]
-                            (p/regenerate kernel old-trace
-                                          (sel/get-subselection selection i))))
-                        (range n))
-          choices (assemble-choices results (comp :choices :trace))
-          retvals (mapv (comp :retval :trace) results)
-          score (sum-field results (comp :score :trace))
-          weight (mx/subtract (sum-field results :weight) (:score trace))
-          element-scores (mapv (comp :score :trace) results)]
-      {:trace (with-meta
-                (tr/make-trace {:gen-fn this :args args
-                                :choices choices :retval retvals :score score})
-                {::element-scores element-scores})
-       :weight weight})))
+    (if-let [cregen (compiled/get-compiled-regenerate kernel)]
+      ;; WP-9A: compiled regenerate path
+      (let [old-choices (:choices trace)
+            args (:args trace)
+            n (count (first args))
+            init-key (rng/fresh-key)]
+        (loop [i 0 key init-key
+               choices cm/EMPTY score (mx/scalar 0.0) weight (mx/scalar 0.0)
+               retvals [] element-scores []]
+          (if (>= i n)
+            {:trace (with-meta
+                      (tr/make-trace {:gen-fn this :args args
+                                      :choices choices :retval retvals :score score})
+                      {::element-scores element-scores ::compiled-path true})
+             :weight weight}
+            (let [[k1 k2] (rng/split key)
+                  elem-args (mapv #(nth % i) args)
+                  old-sub-choices (cm/get-submap old-choices i)
+                  result (cregen k1 (vec elem-args) old-sub-choices
+                                 (sel/get-subselection selection i))
+                  elem-choices (values->choices (:values result))
+                  old-elem-score (or (some-> (::element-scores (meta trace))
+                                             (nth i nil))
+                                     (mx/scalar 0.0))
+                  ;; compiled-regenerate returns proposal_ratio in :weight
+                  ;; per-step weight = new_score - old_score - proposal_ratio
+                  step-weight (mx/subtract (mx/subtract (:score result) old-elem-score)
+                                           (:weight result))]
+              (recur (inc i) k2
+                     (cm/set-choice choices [i] elem-choices)
+                     (mx/add score (:score result))
+                     (mx/add weight step-weight)
+                     (conj retvals (:retval result))
+                     (conj element-scores (:score result)))))))
+      ;; Fallback: handler path (weight bug fixed: no - (:score trace))
+      (let [old-choices (:choices trace)
+            args (:args trace)
+            n (count (first args))
+            old-element-scores (::element-scores (meta trace))
+            results (mapv (fn [i]
+                            (let [kernel-args (mapv #(nth % i) args)
+                                  old-trace (tr/make-trace
+                                             {:gen-fn kernel :args kernel-args
+                                              :choices (cm/get-submap old-choices i)
+                                              :retval nil :score (if old-element-scores (nth old-element-scores i) (mx/scalar 0.0))})]
+                              (p/regenerate kernel old-trace
+                                            (sel/get-subselection selection i))))
+                          (range n))
+            choices (assemble-choices results (comp :choices :trace))
+            retvals (mapv (comp :retval :trace) results)
+            score (sum-field results (comp :score :trace))
+            weight (sum-field results :weight)
+            element-scores (mapv (comp :score :trace) results)]
+        {:trace (with-meta
+                  (tr/make-trace {:gen-fn this :args args
+                                  :choices choices :retval retvals :score score})
+                  {::element-scores element-scores})
+         :weight weight}))))
 
 (defn map-combinator
   "Create a Map combinator from a kernel generative function.
@@ -395,9 +430,9 @@
                 (let [old-sub-choices (cm/get-submap choices t)
                       kernel-args (into [t state] extra)
                       old-trace (tr/make-trace
-                                  {:gen-fn kern :args kernel-args
-                                   :choices old-sub-choices
-                                   :retval nil :score (if old-step-scores (nth old-step-scores t) (mx/scalar 0.0))})
+                                 {:gen-fn kern :args kernel-args
+                                  :choices old-sub-choices
+                                  :retval nil :score (if old-step-scores (nth old-step-scores t) (mx/scalar 0.0))})
                       result (p/update kern old-trace (cm/get-submap constraints t))
                       new-trace (:trace result)
                       new-state (:retval new-trace)]
@@ -414,35 +449,54 @@
   p/IRegenerate
   (regenerate [this trace selection]
     (let [kern (:kernel this)
+          cregen (compiled/get-compiled-regenerate kern)
           {:keys [args choices]} trace
           [n init-state & extra] args
-          old-step-scores (::step-scores (meta trace))]
-      (loop [t 0 state init-state
+          old-step-scores (::step-scores (meta trace))
+          init-key (when cregen (rng/fresh-key))]
+      (loop [t 0 state init-state key init-key
              new-choices cm/EMPTY score (mx/scalar 0.0) weight (mx/scalar 0.0)
              states [] step-scores []]
         (if (>= t n)
           {:trace (with-meta
                     (tr/make-trace {:gen-fn this :args args
                                     :choices new-choices :retval states :score score})
-                    {::step-scores step-scores})
-           :weight (mx/subtract weight (:score trace))}
+                    (cond-> {::step-scores step-scores}
+                      cregen (assoc ::compiled-path true)))
+           :weight weight}
           (let [old-sub-choices (cm/get-submap choices t)
                 kernel-args (into [t state] extra)
-                old-trace (tr/make-trace
-                            {:gen-fn kern :args kernel-args
-                             :choices old-sub-choices
-                             :retval nil :score (if old-step-scores (nth old-step-scores t) (mx/scalar 0.0))})
-                result (p/regenerate kern old-trace
-                                     (sel/get-subselection selection t))
-                new-trace (:trace result)
-                new-state (:retval new-trace)]
-            (recur (inc t)
-                   new-state
-                   (cm/set-choice new-choices [t] (:choices new-trace))
-                   (mx/add score (:score new-trace))
-                   (mx/add weight (:weight result))
-                   (conj states new-state)
-                   (conj step-scores (:score new-trace)))))))))
+                old-score (if old-step-scores (nth old-step-scores t) (mx/scalar 0.0))]
+            (if cregen
+              ;; WP-9A: compiled regenerate path
+              (let [[k1 k2] (rng/split key)
+                    result (cregen k1 (vec kernel-args) old-sub-choices
+                                   (sel/get-subselection selection t))
+                    step-choices (values->choices (:values result))
+                    new-state (:retval result)
+                    step-weight (mx/subtract (mx/subtract (:score result) old-score)
+                                             (:weight result))]
+                (recur (inc t) new-state k2
+                       (cm/set-choice new-choices [t] step-choices)
+                       (mx/add score (:score result))
+                       (mx/add weight step-weight)
+                       (conj states new-state)
+                       (conj step-scores (:score result))))
+              ;; Fallback: handler path (weight bug fixed: no - (:score trace))
+              (let [old-trace (tr/make-trace
+                               {:gen-fn kern :args kernel-args
+                                :choices old-sub-choices
+                                :retval nil :score old-score})
+                    result (p/regenerate kern old-trace
+                                         (sel/get-subselection selection t))
+                    new-trace (:trace result)
+                    new-state (:retval new-trace)]
+                (recur (inc t) new-state nil
+                       (cm/set-choice new-choices [t] (:choices new-trace))
+                       (mx/add score (:score new-trace))
+                       (mx/add weight (:weight result))
+                       (conj states new-state)
+                       (conj step-scores (:score new-trace)))))))))))
 
 (defn unfold-combinator
   "Create an Unfold combinator from a kernel generative function.
@@ -484,14 +538,14 @@
                                 :score acc-score
                                 :weight (when (contains? state :weight) acc-weight)}
                     state' (-> state
-                             (assoc :key k1)
-                             (h/merge-sub-result addr sub-result))]
+                               (assoc :key k1)
+                               (h/merge-sub-result addr sub-result))]
                 [state' carry])
               ;; Run one kernel step with batched handler
               (let [[sk nk] (rng/split key)
                     step-constraints (cm/get-submap sub-constraints t)
                     has-constraints? (and step-constraints
-                                         (not= step-constraints cm/EMPTY))
+                                          (not= step-constraints cm/EMPTY))
                     [transition init-sub]
                     (if has-constraints?
                       [h/batched-generate-transition
@@ -505,8 +559,8 @@
                                (assoc init-sub :param-store ps)
                                init-sub)
                     step-result (rt/run-handler transition init-sub
-                                  (fn [rt] (apply (:body-fn kern) rt
-                                             (into [t carry] extra))))
+                                                (fn [rt] (apply (:body-fn kern) rt
+                                                                (into [t carry] extra))))
                     step-retval (:retval step-result)]
                 (recur (inc t)
                        step-retval
@@ -514,7 +568,6 @@
                        (mx/add acc-score (:score step-result))
                        (mx/add acc-weight (or (:weight step-result) ZERO))
                        nk)))))))))
-
 
 (defn unfold-empty-trace
   "Create a valid T=0 Unfold trace (no steps executed).
@@ -582,8 +635,8 @@
         (let [key (rng/fresh-key)
               result (csim key (vec branch-args))
               choices (reduce-kv
-                        (fn [cm addr val] (cm/set-value cm addr val))
-                        cm/EMPTY (:values result))]
+                       (fn [cm addr val] (cm/set-value cm addr val))
+                       cm/EMPTY (:values result))]
           (with-meta
             (tr/make-trace {:gen-fn this :args args
                             :choices choices
@@ -651,9 +704,9 @@
                :discard new-discard})
             ;; Fallback: handler path
             (let [old-branch-trace (tr/make-trace
-                                     {:gen-fn branch :args (vec branch-args)
-                                      :choices (:choices trace)
-                                      :retval (:retval trace) :score (:score trace)})
+                                    {:gen-fn branch :args (vec branch-args)
+                                     :choices (:choices trace)
+                                     :retval (:retval trace) :score (:score trace)})
                   result (p/update branch old-branch-trace constraints)
                   new-branch-trace (:trace result)]
               {:trace (with-meta
@@ -681,20 +734,37 @@
   (regenerate [this trace selection]
     (let [orig-args (:args trace)
           [idx & branch-args] orig-args
-          branch (nth (:branches this) idx)
-          old-branch-trace (tr/make-trace
-                             {:gen-fn branch :args (vec branch-args)
-                              :choices (:choices trace)
-                              :retval (:retval trace) :score (:score trace)})
-          result (p/regenerate branch old-branch-trace selection)
-          new-branch-trace (:trace result)]
-      {:trace (with-meta
-                (tr/make-trace {:gen-fn this :args orig-args
-                                :choices (:choices new-branch-trace)
-                                :retval (:retval new-branch-trace)
-                                :score (:score new-branch-trace)})
-                {::switch-idx idx})
-       :weight (:weight result)})))
+          branch (nth (:branches this) idx)]
+      (if-let [cregen (compiled/get-compiled-regenerate branch)]
+        ;; WP-9A: compiled regenerate path
+        (let [key (rng/fresh-key)
+              result (cregen key (vec branch-args) (:choices trace) selection)
+              new-choices (values->choices (:values result))
+              ;; compiled-regenerate returns proposal_ratio in :weight
+              ;; weight = new_score - old_score - proposal_ratio
+              weight (mx/subtract (mx/subtract (:score result) (:score trace))
+                                  (:weight result))]
+          {:trace (with-meta
+                    (tr/make-trace {:gen-fn this :args orig-args
+                                    :choices new-choices
+                                    :retval (:retval result)
+                                    :score (:score result)})
+                    {::switch-idx idx ::compiled-path true})
+           :weight weight})
+        ;; Fallback: handler path
+        (let [old-branch-trace (tr/make-trace
+                                {:gen-fn branch :args (vec branch-args)
+                                 :choices (:choices trace)
+                                 :retval (:retval trace) :score (:score trace)})
+              result (p/regenerate branch old-branch-trace selection)
+              new-branch-trace (:trace result)]
+          {:trace (with-meta
+                    (tr/make-trace {:gen-fn this :args orig-args
+                                    :choices (:choices new-branch-trace)
+                                    :retval (:retval new-branch-trace)
+                                    :score (:score new-branch-trace)})
+                    {::switch-idx idx})
+           :weight (:weight result)})))))
 
 (defn switch-combinator
   "Create a Switch combinator from a vector of branch generative functions.
@@ -715,11 +785,11 @@
   [mask cm-true cm-false]
   (let [addrs (cm/addresses cm-true)]
     (reduce
-      (fn [acc addr-path]
-        (let [v-t (cm/get-choice cm-true addr-path)
-              v-f (cm/get-choice cm-false addr-path)]
-          (cm/set-choice acc addr-path (mx/where mask v-t v-f))))
-      cm/EMPTY addrs)))
+     (fn [acc addr-path]
+       (let [v-t (cm/get-choice cm-true addr-path)
+             v-f (cm/get-choice cm-false addr-path)]
+         (cm/set-choice acc addr-path (mx/where mask v-t v-f))))
+     cm/EMPTY addrs)))
 
 (extend-type SwitchCombinator
   p/IBatchedSplice
@@ -756,46 +826,46 @@
                                    (assoc init-sub :param-store ps)
                                    init-sub)
                         result (rt/run-handler transition init-sub
-                                 (fn [rt] (apply (:body-fn (nth brs i)) rt
-                                            (vec branch-args))))]
+                                               (fn [rt] (apply (:body-fn (nth brs i)) rt
+                                                               (vec branch-args))))]
                     (recur (inc i) (conj results result) nk))))
               ;; Combine results using mx/where based on [N]-shaped index
               combined-score
               (reduce-kv
-                (fn [acc i br]
-                  (let [mask (mx/equal index (mx/scalar i mx/int32))]
-                    (mx/where mask (:score br) acc)))
-                batch-zero branch-results)
+               (fn [acc i br]
+                 (let [mask (mx/equal index (mx/scalar i mx/int32))]
+                   (mx/where mask (:score br) acc)))
+               batch-zero branch-results)
               combined-weight
               (when (contains? state :weight)
                 (reduce-kv
-                  (fn [acc i br]
-                    (let [mask (mx/equal index (mx/scalar i mx/int32))]
-                      (mx/where mask (or (:weight br) batch-zero) acc)))
-                  batch-zero branch-results))
+                 (fn [acc i br]
+                   (let [mask (mx/equal index (mx/scalar i mx/int32))]
+                     (mx/where mask (or (:weight br) batch-zero) acc)))
+                 batch-zero branch-results))
               combined-choices
               (reduce-kv
-                (fn [acc i br]
-                  (let [mask (mx/equal index (mx/scalar i mx/int32))]
-                    (if (zero? i)
-                      (:choices br)
-                      (where-select-choicemap mask (:choices br) acc))))
-                cm/EMPTY branch-results)
+               (fn [acc i br]
+                 (let [mask (mx/equal index (mx/scalar i mx/int32))]
+                   (if (zero? i)
+                     (:choices br)
+                     (where-select-choicemap mask (:choices br) acc))))
+               cm/EMPTY branch-results)
               combined-retval
               (let [rvs (mapv :retval branch-results)]
                 (when (mx/array? (first rvs))
                   (reduce-kv
-                    (fn [acc i rv]
-                      (let [mask (mx/equal index (mx/scalar i mx/int32))]
-                        (mx/where mask rv acc)))
-                    (first rvs) rvs)))
+                   (fn [acc i rv]
+                     (let [mask (mx/equal index (mx/scalar i mx/int32))]
+                       (mx/where mask rv acc)))
+                   (first rvs) rvs)))
               ;; Merge into parent state
               sub-result {:choices combined-choices
                           :score combined-score
                           :weight combined-weight}
               state' (-> state
-                       (assoc :key k1)
-                       (h/merge-sub-result addr sub-result))]
+                         (assoc :key k1)
+                         (h/merge-sub-result addr sub-result))]
           [state' combined-retval])))))
 
 ;; ---------------------------------------------------------------------------
@@ -850,9 +920,9 @@
       (if active?
         (let [inner (:inner this)
               old-inner-trace (tr/make-trace
-                                {:gen-fn inner :args (vec inner-args)
-                                 :choices (:choices trace)
-                                 :retval (:retval trace) :score (:score trace)})
+                               {:gen-fn inner :args (vec inner-args)
+                                :choices (:choices trace)
+                                :retval (:retval trace) :score (:score trace)})
               result (p/update inner old-inner-trace constraints)
               new-trace (:trace result)]
           {:trace (tr/make-trace {:gen-fn this :args (:args trace)
@@ -868,9 +938,9 @@
       (if active?
         (let [inner (:inner this)
               old-inner-trace (tr/make-trace
-                                {:gen-fn inner :args (vec inner-args)
-                                 :choices (:choices trace)
-                                 :retval (:retval trace) :score (:score trace)})
+                               {:gen-fn inner :args (vec inner-args)
+                                :choices (:choices trace)
+                                :retval (:retval trace) :score (:score trace)})
               result (p/regenerate inner old-inner-trace selection)
               new-trace (:trace result)]
           {:trace (tr/make-trace {:gen-fn this :args (:args trace)
@@ -912,9 +982,9 @@
   (update [this trace constraints]
     (let [gf ((:maker this) this)
           old-inner-trace (tr/make-trace
-                            {:gen-fn gf :args (:args trace)
-                             :choices (:choices trace)
-                             :retval (:retval trace) :score (:score trace)})
+                           {:gen-fn gf :args (:args trace)
+                            :choices (:choices trace)
+                            :retval (:retval trace) :score (:score trace)})
           result (p/update gf old-inner-trace constraints)
           new-trace (:trace result)]
       {:trace (tr/make-trace {:gen-fn this :args (:args trace)
@@ -927,9 +997,9 @@
   (regenerate [this trace selection]
     (let [gf ((:maker this) this)
           old-inner-trace (tr/make-trace
-                            {:gen-fn gf :args (:args trace)
-                             :choices (:choices trace)
-                             :retval (:retval trace) :score (:score trace)})
+                           {:gen-fn gf :args (:args trace)
+                            :choices (:choices trace)
+                            :retval (:retval trace) :score (:score trace)})
           result (p/regenerate gf old-inner-trace selection)
           new-trace (:trace result)]
       {:trace (tr/make-trace {:gen-fn this :args (:args trace)
@@ -943,9 +1013,9 @@
   (project [this trace selection]
     (let [gf ((:maker this) this)
           inner-trace (tr/make-trace
-                        {:gen-fn gf :args (:args trace)
-                         :choices (:choices trace)
-                         :retval (:retval trace) :score (:score trace)})]
+                       {:gen-fn gf :args (:args trace)
+                        :choices (:choices trace)
+                        :retval (:retval trace) :score (:score trace)})]
       (p/project gf inner-trace selection))))
 
 (extend-type RecurseCombinator
@@ -979,12 +1049,12 @@
   (let [first-choices (:choices (first traces))
         is-leaf (cm/has-value? first-choices)]
     {:choices (if is-leaf
-               (cm/->Value (mx/stack (mapv #(cm/get-value (:choices %)) traces)))
-               (let [addrs (cm/addresses first-choices)]
-                 (reduce (fn [cm addr-path]
-                           (cm/set-choice cm addr-path
-                             (mx/stack (mapv #(cm/get-choice (:choices %) addr-path) traces))))
-                         cm/EMPTY addrs)))
+                (cm/->Value (mx/stack (mapv #(cm/get-value (:choices %)) traces)))
+                (let [addrs (cm/addresses first-choices)]
+                  (reduce (fn [cm addr-path]
+                            (cm/set-choice cm addr-path
+                                           (mx/stack (mapv #(cm/get-choice (:choices %) addr-path) traces))))
+                          cm/EMPTY addrs)))
      :score (mx/stack (mapv :score traces))
      :retval (let [rvs (mapv :retval traces)]
                (if (mx/array? (first rvs)) (mx/stack rvs) rvs))}))
@@ -1002,7 +1072,7 @@
         ;; For each branch, produce N independent samples stacked into [N]-shaped arrays
         branch-data (mapv (fn [gf]
                             (let [traces (mapv (fn [_] (p/simulate gf branch-args))
-                                              (range n-val))]
+                                               (range n-val))]
                               (stack-branch-traces traces)))
                           branches)
         ;; Combine branches using mx/where based on index
@@ -1015,44 +1085,44 @@
           ;; Distribution branches: combine leaf values
           (let [vals (mapv #(cm/get-value (:choices %)) branch-data)
                 combined (reduce-kv
-                           (fn [acc i v]
-                             (if (zero? i) acc
-                               (mx/where (mx/equal index (mx/scalar i mx/int32)) v acc)))
-                           (first vals) vals)]
+                          (fn [acc i v]
+                            (if (zero? i) acc
+                                (mx/where (mx/equal index (mx/scalar i mx/int32)) v acc)))
+                          (first vals) vals)]
             (cm/->Value combined))
           ;; GF branches: combine per-address
           (let [all-addrs (into #{} (mapcat #(cm/addresses (:choices %)) branch-data))]
             (reduce
-              (fn [cm addr-path]
-                (let [vals (mapv (fn [bd]
+             (fn [cm addr-path]
+               (let [vals (mapv (fn [bd]
                                   (try (cm/get-choice (:choices bd) addr-path)
                                        (catch :default _ nil)))
                                 branch-data)
-                      combined (reduce-kv
-                                 (fn [acc i v]
-                                   (if (or (zero? i) (nil? v)) acc
+                     combined (reduce-kv
+                               (fn [acc i v]
+                                 (if (or (zero? i) (nil? v)) acc
                                      (mx/where (mx/equal index (mx/scalar i mx/int32)) v acc)))
-                                 (or (first vals) (mx/zeros [n-val]))
-                                 vals)]
-                  (cm/set-choice cm addr-path combined)))
-              cm/EMPTY all-addrs)))
+                               (or (first vals) (mx/zeros [n-val]))
+                               vals)]
+                 (cm/set-choice cm addr-path combined)))
+             cm/EMPTY all-addrs)))
         ;; Combine scores using where
         combined-score (reduce-kv
-                         (fn [acc i bd]
-                           (if (zero? i)
-                             (:score bd)
-                             (mx/where (mx/equal index (mx/scalar i mx/int32))
-                                       (:score bd) acc)))
-                         (mx/scalar 0.0)
-                         (vec branch-data))
+                        (fn [acc i bd]
+                          (if (zero? i)
+                            (:score bd)
+                            (mx/where (mx/equal index (mx/scalar i mx/int32))
+                                      (:score bd) acc)))
+                        (mx/scalar 0.0)
+                        (vec branch-data))
         ;; Combine retvals
         combined-retval (let [rvs (mapv :retval branch-data)]
                           (if (and (mx/array? (first rvs)) (> n-branches 1))
                             (reduce-kv
-                              (fn [acc i rv]
-                                (if (or (zero? i) (nil? rv)) acc
-                                  (mx/where (mx/equal index (mx/scalar i mx/int32)) rv acc)))
-                              (first rvs) rvs)
+                             (fn [acc i rv]
+                               (if (or (zero? i) (nil? rv)) acc
+                                   (mx/where (mx/equal index (mx/scalar i mx/int32)) rv acc)))
+                             (first rvs) rvs)
                             (first rvs)))]
     {:choices combined-choices
      :score combined-score
@@ -1165,7 +1235,7 @@
                       {::step-scores step-scores ::step-carries step-carries})
              :weight weight}
             (let [result (p/generate kernel [carry (nth inputs t)]
-                                      (cm/get-submap constraints t))
+                                     (cm/get-submap constraints t))
                   trace (:trace result)
                   [new-carry output] (:retval trace)]
               (recur (inc t)
@@ -1257,9 +1327,9 @@
                 ;; Fallback: handler path
                 (let [old-sub-choices (cm/get-submap choices t)
                       old-trace (tr/make-trace
-                                  {:gen-fn kern :args [carry (nth inputs t)]
-                                   :choices old-sub-choices
-                                   :retval nil :score (if old-step-scores (nth old-step-scores t) (mx/scalar 0.0))})
+                                 {:gen-fn kern :args [carry (nth inputs t)]
+                                  :choices old-sub-choices
+                                  :retval nil :score (if old-step-scores (nth old-step-scores t) (mx/scalar 0.0))})
                       result (p/update kern old-trace (cm/get-submap constraints t))
                       new-trace (:trace result)
                       [new-carry output] (:retval new-trace)]
@@ -1277,11 +1347,13 @@
   p/IRegenerate
   (regenerate [this trace selection]
     (let [kern (:kernel this)
+          cregen (compiled/get-compiled-regenerate kern)
           {:keys [args choices]} trace
           [init-carry inputs] args
           n (count inputs)
-          old-step-scores (::step-scores (meta trace))]
-      (loop [t 0 carry init-carry
+          old-step-scores (::step-scores (meta trace))
+          init-key (when cregen (rng/fresh-key))]
+      (loop [t 0 carry init-carry key init-key
              new-choices cm/EMPTY score (mx/scalar 0.0) weight (mx/scalar 0.0)
              outputs [] step-scores [] step-carries []]
         (if (>= t n)
@@ -1290,25 +1362,44 @@
                                     :choices new-choices
                                     :retval {:carry carry :outputs outputs}
                                     :score score})
-                    {::step-scores step-scores ::step-carries step-carries})
-           :weight (mx/subtract weight (:score trace))}
+                    (cond-> {::step-scores step-scores ::step-carries step-carries}
+                      cregen (assoc ::compiled-path true)))
+           :weight weight}
           (let [old-sub-choices (cm/get-submap choices t)
-                old-trace (tr/make-trace
-                            {:gen-fn kern :args [carry (nth inputs t)]
-                             :choices old-sub-choices
-                             :retval nil :score (if old-step-scores (nth old-step-scores t) (mx/scalar 0.0))})
-                result (p/regenerate kern old-trace
-                                     (sel/get-subselection selection t))
-                new-trace (:trace result)
-                [new-carry output] (:retval new-trace)]
-            (recur (inc t)
-                   new-carry
-                   (cm/set-choice new-choices [t] (:choices new-trace))
-                   (mx/add score (:score new-trace))
-                   (mx/add weight (:weight result))
-                   (conj outputs output)
-                   (conj step-scores (:score new-trace))
-                   (conj step-carries new-carry))))))))
+                kernel-args [carry (nth inputs t)]
+                old-score (if old-step-scores (nth old-step-scores t) (mx/scalar 0.0))]
+            (if cregen
+              ;; WP-9A: compiled regenerate path
+              (let [[k1 k2] (rng/split key)
+                    result (cregen k1 (vec kernel-args) old-sub-choices
+                                   (sel/get-subselection selection t))
+                    step-choices (values->choices (:values result))
+                    [new-carry output] (:retval result)
+                    step-weight (mx/subtract (mx/subtract (:score result) old-score)
+                                             (:weight result))]
+                (recur (inc t) new-carry k2
+                       (cm/set-choice new-choices [t] step-choices)
+                       (mx/add score (:score result))
+                       (mx/add weight step-weight)
+                       (conj outputs output)
+                       (conj step-scores (:score result))
+                       (conj step-carries new-carry)))
+              ;; Fallback: handler path (weight bug fixed: no - (:score trace))
+              (let [old-trace (tr/make-trace
+                               {:gen-fn kern :args kernel-args
+                                :choices old-sub-choices
+                                :retval nil :score old-score})
+                    result (p/regenerate kern old-trace
+                                         (sel/get-subselection selection t))
+                    new-trace (:trace result)
+                    [new-carry output] (:retval new-trace)]
+                (recur (inc t) new-carry nil
+                       (cm/set-choice new-choices [t] (:choices new-trace))
+                       (mx/add score (:score new-trace))
+                       (mx/add weight (:weight result))
+                       (conj outputs output)
+                       (conj step-scores (:score new-trace))
+                       (conj step-carries new-carry))))))))))
 
 (defn scan-combinator
   "Create a Scan combinator from a kernel generative function.
@@ -1345,13 +1436,13 @@
                                 :score acc-score
                                 :weight (when (contains? state :weight) acc-weight)}
                     state' (-> state
-                             (assoc :key k1)
-                             (h/merge-sub-result addr sub-result))]
+                               (assoc :key k1)
+                               (h/merge-sub-result addr sub-result))]
                 [state' carry])
               (let [[sk nk] (rng/split key)
                     step-constraints (cm/get-submap sub-constraints t)
                     has-constraints? (and step-constraints
-                                         (not= step-constraints cm/EMPTY))
+                                          (not= step-constraints cm/EMPTY))
                     [transition init-sub]
                     (if has-constraints?
                       [h/batched-generate-transition
@@ -1365,7 +1456,7 @@
                                (assoc init-sub :param-store ps)
                                init-sub)
                     step-result (rt/run-handler transition init-sub
-                                  (fn [rt] ((:body-fn kern) rt carry (nth inputs t))))
+                                                (fn [rt] ((:body-fn kern) rt carry (nth inputs t))))
                     [new-carry _output] (:retval step-result)]
                 (recur (inc t)
                        new-carry
@@ -1502,7 +1593,7 @@
     ;; Sample component index, then simulate that component
     (let [log-w (log-weights-fn args)
           idx-trace (p/simulate (dc/->Distribution
-                                  :categorical {:logits log-w}) [])
+                                 :categorical {:logits log-w}) [])
           idx (mx/item (cm/get-value (:choices idx-trace)))
           component (nth components (int idx))]
       (if-let [csim (compiled/get-compiled-simulate component)]
@@ -1510,8 +1601,8 @@
         (let [key (rng/fresh-key)
               result (csim key (vec args))
               choices (reduce-kv
-                        (fn [cm addr val] (cm/set-value cm addr val))
-                        cm/EMPTY (:values result))
+                       (fn [cm addr val] (cm/set-value cm addr val))
+                       cm/EMPTY (:values result))
               choices (cm/set-choice choices [:component-idx]
                                      (mx/scalar (int idx) mx/int32))]
           (with-meta
@@ -1542,8 +1633,8 @@
           idx (mx/item (cm/get-value (:choices (:trace idx-result))))
           component (nth components (int idx))
           comp-constraints (if (instance? cm/Node constraints)
-                              (cm/->Node (dissoc (:m constraints) :component-idx))
-                              constraints)]
+                             (cm/->Node (dissoc (:m constraints) :component-idx))
+                             constraints)]
       (if-let [cgen (compiled/get-compiled-generate component)]
         ;; Compiled path — only the component generate is compiled
         (let [key (rng/fresh-key)
@@ -1645,39 +1736,39 @@
                                    (assoc init-sub :param-store ps)
                                    init-sub)
                         result (rt/run-handler transition init-sub
-                                 (fn [rt] (apply (:body-fn (nth comps i)) rt
-                                            (vec args))))]
+                                               (fn [rt] (apply (:body-fn (nth comps i)) rt
+                                                               (vec args))))]
                     (recur (inc i) (conj results result) nk))))
               ;; Combine per-particle results using mx/where on idx-vals
               combined-score
               (reduce-kv
-                (fn [acc i cr]
-                  (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
-                    (mx/where mask (:score cr) acc)))
-                batch-zero comp-results)
+               (fn [acc i cr]
+                 (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
+                   (mx/where mask (:score cr) acc)))
+               batch-zero comp-results)
               combined-weight
               (when (contains? state :weight)
                 (reduce-kv
-                  (fn [acc i cr]
-                    (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
-                      (mx/where mask (or (:weight cr) batch-zero) acc)))
-                  batch-zero comp-results))
+                 (fn [acc i cr]
+                   (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
+                     (mx/where mask (or (:weight cr) batch-zero) acc)))
+                 batch-zero comp-results))
               combined-choices
               (reduce-kv
-                (fn [acc i cr]
-                  (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
-                    (if (zero? i)
-                      (:choices cr)
-                      (where-select-choicemap mask (:choices cr) acc))))
-                cm/EMPTY comp-results)
+               (fn [acc i cr]
+                 (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
+                   (if (zero? i)
+                     (:choices cr)
+                     (where-select-choicemap mask (:choices cr) acc))))
+               cm/EMPTY comp-results)
               combined-retval
               (let [rvs (mapv :retval comp-results)]
                 (when (mx/array? (first rvs))
                   (reduce-kv
-                    (fn [acc i rv]
-                      (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
-                        (mx/where mask rv acc)))
-                    (first rvs) rvs)))
+                   (fn [acc i rv]
+                     (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
+                       (mx/where mask rv acc)))
+                   (first rvs) rvs)))
               ;; Add component-idx to choices + add idx-score to combined score
               final-choices (cm/set-value combined-choices :component-idx idx-vals)
               final-score (mx/add combined-score idx-score)
@@ -1688,8 +1779,8 @@
                           :score final-score
                           :weight final-weight}
               state' (-> state
-                       (assoc :key k2)
-                       (h/merge-sub-result addr sub-result))]
+                         (assoc :key k2)
+                         (h/merge-sub-result addr sub-result))]
           [state' combined-retval])))))
 
 (extend-type MixCombinator
@@ -1791,20 +1882,40 @@
         ;; Same component: regenerate within the component
         (let [component (nth (:components this) old-idx)
               inner-old-score (mx/subtract (:score trace) old-idx-score)
-              inner-old-choices (cm/->Node (dissoc (:m old-choices) :component-idx))
-              inner-old-trace (tr/make-trace {:gen-fn component :args args
-                                              :choices inner-old-choices
-                                              :retval (:retval trace) :score inner-old-score})
-              result (p/regenerate component inner-old-trace selection)
-              new-inner-trace (:trace result)
-              new-score (mx/add (:score new-inner-trace) old-idx-score)]
-          {:trace (tr/make-trace {:gen-fn this :args args
-                                  :choices (cm/set-choice (:choices new-inner-trace)
-                                                          [:component-idx]
-                                                          (mx/scalar old-idx mx/int32))
-                                  :retval (:retval new-inner-trace)
-                                  :score new-score})
-           :weight (mx/subtract new-score (:score trace))})))))
+              inner-old-choices (cm/->Node (dissoc (:m old-choices) :component-idx))]
+          (if-let [cregen (compiled/get-compiled-regenerate component)]
+            ;; WP-9A: compiled regenerate path
+            (let [key (rng/fresh-key)
+                  result (cregen key (vec args) inner-old-choices selection)
+                  inner-score (:score result)
+                  new-score (mx/add inner-score old-idx-score)
+                  new-choices (cm/set-choice (values->choices (:values result))
+                                             [:component-idx]
+                                             (mx/scalar old-idx mx/int32))
+                  ;; weight = new_score - old_score - proposal_ratio
+                  proposal-ratio (:weight result)
+                  weight (mx/subtract (mx/subtract new-score (:score trace)) proposal-ratio)]
+              {:trace (with-meta
+                        (tr/make-trace {:gen-fn this :args args
+                                        :choices new-choices
+                                        :retval (:retval result)
+                                        :score new-score})
+                        {::compiled-path true})
+               :weight weight})
+            ;; Fallback: handler path
+            (let [inner-old-trace (tr/make-trace {:gen-fn component :args args
+                                                  :choices inner-old-choices
+                                                  :retval (:retval trace) :score inner-old-score})
+                  result (p/regenerate component inner-old-trace selection)
+                  new-inner-trace (:trace result)
+                  new-score (mx/add (:score new-inner-trace) old-idx-score)]
+              {:trace (tr/make-trace {:gen-fn this :args args
+                                      :choices (cm/set-choice (:choices new-inner-trace)
+                                                              [:component-idx]
+                                                              (mx/scalar old-idx mx/int32))
+                                      :retval (:retval new-inner-trace)
+                                      :score new-score})
+               :weight (:weight result)})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; IEdit implementations — delegate to edit-dispatch for all combinator types
@@ -1880,25 +1991,25 @@
                                (filter #(not= (cm/get-submap constraints %) cm/EMPTY))
                                (range n))
               results (mapv
-                        (fn [i]
-                          (if (contains? update-set i)
+                       (fn [i]
+                         (if (contains? update-set i)
                             ;; Element changed: do full update
-                            (let [kernel-args (mapv #(nth % i) args)
-                                  old-trace (tr/make-trace
-                                              {:gen-fn kernel :args kernel-args
-                                               :choices (cm/get-submap old-choices i)
-                                               :retval nil :score (if old-element-scores (nth old-element-scores i) (mx/scalar 0.0))})]
-                              (p/update kernel old-trace (cm/get-submap constraints i)))
+                           (let [kernel-args (mapv #(nth % i) args)
+                                 old-trace (tr/make-trace
+                                            {:gen-fn kernel :args kernel-args
+                                             :choices (cm/get-submap old-choices i)
+                                             :retval nil :score (if old-element-scores (nth old-element-scores i) (mx/scalar 0.0))})]
+                             (p/update kernel old-trace (cm/get-submap constraints i)))
                             ;; Element unchanged: reuse old choices and score
-                            {:trace (tr/make-trace
-                                      {:gen-fn kernel
-                                       :args (mapv #(nth % i) args)
-                                       :choices (cm/get-submap old-choices i)
-                                       :retval (nth (:retval trace) i nil)
-                                       :score (nth old-element-scores i)})
-                             :weight (mx/scalar 0.0)
-                             :discard cm/EMPTY}))
-                        (range n))
+                           {:trace (tr/make-trace
+                                    {:gen-fn kernel
+                                     :args (mapv #(nth % i) args)
+                                     :choices (cm/get-submap old-choices i)
+                                     :retval (nth (:retval trace) i nil)
+                                     :score (nth old-element-scores i)})
+                            :weight (mx/scalar 0.0)
+                            :discard cm/EMPTY}))
+                       (range n))
               choices (assemble-choices results (comp :choices :trace))
               retvals (mapv (comp :retval :trace) results)
               score (sum-field results (comp :score :trace))
@@ -1996,10 +2107,10 @@
       (reduce (fn [acc i]
                 (let [kernel-args (mapv #(nth % i) args)
                       sub-trace (tr/make-trace
-                                  {:gen-fn kernel :args kernel-args
-                                   :choices (cm/get-submap old-choices i)
-                                   :retval (nth (:retval trace) i nil)
-                                   :score (if old-element-scores (nth old-element-scores i) (mx/scalar 0.0))})
+                                 {:gen-fn kernel :args kernel-args
+                                  :choices (cm/get-submap old-choices i)
+                                  :retval (nth (:retval trace) i nil)
+                                  :score (if old-element-scores (nth old-element-scores i) (mx/scalar 0.0))})
                       w (p/project kernel sub-trace
                                    (sel/get-subselection selection i))]
                   (mx/add acc w)))
@@ -2031,9 +2142,9 @@
     (let [[idx & branch-args] (:args trace)
           branch (nth (:branches this) idx)
           branch-trace (tr/make-trace
-                         {:gen-fn branch :args (vec branch-args)
-                          :choices (:choices trace)
-                          :retval (:retval trace) :score (:score trace)})]
+                        {:gen-fn branch :args (vec branch-args)
+                         :choices (:choices trace)
+                         :retval (:retval trace) :score (:score trace)})]
       (p/project branch branch-trace selection))))
 
 (extend-type ScanCombinator
@@ -2060,9 +2171,9 @@
     (let [[active? & inner-args] (:args trace)]
       (if active?
         (let [inner-trace (tr/make-trace
-                            {:gen-fn (:inner this) :args (vec inner-args)
-                             :choices (:choices trace)
-                             :retval (:retval trace) :score (:score trace)})]
+                           {:gen-fn (:inner this) :args (vec inner-args)
+                            :choices (:choices trace)
+                            :retval (:retval trace) :score (:score trace)})]
           (p/project (:inner this) inner-trace selection))
         (mx/scalar 0.0)))))
 
