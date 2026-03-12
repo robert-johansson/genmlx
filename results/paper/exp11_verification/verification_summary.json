@@ -1,0 +1,42 @@
+{
+  "date": "2026-03-03",
+  "platform": "macOS, Apple Silicon, Bun + nbb",
+  "gen_clj_compat": {
+    "passed": 165,
+    "failed": 0,
+    "total": 165,
+    "test_file": "test/genmlx/gen_clj_compat_test.cljs"
+  },
+  "genjax_compat": {
+    "passed": 73,
+    "failed": 0,
+    "total": 73,
+    "test_file": "test/genmlx/genjax_compat_test.cljs"
+  },
+  "gfi_contracts": {
+    "contracts": 10,
+    "models": 5,
+    "checks": 64,
+    "failures": 0,
+    "test_file": "test/genmlx/gfi_contract_test.cljs",
+    "contract_types": [
+      "simulate",
+      "generate(all)",
+      "generate(empty)",
+      "assess",
+      "update(same)",
+      "update",
+      "regenerate(none)",
+      "propose",
+      "project(all)",
+      "project(none)"
+    ],
+    "model_types": [
+      "single-site",
+      "multi-site",
+      "linreg",
+      "splice",
+      "mixed"
+    ]
+  }
+}

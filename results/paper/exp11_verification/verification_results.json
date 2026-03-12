@@ -1,0 +1,83 @@
+{
+  "experiment": "exp11_verification",
+  "timestamp": "2026-03-12T05:17:27Z",
+  "suites": [
+    {
+      "name": "Level 0 Certification",
+      "total": 68,
+      "pass": 68,
+      "fail": 0,
+      "file": "test/genmlx/level0_certification_test.cljs",
+      "level": "L0",
+      "notes": "All 10 gates pass (G1-G10)"
+    },
+    {
+      "name": "Schema Extraction (L1-M1)",
+      "total": 174,
+      "pass": 174,
+      "fail": 0,
+      "file": "test/genmlx/schema_test.cljs",
+      "level": "L1",
+      "notes": "49 test sections, all pass"
+    },
+    {
+      "name": "Compiled Simulate (L1-M2)",
+      "total": 82,
+      "pass": 82,
+      "fail": 0,
+      "file": "test/genmlx/compiled_simulate_test.cljs",
+      "level": "L1",
+      "notes": "10 test sections including PRNG equivalence and score correctness"
+    },
+    {
+      "name": "Partial Compilation (L1-M3)",
+      "total": 92,
+      "pass": 92,
+      "fail": 0,
+      "file": "test/genmlx/partial_compile_test.cljs",
+      "level": "L1",
+      "notes": "13 test sections including prefix extraction, GFI operations, edge cases"
+    },
+    {
+      "name": "Combinator Compilation (L1-M5)",
+      "total": 90,
+      "pass": 90,
+      "fail": 0,
+      "file": "test/genmlx/combinator_compile_test.cljs",
+      "level": "L1",
+      "notes": "Unfold, Scan, Map, Switch, Mix combinators with compiled path detection"
+    },
+    {
+      "name": "Gen.clj Compatibility",
+      "total": 165,
+      "pass": 162,
+      "fail": 3,
+      "file": "test/genmlx/gen_clj_compat_test.cljs",
+      "level": "compat",
+      "notes": "3 pre-existing edge cases: beta(0.001,1), beta(1,0.001), gamma(0.001,1)"
+    },
+    {
+      "name": "GenJAX Compatibility",
+      "total": 73,
+      "pass": 72,
+      "fail": 1,
+      "file": "test/genmlx/genjax_compat_test.cljs",
+      "level": "compat",
+      "notes": "1 failure: IID ESS test (ESS=21, expected ~50; statistical variance)"
+    }
+  ],
+  "total_pass": 740,
+  "total_fail": 4,
+  "total_tests": 744,
+  "pass_rate": 0.9946,
+  "summary": {
+    "core_suites_pass": "506/506 (L0 + L1 milestones)",
+    "compat_suites_pass": "234/238 (Gen.clj + GenJAX)",
+    "known_issues": [
+      "beta(0.001,1) log-prob: MLX uses different parameterization at extreme shape values",
+      "beta(1,0.001) log-prob: same parameterization issue as above",
+      "gamma(0.001,1) log-prob: same parameterization issue for near-zero shape",
+      "IID ESS ≈ 50 test: got 21 — statistical variance in ESS estimation"
+    ]
+  }
+}

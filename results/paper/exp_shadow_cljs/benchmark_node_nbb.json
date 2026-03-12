@@ -1,0 +1,57 @@
+{
+  "experiment": "shadow_cljs_aot_benchmark",
+  "date": "2026-03-12T14:33:47.363Z",
+  "runtime": "node",
+  "compilation": "nbb interpreted",
+  "hardware": "Apple Silicon M4, macOS",
+  "benchmarks": [
+    {
+      "label": "handler-generate",
+      "mean": 1.4494345714285666,
+      "std": 0.9974933768801061,
+      "key": "handler-generate"
+    },
+    {
+      "label": "vis-1k",
+      "mean": 2.5306011428571247,
+      "std": 0.04540176630116668,
+      "key": "vis-1k"
+    },
+    {
+      "label": "handler-mh-500",
+      "mean": 3117.260319333333,
+      "std": 9.077413582708171,
+      "key": "handler-mh-500"
+    },
+    {
+      "label": "compiled-mh-500",
+      "mean": 170.3135836666673,
+      "std": 5.188960636235188,
+      "key": "compiled-mh-500"
+    },
+    {
+      "label": "hmc-500",
+      "mean": 1663.0784859999992,
+      "std": 10.686594538679154,
+      "key": "hmc-500"
+    },
+    {
+      "label": "l3-exact-generate",
+      "mean": 2.1597618571436863,
+      "std": 0.4295437701546369,
+      "key": "l3-exact-generate"
+    },
+    {
+      "label": "vis-10k",
+      "mean": 2.5359584285714454,
+      "std": 0.06032677368420786,
+      "key": "vis-10k"
+    },
+    {
+      "label": "mh-single-step",
+      "mean": 4.021934714286284,
+      "std": 0.7748821567685451,
+      "key": "mh-single-step"
+    }
+  ]
+}

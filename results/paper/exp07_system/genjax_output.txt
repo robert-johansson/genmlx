@@ -1,0 +1,187 @@
+Traceback (most recent call last):
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 213, in try_genjax_benchmarks
+    tr = genjax_linreg.simulate(key, (LINREG_XS,))
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<@beartype(genjax._src.generative_functions.static.StaticGenerativeFunction.simulate) at 0x122ede480>", line 54, in simulate
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/genjax/_src/generative_functions/static.py", line 792, in simulate
+    (args, retval, traces) = simulate_transform(self.source)(key, args)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/genjax/_src/generative_functions/static.py", line 285, in wrapper
+    retval = stateful(source_fn)(stateful_handler, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/genjax/_src/core/compiler/interpreters/stateful.py", line 93, in wrapped
+    return interpreter.run_interpreter(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/genjax/_src/core/compiler/interpreters/stateful.py", line 78, in run_interpreter
+    closed_jaxpr, (flat_args, _, out_tree) = stage(_inner)(*args)
+                                             ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/genjax/_src/core/compiler/staging.py", line 295, in wrapped
+    typed_jaxpr = cached_stage_dynamic(flat_fun, tuple(flat_avals))
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/jax/_src/linear_util.py", line 460, in memoized_fun
+    ans = call(fun, *args)
+          ^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/genjax/_src/core/compiler/staging.py", line 268, in cached_stage_dynamic
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/jax/interpreters/partial_eval.py", line 90, in trace_to_jaxpr_dynamic
+    jaxpr, out_avals, consts, () = _trace_to_jaxpr_dynamic(
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/jax/_src/profiler.py", line 334, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/jax/_src/interpreters/partial_eval.py", line 2181, in trace_to_jaxpr_dynamic
+    ans = fun.call_wrapped(*in_tracers)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/jax/_src/linear_util.py", line 210, in call_wrapped
+    return self.f_transformed(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/jax/_src/linear_util.py", line 254, in gen2
+    ans, aux = gen_inst.send(f(*args_, **kwargs_))
+                             ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/jax/_src/linear_util.py", line 388, in _get_result_paths_thunk
+    ans = _fun(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/genjax/_src/core/compiler/interpreters/stateful.py", line 76, in _inner
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/.venv-genjax/lib/python3.12/site-packages/genjax/_src/core/pytree.py", line 334, in __call__
+    return self.fn(*self.dyn_args, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 204, in genjax_linreg
+    slope = genjax_trace("slope", genjax_normal(0.0, 10.0))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<@beartype(genjax._src.generative_functions.static.trace) at 0x122eb2020>", line 86, in trace
+TypeError: trace() missing 1 required positional argument: 'args'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 218, in try_genjax_benchmarks
+    tr = genjax.simulate(genjax_linreg, key, (LINREG_XS,))
+         ^^^^^^^^^^^^^^^
+AttributeError: module 'genjax' has no attribute 'simulate'
+Traceback (most recent call last):
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 269, in run_genjax_gmm_is
+    result = genjax_gmm.importance(k, constraints,
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<@beartype(genjax._src.core.generative.generative_function.GenerativeFunction.importance) at 0x1210bc5e0>", line 53, in importance
+TypeError: Method[1m[35m genjax._src.core.generative.generative_function.GenerativeFunction.importance()[0m parameter [1m[34mconstraint[0m=[1m[31m{'x0': -3.5, 'x1': -4.199999809265137, 'x2': 0.30000001192092896, 'x3': -0.10000000149011612...}[0m violates type hint [1m[32m<class 'genjax._src.core.generative.choice_map.ChoiceMap'>[0m, as [1m[33mdict [0m[1m[31m{'x0': -3.5, 'x1': -4.199999809265137, 'x2': 0.30000001192092896, 'x3': -0.10000000149011612...}[0m not instance of [1m[33m<class "genjax._src.core.generative.choice_map.ChoiceMap">[0m.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 276, in try_genjax_benchmarks
+    r = benchmark("genjax_gmm_is_1000", run_genjax_gmm_is, warmup=5, outer=5, inner=5)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 63, in benchmark
+    f()
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 272, in run_genjax_gmm_is
+    result = genjax_gmm.generate(k, constraints,
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<@beartype(genjax._src.generative_functions.static.StaticGenerativeFunction.generate) at 0x122ede520>", line 53, in generate
+TypeError: Method[1m[35m genjax._src.generative_functions.static.StaticGenerativeFunction.generate()[0m parameter [1m[34mconstraint[0m=[1m[31m{'x0': -3.5, 'x1': -4.199999809265137, 'x2': 0.30000001192092896, 'x3': -0.10000000149011612...}[0m violates type hint [1m[32m<class 'genjax._src.core.generative.choice_map.ChoiceMap'>[0m, as [1m[33mdict [0m[1m[31m{'x0': -3.5, 'x1': -4.199999809265137, 'x2': 0.30000001192092896, 'x3': -0.10000000149011612...}[0m not instance of [1m[33m<class "genjax._src.core.generative.choice_map.ChoiceMap">[0m.
+Traceback (most recent call last):
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 303, in single_importance
+    return genjax_linreg.importance(key, constraints, (LINREG_XS,))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<@beartype(genjax._src.core.generative.generative_function.GenerativeFunction.importance) at 0x1210bc5e0>", line 53, in importance
+TypeError: Method[1m[35m genjax._src.core.generative.generative_function.GenerativeFunction.importance()[0m parameter [1m[34mconstraint[0m=[1m[31m{'y0': 2.299999952316284, 'y1': 4.699999809265137, 'y2': 6.099999904632568, 'y3': 8.89999961...}[0m violates type hint [1m[32m<class 'genjax._src.core.generative.choice_map.ChoiceMap'>[0m, as [1m[33mdict [0m[1m[31m{'y0': 2.299999952316284, 'y1': 4.699999809265137, 'y2': 6.099999904632568, 'y3': 8.89999961...}[0m not instance of [1m[33m<class "genjax._src.core.generative.choice_map.ChoiceMap">[0m.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 310, in run_genjax_vmap_is
+    result = vmapped(keys)
+             ^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 305, in single_importance
+    return genjax_linreg.generate(key, constraints, (LINREG_XS,))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<@beartype(genjax._src.generative_functions.static.StaticGenerativeFunction.generate) at 0x122ede520>", line 53, in generate
+TypeError: Method[1m[35m genjax._src.generative_functions.static.StaticGenerativeFunction.generate()[0m parameter [1m[34mconstraint[0m=[1m[31m{'y0': 2.299999952316284, 'y1': 4.699999809265137, 'y2': 6.099999904632568, 'y3': 8.89999961...}[0m violates type hint [1m[32m<class 'genjax._src.core.generative.choice_map.ChoiceMap'>[0m, as [1m[33mdict [0m[1m[31m{'y0': 2.299999952316284, 'y1': 4.699999809265137, 'y2': 6.099999904632568, 'y3': 8.89999961...}[0m not instance of [1m[33m<class "genjax._src.core.generative.choice_map.ChoiceMap">[0m.
+--------------------
+For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 303, in single_importance
+    return genjax_linreg.importance(key, constraints, (LINREG_XS,))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<@beartype(genjax._src.core.generative.generative_function.GenerativeFunction.importance) at 0x1210bc5e0>", line 53, in importance
+TypeError: Method[1m[35m genjax._src.core.generative.generative_function.GenerativeFunction.importance()[0m parameter [1m[34mconstraint[0m=[1m[31m{'y0': 2.299999952316284, 'y1': 4.699999809265137, 'y2': 6.099999904632568, 'y3': 8.89999961...}[0m violates type hint [1m[32m<class 'genjax._src.core.generative.choice_map.ChoiceMap'>[0m, as [1m[33mdict [0m[1m[31m{'y0': 2.299999952316284, 'y1': 4.699999809265137, 'y2': 6.099999904632568, 'y3': 8.89999961...}[0m not instance of [1m[33m<class "genjax._src.core.generative.choice_map.ChoiceMap">[0m.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 316, in try_genjax_benchmarks
+    r = benchmark("genjax_vmap_is_1000", run_genjax_vmap_is, warmup=3, outer=3, inner=3)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 63, in benchmark
+    f()
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 313, in run_genjax_vmap_is
+    result = [single_importance(keys[i]) for i in range(min(100, N_PARTICLES))]
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/robert/code/genmlx/bench/genjax/bench_cross_system.py", line 305, in single_importance
+    return genjax_linreg.generate(key, constraints, (LINREG_XS,))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<@beartype(genjax._src.generative_functions.static.StaticGenerativeFunction.generate) at 0x122ede520>", line 53, in generate
+TypeError: Method[1m[35m genjax._src.generative_functions.static.StaticGenerativeFunction.generate()[0m parameter [1m[34mconstraint[0m=[1m[31m{'y0': 2.299999952316284, 'y1': 4.699999809265137, 'y2': 6.099999904632568, 'y3': 8.89999961...}[0m violates type hint [1m[32m<class 'genjax._src.core.generative.choice_map.ChoiceMap'>[0m, as [1m[33mdict [0m[1m[31m{'y0': 2.299999952316284, 'y1': 4.699999809265137, 'y2': 6.099999904632568, 'y3': 8.89999961...}[0m not instance of [1m[33m<class "genjax._src.core.generative.choice_map.ChoiceMap">[0m.
+JAX version: 0.5.3
+JAX backend: cpu
+JAX devices: [CpuDevice(id=0)]
+GenJAX version: 0.10.3
+============================================================
+GenJAX / JAX Cross-System Benchmarks
+============================================================
+Python: 3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]
+GenJAX available: True (version: 0.10.3)
+JAX backend: cpu
+N particles: 1000
+
+
+=== GenJAX track ===
+  GenJAX API: decorator style (@gen, trace, normal)
+
+  -- GenJAX: Linear Regression IS --
+    simulate failed: trace() missing 1 required positional argument: 'args'
+    GenJAX linreg benchmark FAILED: module 'genjax' has no attribute 'simulate'
+
+  -- GenJAX: GMM IS --
+    GenJAX GMM benchmark FAILED: Method[1m[35m genjax._src.generative_functions.static.StaticGenerativeFunction.generate()[0m parameter [1m[34mconstraint[0m=[1m[31m{'x0': -3.5, 'x1': -4.199999809265137, 'x2': 0.30000001192092896, 'x3': -0.10000000149011612...}[0m violates type hint [1m[32m<class 'genjax._src.core.generative.choice_map.ChoiceMap'>[0m, as [1m[33mdict [0m[1m[31m{'x0': -3.5, 'x1': -4.199999809265137, 'x2': 0.30000001192092896, 'x3': -0.10000000149011612...}[0m not instance of [1m[33m<class "genjax._src.core.generative.choice_map.ChoiceMap">[0m.
+
+  -- GenJAX: Vectorized IS --
+    GenJAX vmap benchmark FAILED: Method[1m[35m genjax._src.generative_functions.static.StaticGenerativeFunction.generate()[0m parameter [1m[34mconstraint[0m=[1m[31m{'y0': 2.299999952316284, 'y1': 4.699999809265137, 'y2': 6.099999904632568, 'y3': 8.89999961...}[0m violates type hint [1m[32m<class 'genjax._src.core.generative.choice_map.ChoiceMap'>[0m, as [1m[33mdict [0m[1m[31m{'y0': 2.299999952316284, 'y1': 4.699999809265137, 'y2': 6.099999904632568, 'y3': 8.89999961...}[0m not instance of [1m[33m<class "genjax._src.core.generative.choice_map.ChoiceMap">[0m.
+
+=== Pure JAX track ===
+
+  -- JAX: Linear Regression IS (1000 particles) --
+    log-ML estimate: -12.2854
+    posterior slope mean: 0.2260
+  [jax_linreg_is_1000] 0.342 +/- 0.053 ms
+
+  -- JAX: GMM IS (1000 particles) --
+    log-ML estimate: -14.8482
+  [jax_gmm_is_1000] 0.419 +/- 0.165 ms
+
+  -- JAX: Vectorized IS via vmap (1000 particles) --
+  [jax_vmap_is_1000] 0.321 +/- 0.055 ms
+
+  -- JAX: Particle scaling --
+  [jax_linreg_is_100] 0.122 +/- 0.054 ms
+  [jax_linreg_is_1000] 0.157 +/- 0.027 ms
+  [jax_linreg_is_10000] 0.708 +/- 0.298 ms
+
+Results saved to: /Users/robert/code/genmlx/results/paper/exp07_system/genjax_results.json
+
+=== Summary ===
+
+GenJAX track: no results (API unavailable or incompatible)
+
+Pure JAX track:
+  jax_linreg_is_1000: 0.342 +/- 0.053 ms
+  jax_gmm_is_1000: 0.419 +/- 0.165 ms
+  jax_vmap_is_1000: 0.321 +/- 0.055 ms
+  jax_linreg_is_100: 0.122 +/- 0.054 ms
+  jax_linreg_is_1000: 0.157 +/- 0.027 ms
+  jax_linreg_is_10000: 0.708 +/- 0.298 ms

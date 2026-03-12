@@ -1,0 +1,31 @@
+
+ ======================================================================
+  EXPERIMENT 5: L3 Auto-Conjugacy Showcase
+======================================================================
+
+  Measures variance reduction from automatic analytical elimination.
+  5 conjugate families tested, 10000 IS particles per trial, 20 trials.
+
+
+ ======================================================================
+  5A: Normal-Normal (mean estimation)
+======================================================================
+  Ground truth posterior: N(1.1178, 0.4468^2)
+
+------------------------------------------------------------
+  5A-Normal-Normal
+------------------------------------------------------------
+  Method: :exact (All trace sites eliminated by analytical plan)
+  Eliminated: [:mu] (1 addrs)
+  Residual: [] (0 addrs)
+    Pair: :mu -> :y1 [:normal-normal]
+    Pair: :mu -> :y2 [:normal-normal]
+    Pair: :mu -> :y3 [:normal-normal]
+    Pair: :mu -> :y4 [:normal-normal]
+    Pair: :mu -> :y5 [:normal-normal]
+
+  Running L3 (auto-conjugacy), 10000 particles x 20 trials...
+
+  [5A-Normal-Normal-L3] warming up...
+  [5A-Normal-Normal-L3] 1.383 +/- 0.626 ms
+error: Failed to run "nbb" due to signal SIGTERM
