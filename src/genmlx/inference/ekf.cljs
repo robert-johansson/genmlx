@@ -182,7 +182,7 @@
    args:        gen function arguments
    constraints: choicemap with observation constraints
    latent-addr: keyword address of the latent state
-   n:           number of elements (e.g. patients)
+   n:           number of elements (e.g. units)
    key:         PRNG key
 
    opts (map):
@@ -211,7 +211,7 @@
 
    step-fn:     gen function with ekf-latent and ekf-obs trace sites
    latent-addr: keyword address of the latent state
-   n:           number of elements (patients)
+   n:           number of elements (units)
    T:           number of timesteps
    context-fn:  (fn [t] -> {:args [step-fn-args], :constraints choicemap})
 

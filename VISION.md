@@ -467,19 +467,19 @@ already has. Language becomes just another random variable you can condition
 on — no different from a Gaussian or a Bernoulli.
 
 ```clojure
-(def clinical-model
-  (gen [symptoms lab-results]
-    ;; LANGUAGE variable — diagnosis in words
-    (let [diagnosis (trace :diagnosis
-                     (llm-dist (str "Patient presents with " symptoms)))
-          ;; CONTINUOUS variable — predicted labs from diagnosis
-          predicted (trace :predicted (physiology-model diagnosis))]
-      ;; OBSERVATION — actual lab results constrain both
-      (trace :labs (dist/gaussian predicted noise) lab-results)
-      diagnosis)))
+(def hybrid-model
+  (gen [description measurements]
+    ;; LANGUAGE variable — explanation in words
+    (let [explanation (trace :explanation
+                       (llm-dist (str "Given observation: " description)))
+          ;; CONTINUOUS variable — predicted measurements from explanation
+          predicted (trace :predicted (physics-model explanation))]
+      ;; OBSERVATION — actual measurements constrain both
+      (trace :obs (dist/gaussian predicted noise) measurements)
+      explanation)))
 
-;; Inference finds diagnoses that are BOTH linguistically coherent
-;; (high LLM score) AND consistent with the lab data (high Gaussian score)
+;; Inference finds explanations that are BOTH linguistically coherent
+;; (high LLM score) AND consistent with the measurements (high Gaussian score)
 ```
 
 The LLM doesn't know it's inside a gen function. GenMLX doesn't care that

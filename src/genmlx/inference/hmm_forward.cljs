@@ -18,7 +18,7 @@
       of marginalizing).
 
    Belief representation: {:log-alpha [P,K]-shaped log-probability vector}
-   where P = batch dimension (e.g. patients), K = number of discrete states."
+   where P = batch dimension (e.g. units), K = number of discrete states."
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dist.core :as dc]
@@ -238,7 +238,7 @@
    step-fn:     gen function with hmm-latent and hmm-obs trace sites
    latent-addr: keyword address of the discrete latent state
    log-trans:   [K,K] log transition matrix
-   n:           number of elements (patients), 0 for unbatched
+   n:           number of elements (units), 0 for unbatched
    K:           number of discrete states
    T:           number of timesteps
    context-fn:  (fn [t] -> {:args [step-fn-args], :constraints choicemap})

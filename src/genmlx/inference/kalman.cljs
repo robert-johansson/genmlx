@@ -72,7 +72,7 @@
 
 (defn kalman-init
   "Initial belief state: N(0, 1) prior.
-   n: number of elements (e.g. number of patients for [P]-shaped arrays)."
+   n: number of elements (e.g. number of units for [P]-shaped arrays)."
   [n]
   {:mean (mx/zeros [n]) :var (mx/ones [n])})
 
@@ -217,7 +217,7 @@
    args:        gen function arguments
    constraints: choicemap with observation constraints
    latent-addr: keyword address of the latent state
-   n:           number of elements in belief (e.g. patients)
+   n:           number of elements in belief (e.g. units)
    key:         PRNG key
 
    opts (map):
@@ -247,7 +247,7 @@
 
    step-fn:     gen function with kalman-latent and kalman-obs trace sites
    latent-addr: keyword address of the latent state
-   n:           number of elements (patients)
+   n:           number of elements (units)
    T:           number of timesteps
    context-fn:  (fn [t] -> {:args [step-fn-args], :constraints choicemap})
                 builds per-timestep args and observation constraints.

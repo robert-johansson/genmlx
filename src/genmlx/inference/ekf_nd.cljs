@@ -333,7 +333,7 @@
    args:         gen function arguments
    constraints:  choicemap with observation constraints
    latent-addrs: vector of latent address keywords
-   n:            number of elements (e.g. patients)
+   n:            number of elements (e.g. units)
    key:          PRNG key
 
    opts (map):
