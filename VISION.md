@@ -35,7 +35,9 @@ Level 0 (done):   Model body is one graph, inference loop is host-driven
 Level 1 (done):   Compiled gen fn — model compiles to single Metal dispatch
 Level 2 (done):   Compiled inference — full SMC/MCMC sweep is one graph
 Level 3 (done):   Auto-analytical — macro detects structure, eliminates sampling
-Level 4 (next):   Everything is one graph — model + inference + optimization
+Level 3.5 (done): Extended analytical — full GFI coverage, combinators, multivariate
+Level 4 (next):   Single fused graph — model + inference + optimization
+Level 5 (future): Cognitive architecture — LLMs as generative functions, theory search
 ```
 
 ---
@@ -321,19 +323,66 @@ L3 is exact at every scale. L2 ESS degrades as observations increase.
 **33.5x lower variance**, **7.2x higher ESS**. L2 is essentially collapsed
 (ESS=1.1); L3 still functions by eliminating the conjugate substructure.
 
-### What Level 3 can't do
+### What Level 3 can't do (addressed by Level 3.5)
 
-- **MCMC:** Auto-handlers intercept `p/generate` and `p/assess` only, not
-  `p/regenerate`. MCMC methods using regenerate don't directly benefit.
-- **Combinators:** No combinator-aware conjugacy detection (deferred to L3.5).
-- **Multivariate:** Only 1D conjugacy currently; matrix-valued priors need
-  matrix infrastructure.
+- ~~**MCMC:** Auto-handlers intercept `p/generate` and `p/assess` only~~ → L3.5 WP-0
+- ~~**Combinators:** No combinator-aware conjugacy detection~~ → L3.5 WP-2
+- ~~**Multivariate:** Only 1D conjugacy~~ → L3.5 WP-3
 - **Non-static models:** Dynamic addresses (loops, data-dependent branching)
-  prevent conjugacy detection.
+  prevent conjugacy detection. (Remains a limitation.)
 
 ---
 
-## Level 4: One Graph to Rule Them All
+## Level 3.5: Extended Analytical Elimination (DONE)
+
+**What it is:** Extends L3's analytical elimination across the full GFI —
+`p/regenerate` and `p/assess` now benefit from auto-handlers alongside
+`p/generate`. Adds combinator-aware conjugacy, multivariate (MVN-MVN)
+conjugacy, and reduced-dimension score functions for compiled MCMC.
+
+**Status:** Complete. 150 tests across 5 test files, 5 investigation gates passed.
+
+### How it extends Level 3
+
+L3 proved that zero-annotation conjugacy detection works. L3.5 extends coverage:
+
+1. **Regenerate auto-handlers (WP-0):** MCMC methods using `p/regenerate` now
+   benefit from analytical elimination. Score-only semantics (no weight
+   contribution) — the prior site's score is updated analytically, obs sites
+   contribute marginal LL to score. 8.2% dispatch overhead (within 10% budget).
+
+2. **Assess auto-handlers (WP-1):** `p/assess` computes exact marginal
+   log-likelihood for conjugate substructure. Enables model comparison and
+   scoring without sampling.
+
+3. **Combinator-aware conjugacy (WP-2):** Kernel-internal conjugacy works for
+   free — combinators like `unfold`, `map`, and `scan` call `p/generate`
+   internally, which triggers auto-handlers. Cross-boundary conjugacy
+   (prior in outer, obs in combinator) deferred to L4.
+
+4. **Multivariate conjugacy (WP-3):** MVN-MVN conjugate family with Kalman gain
+   form using `mx/solve` (numerically stable, no explicit matrix inverse).
+   Scales with prior dimension.
+
+5. **Score function integration (WP-4):** `make-conjugate-aware-score-fn`
+   produces reduced-dimension score functions that exclude eliminated addresses.
+   Compiled MCMC operates only on residual stochastic dimensions.
+
+### Architecture decisions
+
+- **Score-only regenerate semantics:** Regenerate weight = (new-score - old-score).
+  Auto-handlers contribute to score, not weight. This preserves MH correctness.
+- **O(1) dispatch guard:** Precomputed `:auto-regenerate-transition` on schema
+  avoids per-step scanning overhead.
+- **Kalman gain form for MVN:** `mx/solve` instead of 3x `mx/inv` — O(n^3) but
+  better constant factor and numerical stability.
+- **Unified Kalman handler core:** Generate and regenerate Kalman handlers share
+  `make-kalman-handlers-core` with mode parameter, eliminating ~80 lines of
+  duplication.
+
+---
+
+## Level 4: Single Fused Graph
 
 **What it is:** Model specification, inference algorithm, and parameter
 optimization are all expressed as one lazy MLX computation graph.
@@ -342,6 +391,10 @@ ClojureScript builds the graph, then sits idle while Metal executes.
 **What's in the graph:** Everything. The model, the analytical eliminations,
 the compiled inference sweep, the gradient computation, the optimizer step.
 One `mx/eval!`.
+
+This is the natural culmination of the compilation ladder. L0 batched the
+model, L1 compiled it, L2 compiled inference, L3/3.5 eliminated analytically
+— L4 fuses it all into one dispatch. The PPL becomes a compiler.
 
 ### What this looks like
 
@@ -384,17 +437,77 @@ Given a model and data, the system chooses the inference strategy:
 - Static with few latents → compiled MCMC
 - High-dimensional → compiled VI/ADEV
 
-Selection based on the structure metadata from Level 3's macro analysis.
+Selection based on the structure metadata from Level 3/3.5's analysis.
 The user calls `(fit model data)` and the system figures out the rest.
 
-**L4-M4: LLM as generative function.**
-An LLM wrapped as a generative function with a proper score (log-probability
-of the generated text). Enables inference over natural language: condition on
-observations, sample explanations, compute posteriors over hypotheses expressed
-in text. The GFI's `assess` gives the score; `generate` with constraints
-gives conditional generation.
+---
 
-**L4-M5: Amortized combinator search.**
+## Level 5: Cognitive Architecture
+
+**What it is:** The GFI becomes a cognitive primitive. Language models,
+theory search, and adaptive reasoning are first-class generative functions
+— composable with Gaussians, Kalman filters, neural nets, and all existing
+combinators through the same interface.
+
+L0-L4 make probabilistic programs run fast. L5 makes them think.
+
+### Why this is possible
+
+An LLM has a well-defined `log p(text)` — the sum of per-token log-probs.
+That means it satisfies the GFI contract:
+
+- **`simulate`**: sample text from the LLM (normal generation)
+- **`assess`**: compute `log p(text)` for given text (the score)
+- **`generate` with constraints**: conditioned generation (infilling/constrained decoding)
+
+Once an LLM is a generative function, it composes with everything GenMLX
+already has. Language becomes just another random variable you can condition
+on — no different from a Gaussian or a Bernoulli.
+
+```clojure
+(def clinical-model
+  (gen [symptoms lab-results]
+    ;; LANGUAGE variable — diagnosis in words
+    (let [diagnosis (trace :diagnosis
+                     (llm-dist (str "Patient presents with " symptoms)))
+          ;; CONTINUOUS variable — predicted labs from diagnosis
+          predicted (trace :predicted (physiology-model diagnosis))]
+      ;; OBSERVATION — actual lab results constrain both
+      (trace :labs (dist/gaussian predicted noise) lab-results)
+      diagnosis)))
+
+;; Inference finds diagnoses that are BOTH linguistically coherent
+;; (high LLM score) AND consistent with the lab data (high Gaussian score)
+```
+
+The LLM doesn't know it's inside a gen function. GenMLX doesn't care that
+the distribution is an API call. The causal structure lives entirely in the
+gen function's control flow. The LLM is a black-box conditional distribution
+`p(text | prompt)`, just as `dist/gaussian` is `p(x | mean, std)`.
+
+All existing combinators work naturally:
+
+- **Map**: parallel independent LLM calls (N explanations for N data points)
+- **Unfold**: sequential reasoning chains (chain-of-thought with particle filtering)
+- **Switch**: discrete model selection (LLM vs physics model, posterior decides)
+- **Scan**: dialogue modeling (multi-turn with full history as trace)
+- **Mix**: LLM ensembles with learned mixture weights
+- **Recurse**: tree-structured decomposition of complex problems
+- **Dimap**: prompt engineering as pure function composition
+
+### Milestones
+
+**L5-M1: LLM as generative function.**
+Wrap an LLM API (or local model via mlx-lm) as a `Distribution` with
+proper `sample` and `log-prob`. Handle batching (multiple particles =
+multiple API calls or batched local inference). Token-level log-prob
+accumulation for `assess`. Constrained generation for `generate`.
+
+This is the infrastructure milestone. Once done, all the composition
+patterns above work immediately — they're just gen functions using a
+new distribution type.
+
+**L5-M2: Theory search.**
 Express theory discovery as a meta-generative function that samples
 architecture (which mechanisms to include) and evaluates fit. The space of
 combinator compositions is the hypothesis space; the posterior concentrates
@@ -410,6 +523,10 @@ architectures via compiled `switch`.
       (splice :fit (model data)))))
 ;; Posterior over :mech-a, :mech-b = which theory fits the data
 ```
+
+With L5-M1, the mechanisms themselves can be LLM-generated code,
+scored against real data. The system searches over both structure
+(which components) and implementation (what each component does).
 
 ---
 
@@ -428,8 +545,12 @@ architectures via compiled `switch`.
 
 At Level 0, GenMLX is 2-5x slower than GenJAX for compiled workloads.
 At Level 2, the gap closes to parity on Apple Silicon (unified memory wins).
-At Level 3+, GenMLX does things GenJAX cannot: automatic analytical
-elimination, macro-time structure detection, composable middleware stacking.
+At Level 3/3.5, GenMLX does things GenJAX cannot: automatic analytical
+elimination across all GFI operations, multivariate conjugacy, macro-time
+structure detection, and composable middleware stacking.
+At Level 5, GenMLX enters territory no existing PPL occupies: LLMs as
+first-class generative functions composable with continuous and discrete
+models through a unified probabilistic interface.
 
 ### The honest bottleneck
 
@@ -471,6 +592,10 @@ The PPL becomes a compiler from probabilistic programs to optimal GPU
 execution plans, where "compilation" emerges from the natural interaction of
 Lisp macros, functional middleware, and lazy evaluation. No compiler
 infrastructure needed — the stack is the compiler.
+
+At Level 5, the same architecture extends to cognitive tasks: LLMs slot into
+the GFI as distributions over language, composable with everything above
+through the same `simulate`/`generate`/`assess` contract.
 
 ---
 
@@ -520,7 +645,17 @@ stay lazy, but true single-mx/eval! SMC sweep is not yet achieved.
 - 426 tests across 6 test files, 7 investigation gates passed
 - Benchmark: 33.5x variance reduction, 7.2x ESS improvement on multi-group mixed models
 
+### Level 3.5: COMPLETE
+
+- WP-0: Regenerate auto-handlers — MCMC benefits from analytical elimination (8.2% overhead)
+- WP-1: Assess auto-handlers — exact marginal LL scoring for conjugate substructure
+- WP-2: Combinator-aware conjugacy — kernel-internal conjugacy works via p/generate dispatch
+- WP-3: Multivariate conjugacy — MVN-MVN with Kalman gain form (mx/solve, no mx/inv)
+- WP-4: Score function integration — reduced-dimension score fns for compiled MCMC
+- Unified Kalman handler core (generate/regenerate), -98 lines cleanup
+- 150 tests across 5 test files, 5 investigation gates passed
+
 ### Next
 
-- Level 4: End-to-end differentiable probabilistic programming
-- L3.5: Combinator-aware conjugacy, multivariate priors, MCMC integration
+- Level 4: Single fused graph — compiled optimization, fused inference, automatic method selection
+- Level 5: Cognitive architecture — LLM as generative function, theory search
