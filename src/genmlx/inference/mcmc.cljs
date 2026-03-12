@@ -35,7 +35,7 @@
     (let [prev (mx/default-device)]
       (mx/set-default-device! d)
       (try (f)
-        (finally (mx/set-default-device! prev))))
+           (finally (mx/set-default-device! prev))))
     (f)))
 
 ;; ---------------------------------------------------------------------------
@@ -69,12 +69,12 @@
   (let [[init-key chain-key] (rng/split (rng/ensure-key key))
         {:keys [trace]} (p/generate (dyn/with-key model init-key) args observations)]
     (kern/collect-samples
-      {:samples samples :burn burn :thin thin :callback callback :key chain-key}
-      (fn [state step-key]
-        (let [new-trace (mh-step state selection step-key)]
-          {:state new-trace :accepted? (not (identical? new-trace state))}))
-      identity
-      trace)))
+     {:samples samples :burn burn :thin thin :callback callback :key chain-key}
+     (fn [state step-key]
+       (let [new-trace (mh-step state selection step-key)]
+         {:state new-trace :accepted? (not (identical? new-trace state))}))
+     identity
+     trace)))
 
 ;; ---------------------------------------------------------------------------
 ;; Custom Proposal MH
@@ -118,7 +118,7 @@
          update-weight (:weight update-result)
          _ (mx/materialize! update-weight forward-score backward-score)
          log-alpha (mx/realize (mx/add update-weight
-                                 (mx/subtract backward-score forward-score)))]
+                                       (mx/subtract backward-score forward-score)))]
      (if (u/accept-mh? log-alpha k3)
        new-trace
        current-trace))))
@@ -137,12 +137,12 @@
   (let [model (dyn/auto-key model)
         {:keys [trace]} (p/generate model args observations)]
     (kern/collect-samples
-      {:samples samples :burn burn :thin thin :callback callback :key key}
-      (fn [state step-key]
-        (let [new-trace (mh-custom-step state model proposal-gf backward-gf step-key)]
-          {:state new-trace :accepted? (not (identical? new-trace state))}))
-      identity
-      trace)))
+     {:samples samples :burn burn :thin thin :callback callback :key key}
+     (fn [state step-key]
+       (let [new-trace (mh-custom-step state model proposal-gf backward-gf step-key)]
+         {:state new-trace :accepted? (not (identical? new-trace state))}))
+     identity
+     trace)))
 
 ;; ---------------------------------------------------------------------------
 ;; Compiled MH (random-walk proposal in parameter space)
@@ -154,9 +154,9 @@
   [params score-fn proposal-std param-shape key]
   (let [key (rng/ensure-key key)
         [propose-key accept-key] (rng/split key)
-        noise    (rng/normal propose-key param-shape)
+        noise (rng/normal propose-key param-shape)
         proposal (mx/add params (mx/multiply proposal-std noise))
-        score-current  (score-fn params)
+        score-current (score-fn params)
         score-proposal (score-fn proposal)
         _ (mx/materialize! score-current score-proposal)
         log-alpha (- (mx/item score-proposal) (mx/item score-current))
@@ -172,21 +172,153 @@
         (fn [params noise-2d uniforms-1d]
           (loop [p params, i 0]
             (if (>= i k-steps) p
+                (let [row (mx/reshape
+                           (mx/take-idx noise-2d (mx/array [i] mx/int32) 0)
+                           [n-params])
+                      proposal (mx/add p (mx/multiply proposal-std row))
+                      s-cur (score-fn p)
+                      s-prop (score-fn proposal)
+                      log-alpha (mx/subtract s-prop s-cur)
+                      log-u (mx/log (mx/index uniforms-1d i))
+                      accept? (mx/greater log-alpha log-u)]
+                  (recur (mx/where accept? proposal p) (inc i))))))
+        compiled (mx/compile-fn chain-fn)]
+    ;; Trace call to cache the Metal program
+    (mx/materialize! (compiled (mx/array (vec (repeat n-params 0.0)))
+                               (rng/normal (rng/fresh-key) [k-steps n-params])
+                               (rng/uniform (rng/fresh-key) [k-steps])))
+    compiled))
+
+(defn- pre-generate-chain-noise
+  "Generate all noise for a complete MH chain upfront.
+   Returns {:noise [total-steps, n-params] :uniforms [total-steps]}.
+   Materialized immediately so downstream compiled fns see concrete arrays."
+  [key total-steps n-params]
+  (let [[k1 k2] (rng/split (rng/ensure-key key))
+        noise (rng/normal k1 [total-steps n-params])
+        uniforms (rng/uniform k2 [total-steps])]
+    (mx/materialize! noise uniforms)
+    {:noise noise :uniforms uniforms}))
+
+(defn- write-sample-row
+  "Write params into row sample-idx of the samples tensor.
+   Uses mx/where for branchless in-graph recording."
+  [samples params sample-idx n-samples n-params]
+  (let [indices (mx/astype (mx/arange n-samples) mx/int32)
+        row-mask (mx/equal indices sample-idx)
+        write-mask-2d (mx/expand-dims row-mask 1)
+        new-row (mx/broadcast-to (mx/reshape params [1 n-params])
+                                 [n-samples n-params])]
+    (mx/where write-mask-2d new-row samples)))
+
+(defn- make-fused-burn-in
+  "Compile a function that runs n-burn MH steps in one Metal dispatch.
+   Returns compiled fn: (params [D], noise [B,D], uniforms [B]) → params [D].
+   All noise is pre-generated outside."
+  [n-burn score-fn proposal-std n-params]
+  (let [burn-fn
+        (fn [params noise uniforms]
+          (loop [p params, i 0]
+            (if (>= i n-burn) p
+                (let [row (mx/reshape
+                           (mx/take-idx noise (mx/array [i] mx/int32) 0)
+                           [n-params])
+                      proposal (mx/add p (mx/multiply proposal-std row))
+                      s-cur (score-fn p)
+                      s-prop (score-fn proposal)
+                      log-alpha (mx/subtract s-prop s-cur)
+                      log-u (mx/log (mx/index uniforms i))
+                      accept? (mx/greater log-alpha log-u)]
+                  (recur (mx/where accept? proposal p) (inc i))))))
+        compiled (mx/compile-fn burn-fn)]
+    ;; Warmup trace
+    (mx/materialize! (compiled (mx/zeros [n-params])
+                               (rng/normal (rng/fresh-key) [n-burn n-params])
+                               (rng/uniform (rng/fresh-key) [n-burn])))
+    compiled))
+
+(defn- make-fused-collection
+  "Compile a function that runs thin*n-samples MH steps and returns
+   [n-samples, n-params] tensor of thinned samples.
+   Records every thin-th step via in-graph mx/where row-write.
+   Since thin is a host constant, the record/skip decision is resolved at
+   graph-build time — no data-dependent branching in the compiled graph."
+  [n-samples thin score-fn proposal-std n-params]
+  (let [total-steps (* thin n-samples)
+        collect-fn
+        (fn [init-params noise uniforms]
+          (loop [p init-params, i 0
+                 sample-count (mx/astype (mx/array [0]) mx/int32)
+                 samples (mx/zeros [n-samples n-params])]
+            (if (>= i total-steps)
+              samples
               (let [row (mx/reshape
-                          (mx/take-idx noise-2d (mx/array [i] mx/int32) 0)
-                          [n-params])
+                         (mx/take-idx noise (mx/array [i] mx/int32) 0)
+                         [n-params])
                     proposal (mx/add p (mx/multiply proposal-std row))
                     s-cur (score-fn p)
                     s-prop (score-fn proposal)
                     log-alpha (mx/subtract s-prop s-cur)
-                    log-u (mx/log (mx/index uniforms-1d i))
-                    accept? (mx/greater log-alpha log-u)]
-                (recur (mx/where accept? proposal p) (inc i))))))
+                    log-u (mx/log (mx/index uniforms i))
+                    accept? (mx/greater log-alpha log-u)
+                    new-p (mx/where accept? proposal p)
+                    ;; Record every thin steps (host-side decision)
+                    is-record (zero? (mod i thin))
+                    new-samples (if is-record
+                                  (write-sample-row samples new-p sample-count
+                                                    n-samples n-params)
+                                  samples)
+                    new-count (if is-record
+                                (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
+                                sample-count)]
+                (recur new-p (inc i) new-count new-samples)))))
+        compiled (mx/compile-fn collect-fn)]
+    ;; Warmup trace
+    (mx/materialize! (compiled (mx/zeros [n-params])
+                               (rng/normal (rng/fresh-key) [total-steps n-params])
+                               (rng/uniform (rng/fresh-key) [total-steps])))
+    compiled))
+
+(defn- make-fused-burn-and-collect
+  "Compile a single function for burn-in + thinned collection.
+   Runs n-burn MH steps (discarded), then thin*n-samples steps (recorded).
+   Returns [n-samples, n-params] tensor. ONE Metal dispatch for entire chain."
+  [n-burn n-samples thin score-fn proposal-std n-params]
+  (let [total-steps (+ n-burn (* thin n-samples))
+        chain-fn
+        (fn [init-params noise uniforms]
+          (loop [p init-params, i 0
+                 sample-count (mx/astype (mx/array [0]) mx/int32)
+                 samples (mx/zeros [n-samples n-params])]
+            (if (>= i total-steps)
+              #js [p samples]
+              (let [row (mx/reshape
+                         (mx/take-idx noise (mx/array [i] mx/int32) 0)
+                         [n-params])
+                    proposal (mx/add p (mx/multiply proposal-std row))
+                    s-cur (score-fn p)
+                    s-prop (score-fn proposal)
+                    log-alpha (mx/subtract s-prop s-cur)
+                    log-u (mx/log (mx/index uniforms i))
+                    accept? (mx/greater log-alpha log-u)
+                    new-p (mx/where accept? proposal p)
+                    ;; After burn-in, record every thin steps
+                    past-burn? (>= i n-burn)
+                    is-record (and past-burn? (zero? (mod (- i n-burn) thin)))
+                    new-samples (if is-record
+                                  (write-sample-row samples new-p sample-count
+                                                    n-samples n-params)
+                                  samples)
+                    new-count (if is-record
+                                (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
+                                sample-count)]
+                (recur new-p (inc i) new-count new-samples)))))
         compiled (mx/compile-fn chain-fn)]
-    ;; Trace call to cache the Metal program
-    (mx/materialize! (compiled (mx/array (vec (repeat n-params 0.0)))
-                        (rng/normal (rng/fresh-key) [k-steps n-params])
-                        (rng/uniform (rng/fresh-key) [k-steps])))
+    ;; Warmup trace
+    (let [result (compiled (mx/zeros [n-params])
+                           (rng/normal (rng/fresh-key) [total-steps n-params])
+                           (rng/uniform (rng/fresh-key) [total-steps]))]
+      (mx/materialize! (aget result 0) (aget result 1)))
     compiled))
 
 (defn- make-compiled-trajectory
@@ -201,8 +333,8 @@
             (if (>= i k-steps)
               (mx/stack traj)
               (let [row (mx/reshape
-                          (mx/take-idx noise-2d (mx/array [i] mx/int32) 0)
-                          [n-params])
+                         (mx/take-idx noise-2d (mx/array [i] mx/int32) 0)
+                         [n-params])
                     proposal (mx/add p (mx/multiply proposal-std row))
                     s-cur (score-fn p)
                     s-prop (score-fn proposal)
@@ -214,8 +346,8 @@
         compiled (mx/compile-fn traj-fn)]
     ;; Trace call to cache the Metal program
     (mx/materialize! (compiled (mx/array (vec (repeat n-params 0.0)))
-                        (rng/normal (rng/fresh-key) [k-steps n-params])
-                        (rng/uniform (rng/fresh-key) [k-steps])))
+                               (rng/normal (rng/fresh-key) [k-steps n-params])
+                               (rng/uniform (rng/fresh-key) [k-steps])))
     compiled))
 
 (defn- eager-mh-step
@@ -223,7 +355,7 @@
    No PRNG overhead per step — randomness is pre-generated in batches."
   [params score-fn proposal-std noise uniform-val]
   (let [proposal (mx/add params (mx/multiply proposal-std noise))
-        score-current  (score-fn params)
+        score-current (score-fn params)
         score-proposal (score-fn proposal)
         _ (mx/materialize! score-current score-proposal)
         log-alpha (- (mx/item score-proposal) (mx/item score-current))
@@ -241,93 +373,93 @@
    score-fn proposal-std burn-chain burn-block-size thin-chain
    {:keys [collect-chain block-size-collect]}]
   (mx/with-resource-guard
-   (fn []
-    (let [param-shape [n-params]
-        rk (rng/ensure-key key)
+    (fn []
+      (let [param-shape [n-params]
+            rk (rng/ensure-key key)
         ;; Phase 1: Burn-in via compiled chain blocks
-        [params rk]
-        (if (and burn-chain (> burn 0))
-          (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
-            (loop [p init-params, b 0, rk rk]
-              (if (>= b n-blocks) [p rk]
-                (let [[k1 k2 rk'] (rng/split-n rk 3)
-                      noise (rng/normal k1 [burn-block-size n-params])
-                      uniforms (rng/uniform k2 [burn-block-size])
-                      p' (burn-chain p noise uniforms)]
-                  (mx/materialize! p')
-                  (mx/clear-cache!)
-                  (recur p' (inc b) rk')))))
-          [init-params rk])
+            [params rk]
+            (if (and burn-chain (> burn 0))
+              (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
+                (loop [p init-params, b 0, rk rk]
+                  (if (>= b n-blocks) [p rk]
+                      (let [[k1 k2 rk'] (rng/split-n rk 3)
+                            noise (rng/normal k1 [burn-block-size n-params])
+                            uniforms (rng/uniform k2 [burn-block-size])
+                            p' (burn-chain p noise uniforms)]
+                        (mx/materialize! p')
+                        (mx/clear-cache!)
+                        (recur p' (inc b) rk')))))
+              [init-params rk])
         ;; Phase 2: Collect samples
-        result
-        (if thin-chain
+            result
+            (if thin-chain
           ;; thin > 1: compiled chain per sample (with tidy for resource safety)
-          (loop [p params, acc (transient []), i 0, rk rk]
-            (if (>= i samples)
-              (persistent! acc)
-              (let [[k1 k2 rk'] (rng/split-n rk 3)
-                    p' (mx/tidy-materialize
-                         #(let [noise (rng/normal k1 [thin n-params])
-                                uniforms (rng/uniform k2 [thin])]
-                            (thin-chain p noise uniforms)))]
-                (when callback
-                  (callback {:iter i :value (mx/->clj p')}))
-                (recur p' (conj! acc (mx/->clj p')) (inc i) rk'))))
-          ;; thin = 1: trajectory blocks (compiled) or eager steps (fallback)
-          (if collect-chain
-            ;; Compiled trajectory path: K samples per Metal dispatch
-            (let [n-blocks (js/Math.ceil (/ samples block-size-collect))
-                  ;; Pre-generate all noise/uniforms for all blocks
-                  all-keys (rng/split-n rk (* 2 n-blocks))
-                  all-noise (mapv #(rng/normal % [block-size-collect n-params])
-                                  (take-nth 2 all-keys))
-                  all-uniforms (mapv #(rng/uniform % [block-size-collect])
-                                     (take-nth 2 (rest all-keys)))]
-              (loop [p params, acc [], b 0]
-                (if (>= b n-blocks)
-                  (vec (take samples acc))
-                  (let [traj (collect-chain p (nth all-noise b) (nth all-uniforms b))]
-                    (mx/materialize! traj)
-                    (let [traj-js (mx/->clj traj)
-                          remaining (- samples (count acc))
-                          block-k (min block-size-collect remaining)
-                          block-samples (take block-k traj-js)
-                          p' (mx/array (nth traj-js (dec block-size-collect)))]
-                      (when callback
-                        (doseq [[j s] (map-indexed vector block-samples)]
-                          (callback {:iter (+ (count acc) j) :value s})))
-                      (when (zero? (mod b 10)) (mx/clear-cache!))
-                      (recur p' (into acc block-samples) (inc b)))))))
-            ;; Eager fallback (uncompiled path)
-            (let [batch-size (min samples 50)]
               (loop [p params, acc (transient []), i 0, rk rk]
                 (if (>= i samples)
                   (persistent! acc)
+                  (let [[k1 k2 rk'] (rng/split-n rk 3)
+                        p' (mx/tidy-materialize
+                            #(let [noise (rng/normal k1 [thin n-params])
+                                   uniforms (rng/uniform k2 [thin])]
+                               (thin-chain p noise uniforms)))]
+                    (when callback
+                      (callback {:iter i :value (mx/->clj p')}))
+                    (recur p' (conj! acc (mx/->clj p')) (inc i) rk'))))
+          ;; thin = 1: trajectory blocks (compiled) or eager steps (fallback)
+              (if collect-chain
+            ;; Compiled trajectory path: K samples per Metal dispatch
+                (let [n-blocks (js/Math.ceil (/ samples block-size-collect))
+                  ;; Pre-generate all noise/uniforms for all blocks
+                      all-keys (rng/split-n rk (* 2 n-blocks))
+                      all-noise (mapv #(rng/normal % [block-size-collect n-params])
+                                      (take-nth 2 all-keys))
+                      all-uniforms (mapv #(rng/uniform % [block-size-collect])
+                                         (take-nth 2 (rest all-keys)))]
+                  (loop [p params, acc [], b 0]
+                    (if (>= b n-blocks)
+                      (vec (take samples acc))
+                      (let [traj (collect-chain p (nth all-noise b) (nth all-uniforms b))]
+                        (mx/materialize! traj)
+                        (let [traj-js (mx/->clj traj)
+                              remaining (- samples (count acc))
+                              block-k (min block-size-collect remaining)
+                              block-samples (take block-k traj-js)
+                              p' (mx/array (nth traj-js (dec block-size-collect)))]
+                          (when callback
+                            (doseq [[j s] (map-indexed vector block-samples)]
+                              (callback {:iter (+ (count acc) j) :value s})))
+                          (when (zero? (mod b 10)) (mx/clear-cache!))
+                          (recur p' (into acc block-samples) (inc b)))))))
+            ;; Eager fallback (uncompiled path)
+                (let [batch-size (min samples 50)]
+                  (loop [p params, acc (transient []), i 0, rk rk]
+                    (if (>= i samples)
+                      (persistent! acc)
                   ;; Generate a batch of noise/uniforms
-                  (let [remaining (- samples i)
-                        batch (min batch-size remaining)
-                        [k1 k2 rk'] (rng/split-n rk 3)
-                        noise-batch (rng/normal k1 [batch n-params])
-                        uniforms-batch (rng/uniform k2 [batch])
-                        _ (mx/materialize! noise-batch uniforms-batch)
-                        uniforms-js (mx/->clj uniforms-batch)
+                      (let [remaining (- samples i)
+                            batch (min batch-size remaining)
+                            [k1 k2 rk'] (rng/split-n rk 3)
+                            noise-batch (rng/normal k1 [batch n-params])
+                            uniforms-batch (rng/uniform k2 [batch])
+                            _ (mx/materialize! noise-batch uniforms-batch)
+                            uniforms-js (mx/->clj uniforms-batch)
                         ;; Inner loop: iterate through pre-generated randomness
-                        [p' acc']
-                        (loop [p p, acc acc, j 0]
-                          (if (>= j batch)
-                            [p acc]
-                            (let [noise (mx/reshape
-                                          (mx/take-idx noise-batch (mx/scalar j mx/int32) 0)
-                                          [n-params])
-                                  p' (mx/tidy-materialize
-                                       #(eager-mh-step p score-fn proposal-std
-                                                       noise (nth uniforms-js j)))]
-                              (when callback
-                                (callback {:iter (+ i j) :value (mx/->clj p')}))
-                              (recur p' (conj! acc (mx/->clj p')) (inc j)))))]
-                    (mx/clear-cache!)
-                    (recur p' acc' (+ i batch) rk')))))))]
-    result))))
+                            [p' acc']
+                            (loop [p p, acc acc, j 0]
+                              (if (>= j batch)
+                                [p acc]
+                                (let [noise (mx/reshape
+                                             (mx/take-idx noise-batch (mx/scalar j mx/int32) 0)
+                                             [n-params])
+                                      p' (mx/tidy-materialize
+                                          #(eager-mh-step p score-fn proposal-std
+                                                          noise (nth uniforms-js j)))]
+                                  (when callback
+                                    (callback {:iter (+ i j) :value (mx/->clj p')}))
+                                  (recur p' (conj! acc (mx/->clj p')) (inc j)))))]
+                        (mx/clear-cache!)
+                        (recur p' acc' (+ i batch) rk')))))))]
+        result))))
 
 (defn compiled-mh
   "Compiled MH inference with random-walk Gaussian proposal.
@@ -363,30 +495,30 @@
              {:keys [score-fn init-params n-params]}
              (u/prepare-mcmc-score model args observations addresses trace)
              raw-score-fn score-fn
-             score-fn     (if compile? (mx/compile-fn raw-score-fn) raw-score-fn)
-           std (mx/scalar proposal-std)]
-       (if compile?
+             score-fn (if compile? (mx/compile-fn raw-score-fn) raw-score-fn)
+             std (mx/scalar proposal-std)]
+         (if compile?
          ;; Loop-compiled path: compiled chains for burn-in + optional thin/trajectory
          ;; Pass raw-score-fn to chain builders (they compile internally — avoid double compilation)
-         (let [burn-block (min (max burn 1) block-size)
-               burn-chain (when (> burn 0)
-                            (make-compiled-chain burn-block raw-score-fn std n-params))
-               thin-chain (when (> thin 1)
-                            (make-compiled-chain thin raw-score-fn std n-params))
-               collect-chain (when (= thin 1)
-                               (make-compiled-trajectory block-size-collect raw-score-fn std n-params))]
-           (run-loop-compiled-mh
-             {:samples samples :burn burn :thin thin :callback callback :key key}
-             init-params n-params score-fn std
-             burn-chain burn-block thin-chain
-             {:collect-chain collect-chain :block-size-collect block-size-collect}))
+           (let [burn-block (min (max burn 1) block-size)
+                 burn-chain (when (> burn 0)
+                              (make-compiled-chain burn-block raw-score-fn std n-params))
+                 thin-chain (when (> thin 1)
+                              (make-compiled-chain thin raw-score-fn std n-params))
+                 collect-chain (when (= thin 1)
+                                 (make-compiled-trajectory block-size-collect raw-score-fn std n-params))]
+             (run-loop-compiled-mh
+              {:samples samples :burn burn :thin thin :callback callback :key key}
+              init-params n-params score-fn std
+              burn-chain burn-block thin-chain
+              {:collect-chain collect-chain :block-size-collect block-size-collect}))
          ;; Fallback: per-step eager path
-         (kern/collect-samples
-           {:samples samples :burn burn :thin thin :callback callback :key key}
-           (fn [params step-key]
-             (compiled-mh-step params score-fn std (mx/shape init-params) step-key))
-           mx/->clj
-           init-params))))))
+           (kern/collect-samples
+            {:samples samples :burn burn :thin thin :callback callback :key key}
+            (fn [params step-key]
+              (compiled-mh-step params score-fn std (mx/shape init-params) step-key))
+            mx/->clj
+            init-params))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized Compiled MH (N parallel chains)
@@ -398,9 +530,9 @@
   [params score-fn proposal-std param-shape n-chains key]
   (let [key (rng/ensure-key key)
         [propose-key accept-key] (rng/split key)
-        noise    (rng/normal propose-key param-shape)
+        noise (rng/normal propose-key param-shape)
         proposal (mx/add params (mx/multiply proposal-std noise))
-        score-current  (score-fn params)
+        score-current (score-fn params)
         score-proposal (score-fn proposal)
         _ (mx/materialize! score-current score-proposal)
         log-alphas (mx/subtract score-proposal score-current)
@@ -434,32 +566,32 @@
     (with-device device
       #(let [score-fn (u/make-vectorized-score-fn model args observations addresses)
           ;; Initialize N chains from independent generate calls
-          init-params (mx/stack
-                        (mapv (fn [_]
-                                (let [{:keys [trace]} (p/generate model args observations)]
-                                  (u/extract-params trace addresses)))
-                              (range n-chains)))
-          param-shape (mx/shape init-params)
-          std (mx/scalar proposal-std)
-          total-iters (+ burn (* samples thin))
-          d (count addresses)]
-      (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
-        (if (>= n samples)
-          (with-meta (persistent! acc)
-            {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
-          (let [[step-key next-key] (rng/split-or-nils rk)
-                {:keys [state n-accepted]} (vectorized-mh-step
-                                             state score-fn std param-shape n-chains step-key)
-                _  (when (zero? (mod i 50)) (mx/clear-cache!))
-                past-burn? (>= i burn)
-                keep? (and past-burn? (zero? (mod (- i burn) thin)))]
-            (when (and callback keep?)
-              (callback {:iter n :value (mx/->clj state) :n-accepted n-accepted}))
-            (recur (inc i) state
-                   (if keep? (conj! acc (mx/->clj state)) acc)
-                   (if keep? (inc n) n)
-                   (+ total-accepted n-accepted)
-                   next-key))))))))
+             init-params (mx/stack
+                          (mapv (fn [_]
+                                  (let [{:keys [trace]} (p/generate model args observations)]
+                                    (u/extract-params trace addresses)))
+                                (range n-chains)))
+             param-shape (mx/shape init-params)
+             std (mx/scalar proposal-std)
+             total-iters (+ burn (* samples thin))
+             d (count addresses)]
+         (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
+           (if (>= n samples)
+             (with-meta (persistent! acc)
+               {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
+             (let [[step-key next-key] (rng/split-or-nils rk)
+                   {:keys [state n-accepted]} (vectorized-mh-step
+                                               state score-fn std param-shape n-chains step-key)
+                   _ (when (zero? (mod i 50)) (mx/clear-cache!))
+                   past-burn? (>= i burn)
+                   keep? (and past-burn? (zero? (mod (- i burn) thin)))]
+               (when (and callback keep?)
+                 (callback {:iter n :value (mx/->clj state) :n-accepted n-accepted}))
+               (recur (inc i) state
+                      (if keep? (conj! acc (mx/->clj state)) acc)
+                      (if keep? (inc n) n)
+                      (+ total-accepted n-accepted)
+                      next-key))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized Compiled Trajectory MH (N chains × K steps per dispatch)
@@ -473,25 +605,25 @@
         (fn [params noise-3d uniforms-2d]
           (loop [p params, i 0]
             (if (>= i k-steps) p
-              (let [row (mx/reshape
-                          (mx/take-idx noise-3d (mx/array [i] mx/int32) 0)
-                          [n-chains n-params])
-                    proposal (mx/add p (mx/multiply proposal-std row))
-                    s-cur (score-fn p)
-                    s-prop (score-fn proposal)
-                    log-alpha (mx/subtract s-prop s-cur)
-                    u-row (mx/reshape
-                            (mx/take-idx uniforms-2d (mx/array [i] mx/int32) 0)
-                            [n-chains])
-                    log-u (mx/log u-row)
-                    accept? (mx/greater log-alpha log-u)
-                    p' (mx/where (mx/expand-dims accept? 1) proposal p)]
-                (recur p' (inc i))))))
+                (let [row (mx/reshape
+                           (mx/take-idx noise-3d (mx/array [i] mx/int32) 0)
+                           [n-chains n-params])
+                      proposal (mx/add p (mx/multiply proposal-std row))
+                      s-cur (score-fn p)
+                      s-prop (score-fn proposal)
+                      log-alpha (mx/subtract s-prop s-cur)
+                      u-row (mx/reshape
+                             (mx/take-idx uniforms-2d (mx/array [i] mx/int32) 0)
+                             [n-chains])
+                      log-u (mx/log u-row)
+                      accept? (mx/greater log-alpha log-u)
+                      p' (mx/where (mx/expand-dims accept? 1) proposal p)]
+                  (recur p' (inc i))))))
         compiled (mx/compile-fn chain-fn)]
     ;; Warmup: trace call to cache the Metal program
     (mx/materialize! (compiled (mx/zeros [n-chains n-params])
-                        (rng/normal (rng/fresh-key) [k-steps n-chains n-params])
-                        (rng/uniform (rng/fresh-key) [k-steps n-chains])))
+                               (rng/normal (rng/fresh-key) [k-steps n-chains n-params])
+                               (rng/uniform (rng/fresh-key) [k-steps n-chains])))
     compiled))
 
 (defn- make-vectorized-compiled-trajectory
@@ -504,15 +636,15 @@
             (if (>= i k-steps)
               (mx/stack traj)
               (let [row (mx/reshape
-                          (mx/take-idx noise-3d (mx/array [i] mx/int32) 0)
-                          [n-chains n-params])
+                         (mx/take-idx noise-3d (mx/array [i] mx/int32) 0)
+                         [n-chains n-params])
                     proposal (mx/add p (mx/multiply proposal-std row))
                     s-cur (score-fn p)
                     s-prop (score-fn proposal)
                     log-alpha (mx/subtract s-prop s-cur)
                     u-row (mx/reshape
-                            (mx/take-idx uniforms-2d (mx/array [i] mx/int32) 0)
-                            [n-chains])
+                           (mx/take-idx uniforms-2d (mx/array [i] mx/int32) 0)
+                           [n-chains])
                     log-u (mx/log u-row)
                     accept? (mx/greater log-alpha log-u)
                     p' (mx/where (mx/expand-dims accept? 1) proposal p)]
@@ -520,8 +652,8 @@
         compiled (mx/compile-fn traj-fn)]
     ;; Warmup: trace call to cache the Metal program
     (mx/materialize! (compiled (mx/zeros [n-chains n-params])
-                        (rng/normal (rng/fresh-key) [k-steps n-chains n-params])
-                        (rng/uniform (rng/fresh-key) [k-steps n-chains])))
+                               (rng/normal (rng/fresh-key) [k-steps n-chains n-params])
+                               (rng/uniform (rng/fresh-key) [k-steps n-chains])))
     compiled))
 
 (defn vectorized-compiled-trajectory-mh
@@ -560,7 +692,7 @@
               ;; Single compiled trajectory chain for both phases
               ;; Pass raw (uncompiled) score-fn — chain builder compiles internally
               chain (make-vectorized-compiled-trajectory
-                      k raw-score-fn std n-chains n-params)
+                     k raw-score-fn std n-chains n-params)
 
               rk (rng/ensure-key key)
 
@@ -570,16 +702,16 @@
                 (let [n-burn-blocks (js/Math.ceil (/ burn k))]
                   (loop [p init-params, b 0, rk rk]
                     (if (>= b n-burn-blocks) [p rk]
-                      (let [[k1 k2 rk'] (rng/split-n rk 3)
-                            noise (rng/normal k1 [k n-chains n-params])
-                            uniforms (rng/uniform k2 [k n-chains])
-                            traj (chain p noise uniforms)]
-                        (mx/materialize! traj)
+                        (let [[k1 k2 rk'] (rng/split-n rk 3)
+                              noise (rng/normal k1 [k n-chains n-params])
+                              uniforms (rng/uniform k2 [k n-chains])
+                              traj (chain p noise uniforms)]
+                          (mx/materialize! traj)
                         ;; Extract last step [N,D] from trajectory [K,N,D]
-                        (let [p' (mx/reshape
-                                   (mx/take-idx traj (mx/array [(dec k)] mx/int32) 0)
-                                   [n-chains n-params])]
-                          (recur p' (inc b) rk'))))))
+                          (let [p' (mx/reshape
+                                    (mx/take-idx traj (mx/array [(dec k)] mx/int32) 0)
+                                    [n-chains n-params])]
+                            (recur p' (inc b) rk'))))))
                 [init-params rk])
 
               ;; Phase 2: Collect via trajectory blocks, pool across chains
@@ -603,10 +735,10 @@
                       block-samples
                       (loop [ki 0, s []]
                         (if (>= ki block-k) s
-                          (let [step-k (nth traj-js ki)]
-                            (recur (inc ki)
-                                   (into s (map (fn [n] (nth step-k n))
-                                                (range n-chains)))))))
+                            (let [step-k (nth traj-js ki)]
+                              (recur (inc ki)
+                                     (into s (map (fn [n] (nth step-k n))
+                                                  (range n-chains)))))))
                       ;; Last params for next block
                       p' (mx/array (nth traj-js (dec k)))]
                   (when (zero? (mod b 10)) (mx/clear-cache!))
@@ -653,17 +785,17 @@
   (let [model (dyn/auto-key model)
         {:keys [trace]} (p/generate model args observations)]
     (kern/collect-samples
-      {:samples samples :burn burn :thin thin :callback callback :key key}
-      (fn [state step-key]
-        (let [keys (rng/split-n (rng/ensure-key step-key) (count schedule))
-              new-trace (reduce (fn [t [spec ki]]
-                                  (gibbs-step-with-support
-                                    t (:addr spec) (:support spec) ki))
-                                state
-                                (map vector schedule keys))]
-          {:state new-trace :accepted? true}))
-      identity
-      trace)))
+     {:samples samples :burn burn :thin thin :callback callback :key key}
+     (fn [state step-key]
+       (let [keys (rng/split-n (rng/ensure-key step-key) (count schedule))
+             new-trace (reduce (fn [t [spec ki]]
+                                 (gibbs-step-with-support
+                                  t (:addr spec) (:support spec) ki))
+                               state
+                               (map vector schedule keys))]
+         {:state new-trace :accepted? true}))
+     identity
+     trace)))
 
 ;; ---------------------------------------------------------------------------
 ;; Involutive MCMC
@@ -704,8 +836,8 @@
         update-weight (:weight update-result)
         _ (mx/materialize! update-weight fwd-score bwd-score log-abs-det-J)
         log-alpha (mx/realize (mx/add (mx/add update-weight
-                                        (mx/subtract bwd-score fwd-score))
-                                log-abs-det-J))]
+                                              (mx/subtract bwd-score fwd-score))
+                                      log-abs-det-J))]
     (if (u/accept-mh? log-alpha k2)
       new-trace
       current-trace)))
@@ -724,12 +856,12 @@
   (let [model (dyn/auto-key model)
         {:keys [trace]} (p/generate model args observations)]
     (kern/collect-samples
-      {:samples samples :burn burn :thin thin :callback callback :key key}
-      (fn [state step-key]
-        (let [new-trace (involutive-mh-step state model proposal-gf involution step-key)]
-          {:state new-trace :accepted? (not (identical? new-trace state))}))
-      identity
-      trace)))
+     {:samples samples :burn burn :thin thin :callback callback :key key}
+     (fn [state step-key]
+       (let [new-trace (involutive-mh-step state model proposal-gf involution step-key)]
+         {:state new-trace :accepted? (not (identical? new-trace state))}))
+     identity
+     trace)))
 
 ;; ---------------------------------------------------------------------------
 ;; MALA (Metropolis-Adjusted Langevin Algorithm)
@@ -763,7 +895,7 @@
         [score-q _] (val-grad-compiled q)
         _ (mx/materialize! log-fwd log-bwd score-q)
         log-accept (+ (- (mx/item score-q') (mx/item score-q))
-                     (- (mx/item log-bwd) (mx/item log-fwd)))
+                      (- (mx/item log-bwd) (mx/item log-fwd)))
         accept? (u/accept-mh? log-accept accept-key)
         q-next (if accept? q' q)]
     {:state q-next :accepted? accept?}))
@@ -782,11 +914,11 @@
               #js [q sq gq]
               (let [;; Extract noise row i
                     noise-i (mx/reshape
-                              (mx/take-idx noise-2d (mx/array [i] mx/int32) 0)
-                              [n-params])
+                             (mx/take-idx noise-2d (mx/array [i] mx/int32) 0)
+                             [n-params])
                     ;; Propose: q' = q + half-eps2 * grad + eps * noise
                     q' (mx/add q (mx/multiply half-eps2 gq)
-                                 (mx/multiply eps noise-i))
+                               (mx/multiply eps noise-i))
                     ;; Score and gradient at proposal — THE ONLY val-grad call
                     [sq' gq'] (val-grad-fn q')
                     ;; Forward/backward means for asymmetric correction
@@ -801,7 +933,7 @@
                     log-u (mx/log (mx/index uniforms-1d i))
                     accept? (mx/greater log-alpha log-u)
                     ;; Branchless select (scalar accept? broadcasts to [D])
-                    new-q  (mx/where accept? q' q)
+                    new-q (mx/where accept? q' q)
                     new-sq (mx/where accept? sq' sq)
                     new-gq (mx/where accept? gq' gq)]
                 (recur new-q new-sq new-gq (inc i))))))
@@ -811,8 +943,8 @@
           [init-s init-g] (val-grad-fn init-q)]
       (mx/materialize! init-s init-g)
       (mx/materialize! (compiled init-q init-s init-g
-                          (rng/normal (rng/fresh-key) [k-steps n-params])
-                          (rng/uniform (rng/fresh-key) [k-steps]))))
+                                 (rng/normal (rng/fresh-key) [k-steps n-params])
+                                 (rng/uniform (rng/fresh-key) [k-steps]))))
     compiled))
 
 (defn- run-loop-compiled-mala
@@ -822,42 +954,42 @@
   [{:keys [samples burn thin callback key]} init-q n-params
    val-grad-compiled burn-chain burn-block-size thin-chain thin-steps]
   (mx/with-resource-guard
-   (fn []
-    (let [rk (rng/ensure-key key)
+    (fn []
+      (let [rk (rng/ensure-key key)
         ;; Compute initial score and gradient
-        [init-score init-grad] (val-grad-compiled init-q)
-        _ (mx/materialize! init-score init-grad)
+            [init-score init-grad] (val-grad-compiled init-q)
+            _ (mx/materialize! init-score init-grad)
         ;; Phase 1: Burn-in via compiled chain blocks
-        [params score grad rk]
-        (if (and burn-chain (> burn 0))
-          (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
-            (loop [q init-q, sq init-score, gq init-grad, b 0, rk rk]
-              (if (>= b n-blocks) [q sq gq rk]
-                (let [[k1 k2 rk'] (rng/split-n rk 3)
-                      noise (rng/normal k1 [burn-block-size n-params])
-                      uniforms (rng/uniform k2 [burn-block-size])
-                      r (burn-chain q sq gq noise uniforms)
-                      q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
-                  (mx/materialize! q' sq' gq')
-                  (mx/clear-cache!)
-                  (recur q' sq' gq' (inc b) rk')))))
-          [init-q init-score init-grad rk])
+            [params score grad rk]
+            (if (and burn-chain (> burn 0))
+              (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
+                (loop [q init-q, sq init-score, gq init-grad, b 0, rk rk]
+                  (if (>= b n-blocks) [q sq gq rk]
+                      (let [[k1 k2 rk'] (rng/split-n rk 3)
+                            noise (rng/normal k1 [burn-block-size n-params])
+                            uniforms (rng/uniform k2 [burn-block-size])
+                            r (burn-chain q sq gq noise uniforms)
+                            q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
+                        (mx/materialize! q' sq' gq')
+                        (mx/clear-cache!)
+                        (recur q' sq' gq' (inc b) rk')))))
+              [init-q init-score init-grad rk])
         ;; Phase 2: Collect samples (tidy-run prevents Metal resource leak)
-        result (loop [q params, sq score, gq grad, acc (transient []), i 0, rk rk]
-                 (if (>= i samples)
-                   (persistent! acc)
-                   (let [[step-key rk'] (rng/split rk)
-                         r (mx/tidy-run
-                             #(let [[k1 k2] (rng/split step-key)
-                                    noise (rng/normal k1 [thin-steps n-params])
-                                    uniforms (rng/uniform k2 [thin-steps])]
-                                (thin-chain q sq gq noise uniforms))
-                             (fn [r] [(aget r 0) (aget r 1) (aget r 2)]))
-                         q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
-                     (when callback
-                       (callback {:iter i :value (mx/->clj q')}))
-                     (recur q' sq' gq' (conj! acc (mx/->clj q')) (inc i) rk'))))]
-    result))))
+            result (loop [q params, sq score, gq grad, acc (transient []), i 0, rk rk]
+                     (if (>= i samples)
+                       (persistent! acc)
+                       (let [[step-key rk'] (rng/split rk)
+                             r (mx/tidy-run
+                                #(let [[k1 k2] (rng/split step-key)
+                                       noise (rng/normal k1 [thin-steps n-params])
+                                       uniforms (rng/uniform k2 [thin-steps])]
+                                   (thin-chain q sq gq noise uniforms))
+                                (fn [r] [(aget r 0) (aget r 1) (aget r 2)]))
+                             q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
+                         (when callback
+                           (callback {:iter i :value (mx/->clj q')}))
+                         (recur q' sq' gq' (conj! acc (mx/->clj q')) (inc i) rk'))))]
+        result))))
 
 (defn mala
   "MALA inference using gradient information for proposals.
@@ -881,35 +1013,35 @@
   (let [model (dyn/auto-key model)]
     (with-device device
       #(let [{:keys [trace]} (p/generate model args observations)
-           {:keys [score-fn init-params n-params]}
-           (u/prepare-mcmc-score model args observations addresses trace)
-           val-grad-fn       (mx/value-and-grad score-fn)
-           val-grad-compiled (mx/compile-fn val-grad-fn)
-           eps              (mx/scalar step-size)
-           half-eps2        (mx/scalar (* 0.5 step-size step-size))
-           two-eps-sq       (mx/scalar (* 2.0 step-size step-size))
-           init-q           init-params
-           q-shape          (mx/shape init-q)]
-       (if compile?
+             {:keys [score-fn init-params n-params]}
+             (u/prepare-mcmc-score model args observations addresses trace)
+             val-grad-fn (mx/value-and-grad score-fn)
+             val-grad-compiled (mx/compile-fn val-grad-fn)
+             eps (mx/scalar step-size)
+             half-eps2 (mx/scalar (* 0.5 step-size step-size))
+             two-eps-sq (mx/scalar (* 2.0 step-size step-size))
+             init-q init-params
+             q-shape (mx/shape init-q)]
+         (if compile?
          ;; Loop-compiled path
-         (let [burn-block (min (max burn 1) block-size)
-               burn-chain (when (> burn 0)
-                            (make-compiled-mala-chain
-                              burn-block val-grad-fn eps half-eps2 two-eps-sq n-params))
-               thin-steps (max thin 1)
-               thin-chain (make-compiled-mala-chain
-                            thin-steps val-grad-fn eps half-eps2 two-eps-sq n-params)]
-           (run-loop-compiled-mala
-             {:samples samples :burn burn :thin thin :callback callback :key key}
-             init-q n-params val-grad-compiled
-             burn-chain burn-block thin-chain thin-steps))
+           (let [burn-block (min (max burn 1) block-size)
+                 burn-chain (when (> burn 0)
+                              (make-compiled-mala-chain
+                               burn-block val-grad-fn eps half-eps2 two-eps-sq n-params))
+                 thin-steps (max thin 1)
+                 thin-chain (make-compiled-mala-chain
+                             thin-steps val-grad-fn eps half-eps2 two-eps-sq n-params)]
+             (run-loop-compiled-mala
+              {:samples samples :burn burn :thin thin :callback callback :key key}
+              init-q n-params val-grad-compiled
+              burn-chain burn-block thin-chain thin-steps))
          ;; Fallback: per-step eager path
-         (kern/collect-samples
-           {:samples samples :burn burn :thin thin :callback callback :key key}
-           (fn [q step-key]
-             (mala-step q val-grad-compiled eps half-eps2 two-eps-sq q-shape step-key))
-           mx/->clj
-           init-q))))))
+           (kern/collect-samples
+            {:samples samples :burn burn :thin thin :callback callback :key key}
+            (fn [q step-key]
+              (mala-step q val-grad-compiled eps half-eps2 two-eps-sq q-shape step-key))
+            mx/->clj
+            init-q))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized MALA (N parallel chains)
@@ -944,7 +1076,7 @@
         log-fwd (vectorized-log-proposal-density q' fwd-mean two-eps-sq)
         log-bwd (vectorized-log-proposal-density q bwd-mean two-eps-sq)
         ;; Scores [N]
-        score-q  (score-fn q)
+        score-q (score-fn q)
         score-q' (score-fn q')
         _ (mx/materialize! log-fwd log-bwd score-q score-q')
         ;; Per-chain acceptance ratio [N]
@@ -983,7 +1115,7 @@
       #(let [{:keys [score-fn grad-fn]}
              (u/make-compiled-vectorized-score-and-grad model args observations addresses)
              init-params (u/init-vectorized-params model args observations addresses n-chains)
-             eps       (mx/scalar step-size)
+             eps (mx/scalar step-size)
              half-eps2 (mx/scalar (* 0.5 step-size step-size))
              two-eps-sq (mx/scalar (* 2.0 step-size step-size))
              total-iters (+ burn (* samples thin))]
@@ -993,9 +1125,9 @@
                {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
              (let [[step-key next-key] (rng/split-or-nils rk)
                    {:keys [state n-accepted]}
-                     (vectorized-mala-step state score-fn grad-fn eps half-eps2 two-eps-sq
-                                           n-chains step-key)
-                   _  (when (zero? (mod i 50)) (mx/clear-cache!))
+                   (vectorized-mala-step state score-fn grad-fn eps half-eps2 two-eps-sq
+                                         n-chains step-key)
+                   _ (when (zero? (mod i 50)) (mx/clear-cache!))
                    past-burn? (>= i burn)
                    keep? (and past-burn? (zero? (mod (- i burn) thin)))]
                (when (and callback keep?)
@@ -1022,12 +1154,12 @@
   [metric q-shape key]
   (let [z (rng/normal (rng/ensure-key key) q-shape)]
     (cond
-      (nil? metric)    z
-      (= 1 (count (mx/shape metric)))  ;; diagonal: p = sqrt(diag) * z
-        (mx/multiply (mx/sqrt metric) z)
-      :else  ;; dense: p = L * z where M = L L^T
-        (let [L (mx/cholesky metric)]
-          (mx/squeeze (mx/matmul L (mx/reshape z [-1 1])))))))
+      (nil? metric) z
+      (= 1 (count (mx/shape metric))) ;; diagonal: p = sqrt(diag) * z
+      (mx/multiply (mx/sqrt metric) z)
+      :else ;; dense: p = L * z where M = L L^T
+      (let [L (mx/cholesky metric)]
+        (mx/squeeze (mx/matmul L (mx/reshape z [-1 1])))))))
 
 (defn- kinetic-energy
   "Kinetic energy: 0.5 * p^T M^{-1} p.
@@ -1037,12 +1169,12 @@
   [p metric half]
   (cond
     (nil? metric)
-      (mx/multiply half (mx/sum (mx/square p)))
-    (= 1 (count (mx/shape metric)))  ;; diagonal
-      (mx/multiply half (mx/sum (mx/divide (mx/square p) metric)))
-    :else  ;; dense
-      (let [Minv-p (mx/solve metric p)]
-        (mx/multiply half (mx/sum (mx/multiply p Minv-p))))))
+    (mx/multiply half (mx/sum (mx/square p)))
+    (= 1 (count (mx/shape metric))) ;; diagonal
+    (mx/multiply half (mx/sum (mx/divide (mx/square p) metric)))
+    :else ;; dense
+    (let [Minv-p (mx/solve metric p)]
+      (mx/multiply half (mx/sum (mx/multiply p Minv-p))))))
 
 (defn- inv-mass-multiply
   "Compute M^{-1} * p for the leapfrog position update.
@@ -1051,9 +1183,9 @@
    metric matrix → M^{-1} p."
   [p metric]
   (cond
-    (nil? metric)    p
-    (= 1 (count (mx/shape metric)))  (mx/divide p metric)
-    :else            (mx/solve metric p)))
+    (nil? metric) p
+    (= 1 (count (mx/shape metric))) (mx/divide p metric)
+    :else (mx/solve metric p)))
 
 (defn- hamiltonian
   "Compute H = neg-U(q) + kinetic-energy(p, M). Returns JS number."
@@ -1076,13 +1208,13 @@
   ([grad-U q p eps half-eps] (leapfrog-step grad-U q p eps half-eps nil))
   ([grad-U q p eps half-eps metric]
    (let [r (mx/tidy-run
-             #(let [g (grad-U q)
-                    p (mx/subtract p (mx/multiply half-eps g))
-                    q (mx/add q (mx/multiply eps (inv-mass-multiply p metric)))
-                    g (grad-U q)
-                    p (mx/subtract p (mx/multiply half-eps g))]
-                #js [q p])
-             (fn [r] [(aget r 0) (aget r 1)]))]
+            #(let [g (grad-U q)
+                   p (mx/subtract p (mx/multiply half-eps g))
+                   q (mx/add q (mx/multiply eps (inv-mass-multiply p metric)))
+                   g (grad-U q)
+                   p (mx/subtract p (mx/multiply half-eps g))]
+               #js [q p])
+            (fn [r] [(aget r 0) (aget r 1)]))]
      [(aget r 0) (aget r 1)])))
 
 (defn- leapfrog-trajectory
@@ -1131,11 +1263,11 @@
         current-H (hamiltonian neg-U-compiled q p0 half metric)
         ;; Fused leapfrog — L+1 gradient evals, one lazy graph
         [q' p'] (let [r (mx/tidy-run
-                          #(let [[q' p'] (leapfrog-trajectory-fused
-                                           grad-neg-U q p0 eps half-eps
-                                           leapfrog-steps metric)]
-                             #js [q' p'])
-                          (fn [r] [(aget r 0) (aget r 1)]))]
+                         #(let [[q' p'] (leapfrog-trajectory-fused
+                                         grad-neg-U q p0 eps half-eps
+                                         leapfrog-steps metric)]
+                            #js [q' p'])
+                         (fn [r] [(aget r 0) (aget r 1)]))]
                   [(aget r 0) (aget r 1)])
         ;; Proposed Hamiltonian
         proposed-H (hamiltonian neg-U-compiled q' p' half metric)
@@ -1156,43 +1288,43 @@
         (fn [q momentum-2d uniforms-1d]
           (loop [q q, k 0]
             (if (>= k k-steps) q
-              (let [;; Extract momentum row k
-                    p0 (mx/reshape
-                         (mx/take-idx momentum-2d (mx/array [k] mx/int32) 0)
-                         [n-params])
+                (let [;; Extract momentum row k
+                      p0 (mx/reshape
+                          (mx/take-idx momentum-2d (mx/array [k] mx/int32) 0)
+                          [n-params])
                     ;; Current Hamiltonian: H = neg-U(q) + 0.5*sum(p²)
-                    current-H (mx/add (neg-U-fn q)
-                                      (mx/multiply half (mx/sum (mx/square p0))))
+                      current-H (mx/add (neg-U-fn q)
+                                        (mx/multiply half (mx/sum (mx/square p0))))
                     ;; Inline fused leapfrog (L+1 grad evals instead of 2L)
                     ;; Initial half-kick: p -= half-eps * grad(neg-U)
-                    g0 (grad-neg-U q)
-                    p1 (mx/subtract p0 (mx/multiply half-eps g0))
+                      g0 (grad-neg-U q)
+                      p1 (mx/subtract p0 (mx/multiply half-eps g0))
                     ;; First drift: q += eps * p (identity mass)
-                    q1 (mx/add q (mx/multiply eps p1))
+                      q1 (mx/add q (mx/multiply eps p1))
                     ;; L-1 interior steps: full kick + drift
-                    [q-lf p-lf]
-                    (loop [j 1, qj q1, pj p1]
-                      (if (>= j leapfrog-steps) [qj pj]
-                        (let [gj (grad-neg-U qj)
-                              pj (mx/subtract pj (mx/multiply eps gj))
-                              qj (mx/add qj (mx/multiply eps pj))]
-                          (recur (inc j) qj pj))))
+                      [q-lf p-lf]
+                      (loop [j 1, qj q1, pj p1]
+                        (if (>= j leapfrog-steps) [qj pj]
+                            (let [gj (grad-neg-U qj)
+                                  pj (mx/subtract pj (mx/multiply eps gj))
+                                  qj (mx/add qj (mx/multiply eps pj))]
+                              (recur (inc j) qj pj))))
                     ;; Final half-kick
-                    g-final (grad-neg-U q-lf)
-                    p-final (mx/subtract p-lf (mx/multiply half-eps g-final))
+                      g-final (grad-neg-U q-lf)
+                      p-final (mx/subtract p-lf (mx/multiply half-eps g-final))
                     ;; Proposed Hamiltonian
-                    proposed-H (mx/add (neg-U-fn q-lf)
-                                       (mx/multiply half (mx/sum (mx/square p-final))))
+                      proposed-H (mx/add (neg-U-fn q-lf)
+                                         (mx/multiply half (mx/sum (mx/square p-final))))
                     ;; Accept/reject
-                    log-alpha (mx/subtract current-H proposed-H)
-                    log-u (mx/log (mx/index uniforms-1d k))
-                    accept? (mx/greater log-alpha log-u)]
-                (recur (mx/where accept? q-lf q) (inc k))))))
+                      log-alpha (mx/subtract current-H proposed-H)
+                      log-u (mx/log (mx/index uniforms-1d k))
+                      accept? (mx/greater log-alpha log-u)]
+                  (recur (mx/where accept? q-lf q) (inc k))))))
         compiled (mx/compile-fn chain-fn)]
     ;; Warm-up trace call
     (mx/materialize! (compiled (mx/zeros [n-params])
-                        (rng/normal (rng/fresh-key) [k-steps n-params])
-                        (rng/uniform (rng/fresh-key) [k-steps])))
+                               (rng/normal (rng/fresh-key) [k-steps n-params])
+                               (rng/uniform (rng/fresh-key) [k-steps])))
     compiled))
 
 (defn- run-loop-compiled-hmc
@@ -1203,44 +1335,44 @@
    neg-U-compiled grad-neg-U eps half-eps half q-shape
    leapfrog-steps metric burn-chain burn-block-size thin-chain]
   (mx/with-resource-guard
-   (fn []
-    (let [rk (rng/ensure-key key)
+    (fn []
+      (let [rk (rng/ensure-key key)
         ;; Phase 1: Burn-in via compiled chain blocks
-        [params rk]
-        (if (and burn-chain (> burn 0))
-          (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
-            (loop [q init-q, b 0, rk rk]
-              (if (>= b n-blocks) [q rk]
-                (let [[k1 k2 rk'] (rng/split-n rk 3)
-                      momentum (rng/normal k1 [burn-block-size n-params])
-                      uniforms (rng/uniform k2 [burn-block-size])
-                      q' (burn-chain q momentum uniforms)]
-                  (mx/materialize! q')
-                  (mx/clear-cache!)
-                  (recur q' (inc b) rk')))))
-          [init-q rk])
+            [params rk]
+            (if (and burn-chain (> burn 0))
+              (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
+                (loop [q init-q, b 0, rk rk]
+                  (if (>= b n-blocks) [q rk]
+                      (let [[k1 k2 rk'] (rng/split-n rk 3)
+                            momentum (rng/normal k1 [burn-block-size n-params])
+                            uniforms (rng/uniform k2 [burn-block-size])
+                            q' (burn-chain q momentum uniforms)]
+                        (mx/materialize! q')
+                        (mx/clear-cache!)
+                        (recur q' (inc b) rk')))))
+              [init-q rk])
         ;; Phase 2: Collect samples (tidy-materialize prevents Metal resource leak)
-        result (loop [q params, acc (transient []), i 0, rk rk]
-                 (if (>= i samples)
-                   (persistent! acc)
-                   (let [[step-key rk'] (rng/split rk)
-                         q' (mx/tidy-materialize
-                              #(if thin-chain
+            result (loop [q params, acc (transient []), i 0, rk rk]
+                     (if (>= i samples)
+                       (persistent! acc)
+                       (let [[step-key rk'] (rng/split rk)
+                             q' (mx/tidy-materialize
+                                 #(if thin-chain
                                  ;; thin > 1: compiled chain of thin steps
-                                 (let [[k1 k2] (rng/split step-key)
-                                       momentum (rng/normal k1 [thin n-params])
-                                       uniforms (rng/uniform k2 [thin])]
-                                   (thin-chain q momentum uniforms))
+                                    (let [[k1 k2] (rng/split step-key)
+                                          momentum (rng/normal k1 [thin n-params])
+                                          uniforms (rng/uniform k2 [thin])]
+                                      (thin-chain q momentum uniforms))
                                  ;; thin = 1: eager step
-                                 (let [{:keys [state]}
-                                       (hmc-step q neg-U-compiled grad-neg-U
-                                                 eps half-eps half q-shape
-                                                 leapfrog-steps metric step-key)]
-                                   state)))]
-                     (when callback
-                       (callback {:iter i :value (mx/->clj q')}))
-                     (recur q' (conj! acc (mx/->clj q')) (inc i) rk'))))]
-    result))))
+                                    (let [{:keys [state]}
+                                          (hmc-step q neg-U-compiled grad-neg-U
+                                                    eps half-eps half q-shape
+                                                    leapfrog-steps metric step-key)]
+                                      state)))]
+                         (when callback
+                           (callback {:iter i :value (mx/->clj q')}))
+                         (recur q' (conj! acc (mx/->clj q')) (inc i) rk'))))]
+        result))))
 
 ;; ---------------------------------------------------------------------------
 ;; Find reasonable initial step-size (Hoffman & Gelman 2014, Algorithm 4)
@@ -1263,11 +1395,11 @@
         dir (if (> init-a 0.5) 1 -1)]
     (loop [eps 1.0, i 0]
       (if (>= i 100) eps
-        (let [a (test-accept eps)]
-          (if (or (and (pos? dir) (< a 0.5))
-                  (and (neg? dir) (> a 0.5)))
-            eps
-            (recur (* eps (js/Math.pow 2.0 dir)) (inc i))))))))
+          (let [a (test-accept eps)]
+            (if (or (and (pos? dir) (< a 0.5))
+                    (and (neg? dir) (> a 0.5)))
+              eps
+              (recur (* eps (js/Math.pow 2.0 dir)) (inc i))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Welford's online mean + variance (for diagonal mass matrix estimation)
@@ -1324,8 +1456,8 @@
         (let [;; Wrap step-fn in tidy-run to clean up intermediate MLX arrays
               ;; (NUTS builds ~10K arrays per step via binary tree — OOMs without cleanup)
               result (mx/tidy-run
-                       #(step-fn q current-eps warmup-metric nil)
-                       (fn [{:keys [state]}] [state]))
+                      #(step-fn q current-eps warmup-metric nil)
+                      (fn [{:keys [state]}] [state]))
               _ (mx/clear-cache!)
               {:keys [state accept-stat]} result
               alpha (if (js/isNaN accept-stat) 0.0 (min 1.0 accept-stat))
@@ -1388,69 +1520,69 @@
       #(let [{:keys [trace]} (p/generate model args observations)
              {:keys [score-fn init-params n-params]}
              (u/prepare-mcmc-score model args observations addresses trace)
-             neg-U    (fn [q] (mx/negative (score-fn q)))
+             neg-U (fn [q] (mx/negative (score-fn q)))
              grad-neg-U-raw (mx/grad neg-U)
              grad-neg-U (if compile? (mx/compile-fn grad-neg-U-raw) grad-neg-U-raw)
              neg-U-compiled (if compile? (mx/compile-fn neg-U) neg-U)
-           init-q init-params
-           q-shape (mx/shape init-q)
+             init-q init-params
+             q-shape (mx/shape init-q)
            ;; Adaptive warmup: dual averaging + optional metric estimation
-           {:keys [adapted-eps warmup-q adapted-metric]}
-           (if (and (or adapt-step-size adapt-metric) (> burn 0))
-             (let [hmc-step-fn
-                   (fn [q eps-val m _key]
-                     (let [eps-mx (mx/scalar eps-val)
-                           half-eps-mx (mx/scalar (* 0.5 eps-val))
-                           half-mx (mx/scalar 0.5)
-                           {:keys [state log-accept]}
-                           (hmc-step q neg-U-compiled grad-neg-U
-                                     eps-mx half-eps-mx half-mx q-shape
-                                     leapfrog-steps m nil)]
-                       {:state state
-                        :accept-stat (let [a (js/Math.exp log-accept)]
-                                       (if (js/isNaN a) 0.0 (min 1.0 a)))}))
-                   init-eps (if adapt-step-size
-                              (find-reasonable-epsilon init-q neg-U-compiled grad-neg-U
-                                                       q-shape metric)
-                              step-size)
-                   result (dual-averaging-warmup
-                            burn target-accept init-q hmc-step-fn n-params init-eps
-                            adapt-metric (when-not adapt-metric metric))]
-               {:adapted-eps (when adapt-step-size (:step-size result))
-               :warmup-q (:state result)
-               :adapted-metric (:metric result)})
-             {:adapted-eps nil :warmup-q nil :adapted-metric nil})
+             {:keys [adapted-eps warmup-q adapted-metric]}
+             (if (and (or adapt-step-size adapt-metric) (> burn 0))
+               (let [hmc-step-fn
+                     (fn [q eps-val m _key]
+                       (let [eps-mx (mx/scalar eps-val)
+                             half-eps-mx (mx/scalar (* 0.5 eps-val))
+                             half-mx (mx/scalar 0.5)
+                             {:keys [state log-accept]}
+                             (hmc-step q neg-U-compiled grad-neg-U
+                                       eps-mx half-eps-mx half-mx q-shape
+                                       leapfrog-steps m nil)]
+                         {:state state
+                          :accept-stat (let [a (js/Math.exp log-accept)]
+                                         (if (js/isNaN a) 0.0 (min 1.0 a)))}))
+                     init-eps (if adapt-step-size
+                                (find-reasonable-epsilon init-q neg-U-compiled grad-neg-U
+                                                         q-shape metric)
+                                step-size)
+                     result (dual-averaging-warmup
+                             burn target-accept init-q hmc-step-fn n-params init-eps
+                             adapt-metric (when-not adapt-metric metric))]
+                 {:adapted-eps (when adapt-step-size (:step-size result))
+                  :warmup-q (:state result)
+                  :adapted-metric (:metric result)})
+               {:adapted-eps nil :warmup-q nil :adapted-metric nil})
            ;; Use adapted values if available
-           final-metric (or adapted-metric metric)
-           final-step-size (or adapted-eps step-size)
-           eps      (mx/scalar final-step-size)
-           half-eps (mx/scalar (* 0.5 final-step-size))
-           half     (mx/scalar 0.5)
-           start-q  (or warmup-q init-q)
-           remaining-burn (if warmup-q 0 burn)]
-       (if (and compile? (nil? final-metric))
+             final-metric (or adapted-metric metric)
+             final-step-size (or adapted-eps step-size)
+             eps (mx/scalar final-step-size)
+             half-eps (mx/scalar (* 0.5 final-step-size))
+             half (mx/scalar 0.5)
+             start-q (or warmup-q init-q)
+             remaining-burn (if warmup-q 0 burn)]
+         (if (and compile? (nil? final-metric))
          ;; Loop-compiled path (identity mass matrix only)
-         (let [burn-block (min (max remaining-burn 1) block-size)
-               burn-chain (when (> remaining-burn 0)
-                            (make-compiled-hmc-chain
-                              burn-block neg-U grad-neg-U-raw
-                              eps half-eps half n-params leapfrog-steps))
-               thin-chain (when (> thin 1)
-                            (make-compiled-hmc-chain
-                              thin neg-U grad-neg-U-raw
-                              eps half-eps half n-params leapfrog-steps))]
-           (run-loop-compiled-hmc
-             {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
-             start-q n-params neg-U-compiled grad-neg-U eps half-eps half q-shape
-             leapfrog-steps final-metric burn-chain burn-block thin-chain))
+           (let [burn-block (min (max remaining-burn 1) block-size)
+                 burn-chain (when (> remaining-burn 0)
+                              (make-compiled-hmc-chain
+                               burn-block neg-U grad-neg-U-raw
+                               eps half-eps half n-params leapfrog-steps))
+                 thin-chain (when (> thin 1)
+                              (make-compiled-hmc-chain
+                               thin neg-U grad-neg-U-raw
+                               eps half-eps half n-params leapfrog-steps))]
+             (run-loop-compiled-hmc
+              {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
+              start-q n-params neg-U-compiled grad-neg-U eps half-eps half q-shape
+              leapfrog-steps final-metric burn-chain burn-block thin-chain))
          ;; Fallback: per-step eager path (or non-identity metric)
-         (kern/collect-samples
-           {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
-           (fn [q step-key]
-             (hmc-step q neg-U-compiled grad-neg-U eps half-eps half q-shape
-                       leapfrog-steps final-metric step-key))
-           mx/->clj
-           start-q))))))
+           (kern/collect-samples
+            {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
+            (fn [q step-key]
+              (hmc-step q neg-U-compiled grad-neg-U eps half-eps half q-shape
+                        leapfrog-steps final-metric step-key))
+            mx/->clj
+            start-q))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized HMC (N parallel chains)
@@ -1546,9 +1678,9 @@
              neg-U-fn (fn [q] (mx/negative (vec-score-fn q)))
              grad-fn (mx/compile-fn (u/make-vectorized-grad-score model args observations addresses))
              init-params (u/init-vectorized-params model args observations addresses n-chains)
-             eps       (mx/scalar step-size)
-             half-eps  (mx/scalar (* 0.5 step-size))
-             half      (mx/scalar 0.5)
+             eps (mx/scalar step-size)
+             half-eps (mx/scalar (* 0.5 step-size))
+             half (mx/scalar 0.5)
              total-iters (+ burn (* samples thin))]
          (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
            (if (>= n samples)
@@ -1556,9 +1688,9 @@
                {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
              (let [[step-key next-key] (rng/split-or-nils rk)
                    {:keys [state n-accepted]}
-                     (vectorized-hmc-step state neg-U-fn grad-fn eps half-eps half
-                                           n-chains leapfrog-steps step-key)
-                   _  (when (zero? (mod i 50)) (mx/clear-cache!))
+                   (vectorized-hmc-step state neg-U-fn grad-fn eps half-eps half
+                                        n-chains leapfrog-steps step-key)
+                   _ (when (zero? (mod i 50)) (mx/clear-cache!))
                    past-burn? (>= i burn)
                    keep? (and past-burn? (zero? (mod (- i burn) thin)))]
                (when (and callback keep?)
@@ -1619,8 +1751,8 @@
               q' (if accept-subtree? (:q' tree2) (:q' tree1))
               q-minus (if (pos? v) (:q-minus tree1) (:q-minus tree2))
               p-minus (if (pos? v) (:p-minus tree1) (:p-minus tree2))
-              q-plus  (if (pos? v) (:q-plus tree2)  (:q-plus tree1))
-              p-plus  (if (pos? v) (:p-plus tree2)  (:p-plus tree1))
+              q-plus (if (pos? v) (:q-plus tree2) (:q-plus tree1))
+              p-plus (if (pos? v) (:p-plus tree2) (:p-plus tree1))
               s' (and (:s' tree2)
                       (compute-u-turn? q-minus q-plus p-minus p-plus))]
           {:q-minus q-minus :p-minus p-minus
@@ -1665,120 +1797,120 @@
              grad-neg-ld (let [g (mx/grad neg-log-density)]
                            (if compile? (mx/compile-fn g) g))
              neg-ld-compiled (if compile? (mx/compile-fn neg-log-density) neg-log-density)
-           init-q init-params
-           q-shape (mx/shape init-q)
+             init-q init-params
+             q-shape (mx/shape init-q)
            ;; Adaptive warmup: dual averaging + optional metric estimation
-           {:keys [adapted-eps warmup-q adapted-metric]}
-           (if (and (or adapt-step-size adapt-metric) (> burn 0))
-             (let [nuts-step-fn
-                   (fn [q eps-val m _key]
-                     (let [eps-mx (mx/scalar eps-val)
-                           half-eps-mx (mx/scalar (* 0.5 eps-val))
-                           half-mx (mx/scalar 0.5)
-                           local-ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld
-                                      :eps eps-mx :half-eps half-eps-mx
-                                      :half half-mx :metric m}
-                           warmup-key (rng/fresh-key)
-                           [momentum-key slice-key dir-key tree-key] (rng/split-n warmup-key 4)
-                           p0 (let [p (sample-momentum m q-shape momentum-key)] (mx/materialize! p) p)
-                           current-H (hamiltonian neg-ld-compiled q p0 half-mx m)
-                           log-u (+ (js/Math.log (mx/realize (rng/uniform slice-key []))) (- current-H))]
-                       (loop [j 0
-                              q-minus q, p-minus p0
-                              q-plus q, p-plus p0
-                              q' q, depth-n 1, continue? true
-                              total-alpha 0.0, total-n-alpha 0
-                              dk dir-key, tk tree-key]
-                         (if (or (not continue?) (>= j max-depth))
-                           {:state q'
-                            :accept-stat (if (pos? total-n-alpha)
-                                           (/ total-alpha total-n-alpha)
-                                           0.0)}
-                           (let [[dk1 dk-next] (rng/split dk)
-                                 [tk1 tk-next] (rng/split tk)
-                                 v (if (< (mx/realize (rng/uniform dk1 [])) 0.5) -1 1)
-                                 [qs ps] (if (pos? v)
-                                           [q-plus p-plus]
-                                           [q-minus p-minus])
-                                 tree (build-tree local-ctx qs ps log-u v j current-H tk1)
-                                 accept? (and (:s' tree)
-                                              (let [[ak _] (rng/split tk1)]
-                                                (< (mx/realize (rng/uniform ak []))
-                                                   (/ (:n' tree) (max 1 depth-n)))))
-                                 q'' (if accept? (:q' tree) q')
-                                 qm' (if (neg? v) (:q-minus tree) q-minus)
-                                 pm' (if (neg? v) (:p-minus tree) p-minus)
-                                 qp' (if (pos? v) (:q-plus tree) q-plus)
-                                 pp' (if (pos? v) (:p-plus tree) p-plus)
-                                 cont? (and (:s' tree)
-                                            (compute-u-turn? qm' qp' pm' pp'))]
-                             (recur (inc j) qm' pm' qp' pp' q''
-                                    (+ depth-n (:n' tree)) cont?
-                                    (+ total-alpha (:alpha tree))
-                                    (+ total-n-alpha (:n-alpha tree))
-                                    dk-next tk-next))))))
-                   init-eps (if adapt-step-size
-                              (find-reasonable-epsilon init-q neg-ld-compiled grad-neg-ld
-                                                       q-shape metric)
-                              step-size)
-                   result (dual-averaging-warmup
-                            burn target-accept init-q nuts-step-fn n-params init-eps
-                            adapt-metric (when-not adapt-metric metric))]
-               {:adapted-eps (when adapt-step-size (:step-size result))
-                :warmup-q (:state result)
-                :adapted-metric (:metric result)})
-             {:adapted-eps nil :warmup-q nil :adapted-metric nil})
+             {:keys [adapted-eps warmup-q adapted-metric]}
+             (if (and (or adapt-step-size adapt-metric) (> burn 0))
+               (let [nuts-step-fn
+                     (fn [q eps-val m _key]
+                       (let [eps-mx (mx/scalar eps-val)
+                             half-eps-mx (mx/scalar (* 0.5 eps-val))
+                             half-mx (mx/scalar 0.5)
+                             local-ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld
+                                        :eps eps-mx :half-eps half-eps-mx
+                                        :half half-mx :metric m}
+                             warmup-key (rng/fresh-key)
+                             [momentum-key slice-key dir-key tree-key] (rng/split-n warmup-key 4)
+                             p0 (let [p (sample-momentum m q-shape momentum-key)] (mx/materialize! p) p)
+                             current-H (hamiltonian neg-ld-compiled q p0 half-mx m)
+                             log-u (+ (js/Math.log (mx/realize (rng/uniform slice-key []))) (- current-H))]
+                         (loop [j 0
+                                q-minus q, p-minus p0
+                                q-plus q, p-plus p0
+                                q' q, depth-n 1, continue? true
+                                total-alpha 0.0, total-n-alpha 0
+                                dk dir-key, tk tree-key]
+                           (if (or (not continue?) (>= j max-depth))
+                             {:state q'
+                              :accept-stat (if (pos? total-n-alpha)
+                                             (/ total-alpha total-n-alpha)
+                                             0.0)}
+                             (let [[dk1 dk-next] (rng/split dk)
+                                   [tk1 tk-next] (rng/split tk)
+                                   v (if (< (mx/realize (rng/uniform dk1 [])) 0.5) -1 1)
+                                   [qs ps] (if (pos? v)
+                                             [q-plus p-plus]
+                                             [q-minus p-minus])
+                                   tree (build-tree local-ctx qs ps log-u v j current-H tk1)
+                                   accept? (and (:s' tree)
+                                                (let [[ak _] (rng/split tk1)]
+                                                  (< (mx/realize (rng/uniform ak []))
+                                                     (/ (:n' tree) (max 1 depth-n)))))
+                                   q'' (if accept? (:q' tree) q')
+                                   qm' (if (neg? v) (:q-minus tree) q-minus)
+                                   pm' (if (neg? v) (:p-minus tree) p-minus)
+                                   qp' (if (pos? v) (:q-plus tree) q-plus)
+                                   pp' (if (pos? v) (:p-plus tree) p-plus)
+                                   cont? (and (:s' tree)
+                                              (compute-u-turn? qm' qp' pm' pp'))]
+                               (recur (inc j) qm' pm' qp' pp' q''
+                                      (+ depth-n (:n' tree)) cont?
+                                      (+ total-alpha (:alpha tree))
+                                      (+ total-n-alpha (:n-alpha tree))
+                                      dk-next tk-next))))))
+                     init-eps (if adapt-step-size
+                                (find-reasonable-epsilon init-q neg-ld-compiled grad-neg-ld
+                                                         q-shape metric)
+                                step-size)
+                     result (dual-averaging-warmup
+                             burn target-accept init-q nuts-step-fn n-params init-eps
+                             adapt-metric (when-not adapt-metric metric))]
+                 {:adapted-eps (when adapt-step-size (:step-size result))
+                  :warmup-q (:state result)
+                  :adapted-metric (:metric result)})
+               {:adapted-eps nil :warmup-q nil :adapted-metric nil})
            ;; Use adapted values if available
-           final-metric (or adapted-metric metric)
-           final-step-size (or adapted-eps step-size)
-           eps (mx/scalar final-step-size)
-           half-eps (mx/scalar (* 0.5 final-step-size))
-           half (mx/scalar 0.5)
-           ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld :eps eps :half-eps half-eps
-                :half half :metric final-metric}
-           start-q (or warmup-q init-q)
-           remaining-burn (if warmup-q 0 burn)]
-       (kern/collect-samples
-         {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
-         (fn [q step-key]
-        (let [step-key (rng/ensure-key step-key)
-              [momentum-key slice-key dir-key tree-key]
-              (rng/split-n step-key 4)
-              p0 (let [p (sample-momentum final-metric q-shape momentum-key)] (mx/materialize! p) p)
-              current-H (hamiltonian neg-ld-compiled q p0 half final-metric)
-              log-u (+ (js/Math.log (mx/realize (rng/uniform slice-key [])))
-                       (- current-H))
-              new-q (loop [j 0
-                           q-minus q, p-minus p0
-                           q-plus q, p-plus p0
-                           q' q, depth-n 1, continue? true
-                           dk dir-key, tk tree-key]
-                      (if (or (not continue?) (>= j max-depth))
-                        q'
-                        (let [[dk1 dk-next] (rng/split dk)
-                              [tk1 tk-next] (rng/split tk)
-                              v (if (< (mx/realize (rng/uniform dk1 [])) 0.5) -1 1)
-                              [qs ps] (if (pos? v)
-                                        [q-plus p-plus]
-                                        [q-minus p-minus])
-                              tree (build-tree ctx qs ps log-u v j current-H tk1)
-                              accept? (and (:s' tree)
-                                           (let [[ak _] (rng/split tk1)]
-                                             (< (mx/realize (rng/uniform ak []))
-                                                (/ (:n' tree) (max 1 depth-n)))))
-                              q'' (if accept? (:q' tree) q')
-                              qm' (if (neg? v) (:q-minus tree) q-minus)
-                              pm' (if (neg? v) (:p-minus tree) p-minus)
-                              qp' (if (pos? v) (:q-plus tree) q-plus)
-                              pp' (if (pos? v) (:p-plus tree) p-plus)
-                              cont? (and (:s' tree)
-                                         (compute-u-turn? qm' qp' pm' pp'))]
-                          (recur (inc j) qm' pm' qp' pp' q''
-                                 (+ depth-n (:n' tree)) cont?
-                                 dk-next tk-next))))]
-          {:state new-q :accepted? (not (identical? new-q q))}))
-         mx/->clj
-         start-q)))))
+             final-metric (or adapted-metric metric)
+             final-step-size (or adapted-eps step-size)
+             eps (mx/scalar final-step-size)
+             half-eps (mx/scalar (* 0.5 final-step-size))
+             half (mx/scalar 0.5)
+             ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld :eps eps :half-eps half-eps
+                  :half half :metric final-metric}
+             start-q (or warmup-q init-q)
+             remaining-burn (if warmup-q 0 burn)]
+         (kern/collect-samples
+          {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
+          (fn [q step-key]
+            (let [step-key (rng/ensure-key step-key)
+                  [momentum-key slice-key dir-key tree-key]
+                  (rng/split-n step-key 4)
+                  p0 (let [p (sample-momentum final-metric q-shape momentum-key)] (mx/materialize! p) p)
+                  current-H (hamiltonian neg-ld-compiled q p0 half final-metric)
+                  log-u (+ (js/Math.log (mx/realize (rng/uniform slice-key [])))
+                           (- current-H))
+                  new-q (loop [j 0
+                               q-minus q, p-minus p0
+                               q-plus q, p-plus p0
+                               q' q, depth-n 1, continue? true
+                               dk dir-key, tk tree-key]
+                          (if (or (not continue?) (>= j max-depth))
+                            q'
+                            (let [[dk1 dk-next] (rng/split dk)
+                                  [tk1 tk-next] (rng/split tk)
+                                  v (if (< (mx/realize (rng/uniform dk1 [])) 0.5) -1 1)
+                                  [qs ps] (if (pos? v)
+                                            [q-plus p-plus]
+                                            [q-minus p-minus])
+                                  tree (build-tree ctx qs ps log-u v j current-H tk1)
+                                  accept? (and (:s' tree)
+                                               (let [[ak _] (rng/split tk1)]
+                                                 (< (mx/realize (rng/uniform ak []))
+                                                    (/ (:n' tree) (max 1 depth-n)))))
+                                  q'' (if accept? (:q' tree) q')
+                                  qm' (if (neg? v) (:q-minus tree) q-minus)
+                                  pm' (if (neg? v) (:p-minus tree) p-minus)
+                                  qp' (if (pos? v) (:q-plus tree) q-plus)
+                                  pp' (if (pos? v) (:p-plus tree) p-plus)
+                                  cont? (and (:s' tree)
+                                             (compute-u-turn? qm' qp' pm' pp'))]
+                              (recur (inc j) qm' pm' qp' pp' q''
+                                     (+ depth-n (:n' tree)) cont?
+                                     dk-next tk-next))))]
+              {:state new-q :accepted? (not (identical? new-q q))}))
+          mx/->clj
+          start-q)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Elliptical Slice Sampling (Murray, Adams, MacKay 2010)
@@ -1855,12 +1987,12 @@
   (let [model (dyn/auto-key model)
         {:keys [trace]} (p/generate model args observations)]
     (kern/collect-samples
-      {:samples samples :burn burn :thin thin :key key}
-      (fn [state step-key]
-        (let [new-trace (elliptical-slice-step state selection prior-std step-key)]
-          {:state new-trace :accepted? true}))
-      identity
-      trace)))
+     {:samples samples :burn burn :thin thin :key key}
+     (fn [state step-key]
+       (let [new-trace (elliptical-slice-step state selection prior-std step-key)]
+         {:state new-trace :accepted? true}))
+     identity
+     trace)))
 
 ;; ---------------------------------------------------------------------------
 ;; MAP (Maximum A Posteriori) Optimization
@@ -1884,61 +2016,61 @@
   (let [model (dyn/auto-key model)]
     (with-device device
       #(mx/with-resource-guard
-        (fn []
-         (let [{:keys [trace]} (p/generate model args observations)
-             {:keys [score-fn init-params n-params latent-index]}
-             (u/prepare-mcmc-score model args observations addresses trace)
-             layout      (u/compute-param-layout trace addresses)
-             val-grad-fn (mx/value-and-grad score-fn)
-             val-grad    (if compile? (mx/compile-fn val-grad-fn) val-grad-fn)
-             opt-state   (when (= optimizer :adam) (learn/adam-init init-params))]
-       (loop [i 0
-              params init-params
-              opt-st opt-state
-              history (transient [])]
-         (if (>= i iterations)
+         (fn []
+           (let [{:keys [trace]} (p/generate model args observations)
+                 {:keys [score-fn init-params n-params latent-index]}
+                 (u/prepare-mcmc-score model args observations addresses trace)
+                 layout (u/compute-param-layout trace addresses)
+                 val-grad-fn (mx/value-and-grad score-fn)
+                 val-grad (if compile? (mx/compile-fn val-grad-fn) val-grad-fn)
+                 opt-state (when (= optimizer :adam) (learn/adam-init init-params))]
+             (loop [i 0
+                    params init-params
+                    opt-st opt-state
+                    history (transient [])]
+               (if (>= i iterations)
            ;; Reconstruct final choicemap from params
-           (let [final-cm (if latent-index
+                 (let [final-cm (if latent-index
                             ;; Tensor-native: unpack using latent-index ordering
-                            (reduce (fn [cm [addr idx]]
-                                      (cm/set-choice cm [addr] (mx/index params idx)))
-                                    observations
-                                    latent-index)
+                                  (reduce (fn [cm [addr idx]]
+                                            (cm/set-choice cm [addr] (mx/index params idx)))
+                                          observations
+                                          latent-index)
                             ;; GFI fallback: unpack using layout/addresses
-                            (if (:array-valued? layout)
-                              (reduce (fn [cm {:keys [addr shape offset size]}]
-                                        (let [v (if (= size 1)
-                                                  (mx/index params offset)
-                                                  (mx/reshape (mx/slice params offset (+ offset size)) shape))]
-                                          (cm/set-choice cm [addr] v)))
-                                      observations
-                                      (:layout layout))
-                              (reduce (fn [cm [j addr]]
-                                        (cm/set-choice cm [addr] (mx/index params j)))
-                                      observations
-                                      (map-indexed vector addresses))))
-                 {:keys [trace]} (p/generate model args final-cm)
-                 score (mx/realize (:score trace))]
-             {:trace trace
-              :score score
-              :params (mx/->clj params)
-              :score-history (persistent! history)})
-           (let [[score-val new-params new-opt-st]
-                 (mx/tidy-materialize
-                   (fn []
-                     (let [[score grad] (val-grad params)
-                           neg-grad (mx/negative grad)]
-                       (mx/materialize! score neg-grad)
-                       (let [sv (mx/item score)
-                             [np nos]
-                             (case optimizer
-                               :sgd [(learn/sgd-step params neg-grad lr) nil]
-                               :adam (learn/adam-step params neg-grad opt-st {:lr lr}))]
-                         [sv np nos]))))]
-             (when callback
-               (callback {:iter i :score score-val :params params}))
-             (recur (inc i) new-params new-opt-st
-                    (conj! history score-val)))))))))))
+                                  (if (:array-valued? layout)
+                                    (reduce (fn [cm {:keys [addr shape offset size]}]
+                                              (let [v (if (= size 1)
+                                                        (mx/index params offset)
+                                                        (mx/reshape (mx/slice params offset (+ offset size)) shape))]
+                                                (cm/set-choice cm [addr] v)))
+                                            observations
+                                            (:layout layout))
+                                    (reduce (fn [cm [j addr]]
+                                              (cm/set-choice cm [addr] (mx/index params j)))
+                                            observations
+                                            (map-indexed vector addresses))))
+                       {:keys [trace]} (p/generate model args final-cm)
+                       score (mx/realize (:score trace))]
+                   {:trace trace
+                    :score score
+                    :params (mx/->clj params)
+                    :score-history (persistent! history)})
+                 (let [[score-val new-params new-opt-st]
+                       (mx/tidy-materialize
+                        (fn []
+                          (let [[score grad] (val-grad params)
+                                neg-grad (mx/negative grad)]
+                            (mx/materialize! score neg-grad)
+                            (let [sv (mx/item score)
+                                  [np nos]
+                                  (case optimizer
+                                    :sgd [(learn/sgd-step params neg-grad lr) nil]
+                                    :adam (learn/adam-step params neg-grad opt-st {:lr lr}))]
+                              [sv np nos]))))]
+                   (when callback
+                     (callback {:iter i :score score-val :params params}))
+                   (recur (inc i) new-params new-opt-st
+                          (conj! history score-val)))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized MAP (N random restarts in parallel)
@@ -1970,52 +2102,52 @@
              (u/make-compiled-vectorized-score-and-grad model args observations addresses)
              init-params (u/init-vectorized-params model args observations addresses n-restarts)
            ;; Adam state: m and v are [N,D] — element-wise ops broadcast naturally
-           opt-state (when (= optimizer :adam) (learn/adam-init init-params))
-           lr-s (mx/scalar lr)]
-       (loop [i 0
-              params init-params
-              opt-st opt-state
-              history (transient [])]
-         (if (>= i iterations)
+             opt-state (when (= optimizer :adam) (learn/adam-init init-params))
+             lr-s (mx/scalar lr)]
+         (loop [i 0
+                params init-params
+                opt-st opt-state
+                history (transient [])]
+           (if (>= i iterations)
            ;; Find best restart
-           (let [final-scores (score-fn params)
-                 _ (mx/materialize! final-scores params)
-                 best-idx (mx/item (mx/argmax final-scores))
-                 best-params (mx/take-idx params (mx/array best-idx mx/int32))
-                 best-score (mx/item (mx/index final-scores best-idx))
+             (let [final-scores (score-fn params)
+                   _ (mx/materialize! final-scores params)
+                   best-idx (mx/item (mx/argmax final-scores))
+                   best-params (mx/take-idx params (mx/array best-idx mx/int32))
+                   best-score (mx/item (mx/index final-scores best-idx))
                  ;; Reconstruct trace from best params
-                 final-cm (reduce (fn [cm [j addr]]
-                                    (cm/set-choice cm [addr] (mx/index best-params j)))
-                                  observations
-                                  (map-indexed vector addresses))
-                 {:keys [trace]} (p/generate model args final-cm)]
-             {:trace trace
-              :score best-score
-              :params (mx/->clj best-params)
-              :all-params (mx/->clj params)
-              :all-scores (mx/->clj final-scores)
-              :score-history (persistent! history)})
+                   final-cm (reduce (fn [cm [j addr]]
+                                      (cm/set-choice cm [addr] (mx/index best-params j)))
+                                    observations
+                                    (map-indexed vector addresses))
+                   {:keys [trace]} (p/generate model args final-cm)]
+               {:trace trace
+                :score best-score
+                :params (mx/->clj best-params)
+                :all-params (mx/->clj params)
+                :all-scores (mx/->clj final-scores)
+                :score-history (persistent! history)})
            ;; Gradient step for all N restarts simultaneously
            ;; Use tidy-run to free intermediate arrays each iteration
-           (let [r (mx/tidy-run
-                     (fn [] (let [grad (grad-fn params)
-                            neg-grad (mx/negative grad)
-                            scores (score-fn params)
-                            best-score (do (mx/materialize! scores neg-grad)
-                                           (mx/item (mx/amax scores)))
-                            [new-params new-opt-st]
-                            (case optimizer
-                              :sgd [(mx/subtract params (mx/multiply lr-s neg-grad)) nil]
-                              :adam (learn/adam-step params neg-grad opt-st {:lr lr}))]
-                        {:params new-params :opt-st new-opt-st :best-score best-score}))
-                     (fn [{:keys [params opt-st]}]
-                       (if opt-st
-                         [params (:m opt-st) (:v opt-st)]
-                         [params])))
-                 new-params (:params r)
-                 new-opt-st (:opt-st r)
-                 best-score (:best-score r)]
-             (when callback
-               (callback {:iter i :best-score best-score}))
-             (recur (inc i) new-params new-opt-st
-                    (conj! history best-score)))))))))
+             (let [r (mx/tidy-run
+                      (fn [] (let [grad (grad-fn params)
+                                   neg-grad (mx/negative grad)
+                                   scores (score-fn params)
+                                   best-score (do (mx/materialize! scores neg-grad)
+                                                  (mx/item (mx/amax scores)))
+                                   [new-params new-opt-st]
+                                   (case optimizer
+                                     :sgd [(mx/subtract params (mx/multiply lr-s neg-grad)) nil]
+                                     :adam (learn/adam-step params neg-grad opt-st {:lr lr}))]
+                               {:params new-params :opt-st new-opt-st :best-score best-score}))
+                      (fn [{:keys [params opt-st]}]
+                        (if opt-st
+                          [params (:m opt-st) (:v opt-st)]
+                          [params])))
+                   new-params (:params r)
+                   new-opt-st (:opt-st r)
+                   best-score (:best-score r)]
+               (when callback
+                 (callback {:iter i :best-score best-score}))
+               (recur (inc i) new-params new-opt-st
+                      (conj! history best-score)))))))))
