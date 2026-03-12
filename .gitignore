@@ -4,12 +4,23 @@ node_modules/
 .nbb/
 *.pdf
 
+# Claude Code
+.claude/
+
+# Python virtualenvs
+.venv-genjax/
+
+# shadow-cljs
+.shadow-cljs/
+out/
+
 # OS
 .DS_Store
 
 # External repos (cloned for comparison)
 genjax/
 genstudio/
+bench/
 
 
 # Python
