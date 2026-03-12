@@ -94,7 +94,22 @@
 ;; Memory management
 ;; ---------------------------------------------------------------------------
 
-(defn tidy [f] (.tidy core f))
+(def ^:private tidy-depth
+  "Tracks nesting depth of mx/tidy scopes. sweep-dead-arrays! is unsafe
+   inside tidy (can cause use-after-free / double-free of Metal buffers),
+   so auto-sweep in p/generate and p/simulate skips when tidy-depth > 0."
+  (atom 0))
+
+(defn tidy [f]
+  (swap! tidy-depth inc)
+  (try
+    (.tidy core f)
+    (finally
+      (swap! tidy-depth dec))))
+
+(defn in-tidy?
+  "Returns true if currently executing inside an mx/tidy scope."
+  [] (pos? @tidy-depth))
 
 (defn dispose! [a] (.dispose core a))
 
@@ -107,8 +122,11 @@
 (defn sweep-dead-arrays!
   "Synchronously free Metal buffers for arrays whose JS wrappers have been GC'd
    but whose deferred N-API finalizers haven't run yet. Returns count swept.
-   Call this in synchronous loops where event loop yields are rare."
-  [] (.sweepDeadArrays core))
+   Call this in synchronous loops where event loop yields are rare.
+   No-op when called inside mx/tidy (tidy manages its own disposal)."
+  []
+  (when-not (in-tidy?)
+    (.sweepDeadArrays core)))
 
 ;; Memory control
 (defn set-memory-limit! [n] (.setMemoryLimit core n))
