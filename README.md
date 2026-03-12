@@ -2,25 +2,26 @@
   <img src="genmlx.png" alt="GenMLX" width="528">
 </p>
 
-A probabilistic programming language implemented in ClojureScript on Node.js ([nbb](https://github.com/babashka/nbb)), using Apple's [MLX framework](https://github.com/ml-explore/mlx) for GPU acceleration via [`@frost-beta/mlx`](https://github.com/nicebyte/node-mlx).
+A probabilistic programming language implemented in ClojureScript on Node.js ([nbb](https://github.com/babashka/nbb)), using the [MLX framework](https://github.com/ml-explore/mlx) for GPU acceleration via [`@frost-beta/mlx`](https://github.com/nicebyte/node-mlx).
 
 GenMLX implements Gen's **Generative Function Interface (GFI)** — the same architecture used by [GenJAX](https://github.com/probcomp/GenJAX) (JAX) and [Gen.jl](https://github.com/probcomp/Gen.jl) (Julia).
 
 ## Why GenMLX?
 
-Gen implementations exist for Julia and JAX — but nothing for Apple Silicon's GPU framework. MLX's unified memory model is a natural fit for probabilistic programming: MCMC control flow runs on CPU while all numerics stay on GPU, with zero data transfer cost. ClojureScript on Node.js gives direct access to MLX through a native addon with no FFI overhead, and nbb provides a fast REPL for interactive model development.
+Gen implementations exist for Julia and JAX — but nothing for MLX. MLX's unified memory model is a natural fit for probabilistic programming: MCMC control flow runs on CPU while all numerics stay on GPU, with zero data transfer cost. ClojureScript on Node.js gives direct access to MLX through a native addon with no FFI overhead, and nbb provides a fast REPL for interactive model development.
 
-- **MLX-native** — unified memory, lazy evaluation, dynamic shapes, `mx/grad` through entire models
-- **~10,800 lines of ClojureScript** — protocols, records, persistent data structures, the whole thing is readable in an afternoon
+- **MLX-native** — unified memory, lazy evaluation, dynamic shapes, `mx/grad` through entire models (Apple Silicon and CUDA)
+- **~22,500 lines of ClojureScript** — protocols, records, persistent data structures, the whole thing is readable in an afternoon
 - **GPU end-to-end** — scores and choice values are MLX arrays throughout, extracted with `mx/item` only at inference boundaries
+- **5-level compilation ladder** — progressively moves work from the host interpreter into fused MLX computation graphs, from shape-based batching (L0) through auto-analytical elimination (L3) to single fused graphs (L4)
 
 ## Requirements
 
-- macOS with Apple Silicon (M1/M2/M3/M4)
-- Xcode Command Line Tools — `xcode-select --install` (provides CMake, clang++)
-- First launch setup — `sudo xcodebuild -runFirstLaunch`
-- Metal Toolchain — `xcodebuild -downloadComponent MetalToolchain` (required on macOS 26+)
-- [Bun](https://bun.sh/) — `curl -fsSL https://bun.sh/install | bash`
+- macOS with Apple Silicon (M1/M2/M3/M4), or Linux/Windows with CUDA (MLX supports both)
+- **macOS:** Xcode Command Line Tools — `xcode-select --install` (provides CMake, clang++)
+- **macOS:** First launch setup — `sudo xcodebuild -runFirstLaunch`
+- **macOS:** Metal Toolchain — `xcodebuild -downloadComponent MetalToolchain` (required on macOS 26+)
+- [Bun](https://bun.sh/) — `curl -fsSL https://bun.sh/install | bash` (recommended — 3-4x faster than Node.js)
 - [nbb](https://github.com/babashka/nbb) — `npm install -g nbb`
 
 ## Quick Start
@@ -94,6 +95,21 @@ bun run --bun nbb examples/linear_regression.cljs
 ;; => ~2.0 (true slope)
 ```
 
+## Compilation Ladder
+
+GenMLX progressively moves work from the host interpreter into fused MLX computation graphs. Each level adds performance without breaking the GFI semantic contract — a model written at L0 runs unchanged at L4.
+
+```
+Level 0: Shape-based batching       — [N]-shaped arrays + broadcasting (certified, 68/68 tests)
+Level 1: Compiled gen functions      — schema extraction, noise transforms, compiled simulate (506+ tests)
+Level 2: Compiled inference sweeps   — compiled MCMC, differentiable inference, particle methods (881+ tests)
+Level 3: Auto-analytical elimination — conjugacy detection, Kalman/EKF/HMM handlers (426 tests)
+Level 3.5: Extended analytical       — N-d EKF, combinator-aware conjugacy, MVN Kalman (150 tests)
+Level 4: Single fused graph          — compiled optimizer, method selection, fit API (260+ tests)
+```
+
+The handler system is ground truth; compilation is optimization. Compiled paths produce identical traces, scores, and weights as the handler path.
+
 ## Architecture
 
 ```
@@ -113,9 +129,16 @@ Layer 2: GFI Protocols & Execution
   genmlx.edit         — parametric edit interface (constraint, selection, proposal)
   genmlx.diff         — incremental change tracking
 
-Layer 3: DSL
+Layer 3: DSL + Schema + Compilation
   genmlx.gen          — gen macro
   genmlx.dynamic      — DynamicDSLFunction (full GFI + vsimulate/vgenerate)
+  genmlx.schema       — schema extraction from gen body source forms (L1)
+  genmlx.compiled     — compiled simulate, partial prefix, branch rewriting (L1)
+  genmlx.compiled_gen — compiled generate with middle-tier score function (L1)
+  genmlx.affine       — affine dependency analysis for conjugacy (L3)
+  genmlx.conjugacy    — conjugate prior detection and Rao-Blackwellization (L3)
+  genmlx.method_selection — decision tree from model metadata (L4)
+  genmlx.fit          — one-call entry point: (fit model args data) (L4)
 
 Layer 4: Distributions
   genmlx.dist         — 27 distributions, each a GFI participant
@@ -131,6 +154,9 @@ Layer 6: Inference
   genmlx.inference    — IS, MH, MALA, HMC, NUTS, Gibbs, Elliptical Slice,
                         Involutive MCMC, MAP, SMC, SMCP3, VI, ADEV,
                         Amortized Inference, Kernel Composition
+                      — Kalman, EKF, N-d EKF, HMM forward algorithm (L3)
+                      — Compiled gradient, compiled optimizer (L4)
+                      — Compiled SMC, differentiable inference, PMCMC (L2)
 
 Layer 7: Vectorized
   genmlx.vectorized   — VectorizedTrace, batched execution, dispatch amortization
@@ -189,6 +215,13 @@ Aliases: `normal` → `gaussian`, `flip` → `bernoulli`
 - **SMCP3** — `smcp3` (Sequential Monte Carlo with Probabilistic Program Proposals)
 - **Variational Inference** — `vi` (ADVI with mean-field Gaussian guide), `programmable-vi` with pluggable objectives (`elbo`, `iwelbo`, `wake-sleep`) and gradient estimators (`reinforce`, reparameterization)
 - **ADEV** — automatic differentiation of expected values with reparameterization and REINFORCE strategies, vectorized GPU execution, compiled optimization loops, baseline variance reduction
+- **Analytical Elimination** — auto-conjugacy detection (5 families), Rao-Blackwellization, 33.5x variance reduction
+- **Kalman Filter** — handler middleware for linear-Gaussian SSMs, sequential updates, exact marginal LL
+- **Extended Kalman Filter** — nonlinear SSMs via auto-diff linearization (1D and N-dimensional)
+- **HMM Forward Algorithm** — discrete latent state-space models, exact marginal likelihood
+- **Exact Enumeration** — discrete latent variables with finite support
+- **Compiled Optimization** — `mx/compile-fn` + Adam, 9.2x speedup over handler loops
+- **Method Selection** — automatic inference method from model structure (L4 `fit` API)
 - **Kernel Composition** — `chain`, `cycle-kernels`, `mix-kernels`, `repeat-kernel`, `seed`
 - **Diagnostics** — `ess`, `r-hat`, `summarize`, `sample-quantiles`
 
@@ -260,7 +293,7 @@ for f in choicemap_test trace_test selection_test handler_test dist_test gen_tes
 done
 
 # Compatibility suites
-bun run --bun nbb test/genmlx/gen_clj_compat_test.cljs     # 165/165 tests (from Gen.clj)
+bun run --bun nbb test/genmlx/gen_clj_compat_test.cljs     # 162/165 tests (from Gen.clj, 3 pre-existing edge cases)
 bun run --bun nbb test/genmlx/genjax_compat_test.cljs       # 73/73 tests (GenJAX compat)
 
 # Vectorized tests + benchmarks
@@ -291,9 +324,12 @@ bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 
 ## MLX Optimization Strategy
 
+- **Compilation ladder** — 5 levels (L0–L4) progressively fuse more work into MLX graphs
 - **Loop compilation** — entire MCMC chains compiled into single Metal dispatches via `mx/compile-fn`
 - **`mx/compile-fn`** on score functions — JIT-compiles into cached Metal programs
 - **`mx/value-and-grad`** — fused forward+backward in a single GPU dispatch
+- **Auto-analytical elimination** — conjugacy detection and Rao-Blackwellization (L3)
+- **Compiled Adam** — 9.2x faster than handler loop via `mx/compile-fn` + `mx/value-and-grad` (L4)
 - **Adaptive step-size** — HMC dual averaging (Hoffman & Gelman 2014) auto-tunes during burn-in
 - **`mx/tidy` + `mx/eval!` discipline** — bounds graph size, prevents Metal resource exhaustion
 - **`mx/vmap`** in combinators — batch GPU execution across particles/instances

@@ -11,7 +11,7 @@ ClojureScript's immutable data, open multimethods, and macro system map perfectl
 onto the GFI's mathematical structure. MLX's lazy graphs, unified memory, and
 broadcasting reinforce this — functional-style array programming without penalty.
 
-~10,800 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
+~22,500 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
 
 ## Compilation ladder (VISION.md)
 
@@ -19,23 +19,22 @@ GenMLX follows a 5-level compilation ladder, progressively moving work from the
 host interpreter into fused MLX computation graphs:
 
 ```
-Level 0: Shape-based batching    ← DONE (certified)
-Level 1: Compiled gen functions  ← simulate compiled (M1-M5 done), generate/update in progress
-Level 2: Compiled inference sweeps
-Level 3: Auto-analytical elimination
-Level 4: Single fused graph
+Level 0: Shape-based batching       ← DONE (certified, 68/68)
+Level 1: Compiled gen functions      ← DONE (506+ tests)
+Level 2: Compiled inference sweeps   ← DONE (881+ tests)
+Level 3: Auto-analytical elimination ← DONE (426 tests, 33.5x variance reduction)
+Level 3.5: Extended analytical       ← DONE (150 tests, MVN Kalman, combinator conjugacy)
+Level 4: Single fused graph          ← DONE (260+ tests, 9.2x compiled Adam speedup)
 ```
 
 Each level adds performance without breaking the GFI semantic contract. A model
 written today runs unchanged at higher compilation levels. The handler system is
 ground truth; compilation is optimization.
 
-Long-term goal: match GenJAX performance via this compilation ladder.
-
 ## How to run things
 
 ```bash
-# Run with Bun (recommended — 1.5x faster than Node.js)
+# Run with Bun (recommended — 3-4x faster than Node.js for iterative inference)
 bun run --bun nbb <file.cljs>
 
 # Run all core tests
@@ -63,7 +62,7 @@ bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 
 No build step, no compilation. nbb interprets ClojureScript directly.
 
-**Requirements:** macOS with Apple Silicon, Bun (or Node.js 18+), `npm install` for `@frost-beta/mlx`.
+**Requirements:** macOS with Apple Silicon (or Linux/Windows with CUDA — MLX supports both), Bun (or Node.js 18+), `npm install` for `@frost-beta/mlx`.
 
 ## Project structure
 
@@ -82,6 +81,14 @@ src/genmlx/
   schema.cljs           Schema extraction from gen body source forms (L1-M1)
   compiled.cljs         Compiled execution paths: noise transforms, compiled simulate (L1-M2),
                         partial prefix (L1-M3), branch rewriting (L1-M4)
+  compiled_gen.cljs     Compiled generate with middle-tier score function (L1)
+  rewrite.cljs          Source form rewriting for compiled paths (L1-M4)
+  tensor_trace.cljs     TensorTrace — flat tensor-backed trace for compiled paths
+  affine.cljs           Affine dependency analysis for conjugacy detection (L3)
+  conjugacy.cljs        Conjugate prior detection and Rao-Blackwellization (L3)
+  dep_graph.cljs        Dependency graph analysis for auto-analytical (L3)
+  method_selection.cljs Method selection: decision tree from model metadata (L4)
+  fit.cljs              One-call entry point: (fit model args data) (L4)
   dist/core.cljs        Distribution record + open multimethods (sample, log-prob, sample-n)
   dist/macros.cljc      defdist macro (zero-boilerplate distribution definition)
   edit.cljs             Parametric edit interface (constraint, selection, proposal)
@@ -94,6 +101,7 @@ src/genmlx/
   learning.cljs         Parameter stores, optimizers (SGD, Adam), wake-sleep
   custom_gradient.cljs  CustomGradientGF — custom gradient generative functions
   nn.cljs               Neural network generative functions (nn->gen-fn)
+  serialize.cljs        Serialization/deserialization of traces and choicemaps
   contracts.cljs        GFI contract registry (11 measure-theoretic contracts)
   verify.cljs           Static validator (validate-gen-fn)
   inference/
@@ -107,14 +115,33 @@ src/genmlx/
     kernel.cljs         Kernel composition (chain, cycle, mix, repeat, seed)
     util.cljs           Weight materialization, normalization, MH accept
     diagnostics.cljs    ESS, R-hat, summary statistics
+    analytical.cljs     Analytical handler middleware (wrap-analytical) (L3)
+    conjugate.cljs      Conjugate update rules (5 families) (L3)
+    auto_analytical.cljs  Auto-analytical elimination from model structure (L3)
+    kalman.cljs         Kalman filter middleware for linear-Gaussian SSMs (L3)
+    ekf.cljs            Extended Kalman filter for nonlinear SSMs (L3)
+    ekf_nd.cljs         N-dimensional EKF with full matrix Jacobians (L3.5)
+    hmm_forward.cljs    HMM forward algorithm for discrete latent SSMs (L3)
+    enumerate.cljs      Exact enumeration for discrete latent variables (L3)
+    fisher.cljs         Fisher information and Cramér-Rao bounds (L3)
+    compiled_gradient.cljs  Tensor-native loss-gradient (L4)
+    compiled_optimizer.cljs Compiled Adam optimizer (mx/compile-fn) (L4)
+    compiled_smc.cljs   Compiled SMC with fused particle operations (L2)
+    differentiable.cljs Differentiable inference primitives (L2)
+    differentiable_resample.cljs  Differentiable resampling (L2)
+    pmcmc.cljs          Particle MCMC (L2)
 
 test/genmlx/
-  *_test.cljs                Unit tests (custom assert helpers, println output)
-  level0_certification_test.cljs  68 checks across 10 gates (L0 certification)
+  *_test.cljs                     Unit tests (custom assert helpers, println output)
+  level0_certification_test.cljs  68 checks across 10 gates (L0)
   schema_test.cljs                174 checks for schema extraction (L1-M1)
   compiled_simulate_test.cljs     82 checks for compiled simulate (L1-M2)
   partial_compile_test.cljs       92 checks for partial compilation (L1-M3)
   combinator_compile_test.cljs    90 checks for combinator compilation (L1-M5)
+  l2_gate_test.cljs               L2 gate tests
+  l2_mcmc_test.cljs               L2 compiled MCMC tests
+  l3_5_*_test.cljs                L3.5 tests (assess, conjugacy, MVN, regenerate, score)
+  l4_certification_test.cljs      41 checks (L4 certification)
   gen_clj_compat_test.cljs        165 tests from Gen.clj
   genjax_compat_test.cljs         73 tests for GenJAX compatibility
   vectorized_test.cljs            Shape correctness, statistical equivalence
@@ -260,11 +287,12 @@ Pattern:
 
 After any change, verify:
 - All core tests pass (no FAIL lines in output)
-- `level0_certification_test.cljs`: 68/68
-- `schema_test.cljs`: 174/174
+- `level0_certification_test.cljs`: 68/68 (L0)
+- `schema_test.cljs`: 174/174 (L1-M1)
 - `compiled_simulate_test.cljs`: 82/82 (L1-M2)
 - `partial_compile_test.cljs`: 92/92 (L1-M3)
 - `combinator_compile_test.cljs`: 90/90 (L1-M5)
+- `l4_certification_test.cljs`: 41/41 (L4)
 - `gen_clj_compat_test.cljs`: 162/165 (3 pre-existing beta/gamma edge cases)
 - `genjax_compat_test.cljs`: 73/73
 
@@ -317,10 +345,5 @@ When working on a milestone (L1-M2, L1-M3, etc.):
 
 ## Related documents
 
-- `VISION.md` — Compilation ladder levels 0-4, the master development roadmap
-- `L1_COMPLETION_PLAN.md` — Detailed plan for completing Level 1 (WP-1 through WP-9)
+- `VISION.md` — Compilation ladder levels 0-5, the master development roadmap
 - `README.md` — Quick start, examples, public API overview
-- `GAPS.md` — Long-term roadmap, gap analysis vs Gen.jl and GenJAX
-- `TESTING.md` — Testing strategy, verification frameworks, and test file inventory
-- `TODO.md` — Master TODO with all remaining work
-- `FEATURE_COMPARISON.md` — GenJAX vs GenMLX feature comparison
