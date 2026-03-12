@@ -3,11 +3,34 @@
 ## What is this project?
 
 GenMLX is a probabilistic programming language in ClojureScript on Node.js (nbb),
-using Apple's MLX framework for GPU acceleration on Apple Silicon. It implements
-the **Generative Function Interface (GFI)** — the same architecture as Gen.jl
-(Julia) and GenJAX (JAX).
+using Apple's MLX framework for GPU acceleration. It implements the **Generative
+Function Interface (GFI)** — the same architecture as Gen.jl (Julia) and GenJAX (JAX).
+
+The thesis: probabilistic programming and functional programming are the same thing.
+ClojureScript's immutable data, open multimethods, and macro system map perfectly
+onto the GFI's mathematical structure. MLX's lazy graphs, unified memory, and
+broadcasting reinforce this — functional-style array programming without penalty.
 
 ~10,800 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
+
+## Compilation ladder (VISION.md)
+
+GenMLX follows a 5-level compilation ladder, progressively moving work from the
+host interpreter into fused MLX computation graphs:
+
+```
+Level 0: Shape-based batching    ← DONE (certified)
+Level 1: Compiled gen functions  ← simulate compiled (M1-M5 done), generate/update in progress
+Level 2: Compiled inference sweeps
+Level 3: Auto-analytical elimination
+Level 4: Single fused graph
+```
+
+Each level adds performance without breaking the GFI semantic contract. A model
+written today runs unchanged at higher compilation levels. The handler system is
+ground truth; compilation is optimization.
+
+Long-term goal: match GenJAX performance via this compilation ladder.
 
 ## How to run things
 
@@ -20,9 +43,18 @@ for f in choicemap_test trace_test selection_test handler_test dist_test gen_tes
   bun run --bun nbb "test/genmlx/${f}.cljs"
 done
 
-# Compatibility suites (must pass 165/165 and 73/73)
-bun run --bun nbb test/genmlx/gen_clj_compat_test.cljs
-bun run --bun nbb test/genmlx/genjax_compat_test.cljs
+# Level 0 certification (must pass 68/68)
+bun run --bun nbb test/genmlx/level0_certification_test.cljs
+
+# Level 1 compilation tests
+bun run --bun nbb test/genmlx/schema_test.cljs                # 174/174 (L1-M1)
+bun run --bun nbb test/genmlx/compiled_simulate_test.cljs      # 82/82  (L1-M2)
+bun run --bun nbb test/genmlx/partial_compile_test.cljs        # 92/92  (L1-M3)
+bun run --bun nbb test/genmlx/combinator_compile_test.cljs     # 90/90  (L1-M5)
+
+# Compatibility suites
+bun run --bun nbb test/genmlx/gen_clj_compat_test.cljs    # 162/165 (3 pre-existing edge cases)
+bun run --bun nbb test/genmlx/genjax_compat_test.cljs      # 73/73
 
 # Vectorized inference tests + benchmarks
 bun run --bun nbb test/genmlx/vectorized_test.cljs
@@ -47,6 +79,9 @@ src/genmlx/
   runtime.cljs          Execution runtime: run-handler with volatile! dispatch
   gen.cljc              gen macro (converts fn bodies into DynamicGF)
   dynamic.cljs          DynamicGF record (full GFI via handlers), vsimulate, vgenerate
+  schema.cljs           Schema extraction from gen body source forms (L1-M1)
+  compiled.cljs         Compiled execution paths: noise transforms, compiled simulate (L1-M2),
+                        partial prefix (L1-M3), branch rewriting (L1-M4)
   dist/core.cljs        Distribution record + open multimethods (sample, log-prob, sample-n)
   dist/macros.cljc      defdist macro (zero-boilerplate distribution definition)
   edit.cljs             Parametric edit interface (constraint, selection, proposal)
@@ -74,11 +109,16 @@ src/genmlx/
     diagnostics.cljs    ESS, R-hat, summary statistics
 
 test/genmlx/
-  *_test.cljs           Unit tests (custom assert helpers, println output)
-  gen_clj_compat_test.cljs   165 tests from Gen.clj
-  genjax_compat_test.cljs    73 tests for GenJAX compatibility
-  vectorized_test.cljs       Shape correctness, statistical equivalence
-  vectorized_benchmark.cljs  Speedup measurements
+  *_test.cljs                Unit tests (custom assert helpers, println output)
+  level0_certification_test.cljs  68 checks across 10 gates (L0 certification)
+  schema_test.cljs                174 checks for schema extraction (L1-M1)
+  compiled_simulate_test.cljs     82 checks for compiled simulate (L1-M2)
+  partial_compile_test.cljs       92 checks for partial compilation (L1-M3)
+  combinator_compile_test.cljs    90 checks for combinator compilation (L1-M5)
+  gen_clj_compat_test.cljs        165 tests from Gen.clj
+  genjax_compat_test.cljs         73 tests for GenJAX compatibility
+  vectorized_test.cljs            Shape correctness, statistical equivalence
+  vectorized_benchmark.cljs       Speedup measurements
   benchmark.cljs, gpu_benchmark.cljs
 ```
 
@@ -88,7 +128,7 @@ test/genmlx/
 Layer 0: MLX + Runtime    (mlx.cljs, mlx/random.cljs, runtime.cljs — mutable boundary)
 Layer 1: Core Data        (choicemap, trace, selection — pure)
 Layer 2: GFI & Execution  (protocols, handler, edit, diff — pure)
-Layer 3: DSL              (gen macro, dynamic — pure)
+Layer 3: DSL + Schema     (gen macro, dynamic, schema — pure)
 Layer 4: Distributions    (dist/core, dist/macros, dist — 27 types, pure)
 Layer 5: Combinators      (Map, Unfold, Switch, etc. — pure)
 Layer 6: Inference        (IS, MCMC, SMC, VI, ADEV, MAP + kernels — pure)
@@ -117,6 +157,9 @@ Layer 8: Verification     (contracts, verify — pure)
    (`[N]` instead of `[]`), not by transforming functions with `vmap`. MLX
    broadcasting handles all arithmetic naturally.
 
+6. **Compose, don't duplicate.** Compiled paths compose on existing handlers and
+   infrastructure — no parallel implementations. The handler is ground truth.
+
 ## How models work
 
 ```clojure
@@ -142,6 +185,9 @@ Layer 8: Verification     (contracts, verify — pure)
 ;; Vectorized (runs model body ONCE for N particles)
 (dyn/vsimulate model args n key)         ;; => VectorizedTrace
 (dyn/vgenerate model args obs n key)     ;; => VectorizedTrace with weights
+
+;; Schema introspection (Level 1)
+(:schema model)                          ;; => {:trace-sites [...] :static? true ...}
 ```
 
 ## How the handler system works
@@ -169,6 +215,22 @@ The handler never inspects value shapes — this is what makes batched execution
 PRNG keys are threaded via metadata on gen-fns (`::key`). The single entropy
 injection point is `rng/fresh-key` in `mlx/random.cljs`.
 
+## Schema system (Level 1)
+
+The `gen` macro captures the source form. At construction time, `schema.cljs`
+walks this quoted form to extract:
+
+- **Trace sites:** address, distribution type, dist-args, dependency set, static?
+- **Splice sites:** address, gf reference, dependency set
+- **Param sites:** name, default expression
+- **Classification:** static?, dynamic-addresses?, has-branches?, has-loops?
+- **Dep-order:** topological sort of static trace addresses
+- **Return form:** the last body expression
+
+The schema lives on the `DynamicGF` record as `:schema`. It enables Level 1
+compilation: static models can be compiled into flat tensor operations because
+all trace addresses, distribution types, and dependencies are known ahead of time.
+
 ## Vectorized inference
 
 The key insight: MLX operations broadcast naturally. Sample `[N]` values
@@ -186,7 +248,7 @@ score accumulation, weight computation) just works.
 
 Tests use custom assertion helpers (`assert-true`, `assert-close`, `assert-equal`)
 with `println` output. No test framework. Each test file is self-contained and
-executable with `npx nbb`.
+executable with `bun run --bun nbb`.
 
 Pattern:
 ```clojure
@@ -198,9 +260,13 @@ Pattern:
 
 After any change, verify:
 - All core tests pass (no FAIL lines in output)
-- `gen_clj_compat_test.cljs`: 165/165
+- `level0_certification_test.cljs`: 68/68
+- `schema_test.cljs`: 174/174
+- `compiled_simulate_test.cljs`: 82/82 (L1-M2)
+- `partial_compile_test.cljs`: 92/92 (L1-M3)
+- `combinator_compile_test.cljs`: 90/90 (L1-M5)
+- `gen_clj_compat_test.cljs`: 162/165 (3 pre-existing beta/gamma edge cases)
 - `genjax_compat_test.cljs`: 73/73
-- `vectorized_test.cljs`: all pass
 
 ## Common patterns when editing
 
@@ -225,8 +291,34 @@ After any change, verify:
 - Don't modify existing GFI protocol signatures — everything downstream depends
   on them.
 
+## Milestone delivery protocol
+
+When working on a milestone (L1-M2, L1-M3, etc.):
+
+1. **Spec first, code second.** Before writing any implementation or test code,
+   produce a written spec that enumerates EVERY field, behavior, edge case, and
+   invariant that "done" means for this milestone. Present the spec and STOP.
+   Do not write code until the user has reviewed and approved the spec.
+
+2. **Tests cover the full spec.** After spec approval, write tests for the
+   COMPLETE spec — including parts not yet implemented. Failing tests are
+   expected and show the gap between current state and done.
+
+3. **Implement until all tests pass.** No partial delivery.
+
+4. **Self-review before presenting.** Before showing results, check every item
+   in the spec. Explicitly state completeness as "X/Y spec items done" — not
+   just "N/N tests pass" (which hides incomplete specs). If anything is missing
+   or deferred, state it upfront, not when asked.
+
+5. **Compiled paths must match handler paths.** For Level 1+ work, compiled
+   execution must produce identical traces, scores, and weights as the handler
+   path. The handler is ground truth; compilation is optimization.
+
 ## Related documents
 
+- `VISION.md` — Compilation ladder levels 0-4, the master development roadmap
+- `L1_COMPLETION_PLAN.md` — Detailed plan for completing Level 1 (WP-1 through WP-9)
 - `README.md` — Quick start, examples, public API overview
 - `GAPS.md` — Long-term roadmap, gap analysis vs Gen.jl and GenJAX
 - `TESTING.md` — Testing strategy, verification frameworks, and test file inventory

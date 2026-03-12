@@ -1,0 +1,62 @@
+
+=== Paper Experiment 3A: Linear Regression Correctness ===
+Data: 20 points, true slope=2, true intercept=0.5, sigma=1
+First 5 ys: ["-4.65" "-2.23" "-4.74" "-1.36" "-3.23"]
+
+Analytic posterior:
+  slope:     mean=2.0900 std=0.1470
+  intercept: mean=0.5588 std=0.2222
+
+-- Algorithm 1: Compiled MH (5000 samples, 1000 burn-in) --
+  Running second chain for R-hat...
+  slope:     mean=2.0899 std=0.1387 err=0.0001
+  intercept: mean=0.5823 std=0.2156 err=0.0236
+  ESS=744 R-hat=1.000 time=4841ms
+
+-- Algorithm 1b: Vectorized Compiled Trajectory MH (5000 samples, N=50 chains) --
+  slope:     mean=2.0892 std=0.1576 err=0.0008
+  intercept: mean=0.5534 std=0.2190 err=0.0053
+  time=6069ms
+  Speedup vs compiled-mh: 0.8x
+
+-- Algorithm 1c: Multi-chain scaling sweep (5000 samples, 1000 burn) --
+  N=50 K=10 -> 968ms (slope err=0.0053, samples=5000)
+  N=100 K=10 -> 964ms (slope err=0.0011, samples=5000)
+  N=100 K=25 -> 1922ms (slope err=0.0019, samples=5000)
+  N=200 K=25 -> 1939ms (slope err=0.0023, samples=5000)
+  N=200 K=50 -> 3390ms (slope err=0.0071, samples=5000)
+  N=500 K=50 -> 4478ms (slope err=0.0049, samples=5000)
+
+  Fastest: N=100 K=10 -> 964ms
+  Running fastest config 10 times for stable timing...
+  10-run mean: 2045ms (slope err=0.0031)
+  Speedup vs compiled-mh: 2.4x
+  vs Gen.jl MH(5000): 0.03x ratio
+
+-- Algorithm 2: HMC (1000 samples, 200 burn-in) --
+  Running second chain for R-hat...
+  slope:     mean=2.0899 std=0.1314 err=0.0002
+  intercept: mean=0.5594 std=0.2129 err=0.0006
+  ESS=1000 R-hat=1.000 time=34208ms
+
+-- Algorithm 3: NUTS (1000 samples, 1000 burn-in, adapt-metric) --
+  Running second chain for R-hat...
+  slope:     mean=2.0877 std=0.1387 err=0.0023
+  intercept: mean=0.5565 std=0.2162 err=0.0022
+  ESS=543 R-hat=1.000 time=216017ms
+
+-- Algorithm 4: ADVI (2000 iterations) --
+  slope:     mean=2.1521 std=0.1492 err=0.0621
+  intercept: mean=0.5963 std=0.3987 err=0.0376
+  time=13238ms
+
+-- Algorithm 5: Vectorized IS (12000 particles) --
+  slope:     mean=2.1007 std=0.1447 err=0.0106
+  intercept: mean=0.5612 std=0.2123 err=0.0025
+  ESS=105 log-ML=-31.68 time=8ms
+
+-- Writing results --
+  Wrote: /Users/robert/code/genmlx/results/exp3_canonical_models/linreg_results.json
+  Wrote: /Users/robert/code/genmlx/results/exp3_canonical_models/SUMMARY.md
+
+All benchmarks complete.

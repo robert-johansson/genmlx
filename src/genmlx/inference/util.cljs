@@ -6,7 +6,9 @@
             [genmlx.mlx.random :as rng]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
-            [genmlx.dynamic :as dyn]))
+            [genmlx.dynamic :as dyn]
+            [genmlx.compiled :as compiled]
+            [genmlx.tensor-trace :as tt]))
 
 (defn materialize-weights
   "Evaluate a vector of MLX log-weight scalars and return them as a single
@@ -340,3 +342,136 @@
     (fn [result]
       (let [s (:state result)]
         (if (mx/array? s) [s] (collect-trace-arrays s))))))
+
+;; ===========================================================================
+;; Level 3.5: Conjugate-aware score functions
+;; ===========================================================================
+
+(defn get-eliminated-addresses
+  "Return the set of addresses analytically eliminated by L3 auto-handlers.
+   Returns nil if the model has no analytical plan."
+  [model]
+  (get-in (:schema model) [:analytical-plan :rewrite-result :eliminated]))
+
+(defn filter-addresses
+  "Remove analytically eliminated addresses from an address list.
+   If no addresses are eliminated, returns the original list unchanged."
+  [addresses eliminated]
+  (if (seq eliminated)
+    (vec (remove eliminated addresses))
+    addresses))
+
+(defn make-conjugate-aware-score-fn
+  "Build a score function that excludes analytically marginalized parameters.
+   The auto-handlers in p/generate handle eliminated addresses automatically,
+   so they need not be in the parameter vector.
+
+   Returns {:score-fn      (fn [params] -> scalar)
+            :addresses     filtered address list
+            :eliminated    set of eliminated addresses (may be nil)
+            :reduced?      true if dimension was reduced}."
+  [model args observations addresses]
+  (let [eliminated (get-eliminated-addresses model)
+        filtered (filter-addresses addresses eliminated)
+        reduced? (< (count filtered) (count addresses))]
+    {:score-fn (make-score-fn model args observations filtered)
+     :addresses filtered
+     :eliminated eliminated
+     :reduced? reduced?}))
+
+;; ===========================================================================
+;; Level 2: Tensor-native score function (tries compiled, falls back to GFI)
+;; ===========================================================================
+
+(defn make-compiled-generate-score-fn
+  "Build a score function from compiled generate.
+   All sites (latent + observed) are constrained — no sampling, no key needed.
+   Returns {:score-fn (fn [K-tensor] -> scalar) :latent-index {addr -> int}}
+   or nil if model has no compiled-generate."
+  [model args observations addresses]
+  (when-let [compiled-gen (:compiled-generate (:schema model))]
+    (let [latent-index (into {} (map-indexed (fn [i a] [a i]) addresses))
+          mlx-args (vec args)
+          indexed-addrs (mapv vector (range) addresses)]
+      {:score-fn
+       (fn [params]
+         (let [constraints (reduce
+                            (fn [cm [i addr]]
+                              (cm/set-choice cm [addr] (mx/index params i)))
+                            observations
+                            indexed-addrs)]
+           (:weight (compiled-gen (rng/fresh-key) mlx-args constraints))))
+       :latent-index latent-index})))
+
+(defn make-tensor-score-fn
+  "Try to build a tensor-native score function from model schema.
+   Falls back through: tensor-native → compiled-generate → GFI handler.
+
+   Returns {:score-fn (fn [K-tensor] -> scalar)
+            :latent-index {addr -> int}
+            :tensor-native? bool
+            :compiled-generate? bool}
+
+   When tensor-native? is true, score-fn takes a [K]-shaped latent tensor.
+   When false, score-fn takes a [D]-shaped params array (same as make-score-fn)
+   and latent-index is built from the addresses."
+  [model args observations addresses]
+  (let [schema (:schema model)
+        source (:source model)]
+    (if-let [result (compiled/make-tensor-score-with-index
+                      schema source (vec args) observations)]
+      (assoc result :tensor-native? true :compiled-generate? false)
+      ;; Try compiled-generate before falling back to GFI handler
+      (if-let [cg-result (make-compiled-generate-score-fn
+                           model args observations addresses)]
+        (assoc cg-result :tensor-native? false :compiled-generate? true)
+        ;; Fall back to GFI-based score
+        (let [gfi-fn (make-score-fn model args observations addresses)
+              latent-index (into {} (map-indexed (fn [i a] [a i]) addresses))]
+          {:score-fn gfi-fn
+           :latent-index latent-index
+           :tensor-native? false
+           :compiled-generate? false})))))
+
+(defn extract-params-by-index
+  "Extract parameter values from a trace using latent-index ordering.
+   Returns [K] MLX array matching the latent-index mapping."
+  [trace latent-index]
+  (let [choices (:choices trace)
+        pairs (sort-by val latent-index)]
+    (mx/stack (mapv (fn [[addr _]]
+                      (cm/get-value (cm/get-submap choices addr)))
+                    pairs))))
+
+(defn prepare-mcmc-score
+  "Prepare score function + init params for compiled MCMC.
+   Tries tensor-native score first (bypasses GFI), falls back to GFI-based.
+   Automatically filters out analytically eliminated addresses (L3.5).
+
+   Returns {:score-fn    (fn [D-tensor] -> scalar)
+            :init-params [D] MLX array
+            :n-params    int
+            :tensor-native? bool}
+
+   The returned score-fn and init-params always use the same indexing,
+   whether tensor-native or GFI-based."
+  [model args observations addresses trace]
+  (let [;; L3.5: filter out conjugate prior addresses
+        eliminated (get-eliminated-addresses model)
+        addresses (filter-addresses addresses eliminated)
+        {:keys [score-fn latent-index tensor-native?]}
+        (make-tensor-score-fn model args observations addresses)]
+    (if tensor-native?
+      ;; Tensor-native: params packed in dep-order (latent-index)
+      {:score-fn score-fn
+       :init-params (extract-params-by-index trace latent-index)
+       :n-params (count latent-index)
+       :tensor-native? true
+       :latent-index latent-index}
+      ;; GFI fallback: use existing layout machinery
+      (let [layout (compute-param-layout trace addresses)]
+        {:score-fn score-fn
+         :init-params (extract-params trace addresses layout)
+         :n-params (:total-size layout)
+         :tensor-native? false
+         :latent-index latent-index}))))

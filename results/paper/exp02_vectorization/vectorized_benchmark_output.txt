@@ -1,0 +1,33 @@
+
+=== Vectorized Inference Benchmarks ===
+
+-- Benchmark 1: dist-sample vs dist-sample-n (N=100) --
+  Sequential (100 x dist-sample): 308ms
+  Batched    (dist-sample-n 100):  77ms
+  Speedup: 4.0x
+  EXIT CRITERION (>10x): CHECK
+
+-- Benchmark 1b: dist-sample vs dist-sample-n (N=1000) --
+  Sequential (1000 x dist-sample): 1014ms
+  Batched    (dist-sample-n 1000):  1ms
+  Speedup: 1014.0x
+
+-- Benchmark 2: generate vs vgenerate (5-site model, N=100) --
+  Sequential (100 x generate): 514ms
+  Batched    (vgenerate 100):   70ms
+  Speedup: 7.3x
+  EXIT CRITERION (>5x): PASS
+
+-- Benchmark 3: IS vs vectorized IS (5-site model, N=100) --
+  Sequential IS (100 particles):  768ms
+  Vectorized IS (100 particles):  9ms
+  Speedup: 85.3x
+  Sequential log-ml: -5.67
+  Vectorized log-ml: -5.91
+
+-- Benchmark 4: SMC init vs vsmc-init (5-site, N=100) --
+  Sequential SMC init (100 particles): 432ms
+  Vectorized SMC init (100 particles): 2ms
+  Speedup: 216.0x
+
+All benchmarks complete.

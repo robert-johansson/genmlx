@@ -1,381 +1,670 @@
-# GenMLX Vision: GPU-Native Probabilistic Programming
+# GenMLX Vision: From Orchestrator to Compiler
 
-## Current State
+## The Stack
 
-GenMLX is ~10,800 lines of ClojureScript implementing the full Generative Function Interface (GFI) on Apple Silicon via MLX. It has 27 distributions, 10 combinators, and comprehensive inference (IS, MCMC, SMC, SMCP3, VI, ADEV, amortized). Shape-based GPU batching gives 10-100x speedups where implemented.
+GenMLX is ~10,800 lines of ClojureScript implementing the full Generative Function
+Interface (GFI) on GPU via MLX. Three properties of this stack, taken together,
+enable something no other PPL can do:
 
-But GPU utilization is uneven. This document maps the path from "selective GPU acceleration" to "everything compiles to a single Metal dispatch."
+1. **ClojureScript is a Lisp.** Macros see model source code as data. Program
+   analysis and code generation happen at macro-expansion time — no separate
+   compiler infrastructure needed.
 
----
+2. **MLX is lazy.** Operations build a computation graph before executing.
+   The more you defer evaluation, the more MLX can fuse. Laziness is implicit
+   whole-program compilation.
 
-## 1. GPU Gaps in Current GenMLX
+3. **Handlers are pure middleware.** The handler is `(state, addr, dist) →
+   (value, state')` with no side effects. Analytical solvers, compilation
+   passes, and interpretation all compose as middleware layers around the
+   same unchanged model code.
 
-### Sequential Bottlenecks (CPU `mapv` loops)
-
-| Algorithm | File | Current | Fix | Est. Speedup |
-|-----------|------|---------|-----|--------------|
-| `importance-sampling` | inference/importance.cljs | N separate `p/generate` | Use existing `vectorized-importance-sampling` | 10-100x |
-| `adev-optimize` | inference/adev.cljs | Sequential `adev-gradient` | Use existing `vadev-gradient` / `compiled-adev-optimize` | 5-10x |
-| `smc` init | inference/smc.cljs | `mapv` over particles | `vgenerate` (as `batched-smc-unfold` already does) | 10-50x |
-| `smc-step` updates | inference/smc.cljs | `mapv` per particle | Batched update transition (handler supports it) | 10-50x |
-| `smc-rejuvenate` | inference/smc.cljs | Nested `mapv` | Use `vectorized-compiled-mh` | 10-50x |
-| `smcp3` all steps | inference/smcp3.cljs | `mapv` per particle | Add vectorized variants | 10-50x |
-| `systematic-resample` | inference/util.cljs | JS loop + `mx/realize` | GPU cumsum + searchsorted | 2-5x |
-| `wake-sleep` | learning.cljs | Nested `mapv` | Batch via `vadev-gradient` pattern | 5-10x |
-
-### All Combinators Are Sequential
-
-Map, Unfold, Switch, Scan in `combinators.cljs` — all use `mapv` internally, calling `p/simulate` per element. Shape-based batching only works at the handler level (vsimulate/vgenerate), not at the combinator level.
-
-### Unused MLX Primitives
-
-| Primitive | Wrapped? | Used? | Potential |
-|-----------|----------|-------|-----------|
-| `mx/vmap` | Yes | Only in vi.cljs | Native functional vectorization |
-| `mx/jvp` / `mx/vjp` | Yes | Never | Forward-mode AD, Fisher information |
-| `mx/checkpoint` | No | N/A | Memory-efficient gradients for deep models |
-| `asyncEval` | Yes | Never | Pipeline GPU work |
-| `einsum` | No | N/A | Cleaner tensor contractions |
-| `fast.scaledDotProductAttention` | No | N/A | Fused attention for sequence models |
-| `fast.rope` | No | N/A | Rotary position embeddings |
-| Metal capture/profiling | No | N/A | GPU shader debugging |
+The host language is just an orchestrator — it builds the graph, MLX executes it.
+Today, the orchestrator does too much work. The vision: push everything into the
+graph until ClojureScript builds one graph and then sits idle.
 
 ---
 
-## 2. Missing Gen Universe Features
+## The Levels
 
-### Inference Algorithms
+Each level describes how much of the total computation lives in a single MLX
+lazy graph. Each level subsumes the previous.
 
-- **Particle MCMC (PMCMC)** — Use SMC as MH proposal for full trajectories. Standard in Gen.jl. Critical for temporal models (depression unfold).
-- **SMC-squared** — Nested SMC for simultaneous parameter + state estimation. Eliminates need for fixed-parameter IS.
-- **Rao-Blackwellization** — Analytically marginalize conjugate pairs. Massive variance reduction. E.g., if measurement noise is conjugate, marginalize it instead of sampling.
-- **Streaming/Online SMC** — Process new observations incrementally. Natural for clinical monitoring.
-
-### Compilation Strategy
-
-GenJAX's key advantage: lower an entire inference loop to a single XLA dispatch. GenMLX has `mx/compile-fn` for individual functions (gradients, MH scores) but not for whole inference sweeps. The gap is **whole-program compilation**.
-
-### Static Analysis — The Middle Path
-
-Gen.jl has two DSLs: Dynamic (arbitrary control flow, trace structure discovered at runtime) and Static (compile-time-known trace structure as a DAG). GenJAX inherits this split.
-
-A full static DSL for GenMLX would restrict what you can write: no data-dependent branching, no variable-length loops, no dynamic `splice`. This would break the `switch`/`mix` combinators, any model where trace sites depend on data, and the amortized combinator search idea (3d).
-
-**The middle path: trace-once compilation.** Instead of a second DSL, we compile standard `gen` functions by tracing them:
-
-1. **Trace-once analysis**: Run the model once under a special "schema discovery" handler that records execution order, trace addresses, distribution types, and shapes — but doesn't sample or score.
-2. **Schema validation**: Verify the schema is structurally static (same addresses every execution). If the model has data-dependent branching, fail gracefully with a clear error.
-3. **Code generation**: From the schema, auto-generate a pure MLX step function that does the same sampling + scoring as flat tensor operations. Distribution-specific transforms convert noise to samples (Gaussian: `noise * std + mean`, etc.).
-4. **GFI bridge**: Wrap the compiled function in a `CompiledGF` record that implements `simulate`, `generate`, `update` — converting between flat tensors and standard Trace/choicemap at the boundary.
-
-```clojure
-;; User writes normal gen code
-(def model
-  (gen [x]
-    (let [slope     (trace :slope (dist/gaussian 0 10))
-          intercept (trace :intercept (dist/gaussian 0 10))]
-      (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
-      slope)))
-
-;; compile-gen traces once, discovers schema, builds compiled version
-(def fast-model (compile-gen model))
-;; fast-model implements full GFI: simulate, generate, update
-;; Internally: single Metal dispatch, flat tensor trace, no handler overhead
-
-;; Falls back gracefully for dynamic models:
-(compile-gen dynamic-branching-model)
-;; => Error: "Model has data-dependent trace structure at address :branch.
-;;    Cannot compile. Use the dynamic path instead."
+```
+Level 0 (done):   Model body is one graph, inference loop is host-driven
+Level 1 (done):   Compiled gen fn — model compiles to single Metal dispatch
+Level 2 (done):   Compiled inference — full SMC/MCMC sweep is one graph
+Level 3 (done):   Auto-analytical — macro detects structure, eliminates sampling
+Level 3.5 (done): Extended analytical — full GFI coverage, combinators, multivariate
+Level 4 (done):   Single fused graph — compiled optimization, fused inference, automatic method selection
+Level 5 (future): Cognitive architecture — LLMs as generative functions, theory search
 ```
 
-**Why this is better than a static DSL:**
-- One language, one way of writing models. Compilation is an optimization pass, not a different programming model.
-- Models work without compilation (dynamic path). Compilation makes them faster.
-- No new syntax to learn. No restrictions on what you *write* — only on what you *compile*.
-- JAX's `jit` works the same way: trace once, compile, replay. Proven pattern.
+---
 
-**What's needed:** ~500-800 lines. Schema discovery handler, per-distribution noise transforms (Gaussian is trivial; beta/gamma need inverse CDF or rejection), flat trace representation, GFI bridge protocol implementations.
+## Level 0: Shape-Based GPU Batching (DONE)
 
-### Progressive Compilation — Beyond Pass/Fail
+**What it is:** Run the model body once with `[N]`-shaped arrays instead of
+N independent traces. MLX broadcasting handles all batched arithmetic. No vmap,
+no function transformation.
 
-The trace-once approach doesn't have to be all-or-nothing. `compile-gen` can progressively handle more complex models through four levels:
+**What's in the graph:** One forward pass of the model for all N particles.
+The inference loop (resampling, weight normalization, iteration) is host-driven.
 
-**Level 1: Diagnostic feedback.** When compilation fails, explain *why* and *where* — not just "can't compile" but "address `:branch` at line 12 depends on the value of `:mode`. The 3 other trace sites are structurally static. Consider: wrap the branching in a switch combinator."
+**Status:** Complete. This is the current state of GenMLX.
 
-**Level 2: Partial compilation.** Compile the static parts, interpret only the dynamic parts. If a model has 10 trace sites and one data-dependent branch, compile 9 sites as a single Metal dispatch and drop into the dynamic handler only for the branch. Still faster than fully dynamic.
+### Completed work
+
+| Item | Result |
+|------|--------|
+| Shape-based vectorization (vsimulate/vgenerate) | 10-100x over scalar |
+| GPU resampling (cumsum + broadcasting) | O(N^2) mem, fine for N<=20K |
+| Structured state resampling | Walk map, take-idx each array |
+| Default vectorized IS/ADEV | 352-1520x IS speedup |
+| Batched combinators (Unfold, Switch, Scan, Mix) | 19-80x over scalar loops |
+| Compiled unfold + compiled particle filter | 6-15x over batched variants |
+| Differentiable inference (grad through IS) | Automatic parameter learning |
+| Analytical middleware (Kalman, EKF, HMM, conjugate) | Exact inference for substructure |
+| Fisher information / Laplace approximation | Exact model comparison |
+| PMCMC (Particle Gibbs, PMMH) | Joint parameter + state estimation |
+
+### What Level 0 can't do
+
+Every `mx/` call from ClojureScript crosses the FFI boundary. A model with 50
+trace sites and 10 ops each makes 500 FFI calls per particle per step. MLX's
+lazy graph amortizes GPU dispatch, but the FFI call overhead is pure host cost.
+The inference loop (resample, iterate, check convergence) forces materialization
+at every step, breaking the graph into fragments.
+
+---
+
+## Level 1: Compiled Gen Functions
+
+**What it is:** The `gen` macro analyzes model source code at macro-expansion
+time and emits a compiled path — a single MLX-compiled function that replaces
+hundreds of FFI calls with one Metal dispatch.
+
+**What's in the graph:** The entire model forward pass as a fused kernel.
+The inference loop is still host-driven, but each step is a single call.
+
+### Strategy: Macro-time analysis, not runtime tracing
+
+The existing VISION.md proposed runtime tracing ("trace once, discover schema,
+compile"). The Lisp approach is more powerful: the `gen` macro already sees the
+model body as data. Analyze it at compile time.
 
 ```clojure
-(def model
-  (gen [x]
-    (let [slope (trace :slope (dist/gaussian 0 10))          ;; compiled
-          intercept (trace :intercept (dist/gaussian 0 10))  ;; compiled
-          mode (trace :mode (dist/bernoulli 0.5))]           ;; compiled
-      ;; Dynamic branch — drops to handler here
-      (if (pos? (mx/item mode))
-        (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
-        (trace :y (dist/gaussian intercept 2))))))
+;; The gen macro sees this code as a data structure:
+(gen [x]
+  (let [slope     (trace :slope (dist/gaussian 0 10))
+        intercept (trace :intercept (dist/gaussian 0 10))]
+    (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
+    slope))
 
-(compile-gen model)
-;; => Partially compiled: 3/4 sites compiled, 1 dynamic branch
-;;    Speedup: ~3x (overhead eliminated on compiled sites)
+;; At macro-expansion time:
+;; 1. Extract trace sites: [:slope, :intercept, :y]
+;; 2. Extract distribution types: [gaussian, gaussian, gaussian]
+;; 3. Build dependency graph: :y depends on :slope, :intercept
+;; 4. Emit BOTH the flexible handler version AND a compiled version
+;; 5. The compiled version inlines log-probs as flat MLX ops
 ```
 
-**Level 3: Automatic rewriting.** The compiler recognizes patterns it can make branchless. Data-dependent `if` over trace sites with the same address becomes `mx/where`:
+### Milestones
+
+**L1-M1: Schema extraction from gen bodies.**
+The `gen` macro extracts trace addresses, distribution types, and dependency
+structure from the model body at compile time. Emits metadata alongside the
+standard handler-based code. No behavior change — just analysis.
+
+**L1-M2: Compiled simulate/generate for static models.**
+For models where all trace sites are statically known (no data-dependent
+branching), emit a compiled function that does sampling + scoring as flat
+tensor operations. Distribution-specific noise transforms (Gaussian: `noise *
+std + mean`, etc.). Single `mx/compile-fn` call. Full GFI bridge
+(simulate, generate, update via compiled path).
+
+**L1-M3: Partial compilation for dynamic models.**
+Models with data-dependent branching: compile the static subgraph, interpret
+only the dynamic parts. If 9 of 10 trace sites are static, compile 9 and
+drop to handler for 1.
+
+**L1-M4: Automatic branch rewriting.**
+Recognize `if/else` over trace sites with the same address and rewrite to
+`mx/where` — making branches branchless. This is what the `switch` combinator
+does; the compiler automates the transformation.
+
+**L1-M5: Combinator-aware compilation.**
+The compiler understands combinator structure:
+- `unfold` → compiled scan (single dispatch for T steps)
+- `switch` → compute all branches, `mx/where` to select
+- `mix` → pre-compile each component, weight at runtime
+- `map` → reshape to [P*K] flat batch
+
+Each combinator encodes a compilation strategy. A model built from
+`unfold(switch(mix(...)))` compiles by composing strategies for each layer.
+
+### Why this is uniquely GenMLX
+
+Neither Gen.jl nor GenJAX can do macro-time program analysis. Julia macros
+exist but Gen.jl doesn't use them for compilation — it has a separate static
+DSL. Python has no macros at all; GenJAX relies on JAX's runtime tracing.
+ClojureScript macros operate on code-as-data at compile time, which is strictly
+more powerful than runtime tracing: you see the source structure, not just one
+execution path.
+
+---
+
+## Level 2: Compiled Inference Sweeps
+
+**What it is:** The inference algorithm itself — SMC steps, MCMC transitions,
+resampling, weight normalization — becomes part of the MLX graph. The entire
+inference sweep from initialization to final estimate is one lazy computation.
+
+**What's in the graph:** Model + inference algorithm + all iterations. Host
+language builds the graph once and calls `mx/eval!` once.
+
+### The key obstacle: data-dependent control flow
+
+Resampling in SMC depends on weights. MH accept/reject depends on the score
+ratio. These create host-side decision points that force materialization,
+breaking the graph.
+
+### The solution: differentiable alternatives
+
+Replace hard decisions with differentiable approximations that stay in the graph:
+
+- **Differentiable resampling** — Gumbel-top-k, optimal transport, or soft
+  systematic resampling. Particle selection becomes a continuous operation.
+- **Soft MH** — Replace hard accept/reject with a continuous interpolation
+  weighted by the acceptance probability. Or pre-generate all uniform random
+  numbers and express accept/reject as `mx/where`.
+- **Fixed-randomness sweeps** — Pre-generate all random noise (keys, uniforms)
+  before the sweep. The entire computation becomes deterministic given the
+  noise — pure graph, no decisions.
+
+### Milestones
+
+**L2-M1: Pre-generated randomness for SMC.**
+Generate all PRNG keys for T steps x N particles upfront. Pass them into the
+sweep as data. Resampling uses pre-generated uniform noise with stratified
+indices. The sweep becomes a pure `reduce` over timesteps — no host-side
+randomness decisions.
+
+**L2-M2: Lazy SMC sweep.**
+Build the entire SMC sweep (init, T steps of extend + weight + resample) as
+one lazy graph. Single `mx/eval!` at the end. Verify correctness against
+the current eager implementation.
+
+**L2-M3: Differentiable resampling.**
+Implement Gumbel-top-k or optimal transport resampling as pure MLX operations.
+This replaces the weight-dependent host-side branching with a continuous
+in-graph operation. Enables gradients through the full SMC sweep.
+
+**L2-M4: Compiled MCMC chains.**
+Express an MH chain as a compiled scan: pre-generate proposals and acceptance
+uniforms, `mx/where` to accept/reject. The entire chain from initialization
+to final samples is one graph. Compose with compiled gen fns from Level 1.
+
+**L2-M5: Gradient through full inference.**
+With differentiable resampling + compiled sweeps, compute gradients of the
+final log-marginal-likelihood with respect to model parameters through the
+entire inference procedure. This is end-to-end differentiable probabilistic
+programming.
+
+### Unified memory advantage
+
+This is where Apple Silicon's unified memory becomes a structural advantage
+over CUDA. GenJAX on CUDA pays a transfer cost every time the host reads a
+weight or makes a decision. GenMLX on unified memory pays zero. But at Level 2,
+this advantage is even stronger: because we're keeping everything in one graph,
+there are literally zero transfers. CUDA can't match this even with aggressive
+compilation, because XLA still materializes between traced functions.
+
+---
+
+## Level 3: Automatic Analytical Elimination (DONE)
+
+**What it is:** The `gen` macro analyzes model structure and automatically
+applies analytical middleware — eliminating sampling entirely for substructure
+that has closed-form solutions. The system infers more and samples less.
+
+**What's in the graph:** Only the irreducible stochastic computation.
+Everything with a closed form has been algebraically eliminated. The graph
+is smaller, the variance is lower, the inference is faster.
+
+**Status:** Complete. 426 tests across 6 new files, 7 investigation gates passed.
+
+### How it works
+
+The user writes standard `gen` functions with standard distributions. At
+construction time, the system automatically:
+
+1. **Detects conjugate pairs** — scans trace site dependencies to find
+   known conjugate families (Normal-Normal, Beta-Bernoulli, Gamma-Poisson,
+   Gamma-Exponential, Dirichlet-Categorical)
+2. **Classifies dependency types** — determines if the link between prior
+   and likelihood is `:direct`, `:affine`, or `:nonlinear`
+3. **Builds analytical handlers** — address-based dispatch that intercepts
+   `p/generate` at conjugate sites, computing exact marginal likelihoods
+   instead of sampling
+4. **Wires handlers automatically** — no annotations, no manual middleware
+   composition. The `gen` macro does everything.
+
+```clojure
+;; User writes exactly this — no annotations:
+(def model
+  (gen [x]
+    (let [mu    (trace :mu (dist/gaussian 0 10))
+          sigma (trace :sigma (dist/gamma 2 1))]
+      (trace :y (dist/gaussian mu 1)))))
+
+;; System detects: :mu → :y is Normal-Normal conjugate
+;; p/generate analytically marginalizes :mu
+;; Only :sigma needs sampling
+;; Weight = exact marginal log-likelihood (zero variance)
+```
+
+### Architecture
+
+**Address-based dispatch, not distribution-type dispatch.** L3 intercepts
+standard distributions (`dist/gaussian`, `dist/beta-dist`, etc.) at specific
+trace addresses detected as conjugate pairs. This means existing model code
+works unchanged — no special distribution types needed.
+
+**Score accounting:**
+- Prior sites (marginalized): no score/weight contribution
+- Observation sites (constrained): marginal LL added to both `:score` and `:weight`
+- Observation sites (unconstrained): fallthrough to standard handler
+
+**Fallthrough design:** Non-conjugate sites, unconstrained observations, and
+dynamic models all fall through to the standard L2/L1/L0 handler paths.
+A model that is 70% conjugate gets 70% eliminated and 30% sampled.
+
+### Completed work
+
+| Component | File | Lines |
+|-----------|------|-------|
+| Conjugacy detection (5 families) | `conjugacy.cljs` | 165 |
+| Affine expression analysis | `affine.cljs` | 379 |
+| Dependency graph + d-separation | `dep_graph.cljs` | 262 |
+| Graph rewriting engine (3 rule types) | `rewrite.cljs` | 225 |
+| Address-based analytical handlers | `inference/auto_analytical.cljs` | 393 |
+| Auto-wiring in DynamicGF | `dynamic.cljs` | +133 |
+
+**Rewrite rules** (applied in priority order):
+1. **KalmanRule** — collapse linear-Gaussian chains via Kalman filter
+2. **ConjugacyRule** — eliminate conjugate prior via marginalization
+3. **RaoBlackwellRule** — sample from posterior mean (variance reduction)
+
+### Benchmark results
+
+Evaluation benchmark (`l3_evaluation_benchmark.cljs`) comparing L3 analytical
+elimination against L2 standard prior-proposal IS:
+
+**Observation scaling** (Normal-Normal, prior std=10):
+
+| Obs | L3 log-ML | L2 IS (200 particles) | L2 ESS | ESS/N |
+|-----|-----------|----------------------|--------|-------|
+| 5 | -7.708 (exact) | -7.93 +/- 0.40 | 11.4 | 5.7% |
+| 10 | -12.649 (exact) | -12.92 +/- 0.41 | 7.8 | 3.9% |
+| 20 | -22.184 (exact) | -22.50 +/- 0.41 | 5.2 | 2.6% |
+| 50 | -50.211 (exact) | -50.54 +/- 0.42 | 3.1 | 1.6% |
+
+L3 is exact at every scale. L2 ESS degrades as observations increase.
+
+**Multi-group Rao-Blackwellization** (3 NN groups + 2 non-conjugate params,
+200 particles x 15 trials):
+
+| | L3 (3/5 dims eliminated) | L2 (all 5 dims sampled) |
+|---|---|---|
+| log-ML std | **0.44** | 14.73 |
+| ESS | **7.7** / 200 | 1.1 / 200 |
+
+**33.5x lower variance**, **7.2x higher ESS**. L2 is essentially collapsed
+(ESS=1.1); L3 still functions by eliminating the conjugate substructure.
+
+### What Level 3 can't do (addressed by Level 3.5)
+
+- ~~**MCMC:** Auto-handlers intercept `p/generate` and `p/assess` only~~ → L3.5 WP-0
+- ~~**Combinators:** No combinator-aware conjugacy detection~~ → L3.5 WP-2
+- ~~**Multivariate:** Only 1D conjugacy~~ → L3.5 WP-3
+- **Non-static models:** Dynamic addresses (loops, data-dependent branching)
+  prevent conjugacy detection. (Remains a limitation.)
+
+---
+
+## Level 3.5: Extended Analytical Elimination (DONE)
+
+**What it is:** Extends L3's analytical elimination across the full GFI —
+`p/regenerate` and `p/assess` now benefit from auto-handlers alongside
+`p/generate`. Adds combinator-aware conjugacy, multivariate (MVN-MVN)
+conjugacy, and reduced-dimension score functions for compiled MCMC.
+
+**Status:** Complete. 150 tests across 5 test files, 5 investigation gates passed.
+
+### How it extends Level 3
+
+L3 proved that zero-annotation conjugacy detection works. L3.5 extends coverage:
+
+1. **Regenerate auto-handlers (WP-0):** MCMC methods using `p/regenerate` now
+   benefit from analytical elimination. Score-only semantics (no weight
+   contribution) — the prior site's score is updated analytically, obs sites
+   contribute marginal LL to score. 8.2% dispatch overhead (within 10% budget).
+
+2. **Assess auto-handlers (WP-1):** `p/assess` computes exact marginal
+   log-likelihood for conjugate substructure. Enables model comparison and
+   scoring without sampling.
+
+3. **Combinator-aware conjugacy (WP-2):** Kernel-internal conjugacy works for
+   free — combinators like `unfold`, `map`, and `scan` call `p/generate`
+   internally, which triggers auto-handlers. Cross-boundary conjugacy
+   (prior in outer, obs in combinator) deferred to L4.
+
+4. **Multivariate conjugacy (WP-3):** MVN-MVN conjugate family with Kalman gain
+   form using `mx/solve` (numerically stable, no explicit matrix inverse).
+   Scales with prior dimension.
+
+5. **Score function integration (WP-4):** `make-conjugate-aware-score-fn`
+   produces reduced-dimension score functions that exclude eliminated addresses.
+   Compiled MCMC operates only on residual stochastic dimensions.
+
+### Architecture decisions
+
+- **Score-only regenerate semantics:** Regenerate weight = (new-score - old-score).
+  Auto-handlers contribute to score, not weight. This preserves MH correctness.
+- **O(1) dispatch guard:** Precomputed `:auto-regenerate-transition` on schema
+  avoids per-step scanning overhead.
+- **Kalman gain form for MVN:** `mx/solve` instead of 3x `mx/inv` — O(n^3) but
+  better constant factor and numerical stability.
+- **Unified Kalman handler core:** Generate and regenerate Kalman handlers share
+  `make-kalman-handlers-core` with mode parameter, eliminating ~80 lines of
+  duplication.
+
+---
+
+## Level 4: Single Fused Graph
+
+**What it is:** Model specification, inference algorithm, and parameter
+optimization are all expressed as one lazy MLX computation graph.
+ClojureScript builds the graph, then sits idle while Metal executes.
+
+**What's in the graph:** Everything. The model, the analytical eliminations,
+the compiled inference sweep, the gradient computation, the optimizer step.
+One `mx/eval!`.
+
+This is the natural culmination of the compilation ladder. L0 batched the
+model, L1 compiled it, L2 compiled inference, L3/3.5 eliminated analytically
+— L4 fuses it all into one dispatch. The PPL becomes a compiler.
+
+### What this looks like
 
 ```clojure
 ;; User writes:
-(if (pos? mode)
-  (trace :y (dist/gaussian mean1 std1))
-  (trace :y (dist/gaussian mean2 std2)))
+(def model (gen [...] ...))
+(def result (fit model data {:method :smc :particles 1000 :learn [:theta]}))
 
-;; Compiler rewrites to:
-(trace :y (dist/gaussian
-            (mx/where mode-mask mean1 mean2)
-            (mx/where mode-mask std1 std2)))
-;; Now fully compilable — mx/where is a pure MLX op, no branching
+;; Under the hood:
+;; 1. gen macro analyzes model structure (Level 3)
+;; 2. Conjugate pairs detected, middleware auto-composed
+;; 3. Remaining stochastic sites compiled (Level 1)
+;; 4. SMC sweep compiled with differentiable resampling (Level 2)
+;; 5. Gradient of log-ML w.r.t. :theta computed through the full sweep
+;; 6. Adam step on :theta
+;; 7. Steps 4-6 repeated for E epochs
+;; 8. ALL of steps 4-7 is ONE lazy graph
+;; 9. Single mx/eval! ships it to Metal
 ```
 
-This is what the `switch` combinator already does conceptually. The compiler automates the transformation.
+### Results
 
-**Level 4: Combinator-aware compilation.** The compiler understands combinator structure and applies compositional compilation strategies:
+**Benchmark:** Compiled Adam is **9.2x faster** than the handler-based training loop
+(178ms → 19ms for 200 iterations on a 3-parameter quadratic objective).
 
-- `unfold` → compiled scan (single dispatch for T steps)
-- `switch` → compute all branches in parallel, `mx/where` to select
-- `mix` → pre-compile each component, weight at runtime
-- `map` over patients → reshape to [P*K] flat batch
+**Implementation:** 6 work packages, 5 gates, ~1000 new lines, 260+ tests.
 
-Each combinator encodes a compilation strategy. A model built from `unfold(switch(mix(...)))` gets compiled by composing the strategies for each layer. The combinators aren't just programming abstractions — they're compilation hints.
+- **WP-0: Compiled optimizer** — `mx/compile-fn(mx/value-and-grad(score))` + Adam in
+  a single compiled step. Key insight: pass Adam's `t` counter as an MLX scalar arg
+  so `mx/power` handles bias correction inside the graph.
+- **WP-1: Compiled loss-gradient** — Compose GFI score functions with
+  `mx/value-and-grad`. Tensor-native path for static models, handler fallback otherwise.
+- **WP-2: Fused inference + optimization** — Differentiable MH chains with
+  noise-as-argument pattern. Pre-generate PRNG noise host-side, pass into compiled step.
+  MCMC + Adam + gradient in one compiled dispatch per iteration.
+- **WP-3: Automatic method selection** — Pure decision tree from L3/3.5 metadata:
+  conjugate → exact, Kalman → kalman, temporal → SMC, static few-dim → HMC,
+  high-dim → VI, fallback → handler-IS. With hyperparameter tuning.
+- **WP-4: `fit` API** — One-call entry point: `(fit model args data)`. Auto-selects
+  method, runs inference, extracts posterior, optionally runs parameter learning.
+- **WP-5: Certification** — 41/41 gates, all L0-L3.5 regressions green.
 
-```clojure
-;; This model has dynamic branching (switch) inside temporal structure (unfold)
-;; Level 4 handles it compositionally:
-;;   unfold → compiled scan
-;;   switch inside each step → compute both branches, mx/where to select
-;;   Result: single Metal dispatch for the entire T-step model with branching
-(compile-gen (unfold (switch [engage-kernel avoid-kernel])))
-```
-
-**The deep idea: models that compile themselves.**
-
-In a traditional compiler, source code is opaque text that must be parsed, analyzed, and transformed into an execution plan. The compiler does all the work.
-
-In GenMLX at Level 4, the model *is* the execution plan. When you write `(unfold (switch [kernel-a kernel-b]))`, you're not writing code that a compiler must analyze — you're directly composing compilation strategies:
-
-- `unfold` says "I am a sequential scan — compile me as a loop over timesteps"
-- `switch` says "I have parallel branches — compute all of them, select with `mx/where`"
-- Each leaf kernel says "I am a fixed set of trace sites — compile me as flat tensor ops"
-
-The combinators are simultaneously: (1) a probabilistic model specification, (2) an abstract syntax tree, and (3) a GPU compilation plan. No analysis needed — the structure carries its meaning.
-
-This is possible because the GFI is so constrained. A generative function can only `trace` (sample + score), `splice` (call a sub-model), and `return`. The combinators compose these in known patterns. There is no arbitrary control flow to analyze — the combinator *is* the control flow. Composition of combinators = composition of compilation strategies.
-
-**Why this is uniquely GenMLX.** Neither Gen.jl nor GenJAX can do this because they lack the combination of:
-
-1. **Lazy computation graph** (MLX) — compiled and interpreted sections produce the same lazy arrays, so partial compilation is natural
-2. **Pure handler transitions** — no hidden state to corrupt, so rewriting is safe
-3. **Combinator algebra as compilation IR** — the model structure *is* the compilation plan, no separate analysis pass needed
-
-The static/dynamic distinction becomes a property of the *model*, not the *language*. GenMLX detects it automatically — and when a model is *partially* static, it compiles what it can.
+**Known limitation:** VI path (`fused-learn :vi`) segfaults in fresh nbb processes
+(both Bun and Node.js) due to MLX/nbb interaction with `mx/vmap` on GFI score
+functions that use `volatile!` internally. Works correctly in long-lived REPL sessions.
+See `memory/bug_bun_segfault_vmap.md`.
 
 ---
 
-## 3. New Ideas — Where GenMLX Can Lead
+## Level 5: Cognitive Architecture
 
-GenMLX sits at a unique intersection: purely functional ClojureScript + MLX's lazy computation graph + Apple Silicon GPU. This enables things neither Gen.jl nor GenJAX can easily do.
+**What it is:** The GFI becomes a cognitive primitive. Language models,
+theory search, and adaptive reasoning are first-class generative functions
+— composable with Gaussians, Kalman filters, neural nets, and all existing
+combinators through the same interface.
 
-### B. Lazy Inference Graphs
+L0-L4 make probabilistic programs run fast. L5 makes them think.
 
-**Insight:** Currently, inference materializes (`mx/eval!`) at every decision point. But MLX's lazy graph can represent the *entire inference sweep* as one graph.
+### Why this is possible
 
-```clojure
-;; Current SMC: materialize after each step
-(loop [step 0, particles ...]
-  (let [new-particles (smc-step ...)   ;; builds graph
-        _             (mx/materialize!) ;; BREAKS graph here
-        resampled     (resample ...)]   ;; new graph starts
-    (recur (inc step) resampled)))
+An LLM has a well-defined `log p(text)` — the sum of per-token log-probs.
+That means it satisfies the GFI contract:
 
-;; Proposed: lazy SMC sweep
-(defn lazy-smc-sweep [model obs-seq n-particles]
-  (reduce (fn [state obs-t]
-            (-> state
-                (extend-particles model obs-t)
-                (compute-weights)
-                (resample-lazy)))
-          (init-particles model n-particles)
-          obs-seq))
-;; Single mx/eval! at the very end
-```
+- **`simulate`**: sample text from the LLM (normal generation)
+- **`assess`**: compute `log p(text)` for given text (the score)
+- **`generate` with constraints**: conditioned generation (infilling/constrained decoding)
 
-**Key challenge:** Resampling requires reading weights, forcing materialization. **Solution:** Pre-generate all random noise (stratified resampling with fixed u0). Then the entire sweep is deterministic given the noise — pure graph, single dispatch.
-
-**Why uniquely GenMLX:** JAX requires explicit `jax.lax.scan` with static shapes. MLX's lazy graph naturally accumulates operations without requiring fixed control flow.
-
-### C. Differentiable Inference Programs
-
-**Insight:** ADEV differentiates through model execution. Extend this to differentiate through *inference itself* — learn model parameters by backpropagating through the inference algorithm.
+Once an LLM is a generative function, it composes with everything GenMLX
+already has. Language becomes just another random variable you can condition
+on — no different from a Gaussian or a Bernoulli.
 
 ```clojure
-;; Learn theta by differentiating through IS
-(defn differentiable-is [theta observations n-particles key]
-  (let [traces  (vgenerate (model theta) observations n-particles key)
-        log-ml  (log-marginal-likelihood traces)]
-    log-ml))
+(def clinical-model
+  (gen [symptoms lab-results]
+    ;; LANGUAGE variable — diagnosis in words
+    (let [diagnosis (trace :diagnosis
+                     (llm-dist (str "Patient presents with " symptoms)))
+          ;; CONTINUOUS variable — predicted labs from diagnosis
+          predicted (trace :predicted (physiology-model diagnosis))]
+      ;; OBSERVATION — actual lab results constrain both
+      (trace :labs (dist/gaussian predicted noise) lab-results)
+      diagnosis)))
 
-(def grad-fn (mx/grad differentiable-is))
-;; Gradient of log-ML w.r.t. model parameters!
+;; Inference finds diagnoses that are BOTH linguistically coherent
+;; (high LLM score) AND consistent with the lab data (high Gaussian score)
 ```
 
-This is the "learning the model by differentiating through inference" paradigm (Maddison et al., Le et al.). GenMLX already has the pieces (ADEV + vectorized IS + mx/grad). The missing piece is composing them.
+The LLM doesn't know it's inside a gen function. GenMLX doesn't care that
+the distribution is an API call. The causal structure lives entirely in the
+gen function's control flow. The LLM is a black-box conditional distribution
+`p(text | prompt)`, just as `dist/gaussian` is `p(x | mean, std)`.
 
-**Impact on depression:** Learn population-level parameters (measurement slopes, noise scales, prior variances) by gradient descent on log-ML. Currently hand-calibrated. Differentiable inference finds optimal values automatically.
+All existing combinators work naturally:
 
-### D. Combinator-Level GPU Compilation
+- **Map**: parallel independent LLM calls (N explanations for N data points)
+- **Unfold**: sequential reasoning chains (chain-of-thought with particle filtering)
+- **Switch**: discrete model selection (LLM vs physics model, posterior decides)
+- **Scan**: dialogue modeling (multi-turn with full history as trace)
+- **Mix**: LLM ensembles with learned mixture weights
+- **Recurse**: tree-structured decomposition of complex problems
+- **Dimap**: prompt engineering as pure function composition
 
-**Insight:** Combinators are sequential wrappers. But `unfold` has known structure — it's a scan over timesteps. Compile the entire unfolded execution as one graph.
+### Milestones
+
+**L5-M1: LLM as generative function.**
+Wrap an LLM API (or local model via mlx-lm) as a `Distribution` with
+proper `sample` and `log-prob`. Handle batching (multiple particles =
+multiple API calls or batched local inference). Token-level log-prob
+accumulation for `assess`. Constrained generation for `generate`.
+
+This is the infrastructure milestone. Once done, all the composition
+patterns above work immediately — they're just gen functions using a
+new distribution type.
+
+**L5-M2: Theory search.**
+Express theory discovery as a meta-generative function that samples
+architecture (which mechanisms to include) and evaluates fit. The space of
+combinator compositions is the hypothesis space; the posterior concentrates
+on the best-fitting theory. GPU-parallel evaluation of all candidate
+architectures via compiled `switch`.
 
 ```clojure
-;; Current: unfold calls kernel.simulate 10 times sequentially
-(unfold kernel 10 init-state)
-
-;; Proposed: compiled-unfold
-(compiled-unfold kernel 10 init-state)
-;; mx/compile-fn wraps the entire 10-step loop
-;; Traces pre-allocated as [10, ...]-shaped tensors
-;; Single Metal dispatch for all timesteps
+(def theory-search
+  (gen [data]
+    (let [has-mechanism-a (trace :mech-a (dist/bernoulli 0.5))
+          has-mechanism-b (trace :mech-b (dist/bernoulli 0.5))
+          model (compose-model has-mechanism-a has-mechanism-b)]
+      (splice :fit (model data)))))
+;; Posterior over :mech-a, :mech-b = which theory fits the data
 ```
 
-For `switch`: pre-compute all branches, then `mx/where` to select (already possible with vectorized-switch, not yet generalized).
-
-For `map` over patients: the flat `[P*K]` trick. Generalize as `compiled-map`.
-
-### E. Amortized Combinator Search (Automatic Theory Discovery)
-
-**Insight from depression reboot:** Mechanism profiling manually searched 8 combinator compositions. Make this search a generative program itself.
-
-```clojure
-;; Meta-generative function: samples architecture, then runs it
-(def architecture-search
-  (gen [patient-data]
-    (let [has-self-criticism  (trace :self-crit (dist/bernoulli 0.5))
-          has-reward-sens     (trace :reward    (dist/bernoulli 0.5))
-          has-barrier-sens    (trace :barrier   (dist/bernoulli 0.5))
-          model (compose-architecture
-                  has-self-criticism has-reward-sens has-barrier-sens)]
-      (splice :inner (model patient-data)))))
-```
-
-This is `mix` over an exponential space of compositions. With `switch` + GPU, evaluate all compositions in parallel and let the data choose. The "theory" is whatever the posterior concentrates on.
-
-The depression reboot's mechanism profiling was a manual version. Automating it requires: (a) compiled switch over architectures, (b) GPU-parallel branch evaluation, (c) inference over architecture choices.
-
-### F. Forward-Mode AD for Fisher Information
-
-**Unused capability:** `mx/jvp` (forward-mode AD) gives Jacobian-vector products, which yields the **Fisher information matrix**:
-
-```
-Fisher information = E[nabla log p (x) nabla log p]
-Forward-mode: one JVP per parameter dimension
-```
-
-For models with ~20-30 parameters, forward-mode is competitive with reverse-mode and gives exact Fisher information — enabling:
-- Natural gradient optimization
-- Laplace approximation (posterior uncertainty)
-- Proper model comparison (BIC with exact parameter counts)
-- Confidence intervals on mechanism strengths
-
-### G. Checkpoint for Deep Temporal Models
-
-MLX has `checkpoint` (gradient checkpointing) — not yet wrapped. For `unfold` over T timesteps with gradients, checkpointing reduces memory from O(T) to O(sqrt(T)) by recomputing intermediate states during backward pass.
-
-Critical for: daily data (T=63 days), item-level data (many more parameters per timestep), or longer treatment courses.
+With L5-M1, the mechanisms themselves can be LLM-generated code,
+scored against real data. The system searches over both structure
+(which components) and implementation (what each component does).
 
 ---
 
-## 4. Priority Roadmap
+## The Competitive Picture
 
-### Tier 1: Engineering (immediate GPU wins)
+### vs GenJAX (JAX/XLA on CUDA)
 
-| # | Item | Status | Result |
-|---|------|--------|--------|
-| 1a | Vectorize SMC init + step (vgenerate + batched handler) | **DONE** | 20-231x SMC speedup |
-| 1b | GPU resampling (cumsum + broadcasting) | **DONE** | O(N²) mem, fine for N≤20K |
-| 1c | Population-level flat [P*K] batching | Deferred | Implement with 3a when needed |
-| 1d | Default to vectorized variants for IS, ADEV | **DONE** | 352-1520x IS speedup |
-| 1e | Structured state resampling (walk map, take-idx each array) | **DONE** | Unblocks SMC with structured state |
+| | GenJAX | GenMLX at Level 0 | GenMLX at Level 2+ |
+|---|---|---|---|
+| Compilation | Full program via XLA trace | None (FFI per op) | Lazy graph = implicit compilation |
+| Memory model | CUDA (explicit transfers) | Unified (zero transfers) | Unified (structural advantage) |
+| Vectorization | vmap → compiled kernel | Shape broadcasting | Shape broadcasting (equivalent) |
+| Host interaction | Zero during compiled execution | FFI per op | Zero (full graph) |
+| Analytical inference | Manual | Composable middleware | **Auto-detected + composed** |
+| Program analysis | Runtime tracing only | **Macro-time (code as data)** | **Macro-time** |
 
-### Tier 2: Compilation (eliminate overhead)
+At Level 0, GenMLX is 2-5x slower than GenJAX for compiled workloads.
+At Level 2, the gap closes to parity on Apple Silicon (unified memory wins).
+At Level 3/3.5, GenMLX does things GenJAX cannot: automatic analytical
+elimination across all GFI operations, multivariate conjugacy, macro-time
+structure detection, and composable middleware stacking.
+At Level 5, GenMLX enters territory no existing PPL occupies: LLMs as
+first-class generative functions composable with continuous and discrete
+models through a unified probabilistic interface.
 
-| # | Item | Status | Result |
-|---|------|--------|--------|
-| 2a | Compiled unfold (single Metal dispatch for T steps) | **DONE** | 6-15x vs standard unfold |
-| 2b | Compiled gen fn (trace-once → auto-compiled) | Not started | See "Middle Path" above |
-| 2c | Compiled particle filter (whole SMC sweep, one dispatch) | **DONE** | 14-15x vs batched-smc-unfold |
+### The honest bottleneck
 
-### Tier 3: Research contributions
+**Model expressivity vs compilability.** The more dynamic the model (stochastic
+control flow, variable-length traces, recursion), the less fits in one static
+graph. Gen's power is handling arbitrary dynamic models. The art is keeping
+full expressivity as a fallback while making the common cases fly.
 
-| # | Item | Lines | Impact |
-|---|------|-------|--------|
-| 3a | Differentiable inference (grad through vgenerate → log-ML) | ~100 | Automatic parameter learning |
-| 3b | PMCMC / SMC-squared | ~200 | Joint parameter + state estimation |
-| 3c | Rao-Blackwellization (auto-detect conjugate pairs) | ~300 | Variance reduction |
-| 3d | Amortized combinator search | ~200 | Automatic theory discovery |
-| 3e | Forward-mode AD / Fisher information | ~100 | Model comparison, natural gradient |
-| 3f | Wrap mx/checkpoint for deep temporal gradients | ~30 | Memory-efficient long sequences |
-
-### Tier 4: Ecosystem
-
-| # | Item | Impact |
-|---|------|--------|
-| 4a | Streaming/online SMC | Real-time clinical inference |
-| 4b | Visualization (GenStudio-inspired) | Interactive trace exploration |
-| 4c | LLM-as-generative-function | Natural language + probabilistic reasoning |
+The middleware architecture is perfectly positioned for this: each layer
+handles what it can and passes the rest through. A model that is 70%
+analytically tractable and 30% dynamic gets 70% eliminated and 30% sampled.
+No all-or-nothing tradeoff.
 
 ---
 
-## 5. The Unifying Vision
-
-**In GenMLX, models compile themselves.**
-
-A generative function is three things at once:
-1. **A probabilistic model** — it specifies a distribution over data
-2. **A computation graph** — MLX's lazy evaluation captures it as a sequence of GPU operations
-3. **A compilation plan** — the combinator structure says how to compile it
-
-When you write `(unfold (switch [kernel-a kernel-b]))`, you are simultaneously defining a temporal switching model, building an MLX computation graph, and encoding the GPU execution strategy (scan over timesteps, parallel branch evaluation, `mx/where` selection). No separate compiler pass is needed because the program structure *is* the compilation IR.
+## Architecture Summary
 
 ```
-gen macro       → what to compute (model specification)
-combinators     → how to compute it (compilation strategy)
-MLX lazy graph  → the actual Metal program (GPU execution)
+ClojureScript macros  →  static program analysis + code generation
+Middleware handlers   →  algebraic graph rewriting engine
+MLX laziness          →  implicit whole-program compilation
+Unified memory        →  zero-cost host/device interleaving
+Bun                   →  fast graph construction, then idle
 
-Model = Specification = Compilation Plan
+gen macro sees code as data
+  → extracts structure (trace sites, dependencies, conjugacy)
+  → emits compiled path + analytical middleware
+  → model body becomes one fused MLX kernel
+
+inference algorithm expressed as lazy MLX ops
+  → differentiable resampling, soft accept/reject
+  → entire sweep is one graph
+  → gradient flows through model + inference
+
+result: ClojureScript builds one graph, calls mx/eval! once, Metal executes
 ```
 
-This is possible because of three properties unique to GenMLX's design:
+The PPL becomes a compiler from probabilistic programs to optimal GPU
+execution plans, where "compilation" emerges from the natural interaction of
+Lisp macros, functional middleware, and lazy evaluation. No compiler
+infrastructure needed — the stack is the compiler.
 
-- **Constrained interface.** The GFI allows only three operations: `trace`, `splice`, `return`. Combinators compose these in known patterns. There is no arbitrary control flow — the combinator *is* the control flow, and each combinator knows how to compile itself.
-
-- **Pure handler transitions.** The handler is `(state, addr, dist) → (value, state')` with no side effects. Compilation, interpretation, and mixed execution all produce the same lazy arrays. You can compile some trace sites and interpret others in the same model.
-
-- **Lazy computation graph.** MLX operations build a graph that isn't evaluated until needed. A `gen` body that runs under the dynamic handler and one that runs under a compiled handler both produce the same lazy arrays — they just take different paths to get there. Compilation eliminates the ClojureScript scaffolding (choicemaps, handler state, volatile!) and keeps only the MLX graph.
-
-The result: a PPL where writing `(gen [...] ...)` and running `(smc model obs)` compiles to GPU code as efficient as hand-written Metal shaders, while remaining a 10-line ClojureScript program. The user never thinks about compilation — the model's own structure determines it.
+At Level 5, the same architecture extends to cognitive tasks: LLMs slot into
+the GFI as distributions over language, composable with everything above
+through the same `simulate`/`generate`/`assess` contract.
 
 ---
 
-## 6. Depression Model as Proof of Concept
+## Status
 
-The depression reboot (Phase B) demonstrates the vision at small scale:
-- **Combinators as mechanisms**: mix (subtypes), switch (modes), unfold (temporal), scan (learning)
-- **Bottom-up theory discovery**: 8 compositions searched, profiles emerged that match Blatt's theory
-- **GPU acceleration**: VIS runs 20K particles per patient on Metal
+### Level 0: COMPLETE
 
-The full vision scales this to:
-- **Compiled temporal model**: `compiled-unfold` over 10 weeks, single dispatch per patient
-- **Population GPU**: flat [P*K] batching, 180 patients × 1000 particles = 180K simultaneous
-- **Differentiable inference**: learn measurement slopes, noise scales, prior variances by gradient descent
-- **Automatic architecture search**: posterior over combinator compositions, not manual profiling
-- **Three-dataset validation**: discover on N=180, replicate on N=90, test on N=90
+- Full shape-based GPU batching, all combinators, all inference algorithms
+- Analytical middleware: Kalman, EKF (1D + ND), HMM forward, conjugate priors
+- Compiled combinators: unfold, particle filter
+- Differentiable inference, Fisher information, PMCMC
+- Formal verification: 10 GFI contracts, Lean mechanization (Phase A)
 
-This progression — from manual mechanism profiling to automatic combinator search on GPU — is the GenMLX roadmap in microcosm.
+### Level 1: COMPLETE
+
+- L1-M1: Schema extraction from gen bodies (174/174 tests)
+- L1-M2: Compiled simulate/generate for static models (82/82 tests)
+- L1-M3: Partial compilation for dynamic models (92/92 tests)
+- L1-M4: Automatic branch rewriting via mx/where
+- L1-M5: Combinator-aware compilation — unfold, scan, map, switch, mix (90/90 tests)
+- Performance: 3-5x simulate speedup, compiled gen fns as single Metal dispatch
+
+### Level 2: COMPLETE
+
+- L2-M1: Pre-generated randomness for SMC and MCMC sweeps
+- L2-M2: Compiled SMC — bootstrap particle filter, 77.5x speedup over handler
+- L2-M3: Differentiable resampling — Gumbel-top-k (hard) + Gumbel-softmax (differentiable)
+- L2-M4: Compiled MCMC chains with tensor-native score, 15.6x speedup
+- L2-M5: Gradient through full inference — MH chains and SMC sweeps, sublinear memory
+- New infrastructure: TensorTrace, TensorChoiceMap, tensor-native score function
+- Bonus: fixed pre-existing PRNG seed bug affecting all multi-particle inference
+- 881+ tests green across L0/L1/L2, all 6 investigation gates passed
+
+Note: L2-M2 materializes at step boundaries for resampling (host-side systematic
+resampling breaks the graph). With Gumbel-softmax resampling, larger chunks can
+stay lazy, but true single-mx/eval! SMC sweep is not yet achieved.
+
+### Level 3: COMPLETE
+
+- WP-0: Conjugacy detection — 5 families (NN, BB, GP, GE, DC), dependency classification
+- WP-1: Address-based analytical handlers — reuses conjugate.cljs math, address dispatch
+- WP-2: Auto-wiring in DynamicGF — zero-annotation conjugate elimination in p/generate
+- WP-3: Affine expression analysis + auto-Kalman — linear-Gaussian chain detection
+- WP-4: Dependency graph + conditional independence — d-separation, Markov blankets
+- WP-5: Algebraic graph rewriting — 3 rule types (Kalman, Conjugacy, RaoBlackwell)
+- Memory fix: auto-sweep dead arrays in p/simulate and p/generate (prevents Metal exhaustion)
+- 426 tests across 6 test files, 7 investigation gates passed
+- Benchmark: 33.5x variance reduction, 7.2x ESS improvement on multi-group mixed models
+
+### Level 3.5: COMPLETE
+
+- WP-0: Regenerate auto-handlers — MCMC benefits from analytical elimination (8.2% overhead)
+- WP-1: Assess auto-handlers — exact marginal LL scoring for conjugate substructure
+- WP-2: Combinator-aware conjugacy — kernel-internal conjugacy works via p/generate dispatch
+- WP-3: Multivariate conjugacy — MVN-MVN with Kalman gain form (mx/solve, no mx/inv)
+- WP-4: Score function integration — reduced-dimension score fns for compiled MCMC
+- Unified Kalman handler core (generate/regenerate), -98 lines cleanup
+- 150 tests across 5 test files, 5 investigation gates passed
+
+### Level 4 (done)
+
+- Compiled optimization: 9.2x speedup over handler loop
+- Fused MCMC+Adam: differentiable MH chains with noise-as-argument
+- Automatic method selection from L3/3.5 metadata
+- `fit` API: one-call inference entry point
+- 260+ new tests, 41/41 certification gates, all regressions green
+
+### Next
+
+- Level 5: Cognitive architecture — LLM as generative function, theory search

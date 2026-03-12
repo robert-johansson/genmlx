@@ -1,0 +1,143 @@
+{
+  "experiment": "exp10_optimization",
+  "timestamp": "2026-03-12T05:24:14.061Z",
+  "hardware": {
+    "platform": "macOS",
+    "chip": "Apple Silicon",
+    "gpu": "Metal"
+  },
+  "exp10a_compiled_adam": {
+    "description": "Compiled Adam vs handler loop (200 iterations, static linreg)",
+    "handler": {
+      "mean_ms": 17787.377291399996,
+      "std_ms": 3394.345340659347,
+      "min_ms": 13294.097749999997,
+      "max_ms": 22425.58808299998,
+      "raw_times": [
+        13294.097749999997,
+        16561.294624999995,
+        17256.496541,
+        19399.40945800001,
+        22425.58808299998
+      ]
+    },
+    "compiled": {
+      "mean_ms": 225.4678253999911,
+      "std_ms": 122.64408974689867,
+      "min_ms": 87.2393339999835,
+      "max_ms": 349.16941699996823,
+      "raw_times": [
+        99.77312500000698,
+        87.2393339999835,
+        287.6135420000064,
+        349.16941699996823,
+        303.5437089999905
+      ]
+    },
+    "speedup": 78.89097816881103,
+    "iterations": 200,
+    "learning_rate": 0.01
+  },
+  "exp10b_method_selection": {
+    "description": "Method selection accuracy across 6 model types",
+    "results": [
+      {
+        "label": "Static LinReg (fully conjugate)",
+        "expected": "exact",
+        "actual": "exact",
+        "pass": true,
+        "reason": "All trace sites eliminated by analytical plan",
+        "n_residual": 0,
+        "n_eliminated": 2
+      },
+      {
+        "label": "Mixed Model (partial conjugate)",
+        "expected": "hmc",
+        "actual": "hmc",
+        "pass": true,
+        "reason": "Static model with 1 residual dims (≤ 10)",
+        "n_residual": 1,
+        "n_eliminated": 2
+      },
+      {
+        "label": "Dynamic LinReg (dynamic addresses)",
+        "expected": "handler-is",
+        "actual": "handler-is",
+        "pass": true,
+        "reason": "Dynamic addresses — shape-based methods not applicable",
+        "n_residual": 3,
+        "n_eliminated": 0
+      },
+      {
+        "label": "Empty model (no trace sites)",
+        "expected": "exact",
+        "actual": "exact",
+        "pass": true,
+        "reason": "No trace sites — trivial model",
+        "n_residual": 0,
+        "n_eliminated": 0
+      },
+      {
+        "label": "Large model (15+ latents)",
+        "expected": "vi",
+        "actual": "vi",
+        "pass": true,
+        "reason": "Static model with 15 residual dims (> 10) — VI preferred",
+        "n_residual": 15,
+        "n_eliminated": 0
+      },
+      {
+        "label": "Splice model (sub-model call)",
+        "expected": "smc",
+        "actual": "smc",
+        "pass": true,
+        "reason": "Splice sites present — SMC for sub-model structure",
+        "n_residual": 1,
+        "n_eliminated": 0
+      }
+    ],
+    "total": 6,
+    "correct": 6
+  },
+  "exp10c_fit_api": {
+    "description": "fit API end-to-end auto-select verification",
+    "results": [
+      {
+        "model": "static-linreg",
+        "method": "exact",
+        "expected_method": "exact",
+        "pass": true,
+        "log_ml": -28.14594841003418,
+        "posterior": {
+          "slope": {
+            "value": 0
+          },
+          "intercept": {
+            "value": 6.427145481109619
+          }
+        },
+        "elapsed_ms": 19.875832999998238
+      },
+      {
+        "model": "dynamic-linreg",
+        "method": "handler-is",
+        "expected_method": "handler-is",
+        "pass": true,
+        "log_ml": -10.969826698303223,
+        "has_posterior": true,
+        "elapsed_ms": 20931.229624999978
+      },
+      {
+        "model": "mixed-model",
+        "method": "hmc",
+        "expected_method": "hmc",
+        "pass": true,
+        "log_ml": null,
+        "has_posterior": true,
+        "elapsed_ms": 127497.91308299999
+      }
+    ],
+    "total": 3,
+    "correct": 3
+  }
+}

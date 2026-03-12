@@ -1,0 +1,53 @@
+{
+  "metadata": {
+    "python_version": "3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]",
+    "jax_version": "0.5.3",
+    "jax_backend": "cpu",
+    "jax_devices": [
+      "TFRT_CPU_0"
+    ],
+    "genjax_available": true,
+    "genjax_version": "0.10.3",
+    "n_particles": 1000,
+    "timestamp": "2026-03-12T06:17:59"
+  },
+  "genjax_results": [],
+  "jax_results": [
+    {
+      "label": "jax_linreg_is_1000",
+      "mean_ms": 0.34190000442322344,
+      "std_ms": 0.05275471972250262,
+      "min_ms": 0.2775000029942021
+    },
+    {
+      "label": "jax_gmm_is_1000",
+      "mean_ms": 0.4188250022707507,
+      "std_ms": 0.16547003189601145,
+      "min_ms": 0.23562500427942723
+    },
+    {
+      "label": "jax_vmap_is_1000",
+      "mean_ms": 0.32086659921333194,
+      "std_ms": 0.05506227724444676,
+      "min_ms": 0.26200000138487667
+    },
+    {
+      "label": "jax_linreg_is_100",
+      "mean_ms": 0.12183300277683884,
+      "std_ms": 0.053717819250493806,
+      "min_ms": 0.07079199713189155
+    },
+    {
+      "label": "jax_linreg_is_1000",
+      "mean_ms": 0.15722480020485818,
+      "std_ms": 0.027467772653991838,
+      "min_ms": 0.13241700071375817
+    },
+    {
+      "label": "jax_linreg_is_10000",
+      "mean_ms": 0.7075333967804909,
+      "std_ms": 0.2976148004659561,
+      "min_ms": 0.417124989326112
+    }
+  ]
+}

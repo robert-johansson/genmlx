@@ -1,0 +1,47 @@
+
+=== Paper Experiment 8: Changepoint Detection ===
+T=100, p_change=0.05
+True changepoints: [10 43 46 62 90 93] (6 total)
+Segment means: ["0.00" "-1.85" "4.41" "-1.51" "0.18" "-8.61" "7.93"]
+
+Exact log P(y) = -178.4776
+
+-- SMC_100 (3 runs) --
+  run 0...
+  run 1...
+  run 2...
+  log-ML: -230.03 +/- 17.06
+  |error|: 51.56 +/- 17.06
+  ESS: 100.0  time: 55993ms
+  Wrote: /Users/robert/code/genmlx/results/exp8_changepoint/changepoint_results.json
+
+-- SMC_250 (3 runs) --
+  run 0...
+  run 1...
+  run 2...
+  log-ML: -184.63 +/- 10.16
+  |error|: 7.93 +/- 8.85
+  ESS: 250.0  time: 131209ms
+  Wrote: /Users/robert/code/genmlx/results/exp8_changepoint/changepoint_results.json
+
+-- SMC_500 (3 runs) --
+  run 0...
+  run 1...
+  run 2...
+  log-ML: -181.84 +/- 4.56
+  |error|: 5.33 +/- 1.94
+  ESS: 500.0  time: 172645ms
+  Wrote: /Users/robert/code/genmlx/results/exp8_changepoint/changepoint_results.json
+
+-- IS_1000 (3 runs) --
+  run 0...
+  run 1...
+  run 2...
+  log-ML: -442.40 +/- 16.39
+  |error|: 263.92 +/- 16.39
+  ESS: 1.0  time: 95148ms
+  Wrote: /Users/robert/code/genmlx/results/exp8_changepoint/changepoint_results.json
+
+  Wrote: /Users/robert/code/genmlx/results/exp8_changepoint/SUMMARY.md
+
+All changepoint benchmarks complete.
