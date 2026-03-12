@@ -114,7 +114,7 @@
         (trace :y (dist/gaussian (mx/scalar mu) 1.0))
         state-val))))
 
-;; GMM
+;; GMM (scalar — uses mx/item, not VIS-compatible)
 (def gmm-model
   (dyn/auto-key
     (gen [data]
@@ -128,6 +128,24 @@
                 mu (nth mus z-val)]
             (trace (keyword (str "y" i))
                    (dist/gaussian (mx/scalar mu) sigma))))))))
+
+;; GMM vectorized — no mx/item, shapes flow through for VIS
+(def gmm-log-weights (mx/array [(js/Math.log (/ 1.0 3.0))
+                                 (js/Math.log (/ 1.0 3.0))
+                                 (js/Math.log (/ 1.0 3.0))]))
+(def gmm-means-arr (mx/array [-4.0 0.0 4.0]))
+
+(def gmm-vec-model
+  (dyn/auto-key
+    (gen [data]
+      (let [sigma 1.0
+            K 3]
+        (doseq [[i y] (map-indexed vector data)]
+          (let [z (trace (keyword (str "z" i))
+                         (dist/categorical gmm-log-weights))
+                mu (mx/take-idx gmm-means-arr z)]
+            (trace (keyword (str "y" i))
+                   (dist/gaussian mu (mx/scalar sigma)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Data
@@ -230,11 +248,11 @@
 ;; ---------------------------------------------------------------------------
 
 (def vis-gmm
-  (safe-benchmark "VIS-gmm-1000"
+  (benchmark "VIS-gmm-1000"
     (fn []
       (let [{:keys [vtrace log-ml-estimate]}
             (is/vectorized-importance-sampling {:samples 1000}
-                                                gmm-model [gmm-data] gmm-obs)]
+                                                gmm-vec-model [gmm-data] gmm-obs)]
         (mx/eval! log-ml-estimate)))
     :warmup-n 5 :outer-n 7 :inner-n 10))
 
