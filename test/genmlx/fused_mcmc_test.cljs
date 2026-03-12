@@ -322,6 +322,73 @@
   (assert-shape "fused-mh thin=2" [200 2] (:samples result)))
 
 ;; ---------------------------------------------------------------------------
+;; 13. fused-vectorized-mh
+;; ---------------------------------------------------------------------------
+
+(println "\n-- fused-vectorized-mh --")
+
+(let [xs [1.0 2.0 3.0 4.0 5.0]
+      ys (mapv #(+ (* 2.0 %) 1.0) xs)
+      obs (apply cm/choicemap (mapcat (fn [j y] [(keyword (str "y" j)) y]) (range) ys))
+      result (mcmc/fused-vectorized-mh
+               {:samples 200 :burn 200 :n-chains 4
+                :addresses [:slope :intercept]
+                :proposal-std 0.3 :key (rng/fresh-key)
+                :device :cpu}
+               linreg-model [xs] obs)]
+  (assert-shape "vectorized samples [S,N,D]" [200 4 2] (:samples result))
+  (assert-shape "vectorized final-params [N,D]" [4 2] (:final-params result))
+  (assert-true "vectorized chain-fn returned" (some? (:chain-fn result)))
+  ;; Statistical check: pool chains, compute mean slope
+  (let [samples-js (mx/->clj (:samples result))
+        all-slopes (for [s samples-js, chain s] (first chain))
+        mean-slope (/ (reduce + all-slopes) (count all-slopes))]
+    (assert-close "vectorized posterior slope ≈ 2" 2.0 mean-slope 0.5)))
+
+;; ---------------------------------------------------------------------------
+;; 14. fused-vectorized-mh cached reuse
+;; ---------------------------------------------------------------------------
+
+(println "\n-- fused-vectorized-mh cached --")
+
+(let [xs [1.0 2.0 3.0 4.0 5.0]
+      ys (mapv #(+ (* 2.0 %) 1.0) xs)
+      obs (apply cm/choicemap (mapcat (fn [j y] [(keyword (str "y" j)) y]) (range) ys))
+      r1 (mcmc/fused-vectorized-mh
+           {:samples 200 :burn 100 :n-chains 4
+            :addresses [:slope :intercept]
+            :proposal-std 0.3 :key (rng/fresh-key) :device :cpu}
+           linreg-model [xs] obs)
+      ;; Cached call
+      t0 (.now js/Date)
+      r2 (mcmc/fused-vectorized-mh
+           {:samples 200 :burn 100 :n-chains 4
+            :addresses [:slope :intercept]
+            :proposal-std 0.3 :key (rng/fresh-key)
+            :chain-fn (:chain-fn r1) :device :cpu}
+           linreg-model [xs] obs)
+      t1 (.now js/Date)]
+  (assert-shape "cached vectorized samples" [200 4 2] (:samples r2))
+  (println "  cached vectorized:" (- t1 t0) "ms")
+  (assert-true "cached vectorized < 500ms" (< (- t1 t0) 500)))
+
+;; ---------------------------------------------------------------------------
+;; 15. fused-vectorized-mh with thin
+;; ---------------------------------------------------------------------------
+
+(println "\n-- fused-vectorized-mh thin=2 --")
+
+(let [xs [1.0 2.0 3.0 4.0 5.0]
+      ys (mapv #(+ (* 2.0 %) 1.0) xs)
+      obs (apply cm/choicemap (mapcat (fn [j y] [(keyword (str "y" j)) y]) (range) ys))
+      result (mcmc/fused-vectorized-mh
+               {:samples 100 :burn 100 :thin 2 :n-chains 4
+                :addresses [:slope :intercept]
+                :proposal-std 0.3 :key (rng/fresh-key) :device :cpu}
+               linreg-model [xs] obs)]
+  (assert-shape "vectorized thin=2" [100 4 2] (:samples result)))
+
+;; ---------------------------------------------------------------------------
 ;; Summary
 ;; ---------------------------------------------------------------------------
 

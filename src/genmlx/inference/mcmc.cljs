@@ -785,6 +785,106 @@
                   (when (zero? (mod b 10)) (mx/clear-cache!))
                   (recur p' (into acc block-samples) (inc b) rk'))))))))))
 
+(defn- write-vectorized-sample-row
+  "Write [N,D] params into row sample-idx of [S,N,D] samples tensor."
+  [samples params sample-idx n-samples n-chains n-params]
+  (let [indices (mx/astype (mx/arange n-samples) mx/int32)
+        row-mask (mx/equal indices sample-idx)
+        ;; [S] → [S,1,1] for broadcasting with [S,N,D]
+        write-mask-3d (mx/expand-dims (mx/expand-dims row-mask 1) 2)
+        new-row (mx/broadcast-to (mx/expand-dims params 0)
+                                 [n-samples n-chains n-params])]
+    (mx/where write-mask-3d new-row samples)))
+
+(defn- make-fused-vectorized-burn-and-collect
+  "Compile a fused chain for N parallel MH chains: burn-in + thinned collection.
+   params shape: [N,D], noise: [T,N,D], uniforms: [T,N].
+   Returns [S,N,D] sample tensor + [N,D] final params. ONE Metal dispatch."
+  [n-burn n-samples thin score-fn proposal-std n-chains n-params]
+  (let [total-steps (+ n-burn (* thin n-samples))
+        chain-fn
+        (fn [init-params noise uniforms]
+          (loop [p init-params, i 0
+                 sample-count (mx/astype (mx/array [0]) mx/int32)
+                 samples (mx/zeros [n-samples n-chains n-params])]
+            (if (>= i total-steps)
+              #js [p samples]
+              (let [;; Extract noise row: [T,N,D] → [N,D]
+                    row (mx/reshape
+                         (mx/take-idx noise (mx/array [i] mx/int32) 0)
+                         [n-chains n-params])
+                    proposal (mx/add p (mx/multiply proposal-std row))
+                    s-cur (score-fn p) ;; [N]
+                    s-prop (score-fn proposal) ;; [N]
+                    log-alpha (mx/subtract s-prop s-cur) ;; [N]
+                    ;; Extract uniform row: [T,N] → [N]
+                    u-row (mx/reshape
+                           (mx/take-idx uniforms (mx/array [i] mx/int32) 0)
+                           [n-chains])
+                    log-u (mx/log u-row)
+                    accept? (mx/greater log-alpha log-u) ;; [N] boolean
+                    new-p (mx/where (mx/expand-dims accept? 1) proposal p) ;; [N,D]
+                    ;; Record logic (host-side decision)
+                    past-burn? (>= i n-burn)
+                    is-record (and past-burn? (zero? (mod (- i n-burn) thin)))
+                    new-samples (if is-record
+                                  (write-vectorized-sample-row
+                                   samples new-p sample-count
+                                   n-samples n-chains n-params)
+                                  samples)
+                    new-count (if is-record
+                                (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
+                                sample-count)]
+                (recur new-p (inc i) new-count new-samples)))))
+        compiled (mx/compile-fn chain-fn)]
+    ;; Warmup trace
+    (let [result (compiled (mx/zeros [n-chains n-params])
+                           (rng/normal (rng/fresh-key) [total-steps n-chains n-params])
+                           (rng/uniform (rng/fresh-key) [total-steps n-chains]))]
+      (mx/materialize! (aget result 0) (aget result 1)))
+    compiled))
+
+(defn fused-vectorized-mh
+  "Fully fused vectorized MH: N parallel chains, burn-in + thinned collection
+   in ONE Metal dispatch per call. Returns {:samples [S,N,D] :final-params [N,D]
+   :chain-fn compiled-fn}.
+
+   First call incurs compilation overhead. Pass :chain-fn to skip recompilation.
+
+   opts: {:samples S :burn B :thin T :addresses [addr...]
+          :proposal-std σ :n-chains N :key prng-key :device :cpu|:gpu
+          :chain-fn compiled-fn-from-previous-call}
+
+   Default device: :gpu."
+  [{:keys [samples burn thin addresses proposal-std n-chains key device chain-fn]
+    :or {burn 500 samples 1000 thin 1 proposal-std 0.1 n-chains 8 device :gpu}}
+   model args observations]
+  (let [model (dyn/auto-key model)
+        addresses (u/filter-addresses addresses (u/get-eliminated-addresses model))]
+    (with-device device
+      (fn []
+        (let [raw-score-fn (u/make-batched-score-fn model args observations addresses)
+              {:keys [trace]} (p/generate model args observations)
+              seed-params (u/extract-params trace addresses)
+              n-params (count addresses)
+              init-params (mx/broadcast-to (mx/expand-dims seed-params 0)
+                                           [n-chains n-params])
+              std (mx/scalar proposal-std)
+              total-steps (+ burn (* thin samples))
+              rk (rng/ensure-key key)
+              [k1 k2] (rng/split rk)
+              noise (rng/normal k1 [total-steps n-chains n-params])
+              uniforms (rng/uniform k2 [total-steps n-chains])
+              _ (mx/materialize! noise uniforms)
+              cfn (or chain-fn
+                      (make-fused-vectorized-burn-and-collect
+                       burn samples thin raw-score-fn std n-chains n-params))
+              result (cfn init-params noise uniforms)]
+          (mx/materialize! (aget result 0) (aget result 1))
+          {:samples (aget result 1) ;; [S,N,D]
+           :final-params (aget result 0) ;; [N,D]
+           :chain-fn cfn})))))
+
 ;; ---------------------------------------------------------------------------
 ;; Enumerative Gibbs Sampling
 ;; ---------------------------------------------------------------------------
