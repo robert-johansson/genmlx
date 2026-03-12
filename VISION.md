@@ -36,7 +36,7 @@ Level 1 (done):   Compiled gen fn — model compiles to single Metal dispatch
 Level 2 (done):   Compiled inference — full SMC/MCMC sweep is one graph
 Level 3 (done):   Auto-analytical — macro detects structure, eliminates sampling
 Level 3.5 (done): Extended analytical — full GFI coverage, combinators, multivariate
-Level 4 (next):   Single fused graph — model + inference + optimization
+Level 4 (done):   Single fused graph — compiled optimization, fused inference, automatic method selection
 Level 5 (future): Cognitive architecture — LLMs as generative functions, theory search
 ```
 
@@ -415,30 +415,32 @@ model, L1 compiled it, L2 compiled inference, L3/3.5 eliminated analytically
 ;; 9. Single mx/eval! ships it to Metal
 ```
 
-### Milestones
+### Results
 
-**L4-M1: Compiled optimization loop.**
-Wrap the gradient computation + Adam update in `mx/compile-fn`. The inner
-loop (compute loss, compute gradient, update parameters) is a single compiled
-call per iteration. The epoch loop is still host-driven but each iteration is
-minimal overhead.
+**Benchmark:** Compiled Adam is **9.2x faster** than the handler-based training loop
+(178ms → 19ms for 200 iterations on a 3-parameter quadratic objective).
 
-**L4-M2: Fused inference + optimization.**
-Compose compiled inference sweeps (Level 2) with compiled optimization
-(L4-M1). The entire "run SMC, compute log-ML gradient, update params" cycle
-is one graph. Multiple cycles can be unrolled into a single graph if MLX
-compile supports it.
+**Implementation:** 6 work packages, 5 gates, ~1000 new lines, 260+ tests.
 
-**L4-M3: Automatic method selection.**
-Given a model and data, the system chooses the inference strategy:
-- All conjugate → exact inference, no sampling
-- Linear-Gaussian temporal → Kalman filter
-- Nonlinear temporal → EKF or compiled SMC
-- Static with few latents → compiled MCMC
-- High-dimensional → compiled VI/ADEV
+- **WP-0: Compiled optimizer** — `mx/compile-fn(mx/value-and-grad(score))` + Adam in
+  a single compiled step. Key insight: pass Adam's `t` counter as an MLX scalar arg
+  so `mx/power` handles bias correction inside the graph.
+- **WP-1: Compiled loss-gradient** — Compose GFI score functions with
+  `mx/value-and-grad`. Tensor-native path for static models, handler fallback otherwise.
+- **WP-2: Fused inference + optimization** — Differentiable MH chains with
+  noise-as-argument pattern. Pre-generate PRNG noise host-side, pass into compiled step.
+  MCMC + Adam + gradient in one compiled dispatch per iteration.
+- **WP-3: Automatic method selection** — Pure decision tree from L3/3.5 metadata:
+  conjugate → exact, Kalman → kalman, temporal → SMC, static few-dim → HMC,
+  high-dim → VI, fallback → handler-IS. With hyperparameter tuning.
+- **WP-4: `fit` API** — One-call entry point: `(fit model args data)`. Auto-selects
+  method, runs inference, extracts posterior, optionally runs parameter learning.
+- **WP-5: Certification** — 41/41 gates, all L0-L3.5 regressions green.
 
-Selection based on the structure metadata from Level 3/3.5's analysis.
-The user calls `(fit model data)` and the system figures out the rest.
+**Known limitation:** VI path (`fused-learn :vi`) segfaults in fresh nbb processes
+(both Bun and Node.js) due to MLX/nbb interaction with `mx/vmap` on GFI score
+functions that use `volatile!` internally. Works correctly in long-lived REPL sessions.
+See `memory/bug_bun_segfault_vmap.md`.
 
 ---
 
@@ -655,7 +657,14 @@ stay lazy, but true single-mx/eval! SMC sweep is not yet achieved.
 - Unified Kalman handler core (generate/regenerate), -98 lines cleanup
 - 150 tests across 5 test files, 5 investigation gates passed
 
+### Level 4 (done)
+
+- Compiled optimization: 9.2x speedup over handler loop
+- Fused MCMC+Adam: differentiable MH chains with noise-as-argument
+- Automatic method selection from L3/3.5 metadata
+- `fit` API: one-call inference entry point
+- 260+ new tests, 41/41 certification gates, all regressions green
+
 ### Next
 
-- Level 4: Single fused graph — compiled optimization, fused inference, automatic method selection
 - Level 5: Cognitive architecture — LLM as generative function, theory search
