@@ -311,6 +311,51 @@
     :warmup-n 2 :outer-n 3 :inner-n 2))
 
 ;; ---------------------------------------------------------------------------
+;; 11. Fused MH (static linreg, cached) — GenMLX only
+;; ---------------------------------------------------------------------------
+
+;; Pre-compile fused chain (one-time cost, not benchmarked)
+(println "\n  [fused-mh] compiling chain (one-time)...")
+(def fused-warmup
+  (mcmc/fused-mh {:samples 10 :burn 10 :addresses [:slope :intercept]
+                   :proposal-std 0.5 :device :cpu}
+                 static-linreg static-args static-obs))
+
+(def fused-mh-linreg
+  (benchmark "fused-MH-linreg-5000"
+    (fn []
+      (let [result (mcmc/fused-mh
+                     {:samples 5000 :burn 0 :addresses [:slope :intercept]
+                      :proposal-std 0.5 :device :cpu
+                      :chain-fn (:chain-fn fused-warmup)}
+                     static-linreg static-args static-obs)]
+        (mx/eval! (mx/scalar (first (mx/shape (:samples result)))))))
+    :warmup-n 3 :outer-n 7 :inner-n 10))
+
+;; ---------------------------------------------------------------------------
+;; 12. Fused Vectorized MH (N=8 chains, static linreg) — GenMLX only
+;; ---------------------------------------------------------------------------
+
+(println "\n  [fused-vec-mh] compiling vectorized chain (one-time)...")
+(def fused-vec-warmup
+  (mcmc/fused-vectorized-mh
+    {:samples 10 :burn 10 :n-chains 8 :addresses [:slope :intercept]
+     :proposal-std 0.5 :device :cpu}
+    static-linreg static-args static-obs))
+
+(def fused-vec-mh-linreg
+  (benchmark "fused-vec-MH-linreg-N8-5000"
+    (fn []
+      (let [result (mcmc/fused-vectorized-mh
+                     {:samples 5000 :burn 0 :n-chains 8
+                      :addresses [:slope :intercept]
+                      :proposal-std 0.5 :device :cpu
+                      :chain-fn (:chain-fn fused-vec-warmup)}
+                     static-linreg static-args static-obs)]
+        (mx/eval! (mx/scalar (first (mx/shape (:samples result)))))))
+    :warmup-n 3 :outer-n 7 :inner-n 10))
+
+;; ---------------------------------------------------------------------------
 ;; Collect & write results
 ;; ---------------------------------------------------------------------------
 
@@ -323,6 +368,8 @@
    {:config "VIS-linreg" :particles 1000 :timing vis-linreg}
    {:config "VIS-linreg" :particles 10000 :timing vis-linreg-10k}
    {:config "MH-linreg" :samples 5000 :timing mh-linreg}
+   {:config "fused-MH-linreg" :samples 5000 :timing fused-mh-linreg}
+   {:config "fused-vec-MH-linreg-N8" :samples 5000 :timing fused-vec-mh-linreg}
    {:config "IS-gmm-seq" :particles 1000 :timing is-gmm-seq}
    {:config "VIS-gmm" :particles 1000 :timing vis-gmm}
    {:config "L3-exact" :timing l3-exact}
