@@ -276,6 +276,52 @@
   (assert-close "posterior intercept ≈ 1" 1.0 mean-int 1.5))
 
 ;; ---------------------------------------------------------------------------
+;; 11. fused-mh public API
+;; ---------------------------------------------------------------------------
+
+(println "\n-- fused-mh public API --")
+
+(let [xs [1.0 2.0 3.0 4.0 5.0]
+      ys (mapv #(+ (* 2.0 %) 1.0) xs)
+      obs (apply cm/choicemap (mapcat (fn [j y] [(keyword (str "y" j)) y]) (range) ys))
+      ;; First call (compiles)
+      r1 (mcmc/fused-mh
+           {:samples 500 :burn 300 :thin 1
+            :addresses [:slope :intercept]
+            :proposal-std 0.3 :key (rng/fresh-key)}
+           linreg-model [xs] obs)]
+  (assert-shape "fused-mh samples" [500 2] (:samples r1))
+  (assert-shape "fused-mh final-params" [2] (:final-params r1))
+  (assert-true "chain-fn returned" (some? (:chain-fn r1)))
+  ;; Second call with cached chain-fn
+  (let [r2 (mcmc/fused-mh
+             {:samples 500 :burn 300 :thin 1
+              :addresses [:slope :intercept]
+              :proposal-std 0.3 :key (rng/fresh-key)
+              :chain-fn (:chain-fn r1)}
+             linreg-model [xs] obs)
+        samples-js (mx/->clj (:samples r2))
+        mean-slope (/ (reduce + (mapv first samples-js)) (count samples-js))]
+    (assert-shape "cached fused-mh samples" [500 2] (:samples r2))
+    (assert-close "cached posterior slope ≈ 2" 2.0 mean-slope 0.5)))
+
+;; ---------------------------------------------------------------------------
+;; 12. fused-mh with thin > 1
+;; ---------------------------------------------------------------------------
+
+(println "\n-- fused-mh thin=2 --")
+
+(let [xs [1.0 2.0 3.0 4.0 5.0]
+      ys (mapv #(+ (* 2.0 %) 1.0) xs)
+      obs (apply cm/choicemap (mapcat (fn [j y] [(keyword (str "y" j)) y]) (range) ys))
+      result (mcmc/fused-mh
+               {:samples 200 :burn 200 :thin 2
+                :addresses [:slope :intercept]
+                :proposal-std 0.3 :key (rng/fresh-key)}
+               linreg-model [xs] obs)]
+  (assert-shape "fused-mh thin=2" [200 2] (:samples result)))
+
+;; ---------------------------------------------------------------------------
 ;; Summary
 ;; ---------------------------------------------------------------------------
 

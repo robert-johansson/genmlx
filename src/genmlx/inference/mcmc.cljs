@@ -520,6 +520,47 @@
             mx/->clj
             init-params))))))
 
+(defn fused-mh
+  "Fully fused MH: burn-in + thinned collection in ONE Metal dispatch.
+   Pre-generates all noise upfront, compiles the entire chain into a single
+   function. Returns {:samples MLX-array [S,D] :final-params MLX-array [D]
+                      :chain-fn compiled-fn}.
+
+   First call incurs compilation overhead (~2-10s depending on chain length).
+   Pass :chain-fn from a previous call to skip recompilation.
+
+   opts: {:samples N :burn B :thin T :addresses [addr...]
+          :proposal-std σ :key prng-key :device :cpu|:gpu
+          :chain-fn compiled-fn-from-previous-call}
+   model: generative function
+   args:  model arguments
+   observations: choice map of observed values
+
+   Default device: :cpu."
+  [{:keys [samples burn thin addresses proposal-std key device chain-fn]
+    :or {burn 500 samples 1000 thin 1 proposal-std 0.1 device :cpu}}
+   model args observations]
+  (let [model (dyn/auto-key model)]
+    (with-device device
+      (fn []
+        (let [{:keys [trace]} (p/generate model args observations)
+              {:keys [score-fn init-params n-params tensor-native?]}
+              (u/prepare-mcmc-score model args observations addresses trace)
+              _ (when (and (not tensor-native?) (nil? chain-fn))
+                  (println "Warning: fused-mh using GFI score (slow). Consider a static model."))
+              std (mx/scalar proposal-std)
+              total-steps (+ burn (* thin samples))
+              rk (rng/ensure-key key)
+              {:keys [noise uniforms]} (pre-generate-chain-noise rk total-steps n-params)
+              ;; Reuse chain-fn if provided, otherwise compile
+              cfn (or chain-fn
+                      (make-fused-burn-and-collect burn samples thin score-fn std n-params))
+              result (cfn init-params noise uniforms)]
+          (mx/materialize! (aget result 0) (aget result 1))
+          {:samples (aget result 1)
+           :final-params (aget result 0)
+           :chain-fn cfn})))))
+
 ;; ---------------------------------------------------------------------------
 ;; Vectorized Compiled MH (N parallel chains)
 ;; ---------------------------------------------------------------------------
