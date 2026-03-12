@@ -247,13 +247,81 @@
 
           (recur (inc i) new-params new-m new-v losses'))))))
 
+(defn- ad-train
+  "Training loop for compiled-generate score functions.
+   Uses mx/value-and-grad for exact AD gradients (not compiled, not finite-diff).
+   Per-iteration mx/materialize! since mx/compile-fn can't wrap ChoiceMap ops.
+
+   score-fn: (fn [params-tensor] -> MLX scalar) — objective to MAXIMIZE.
+   init-params: [D] MLX array.
+   opts: same as compiled-train.
+
+   Returns {:params final-params :loss-history [numbers...]}."
+  [score-fn init-params
+   {:keys [iterations lr beta1 beta2 epsilon callback log-every]
+    :or {iterations 1000 lr 0.001 beta1 0.9 beta2 0.999
+         epsilon 1e-8 log-every 50}}]
+  (let [d (mx/shape init-params)
+        neg-score (fn [p] (mx/negative (score-fn p)))
+        vg (mx/value-and-grad neg-score)
+        beta1-s (mx/scalar beta1)
+        beta2-s (mx/scalar beta2)
+        one-minus-b1-s (mx/scalar (- 1.0 beta1))
+        one-minus-b2-s (mx/scalar (- 1.0 beta2))
+        lr-s (mx/scalar lr)
+        eps-s (mx/scalar epsilon)]
+    (loop [i 0
+           params init-params
+           m (mx/zeros d)
+           v (mx/zeros d)
+           losses (transient [])]
+      (if (>= i iterations)
+        (do
+          (mx/materialize! params)
+          {:params params :loss-history (persistent! losses)})
+        (let [[loss grad] (vg params)
+              _ (mx/materialize! loss grad)
+
+              ;; Adam moment updates (host-side bias correction)
+              t (double (inc i))
+              new-m (mx/add (mx/multiply beta1-s m)
+                            (mx/multiply one-minus-b1-s grad))
+              new-v (mx/add (mx/multiply beta2-s v)
+                            (mx/multiply one-minus-b2-s (mx/square grad)))
+              m-hat (mx/divide new-m (mx/scalar (- 1.0 (js/Math.pow beta1 t))))
+              v-hat (mx/divide new-v (mx/scalar (- 1.0 (js/Math.pow beta2 t))))
+              update-vec (mx/divide m-hat
+                                    (mx/add (mx/sqrt v-hat) eps-s))
+              new-params (mx/subtract params (mx/multiply lr-s update-vec))
+
+              _ (mx/materialize! new-params new-m new-v)
+
+              ;; Log loss at boundaries
+              log? (or (zero? i) (zero? (mod (inc i) log-every)))
+              loss-val (mx/item loss)
+              losses' (if log?
+                        (do
+                          (when callback
+                            (callback {:iter i :loss loss-val :params new-params}))
+                          (conj! losses loss-val))
+                        losses)]
+
+          ;; Periodic cleanup
+          (when (and (pos? i) (zero? (mod i 50)))
+            (mx/clear-cache!)
+            (mx/sweep-dead-arrays!))
+
+          (recur (inc i) new-params new-m new-v losses'))))))
+
 (defn make-compiled-loss-grad
   "Build a compiled loss+gradient function for parameter learning.
 
-   Tries two paths in priority order:
+   Tries three paths in priority order:
    1. Tensor-native score (L2) — pure MLX ops, no GFI. Wraps in
       mx/compile-fn(mx/value-and-grad(negative(score-fn))). Fully compiled.
-   2. Handler-based score (L0) — full GFI via u/make-score-fn. Uses
+   2. Compiled-generate score — compiled generate as score fn. Uses
+      mx/value-and-grad for exact AD gradients (no mx/compile-fn).
+   3. Handler-based score (L0) — full GFI via u/make-score-fn. Uses
       finite-difference gradients (GFI not differentiable through MLX AD).
 
    Automatically filters out L3/3.5 analytically eliminated addresses.
@@ -268,15 +336,15 @@
       :score-fn           (fn [params-tensor] -> scalar)
       :init-params        [K] MLX array
       :n-params           int
-      :compilation-level  :tensor-native | :handler
+      :compilation-level  :tensor-native | :compiled-generate | :handler
       :latent-index       {addr -> int}}"
   [model args observations addresses]
   (let [model-keyed (dyn/auto-key model)
         ;; L3.5: filter out analytically eliminated addresses
         eliminated (u/get-eliminated-addresses model)
         addresses (u/filter-addresses addresses eliminated)
-        ;; Try tensor-native path first
-        {:keys [score-fn latent-index tensor-native?]}
+        ;; Try tensor-native → compiled-generate → handler
+        {:keys [score-fn latent-index tensor-native? compiled-generate?]}
         (u/make-tensor-score-fn model args observations addresses)
         ;; Get initial trace for extracting init-params
         {:keys [trace]} (p/generate model-keyed args observations)]
@@ -293,23 +361,35 @@
          :n-params n-params
          :compilation-level :tensor-native
          :latent-index latent-index})
-      ;; Path 2: Handler-based — finite-difference gradients
-      (let [layout (u/compute-param-layout trace addresses)
-            init-params (u/extract-params trace addresses layout)
-            n-params (:total-size layout)
-            gfi-score-fn (u/make-score-fn model args observations addresses layout)
-            neg-score (fn [params] (mx/negative (gfi-score-fn params)))
-            loss-grad (fn [params]
-                        (let [loss (neg-score params)
-                              grad (finite-diff-grad neg-score params 1e-4)]
-                          (mx/materialize! loss grad)
-                          [loss grad]))]
-        {:loss-grad-fn loss-grad
-         :score-fn gfi-score-fn
-         :init-params init-params
-         :n-params n-params
-         :compilation-level :handler
-         :latent-index latent-index}))))
+      (if compiled-generate?
+        ;; Path 2: Compiled-generate — exact AD, not compiled
+        (let [init-params (u/extract-params trace addresses)
+              n-params (first (mx/shape init-params))
+              neg-score (fn [params] (mx/negative (score-fn params)))
+              vg (mx/value-and-grad neg-score)]
+          {:loss-grad-fn vg
+           :score-fn score-fn
+           :init-params init-params
+           :n-params n-params
+           :compilation-level :compiled-generate
+           :latent-index latent-index})
+        ;; Path 3: Handler-based — finite-difference gradients
+        (let [layout (u/compute-param-layout trace addresses)
+              init-params (u/extract-params trace addresses layout)
+              n-params (:total-size layout)
+              gfi-score-fn (u/make-score-fn model args observations addresses layout)
+              neg-score (fn [params] (mx/negative (gfi-score-fn params)))
+              loss-grad (fn [params]
+                          (let [loss (neg-score params)
+                                grad (finite-diff-grad neg-score params 1e-4)]
+                            (mx/materialize! loss grad)
+                            [loss grad]))]
+          {:loss-grad-fn loss-grad
+           :score-fn gfi-score-fn
+           :init-params init-params
+           :n-params n-params
+           :compilation-level :handler
+           :latent-index latent-index})))))
 
 (defn learn
   "Learn model parameters via compiled gradient optimization.
@@ -343,9 +423,10 @@
         train-opts (merge {:iterations iterations :lr lr :log-every log-every
                            :callback callback}
                           (select-keys opts [:beta1 :beta2 :epsilon :fd-h]))
-        result (if (= compilation-level :tensor-native)
-                 (compiled-train score-fn init-params train-opts)
-                 (handler-train score-fn init-params train-opts))]
+        result (case compilation-level
+                 :tensor-native (compiled-train score-fn init-params train-opts)
+                 :compiled-generate (ad-train score-fn init-params train-opts)
+                 :handler (handler-train score-fn init-params train-opts))]
     (assoc result
            :compilation-level compilation-level
            :latent-index latent-index

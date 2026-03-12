@@ -1,8 +1,15 @@
 (ns genmlx.compiled-optimizer-test
   "Tests for WP-0: Compiled optimization step.
-   Covers make-compiled-opt-step and compiled-train."
+   Covers make-compiled-opt-step, compiled-train, and compiled-generate score path."
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             [genmlx.learning :as learn]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]
+            [genmlx.dynamic :as dyn]
+            [genmlx.gen :refer [gen]]
+            [genmlx.dist :as dist]
+            [genmlx.inference.util :as u]
             [genmlx.inference.compiled-optimizer :as co]))
 
 ;; ---------------------------------------------------------------------------
@@ -313,6 +320,147 @@
                (< mem-peak (* 1024 1024)))
   (assert-true "500 iters: converging"
                (< (last (:loss-history result)) (first (:loss-history result)))))
+
+;; ---------------------------------------------------------------------------
+;; 10. Compiled-generate score function (middle tier)
+;; ---------------------------------------------------------------------------
+
+(println "\n=== 10. Compiled-generate score function ===")
+
+;; Non-conjugate branch model: uniform prior + gaussian likelihood.
+;; Branch → static?=false → no tensor-native score.
+;; Branch-rewriting → compiled-generate works.
+;; Uniform prior → no L3/3.5 conjugacy → no elimination.
+(def cg-model
+  (gen [flag]
+    (let [mu (trace :mu (dist/uniform -10 10))]
+      (if flag
+        (trace :obs (dist/gaussian mu 1))
+        (trace :obs (dist/gaussian mu 5)))
+      mu)))
+
+(def cg-obs (cm/choicemap :obs (mx/scalar 5.0)))
+
+;; 10a. Model has compiled-generate but NOT tensor-native, not eliminated
+(let [schema (:schema cg-model)]
+  (assert-true "cg-model has :compiled-generate"
+    (some? (:compiled-generate schema)))
+  (assert-true "cg-model has-branches? = true"
+    (:has-branches? schema))
+  (assert-true "no eliminated addresses"
+    (nil? (u/get-eliminated-addresses cg-model))))
+
+;; 10b. make-compiled-generate-score-fn returns non-nil
+(let [result (u/make-compiled-generate-score-fn cg-model [true] cg-obs [:mu])]
+  (assert-true "make-compiled-generate-score-fn returns result"
+    (some? result))
+  (assert-true "result has :score-fn" (fn? (:score-fn result)))
+  (assert-true "result has :latent-index" (map? (:latent-index result))))
+
+;; 10c. Score values match handler (both go through compiled-gen under the hood)
+(let [{cg-score-fn :score-fn} (u/make-compiled-generate-score-fn cg-model [true] cg-obs [:mu])
+      handler-score-fn (u/make-score-fn (dyn/auto-key cg-model) [true] cg-obs [:mu])
+      params (mx/array [3.0])
+      cg-val (mx/item (cg-score-fn params))
+      handler-val (mx/item (handler-score-fn params))]
+  (assert-close "cg score matches handler" handler-val cg-val 0.01))
+
+;; 10d. make-tensor-score-fn dispatches to compiled-generate (not tensor-native)
+(let [result (u/make-tensor-score-fn cg-model [true] cg-obs [:mu])]
+  (assert-true "tensor-native? is false" (not (:tensor-native? result)))
+  (assert-true "compiled-generate? is true" (:compiled-generate? result)))
+
+;; 10e. mx/grad produces correct gradients through compiled-generate score
+;; Analytical: d/dmu [log U(mu|-10,10) + log N(5|mu,1)]
+;; = 0 + (5-mu) = 2.0 at mu=3
+(let [{:keys [score-fn]} (u/make-compiled-generate-score-fn cg-model [true] cg-obs [:mu])
+      grad-fn (mx/grad score-fn)
+      params (mx/array [3.0])
+      grad-val (mx/item (grad-fn params))]
+  (assert-close "mx/grad through cg score: gradient = 2.0" 2.0 grad-val 0.1))
+
+;; 10f. mx/value-and-grad works
+(let [{:keys [score-fn]} (u/make-compiled-generate-score-fn cg-model [true] cg-obs [:mu])
+      neg-score (fn [p] (mx/negative (score-fn p)))
+      vg (mx/value-and-grad neg-score)
+      params (mx/array [3.0])
+      [loss grad] (vg params)]
+  (mx/materialize! loss grad)
+  (assert-true "value-and-grad: loss is positive (neg log-prob)" (pos? (mx/item loss)))
+  (assert-close "value-and-grad: grad = -2.0" -2.0 (mx/item grad) 0.1))
+
+;; ---------------------------------------------------------------------------
+;; 11. make-compiled-loss-grad with compiled-generate
+;; ---------------------------------------------------------------------------
+
+(println "\n=== 11. make-compiled-loss-grad compiled-generate path ===")
+
+(let [result (co/make-compiled-loss-grad cg-model [true] cg-obs [:mu])]
+  (assert-true "compilation-level is :compiled-generate"
+    (= :compiled-generate (:compilation-level result)))
+  (assert-true "has loss-grad-fn" (fn? (:loss-grad-fn result)))
+  (assert-true "has score-fn" (fn? (:score-fn result)))
+  (assert-true "has init-params" (some? (:init-params result)))
+  (assert-true "n-params = 1" (= 1 (:n-params result))))
+
+;; loss-grad-fn returns [loss, grad]
+(let [{:keys [loss-grad-fn]} (co/make-compiled-loss-grad cg-model [true] cg-obs [:mu])
+      params (mx/array [3.0])
+      [loss grad] (loss-grad-fn params)]
+  (mx/materialize! loss grad)
+  (assert-true "loss-grad-fn: loss > 0" (pos? (mx/item loss)))
+  (assert-true "loss-grad-fn: grad shape [1]" (= [1] (mx/shape grad))))
+
+;; ---------------------------------------------------------------------------
+;; 12. learn converges via compiled-generate path
+;; ---------------------------------------------------------------------------
+
+(println "\n=== 12. learn via compiled-generate ===")
+
+;; MAP for uniform(-10,10) + N(obs=5|mu,1): mu=5 (MLE, uniform is flat)
+(let [result (co/learn cg-model [true] cg-obs [:mu]
+               {:iterations 200 :lr 0.05 :log-every 50})]
+  (mx/materialize! (:params result))
+  (assert-true "learn: compilation-level is :compiled-generate"
+    (= :compiled-generate (:compilation-level result)))
+  (assert-true "learn: has loss-history" (vector? (:loss-history result)))
+  (assert-true "learn: loss decreased"
+    (< (last (:loss-history result)) (first (:loss-history result))))
+  (let [mu-final (mx/item (:params result))]
+    (assert-close "learn: mu converges to MAP ≈ 5.0" 5.0 mu-final 0.3)))
+
+;; ---------------------------------------------------------------------------
+;; 13. Multi-site branch model
+;; ---------------------------------------------------------------------------
+
+(println "\n=== 13. Multi-site compiled-generate ===")
+
+;; Uniform priors (non-conjugate) + branch around trace
+(def cg-multi
+  (gen [flag]
+    (let [slope (trace :slope (dist/uniform -10 10))
+          intercept (trace :intercept (dist/uniform -10 10))
+          total (mx/add slope intercept)]
+      (if flag
+        (trace :y (dist/gaussian total 1))
+        (trace :y (dist/gaussian total 5)))
+      total)))
+
+(def cg-multi-obs (cm/choicemap :y (mx/scalar 4.0)))
+
+(let [result (co/make-compiled-loss-grad cg-multi [true] cg-multi-obs [:slope :intercept])]
+  (assert-true "multi-site: compilation-level is :compiled-generate"
+    (= :compiled-generate (:compilation-level result)))
+  (assert-true "multi-site: n-params = 2" (= 2 (:n-params result))))
+
+(let [result (co/learn cg-multi [true] cg-multi-obs [:slope :intercept]
+               {:iterations 300 :lr 0.05 :log-every 100})]
+  (mx/materialize! (:params result))
+  (let [final (mx/->clj (:params result))
+        total (+ (nth final 0) (nth final 1))]
+    (assert-true "multi-site: loss decreased"
+      (< (last (:loss-history result)) (first (:loss-history result))))
+    (assert-close "multi-site: slope + intercept ≈ 4.0" 4.0 total 0.5)))
 
 ;; ---------------------------------------------------------------------------
 ;; Summary

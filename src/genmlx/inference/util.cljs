@@ -383,13 +383,34 @@
 ;; Level 2: Tensor-native score function (tries compiled, falls back to GFI)
 ;; ===========================================================================
 
+(defn make-compiled-generate-score-fn
+  "Build a score function from compiled generate.
+   All sites (latent + observed) are constrained — no sampling, no key needed.
+   Returns {:score-fn (fn [K-tensor] -> scalar) :latent-index {addr -> int}}
+   or nil if model has no compiled-generate."
+  [model args observations addresses]
+  (when-let [compiled-gen (:compiled-generate (:schema model))]
+    (let [latent-index (into {} (map-indexed (fn [i a] [a i]) addresses))
+          mlx-args (vec args)
+          indexed-addrs (mapv vector (range) addresses)]
+      {:score-fn
+       (fn [params]
+         (let [constraints (reduce
+                            (fn [cm [i addr]]
+                              (cm/set-choice cm [addr] (mx/index params i)))
+                            observations
+                            indexed-addrs)]
+           (:weight (compiled-gen (rng/fresh-key) mlx-args constraints))))
+       :latent-index latent-index})))
+
 (defn make-tensor-score-fn
   "Try to build a tensor-native score function from model schema.
-   Falls back to GFI-based make-score-fn if the model can't be compiled.
+   Falls back through: tensor-native → compiled-generate → GFI handler.
 
    Returns {:score-fn (fn [K-tensor] -> scalar)
             :latent-index {addr -> int}
-            :tensor-native? bool}
+            :tensor-native? bool
+            :compiled-generate? bool}
 
    When tensor-native? is true, score-fn takes a [K]-shaped latent tensor.
    When false, score-fn takes a [D]-shaped params array (same as make-score-fn)
@@ -399,13 +420,18 @@
         source (:source model)]
     (if-let [result (compiled/make-tensor-score-with-index
                       schema source (vec args) observations)]
-      (assoc result :tensor-native? true)
-      ;; Fall back to GFI-based score
-      (let [gfi-fn (make-score-fn model args observations addresses)
-            latent-index (into {} (map-indexed (fn [i a] [a i]) addresses))]
-        {:score-fn gfi-fn
-         :latent-index latent-index
-         :tensor-native? false}))))
+      (assoc result :tensor-native? true :compiled-generate? false)
+      ;; Try compiled-generate before falling back to GFI handler
+      (if-let [cg-result (make-compiled-generate-score-fn
+                           model args observations addresses)]
+        (assoc cg-result :tensor-native? false :compiled-generate? true)
+        ;; Fall back to GFI-based score
+        (let [gfi-fn (make-score-fn model args observations addresses)
+              latent-index (into {} (map-indexed (fn [i a] [a i]) addresses))]
+          {:score-fn gfi-fn
+           :latent-index latent-index
+           :tensor-native? false
+           :compiled-generate? false})))))
 
 (defn extract-params-by-index
   "Extract parameter values from a trace using latent-index ordering.
