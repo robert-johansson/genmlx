@@ -662,7 +662,23 @@
                 (let [z (mx/divide (mx/subtract v loc) scale)]
                   (mx/negative
                    (mx/add LOG-PI (mx/log scale)
-                           (mx/log (mx/add ONE (mx/square z)))))))}})
+                           (mx/log (mx/add ONE (mx/square z)))))))}
+
+   :iid-gaussian
+   {:noise-fn nil ;; noise shape depends on t (3rd dist-arg)
+    :args-noise-fn (fn [eval-args key]
+                     (let [t (let [v (nth eval-args 2)]
+                               (if (number? v) v (mx/item v)))]
+                       (rng/normal key [t])))
+    :transform (fn [noise mu sigma _t]
+                 (mx/add mu (mx/multiply sigma noise)))
+    :log-prob (fn [v mu sigma _t]
+                (let [z (mx/divide (mx/subtract v mu) sigma)]
+                  (mx/sum
+                   (mx/negative
+                    (mx/add LOG-2PI-HALF (mx/log sigma)
+                            (mx/multiply HALF (mx/square z))))
+                   -1)))}})
 
 ;; Aliases
 (def noise-transforms-full
@@ -717,7 +733,8 @@
   (let [{:keys [addr compiled-args dist-type]} site-spec
         nt (get noise-transforms-full dist-type)]
     (when nt
-      (if (:noise-fn nt)
+      (cond
+        (:noise-fn nt)
         ;; Standard distribution: generate noise, transform, score
         (let [noise-fn (:noise-fn nt)
               transform-fn (:transform nt)
@@ -731,6 +748,23 @@
               {:values (assoc values addr value)
                :score (mx/add score lp)
                :key k1})))
+
+        (:args-noise-fn nt)
+        ;; Dynamic-shape noise (iid-gaussian): noise depends on eval-args
+        (let [args-noise-fn (:args-noise-fn nt)
+              transform-fn (:transform nt)
+              log-prob-fn (:log-prob nt)]
+          (fn [{:keys [values score key]} args-vec]
+            (let [eval-args (mapv #(% values args-vec) compiled-args)
+                  [k1 k2] (rng/split key)
+                  noise (args-noise-fn eval-args k2)
+                  value (apply transform-fn noise eval-args)
+                  lp (apply log-prob-fn value eval-args)]
+              {:values (assoc values addr value)
+               :score (mx/add score lp)
+               :key k1})))
+
+        :else
         ;; Delta: no noise, value = first arg, lp = 0 (in simulate, value always matches)
         ;; Still consume a key split for PRNG equivalence with handler
         (fn [{:keys [values score key]} args-vec]
@@ -792,24 +826,34 @@
                       vals (mapv #(get (:values result) %) addrs)]
                   ;; Return flat JS array: [v0 v1 ... vN score]
                   (to-array (conj vals (:score result)))))
-              ;; Build arity-specific wrapper for mx/compile-fn
+              ;; Build arity-specific wrapper for mx/compile-fn.
+              ;; Skip mx/compile-fn when any site uses :args-noise-fn
+              ;; (dynamic noise shape breaks Metal graph caching).
               n-params (count (first source))
+              has-dynamic-noise?
+              (some (fn [ss]
+                      (let [nt (get noise-transforms-full (:dist-type ss))]
+                        (and nt (:args-noise-fn nt))))
+                    site-specs)
               compiled-inner
-              (case n-params
-                0 (let [f (fn [key] (inner-fn key []))
-                        cf (mx/compile-fn f)]
-                    (fn [key _args] (cf key)))
-                1 (let [f (fn [key a0] (inner-fn key [a0]))
-                        cf (mx/compile-fn f)]
-                    (fn [key args] (cf key (nth args 0))))
-                2 (let [f (fn [key a0 a1] (inner-fn key [a0 a1]))
-                        cf (mx/compile-fn f)]
-                    (fn [key args] (cf key (nth args 0) (nth args 1))))
-                3 (let [f (fn [key a0 a1 a2] (inner-fn key [a0 a1 a2]))
-                        cf (mx/compile-fn f)]
-                    (fn [key args] (cf key (nth args 0) (nth args 1) (nth args 2))))
-                ;; >3 params: no mx/compile-fn, use raw noise transforms
-                (fn [key args] (inner-fn key args)))]
+              (if has-dynamic-noise?
+                ;; Raw noise transforms — still faster than multimethod dispatch
+                (fn [key args] (inner-fn key args))
+                (case n-params
+                  0 (let [f (fn [key] (inner-fn key []))
+                          cf (mx/compile-fn f)]
+                      (fn [key _args] (cf key)))
+                  1 (let [f (fn [key a0] (inner-fn key [a0]))
+                          cf (mx/compile-fn f)]
+                      (fn [key args] (cf key (nth args 0))))
+                  2 (let [f (fn [key a0 a1] (inner-fn key [a0 a1]))
+                          cf (mx/compile-fn f)]
+                      (fn [key args] (cf key (nth args 0) (nth args 1))))
+                  3 (let [f (fn [key a0 a1 a2] (inner-fn key [a0 a1 a2]))
+                          cf (mx/compile-fn f)]
+                      (fn [key args] (cf key (nth args 0) (nth args 1) (nth args 2))))
+                  ;; >3 params: no mx/compile-fn, use raw noise transforms
+                  (fn [key args] (inner-fn key args))))]
           ;; Outer wrapper: GenMLX interface
           (fn compiled-simulate [key args-vec]
             (let [mlx-args (ensure-mlx-args args-vec)

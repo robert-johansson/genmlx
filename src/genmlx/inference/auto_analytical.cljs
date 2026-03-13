@@ -44,6 +44,37 @@
   (let [r (conjugate/nn-update posterior obs-value obs-var MASK-ON)]
     {:mean (:mean (:posterior r)) :var (:var (:posterior r)) :ll (:ll r)}))
 
+(defn nn-iid-update-step
+  "Normal-IID-Normal conjugate update. Processes [T] observations at once.
+   posterior: {:mean :var}, obs-values: [T]-shaped array, obs-var (sigma^2)
+   Returns: {:mean :var :ll}
+
+   Math: T observations y_1..y_T from N(mu, sigma^2)
+     posterior-prec = 1/prior-var + T/obs-var
+     posterior-mean = posterior-var * (prior-mean/prior-var + sum(y)/obs-var)
+     marginal LL = sum of per-element N(y_i; prior-mean, prior-var + obs-var)"
+  [posterior obs-values obs-var]
+  (let [{:keys [mean var]} posterior
+        obs-values (mx/ensure-array obs-values)
+        t-val (mx/scalar (first (mx/shape obs-values)))
+        sum-obs (mx/sum obs-values)
+        ;; Posterior
+        inv-prior (mx/divide (mx/scalar 1.0) var)
+        inv-obs-total (mx/divide t-val obs-var)
+        new-var (mx/divide (mx/scalar 1.0) (mx/add inv-prior inv-obs-total))
+        new-mean (mx/multiply new-var
+                   (mx/add (mx/multiply inv-prior mean)
+                           (mx/divide sum-obs obs-var)))
+        ;; Marginal LL: sum of N(y_i; prior-mean, prior-var + obs-var)
+        S (mx/add var obs-var)
+        innov (mx/subtract obs-values mean)
+        element-lls (mx/multiply (mx/scalar -0.5)
+                      (mx/add (mx/scalar LOG-2PI)
+                        (mx/add (mx/log S)
+                          (mx/divide (mx/multiply innov innov) S))))
+        ll (mx/sum element-lls)]
+    {:mean new-mean :var new-var :ll ll}))
+
 (defn bb-update-step
   "Beta-Bernoulli conjugate update. Wraps conjugate/bb-update with mask=1.
    posterior: {:alpha :beta}, obs-value (0 or 1)
@@ -151,6 +182,19 @@
                            (fn [posterior obs-value {:keys [sigma]}]
                              (let [obs-var (mx/multiply sigma sigma)
                                    {:keys [mean var ll]} (nn-update-step posterior obs-value obs-var)]
+                               {:posterior {:mean mean :var var} :ll ll}))))
+
+(defn make-auto-nn-iid-handlers
+  "Build address-based handlers for a Normal prior + iid-gaussian obs pair.
+   Processes [T] observations at once via nn-iid-update-step."
+  [prior-addr obs-addrs]
+  (make-conjugate-handlers prior-addr obs-addrs
+                           (fn [{:keys [mu sigma]}]
+                             {:mean mu :var (mx/multiply sigma sigma)})
+                           :mean
+                           (fn [posterior obs-value {:keys [sigma]}]
+                             (let [obs-var (mx/multiply sigma sigma)
+                                   {:keys [mean var ll]} (nn-iid-update-step posterior obs-value obs-var)]
                                {:posterior {:mean mean :var var} :ll ll}))))
 
 (defn make-auto-bb-handlers
@@ -454,6 +498,7 @@
 (def family->handler-factory
   "Map from conjugate family keyword to handler factory function."
   {:normal-normal make-auto-nn-handlers
+   :normal-iid-normal make-auto-nn-iid-handlers
    :beta-bernoulli make-auto-bb-handlers
    :gamma-poisson make-auto-gp-handlers
    :gamma-exponential make-auto-ge-handlers
@@ -543,6 +588,18 @@
                                               {:keys [mean var ll]} (nn-update-step posterior obs-value obs-var)]
                                           {:posterior {:mean mean :var var} :ll ll}))))
 
+(defn make-regenerate-nn-iid-handlers
+  "Build regenerate-specific handlers for Normal prior + iid-gaussian obs."
+  [prior-addr obs-addrs]
+  (make-regenerate-conjugate-handlers prior-addr obs-addrs
+                                      (fn [{:keys [mu sigma]}]
+                                        {:mean mu :var (mx/multiply sigma sigma)})
+                                      :mean
+                                      (fn [posterior obs-value {:keys [sigma]}]
+                                        (let [obs-var (mx/multiply sigma sigma)
+                                              {:keys [mean var ll]} (nn-iid-update-step posterior obs-value obs-var)]
+                                          {:posterior {:mean mean :var var} :ll ll}))))
+
 (defn make-regenerate-bb-handlers
   "Build regenerate-specific handlers for Beta-Bernoulli."
   [prior-addr obs-addrs]
@@ -614,6 +671,7 @@
 (def regenerate-family->handler-factory
   "Map from conjugate family keyword to regenerate-specific handler factory."
   {:normal-normal make-regenerate-nn-handlers
+   :normal-iid-normal make-regenerate-nn-iid-handlers
    :beta-bernoulli make-regenerate-bb-handlers
    :gamma-poisson make-regenerate-gp-handlers
    :gamma-exponential make-regenerate-ge-handlers

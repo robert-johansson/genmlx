@@ -32,7 +32,8 @@
         nt (get compiled/noise-transforms-full dist-type)]
     (when nt
       (let [log-prob-fn (:log-prob nt)]
-        (if (:noise-fn nt)
+        (cond
+          (:noise-fn nt)
           ;; Standard distribution with noise transform
           (let [noise-fn (:noise-fn nt)
                 transform-fn (:transform nt)]
@@ -57,6 +58,35 @@
                      :score (mx/add score lp)
                      :weight weight
                      :key k1})))))
+
+          (:args-noise-fn nt)
+          ;; Dynamic-shape distribution (e.g., iid-gaussian): noise shape
+          ;; depends on dist-args, so use args-noise-fn
+          (let [args-noise-fn (:args-noise-fn nt)
+                transform-fn (:transform nt)]
+            (fn [{:keys [values score weight key] :as state} args-vec constraints]
+              (let [constraint (cm/get-submap constraints addr)]
+                (if (cm/has-value? constraint)
+                  ;; Constrained: use value, score + weight
+                  (let [value (cm/get-value constraint)
+                        eval-args (mapv #(% values args-vec) compiled-args)
+                        lp (apply log-prob-fn value eval-args)]
+                    {:values (assoc values addr value)
+                     :score (mx/add score lp)
+                     :weight (mx/add weight lp)
+                     :key key})
+                  ;; Unconstrained: sample via args-noise-fn
+                  (let [eval-args (mapv #(% values args-vec) compiled-args)
+                        [k1 k2] (rng/split key)
+                        noise (args-noise-fn eval-args k2)
+                        value (apply transform-fn noise eval-args)
+                        lp (apply log-prob-fn value eval-args)]
+                    {:values (assoc values addr value)
+                     :score (mx/add score lp)
+                     :weight weight
+                     :key k1})))))
+
+          :else
           ;; Delta distribution: no noise transform
           (fn [{:keys [values score weight key] :as state} args-vec constraints]
             (let [constraint (cm/get-submap constraints addr)]

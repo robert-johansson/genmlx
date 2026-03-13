@@ -66,6 +66,15 @@
     :obs-cov-key :cov-matrix
     :natural-param-idx 0}
 
+   ;; Normal prior + iid-gaussian observations (T observations at once)
+   [:gaussian :iid-gaussian]
+   {:family :normal-iid-normal
+    :prior-mean-key :mu
+    :prior-std-key :sigma
+    :obs-mean-key :mu
+    :obs-noise-key :sigma
+    :natural-param-idx 0}
+
    ;; Explicitly NOT conjugate
    [:gaussian :bernoulli] nil
    [:beta-dist :gaussian] nil
