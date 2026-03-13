@@ -435,10 +435,10 @@
 (println "  EXPERIMENT 5: L3 Auto-Conjugacy Showcase")
 (println (apply str (repeat 70 "=")))
 (println "\n  Measures variance reduction from automatic analytical elimination.")
-(println "  5 conjugate families tested, 10000 IS particles per trial, 20 trials.\n")
+(println "  5 conjugate families tested, 1000 IS particles per trial, 10 trials.\n")
 
-(def n-particles 10000)
-(def n-trials 20)
+(def n-particles 1000)
+(def n-trials 10)
 
 ;; ---------------------------------------------------------------------------
 ;; 5A: Normal-Normal

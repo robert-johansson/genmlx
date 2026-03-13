@@ -3,7 +3,7 @@
 **Date:** 2026-03-05
 **Model:** T=100, p_change=0.05, mu ~ N(0,5), sigma=1
 **True changepoints:** [10 43 46 62 90 93] (6 total)
-**Exact log P(y):** -178.4776
+**Exact log P(y):** -162.6524
 
 ## Key Expressiveness Feature
 
@@ -23,10 +23,10 @@ The `if` on a sampled Bernoulli creates **data-dependent random structure**.
 
 | Method | Particles | log-ML error | ESS | Time (ms) |
 |--------|-----------|-------------|-----|----------|
-| smc | 100 | 51.56 +/- 17.06 | 100.0 | 55993 |
-| smc | 250 | 7.93 +/- 8.85 | 250.0 | 131209 |
-| smc | 500 | 5.33 +/- 1.94 | 500.0 | 172645 |
-| is | 1000 | 263.92 +/- 16.39 | 1.0 | 95148 |
+| smc | 100 | 13.95 +/- 2.05 | 100.0 | 15540 |
+| smc | 250 | 5.34 +/- 4.92 | 250.0 | 34796 |
+| smc | 500 | 1.11 +/- 1.35 | 500.0 | 66399 |
+| is | 1000 | 205.72 +/- 21.39 | 1.0 | 47203 |
 
 ## Interpretation
 

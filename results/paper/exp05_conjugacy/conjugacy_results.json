@@ -1,0 +1,424 @@
+{
+  "experiment": "exp05_conjugacy",
+  "description": "L3 Auto-Conjugacy Showcase: variance reduction from analytical elimination",
+  "timestamp": "2026-03-13T07:02:16.747Z",
+  "hardware": {
+    "platform": "macOS",
+    "chip": "Apple Silicon",
+    "gpu": "Metal"
+  },
+  "config": {
+    "n_particles": 1000,
+    "n_trials": 10
+  },
+  "sub_experiments": {
+    "exp5a": {
+      "method_selection": {
+        "method": "exact",
+        "reason": "All trace sites eliminated by analytical plan",
+        "eliminated": [
+          "mu"
+        ],
+        "residual": [],
+        "n_eliminated": 1,
+        "n_residual": 0
+      },
+      "n_particles": 1000,
+      "ess_improvement": 14.967118704587483,
+      "ground_truth": {
+        "distribution": "Normal",
+        "mean": 1.1177644710578842,
+        "std": 0.4467670516087703,
+        "var": 0.1996007984031936
+      },
+      "n_trials": 10,
+      "label": "5A-Normal-Normal",
+      "l2": {
+        "log_ml_mean": -7.780070049878357,
+        "log_ml_std": 0.07824239654637326,
+        "log_ml_var": 0.006121872617319921,
+        "ess_mean": 66.81312681067203,
+        "time_ms": 0.47539180000021586,
+        "time_std_ms": 0.040823044639868085
+      },
+      "l3": {
+        "log_ml_mean": -7.843255043029785,
+        "log_ml_std": 0,
+        "log_ml_var": 0,
+        "ess_mean": 999.9999999999848,
+        "time_ms": 0.7305751999999757,
+        "time_std_ms": 0.04647797481817829
+      },
+      "variance_reduction": null,
+      "conjugate_pairs": [
+        {
+          "prior": "mu",
+          "obs": "y1",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "mu",
+          "obs": "y2",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "mu",
+          "obs": "y3",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "mu",
+          "obs": "y4",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "mu",
+          "obs": "y5",
+          "family": "normal-normal"
+        }
+      ]
+    },
+    "exp5b": {
+      "method_selection": {
+        "method": "exact",
+        "reason": "All trace sites eliminated by analytical plan",
+        "eliminated": [
+          "theta"
+        ],
+        "residual": [],
+        "n_eliminated": 1,
+        "n_residual": 0
+      },
+      "n_particles": 1000,
+      "ess_improvement": 1.2730617410527112,
+      "ground_truth": {
+        "distribution": "Beta",
+        "alpha": 5,
+        "beta": 4,
+        "mean": 0.5555555555555556
+      },
+      "n_trials": 10,
+      "label": "5B-Beta-Bernoulli",
+      "l2": {
+        "log_ml_mean": -3.852822286736727,
+        "log_ml_std": 0.0075577865279425685,
+        "log_ml_var": 0.00005712013720195018,
+        "ess_mean": 785.507856966208,
+        "time_ms": 1.0471083999989788,
+        "time_std_ms": 0.16689604501810026
+      },
+      "l3": {
+        "log_ml_mean": -3.8430299758911133,
+        "log_ml_std": 0,
+        "log_ml_var": 0,
+        "ess_mean": 999.9999999999848,
+        "time_ms": 0.5198079999994661,
+        "time_std_ms": 0.028450148655840037
+      },
+      "variance_reduction": null,
+      "conjugate_pairs": [
+        {
+          "prior": "theta",
+          "obs": "y1",
+          "family": "beta-bernoulli"
+        },
+        {
+          "prior": "theta",
+          "obs": "y2",
+          "family": "beta-bernoulli"
+        },
+        {
+          "prior": "theta",
+          "obs": "y3",
+          "family": "beta-bernoulli"
+        },
+        {
+          "prior": "theta",
+          "obs": "y4",
+          "family": "beta-bernoulli"
+        },
+        {
+          "prior": "theta",
+          "obs": "y5",
+          "family": "beta-bernoulli"
+        }
+      ]
+    },
+    "exp5c": {
+      "method_selection": {
+        "method": "exact",
+        "reason": "All trace sites eliminated by analytical plan",
+        "eliminated": [
+          "rate"
+        ],
+        "residual": [],
+        "n_eliminated": 1,
+        "n_residual": 0
+      },
+      "n_particles": 1000,
+      "ess_improvement": 2.805523157406572,
+      "ground_truth": {
+        "distribution": "Gamma",
+        "shape": 16,
+        "rate": 5,
+        "mean": 3.2
+      },
+      "n_trials": 10,
+      "label": "5C-Gamma-Poisson",
+      "l2": {
+        "log_ml_mean": -8.28940511633324,
+        "log_ml_std": 0.033630602163767676,
+        "log_ml_var": 0.001131017401897615,
+        "ess_mean": 356.4397596790417,
+        "time_ms": 0.8511665999947582,
+        "time_std_ms": 0.04398223758443691
+      },
+      "l3": {
+        "log_ml_mean": -8.302188873291016,
+        "log_ml_std": 0,
+        "log_ml_var": 0,
+        "ess_mean": 999.9999999999848,
+        "time_ms": 0.5092586000013398,
+        "time_std_ms": 0.024766328255024242
+      },
+      "variance_reduction": null,
+      "conjugate_pairs": [
+        {
+          "prior": "rate",
+          "obs": "y1",
+          "family": "gamma-poisson"
+        },
+        {
+          "prior": "rate",
+          "obs": "y2",
+          "family": "gamma-poisson"
+        },
+        {
+          "prior": "rate",
+          "obs": "y3",
+          "family": "gamma-poisson"
+        },
+        {
+          "prior": "rate",
+          "obs": "y4",
+          "family": "gamma-poisson"
+        }
+      ]
+    },
+    "exp5d": {
+      "method_selection": {
+        "method": "hmc",
+        "reason": "Static model with 1 residual dims (≤ 10)",
+        "eliminated": [
+          "mu-a",
+          "mu-b"
+        ],
+        "residual": [
+          "sigma"
+        ],
+        "n_eliminated": 2,
+        "n_residual": 1
+      },
+      "n_particles": 1000,
+      "ess_improvement": 45.377234784383724,
+      "ground_truth": {
+        "conjugate-latents": [
+          "mu-a",
+          "mu-b"
+        ],
+        "non-conjugate-latents": [
+          "sigma"
+        ],
+        "note": "mu-a, mu-b eliminated analytically; sigma must be sampled"
+      },
+      "n_trials": 10,
+      "label": "5D-Mixed",
+      "l2": {
+        "log_ml_mean": -9.835662325096646,
+        "log_ml_std": 0.7585585759587911,
+        "log_ml_var": 0.575411113160629,
+        "ess_mean": 9.382397059300176,
+        "time_ms": 1.040958400000818,
+        "time_std_ms": 0.07518311262063179
+      },
+      "l3": {
+        "log_ml_mean": -9.410341419954586,
+        "log_ml_std": 0.037517669702901414,
+        "log_ml_var": 0.0014075755399360066,
+        "ess_mean": 425.7472342001755,
+        "time_ms": 1.0682082000013906,
+        "time_std_ms": 0.019875107973303302
+      },
+      "variance_reduction": 408.7959024826399,
+      "conjugate_pairs": [
+        {
+          "prior": "mu-a",
+          "obs": "y1",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "mu-a",
+          "obs": "y2",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "mu-b",
+          "obs": "y3",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "mu-b",
+          "obs": "y4",
+          "family": "normal-normal"
+        }
+      ]
+    },
+    "exp5e": {
+      "method_selection": {
+        "method": "exact",
+        "reason": "All trace sites eliminated by analytical plan",
+        "eliminated": [
+          "slope",
+          "intercept"
+        ],
+        "residual": [],
+        "n_eliminated": 2,
+        "n_residual": 0
+      },
+      "n_particles": 1000,
+      "ess_improvement": 235.05302990019192,
+      "ground_truth": {
+        "slope-mean": 1.9993241120076828,
+        "slope-std": 0.3146611860911486,
+        "intercept-mean": 0.44114537323049063,
+        "intercept-std": 1.0426658149550536
+      },
+      "n_trials": 10,
+      "label": "5E-LinReg",
+      "l2": {
+        "log_ml_mean": -11.576047946479413,
+        "log_ml_std": 0.704780441990004,
+        "log_ml_var": 0.4967154714116255,
+        "ess_mean": 4.254359113875725,
+        "time_ms": 0.5469332000124268,
+        "time_std_ms": 0.03487121153821486
+      },
+      "l3": {
+        "log_ml_mean": -28.14594841003418,
+        "log_ml_std": 0,
+        "log_ml_var": 0,
+        "ess_mean": 999.9999999999848,
+        "time_ms": 0.6716083999956026,
+        "time_std_ms": 0.051473075103095435
+      },
+      "variance_reduction": null,
+      "conjugate_pairs": [
+        {
+          "prior": "slope",
+          "obs": "y1",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "intercept",
+          "obs": "y1",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "slope",
+          "obs": "y2",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "intercept",
+          "obs": "y2",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "slope",
+          "obs": "y3",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "intercept",
+          "obs": "y3",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "slope",
+          "obs": "y4",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "intercept",
+          "obs": "y4",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "slope",
+          "obs": "y5",
+          "family": "normal-normal"
+        },
+        {
+          "prior": "intercept",
+          "obs": "y5",
+          "family": "normal-normal"
+        }
+      ]
+    }
+  },
+  "summary": {
+    "families_tested": [
+      "normal-normal",
+      "beta-bernoulli",
+      "gamma-poisson",
+      "mixed",
+      "linreg"
+    ],
+    "variance_reductions": [
+      {
+        "label": "5A-Normal-Normal",
+        "ratio": "Infinity"
+      },
+      {
+        "label": "5B-Beta-Bernoulli",
+        "ratio": "Infinity"
+      },
+      {
+        "label": "5C-Gamma-Poisson",
+        "ratio": "Infinity"
+      },
+      {
+        "label": "5D-Mixed",
+        "ratio": 408.7959024826399
+      },
+      {
+        "label": "5E-LinReg",
+        "ratio": "Infinity"
+      }
+    ],
+    "ess_improvements": [
+      {
+        "label": "5A-Normal-Normal",
+        "ratio": 14.967118704587483
+      },
+      {
+        "label": "5B-Beta-Bernoulli",
+        "ratio": 1.2730617410527112
+      },
+      {
+        "label": "5C-Gamma-Poisson",
+        "ratio": 2.805523157406572
+      },
+      {
+        "label": "5D-Mixed",
+        "ratio": 45.377234784383724
+      },
+      {
+        "label": "5E-LinReg",
+        "ratio": 235.05302990019192
+      }
+    ],
+    "mean_variance_reduction": 408.7959024826399,
+    "mean_ess_improvement": 59.89519365752449
+  }
+}

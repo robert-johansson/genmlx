@@ -5,7 +5,7 @@ Usage:
     cd paper/viz
     python generate_paper_figures.py
 
-Reads data from results/paper/exp{01-11}_*/ and outputs to paper/figs/.
+Reads data from results/paper/exp{01-11}_*/ and outputs to paper/TOPML_system/figs/.
 """
 
 import json
@@ -27,7 +27,7 @@ import matplotlib.patches as mpatches
 # Paths
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 RESULTS = os.path.join(ROOT, "results", "paper")
-FIGS = os.path.join(ROOT, "paper", "figs")
+FIGS = os.path.join(ROOT, "paper", "TOPML_system", "figs")
 
 os.makedirs(FIGS, exist_ok=True)
 
@@ -145,27 +145,34 @@ def fig_vectorization_speedup():
 # =============================================================================
 
 def fig_cross_system_is():
-    """Grouped bar chart: GenMLX vs Gen.jl vs JAX for IS."""
+    """Grouped bar chart: GenMLX vs Gen.jl vs GenJAX vs JAX for IS."""
     comparison = load_json("exp07_system/cross_system_comparison.json")
     is_data = comparison["comparisons"]["importance_sampling_1000"]
 
     models = ["LinReg", "GMM", "HMM"]
     genmlx = [is_data["linreg"]["genmlx_vis_ms"], is_data["gmm"]["genmlx_vis_ms"], is_data["hmm"]["genmlx_vis_ms"]]
     genjl = [is_data["linreg"]["genjl_ms"], is_data["gmm"]["genjl_ms"], is_data["hmm"]["genjl_ms"]]
+    genjax = [is_data["linreg"].get("genjax_vmap_ms", None), None, None]
     jax = [is_data["linreg"]["jax_ms"], is_data["gmm"]["jax_ms"], None]
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(11, 5))
     x = np.arange(len(models))
-    w = 0.25
+    w = 0.2
 
-    bars1 = ax.bar(x - w, genmlx, w, label="GenMLX (VIS, Metal)", color=COLORS["genmlx"], **BAR)
-    bars2 = ax.bar(x, genjl, w, label="Gen.jl (CPU)", color=COLORS["genjl"], **BAR)
+    bars1 = ax.bar(x - 1.5*w, genmlx, w, label="GenMLX (VIS, Metal)", color=COLORS["genmlx"], **BAR)
+    bars2 = ax.bar(x - 0.5*w, genjl, w, label="Gen.jl (CPU)", color=COLORS["genjl"], **BAR)
+    genjax_vals = [v if v is not None else 0 for v in genjax]
+    bars3 = ax.bar(x + 0.5*w, genjax_vals, w, label="GenJAX (vmap, CPU)", color="#9467bd", **BAR)
     jax_vals = [v if v is not None else 0 for v in jax]
-    bars3 = ax.bar(x + w, jax_vals, w, label="JAX (CPU, JIT)", color=COLORS["genjax"], **BAR)
+    bars4 = ax.bar(x + 1.5*w, jax_vals, w, label="JAX (JIT, CPU)", color=COLORS["genjax"], **BAR)
 
-    # Hide the missing HMM JAX bar
-    if jax[2] is None:
-        bars3[2].set_alpha(0)
+    # Hide missing bars
+    for i, v in enumerate(genjax):
+        if v is None:
+            bars3[i].set_alpha(0)
+    for i, v in enumerate(jax):
+        if v is None:
+            bars4[i].set_alpha(0)
 
     ax.set_yscale("log")
     ax.set_ylabel("Time (ms)", fontweight="bold")
@@ -180,12 +187,12 @@ def fig_cross_system_is():
                 f"{t:.1f}ms", ha="center", va="bottom", fontsize=9, fontweight="bold",
                 color=COLORS["genmlx"])
 
-    ax.legend(fontsize=13, loc="upper left", framealpha=0.9)
+    ax.legend(fontsize=12, loc="upper left", framealpha=0.9)
 
     # Add gold stars where GenMLX wins
     for i, (g, j) in enumerate(zip(genmlx, genjl)):
         if g < j:
-            ax.scatter(i - w, g * 0.5, **MARKER["small_star"], color="gold")
+            ax.scatter(i - 1.5*w, g * 0.5, **MARKER["small_star"], color="gold")
 
     save_fig(fig, os.path.join(FIGS, "fig_cross_system_is.pdf"))
 
@@ -205,7 +212,7 @@ def fig_particle_scaling():
 
     # Add HMM batched SMC data from exp04b
     hmm_particles = [100, 250, 1000]
-    hmm_times = [296, 318, 319]  # From benchmark output
+    hmm_times = [130, 132, 150]  # From benchmark output
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=SIZES["two_panel"])
 
@@ -244,7 +251,7 @@ def fig_particle_scaling():
     clean_axes(ax2, grid=True)
 
     ax2.annotate("10x particles\nsame time!",
-                 xy=(1000, 319), xytext=(400, 1500),
+                 xy=(1000, 150), xytext=(400, 1500),
                  fontsize=11, fontweight="bold", color=COLORS["smc"],
                  arrowprops=dict(arrowstyle="->", color=COLORS["smc"], lw=2))
 
@@ -259,8 +266,8 @@ def fig_hmm_comparison():
     """Bar chart: sequential vs batched SMC, IS."""
     # Data from exp04b output
     algorithms = ["SMC\n(seq, 100)", "SMC\n(seq, 250)", "SMC\n(bat, 100)", "SMC\n(bat, 250)", "SMC\n(bat, 1000)", "IS\n(seq, 1000)", "VIS\n(1000)"]
-    times = [22419, 49337, 296, 318, 319, 63413, 84]
-    errors = [0.45, 0.41, 0.45, 0.41, 0.12, 19.74, 22.00]
+    times = [7131, 15191, 130, 132, 150, 25789, 12.3]
+    errors = [0.24, 0.28, 0.50, 0.38, 0.13, 32.07, 28.52]
     colors_list = ["#CC3311", "#CC3311", COLORS["smc"], COLORS["smc"], COLORS["smc"], "#CC3311", COLORS["vec_is"]]
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=SIZES["two_panel"])
@@ -354,10 +361,10 @@ def fig_conjugacy():
 
 def fig_rao_blackwell():
     """Bar chart: L3 vs L2 for mixed model."""
-    methods = ["L3\n(3/5 dims eliminated)", "L2\n(all 5 dims sampled)"]
-    logml_means = [-28.932, -66.488]
-    logml_stds = [0.440, 14.728]
-    ess = [7.7, 1.1]
+    methods = ["L3\n(2/3 dims eliminated)", "L2\n(all 3 dims sampled)"]
+    logml_means = [-9.410, -9.836]
+    logml_stds = [0.037, 0.758]
+    ess = [425.7, 9.4]
     colors_list = [COLORS["nuts"], COLORS["is"]]
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=SIZES["two_panel"])
@@ -372,14 +379,14 @@ def fig_rao_blackwell():
     ax1.set_title("Rao-Blackwellization: log-ML Accuracy", fontweight="bold")
     clean_axes(ax1)
 
-    ax1.annotate(f"33.5x lower\nvariance",
-                 xy=(0, 28.932), xytext=(0.5, 50),
+    ax1.annotate(f"408.8x lower\nvariance",
+                 xy=(0, 9.410), xytext=(0.5, 50),
                  fontsize=12, fontweight="bold", color=COLORS["nuts"],
                  arrowprops=dict(arrowstyle="->", color=COLORS["nuts"], lw=2))
 
     # Panel 2: ESS
     bars2 = ax2.bar(x, ess, color=colors_list, **BAR)
-    ax2.set_ylabel("ESS (out of 200)", fontweight="bold")
+    ax2.set_ylabel("ESS (out of 1000)", fontweight="bold")
     ax2.set_xticks(x)
     ax2.set_xticklabels(methods, fontsize=13)
     ax2.set_title("Rao-Blackwellization: Sample Efficiency", fontweight="bold")
@@ -388,8 +395,8 @@ def fig_rao_blackwell():
     for i, e in enumerate(ess):
         ax2.text(i, e + 0.3, f"ESS={e}", ha="center", fontsize=13, fontweight="bold")
 
-    ax2.annotate(f"7.2x higher\nESS",
-                 xy=(0, 7.7), xytext=(0.5, 5),
+    ax2.annotate(f"45.4x higher\nESS",
+                 xy=(0, 425.7), xytext=(0.5, 300),
                  fontsize=12, fontweight="bold", color=COLORS["nuts"],
                  arrowprops=dict(arrowstyle="->", color=COLORS["nuts"], lw=2))
 
@@ -544,7 +551,7 @@ def fig_verification():
     ax.set_xlabel("Pass Rate (%)", fontweight="bold")
     ax.set_yticks(y)
     ax.set_yticklabels(names, fontsize=11)
-    ax.set_title("Verification Suite: 740/744 (99.5%)", fontweight="bold")
+    ax.set_title("Verification Suite: 838+/838+ (100%)", fontweight="bold")
     clean_axes(ax)
     ax.axvline(x=100, color="gray", **LINE["baseline"])
 
@@ -563,8 +570,8 @@ def fig_cross_system_full():
     """Comprehensive cross-system comparison with multiple benchmarks."""
     benchmarks = ["LinReg\nIS (1K)", "GMM\nIS (1K)", "HMM\nIS (1K)", "LinReg\nMH (5K)", "HMM\nSMC (100)"]
 
-    genmlx = [1.036, 2.095, 8.165, 777.9, 296]
-    genjl = [1.713, 5.311, 46.722, 40.305, 603.5]
+    genmlx = [0.710, 1.586, 12.3, 1.331, 130]
+    genjl = [1.261, 3.553, 23.314, 16.831, 138.478]
 
     fig, ax = plt.subplots(figsize=(12, 5))
     x = np.arange(len(benchmarks))
@@ -603,8 +610,8 @@ def fig_cross_system_full():
 def fig_gmm_comparison():
     """Two-panel: accuracy + time for GMM."""
     algorithms = ["Exact", "Seq IS\n(1000)", "VIS\n(1000)", "Gibbs\n(500)"]
-    errors = [0, 4.49, 5.96, 0]  # |log-ML error|
-    times = [4, 13139, 22, 107172]
+    errors = [0, 4.37, 4.44, 0]  # |log-ML error|
+    times = [2, 3841, 3, 26788]
     colors_list = [COLORS["truth"], "#CC3311", COLORS["vec_is"], COLORS["gibbs"]]
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=SIZES["two_panel"])
@@ -620,15 +627,15 @@ def fig_gmm_comparison():
     clean_axes(ax1, grid=True)
 
     # Speedup
-    ax1.annotate(f"605x faster", xy=(2, 22), xytext=(2.5, 2000),
+    ax1.annotate(f"1130x faster", xy=(2, 3), xytext=(2.5, 2000),
                  fontsize=12, fontweight="bold", color=COLORS["vec_is"],
                  arrowprops=dict(arrowstyle="->", color=COLORS["vec_is"], lw=2))
 
     # Panel 2: Accuracy
     accuracy = [1.0, 0, 0, 1.0]  # Gibbs and exact achieve perfect assignment
-    accuracy_labels = ["Exact\n(analytic)", "IS\n(ESS=1.2)", "VIS\n(ESS=1.9)", "Gibbs\n(acc=1.0)"]
+    accuracy_labels = ["Exact\n(analytic)", "IS\n(ESS=1.2)", "VIS\n(ESS=1.9)", "Gibbs\n(acc=0.988)"]
     ess_vals = [None, 1.2, 1.9, None]
-    gibbs_acc = [None, None, None, 1.0]
+    gibbs_acc = [None, None, None, 0.988]
 
     bars2 = ax2.bar(x, [1.0 if a else 0 for a in [True, False, False, True]],
                     color=colors_list, **BAR)
@@ -649,10 +656,10 @@ def fig_gmm_comparison():
 def fig_funnel():
     """Bar chart: sampler comparison on Neal's funnel."""
     algorithms = ["NUTS\n(3000)", "HMC\n(2000)", "MALA\n(2000)", "Compiled MH\n(5000)"]
-    v_means = [0.849, 0.643, -1.503, -1.750]
-    v_stds = [2.327, 2.114, 2.493, 4.534]
-    rhats = [1.595, 3.308, 17.291, 4.604]
-    times = [202849, 45290, 3443, 2731]
+    v_means = [1.4067, 1.1462, 1.0040, 0.8271]
+    v_stds = [2.1048, 1.6186, 1.6726, 4.0944]
+    rhats = [1.567, 1.000, 13.234, 3.704]
+    times = [34145, 36520, 2624, 2287]
     colors_list = [COLORS["nuts"], COLORS["hmc"], "#CC3311", COLORS["compiled_mh"]]
 
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=SIZES["three_panel"])
@@ -704,8 +711,8 @@ def fig_funnel():
 def fig_changepoint():
     """Bar chart: SMC vs IS for changepoint model."""
     algorithms = ["SMC\n(N=100)", "SMC\n(N=250)", "SMC\n(N=500)", "IS\n(N=1000)"]
-    errors = [51.56, 7.93, 5.33, 263.92]
-    times = [55993, 131209, 172645, 95148]
+    errors = [13.95, 5.34, 1.11, 205.72]
+    times = [15540, 34796, 66399, 47203]
     colors_list = [COLORS["smc"], COLORS["smc"], COLORS["smc"], "#CC3311"]
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=SIZES["two_panel"])
@@ -742,7 +749,7 @@ def fig_linreg_algorithms():
     """Bar chart: time and accuracy for all linreg algorithms."""
     algorithms = ["Compiled\nMH", "Multi-chain\nMH", "HMC", "NUTS", "ADVI", "VIS\n(12K)"]
     times = [4841, 2045, 34208, 216017, 13238, 8]
-    slope_errors = [0.0001, 0.0031, 0.0002, 0.0023, 0.062, 0.011]
+    slope_errors = [0.0001, 0.0031, 0.0002, 0.0023, 0.062, 0.0025]
     colors_list = [COLORS["compiled_mh"], COLORS["genmlx_vec"], COLORS["hmc"],
                    COLORS["nuts"], COLORS["advi"], COLORS["vec_is"]]
 
@@ -760,7 +767,7 @@ def fig_linreg_algorithms():
     smaller_is_better(ax1)
 
     # VIS callout
-    ax1.annotate("8ms!", xy=(5, 8), xytext=(4.3, 100),
+    ax1.annotate("1ms!", xy=(5, 1), xytext=(4.3, 100),
                  fontsize=14, fontweight="bold", color=COLORS["vec_is"],
                  arrowprops=dict(arrowstyle="->", color=COLORS["vec_is"], lw=2))
 
@@ -836,23 +843,23 @@ def fig_hero_speedups():
     """Horizontal bar chart: all key speedup numbers."""
     metrics = [
         "Vectorized IS\n(seq → batched)",
-        "Vectorized IS\n(HMM)",
         "Vectorized IS\n(GMM)",
+        "Vectorized IS\n(HMM)",
+        "Fused MH\n(handler → compiled)",
         "Compiled Adam\n(handler → fused)",
         "Batched SMC\n(seq → batched)",
-        "Score-fn\n(compiled)",
-        "log-ML variance\n(L3 conjugacy)",
-        "Compiled MH\n(handler → compiled)",
-        "Vectorized MH\n(serial → 10 chains)",
-        "ESS improvement\n(L3 vs L2)",
+        "L3 Var. Reduction\n(mixed model)",
+        "L3 ESS\n(mixed model)",
+        "Vec. MH\n(scalar → N=8)",
+        "Multi-chain MH\n(serial → vec)",
     ]
-    speedups = [7813, 759, 605, 78.9, 75.7, 40.6, 33.5, 15.8, 14.1, 7.2]
+    speedups = [2350.3, 1130.0, 528.8, 498.1, 149.0, 54.8, 408.8, 45.4, 876.0, 35.8]
 
     colors_list = [
         COLORS["vec_is"], COLORS["vec_is"], COLORS["vec_is"],
-        COLORS["genmlx"], COLORS["smc"], COLORS["genmlx"],
-        COLORS["nuts"], COLORS["compiled_mh"], COLORS["genmlx_vec"],
-        COLORS["nuts"],
+        COLORS["compiled_mh"], COLORS["genmlx"], COLORS["smc"],
+        COLORS["nuts"], COLORS["nuts"], COLORS["genmlx_vec"],
+        COLORS["genmlx_vec"],
     ]
 
     fig, ax = plt.subplots(figsize=(12, 7))

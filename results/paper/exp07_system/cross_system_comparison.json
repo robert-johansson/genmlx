@@ -1,6 +1,6 @@
 {
   "experiment": "exp07_cross_system_comparison",
-  "date": "2026-03-12",
+  "date": "2026-03-13",
   "hardware": "Apple Silicon M4, macOS",
   "systems": {
     "genmlx": {
@@ -14,60 +14,71 @@
       "backend": "CPU"
     },
     "jax": {
-      "version": "0.5.3",
+      "version": "0.7.2",
       "runtime": "Python 3.12.13",
-      "backend": "CPU (TFRT)"
+      "backend": "CPU"
+    },
+    "genjax": {
+      "version": "1.0.13",
+      "runtime": "Python 3.12.13 + JAX 0.7.2",
+      "backend": "CPU"
     }
   },
   "comparisons": {
     "importance_sampling_1000": {
       "description": "IS with 1000 particles, same model structure",
       "linreg": {
-        "genmlx_vis_ms": 1.036,
+        "genmlx_vis_ms": 0.710,
         "genmlx_seq_ms": 2231.290,
-        "genjl_ms": 1.713,
-        "jax_ms": 0.342,
-        "genmlx_vs_genjl": "0.60x (faster)",
-        "genmlx_vs_jax": "3.0x (slower)",
+        "genjl_ms": 1.261,
+        "genjax_seq_ms": 1652.370,
+        "genjax_vmap_ms": 15.272,
+        "jax_ms": 0.138,
+        "genmlx_vs_genjl": "0.56x (faster)",
+        "genmlx_vs_genjax_vmap": "0.046x (faster)",
+        "genmlx_vs_jax": "5.1x (slower)",
         "note": "GenMLX VIS is vectorized (1000 particles in one MLX graph)"
       },
       "gmm": {
-        "genmlx_vis_ms": 2.095,
+        "genmlx_vis_ms": 1.586,
         "genmlx_seq_ms": 9293.280,
-        "genjl_ms": 5.311,
-        "jax_ms": 0.419,
-        "genmlx_vis_vs_genjl": "0.39x (faster)",
-        "note": "GenMLX VIS-GMM skipped (mx/item in model body); using previous run data"
+        "genjl_ms": 3.553,
+        "genjax_seq_ms": 6018.453,
+        "jax_ms": 0.238,
+        "genmlx_vis_vs_genjl": "0.45x (faster)",
+        "genmlx_vis_vs_genjax_seq": "0.00026x (faster)",
+        "note": "GenMLX VIS-GMM vectorized IS"
       },
       "hmm": {
-        "genmlx_vis_ms": 8.165,
-        "genjl_ms": 46.722,
-        "genmlx_vis_vs_genjl": "0.17x (5.7x faster)",
-        "note": "HMM vectorized IS. Gen.jl is sequential"
+        "genmlx_vis_ms": 12.3,
+        "genjl_ms": 23.314,
+        "jax_ms": null,
+        "genmlx_vis_vs_genjl": "1.9x (GenMLX faster)",
+        "note": "HMM VIS 1000 particles, 50 timesteps, flat vectorized model"
       }
     },
     "particle_scaling": {
       "description": "1K → 10K particles, measuring sublinear scaling",
-      "linreg_genmlx_1k_ms": 1.036,
-      "linreg_genmlx_10k_ms": 1.107,
-      "scaling_factor": 1.07,
-      "jax_1k_ms": 0.342,
-      "jax_10k_ms": 0.708,
-      "jax_scaling_factor": 2.07,
-      "note": "GenMLX: 10x particles costs only 7% more time. JAX: 2x."
+      "linreg_genmlx_1k_ms": 0.710,
+      "linreg_genmlx_10k_ms": 0.912,
+      "scaling_factor": 1.28,
+      "jax_1k_ms": 0.144,
+      "jax_10k_ms": 0.610,
+      "jax_scaling_factor": 4.24,
+      "note": "GenMLX: 10x particles costs only 28% more time. JAX: 4.24x."
     },
     "mcmc_5000_steps": {
       "description": "MH with 5000 steps on linear regression",
-      "genmlx_compiled_mh_ms": 777.904,
-      "genjl_mh_ms": 40.305,
-      "ratio": "19.3x (Gen.jl faster)",
-      "note": "Gen.jl's compiled Julia runtime vs GenMLX's nbb interpreter. MCMC is inherently sequential — each step depends on the previous."
+      "genmlx_compiled_mh_ms": 1.331,
+      "genjl_mh_ms": 16.831,
+      "ratio": "12.6x (GenMLX faster)",
+      "note": "Compiled MH with fused Metal execution"
     },
     "smc_hmm": {
       "description": "SMC on HMM (100 particles, 50 steps)",
-      "genmlx_batched_smc_ms": 296,
-      "genjl_smc_ms": 603.5,
-      "ratio": "2.0x (GenMLX faster)",
+      "genmlx_batched_smc_ms": 130,
+      "genjl_smc_ms": 138.478,
+      "ratio": "1.07x (GenMLX faster)",
       "note": "GenMLX batched SMC leverages Metal GPU parallelism"
     },
     "hmc_funnel": {
@@ -81,25 +92,30 @@
     "unique_genmlx_features": {
       "L3_exact_generate_ms": 0.699,
       "L4_fit_ms": 0.970,
-      "compiled_adam_speedup": "78.9x",
+      "compiled_adam_speedup": "149.0x",
       "auto_method_selection": "6/6 correct",
       "note": "Features unique to GenMLX — no Gen.jl or JAX equivalent"
     }
   },
   "summary": {
     "genmlx_wins": [
-      "Vectorized IS: 1-6x faster than Gen.jl for parallel particle methods",
-      "Batched SMC: 2x faster than Gen.jl (Metal GPU parallelism)",
-      "Sublinear particle scaling: 10x particles costs 7% more time",
+      "Vectorized IS: 1.8-2.2x faster than Gen.jl on all models (LinReg, GMM, HMM)",
+      "Batched SMC: 1.07x faster than Gen.jl (Metal GPU parallelism)",
+      "Compiled MH: 12.6x faster than Gen.jl",
+      "Sublinear particle scaling: 10x particles costs 28% more time",
       "Unique L3/L4 features: auto-conjugacy, compiled optimization, method selection"
     ],
     "genjl_wins": [
-      "MCMC (MH/HMC): 6-19x faster (compiled Julia vs interpreted ClojureScript)",
-      "Sequential operations benefit from Julia's compiled runtime"
+      "HMC: 5.9x faster (sequential leapfrog steps)"
     ],
     "jax_wins": [
-      "Bare JIT computation: 3x faster IS (XLA JIT vs Metal lazy graph)"
+      "Bare JIT computation: 5x faster IS (XLA JIT vs Metal lazy graph)"
     ],
-    "key_insight": "GenMLX wins where parallelism matters (IS, SMC), loses where sequential steps dominate (MCMC). The compilation ladder progressively closes the gap."
+    "genjax_comparison": [
+      "GenMLX VIS linreg: 0.71ms vs GenJAX seq 1652ms (2327x faster), GenJAX vmap 15.3ms (21.5x faster)",
+      "GenMLX VIS GMM: 1.59ms vs GenJAX seq 6018ms (3786x faster)",
+      "GenJAX vmap closes gap significantly but GenMLX VIS still wins"
+    ],
+    "key_insight": "GenMLX wins where parallelism matters (IS, SMC, compiled MH), loses where sequential steps dominate (HMC). The compilation ladder progressively closes the gap."
   }
 }

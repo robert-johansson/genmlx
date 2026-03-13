@@ -3,7 +3,7 @@
 **Date:** 2026-03-04
 **Model:** K=3 Gaussian mixture, N=8 data points, 1D
 **Means:** [-4, 0, 4], sigma=1.0, equal mixing weights
-**Exact log P(y):** -17.7270 (enumeration over 6561 configs)
+**Exact log P(y):** -21.1712 (enumeration over 6561 configs)
 
 ## Methods
 
@@ -18,28 +18,28 @@
 
 | Metric | Mean | Std |
 |--------|------|-----|
-| log-ML | -22.21 | 3.58 |
-| |Error| | 5.22 | 2.36 |
-| ESS | 1.2 | 0.2 |
-| Time (ms) | 13139 | 3945 |
+| log-ML | -24.92 | 2.97 |
+| |Error| | 4.37 | 1.92 |
+| ESS | 1.8 | 0.5 |
+| Time (ms) | 3841 | 14 |
 
 ### Vectorized IS
 
 | Metric | Mean | Std |
 |--------|------|-----|
-| log-ML | -23.69 | 2.04 |
-| |Error| | 5.96 | 2.04 |
-| ESS | 1.9 | 0.7 |
-| Time (ms) | 22 | 30 |
-| Speedup vs seq IS | 605.3x | — |
+| log-ML | -25.16 | 3.50 |
+| |Error| | 4.44 | 2.91 |
+| ESS | 1.8 | 0.7 |
+| Time (ms) | 3 | 0 |
+| Speedup vs seq IS | 1130.0x | — |
 
 ### Gibbs
 
 | Metric | Mean | Std |
 |--------|------|-----|
-| Assignment accuracy | 1.000 | 0.000 |
-| Marginal MAE | 0.0007 | 0.0003 |
-| Time (ms) | 107172 | 44673 |
+| Assignment accuracy | 0.988 | 0.037 |
+| Marginal MAE | 0.0021 | 0.0012 |
+| Time (ms) | 26788 | 271 |
 
 ## Interpretation
 
