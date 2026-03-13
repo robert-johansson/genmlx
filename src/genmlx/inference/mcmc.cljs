@@ -211,6 +211,31 @@
                                  [n-samples n-params])]
     (mx/where write-mask-2d new-row samples)))
 
+(defn- validate-compiled-result
+  "Validate that a compiled function produced a valid result.
+   Throws with descriptive error if result is nil (Metal graph too large)."
+  [result method-name total-steps]
+  (when (or (nil? result) (undefined? result))
+    (throw (js/Error.
+            (str "Fused " method-name " compilation failed: Metal graph too large for "
+                 total-steps " total steps. Reduce samples/burn/thin or use the "
+                 "block-compiled version instead.")))))
+
+(defn- safe-compile-chain
+  "Build a fused chain function with error handling.
+   build-fn: zero-arg fn that builds and returns a compiled function.
+   The make-fused-* builders already compile and warmup internally;
+   this wraps the entire process in try/catch to convert Metal errors
+   into actionable messages."
+  [build-fn method-name total-steps]
+  (try
+    (build-fn)
+    (catch :default e
+      (throw (js/Error.
+              (str "Fused " method-name " Metal compilation failed ("
+                   total-steps " total steps). " (.-message e)
+                   ". Use the block-compiled version instead."))))))
+
 (defn- make-fused-burn-in
   "Compile a function that runs n-burn MH steps in one Metal dispatch.
    Returns compiled fn: (params [D], noise [B,D], uniforms [B]) → params [D].
@@ -282,16 +307,18 @@
 (defn- make-fused-burn-and-collect
   "Compile a single function for burn-in + thinned collection.
    Runs n-burn MH steps (discarded), then thin*n-samples steps (recorded).
-   Returns [n-samples, n-params] tensor. ONE Metal dispatch for entire chain."
+   Returns #js [final-params, samples [S,D], accept-count []].
+   ONE Metal dispatch for entire chain."
   [n-burn n-samples thin score-fn proposal-std n-params]
   (let [total-steps (+ n-burn (* thin n-samples))
         chain-fn
         (fn [init-params noise uniforms]
           (loop [p init-params, i 0
                  sample-count (mx/astype (mx/array [0]) mx/int32)
-                 samples (mx/zeros [n-samples n-params])]
+                 samples (mx/zeros [n-samples n-params])
+                 accept-count (mx/scalar 0.0)]
             (if (>= i total-steps)
-              #js [p samples]
+              #js [p samples accept-count]
               (let [row (mx/reshape
                          (mx/take-idx noise (mx/array [i] mx/int32) 0)
                          [n-params])
@@ -302,6 +329,7 @@
                     log-u (mx/log (mx/index uniforms i))
                     accept? (mx/greater log-alpha log-u)
                     new-p (mx/where accept? proposal p)
+                    new-accept-count (mx/add accept-count (mx/astype accept? mx/float32))
                     ;; After burn-in, record every thin steps
                     past-burn? (>= i n-burn)
                     is-record (and past-burn? (zero? (mod (- i n-burn) thin)))
@@ -312,13 +340,13 @@
                     new-count (if is-record
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
-                (recur new-p (inc i) new-count new-samples)))))
+                (recur new-p (inc i) new-count new-samples new-accept-count)))))
         compiled (mx/compile-fn chain-fn)]
     ;; Warmup trace
     (let [result (compiled (mx/zeros [n-params])
                            (rng/normal (rng/fresh-key) [total-steps n-params])
                            (rng/uniform (rng/fresh-key) [total-steps]))]
-      (mx/materialize! (aget result 0) (aget result 1)))
+      (mx/materialize! (aget result 0) (aget result 1) (aget result 2)))
     compiled))
 
 (defn- make-compiled-trajectory
@@ -520,11 +548,54 @@
             mx/->clj
             init-params))))))
 
+;; ---------------------------------------------------------------------------
+;; Fused chain graph size estimation and auto-fallback
+;; ---------------------------------------------------------------------------
+;; Empirical limits from Metal graph analysis (FUSED_MCMC_ANALYSIS.md):
+;; - GFI score functions: ~15K ops per score eval → graphs exceed 499K buffer quickly
+;; - Tensor-native scores: ~50 ops per score eval → much higher step budgets
+;; Conservative limits leave headroom below measured failure points.
+
+(def ^:private fused-ops-limits
+  {:gfi    {:mh 2500 :mala 1500 :hmc 8000}
+   :native {:mh 80000 :mala 50000 :hmc 200000}})
+
+(defn- estimate-fused-ops
+  "Estimate Metal graph operations for a fused chain.
+   Returns estimated ops count (proportional to graph size)."
+  [method total-steps {:keys [leapfrog-steps]}]
+  (case method
+    :mh   total-steps
+    :mala (* total-steps 2)
+    :hmc  (* total-steps (or leapfrog-steps 20))))
+
+(defn- can-fuse?
+  "Decide whether a chain can be fused into a single Metal dispatch.
+   Returns true if estimated ops are within safe limits."
+  [method total-steps {:keys [tensor-native? leapfrog-steps]}]
+  (let [ops (estimate-fused-ops method total-steps {:leapfrog-steps leapfrog-steps})
+        tier (if tensor-native? :native :gfi)]
+    (<= ops (get-in fused-ops-limits [tier method]))))
+
+(defn- block-result->fused-format
+  "Convert block-compiled result (vector of JS arrays) to fused return format.
+   Block-compiled functions (compiled-mh, mala, hmc) return vectors of JS arrays
+   via mx/->clj. This stacks them into a single [S,D] MLX tensor for API
+   consistency with the fused path."
+  [samples-vec]
+  {:samples (mx/stack (mapv mx/array samples-vec))
+   :final-params (mx/array (last samples-vec))
+   :chain-fn nil
+   :acceptance-rate nil})
+
 (defn fused-mh
   "Fully fused MH: burn-in + thinned collection in ONE Metal dispatch.
    Pre-generates all noise upfront, compiles the entire chain into a single
    function. Returns {:samples MLX-array [S,D] :final-params MLX-array [D]
                       :chain-fn compiled-fn}.
+
+   Auto-falls back to block-compiled path when chain is too large for a
+   single Metal graph.
 
    First call incurs compilation overhead (~2-10s depending on chain length).
    Pass :chain-fn from a previous call to skip recompilation.
@@ -540,26 +611,39 @@
   [{:keys [samples burn thin addresses proposal-std key device chain-fn]
     :or {burn 500 samples 1000 thin 1 proposal-std 0.1 device :cpu}}
    model args observations]
-  (let [model (dyn/auto-key model)]
+  (let [model (dyn/auto-key model)
+        total-steps (+ burn (* thin samples))]
     (with-device device
       (fn []
         (let [{:keys [trace]} (p/generate model args observations)
               {:keys [score-fn init-params n-params tensor-native?]}
-              (u/prepare-mcmc-score model args observations addresses trace)
-              _ (when (and (not tensor-native?) (nil? chain-fn))
-                  (println "Warning: fused-mh using GFI score (slow). Consider a static model."))
-              std (mx/scalar proposal-std)
-              total-steps (+ burn (* thin samples))
-              rk (rng/ensure-key key)
-              {:keys [noise uniforms]} (pre-generate-chain-noise rk total-steps n-params)
-              ;; Reuse chain-fn if provided, otherwise compile
-              cfn (or chain-fn
-                      (make-fused-burn-and-collect burn samples thin score-fn std n-params))
-              result (cfn init-params noise uniforms)]
-          (mx/materialize! (aget result 0) (aget result 1))
-          {:samples (aget result 1)
-           :final-params (aget result 0)
-           :chain-fn cfn})))))
+              (u/prepare-mcmc-score model args observations addresses trace)]
+          ;; Auto-fallback: when chain is too large for single Metal graph
+          (if (and (nil? chain-fn)
+                   (not (can-fuse? :mh total-steps {:tensor-native? tensor-native?})))
+            (do (println "Note: chain too large for single Metal graph — using block-compiled path.")
+                (block-result->fused-format
+                 (compiled-mh {:samples samples :burn burn :thin thin :addresses addresses
+                               :proposal-std proposal-std :key key :device device :compile? true}
+                              model args observations)))
+            ;; Fused path (with validation)
+            (let [_ (when (and (not tensor-native?) (nil? chain-fn))
+                      (println "Warning: fused-mh using GFI score (slow). Consider a static model."))
+                  std (mx/scalar proposal-std)
+                  rk (rng/ensure-key key)
+                  {:keys [noise uniforms]} (pre-generate-chain-noise rk total-steps n-params)
+                  cfn (if chain-fn
+                        chain-fn
+                        (safe-compile-chain
+                         #(make-fused-burn-and-collect burn samples thin score-fn std n-params)
+                         "fused-mh" total-steps))
+                  result (cfn init-params noise uniforms)]
+              (validate-compiled-result result "fused-mh" total-steps)
+              (mx/materialize! (aget result 0) (aget result 1) (aget result 2))
+              {:samples (aget result 1)
+               :final-params (aget result 0)
+               :chain-fn cfn
+               :acceptance-rate (/ (mx/item (aget result 2)) total-steps)})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized Compiled MH (N parallel chains)
@@ -799,16 +883,18 @@
 (defn- make-fused-vectorized-burn-and-collect
   "Compile a fused chain for N parallel MH chains: burn-in + thinned collection.
    params shape: [N,D], noise: [T,N,D], uniforms: [T,N].
-   Returns [S,N,D] sample tensor + [N,D] final params. ONE Metal dispatch."
+   Returns #js [final-params [N,D], samples [S,N,D], accept-count [N]].
+   ONE Metal dispatch."
   [n-burn n-samples thin score-fn proposal-std n-chains n-params]
   (let [total-steps (+ n-burn (* thin n-samples))
         chain-fn
         (fn [init-params noise uniforms]
           (loop [p init-params, i 0
                  sample-count (mx/astype (mx/array [0]) mx/int32)
-                 samples (mx/zeros [n-samples n-chains n-params])]
+                 samples (mx/zeros [n-samples n-chains n-params])
+                 accept-count (mx/zeros [n-chains])]
             (if (>= i total-steps)
-              #js [p samples]
+              #js [p samples accept-count]
               (let [;; Extract noise row: [T,N,D] → [N,D]
                     row (mx/reshape
                          (mx/take-idx noise (mx/array [i] mx/int32) 0)
@@ -824,6 +910,7 @@
                     log-u (mx/log u-row)
                     accept? (mx/greater log-alpha log-u) ;; [N] boolean
                     new-p (mx/where (mx/expand-dims accept? 1) proposal p) ;; [N,D]
+                    new-accept-count (mx/add accept-count (mx/astype accept? mx/float32))
                     ;; Record logic (host-side decision)
                     past-burn? (>= i n-burn)
                     is-record (and past-burn? (zero? (mod (- i n-burn) thin)))
@@ -835,13 +922,13 @@
                     new-count (if is-record
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
-                (recur new-p (inc i) new-count new-samples)))))
+                (recur new-p (inc i) new-count new-samples new-accept-count)))))
         compiled (mx/compile-fn chain-fn)]
     ;; Warmup trace
     (let [result (compiled (mx/zeros [n-chains n-params])
                            (rng/normal (rng/fresh-key) [total-steps n-chains n-params])
                            (rng/uniform (rng/fresh-key) [total-steps n-chains]))]
-      (mx/materialize! (aget result 0) (aget result 1)))
+      (mx/materialize! (aget result 0) (aget result 1) (aget result 2)))
     compiled))
 
 (defn fused-vectorized-mh
@@ -860,7 +947,15 @@
     :or {burn 500 samples 1000 thin 1 proposal-std 0.1 n-chains 8 device :gpu}}
    model args observations]
   (let [model (dyn/auto-key model)
-        addresses (u/filter-addresses addresses (u/get-eliminated-addresses model))]
+        addresses (u/filter-addresses addresses (u/get-eliminated-addresses model))
+        total-steps (+ burn (* thin samples))]
+    ;; Auto-fallback: vectorized graphs are larger (N chains), so check before work
+    (when (and (nil? chain-fn)
+               (not (can-fuse? :mh total-steps {:tensor-native? false})))
+      (throw (js/Error.
+              (str "fused-vectorized-mh: chain too large for single Metal graph ("
+                   total-steps " total steps x " n-chains " chains). "
+                   "Reduce samples/burn/thin or use vectorized-compiled-mh instead."))))
     (with-device device
       (fn []
         (let [raw-score-fn (u/make-batched-score-fn model args observations addresses)
@@ -870,20 +965,25 @@
               init-params (mx/broadcast-to (mx/expand-dims seed-params 0)
                                            [n-chains n-params])
               std (mx/scalar proposal-std)
-              total-steps (+ burn (* thin samples))
               rk (rng/ensure-key key)
               [k1 k2] (rng/split rk)
               noise (rng/normal k1 [total-steps n-chains n-params])
               uniforms (rng/uniform k2 [total-steps n-chains])
               _ (mx/materialize! noise uniforms)
-              cfn (or chain-fn
-                      (make-fused-vectorized-burn-and-collect
-                       burn samples thin raw-score-fn std n-chains n-params))
+              cfn (if chain-fn
+                    chain-fn
+                    (safe-compile-chain
+                     #(make-fused-vectorized-burn-and-collect
+                       burn samples thin raw-score-fn std n-chains n-params)
+                     "fused-vectorized-mh" total-steps))
               result (cfn init-params noise uniforms)]
-          (mx/materialize! (aget result 0) (aget result 1))
+          (validate-compiled-result result "fused-vectorized-mh" total-steps)
+          (mx/materialize! (aget result 0) (aget result 1) (aget result 2))
           {:samples (aget result 1) ;; [S,N,D]
            :final-params (aget result 0) ;; [N,D]
-           :chain-fn cfn})))))
+           :chain-fn cfn
+           :acceptance-rate (mx/divide (aget result 2)
+                                       (mx/scalar total-steps))})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Enumerative Gibbs Sampling
@@ -1132,6 +1232,123 @@
                          (recur q' sq' gq' (conj! acc (mx/->clj q')) (inc i) rk'))))]
         result))))
 
+;; ---------------------------------------------------------------------------
+;; Welford's online mean + variance (for diagonal mass matrix estimation)
+;; ---------------------------------------------------------------------------
+
+(defn- welford-update
+  "Online Welford update for mean and M2 (sum of squared deviations)."
+  [mean-vec m2-vec n q-js]
+  (let [n' (inc n)
+        delta (mapv - q-js mean-vec)
+        mean' (mapv (fn [m d] (+ m (/ d n'))) mean-vec delta)
+        delta2 (mapv - q-js mean')
+        m2' (mapv + m2-vec (mapv * delta delta2))]
+    [mean' m2' n']))
+
+(defn- welford-variance
+  "Compute mass matrix from Welford state. Returns MLX diagonal array or nil if n < 10.
+   Mass matrix M = 1/Var(q), so that M^{-1} = Var(q) — parameters with larger
+   posterior variance get proportionally larger position updates in leapfrog."
+  [m2-vec n]
+  (when (>= n 10)
+    (let [inv-var-vec (mapv (fn [m2] (/ 1.0 (max (/ m2 (dec n)) 1e-3))) m2-vec)]
+      (mx/array inv-var-vec))))
+
+;; ---------------------------------------------------------------------------
+;; Dual averaging step-size adaptation (Hoffman & Gelman 2014, Algorithm 5)
+;; with optional diagonal mass matrix estimation via Welford's algorithm.
+;; ---------------------------------------------------------------------------
+
+(defn- dual-averaging-warmup
+  "Run n-warmup steps adapting step-size via dual averaging.
+   step-fn: (fn [q eps-val metric key] -> {:state q' :accept-stat alpha})
+   warmup-metric: metric to use during warmup (nil = identity).
+   Returns {:step-size adapted-eps :state final-q :metric diagonal-or-nil}."
+  [n-warmup target-accept init-q step-fn n-params init-eps adapt-metric? warmup-metric]
+  (let [gamma 0.05
+        t0 10
+        kappa 0.75
+        mu (js/Math.log (* 10.0 init-eps))
+        init-welford (when adapt-metric?
+                       [(vec (repeat n-params 0.0))
+                        (vec (repeat n-params 0.0))
+                        0])]
+    (loop [m 1
+           q init-q
+           log-eps-bar 0.0
+           h-bar 0.0
+           current-eps init-eps
+           welford init-welford]
+      (if (> m n-warmup)
+        {:step-size (js/Math.exp log-eps-bar)
+         :state q
+         :metric (when welford (welford-variance (second welford) (nth welford 2)))}
+        (let [;; Wrap step-fn in tidy-run to clean up intermediate MLX arrays
+              ;; (NUTS builds ~10K arrays per step via binary tree — OOMs without cleanup)
+              result (mx/tidy-run
+                      #(step-fn q current-eps warmup-metric nil)
+                      (fn [{:keys [state]}] [state]))
+              _ (mx/clear-cache!)
+              {:keys [state accept-stat]} result
+              alpha (if (js/isNaN accept-stat) 0.0 (min 1.0 accept-stat))
+              ;; Update dual averaging statistics
+              w (/ 1.0 (+ m t0))
+              h-bar' (+ (* (- 1.0 w) h-bar)
+                        (* w (- target-accept alpha)))
+              log-eps' (- mu (/ (* (js/Math.sqrt m) h-bar') gamma))
+              ;; Averaged step-size (more stable)
+              m-kappa (js/Math.pow m (- kappa))
+              log-eps-bar' (+ (* m-kappa log-eps')
+                              (* (- 1.0 m-kappa) log-eps-bar))
+              ;; Welford update for metric estimation
+              welford' (when welford
+                         (let [[mean-v m2-v n] welford
+                               q-js (mx/->clj state)]
+                           (welford-update mean-v m2-v n q-js)))]
+          (recur (inc m) state log-eps-bar' h-bar' (js/Math.exp log-eps')
+                 welford'))))))
+
+;; ---------------------------------------------------------------------------
+;; MALA step-size adaptation (mirrors HMC's find-reasonable-epsilon)
+;; ---------------------------------------------------------------------------
+
+(defn- find-reasonable-mala-epsilon
+  "Find initial MALA step-size yielding ~50% acceptance via doubling/halving.
+   Same algorithm as find-reasonable-epsilon but using MALA proposals."
+  [q val-grad-compiled q-shape]
+  (let [test-accept
+        (fn [eps-val]
+          (let [eps (mx/scalar eps-val)
+                half-eps2 (mx/scalar (* 0.5 eps-val eps-val))
+                two-eps-sq (mx/scalar (* 2.0 eps-val eps-val))
+                {:keys [accepted?]}
+                (mala-step q val-grad-compiled eps half-eps2 two-eps-sq q-shape nil)]
+            (if accepted? 1.0 0.0)))
+        init-a (test-accept 1.0)
+        dir (if (> init-a 0.5) 1 -1)]
+    (loop [eps 1.0, i 0]
+      (if (>= i 100) eps
+          (let [a (test-accept eps)]
+            (if (or (and (pos? dir) (< a 0.5))
+                    (and (neg? dir) (> a 0.5)))
+              eps
+              (recur (* eps (js/Math.pow 2.0 dir)) (inc i))))))))
+
+(defn- make-mala-step-fn
+  "Adapter: wraps mala-step into the dual-averaging-warmup interface.
+   dual-averaging expects: (fn [q eps-val metric key] -> {:state q' :accept-stat alpha})
+   MALA doesn't use a mass matrix, so metric is ignored."
+  [val-grad-compiled q-shape]
+  (fn [q eps-val _metric _key]
+    (let [eps (mx/scalar eps-val)
+          half-eps2 (mx/scalar (* 0.5 eps-val eps-val))
+          two-eps-sq (mx/scalar (* 2.0 eps-val eps-val))
+          {:keys [state accepted?]}
+          (mala-step q val-grad-compiled eps half-eps2 two-eps-sq q-shape nil)]
+      {:state state
+       :accept-stat (if accepted? 1.0 0.0)})))
+
 (defn mala
   "MALA inference using gradient information for proposals.
 
@@ -1139,17 +1356,22 @@
    are compiled into single Metal dispatches. Score and gradient are cached
    across iterations, reducing val-grad calls from 3 to 1 per step.
 
+   When :adapt-step-size is true, the burn-in phase uses dual averaging
+   (Hoffman & Gelman 2014) to tune the step-size to achieve :target-accept
+   acceptance rate (default 0.574). The adapted step-size is then used
+   for the sampling phase.
+
    opts: {:samples N :step-size eps :burn B :thin T :addresses [addr...]
           :compile? bool :callback fn :key prng-key :device :cpu|:gpu
-          :block-size K}
+          :block-size K :adapt-step-size bool :target-accept float}
    model: generative function
    args: model arguments
    observations: choice map of observed values
    Default device: :cpu (faster for scalar parameters)."
   [{:keys [samples step-size burn thin addresses compile? callback key device
-           block-size]
+           block-size adapt-step-size target-accept]
     :or {step-size 0.01 burn 0 thin 1 compile? true device :cpu
-         block-size 50}}
+         block-size 50 adapt-step-size false target-accept 0.574}}
    model args observations]
   (let [model (dyn/auto-key model)]
     (with-device device
@@ -1158,31 +1380,210 @@
              (u/prepare-mcmc-score model args observations addresses trace)
              val-grad-fn (mx/value-and-grad score-fn)
              val-grad-compiled (mx/compile-fn val-grad-fn)
-             eps (mx/scalar step-size)
-             half-eps2 (mx/scalar (* 0.5 step-size step-size))
-             two-eps-sq (mx/scalar (* 2.0 step-size step-size))
              init-q init-params
-             q-shape (mx/shape init-q)]
+             q-shape (mx/shape init-q)
+           ;; Step-size adaptation (optional)
+             {:keys [adapted-eps warmup-q]}
+             (if (and adapt-step-size (> burn 0))
+               (let [n-warmup (min burn 200)
+                     init-eps (find-reasonable-mala-epsilon
+                               init-q val-grad-compiled q-shape)
+                     step-fn (make-mala-step-fn val-grad-compiled q-shape)
+                     result (dual-averaging-warmup
+                             n-warmup target-accept init-q step-fn
+                             n-params init-eps false nil)]
+                 (println "Adapted MALA step-size:" (:step-size result))
+                 {:adapted-eps (:step-size result)
+                  :warmup-q (:state result)})
+               {:adapted-eps nil :warmup-q nil})
+           ;; Use adapted values if available
+             final-step-size (or adapted-eps step-size)
+             start-q (or warmup-q init-q)
+             remaining-burn (if warmup-q (max 0 (- burn 200)) burn)
+             eps (mx/scalar final-step-size)
+             half-eps2 (mx/scalar (* 0.5 final-step-size final-step-size))
+             two-eps-sq (mx/scalar (* 2.0 final-step-size final-step-size))]
          (if compile?
          ;; Loop-compiled path
-           (let [burn-block (min (max burn 1) block-size)
-                 burn-chain (when (> burn 0)
+           (let [burn-block (min (max remaining-burn 1) block-size)
+                 burn-chain (when (> remaining-burn 0)
                               (make-compiled-mala-chain
                                burn-block val-grad-fn eps half-eps2 two-eps-sq n-params))
                  thin-steps (max thin 1)
                  thin-chain (make-compiled-mala-chain
                              thin-steps val-grad-fn eps half-eps2 two-eps-sq n-params)]
              (run-loop-compiled-mala
-              {:samples samples :burn burn :thin thin :callback callback :key key}
-              init-q n-params val-grad-compiled
+              {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
+              start-q n-params val-grad-compiled
               burn-chain burn-block thin-chain thin-steps))
          ;; Fallback: per-step eager path
            (kern/collect-samples
-            {:samples samples :burn burn :thin thin :callback callback :key key}
+            {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
             (fn [q step-key]
               (mala-step q val-grad-compiled eps half-eps2 two-eps-sq q-shape step-key))
             mx/->clj
-            init-q))))))
+            start-q))))))
+
+;; ---------------------------------------------------------------------------
+;; Fused MALA (single Metal dispatch for entire chain)
+;; ---------------------------------------------------------------------------
+
+(defn- make-fused-mala-burn-and-collect
+  "Compile a single function for MALA burn-in + thinned collection.
+   State threads [q, score, grad] to avoid redundant val-grad calls.
+   Returns compiled fn: (init-q [D], init-score [], init-grad [D], noise [T,D], uniforms [T])
+     → #js [final-q, final-score, final-grad, samples [S,D], accept-count []].
+   ONE Metal dispatch for entire chain."
+  [n-burn n-samples thin val-grad-fn eps half-eps2 two-eps-sq n-params]
+  (let [total-steps (+ n-burn (* thin n-samples))
+        chain-fn
+        (fn [init-q init-score init-grad noise uniforms]
+          (loop [q init-q, sq init-score, gq init-grad, i 0
+                 sample-count (mx/astype (mx/array [0]) mx/int32)
+                 samples (mx/zeros [n-samples n-params])
+                 accept-count (mx/scalar 0.0)]
+            (if (>= i total-steps)
+              #js [q sq gq samples accept-count]
+              (let [;; Extract noise row i
+                    noise-i (mx/reshape
+                             (mx/take-idx noise (mx/array [i] mx/int32) 0)
+                             [n-params])
+                    ;; Propose: q' = q + half-eps2 * grad + eps * noise
+                    q' (mx/add q (mx/multiply half-eps2 gq)
+                               (mx/multiply eps noise-i))
+                    ;; Score and gradient at proposal — THE ONLY val-grad call
+                    [sq' gq'] (val-grad-fn q')
+                    ;; Forward/backward means for asymmetric correction
+                    fwd-mean (mx/add q (mx/multiply half-eps2 gq))
+                    bwd-mean (mx/add q' (mx/multiply half-eps2 gq'))
+                    ;; Log proposal densities
+                    log-fwd (log-proposal-density q' fwd-mean two-eps-sq)
+                    log-bwd (log-proposal-density q bwd-mean two-eps-sq)
+                    ;; Acceptance ratio
+                    log-alpha (mx/add (mx/subtract sq' sq)
+                                      (mx/subtract log-bwd log-fwd))
+                    log-u (mx/log (mx/index uniforms i))
+                    accept? (mx/greater log-alpha log-u)
+                    ;; Branchless select (scalar accept? broadcasts to [D])
+                    new-q (mx/where accept? q' q)
+                    new-sq (mx/where accept? sq' sq)
+                    new-gq (mx/where accept? gq' gq)
+                    new-accept-count (mx/add accept-count (mx/astype accept? mx/float32))
+                    ;; After burn-in, record every thin steps
+                    past-burn? (>= i n-burn)
+                    is-record (and past-burn? (zero? (mod (- i n-burn) thin)))
+                    new-samples (if is-record
+                                  (write-sample-row samples new-q sample-count
+                                                    n-samples n-params)
+                                  samples)
+                    new-count (if is-record
+                                (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
+                                sample-count)]
+                (recur new-q new-sq new-gq (inc i)
+                       new-count new-samples new-accept-count)))))
+        compiled (mx/compile-fn chain-fn)]
+    ;; Warmup trace
+    (let [init-q (mx/zeros [n-params])
+          [init-s init-g] (val-grad-fn init-q)]
+      (mx/materialize! init-s init-g)
+      (let [result (compiled init-q init-s init-g
+                             (rng/normal (rng/fresh-key) [total-steps n-params])
+                             (rng/uniform (rng/fresh-key) [total-steps]))]
+        (mx/materialize! (aget result 0) (aget result 1) (aget result 2)
+                         (aget result 3) (aget result 4))))
+    compiled))
+
+(defn fused-mala
+  "Fully fused MALA: burn-in + thinned collection in ONE Metal dispatch.
+   Pre-generates all noise upfront, compiles the entire chain into a single
+   function. Returns {:samples MLX-array [S,D] :final-params MLX-array [D]
+                      :chain-fn compiled-fn :acceptance-rate float}.
+
+   Auto-falls back to block-compiled MALA when chain is too large for a
+   single Metal graph.
+
+   When :adapt-step-size is true, runs a short eager warmup phase using
+   dual averaging (Hoffman & Gelman 2014) to tune the step-size, then
+   compiles the fused chain with the adapted step-size. The adapted
+   step-size is printed and the remaining burn-in is adjusted accordingly.
+
+   First call incurs compilation overhead. Pass :chain-fn to skip recompilation.
+
+   opts: {:samples N :burn B :thin T :addresses [addr...]
+          :step-size eps :key prng-key :device :cpu|:gpu
+          :chain-fn compiled-fn-from-previous-call
+          :adapt-step-size bool :target-accept float :warmup-steps int}
+   model: generative function
+   args:  model arguments
+   observations: choice map of observed values
+
+   Default device: :cpu."
+  [{:keys [samples burn thin addresses step-size key device chain-fn
+           adapt-step-size target-accept warmup-steps]
+    :or {burn 500 samples 1000 thin 1 step-size 0.01 device :cpu
+         adapt-step-size false target-accept 0.574 warmup-steps 200}}
+   model args observations]
+  (let [model (dyn/auto-key model)
+        total-steps (+ burn (* thin samples))]
+    (with-device device
+      (fn []
+        (let [{:keys [trace]} (p/generate model args observations)
+              {:keys [score-fn init-params n-params tensor-native?]}
+              (u/prepare-mcmc-score model args observations addresses trace)]
+          ;; Auto-fallback: when chain is too large for single Metal graph
+          (if (and (nil? chain-fn)
+                   (not (can-fuse? :mala total-steps {:tensor-native? tensor-native?})))
+            (do (println "Note: chain too large for single Metal graph — using block-compiled MALA.")
+                (block-result->fused-format
+                 (mala {:samples samples :burn burn :thin thin :addresses addresses
+                        :step-size step-size :key key :device device :compile? true
+                        :adapt-step-size adapt-step-size :target-accept target-accept}
+                       model args observations)))
+            ;; Fused path (with validation)
+            (let [val-grad-fn (mx/value-and-grad score-fn)
+                  val-grad-compiled (mx/compile-fn val-grad-fn)
+                  q-shape (mx/shape init-params)
+                  ;; Step-size adaptation (optional)
+                  {:keys [adapted-eps warmup-q]}
+                  (if (and adapt-step-size (nil? chain-fn) (> burn 0))
+                    (let [n-warmup (min warmup-steps burn)
+                          init-eps (find-reasonable-mala-epsilon
+                                    init-params val-grad-compiled q-shape)
+                          step-fn (make-mala-step-fn val-grad-compiled q-shape)
+                          result (dual-averaging-warmup
+                                  n-warmup target-accept init-params step-fn
+                                  n-params init-eps false nil)]
+                      (println "Adapted MALA step-size:" (:step-size result))
+                      {:adapted-eps (:step-size result)
+                       :warmup-q (:state result)})
+                    {:adapted-eps nil :warmup-q nil})
+                  ;; Use adapted values if available
+                  final-step-size (or adapted-eps step-size)
+                  start-q (or warmup-q init-params)
+                  remaining-burn (if warmup-q (max 0 (- burn warmup-steps)) burn)
+                  remaining-total (+ remaining-burn (* thin samples))
+                  eps (mx/scalar final-step-size)
+                  half-eps2 (mx/scalar (* 0.5 final-step-size final-step-size))
+                  two-eps-sq (mx/scalar (* 2.0 final-step-size final-step-size))
+                  rk (rng/ensure-key key)
+                  {:keys [noise uniforms]} (pre-generate-chain-noise rk remaining-total n-params)
+                  [init-score init-grad] (val-grad-fn start-q)
+                  _ (mx/materialize! init-score init-grad)
+                  cfn (if chain-fn
+                        chain-fn
+                        (safe-compile-chain
+                         #(make-fused-mala-burn-and-collect
+                           remaining-burn samples thin val-grad-fn
+                           eps half-eps2 two-eps-sq n-params)
+                         "fused-mala" remaining-total))
+                  result (cfn start-q init-score init-grad noise uniforms)]
+              (validate-compiled-result result "fused-mala" remaining-total)
+              (mx/materialize! (aget result 0) (aget result 1) (aget result 2)
+                               (aget result 3) (aget result 4))
+              {:samples (aget result 3)
+               :final-params (aget result 0)
+               :chain-fn cfn
+               :acceptance-rate (/ (mx/item (aget result 4)) remaining-total)})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized MALA (N parallel chains)
@@ -1542,83 +1943,6 @@
               eps
               (recur (* eps (js/Math.pow 2.0 dir)) (inc i))))))))
 
-;; ---------------------------------------------------------------------------
-;; Welford's online mean + variance (for diagonal mass matrix estimation)
-;; ---------------------------------------------------------------------------
-
-(defn- welford-update
-  "Online Welford update for mean and M2 (sum of squared deviations)."
-  [mean-vec m2-vec n q-js]
-  (let [n' (inc n)
-        delta (mapv - q-js mean-vec)
-        mean' (mapv (fn [m d] (+ m (/ d n'))) mean-vec delta)
-        delta2 (mapv - q-js mean')
-        m2' (mapv + m2-vec (mapv * delta delta2))]
-    [mean' m2' n']))
-
-(defn- welford-variance
-  "Compute mass matrix from Welford state. Returns MLX diagonal array or nil if n < 10.
-   Mass matrix M = 1/Var(q), so that M^{-1} = Var(q) — parameters with larger
-   posterior variance get proportionally larger position updates in leapfrog."
-  [m2-vec n]
-  (when (>= n 10)
-    (let [inv-var-vec (mapv (fn [m2] (/ 1.0 (max (/ m2 (dec n)) 1e-3))) m2-vec)]
-      (mx/array inv-var-vec))))
-
-;; ---------------------------------------------------------------------------
-;; Dual averaging step-size adaptation (Hoffman & Gelman 2014, Algorithm 5)
-;; with optional diagonal mass matrix estimation via Welford's algorithm.
-;; ---------------------------------------------------------------------------
-
-(defn- dual-averaging-warmup
-  "Run n-warmup steps adapting step-size via dual averaging.
-   step-fn: (fn [q eps-val metric key] -> {:state q' :accept-stat alpha})
-   warmup-metric: metric to use during warmup (nil = identity).
-   Returns {:step-size adapted-eps :state final-q :metric diagonal-or-nil}."
-  [n-warmup target-accept init-q step-fn n-params init-eps adapt-metric? warmup-metric]
-  (let [gamma 0.05
-        t0 10
-        kappa 0.75
-        mu (js/Math.log (* 10.0 init-eps))
-        init-welford (when adapt-metric?
-                       [(vec (repeat n-params 0.0))
-                        (vec (repeat n-params 0.0))
-                        0])]
-    (loop [m 1
-           q init-q
-           log-eps-bar 0.0
-           h-bar 0.0
-           current-eps init-eps
-           welford init-welford]
-      (if (> m n-warmup)
-        {:step-size (js/Math.exp log-eps-bar)
-         :state q
-         :metric (when welford (welford-variance (second welford) (nth welford 2)))}
-        (let [;; Wrap step-fn in tidy-run to clean up intermediate MLX arrays
-              ;; (NUTS builds ~10K arrays per step via binary tree — OOMs without cleanup)
-              result (mx/tidy-run
-                      #(step-fn q current-eps warmup-metric nil)
-                      (fn [{:keys [state]}] [state]))
-              _ (mx/clear-cache!)
-              {:keys [state accept-stat]} result
-              alpha (if (js/isNaN accept-stat) 0.0 (min 1.0 accept-stat))
-              ;; Update dual averaging statistics
-              w (/ 1.0 (+ m t0))
-              h-bar' (+ (* (- 1.0 w) h-bar)
-                        (* w (- target-accept alpha)))
-              log-eps' (- mu (/ (* (js/Math.sqrt m) h-bar') gamma))
-              ;; Averaged step-size (more stable)
-              m-kappa (js/Math.pow m (- kappa))
-              log-eps-bar' (+ (* m-kappa log-eps')
-                              (* (- 1.0 m-kappa) log-eps-bar))
-              ;; Welford update for metric estimation
-              welford' (when welford
-                         (let [[mean-v m2-v n] welford
-                               q-js (mx/->clj state)]
-                           (welford-update mean-v m2-v n q-js)))]
-          (recur (inc m) state log-eps-bar' h-bar' (js/Math.exp log-eps')
-                 welford'))))))
-
 (defn hmc
   "Hamiltonian Monte Carlo sampling.
 
@@ -1724,6 +2048,189 @@
                         leapfrog-steps final-metric step-key))
             mx/->clj
             start-q))))))
+
+;; ---------------------------------------------------------------------------
+;; Fused HMC (single Metal dispatch for entire chain)
+;; ---------------------------------------------------------------------------
+
+(defn- make-fused-hmc-burn-and-collect
+  "Compile a single function for HMC burn-in + thinned collection.
+   Each step contains L leapfrog sub-steps (unrolled at graph-build time).
+   Identity mass matrix only.
+   Returns compiled fn: (init-q [D], momentum [T,D], uniforms [T])
+     → #js [final-q, samples [S,D], accept-count []].
+   ONE Metal dispatch for entire chain."
+  [n-burn n-samples thin neg-U-fn grad-neg-U eps half-eps half n-params leapfrog-steps]
+  (let [total-steps (+ n-burn (* thin n-samples))
+        chain-fn
+        (fn [init-q momentum-2d uniforms-1d]
+          (loop [q init-q, i 0
+                 sample-count (mx/astype (mx/array [0]) mx/int32)
+                 samples (mx/zeros [n-samples n-params])
+                 accept-count (mx/scalar 0.0)]
+            (if (>= i total-steps)
+              #js [q samples accept-count]
+              (let [;; Extract momentum row i
+                    p0 (mx/reshape
+                        (mx/take-idx momentum-2d (mx/array [i] mx/int32) 0)
+                        [n-params])
+                    ;; Current Hamiltonian: H = neg-U(q) + 0.5*sum(p²)
+                    current-H (mx/add (neg-U-fn q)
+                                      (mx/multiply half (mx/sum (mx/square p0))))
+                    ;; Inline fused leapfrog (L+1 grad evals instead of 2L)
+                    ;; Initial half-kick: p -= half-eps * grad(neg-U)
+                    g0 (grad-neg-U q)
+                    p1 (mx/subtract p0 (mx/multiply half-eps g0))
+                    ;; First drift: q += eps * p (identity mass)
+                    q1 (mx/add q (mx/multiply eps p1))
+                    ;; L-1 interior steps: full kick + drift
+                    [q-lf p-lf]
+                    (loop [j 1, qj q1, pj p1]
+                      (if (>= j leapfrog-steps) [qj pj]
+                          (let [gj (grad-neg-U qj)
+                                pj (mx/subtract pj (mx/multiply eps gj))
+                                qj (mx/add qj (mx/multiply eps pj))]
+                            (recur (inc j) qj pj))))
+                    ;; Final half-kick
+                    g-final (grad-neg-U q-lf)
+                    p-final (mx/subtract p-lf (mx/multiply half-eps g-final))
+                    ;; Proposed Hamiltonian
+                    proposed-H (mx/add (neg-U-fn q-lf)
+                                       (mx/multiply half (mx/sum (mx/square p-final))))
+                    ;; Accept/reject
+                    log-alpha (mx/subtract current-H proposed-H)
+                    log-u (mx/log (mx/index uniforms-1d i))
+                    accept? (mx/greater log-alpha log-u)
+                    new-q (mx/where accept? q-lf q)
+                    new-accept-count (mx/add accept-count (mx/astype accept? mx/float32))
+                    ;; After burn-in, record every thin steps
+                    past-burn? (>= i n-burn)
+                    is-record (and past-burn? (zero? (mod (- i n-burn) thin)))
+                    new-samples (if is-record
+                                  (write-sample-row samples new-q sample-count
+                                                    n-samples n-params)
+                                  samples)
+                    new-count (if is-record
+                                (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
+                                sample-count)]
+                (recur new-q (inc i) new-count new-samples new-accept-count)))))
+        compiled (mx/compile-fn chain-fn)]
+    ;; Warmup trace
+    (let [result (compiled (mx/zeros [n-params])
+                           (rng/normal (rng/fresh-key) [total-steps n-params])
+                           (rng/uniform (rng/fresh-key) [total-steps]))]
+      (mx/materialize! (aget result 0) (aget result 1) (aget result 2)))
+    compiled))
+
+(defn fused-hmc
+  "Fully fused HMC: burn-in + thinned collection in ONE Metal dispatch.
+   Pre-generates all momentum and acceptance noise upfront, compiles the
+   entire chain into a single function.
+   Returns {:samples MLX-array [S,D] :final-params MLX-array [D]
+            :chain-fn compiled-fn :acceptance-rate float}.
+
+   Auto-falls back to block-compiled HMC when chain is too large for a
+   single Metal graph (estimated from total-steps * leapfrog-steps).
+
+   When :adapt-step-size is true, runs a short eager warmup phase using
+   dual averaging (Hoffman & Gelman 2014) to tune the step-size, then
+   compiles the fused chain with the adapted step-size. Identity mass matrix
+   only for fused chains (mass matrix adaptation is not supported in fused mode).
+
+   First call incurs compilation overhead. Pass :chain-fn to skip recompilation.
+
+   opts: {:samples N :burn B :thin T :addresses [addr...]
+          :step-size eps :leapfrog-steps L :key prng-key :device :cpu|:gpu
+          :chain-fn compiled-fn-from-previous-call
+          :adapt-step-size bool :target-accept float :warmup-steps int}
+   model: generative function
+   args:  model arguments
+   observations: choice map of observed values
+
+   Default device: :cpu."
+  [{:keys [samples burn thin addresses step-size leapfrog-steps key device chain-fn
+           adapt-step-size target-accept warmup-steps]
+    :or {burn 500 samples 1000 thin 1 step-size 0.01 leapfrog-steps 20 device :cpu
+         adapt-step-size false target-accept 0.65 warmup-steps 200}}
+   model args observations]
+  (let [model (dyn/auto-key model)
+        total-steps (+ burn (* thin samples))]
+    (with-device device
+      (fn []
+        (let [{:keys [trace]} (p/generate model args observations)
+              {:keys [score-fn init-params n-params tensor-native?]}
+              (u/prepare-mcmc-score model args observations addresses trace)]
+          ;; Auto-fallback: when chain is too large for single Metal graph
+          (if (and (nil? chain-fn)
+                   (not (can-fuse? :hmc total-steps
+                                   {:tensor-native? tensor-native?
+                                    :leapfrog-steps leapfrog-steps})))
+            (do (println "Note: chain too large for single Metal graph — using block-compiled HMC.")
+                (block-result->fused-format
+                 (hmc {:samples samples :burn burn :thin thin :addresses addresses
+                       :step-size step-size :leapfrog-steps leapfrog-steps
+                       :key key :device device :compile? true
+                       :adapt-step-size adapt-step-size :target-accept target-accept}
+                      model args observations)))
+            ;; Fused path (with validation)
+            (let [neg-U-fn (fn [q] (mx/negative (score-fn q)))
+                  grad-neg-U-raw (mx/grad neg-U-fn)
+                  grad-neg-U (mx/compile-fn grad-neg-U-raw)
+                  neg-U-compiled (mx/compile-fn neg-U-fn)
+                  q-shape (mx/shape init-params)
+                  ;; Step-size adaptation (optional)
+                  {:keys [adapted-eps warmup-q]}
+                  (if (and adapt-step-size (nil? chain-fn) (> burn 0))
+                    (let [n-warmup (min warmup-steps burn)
+                          init-eps (find-reasonable-epsilon
+                                    init-params neg-U-compiled grad-neg-U
+                                    q-shape nil)
+                          half-mx (mx/scalar 0.5)
+                          hmc-step-fn
+                          (fn [q eps-val _m _key]
+                            (let [eps-mx (mx/scalar eps-val)
+                                  half-eps-mx (mx/scalar (* 0.5 eps-val))
+                                  {:keys [state log-accept]}
+                                  (hmc-step q neg-U-compiled grad-neg-U
+                                            eps-mx half-eps-mx half-mx q-shape
+                                            leapfrog-steps nil nil)]
+                              {:state state
+                               :accept-stat (let [a (js/Math.exp log-accept)]
+                                              (if (js/isNaN a) 0.0 (min 1.0 a)))}))
+                          result (dual-averaging-warmup
+                                  n-warmup target-accept init-params hmc-step-fn
+                                  n-params init-eps false nil)]
+                      (println "Adapted HMC step-size:" (:step-size result))
+                      {:adapted-eps (:step-size result)
+                       :warmup-q (:state result)})
+                    {:adapted-eps nil :warmup-q nil})
+                  ;; Use adapted values if available
+                  final-step-size (or adapted-eps step-size)
+                  start-q (or warmup-q init-params)
+                  remaining-burn (if warmup-q (max 0 (- burn warmup-steps)) burn)
+                  remaining-total (+ remaining-burn (* thin samples))
+                  eps (mx/scalar final-step-size)
+                  half-eps (mx/scalar (* 0.5 final-step-size))
+                  half (mx/scalar 0.5)
+                  rk (rng/ensure-key key)
+                  [k1 k2] (rng/split rk)
+                  momentum (rng/normal k1 [remaining-total n-params])
+                  uniforms (rng/uniform k2 [remaining-total])
+                  _ (mx/materialize! momentum uniforms)
+                  cfn (if chain-fn
+                        chain-fn
+                        (safe-compile-chain
+                         #(make-fused-hmc-burn-and-collect
+                           remaining-burn samples thin neg-U-fn grad-neg-U-raw
+                           eps half-eps half n-params leapfrog-steps)
+                         "fused-hmc" remaining-total))
+                  result (cfn start-q momentum uniforms)]
+              (validate-compiled-result result "fused-hmc" remaining-total)
+              (mx/materialize! (aget result 0) (aget result 1) (aget result 2))
+              {:samples (aget result 1)
+               :final-params (aget result 0)
+               :chain-fn cfn
+               :acceptance-rate (/ (mx/item (aget result 2)) remaining-total)})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized HMC (N parallel chains)
