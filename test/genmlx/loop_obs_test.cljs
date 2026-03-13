@@ -1,7 +1,6 @@
-(ns genmlx.m4-constraint-stacking-test
-  "M4: Auto-constraint stacking tests.
-   Verifies that flat loop constraints are detected and pre-stacked
-   into [T]-shaped MLX tensors for M5 consumption."
+(ns genmlx.loop-obs-test
+  "Tests for loop-obs and merge-obs convenience helpers,
+   plus vgenerate-on-loop-model integration."
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
@@ -73,45 +72,10 @@
   (assert-equal "merged has y2" 30 (cm/get-value (cm/get-submap merged :y2))))
 
 ;; ---------------------------------------------------------------------------
-;; 3. prepare-loop-stacks with model
+;; 3. vgenerate + loop model
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 3. prepare-loop-stacks with model --")
-
-(let [obs (dyn/loop-obs "y" [1.0 2.0 3.0])
-      schema (:schema linreg-model)
-      stacks (dyn/prepare-loop-stacks obs schema)]
-  (assert-equal "one stack" 1 (count stacks))
-  (assert-equal "prefix is y" "y" (:prefix (first stacks)))
-  (assert-equal "count is 3" 3 (:count (first stacks)))
-  (assert-equal "values shape [3]" [3] (mx/shape (:values (first stacks))))
-  (assert-true "fully constrained" (:fully-constrained? (first stacks))))
-
-;; ---------------------------------------------------------------------------
-;; 4. prepare-loop-stacks edge cases
-;; ---------------------------------------------------------------------------
-
-(println "\n-- 4. prepare-loop-stacks edge cases --")
-
-(let [schema (:schema linreg-model)]
-  ;; nil constraints
-  (assert-true "nil constraints -> nil" (nil? (dyn/prepare-loop-stacks nil schema)))
-  ;; EMPTY constraints
-  (assert-true "EMPTY constraints -> nil" (nil? (dyn/prepare-loop-stacks cm/EMPTY schema)))
-  ;; No matching prefix
-  (assert-true "no match -> nil"
-               (nil? (dyn/prepare-loop-stacks (cm/choicemap :slope 1.0 :intercept 2.0) schema)))
-  ;; Sparse (non-contiguous) indices
-  (let [sparse (cm/choicemap :y0 1.0 :y2 3.0)
-        stacks (dyn/prepare-loop-stacks sparse schema)]
-    (assert-true "sparse not fully-constrained"
-                 (not (:fully-constrained? (first stacks))))))
-
-;; ---------------------------------------------------------------------------
-;; 5. vgenerate + loop model
-;; ---------------------------------------------------------------------------
-
-(println "\n-- 5. vgenerate + loop model --")
+(println "\n-- 3. vgenerate + loop model --")
 
 (let [xs [1.0 2.0 3.0]
       obs (dyn/loop-obs "y" [10.0 20.0 30.0])
@@ -125,10 +89,10 @@
     (assert-true "y0 is constrained scalar" (= [] (mx/shape y0-val)))))
 
 ;; ---------------------------------------------------------------------------
-;; 6. Equivalence: loop-obs == manual choicemap
+;; 4. Equivalence: loop-obs == manual choicemap
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 6. Equivalence: loop-obs vs manual choicemap --")
+(println "\n-- 4. Equivalence: loop-obs vs manual choicemap --")
 
 (let [xs [1.0 2.0 3.0]
       manual (cm/choicemap :y0 10.0 :y1 20.0 :y2 30.0)
@@ -142,10 +106,10 @@
   (assert-equal "same n-particles" (:n-particles vt-manual) (:n-particles vt-loop)))
 
 ;; ---------------------------------------------------------------------------
-;; 7. merge-obs + vgenerate end-to-end
+;; 5. merge-obs + vgenerate end-to-end
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 7. merge-obs + vgenerate end-to-end --")
+(println "\n-- 5. merge-obs + vgenerate end-to-end --")
 
 (let [xs [1.0 2.0 3.0]
       static (cm/choicemap :slope 2.0 :intercept 1.0)
@@ -160,11 +124,11 @@
     (assert-close "slope constrained" 2.0 slope-num 0.001)))
 
 ;; ---------------------------------------------------------------------------
-;; 8. Summary
+;; Summary
 ;; ---------------------------------------------------------------------------
 
 (println "\n========================================")
-(println (str "M4 Constraint Stacking: " @pass-count "/" (+ @pass-count @fail-count)
+(println (str "Loop Obs Helpers: " @pass-count "/" (+ @pass-count @fail-count)
               " passed" (when (pos? @fail-count) (str ", " @fail-count " FAILED"))))
 (println "========================================")
 
