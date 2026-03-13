@@ -16,6 +16,7 @@
             [genmlx.schema :as schema]
             [genmlx.compiled :as compiled]
             [genmlx.compiled-ops :as cops]
+            [genmlx.dist.core :as dc]
             [genmlx.conjugacy :as conjugacy]
             [genmlx.rewrite :as rewrite]
             [genmlx.inference.auto-analytical :as auto-analytical]
@@ -106,6 +107,120 @@
                           :fully-constrained? (= indices (vec (range n)))})))))
                 (:loop-sites schema))]
       (when (seq stacks) stacks))))
+
+;; ---------------------------------------------------------------------------
+;; M5: Fused loop execution — accumulate-and-fuse handler transitions
+;; ---------------------------------------------------------------------------
+
+(def ^:private dist-param-keys
+  "Distribution type → ordered param keys matching noise-transform function args."
+  {:gaussian [:mu :sigma]
+   :normal [:mu :sigma]
+   :uniform [:low :high]
+   :bernoulli [:p]
+   :flip [:p]
+   :exponential [:rate]
+   :log-normal [:mu :sigma]
+   :delta [:value]
+   :laplace [:loc :scale]
+   :cauchy [:loc :scale]})
+
+(defn- match-loop-addr
+  "If addr matches a loop-stack's prefix, return the stack. Otherwise nil."
+  [addr loop-stacks]
+  (when loop-stacks
+    (let [s (name addr)]
+      (some (fn [stack]
+              (when (and (:prefix stack)
+                         (.startsWith s (:prefix stack))
+                         (> (count s) (count (:prefix stack))))
+                stack))
+            loop-stacks))))
+
+(defn- fused-batched-generate-transition
+  "Wraps batched-generate-transition. For addresses matching a fusable loop,
+   stores the value and accumulates dist params for deferred fused log-prob.
+   For non-loop addresses, delegates to standard handler."
+  [state addr dist]
+  (if-let [stack (match-loop-addr addr (:loop-stacks state))]
+    (let [constraint (cm/get-submap (:constraints state) addr)
+          loop-idx (:loop-idx stack)
+          [k1 k2] (rng/split (:key state))]
+      (if (cm/has-value? constraint)
+        ;; Constrained: store value, accumulate params, skip log-prob
+        (let [value (cm/get-value constraint)]
+          [value (-> state
+                     (assoc :key k1)
+                     (update :choices cm/set-value addr value)
+                     (update-in [:loop-accum loop-idx :params]
+                                (fnil conj []) (:params dist))
+                     (update-in [:loop-accum loop-idx :values]
+                                (fnil conj []) value)
+                     (update-in [:loop-accum loop-idx :dist-type]
+                                (fn [t] (or t (:type dist)))))])
+        ;; Unconstrained in loop: sample [N], accumulate for fused score
+        (let [n (:batch-size state)
+              value (dc/dist-sample-n dist k2 n)]
+          [value (-> state
+                     (assoc :key k1)
+                     (update :choices cm/set-value addr value)
+                     (update-in [:loop-accum loop-idx :params]
+                                (fnil conj []) (:params dist))
+                     (update-in [:loop-accum loop-idx :values]
+                                (fnil conj []) value)
+                     (update-in [:loop-accum loop-idx :dist-type]
+                                (fn [t] (or t (:type dist)))))])))
+    (h/batched-generate-transition state addr dist)))
+
+(defn- fused-batched-simulate-transition
+  "Wraps batched-simulate-transition. Loop addresses: sample [N], accumulate
+   params for deferred fused score. Non-loop: delegate to standard."
+  [state addr dist]
+  (if-let [stack (match-loop-addr addr (:loop-stacks state))]
+    (let [n (:batch-size state)
+          [k1 k2] (rng/split (:key state))
+          value (dc/dist-sample-n dist k2 n)
+          loop-idx (:loop-idx stack)]
+      [value (-> state
+                 (assoc :key k1)
+                 (update :choices cm/set-value addr value)
+                 (update-in [:loop-accum loop-idx :params]
+                            (fnil conj []) (:params dist))
+                 (update-in [:loop-accum loop-idx :values]
+                            (fnil conj []) value)
+                 (update-in [:loop-accum loop-idx :dist-type]
+                            (fn [t] (or t (:type dist)))))])
+    (h/batched-simulate-transition state addr dist)))
+
+(defn- fuse-loop-scores
+  "Post-process: stack accumulated loop params into [N,T] tensors,
+   compute fused log-probs via noise transforms, update score/weight."
+  [result fuse-weight?]
+  (if-let [accum (:loop-accum result)]
+    (reduce-kv
+     (fn [state loop-idx {:keys [dist-type params values]}]
+       (if-let [nt (get compiled/noise-transforms-full dist-type)]
+         (let [log-prob-fn (:log-prob nt)
+               pkeys (get dist-param-keys dist-type)
+               stacked-params (mapv (fn [pk]
+                                      (mx/stack (mapv #(mx/ensure-array (get % pk)) params) -1))
+                                    pkeys)
+               stacked-values (mx/stack (mapv mx/ensure-array values) -1)
+               fused-lp (apply log-prob-fn stacked-values stacked-params)
+               score-contrib (mx/sum fused-lp -1)]
+           (cond-> (update state :score #(mx/add % score-contrib))
+             fuse-weight? (update :weight #(mx/add % score-contrib))))
+          ;; No noise transform — fall back to per-iteration log-prob
+         (reduce (fn [st i]
+                   (let [d (dc/->Distribution dist-type (nth params i))
+                         lp (dc/dist-log-prob d (nth values i))]
+                     (cond-> (update st :score #(mx/add % lp))
+                       fuse-weight? (update :weight #(mx/add % lp)))))
+                 state
+                 (range (count params)))))
+     (dissoc result :loop-accum)
+     accum)
+    result))
 
 (defn- find-unused-constraints
   "Return set of top-level constraint keys not consumed by the trace, or nil."
@@ -823,12 +938,33 @@
   [gf args n key]
   (let [key (rng/ensure-key key)
         _ (rng/seed! key)
-        result (rt/run-handler h/batched-simulate-transition
+        schema (:schema gf)
+        ;; Build minimal loop-stacks for address matching (no constraints)
+        loop-stacks (when (and schema (seq (:loop-sites schema)))
+                      (let [stacks (into []
+                                         (keep-indexed
+                                          (fn [loop-idx ls]
+                                            (when-let [prefix (get-in (first (:trace-sites ls))
+                                                                      [:addr-pattern :prefix])]
+                                              {:loop-idx loop-idx :prefix prefix})))
+                                         (:loop-sites schema))]
+                        (when (seq stacks) stacks)))
+        fusable? (and loop-stacks
+                      (every? (fn [stack]
+                                (let [ls (nth (:loop-sites schema) (:loop-idx stack))]
+                                  (and (:homogeneous? ls) (:rewritable? ls))))
+                              loop-stacks))
+        transition (if fusable?
+                     fused-batched-simulate-transition
+                     h/batched-simulate-transition)
+        result (rt/run-handler transition
                                {:choices cm/EMPTY :score SCORE-ZERO
                                 :key key :batch-size n :batched? true
+                                :loop-stacks (when fusable? loop-stacks)
                                 :executor execute-sub
                                 :param-store (::param-store (meta gf))}
-                               (fn [rt] (apply (:body-fn gf) rt args)))]
+                               (fn [rt] (apply (:body-fn gf) rt args)))
+        result (if fusable? (fuse-loop-scores result false) result)]
     (vec/->VectorizedTrace gf args (:choices result) (:score result)
                            (mx/zeros [n]) n (:retval result))))
 
@@ -844,14 +980,28 @@
         schema (:schema gf)
         loop-stacks (when (and schema (seq (:loop-sites schema)))
                       (prepare-loop-stacks constraints schema))
-        result (rt/run-handler h/batched-generate-transition
+        ;; Use fused transition when loop-stacks exist and loops are fusable
+        fusable? (and loop-stacks
+                      (every? (fn [stack]
+                                (let [ls (nth (:loop-sites schema) (:loop-idx stack))]
+                                  (and (:homogeneous? ls)
+                                       (:rewritable? ls)
+                                       (:fully-constrained? stack)
+                                       (get compiled/noise-transforms-full
+                                            (:dist-type (first (:trace-sites ls)))))))
+                              loop-stacks))
+        transition (if fusable?
+                     fused-batched-generate-transition
+                     h/batched-generate-transition)
+        result (rt/run-handler transition
                                {:choices cm/EMPTY :score SCORE-ZERO
                                 :weight SCORE-ZERO :key key
                                 :constraints constraints :batch-size n :batched? true
                                 :loop-stacks loop-stacks
                                 :executor execute-sub
                                 :param-store (::param-store (meta gf))}
-                               (fn [rt] (apply (:body-fn gf) rt args)))]
+                               (fn [rt] (apply (:body-fn gf) rt args)))
+        result (if fusable? (fuse-loop-scores result true) result)]
     (vec/->VectorizedTrace gf args (:choices result) (:score result)
                            (:weight result) n (:retval result))))
 
