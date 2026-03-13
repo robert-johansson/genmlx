@@ -55,11 +55,11 @@
   [state addr dist]
   (let [[k1 k2] (rng/split (:key state))
         value (dc/dist-sample dist k2)
-        lp    (dc/dist-log-prob dist value)]
+        lp (dc/dist-log-prob dist value)]
     [value (-> state
-             (assoc :key k1)
-             (update :choices cm/set-value addr value)
-             (update :score #(mx/add % lp)))]))
+               (assoc :key k1)
+               (update :choices cm/set-value addr value)
+               (update :score #(mx/add % lp)))]))
 
 (defn generate-transition
   "Pure: if constrained at addr, use constraint; otherwise simulate."
@@ -67,11 +67,11 @@
   (let [constraint (cm/get-submap (:constraints state) addr)]
     (if (cm/has-value? constraint)
       (let [value (cm/get-value constraint)
-            lp    (dc/dist-log-prob dist value)]
+            lp (dc/dist-log-prob dist value)]
         [value (-> state
-                 (update :choices cm/set-value addr value)
-                 (update :score  #(mx/add % lp))
-                 (update :weight #(mx/add % lp)))])
+                   (update :choices cm/set-value addr value)
+                   (update :score #(mx/add % lp))
+                   (update :weight #(mx/add % lp)))])
       (simulate-transition state addr dist))))
 
 (defn assess-transition
@@ -80,11 +80,11 @@
   (let [constraint (cm/get-submap (:constraints state) addr)]
     (if (cm/has-value? constraint)
       (let [value (cm/get-value constraint)
-            lp    (dc/dist-log-prob dist value)]
+            lp (dc/dist-log-prob dist value)]
         [value (-> state
-                 (update :choices cm/set-value addr value)
-                 (update :score  #(mx/add % lp))
-                 (update :weight #(mx/add % lp)))])
+                   (update :choices cm/set-value addr value)
+                   (update :score #(mx/add % lp))
+                   (update :weight #(mx/add % lp)))])
       (throw (ex-info (str "assess: address " addr " not found in provided choices. "
                            "All addresses must be constrained for assess.")
                       {:addr addr})))))
@@ -98,23 +98,23 @@
       ;; New constraint provided
       (cm/has-value? constraint)
       (let [new-val (cm/get-value constraint)
-            new-lp  (dc/dist-log-prob dist new-val)
+            new-lp (dc/dist-log-prob dist new-val)
             old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
-            old-lp  (if old-val (dc/dist-log-prob dist old-val) ZERO)]
+            old-lp (if old-val (dc/dist-log-prob dist old-val) ZERO)]
         [new-val (-> state
-                   (update :choices cm/set-value addr new-val)
-                   (update :score  #(mx/add % new-lp))
-                   (update :weight #(mx/add % (mx/subtract new-lp old-lp)))
-                   (cond->
-                     old-val (update :discard cm/set-value addr old-val)))])
+                     (update :choices cm/set-value addr new-val)
+                     (update :score #(mx/add % new-lp))
+                     (update :weight #(mx/add % (mx/subtract new-lp old-lp)))
+                     (cond->
+                      old-val (update :discard cm/set-value addr old-val)))])
 
       ;; Keep old value
       (cm/has-value? old-choice)
       (let [val (cm/get-value old-choice)
-            lp  (dc/dist-log-prob dist val)]
+            lp (dc/dist-log-prob dist val)]
         [val (-> state
-               (update :choices cm/set-value addr val)
-               (update :score #(mx/add % lp)))])
+                 (update :choices cm/set-value addr val)
+                 (update :score #(mx/add % lp)))])
 
       ;; New address: sample fresh
       :else (simulate-transition state addr dist))))
@@ -128,14 +128,14 @@
       ;; Selected: resample, compute weight adjustment
       (let [[k1 k2] (rng/split (:key state))
             new-val (dc/dist-sample dist k2)
-            new-lp  (dc/dist-log-prob dist new-val)
+            new-lp (dc/dist-log-prob dist new-val)
             old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
-            old-lp  (if old-val (dc/dist-log-prob dist old-val) ZERO)]
+            old-lp (if old-val (dc/dist-log-prob dist old-val) ZERO)]
         [new-val (-> state
-                   (assoc :key k1)
-                   (update :choices cm/set-value addr new-val)
-                   (update :score  #(mx/add % new-lp))
-                   (update :weight #(mx/add % (mx/subtract new-lp old-lp))))])
+                     (assoc :key k1)
+                     (update :choices cm/set-value addr new-val)
+                     (update :score #(mx/add % new-lp))
+                     (update :weight #(mx/add % (mx/subtract new-lp old-lp))))])
       ;; Not selected: keep old
       (let [val (when (cm/has-value? old-choice)
                   (cm/get-value old-choice))]
@@ -145,8 +145,8 @@
                           {:addr addr})))
         (let [lp (dc/dist-log-prob dist val)]
           [val (-> state
-                 (update :choices cm/set-value addr val)
-                 (update :score #(mx/add % lp)))])))))
+                   (update :choices cm/set-value addr val)
+                   (update :score #(mx/add % lp)))])))))
 
 (defn project-transition
   "Pure: replay old value, accumulate log-prob for selected addresses."
@@ -161,10 +161,10 @@
         lp (dc/dist-log-prob dist val)
         sel (:selection state)]
     [val (-> state
-           (update :choices cm/set-value addr val)
-           (update :score #(mx/add % lp))
-           (cond-> (and sel (sel/selected? sel addr))
-             (update :weight #(mx/add % lp))))]))
+             (update :choices cm/set-value addr val)
+             (update :score #(mx/add % lp))
+             (cond-> (and sel (sel/selected? sel addr))
+               (update :weight #(mx/add % lp))))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Batched state transitions (vectorized: [N]-shaped values)
@@ -176,11 +176,11 @@
   (let [n (:batch-size state)
         [k1 k2] (rng/split (:key state))
         value (dc/dist-sample-n dist k2 n)
-        lp    (dc/dist-log-prob dist value)]
+        lp (dc/dist-log-prob dist value)]
     [value (-> state
-             (assoc :key k1)
-             (update :choices cm/set-value addr value)
-             (update :score #(mx/add % lp)))]))
+               (assoc :key k1)
+               (update :choices cm/set-value addr value)
+               (update :score #(mx/add % lp)))]))
 
 (defn batched-generate-transition
   "Pure: constrained sites use scalar observation (broadcasts into [N] score),
@@ -190,11 +190,11 @@
     (if (cm/has-value? constraint)
       ;; Constrained: scalar observation, scalar log-prob → broadcasts into [N] score/weight
       (let [value (cm/get-value constraint)
-            lp    (dc/dist-log-prob dist value)]
+            lp (dc/dist-log-prob dist value)]
         [value (-> state
-                 (update :choices cm/set-value addr value)
-                 (update :score  #(mx/add % lp))
-                 (update :weight #(mx/add % lp)))])
+                   (update :choices cm/set-value addr value)
+                   (update :score #(mx/add % lp))
+                   (update :weight #(mx/add % lp)))])
       (batched-simulate-transition state addr dist))))
 
 (defn batched-update-transition
@@ -207,23 +207,23 @@
       ;; New constraint provided — score difference against old values
       (cm/has-value? constraint)
       (let [new-val (cm/get-value constraint)
-            new-lp  (dc/dist-log-prob dist new-val)
+            new-lp (dc/dist-log-prob dist new-val)
             old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
-            old-lp  (if old-val (dc/dist-log-prob dist old-val) ZERO)]
+            old-lp (if old-val (dc/dist-log-prob dist old-val) ZERO)]
         [new-val (-> state
-                   (update :choices cm/set-value addr new-val)
-                   (update :score  #(mx/add % new-lp))
-                   (update :weight #(mx/add % (mx/subtract new-lp old-lp)))
-                   (cond->
-                     old-val (update :discard cm/set-value addr old-val)))])
+                     (update :choices cm/set-value addr new-val)
+                     (update :score #(mx/add % new-lp))
+                     (update :weight #(mx/add % (mx/subtract new-lp old-lp)))
+                     (cond->
+                      old-val (update :discard cm/set-value addr old-val)))])
 
       ;; Keep old [N]-shaped values
       (cm/has-value? old-choice)
       (let [val (cm/get-value old-choice)
-            lp  (dc/dist-log-prob dist val)]
+            lp (dc/dist-log-prob dist val)]
         [val (-> state
-               (update :choices cm/set-value addr val)
-               (update :score #(mx/add % lp)))])
+                 (update :choices cm/set-value addr val)
+                 (update :score #(mx/add % lp)))])
 
       ;; New address: sample [N] fresh values
       :else (batched-simulate-transition state addr dist))))
@@ -238,20 +238,20 @@
       ;; Selected: resample [N] values, compute [N]-shaped weight adjustment
       (let [[k1 k2] (rng/split (:key state))
             new-val (dc/dist-sample-n dist k2 n)
-            new-lp  (dc/dist-log-prob dist new-val)
+            new-lp (dc/dist-log-prob dist new-val)
             old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
-            old-lp  (if old-val (dc/dist-log-prob dist old-val) ZERO)]
+            old-lp (if old-val (dc/dist-log-prob dist old-val) ZERO)]
         [new-val (-> state
-                   (assoc :key k1)
-                   (update :choices cm/set-value addr new-val)
-                   (update :score  #(mx/add % new-lp))
-                   (update :weight #(mx/add % (mx/subtract new-lp old-lp))))])
+                     (assoc :key k1)
+                     (update :choices cm/set-value addr new-val)
+                     (update :score #(mx/add % new-lp))
+                     (update :weight #(mx/add % (mx/subtract new-lp old-lp))))])
       ;; Not selected: keep old [N]-shaped values
       (let [val (cm/get-value old-choice)
-            lp  (dc/dist-log-prob dist val)]
+            lp (dc/dist-log-prob dist val)]
         [val (-> state
-               (update :choices cm/set-value addr val)
-               (update :score #(mx/add % lp)))]))))
+                 (update :choices cm/set-value addr val)
+                 (update :score #(mx/add % lp)))]))))
 
 ;; ---------------------------------------------------------------------------
 ;; Pure helpers used by runtime.cljs
@@ -261,26 +261,26 @@
   "Pure: merge a sub-generative-function result into parent state."
   [state addr sub-result]
   (-> state
-    (update :choices cm/set-submap addr (:choices sub-result))
-    (update :score (fn [sc] (mx/add sc (:score sub-result))))
-    (update :splice-scores (fn [ss] (assoc (or ss {}) addr (:score sub-result))))
-    (cond->
-      (and (contains? state :weight) (:weight sub-result))
-      (update :weight (fn [w] (mx/add w (:weight sub-result))))
+      (update :choices cm/set-submap addr (:choices sub-result))
+      (update :score (fn [sc] (mx/add sc (:score sub-result))))
+      (update :splice-scores (fn [ss] (assoc (or ss {}) addr (:score sub-result))))
+      (cond->
+       (and (contains? state :weight) (:weight sub-result))
+        (update :weight (fn [w] (mx/add w (:weight sub-result))))
 
-      (:discard sub-result)
-      (update :discard cm/set-submap addr (:discard sub-result)))))
+        (:discard sub-result)
+        (update :discard cm/set-submap addr (:discard sub-result)))))
 
 (defn mlx-arr-batched?
   "Check if x is an MLX array with at least 1 dimension."
   [x]
-  (and (some? x) (some? (.-shape x)) (.-item x)
+  (and (some? x) (some? (.-shape x)) (some? (.-item x))
        (pos? (count (mx/shape x)))))
 
 (defn scalar-leaf-val?
   "Check if a value is scalar (0-d or not an MLX array)."
   [v]
-  (or (not (and (some? v) (some? (.-shape v)) (.-item v)))
+  (or (not (and (some? v) (some? (.-shape v)) (some? (.-item v))))
       (= [] (mx/shape v))))
 
 (defn combinator-batched-fallback
@@ -292,8 +292,8 @@
         ;; Extract scoped state
         sub-constraints (cm/get-submap (:constraints state) addr)
         sub-old-choices (cm/get-submap (:old-choices state) addr)
-        sub-selection   (when-let [s (:selection state)]
-                          (sel/get-subselection s addr))
+        sub-selection (when-let [s (:selection state)]
+                        (sel/get-subselection s addr))
         ;; Extract per-particle args: only unstack if leading dim == N (batched)
         extract-scalar-arg (fn [a i]
                              (if (and (mlx-arr-batched? a)
@@ -316,45 +316,45 @@
         ;; Run per-particle
         results
         (mapv
-          (fn [i]
-            (let [elem-args (mapv #(extract-scalar-arg % i) args)]
-              (cond
+         (fn [i]
+           (let [elem-args (mapv #(extract-scalar-arg % i) args)]
+             (cond
                 ;; Regenerate mode
-                sub-selection
-                (let [old-choices (or (and per-old-choices (nth per-old-choices i)) cm/EMPTY)
-                      elem-trace (tr/make-trace
-                                   {:gen-fn gf :args elem-args
-                                    :choices old-choices :retval nil
-                                    :score (mx/scalar 0.0)})
-                      {:keys [trace weight]} (p/regenerate gf elem-trace sub-selection)]
-                  {:choices (:choices trace) :score (:score trace)
-                   :weight weight :retval (:retval trace)})
+               sub-selection
+               (let [old-choices (or (and per-old-choices (nth per-old-choices i)) cm/EMPTY)
+                     elem-trace (tr/make-trace
+                                 {:gen-fn gf :args elem-args
+                                  :choices old-choices :retval nil
+                                  :score (mx/scalar 0.0)})
+                     {:keys [trace weight]} (p/regenerate gf elem-trace sub-selection)]
+                 {:choices (:choices trace) :score (:score trace)
+                  :weight weight :retval (:retval trace)})
 
                 ;; Update mode
-                (and per-old-choices (nth per-old-choices i)
-                     (not= (nth per-old-choices i) cm/EMPTY))
-                (let [c (or (and per-constraints (nth per-constraints i)) cm/EMPTY)
-                      elem-trace (tr/make-trace
-                                   {:gen-fn gf :args elem-args
-                                    :choices (nth per-old-choices i) :retval nil
-                                    :score (mx/scalar 0.0)})
-                      {:keys [trace weight discard]} (p/update gf elem-trace c)]
-                  {:choices (:choices trace) :score (:score trace)
-                   :weight weight :discard discard :retval (:retval trace)})
+               (and per-old-choices (nth per-old-choices i)
+                    (not= (nth per-old-choices i) cm/EMPTY))
+               (let [c (or (and per-constraints (nth per-constraints i)) cm/EMPTY)
+                     elem-trace (tr/make-trace
+                                 {:gen-fn gf :args elem-args
+                                  :choices (nth per-old-choices i) :retval nil
+                                  :score (mx/scalar 0.0)})
+                     {:keys [trace weight discard]} (p/update gf elem-trace c)]
+                 {:choices (:choices trace) :score (:score trace)
+                  :weight weight :discard discard :retval (:retval trace)})
 
                 ;; Generate with constraints
-                (and per-constraints (nth per-constraints i)
-                     (not= (nth per-constraints i) cm/EMPTY))
-                (let [{:keys [trace weight]} (p/generate gf elem-args (nth per-constraints i))]
-                  {:choices (:choices trace) :score (:score trace)
-                   :weight weight :retval (:retval trace)})
+               (and per-constraints (nth per-constraints i)
+                    (not= (nth per-constraints i) cm/EMPTY))
+               (let [{:keys [trace weight]} (p/generate gf elem-args (nth per-constraints i))]
+                 {:choices (:choices trace) :score (:score trace)
+                  :weight weight :retval (:retval trace)})
 
                 ;; Simulate
-                :else
-                (let [trace (p/simulate gf elem-args)]
-                  {:choices (:choices trace) :score (:score trace)
-                   :retval (:retval trace)}))))
-          (range n))
+               :else
+               (let [trace (p/simulate gf elem-args)]
+                 {:choices (:choices trace) :score (:score trace)
+                  :retval (:retval trace)}))))
+         (range n))
         ;; Stack results
         stacked-choices (cm/stack-choicemaps (mapv :choices results) mx/stack)
         stacked-scores (mx/stack (mapv :score results))
@@ -372,6 +372,6 @@
                     :weight stacked-weights :discard stacked-discard
                     :retval stacked-retval}
         state' (-> state
-                 (assoc :key k1)
-                 (merge-sub-result addr sub-result))]
+                   (assoc :key k1)
+                   (merge-sub-result addr sub-result))]
     [state' stacked-retval]))

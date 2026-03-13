@@ -466,7 +466,7 @@
        (not (coll? x))
        (try (some? (.-shape x))
          (catch :default _ false))
-       (.-item x)))
+       (some? (.-item x))))
 
 (defn realize
   "Evaluate a lazy MLX array and return its scalar JS value."

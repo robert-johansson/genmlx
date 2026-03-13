@@ -12,7 +12,7 @@
             [genmlx.dist.core :as dc]
             [genmlx.edit :as edit]
             [genmlx.diff :as diff]
-            [genmlx.compiled :as compiled]))
+            [genmlx.compiled-ops :as cops]))
 
 ;; ---------------------------------------------------------------------------
 ;; Shared helpers
@@ -128,16 +128,16 @@
 (defrecord MapCombinator [kernel]
   p/IGenerativeFunction
   (simulate [this args]
-    (if-let [{:keys [fused-fn addr-order]} (compiled/make-fused-map-simulate
+    (if-let [{:keys [fused-fn addr-order]} (cops/make-fused-map-simulate
                                             (:schema kernel) (:source kernel))]
       (map-simulate-fused this args kernel fused-fn addr-order)
-      (if-let [csim (compiled/get-compiled-simulate kernel)]
+      (if-let [csim (cops/get-compiled-simulate kernel)]
         (map-simulate-compiled this args kernel csim)
         (map-simulate-handler this args kernel))))
 
   p/IGenerate
   (generate [this args constraints]
-    (if-let [cgen (compiled/get-compiled-generate kernel)]
+    (if-let [cgen (cops/get-compiled-generate kernel)]
       ;; Compiled path — call compiled-generate directly per element
       (let [n (count (first args))
             init-key (rng/fresh-key)]
@@ -179,7 +179,7 @@
 
   p/IUpdate
   (update [this trace constraints]
-    (if-let [cupd (compiled/get-compiled-update kernel)]
+    (if-let [cupd (cops/get-compiled-update kernel)]
       ;; WP-8: compiled update path
       (let [old-choices (:choices trace)
             args (:args trace)
@@ -238,7 +238,7 @@
 
   p/IRegenerate
   (regenerate [this trace selection]
-    (if-let [cregen (compiled/get-compiled-regenerate kernel)]
+    (if-let [cregen (cops/get-compiled-regenerate kernel)]
       ;; WP-9A: compiled regenerate path
       (let [old-choices (:choices trace)
             args (:args trace)
@@ -352,12 +352,12 @@
    Cache is stored as metadata on the combinator.
    Returns {:compiled-fn :noise-dim :addr-order :noise-site-types :extra-args} or nil."
   [cache kernel T extra]
-  (when (and (pos? T) (compiled/fusable-kernel? kernel))
+  (when (and (pos? T) (cops/fusable-kernel? kernel))
     (let [cached (get @cache T)]
       (if (and cached (extras-match? (:extra-args cached) extra))
         cached
         ;; Build new fused function
-        (when-let [fused (compiled/make-fused-unfold-simulate
+        (when-let [fused (cops/make-fused-unfold-simulate
                           (:schema kernel) (:source kernel) T extra)]
           (swap! cache assoc T fused)
           fused)))))
@@ -368,7 +368,7 @@
   (let [{:keys [compiled-fn noise-dim addr-order noise-site-types]}
         (get-or-build-fused-unfold fused-cache kernel n extra)
         key (rng/fresh-key)
-        noise (compiled/generate-noise-matrix key n noise-site-types)
+        noise (cops/generate-noise-matrix key n noise-site-types)
         [outputs-tensor scores-tensor total-score]
         (compiled-fn (mx/ensure-array init-state) noise)
         _ (mx/materialize! outputs-tensor scores-tensor total-score)
@@ -428,14 +428,14 @@
     (let [[n init-state & extra] args]
       (if-let [_fused (get-or-build-fused-unfold fused-cache kernel n extra)]
         (unfold-simulate-fused this args kernel fused-cache n init-state extra)
-        (if-let [csim (compiled/get-compiled-simulate kernel)]
+        (if-let [csim (cops/get-compiled-simulate kernel)]
           (unfold-simulate-compiled this args kernel n init-state extra csim)
           (unfold-simulate-handler this args kernel n init-state extra)))))
 
   p/IGenerate
   (generate [this args constraints]
     (let [[n init-state & extra] args]
-      (if-let [cgen (compiled/get-compiled-generate kernel)]
+      (if-let [cgen (cops/get-compiled-generate kernel)]
         ;; Compiled path
         (let [init-key (rng/fresh-key)]
           (loop [t 0 state init-state key init-key
@@ -484,7 +484,7 @@
   p/IUpdate
   (update [this trace constraints]
     (let [kern (:kernel this)
-          cupd (compiled/get-compiled-update kern)
+          cupd (cops/get-compiled-update kern)
           {:keys [args choices]} trace
           [n init-state & extra] args
           old-step-scores (::step-scores (meta trace))
@@ -572,7 +572,7 @@
   p/IRegenerate
   (regenerate [this trace selection]
     (let [kern (:kernel this)
-          cregen (compiled/get-compiled-regenerate kern)
+          cregen (cops/get-compiled-regenerate kern)
           {:keys [args choices]} trace
           [n init-state & extra] args
           old-step-scores (::step-scores (meta trace))
@@ -753,7 +753,7 @@
     ;; args: [index & branch-args]
     (let [[idx & branch-args] args
           branch (nth branches idx)]
-      (if-let [csim (compiled/get-compiled-simulate branch)]
+      (if-let [csim (cops/get-compiled-simulate branch)]
         ;; L1-M5: compiled path
         (let [key (rng/fresh-key)
               result (csim key (vec branch-args))
@@ -777,7 +777,7 @@
   (generate [this args constraints]
     (let [[idx & branch-args] args
           branch (nth branches idx)]
-      (if-let [cgen (compiled/get-compiled-generate branch)]
+      (if-let [cgen (cops/get-compiled-generate branch)]
         ;; Compiled path
         (let [key (rng/fresh-key)
               result (cgen key (vec branch-args) constraints)
@@ -808,7 +808,7 @@
       (if (= old-idx new-idx)
         ;; Same branch: update in place
         (let [branch (nth (:branches this) new-idx)
-              cupd (compiled/get-compiled-update branch)]
+              cupd (cops/get-compiled-update branch)]
           (if cupd
             ;; WP-8: compiled update path
             (let [key (rng/fresh-key)
@@ -856,7 +856,7 @@
     (let [orig-args (:args trace)
           [idx & branch-args] orig-args
           branch (nth (:branches this) idx)]
-      (if-let [cregen (compiled/get-compiled-regenerate branch)]
+      (if-let [cregen (cops/get-compiled-regenerate branch)]
         ;; WP-9A: compiled regenerate path
         (let [key (rng/fresh-key)
               result (cregen key (vec branch-args) (:choices trace) selection)
@@ -1289,11 +1289,11 @@
 (defn- get-or-build-fused-scan
   "Get cached or build new fused scan simulate."
   [cache kernel T]
-  (when (and (pos? T) (compiled/fusable-kernel? kernel))
+  (when (and (pos? T) (cops/fusable-kernel? kernel))
     (let [cached (get @cache T)]
       (if cached
         cached
-        (when-let [fused (compiled/make-fused-scan-simulate
+        (when-let [fused (cops/make-fused-scan-simulate
                           (:schema kernel) (:source kernel) T)]
           (swap! cache assoc T fused)
           fused)))))
@@ -1304,7 +1304,7 @@
   (let [{:keys [compiled-fn noise-dim addr-order noise-site-types]}
         (get-or-build-fused-scan fused-cache kernel n)
         key (rng/fresh-key)
-        noise (compiled/generate-noise-matrix key n noise-site-types)
+        noise (cops/generate-noise-matrix key n noise-site-types)
         [outputs-tensor scores-tensor total-score]
         (compiled-fn (mx/ensure-array init-carry)
                      (mx/stack (mapv mx/ensure-array inputs))
@@ -1377,7 +1377,7 @@
           n (count inputs)]
       (if-let [_fused (get-or-build-fused-scan fused-cache kernel n)]
         (scan-simulate-fused this args kernel fused-cache init-carry inputs n)
-        (if-let [csim (compiled/get-compiled-simulate kernel)]
+        (if-let [csim (cops/get-compiled-simulate kernel)]
           (scan-simulate-compiled this args kernel init-carry inputs n csim)
           (scan-simulate-handler this args kernel init-carry inputs n)))))
 
@@ -1385,7 +1385,7 @@
   (generate [this args constraints]
     (let [[init-carry inputs] args
           n (count inputs)]
-      (if-let [cgen (compiled/get-compiled-generate kernel)]
+      (if-let [cgen (cops/get-compiled-generate kernel)]
         ;; Compiled path
         (let [init-key (rng/fresh-key)]
           (loop [t 0 carry init-carry key init-key
@@ -1441,7 +1441,7 @@
   p/IUpdate
   (update [this trace constraints]
     (let [kern (:kernel this)
-          cupd (compiled/get-compiled-update kern)
+          cupd (cops/get-compiled-update kern)
           {:keys [args choices]} trace
           [init-carry inputs] args
           n (count inputs)
@@ -1537,7 +1537,7 @@
   p/IRegenerate
   (regenerate [this trace selection]
     (let [kern (:kernel this)
-          cregen (compiled/get-compiled-regenerate kern)
+          cregen (cops/get-compiled-regenerate kern)
           {:keys [args choices]} trace
           [init-carry inputs] args
           n (count inputs)
@@ -1786,7 +1786,7 @@
                                  :categorical {:logits log-w}) [])
           idx (mx/item (cm/get-value (:choices idx-trace)))
           component (nth components (int idx))]
-      (if-let [csim (compiled/get-compiled-simulate component)]
+      (if-let [csim (cops/get-compiled-simulate component)]
         ;; L1-M5: compiled path
         (let [key (rng/fresh-key)
               result (csim key (vec args))
@@ -1823,7 +1823,7 @@
           comp-constraints (if (instance? cm/Node constraints)
                              (cm/->Node (dissoc (:m constraints) :component-idx))
                              constraints)]
-      (if-let [cgen (compiled/get-compiled-generate component)]
+      (if-let [cgen (cops/get-compiled-generate component)]
         ;; Compiled path — only the component generate is compiled
         (let [key (rng/fresh-key)
               result (cgen key (vec args) comp-constraints)
@@ -1993,7 +1993,7 @@
       (if (= new-idx old-idx)
         ;; Same component: update inner only
         (let [component (nth (:components this) old-idx)
-              cupd (compiled/get-compiled-update component)]
+              cupd (cops/get-compiled-update component)]
           (if cupd
             ;; WP-8: compiled update path
             (let [key (rng/fresh-key)
@@ -2071,7 +2071,7 @@
         (let [component (nth (:components this) old-idx)
               inner-old-score (mx/subtract (:score trace) old-idx-score)
               inner-old-choices (cm/->Node (dissoc (:m old-choices) :component-idx))]
-          (if-let [cregen (compiled/get-compiled-regenerate component)]
+          (if-let [cregen (cops/get-compiled-regenerate component)]
             ;; WP-9A: compiled regenerate path
             (let [key (rng/fresh-key)
                   result (cregen key (vec args) inner-old-choices selection)

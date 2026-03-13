@@ -9,7 +9,7 @@
             [genmlx.dist :as dist]
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
-            [genmlx.compiled :as compiled]))
+            [genmlx.compiled-ops :as compiled]))
 
 ;; ---------------------------------------------------------------------------
 ;; Test helpers

@@ -3,7 +3,7 @@
    Score convention follows Gen.jl: score = log P(choices | args).
    Scores are MLX scalars (stay on GPU). Choice values are MLX arrays.
    Use mx/item only at the inference boundary."
-  (:require [genmlx.choicemap :as cm]))
+)
 
 (defrecord Trace [gen-fn args choices retval score])
 

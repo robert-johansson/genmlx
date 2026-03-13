@@ -17,7 +17,7 @@
             [genmlx.inference.util :as u]
             [genmlx.inference.compiled-smc :as csmc]
             [genmlx.inference.differentiable-resample :as dr]
-            [genmlx.compiled :as compiled]
+            [genmlx.compiled-ops :as cops]
             [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]))
@@ -142,7 +142,7 @@
         gumbel-noise (dr/generate-gumbel-noise gk T particles)
         _ (mx/materialize! extend-noise gumbel-noise)
         tau-arr (mx/scalar tau)
-        extend-fn (compiled/make-smc-extend-step schema source)
+        extend-fn (cops/make-smc-extend-step schema source)
         ;; Objective: log-ML as function of model-params
         ;; For now, model-params modulate the init-state
         ;; (full parameterization requires make-parameterized-extend)

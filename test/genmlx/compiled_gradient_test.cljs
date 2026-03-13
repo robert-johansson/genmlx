@@ -19,7 +19,7 @@
             [genmlx.inference.util :as u]
             [genmlx.inference.compiled-smc :as csmc]
             [genmlx.inference.differentiable-resample :as dr]
-            [genmlx.compiled :as compiled]))
+            [genmlx.compiled-ops :as compiled]))
 
 ;; ---------------------------------------------------------------------------
 ;; Test helpers

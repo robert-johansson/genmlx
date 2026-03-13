@@ -11,12 +11,12 @@
 
    Architecture:
    - generate-smc-noise: pre-generate [T,N,K] extend noise + [T] resample uniforms
-   - compiled/make-smc-extend-step: build extend step from kernel schema
+   - cops/make-smc-extend-step: build extend step from kernel schema
    - systematic-resample-tensor: [N] log-weights → resampled [N,K] particles
    - compiled-smc: full bootstrap PF with chunked execution"
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.compiled :as compiled]
+            [genmlx.compiled-ops :as cops]
             [genmlx.choicemap :as cm]
             [genmlx.tensor-trace :as tt]
             [genmlx.inference.util :as u]
@@ -122,7 +122,7 @@
    kernel init-state observations-seq]
   (let [schema (:schema kernel)
         source (:source kernel)
-        extend-fn (compiled/make-smc-extend-step schema source)
+        extend-fn (cops/make-smc-extend-step schema source)
         obs-vec (vec observations-seq)
         T (count obs-vec)
         static-sites (filterv :static? (:trace-sites schema))

@@ -7,7 +7,7 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
-            [genmlx.compiled :as compiled]
+            [genmlx.compiled-ops :as cops]
             [genmlx.tensor-trace :as tt]))
 
 (defn materialize-weights
@@ -418,7 +418,7 @@
   [model args observations addresses]
   (let [schema (:schema model)
         source (:source model)]
-    (if-let [result (compiled/make-tensor-score-with-index
+    (if-let [result (cops/make-tensor-score-with-index
                       schema source (vec args) observations)]
       (assoc result :tensor-native? true :compiled-generate? false)
       ;; Try compiled-generate before falling back to GFI handler

@@ -14,7 +14,7 @@
             [genmlx.dist.core :as dc]
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
-            [genmlx.compiled :as compiled]
+            [genmlx.compiled-ops :as compiled]
             [genmlx.selection :as sel]
             [genmlx.combinators :as comb]))
 

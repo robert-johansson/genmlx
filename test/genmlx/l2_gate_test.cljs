@@ -14,7 +14,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
             [genmlx.choicemap :as cm]
-            [genmlx.compiled :as compiled]
+            [genmlx.compiled-ops :as compiled]
             [genmlx.tensor-trace :as tt]
             [genmlx.inference.util :as iu]))
 

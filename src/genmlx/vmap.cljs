@@ -18,7 +18,7 @@
 (defn- mlx-arr?
   "Check if x is an MLX array. More robust than mx/array? in nbb."
   [x]
-  (and (some? x) (some? (.-shape x)) (.-item x)))
+  (and (some? x) (some? (.-shape x)) (some? (.-item x))))
 
 (defn- axis-size-of
   "Get the leading dimension size of an arg."
@@ -44,7 +44,7 @@
     (let [a (first args)
           n (axis-size-of a)]
       (if n n
-        (throw (ex-info "vmap: cannot determine axis-size from arg" {:arg a}))))
+          (throw (ex-info "vmap: cannot determine axis-size from arg" {:arg a}))))
 
     ;; in-axes provided: find first non-nil axis
     :else
@@ -53,7 +53,7 @@
         (let [a (nth args idx)
               n (axis-size-of a)]
           (if n n
-            (throw (ex-info "vmap: cannot determine axis-size" {:arg a}))))
+              (throw (ex-info "vmap: cannot determine axis-size" {:arg a}))))
         (throw (ex-info "vmap: all in-axes are nil and no axis-size provided" {}))))))
 
 (defn- index-arg
@@ -137,10 +137,10 @@
     (instance? cm/Node (first cms))
     (let [addrs (keys (:m (first cms)))]
       (cm/->Node
-        (into {}
-          (map (fn [addr]
-                 [addr (stack-choices (mapv #(cm/get-submap % addr) cms))])
-               addrs))))
+       (into {}
+             (map (fn [addr]
+                    [addr (stack-choices (mapv #(cm/get-submap % addr) cms))])
+                  addrs))))
 
     :else cm/EMPTY))
 
@@ -169,9 +169,9 @@
       ;; Zip: for each i, build a node with all sub-addresses
       (mapv (fn [i]
               (cm/->Node
-                (into {}
-                  (map (fn [[addr v]] [addr (nth v i)])
-                       addr-vecs))))
+               (into {}
+                     (map (fn [[addr v]] [addr (nth v i)])
+                          addr-vecs))))
             (range n)))
 
     :else (vec (repeat n cm/EMPTY))))
@@ -217,9 +217,9 @@
         ;; Fast path: run kernel body once with batched handler
         (let [key (rng/fresh-key)
               result (rt/run-handler h/batched-simulate-transition
-                       {:choices cm/EMPTY :score (mx/scalar 0.0)
-                        :key key :batch-size n :batched? true}
-                       (fn [rt] (apply (:body-fn kernel) rt args)))
+                                     {:choices cm/EMPTY :score (mx/scalar 0.0)
+                                      :key key :batch-size n :batched? true}
+                                     (fn [rt] (apply (:body-fn kernel) rt args)))
               ;; score is [N]-shaped, sum for total
               total-score (mx/sum (:score result))
               element-scores (mapv #(mx/index (:score result) %) (range n))]
@@ -251,11 +251,11 @@
         ;; Fast path: batched generate with no constraints (all sites simulated)
         (let [key (rng/fresh-key)
               result (rt/run-handler h/batched-generate-transition
-                       {:choices cm/EMPTY :score (mx/scalar 0.0)
-                        :weight (mx/scalar 0.0)
-                        :key key :constraints cm/EMPTY
-                        :batch-size n :batched? true}
-                       (fn [rt] (apply (:body-fn kernel) rt args)))
+                                     {:choices cm/EMPTY :score (mx/scalar 0.0)
+                                      :weight (mx/scalar 0.0)
+                                      :key key :constraints cm/EMPTY
+                                      :batch-size n :batched? true}
+                                     (fn [rt] (apply (:body-fn kernel) rt args)))
               total-score (mx/sum (:score result))
               total-weight (mx/sum (:weight result))
               element-scores (mapv #(mx/index (:score result) %) (range n))]
@@ -269,8 +269,8 @@
         (let [per-constraints (when-not scalar? (unstack-choices constraints n))
               results (mapv (fn [i]
                               (p/generate kernel
-                                         (extract-element-args args in-axes i)
-                                         (if scalar? constraints (nth per-constraints i))))
+                                          (extract-element-args args in-axes i)
+                                          (if scalar? constraints (nth per-constraints i))))
                             (range n))
               choices (stack-choices (mapv (comp :choices :trace) results))
               retvals (stack-retvals (mapv (comp :retval :trace) results))
@@ -297,12 +297,12 @@
           results (mapv (fn [i]
                           (let [elem-args (extract-element-args (:args trace) in-axes i)
                                 old-trace (tr/make-trace
-                                            {:gen-fn kernel :args elem-args
-                                             :choices (nth old-per-choices i)
-                                             :retval nil
-                                             :score (if old-element-scores
-                                                      (nth old-element-scores i)
-                                                      (mx/scalar 0.0))})]
+                                           {:gen-fn kernel :args elem-args
+                                            :choices (nth old-per-choices i)
+                                            :retval nil
+                                            :score (if old-element-scores
+                                                     (nth old-element-scores i)
+                                                     (mx/scalar 0.0))})]
                             (kernel-update kernel old-trace
                                            (if scalar-c? constraints (nth new-per-constraints i)))))
                         (range n))
@@ -333,14 +333,14 @@
           results (mapv (fn [i]
                           (let [elem-args (extract-element-args (:args trace) in-axes i)
                                 old-trace (tr/make-trace
-                                            {:gen-fn kernel :args elem-args
-                                             :choices (nth old-per-choices i)
-                                             :retval nil
-                                             :score (if old-element-scores
-                                                      (nth old-element-scores i)
-                                                      (mx/scalar 0.0))})]
+                                           {:gen-fn kernel :args elem-args
+                                            :choices (nth old-per-choices i)
+                                            :retval nil
+                                            :score (if old-element-scores
+                                                     (nth old-element-scores i)
+                                                     (mx/scalar 0.0))})]
                             (kernel-regenerate kernel old-trace
-                                              (extract-element-selection selection i))))
+                                               (extract-element-selection selection i))))
                         (range n))
           choices (stack-choices (mapv (comp :choices :trace) results))
           retvals (stack-retvals (mapv (comp :retval :trace) results))
@@ -395,19 +395,19 @@
           old-per-choices (unstack-choices (:choices trace) n)
           old-element-scores (::element-scores (meta trace))]
       (reduce
-        (fn [acc i]
-          (let [elem-args (extract-element-args (:args trace) (:in-axes this) i)
-                elem-trace (tr/make-trace
-                             {:gen-fn (:kernel this) :args elem-args
-                              :choices (nth old-per-choices i)
-                              :retval nil
-                              :score (if old-element-scores
-                                       (nth old-element-scores i)
-                                       (mx/scalar 0.0))})]
-            (mx/add acc (p/project (:kernel this) elem-trace
-                                   (extract-element-selection selection i)))))
-        (mx/scalar 0.0)
-        (range n)))))
+       (fn [acc i]
+         (let [elem-args (extract-element-args (:args trace) (:in-axes this) i)
+               elem-trace (tr/make-trace
+                           {:gen-fn (:kernel this) :args elem-args
+                            :choices (nth old-per-choices i)
+                            :retval nil
+                            :score (if old-element-scores
+                                     (nth old-element-scores i)
+                                     (mx/scalar 0.0))})]
+           (mx/add acc (p/project (:kernel this) elem-trace
+                                  (extract-element-selection selection i)))))
+       (mx/scalar 0.0)
+       (range n)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Constructors
