@@ -52,7 +52,7 @@ bun run --bun nbb test/genmlx/partial_compile_test.cljs        # 92/92  (L1-M3)
 bun run --bun nbb test/genmlx/combinator_compile_test.cljs     # 90/90  (L1-M5)
 
 # Compatibility suites
-bun run --bun nbb test/genmlx/gen_clj_compat_test.cljs    # 162/165 (3 pre-existing edge cases)
+bun run --bun nbb test/genmlx/gen_clj_compat_test.cljs    # 165/165
 bun run --bun nbb test/genmlx/genjax_compat_test.cljs      # 73/73
 
 # Vectorized inference tests + benchmarks
@@ -293,7 +293,7 @@ After any change, verify:
 - `partial_compile_test.cljs`: 92/92 (L1-M3)
 - `combinator_compile_test.cljs`: 90/90 (L1-M5)
 - `l4_certification_test.cljs`: 41/41 (L4)
-- `gen_clj_compat_test.cljs`: 162/165 (3 pre-existing beta/gamma edge cases)
+- `gen_clj_compat_test.cljs`: 165/165
 - `genjax_compat_test.cljs`: 73/73
 
 ## Common patterns when editing

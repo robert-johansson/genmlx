@@ -293,7 +293,7 @@ for f in choicemap_test trace_test selection_test handler_test dist_test gen_tes
 done
 
 # Compatibility suites
-bun run --bun nbb test/genmlx/gen_clj_compat_test.cljs     # 162/165 tests (from Gen.clj, 3 pre-existing edge cases)
+bun run --bun nbb test/genmlx/gen_clj_compat_test.cljs     # 165/165 tests (from Gen.clj)
 bun run --bun nbb test/genmlx/genjax_compat_test.cljs       # 73/73 tests (GenJAX compat)
 
 # Vectorized tests + benchmarks
