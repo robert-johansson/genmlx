@@ -815,6 +815,179 @@
   (assert-equal "trace is :real" :real (-> s :trace-sites first :addr)))
 
 ;; ============================================================
+;; M3: Loop analysis tests
+;; ============================================================
+
+;; Test 50: Simple doseq with keyword-str address pattern
+(println "\n-- 50. M3: doseq with keyword-str pattern --")
+(let [model (gen [xs]
+              (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+                (doseq [[j x] (map-indexed vector xs)]
+                  (trace (keyword (str "y" j))
+                         (dist/gaussian mu (mx/scalar 1))))
+                mu))
+      s (:schema model)
+      ls (first (:loop-sites s))]
+  (assert-equal "one loop-site" 1 (count (:loop-sites s)))
+  (assert-equal "loop type is :doseq" :doseq (:type ls))
+  (assert-equal "index-sym is j" 'j (:index-sym ls))
+  (assert-equal "element-sym is x" 'x (:element-sym ls))
+  (assert-true "has collection-form" (some? (:collection-form ls)))
+  (assert-true "homogeneous" (:homogeneous? ls))
+  (assert-true "rewritable" (:rewritable? ls))
+  (assert-equal "no rewrite blockers" [] (:rewrite-blockers ls))
+  (let [ts (first (:trace-sites ls))]
+    (assert-equal "addr-pattern type" :keyword-str (:type (:addr-pattern ts)))
+    (assert-equal "addr prefix" "y" (:prefix (:addr-pattern ts)))
+    (assert-equal "addr index-sym" 'j (:index-sym (:addr-pattern ts)))
+    (assert-equal "dist-type gaussian" :gaussian (:dist-type ts))
+    (assert-true "outer-deps includes :mu" (contains? (:outer-deps ts) :mu)))
+  ;; Backward compat
+  (assert-true "has-loops? still true" (:has-loops? s))
+  (assert-true "dynamic-addresses? still true" (:dynamic-addresses? s))
+  (assert-true "not static" (not (:static? s))))
+
+;; Test 51: Linear regression (3 static prefix + 1 loop)
+(println "\n-- 51. M3: linreg with prefix sites --")
+(let [model (gen [xs ys]
+              (let [slope (trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
+                    intercept (trace :intercept (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
+                    noise (trace :noise (dist/exponential (mx/scalar 1)))]
+                (doseq [[j [x y]] (map-indexed vector (map vector xs ys))]
+                  (trace (keyword (str "obs" j))
+                         (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                                intercept)
+                                        noise)))
+                slope))
+      s (:schema model)
+      ls (first (:loop-sites s))
+      static-addrs (set (map :addr (filter :static? (:trace-sites s))))]
+  (assert-equal "one loop-site" 1 (count (:loop-sites s)))
+  (assert-true "slope is static prefix" (contains? static-addrs :slope))
+  (assert-true "intercept is static prefix" (contains? static-addrs :intercept))
+  (assert-true "noise is static prefix" (contains? static-addrs :noise))
+  (assert-true "homogeneous" (:homogeneous? ls))
+  (assert-true "rewritable" (:rewritable? ls))
+  (assert-equal "addr prefix is obs" "obs" (-> ls :trace-sites first :addr-pattern :prefix))
+  (let [deps (-> ls :trace-sites first :outer-deps)]
+    (assert-true "depends on :slope" (contains? deps :slope))
+    (assert-true "depends on :intercept" (contains? deps :intercept))
+    (assert-true "depends on :noise" (contains? deps :noise))))
+
+;; Test 52: dotimes with literal count
+(println "\n-- 52. M3: dotimes with literal count --")
+(let [model (gen []
+              (dotimes [i 5]
+                (trace (keyword (str "x" i))
+                       (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+      s (:schema model)
+      ls (first (:loop-sites s))]
+  (assert-equal "loop type :dotimes" :dotimes (:type ls))
+  (assert-equal "count-form is 5" 5 (:count-form ls))
+  (assert-equal "count-arg-idx is -1" -1 (:count-arg-idx ls))
+  (assert-true "rewritable" (:rewritable? ls)))
+
+;; Test 53: for loop
+(println "\n-- 53. M3: for loop --")
+(let [model (gen [items]
+              (doall (for [item items]
+                (trace (keyword (str "obs-" item))
+                       (dist/gaussian (mx/scalar 0) (mx/scalar 1))))))
+      s (:schema model)
+      ls (first (:loop-sites s))]
+  (assert-equal "loop type :for" :for (:type ls))
+  (assert-equal "element-sym is item" 'item (:element-sym ls))
+  (assert-true "rewritable" (:rewritable? ls)))
+
+;; Test 54: Non-rewritable — mixed distribution types
+(println "\n-- 54. M3: mixed dist types → not rewritable --")
+(let [model (gen [xs]
+              (doseq [[j x] (map-indexed vector xs)]
+                (trace (keyword (str "y" j)) (dist/gaussian (mx/scalar x) (mx/scalar 1)))
+                (trace (keyword (str "z" j)) (dist/bernoulli (mx/scalar 0.5)))))
+      s (:schema model)
+      ls (first (:loop-sites s))]
+  (assert-true "not homogeneous" (not (:homogeneous? ls)))
+  (assert-true "not rewritable" (not (:rewritable? ls)))
+  (assert-true "blocker mentions heterogeneous"
+               (some #(re-find #"heterogeneous" %) (:rewrite-blockers ls))))
+
+;; Test 55: Non-rewritable — branch with trace in loop
+(println "\n-- 55. M3: branch in loop → not rewritable --")
+(let [model (gen [xs]
+              (doseq [[j x] (map-indexed vector xs)]
+                (if (pos? x)
+                  (trace (keyword (str "y" j)) (dist/gaussian (mx/scalar x) (mx/scalar 1)))
+                  (trace (keyword (str "y" j)) (dist/gaussian (mx/scalar 0) (mx/scalar 1))))))
+      s (:schema model)
+      ls (first (:loop-sites s))]
+  (assert-true "not rewritable" (not (:rewritable? ls)))
+  (assert-true "blocker mentions branch"
+               (some #(re-find #"branch" %) (:rewrite-blockers ls))))
+
+;; Test 56: Non-rewritable — unknown address pattern
+(println "\n-- 56. M3: unknown addr pattern → not rewritable --")
+(let [model (gen [xs]
+              (doseq [[j x] (map-indexed vector xs)]
+                (trace (nth [:a :b :c] j) (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+      s (:schema model)
+      ls (first (:loop-sites s))]
+  (assert-true "not rewritable" (not (:rewritable? ls)))
+  (assert-true "blocker mentions address pattern"
+               (some #(re-find #"address pattern" %) (:rewrite-blockers ls))))
+
+;; Test 57: Static model — empty loop-sites
+(println "\n-- 57. M3: static model has no loop-sites --")
+(let [model (gen [x]
+              (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                (trace :y (dist/gaussian mu (mx/scalar 1)))))
+      s (:schema model)]
+  (assert-equal "loop-sites is empty" [] (:loop-sites s))
+  (assert-true "not has-loops" (not (:has-loops? s)))
+  (assert-true "static" (:static? s)))
+
+;; Test 58: loop/recur — has-loops but no loop-sites
+(println "\n-- 58. M3: loop/recur not analyzed --")
+(let [model (gen [n]
+              (loop [i 0]
+                (when (< i n)
+                  (trace (keyword (str "x" i)) (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                  (recur (inc i)))))
+      s (:schema model)]
+  (assert-true "has-loops" (:has-loops? s))
+  (assert-equal "loop-sites empty" [] (:loop-sites s)))
+
+;; Test 59: Multiple loops in one model
+(println "\n-- 59. M3: multiple loops --")
+(let [model (gen [xs ys]
+              (let [mu-x (trace :mu-x (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
+                    mu-y (trace :mu-y (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+                (doseq [[j x] (map-indexed vector xs)]
+                  (trace (keyword (str "x" j)) (dist/gaussian mu-x (mx/scalar 1))))
+                (doseq [[j y] (map-indexed vector ys)]
+                  (trace (keyword (str "y" j)) (dist/gaussian mu-y (mx/scalar 1))))
+                [mu-x mu-y]))
+      s (:schema model)]
+  (assert-equal "two loop-sites" 2 (count (:loop-sites s)))
+  (let [ls0 (first (:loop-sites s))
+        ls1 (second (:loop-sites s))]
+    (assert-equal "first prefix" "x" (-> ls0 :trace-sites first :addr-pattern :prefix))
+    (assert-equal "second prefix" "y" (-> ls1 :trace-sites first :addr-pattern :prefix))
+    (assert-true "first deps on :mu-x" (contains? (-> ls0 :trace-sites first :outer-deps) :mu-x))
+    (assert-true "second deps on :mu-y" (contains? (-> ls1 :trace-sites first :outer-deps) :mu-y))
+    (assert-true "both rewritable" (and (:rewritable? ls0) (:rewritable? ls1)))))
+
+;; Test 60: dotimes with param-derived count
+(println "\n-- 60. M3: dotimes count from param --")
+(let [model (gen [n]
+              (dotimes [i n]
+                (trace (keyword (str "x" i)) (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+      s (:schema model)
+      ls (first (:loop-sites s))]
+  (assert-equal "count-form is n" 'n (:count-form ls))
+  (assert-equal "count-arg-idx is 0" 0 (:count-arg-idx ls)))
+
+;; ============================================================
 ;; Summary
 ;; ============================================================
 (println "\n=== Schema Test Results ===")
