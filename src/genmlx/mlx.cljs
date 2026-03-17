@@ -349,7 +349,7 @@
 (defn index
   "Index along axis 0. For 1D: returns scalar element. For 2D: returns row."
   [a i]
-  (.take core a (scalar i int32) 0))
+  (.index a i))
 
 (defn slice
   "Slice along axis 0. Returns elements [start, stop) with optional step."
@@ -359,7 +359,7 @@
 (defn mat-get
   "Get element [i,j] from a 2D array. Returns a scalar MLX array."
   [a i j]
-  (.take core (.take core a (scalar i int32) 0) (scalar j int32) 0))
+  (.index (.index a i) j))
 
 ;; ---------------------------------------------------------------------------
 ;; Matrix operations
