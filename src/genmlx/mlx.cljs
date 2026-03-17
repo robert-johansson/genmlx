@@ -520,12 +520,12 @@
 ;; Utilities
 ;; ---------------------------------------------------------------------------
 
+(def ^:private MxArray
+  "Constructor of MLX arrays — used for fast instance? checks."
+  (.-constructor (.array core 0)))
+
 (defn array? [x]
-  (and (some? x)
-       (not (coll? x))
-       (try (some? (.-shape x))
-         (catch :default _ false))
-       (some? (.-item x))))
+  (instance? MxArray x))
 
 (defn realize
   "Evaluate a lazy MLX array and return its scalar JS value."
