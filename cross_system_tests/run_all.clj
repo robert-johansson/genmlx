@@ -1390,7 +1390,9 @@
         gradient-spec (str specs-dir "/gradient_tests.json")
         inference-spec (str specs-dir "/inference_quality_tests.json")
         args (vec *command-line-args*)
-        suites (if (seq args) (set args) #{"mlx_ops" "logprob" "assess" "score_decomposition" "update" "project" "regenerate" "combinator" "stability" "gradient" "inference_quality"})]
+        ;; Default: fast deterministic suites only. Opt-in to slow inference_quality:
+        ;; bb cross_system_tests/run_all.clj inference_quality
+        suites (if (seq args) (set args) #{"mlx_ops" "logprob" "assess" "score_decomposition" "update" "project" "regenerate" "combinator" "stability" "gradient"})]
 
     (println "╔════════════════════════════════════════════╗")
     (println "║  GenMLX Cross-System Verification Harness  ║")
