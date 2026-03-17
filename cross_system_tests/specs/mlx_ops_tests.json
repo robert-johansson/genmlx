@@ -71,6 +71,16 @@
     {"id": "lgamma-neg-int", "op": "lgamma", "args": [-1.0], "expected": "Inf", "note": "lgamma at negative integers = +Inf (poles)"},
     {"id": "sigmoid-large-neg", "op": "sigmoid", "args": [-100.0], "expected": 0.0, "note": "sigmoid(-100) underflows to 0 — no NaN"},
     {"id": "sigmoid-large-pos", "op": "sigmoid", "args": [100.0], "expected": 1.0, "note": "sigmoid(100) saturates to 1 — no NaN"},
-    {"id": "logsumexp-single", "op": "logsumexp", "args": [[5.0]], "expected": 5.0, "note": "logsumexp of single element = that element"}
+    {"id": "logsumexp-single", "op": "logsumexp", "args": [[5.0]], "expected": 5.0, "note": "logsumexp of single element = that element"},
+
+    {"id": "trace-2x2", "op": "trace", "args": [[[1.0, 2.0], [3.0, 4.0]]], "expected": 5.0, "note": "trace([[1,2],[3,4]]) = 1+4"},
+    {"id": "trace-3x3-diag", "op": "trace", "args": [[[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]]], "expected": 6.0, "note": "trace(diag(1,2,3)) = 6"},
+    {"id": "nan-to-num-nan", "op": "nan_to_num", "args": ["NaN"], "expected": 0.0, "note": "NaN replaced with 0"},
+    {"id": "cholesky-inv-2x2", "op": "cholesky_inv", "args": [[[4.0, 2.0], [2.0, 3.0]]], "expected": [[0.375, -0.25], [-0.25, 0.5]], "note": "runner computes L=cholesky(A) then choleskyInv(L) to get A^-1"},
+    {"id": "logcumsumexp-basic", "op": "logcumsumexp", "args": [[0.0, 0.0, 0.0]], "expected": [0.0, 0.6931471805599453, 1.0986122886681098], "note": "cumulative logsumexp of [0,0,0] = [0, log2, log3]"},
+    {"id": "einsum-matmul", "op": "einsum", "args": ["ij,jk->ik", [[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]], "expected": [[19.0, 22.0], [43.0, 50.0]], "note": "einsum matmul matches matmul op"},
+    {"id": "einsum-trace", "op": "einsum", "args": ["ii->", [[1.0, 2.0], [3.0, 4.0]]], "expected": 5.0, "note": "einsum trace of [[1,2],[3,4]]"},
+    {"id": "slice-basic", "op": "slice", "args": [[1.0, 2.0, 3.0, 4.0, 5.0], 1, 4], "expected": [2.0, 3.0, 4.0], "note": "slice [1:4] of [1..5]"},
+    {"id": "slice-step", "op": "slice", "args": [[1.0, 2.0, 3.0, 4.0, 5.0], 0, 5, 2], "expected": [1.0, 3.0, 5.0], "note": "slice [0:5:2] of [1..5]"}
   ]
 }

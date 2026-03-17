@@ -180,6 +180,9 @@
   [v]
   (cond
     (number? v)                          (mx/scalar v)
+    (= v "NaN")                          (mx/scalar js/NaN)
+    (= v "Inf")                          (mx/scalar js/Infinity)
+    (= v "-Inf")                         (mx/scalar (- js/Infinity))
     (and (vector? v) (number? (first v))) (mx/array (clj->js v))
     (and (vector? v) (vector? (first v))) (mx/array (clj->js v))
     :else                                (mx/scalar v)))
@@ -217,12 +220,21 @@
               "mean"      (mx/item (mx/mean (to-mlx (first args))))
               "matmul"    (from-mlx (mx/matmul (to-mlx (first args)) (to-mlx (second args))))
               "cholesky"  (from-mlx (mx/cholesky (to-mlx (first args))))
-              "det"       (let [L (mx/cholesky (to-mlx (first args)))
-                                d (mx/diag L)]
-                            (mx/item (mx/power (mx/prod d) (mx/scalar 2))))
-              "logdet"    (let [L (mx/cholesky (to-mlx (first args)))
-                                d (mx/diag L)]
-                            (mx/item (mx/multiply (mx/scalar 2) (mx/sum (mx/log d)))))
+              "det"       (mx/item (mx/det (to-mlx (first args))))
+              "logdet"    (mx/item (mx/logdet (to-mlx (first args))))
+              "trace"     (mx/item (mx/trace-mat (to-mlx (first args))))
+              "nan_to_num" (mx/item (mx/nan-to-num (to-mlx (first args))))
+              "cholesky_inv" (from-mlx (mx/cholesky-inv (mx/cholesky (to-mlx (first args)))))
+              "logcumsumexp" (from-mlx (mx/logcumsumexp (to-mlx (first args))))
+              "einsum"    (let [subscripts (first args)
+                                arrays (mapv to-mlx (rest args))]
+                            (from-mlx (apply mx/einsum subscripts arrays)))
+              "slice"     (let [a     (to-mlx (first args))
+                                start (second args)
+                                stop  (nth args 2)]
+                            (if (> (count args) 3)
+                              (from-mlx (mx/slice a start stop (nth args 3)))
+                              (from-mlx (mx/slice a start stop))))
               (throw (js/Error. (str "unsupported op: " op))))]
         #js {"id" (get spec "id") "result" (clj->js result)})
       (catch :default e

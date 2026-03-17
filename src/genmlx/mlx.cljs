@@ -287,6 +287,11 @@
   ([a]      (.cumsum core a))
   ([a axis] (.cumsum core a axis)))
 
+(defn logcumsumexp
+  "Cumulative log-sum-exp along axis."
+  ([a]      (.logcumsumexp core a))
+  ([a axis] (.logcumsumexp core a axis)))
+
 ;; ---------------------------------------------------------------------------
 ;; Comparison / selection
 ;; ---------------------------------------------------------------------------
@@ -300,6 +305,11 @@
 (defn where        [cond a b] (.where core cond a b))
 (defn isnan        [a] (.isnan core a))
 (defn isinf        [a] (.isinf core a))
+(defn nan-to-num
+  "Replace NaN/Inf with finite values. Default: NaN→0."
+  ([a]                             (.nanToNum core a 0.0))
+  ([a nan-val]                     (.nanToNum core a nan-val))
+  ([a nan-val posinf-val neginf-val] (.nanToNum core a nan-val posinf-val neginf-val)))
 
 ;; ---------------------------------------------------------------------------
 ;; Shape manipulation
@@ -342,13 +352,9 @@
   (.take core a (scalar i int32) 0))
 
 (defn slice
-  "Slice along axis 0. For 1D: returns sub-array. For 2D: returns sub-rows."
-  ([a start stop]
-   (let [indices (.arange core start stop 1 int32)]
-     (.take core a indices 0)))
-  ([a start stop step]
-   (let [indices (.arange core start stop step int32)]
-     (.take core a indices 0))))
+  "Slice along axis 0. Returns elements [start, stop) with optional step."
+  ([a start stop]      (.index a (.Slice core start stop)))
+  ([a start stop step] (.index a (.Slice core start stop step))))
 
 (defn mat-get
   "Get element [i,j] from a 2D array. Returns a scalar MLX array."
@@ -363,6 +369,15 @@
 (defn inner     [a b] (.inner core a b))
 (defn outer     [a b] (.outer core a b))
 (defn diag      [a]   (.diag core a))
+(defn trace-mat
+  "Matrix trace (sum of diagonal elements)."
+  ([a]                  (.trace core a 0 0 1))
+  ([a offset]           (.trace core a offset 0 1))
+  ([a offset ax1 ax2]   (.trace core a offset ax1 ax2)))
+(defn einsum
+  "Einstein summation. E.g. (einsum \"ij,jk->ik\" a b)"
+  [subscripts & arrays]
+  (.einsum core subscripts (to-array arrays)))
 
 ;; ---------------------------------------------------------------------------
 ;; Linear algebra (CPU stream)
@@ -374,6 +389,10 @@
   (.solveTriangular linalg a b upper cpu-stream))
 (defn inv     [a]    (.inv linalg a cpu-stream))
 (defn tri-inv [a upper] (.triInv linalg a upper cpu-stream))
+(defn cholesky-inv
+  "Inverse of A from its Cholesky factor L (where A=LL^T)."
+  ([a]       (.choleskyInv linalg a false cpu-stream))
+  ([a upper] (.choleskyInv linalg a upper cpu-stream)))
 (defn qr [a]
   (let [result (.qr linalg a cpu-stream)]
     [(aget result 0) (aget result 1)]))
@@ -387,6 +406,18 @@
 (defn norm
   ([a]     (.norm linalg a))
   ([a ord] (.norm linalg a ord)))
+
+(defn logdet
+  "Log-determinant of positive-definite matrix via Cholesky."
+  [a]
+  (let [L (cholesky a)]
+    (multiply (scalar 2.0) (sum (log (diag L))))))
+
+(defn det
+  "Determinant of positive-definite matrix via Cholesky."
+  [a]
+  (let [L (cholesky a)]
+    (power (prod (diag L)) (scalar 2))))
 
 
 ;; ---------------------------------------------------------------------------
