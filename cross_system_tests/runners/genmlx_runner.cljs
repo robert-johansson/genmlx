@@ -10,6 +10,9 @@
             [genmlx.choicemap :as cm]
             [genmlx.combinators :as comb]
             [genmlx.selection :as sel]
+            [genmlx.inference.importance :as is]
+            [genmlx.inference.mcmc :as mcmc]
+            [genmlx.mlx.random :as rng]
             ["fs" :as fs]))
 
 ;; --- Read JSON from stdin ---
@@ -532,6 +535,190 @@
       (catch :default e
         #js {"id" (get spec "id") "error" (str e)}))))
 
+;; --- Gradient dispatch ---
+
+(defn make-dist-from-spec
+  "Create a distribution from a dist name + params map (all MLX scalars)."
+  [dist-name params]
+  (case dist-name
+    "normal"      (dist/gaussian (mx/scalar (get params "mu"))
+                                 (mx/scalar (get params "sigma")))
+    "beta"        (dist/beta-dist (mx/scalar (get params "alpha"))
+                                   (mx/scalar (get params "beta")))
+    "gamma"       (dist/gamma-dist (mx/scalar (get params "shape"))
+                                    (mx/scalar (get params "rate")))
+    "exponential" (dist/exponential (mx/scalar (get params "rate")))
+    "laplace"     (dist/laplace (mx/scalar (get params "loc"))
+                                 (mx/scalar (get params "scale")))
+    "cauchy"      (dist/cauchy (mx/scalar (get params "loc"))
+                                (mx/scalar (get params "scale")))
+    "lognormal"   (dist/log-normal (mx/scalar (get params "mu"))
+                                    (mx/scalar (get params "sigma")))
+    "student_t"   (dist/student-t (mx/scalar (get params "df"))
+                                   (mx/scalar (get params "loc"))
+                                   (mx/scalar (get params "scale")))
+    (throw (js/Error. (str "unsupported gradient dist: " dist-name)))))
+
+(defn eval-gradient [spec]
+  (let [dist-name (get spec "dist")
+        params    (get spec "params")
+        grad-wrt  (get spec "grad_wrt")
+        value     (get spec "value")]
+    (try
+      (let [grad-val
+            (case grad-wrt
+              "value"
+              (let [grad-fn (mx/grad
+                              (fn [v]
+                                (dc/dist-log-prob
+                                 (make-dist-from-spec dist-name params) v)))]
+                (mx/item (grad-fn (mx/scalar value))))
+
+              "mu"
+              (let [grad-fn (mx/grad
+                              (fn [mu]
+                                (dc/dist-log-prob
+                                 (case dist-name
+                                   "normal"   (dist/gaussian mu (mx/scalar (get params "sigma")))
+                                   "lognormal" (dist/log-normal mu (mx/scalar (get params "sigma"))))
+                                 (mx/scalar value))))]
+                (mx/item (grad-fn (mx/scalar (get params "mu")))))
+
+              "sigma"
+              (let [grad-fn (mx/grad
+                              (fn [sigma]
+                                (dc/dist-log-prob
+                                 (case dist-name
+                                   "normal"   (dist/gaussian (mx/scalar (get params "mu")) sigma)
+                                   "lognormal" (dist/log-normal (mx/scalar (get params "mu")) sigma))
+                                 (mx/scalar value))))]
+                (mx/item (grad-fn (mx/scalar (get params "sigma")))))
+
+              "alpha"
+              (let [grad-fn (mx/grad
+                              (fn [alpha]
+                                (dc/dist-log-prob
+                                 (dist/beta-dist alpha (mx/scalar (get params "beta")))
+                                 (mx/scalar value))))]
+                (mx/item (grad-fn (mx/scalar (get params "alpha")))))
+
+              "shape"
+              (let [grad-fn (mx/grad
+                              (fn [shape]
+                                (dc/dist-log-prob
+                                 (dist/gamma-dist shape (mx/scalar (get params "rate")))
+                                 (mx/scalar value))))]
+                (mx/item (grad-fn (mx/scalar (get params "shape")))))
+
+              (throw (js/Error. (str "unsupported grad_wrt: " grad-wrt))))]
+        #js {"id" (get spec "id") "gradient" grad-val})
+      (catch :default e
+        #js {"id" (get spec "id") "error" (str e)}))))
+
+;; --- Inference quality models ---
+
+(def nn-inference-model
+  (dyn/auto-key
+    (gen [observations]
+      (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+        (doseq [[i obs] (map-indexed vector observations)]
+          (trace (keyword (str "x" i)) (dist/gaussian mu (mx/scalar 1))))
+        mu))))
+
+(def bb-inference-model
+  (dyn/auto-key
+    (gen [observations]
+      (let [p (trace :p (dist/beta-dist (mx/scalar 1) (mx/scalar 1)))]
+        (doseq [[i obs] (map-indexed vector observations)]
+          (trace (keyword (str "x" i)) (dist/bernoulli p)))
+        p))))
+
+(def linreg-inference-model
+  (dyn/auto-key
+    (gen [xs]
+      (let [slope (trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+        (doseq [[i x] (map-indexed vector xs)]
+          (trace (keyword (str "y" i)) (dist/gaussian (mx/multiply slope (mx/scalar x)) (mx/scalar 1))))
+        slope))))
+
+(def inference-model-lookup
+  {"normal_normal"       nn-inference-model
+   "beta_bernoulli_iid"  bb-inference-model
+   "normal_linreg"       linreg-inference-model})
+
+(defn make-inference-observations
+  "Build observation choicemap from spec data and model type."
+  [model-name data]
+  (case model-name
+    "normal_normal"
+    (let [obs (get data "observations")]
+      (reduce (fn [cm [i v]]
+                (cm/set-value cm (keyword (str "x" i)) (mx/scalar v)))
+              (cm/choicemap) (map-indexed vector obs)))
+
+    "beta_bernoulli_iid"
+    (let [obs (get data "observations")]
+      (reduce (fn [cm [i v]]
+                (cm/set-value cm (keyword (str "x" i)) (mx/scalar v)))
+              (cm/choicemap) (map-indexed vector obs)))
+
+    "normal_linreg"
+    (let [ys (get data "ys")]
+      (reduce (fn [cm [i v]]
+                (cm/set-value cm (keyword (str "y" i)) (mx/scalar v)))
+              (cm/choicemap) (map-indexed vector ys)))))
+
+(defn make-inference-args
+  "Build args vector for inference model."
+  [model-name data]
+  (case model-name
+    "normal_normal"      [(get data "observations")]
+    "beta_bernoulli_iid" [(get data "observations")]
+    "normal_linreg"      [(get data "xs")]))
+
+(defn eval-inference [spec]
+  (let [model-name  (get spec "model")
+        model       (get inference-model-lookup model-name)
+        algorithm   (get spec "algorithm")
+        algo-params (get spec "algorithm_params")
+        data        (get spec "data")
+        target-addr (keyword (get spec "target_addr"))
+        args        (make-inference-args model-name data)
+        obs-cm      (make-inference-observations model-name data)]
+    (try
+      (let [posterior-mean
+            (case algorithm
+              "importance_sampling"
+              (let [n-particles (get algo-params "n_particles" 1000)
+                    {:keys [traces log-weights]}
+                    (is/importance-sampling {:samples n-particles} model args obs-cm)
+                    ;; Compute weighted mean
+                    raw-weights (mapv (fn [w] (mx/eval! w) (mx/item w)) log-weights)
+                    max-w (apply max raw-weights)
+                    exp-weights (mapv #(js/Math.exp (- % max-w)) raw-weights)
+                    sum-w (reduce + exp-weights)
+                    norm-weights (mapv #(/ % sum-w) exp-weights)
+                    vals (mapv (fn [t]
+                                 (let [v (cm/get-value (cm/get-submap (:choices t) target-addr))]
+                                   (mx/eval! v) (mx/item v)))
+                               traces)]
+                (reduce + (map * vals norm-weights)))
+
+              "mh"
+              (let [n-steps (get algo-params "n_steps" 2000)
+                    burn    (get algo-params "burn" 500)
+                    traces  (mcmc/mh {:samples (- n-steps burn) :burn burn
+                                      :selection (sel/select target-addr)}
+                                     model args obs-cm)
+                    vals    (mapv (fn [t]
+                                    (let [v (cm/get-value (cm/get-submap (:choices t) target-addr))]
+                                      (mx/eval! v) (mx/item v)))
+                                  traces)]
+                (/ (reduce + vals) (count vals))))]
+        #js {"id" (get spec "id") "posterior_mean" posterior-mean})
+      (catch :default e
+        #js {"id" (get spec "id") "error" (str e)}))))
+
 ;; --- JSON sanitization (JS JSON.stringify turns NaN/Infinity into null) ---
 
 (defn sanitize-result [v]
@@ -561,6 +748,8 @@
                 "regenerate"           (mapv eval-regenerate (get input-data "regenerate_tests"))
                 "combinator"           (mapv eval-combinator (get input-data "combinator_tests"))
                 "mlx_ops"              (mapv (comp sanitize-js-obj eval-mlx-op) (get input-data "tests"))
+                "gradient"             (mapv eval-gradient (get input-data "gradient_tests"))
+                "inference_quality"    (mapv eval-inference (get input-data "tests"))
                 (do (.error js/console (str "Unknown test type: " test-type))
                     (js/process.exit 1)))
       output  #js {"system"    "genmlx"

@@ -1,0 +1,166 @@
+{
+  "test_type": "gradient",
+  "tolerance": 1e-3,
+  "gradient_tests": [
+    {
+      "id": "grad-normal-val-1",
+      "dist": "normal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0
+    },
+    {
+      "id": "grad-normal-val-0",
+      "dist": "normal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 0.0,
+      "grad_wrt": "value",
+      "expected": 0.0
+    },
+    {
+      "id": "grad-normal-mu-1",
+      "dist": "normal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 1.0,
+      "grad_wrt": "mu",
+      "expected": 1.0
+    },
+    {
+      "id": "grad-normal-sigma-1",
+      "dist": "normal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 1.0,
+      "grad_wrt": "sigma",
+      "expected": 0.0
+    },
+    {
+      "id": "grad-beta-val-1",
+      "dist": "beta",
+      "params": {"alpha": 2.0, "beta": 2.0},
+      "value": 0.5,
+      "grad_wrt": "value",
+      "expected": 0.0
+    },
+    {
+      "id": "grad-beta-val-2",
+      "dist": "beta",
+      "params": {"alpha": 2.0, "beta": 2.0},
+      "value": 0.3,
+      "grad_wrt": "value",
+      "expected": 1.904761904761905
+    },
+    {
+      "id": "grad-gamma-val-1",
+      "dist": "gamma",
+      "params": {"shape": 2.0, "rate": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": 0.0
+    },
+    {
+      "id": "grad-gamma-val-2",
+      "dist": "gamma",
+      "params": {"shape": 2.0, "rate": 1.0},
+      "value": 2.0,
+      "grad_wrt": "value",
+      "expected": -0.5
+    },
+    {
+      "id": "grad-exp-val-1",
+      "dist": "exponential",
+      "params": {"rate": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0
+    },
+    {
+      "id": "grad-exp-val-2",
+      "dist": "exponential",
+      "params": {"rate": 2.0},
+      "value": 0.5,
+      "grad_wrt": "value",
+      "expected": -2.0
+    },
+    {
+      "id": "grad-laplace-val-pos",
+      "dist": "laplace",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0
+    },
+    {
+      "id": "grad-laplace-val-neg",
+      "dist": "laplace",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": -1.0,
+      "grad_wrt": "value",
+      "expected": 1.0
+    },
+    {
+      "id": "grad-cauchy-val-0",
+      "dist": "cauchy",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": 0.0,
+      "grad_wrt": "value",
+      "expected": 0.0
+    },
+    {
+      "id": "grad-cauchy-val-1",
+      "dist": "cauchy",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0
+    },
+    {
+      "id": "grad-lognormal-val-1",
+      "dist": "lognormal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0
+    },
+    {
+      "id": "grad-studentt-val-0",
+      "dist": "student_t",
+      "params": {"df": 3.0, "loc": 0.0, "scale": 1.0},
+      "value": 0.0,
+      "grad_wrt": "value",
+      "expected": 0.0
+    },
+    {
+      "id": "grad-normal-val-neg",
+      "dist": "normal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": -2.0,
+      "grad_wrt": "value",
+      "expected": 2.0
+    },
+    {
+      "id": "grad-normal-large-sigma",
+      "dist": "normal",
+      "params": {"mu": 0.0, "sigma": 10.0},
+      "value": 5.0,
+      "grad_wrt": "value",
+      "expected": -0.05
+    },
+    {
+      "id": "grad-beta-alpha",
+      "dist": "beta",
+      "params": {"alpha": 2.0, "beta": 2.0},
+      "value": 0.5,
+      "grad_wrt": "alpha",
+      "expected": 0.14019
+    },
+    {
+      "id": "grad-gamma-shape",
+      "dist": "gamma",
+      "params": {"shape": 2.0, "rate": 1.0},
+      "value": 1.0,
+      "grad_wrt": "shape",
+      "expected": -0.42278
+    }
+  ]
+}

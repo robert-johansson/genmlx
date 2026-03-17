@@ -1,0 +1,19 @@
+{
+  "description": "Numerical stability edge cases — extreme parameters/values for float32 vs float64 comparison",
+  "tolerance": 0.01,
+  "tolerance_note": "Wider tolerance for extreme values where float32 (GenMLX/MLX) precision diverges from float64 (Gen.jl/Julia)",
+  "tests": [
+    {"id": "stab-normal-tiny-sigma", "dist": "normal", "value": 0.0, "params": {"mu": 0.0, "sigma": 1e-10}, "note": "Very peaked — large positive logpdf"},
+    {"id": "stab-normal-huge-sigma", "dist": "normal", "value": 0.0, "params": {"mu": 0.0, "sigma": 1e10}, "note": "Very flat — large negative logpdf"},
+    {"id": "stab-normal-far-tail", "dist": "normal", "value": 100.0, "params": {"mu": 0.0, "sigma": 1.0}, "note": "Far tail"},
+    {"id": "stab-beta-near-0", "dist": "beta", "value": 1e-6, "params": {"alpha": 0.5, "beta": 0.5}, "note": "Near boundary"},
+    {"id": "stab-beta-near-1", "dist": "beta", "value": 0.999999, "params": {"alpha": 0.5, "beta": 0.5}, "note": "Near boundary"},
+    {"id": "stab-gamma-near-0", "dist": "gamma", "value": 1e-10, "params": {"shape": 0.5, "rate": 1.0}, "note": "Near zero"},
+    {"id": "stab-gamma-large", "dist": "gamma", "value": 1000.0, "params": {"shape": 0.5, "rate": 1.0}, "note": "Large value"},
+    {"id": "stab-poisson-large", "dist": "poisson", "value": 100, "params": {"rate": 100.0}, "note": "Large rate and value"},
+    {"id": "stab-categorical-extreme", "dist": "categorical", "value": 0, "params": {"logits": [100, -100, -100]}, "note": "Extreme logits"},
+    {"id": "stab-exp-large", "dist": "exponential", "value": 100.0, "params": {"rate": 0.01}, "note": "Large value, small rate"},
+    {"id": "stab-normal-extreme-sigma", "dist": "normal", "value": 0.0, "params": {"mu": 0.0, "sigma": 1e-30}, "note": "Extreme sigma — may overflow to Inf"},
+    {"id": "stab-beta-uniform", "dist": "beta", "value": 0.5, "params": {"alpha": 1.0, "beta": 1.0}, "note": "Beta(1,1) = Uniform — logpdf should be 0.0"}
+  ]
+}

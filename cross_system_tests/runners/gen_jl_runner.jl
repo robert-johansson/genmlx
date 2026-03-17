@@ -2,7 +2,7 @@
 # Reads JSON from stdin, writes results to stdout.
 using Gen
 using JSON
-using SpecialFunctions: loggamma
+using SpecialFunctions: loggamma, digamma
 using LinearAlgebra: logdet, inv
 
 # --- Distribution log-prob dispatch ---
@@ -471,6 +471,205 @@ function eval_combinator(spec)
     end
 end
 
+# --- Gradient dispatch ---
+
+function eval_gradient(spec)
+    dist_name = spec["dist"]
+    value = Float64(spec["value"])
+    params = spec["params"]
+    grad_wrt = spec["grad_wrt"]
+
+    try
+        grad_val = if dist_name == "normal"
+            mu = Float64(params["mu"]); sigma = Float64(params["sigma"])
+            (gv, gmu, gsigma) = logpdf_grad(normal, value, mu, sigma)
+            if grad_wrt == "value"
+                gv
+            elseif grad_wrt == "mu"
+                gmu
+            elseif grad_wrt == "sigma"
+                gsigma
+            else
+                error("unsupported grad_wrt for normal: $grad_wrt")
+            end
+
+        elseif dist_name == "beta"
+            alpha = Float64(params["alpha"]); b = Float64(params["beta"])
+            if grad_wrt == "value"
+                # d/dx log Beta(x;a,b) = (a-1)/x - (b-1)/(1-x)
+                (alpha - 1.0) / value - (b - 1.0) / (1.0 - value)
+            elseif grad_wrt == "alpha"
+                # d/dalpha = log(x) - digamma(alpha) + digamma(alpha+beta)
+                log(value) - digamma(alpha) + digamma(alpha + b)
+            else
+                error("unsupported grad_wrt for beta: $grad_wrt")
+            end
+
+        elseif dist_name == "gamma"
+            shape = Float64(params["shape"]); rate = Float64(params["rate"])
+            # Gen.jl gamma uses scale = 1/rate
+            if grad_wrt == "value"
+                # d/dx log Gamma(x;k,rate) = (k-1)/x - rate
+                (shape - 1.0) / value - rate
+            elseif grad_wrt == "shape"
+                # d/dk = log(x) + log(rate) - digamma(k)
+                log(value) + log(rate) - digamma(shape)
+            else
+                error("unsupported grad_wrt for gamma: $grad_wrt")
+            end
+
+        elseif dist_name == "exponential"
+            rate = Float64(params["rate"])
+            if grad_wrt == "value"
+                -rate
+            else
+                error("unsupported grad_wrt for exponential: $grad_wrt")
+            end
+
+        elseif dist_name == "laplace"
+            loc = Float64(params["loc"]); scale = Float64(params["scale"])
+            if grad_wrt == "value"
+                -sign(value - loc) / scale
+            else
+                error("unsupported grad_wrt for laplace: $grad_wrt")
+            end
+
+        elseif dist_name == "cauchy"
+            loc = Float64(params["loc"]); scale = Float64(params["scale"])
+            if grad_wrt == "value"
+                -2.0 * (value - loc) / (scale^2 + (value - loc)^2)
+            else
+                error("unsupported grad_wrt for cauchy: $grad_wrt")
+            end
+
+        elseif dist_name == "lognormal"
+            mu = Float64(params["mu"]); sigma = Float64(params["sigma"])
+            if grad_wrt == "value"
+                -(1.0 + (log(value) - mu) / sigma^2) / value
+            else
+                error("unsupported grad_wrt for lognormal: $grad_wrt")
+            end
+
+        elseif dist_name == "student_t"
+            df = Float64(params["df"]); loc = Float64(params["loc"]); scale = Float64(params["scale"])
+            if grad_wrt == "value"
+                -(df + 1.0) * (value - loc) / (df * scale^2 + (value - loc)^2)
+            else
+                error("unsupported grad_wrt for student_t: $grad_wrt")
+            end
+
+        else
+            return Dict("id" => spec["id"], "error" => "unsupported dist: $dist_name")
+        end
+
+        Dict("id" => spec["id"], "gradient" => grad_val)
+    catch e
+        Dict("id" => spec["id"], "error" => string(e))
+    end
+end
+
+# --- Phase 8: Inference Quality models ---
+
+@gen function nn_inference_model(observations)
+    mu = {:mu} ~ normal(0, 1)
+    for (i, obs) in enumerate(observations)
+        {Symbol("x$(i-1)")} ~ normal(mu, 1)
+    end
+    return mu
+end
+
+@gen function bb_inference_model(observations)
+    p = {:p} ~ beta(1, 1)
+    for (i, obs) in enumerate(observations)
+        {Symbol("x$(i-1)")} ~ bernoulli(p)
+    end
+    return p
+end
+
+@gen function linreg_inference_model(xs)
+    slope = {:slope} ~ normal(0, 10)
+    for (i, x) in enumerate(xs)
+        {Symbol("y$(i-1)")} ~ normal(slope * x, 1)
+    end
+    return slope
+end
+
+INFERENCE_MODEL_LOOKUP = Dict(
+    "normal_normal" => nn_inference_model,
+    "beta_bernoulli_iid" => bb_inference_model,
+    "normal_linreg" => linreg_inference_model,
+)
+
+function make_inference_observations(model_name, data)
+    cm = Gen.choicemap()
+    if model_name == "normal_normal"
+        for (i, obs) in enumerate(data["observations"])
+            cm[Symbol("x$(i-1)")] = Float64(obs)
+        end
+    elseif model_name == "beta_bernoulli_iid"
+        for (i, obs) in enumerate(data["observations"])
+            cm[Symbol("x$(i-1)")] = obs == 1 ? true : false
+        end
+    elseif model_name == "normal_linreg"
+        for (i, y) in enumerate(data["ys"])
+            cm[Symbol("y$(i-1)")] = Float64(y)
+        end
+    end
+    return cm
+end
+
+function get_inference_args(model_name, data)
+    if model_name == "normal_normal"
+        (Float64.(data["observations"]),)
+    elseif model_name == "beta_bernoulli_iid"
+        (Float64.(data["observations"]),)
+    elseif model_name == "normal_linreg"
+        (Float64.(data["xs"]),)
+    end
+end
+
+function eval_inference(spec)
+    model_name = spec["model"]
+    model = INFERENCE_MODEL_LOOKUP[model_name]
+    algorithm = spec["algorithm"]
+    algo_params = spec["algorithm_params"]
+    data = spec["data"]
+    target_addr = Symbol(spec["target_addr"])
+    args = get_inference_args(model_name, data)
+    obs_cm = make_inference_observations(model_name, data)
+
+    try
+        posterior_mean = if algorithm == "importance_sampling"
+            n_particles = get(algo_params, "n_particles", 1000)
+            (traces, log_weights, _) = importance_sampling(model, args, obs_cm, n_particles)
+            # Compute weighted mean
+            max_w = maximum(log_weights)
+            weights = exp.(log_weights .- max_w)
+            weights ./= sum(weights)
+            vals = [traces[i][target_addr] for i in 1:length(traces)]
+            sum(vals .* weights)
+        elseif algorithm == "mh"
+            n_steps = get(algo_params, "n_steps", 2000)
+            burn = get(algo_params, "burn", 500)
+            (trace, _) = generate(model, args, obs_cm)
+            sel = select(target_addr)
+            samples = Float64[]
+            for step in 1:n_steps
+                (trace, accepted) = mh(trace, sel)
+                if step > burn
+                    push!(samples, trace[target_addr])
+                end
+            end
+            sum(samples) / length(samples)
+        else
+            return Dict("id" => spec["id"], "error" => "unsupported algorithm: $algorithm")
+        end
+        Dict("id" => spec["id"], "posterior_mean" => posterior_mean)
+    catch e
+        Dict("id" => spec["id"], "error" => string(e))
+    end
+end
+
 # --- Main: read stdin, write stdout ---
 
 function main()
@@ -509,6 +708,14 @@ function main()
     elseif test_type == "combinator"
         for spec in input["combinator_tests"]
             push!(results, eval_combinator(spec))
+        end
+    elseif test_type == "gradient"
+        for spec in input["gradient_tests"]
+            push!(results, eval_gradient(spec))
+        end
+    elseif test_type == "inference_quality"
+        for spec in input["tests"]
+            push!(results, eval_inference(spec))
         end
     else
         println(stderr, "Unknown test type: $test_type")

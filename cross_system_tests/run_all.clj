@@ -64,7 +64,7 @@
    (fn [x]
      (if (and (map? x) (not (record? x)))
        (reduce-kv (fn [acc k v]
-                    (assoc acc k (if (#{:logprob :weight :score :old_score :new_score :total_score :sum_components} k)
+                    (assoc acc k (if (#{:logprob :weight :score :old_score :new_score :total_score :sum_components :gradient :posterior_mean} k)
                                    (parse-number v) v)))
                   {} x)
        x))
@@ -863,6 +863,316 @@
                       @error-count " error"))
         {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
 
+;; --- Stability Suite ---
+
+(defn run-stability-suite [spec-file tolerance]
+  (println "\n>>> Running stability tests <<<")
+  (println (str "Spec: " spec-file))
+
+  (let [spec-json (slurp spec-file)
+        systems ["gen_jl" "genmlx"]
+        run-results
+        (reduce
+         (fn [acc sys]
+           (let [out-file (str results-dir "/" sys "_stability.json")
+                 result (run-system sys "logprob" spec-json out-file)]
+             (assoc acc sys result)))
+         {}
+         systems)
+
+        loaded (reduce
+                (fn [acc [sys info]]
+                  (if (:success info)
+                    (try
+                      (assoc acc (keyword sys) (load-results (:output-file info)))
+                      (catch Exception e
+                        (println (str "  Failed to load " sys " results: " (.getMessage e)))
+                        acc))
+                    (do
+                      (println (str "  " sys " failed to run"))
+                      acc)))
+                {}
+                run-results)]
+
+    (println (str "\n=== STABILITY COMPARISON ==="))
+    (println (str "Tolerance: " tolerance))
+    (println (str "Systems: " (str/join ", " (map name (keys loaded)))))
+    (println)
+
+    (if (< (count loaded) 2)
+      (do (println "Not enough systems succeeded for comparison")
+          {:pass 0 :fail 0 :error 0 :skip 0})
+
+      (let [by-id (reduce
+                   (fn [acc [sys-name results]]
+                     (reduce
+                      (fn [acc2 r]
+                        (assoc-in acc2 [(:id r) sys-name] r))
+                      acc
+                      (:results results)))
+                   {}
+                   loaded)
+            pass-count (atom 0)
+            fail-count (atom 0)
+            error-count (atom 0)]
+
+        (doseq [[id sys-map] (sort-by key by-id)]
+          (let [all-sys (vals sys-map)
+                errors (filter :error all-sys)
+                valid (remove :error all-sys)]
+            (cond
+              (seq errors)
+              (do (swap! error-count inc)
+                  (println (str "  ERROR  " id))
+                  (doseq [e errors]
+                    (println (str "         " (:error e)))))
+
+              (< (count valid) 2)
+              (do (swap! error-count inc)
+                  (println (str "  ERROR  " id " (not enough results)")))
+
+              :else
+              (let [vals-list (map :logprob valid)
+                    both-inf (and (every? #(and (number? %) (Double/isInfinite %)) vals-list)
+                                  (apply = (map #(< % 0) vals-list)))
+                    both-nan (every? #(and (number? %) (Double/isNaN %)) vals-list)
+                    ref-val (first vals-list)
+                    all-close (every? #(close-enough? ref-val % tolerance) (rest vals-list))]
+                (if (or both-inf both-nan all-close)
+                  (do (swap! pass-count inc)
+                      (let [display (cond
+                                      both-inf "both=-Inf"
+                                      both-nan "both=NaN"
+                                      :else (str/join " | "
+                                                      (map (fn [[sys r]]
+                                                             (str (name sys) "="
+                                                                  (format "%.6f" (double (:logprob r)))))
+                                                           sys-map)))]
+                        (println (str "  PASS   " id "  " display))))
+                  (do (swap! fail-count inc)
+                      (println (str "  FAIL   " id))
+                      (doseq [[sys r] sys-map]
+                        (println (str "         " (name sys) ": " (:logprob r))))))))))
+
+        (println)
+        (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
+                      @error-count " error"))
+        {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
+
+;; --- Gradient Suite ---
+
+(defn run-gradient-suite [spec-file tolerance]
+  (println "\n>>> Running gradient tests <<<")
+  (println (str "Spec: " spec-file))
+
+  (let [spec-json (slurp spec-file)
+        specs (json/parse-string spec-json true)
+        systems ["gen_jl" "genmlx"]
+        run-results
+        (reduce
+         (fn [acc sys]
+           (let [out-file (str results-dir "/" sys "_gradient.json")
+                 result (run-system sys "gradient" spec-json out-file)]
+             (assoc acc sys result)))
+         {}
+         systems)
+
+        loaded (reduce
+                (fn [acc [sys info]]
+                  (if (:success info)
+                    (try
+                      (assoc acc (keyword sys) (load-results (:output-file info)))
+                      (catch Exception e
+                        (println (str "  Failed to load " sys " results: " (.getMessage e)))
+                        acc))
+                    (do
+                      (println (str "  " sys " failed to run"))
+                      acc)))
+                {}
+                run-results)
+
+        expected-by-id (into {} (map (fn [t] [(:id t) t]) (:gradient_tests specs)))]
+
+    (println (str "\n=== GRADIENT COMPARISON ==="))
+    (println (str "Tolerance: " tolerance))
+    (println (str "Systems: " (str/join ", " (map name (keys loaded)))))
+    (println)
+
+    (let [pass-count (atom 0)
+          fail-count (atom 0)
+          error-count (atom 0)
+          by-id (reduce
+                 (fn [acc [sys-name results]]
+                   (reduce
+                    (fn [acc2 r]
+                      (assoc-in acc2 [(:id r) sys-name] r))
+                    acc
+                    (:results results)))
+                 {}
+                 loaded)]
+
+      (doseq [[id sys-map] (sort-by key by-id)]
+        (let [all-sys (vals sys-map)
+              errors (filter :error all-sys)
+              valid (remove :error all-sys)
+              spec (get expected-by-id id)
+              expected (:expected spec)]
+          (cond
+            (seq errors)
+            (do (swap! error-count inc)
+                (println (str "  ERROR  " id))
+                (doseq [e errors]
+                  (println (str "         " (:error e)))))
+
+            (empty? valid)
+            (do (swap! error-count inc)
+                (println (str "  ERROR  " id " (no results)")))
+
+            :else
+            (let [gradients (map #(parse-number (:gradient %)) valid)
+                  ref-g (first gradients)
+                  cross-ok (if (> (count gradients) 1)
+                             (every? #(close-enough? ref-g % tolerance) (rest gradients))
+                             true)
+                  expected-ok (if expected
+                                (every? #(close-enough? % (parse-number expected) tolerance) gradients)
+                                true)]
+              (if (and cross-ok expected-ok)
+                (do (swap! pass-count inc)
+                    (println (str "  PASS   " id "  "
+                                  (str/join " | "
+                                            (map (fn [[sys r]]
+                                                   (str (name sys) "="
+                                                        (format "%.6f" (double (parse-number (:gradient r))))))
+                                                 sys-map))
+                                  (when expected (str "  expected=" (format "%.6f" (double expected)))))))
+                (do (swap! fail-count inc)
+                    (println (str "  FAIL   " id
+                                  (when (not cross-ok) " [cross-system mismatch]")
+                                  (when (not expected-ok) " [expected mismatch]")))
+                    (doseq [[sys r] sys-map]
+                      (println (str "         " (name sys) ": "
+                                    (format "%.10f" (double (parse-number (:gradient r)))))))
+                    (when expected
+                      (println (str "         expected: " (format "%.10f" (double expected)))))))))))
+
+      (println)
+      (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
+                    @error-count " error"))
+      {:pass @pass-count :fail @fail-count :error @error-count :skip 0})))
+
+;; --- Inference Quality Suite ---
+
+(defn run-inference-quality-suite [spec-file]
+  (println "\n>>> Running inference_quality tests <<<")
+  (println (str "Spec: " spec-file))
+
+  (let [spec-json (slurp spec-file)
+        specs (json/parse-string spec-json true)
+        systems ["gen_jl" "genmlx"]
+        run-results
+        (reduce
+         (fn [acc sys]
+           (let [out-file (str results-dir "/" sys "_inference_quality.json")
+                 result (run-system sys "inference_quality" spec-json out-file)]
+             (assoc acc sys result)))
+         {}
+         systems)
+
+        loaded (reduce
+                (fn [acc [sys info]]
+                  (if (:success info)
+                    (try
+                      (assoc acc (keyword sys) (load-results (:output-file info)))
+                      (catch Exception e
+                        (println (str "  Failed to load " sys " results: " (.getMessage e)))
+                        acc))
+                    (do
+                      (println (str "  " sys " failed to run"))
+                      acc)))
+                {}
+                run-results)
+
+        test-by-id (into {} (map (fn [t] [(:id t) t]) (:tests specs)))]
+
+    (println (str "\n=== INFERENCE QUALITY COMPARISON ==="))
+    (println (str "Systems: " (str/join ", " (map name (keys loaded)))))
+    (println (str "Tolerance: 3 * analytical_std (statistical)"))
+    (println)
+
+    (if (empty? loaded)
+      (do (println "No systems succeeded")
+          {:pass 0 :fail 0 :error 0 :skip 0})
+
+      (let [by-id (reduce
+                   (fn [acc [sys-name results]]
+                     (reduce
+                      (fn [acc2 r]
+                        (assoc-in acc2 [(:id r) sys-name] r))
+                      acc
+                      (:results results)))
+                   {}
+                   loaded)
+            pass-count (atom 0)
+            fail-count (atom 0)
+            error-count (atom 0)]
+
+        (doseq [[id sys-map] (sort-by key by-id)]
+          (let [test-spec (get test-by-id id)
+                analytical-mean (get-in test-spec [:analytical_posterior :mean])
+                analytical-std  (get-in test-spec [:analytical_posterior :std])
+                ;; Generous tolerance: 3 * analytical_std
+                tol (* 3.0 analytical-std)
+                all-sys (vals sys-map)
+                errors (filter :error all-sys)
+                valid (remove :error all-sys)]
+            (cond
+              (seq errors)
+              (do (swap! error-count inc)
+                  (println (str "  ERROR  " id))
+                  (doseq [e errors]
+                    (println (str "         " (:error e)))))
+
+              (empty? valid)
+              (do (swap! error-count inc)
+                  (println (str "  ERROR  " id " (no results)")))
+
+              :else
+              (let [means (map #(parse-number (:posterior_mean %)) valid)
+                    ;; Check each system against analytical posterior
+                    all-within-tol
+                    (every? #(< (abs (- % analytical-mean)) tol) means)
+                    ;; Also check systems agree with each other (within 2*std)
+                    cross-tol (* 2.0 analytical-std)
+                    cross-ok (if (> (count means) 1)
+                               (let [ref-m (first means)]
+                                 (every? #(< (abs (- % ref-m)) cross-tol) (rest means)))
+                               true)]
+                (if (and all-within-tol cross-ok)
+                  (do (swap! pass-count inc)
+                      (println (str "  PASS   " id "  "
+                                    (str/join " | "
+                                              (map (fn [[sys r]]
+                                                     (str (name sys) "="
+                                                          (format "%.4f" (double (parse-number (:posterior_mean r))))))
+                                                   sys-map))
+                                    "  analytical=" (format "%.4f" analytical-mean)
+                                    "  tol=" (format "%.4f" tol))))
+                  (do (swap! fail-count inc)
+                      (println (str "  FAIL   " id
+                                    (when (not all-within-tol) " [outside 3*std of analytical]")
+                                    (when (not cross-ok) " [cross-system disagree]")))
+                      (doseq [[sys r] sys-map]
+                        (println (str "         " (name sys) ": "
+                                      (format "%.6f" (double (parse-number (:posterior_mean r)))))))
+                      (println (str "         analytical: " (format "%.6f" analytical-mean)
+                                    " +/- " (format "%.6f" tol)))))))))
+
+        (println)
+        (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
+                      @error-count " error"))
+        {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
+
 ;; --- Main ---
 
 (defn run-test-suite [test-type spec-file tolerance]
@@ -910,8 +1220,11 @@
         update-spec (str specs-dir "/update_tests.json")
         project-regen-spec (str specs-dir "/project_regen_tests.json")
         combinator-spec (str specs-dir "/combinator_tests.json")
+        stability-spec (str specs-dir "/stability_tests.json")
+        gradient-spec (str specs-dir "/gradient_tests.json")
+        inference-spec (str specs-dir "/inference_quality_tests.json")
         args (vec *command-line-args*)
-        suites (if (seq args) (set args) #{"mlx_ops" "logprob" "assess" "score_decomposition" "update" "project" "regenerate" "combinator"})]
+        suites (if (seq args) (set args) #{"mlx_ops" "logprob" "assess" "score_decomposition" "update" "project" "regenerate" "combinator" "stability" "gradient" "inference_quality"})]
 
     (println "╔════════════════════════════════════════════╗")
     (println "║  GenMLX Cross-System Verification Harness  ║")
@@ -944,7 +1257,16 @@
             (conj (run-regenerate-suite project-regen-spec 1e-4))
 
             (contains? suites "combinator")
-            (conj (run-combinator-suite combinator-spec 1e-4)))
+            (conj (run-combinator-suite combinator-spec 1e-4))
+
+            (contains? suites "stability")
+            (conj (run-stability-suite stability-spec 0.01))
+
+            (contains? suites "gradient")
+            (conj (run-gradient-suite gradient-spec 1e-3))
+
+            (contains? suites "inference_quality")
+            (conj (run-inference-quality-suite inference-spec)))
 
           totals (reduce
                   (fn [acc r]
