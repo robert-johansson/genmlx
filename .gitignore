@@ -26,3 +26,4 @@ bench/
 
 # Python
 __pycache__/
+cross_system_tests/results/

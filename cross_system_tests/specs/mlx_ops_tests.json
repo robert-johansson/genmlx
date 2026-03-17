@@ -1,0 +1,59 @@
+{
+  "description": "MLX primitive ops verification against known analytical values",
+  "tolerance": 1e-3,
+  "tolerance_note": "float32 MLX vs float64 reference — 1e-3 accounts for precision gap",
+  "tests": [
+    {"id": "log-1", "op": "log", "args": [1.0], "expected": 0.0},
+    {"id": "log-e", "op": "log", "args": [2.718281828459045], "expected": 1.0},
+    {"id": "log-10", "op": "log", "args": [10.0], "expected": 2.302585092994046},
+    {"id": "log-small", "op": "log", "args": [1e-10], "expected": -23.025850929940457},
+
+    {"id": "exp-0", "op": "exp", "args": [0.0], "expected": 1.0},
+    {"id": "exp-1", "op": "exp", "args": [1.0], "expected": 2.718281828459045},
+    {"id": "exp-neg5", "op": "exp", "args": [-5.0], "expected": 0.006737946999085467},
+    {"id": "exp-10", "op": "exp", "args": [10.0], "expected": 22026.465794806718},
+
+    {"id": "sqrt-4", "op": "sqrt", "args": [4.0], "expected": 2.0},
+    {"id": "sqrt-2", "op": "sqrt", "args": [2.0], "expected": 1.4142135623730951},
+    {"id": "sqrt-0", "op": "sqrt", "args": [0.0], "expected": 0.0},
+
+    {"id": "abs-neg3", "op": "abs", "args": [-3.0], "expected": 3.0},
+    {"id": "abs-pos5", "op": "abs", "args": [5.0], "expected": 5.0},
+
+    {"id": "lgamma-1", "op": "lgamma", "args": [1.0], "expected": 0.0, "note": "lgamma(1) = log(0!) = 0"},
+    {"id": "lgamma-2", "op": "lgamma", "args": [2.0], "expected": 0.0, "note": "lgamma(2) = log(1!) = 0"},
+    {"id": "lgamma-3", "op": "lgamma", "args": [3.0], "expected": 0.6931471805599453, "note": "lgamma(3) = log(2!) = log(2)"},
+    {"id": "lgamma-5", "op": "lgamma", "args": [5.0], "expected": 3.1780538303479458, "note": "lgamma(5) = log(4!) = log(24)"},
+    {"id": "lgamma-0.5", "op": "lgamma", "args": [0.5], "expected": 0.5723649429247001, "note": "lgamma(0.5) = log(sqrt(pi))"},
+    {"id": "lgamma-10", "op": "lgamma", "args": [10.0], "expected": 12.801827480081469},
+    {"id": "lgamma-100", "op": "lgamma", "args": [100.0], "expected": 359.1342053695754},
+
+    {"id": "sin-0", "op": "sin", "args": [0.0], "expected": 0.0},
+    {"id": "sin-pi2", "op": "sin", "args": [1.5707963267948966], "expected": 1.0},
+    {"id": "cos-0", "op": "cos", "args": [0.0], "expected": 1.0},
+    {"id": "cos-pi", "op": "cos", "args": [3.141592653589793], "expected": -1.0},
+
+    {"id": "add-basic", "op": "add", "args": [2.5, 3.5], "expected": 6.0},
+    {"id": "multiply-basic", "op": "multiply", "args": [3.0, 4.0], "expected": 12.0},
+    {"id": "subtract-basic", "op": "subtract", "args": [10.0, 3.0], "expected": 7.0},
+    {"id": "divide-basic", "op": "divide", "args": [10.0, 4.0], "expected": 2.5},
+    {"id": "power-basic", "op": "power", "args": [2.0, 10.0], "expected": 1024.0},
+    {"id": "power-frac", "op": "power", "args": [27.0, 0.3333333333], "expected": 3.0},
+
+    {"id": "logsumexp-equal", "op": "logsumexp", "args": [[0.0, 0.0]], "expected": 0.6931471805599453, "note": "log(exp(0)+exp(0)) = log(2)"},
+    {"id": "logsumexp-diff", "op": "logsumexp", "args": [[1.0, 2.0, 3.0]], "expected": 3.4076059644443806},
+    {"id": "logsumexp-large", "op": "logsumexp", "args": [[1000.0, 1000.0]], "expected": 1000.6931471805599, "note": "numerical stability test"},
+    {"id": "logsumexp-neg", "op": "logsumexp", "args": [[-1000.0, -1000.0]], "expected": -999.3068528194401, "note": "numerical stability test"},
+
+    {"id": "sigmoid-0", "op": "sigmoid", "args": [0.0], "expected": 0.5},
+    {"id": "sigmoid-large", "op": "sigmoid", "args": [10.0], "expected": 0.9999546021312976},
+    {"id": "sigmoid-neg", "op": "sigmoid", "args": [-10.0], "expected": 0.00004539786870243439},
+
+    {"id": "matmul-2x2", "op": "matmul", "args": [[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]], "expected": [[19.0, 22.0], [43.0, 50.0]]},
+
+    {"id": "cholesky-2x2", "op": "cholesky", "args": [[[4.0, 2.0], [2.0, 3.0]]], "expected": [[2.0, 0.0], [1.0, 1.4142135623730951]]},
+
+    {"id": "sum-vec", "op": "sum", "args": [[1.0, 2.0, 3.0, 4.0, 5.0]], "expected": 15.0},
+    {"id": "mean-vec", "op": "mean", "args": [[2.0, 4.0, 6.0, 8.0]], "expected": 5.0}
+  ]
+}

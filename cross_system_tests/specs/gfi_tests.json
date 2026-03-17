@@ -1,0 +1,75 @@
+{
+  "description": "GFI operation cross-system verification",
+  "tolerance": 1e-4,
+  "notes": "Models are defined per-system in runners. Choices and args are shared here.",
+  "assess_tests": [
+    {
+      "id": "assess-single-normal",
+      "model": "single_normal",
+      "args": [],
+      "choices": {"x": 1.5},
+      "description": "x ~ Normal(0, 1), assess at x=1.5"
+    },
+    {
+      "id": "assess-two-normals",
+      "model": "two_normals",
+      "args": [],
+      "choices": {"mu": 2.0, "x": 3.0},
+      "description": "mu ~ Normal(0, 10), x ~ Normal(mu, 1), assess at mu=2, x=3"
+    },
+    {
+      "id": "assess-beta-bernoulli",
+      "model": "beta_bernoulli",
+      "args": [],
+      "choices": {"p": 0.7, "x": 1},
+      "description": "p ~ Beta(2, 2), x ~ Bernoulli(p)"
+    },
+    {
+      "id": "assess-linear-regression",
+      "model": "linear_regression",
+      "args": [[1.0, 2.0, 3.0]],
+      "choices": {"slope": 2.0, "intercept": 1.0, "y0": 3.1, "y1": 5.0, "y2": 6.9},
+      "description": "slope ~ N(0,10), intercept ~ N(0,10), y_i ~ N(slope*x_i + intercept, 1)"
+    }
+  ],
+  "generate_tests": [
+    {
+      "id": "generate-observe-one",
+      "model": "two_normals",
+      "args": [],
+      "constraints": {"x": 3.0},
+      "description": "mu ~ Normal(0, 10), x ~ Normal(mu, 1), constrain x=3.0. Weight should be logpdf(normal, 3.0, sampled_mu, 1.0) but score = logpdf(mu) + logpdf(x|mu).",
+      "check": "weight_equals_score"
+    },
+    {
+      "id": "generate-linreg-obs",
+      "model": "linear_regression",
+      "args": [[1.0, 2.0, 3.0]],
+      "constraints": {"y0": 3.1, "y1": 5.0, "y2": 6.9},
+      "description": "Constrain observations, leave slope/intercept free",
+      "check": "weight_equals_score"
+    }
+  ],
+  "score_decomposition_tests": [
+    {
+      "id": "score-decomp-two-normals",
+      "model": "two_normals",
+      "choices": {"mu": 2.0, "x": 3.0},
+      "expected_components": {
+        "mu": {"dist": "normal", "value": 2.0, "params": {"mu": 0.0, "sigma": 10.0}},
+        "x":  {"dist": "normal", "value": 3.0, "params": {"mu": 2.0, "sigma": 1.0}}
+      },
+      "description": "Verify score = sum of individual logpdfs"
+    },
+    {
+      "id": "score-decomp-beta-bernoulli",
+      "model": "beta_bernoulli",
+      "choices": {"p": 0.7, "x": 1},
+      "expected_components": {
+        "p": {"dist": "beta", "value": 0.7, "params": {"alpha": 2.0, "beta": 2.0}},
+        "x": {"dist": "bernoulli", "value": 1, "params": {"p": 0.7}}
+      },
+      "description": "Verify score = logpdf(beta, 0.7, 2, 2) + logpdf(bernoulli, 1, 0.7)"
+    }
+  ]
+}

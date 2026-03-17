@@ -1,0 +1,78 @@
+{
+  "description": "Distribution log-probability cross-system verification",
+  "tolerance": 1e-5,
+  "parameterization_notes": {
+    "gamma": "GenMLX and GenJAX use rate. Gen.jl uses scale. rate = 1/scale. Runners handle conversion.",
+    "categorical": "GenMLX and GenJAX use logits. Gen.jl uses probs. Runners handle conversion.",
+    "genjax_score_sign": "GenJAX get_score() returns -log P. Runners negate to match."
+  },
+  "tests": [
+    {"id": "normal-001", "dist": "normal", "value": 0.0,  "params": {"mu": 0.0, "sigma": 1.0}},
+    {"id": "normal-002", "dist": "normal", "value": 1.5,  "params": {"mu": 0.0, "sigma": 1.0}},
+    {"id": "normal-003", "dist": "normal", "value": -2.0, "params": {"mu": 1.0, "sigma": 2.0}},
+    {"id": "normal-004", "dist": "normal", "value": 0.0,  "params": {"mu": 0.0, "sigma": 0.01}},
+    {"id": "normal-005", "dist": "normal", "value": 5.0,  "params": {"mu": 5.0, "sigma": 0.5}},
+
+    {"id": "uniform-001", "dist": "uniform", "value": 0.5, "params": {"lo": 0.0, "hi": 1.0}},
+    {"id": "uniform-002", "dist": "uniform", "value": 3.0, "params": {"lo": 1.0, "hi": 5.0}},
+    {"id": "uniform-003", "dist": "uniform", "value": 0.0, "params": {"lo": 0.0, "hi": 10.0}},
+    {"id": "uniform-004", "dist": "uniform", "value": 10.0, "params": {"lo": 0.0, "hi": 10.0}},
+    {"id": "uniform-005", "dist": "uniform", "value": -1.0, "params": {"lo": 0.0, "hi": 1.0}, "note": "out of support, should be -Inf"},
+
+    {"id": "bernoulli-001", "dist": "bernoulli", "value": 1, "params": {"p": 0.7}},
+    {"id": "bernoulli-002", "dist": "bernoulli", "value": 0, "params": {"p": 0.7}},
+    {"id": "bernoulli-003", "dist": "bernoulli", "value": 1, "params": {"p": 0.5}},
+    {"id": "bernoulli-004", "dist": "bernoulli", "value": 1, "params": {"p": 0.999}},
+    {"id": "bernoulli-005", "dist": "bernoulli", "value": 0, "params": {"p": 0.001}},
+
+    {"id": "beta-001", "dist": "beta", "value": 0.5,  "params": {"alpha": 2.0, "beta": 2.0}},
+    {"id": "beta-002", "dist": "beta", "value": 0.1,  "params": {"alpha": 0.5, "beta": 0.5}},
+    {"id": "beta-003", "dist": "beta", "value": 0.9,  "params": {"alpha": 5.0, "beta": 1.0}},
+    {"id": "beta-004", "dist": "beta", "value": 0.01, "params": {"alpha": 1.0, "beta": 1.0}},
+    {"id": "beta-005", "dist": "beta", "value": 0.5,  "params": {"alpha": 10.0, "beta": 10.0}},
+
+    {"id": "gamma-001", "dist": "gamma", "value": 1.0, "params": {"shape": 1.0, "rate": 1.0}},
+    {"id": "gamma-002", "dist": "gamma", "value": 2.0, "params": {"shape": 2.0, "rate": 1.0}},
+    {"id": "gamma-003", "dist": "gamma", "value": 0.5, "params": {"shape": 0.5, "rate": 2.0}},
+    {"id": "gamma-004", "dist": "gamma", "value": 5.0, "params": {"shape": 3.0, "rate": 0.5}},
+    {"id": "gamma-005", "dist": "gamma", "value": 0.1, "params": {"shape": 1.0, "rate": 10.0}},
+
+    {"id": "exponential-001", "dist": "exponential", "value": 1.0,  "params": {"rate": 1.0}},
+    {"id": "exponential-002", "dist": "exponential", "value": 0.5,  "params": {"rate": 2.0}},
+    {"id": "exponential-003", "dist": "exponential", "value": 5.0,  "params": {"rate": 0.1}},
+    {"id": "exponential-004", "dist": "exponential", "value": 0.01, "params": {"rate": 100.0}},
+    {"id": "exponential-005", "dist": "exponential", "value": -1.0, "params": {"rate": 1.0}, "note": "out of support"},
+
+    {"id": "laplace-001", "dist": "laplace", "value": 0.0, "params": {"loc": 0.0, "scale": 1.0}},
+    {"id": "laplace-002", "dist": "laplace", "value": 2.0, "params": {"loc": 1.0, "scale": 0.5}},
+    {"id": "laplace-003", "dist": "laplace", "value": -3.0, "params": {"loc": 0.0, "scale": 2.0}},
+
+    {"id": "cauchy-001", "dist": "cauchy", "value": 0.0, "params": {"loc": 0.0, "scale": 1.0}},
+    {"id": "cauchy-002", "dist": "cauchy", "value": 5.0, "params": {"loc": 0.0, "scale": 1.0}},
+    {"id": "cauchy-003", "dist": "cauchy", "value": 0.0, "params": {"loc": 2.0, "scale": 0.5}},
+
+    {"id": "poisson-001", "dist": "poisson", "value": 3, "params": {"rate": 3.0}},
+    {"id": "poisson-002", "dist": "poisson", "value": 0, "params": {"rate": 1.0}},
+    {"id": "poisson-003", "dist": "poisson", "value": 10, "params": {"rate": 5.0}},
+
+    {"id": "binomial-001", "dist": "binomial", "value": 3,  "params": {"n": 10, "p": 0.5}},
+    {"id": "binomial-002", "dist": "binomial", "value": 0,  "params": {"n": 5, "p": 0.3}},
+    {"id": "binomial-003", "dist": "binomial", "value": 10, "params": {"n": 10, "p": 0.9}},
+
+    {"id": "geometric-001", "dist": "geometric", "value": 0, "params": {"p": 0.5}},
+    {"id": "geometric-002", "dist": "geometric", "value": 3, "params": {"p": 0.3}},
+    {"id": "geometric-003", "dist": "geometric", "value": 1, "params": {"p": 0.9}},
+
+    {"id": "lognormal-001", "dist": "lognormal", "value": 1.0, "params": {"mu": 0.0, "sigma": 1.0}},
+    {"id": "lognormal-002", "dist": "lognormal", "value": 2.5, "params": {"mu": 1.0, "sigma": 0.5}},
+    {"id": "lognormal-003", "dist": "lognormal", "value": 0.1, "params": {"mu": 0.0, "sigma": 2.0}},
+
+    {"id": "invgamma-001", "dist": "inv_gamma", "value": 1.0, "params": {"shape": 2.0, "scale": 1.0}},
+    {"id": "invgamma-002", "dist": "inv_gamma", "value": 0.5, "params": {"shape": 3.0, "scale": 2.0}},
+    {"id": "invgamma-003", "dist": "inv_gamma", "value": 5.0, "params": {"shape": 1.0, "scale": 1.0}},
+
+    {"id": "studentt-001", "dist": "student_t", "value": 0.0, "params": {"df": 3.0, "loc": 0.0, "scale": 1.0}},
+    {"id": "studentt-002", "dist": "student_t", "value": 2.0, "params": {"df": 5.0, "loc": 1.0, "scale": 2.0}},
+    {"id": "studentt-003", "dist": "student_t", "value": 0.0, "params": {"df": 1.0, "loc": 0.0, "scale": 1.0}, "note": "df=1 is Cauchy"}
+  ]
+}
