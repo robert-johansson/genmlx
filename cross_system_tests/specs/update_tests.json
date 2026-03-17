@@ -1,0 +1,144 @@
+{
+  "description": "GFI update operation cross-system verification",
+  "tolerance": 1e-4,
+  "notes": "Each test creates an initial trace via fully-constrained generate, then updates with new constraints. Invariant: weight == new_score - old_score. Models defined per-system in runners.",
+  "model_definitions": {
+    "single_gaussian": "x ~ Normal(0, 1)",
+    "linear_regression": "slope ~ N(0,10), intercept ~ N(0,10), y_i ~ N(slope*x_i + intercept, 1), args=xs",
+    "linear_regression_5": "same as linear_regression but with 5 observations",
+    "two_normals": "mu ~ N(0, 10), x ~ N(mu, 1)",
+    "beta_bernoulli": "p ~ Beta(2, 2), x ~ Bernoulli(p)",
+    "many_addresses": "mu ~ N(0, 10), y_i ~ N(mu, 1) for i=0..9",
+    "mixed": "coin ~ Bernoulli(0.5), if coin=1: x ~ N(10, 1), else: x ~ N(0, 1)"
+  },
+  "tests": [
+    {
+      "id": "update-single-x",
+      "model": "single_gaussian",
+      "args": [],
+      "initial_choices": {"x": 0.5},
+      "update_constraints": {"x": -0.5},
+      "description": "Basic single-site update: x from 0.5 to -0.5. Both have same |x|, so weight should be 0."
+    },
+    {
+      "id": "update-single-same",
+      "model": "single_gaussian",
+      "args": [],
+      "initial_choices": {"x": 0.5},
+      "update_constraints": {"x": 0.5},
+      "description": "NEGATIVE TEST: same-value update. Weight MUST be exactly 0.0 (new_score == old_score)."
+    },
+    {
+      "id": "update-linreg-slope",
+      "model": "linear_regression",
+      "args": [[1.0, 2.0, 3.0]],
+      "initial_choices": {"slope": 2.0, "intercept": 1.0, "y0": 3.1, "y1": 5.0, "y2": 6.9},
+      "update_constraints": {"slope": 3.0},
+      "description": "Update latent slope from 2.0 to 3.0. Obs y_i scores change because mean shifts from slope*x+int to new_slope*x+int."
+    },
+    {
+      "id": "update-linreg-intercept",
+      "model": "linear_regression",
+      "args": [[1.0, 2.0, 3.0]],
+      "initial_choices": {"slope": 2.0, "intercept": 1.0, "y0": 3.1, "y1": 5.0, "y2": 6.9},
+      "update_constraints": {"intercept": 0.0},
+      "description": "Update latent intercept from 1.0 to 0.0. All obs means shift down by 1."
+    },
+    {
+      "id": "update-linreg-obs",
+      "model": "linear_regression",
+      "args": [[1.0, 2.0, 3.0]],
+      "initial_choices": {"slope": 2.0, "intercept": 1.0, "y0": 3.1, "y1": 5.0, "y2": 6.9},
+      "update_constraints": {"y0": 4.0},
+      "description": "Update single observation y0 from 3.1 to 4.0. Only y0's logpdf changes."
+    },
+    {
+      "id": "update-linreg-multi",
+      "model": "linear_regression",
+      "args": [[1.0, 2.0, 3.0]],
+      "initial_choices": {"slope": 2.0, "intercept": 1.0, "y0": 3.1, "y1": 5.0, "y2": 6.9},
+      "update_constraints": {"slope": 3.0, "intercept": 0.5},
+      "description": "Multi-site update: both slope and intercept change simultaneously."
+    },
+    {
+      "id": "update-two-normals-mu",
+      "model": "two_normals",
+      "args": [],
+      "initial_choices": {"mu": 2.0, "x": 3.0},
+      "update_constraints": {"mu": 0.0},
+      "description": "Update mu in dependent chain. x's logpdf changes because x ~ N(mu, 1) and mu changed."
+    },
+    {
+      "id": "update-two-normals-x",
+      "model": "two_normals",
+      "args": [],
+      "initial_choices": {"mu": 2.0, "x": 3.0},
+      "update_constraints": {"x": 1.0},
+      "description": "Update dependent site x from 3.0 to 1.0. Only x's logpdf changes (mu stays 2.0)."
+    },
+    {
+      "id": "update-two-normals-both",
+      "model": "two_normals",
+      "args": [],
+      "initial_choices": {"mu": 2.0, "x": 3.0},
+      "update_constraints": {"mu": 1.0, "x": 2.0},
+      "description": "Update both sites simultaneously. Both logpdfs change."
+    },
+    {
+      "id": "update-beta-bernoulli-p",
+      "model": "beta_bernoulli",
+      "args": [],
+      "initial_choices": {"p": 0.7, "x": 1},
+      "update_constraints": {"p": 0.3},
+      "description": "Update continuous param p from 0.7 to 0.3. Both p's logpdf (Beta) and x's logpdf (Bernoulli) change."
+    },
+    {
+      "id": "update-beta-bernoulli-x",
+      "model": "beta_bernoulli",
+      "args": [],
+      "initial_choices": {"p": 0.7, "x": 1},
+      "update_constraints": {"x": 0},
+      "description": "Discrete flip: x from 1 to 0. Only Bernoulli logpdf changes."
+    },
+    {
+      "id": "update-many-mu",
+      "model": "many_addresses",
+      "args": [],
+      "initial_choices": {"mu": 2.0, "y0": 0.0, "y1": 0.5, "y2": 1.0, "y3": 1.5, "y4": 2.0, "y5": 2.5, "y6": 3.0, "y7": 3.5, "y8": 4.0, "y9": 4.5},
+      "update_constraints": {"mu": 5.0},
+      "description": "Update mu from 2.0 to 5.0. All 10 observation logpdfs change (y_i ~ N(mu, 1) with new mu)."
+    },
+    {
+      "id": "update-many-obs",
+      "model": "many_addresses",
+      "args": [],
+      "initial_choices": {"mu": 2.0, "y0": 0.0, "y1": 0.5, "y2": 1.0, "y3": 1.5, "y4": 2.0, "y5": 2.5, "y6": 3.0, "y7": 3.5, "y8": 4.0, "y9": 4.5},
+      "update_constraints": {"y0": 10.0},
+      "description": "Update single obs y0 from 0.0 to 10.0. Only y0's logpdf changes."
+    },
+    {
+      "id": "update-mixed-samebranch",
+      "model": "mixed",
+      "args": [],
+      "initial_choices": {"coin": 1, "x": 10.5},
+      "update_constraints": {"x": 11.0},
+      "description": "Same-branch update: x from 10.5 to 11.0 within true branch (coin=1, x ~ N(10, 1))."
+    },
+    {
+      "id": "update-linreg5-slope",
+      "model": "linear_regression_5",
+      "args": [[1.0, 2.0, 3.0, 4.0, 5.0]],
+      "initial_choices": {"slope": 2.0, "intercept": 1.0, "y0": 3.1, "y1": 5.2, "y2": 6.9, "y3": 9.1, "y4": 10.8},
+      "update_constraints": {"slope": 1.5},
+      "description": "5-obs model: update slope from 2.0 to 1.5. All 5 observation logpdfs change."
+    },
+    {
+      "id": "update-linreg5-all-obs",
+      "model": "linear_regression_5",
+      "args": [[1.0, 2.0, 3.0, 4.0, 5.0]],
+      "initial_choices": {"slope": 2.0, "intercept": 1.0, "y0": 3.1, "y1": 5.2, "y2": 6.9, "y3": 9.1, "y4": 10.8},
+      "update_constraints": {"y0": 2.5, "y1": 4.0, "y2": 5.5, "y3": 7.0, "y4": 8.5},
+      "description": "Bulk observation update: all 5 observations change simultaneously. Latents stay fixed."
+    }
+  ]
+}

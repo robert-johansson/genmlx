@@ -2,11 +2,13 @@
   "GenMLX cross-system verification runner.
    Reads JSON from stdin, writes results to stdout."
   (:require [genmlx.dist :as dist]
+            [genmlx.dist.core :as dc]
             [genmlx.mlx :as mx]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
             [genmlx.gen :refer [gen]]
             [genmlx.choicemap :as cm]
+            [genmlx.selection :as sel]
             ["fs" :as fs]))
 
 ;; --- Read JSON from stdin ---
@@ -23,7 +25,7 @@
         value     (get spec "value")
         params    (get spec "params")]
     (try
-      (let [v  (mx/scalar value)
+      (let [v  (when (number? value) (mx/scalar value))
             lp (case dist-name
                  "normal"
                  (let [d (dist/gaussian (mx/scalar (get params "mu"))
@@ -92,6 +94,24 @@
                                          (mx/scalar (get params "scale")))]
                    (mx/item (dist/log-prob d v)))
 
+                 "categorical"
+                 (let [logits (mx/array (clj->js (get params "logits")))
+                       d (dist/categorical logits)]
+                   (mx/item (dc/dist-log-prob d (mx/scalar (int value) mx/int32))))
+
+                 "dirichlet"
+                 (let [alpha (mx/array (clj->js (get params "alpha")))
+                       d (dist/dirichlet alpha)
+                       val-arr (mx/array (clj->js value))]
+                   (mx/item (dc/dist-log-prob d val-arr)))
+
+                 "mvn"
+                 (let [mu  (mx/array (clj->js (get params "mu")))
+                       cov (mx/array (clj->js (get params "cov")))
+                       d   (dist/multivariate-normal mu cov)
+                       val-arr (mx/array (clj->js value))]
+                   (mx/item (dc/dist-log-prob d val-arr)))
+
                  ;; default
                  (throw (js/Error. (str "unsupported dist: " dist-name))))]
         #js {"id" (get spec "id") "logprob" lp})
@@ -129,11 +149,45 @@
                                         intercept) (mx/scalar 1)))
       slope)))
 
+;; single_gaussian is the same model as single_normal (alias used in expanded specs)
+(def single-gaussian-model single-normal-model)
+
+(def mixed-model
+  (gen []
+    (let [coin (trace :coin (dist/bernoulli (mx/scalar 0.5)))]
+      (if (pos? (mx/item coin))
+        (trace :x (dist/gaussian (mx/scalar 10) (mx/scalar 1)))
+        (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))))
+
+(def many-addresses-model
+  (gen []
+    (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+      (doseq [i (range 10)]
+        (trace (keyword (str "y" i)) (dist/gaussian mu (mx/scalar 1))))
+      mu)))
+
+(def linear-regression-5-model
+  (gen [xs]
+    (let [slope     (trace :slope     (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
+          intercept (trace :intercept (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+      (doseq [i (range 5)]
+        (trace (keyword (str "y" i))
+               (dist/gaussian (mx/add (mx/multiply slope (mx/scalar (nth xs i)))
+                                      intercept)
+                              (mx/scalar 1))))
+      slope)))
+
 (def model-lookup
-  {"single_normal"      single-normal-model
-   "two_normals"        two-normals-model
-   "beta_bernoulli"     beta-bernoulli-model
-   "linear_regression"  linear-regression-model})
+  (into {}
+    (map (fn [[k v]] [k (dyn/auto-key v)]))
+    {"single_normal"         single-normal-model
+     "single_gaussian"       single-gaussian-model
+     "two_normals"           two-normals-model
+     "beta_bernoulli"        beta-bernoulli-model
+     "linear_regression"     linear-regression-model
+     "linear_regression_5"   linear-regression-5-model
+     "mixed"                 mixed-model
+     "many_addresses"        many-addresses-model}))
 
 (defn make-choicemap [choices-map]
   (reduce-kv
@@ -142,13 +196,27 @@
    (cm/choicemap)
    choices-map))
 
+(defn make-args
+  "Build the args vector for a model from the spec's args and model name.
+   Falls back to default args when spec omits them for models that require args."
+  [model-name raw-args]
+  (if (seq raw-args)
+    (case model-name
+      ("linear_regression" "linear_regression_5")
+      [(js->clj (first raw-args))]
+      ;; default: pass through
+      (vec raw-args))
+    ;; No args in spec — use defaults for models that require them
+    (case model-name
+      "linear_regression"   [[1.0 2.0 3.0]]
+      "linear_regression_5" [[1.0 2.0 3.0 4.0 5.0]]
+      [])))
+
 (defn eval-assess [spec]
   (let [model-name (get spec "model")
         model      (get model-lookup model-name)
         raw-args   (get spec "args" [])
-        args       (if (= model-name "linear_regression")
-                     [(js->clj (first raw-args))]
-                     [])
+        args       (make-args model-name raw-args)
         cm         (make-choicemap (get spec "choices"))]
     (try
       (let [result (p/assess model args cm)
@@ -161,15 +229,83 @@
   (let [model-name  (get spec "model")
         model       (get model-lookup model-name)
         raw-args    (get spec "args" [])
-        args        (if (= model-name "linear_regression")
-                      [(js->clj (first raw-args))]
-                      [])
+        args        (make-args model-name raw-args)
         constraints (make-choicemap (get spec "constraints"))]
     (try
       (let [result (p/generate model args constraints)
             weight (mx/item (:weight result))
             score  (mx/item (:score (:trace result)))]
         #js {"id" (get spec "id") "weight" weight "score" score})
+      (catch :default e
+        #js {"id" (get spec "id") "error" (str e)}))))
+
+;; --- Score decomposition ---
+
+(defn make-component-dist
+  "Create a distribution from a component spec map."
+  [comp-spec]
+  (let [dist-name (get comp-spec "dist")
+        params    (get comp-spec "params")]
+    (case dist-name
+      "normal"    (dist/gaussian (mx/scalar (get params "mu"))
+                                 (mx/scalar (get params "sigma")))
+      "beta"      (dist/beta-dist (mx/scalar (get params "alpha"))
+                                   (mx/scalar (get params "beta")))
+      "bernoulli" (dist/bernoulli (mx/scalar (get params "p")))
+      (throw (js/Error. (str "unsupported component dist: " dist-name))))))
+
+(defn eval-score-decomposition [spec]
+  (let [model-name (get spec "model")
+        model      (get model-lookup model-name)
+        raw-args   (get spec "args" [])
+        args       (make-args model-name raw-args)
+        choices    (get spec "choices")
+        cm         (make-choicemap choices)
+        components (get spec "expected_components")]
+    (try
+      ;; Get total score via assess
+      (let [result      (p/assess model args cm)
+            total-score (mx/item (:weight result))
+            ;; Compute per-component logprobs
+            comp-scores
+            (reduce-kv
+             (fn [acc addr comp-spec]
+               (let [d   (make-component-dist comp-spec)
+                     v   (get choices addr)
+                     lp  (mx/item (dc/dist-log-prob d (mx/scalar v)))]
+                 (assoc acc addr lp)))
+             {}
+             components)]
+        #js {"id"              (get spec "id")
+             "total_score"    total-score
+             "components"     (clj->js comp-scores)
+             "sum_components" (reduce + (vals comp-scores))})
+      (catch :default e
+        #js {"id" (get spec "id") "error" (str e)}))))
+
+;; --- Update ---
+
+(defn eval-update [spec]
+  (let [model-name (get spec "model")
+        model      (get model-lookup model-name)
+        raw-args   (get spec "args" [])
+        args       (make-args model-name raw-args)
+        init-cm    (make-choicemap (get spec "initial_choices"))
+        upd-cm     (make-choicemap (get spec "update_constraints"))]
+    (try
+      ;; Step 1: create initial trace via fully-constrained generate
+      (let [gen-result  (p/generate model args init-cm)
+            init-trace  (:trace gen-result)
+            old-score   (mx/item (:score init-trace))
+            ;; Step 2: update trace with new constraints
+            upd-result  (p/update model init-trace upd-cm)
+            new-trace   (:trace upd-result)
+            new-score   (mx/item (:score new-trace))
+            weight      (mx/item (:weight upd-result))]
+        #js {"id"        (get spec "id")
+             "old_score" old-score
+             "new_score" new-score
+             "weight"    weight})
       (catch :default e
         #js {"id" (get spec "id") "error" (str e)}))))
 
@@ -259,10 +395,13 @@
 ;; --- Main: dispatch on test_type, write stdout ---
 
 (let [results (case test-type
-                "logprob"  (mapv eval-logprob  (get input-data "tests"))
-                "assess"   (mapv eval-assess   (get input-data "assess_tests"))
-                "generate" (mapv eval-generate (get input-data "generate_tests"))
-                "mlx_ops"  (mapv (comp sanitize-js-obj eval-mlx-op) (get input-data "tests"))
+                "logprob"              (mapv eval-logprob  (get input-data "tests"))
+                "assess"               (mapv eval-assess   (get input-data "assess_tests"))
+                "generate"             (mapv eval-generate (get input-data "generate_tests"))
+                "score_decomposition"  (mapv eval-score-decomposition
+                                             (get input-data "score_decomposition_tests"))
+                "update"               (mapv eval-update   (get input-data "tests"))
+                "mlx_ops"              (mapv (comp sanitize-js-obj eval-mlx-op) (get input-data "tests"))
                 (do (.error js/console (str "Unknown test type: " test-type))
                     (js/process.exit 1)))
       output  #js {"system"    "genmlx"

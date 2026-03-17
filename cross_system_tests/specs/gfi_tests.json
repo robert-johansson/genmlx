@@ -30,6 +30,48 @@
       "args": [[1.0, 2.0, 3.0]],
       "choices": {"slope": 2.0, "intercept": 1.0, "y0": 3.1, "y1": 5.0, "y2": 6.9},
       "description": "slope ~ N(0,10), intercept ~ N(0,10), y_i ~ N(slope*x_i + intercept, 1)"
+    },
+    {
+      "id": "assess-single-gaussian",
+      "model": "single_gaussian",
+      "args": [],
+      "choices": {"x": 0.5},
+      "description": "x ~ Normal(0, 1), assess at x=0.5. logpdf = -0.5*ln(2*pi) - 0.5*(0.5)^2 = -1.0439"
+    },
+    {
+      "id": "assess-linreg-5",
+      "model": "linear_regression_5",
+      "args": [[1.0, 2.0, 3.0, 4.0, 5.0]],
+      "choices": {"slope": 2.0, "intercept": 1.0, "y0": 3.1, "y1": 5.2, "y2": 6.9, "y3": 9.1, "y4": 10.8},
+      "description": "5-observation linear regression. slope ~ N(0,10), intercept ~ N(0,10), y_i ~ N(slope*x_i + intercept, 1)"
+    },
+    {
+      "id": "assess-mixed-true",
+      "model": "mixed",
+      "args": [],
+      "choices": {"coin": 1, "x": 10.5},
+      "description": "coin ~ Bernoulli(0.5), if coin=1: x ~ N(10, 1), else x ~ N(0, 1). True branch taken."
+    },
+    {
+      "id": "assess-mixed-false",
+      "model": "mixed",
+      "args": [],
+      "choices": {"coin": 0, "x": -0.5},
+      "description": "coin ~ Bernoulli(0.5), if coin=0: x ~ N(0, 1), else x ~ N(10, 1). False branch taken."
+    },
+    {
+      "id": "assess-many-addresses",
+      "model": "many_addresses",
+      "args": [],
+      "choices": {"mu": 2.0, "y0": 0.0, "y1": 0.5, "y2": 1.0, "y3": 1.5, "y4": 2.0, "y5": 2.5, "y6": 3.0, "y7": 3.5, "y8": 4.0, "y9": 4.5},
+      "description": "mu ~ N(0, 10), y_i ~ N(mu, 1) for i=0..9. Tests model with 11 trace sites."
+    },
+    {
+      "id": "assess-single-gaussian-extreme",
+      "model": "single_gaussian",
+      "args": [],
+      "choices": {"x": 10.0},
+      "description": "Tail test: x=10 under N(0,1). Score should be very negative (-50.92) but finite, not NaN or -Inf."
     }
   ],
   "generate_tests": [
@@ -70,6 +112,67 @@
         "x": {"dist": "bernoulli", "value": 1, "params": {"p": 0.7}}
       },
       "description": "Verify score = logpdf(beta, 0.7, 2, 2) + logpdf(bernoulli, 1, 0.7)"
+    },
+    {
+      "id": "score-decomp-single-gaussian",
+      "model": "single_gaussian",
+      "choices": {"x": 0.5},
+      "expected_components": {
+        "x": {"dist": "normal", "value": 0.5, "params": {"mu": 0.0, "sigma": 1.0}}
+      },
+      "description": "Single site: score = logpdf(N(0,1), 0.5) = -0.5*ln(2*pi) - 0.125 ≈ -1.0439"
+    },
+    {
+      "id": "score-decomp-linreg",
+      "model": "linear_regression",
+      "choices": {"slope": 2.0, "intercept": 1.0, "y0": 3.1, "y1": 5.0, "y2": 6.9},
+      "expected_components": {
+        "slope":     {"dist": "normal", "value": 2.0, "params": {"mu": 0.0, "sigma": 10.0}},
+        "intercept": {"dist": "normal", "value": 1.0, "params": {"mu": 0.0, "sigma": 10.0}},
+        "y0":        {"dist": "normal", "value": 3.1, "params": {"mu": 3.0, "sigma": 1.0}},
+        "y1":        {"dist": "normal", "value": 5.0, "params": {"mu": 5.0, "sigma": 1.0}},
+        "y2":        {"dist": "normal", "value": 6.9, "params": {"mu": 7.0, "sigma": 1.0}}
+      },
+      "description": "5-site decomposition: slope, intercept priors + 3 obs likelihoods. y_i ~ N(slope*x_i + intercept, 1) with xs=[1,2,3]"
+    },
+    {
+      "id": "score-decomp-many-addresses",
+      "model": "many_addresses",
+      "choices": {"mu": 2.0, "y0": 0.0, "y1": 0.5, "y2": 1.0, "y3": 1.5, "y4": 2.0, "y5": 2.5, "y6": 3.0, "y7": 3.5, "y8": 4.0, "y9": 4.5},
+      "expected_components": {
+        "mu": {"dist": "normal", "value": 2.0, "params": {"mu": 0.0, "sigma": 10.0}},
+        "y0": {"dist": "normal", "value": 0.0, "params": {"mu": 2.0, "sigma": 1.0}},
+        "y1": {"dist": "normal", "value": 0.5, "params": {"mu": 2.0, "sigma": 1.0}},
+        "y2": {"dist": "normal", "value": 1.0, "params": {"mu": 2.0, "sigma": 1.0}},
+        "y3": {"dist": "normal", "value": 1.5, "params": {"mu": 2.0, "sigma": 1.0}},
+        "y4": {"dist": "normal", "value": 2.0, "params": {"mu": 2.0, "sigma": 1.0}},
+        "y5": {"dist": "normal", "value": 2.5, "params": {"mu": 2.0, "sigma": 1.0}},
+        "y6": {"dist": "normal", "value": 3.0, "params": {"mu": 2.0, "sigma": 1.0}},
+        "y7": {"dist": "normal", "value": 3.5, "params": {"mu": 2.0, "sigma": 1.0}},
+        "y8": {"dist": "normal", "value": 4.0, "params": {"mu": 2.0, "sigma": 1.0}},
+        "y9": {"dist": "normal", "value": 4.5, "params": {"mu": 2.0, "sigma": 1.0}}
+      },
+      "description": "11-site decomposition: mu prior + 10 obs. All y_i ~ N(mu=2, sigma=1)."
+    },
+    {
+      "id": "score-decomp-mixed-true",
+      "model": "mixed",
+      "choices": {"coin": 1, "x": 10.5},
+      "expected_components": {
+        "coin": {"dist": "bernoulli", "value": 1, "params": {"p": 0.5}},
+        "x":    {"dist": "normal", "value": 10.5, "params": {"mu": 10.0, "sigma": 1.0}}
+      },
+      "description": "Branch model, true branch: only coin and x|true-branch contribute. Negative test: false-branch logpdf must NOT appear."
+    },
+    {
+      "id": "score-decomp-mixed-false",
+      "model": "mixed",
+      "choices": {"coin": 0, "x": -0.5},
+      "expected_components": {
+        "coin": {"dist": "bernoulli", "value": 0, "params": {"p": 0.5}},
+        "x":    {"dist": "normal", "value": -0.5, "params": {"mu": 0.0, "sigma": 1.0}}
+      },
+      "description": "Branch model, false branch: only coin and x|false-branch contribute. Negative test: true-branch logpdf must NOT appear."
     }
   ]
 }
