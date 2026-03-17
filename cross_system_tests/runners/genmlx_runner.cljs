@@ -12,6 +12,9 @@
             [genmlx.selection :as sel]
             [genmlx.inference.importance :as is]
             [genmlx.inference.mcmc :as mcmc]
+            [genmlx.inference.smc :as smc]
+            [genmlx.inference.vi :as vi]
+            [genmlx.inference.util :as u]
             [genmlx.mlx.random :as rng]
             ["fs" :as fs]))
 
@@ -641,10 +644,28 @@
           (trace (keyword (str "y" i)) (dist/gaussian (mx/multiply slope (mx/scalar x)) (mx/scalar 1))))
         slope))))
 
+(def gp-inference-model
+  (dyn/auto-key
+    (gen [observations]
+      (let [lambda (trace :lambda (dist/gamma-dist (mx/scalar 2) (mx/scalar 1)))]
+        (doseq [[i obs] (map-indexed vector observations)]
+          (trace (keyword (str "x" i)) (dist/poisson lambda)))
+        lambda))))
+
+(def dc-inference-model
+  (dyn/auto-key
+    (gen [observations]
+      (let [p (trace :p (dist/dirichlet (mx/array #js [1 1 1])))]
+        (doseq [[i obs] (map-indexed vector observations)]
+          (trace (keyword (str "x" i)) (dist/categorical (mx/log p))))
+        p))))
+
 (def inference-model-lookup
-  {"normal_normal"       nn-inference-model
-   "beta_bernoulli_iid"  bb-inference-model
-   "normal_linreg"       linreg-inference-model})
+  {"normal_normal"           nn-inference-model
+   "beta_bernoulli_iid"      bb-inference-model
+   "normal_linreg"           linreg-inference-model
+   "gamma_poisson"           gp-inference-model
+   "dirichlet_categorical"   dc-inference-model})
 
 (defn make-inference-observations
   "Build observation choicemap from spec data and model type."
@@ -666,31 +687,59 @@
     (let [ys (get data "ys")]
       (reduce (fn [cm [i v]]
                 (cm/set-value cm (keyword (str "y" i)) (mx/scalar v)))
-              (cm/choicemap) (map-indexed vector ys)))))
+              (cm/choicemap) (map-indexed vector ys)))
+
+    "gamma_poisson"
+    (let [obs (get data "observations")]
+      (reduce (fn [cm [i v]]
+                (cm/set-value cm (keyword (str "x" i)) (mx/scalar (int v) mx/int32)))
+              (cm/choicemap) (map-indexed vector obs)))
+
+    "dirichlet_categorical"
+    (let [obs (get data "observations")]
+      (reduce (fn [cm [i v]]
+                (cm/set-value cm (keyword (str "x" i)) (mx/scalar (int v) mx/int32)))
+              (cm/choicemap) (map-indexed vector obs)))))
 
 (defn make-inference-args
   "Build args vector for inference model."
   [model-name data]
   (case model-name
-    "normal_normal"      [(get data "observations")]
-    "beta_bernoulli_iid" [(get data "observations")]
-    "normal_linreg"      [(get data "xs")]))
+    "normal_normal"          [(get data "observations")]
+    "beta_bernoulli_iid"     [(get data "observations")]
+    "normal_linreg"          [(get data "xs")]
+    "gamma_poisson"          [(get data "observations")]
+    "dirichlet_categorical"  [(get data "observations")]))
+
+(defn extract-trace-value
+  "Extract a scalar value from a trace at target-addr.
+   For vector-valued traces (e.g. Dirichlet), extracts target-component."
+  [t target-addr target-component]
+  (let [v (cm/get-value (cm/get-submap (:choices t) target-addr))]
+    (mx/eval! v)
+    (if target-component
+      ;; Vector-valued: extract component
+      (let [arr (.tolist v)]
+        (aget arr target-component))
+      (mx/item v))))
 
 (defn eval-inference [spec]
-  (let [model-name  (get spec "model")
-        model       (get inference-model-lookup model-name)
-        algorithm   (get spec "algorithm")
-        algo-params (get spec "algorithm_params")
-        data        (get spec "data")
-        target-addr (keyword (get spec "target_addr"))
-        args        (make-inference-args model-name data)
-        obs-cm      (make-inference-observations model-name data)]
+  (let [model-name       (get spec "model")
+        model            (get inference-model-lookup model-name)
+        algorithm        (get spec "algorithm")
+        algo-params      (get spec "algorithm_params")
+        data             (get spec "data")
+        target-addr      (keyword (get spec "target_addr"))
+        target-component (get spec "target_component")
+        comparison       (get spec "comparison")
+        args             (make-inference-args model-name data)
+        obs-cm           (make-inference-observations model-name data)]
     (try
-      (let [posterior-mean
+      (let [result
             (case algorithm
               "importance_sampling"
               (let [n-particles (get algo-params "n_particles" 1000)
-                    {:keys [traces log-weights]}
+                    {:keys [traces log-weights log-ml-estimate]}
                     (is/importance-sampling {:samples n-particles} model args obs-cm)
                     ;; Compute weighted mean
                     raw-weights (mapv (fn [w] (mx/eval! w) (mx/item w)) log-weights)
@@ -698,11 +747,11 @@
                     exp-weights (mapv #(js/Math.exp (- % max-w)) raw-weights)
                     sum-w (reduce + exp-weights)
                     norm-weights (mapv #(/ % sum-w) exp-weights)
-                    vals (mapv (fn [t]
-                                 (let [v (cm/get-value (cm/get-submap (:choices t) target-addr))]
-                                   (mx/eval! v) (mx/item v)))
+                    vals (mapv (fn [t] (extract-trace-value t target-addr target-component))
                                traces)]
-                (reduce + (map * vals norm-weights)))
+                {:mean (reduce + (map * vals norm-weights))
+                 :accept-rate nil
+                 :log-ml (mx/item log-ml-estimate)})
 
               "mh"
               (let [n-steps (get algo-params "n_steps" 2000)
@@ -710,12 +759,129 @@
                     traces  (mcmc/mh {:samples (- n-steps burn) :burn burn
                                       :selection (sel/select target-addr)}
                                      model args obs-cm)
-                    vals    (mapv (fn [t]
-                                    (let [v (cm/get-value (cm/get-submap (:choices t) target-addr))]
-                                      (mx/eval! v) (mx/item v)))
+                    vals    (mapv (fn [t] (extract-trace-value t target-addr target-component))
                                   traces)]
-                (/ (reduce + vals) (count vals))))]
-        #js {"id" (get spec "id") "posterior_mean" posterior-mean})
+                {:mean (/ (reduce + vals) (count vals))
+                 :accept-rate (:acceptance-rate (meta traces))})
+
+              "hmc"
+              (let [n-steps  (get algo-params "n_steps" 500)
+                    burn     (get algo-params "burn" 200)
+                    L        (get algo-params "leapfrog_steps" 10)
+                    eps      (get algo-params "step_size" 0.01)
+                    samples  (mcmc/hmc {:samples n-steps :burn burn
+                                        :leapfrog-steps L :step-size eps
+                                        :addresses [target-addr]
+                                        :compile? false}
+                                       model args obs-cm)
+                    ;; HMC returns vectors — extract first element for single param
+                    vals     (mapv (fn [s] (if (vector? s) (first s) s)) samples)]
+                {:mean (/ (reduce + vals) (count vals))
+                 :accept-rate (:acceptance-rate (meta samples))})
+
+              "mala"
+              (let [n-steps  (get algo-params "n_steps" 500)
+                    burn     (get algo-params "burn" 200)
+                    eps      (get algo-params "step_size" 0.01)
+                    samples  (mcmc/mala {:samples n-steps :burn burn
+                                         :step-size eps
+                                         :addresses [target-addr]
+                                         :compile? false}
+                                        model args obs-cm)
+                    ;; MALA returns vectors — extract first element for single param
+                    vals     (mapv (fn [s] (if (vector? s) (first s) s)) samples)]
+                {:mean (/ (reduce + vals) (count vals))
+                 :accept-rate (:acceptance-rate (meta samples))}))]
+        (cond-> #js {"id" (get spec "id")
+                     "posterior_mean" (:mean result)
+                     "acceptance_rate" (:accept-rate result)}
+          ;; Include log-ML for log_ml and log_ml_analytical comparison tests
+          (and (contains? #{"log_ml" "log_ml_analytical"} comparison)
+               (:log-ml result))
+          (doto (aset "log_ml" (:log-ml result)))))
+      (catch :default e
+        #js {"id" (get spec "id") "error" (str e)}))))
+
+;; --- SSM model for SMC tests ---
+
+(def ssm-kernel
+  (dyn/auto-key
+    (gen [t state]
+      (let [x (trace :x (dist/gaussian (mx/scalar state) (mx/scalar 1)))]
+        (trace :y (dist/gaussian x (mx/scalar 0.5)))
+        x))))
+
+(defn run-smc-ssm
+  "Run SMC on linear-Gaussian SSM using smc-unfold."
+  [observations n-particles]
+  (let [obs-seq (mapv (fn [y]
+                        (cm/set-value (cm/choicemap) :y (mx/scalar y)))
+                      observations)
+        result (smc/smc-unfold {:particles n-particles} ssm-kernel 0.0 obs-seq)
+        log-ml (mx/item (:log-ml result))
+        final-ess (:final-ess result)]
+    {:log-ml log-ml :ess final-ess}))
+
+(defn run-smc-single
+  "Single-step SMC (equivalent to IS) for normal-normal model."
+  [model args obs-cm n-particles]
+  (let [{:keys [traces log-weights]}
+        (is/importance-sampling {:samples n-particles} model args obs-cm)
+        raw-weights (mapv (fn [w] (mx/eval! w) (mx/item w)) log-weights)
+        max-w (apply max raw-weights)
+        log-ml (+ max-w (js/Math.log (/ (reduce + (mapv #(js/Math.exp (- % max-w)) raw-weights))
+                                         n-particles)))]
+    {:log-ml log-ml}))
+
+(defn eval-inference-smc [spec]
+  (let [algorithm   (get spec "algorithm")
+        algo-params (get spec "algorithm_params")
+        data        (get spec "data")
+        comparison  (get spec "comparison")]
+    (try
+      (case algorithm
+        "smc"
+        (let [obs (get data "observations")
+              n-particles (get algo-params "n_particles" 500)
+              {:keys [log-ml ess]} (run-smc-ssm obs n-particles)]
+          (case comparison
+            "log_ml"
+            #js {"id" (get spec "id") "log_ml" log-ml}
+
+            "ess"
+            #js {"id" (get spec "id") "ess" ess "log_ml" log-ml}
+
+            "analytical_log_ml"
+            #js {"id" (get spec "id") "log_ml" log-ml}))
+
+        "smc_single"
+        (let [model-name (get spec "model")
+              model      (get inference-model-lookup model-name)
+              args       (make-inference-args model-name data)
+              obs-cm     (make-inference-observations model-name data)
+              n-particles (get algo-params "n_particles" 500)
+              {:keys [log-ml]} (run-smc-single model args obs-cm n-particles)]
+          #js {"id" (get spec "id") "log_ml" log-ml}))
+      (catch :default e
+        #js {"id" (get spec "id") "error" (str e)}))))
+
+;; --- VI eval ---
+
+(defn eval-inference-vi [spec]
+  (let [model-name  (get spec "model")
+        model       (get inference-model-lookup model-name)
+        algo-params (get spec "algorithm_params")
+        data        (get spec "data")
+        target-addr (keyword (get spec "target_addr"))
+        args        (make-inference-args model-name data)
+        obs-cm      (make-inference-observations model-name data)
+        iterations  (get algo-params "iterations" 500)
+        lr          (get algo-params "learning_rate" 0.01)]
+    (try
+      (let [result (vi/vi-from-model {:iterations iterations :learning-rate lr}
+                                      model args obs-cm [target-addr])
+            mu-val (mx/item (:mu result))]
+        #js {"id" (get spec "id") "posterior_mean" mu-val})
       (catch :default e
         #js {"id" (get spec "id") "error" (str e)}))))
 
@@ -749,7 +915,18 @@
                 "combinator"           (mapv eval-combinator (get input-data "combinator_tests"))
                 "mlx_ops"              (mapv (comp sanitize-js-obj eval-mlx-op) (get input-data "tests"))
                 "gradient"             (mapv eval-gradient (get input-data "gradient_tests"))
-                "inference_quality"    (mapv eval-inference (get input-data "tests"))
+                "inference_quality"    (mapv (fn [spec]
+                                               (let [algo (get spec "algorithm")]
+                                                 (cond
+                                                   (contains? #{"smc" "smc_single"} algo)
+                                                   (eval-inference-smc spec)
+
+                                                   (= algo "vi")
+                                                   (eval-inference-vi spec)
+
+                                                   :else
+                                                   (eval-inference spec))))
+                                             (get input-data "tests"))
                 (do (.error js/console (str "Unknown test type: " test-type))
                     (js/process.exit 1)))
       output  #js {"system"    "genmlx"

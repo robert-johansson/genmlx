@@ -64,7 +64,7 @@
    (fn [x]
      (if (and (map? x) (not (record? x)))
        (reduce-kv (fn [acc k v]
-                    (assoc acc k (if (#{:logprob :weight :score :old_score :new_score :total_score :sum_components :gradient :posterior_mean} k)
+                    (assoc acc k (if (#{:logprob :weight :score :old_score :new_score :total_score :sum_components :gradient :posterior_mean :log_ml :acceptance_rate :ess} k)
                                    (parse-number v) v)))
                   {} x)
        x))
@@ -1119,10 +1119,9 @@
 
         (doseq [[id sys-map] (sort-by key by-id)]
           (let [test-spec (get test-by-id id)
+                comparison (get test-spec :comparison "posterior_mean")
                 analytical-mean (get-in test-spec [:analytical_posterior :mean])
                 analytical-std  (get-in test-spec [:analytical_posterior :std])
-                ;; Generous tolerance: 3 * analytical_std
-                tol (* 3.0 analytical-std)
                 all-sys (vals sys-map)
                 errors (filter :error all-sys)
                 valid (remove :error all-sys)]
@@ -1137,8 +1136,144 @@
               (do (swap! error-count inc)
                   (println (str "  ERROR  " id " (no results)")))
 
+              (= comparison "acceptance_rate")
+              ;; Acceptance rate test: check each system's rate > min threshold
+              (let [min-rate (get test-spec :min_accept_rate 0.3)
+                    rates (map (fn [r] (when-let [ar (:acceptance_rate r)]
+                                         (parse-number ar)))
+                               valid)
+                    rates (remove nil? rates)
+                    all-above (every? #(> % min-rate) rates)]
+                (if (or all-above (empty? rates))
+                  (do (swap! pass-count inc)
+                      (println (str "  PASS   " id "  "
+                                    (str/join " | "
+                                              (map (fn [[sys r]]
+                                                     (let [ar (:acceptance_rate r)]
+                                                       (str (name sys) "="
+                                                            (if ar (format "%.4f" (double (parse-number ar))) "N/A"))))
+                                                   sys-map))
+                                    "  min=" (format "%.2f" min-rate))))
+                  (do (swap! fail-count inc)
+                      (println (str "  FAIL   " id " [acceptance rate below " (format "%.2f" min-rate) "]"))
+                      (doseq [[sys r] sys-map]
+                        (let [ar (:acceptance_rate r)]
+                          (println (str "         " (name sys) ": "
+                                        (if ar (format "%.4f" (double (parse-number ar))) "N/A"))))))))
+
+              (= comparison "log_ml")
+              ;; Log-ML cross-system comparison (within tolerance nats)
+              (let [tol (get test-spec :tolerance 1.0)
+                    log-mls (keep (fn [r] (when-let [ml (:log_ml r)] (parse-number ml)))
+                                  valid)]
+                (if (< (count log-mls) 2)
+                  (do (swap! pass-count inc)
+                      (println (str "  PASS   " id " (only " (count log-mls) " system(s) with log-ML)")))
+                  (let [ref-ml (first log-mls)
+                        all-close (every? #(< (abs (- % ref-ml)) tol) (rest log-mls))]
+                    (if all-close
+                      (do (swap! pass-count inc)
+                          (println (str "  PASS   " id "  "
+                                        (str/join " | "
+                                                  (map (fn [[sys r]]
+                                                         (str (name sys) "="
+                                                              (if-let [ml (:log_ml r)]
+                                                                (format "%.4f" (double (parse-number ml)))
+                                                                "N/A")))
+                                                       sys-map))
+                                        "  tol=" (format "%.1f" (double tol)))))
+                      (do (swap! fail-count inc)
+                          (println (str "  FAIL   " id " [log-ML cross-system disagree, tol=" (format "%.1f" (double tol)) "]"))
+                          (doseq [[sys r] sys-map]
+                            (println (str "         " (name sys) ": "
+                                          (if-let [ml (:log_ml r)]
+                                            (format "%.6f" (double (parse-number ml)))
+                                            "N/A")))))))))
+
+              (= comparison "ess")
+              ;; ESS threshold test: check each system's ESS > threshold
+              (let [ess-threshold (get test-spec :ess_threshold 10)
+                    ess-vals (keep (fn [r] (when-let [e (:ess r)]
+                                             (parse-number e)))
+                                   valid)
+                    all-above (every? #(> % ess-threshold) ess-vals)]
+                (if (or all-above (empty? ess-vals))
+                  (do (swap! pass-count inc)
+                      (println (str "  PASS   " id "  "
+                                    (str/join " | "
+                                              (map (fn [[sys r]]
+                                                     (let [e (:ess r)]
+                                                       (str (name sys) "="
+                                                            (if e (format "%.1f" (double (parse-number e))) "N/A"))))
+                                                   sys-map))
+                                    "  threshold=" ess-threshold)))
+                  (do (swap! fail-count inc)
+                      (println (str "  FAIL   " id " [ESS below " ess-threshold "]"))
+                      (doseq [[sys r] sys-map]
+                        (let [e (:ess r)]
+                          (println (str "         " (name sys) ": "
+                                        (if e (format "%.1f" (double (parse-number e))) "N/A"))))))))
+
+              (= comparison "analytical_only")
+              ;; Check against analytical posterior only (skip cross-system)
+              (let [tol (* 3.0 analytical-std)
+                    non-skip (remove :skip valid)
+                    means (map #(parse-number (:posterior_mean %)) non-skip)
+                    all-within-tol (every? #(< (abs (- % analytical-mean)) tol) means)]
+                (if all-within-tol
+                  (do (swap! pass-count inc)
+                      (println (str "  PASS   " id "  "
+                                    (str/join " | "
+                                              (map (fn [[sys r]]
+                                                     (if (:skip r)
+                                                       (str (name sys) "=skip")
+                                                       (str (name sys) "="
+                                                            (format "%.4f" (double (parse-number (:posterior_mean r)))))))
+                                                   sys-map))
+                                    "  analytical=" (format "%.4f" analytical-mean)
+                                    "  tol=" (format "%.4f" tol))))
+                  (do (swap! fail-count inc)
+                      (println (str "  FAIL   " id " [outside 3*std of analytical]"))
+                      (doseq [[sys r] sys-map]
+                        (if (:skip r)
+                          (println (str "         " (name sys) ": skipped"))
+                          (println (str "         " (name sys) ": "
+                                        (format "%.6f" (double (parse-number (:posterior_mean r))))))))
+                      (println (str "         analytical: " (format "%.6f" analytical-mean)
+                                    " +/- " (format "%.6f" tol))))))
+
+              (= comparison "analytical_log_ml")
+              ;; Log-ML vs analytical value (within tolerance nats)
+              (let [tol (get test-spec :tolerance 1.0)
+                    analytical-log-ml (get test-spec :analytical_log_ml)
+                    log-mls (map (fn [r] (parse-number (:log_ml r))) valid)
+                    log-mls (remove nil? log-mls)
+                    all-close (every? #(< (abs (- % analytical-log-ml)) tol) log-mls)]
+                (if all-close
+                  (do (swap! pass-count inc)
+                      (println (str "  PASS   " id "  "
+                                    (str/join " | "
+                                              (map (fn [[sys r]]
+                                                     (str (name sys) "="
+                                                          (if-let [ml (:log_ml r)]
+                                                            (format "%.4f" (double (parse-number ml)))
+                                                            "N/A")))
+                                                   sys-map))
+                                    "  analytical=" (format "%.4f" (double analytical-log-ml))
+                                    "  tol=" (format "%.1f" (double tol)))))
+                  (do (swap! fail-count inc)
+                      (println (str "  FAIL   " id " [log-ML outside " (format "%.1f" (double tol))
+                                    " nat of analytical=" (format "%.4f" (double analytical-log-ml)) "]"))
+                      (doseq [[sys r] sys-map]
+                        (println (str "         " (name sys) ": "
+                                      (if-let [ml (:log_ml r)]
+                                        (format "%.6f" (double (parse-number ml)))
+                                        "N/A")))))))
+
               :else
-              (let [means (map #(parse-number (:posterior_mean %)) valid)
+              ;; Posterior mean test
+              (let [tol (* 3.0 analytical-std)
+                    means (map #(parse-number (:posterior_mean %)) valid)
                     ;; Check each system against analytical posterior
                     all-within-tol
                     (every? #(< (abs (- % analytical-mean)) tol) means)

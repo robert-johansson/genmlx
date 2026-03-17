@@ -568,6 +568,13 @@ function eval_gradient(spec)
     end
 end
 
+# --- Utility ---
+
+function logsumexp(xs)
+    m = maximum(xs)
+    m + log(sum(exp.(xs .- m)))
+end
+
 # --- Phase 8: Inference Quality models ---
 
 @gen function nn_inference_model(observations)
@@ -594,10 +601,28 @@ end
     return slope
 end
 
+@gen function gp_inference_model(observations)
+    lambda = {:lambda} ~ gamma(2, 1.0)  # shape=2, scale=1.0
+    for (i, obs) in enumerate(observations)
+        {Symbol("x$(i-1)")} ~ poisson(lambda)
+    end
+    return lambda
+end
+
+@gen function dc_inference_model(observations)
+    p = {:p} ~ dirichlet([1.0, 1.0, 1.0])
+    for (i, obs) in enumerate(observations)
+        {Symbol("x$(i-1)")} ~ categorical(p)  # Gen.jl categorical: probs, 1-indexed
+    end
+    return p
+end
+
 INFERENCE_MODEL_LOOKUP = Dict(
     "normal_normal" => nn_inference_model,
     "beta_bernoulli_iid" => bb_inference_model,
     "normal_linreg" => linreg_inference_model,
+    "gamma_poisson" => gp_inference_model,
+    "dirichlet_categorical" => dc_inference_model,
 )
 
 function make_inference_observations(model_name, data)
@@ -614,6 +639,15 @@ function make_inference_observations(model_name, data)
         for (i, y) in enumerate(data["ys"])
             cm[Symbol("y$(i-1)")] = Float64(y)
         end
+    elseif model_name == "gamma_poisson"
+        for (i, obs) in enumerate(data["observations"])
+            cm[Symbol("x$(i-1)")] = Int(obs)
+        end
+    elseif model_name == "dirichlet_categorical"
+        for (i, obs) in enumerate(data["observations"])
+            # Gen.jl categorical is 1-indexed
+            cm[Symbol("x$(i-1)")] = Int(obs) + 1
+        end
     end
     return cm
 end
@@ -625,6 +659,20 @@ function get_inference_args(model_name, data)
         (Float64.(data["observations"]),)
     elseif model_name == "normal_linreg"
         (Float64.(data["xs"]),)
+    elseif model_name == "gamma_poisson"
+        (Float64.(data["observations"]),)
+    elseif model_name == "dirichlet_categorical"
+        (Float64.(data["observations"]),)
+    end
+end
+
+function extract_trace_value(trace, target_addr, target_component)
+    val = trace[target_addr]
+    if target_component !== nothing
+        # Vector-valued (e.g. Dirichlet): extract component (0-indexed in spec)
+        return val[target_component + 1]
+    else
+        return Float64(val)
     end
 end
 
@@ -635,39 +683,176 @@ function eval_inference(spec)
     algo_params = spec["algorithm_params"]
     data = spec["data"]
     target_addr = Symbol(spec["target_addr"])
+    target_component = get(spec, "target_component", nothing)
+    comparison = get(spec, "comparison", nothing)
     args = get_inference_args(model_name, data)
     obs_cm = make_inference_observations(model_name, data)
 
     try
-        posterior_mean = if algorithm == "importance_sampling"
+        if algorithm == "importance_sampling"
             n_particles = get(algo_params, "n_particles", 1000)
             (traces, log_weights, _) = importance_sampling(model, args, obs_cm, n_particles)
+            # Compute log-ML estimate
+            log_ml = logsumexp(log_weights) - log(n_particles)
             # Compute weighted mean
             max_w = maximum(log_weights)
             weights = exp.(log_weights .- max_w)
             weights ./= sum(weights)
-            vals = [traces[i][target_addr] for i in 1:length(traces)]
-            sum(vals .* weights)
+            vals = [extract_trace_value(traces[i], target_addr, target_component) for i in 1:length(traces)]
+            posterior_mean = sum(vals .* weights)
+            result = Dict("id" => spec["id"], "posterior_mean" => posterior_mean)
+            if comparison in ("log_ml", "log_ml_analytical")
+                result["log_ml"] = log_ml
+            end
+            return result
         elseif algorithm == "mh"
             n_steps = get(algo_params, "n_steps", 2000)
             burn = get(algo_params, "burn", 500)
             (trace, _) = generate(model, args, obs_cm)
             sel = select(target_addr)
             samples = Float64[]
+            accepted_count = 0
             for step in 1:n_steps
                 (trace, accepted) = mh(trace, sel)
                 if step > burn
-                    push!(samples, trace[target_addr])
+                    push!(samples, extract_trace_value(trace, target_addr, target_component))
+                    if accepted; accepted_count += 1; end
                 end
             end
-            sum(samples) / length(samples)
+            posterior_mean = sum(samples) / length(samples)
+            accept_rate = accepted_count / length(samples)
+            return Dict("id" => spec["id"], "posterior_mean" => posterior_mean, "acceptance_rate" => accept_rate)
+
+        elseif algorithm == "hmc"
+            n_steps = get(algo_params, "n_steps", 500)
+            burn = get(algo_params, "burn", 200)
+            L = Int(get(algo_params, "leapfrog_steps", 10))
+            eps = get(algo_params, "step_size", 0.01)
+            (trace, _) = generate(model, args, obs_cm)
+            sel = select(target_addr)
+            samples = Float64[]
+            accepted_count = 0
+            for step in 1:(burn + n_steps)
+                (trace, accepted) = hmc(trace, sel; L=L, eps=eps)
+                if step > burn
+                    push!(samples, trace[target_addr])
+                    if accepted; accepted_count += 1; end
+                end
+            end
+            posterior_mean = sum(samples) / length(samples)
+            accept_rate = accepted_count / n_steps
+            return Dict("id" => spec["id"], "posterior_mean" => posterior_mean, "acceptance_rate" => accept_rate)
+
+        elseif algorithm == "mala"
+            n_steps = get(algo_params, "n_steps", 500)
+            burn = get(algo_params, "burn", 200)
+            tau = get(algo_params, "step_size", 0.01)
+            (trace, _) = generate(model, args, obs_cm)
+            sel = select(target_addr)
+            samples = Float64[]
+            accepted_count = 0
+            for step in 1:(burn + n_steps)
+                (trace, accepted) = mala(trace, sel, tau)
+                if step > burn
+                    push!(samples, trace[target_addr])
+                    if accepted; accepted_count += 1; end
+                end
+            end
+            posterior_mean = sum(samples) / length(samples)
+            accept_rate = accepted_count / n_steps
+            return Dict("id" => spec["id"], "posterior_mean" => posterior_mean, "acceptance_rate" => accept_rate)
+
         else
             return Dict("id" => spec["id"], "error" => "unsupported algorithm: $algorithm")
         end
-        Dict("id" => spec["id"], "posterior_mean" => posterior_mean)
     catch e
         Dict("id" => spec["id"], "error" => string(e))
     end
+end
+
+# --- Phase 12: SMC — Linear-Gaussian SSM via particle filter ---
+
+@gen function ssm_model(T::Int)
+    x_prev = {:x1} ~ normal(0.0, 1.0)
+    {:y1} ~ normal(x_prev, 0.5)
+    for t in 2:T
+        x = {(:x, t)} ~ normal(x_prev, 1.0)
+        {(:y, t)} ~ normal(x, 0.5)
+        x_prev = x
+    end
+end
+
+function run_smc_ssm(observations, n_particles)
+    T = length(observations)
+    # Initialize at t=1
+    init_obs = choicemap()
+    init_obs[:y1] = observations[1]
+    state = initialize_particle_filter(ssm_model, (1,), init_obs, n_particles)
+
+    # Step through t=2..T
+    for t in 2:T
+        obs_t = choicemap()
+        obs_t[(:y, t)] = observations[t]
+        maybe_resample!(state, ess_threshold=n_particles/2.0)
+        particle_filter_step!(state, (t,), (UnknownChange(),), obs_t)
+    end
+
+    log_ml = log_ml_estimate(state)
+    # Compute ESS from final weights
+    log_weights = state.log_weights
+    max_w = maximum(log_weights)
+    weights = exp.(log_weights .- max_w)
+    weights ./= sum(weights)
+    ess = 1.0 / sum(weights .^ 2)
+
+    return (log_ml, ess)
+end
+
+function run_smc_single(model, args, obs_cm, n_particles)
+    (traces, log_weights, _) = importance_sampling(model, args, obs_cm, n_particles)
+    log_ml = logsumexp(log_weights) - log(n_particles)
+    return log_ml
+end
+
+function eval_inference_smc(spec)
+    algorithm = spec["algorithm"]
+    algo_params = spec["algorithm_params"]
+    data = spec["data"]
+    comparison = get(spec, "comparison", "log_ml")
+
+    try
+        if algorithm == "smc"
+            observations = Float64.(data["observations"])
+            n_particles = Int(get(algo_params, "n_particles", 500))
+            (log_ml, ess) = run_smc_ssm(observations, n_particles)
+
+            if comparison == "ess"
+                return Dict("id" => spec["id"], "ess" => ess, "log_ml" => log_ml)
+            else
+                return Dict("id" => spec["id"], "log_ml" => log_ml)
+            end
+        elseif algorithm == "smc_single"
+            model_name = spec["model"]
+            model = INFERENCE_MODEL_LOOKUP[model_name]
+            args = get_inference_args(model_name, data)
+            obs_cm = make_inference_observations(model_name, data)
+            n_particles = Int(get(algo_params, "n_particles", 500))
+            log_ml = run_smc_single(model, args, obs_cm, n_particles)
+            return Dict("id" => spec["id"], "log_ml" => log_ml)
+        else
+            return Dict("id" => spec["id"], "error" => "unsupported smc algorithm: $algorithm")
+        end
+    catch e
+        Dict("id" => spec["id"], "error" => string(e))
+    end
+end
+
+# --- Phase 13: VI — GenMLX-only (analytical comparison), Gen.jl returns skip ---
+
+function eval_inference_vi(spec)
+    # Gen.jl VI is not implemented for cross-system comparison.
+    # Return skip so orchestrator uses analytical_only comparison.
+    return Dict("id" => spec["id"], "skip" => true)
 end
 
 # --- Main: read stdin, write stdout ---
@@ -715,7 +900,14 @@ function main()
         end
     elseif test_type == "inference_quality"
         for spec in input["tests"]
-            push!(results, eval_inference(spec))
+            algo = spec["algorithm"]
+            if algo in ("smc", "smc_single")
+                push!(results, eval_inference_smc(spec))
+            elseif algo == "vi"
+                push!(results, eval_inference_vi(spec))
+            else
+                push!(results, eval_inference(spec))
+            end
         end
     else
         println(stderr, "Unknown test type: $test_type")

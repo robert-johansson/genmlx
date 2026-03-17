@@ -1,5 +1,5 @@
 {
-  "description": "Inference quality — posterior convergence on conjugate models",
+  "description": "Inference quality — posterior convergence on conjugate models + log-ML estimates",
   "tests": [
     {
       "id": "infer-nn-is",
@@ -60,6 +60,243 @@
       "analytical_posterior": {"mean": 2.0, "std": 0.5},
       "target_addr": "slope",
       "description": "Same model, MH inference"
+    },
+    {
+      "id": "infer-nn-hmc",
+      "model": "normal_normal",
+      "algorithm": "hmc",
+      "algorithm_params": {"n_steps": 2000, "burn": 500, "leapfrog_steps": 10, "step_size": 0.1},
+      "data": {"observations": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]},
+      "analytical_posterior": {"mean": 0.4545, "std": 0.3015},
+      "target_addr": "mu",
+      "description": "Normal-normal model, HMC inference"
+    },
+    {
+      "id": "infer-linreg-hmc",
+      "model": "normal_linreg",
+      "algorithm": "hmc",
+      "algorithm_params": {"n_steps": 2000, "burn": 500, "leapfrog_steps": 10, "step_size": 0.01},
+      "data": {"xs": [1.0, 2.0, 3.0, 4.0, 5.0], "ys": [2.1, 3.9, 6.2, 7.8, 10.1]},
+      "analytical_posterior": {"mean": 2.0, "std": 0.5},
+      "target_addr": "slope",
+      "description": "Linear regression, HMC inference"
+    },
+    {
+      "id": "infer-nn-hmc-accept",
+      "model": "normal_normal",
+      "algorithm": "hmc",
+      "algorithm_params": {"n_steps": 2000, "burn": 500, "leapfrog_steps": 10, "step_size": 0.1},
+      "data": {"observations": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]},
+      "analytical_posterior": {"mean": 0.4545, "std": 0.3015},
+      "target_addr": "mu",
+      "comparison": "acceptance_rate",
+      "min_accept_rate": 0.5,
+      "description": "Normal-normal model, HMC acceptance rate > 0.5"
+    },
+    {
+      "id": "infer-linreg-hmc-accept",
+      "model": "normal_linreg",
+      "algorithm": "hmc",
+      "algorithm_params": {"n_steps": 2000, "burn": 500, "leapfrog_steps": 10, "step_size": 0.01},
+      "data": {"xs": [1.0, 2.0, 3.0, 4.0, 5.0], "ys": [2.1, 3.9, 6.2, 7.8, 10.1]},
+      "analytical_posterior": {"mean": 2.0, "std": 0.5},
+      "target_addr": "slope",
+      "comparison": "acceptance_rate",
+      "min_accept_rate": 0.5,
+      "description": "Linear regression, HMC acceptance rate > 0.5"
+    },
+    {
+      "id": "infer-nn-mala",
+      "model": "normal_normal",
+      "algorithm": "mala",
+      "algorithm_params": {"n_steps": 2000, "burn": 500, "step_size": 0.1},
+      "data": {"observations": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]},
+      "analytical_posterior": {"mean": 0.4545, "std": 0.3015},
+      "target_addr": "mu",
+      "description": "Normal-normal model, MALA inference"
+    },
+    {
+      "id": "infer-linreg-mala",
+      "model": "normal_linreg",
+      "algorithm": "mala",
+      "algorithm_params": {"n_steps": 2000, "burn": 500, "step_size": 0.05},
+      "data": {"xs": [1.0, 2.0, 3.0, 4.0, 5.0], "ys": [2.1, 3.9, 6.2, 7.8, 10.1]},
+      "analytical_posterior": {"mean": 2.0, "std": 0.5},
+      "target_addr": "slope",
+      "description": "Linear regression, MALA inference"
+    },
+    {
+      "id": "infer-nn-mala-accept",
+      "model": "normal_normal",
+      "algorithm": "mala",
+      "algorithm_params": {"n_steps": 2000, "burn": 500, "step_size": 0.1},
+      "data": {"observations": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]},
+      "analytical_posterior": {"mean": 0.4545, "std": 0.3015},
+      "target_addr": "mu",
+      "comparison": "acceptance_rate",
+      "min_accept_rate": 0.3,
+      "description": "Normal-normal model, MALA acceptance rate > 0.3"
+    },
+    {
+      "id": "infer-linreg-mala-accept",
+      "model": "normal_linreg",
+      "algorithm": "mala",
+      "algorithm_params": {"n_steps": 2000, "burn": 500, "step_size": 0.05},
+      "data": {"xs": [1.0, 2.0, 3.0, 4.0, 5.0], "ys": [2.1, 3.9, 6.2, 7.8, 10.1]},
+      "analytical_posterior": {"mean": 2.0, "std": 0.5},
+      "target_addr": "slope",
+      "comparison": "acceptance_rate",
+      "min_accept_rate": 0.3,
+      "description": "Linear regression, MALA acceptance rate > 0.3"
+    },
+    {
+      "id": "infer-gp-is",
+      "model": "gamma_poisson",
+      "algorithm": "importance_sampling",
+      "algorithm_params": {"n_particles": 1000},
+      "data": {"observations": [3,2,4,3,3,2,4,3,3,2,4,3,3,2,4,3,3,2,4,3]},
+      "analytical_posterior": {"mean": 2.952, "std": 0.245},
+      "target_addr": "lambda",
+      "description": "lambda~Gamma(2,1), x_i~Poisson(lambda), 20 obs sum=60. Posterior: Gamma(62,21), mean=62/21"
+    },
+    {
+      "id": "infer-gp-mh",
+      "model": "gamma_poisson",
+      "algorithm": "mh",
+      "algorithm_params": {"n_steps": 2000, "burn": 500},
+      "data": {"observations": [3,2,4,3,3,2,4,3,3,2,4,3,3,2,4,3,3,2,4,3]},
+      "analytical_posterior": {"mean": 2.952, "std": 0.245},
+      "target_addr": "lambda",
+      "description": "Same model, MH inference"
+    },
+    {
+      "id": "infer-dc-is",
+      "model": "dirichlet_categorical",
+      "algorithm": "importance_sampling",
+      "algorithm_params": {"n_particles": 1000},
+      "data": {"observations": [0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2]},
+      "analytical_posterior": {"mean": 0.333, "std": 0.08},
+      "target_addr": "p",
+      "target_component": 0,
+      "description": "p~Dir([1,1,1]), x_i~Cat(log(p)), counts=[10,12,8]. Posterior mean_0=11/33"
+    },
+    {
+      "id": "infer-dc-mh",
+      "model": "dirichlet_categorical",
+      "algorithm": "mh",
+      "algorithm_params": {"n_steps": 2000, "burn": 500},
+      "data": {"observations": [0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2]},
+      "analytical_posterior": {"mean": 0.333, "std": 0.08},
+      "target_addr": "p",
+      "target_component": 0,
+      "description": "Same model, MH inference"
+    },
+    {
+      "id": "logml-nn-is",
+      "model": "normal_normal",
+      "algorithm": "importance_sampling",
+      "algorithm_params": {"n_particles": 5000},
+      "comparison": "log_ml",
+      "data": {"observations": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]},
+      "target_addr": "mu",
+      "analytical_log_ml": -10.502,
+      "description": "Normal-normal IS log-ML: cross-system comparison"
+    },
+    {
+      "id": "logml-bb-is",
+      "model": "beta_bernoulli_iid",
+      "algorithm": "importance_sampling",
+      "algorithm_params": {"n_particles": 5000},
+      "comparison": "log_ml",
+      "data": {"observations": [1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0]},
+      "target_addr": "p",
+      "analytical_log_ml": -13.610,
+      "description": "Beta-bernoulli IS log-ML: cross-system comparison"
+    },
+    {
+      "id": "logml-nn-analytical",
+      "model": "normal_normal",
+      "algorithm": "importance_sampling",
+      "algorithm_params": {"n_particles": 5000},
+      "comparison": "log_ml_analytical",
+      "data": {"observations": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]},
+      "target_addr": "mu",
+      "analytical_log_ml": -10.502,
+      "description": "Normal-normal IS log-ML vs analytical value"
+    },
+    {
+      "id": "logml-bb-analytical",
+      "model": "beta_bernoulli_iid",
+      "algorithm": "importance_sampling",
+      "algorithm_params": {"n_particles": 5000},
+      "comparison": "log_ml_analytical",
+      "data": {"observations": [1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0,0,0,0]},
+      "target_addr": "p",
+      "analytical_log_ml": -13.610,
+      "description": "Beta-bernoulli IS log-ML vs analytical value"
+    },
+    {
+      "id": "infer-ssm-smc-logml",
+      "model": "linear_gaussian_ssm",
+      "algorithm": "smc",
+      "algorithm_params": {"n_particles": 500, "T": 10},
+      "data": {"observations": [0.3, -0.8, 1.2, 0.5, -0.3, 0.9, 1.5, 0.2, -0.6, 0.8]},
+      "comparison": "log_ml",
+      "tolerance": 2.0,
+      "description": "SMC log-ML on linear-Gaussian SSM T=10, cross-system within 2.0 nats"
+    },
+    {
+      "id": "infer-ssm-smc-ess",
+      "model": "linear_gaussian_ssm",
+      "algorithm": "smc",
+      "algorithm_params": {"n_particles": 500, "T": 10},
+      "data": {"observations": [0.3, -0.8, 1.2, 0.5, -0.3, 0.9, 1.5, 0.2, -0.6, 0.8]},
+      "comparison": "ess",
+      "ess_threshold": 10,
+      "description": "SMC ESS > 10 on linear-Gaussian SSM"
+    },
+    {
+      "id": "infer-nn-smc-logml",
+      "model": "normal_normal",
+      "algorithm": "smc_single",
+      "algorithm_params": {"n_particles": 500},
+      "data": {"observations": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]},
+      "comparison": "log_ml",
+      "tolerance": 1.5,
+      "description": "Single-step SMC (IS) on normal-normal, log-ML cross-system within 1.5 nats"
+    },
+    {
+      "id": "infer-ssm-smc-analytical",
+      "model": "linear_gaussian_ssm",
+      "algorithm": "smc",
+      "algorithm_params": {"n_particles": 500, "T": 10},
+      "data": {"observations": [0.3, -0.8, 1.2, 0.5, -0.3, 0.9, 1.5, 0.2, -0.6, 0.8]},
+      "comparison": "analytical_log_ml",
+      "analytical_log_ml": -14.764156,
+      "tolerance": 3.0,
+      "description": "SMC log-ML within 3.0 nats of Kalman analytical (-14.76)"
+    },
+    {
+      "id": "infer-nn-vi",
+      "model": "normal_normal",
+      "algorithm": "vi",
+      "algorithm_params": {"iterations": 500, "learning_rate": 0.01},
+      "data": {"observations": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]},
+      "analytical_posterior": {"mean": 0.4545, "std": 0.3015},
+      "target_addr": "mu",
+      "comparison": "analytical_only",
+      "description": "VI posterior mean for mu within 3 std of analytical"
+    },
+    {
+      "id": "infer-linreg-vi",
+      "model": "normal_linreg",
+      "algorithm": "vi",
+      "algorithm_params": {"iterations": 1000, "learning_rate": 0.05},
+      "data": {"xs": [1.0, 2.0, 3.0, 4.0, 5.0], "ys": [2.1, 3.9, 6.2, 7.8, 10.1]},
+      "analytical_posterior": {"mean": 2.0, "std": 0.5},
+      "target_addr": "slope",
+      "comparison": "analytical_only",
+      "description": "VI posterior mean for slope within 3 std of analytical"
     }
   ]
 }
