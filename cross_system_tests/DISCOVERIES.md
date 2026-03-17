@@ -6,10 +6,29 @@ work around limitations.
 
 ## MLX Wrapper Gaps
 
+### Missing ops
+
 | Discovery | Status | Notes |
 |---|---|---|
-| `det` (determinant) not in mlx.cljs | **OPEN** | MLX linalg has no native det. Verified via `prod(diag(chol(A)))^2` in runner — should be added to mlx.cljs. Needed for MVN, Wishart. |
-| `logdet` (log-determinant) not in mlx.cljs | **OPEN** | `2 * sum(log(diag(chol(A))))` — numerically stable. Verified in runner. Critical for MVN log-prob. Should be added to mlx.cljs. |
+| `det` (determinant) not in mlx.cljs | **OPEN** | MLX has no native det. Implement via `prod(diag(chol(A)))^2`. Verified in runner. Needed for MVN, Wishart. |
+| `logdet` (log-determinant) not in mlx.cljs | **OPEN** | `2 * sum(log(diag(chol(A))))` — numerically stable. Verified in runner. Critical for MVN log-prob. |
+| `trace` (matrix trace) not in mlx.cljs | **OPEN** | MLX core exposes `.trace` — not wrapped. `trace(A) = sum(diag(A))`. Used in matrix distributions, Fisher info. |
+| `tri` (triangular matrix) not in mlx.cljs | **OPEN** | MLX core exposes `.tri` — not wrapped. Returns lower-triangular ones matrix. Useful for masking. |
+| `tril` (lower triangle) not in mlx.cljs | **OPEN** | MLX core exposes `.tril` — not wrapped. Extract lower triangle of matrix. |
+| `einsum` not in mlx.cljs | **OPEN** | MLX core exposes `.einsum` — not wrapped. Powerful for tensor contractions, batched matmuls, traces. Could simplify MVN, Wishart code. |
+| `pinv` (pseudoinverse) not in mlx.cljs | **OPEN** | MLX linalg exposes `.pinv` — not wrapped. Useful for least-squares, ill-conditioned systems. |
+| `lu` / `luFactor` not in mlx.cljs | **OPEN** | MLX linalg exposes LU decomposition — not wrapped. Alternative to Cholesky for det (works for non-PD matrices). |
+| `choleskyInv` not in mlx.cljs | **OPEN** | MLX linalg exposes `.choleskyInv` — not wrapped. Directly inverts from Cholesky factor (avoids separate `inv` call). |
+| Native `slice` not used | **OPEN** | MLX core exposes `.slice` and `.sliceUpdate` — not wrapped. Current `slice` in mlx.cljs uses `arange` + `take` which creates intermediate index arrays. Native slice avoids this overhead. |
+
+### Performance concerns
+
+| Discovery | Status | Notes |
+|---|---|---|
+| Linalg decompositions are CPU-only | **CONFIRMED** | `cholesky`, `solve`, `inv`, `qr`, `svd`, `eigh`, `eigvalsh` all require `cpu-stream`. MLX error: "This op is not yet supported on the GPU." This is an MLX framework limitation, not a GenMLX bug. `norm` and `cross` DO work on GPU. CPU stream usage in mlx.cljs is correct. |
+| `slice` uses `arange` + `take` | **OPEN** | Creates intermediate index array per slice. MLX has native `.slice(start, stop, strides)` that avoids this. Could matter in inner loops. |
+| `index` creates intermediate scalar | **OPEN** | `(index a i)` creates `(scalar i int32)` + `take` each call. For repeated indexing in loops, pre-compute index arrays. |
+| `array?` uses try/catch | **OPEN** | Type check via `(try (some? (.-shape x)) (catch ...))`. In hot paths, exception-based dispatch is slow. Consider checking for MLX array constructor or prototype instead. |
 
 ## Distribution Gaps
 
