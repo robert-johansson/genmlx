@@ -74,23 +74,25 @@
   (coerce-results (json/parse-string (slurp file) true)))
 
 (defn close-enough? [a b tol]
-  (cond
-    (and (number? a) (number? b))
-    (or ;; Absolute tolerance
-        (< (abs (- a b)) tol)
-        ;; Relative tolerance (for large values)
-        (and (not (zero? (max (abs a) (abs b))))
-             (< (/ (abs (- a b)) (max (abs a) (abs b))) tol))
-        ;; Both -Inf or both +Inf
-        (and (Double/isInfinite a) (Double/isInfinite b)
-             (= (< a 0) (< b 0))))
+  (let [a (parse-number a)
+        b (parse-number b)]
+    (cond
+      ;; Both NaN (check first — NaN != NaN in arithmetic)
+      (and (number? a) (number? b)
+           (Double/isNaN a) (Double/isNaN b))
+      true
 
-    ;; Both NaN
-    (and (number? a) (number? b)
-         (Double/isNaN a) (Double/isNaN b))
-    true
+      (and (number? a) (number? b))
+      (or ;; Absolute tolerance
+          (< (abs (- a b)) tol)
+          ;; Relative tolerance (for large values)
+          (and (not (zero? (max (abs a) (abs b))))
+               (< (/ (abs (- a b)) (max (abs a) (abs b))) tol))
+          ;; Both -Inf or both +Inf
+          (and (Double/isInfinite a) (Double/isInfinite b)
+               (= (< a 0) (< b 0))))
 
-    :else false))
+      :else false)))
 
 (defn compare-results [test-type systems-results tolerance]
   (let [system-names (keys systems-results)
@@ -178,11 +180,11 @@
   "Compare scalars, vectors, or nested vectors element-wise."
   [a b tol]
   (cond
-    (and (number? a) (number? b)) (close-enough? a b tol)
     (and (sequential? a) (sequential? b))
     (and (= (count a) (count b))
          (every? true? (map #(close-enough-recursive? %1 %2 tol) a b)))
-    :else false))
+    ;; Delegate everything else (numbers, strings like "NaN") to close-enough?
+    :else (close-enough? a b tol)))
 
 (defn run-mlx-ops-suite [spec-file _default-tolerance]
   (println "\n>>> Running mlx_ops tests <<<")
@@ -210,7 +212,7 @@
 
         (doseq [r (:results results)]
           (let [spec (get expected-by-id (:id r))
-                expected (:expected spec)]
+                expected (parse-number (:expected spec))]
             (cond
               (:error r)
               (do (swap! error-count inc)

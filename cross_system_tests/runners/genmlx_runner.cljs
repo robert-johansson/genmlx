@@ -217,10 +217,32 @@
               "mean"      (mx/item (mx/mean (to-mlx (first args))))
               "matmul"    (from-mlx (mx/matmul (to-mlx (first args)) (to-mlx (second args))))
               "cholesky"  (from-mlx (mx/cholesky (to-mlx (first args))))
+              "det"       (let [L (mx/cholesky (to-mlx (first args)))
+                                d (mx/diag L)]
+                            (mx/item (mx/power (mx/prod d) (mx/scalar 2))))
+              "logdet"    (let [L (mx/cholesky (to-mlx (first args)))
+                                d (mx/diag L)]
+                            (mx/item (mx/multiply (mx/scalar 2) (mx/sum (mx/log d)))))
               (throw (js/Error. (str "unsupported op: " op))))]
         #js {"id" (get spec "id") "result" (clj->js result)})
       (catch :default e
         #js {"id" (get spec "id") "error" (str e)}))))
+
+;; --- JSON sanitization (JS JSON.stringify turns NaN/Infinity into null) ---
+
+(defn sanitize-result [v]
+  (cond
+    (and (number? v) (js/isNaN v))             "NaN"
+    (and (number? v) (not (js/isFinite v)) (pos? v)) "Inf"
+    (and (number? v) (not (js/isFinite v)) (neg? v)) "-Inf"
+    :else v))
+
+(defn sanitize-js-obj [obj]
+  (let [result (get (js->clj obj) "result")]
+    (clj->js (assoc (js->clj obj) "result"
+                     (if (sequential? result)
+                       result
+                       (sanitize-result result))))))
 
 ;; --- Main: dispatch on test_type, write stdout ---
 
@@ -228,7 +250,7 @@
                 "logprob"  (mapv eval-logprob  (get input-data "tests"))
                 "assess"   (mapv eval-assess   (get input-data "assess_tests"))
                 "generate" (mapv eval-generate (get input-data "generate_tests"))
-                "mlx_ops"  (mapv eval-mlx-op   (get input-data "tests"))
+                "mlx_ops"  (mapv (comp sanitize-js-obj eval-mlx-op) (get input-data "tests"))
                 (do (.error js/console (str "Unknown test type: " test-type))
                     (js/process.exit 1)))
       output  #js {"system"    "genmlx"

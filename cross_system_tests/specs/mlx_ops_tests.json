@@ -54,6 +54,23 @@
     {"id": "cholesky-2x2", "op": "cholesky", "args": [[[4.0, 2.0], [2.0, 3.0]]], "expected": [[2.0, 0.0], [1.0, 1.4142135623730951]]},
 
     {"id": "sum-vec", "op": "sum", "args": [[1.0, 2.0, 3.0, 4.0, 5.0]], "expected": 15.0},
-    {"id": "mean-vec", "op": "mean", "args": [[2.0, 4.0, 6.0, 8.0]], "expected": 5.0}
+    {"id": "mean-vec", "op": "mean", "args": [[2.0, 4.0, 6.0, 8.0]], "expected": 5.0},
+
+    {"id": "det-2x2", "op": "det", "args": [[[4.0, 2.0], [2.0, 3.0]]], "expected": 8.0, "note": "DISCOVERY: det not in mlx.cljs — needs implementation"},
+    {"id": "det-identity", "op": "det", "args": [[[1.0, 0.0], [0.0, 1.0]]], "expected": 1.0},
+    {"id": "logdet-2x2", "op": "logdet", "args": [[[4.0, 2.0], [2.0, 3.0]]], "expected": 2.0794415416798357, "note": "DISCOVERY: logdet not in mlx.cljs — needs implementation. log(8) = 2.079..."},
+
+    {"id": "log-neg", "op": "log", "args": [-1.0], "expected": "NaN", "note": "negative input — should produce NaN, not crash"},
+    {"id": "log-zero", "op": "log", "args": [0.0], "expected": "-Inf", "note": "log(0) = -Inf"},
+    {"id": "sqrt-neg", "op": "sqrt", "args": [-1.0], "expected": "NaN", "note": "negative input — should produce NaN"},
+    {"id": "exp-large", "op": "exp", "args": [100.0], "expected": "Inf", "note": "overflow to Inf in float32 (exp(100) > 3.4e38 max)"},
+    {"id": "exp-neg-large", "op": "exp", "args": [-100.0], "expected": 0.0, "note": "underflow to 0"},
+    {"id": "divide-by-zero", "op": "divide", "args": [1.0, 0.0], "expected": "Inf", "note": "IEEE 754: 1/0 = Inf"},
+    {"id": "zero-over-zero", "op": "divide", "args": [0.0, 0.0], "expected": "NaN", "note": "IEEE 754: 0/0 = NaN"},
+    {"id": "lgamma-zero", "op": "lgamma", "args": [0.0], "expected": "Inf", "note": "lgamma(0) = +Inf (pole)"},
+    {"id": "lgamma-neg-int", "op": "lgamma", "args": [-1.0], "expected": "Inf", "note": "lgamma at negative integers = +Inf (poles)"},
+    {"id": "sigmoid-large-neg", "op": "sigmoid", "args": [-100.0], "expected": 0.0, "note": "sigmoid(-100) underflows to 0 — no NaN"},
+    {"id": "sigmoid-large-pos", "op": "sigmoid", "args": [100.0], "expected": 1.0, "note": "sigmoid(100) saturates to 1 — no NaN"},
+    {"id": "logsumexp-single", "op": "logsumexp", "args": [[5.0]], "expected": 5.0, "note": "logsumexp of single element = that element"}
   ]
 }
