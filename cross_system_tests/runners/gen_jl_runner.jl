@@ -617,12 +617,21 @@ end
     return p
 end
 
+@gen function ig_inference_model(observations)
+    sigma = {:sigma} ~ inv_gamma(3, 2)  # shape=3, scale=2
+    for (i, obs) in enumerate(observations)
+        {Symbol("x$(i-1)")} ~ normal(0, sqrt(sigma))
+    end
+    return sigma
+end
+
 INFERENCE_MODEL_LOOKUP = Dict(
     "normal_normal" => nn_inference_model,
     "beta_bernoulli_iid" => bb_inference_model,
     "normal_linreg" => linreg_inference_model,
     "gamma_poisson" => gp_inference_model,
     "dirichlet_categorical" => dc_inference_model,
+    "inv_gamma_normal" => ig_inference_model,
 )
 
 function make_inference_observations(model_name, data)
@@ -648,6 +657,10 @@ function make_inference_observations(model_name, data)
             # Gen.jl categorical is 1-indexed
             cm[Symbol("x$(i-1)")] = Int(obs) + 1
         end
+    elseif model_name == "inv_gamma_normal"
+        for (i, obs) in enumerate(data["observations"])
+            cm[Symbol("x$(i-1)")] = Float64(obs)
+        end
     end
     return cm
 end
@@ -662,6 +675,8 @@ function get_inference_args(model_name, data)
     elseif model_name == "gamma_poisson"
         (Float64.(data["observations"]),)
     elseif model_name == "dirichlet_categorical"
+        (Float64.(data["observations"]),)
+    elseif model_name == "inv_gamma_normal"
         (Float64.(data["observations"]),)
     end
 end
@@ -700,7 +715,10 @@ function eval_inference(spec)
             weights ./= sum(weights)
             vals = [extract_trace_value(traces[i], target_addr, target_component) for i in 1:length(traces)]
             posterior_mean = sum(vals .* weights)
-            result = Dict("id" => spec["id"], "posterior_mean" => posterior_mean)
+            # Compute weighted variance
+            posterior_variance = sum(weights .* (vals .- posterior_mean) .^ 2)
+            result = Dict("id" => spec["id"], "posterior_mean" => posterior_mean,
+                          "posterior_variance" => posterior_variance)
             if comparison in ("log_ml", "log_ml_analytical")
                 result["log_ml"] = log_ml
             end

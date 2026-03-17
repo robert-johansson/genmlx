@@ -660,12 +660,21 @@
           (trace (keyword (str "x" i)) (dist/categorical (mx/log p))))
         p))))
 
+(def ig-inference-model
+  (dyn/auto-key
+    (gen [observations]
+      (let [sigma (trace :sigma (dist/inv-gamma (mx/scalar 3) (mx/scalar 2)))]
+        (doseq [[i obs] (map-indexed vector observations)]
+          (trace (keyword (str "x" i)) (dist/gaussian (mx/scalar 0) (mx/sqrt sigma))))
+        sigma))))
+
 (def inference-model-lookup
   {"normal_normal"           nn-inference-model
    "beta_bernoulli_iid"      bb-inference-model
    "normal_linreg"           linreg-inference-model
    "gamma_poisson"           gp-inference-model
-   "dirichlet_categorical"   dc-inference-model})
+   "dirichlet_categorical"   dc-inference-model
+   "inv_gamma_normal"        ig-inference-model})
 
 (defn make-inference-observations
   "Build observation choicemap from spec data and model type."
@@ -699,6 +708,12 @@
     (let [obs (get data "observations")]
       (reduce (fn [cm [i v]]
                 (cm/set-value cm (keyword (str "x" i)) (mx/scalar (int v) mx/int32)))
+              (cm/choicemap) (map-indexed vector obs)))
+
+    "inv_gamma_normal"
+    (let [obs (get data "observations")]
+      (reduce (fn [cm [i v]]
+                (cm/set-value cm (keyword (str "x" i)) (mx/scalar v)))
               (cm/choicemap) (map-indexed vector obs)))))
 
 (defn make-inference-args
@@ -709,7 +724,8 @@
     "beta_bernoulli_iid"     [(get data "observations")]
     "normal_linreg"          [(get data "xs")]
     "gamma_poisson"          [(get data "observations")]
-    "dirichlet_categorical"  [(get data "observations")]))
+    "dirichlet_categorical"  [(get data "observations")]
+    "inv_gamma_normal"       [(get data "observations")]))
 
 (defn extract-trace-value
   "Extract a scalar value from a trace at target-addr.
@@ -748,8 +764,13 @@
                     sum-w (reduce + exp-weights)
                     norm-weights (mapv #(/ % sum-w) exp-weights)
                     vals (mapv (fn [t] (extract-trace-value t target-addr target-component))
-                               traces)]
-                {:mean (reduce + (map * vals norm-weights))
+                               traces)
+                    wmean (reduce + (map * vals norm-weights))
+                    ;; Weighted variance: sum(w * (x - mean)^2)
+                    wvar (reduce + (map (fn [v w] (* w (* (- v wmean) (- v wmean))))
+                                        vals norm-weights))]
+                {:mean wmean
+                 :variance wvar
                  :accept-rate nil
                  :log-ml (mx/item log-ml-estimate)})
 
@@ -798,7 +819,10 @@
           ;; Include log-ML for log_ml and log_ml_analytical comparison tests
           (and (contains? #{"log_ml" "log_ml_analytical"} comparison)
                (:log-ml result))
-          (doto (aset "log_ml" (:log-ml result)))))
+          (doto (aset "log_ml" (:log-ml result)))
+          ;; Include posterior_variance for variance comparison tests
+          (:variance result)
+          (doto (aset "posterior_variance" (:variance result)))))
       (catch :default e
         #js {"id" (get spec "id") "error" (str e)}))))
 

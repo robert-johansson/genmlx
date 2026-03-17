@@ -64,7 +64,7 @@
    (fn [x]
      (if (and (map? x) (not (record? x)))
        (reduce-kv (fn [acc k v]
-                    (assoc acc k (if (#{:logprob :weight :score :old_score :new_score :total_score :sum_components :gradient :posterior_mean :log_ml :acceptance_rate :ess} k)
+                    (assoc acc k (if (#{:logprob :weight :score :old_score :new_score :total_score :sum_components :gradient :posterior_mean :posterior_variance :log_ml :acceptance_rate :ess} k)
                                    (parse-number v) v)))
                   {} x)
        x))
@@ -1268,6 +1268,37 @@
                         (println (str "         " (name sys) ": "
                                       (if-let [ml (:log_ml r)]
                                         (format "%.6f" (double (parse-number ml)))
+                                        "N/A")))))))
+
+              (= comparison "posterior_variance")
+              ;; Posterior variance test: check sample variance within factor of 3 of analytical
+              (let [analytical-var (get-in test-spec [:analytical_posterior :variance])
+                    variances (keep (fn [r] (when-let [v (:posterior_variance r)]
+                                              (parse-number v)))
+                                    valid)
+                    all-ok (every? (fn [v]
+                                     (and (> v (/ analytical-var 3.0))
+                                          (< v (* analytical-var 3.0))))
+                                   variances)]
+                (if (or all-ok (empty? variances))
+                  (do (swap! pass-count inc)
+                      (println (str "  PASS   " id "  "
+                                    (str/join " | "
+                                              (map (fn [[sys r]]
+                                                     (str (name sys) "="
+                                                          (if-let [v (:posterior_variance r)]
+                                                            (format "%.6f" (double (parse-number v)))
+                                                            "N/A")))
+                                                   sys-map))
+                                    "  analytical=" (format "%.6f" (double analytical-var))
+                                    "  [factor-of-3]")))
+                  (do (swap! fail-count inc)
+                      (println (str "  FAIL   " id " [variance outside factor-of-3 of analytical="
+                                    (format "%.6f" (double analytical-var)) "]"))
+                      (doseq [[sys r] sys-map]
+                        (println (str "         " (name sys) ": "
+                                      (if-let [v (:posterior_variance r)]
+                                        (format "%.6f" (double (parse-number v)))
                                         "N/A")))))))
 
               :else
