@@ -468,6 +468,401 @@
                       @error-count " error"))
         {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
 
+;; --- Project Suite ---
+
+(defn run-project-suite [spec-file tolerance]
+  (println "\n>>> Running project tests <<<")
+  (println (str "Spec: " spec-file))
+
+  (let [spec-json (slurp spec-file)
+        systems ["gen_jl" "genmlx"]
+        run-results
+        (reduce
+         (fn [acc sys]
+           (let [out-file (str results-dir "/" sys "_project.json")
+                 result (run-system sys "project" spec-json out-file)]
+             (assoc acc sys result)))
+         {}
+         systems)
+
+        loaded (reduce
+                (fn [acc [sys info]]
+                  (if (:success info)
+                    (try
+                      (assoc acc (keyword sys) (load-results (:output-file info)))
+                      (catch Exception e
+                        (println (str "  Failed to load " sys " results: " (.getMessage e)))
+                        acc))
+                    (do
+                      (println (str "  " sys " failed to run"))
+                      acc)))
+                {}
+                run-results)]
+
+    (println (str "\n=== PROJECT COMPARISON ==="))
+    (println (str "Tolerance: " tolerance))
+    (println (str "Systems: " (str/join ", " (map name (keys loaded)))))
+    (println)
+
+    (if (< (count loaded) 2)
+      (do (println "Not enough systems succeeded for comparison")
+          {:pass 0 :fail 0 :error 0 :skip 0})
+
+      (let [by-id (reduce
+                   (fn [acc [sys-name results]]
+                     (reduce
+                      (fn [acc2 r]
+                        (assoc-in acc2 [(:id r) sys-name] r))
+                      acc
+                      (:results results)))
+                   {}
+                   loaded)
+            pass-count (atom 0)
+            fail-count (atom 0)
+            error-count (atom 0)]
+
+        (doseq [[id sys-map] (sort-by key by-id)]
+          (let [all-sys (vals sys-map)
+                errors (filter :error all-sys)
+                valid (remove :error all-sys)]
+            (cond
+              (seq errors)
+              (do (swap! error-count inc)
+                  (println (str "  ERROR  " id))
+                  (doseq [e errors]
+                    (println (str "         " (:error e)))))
+
+              (< (count valid) 2)
+              (do (swap! error-count inc)
+                  (println (str "  ERROR  " id " (not enough results)")))
+
+              :else
+              ;; Cross-system: compare weight (the project output)
+              (let [weights (map #(parse-number (:weight %)) valid)
+                    ref-w (first weights)
+                    cross-ok (every? #(close-enough? ref-w % tolerance) (rest weights))]
+                (if cross-ok
+                  (do (swap! pass-count inc)
+                      (println (str "  PASS   " id "  "
+                                    (str/join " | "
+                                              (map (fn [[sys r]]
+                                                     (str (name sys) "="
+                                                          (format "%.6f" (double (parse-number (:weight r))))))
+                                                   sys-map)))))
+                  (do (swap! fail-count inc)
+                      (println (str "  FAIL   " id " [cross-system mismatch]"))
+                      (doseq [[sys r] sys-map]
+                        (println (str "         " (name sys)
+                                      " weight=" (format "%.10f" (double (parse-number (:weight r)))))))))))))
+
+        (println)
+        (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
+                      @error-count " error"))
+        {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
+
+;; --- Regenerate Suite ---
+
+(defn run-regenerate-suite [spec-file tolerance]
+  (println "\n>>> Running regenerate tests <<<")
+  (println (str "Spec: " spec-file))
+
+  (let [spec-json (slurp spec-file)
+        systems ["gen_jl" "genmlx"]
+        run-results
+        (reduce
+         (fn [acc sys]
+           (let [out-file (str results-dir "/" sys "_regenerate.json")
+                 result (run-system sys "regenerate" spec-json out-file)]
+             (assoc acc sys result)))
+         {}
+         systems)
+
+        loaded (reduce
+                (fn [acc [sys info]]
+                  (if (:success info)
+                    (try
+                      (assoc acc (keyword sys) (load-results (:output-file info)))
+                      (catch Exception e
+                        (println (str "  Failed to load " sys " results: " (.getMessage e)))
+                        acc))
+                    (do
+                      (println (str "  " sys " failed to run"))
+                      acc)))
+                {}
+                run-results)
+
+        ;; Load spec to identify invariant-based tests
+        specs (json/parse-string spec-json true)
+        test-by-id (into {} (map (fn [t] [(:id t) t]) (:regenerate_tests specs)))]
+
+    (println (str "\n=== REGENERATE COMPARISON ==="))
+    (println (str "Tolerance: " tolerance))
+    (println (str "Systems: " (str/join ", " (map name (keys loaded)))))
+    (println)
+
+    (if (< (count loaded) 2)
+      (do (println "Not enough systems succeeded for comparison")
+          {:pass 0 :fail 0 :error 0 :skip 0})
+
+      (let [by-id (reduce
+                   (fn [acc [sys-name results]]
+                     (reduce
+                      (fn [acc2 r]
+                        (assoc-in acc2 [(:id r) sys-name] r))
+                      acc
+                      (:results results)))
+                   {}
+                   loaded)
+            pass-count (atom 0)
+            fail-count (atom 0)
+            error-count (atom 0)]
+
+        (doseq [[id sys-map] (sort-by key by-id)]
+          (let [all-sys (vals sys-map)
+                errors (filter :error all-sys)
+                valid (remove :error all-sys)
+                test-spec (get test-by-id id)]
+            (cond
+              (seq errors)
+              (do (swap! error-count inc)
+                  (println (str "  ERROR  " id))
+                  (doseq [e errors]
+                    (println (str "         " (:error e)))))
+
+              (< (count valid) 2)
+              (do (swap! error-count inc)
+                  (println (str "  ERROR  " id " (not enough results)")))
+
+              :else
+              (let [;; 1. Cross-system: old_score must match (deterministic from generate)
+                    old-scores (map #(parse-number (:old_score %)) valid)
+                    ref-old (first old-scores)
+                    old-ok (every? #(close-enough? ref-old % tolerance) (rest old-scores))
+
+                    ;; 2. Invariant checks within each system
+                    ;; regenerate weight = log p(unselected|new_selected) - log p(unselected|old_selected)
+                    ;; NOT new_score - old_score (that ignores the proposal cancellation)
+                    sel-type (get-in test-spec [:selection :type])
+
+                    invariant-ok
+                    (cond
+                      ;; Empty selection: weight must be 0, trace unchanged
+                      (= sel-type "none")
+                      (every?
+                       (fn [r]
+                         (and (close-enough? (parse-number (:weight r)) 0.0 tolerance)
+                              (close-enough? (parse-number (:old_score r))
+                                             (parse-number (:new_score r)) tolerance)))
+                       valid)
+
+                      ;; Single-site-from-prior or all-sites: weight = 0
+                      ;; (proposal = prior, so proposal terms cancel the selected terms)
+                      (contains? #{"regen-single-x" "regen-all-sites"} id)
+                      (every?
+                       (fn [r]
+                         (close-enough? (parse-number (:weight r)) 0.0 tolerance))
+                       valid)
+
+                      ;; General case: weight is random, can't compare cross-system.
+                      ;; Just verify old_score match (already checked above) and
+                      ;; that weight is finite.
+                      :else
+                      (every?
+                       (fn [r]
+                         (let [w (parse-number (:weight r))]
+                           (and (not (Double/isNaN w))
+                                (not (Double/isInfinite w)))))
+                       valid))]
+
+                (if (and old-ok invariant-ok)
+                  (do (swap! pass-count inc)
+                      (println (str "  PASS   " id "  "
+                                    (str/join " | "
+                                              (map (fn [[sys r]]
+                                                     (str (name sys)
+                                                          " w=" (format "%.6f" (double (parse-number (:weight r))))))
+                                                   sys-map)))))
+                  (do (swap! fail-count inc)
+                      (println (str "  FAIL   " id
+                                    (when (not old-ok) " [old_score mismatch]")
+                                    (when (not invariant-ok) " [invariant violated]")))
+                      (doseq [[sys r] sys-map]
+                        (println (str "         " (name sys)
+                                      " old=" (format "%.10f" (double (parse-number (:old_score r))))
+                                      " new=" (format "%.10f" (double (parse-number (:new_score r))))
+                                      " w=" (format "%.10f" (double (parse-number (:weight r)))))))))))))
+
+        (println)
+        (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
+                      @error-count " error"))
+        {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
+
+;; --- Combinator Suite ---
+
+(defn run-combinator-suite [spec-file tolerance]
+  (println "\n>>> Running combinator tests <<<")
+  (println (str "Spec: " spec-file))
+
+  (let [spec-json (slurp spec-file)
+        systems ["gen_jl" "genmlx"]
+        run-results
+        (reduce
+         (fn [acc sys]
+           (let [out-file (str results-dir "/" sys "_combinator.json")
+                 result (run-system sys "combinator" spec-json out-file)]
+             (assoc acc sys result)))
+         {}
+         systems)
+
+        loaded (reduce
+                (fn [acc [sys info]]
+                  (if (:success info)
+                    (try
+                      (assoc acc (keyword sys) (load-results (:output-file info)))
+                      (catch Exception e
+                        (println (str "  Failed to load " sys " results: " (.getMessage e)))
+                        acc))
+                    (do
+                      (println (str "  " sys " failed to run"))
+                      acc)))
+                {}
+                run-results)]
+
+    (println (str "\n=== COMBINATOR COMPARISON ==="))
+    (println (str "Tolerance: " tolerance))
+    (println (str "Systems: " (str/join ", " (map name (keys loaded)))))
+    (println)
+
+    (if (< (count loaded) 2)
+      (do (println "Not enough systems succeeded for comparison")
+          {:pass 0 :fail 0 :error 0 :skip 0})
+
+      (let [by-id (reduce
+                   (fn [acc [sys-name results]]
+                     (reduce
+                      (fn [acc2 r]
+                        (assoc-in acc2 [(:id r) sys-name] r))
+                      acc
+                      (:results results)))
+                   {}
+                   loaded)
+            pass-count (atom 0)
+            fail-count (atom 0)
+            error-count (atom 0)]
+
+        (doseq [[id sys-map] (sort-by key by-id)]
+          (let [all-sys (vals sys-map)
+                errors (filter :error all-sys)
+                valid (remove :error all-sys)]
+            (cond
+              (seq errors)
+              (do (swap! error-count inc)
+                  (println (str "  ERROR  " id))
+                  (doseq [e errors]
+                    (println (str "         " (:error e)))))
+
+              (< (count valid) 2)
+              (do (swap! error-count inc)
+                  (println (str "  ERROR  " id " (not enough results)")))
+
+              :else
+              (let [;; Dispatch on what fields are available
+                    has-weight (some :weight valid)
+                    has-total (some :total_score valid)
+                    has-old (some :old_score valid)]
+                (cond
+                  ;; Score decomposition: check total_score + sum_components
+                  has-total
+                  (let [internal-ok
+                        (every?
+                         (fn [r]
+                           (let [total (parse-number (:total_score r))
+                                 sum-c (parse-number (:sum_components r))]
+                             (close-enough? total sum-c tolerance)))
+                         valid)
+                        totals (map #(parse-number (:total_score %)) valid)
+                        ref-total (first totals)
+                        cross-ok (every? #(close-enough? ref-total % tolerance) (rest totals))]
+                    (if (and internal-ok cross-ok)
+                      (do (swap! pass-count inc)
+                          (println (str "  PASS   " id "  "
+                                        (str/join " | "
+                                                  (map (fn [[sys r]]
+                                                         (str (name sys) "="
+                                                              (format "%.6f" (double (parse-number (:total_score r))))))
+                                                       sys-map)))))
+                      (do (swap! fail-count inc)
+                          (println (str "  FAIL   " id
+                                        (when (not internal-ok) " [internal consistency]")
+                                        (when (not cross-ok) " [cross-system mismatch]")))
+                          (doseq [[sys r] sys-map]
+                            (println (str "         " (name sys)
+                                          " total=" (format "%.10f" (double (parse-number (:total_score r))))
+                                          " sum=" (format "%.10f" (double (parse-number (:sum_components r))))))))))
+
+                  ;; Update: check old_score, new_score, weight + invariant
+                  has-old
+                  (let [internal-ok
+                        (every?
+                         (fn [r]
+                           (let [old-s (parse-number (:old_score r))
+                                 new-s (parse-number (:new_score r))
+                                 w (parse-number (:weight r))]
+                             (close-enough? w (- new-s old-s) tolerance)))
+                         valid)
+                        cross-ok
+                        (every?
+                         (fn [field]
+                           (let [vs (map #(parse-number (get % field)) valid)
+                                 ref-v (first vs)]
+                             (every? #(close-enough? ref-v % tolerance) (rest vs))))
+                         [:old_score :new_score :weight])]
+                    (if (and internal-ok cross-ok)
+                      (do (swap! pass-count inc)
+                          (println (str "  PASS   " id "  "
+                                        (str/join " | "
+                                                  (map (fn [[sys r]]
+                                                         (str (name sys)
+                                                              " w=" (format "%.6f" (double (parse-number (:weight r))))))
+                                                       sys-map)))))
+                      (do (swap! fail-count inc)
+                          (println (str "  FAIL   " id
+                                        (when (not internal-ok) " [w != new-old]")
+                                        (when (not cross-ok) " [cross-system mismatch]")))
+                          (doseq [[sys r] sys-map]
+                            (println (str "         " (name sys)
+                                          " old=" (format "%.10f" (double (parse-number (:old_score r))))
+                                          " new=" (format "%.10f" (double (parse-number (:new_score r))))
+                                          " w=" (format "%.10f" (double (parse-number (:weight r))))))))))
+
+                  ;; Assess/generate: compare weight
+                  has-weight
+                  (let [weights (map #(parse-number (:weight %)) valid)
+                        ref-w (first weights)
+                        cross-ok (every? #(close-enough? ref-w % tolerance) (rest weights))]
+                    (if cross-ok
+                      (do (swap! pass-count inc)
+                          (println (str "  PASS   " id "  "
+                                        (str/join " | "
+                                                  (map (fn [[sys r]]
+                                                         (str (name sys) "="
+                                                              (format "%.6f" (double (parse-number (:weight r))))))
+                                                       sys-map)))))
+                      (do (swap! fail-count inc)
+                          (println (str "  FAIL   " id " [cross-system mismatch]"))
+                          (doseq [[sys r] sys-map]
+                            (println (str "         " (name sys)
+                                          " weight=" (format "%.10f" (double (parse-number (:weight r))))))))))
+
+                  :else
+                  (do (swap! error-count inc)
+                      (println (str "  ERROR  " id " (no comparable fields)"))))))))
+
+        (println)
+        (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
+                      @error-count " error"))
+        {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
+
 ;; --- Main ---
 
 (defn run-test-suite [test-type spec-file tolerance]
@@ -513,8 +908,10 @@
         gfi-spec (str specs-dir "/gfi_tests.json")
         mlx-spec (str specs-dir "/mlx_ops_tests.json")
         update-spec (str specs-dir "/update_tests.json")
+        project-regen-spec (str specs-dir "/project_regen_tests.json")
+        combinator-spec (str specs-dir "/combinator_tests.json")
         args (vec *command-line-args*)
-        suites (if (seq args) (set args) #{"mlx_ops" "logprob" "assess" "score_decomposition" "update"})]
+        suites (if (seq args) (set args) #{"mlx_ops" "logprob" "assess" "score_decomposition" "update" "project" "regenerate" "combinator"})]
 
     (println "╔════════════════════════════════════════════╗")
     (println "║  GenMLX Cross-System Verification Harness  ║")
@@ -538,7 +935,16 @@
             (conj (run-score-decomposition-suite gfi-spec 1e-4))
 
             (contains? suites "update")
-            (conj (run-update-suite update-spec 1e-4)))
+            (conj (run-update-suite update-spec 1e-4))
+
+            (contains? suites "project")
+            (conj (run-project-suite project-regen-spec 1e-4))
+
+            (contains? suites "regenerate")
+            (conj (run-regenerate-suite project-regen-spec 1e-4))
+
+            (contains? suites "combinator")
+            (conj (run-combinator-suite combinator-spec 1e-4)))
 
           totals (reduce
                   (fn [acc r]

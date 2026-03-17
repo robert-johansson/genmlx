@@ -501,8 +501,13 @@
           _ (rng/seed! key)
           old-score (:score trace)]
       (cond
-        ;; L3.5: auto-analytical regenerate (precomputed transition)
-        (:auto-regenerate-transition schema)
+        ;; L3.5: auto-analytical regenerate — only when a conjugate prior
+        ;; is actually selected. Otherwise the analytical handler marginalizes
+        ;; priors that should remain fixed, producing wrong scores.
+        (and (:auto-regenerate-transition schema)
+             (some (fn [{:keys [prior-addr]}]
+                     (sel/selected? selection prior-addr))
+                   (:conjugate-pairs schema)))
         (run-regen-analytical schema this trace key selection old-score body-fn this)
 
         ;; L1: fully compiled regenerate (M2/M4)

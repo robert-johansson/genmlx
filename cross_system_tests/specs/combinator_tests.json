@@ -1,0 +1,153 @@
+{
+  "description": "Combinator cross-system verification: Map, Unfold, Switch",
+  "tolerance": 1e-4,
+  "notes": "Spec uses 0-based indexing. Gen.jl runner adds 1 for 1-based addressing. Hierarchical choices: {\"0\": {\"y\": 1.5}} means element 0, address :y, value 1.5.",
+  "model_definitions": {
+    "map_kernel": "y ~ Normal(x, 1), applied per-element",
+    "unfold_kernel": "x ~ Normal(state, 1), returns x as new state",
+    "switch_branch_a": "x ~ Normal(0, 1)",
+    "switch_branch_b": "x ~ Normal(10, 1)"
+  },
+  "combinator_tests": [
+    {
+      "id": "map-assess-3elem",
+      "combinator_type": "map",
+      "operation": "assess",
+      "args": [[1.0, 2.0, 3.0]],
+      "choices": {"0": {"y": 1.5}, "1": {"y": 2.5}, "2": {"y": 3.5}},
+      "description": "Map(kernel) with 3 elements, fully constrained. Score = sum of N(x_i, 1) logpdfs at y_i."
+    },
+    {
+      "id": "map-assess-1elem",
+      "combinator_type": "map",
+      "operation": "assess",
+      "args": [[5.0]],
+      "choices": {"0": {"y": 5.3}},
+      "description": "Map(kernel) with 1 element. Score = logpdf(N(5.0, 1), 5.3)."
+    },
+    {
+      "id": "map-assess-5elem",
+      "combinator_type": "map",
+      "operation": "assess",
+      "args": [[0.0, 1.0, 2.0, 3.0, 4.0]],
+      "choices": {"0": {"y": 0.1}, "1": {"y": 1.2}, "2": {"y": 1.8}, "3": {"y": 3.3}, "4": {"y": 4.5}},
+      "description": "Map(kernel) with 5 elements, all constrained."
+    },
+    {
+      "id": "map-score-decomp",
+      "combinator_type": "map",
+      "operation": "score_decomposition",
+      "args": [[1.0, 2.0, 3.0]],
+      "choices": {"0": {"y": 1.5}, "1": {"y": 2.5}, "2": {"y": 3.5}},
+      "expected_components": [
+        {"index": 0, "addr": "y", "dist": "normal", "params": {"mu": 1.0, "sigma": 1.0}, "value": 1.5},
+        {"index": 1, "addr": "y", "dist": "normal", "params": {"mu": 2.0, "sigma": 1.0}, "value": 2.5},
+        {"index": 2, "addr": "y", "dist": "normal", "params": {"mu": 3.0, "sigma": 1.0}, "value": 3.5}
+      ],
+      "description": "Map score = sum of 3 kernel logpdfs. Verify decomposition."
+    },
+    {
+      "id": "map-generate-partial",
+      "combinator_type": "map",
+      "operation": "generate",
+      "args": [[1.0, 2.0, 3.0]],
+      "constraints": {"0": {"y": 1.5}},
+      "description": "Map(kernel) with 3 elements, only element 0 constrained. Weight = logpdf(N(1.0,1), 1.5)."
+    },
+    {
+      "id": "map-update-one",
+      "combinator_type": "map",
+      "operation": "update",
+      "args": [[1.0, 2.0, 3.0]],
+      "initial_choices": {"0": {"y": 1.5}, "1": {"y": 2.5}, "2": {"y": 3.5}},
+      "update_choices": {"1": {"y": 3.0}},
+      "description": "Map update: change element 1's y from 2.5 to 3.0."
+    },
+    {
+      "id": "unfold-assess-3step",
+      "combinator_type": "unfold",
+      "operation": "assess",
+      "args": [3, 0.0],
+      "choices": {"0": {"x": 0.5}, "1": {"x": 1.0}, "2": {"x": 1.5}},
+      "description": "Unfold(kernel) 3 steps from init=0.0. Step 0: x~N(0,1) at 0.5, Step 1: x~N(0.5,1) at 1.0, Step 2: x~N(1.0,1) at 1.5."
+    },
+    {
+      "id": "unfold-assess-1step",
+      "combinator_type": "unfold",
+      "operation": "assess",
+      "args": [1, 0.0],
+      "choices": {"0": {"x": 0.5}},
+      "description": "Unfold(kernel) 1 step from init=0.0. Score = logpdf(N(0,1), 0.5)."
+    },
+    {
+      "id": "unfold-score-decomp",
+      "combinator_type": "unfold",
+      "operation": "score_decomposition",
+      "args": [3, 0.0],
+      "choices": {"0": {"x": 0.5}, "1": {"x": 1.0}, "2": {"x": 1.5}},
+      "expected_components": [
+        {"index": 0, "addr": "x", "dist": "normal", "params": {"mu": 0.0, "sigma": 1.0}, "value": 0.5},
+        {"index": 1, "addr": "x", "dist": "normal", "params": {"mu": 0.5, "sigma": 1.0}, "value": 1.0},
+        {"index": 2, "addr": "x", "dist": "normal", "params": {"mu": 1.0, "sigma": 1.0}, "value": 1.5}
+      ],
+      "description": "Unfold score = sum of 3 step logpdfs with state threading. Verify decomposition."
+    },
+    {
+      "id": "unfold-chained-state",
+      "combinator_type": "unfold",
+      "operation": "assess",
+      "args": [3, 0.0],
+      "choices": {"0": {"x": 1.0}, "1": {"x": 2.0}, "2": {"x": 3.0}},
+      "description": "Unfold state threading: init=0, step0 x~N(0,1)=1, step1 x~N(1,1)=2, step2 x~N(2,1)=3. Each step's mean = previous output."
+    },
+    {
+      "id": "unfold-generate-partial",
+      "combinator_type": "unfold",
+      "operation": "generate",
+      "args": [3, 0.0],
+      "constraints": {"0": {"x": 0.5}},
+      "description": "Unfold 3 steps, only step 0 constrained. Weight = logpdf(N(0,1), 0.5)."
+    },
+    {
+      "id": "unfold-update-step",
+      "combinator_type": "unfold",
+      "operation": "update",
+      "args": [3, 0.0],
+      "initial_choices": {"0": {"x": 0.5}, "1": {"x": 1.0}, "2": {"x": 1.5}},
+      "update_choices": {"2": {"x": 2.0}},
+      "description": "Unfold update: change step 2's x from 1.5 to 2.0."
+    },
+    {
+      "id": "switch-branch0",
+      "combinator_type": "switch",
+      "operation": "assess",
+      "args": [0],
+      "choices": {"x": 0.5},
+      "description": "Switch selects branch 0 (N(0,1)). Assess at x=0.5."
+    },
+    {
+      "id": "switch-branch1",
+      "combinator_type": "switch",
+      "operation": "assess",
+      "args": [1],
+      "choices": {"x": 10.5},
+      "description": "Switch selects branch 1 (N(10,1)). Assess at x=10.5."
+    },
+    {
+      "id": "switch-assess-branch0",
+      "combinator_type": "switch",
+      "operation": "assess",
+      "args": [0],
+      "choices": {"x": -1.0},
+      "description": "Switch branch 0: score = logpdf(N(0,1), -1.0). Verify equals branch_a score only."
+    },
+    {
+      "id": "switch-assess-branch1",
+      "combinator_type": "switch",
+      "operation": "assess",
+      "args": [1],
+      "choices": {"x": 9.0},
+      "description": "Switch branch 1: score = logpdf(N(10,1), 9.0). Verify equals branch_b score only."
+    }
+  ]
+}

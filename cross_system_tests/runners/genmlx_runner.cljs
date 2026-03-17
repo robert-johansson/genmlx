@@ -8,6 +8,7 @@
             [genmlx.dynamic :as dyn]
             [genmlx.gen :refer [gen]]
             [genmlx.choicemap :as cm]
+            [genmlx.combinators :as comb]
             [genmlx.selection :as sel]
             ["fs" :as fs]))
 
@@ -285,6 +286,54 @@
 
 ;; --- Update ---
 
+;; --- Selection helper ---
+
+(defn make-selection [sel-spec]
+  (case (get sel-spec "type")
+    "addrs" (apply sel/select (map keyword (get sel-spec "addrs")))
+    "all"   sel/all
+    "none"  sel/none))
+
+;; --- Project ---
+
+(defn eval-project [spec]
+  (let [model-name (get spec "model")
+        model      (get model-lookup model-name)
+        raw-args   (get spec "args" [])
+        args       (make-args model-name raw-args)
+        cm         (make-choicemap (get spec "choices"))
+        sel        (make-selection (get spec "selection"))]
+    (try
+      (let [gen-result (p/generate model args cm)
+            trace      (:trace gen-result)
+            weight     (mx/item (p/project model trace sel))
+            score      (mx/item (:score trace))]
+        #js {"id" (get spec "id") "weight" weight "score" score})
+      (catch :default e
+        #js {"id" (get spec "id") "error" (str e)}))))
+
+;; --- Regenerate ---
+
+(defn eval-regenerate [spec]
+  (let [model-name (get spec "model")
+        model      (get model-lookup model-name)
+        raw-args   (get spec "args" [])
+        args       (make-args model-name raw-args)
+        cm         (make-choicemap (get spec "choices"))
+        sel        (make-selection (get spec "selection"))]
+    (try
+      (let [gen-result   (p/generate model args cm)
+            trace        (:trace gen-result)
+            old-score    (mx/item (:score trace))
+            regen-result (p/regenerate model trace sel)
+            new-score    (mx/item (:score (:trace regen-result)))
+            weight       (mx/item (:weight regen-result))]
+        #js {"id" (get spec "id") "old_score" old-score "new_score" new-score "weight" weight})
+      (catch :default e
+        #js {"id" (get spec "id") "error" (str e)}))))
+
+;; --- Update ---
+
 (defn eval-update [spec]
   (let [model-name (get spec "model")
         model      (get model-lookup model-name)
@@ -376,6 +425,113 @@
       (catch :default e
         #js {"id" (get spec "id") "error" (str e)}))))
 
+;; --- Combinator models ---
+
+(def map-kernel
+  (gen [x]
+    (trace :y (dist/gaussian (mx/scalar x) (mx/scalar 1)))))
+
+(def map-model (dyn/auto-key (comb/map-combinator (dyn/auto-key map-kernel))))
+
+(def unfold-kernel
+  (gen [t state]
+    (let [x (trace :x (dist/gaussian (mx/scalar state) (mx/scalar 1)))]
+      x)))
+
+(def unfold-model (dyn/auto-key (comb/unfold-combinator (dyn/auto-key unfold-kernel))))
+
+(def switch-branch-a
+  (dyn/auto-key (gen [] (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1))))))
+
+(def switch-branch-b
+  (dyn/auto-key (gen [] (trace :x (dist/gaussian (mx/scalar 10) (mx/scalar 1))))))
+
+(def switch-model (comb/switch-combinator switch-branch-a switch-branch-b))
+
+(defn make-hierarchical-choicemap
+  "Convert {\"0\": {\"y\": 1.5}, \"1\": {\"y\": 2.5}} to hierarchical choicemap."
+  [choices-map]
+  (reduce-kv
+   (fn [cm idx-str sub-map]
+     (let [idx (js/parseInt idx-str)]
+       (reduce-kv
+        (fn [cm2 addr-str val]
+          (cm/set-choice cm2 [idx (keyword addr-str)] (mx/scalar val)))
+        cm sub-map)))
+   (cm/choicemap)
+   choices-map))
+
+(defn make-combinator-args [comb-type raw-args]
+  (case comb-type
+    "map"    [(vec (first raw-args))]
+    "unfold" [(int (first raw-args)) (second raw-args)]
+    "switch" [(int (first raw-args))]))
+
+(defn get-combinator-model [comb-type]
+  (case comb-type
+    "map"    map-model
+    "unfold" unfold-model
+    "switch" switch-model))
+
+(defn make-combinator-choicemap [comb-type choices-map]
+  (case comb-type
+    ;; Switch choices are flat (not hierarchical)
+    "switch" (make-choicemap choices-map)
+    ;; Map and Unfold use hierarchical addressing
+    (make-hierarchical-choicemap choices-map)))
+
+(defn eval-combinator [spec]
+  (let [comb-type (get spec "combinator_type")
+        operation (get spec "operation")
+        raw-args  (get spec "args")
+        model     (get-combinator-model comb-type)
+        args      (make-combinator-args comb-type raw-args)]
+    (try
+      (case operation
+        "assess"
+        (let [cm     (make-combinator-choicemap comb-type (get spec "choices"))
+              result (p/assess model args cm)]
+          #js {"id" (get spec "id") "weight" (mx/item (:weight result))})
+
+        "score_decomposition"
+        (let [cm         (make-combinator-choicemap comb-type (get spec "choices"))
+              result     (p/assess model args cm)
+              total      (mx/item (:weight result))
+              components (get spec "expected_components")
+              comp-scores
+              (mapv (fn [comp]
+                      (let [d  (case (get comp "dist")
+                                 "normal" (dist/gaussian (mx/scalar (get-in comp ["params" "mu"]))
+                                                         (mx/scalar (get-in comp ["params" "sigma"]))))
+                            lp (mx/item (dc/dist-log-prob d (mx/scalar (get comp "value"))))]
+                        {"index" (get comp "index") "logprob" lp}))
+                    components)
+              sum-comp (reduce + (map #(get % "logprob") comp-scores))]
+          #js {"id"             (get spec "id")
+               "total_score"    total
+               "components"     (clj->js comp-scores)
+               "sum_components" sum-comp})
+
+        "generate"
+        (let [constraints (make-combinator-choicemap comb-type (get spec "constraints"))
+              result      (p/generate model args constraints)
+              weight      (mx/item (:weight result))
+              score       (mx/item (:score (:trace result)))]
+          #js {"id" (get spec "id") "weight" weight "score" score})
+
+        "update"
+        (let [init-cm  (make-combinator-choicemap comb-type (get spec "initial_choices"))
+              upd-cm   (make-combinator-choicemap comb-type (get spec "update_choices"))
+              gen-r    (p/generate model args init-cm)
+              old-tr   (:trace gen-r)
+              old-score (mx/item (:score old-tr))
+              upd-r    (p/update model old-tr upd-cm)
+              new-score (mx/item (:score (:trace upd-r)))
+              weight   (mx/item (:weight upd-r))]
+          #js {"id" (get spec "id") "old_score" old-score "new_score" new-score "weight" weight}))
+      (catch :default e
+        #js {"id" (get spec "id") "error" (str e)}))))
+
 ;; --- JSON sanitization (JS JSON.stringify turns NaN/Infinity into null) ---
 
 (defn sanitize-result [v]
@@ -401,6 +557,9 @@
                 "score_decomposition"  (mapv eval-score-decomposition
                                              (get input-data "score_decomposition_tests"))
                 "update"               (mapv eval-update   (get input-data "tests"))
+                "project"              (mapv eval-project  (get input-data "project_tests"))
+                "regenerate"           (mapv eval-regenerate (get input-data "regenerate_tests"))
+                "combinator"           (mapv eval-combinator (get input-data "combinator_tests"))
                 "mlx_ops"              (mapv (comp sanitize-js-obj eval-mlx-op) (get input-data "tests"))
                 (do (.error js/console (str "Unknown test type: " test-type))
                     (js/process.exit 1)))

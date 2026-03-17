@@ -298,6 +298,179 @@ function eval_update(spec)
     end
 end
 
+# --- Phase 3: Project + Regenerate ---
+
+function make_selection(sel_spec)
+    sel_type = sel_spec["type"]
+    if sel_type == "addrs"
+        select([Symbol(a) for a in sel_spec["addrs"]]...)
+    elseif sel_type == "all"
+        selectall()
+    else  # "none"
+        select()
+    end
+end
+
+function eval_project(spec)
+    model_name = spec["model"]
+    model = MODEL_LOOKUP[model_name]
+    args = get_model_args(model_name, spec)
+    cm = make_choicemap(spec["choices"])
+
+    try
+        fix_bool_choices!(cm, model_name, spec["choices"])
+        (trace, _) = generate(model, args, cm)
+        sel = make_selection(spec["selection"])
+        weight = project(trace, sel)
+        score = get_score(trace)
+        Dict("id" => spec["id"], "weight" => weight, "score" => score)
+    catch e
+        Dict("id" => spec["id"], "error" => string(e))
+    end
+end
+
+function eval_regenerate(spec)
+    model_name = spec["model"]
+    model = MODEL_LOOKUP[model_name]
+    args = get_model_args(model_name, spec)
+    cm = make_choicemap(spec["choices"])
+
+    try
+        fix_bool_choices!(cm, model_name, spec["choices"])
+        (trace, _) = generate(model, args, cm)
+        old_score = get_score(trace)
+        sel = make_selection(spec["selection"])
+        (new_trace, weight) = regenerate(trace, sel)
+        new_score = get_score(new_trace)
+        Dict("id" => spec["id"], "old_score" => old_score, "new_score" => new_score, "weight" => weight)
+    catch e
+        Dict("id" => spec["id"], "error" => string(e))
+    end
+end
+
+# --- Phase 4: Combinator models ---
+
+@gen function map_kernel(x::Float64)
+    y = {:y} ~ normal(x, 1.0)
+    return y
+end
+map_model = Map(map_kernel)
+
+@gen function unfold_kernel(t::Int, state::Float64)
+    x = {:x} ~ normal(state, 1.0)
+    return x
+end
+unfold_model = Unfold(unfold_kernel)
+
+@gen function switch_branch_a()
+    x = {:x} ~ normal(0.0, 1.0)
+    return x
+end
+@gen function switch_branch_b()
+    x = {:x} ~ normal(10.0, 1.0)
+    return x
+end
+switch_model = Switch(switch_branch_a, switch_branch_b)
+
+function make_combinator_choicemap(comb_type, choices_dict)
+    cm = Gen.choicemap()
+    if comb_type == "switch"
+        # Switch choices are flat
+        for (addr_str, val) in choices_dict
+            cm[Symbol(addr_str)] = Float64(val)
+        end
+    else
+        # Map/Unfold: hierarchical with 0-based → 1-based conversion
+        for (idx_str, sub_dict) in choices_dict
+            idx = parse(Int, idx_str) + 1  # 0-based → 1-based
+            for (addr_str, val) in sub_dict
+                cm[(idx => Symbol(addr_str))] = Float64(val)
+            end
+        end
+    end
+    return cm
+end
+
+function get_combinator_model(comb_type)
+    if comb_type == "map"
+        map_model
+    elseif comb_type == "unfold"
+        unfold_model
+    elseif comb_type == "switch"
+        switch_model
+    else
+        error("Unknown combinator type: $comb_type")
+    end
+end
+
+function get_combinator_args(comb_type, raw_args)
+    if comb_type == "map"
+        (Float64.(raw_args[1]),)
+    elseif comb_type == "unfold"
+        (Int(raw_args[1]), Float64(raw_args[2]))
+    elseif comb_type == "switch"
+        # 0-based → 1-based for Gen.jl Switch
+        (Int(raw_args[1]) + 1,)
+    else
+        error("Unknown combinator type: $comb_type")
+    end
+end
+
+function eval_combinator(spec)
+    comb_type = spec["combinator_type"]
+    operation = spec["operation"]
+    raw_args = spec["args"]
+    model = get_combinator_model(comb_type)
+    args = get_combinator_args(comb_type, raw_args)
+
+    try
+        if operation == "assess"
+            cm = make_combinator_choicemap(comb_type, spec["choices"])
+            (weight, _) = assess(model, args, cm)
+            Dict("id" => spec["id"], "weight" => weight)
+
+        elseif operation == "score_decomposition"
+            cm = make_combinator_choicemap(comb_type, spec["choices"])
+            (trace, _) = generate(model, args, cm)
+            total_score = get_score(trace)
+            components = spec["expected_components"]
+            comp_scores = Dict{String, Float64}()
+            for comp in components
+                lp = compute_component_logprob(comp)
+                comp_scores["$(comp["index"])_$(comp["addr"])"] = lp
+            end
+            sum_comp = sum(values(comp_scores))
+            Dict("id" => spec["id"],
+                 "total_score" => total_score,
+                 "components" => comp_scores,
+                 "sum_components" => sum_comp)
+
+        elseif operation == "generate"
+            cm = make_combinator_choicemap(comb_type, spec["constraints"])
+            (trace, weight) = generate(model, args, cm)
+            score = get_score(trace)
+            Dict("id" => spec["id"], "weight" => weight, "score" => score)
+
+        elseif operation == "update"
+            init_cm = make_combinator_choicemap(comb_type, spec["initial_choices"])
+            (trace, _) = generate(model, args, init_cm)
+            old_score = get_score(trace)
+            upd_cm = make_combinator_choicemap(comb_type, spec["update_choices"])
+            # Combinator update: no argdiffs needed for same args
+            (new_trace, weight, _, _) = update(trace, args, map(_ -> NoChange(), args), upd_cm)
+            new_score = get_score(new_trace)
+            Dict("id" => spec["id"],
+                 "old_score" => old_score,
+                 "new_score" => new_score,
+                 "weight" => weight)
+        else
+            Dict("id" => spec["id"], "error" => "unsupported operation: $operation")
+        end
+    catch e
+        Dict("id" => spec["id"], "error" => string(e))
+    end
+end
+
 # --- Main: read stdin, write stdout ---
 
 function main()
@@ -324,6 +497,18 @@ function main()
     elseif test_type == "update"
         for spec in input["tests"]
             push!(results, eval_update(spec))
+        end
+    elseif test_type == "project"
+        for spec in input["project_tests"]
+            push!(results, eval_project(spec))
+        end
+    elseif test_type == "regenerate"
+        for spec in input["regenerate_tests"]
+            push!(results, eval_regenerate(spec))
+        end
+    elseif test_type == "combinator"
+        for spec in input["combinator_tests"]
+            push!(results, eval_combinator(spec))
         end
     else
         println(stderr, "Unknown test type: $test_type")

@@ -1,0 +1,152 @@
+{
+  "description": "Project and Regenerate cross-system verification",
+  "tolerance": 1e-4,
+  "project_tests": [
+    {
+      "id": "project-single-x",
+      "model": "single_gaussian",
+      "args": [],
+      "choices": {"x": 0.5},
+      "selection": {"type": "addrs", "addrs": ["x"]},
+      "description": "x ~ N(0,1), project onto :x. Should equal logpdf(N(0,1), 0.5)"
+    },
+    {
+      "id": "project-single-all",
+      "model": "single_gaussian",
+      "args": [],
+      "choices": {"x": 0.5},
+      "selection": {"type": "all"},
+      "description": "x ~ N(0,1), project onto all = total score"
+    },
+    {
+      "id": "project-two-normals-mu",
+      "model": "two_normals",
+      "args": [],
+      "choices": {"mu": 2.0, "x": 3.0},
+      "selection": {"type": "addrs", "addrs": ["mu"]},
+      "description": "Project onto :mu only. Should equal logpdf(N(0,10), 2.0)"
+    },
+    {
+      "id": "project-two-normals-x",
+      "model": "two_normals",
+      "args": [],
+      "choices": {"mu": 2.0, "x": 3.0},
+      "selection": {"type": "addrs", "addrs": ["x"]},
+      "description": "Project onto :x only. Should equal logpdf(N(2,1), 3.0)"
+    },
+    {
+      "id": "project-two-normals-both",
+      "model": "two_normals",
+      "args": [],
+      "choices": {"mu": 2.0, "x": 3.0},
+      "selection": {"type": "addrs", "addrs": ["mu", "x"]},
+      "description": "Project onto both = total score"
+    },
+    {
+      "id": "project-linreg-latents",
+      "model": "linear_regression",
+      "args": [[1.0, 2.0, 3.0]],
+      "choices": {"slope": 2.0, "intercept": 1.0, "y0": 3.1, "y1": 5.0, "y2": 6.9},
+      "selection": {"type": "addrs", "addrs": ["slope", "intercept"]},
+      "description": "Project onto latents only (slope, intercept)"
+    },
+    {
+      "id": "project-linreg-obs",
+      "model": "linear_regression",
+      "args": [[1.0, 2.0, 3.0]],
+      "choices": {"slope": 2.0, "intercept": 1.0, "y0": 3.1, "y1": 5.0, "y2": 6.9},
+      "selection": {"type": "addrs", "addrs": ["y0", "y1", "y2"]},
+      "description": "Project onto observations only (y0, y1, y2)"
+    },
+    {
+      "id": "project-beta-bernoulli-p",
+      "model": "beta_bernoulli",
+      "args": [],
+      "choices": {"p": 0.7, "x": 1},
+      "selection": {"type": "addrs", "addrs": ["p"]},
+      "description": "Project onto :p only. Should equal logpdf(Beta(2,2), 0.7)"
+    },
+    {
+      "id": "project-many-mu",
+      "model": "many_addresses",
+      "args": [],
+      "choices": {"mu": 2.0, "y0": 0.0, "y1": 0.5, "y2": 1.0, "y3": 1.5, "y4": 2.0, "y5": 2.5, "y6": 3.0, "y7": 3.5, "y8": 4.0, "y9": 4.5},
+      "selection": {"type": "addrs", "addrs": ["mu"]},
+      "description": "Project onto :mu only in 11-site model"
+    },
+    {
+      "id": "project-many-obs",
+      "model": "many_addresses",
+      "args": [],
+      "choices": {"mu": 2.0, "y0": 0.0, "y1": 0.5, "y2": 1.0, "y3": 1.5, "y4": 2.0, "y5": 2.5, "y6": 3.0, "y7": 3.5, "y8": 4.0, "y9": 4.5},
+      "selection": {"type": "addrs", "addrs": ["y0", "y1", "y2", "y3", "y4", "y5", "y6", "y7", "y8", "y9"]},
+      "description": "Project onto all 10 observations in 11-site model"
+    }
+  ],
+  "regenerate_tests": [
+    {
+      "id": "regen-single-x",
+      "model": "single_gaussian",
+      "args": [],
+      "choices": {"x": 0.5},
+      "selection": {"type": "addrs", "addrs": ["x"]},
+      "invariant": "weight = 0 (single site from prior, proposal = prior)"
+    },
+    {
+      "id": "regen-two-normals-mu",
+      "model": "two_normals",
+      "args": [],
+      "choices": {"mu": 2.0, "x": 3.0},
+      "selection": {"type": "addrs", "addrs": ["mu"]},
+      "invariant": "weight = new_score - old_score + logpdf(old_mu) - logpdf(new_mu)"
+    },
+    {
+      "id": "regen-two-normals-x",
+      "model": "two_normals",
+      "args": [],
+      "choices": {"mu": 2.0, "x": 3.0},
+      "selection": {"type": "addrs", "addrs": ["x"]},
+      "invariant": "weight = new_score - old_score + logpdf(old_x|mu) - logpdf(new_x|mu)"
+    },
+    {
+      "id": "regen-linreg-slope",
+      "model": "linear_regression",
+      "args": [[1.0, 2.0, 3.0]],
+      "choices": {"slope": 2.0, "intercept": 1.0, "y0": 3.1, "y1": 5.0, "y2": 6.9},
+      "selection": {"type": "addrs", "addrs": ["slope"]},
+      "invariant": "weight formula: new_score - old_score + old_selected_logpdf - new_selected_logpdf"
+    },
+    {
+      "id": "regen-beta-bernoulli-p",
+      "model": "beta_bernoulli",
+      "args": [],
+      "choices": {"p": 0.7, "x": 1},
+      "selection": {"type": "addrs", "addrs": ["p"]},
+      "invariant": "weight formula holds for beta prior"
+    },
+    {
+      "id": "regen-many-mu",
+      "model": "many_addresses",
+      "args": [],
+      "choices": {"mu": 2.0, "y0": 0.0, "y1": 0.5, "y2": 1.0, "y3": 1.5, "y4": 2.0, "y5": 2.5, "y6": 3.0, "y7": 3.5, "y8": 4.0, "y9": 4.5},
+      "selection": {"type": "addrs", "addrs": ["mu"]},
+      "invariant": "weight formula holds for mu with 10 downstream obs"
+    },
+    {
+      "id": "regen-empty-selection",
+      "model": "two_normals",
+      "args": [],
+      "choices": {"mu": 2.0, "x": 3.0},
+      "selection": {"type": "none"},
+      "invariant": "NEGATIVE TEST: weight = 0, trace unchanged (no sites regenerated)"
+    },
+    {
+      "id": "regen-all-sites",
+      "model": "single_gaussian",
+      "args": [],
+      "choices": {"x": 0.5},
+      "selection": {"type": "all"},
+      "invariant": "weight = 0 (all sites from prior, proposal = prior)"
+    }
+  ]
+}
