@@ -378,13 +378,30 @@
 ;; Batched Unfold SMC — one vgenerate call per timestep for all particles
 ;; ---------------------------------------------------------------------------
 
+(defn- resample-state
+  "Resample state by indices. Handles nil, MLX array, and map-valued state."
+  [state indices]
+  (cond
+    (nil? state) nil
+    (map? state) (into {} (map (fn [[k v]] [k (mx/take-idx v indices)]) state))
+    :else (mx/take-idx state indices)))
+
+(defn- materialize-state! [state]
+  (cond
+    (nil? state) nil
+    (map? state) (mx/materialize! (vals state))
+    :else (mx/materialize! state)))
+
 (defn batched-smc-unfold
   "Batched bootstrap particle filter for sequential models.
    Runs kernel ONCE per timestep for all N particles via vgenerate.
 
    kernel: vectorization-compatible gen fn taking [t state]
-   init-state: initial state (nil for HMM)
+   init-state: initial state (nil for HMM, or map/array)
    observations-seq: sequence of kernel-level choice maps
+
+   State can be an MLX array, a map of MLX arrays, or nil.
+   Map-valued state is resampled per-key (each value indexed by particle).
 
    Returns {:log-ml MLX-scalar :final-states [N]-shaped :final-ess number}"
   [{:keys [particles key callback] :or {particles 100}}
@@ -393,7 +410,7 @@
         n-steps (count obs-vec)
         kernel (dyn/auto-key kernel)]
     (loop [t 0
-           state init-state           ;; nil at t=0, [N]-shaped for t>0
+           state init-state
            log-ml (mx/scalar 0.0)
            rk (rng/ensure-key key)]
       (if (>= t n-steps)
@@ -411,11 +428,11 @@
               ml-inc (mx/subtract (mx/logsumexp step-weights)
                                   (mx/scalar (js/Math.log particles)))
               _ (mx/materialize! ml-inc)
-              ;; 3. Resample
+              ;; 3. Resample (handles array, map, or nil state)
               indices (vec/systematic-resample-indices step-weights
                                                        particles resample-key)
-              resampled-state (mx/take-idx new-state indices)
-              _ (mx/materialize! resampled-state)
+              resampled-state (resample-state new-state indices)
+              _ (materialize-state! resampled-state)
               ;; 4. Periodic cleanup
               _ (when (zero? (mod (inc t) 5)) (mx/clear-cache!))
               _ (when callback (callback {:step t}))]

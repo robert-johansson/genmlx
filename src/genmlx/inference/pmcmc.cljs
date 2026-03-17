@@ -131,7 +131,10 @@
           (when callback
             (callback {:iter i :params (extract params')
                        :log-ml log-ml' :accepted? accepted?}))
-          (when (zero? (mod (inc i) 10)) (mx/sweep-dead-arrays!))
+          (when (zero? (mod (inc i) 10))
+            (mx/sweep-dead-arrays!)
+            (when (> (mx/get-cache-memory) (* 512 1024 1024))
+              (mx/clear-cache!)))
           (recur (inc i) params' log-ml'
                  (if past-burn? (conj! samples (extract params')) samples)
                  (if past-burn? (conj! log-mls log-ml') log-mls)

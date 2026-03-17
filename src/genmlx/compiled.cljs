@@ -405,7 +405,8 @@
    "stack" mx/stack "concatenate" mx/concatenate
    "transpose" mx/transpose "inner" mx/inner "outer" mx/outer
    "sign" mx/sign "tan" mx/tan "less-equal" mx/less-equal
-   "less" mx/less "equal" mx/equal "lgamma" mx/lgamma})
+   "less" mx/less "equal" mx/equal "lgamma" mx/lgamma
+   "index" mx/index "take-idx" mx/take-idx "logsumexp" mx/logsumexp})
 
 (def ^:private cljs-fns
   "ClojureScript core math → MLX equivalents."
@@ -497,7 +498,7 @@
     (string? form) (fn [_v _a] form)
     (nil? form) (fn [_v _a] nil)
 
-    ;; Symbol → resolve through binding env
+    ;; Symbol → resolve through binding env, then try closed-over var
     (symbol? form)
     (let [info (get binding-env (name form))]
       (case (:kind info)
@@ -506,7 +507,16 @@
         :expr (when-not (contains? visited (name form))
                 (compile-expr (:form info) binding-env
                               (conj visited (name form))))
-        nil))
+        ;; Not in binding-env: try to resolve as a closed-over var (captured constant)
+        (when-let [resolved (try (deref (resolve form)) (catch :default _ nil))]
+          (fn [_v _a] resolved))))
+
+    ;; Keyword-as-function: (:key arg) → (get arg :key) — common map access pattern
+    (and (seq? form) (seq form) (keyword? (first form)))
+    (let [kw (first form)
+          carg (compile-expr (second form) binding-env visited)]
+      (when carg
+        (fn [v a] (get (carg v a) kw))))
 
     ;; Function call (or trace reference in return position)
     (and (seq? form) (seq form) (symbol? (first form)))
@@ -537,6 +547,17 @@
     (let [celems (mapv #(compile-expr % binding-env visited) form)]
       (when (every? some? celems)
         (fn [v a] (mapv #(% v a) celems))))
+
+    ;; Map literal — common for Unfold kernel return values {:dep dep :ac ac ...}
+    (map? form)
+    (let [compiled-entries
+          (mapv (fn [[k val-form]]
+                  (let [ck (compile-expr k binding-env visited)
+                        cv (compile-expr val-form binding-env visited)]
+                    (when (and ck cv) [ck cv])))
+                form)]
+      (when (every? some? compiled-entries)
+        (fn [v a] (into {} (mapv (fn [[ck cv]] [(ck v a) (cv v a)]) compiled-entries)))))
 
     :else nil))
 

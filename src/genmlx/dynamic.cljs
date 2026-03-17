@@ -420,9 +420,12 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- analytical-applicable?
-  "Check if L3 auto-analytical handlers apply for the given schema + constraints."
+  "Check if L3 auto-analytical handlers apply for the given schema + constraints.
+   Skips analytical path inside mx/grad or mx/value-and-grad because the
+   analytical handler uses volatile! which breaks gradient flow."
   [schema constraints]
-  (and (:auto-handlers schema)
+  (and (not (mx/in-grad?))
+       (:auto-handlers schema)
        (auto-analytical/some-conjugate-obs-constrained?
         (:conjugate-pairs schema) constraints)))
 

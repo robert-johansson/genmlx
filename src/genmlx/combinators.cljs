@@ -310,11 +310,12 @@
 ;; Like Gen.jl's Unfold combinator for time-series models.
 
 (defn- unpack-fused-outputs
-  "Unpack fused output tensor [T, K+1] into per-step ChoiceMaps and retvals.
+  "Unpack fused output tensor [T, K+N] into per-step ChoiceMaps and retvals.
    addr-order: [keyword...] mapping column index 0..K-1 to addresses.
-   Column K is the retval (new state).
+   state-keys: nil for scalar state (column K = retval),
+               or [keyword...] for map state (columns K..K+N-1 = state values).
    Returns {:choices cm :states [retval...] :step-scores [score...]}."
-  [outputs-tensor scores-tensor T addr-order]
+  [outputs-tensor scores-tensor T addr-order state-keys]
   (let [n-sites (count addr-order)]
     (loop [t 0
            choices cm/EMPTY
@@ -328,7 +329,11 @@
                          (cm/set-value scm addr (mx/index row idx)))
                        cm/EMPTY
                        (map-indexed vector addr-order))
-              retval (mx/index row n-sites)
+              retval (if state-keys
+                       (into {} (map-indexed
+                                 (fn [i k] [k (mx/index row (+ n-sites i))])
+                                 state-keys))
+                       (mx/index row n-sites))
               step-score (mx/index scores-tensor t)]
           (recur (inc t)
                  (cm/set-choice choices [t] step-cm)
@@ -365,15 +370,19 @@
 (defn- unfold-simulate-fused
   "Fused Unfold simulate: 2 Metal dispatches for T steps."
   [this args kernel fused-cache n init-state extra]
-  (let [{:keys [compiled-fn noise-dim addr-order noise-site-types]}
+  (let [{:keys [compiled-fn noise-dim addr-order noise-site-types state-keys]}
         (get-or-build-fused-unfold fused-cache kernel n extra)
         key (rng/fresh-key)
         noise (cops/generate-noise-matrix key n noise-site-types)
+        ;; Pack map init-state to flat [N] array for compiled fn
+        init-flat (if state-keys
+                    (mx/stack (mapv #(mx/ensure-array (get init-state %)) state-keys))
+                    (mx/ensure-array init-state))
         [outputs-tensor scores-tensor total-score]
-        (compiled-fn (mx/ensure-array init-state) noise)
+        (compiled-fn init-flat noise)
         _ (mx/materialize! outputs-tensor scores-tensor total-score)
         {:keys [choices states step-scores]}
-        (unpack-fused-outputs outputs-tensor scores-tensor n addr-order)]
+        (unpack-fused-outputs outputs-tensor scores-tensor n addr-order state-keys)]
     (with-meta
       (tr/make-trace {:gen-fn this :args args
                       :choices choices :retval states :score total-score})

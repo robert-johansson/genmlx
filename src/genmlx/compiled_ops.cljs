@@ -832,12 +832,13 @@
 (defn make-fused-unfold-simulate
   "Build a fused unfold simulate: T steps as single mx/compile-fn invocation.
    Auto-generates step function from kernel schema.
-   Returns {:compiled-fn :noise-dim :addr-order :noise-site-types :extra-args}
+   Returns {:compiled-fn :noise-dim :addr-order :noise-site-types :extra-args :state-keys}
    or nil if kernel can't be fused.
 
    The compiled-fn signature:
-     (fn [init-state noise-2d] -> [outputs-tensor [T,K+1], step-scores [T], total-score])
-   where outputs columns 0..K-1 are site values in addr-order, column K is retval."
+     (fn [init-state noise-2d] -> [outputs-tensor [T,K+N], step-scores [T], total-score])
+   where outputs columns 0..K-1 are site values in addr-order, columns K..K+N-1 are
+   state values (N=1 for scalar state, N=len(state-keys) for map state)."
   [schema source T extra-args]
   (when (and (:static? schema)
              (seq (:trace-sites schema))
@@ -851,8 +852,11 @@
           noise-dim (count noise-site-types)
           fused-steps (mapv (fn [spec ni] (build-fused-site-step spec ni))
                             site-specs noise-indices)
-          ;; Compile return expression
+          ;; Compile return expression — detect map-valued state
           return-expr (compiled/extract-return-expr (:return-form schema))
+          map-state? (map? return-expr)
+          state-keys (when map-state? (vec (sort (keys return-expr))))
+          n-state (if map-state? (count state-keys) 1)
           retval-fn (compiled/compile-expr return-expr binding-env #{})
           addr-order (mapv :addr static-sites)
           n-sites (count static-sites)]
@@ -872,7 +876,13 @@
                   (if (>= t T)
                     [(mx/stack outputs) (mx/stack scores) total-score]
                     (let [t-arr (mx/scalar (float t))
-                          args-vec (into [t-arr state] extra-arrs)
+                          ;; Unpack flat state to map for map-state kernels
+                          state-for-args (if state-keys
+                                          (into {} (map-indexed
+                                                    (fn [i k] [k (mx/index state i)])
+                                                    state-keys))
+                                          state)
+                          args-vec (into [t-arr state-for-args] extra-arrs)
                           noise-row (mx/index noise-2d t)
                           result (reduce
                                   (fn [st step-f] (step-f st args-vec noise-row))
@@ -880,17 +890,25 @@
                                   fused-steps)
                           new-state (retval-fn (:values result) args-vec)
                           step-score (:score result)
-                          ;; Pack site values + retval into one row
+                          ;; Pack state into flat values for the output row
                           site-vals (mapv #(get (:values result) %) addr-order)
-                          row (mx/stack (conj site-vals new-state))]
+                          new-state-flat (if state-keys
+                                          (mx/stack (mapv #(get new-state %) state-keys))
+                                          new-state)
+                          row (if state-keys
+                                (mx/stack (into site-vals
+                                                (mapv #(get new-state %) state-keys)))
+                                (mx/stack (conj site-vals new-state)))]
                       (recur (inc t)
-                             new-state
+                             new-state-flat
                              (mx/add total-score step-score)
                              (conj outputs row)
                              (conj scores step-score))))))
               compiled (mx/compile-fn unfold-fn)]
           ;; Warm up with dummy data
-          (let [dummy-state (mx/scalar 0.0)
+          (let [dummy-state (if state-keys
+                              (mx/zeros [n-state])
+                              (mx/scalar 0.0))
                 dummy-noise (mx/zeros [T (max 1 noise-dim)])]
             (let [[outputs scores sc] (compiled dummy-state dummy-noise)]
               (mx/materialize! outputs scores sc)))
@@ -898,7 +916,8 @@
            :noise-dim noise-dim
            :addr-order addr-order
            :noise-site-types noise-site-types
-           :extra-args extra-args})))))
+           :extra-args extra-args
+           :state-keys state-keys})))))
 
 (defn make-fused-scan-simulate
   "Build a fused scan simulate: T steps as single mx/compile-fn invocation.

@@ -100,6 +100,17 @@
    so auto-sweep in p/generate and p/simulate skips when tidy-depth > 0."
   (atom 0))
 
+(def ^:private grad-depth
+  "Tracks nesting depth of mx/grad and mx/value-and-grad scopes.
+   The L3 auto-analytical handler uses volatile! which breaks gradient
+   flow. When grad-depth > 0, p/generate skips the analytical path
+   and uses compiled-generate or handler instead."
+  (atom 0))
+
+(defn in-grad?
+  "Returns true if currently executing inside an mx/grad or mx/value-and-grad scope."
+  [] (pos? @grad-depth))
+
 (defn tidy [f]
   (swap! tidy-depth inc)
   (try
@@ -383,20 +394,37 @@
 ;; ---------------------------------------------------------------------------
 
 (defn grad
-  ([f]         (.grad core f))
-  ([f argnums] (.grad core f (clj->js argnums))))
+  "Compute gradient of f. Tracks grad-depth so p/generate can skip
+   the L3 analytical path (which uses volatile! and breaks gradient flow)."
+  ([f]
+   (let [gf (.grad core f)]
+     (fn [& args]
+       (swap! grad-depth inc)
+       (try (apply gf args)
+            (finally (swap! grad-depth dec))))))
+  ([f argnums]
+   (let [gf (.grad core f (clj->js argnums))]
+     (fn [& args]
+       (swap! grad-depth inc)
+       (try (apply gf args)
+            (finally (swap! grad-depth dec)))))))
 
 (defn value-and-grad
+  "Compute value and gradient of f. Tracks grad-depth."
   ([f]
    (let [vg (.valueAndGrad core f)]
      (fn [& args]
-       (let [result (apply vg args)]
-         [(aget result 0) (aget result 1)]))))
+       (swap! grad-depth inc)
+       (try (let [result (apply vg args)]
+              [(aget result 0) (aget result 1)])
+            (finally (swap! grad-depth dec))))))
   ([f argnums]
    (let [vg (.valueAndGrad core f (clj->js argnums))]
      (fn [& args]
-       (let [result (apply vg args)]
-         [(aget result 0) (aget result 1)])))))
+       (swap! grad-depth inc)
+       (try (let [result (apply vg args)]
+              [(aget result 0) (aget result 1)])
+            (finally (swap! grad-depth dec)))))))
 
 (defn jvp [f primals tangents]
   (let [result (.jvp core f (clj->js primals) (clj->js tangents))]
@@ -497,10 +525,15 @@
     (eval! r)
     r))
 
+;; Auto-clear threshold: release Metal cache when it exceeds this (bytes).
+;; Prevents unbounded cache growth that crashes Bun at ~2GB.
+(def ^:private cache-pressure-threshold (* 512 1024 1024)) ;; 512MB
+
 (defn tidy-run
   "Run f inside mx/tidy. Call collect-fn on the result to get arrays
    to preserve. Materializes those arrays (detaching from computation
    graph intermediates). Returns the result of f.
+   Automatically clears Metal cache when memory pressure is high.
    collect-fn: (result) -> [array1, array2, ...]"
   [f collect-fn]
   (let [result-vol (volatile! nil)]
@@ -510,6 +543,25 @@
         (when (seq arrays) (apply eval! arrays))
         (vreset! result-vol result)
         (to-array arrays))))
+    (when (> (get-cache-memory) cache-pressure-threshold)
+      (clear-cache!))
+    @result-vol))
+
+(defn tidy-scalar
+  "Run f inside mx/tidy, extract a JS number via item, return it.
+   All intermediate MLX arrays are freed. The returned value is a
+   plain JS number with no MLX references — safe for use in loops.
+   Automatically clears Metal cache when memory pressure is high.
+   f must return an MLX scalar array."
+  [f]
+  (let [result-vol (volatile! nil)]
+    (tidy (fn []
+      (let [arr (f)]
+        (eval! arr)
+        (vreset! result-vol (item arr))
+        (to-array [arr]))))
+    (when (> (get-cache-memory) cache-pressure-threshold)
+      (clear-cache!))
     @result-vol))
 
 ;; ---------------------------------------------------------------------------
