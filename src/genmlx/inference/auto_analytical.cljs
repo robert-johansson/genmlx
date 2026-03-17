@@ -736,10 +736,13 @@
 ;; ---------------------------------------------------------------------------
 
 (defn some-conjugate-obs-constrained?
-  "Check if any observation site in a conjugate pair is actually constrained.
-   If no conjugate obs are constrained, there's no benefit to analytical handler."
+  "Check if any observation site in a conjugate pair is actually constrained
+   AND its prior is NOT constrained. If both prior and obs are constrained,
+   there's nothing to marginalize — the analytical handler would compute
+   the marginal likelihood instead of the correct joint log-prob."
   [conjugate-pairs constraints]
   (boolean
-   (some (fn [{:keys [obs-addr]}]
-           (cm/has-value? (cm/get-submap constraints obs-addr)))
+   (some (fn [{:keys [prior-addr obs-addr]}]
+           (and (cm/has-value? (cm/get-submap constraints obs-addr))
+                (not (cm/has-value? (cm/get-submap constraints prior-addr)))))
          conjugate-pairs)))

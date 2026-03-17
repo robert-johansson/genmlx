@@ -522,7 +522,7 @@
     (let [key (ensure-key this)
           _ (rng/seed! key)]
       (cond
-        ;; L3.5: auto-analytical assess
+        ;; L3.5: auto-analytical assess (only when prior is free)
         (analytical-applicable? schema choices)
         (run-assess-analytical schema this args key choices body-fn this)
 
