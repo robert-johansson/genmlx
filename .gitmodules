@@ -4,3 +4,9 @@
 [submodule "node-mlx"]
 	path = node-mlx
 	url = https://github.com/robert-johansson/node-mlx.git
+[submodule "paper/DEP_paper"]
+	path = paper/DEP_paper
+	url = https://git.overleaf.com/68b351823cf5409cb65ef827
+[submodule "internet-psychology"]
+	path = internet-psychology
+	url = https://github.com/robert-johansson/internet-psychology.git

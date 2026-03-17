@@ -3,6 +3,7 @@ node_modules/
 .cpcache/
 .nbb/
 *.pdf
+pdf/
 
 # Claude Code
 .claude/
@@ -25,8 +26,3 @@ bench/
 
 # Python
 __pycache__/
-
-# Planning docs (not for repo)
-paper/plan-*.md
-paper/FORMAL_PAPER_PLAN.md
-paper/MANUSCRIPT_PLAN.md
