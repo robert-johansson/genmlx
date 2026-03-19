@@ -187,9 +187,11 @@
           (let [u (rng/uniform key [])]
             (mx/where (mx/less u p) ONE ZERO)))
   (log-prob [v]
-            (mx/add (mx/multiply v (mx/log p))
-                    (mx/multiply (mx/subtract ONE v)
-                                 (mx/log (mx/subtract ONE p)))))
+            ;; xlogy pattern: 0 * log(0) = 0, not NaN (IEEE 754: 0 * -Inf = NaN)
+            (let [log-p   (mx/log p)
+                  log-1-p (mx/log (mx/subtract ONE p))]
+              (mx/add (mx/where (mx/equal v ZERO) ZERO (mx/multiply v log-p))
+                      (mx/where (mx/equal v ONE)  ZERO (mx/multiply (mx/subtract ONE v) log-1-p)))))
   (support [] BERNOULLI-SUPPORT))
 
 (defmethod dc/dist-sample-n* :bernoulli [d key n]
