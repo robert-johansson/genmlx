@@ -194,6 +194,11 @@
                       (mx/where (mx/equal v ONE)  ZERO (mx/multiply (mx/subtract ONE v) log-1-p)))))
   (support [] BERNOULLI-SUPPORT))
 
+(defmethod dc/dist-log-prob-support :bernoulli [d]
+  ;; [log(1-p), log(p)] — two values, one op each (no xlogy issue)
+  (let [{:keys [p]} (:params d)]
+    (mx/stack [(mx/log (mx/subtract ONE p)) (mx/log p)])))
+
 (defmethod dc/dist-sample-n* :bernoulli [d key n]
   (let [{:keys [p]} (:params d)
         key (rng/ensure-key key)
@@ -421,6 +426,18 @@
   (support []
            (let [n (do (mx/materialize! logits) (last (mx/shape logits)))]
              (mapv #(mx/scalar (int %) mx/int32) (range n)))))
+
+(defmethod dc/dist-log-prob-support :categorical [d]
+  ;; log_softmax(logits) — all K log-probs in one op.
+  ;; For multi-dim logits [..., K]: transpose to put K first → [K, ...]
+  (let [{:keys [logits]} (:params d)]
+    (if (> (count (mx/shape logits)) 1)
+      (let [lse (mx/expand-dims (mx/logsumexp logits [-1]) -1)
+            log-probs (mx/subtract logits lse)
+            nd (count (mx/shape log-probs))
+            perm (into [(dec nd)] (range (dec nd)))]
+        (mx/transpose log-probs perm))
+      (mx/subtract logits (mx/logsumexp logits)))))
 
 (defmethod dc/dist-sample-n* :categorical [d key n]
   (let [{:keys [logits]} (:params d)

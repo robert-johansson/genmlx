@@ -23,6 +23,11 @@
 (defmulti dist-log-prob  (fn [d _value] (:type d)))
 (defmulti dist-reparam   (fn [d _key] (:type d)))
 (defmulti dist-support   (fn [d] (:type d)))
+(defmulti dist-log-prob-support
+  "Log-probabilities for ALL support values at once. Returns tensor of shape
+   [K, ...] where K is the support size and remaining dims match the dist
+   params shape (from broadcasting with previous enumerate axes)."
+  (fn [d] (:type d)))
 (defmulti dist-sample-n* (fn [d _key _n] (:type d)))
 
 ;; Public API — delegates to multimethod after ensuring key.
@@ -48,6 +53,11 @@
 (defmethod dist-support :default [d]
   (throw (ex-info (str "Distribution " (:type d) " is not enumerable")
                   {:type (:type d)})))
+
+;; Default dist-log-prob-support: per-value fallback for distributions without bulk impl.
+(defmethod dist-log-prob-support :default [d]
+  (let [support (dist-support d)]
+    (mx/stack (mapv #(dist-log-prob d %) support))))
 
 ;; Default dist-sample-n*: sequential fallback for distributions that can't batch.
 (defmethod dist-sample-n* :default [d key n]

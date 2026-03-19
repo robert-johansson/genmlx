@@ -280,8 +280,9 @@
   (.topk core a k))
 
 (defn logsumexp
-  ([a]      (.logsumexp core a))
-  ([a axes] (.logsumexp core a (clj->js axes))))
+  ([a]              (.logsumexp core a))
+  ([a axes]         (.logsumexp core a (clj->js axes)))
+  ([a axes keepdims] (.logsumexp core a (clj->js axes) keepdims)))
 
 (defn cumsum
   ([a]      (.cumsum core a))
