@@ -419,7 +419,7 @@
                 (let [log-probs (mx/subtract logits (mx/logsumexp logits))]
                   (mx/take-idx log-probs v)))))
   (support []
-           (let [n (do (mx/materialize! logits) (first (mx/shape logits)))]
+           (let [n (do (mx/materialize! logits) (last (mx/shape logits)))]
              (mapv #(mx/scalar (int %) mx/int32) (range n)))))
 
 (defmethod dc/dist-sample-n* :categorical [d key n]
