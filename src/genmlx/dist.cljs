@@ -410,12 +410,12 @@
   (log-prob [v]
             (let [v (mx/ensure-array v mx/int32)]
               (if (> (count (mx/shape logits)) 1)
-        ;; Batched: logits [N,K], v [N]
+        ;; Multi-dim logits [... K]: normalize along last axis, index along last axis.
+        ;; Handles both scalar v (constrained) and multi-dim v (batched/enumerate).
                 (let [lse (mx/expand-dims (mx/logsumexp logits [-1]) -1)
-                      log-probs (mx/subtract logits lse)
-                      v-col (mx/expand-dims v -1)]
-                  (mx/squeeze (mx/take-along-axis log-probs v-col 1)))
-        ;; Scalar: logits [K], v scalar or [N]
+                      log-probs (mx/subtract logits lse)]
+                  (mx/take-idx log-probs v -1))
+        ;; 1D logits [K]: v is scalar or [N]
                 (let [log-probs (mx/subtract logits (mx/logsumexp logits))]
                   (mx/take-idx log-probs v)))))
   (support []

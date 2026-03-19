@@ -317,7 +317,10 @@
 
 (defn reshape    [a sh] (.reshape core a (clj->js sh)))
 (defn flatten    [a]    (.flatten core a))
-(defn squeeze    [a]    (.squeeze core a))
+(defn squeeze
+  "Remove size-1 dimensions. With axes, only squeeze specified positions."
+  ([a]      (.squeeze core a))
+  ([a axes] (.squeeze core a (clj->js (vec axes)))))
 (defn expand-dims [a axis] (.expandDims core a axis))
 (defn transpose
   ([a]      (.transpose core a))
