@@ -7,6 +7,7 @@ pdf/
 
 # Claude Code
 .claude/
+.mcp.json
 
 # Python virtualenvs
 .venv-genjax/
@@ -27,3 +28,6 @@ bench/
 # Python
 __pycache__/
 cross_system_tests/results/
+
+# Working notes
+notes/

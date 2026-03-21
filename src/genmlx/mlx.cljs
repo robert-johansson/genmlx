@@ -68,6 +68,11 @@
 
 (defn linspace [start stop num] (.linspace core start stop num))
 
+(defn meshgrid
+  "Create coordinate grids from 1D arrays. Returns a JS array of MLX arrays.
+   (meshgrid a b) → #js [grid-a grid-b] where each has shape [len(a), len(b)]."
+  [a b] (.meshgrid core a b))
+
 ;; ---------------------------------------------------------------------------
 ;; Evaluation / materialization
 ;; ---------------------------------------------------------------------------
@@ -190,6 +195,7 @@
 (defn sign     [a]   (.sign core a))
 (defn reciprocal [a] (.reciprocal core a))
 (defn floor-divide [a b] (.floorDivide core a b))
+(defn remainder    [a b] (.remainder core a b))
 
 ;; ---------------------------------------------------------------------------
 ;; Math functions
@@ -261,6 +267,16 @@
   ([a]      (.argmin core a))
   ([a axis] (.argmin core a axis)))
 
+(defn all
+  "True if all elements are true (nonzero). Optional axis."
+  ([a]      (.all core a))
+  ([a axis] (.all core a axis)))
+
+(defn any
+  "True if any element is true (nonzero). Optional axis."
+  ([a]      (.any core a))
+  ([a axis] (.any core a axis)))
+
 (defn argsort
   "Return indices that sort the array along the given axis (default: last axis).
    Requires custom MLX build with argsort support."
@@ -304,6 +320,26 @@
 (defn less         [a b] (.less core a b))
 (defn less-equal   [a b] (.lessEqual core a b))
 (defn where        [cond a b] (.where core cond a b))
+
+;; Model-level comparison helpers — auto-promote integers, return float32.
+;; Use these in gen bodies where traced values are tensors during enumeration.
+;;   (eq? prize 0)  instead of  (.astype (equal prize (scalar 0 int32)) float32)
+;;   (and* a b)     instead of  (multiply (.astype a float32) (.astype b float32))
+
+(defn eq?  [a b]
+  (.astype (equal (if (number? a) (scalar a int32) a)
+                  (if (number? b) (scalar b int32) b)) float32))
+(defn neq? [a b]
+  (.astype (not-equal (if (number? a) (scalar a int32) a)
+                      (if (number? b) (scalar b int32) b)) float32))
+(defn gt?  [a b]
+  (.astype (greater (if (number? a) (scalar a) a)
+                    (if (number? b) (scalar b) b)) float32))
+(defn lt?  [a b]
+  (.astype (less (if (number? a) (scalar a) a)
+                 (if (number? b) (scalar b) b)) float32))
+(defn and* [a b] (multiply a b))
+(defn or*  [a b] (maximum a b))
 (defn isnan        [a] (.isnan core a))
 (defn isinf        [a] (.isinf core a))
 (defn nan-to-num
@@ -346,6 +382,14 @@
 (defn take-idx
   ([a indices]      (.take core a indices))
   ([a indices axis] (.take core a indices axis)))
+
+(defn idx
+  "Extract element at index i along axis (default 0).
+   Auto-promotes integer i to MLX int32 scalar.
+
+     (idx probs 2)   ; instead of (take-idx probs (scalar 2 int32) 0)"
+  ([a i]      (take-idx a (if (number? i) (scalar i int32) i) 0))
+  ([a i axis] (take-idx a (if (number? i) (scalar i int32) i) axis)))
 
 (defn take-along-axis [a indices axis]
   (.takeAlongAxis core a indices axis))

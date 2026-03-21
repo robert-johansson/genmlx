@@ -451,6 +451,41 @@
         perturbed (mx/add logits gumbel)]
     (mx/argmax perturbed 1)))
 
+(defn categorical-weights
+  "Categorical distribution from unnormalized weights (not logits).
+   Handles zero weights safely — no log(0), no NaN gradients.
+   Use this instead of (categorical (mx/log weights)) when weights may
+   contain zeros and gradients are needed (ADEV, gradient descent).
+
+   Zero weights get a large negative logit (-100) with zero gradient.
+   Positive weights get log(weights) with correct gradients."
+  [weights]
+  (let [weights (.astype weights mx/float32)
+        positive (mx/greater weights (mx/scalar 0))
+        ;; Safe log: only compute log for positive weights
+        safe-log (mx/log (mx/maximum weights (mx/scalar 1e-10)))
+        ;; Zero weights → -100 (constant, zero gradient)
+        logits (mx/where positive safe-log (mx/scalar -100.0))]
+    (categorical logits)))
+
+(defn weighted
+  "Categorical distribution from a Clojure vector of weights.
+   Each weight may be a number or an MLX array. Handles scalar
+   promotion, stacking, and log transform automatically.
+
+   Use this to write model code at the distribution layer (Layer 4)
+   without dropping to raw MLX operations (Layer 0):
+
+     (trace :eval (dist/weighted [1.0 1.5 w]))  ; clean
+     ; instead of
+     (trace :eval (dist/categorical              ; noisy
+       (mx/log (mx/stack #js [(mx/scalar 1.0) (mx/scalar 1.5) w]))))"
+  [weights]
+  (let [as-mx (mapv #(if (number? %) (mx/scalar %) %) weights)
+        stacked (mx/stack (clj->js as-mx) -1)
+        logits (mx/log (mx/maximum stacked (mx/scalar 1e-30)))]
+    (categorical logits)))
+
 ;; ---------------------------------------------------------------------------
 ;; Poisson
 ;; ---------------------------------------------------------------------------
