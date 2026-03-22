@@ -11,13 +11,13 @@ GenMLX implements Gen's **Generative Function Interface (GFI)** — the same arc
 Gen implementations exist for Julia and JAX — but nothing for MLX. MLX's unified memory model is a natural fit for probabilistic programming: MCMC control flow runs on CPU while all numerics stay on GPU, with zero data transfer cost. ClojureScript on Node.js gives direct access to MLX through a native addon with no FFI overhead, and nbb provides a fast REPL for interactive model development.
 
 - **MLX-native** — unified memory, lazy evaluation, dynamic shapes, `mx/grad` through entire models (Apple Silicon and CUDA)
-- **~22,500 lines of ClojureScript** — protocols, records, persistent data structures, the whole thing is readable in an afternoon
+- **~25,000 lines of ClojureScript** — protocols, records, persistent data structures, the whole thing is readable in an afternoon
 - **GPU end-to-end** — scores and choice values are MLX arrays throughout, extracted with `mx/item` only at inference boundaries
 - **5-level compilation ladder** — progressively moves work from the host interpreter into fused MLX computation graphs, from shape-based batching (L0) through auto-analytical elimination (L3) to single fused graphs (L4)
 
 ## Requirements
 
-- macOS with Apple Silicon (M1/M2/M3/M4), or Linux/Windows with CUDA (MLX supports both)
+- macOS with Apple Silicon (M1/M2/M3/M4), or Linux with CUDA (MLX supports both)
 - **macOS:** Xcode Command Line Tools — `xcode-select --install` (provides CMake, clang++)
 - **macOS:** First launch setup — `sudo xcodebuild -runFirstLaunch`
 - **macOS:** Metal Toolchain — `xcodebuild -downloadComponent MetalToolchain` (required on macOS 26+)
@@ -48,7 +48,7 @@ bun install
 Run the included examples:
 
 ```bash
-bun run --bun nbb examples/genmlx/linear_regression.cljs       # Bayesian regression (IS + MH)
+bun run --bun nbb examples/genmlx/linear_regression.cljs       # Bayesian regression (IS + MALA)
 bun run --bun nbb examples/genmlx/hidden_markov_model.cljs      # HMM with particle filtering
 bun run --bun nbb examples/genmlx/variational_inference.cljs    # VI vs MCMC comparison
 bun run --bun nbb examples/genmlx/compositional_models.cljs     # Splice, Map, Switch, GFI algebra
@@ -125,7 +125,7 @@ Layer 1: Core Data Types
 Layer 2: GFI Protocols & Execution
   genmlx.protocols    — IGenerativeFunction, IGenerate, IUpdate, IRegenerate,
                         IAssess, IProject, IEdit, IUpdateWithDiffs
-  genmlx.handler      — handler-based execution via dynamic vars
+  genmlx.handler      — pure state transitions (volatile! runtime in runtime.cljs)
   genmlx.edit         — parametric edit interface (constraint, selection, proposal)
   genmlx.diff         — incremental change tracking
 
@@ -141,7 +141,7 @@ Layer 3: DSL + Schema + Compilation
   genmlx.fit          — one-call entry point: (fit model args data) (L4)
 
 Layer 4: Distributions
-  genmlx.dist         — 27 distributions, each a GFI participant
+  genmlx.dist         — 36 distributions, each a GFI participant
   genmlx.custom_gradient — CustomGradientGF (custom gradient gen functions)
   genmlx.nn           — Neural network generative functions (nn->gen-fn)
 
@@ -196,7 +196,16 @@ Layer 8: Verification
 | Wishart | `(wishart df scale)` | — |
 | Inverse Wishart | `(inv-wishart df scale)` | — |
 | Broadcasted Normal | `(broadcasted-normal mu sigma)` | Yes |
+| Gaussian Vec | `(gaussian-vec mu sigma)` | Yes |
+| Von Mises | `(von-mises mu kappa)` | — |
+| Wrapped Cauchy | `(wrapped-cauchy mu gamma)` | — |
+| Wrapped Normal | `(wrapped-normal mu sigma)` | — |
 | Mixture | `(mixture components log-weights)` | — |
+| Product | `(product dists)` | — |
+| IID | `(iid base-dist t)` | — |
+| IID Gaussian | `(iid-gaussian mu sigma t)` | Yes |
+| Categorical (weights) | `(categorical-weights weights)` | — |
+| Weighted | `(weighted probs)` | — |
 
 Aliases: `normal` → `gaussian`, `flip` → `bernoulli`
 
@@ -204,22 +213,31 @@ Aliases: `normal` → `gaussian`, `flip` → `bernoulli`
 
 - **Importance Sampling** — `importance-sampling`, `importance-resampling`; vectorized variants via `vgenerate`
 - **Metropolis-Hastings** — `mh` (via GFI `regenerate`), `mh-custom` (with proposal generative function)
+- **Compiled MCMC** — `compiled-mh`, `compiled-mala` (random-walk in parameter space, `mx/tidy` per step)
+- **Fused MCMC** — `fused-mh`, `fused-mala`, `fused-hmc` (entire chains compiled via `mx/compile-fn`)
+- **Vectorized MCMC** — `vectorized-compiled-mh`, `vectorized-mala` (batched particles)
 - **MALA** — `mala` (gradient-informed Langevin proposals)
 - **HMC** — `hmc` (compiled leapfrog integration, adaptive step-size via dual averaging)
 - **NUTS** — `nuts` (adaptive trajectory length, No-U-Turn Sampler)
 - **Gibbs Sampling** — `gibbs` (systematic scan with enumerable support)
 - **Elliptical Slice Sampling** — `elliptical-slice` (for Gaussian priors)
 - **Involutive MCMC** — `involutive-mh` (deterministic involution-based proposals)
-- **MAP Optimization** — `map-optimize` (point estimates via gradient ascent)
-- **SMC** — `smc` (particle filtering with resampling + rejuvenation), `csmc`
+- **MAP Optimization** — `map-optimize`, `vectorized-map-optimize` (point estimates via gradient ascent)
+- **SMC** — `smc` (particle filtering with resampling + rejuvenation), `csmc`, `vsmc` (vectorized)
 - **SMCP3** — `smcp3` (Sequential Monte Carlo with Probabilistic Program Proposals)
-- **Variational Inference** — `vi` (ADVI with mean-field Gaussian guide), `programmable-vi` with pluggable objectives (`elbo`, `iwelbo`, `wake-sleep`) and gradient estimators (`reinforce`, reparameterization)
+- **Compiled SMC** — `compiled-smc` (fused particle operations)
+- **PMMH** — `pmmh` (Particle Marginal Metropolis-Hastings)
+- **Particle Gibbs** — `particle-gibbs` (conditional SMC + Gibbs)
+- **Variational Inference** — `vi` (ADVI with mean-field Gaussian guide), `programmable-vi` with pluggable objectives (`elbo`, `iwelbo`, `wake-sleep`) and gradient estimators (`reinforce`, reparameterization); compiled variants via `compiled-vi`, `compiled-programmable-vi`
 - **ADEV** — automatic differentiation of expected values with reparameterization and REINFORCE strategies, vectorized GPU execution, compiled optimization loops, baseline variance reduction
+- **Amortized Inference** — `neural-importance-sampling` (learned neural proposals)
 - **Analytical Elimination** — auto-conjugacy detection (5 families), Rao-Blackwellization, 33.5x variance reduction
 - **Kalman Filter** — handler middleware for linear-Gaussian SSMs, sequential updates, exact marginal LL
 - **Extended Kalman Filter** — nonlinear SSMs via auto-diff linearization (1D and N-dimensional)
 - **HMM Forward Algorithm** — discrete latent state-space models, exact marginal likelihood
-- **Exact Enumeration** — discrete latent variables with finite support
+- **Exact Enumeration** — `ExactGF` record with full GFI (simulate, generate, update, regenerate, assess, project); discrete latent variables with finite support
+- **Fisher Information** — `observed-fisher` (Fisher information matrix, Cramer-Rao bounds)
+- **Differentiable Inference** — differentiable resampling, differentiable importance sampling
 - **Compiled Optimization** — `mx/compile-fn` + Adam, 9.2x speedup over handler loops
 - **Method Selection** — automatic inference method from model structure (L4 `fit` API)
 - **Kernel Composition** — `chain`, `cycle-kernels`, `mix-kernels`, `repeat-kernel`, `seed`
@@ -276,8 +294,46 @@ The key insight: MLX operations broadcast naturally. Sample `[N]` values instead
 ```
 
 - `VectorizedTrace` — choices where leaves hold `[N]`-shaped arrays
-- 20 distributions have native batch sampling (`dist-sample-n`), others fall back to sequential
+- 26 distributions have native batch sampling (`dist-sample-n`), others fall back to sequential
 - Vectorized importance sampling and SMC initialization built on `vgenerate`
+
+## Neural Network Integration
+
+GenMLX bridges neural networks and probabilistic programming via `genmlx.nn`:
+
+```clojure
+;; Define a neural network
+(def net (nn/sequential (nn/linear 10 32) nn/relu (nn/linear 32 1)))
+
+;; Wrap as a deterministic generative function
+(def nn-gf (nn/nn->gen-fn net))
+
+;; Use inside gen bodies — gradients flow through the network
+(def model
+  (gen [x]
+    (let [pred (splice :nn nn-gf [x])]
+      (trace :y (dist/gaussian pred (mx/scalar 0.1))))))
+```
+
+Layers: `linear`, `sequential`, `relu`, `gelu`, `tanh-act`, `sigmoid-act`, `layer-norm`, `embedding`, `dropout`. Native MLX optimizers via `nn/optimizer` (`:adam`, `:sgd`, `:adamw`).
+
+## Serialization
+
+Save and load traces and choicemaps to JSON:
+
+```clojure
+(require '[genmlx.serialize :as ser])
+
+;; Save/load choices (recommended — reconstruct trace via generate)
+(ser/save-choices-to-file (:choices trace) "choices.json")
+(let [choices (ser/load-choices-from-file "choices.json")
+      {:keys [trace]} (p/generate model args choices)]
+  trace)
+
+;; Save/load full traces (convenience)
+(ser/save-trace-to-file trace "trace.json")
+(ser/load-trace-from-file "trace.json" model args)
+```
 
 ## Running Tests
 

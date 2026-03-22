@@ -11,7 +11,7 @@ ClojureScript's immutable data, open multimethods, and macro system map perfectl
 onto the GFI's mathematical structure. MLX's lazy graphs, unified memory, and
 broadcasting reinforce this — functional-style array programming without penalty.
 
-~22,500 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
+~25,000 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
 
 ## Compilation ladder (VISION.md)
 
