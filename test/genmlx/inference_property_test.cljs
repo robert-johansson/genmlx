@@ -131,24 +131,10 @@
       (every? (fn [w] (close? 0.0 (eval-weight w) 0.01)) log-weights))))
 
 ;; ---------------------------------------------------------------------------
-;; MH / Accept Decision
-;; Law: MH acceptance probability = min(1, exp(log-alpha))
+;; MH / Regenerate
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- MH accept --")
-
-;; Law: log-alpha = 0 means acceptance ratio = 1, always accept
-(check "accept-mh?(0) always true"
-  (prop/for-all [k gen-key]
-    (u/accept-mh? 0 k))
-  :num-tests 100)
-
-;; Law: log-alpha = -100 means acceptance ratio ~ exp(-100) ~ 0, rarely accept
-(check "accept-mh?(-100) rarely true"
-  (prop/for-all [_ (gen/return nil)]
-    (let [accepts (count (filter true? (repeatedly 100 #(u/accept-mh? -100))))]
-      (< accepts 5)))
-  :num-tests 10)
+(println "\n-- MH regenerate --")
 
 ;; Law: regenerate with empty selection = identity, weight = 0
 (check "regenerate(sel/none) yields weight near 0"

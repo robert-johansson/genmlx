@@ -1,6 +1,6 @@
 (ns genmlx.gradient-learning-property-test
-  "Property-based tests for gradients, parameter stores, optimizers,
-   and training loops using test.check."
+  "Property-based tests for gradients and training loops using test.check.
+   Parameter store and optimizer arithmetic tests demoted to unit_test.cljs."
   (:require [clojure.test.check :as tc]
             [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
@@ -69,17 +69,9 @@
 (def x-pool [0.5 1.0 -0.5 -1.0 2.0 -2.0])
 (def gen-x (gen/elements x-pool))
 
-;; Pools for parameter store tests
-(def param-pool [1.0 2.0 -1.0 0.5 10.0])
-(def gen-param-val (gen/elements param-pool))
-(def name-pool [:a :b :c :x :y])
-(def gen-param-name (gen/elements name-pool))
-
-;; Pools for optimizer tests
+;; Pools for training loop test
 (def lr-pool [0.01 0.05 0.1 0.5])
 (def gen-lr (gen/elements lr-pool))
-(def grad-pool [1.0 -1.0 2.0 -0.5 0.1])
-(def gen-grad-val (gen/elements grad-pool))
 (def init-pool [1.0 3.0 5.0 -3.0 10.0])
 (def gen-init (gen/elements init-pool))
 
@@ -172,93 +164,6 @@
           num-grad (/ (- s-plus s-minus) (* 2 eps))]
       (close? ad-grad num-grad 0.05)))
   :num-tests 30)
-
-;; ---------------------------------------------------------------------------
-;; Parameter Store (3)
-;; ---------------------------------------------------------------------------
-
-(println "\n-- parameter store --")
-
-(check "param-store: get/set round-trip"
-  (prop/for-all [pname gen-param-name
-                 pval gen-param-val]
-    (let [store (learn/make-param-store)
-          store (learn/set-param store pname (mx/scalar pval))
-          v (learn/get-param store pname)]
-      (close? pval (eval-weight v) 1e-6))))
-
-(check "param-store: param-names includes all stored keys"
-  (prop/for-all [v1 gen-param-val
-                 v2 gen-param-val
-                 v3 gen-param-val]
-    (let [store (-> (learn/make-param-store)
-                    (learn/set-param :a (mx/scalar v1))
-                    (learn/set-param :b (mx/scalar v2))
-                    (learn/set-param :c (mx/scalar v3)))
-          names (set (learn/param-names store))]
-      (and (contains? names :a)
-           (contains? names :b)
-           (contains? names :c)))))
-
-(check "param-store: params->array / array->params round-trip"
-  (prop/for-all [v1 gen-param-val
-                 v2 gen-param-val]
-    (let [store (-> (learn/make-param-store)
-                    (learn/set-param :x (mx/scalar v1))
-                    (learn/set-param :y (mx/scalar v2)))
-          names [:x :y]
-          arr (learn/params->array store names)
-          _ (mx/eval! arr)
-          recovered (learn/array->params arr names)
-          rx (eval-weight (:x recovered))
-          ry (eval-weight (:y recovered))]
-      (and (close? v1 rx 1e-6)
-           (close? v2 ry 1e-6)))))
-
-;; ---------------------------------------------------------------------------
-;; Optimizers (3)
-;; ---------------------------------------------------------------------------
-
-(println "\n-- optimizers --")
-
-(check "SGD: step moves params in negative gradient direction"
-  (prop/for-all [init gen-init
-                 gval gen-grad-val
-                 lr gen-lr]
-    (let [params (mx/array [init])
-          grad-arr (mx/array [gval])
-          new-params (learn/sgd-step params grad-arr lr)]
-      (mx/eval! new-params)
-      ;; Should move in negative gradient direction: init - lr*gval
-      (close? (- init (* lr gval)) (mx/item (mx/index new-params 0)) 1e-6))))
-
-(check "SGD: step magnitude proportional to lr"
-  (prop/for-all [init gen-init
-                 gval gen-grad-val]
-    (let [params (mx/array [init])
-          grad-arr (mx/array [gval])
-          p1 (learn/sgd-step params grad-arr 0.1)
-          p2 (learn/sgd-step params grad-arr 0.2)
-          _ (mx/eval! p1 p2)
-          delta1 (- init (mx/item (mx/index p1 0)))  ;; 0.1*gval
-          delta2 (- init (mx/item (mx/index p2 0)))]  ;; 0.2*gval
-      ;; delta2 should be 2x delta1
-      (close? (* 2.0 delta1) delta2 1e-6))))
-
-(check "Adam: loss decreases on quadratic (20 steps)"
-  (prop/for-all [init gen-init]
-    ;; Minimize f(x) = x^2, gradient = 2x, starting at x=init
-    (let [init-params (mx/array [init])
-          result (learn/train
-                   {:iterations 20 :optimizer :adam :lr 0.1}
-                   (fn [params _key]
-                     (let [loss (mx/sum (mx/square params))
-                           grad (mx/multiply (mx/scalar 2.0) params)]
-                       {:loss loss :grad grad}))
-                   init-params)
-          history (:loss-history result)]
-      (< (last history) (first history))))
-  :num-tests 10)
 
 ;; ---------------------------------------------------------------------------
 ;; Training Loop (1)

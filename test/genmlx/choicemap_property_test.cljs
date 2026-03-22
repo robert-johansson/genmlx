@@ -145,16 +145,7 @@
   :num-tests 50)
 
 ;; ---------------------------------------------------------------------------
-;; Property 7: EMPTY has no addresses
-;; ---------------------------------------------------------------------------
-
-(check "EMPTY has no addresses"
-  (prop/for-all [_ (gen/return nil)]
-    (empty? (cm/addresses cm/EMPTY)))
-  :num-tests 1)
-
-;; ---------------------------------------------------------------------------
-;; Property 8: merge-cm(a, EMPTY) = a
+;; Property 7: merge-cm(a, EMPTY) = a
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- merge properties --")

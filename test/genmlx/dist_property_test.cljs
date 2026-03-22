@@ -302,6 +302,79 @@
   :num-tests 100)
 
 ;; ---------------------------------------------------------------------------
+;; Multi-dimensional distribution invariants
+;; ---------------------------------------------------------------------------
+
+(println "\n-- multi-dimensional distribution invariants --")
+
+;; Pre-built MVN instances: varying dimensionality and covariance structure
+(def mvn-pool
+  [{:dim 2 :label "MVN(2d, I)"
+    :dist (dist/multivariate-normal (mx/zeros [2]) (mx/eye 2))}
+   {:dim 3 :label "MVN(3d, I)"
+    :dist (dist/multivariate-normal (mx/zeros [3]) (mx/eye 3))}
+   {:dim 5 :label "MVN(5d, I)"
+    :dist (dist/multivariate-normal (mx/zeros [5]) (mx/eye 5))}
+   {:dim 2 :label "MVN(2d, diag)"
+    :dist (dist/multivariate-normal (mx/array [1.0 -1.0])
+                                    (mx/array [[2.0 0.0] [0.0 0.5]]))}
+   {:dim 3 :label "MVN(3d, shifted)"
+    :dist (dist/multivariate-normal (mx/array [3.0 -2.0 1.0])
+                                    (mx/eye 3))}])
+
+;; Pre-built Dirichlet instances: varying dimension and concentration
+(def dirichlet-pool
+  [{:k 2 :label "Dir([1,1])"
+    :dist (dist/dirichlet (mx/array [1.0 1.0]))}
+   {:k 3 :label "Dir([2,3,1])"
+    :dist (dist/dirichlet (mx/array [2.0 3.0 1.0]))}
+   {:k 5 :label "Dir([0.5 x5])"
+    :dist (dist/dirichlet (mx/array [0.5 0.5 0.5 0.5 0.5]))}
+   {:k 4 :label "Dir([10,10,10,10])"
+    :dist (dist/dirichlet (mx/array [10.0 10.0 10.0 10.0]))}])
+
+;; MD1. MVN: log-prob(sample) is finite
+;; Law: MVN samples lie in support — extends scalar distribution contract
+;;       to multi-dimensional case. Every sample from a non-degenerate MVN
+;;       has finite log-density under the same MVN.
+(check "MVN: log-prob(sample) is finite"
+  (prop/for-all [spec (gen/elements mvn-pool)]
+    (let [key (rng/fresh-key)
+          v (dc/dist-sample (:dist spec) key)
+          lp (dc/dist-log-prob (:dist spec) v)]
+      (mx/eval! lp)
+      (js/isFinite (mx/item lp))))
+  :num-tests 50)
+
+;; MD2. MVN: sample shape matches dimensionality
+;; Law: An MVN over R^d produces samples of shape [d]. This is the
+;;       multi-dimensional analogue of scalar distributions producing
+;;       shape [] samples — the dimensionality contract.
+(check "MVN: sample shape = [d] for d-dimensional"
+  (prop/for-all [spec (gen/elements mvn-pool)]
+    (let [key (rng/fresh-key)
+          v (dc/dist-sample (:dist spec) key)]
+      (mx/eval! v)
+      (= [(:dim spec)] (mx/shape v))))
+  :num-tests 50)
+
+;; MD3. Dirichlet: samples sum to 1
+;; Law: Dirichlet samples lie on the probability simplex. Every sample
+;;       is a vector of non-negative values summing to 1 — the probability
+;;       axiom expressed in higher dimensions. This is a support constraint
+;;       that has no scalar analogue.
+(check "Dirichlet: samples sum to 1 (simplex constraint)"
+  (prop/for-all [spec (gen/elements dirichlet-pool)]
+    (let [key (rng/fresh-key)
+          v (dc/dist-sample (:dist spec) key)]
+      (mx/eval! v)
+      (let [total (mx/item (mx/sum v))
+            vals (mx/->clj v)]
+        (and (< (js/Math.abs (- total 1.0)) 1e-4)
+             (every? #(>= % 0.0) vals)))))
+  :num-tests 50)
+
+;; ---------------------------------------------------------------------------
 ;; Summary
 ;; ---------------------------------------------------------------------------
 
