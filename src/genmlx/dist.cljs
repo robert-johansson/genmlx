@@ -1103,12 +1103,12 @@
   [bounds probs]
   (sample [key]
           (let [[k1 k2] (rng/split key)
-          ;; Choose bin via categorical on log-probs
+                ;; Choose bin via categorical — stays as MLX uint32 (no mx/item)
                 log-probs (mx/log probs)
-                bin-idx (mx/item (rng/categorical k1 log-probs))
-          ;; Uniform within chosen bin
-                lo (mx/index bounds (int bin-idx))
-                hi (mx/index bounds (inc (int bin-idx)))
+                bin-idx (rng/categorical k1 log-probs)
+                ;; Index bounds with MLX integer — vectorizable + differentiable
+                lo (mx/index bounds bin-idx)
+                hi (mx/index bounds (mx/add bin-idx (mx/scalar 1 mx/int32)))
                 u (rng/uniform k2 [])]
             (mx/add lo (mx/multiply u (mx/subtract hi lo)))))
   (log-prob [v]

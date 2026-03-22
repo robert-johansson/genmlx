@@ -173,9 +173,13 @@
   (let [{:keys [components log-weights]} (:params d)
         key (rng/ensure-key key)
         [k1 k2] (rng/split key)
-        idx (mx/item (rng/categorical k1 log-weights))
-        component (nth components (int idx))]
-    (dist-sample component k2)))
+        ;; Sample ALL components, then select by categorical index.
+        ;; Stays in MLX graph (no mx/item) — vectorizable + differentiable.
+        idx (rng/categorical k1 log-weights)
+        component-keys (rng/split-n k2 (count components))
+        all-samples (mx/stack (mapv (fn [c k] (dist-sample c k))
+                                    components component-keys))]
+    (mx/index all-samples idx)))
 
 (defmethod dist-log-prob :mixture [d v]
   (let [{:keys [components log-weights]} (:params d)
