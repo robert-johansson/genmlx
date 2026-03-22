@@ -6,37 +6,16 @@
 
    Uses pre-built distribution instances via gen/elements to avoid
    test.check shrinking issues with mx/scalar in nbb/SCI (alpha)."
-  (:require [clojure.test.check :as tc]
-            [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
+            [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
             [genmlx.dist.core :as dc]
             [genmlx.choicemap :as cm]
-            [genmlx.inference.adev :as adev]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (println "    failing:" (get-in result [:fail]))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+            [genmlx.inference.adev :as adev])
+  (:require-macros [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Pre-built distribution instances (avoids shrinking mx/scalar in nbb)
@@ -78,57 +57,48 @@
 (def gen-continuous-dist (gen/elements (filterv :continuous? all-dists)))
 (def gen-reparam-dist (gen/elements (filterv :reparam? all-dists)))
 
-(println "\n=== Distribution Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
 ;; Property 1: log-prob of own sample is finite
 ;; ---------------------------------------------------------------------------
 
-(println "-- sample/log-prob invariants --")
-
-(check "log-prob(sample(d)) is finite for all distributions"
+(defspec log-prob-sample-is-finite 200
   (prop/for-all [d gen-dist]
     (let [key (rng/fresh-key)
           v (dc/dist-sample (:dist d) key)
           lp (dc/dist-log-prob (:dist d) v)]
       (mx/eval! lp)
-      (js/isFinite (mx/item lp))))
-  :num-tests 200)
+      (js/isFinite (mx/item lp)))))
 
 ;; ---------------------------------------------------------------------------
-;; Property 2: log-prob is deterministic (same input → same output)
+;; Property 2: log-prob is deterministic (same input -> same output)
 ;; ---------------------------------------------------------------------------
 
-(check "log-prob is deterministic"
+(defspec log-prob-is-deterministic 100
   (prop/for-all [d gen-dist]
     (let [key (rng/fresh-key)
           v (dc/dist-sample (:dist d) key)
           lp1 (dc/dist-log-prob (:dist d) v)
           lp2 (dc/dist-log-prob (:dist d) v)]
       (mx/eval! lp1 lp2)
-      (== (mx/item lp1) (mx/item lp2))))
-  :num-tests 100)
+      (== (mx/item lp1) (mx/item lp2)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Property 3: sample-n produces correct shape [N]
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- sample-n shape invariants --")
-
-(check "sample-n shape is [N] for scalar distributions"
+(defspec sample-n-shape-is-n-for-scalar-distributions 100
   (prop/for-all [d gen-dist
                  n (gen/choose 1 50)]
     (let [key (rng/fresh-key)
           samples (dc/dist-sample-n (:dist d) key n)]
       (mx/eval! samples)
-      (= n (first (mx/shape samples)))))
-  :num-tests 100)
+      (= n (first (mx/shape samples))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Property 4: sample-n elements have finite log-prob
 ;; ---------------------------------------------------------------------------
 
-(check "sample-n elements have finite log-prob"
+(defspec sample-n-elements-have-finite-log-prob 100
   (prop/for-all [d gen-dist]
     (let [key (rng/fresh-key)
           n 10
@@ -138,43 +108,36 @@
       (let [shape (mx/shape lps)]
         (every? js/isFinite
                 (for [i (range (first shape))]
-                  (mx/item (mx/index lps i)))))))
-  :num-tests 100)
+                  (mx/item (mx/index lps i))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Property 5: reparam sample has finite log-prob
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- reparameterization invariants --")
-
-(check "reparam sample has finite log-prob"
+(defspec reparam-sample-has-finite-log-prob 100
   (prop/for-all [d gen-reparam-dist]
     (let [key (rng/fresh-key)
           v (dc/dist-reparam (:dist d) key)
           lp (dc/dist-log-prob (:dist d) v)]
       (mx/eval! lp)
-      (js/isFinite (mx/item lp))))
-  :num-tests 100)
+      (js/isFinite (mx/item lp)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Property 6: has-reparam? matches expected
 ;; ---------------------------------------------------------------------------
 
-(check "has-reparam? is consistent"
+(defspec has-reparam-is-consistent 100
   (prop/for-all [d gen-dist]
-    (= (:reparam? d) (adev/has-reparam? (:dist d))))
-  :num-tests 100)
+    (= (:reparam? d) (adev/has-reparam? (:dist d)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Property 7: sample is in support for bounded distributions
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- support/bounds invariants --")
-
 (def uniform-dists
   [{:lo 0.0 :hi 1.0} {:lo -5.0 :hi 5.0} {:lo -100.0 :hi -1.0} {:lo 0.1 :hi 0.2}])
 
-(check "uniform sample is in [lo, hi]"
+(defspec uniform-sample-is-in-lo-hi 50
   (prop/for-all [spec (gen/elements uniform-dists)]
     (let [lo (:lo spec) hi (:hi spec)
           d (dist/uniform (s lo) (s hi))
@@ -182,10 +145,9 @@
           v (dc/dist-sample d key)]
       (mx/eval! v)
       (let [x (mx/item v)]
-        (and (>= x lo) (<= x hi)))))
-  :num-tests 50)
+        (and (>= x lo) (<= x hi))))))
 
-(check "bernoulli sample is 0 or 1"
+(defspec bernoulli-sample-is-0-or-1 50
   (prop/for-all [d (gen/elements [(dist/bernoulli (s 0.1))
                                    (dist/bernoulli (s 0.5))
                                    (dist/bernoulli (s 0.9))])]
@@ -193,20 +155,18 @@
           v (dc/dist-sample d key)]
       (mx/eval! v)
       (let [x (mx/item v)]
-        (or (== x 0.0) (== x 1.0)))))
-  :num-tests 50)
+        (or (== x 0.0) (== x 1.0))))))
 
-(check "exponential sample is non-negative"
+(defspec exponential-sample-is-non-negative 50
   (prop/for-all [d (gen/elements [(dist/exponential (s 0.1))
                                    (dist/exponential (s 1))
                                    (dist/exponential (s 5))])]
     (let [key (rng/fresh-key)
           v (dc/dist-sample d key)]
       (mx/eval! v)
-      (>= (mx/item v) 0.0)))
-  :num-tests 50)
+      (>= (mx/item v) 0.0))))
 
-(check "beta sample is in (0, 1)"
+(defspec beta-sample-is-in-0-1 50
   (prop/for-all [d (gen/elements [(dist/beta-dist (s 2) (s 2))
                                    (dist/beta-dist (s 0.5) (s 0.5))
                                    (dist/beta-dist (s 1) (s 3))])]
@@ -214,57 +174,52 @@
           v (dc/dist-sample d key)]
       (mx/eval! v)
       (let [x (mx/item v)]
-        (and (> x 0.0) (< x 1.0)))))
-  :num-tests 50)
+        (and (> x 0.0) (< x 1.0))))))
 
-(check "gamma sample is positive"
+(defspec gamma-sample-is-positive 50
   (prop/for-all [d (gen/elements [(dist/gamma-dist (s 2) (s 1))
                                    (dist/gamma-dist (s 0.5) (s 2))
                                    (dist/gamma-dist (s 5) (s 0.5))])]
     (let [key (rng/fresh-key)
           v (dc/dist-sample d key)]
       (mx/eval! v)
-      (> (mx/item v) 0.0)))
-  :num-tests 50)
+      (> (mx/item v) 0.0))))
 
-(check "log-normal sample is positive"
+(defspec log-normal-sample-is-positive 50
   (prop/for-all [d (gen/elements [(dist/log-normal (s 0) (s 1))
                                    (dist/log-normal (s 1) (s 0.5))
                                    (dist/log-normal (s -1) (s 2))])]
     (let [key (rng/fresh-key)
           v (dc/dist-sample d key)]
       (mx/eval! v)
-      (> (mx/item v) 0.0)))
-  :num-tests 50)
+      (> (mx/item v) 0.0))))
 
 ;; ---------------------------------------------------------------------------
 ;; Property 8: delta distribution always returns its value
 ;; ---------------------------------------------------------------------------
 
-(check "delta sample equals its value"
+(defspec delta-sample-equals-its-value 30
   (prop/for-all [d (gen/elements [{:v 3.14} {:v -1.0} {:v 0.0} {:v 100.0}])]
     (let [dist (dist/delta (s (:v d)))
           key (rng/fresh-key)
           v (dc/dist-sample dist key)]
       (mx/eval! v)
-      (< (js/Math.abs (- (:v d) (mx/item v))) 1e-6)))
-  :num-tests 30)
+      (< (js/Math.abs (- (:v d) (mx/item v))) 1e-6))))
 
-(check "delta log-prob is 0 at value, -Inf elsewhere"
+(defspec delta-log-prob-is-0-at-value--inf-elsewhere 30
   (prop/for-all [d (gen/elements [{:v 3.14} {:v -1.0} {:v 0.0}])]
     (let [dist (dist/delta (s (:v d)))
           lp-at (dc/dist-log-prob dist (s (:v d)))
           lp-away (dc/dist-log-prob dist (s (+ (:v d) 1.0)))]
       (mx/eval! lp-at lp-away)
       (and (< (js/Math.abs (mx/item lp-at)) 1e-6)
-           (= ##-Inf (mx/item lp-away)))))
-  :num-tests 30)
+           (= ##-Inf (mx/item lp-away))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Property 9: geometric sample is non-negative integer
 ;; ---------------------------------------------------------------------------
 
-(check "geometric sample is non-negative integer"
+(defspec geometric-sample-is-non-negative-integer 50
   (prop/for-all [d (gen/elements [(dist/geometric (s 0.1))
                                    (dist/geometric (s 0.5))
                                    (dist/geometric (s 0.9))])]
@@ -272,25 +227,21 @@
           v (dc/dist-sample d key)]
       (mx/eval! v)
       (let [x (mx/item v)]
-        (and (>= x 0) (== x (js/Math.floor x))))))
-  :num-tests 50)
+        (and (>= x 0) (== x (js/Math.floor x)))))))
 
 ;; ---------------------------------------------------------------------------
-;; Property 10: GFI bridge — dist as generative function
+;; Property 10: GFI bridge -- dist as generative function
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- distribution GFI bridge --")
-
-(check "dist simulate: score = log-prob(sample)"
+(defspec dist-simulate-score-equals-log-prob-sample 100
   (prop/for-all [d gen-dist]
     (let [trace (dc/dist-simulate (:dist d))
           v (:retval trace)
           lp (dc/dist-log-prob (:dist d) v)]
       (mx/eval! (:score trace) lp)
-      (< (js/Math.abs (- (mx/item (:score trace)) (mx/item lp))) 0.01)))
-  :num-tests 100)
+      (< (js/Math.abs (- (mx/item (:score trace)) (mx/item lp))) 0.01))))
 
-(check "dist generate with constraint: weight = log-prob(constraint)"
+(defspec dist-generate-with-constraint-weight-equals-log-prob 100
   (prop/for-all [d gen-continuous-dist]
     (let [key (rng/fresh-key)
           v (dc/dist-sample (:dist d) key)
@@ -298,14 +249,11 @@
           {:keys [weight]} (dc/dist-generate (:dist d) constraint)
           lp (dc/dist-log-prob (:dist d) v)]
       (mx/eval! weight lp)
-      (< (js/Math.abs (- (mx/item weight) (mx/item lp))) 0.01)))
-  :num-tests 100)
+      (< (js/Math.abs (- (mx/item weight) (mx/item lp))) 0.01))))
 
 ;; ---------------------------------------------------------------------------
 ;; Multi-dimensional distribution invariants
 ;; ---------------------------------------------------------------------------
-
-(println "\n-- multi-dimensional distribution invariants --")
 
 ;; Pre-built MVN instances: varying dimensionality and covariance structure
 (def mvn-pool
@@ -333,37 +281,22 @@
    {:k 4 :label "Dir([10,10,10,10])"
     :dist (dist/dirichlet (mx/array [10.0 10.0 10.0 10.0]))}])
 
-;; MD1. MVN: log-prob(sample) is finite
-;; Law: MVN samples lie in support — extends scalar distribution contract
-;;       to multi-dimensional case. Every sample from a non-degenerate MVN
-;;       has finite log-density under the same MVN.
-(check "MVN: log-prob(sample) is finite"
+(defspec mvn-log-prob-sample-is-finite 50
   (prop/for-all [spec (gen/elements mvn-pool)]
     (let [key (rng/fresh-key)
           v (dc/dist-sample (:dist spec) key)
           lp (dc/dist-log-prob (:dist spec) v)]
       (mx/eval! lp)
-      (js/isFinite (mx/item lp))))
-  :num-tests 50)
+      (js/isFinite (mx/item lp)))))
 
-;; MD2. MVN: sample shape matches dimensionality
-;; Law: An MVN over R^d produces samples of shape [d]. This is the
-;;       multi-dimensional analogue of scalar distributions producing
-;;       shape [] samples — the dimensionality contract.
-(check "MVN: sample shape = [d] for d-dimensional"
+(defspec mvn-sample-shape-equals-d 50
   (prop/for-all [spec (gen/elements mvn-pool)]
     (let [key (rng/fresh-key)
           v (dc/dist-sample (:dist spec) key)]
       (mx/eval! v)
-      (= [(:dim spec)] (mx/shape v))))
-  :num-tests 50)
+      (= [(:dim spec)] (mx/shape v)))))
 
-;; MD3. Dirichlet: samples sum to 1
-;; Law: Dirichlet samples lie on the probability simplex. Every sample
-;;       is a vector of non-negative values summing to 1 — the probability
-;;       axiom expressed in higher dimensions. This is a support constraint
-;;       that has no scalar analogue.
-(check "Dirichlet: samples sum to 1 (simplex constraint)"
+(defspec dirichlet-samples-sum-to-1 50
   (prop/for-all [spec (gen/elements dirichlet-pool)]
     (let [key (rng/fresh-key)
           v (dc/dist-sample (:dist spec) key)]
@@ -371,12 +304,6 @@
       (let [total (mx/item (mx/sum v))
             vals (mx/->clj v)]
         (and (< (js/Math.abs (- total 1.0)) 1e-4)
-             (every? #(>= % 0.0) vals)))))
-  :num-tests 50)
+             (every? #(>= % 0.0) vals))))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== Distribution Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)

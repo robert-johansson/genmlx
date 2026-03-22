@@ -2,9 +2,9 @@
   "Property-based tests for serialization round-trip laws.
    Verifies: choicemap round-trip, trace round-trip, dtype preservation,
    nested structure preservation, and empty identity."
-  (:require [clojure.test.check :as tc]
-            [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
+            [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
@@ -13,28 +13,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
             [genmlx.serialize :as ser])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -116,17 +96,13 @@
   (let [root (rng/fresh-key)]
     (vec (rng/split-n root 5))))
 
-(println "\n=== Serialize Property Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
 ;; E13.1: choicemap -> save-choices -> load-choices round-trip
-;; Law: Serialization is an isomorphism — the serialized-then-deserialized
+;; Law: Serialization is an isomorphism -- the serialized-then-deserialized
 ;;       choicemap has the same addresses and values as the original.
 ;; ---------------------------------------------------------------------------
 
-(println "-- choicemap round-trip --")
-
-(check "choicemap round-trip via save/load-choices"
+(defspec choicemap-round-trip-via-save-load-choices 50
   (prop/for-all [cm-orig (gen/elements all-cm-pool)]
     ;; Wrap choicemap in a minimal trace for save-choices API
     (let [fake-trace (tr/make-trace {:gen-fn nil :args []
@@ -135,35 +111,29 @@
                                      :score (mx/scalar 0.0)})
           json-str (ser/save-choices fake-trace)
           cm-restored (ser/load-choices json-str)]
-      (choicemap-values-match? cm-orig cm-restored 1e-6)))
-  :num-tests 50)
+      (choicemap-values-match? cm-orig cm-restored 1e-6))))
 
 ;; ---------------------------------------------------------------------------
 ;; E13.2: save-choices / load-choices round-trip for model traces
-;; Law: Trace serialization preserves all choice values — a trace
+;; Law: Trace serialization preserves all choice values -- a trace
 ;;       simulated from a model can be saved and reconstructed.
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- trace round-trip --")
-
-(check "save-choices / load-choices preserves trace choices"
+(defspec save-choices-load-choices-preserves-trace-choices 30
   (prop/for-all [model (gen/elements model-pool)
                  key (gen/elements key-pool)]
     (let [trace (p/simulate (dyn/with-key model key) [])
           json-str (ser/save-choices trace)
           cm-restored (ser/load-choices json-str)]
-      (choicemap-values-match? (:choices trace) cm-restored 1e-6)))
-  :num-tests 30)
+      (choicemap-values-match? (:choices trace) cm-restored 1e-6))))
 
 ;; ---------------------------------------------------------------------------
 ;; E13.3: dtype preservation
-;; Law: Serialization preserves MLX dtype metadata — float32 stays
+;; Law: Serialization preserves MLX dtype metadata -- float32 stays
 ;;       float32, int32 stays int32, bool stays bool.
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- dtype preservation --")
-
-(check "dtype preserved through serialization round-trip"
+(defspec dtype-preserved-through-serialization-round-trip 20
   (prop/for-all [cm-orig (gen/elements dtype-cm-pool)]
     (let [fake-trace (tr/make-trace {:gen-fn nil :args []
                                      :choices cm-orig
@@ -176,18 +146,15 @@
         (for [path addrs]
           (let [v-orig (cm/get-choice cm-orig path)
                 v-rest (cm/get-choice cm-restored path)]
-            (= (str (mx/dtype v-orig)) (str (mx/dtype v-rest))))))))
-  :num-tests 20)
+            (= (str (mx/dtype v-orig)) (str (mx/dtype v-rest)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; E13.4: nested structure preservation
-;; Law: Serialization preserves tree structure — the set of address
+;; Law: Serialization preserves tree structure -- the set of address
 ;;       paths is identical before and after, and all values match.
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- nested structure --")
-
-(check "nested structure preserved through serialization"
+(defspec nested-structure-preserved-through-serialization 30
   (prop/for-all [cm-orig (gen/elements (vec (concat nested-cm-pool deep-cm-pool)))]
     (let [fake-trace (tr/make-trace {:gen-fn nil :args []
                                      :choices cm-orig
@@ -198,18 +165,15 @@
           orig-addrs (set (cm/addresses cm-orig))
           rest-addrs (set (cm/addresses cm-restored))]
       (and (= orig-addrs rest-addrs)
-           (choicemap-values-match? cm-orig cm-restored 1e-6))))
-  :num-tests 30)
+           (choicemap-values-match? cm-orig cm-restored 1e-6)))))
 
 ;; ---------------------------------------------------------------------------
 ;; E13.5: EMPTY round-trip
-;; Law: Serialization preserves the identity element — the empty
+;; Law: Serialization preserves the identity element -- the empty
 ;;       choicemap serializes and deserializes to an empty choicemap.
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- identity element --")
-
-(check "EMPTY choicemap round-trips to empty"
+(defspec empty-choicemap-round-trips-to-empty 10
   (prop/for-all [_ (gen/return nil)]
     (let [fake-trace (tr/make-trace {:gen-fn nil :args []
                                      :choices cm/EMPTY
@@ -217,14 +181,6 @@
                                      :score (mx/scalar 0.0)})
           json-str (ser/save-choices fake-trace)
           cm-restored (ser/load-choices json-str)]
-      (empty? (cm/addresses cm-restored))))
-  :num-tests 10)
+      (empty? (cm/addresses cm-restored)))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== Serialize Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
-(when (pos? @fail-count)
-  (js/process.exit 1))
+(t/run-tests)

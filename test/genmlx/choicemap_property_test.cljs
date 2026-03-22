@@ -2,31 +2,11 @@
   "Property-based choicemap algebra tests using test.check.
    Verifies set/get round-trips, to-map/from-map isomorphism,
    addresses enumeration, merge identity and override semantics."
-  (:require [clojure.test.check :as tc]
+  (:require [cljs.test :as t]
             [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
-            [genmlx.choicemap :as cm]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 100}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+            [genmlx.choicemap :as cm])
+  (:require-macros [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Generators
@@ -68,116 +48,64 @@
     (fn [kvs] (into {} kvs))
     (gen/not-empty (gen/vector (gen/tuple gen-addr gen-value) 1 5))))
 
-(println "\n=== ChoiceMap Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
-;; Property 1: set-choice then get-choice round-trips
+;; Properties
 ;; ---------------------------------------------------------------------------
 
-(println "-- set/get round-trips --")
-
-(check "set-choice → get-choice round-trips"
+(defspec set-choice-get-choice-round-trips 100
   (prop/for-all [path gen-path
                  val gen-value]
     (let [cm (cm/set-choice cm/EMPTY path val)]
       (= val (cm/get-choice cm path)))))
 
-;; ---------------------------------------------------------------------------
-;; Property 2: to-map → from-map → to-map round-trips
-;; ---------------------------------------------------------------------------
-
-(println "\n-- to-map/from-map isomorphism --")
-
-(check "to-map → from-map → to-map round-trips"
+(defspec to-map-from-map-to-map-round-trips 100
   (prop/for-all [cm (gen-choicemap-from-paths)]
     (let [m1 (cm/to-map cm)
           cm2 (cm/from-map m1)
           m2 (cm/to-map cm2)]
       (= m1 m2))))
 
-;; ---------------------------------------------------------------------------
-;; Property 3: from-map → to-map round-trips
-;; ---------------------------------------------------------------------------
-
-(check "from-map → to-map round-trips"
+(defspec from-map-to-map-round-trips 100
   (prop/for-all [m gen-flat-map]
     (= m (cm/to-map (cm/from-map m)))))
 
-;; ---------------------------------------------------------------------------
-;; Property 4: addresses returns exactly the set paths
-;; ---------------------------------------------------------------------------
-
-(println "\n-- addresses enumeration --")
-
-(check "addresses returns exactly the set paths"
+(defspec addresses-returns-exactly-the-set-paths 100
   (prop/for-all [path gen-path
                  val gen-value]
     (let [cm (cm/set-choice cm/EMPTY path val)
           addrs (cm/addresses cm)]
       (= [path] addrs))))
 
-;; ---------------------------------------------------------------------------
-;; Property 5: has-value? true on leaves, false on nodes
-;; ---------------------------------------------------------------------------
-
-(check "has-value? true on leaves, false on nodes"
+(defspec has-value-true-on-leaves-false-on-nodes 50
   (prop/for-all [path gen-path
                  val gen-value]
     (let [cm (cm/set-choice cm/EMPTY path val)
-          ;; Navigate to the leaf
           leaf (reduce cm/get-submap cm path)
-          ;; The root is a node (unless path is length 1 and only has that key)
           root-is-node (not (cm/has-value? cm))]
-      (and root-is-node (cm/has-value? leaf))))
-  :num-tests 50)
+      (and root-is-node (cm/has-value? leaf)))))
 
-;; ---------------------------------------------------------------------------
-;; Property 6: get-submap of missing addr returns EMPTY
-;; ---------------------------------------------------------------------------
-
-(check "get-submap of missing addr returns EMPTY"
+(defspec get-submap-of-missing-addr-returns-EMPTY 50
   (prop/for-all [cm (gen-choicemap-from-paths)
                  addr gen-addr]
-    ;; Use an address unlikely to collide: prefix with :__missing__
     (let [missing-addr (keyword (str "__missing__" (name addr)))
           sub (cm/get-submap cm missing-addr)]
-      (= sub cm/EMPTY)))
-  :num-tests 50)
+      (= sub cm/EMPTY))))
 
-;; ---------------------------------------------------------------------------
-;; Property 7: EMPTY has no addresses
-;; ---------------------------------------------------------------------------
-
-(check "EMPTY has no addresses"
+(defspec EMPTY-has-no-addresses 1
   (prop/for-all [_ (gen/return nil)]
-    (empty? (cm/addresses cm/EMPTY)))
-  :num-tests 1)
+    (empty? (cm/addresses cm/EMPTY))))
 
-;; ---------------------------------------------------------------------------
-;; Property 8: merge-cm(a, EMPTY) = a
-;; ---------------------------------------------------------------------------
-
-(println "\n-- merge properties --")
-
-(check "merge-cm(a, EMPTY) = a"
+(defspec merge-cm-a-EMPTY-equals-a 100
   (prop/for-all [cm (gen-choicemap-from-paths)]
     (= (cm/to-map (cm/merge-cm cm cm/EMPTY))
        (cm/to-map cm))))
 
-;; ---------------------------------------------------------------------------
-;; Property 9: merge-cm(EMPTY, b) = b
-;; ---------------------------------------------------------------------------
-
-(check "merge-cm(EMPTY, b) = b"
+(defspec merge-cm-EMPTY-b-equals-b 100
   (prop/for-all [cm (gen-choicemap-from-paths)]
     (= (cm/to-map (cm/merge-cm cm/EMPTY cm))
        (cm/to-map cm))))
 
-;; ---------------------------------------------------------------------------
-;; Property 10: merge: b overrides a at shared paths
-;; ---------------------------------------------------------------------------
-
-(check "merge: b overrides a at shared paths"
+(defspec merge-b-overrides-a-at-shared-paths 100
   (prop/for-all [path gen-path
                  val-a gen-value
                  val-b gen-value]
@@ -186,15 +114,10 @@
           merged (cm/merge-cm a b)]
       (= val-b (cm/get-choice merged path)))))
 
-;; ---------------------------------------------------------------------------
-;; Property 11: merge: preserves a's values at disjoint paths
-;; ---------------------------------------------------------------------------
-
-(check "merge: preserves a's values at disjoint paths"
+(defspec merge-preserves-values-at-disjoint-paths 100
   (prop/for-all [val-a gen-value
                  val-b gen-value]
-    (let [;; Use fixed disjoint paths to ensure no overlap
-          path-a [:__left :val]
+    (let [path-a [:__left :val]
           path-b [:__right :val]
           a (cm/set-choice cm/EMPTY path-a val-a)
           b (cm/set-choice cm/EMPTY path-b val-b)
@@ -202,9 +125,4 @@
       (and (= val-a (cm/get-choice merged path-a))
            (= val-b (cm/get-choice merged path-b))))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== ChoiceMap Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)

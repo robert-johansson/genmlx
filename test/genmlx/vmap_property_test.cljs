@@ -4,9 +4,9 @@
    as any generative function: simulate liveness, importance weighting
    identity, update invertibility, score additivity, and projection
    decomposition."
-  (:require [clojure.test.check :as tc]
-            [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
+            [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
@@ -14,28 +14,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.vmap :as vmap])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -104,16 +84,12 @@
 
 (def gen-constraint-val (gen/elements [-3.0 -1.0 0.0 1.0 3.0]))
 
-(println "\n=== Vmap Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
 ;; E15.1: simulate produces valid trace with finite score
-;; Law: GFI liveness — simulate always returns a well-formed trace
+;; Law: GFI liveness -- simulate always returns a well-formed trace
 ;; ---------------------------------------------------------------------------
 
-(println "-- simulate --")
-
-(check "simulate: finite score, addresses present"
+(defspec simulate-finite-score-addresses-present 50
   (prop/for-all [spec gen-args-3]
     (let [trace (p/simulate vmap-gf-3 (:args spec))
           s (eval-score trace)
@@ -127,12 +103,10 @@
 
 ;; ---------------------------------------------------------------------------
 ;; E15.2: generate(empty) weight = 0
-;; Law: importance weighting identity — unconstrained generate has unit weight
+;; Law: importance weighting identity -- unconstrained generate has unit weight
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- generate --")
-
-(check "generate(empty): weight = 0"
+(defspec generate-empty-weight-equals-0 50
   (prop/for-all [spec gen-args-3]
     (let [{:keys [weight]} (p/generate vmap-gf-3 (:args spec) cm/EMPTY)
           w (eval-weight weight)]
@@ -143,7 +117,7 @@
 ;; Law: fully constrained generate has weight equal to joint log-probability
 ;; ---------------------------------------------------------------------------
 
-(check "generate(full): weight = score"
+(defspec generate-full-weight-equals-score 50
   (prop/for-all [spec gen-args-3]
     (let [trace (p/simulate vmap-gf-3 (:args spec))
           {:keys [trace weight]} (p/generate vmap-gf-3 (:args spec) (:choices trace))
@@ -156,9 +130,7 @@
 ;; Law: updating a trace with its own choices is the identity
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- update --")
-
-(check "update(same): weight = 0"
+(defspec update-same-weight-equals-0 50
   (prop/for-all [spec gen-args-3]
     (let [trace (p/simulate vmap-gf-3 (:args spec))
           {:keys [weight]} (p/update vmap-gf-3 trace (:choices trace))
@@ -167,10 +139,10 @@
 
 ;; ---------------------------------------------------------------------------
 ;; E15.5: update round-trip via discard
-;; Law: update is invertible — applying the discard recovers the original trace
+;; Law: update is invertible -- applying the discard recovers the original trace
 ;; ---------------------------------------------------------------------------
 
-(check "update round-trip via discard"
+(defspec update-round-trip-via-discard 50
   (prop/for-all [spec gen-args-3
                  v gen-constraint-val]
     (let [trace0 (p/simulate vmap-gf-3 (:args spec))
@@ -188,9 +160,7 @@
 ;; Law: regenerating nothing is the identity on traces
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- regenerate --")
-
-(check "regenerate(none): weight = 0, choices preserved"
+(defspec regenerate-none-weight-0-choices-preserved 50
   (prop/for-all [spec gen-args-3]
     (let [trace0 (p/simulate vmap-gf-3 (:args spec))
           y-orig (cm/get-value (cm/get-submap (:choices trace0) :y))
@@ -210,9 +180,7 @@
 ;; Law: projecting all addresses yields the total log-probability
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- project --")
-
-(check "project(all) = score"
+(defspec project-all-equals-score 50
   (prop/for-all [spec gen-args-3]
     (let [trace (p/simulate vmap-gf-3 (:args spec))
           s (eval-score trace)
@@ -224,7 +192,7 @@
 ;; Law: projecting no addresses yields zero log-probability
 ;; ---------------------------------------------------------------------------
 
-(check "project(none) = 0"
+(defspec project-none-equals-0 50
   (prop/for-all [spec gen-args-3]
     (let [trace (p/simulate vmap-gf-3 (:args spec))
           proj (eval-weight (p/project vmap-gf-3 trace sel/none))]
@@ -235,7 +203,7 @@
 ;; Law: projection is additively decomposable over address partitions
 ;; ---------------------------------------------------------------------------
 
-(check "project(S) + project(complement(S)) = score"
+(defspec project-s-plus-project-complement-s-equals-score 50
   (prop/for-all [spec gen-multi-args]
     (let [trace (p/simulate multi-vmap-3 (:args spec))
           score (eval-score trace)
@@ -249,9 +217,7 @@
 ;; Law: the degenerate vmap of one element has the same score as the kernel
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- degenerate cases --")
-
-(check "vmap(f, n=1) generate score = f generate score"
+(defspec vmap-f-n-1-generate-score-equals-f-generate-score 50
   (prop/for-all [spec gen-args-1
                  v gen-constraint-val]
     (let [;; vmap generate with [1]-shaped constraint
@@ -267,13 +233,11 @@
 
 ;; ---------------------------------------------------------------------------
 ;; E15.11: vmap score = sum(element scores)
-;; Law: score additivity — the joint log-prob of independent sub-traces
+;; Law: score additivity -- the joint log-prob of independent sub-traces
 ;;      equals the sum of their individual log-probabilities
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- score additivity --")
-
-(check "vmap score = sum(element scores)"
+(defspec vmap-score-equals-sum-element-scores 50
   (prop/for-all [spec gen-args-3]
     (let [trace (p/simulate vmap-gf-3 (:args spec))
           total-score (eval-score trace)
@@ -304,9 +268,4 @@
                 (range 3))]
           (close? total-score elem-scores 0.01))))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== Vmap Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)

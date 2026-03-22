@@ -6,9 +6,9 @@
    - SMC(1 step) degenerates to IS
    - More particles reduce log-ML variance (consistency)
    - Resampling preserves weighted expectations"
-  (:require [clojure.test.check :as tc]
-            [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
+            [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
@@ -20,28 +20,8 @@
             [genmlx.inference.importance :as is]
             [genmlx.inference.util :as u]
             [genmlx.vectorized :as vec])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -95,16 +75,12 @@
 (def key-pool (mapv #(rng/fresh-key %) [42 99 123 7 255]))
 (def gen-key (gen/elements key-pool))
 
-(println "\n=== SMC Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
 ;; Resampling properties
 ;; Law: systematic resampling indices must lie in [0, N)
 ;; ---------------------------------------------------------------------------
 
-(println "-- resampling --")
-
-(check "systematic-resample: indices in [0, N)"
+(defspec systematic-resample-indices-in-0-n 50
   (prop/for-all [n gen-n-particles
                  k gen-key]
     (let [log-weights (vec (repeatedly n #(mx/scalar (- (js/Math.random) 0.5))))
@@ -112,7 +88,7 @@
       (and (= n (count indices))
            (every? #(and (>= % 0) (< % n)) indices)))))
 
-(check "systematic-resample (random weights): indices in [0, N)"
+(defspec systematic-resample-random-weights-indices-in-0-n 50
   (prop/for-all [n gen-n-particles
                  k gen-key]
     (let [log-weights (vec (repeatedly n #(mx/scalar (* 2.0 (- (js/Math.random) 0.5)))))
@@ -121,7 +97,7 @@
            (every? #(and (>= % 0) (< % n)) indices)))))
 
 ;; Law: uniform weights should produce valid resampling
-(check "uniform weights: resample produces valid indices"
+(defspec uniform-weights-resample-produces-valid-indices 50
   (prop/for-all [n gen-n-particles
                  k gen-key]
     (let [log-weights (vec (repeat n (mx/scalar 0.0)))
@@ -134,9 +110,7 @@
 ;; Law: vsmc-init weight and score shapes must be [N]
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- vectorized smc --")
-
-(check "vsmc-init: weight and score shape = [N]"
+(defspec vsmc-init-weight-and-score-shape-equals-n 50
   (prop/for-all [n gen-n-particles
                  k gen-key]
     (let [result (smc/vsmc-init vmodel [] vobs n k)
@@ -150,9 +124,7 @@
 ;; Law: SMC with a single observation step degenerates to importance sampling
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- smc vs is --")
-
-(check "SMC(1 step) log-ML roughly agrees with IS log-ML"
+(defspec smc-1-step-log-ml-roughly-agrees-with-is-log-ml 20
   (prop/for-all [n (gen/elements [10 20])
                  k gen-key]
     (let [[k1 k2] (rng/split k)
@@ -163,8 +135,7 @@
       ;; Both are noisy estimates of the same quantity;
       ;; they should roughly agree (both are unbiased for the same log p(y))
       (and (finite? is-log-ml) (finite? smc-log-ml)
-           (close? is-log-ml smc-log-ml 3.0))))
-  :num-tests 20)
+           (close? is-log-ml smc-log-ml 3.0)))))
 
 ;; ---------------------------------------------------------------------------
 ;; More particles reduce log-ML variance (consistency)
@@ -172,8 +143,8 @@
 ;; ---------------------------------------------------------------------------
 
 ;; Law: ESS increases with more uniform weights (ESS is a measure of sample quality)
-;; Concentrated weights (one dominant) → low ESS, uniform weights → ESS = N
-(check "concentrated weights yield ESS < N"
+;; Concentrated weights (one dominant) -> low ESS, uniform weights -> ESS = N
+(defspec concentrated-weights-yield-ess-less-than-n 20
   (prop/for-all [n gen-n-particles]
     (let [;; Concentrated: one very high weight, rest very low
           concentrated (vec (cons (mx/scalar 10.0)
@@ -184,15 +155,14 @@
           ess-unif (u/compute-ess uniform)]
       ;; Concentrated should give ESS near 1, uniform gives ESS = N
       (and (< ess-conc 2.0)
-           (close? ess-unif (double n) 0.01))))
-  :num-tests 20)
+           (close? ess-unif (double n) 0.01)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Resampling preserves weighted expectation
 ;; Law: E_weighted[mu] before resampling = E_unweighted[mu] after resampling
 ;; ---------------------------------------------------------------------------
 
-(check "resampling preserves weighted expectation"
+(defspec resampling-preserves-weighted-expectation 20
   (prop/for-all [n (gen/elements [10 20])
                  k gen-key]
     (let [[k1 k2] (rng/split k)
@@ -205,12 +175,6 @@
           indices (u/systematic-resample log-weights n k2)
           resampled-vals (mapv #(nth mu-vals %) indices)
           unweighted-mean (/ (reduce + resampled-vals) (count resampled-vals))]
-      (close? weighted-mean unweighted-mean 2.0)))
-  :num-tests 20)
+      (close? weighted-mean unweighted-mean 2.0))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== SMC Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)

@@ -1,7 +1,7 @@
 (ns genmlx.combinator-extra-property-test
   "Property-based tests for Mix, Recurse, Contramap, and Dimap combinators.
    Verifies GFI contracts and structural invariants."
-  (:require [clojure.test.check :as tc]
+  (:require [cljs.test :as t]
             [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
             [genmlx.mlx :as mx]
@@ -12,28 +12,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.combinators :as comb])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -67,15 +47,10 @@
 (def constraint-pool [0.5 1.0 -0.5 2.0 -1.0])
 (def gen-constraint (gen/elements constraint-pool))
 
-(println "\n=== Combinator Extra Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
-;; Mix Combinator (5)
+;; Mix Combinator
 ;; ---------------------------------------------------------------------------
 
-(println "-- Mix combinator --")
-
-;; Two Gaussian components with varying weights
 (def mix-comp1 (dyn/auto-key (gen [] (trace :y (dist/gaussian 0 1)))))
 (def mix-comp2 (dyn/auto-key (gen [] (trace :y (dist/gaussian 5 2)))))
 
@@ -86,21 +61,21 @@
   (let [log-w (mx/log (mx/array [w1 (- 1.0 w1)]))]
     (comb/mix-combinator [mix-comp1 mix-comp2] log-w)))
 
-(check "Mix: simulate produces valid component-idx in {0, 1}"
+(defspec mix-component-idx-in-0-1 50
   (prop/for-all [w gen-mix-weight]
     (let [m (make-mixed w)
           trace (p/simulate m [])
           idx (mx/item (cm/get-choice (:choices trace) [:component-idx]))]
       (or (== idx 0) (== idx 1)))))
 
-(check "Mix: generate(empty) weight near 0"
+(defspec mix-generate-empty-weight-near-zero 50
   (prop/for-all [w gen-mix-weight]
     (let [m (make-mixed w)
           {:keys [weight]} (p/generate m [] cm/EMPTY)
           w (eval-weight weight)]
       (close? 0.0 w 0.01))))
 
-(check "Mix: update(same) weight near 0"
+(defspec mix-update-same-weight-near-zero 50
   (prop/for-all [w gen-mix-weight]
     (let [m (make-mixed w)
           trace (p/simulate m [])
@@ -108,7 +83,7 @@
           w (eval-weight weight)]
       (close? 0.0 w 0.01))))
 
-(check "Mix: generate(full) weight near score"
+(defspec mix-generate-full-weight-near-score 50
   (prop/for-all [w gen-mix-weight]
     (let [m (make-mixed w)
           trace (p/simulate m [])
@@ -117,7 +92,7 @@
           s (eval-score trace)]
       (close? s w 0.01))))
 
-(check "Mix: regenerate(none) weight near 0"
+(defspec mix-regenerate-none-weight-near-zero 50
   (prop/for-all [w gen-mix-weight]
     (let [m (make-mixed w)
           trace (p/simulate m [])
@@ -126,13 +101,9 @@
       (close? 0.0 w 0.01))))
 
 ;; ---------------------------------------------------------------------------
-;; Recurse Combinator (4)
+;; Recurse Combinator
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- Recurse combinator --")
-
-;; Simple recursive model: traces :v, no splice (avoids regenerate complexity)
-;; The recurse combinator just provides fixed-point wrapping.
 (def recursive-model
   (comb/recurse
     (fn [self]
@@ -142,14 +113,13 @@
             (mx/eval! v)
             (mx/item v)))))))
 
-;; Pool: depth doesn't matter since no recursion, but tests the combinator wrapping
 (def recurse-pool
   [{:depth 0 :args [0] :label "recurse(depth=0)"}
    {:depth 1 :args [1] :label "recurse(depth=1)"}])
 
 (def gen-recurse-spec (gen/elements recurse-pool))
 
-(check "Recurse: generate(full) weight near score"
+(defspec recurse-generate-full-weight-near-score 50
   (prop/for-all [spec gen-recurse-spec]
     (let [trace (p/simulate recursive-model (:args spec))
           {:keys [trace weight]} (p/generate recursive-model (:args spec) (:choices trace))
@@ -157,21 +127,21 @@
           s (eval-score trace)]
       (close? s w 0.01))))
 
-(check "Recurse: update(same) weight near 0"
+(defspec recurse-update-same-weight-near-zero 50
   (prop/for-all [spec gen-recurse-spec]
     (let [trace (p/simulate recursive-model (:args spec))
           {:keys [weight]} (p/update recursive-model trace (:choices trace))
           w (eval-weight weight)]
       (close? 0.0 w 0.01))))
 
-(check "Recurse: regenerate(none) weight near 0"
+(defspec recurse-regenerate-none-weight-near-zero 50
   (prop/for-all [spec gen-recurse-spec]
     (let [trace (p/simulate recursive-model (:args spec))
           {:keys [weight]} (p/regenerate recursive-model trace sel/none)
           w (eval-weight weight)]
       (close? 0.0 w 0.01))))
 
-(check "Recurse: project(all) near score"
+(defspec recurse-project-all-near-score 50
   (prop/for-all [spec gen-recurse-spec]
     (let [trace (p/simulate recursive-model (:args spec))
           s (eval-score trace)
@@ -179,10 +149,8 @@
       (close? s proj 0.01))))
 
 ;; ---------------------------------------------------------------------------
-;; Contramap (5)
+;; Contramap
 ;; ---------------------------------------------------------------------------
-
-(println "\n-- Contramap combinator --")
 
 (def inner-gf
   (dyn/auto-key
@@ -190,10 +158,7 @@
       (let [y (trace :y (dist/gaussian x 1))]
         (mx/eval! y) (mx/item y)))))
 
-;; Identity contramap: passes args unchanged
 (def contramap-identity (comb/contramap-gf inner-gf identity))
-
-;; Doubling contramap: doubles the first arg
 (def contramap-double (comb/contramap-gf inner-gf (fn [args] (mapv #(* 2 %) args))))
 
 (def contramap-pool
@@ -202,7 +167,7 @@
 
 (def gen-contramap-spec (gen/elements contramap-pool))
 
-(check "Contramap(identity): score equals inner GF score"
+(defspec contramap-identity-score-equals-inner 50
   (prop/for-all [arg gen-arg
                  cval gen-constraint]
     (let [constraint (cm/choicemap :y (mx/scalar cval))
@@ -212,7 +177,7 @@
           inner-score (eval-score trace)]
       (close? cm-score inner-score 0.01))))
 
-(check "Contramap(identity): retval matches inner GF retval"
+(defspec contramap-identity-retval-matches-inner 50
   (prop/for-all [arg gen-arg
                  cval gen-constraint]
     (let [constraint (cm/choicemap :y (mx/scalar cval))
@@ -222,14 +187,14 @@
           inner-retval (:retval trace)]
       (close? cm-retval inner-retval 1e-6))))
 
-(check "Contramap: generate(empty) weight near 0"
+(defspec contramap-generate-empty-weight-near-zero 50
   (prop/for-all [spec gen-contramap-spec
                  arg gen-arg]
     (let [{:keys [weight]} (p/generate (:gf spec) [arg] cm/EMPTY)
           w (eval-weight weight)]
       (close? 0.0 w 0.01))))
 
-(check "Contramap: update(same) weight near 0"
+(defspec contramap-update-same-weight-near-zero 50
   (prop/for-all [spec gen-contramap-spec
                  arg gen-arg]
     (let [trace (p/simulate (:gf spec) [arg])
@@ -237,10 +202,9 @@
           w (eval-weight weight)]
       (close? 0.0 w 0.01))))
 
-(check "Contramap: score unchanged by arg transformation (structural)"
+(defspec contramap-double-score-matches-inner-doubled-arg 50
   (prop/for-all [arg gen-arg
                  cval gen-constraint]
-    ;; contramap-double with args [arg] should behave like inner-gf with args [2*arg]
     (let [constraint (cm/choicemap :y (mx/scalar cval))
           {:keys [trace]} (p/generate contramap-double [arg] constraint)
           cm-score (eval-score trace)
@@ -249,20 +213,16 @@
       (close? cm-score inner-score 0.01))))
 
 ;; ---------------------------------------------------------------------------
-;; Dimap (4)
+;; Dimap
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- Dimap combinator --")
-
-;; dimap: double input, negate output
 (def dimapped (comb/dimap inner-gf
-                          (fn [args] (mapv #(* 2 %) args))  ; double input
-                          (fn [retval] (- retval))))          ; negate output
+                          (fn [args] (mapv #(* 2 %) args))
+                          (fn [retval] (- retval))))
 
-(check "Dimap: score unchanged vs inner (with matching args and constraints)"
+(defspec dimap-score-unchanged-vs-inner 50
   (prop/for-all [arg gen-arg
                  cval gen-constraint]
-    ;; dimap with args [arg] transforms to inner args [2*arg], same score
     (let [constraint (cm/choicemap :y (mx/scalar cval))
           {:keys [trace]} (p/generate dimapped [arg] constraint)
           dm-score (eval-score trace)
@@ -270,7 +230,7 @@
           inner-score (eval-score trace)]
       (close? dm-score inner-score 0.01))))
 
-(check "Dimap: retval transformed by output function"
+(defspec dimap-retval-transformed-by-output-fn 50
   (prop/for-all [arg gen-arg
                  cval gen-constraint]
     (let [constraint (cm/choicemap :y (mx/scalar cval))
@@ -278,25 +238,19 @@
           dm-retval (:retval trace)
           {:keys [trace]} (p/generate inner-gf [(* 2 arg)] constraint)
           inner-retval (:retval trace)]
-      ;; dimap negates, so dm-retval = -(inner-retval)
       (close? dm-retval (- inner-retval) 1e-6))))
 
-(check "Dimap: generate(empty) weight near 0"
+(defspec dimap-generate-empty-weight-near-zero 50
   (prop/for-all [arg gen-arg]
     (let [{:keys [weight]} (p/generate dimapped [arg] cm/EMPTY)
           w (eval-weight weight)]
       (close? 0.0 w 0.01))))
 
-(check "Dimap: update(same) weight near 0"
+(defspec dimap-update-same-weight-near-zero 50
   (prop/for-all [arg gen-arg]
     (let [trace (p/simulate dimapped [arg])
           {:keys [weight]} (p/update dimapped trace (:choices trace))
           w (eval-weight weight)]
       (close? 0.0 w 0.01))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== Combinator Extra Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)

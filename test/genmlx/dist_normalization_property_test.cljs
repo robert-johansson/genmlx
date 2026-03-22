@@ -2,9 +2,9 @@
   "Property-based tests for discrete distribution normalization laws.
    Verifies: probability axioms (sum to 1), interface consistency,
    categorical parameterization, support coverage, and Bayesian conjugacy."
-  (:require [clojure.test.check :as tc]
-            [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
+            [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
@@ -14,28 +14,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.inference.mcmc :as mcmc])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -71,12 +51,12 @@
   [(dist/discrete-uniform (s 0) (s 3))
    (dist/discrete-uniform (s 1) (s 5))])
 
-;; All discrete distributions with finite, enumerable support (exclude geometric — unbounded)
+;; All discrete distributions with finite, enumerable support (exclude geometric -- unbounded)
 (def discrete-pool
   (vec (concat bernoulli-pool categorical-pool binomial-pool discrete-uniform-pool)))
 
 ;; Small-support pool (support size <= 5) for coverage tests
-;; For support coverage: exclude extreme bernoulli (p=0.01/0.99) — need ~500 samples
+;; For support coverage: exclude extreme bernoulli (p=0.01/0.99) -- need ~500 samples
 ;; to reliably see the rare event. Use moderate-probability distributions only.
 (def small-discrete-pool
   (vec (concat [(dist/bernoulli (s 0.3))
@@ -92,24 +72,19 @@
   (let [root (rng/fresh-key)]
     (vec (rng/split-n root 5))))
 
-(println "\n=== Distribution Normalization Property Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
-;; E16.1: finite-support normalization — sum(exp(log-prob(v))) = 1
-;; Law: Probability axiom — a valid probability measure sums to 1
+;; E16.1: finite-support normalization -- sum(exp(log-prob(v))) = 1
+;; Law: Probability axiom -- a valid probability measure sums to 1
 ;;       over its support.
 ;; ---------------------------------------------------------------------------
 
-(println "-- probability axioms --")
-
-(check "finite-support normalization: sum(exp(log-prob)) = 1"
+(defspec finite-support-normalization-sum-exp-log-prob-equals-1 50
   (prop/for-all [d (gen/elements discrete-pool)]
     (let [support (dc/dist-support d)
           log-probs (mapv #(dc/dist-log-prob d %) support)
           _ (apply mx/eval! log-probs)
           total (reduce + (map #(js/Math.exp (mx/item %)) log-probs))]
-      (close? total 1.0 1e-4)))
-  :num-tests 50)
+      (close? total 1.0 1e-4))))
 
 ;; ---------------------------------------------------------------------------
 ;; E16.2: log-prob-support consistency with dist-log-prob
@@ -117,9 +92,7 @@
 ;;       interface (dist-log-prob) compute identical log-probabilities.
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- interface consistency --")
-
-(check "log-prob-support matches per-value dist-log-prob"
+(defspec log-prob-support-matches-per-value-dist-log-prob 50
   (prop/for-all [d (gen/elements discrete-pool)]
     (let [support (dc/dist-support d)
           bulk-lps (dc/dist-log-prob-support d)
@@ -131,16 +104,13 @@
             (let [bulk-val (mx/item (mx/index bulk-lps i))
                   ind-val (mx/item ind-lp)]
               (close? bulk-val ind-val 1e-5)))
-          individual-lps))))
-  :num-tests 50)
+          individual-lps)))))
 
 ;; ---------------------------------------------------------------------------
 ;; E16.3: categorical probabilities match normalized weights
 ;; Law: For categorical(logits), exp(log-prob(k)) = softmax(logits)[k].
 ;;       The parameterization defines the measure.
 ;; ---------------------------------------------------------------------------
-
-(println "\n-- categorical parameterization --")
 
 ;; Pre-build categorical specs with known weights for verification
 (def categorical-specs
@@ -149,7 +119,7 @@
    {:logits [0.1 0.1 0.1 0.7] :dist (dist/categorical (mx/array [0.1 0.1 0.1 0.7]))}
    {:logits [0.25 0.25 0.25 0.25] :dist (dist/categorical (mx/array [0.25 0.25 0.25 0.25]))}])
 
-(check "categorical probabilities match normalized weights"
+(defspec categorical-probabilities-match-normalized-weights 30
   (prop/for-all [spec (gen/elements categorical-specs)]
     (let [d (:dist spec)
           logits (:logits spec)
@@ -168,18 +138,15 @@
       (every? true?
         (map (fn [expected actual]
                (close? expected actual 1e-4))
-             expected-probs actual-probs))))
-  :num-tests 30)
+             expected-probs actual-probs)))))
 
 ;; ---------------------------------------------------------------------------
 ;; E16.4: sample support coverage (small discrete)
-;; Law: Ergodicity — every value in the support has positive probability,
+;; Law: Ergodicity -- every value in the support has positive probability,
 ;;       so sufficiently many samples must cover all support values.
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- support coverage --")
-
-(check "sample support coverage: all support values appear"
+(defspec sample-support-coverage-all-support-values-appear 20
   (prop/for-all [d (gen/elements small-discrete-pool)
                  key (gen/elements key-pool)]
     (let [support (dc/dist-support d)
@@ -194,17 +161,14 @@
           unique-vals (set samples)
           ;; Check all support values appear
           support-vals (set (map (fn [v] (mx/eval! v) (mx/item v)) support))]
-      (every? #(contains? unique-vals %) support-vals)))
-  :num-tests 20)
+      (every? #(contains? unique-vals %) support-vals))))
 
 ;; ---------------------------------------------------------------------------
 ;; E16.5: conjugate prior-posterior update (Beta-Bernoulli)
-;; Law: Bayes' theorem for conjugate pairs — Beta(a,b) prior with
+;; Law: Bayes' theorem for conjugate pairs -- Beta(a,b) prior with
 ;;       k successes in n Bernoulli trials yields Beta(a+k, b+n-k)
 ;;       posterior with mean (a+k)/(a+k+b+n-k).
 ;; ---------------------------------------------------------------------------
-
-(println "\n-- conjugate Bayesian update --")
 
 ;; Beta(2,3) prior, 5 heads + 3 tails = 8 trials
 ;; Posterior: Beta(2+5, 3+3) = Beta(7, 6), mean = 7/13 ~ 0.538
@@ -220,7 +184,7 @@
   (cm/from-map {:y0 (s 1) :y1 (s 1) :y2 (s 1) :y3 (s 1) :y4 (s 1)
                 :y5 (s 0) :y6 (s 0) :y7 (s 0)}))
 
-(check "Beta-Bernoulli conjugate posterior mean"
+(defspec beta-bernoulli-conjugate-posterior-mean 5
   (prop/for-all [key (gen/elements key-pool)]
     (let [;; Run MH for 200 samples with 50 burn-in
           traces (mcmc/mh {:samples 200 :burn 50 :selection (sel/select :p) :key key}
@@ -233,14 +197,6 @@
                        traces)
           mean-p (/ (reduce + p-vals) (count p-vals))]
       ;; Analytical posterior mean: 7/13 ~ 0.538
-      (close? mean-p (/ 7.0 13.0) 0.15)))
-  :num-tests 5)
+      (close? mean-p (/ 7.0 13.0) 0.15))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== Distribution Normalization Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
-(when (pos? @fail-count)
-  (js/process.exit 1))
+(t/run-tests)

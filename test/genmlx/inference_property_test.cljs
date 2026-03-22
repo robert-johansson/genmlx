@@ -2,9 +2,9 @@
   "Property-based inference algorithm tests using test.check.
    Every test verifies a genuine algebraic law of probabilistic programming:
    normalization, identity elements, bounds, associativity, etc."
-  (:require [clojure.test.check :as tc]
-            [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
+            [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
@@ -16,28 +16,8 @@
             [genmlx.inference.kernel :as kern]
             [genmlx.inference.util :as u]
             [genmlx.inference.diagnostics :as diag])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -105,16 +85,12 @@
 (def key-pool (mapv #(rng/fresh-key %) [42 99 123 7 255]))
 (def gen-key (gen/elements key-pool))
 
-(println "\n=== Inference Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
 ;; Importance Sampling
 ;; Law: normalized weights sum to 1.0 (normalization axiom of probability)
 ;; ---------------------------------------------------------------------------
 
-(println "-- importance sampling --")
-
-(check "IS: normalized weights sum to 1.0"
+(defspec is-normalized-weights-sum-to-1 50
   (prop/for-all [obs gen-obs
                  n gen-n-particles
                  k gen-key]
@@ -124,7 +100,7 @@
       (close? 1.0 total 0.01))))
 
 ;; Law: generate(model, empty constraints) = simulate, so weight = p/q = 1, log-weight = 0
-(check "IS: empty constraints yield weights near 0"
+(defspec is-empty-constraints-yield-weights-near-0 50
   (prop/for-all [n gen-n-particles
                  k gen-key]
     (let [{:keys [log-weights]} (is/importance-sampling {:samples n :key k} model [] cm/EMPTY)]
@@ -135,23 +111,19 @@
 ;; Law: MH acceptance probability = min(1, exp(log-alpha))
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- MH accept --")
-
 ;; Law: log-alpha = 0 means acceptance ratio = 1, always accept
-(check "accept-mh?(0) always true"
+(defspec accept-mh-0-always-true 100
   (prop/for-all [k gen-key]
-    (u/accept-mh? 0 k))
-  :num-tests 100)
+    (u/accept-mh? 0 k)))
 
 ;; Law: log-alpha = -100 means acceptance ratio ~ exp(-100) ~ 0, rarely accept
-(check "accept-mh?(-100) rarely true"
+(defspec accept-mh-neg-100-rarely-true 10
   (prop/for-all [_ (gen/return nil)]
     (let [accepts (count (filter true? (repeatedly 100 #(u/accept-mh? -100))))]
-      (< accepts 5)))
-  :num-tests 10)
+      (< accepts 5))))
 
 ;; Law: regenerate with empty selection = identity, weight = 0
-(check "regenerate(sel/none) yields weight near 0"
+(defspec regenerate-sel-none-yields-weight-near-0 50
   (prop/for-all [_ (gen/return nil)]
     (let [trace (p/simulate model [])
           {:keys [weight]} (p/regenerate model trace sel/none)]
@@ -162,9 +134,7 @@
 ;; Law: log-softmax normalization produces a valid probability distribution
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- weight utilities --")
-
-(check "normalize-log-weights probs sum to 1"
+(defspec normalize-log-weights-probs-sum-to-1 50
   (prop/for-all [n gen-n-particles
                  k gen-key]
     (let [{:keys [log-weights]} (is/importance-sampling {:samples n :key k} model [] (first obs-pool))
@@ -173,15 +143,15 @@
       (close? 1.0 total 0.01))))
 
 ;; Law: ESS = 1 / sum(w_i^2) where w_i are normalized weights, so ESS in (0, N]
-(check "compute-ess result in (0, N]"
+(defspec compute-ess-result-in-0-n 50
   (prop/for-all [n gen-n-particles
                  k gen-key]
     (let [{:keys [log-weights]} (is/importance-sampling {:samples n :key k} model [] (first obs-pool))
           ess (u/compute-ess log-weights)]
       (and (> ess 0) (<= ess (+ n 0.01))))))
 
-;; Law: uniform weights w_i = 1/N → ESS = N (maximum efficiency)
-(check "uniform weights yield ESS = N"
+;; Law: uniform weights w_i = 1/N -> ESS = N (maximum efficiency)
+(defspec uniform-weights-yield-ess-equals-n 50
   (prop/for-all [n gen-n-particles]
     (let [log-weights (vec (repeat n (mx/scalar 0.0)))
           ess (u/compute-ess log-weights)]
@@ -192,10 +162,8 @@
 ;; Law: R-hat measures between-chain vs within-chain variance
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- diagnostics --")
-
 ;; Law: identical chains have zero between-chain variance, R-hat = 1.0 (or NaN for constant)
-(check "diag/r-hat of identical chains near 1.0"
+(defspec diag-r-hat-of-identical-chains-near-1 50
   (prop/for-all [_ (gen/return nil)]
     (let [n 20
           chain (mapv (fn [_] (mx/scalar 5.0)) (range n))
@@ -204,29 +172,26 @@
         (or (js/isNaN r) (>= r 0.99))))))
 
 ;; Law: R-hat >= 1.0 always (between-chain variance is non-negative)
-(check "diag/r-hat >= 1.0 always (non-degenerate)"
+(defspec diag-r-hat-gte-1-always-non-degenerate 30
   (prop/for-all [_ (gen/return nil)]
     (let [n 20
           chain1 (mapv (fn [i] (mx/scalar (+ 0.0 (* 0.1 i)))) (range n))
           chain2 (mapv (fn [i] (mx/scalar (+ 5.0 (* 0.1 i)))) (range n))
           r (diag/r-hat [chain1 chain2])]
-      (>= r 1.0)))
-  :num-tests 30)
+      (>= r 1.0))))
 
 ;; ---------------------------------------------------------------------------
 ;; Kernel composition laws
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- kernel composition --")
-
 (def k1 (kern/mh-kernel (sel/select :slope)))
 (def k2 (kern/mh-kernel (sel/select :intercept)))
 (def k3 (kern/mh-kernel (sel/select :slope)))
 
-;; Law: chain(k1, k2) preserves model support — the output trace has the
+;; Law: chain(k1, k2) preserves model support -- the output trace has the
 ;; same addresses as the input trace. Kernel transitions cannot add or remove
 ;; trace sites; they can only change values.
-(check "kernel chain preserves model support"
+(defspec kernel-chain-preserves-model-support 30
   (prop/for-all [k gen-key]
     (let [{:keys [trace]} (p/generate linreg [linreg-xs] linreg-obs)
           chained (kern/chain k1 k2)
@@ -240,12 +205,11 @@
           score (eval-weight (:score result))]
       (and (finite? slope) (finite? intercept)
            (finite? y0) (finite? y1) (finite? y2)
-           (finite? score))))
-  :num-tests 30)
+           (finite? score)))))
 
-;; Law: cycle(n, [k1, k2]) preserves model support — cycling through multiple
+;; Law: cycle(n, [k1, k2]) preserves model support -- cycling through multiple
 ;; kernels produces a valid trace with all addresses intact.
-(check "cycle-kernels preserves model support"
+(defspec cycle-kernels-preserves-model-support 30
   (prop/for-all [k gen-key]
     (let [{:keys [trace]} (p/generate linreg [linreg-xs] linreg-obs)
           cycled (kern/cycle-kernels 4 [k1 k2])
@@ -253,12 +217,6 @@
           slope (choice-val (:choices result) :slope)
           intercept (choice-val (:choices result) :intercept)
           score (eval-weight (:score result))]
-      (and (finite? slope) (finite? intercept) (finite? score))))
-  :num-tests 30)
+      (and (finite? slope) (finite? intercept) (finite? score)))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== Inference Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)

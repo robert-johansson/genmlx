@@ -3,9 +3,9 @@
    Every test verifies a genuine mathematical invariant of trace mutation:
    invertibility via discard, identity elements, and equivalence with
    the underlying GFI protocol operations."
-  (:require [clojure.test.check :as tc]
-            [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
+            [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
@@ -13,28 +13,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.edit :as edit])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 30}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -102,16 +82,12 @@
 (def gen-indep-model (gen/elements [two-independent]))
 (def gen-constraint-val (gen/elements [-3.0 -1.0 0.0 1.0 3.0]))
 
-(println "\n=== Edit Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
-;; E14.1: ConstraintEdit round-trip — update then undo via discard
+;; E14.1: ConstraintEdit round-trip -- update then undo via discard
 ;; Law: constraint edit is invertible via discard
 ;; ---------------------------------------------------------------------------
 
-(println "-- edit invertibility --")
-
-(check "ConstraintEdit round-trip: update then undo via discard"
+(defspec constraint-edit-round-trip-update-then-undo-via-discard 30
   (prop/for-all [m gen-model
                  v gen-constraint-val]
     (let [model (:model m)
@@ -144,7 +120,7 @@
 ;; For independent sites, the prior IS the proposal, so the MH acceptance
 ;; ratio exponent (weight) is exactly zero: the change in joint score from
 ;; resampling equals the proposal ratio, and they cancel.
-(check "SelectionEdit on independent site: weight = 0"
+(defspec selection-edit-on-independent-site-weight-equals-0 30
   (prop/for-all [m gen-indep-model]
     (let [model (:model m)
           trace0 (p/simulate model [])
@@ -158,9 +134,7 @@
 ;; Law: the empty constraint is the identity element for edit
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- edit identity elements --")
-
-(check "ConstraintEdit with empty constraint = identity"
+(defspec constraint-edit-with-empty-constraint-equals-identity 30
   (prop/for-all [m gen-model]
     (let [model (:model m)
           trace0 (p/simulate model [])
@@ -181,7 +155,7 @@
 ;; Law: the empty selection is the identity element for regenerate-style edit
 ;; ---------------------------------------------------------------------------
 
-(check "SelectionEdit with sel/none = identity"
+(defspec selection-edit-with-sel-none-equals-identity 30
   (prop/for-all [m gen-model]
     (let [model (:model m)
           trace0 (p/simulate model [])
@@ -202,9 +176,7 @@
 ;; Law: edit and update are equivalent for constraint edits
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- edit/protocol equivalence --")
-
-(check "Edit weight matches equivalent protocol call"
+(defspec edit-weight-matches-equivalent-protocol-call 30
   (prop/for-all [m gen-model
                  v gen-constraint-val]
     (let [model (:model m)
@@ -223,9 +195,7 @@
 ;; Law: a symmetric proposal is approximately involutive
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- proposal symmetry --")
-
-(check "ProposalEdit forward/backward symmetry"
+(defspec proposal-edit-forward-backward-symmetry 20
   (prop/for-all [m gen-model]
     (let [model (:model m)
           trace0 (p/simulate model [])
@@ -252,12 +222,6 @@
       (and (finite? fwd-w)
            (finite? bwd-w)
            ;; Score should approximately recover (small perturbation, so close)
-           (close? score0 score2 2.0))))
-  :num-tests 20)
+           (close? score0 score2 2.0)))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== Edit Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)

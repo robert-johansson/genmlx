@@ -6,9 +6,9 @@
    - IWELBO(K=1) = ELBO (degenerate case)
    - ELBO improves over training (gradient ascent)
    - VI posterior mean near analytical posterior"
-  (:require [clojure.test.check :as tc]
-            [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
+            [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
@@ -17,28 +17,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.inference.vi :as vi]
             [genmlx.inference.util :as u])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -109,51 +89,42 @@
 
 (def simple-init (mx/array [1.0 1.0]))
 
-(println "\n=== VI Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
 ;; Law: sigma > 0 (positivity constraint on variational scale)
 ;; sigma = exp(log_sigma), which is always positive
 ;; ---------------------------------------------------------------------------
 
-(println "-- sigma positivity --")
-
-(check "vi: sigma > 0"
+(defspec vi-sigma-greater-than-0 20
   (prop/for-all [k gen-key]
     (let [result (vi/vi {:iterations 30 :learning-rate 0.05 :elbo-samples 3 :key k}
                          simple-log-density simple-init)
           sigma (:sigma result)]
       (mx/eval! sigma)
-      (every? #(> % 0) (mx/->clj sigma))))
-  :num-tests 20)
+      (every? #(> % 0) (mx/->clj sigma)))))
 
-(check "compiled-vi: sigma > 0"
+(defspec compiled-vi-sigma-greater-than-0 15
   (prop/for-all [k gen-key]
     (let [result (vi/compiled-vi {:iterations 30 :learning-rate 0.05
                                    :elbo-samples 3 :key k :device :cpu}
                                   simple-log-density simple-init)
           sigma (:sigma result)]
       (mx/eval! sigma)
-      (every? #(> % 0) (mx/->clj sigma))))
-  :num-tests 15)
+      (every? #(> % 0) (mx/->clj sigma)))))
 
-(check "vi-from-model: sigma > 0"
+(defspec vi-from-model-sigma-greater-than-0 10
   (prop/for-all [k gen-key]
     (let [result (vi/vi-from-model
                    {:iterations 20 :learning-rate 0.05 :elbo-samples 3 :key k}
                    gauss-model [] gauss-obs [:mu])
           sigma (:sigma result)]
       (mx/eval! sigma)
-      (every? #(> % 0) (mx/->clj sigma))))
-  :num-tests 10)
+      (every? #(> % 0) (mx/->clj sigma)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Law: ELBO <= log P(data) (variational lower bound)
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- ELBO bound --")
-
-(check "ELBO <= true log-marginal"
+(defspec elbo-less-than-or-equal-true-log-marginal 15
   (prop/for-all [k gen-key]
     (let [result (vi/vi {:iterations 200 :learning-rate 0.05 :elbo-samples 10 :key k}
                          vi-log-density vi-init-params)
@@ -164,16 +135,13 @@
           sorted (sort last-few)
           median-elbo (nth sorted (quot (count sorted) 2))]
       ;; ELBO is a lower bound; allow 1.5 slack for MC estimation noise
-      (<= median-elbo (+ true-log-ml 1.5))))
-  :num-tests 15)
+      (<= median-elbo (+ true-log-ml 1.5)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Law: IWELBO(K=1) = ELBO (degenerate importance weighting)
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- IWELBO degenerate case --")
-
-(check "IWELBO(K=1) = ELBO"
+(defspec iwelbo-k-1-equals-elbo 30
   (prop/for-all [k gen-key]
     (let [;; Log-p and log-q at same point
           log-p vi-log-density
@@ -184,16 +152,13 @@
           sample (rng/normal k [1 1])
           elbo-val (mx/item (mx/tidy-materialize #(elbo-fn sample)))
           iwelbo-val (mx/item (mx/tidy-materialize #(iwelbo-fn sample)))]
-      (close? elbo-val iwelbo-val 0.01)))
-  :num-tests 30)
+      (close? elbo-val iwelbo-val 0.01))))
 
 ;; ---------------------------------------------------------------------------
 ;; Law: gradient ascent increases ELBO
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- ELBO improvement --")
-
-(check "ELBO improves over training"
+(defspec elbo-improves-over-training 15
   (prop/for-all [k gen-key]
     (let [result (vi/vi {:iterations 200 :learning-rate 0.05 :elbo-samples 10 :key k}
                          vi-log-density vi-init-params)
@@ -204,29 +169,20 @@
               quarter (max 1 (quot n 4))
               early-mean (/ (reduce + (take quarter history)) quarter)
               late-mean  (/ (reduce + (take-last quarter history)) quarter)]
-          (> late-mean early-mean)))))
-  :num-tests 15)
+          (> late-mean early-mean))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Law: VI converges to (near) true posterior
 ;; Analytical posterior: N(300/101, 100/101), mu_post ~ 2.97
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- VI posterior convergence --")
-
-(check "VI posterior mean near analytical"
+(defspec vi-posterior-mean-near-analytical 15
   (prop/for-all [k gen-key]
     (let [result (vi/vi {:iterations 200 :learning-rate 0.05 :elbo-samples 10 :key k}
                          vi-log-density vi-init-params)
           mu (:mu result)]
       (mx/eval! mu)
       (let [mu-val (first (mx/->clj mu))]
-        (close? mu-val 2.97 1.5))))
-  :num-tests 15)
+        (close? mu-val 2.97 1.5)))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== VI Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)
