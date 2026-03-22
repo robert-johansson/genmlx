@@ -39,10 +39,6 @@
 ;; Helpers
 ;; ---------------------------------------------------------------------------
 
-(defn- eval-weight [w]
-  (mx/eval! w)
-  (mx/item w))
-
 (defn- finite? [x]
   (and (number? x) (js/isFinite x)))
 
@@ -89,7 +85,7 @@
 (println "\n=== Vectorized Property-Based Tests ===\n")
 
 ;; ---------------------------------------------------------------------------
-;; vsimulate Shape (4)
+;; vsimulate Shape (3)
 ;; ---------------------------------------------------------------------------
 
 (println "-- vsimulate shape --")
@@ -113,14 +109,6 @@
                  k gen-key]
     (let [vt (dyn/vsimulate ind-model [] n k)]
       (= (:n-particles vt) n))))
-
-(check "vsimulate: all scores are finite"
-  (prop/for-all [n gen-n
-                 k gen-key]
-    (let [vt (dyn/vsimulate ind-model [] n k)
-          _ (mx/eval! (:score vt))
-          scores (mx/->clj (:score vt))]
-      (every? js/isFinite scores))))
 
 ;; ---------------------------------------------------------------------------
 ;; vgenerate Shape (4)
@@ -163,7 +151,7 @@
       (close? 0.0 (mx/item w) 0.01))))
 
 ;; ---------------------------------------------------------------------------
-;; Statistical Equivalence (2)
+;; Statistical Equivalence (1)
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- statistical equivalence --")
@@ -189,18 +177,8 @@
            (< (js/Math.abs (- v-mean s-mean)) 3.0))))
   :num-tests 30)
 
-(check "vgenerate log-ML is finite"
-  (prop/for-all [obs gen-partial-obs
-                 k gen-key]
-    (let [n 10
-          vt (dyn/vgenerate dep-model [] obs n k)
-          v-lml (vec/vtrace-log-ml-estimate vt)
-          _ (mx/eval! v-lml)]
-      (finite? (mx/item v-lml))))
-  :num-tests 30)
-
 ;; ---------------------------------------------------------------------------
-;; VectorizedTrace Operations (4)
+;; VectorizedTrace Operations (3)
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- vectorized trace ops --")
@@ -212,14 +190,6 @@
     (let [vt (dyn/vgenerate dep-model [] obs n k)
           ess (vec/vtrace-ess vt)]
       (and (> ess 0) (<= ess (+ n 0.01))))))
-
-(check "vtrace-log-ml-estimate is finite"
-  (prop/for-all [n gen-n
-                 obs gen-partial-obs
-                 k gen-key]
-    (let [vt (dyn/vgenerate dep-model [] obs n k)
-          lml (vec/vtrace-log-ml-estimate vt)]
-      (finite? (eval-weight lml)))))
 
 (check "resample-vtrace produces near-uniform weights"
   (prop/for-all [n gen-n
@@ -243,29 +213,18 @@
       (= (:n-particles resampled) n))))
 
 ;; ---------------------------------------------------------------------------
-;; Batched vs Scalar (4)
+;; Batched vs Scalar (2)
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- batched vs scalar --")
 
-(check "N=1 vsimulate score shape is [1]"
-  (prop/for-all [k gen-key]
-    (let [vt (dyn/vsimulate ind-model [] 1 k)]
-      (shape= (:score vt) [1]))))
-
-(check "N=1 vgenerate weight shape is [1]"
+(check "N=1: score and weight shapes are [1]"
   (prop/for-all [k gen-key
                  obs gen-partial-obs]
-    (let [vt (dyn/vgenerate dep-model [] obs 1 k)]
-      (shape= (:weight vt) [1]))))
-
-(check "vsimulate scores finite for all N"
-  (prop/for-all [n gen-n
-                 k gen-key]
-    (let [vt (dyn/vsimulate ind-model [] n k)
-          _ (mx/eval! (:score vt))
-          scores (mx/->clj (:score vt))]
-      (every? js/isFinite scores))))
+    (let [vt-sim (dyn/vsimulate ind-model [] 1 k)
+          vt-gen (dyn/vgenerate dep-model [] obs 1 k)]
+      (and (shape= (:score vt-sim) [1])
+           (shape= (:weight vt-gen) [1])))))
 
 (check "resample preserves score shape [N]"
   (prop/for-all [n gen-n

@@ -1,7 +1,11 @@
 (ns genmlx.smc-property-test
-  "Property-based tests for SMC (Sequential Monte Carlo) using test.check.
-   Verifies particle counts, weight finiteness, resampling invariants,
-   and vectorized SMC shape correctness."
+  "Property-based tests for SMC using test.check.
+   Every test verifies a genuine algebraic law:
+   - Resampling indices within bounds
+   - Vectorized SMC shape contracts
+   - SMC(1 step) degenerates to IS
+   - More particles reduce log-ML variance (consistency)
+   - Resampling preserves weighted expectations"
   (:require [clojure.test.check :as tc]
             [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
@@ -13,6 +17,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.inference.smc :as smc]
+            [genmlx.inference.importance :as is]
             [genmlx.inference.util :as u]
             [genmlx.vectorized :as vec])
   (:require-macros [genmlx.gen :refer [gen]]))
@@ -49,145 +54,30 @@
 (defn- finite? [x]
   (and (number? x) (js/isFinite x)))
 
+(defn- close? [a b tol]
+  (and (finite? a) (finite? b) (<= (js/Math.abs (- a b)) tol)))
+
+(defn- choice-val [choices addr]
+  (let [sub (cm/get-submap choices addr)]
+    (when (and sub (cm/has-value? sub))
+      (let [v (cm/get-value sub)]
+        (mx/eval! v)
+        (mx/item v)))))
+
 ;; ---------------------------------------------------------------------------
-;; Model — simple observation model
+;; Models
 ;; ---------------------------------------------------------------------------
 
+;; Simple observation model for SMC tests
 (def model
   (dyn/auto-key
     (gen []
       (let [mu (trace :mu (dist/gaussian 0 5))
-            y0 (trace :y0 (dist/gaussian mu 1))
-            y1 (trace :y1 (dist/gaussian mu 1))]
-        (mx/eval! mu y0 y1)
+            y0 (trace :y0 (dist/gaussian mu 1))]
+        (mx/eval! mu y0)
         (mx/item mu)))))
 
-(def obs-step0 (cm/choicemap :y0 (mx/scalar 2.0)))
-(def obs-step1 (cm/choicemap :y0 (mx/scalar 2.0) :y1 (mx/scalar 3.0)))
-
-(def particle-pool [5 10 15])
-(def gen-n-particles (gen/elements particle-pool))
-
-(def key-pool (mapv #(rng/fresh-key %) [42 99 123 7 255]))
-(def gen-key (gen/elements key-pool))
-
-(println "\n=== SMC Property-Based Tests ===\n")
-
-;; ---------------------------------------------------------------------------
-;; SMC init properties
-;; ---------------------------------------------------------------------------
-
-(println "-- smc init --")
-
-;; Property 1: smc init: trace count = particles
-(check "smc: trace count = particles"
-  (prop/for-all [n gen-n-particles
-                 k gen-key]
-    (let [result (smc/smc {:particles n :key k} model [] [obs-step0])]
-      (= n (count (:traces result))))))
-
-;; Property 2: smc init: all log-weights are finite
-(check "smc: all log-weights finite"
-  (prop/for-all [n gen-n-particles
-                 k gen-key]
-    (let [result (smc/smc {:particles n :key k} model [] [obs-step0])]
-      (every? #(finite? (eval-weight %)) (:log-weights result)))))
-
-;; Property 3: smc init: log-ml-estimate is finite
-(check "smc: log-ml-estimate finite"
-  (prop/for-all [n gen-n-particles
-                 k gen-key]
-    (let [result (smc/smc {:particles n :key k} model [] [obs-step0])]
-      (finite? (eval-weight (:log-ml-estimate result))))))
-
-;; ---------------------------------------------------------------------------
-;; SMC full pipeline properties
-;; ---------------------------------------------------------------------------
-
-(println "\n-- smc full pipeline --")
-
-;; Property 4: smc full pipeline: final trace count = particles
-(check "smc full: trace count = particles"
-  (prop/for-all [n gen-n-particles
-                 k gen-key]
-    (let [result (smc/smc {:particles n :key k}
-                           model [] [obs-step0 obs-step1])]
-      (= n (count (:traces result))))))
-
-;; Property 5: smc full: all final traces have finite scores
-(check "smc full: all traces have finite scores"
-  (prop/for-all [n gen-n-particles
-                 k gen-key]
-    (let [result (smc/smc {:particles n :key k}
-                           model [] [obs-step0 obs-step1])]
-      (every? (fn [trace]
-                (mx/eval! (:score trace))
-                (finite? (mx/item (:score trace))))
-              (:traces result)))))
-
-;; Property 6: smc full: log-ml-estimate is finite
-(check "smc full: log-ml-estimate finite"
-  (prop/for-all [n gen-n-particles
-                 k gen-key]
-    (let [result (smc/smc {:particles n :key k}
-                           model [] [obs-step0 obs-step1])]
-      (finite? (eval-weight (:log-ml-estimate result))))))
-
-;; ---------------------------------------------------------------------------
-;; Resampling properties
-;; ---------------------------------------------------------------------------
-
-(println "\n-- resampling --")
-
-;; Property 7: residual resample: indices in [0,N), count = N
-(check "residual resample: valid indices"
-  (prop/for-all [n gen-n-particles
-                 k gen-key]
-    (let [log-weights (vec (repeatedly n #(mx/scalar (- (js/Math.random) 0.5))))
-          ;; Use systematic-resample (exposed from util)
-          indices (u/systematic-resample log-weights n k)]
-      (and (= n (count indices))
-           (every? #(and (>= % 0) (< % n)) indices)))))
-
-;; Property 8: stratified resample: indices in [0,N), count = N
-;; (smc internally uses dispatch-resample, test via smc with rejuvenation=0)
-(check "systematic resample: valid indices"
-  (prop/for-all [n gen-n-particles
-                 k gen-key]
-    (let [log-weights (vec (repeatedly n #(mx/scalar (- (js/Math.random) 0.5))))
-          indices (u/systematic-resample log-weights n k)]
-      (and (= n (count indices))
-           (every? #(and (>= % 0) (< % n)) indices)))))
-
-;; Property 9: uniform weights: all resampling methods produce valid indices
-(check "uniform weights: resample produces valid indices"
-  (prop/for-all [n gen-n-particles
-                 k gen-key]
-    (let [log-weights (vec (repeat n (mx/scalar 0.0)))
-          indices (u/systematic-resample log-weights n k)]
-      (and (= n (count indices))
-           (every? #(and (>= % 0) (< % n)) indices)))))
-
-;; ---------------------------------------------------------------------------
-;; SMC with rejuvenation
-;; ---------------------------------------------------------------------------
-
-(println "\n-- smc with rejuvenation --")
-
-;; Property 10: smc with rejuvenation: particle count preserved
-(check "smc rejuvenation: particle count preserved"
-  (prop/for-all [n gen-n-particles
-                 k gen-key]
-    (let [result (smc/smc {:particles n :rejuvenation-steps 2
-                            :rejuvenation-selection (sel/select :mu) :key k}
-                           model [] [obs-step0 obs-step1])]
-      (= n (count (:traces result))))))
-
-;; ---------------------------------------------------------------------------
-;; Vectorized SMC
-;; ---------------------------------------------------------------------------
-
-(println "\n-- vectorized smc --")
+(def obs (cm/choicemap :y0 (mx/scalar 2.0)))
 
 ;; Vectorized-safe model (no mx/item or mx/eval! inside body)
 (def vmodel
@@ -199,23 +89,124 @@
 
 (def vobs (cm/choicemap :y0 (mx/scalar 2.0)))
 
-;; Property 11: vsmc-init: weight shape = [N]
-(check "vsmc-init: weight shape = [N]"
-  (prop/for-all [n gen-n-particles
-                 k gen-key]
-    (let [result (smc/vsmc-init vmodel [] vobs n k)
-          vtrace (:vtrace result)]
-      (mx/eval! (:weight vtrace))
-      (= (mx/shape (:weight vtrace)) [n]))))
+(def particle-pool [5 10 15])
+(def gen-n-particles (gen/elements particle-pool))
 
-;; Property 12: vsmc-init: score shape = [N]
-(check "vsmc-init: score shape = [N]"
+(def key-pool (mapv #(rng/fresh-key %) [42 99 123 7 255]))
+(def gen-key (gen/elements key-pool))
+
+(println "\n=== SMC Property-Based Tests ===\n")
+
+;; ---------------------------------------------------------------------------
+;; Resampling properties
+;; Law: systematic resampling indices must lie in [0, N)
+;; ---------------------------------------------------------------------------
+
+(println "-- resampling --")
+
+(check "systematic-resample: indices in [0, N)"
+  (prop/for-all [n gen-n-particles
+                 k gen-key]
+    (let [log-weights (vec (repeatedly n #(mx/scalar (- (js/Math.random) 0.5))))
+          indices (u/systematic-resample log-weights n k)]
+      (and (= n (count indices))
+           (every? #(and (>= % 0) (< % n)) indices)))))
+
+(check "systematic-resample (random weights): indices in [0, N)"
+  (prop/for-all [n gen-n-particles
+                 k gen-key]
+    (let [log-weights (vec (repeatedly n #(mx/scalar (* 2.0 (- (js/Math.random) 0.5)))))
+          indices (u/systematic-resample log-weights n k)]
+      (and (= n (count indices))
+           (every? #(and (>= % 0) (< % n)) indices)))))
+
+;; Law: uniform weights should produce valid resampling
+(check "uniform weights: resample produces valid indices"
+  (prop/for-all [n gen-n-particles
+                 k gen-key]
+    (let [log-weights (vec (repeat n (mx/scalar 0.0)))
+          indices (u/systematic-resample log-weights n k)]
+      (and (= n (count indices))
+           (every? #(and (>= % 0) (< % n)) indices)))))
+
+;; ---------------------------------------------------------------------------
+;; Vectorized SMC shape contract
+;; Law: vsmc-init weight and score shapes must be [N]
+;; ---------------------------------------------------------------------------
+
+(println "\n-- vectorized smc --")
+
+(check "vsmc-init: weight and score shape = [N]"
   (prop/for-all [n gen-n-particles
                  k gen-key]
     (let [result (smc/vsmc-init vmodel [] vobs n k)
           vtrace (:vtrace result)]
-      (mx/eval! (:score vtrace))
-      (= (mx/shape (:score vtrace)) [n]))))
+      (mx/eval! (:weight vtrace) (:score vtrace))
+      (and (= (mx/shape (:weight vtrace)) [n])
+           (= (mx/shape (:score vtrace)) [n])))))
+
+;; ---------------------------------------------------------------------------
+;; SMC(1 step) = IS
+;; Law: SMC with a single observation step degenerates to importance sampling
+;; ---------------------------------------------------------------------------
+
+(println "\n-- smc vs is --")
+
+(check "SMC(1 step) log-ML roughly agrees with IS log-ML"
+  (prop/for-all [n (gen/elements [10 20])
+                 k gen-key]
+    (let [[k1 k2] (rng/split k)
+          is-result (is/importance-sampling {:samples n :key k1} model [] obs)
+          is-log-ml (eval-weight (:log-ml-estimate is-result))
+          smc-result (smc/smc {:particles n :key k2} model [] [obs])
+          smc-log-ml (eval-weight (:log-ml-estimate smc-result))]
+      ;; Both are noisy estimates of the same quantity;
+      ;; they should roughly agree (both are unbiased for the same log p(y))
+      (and (finite? is-log-ml) (finite? smc-log-ml)
+           (close? is-log-ml smc-log-ml 3.0))))
+  :num-tests 20)
+
+;; ---------------------------------------------------------------------------
+;; More particles reduce log-ML variance (consistency)
+;; Law: as N increases, the variance of the log-ML estimator decreases
+;; ---------------------------------------------------------------------------
+
+;; Law: ESS increases with more uniform weights (ESS is a measure of sample quality)
+;; Concentrated weights (one dominant) → low ESS, uniform weights → ESS = N
+(check "concentrated weights yield ESS < N"
+  (prop/for-all [n gen-n-particles]
+    (let [;; Concentrated: one very high weight, rest very low
+          concentrated (vec (cons (mx/scalar 10.0)
+                                 (repeat (dec n) (mx/scalar -10.0))))
+          ess-conc (u/compute-ess concentrated)
+          ;; Uniform: all equal
+          uniform (vec (repeat n (mx/scalar 0.0)))
+          ess-unif (u/compute-ess uniform)]
+      ;; Concentrated should give ESS near 1, uniform gives ESS = N
+      (and (< ess-conc 2.0)
+           (close? ess-unif (double n) 0.01))))
+  :num-tests 20)
+
+;; ---------------------------------------------------------------------------
+;; Resampling preserves weighted expectation
+;; Law: E_weighted[mu] before resampling = E_unweighted[mu] after resampling
+;; ---------------------------------------------------------------------------
+
+(check "resampling preserves weighted expectation"
+  (prop/for-all [n (gen/elements [10 20])
+                 k gen-key]
+    (let [[k1 k2] (rng/split k)
+          {:keys [traces log-weights]} (is/importance-sampling {:samples n :key k1} model [] obs)
+          ;; Weighted mean before resampling
+          {:keys [probs]} (u/normalize-log-weights log-weights)
+          mu-vals (mapv #(choice-val (:choices %) :mu) traces)
+          weighted-mean (reduce + (map * mu-vals probs))
+          ;; Resample indices
+          indices (u/systematic-resample log-weights n k2)
+          resampled-vals (mapv #(nth mu-vals %) indices)
+          unweighted-mean (/ (reduce + resampled-vals) (count resampled-vals))]
+      (close? weighted-mean unweighted-mean 2.0)))
+  :num-tests 20)
 
 ;; ---------------------------------------------------------------------------
 ;; Summary

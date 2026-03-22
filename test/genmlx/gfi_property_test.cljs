@@ -150,12 +150,6 @@
 
 (println "-- simulate properties --")
 
-(check "simulate: score is finite"
-  (prop/for-all [m gen-model]
-    (let [trace (p/simulate (:model m) (:args m))
-          s (trace-score trace)]
-      (finite? s))))
-
 (check "simulate: all addresses present"
   (prop/for-all [m gen-model]
     (let [trace (p/simulate (:model m) (:args m))]
@@ -268,14 +262,14 @@
 
 (check "regenerate(none): choices preserved"
   (prop/for-all [m gen-model]
-    (let [trace (p/simulate (:model m) (:args m))
-          {:keys [trace] :as result} (p/regenerate (:model m) trace sel/none)]
+    (let [orig-trace (p/simulate (:model m) (:args m))
+          orig-vals (into {} (map (fn [a] [a (choice-val (:choices orig-trace) a)])
+                                  (:addrs m)))
+          {:keys [trace]} (p/regenerate (:model m) orig-trace sel/none)]
+      ;; Identity law: regenerate with empty selection preserves all choices exactly
       (every? (fn [addr]
-                (let [orig (choice-val (:choices (p/simulate (:model m) (:args m))) addr)
-                      ;; Can't compare to original since we made a new simulate above.
-                      ;; Instead: just check value exists and is finite.
-                      v (choice-val (:choices trace) addr)]
-                  (finite? v)))
+                (let [new-v (choice-val (:choices trace) addr)]
+                  (close? (get orig-vals addr) new-v 1e-10)))
               (:addrs m)))))
 
 ;; ---------------------------------------------------------------------------

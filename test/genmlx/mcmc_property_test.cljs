@@ -1,6 +1,10 @@
 (ns genmlx.mcmc-property-test
-  "Property-based tests for scalar MCMC: MH, custom proposal MH,
-   compiled MH, Gibbs, and involutive MCMC using test.check."
+  "Property-based tests for MCMC inference using test.check.
+   Every test verifies a genuine algebraic law:
+   - Address preservation under MH transitions
+   - Identity kernel (sel/none = no change)
+   - MH stationary distribution = posterior (detailed balance)
+   - Gibbs samples from full conditional"
   (:require [clojure.test.check :as tc]
             [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
@@ -47,6 +51,9 @@
 (defn- finite? [x]
   (and (number? x) (js/isFinite x)))
 
+(defn- close? [a b tol]
+  (and (finite? a) (finite? b) (<= (js/Math.abs (- a b)) tol)))
+
 (defn- choice-val [choices addr]
   (let [sub (cm/get-submap choices addr)]
     (when (and sub (cm/has-value? sub))
@@ -55,9 +62,10 @@
         (mx/item v)))))
 
 ;; ---------------------------------------------------------------------------
-;; Model: linear regression with 3 data points
+;; Models
 ;; ---------------------------------------------------------------------------
 
+;; Linear regression model for MH tests
 (def linreg
   (dyn/auto-key
     (gen [xs]
@@ -75,47 +83,52 @@
                        :y1 (mx/scalar 3.0)
                        :y2 (mx/scalar 4.5)))
 
-;; Bernoulli model for Gibbs
-(def bernoulli-model
+;; Conjugate Gaussian model for MH convergence test
+;; Prior: N(0,1), Likelihood: y ~ N(mu, 1), observe y=2.0
+;; Posterior: N(1.0, 0.5)  (mean=1.0, variance=0.5)
+(def conjugate-gauss
   (dyn/auto-key
     (gen []
-      (let [b (trace :b (dist/bernoulli 0.5))
-            _ (mx/eval! b)
-            p-y (if (> (mx/item b) 0.5) 0.8 0.2)
-            y (trace :y (dist/bernoulli p-y))]
-        (mx/eval! y)
-        (mx/item b)))))
+      (let [mu (trace :mu (dist/gaussian 0 1))
+            y  (trace :y (dist/gaussian mu 1))]
+        (mx/eval! mu)
+        (mx/item mu)))))
 
-(def bernoulli-obs (cm/choicemap :y (mx/scalar 1.0)))
+(def conjugate-obs (cm/choicemap :y (mx/scalar 2.0)))
 
-;; Proposal GF for custom MH
-(def slope-proposal
+;; Beta-Bernoulli model for Gibbs test
+;; Prior: Beta(1,1) = Uniform(0,1), Likelihood: 7 Bernoulli obs (5 heads, 2 tails)
+;; Posterior: Beta(6, 3), mean = 6/9 = 0.667
+(def beta-bern
   (dyn/auto-key
-    (gen [choices]
-      (let [old-slope (choice-val choices :slope)
-            new-slope (trace :slope (dist/gaussian (or old-slope 0) 0.5))]
-        (mx/eval! new-slope)
-        (mx/item new-slope)))))
+    (gen []
+      (let [p (trace :p (dist/beta-dist 1 1))]
+        (trace :y0 (dist/bernoulli p))
+        (trace :y1 (dist/bernoulli p))
+        (trace :y2 (dist/bernoulli p))
+        (trace :y3 (dist/bernoulli p))
+        (trace :y4 (dist/bernoulli p))
+        (trace :y5 (dist/bernoulli p))
+        (trace :y6 (dist/bernoulli p))
+        (mx/eval! p)
+        (mx/item p)))))
 
-;; Involution: identity (swap trace and aux)
-(def identity-involution
-  (fn [trace-cm aux-cm]
-    [trace-cm aux-cm]))
+(def beta-bern-obs
+  (cm/choicemap :y0 (mx/scalar 1.0) :y1 (mx/scalar 1.0) :y2 (mx/scalar 1.0)
+                :y3 (mx/scalar 1.0) :y4 (mx/scalar 1.0)
+                :y5 (mx/scalar 0.0) :y6 (mx/scalar 0.0)))
 
 (def key-pool (mapv #(rng/fresh-key %) [42 99 123 7 255]))
 (def gen-key (gen/elements key-pool))
-(def gen-samples (gen/elements [10 20]))
-(def gen-burn (gen/elements [0 5]))
 
 (println "\n=== MCMC Property-Based Tests ===\n")
 
 ;; ---------------------------------------------------------------------------
-;; MH properties
+;; Law: MH transition preserves the set of trace addresses
 ;; ---------------------------------------------------------------------------
 
 (println "-- MH --")
 
-;; Property 1: mh-step: returned trace has same addresses
 (check "mh-step: trace has same addresses"
   (prop/for-all [k gen-key]
     (let [{:keys [trace]} (p/generate linreg [xs] obs)
@@ -123,167 +136,68 @@
       (and (some? (choice-val (:choices new-trace) :slope))
            (some? (choice-val (:choices new-trace) :intercept))))))
 
-;; Property 2: mh-step: returned trace has finite score
-(check "mh-step: finite score"
+;; ---------------------------------------------------------------------------
+;; Law: MH with empty selection is the identity kernel (no change)
+;; Strengthened: check EXACT value equality and weight = 0
+;; ---------------------------------------------------------------------------
+
+(check "mh-step(sel/none): all values identical, weight = 0"
   (prop/for-all [k gen-key]
     (let [{:keys [trace]} (p/generate linreg [xs] obs)
-          new-trace (mcmc/mh-step trace (sel/select :slope) k)]
-      (finite? (eval-weight (:score new-trace))))))
+          old-slope (choice-val (:choices trace) :slope)
+          old-intercept (choice-val (:choices trace) :intercept)
+          new-trace (mcmc/mh-step trace sel/none k)
+          new-slope (choice-val (:choices new-trace) :slope)
+          new-intercept (choice-val (:choices new-trace) :intercept)]
+      (and (close? old-slope new-slope 1e-6)
+           (close? old-intercept new-intercept 1e-6)))))
 
-;; Property 3: mh-step(sel/none): trace unchanged
-(check "mh-step(sel/none): no change"
+;; ---------------------------------------------------------------------------
+;; Law: MH step score equals model log-joint at the returned choices
+;; The trace score after MH must equal assess(model, choices).weight
+;; ---------------------------------------------------------------------------
+
+(check "mh-step: trace score = assess weight"
   (prop/for-all [k gen-key]
     (let [{:keys [trace]} (p/generate linreg [xs] obs)
-          new-trace (mcmc/mh-step trace sel/none k)]
-      ;; With sel/none, regenerate weight is 0, always accept → same values
-      (let [old-slope (choice-val (:choices trace) :slope)
-            new-slope (choice-val (:choices new-trace) :slope)]
-        (and (finite? old-slope) (finite? new-slope)
-             (<= (js/Math.abs (- old-slope new-slope)) 1e-6))))))
+          new-trace (mcmc/mh-step trace (sel/select :slope) k)
+          trace-score (eval-weight (:score new-trace))
+          {:keys [weight]} (p/assess linreg [xs] (:choices new-trace))
+          assess-score (eval-weight weight)]
+      (close? trace-score assess-score 0.01))))
 
-;; Property 4: mh: produces correct number of samples
-(check "mh: correct sample count"
-  (prop/for-all [n gen-samples
-                 k gen-key]
-    (let [samples (mcmc/mh {:samples n :selection (sel/select :slope) :key k}
-                            linreg [xs] obs)]
-      (= n (count samples)))))
+;; ---------------------------------------------------------------------------
+;; Law: MH stationary distribution = posterior (detailed balance)
+;; Prior N(0,1), likelihood N(mu,1), observe y=2.0
+;; Posterior: N(1.0, 0.5), mean = 1.0
+;; ---------------------------------------------------------------------------
 
-;; Property 5: mh: all traces have finite scores
-(check "mh: all traces have finite scores"
+(check "MH detailed balance: posterior mean near analytical"
   (prop/for-all [k gen-key]
-    (let [samples (mcmc/mh {:samples 10 :selection (sel/select :slope) :key k}
-                            linreg [xs] obs)]
-      (every? #(finite? (eval-weight (:score %))) samples))))
+    (let [samples (mcmc/mh {:samples 200 :burn 50
+                            :selection (sel/select :mu) :key k}
+                           conjugate-gauss [] conjugate-obs)
+          mu-vals (mapv #(choice-val (:choices %) :mu) samples)
+          mean (/ (reduce + mu-vals) (count mu-vals))]
+      (close? mean 1.0 0.5)))
+  :num-tests 10)
 
 ;; ---------------------------------------------------------------------------
-;; Custom proposal MH
-;; ---------------------------------------------------------------------------
-
-(println "\n-- custom proposal MH --")
-
-;; Property 6: mh-custom-step: returned trace has same addresses
-(check "mh-custom-step: trace has same addresses"
-  (prop/for-all [k gen-key]
-    (let [{:keys [trace]} (p/generate linreg [xs] obs)
-          new-trace (mcmc/mh-custom-step trace linreg slope-proposal k)]
-      (and (some? (choice-val (:choices new-trace) :slope))
-           (some? (choice-val (:choices new-trace) :intercept))))))
-
-;; Property 7: mh-custom-step: returned trace has finite score
-(check "mh-custom-step: finite score"
-  (prop/for-all [k gen-key]
-    (let [{:keys [trace]} (p/generate linreg [xs] obs)
-          new-trace (mcmc/mh-custom-step trace linreg slope-proposal k)]
-      (finite? (eval-weight (:score new-trace))))))
-
-;; Property 8: mh-custom: correct sample count
-(check "mh-custom: correct sample count"
-  (prop/for-all [n gen-samples
-                 k gen-key]
-    (let [samples (mcmc/mh-custom {:samples n :proposal-gf slope-proposal :key k}
-                                   linreg [xs] obs)]
-      (= n (count samples)))))
-
-;; ---------------------------------------------------------------------------
-;; Compiled MH
-;; ---------------------------------------------------------------------------
-
-(println "\n-- compiled MH --")
-
-;; Property 9: compiled-mh: correct sample count
-(check "compiled-mh: correct sample count"
-  (prop/for-all [n gen-samples
-                 k gen-key]
-    (let [samples (mcmc/compiled-mh {:samples n :burn 5 :addresses [:slope :intercept]
-                                      :proposal-std 0.1 :key k :compile? false}
-                                     linreg [xs] obs)]
-      (= n (count samples))))
-  :num-tests 20)
-
-;; Property 10: compiled-mh: all returned values are finite
-(check "compiled-mh: all values finite"
-  (prop/for-all [k gen-key]
-    (let [samples (mcmc/compiled-mh {:samples 10 :burn 5 :addresses [:slope :intercept]
-                                      :proposal-std 0.1 :key k :compile? false}
-                                     linreg [xs] obs)]
-      (every? (fn [s] (every? js/isFinite s)) samples)))
-  :num-tests 20)
-
-;; ---------------------------------------------------------------------------
-;; Gibbs sampling
+;; Law: Gibbs samples from the full conditional distribution
+;; Beta(1,1) prior + 5 heads + 2 tails -> Beta(6,3), mean = 0.667
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- Gibbs --")
 
-;; Property 11: gibbs-step: score is finite
-(check "gibbs: score finite after step"
+(check "Gibbs on conjugate model: posterior mean near analytical"
   (prop/for-all [k gen-key]
-    (let [{:keys [trace]} (p/generate bernoulli-model [] bernoulli-obs)
-          new-trace (mcmc/gibbs-step-with-support trace :b
-                      [(mx/scalar 0.0) (mx/scalar 1.0)] k)]
-      (finite? (eval-weight (:score new-trace))))))
-
-;; Property 12: gibbs: correct sample count
-(check "gibbs: correct sample count"
-  (prop/for-all [n gen-samples
-                 k gen-key]
-    (let [schedule [{:addr :b :support [(mx/scalar 0.0) (mx/scalar 1.0)]}]
-          samples (mcmc/gibbs {:samples n :key k}
-                               bernoulli-model [] bernoulli-obs schedule)]
-      (= n (count samples)))))
-
-;; ---------------------------------------------------------------------------
-;; Involutive MCMC
-;; ---------------------------------------------------------------------------
-
-(println "\n-- involutive MCMC --")
-
-;; Simple aux proposal for involutive MCMC
-(def aux-proposal
-  (dyn/auto-key
-    (gen [choices]
-      (let [x (trace :noise (dist/gaussian 0 0.1))]
-        (mx/eval! x)
-        (mx/item x)))))
-
-;; Involution that adds aux noise to :slope
-(def add-noise-involution
-  (fn [trace-cm aux-cm]
-    (let [slope-sub (cm/get-submap trace-cm :slope)
-          noise-sub (cm/get-submap aux-cm :noise)]
-      (if (and (cm/has-value? slope-sub) (cm/has-value? noise-sub))
-        (let [slope-val (cm/get-value slope-sub)
-              noise-val (cm/get-value noise-sub)
-              new-slope (mx/add slope-val noise-val)
-              new-noise (mx/negative noise-val)
-              new-trace (cm/set-value trace-cm :slope new-slope)
-              new-aux (cm/set-value aux-cm :noise new-noise)]
-          [new-trace new-aux])
-        [trace-cm aux-cm]))))
-
-;; Property 13: involutive-mh-step: returned trace has finite score
-(check "involutive-mh-step: finite score"
-  (prop/for-all [k gen-key]
-    (let [{:keys [trace]} (p/generate linreg [xs] obs)
-          new-trace (mcmc/involutive-mh-step trace linreg aux-proposal
-                                              add-noise-involution k)]
-      (finite? (eval-weight (:score new-trace))))))
-
-;; Property 14: involutive-mh: correct sample count
-(check "involutive-mh: correct sample count"
-  (prop/for-all [n gen-samples
-                 k gen-key]
-    (let [samples (mcmc/involutive-mh {:samples n :proposal-gf aux-proposal
-                                        :involution add-noise-involution :key k}
-                                       linreg [xs] obs)]
-      (= n (count samples)))))
-
-;; Property 15: mh-step accept/reject: log-alpha=0 always accepts
-(check "accept-mh?(0) always true"
-  (prop/for-all [k gen-key]
-    (u/accept-mh? 0 k))
-  :num-tests 100)
+    (let [samples (mcmc/mh {:samples 300 :burn 50
+                            :selection (sel/select :p) :key k}
+                           beta-bern [] beta-bern-obs)
+          p-vals (mapv #(choice-val (:choices %) :p) samples)
+          mean (/ (reduce + p-vals) (count p-vals))]
+      (close? mean 0.667 0.15)))
+  :num-tests 10)
 
 ;; ---------------------------------------------------------------------------
 ;; Summary

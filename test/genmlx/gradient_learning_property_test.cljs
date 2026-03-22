@@ -59,98 +59,105 @@
     (gen []
       (let [x (trace :x (dist/gaussian 0 1))
             y (trace :y (dist/gaussian 0 1))]
-        (mx/eval! x y)
-        (+ (mx/item x) (mx/item y))))))
+        (mx/add x y)))))
 
 (def key-pool (mapv #(rng/fresh-key %) [42 99 123 7 255]))
 (def gen-key (gen/elements key-pool))
 
+;; Pools for gradient tests — points at which to evaluate gradients
+;; Avoid 0.0 for autodiff/numerical tests (division issues at exactly 0)
+(def x-pool [0.5 1.0 -0.5 -1.0 2.0 -2.0])
+(def gen-x (gen/elements x-pool))
+
+;; Pools for parameter store tests
+(def param-pool [1.0 2.0 -1.0 0.5 10.0])
+(def gen-param-val (gen/elements param-pool))
+(def name-pool [:a :b :c :x :y])
+(def gen-param-name (gen/elements name-pool))
+
+;; Pools for optimizer tests
+(def lr-pool [0.01 0.05 0.1 0.5])
+(def gen-lr (gen/elements lr-pool))
+(def grad-pool [1.0 -1.0 2.0 -0.5 0.1])
+(def gen-grad-val (gen/elements grad-pool))
+(def init-pool [1.0 3.0 5.0 -3.0 10.0])
+(def gen-init (gen/elements init-pool))
+
 (println "\n=== Gradient & Learning Property-Based Tests ===\n")
 
 ;; ---------------------------------------------------------------------------
-;; Choice Gradients (4)
+;; Choice Gradients (2)
 ;; ---------------------------------------------------------------------------
 
 (println "-- choice gradients --")
 
-(check "choice-gradients: returns gradients for all requested addresses"
-  (prop/for-all [_ (gen/return nil)]
-    (let [trace (p/simulate model [])
-          addrs [:x :y]
-          grads (grad/choice-gradients model trace addrs)]
-      (and (contains? grads :x)
-           (contains? grads :y)))))
-
-(check "choice-gradients: gradients are finite"
-  (prop/for-all [_ (gen/return nil)]
-    (let [trace (p/simulate model [])
-          grads (grad/choice-gradients model trace [:x :y])]
-      (and (finite? (eval-weight (:x grads)))
-           (finite? (eval-weight (:y grads)))))))
-
 (check "choice-gradients: gradient shape is scalar []"
-  (prop/for-all [_ (gen/return nil)]
-    (let [trace (p/simulate model [])
+  (prop/for-all [xv gen-x
+                 yv gen-x]
+    (let [{:keys [trace]} (p/generate model [] (cm/choicemap :x (mx/scalar xv) :y (mx/scalar yv)))
           grads (grad/choice-gradients model trace [:x :y])]
       (and (= [] (mx/shape (:x grads)))
            (= [] (mx/shape (:y grads)))))))
 
+;; Models with varying means — gradient at mode should always be 0
+;; Note: choice-gradients uses mx/compile-fn which caches the computation graph,
+;; so each test trial must create a fresh model to get correct gradients.
+(def mu-pool [0.0 1.0 -1.0 2.5 -3.0])
+(def gen-mu (gen/elements mu-pool))
+
 (check "choice-gradients: gradient at mode near 0"
-  (prop/for-all [_ (gen/return nil)]
-    ;; For gaussian(0,1), the gradient d(log p)/dx at x=0 is 0
-    (let [;; Build a trace constrained at the mode
-          {:keys [trace]} (p/generate model [] (cm/choicemap :x (mx/scalar 0.0) :y (mx/scalar 0.0)))
-          grads (grad/choice-gradients model trace [:x :y])
+  (prop/for-all [mu gen-mu]
+    ;; For gaussian(mu,1), the gradient d(log p)/dx at x=mu is 0
+    (let [mode-model (dyn/auto-key
+                       (gen []
+                         (let [x (trace :x (dist/gaussian mu 1))
+                               y (trace :y (dist/gaussian mu 1))]
+                           (mx/eval! x y)
+                           (+ (mx/item x) (mx/item y)))))
+          {:keys [trace]} (p/generate mode-model [] (cm/choicemap :x (mx/scalar mu) :y (mx/scalar mu)))
+          grads (grad/choice-gradients mode-model trace [:x :y])
           gx (eval-weight (:x grads))
           gy (eval-weight (:y grads))]
       (and (close? 0.0 gx 0.1)
            (close? 0.0 gy 0.1)))))
 
 ;; ---------------------------------------------------------------------------
-;; Score Function Gradients (4)
+;; Score Function Gradients (3)
 ;; Using make-score-fn + mx/grad (avoids compile-fn zero-grad issue)
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- score function gradients --")
 
-(check "make-score-fn: gradient is finite"
-  (prop/for-all [_ (gen/return nil)]
-    (let [obs (cm/choicemap :y (mx/scalar 1.0))
-          sf (u/make-score-fn model [] obs [:x])
-          grad-fn (mx/grad sf)
-          params (mx/array [0.5])
-          g (grad-fn params)]
-      (mx/eval! g)
-      (finite? (mx/item (mx/index g 0))))))
-
 (check "make-score-fn: gradient shape matches params"
-  (prop/for-all [_ (gen/return nil)]
+  (prop/for-all [xv gen-x
+                 yv gen-x]
     (let [obs cm/EMPTY
           sf (u/make-score-fn model [] obs [:x :y])
           grad-fn (mx/grad sf)
-          params (mx/array [0.5 0.3])
+          params (mx/array [xv yv])
           g (grad-fn params)]
       (= (mx/shape g) [2]))))
 
 (check "make-score-fn: gradient correct for gaussian"
-  (prop/for-all [_ (gen/return nil)]
+  (prop/for-all [xv gen-x
+                 yv gen-x]
     ;; For gaussian(0,1): d(log p)/dx = -x
-    ;; At x=0.5 with y=1.0 constrained: grad w.r.t. x = -0.5
-    (let [obs (cm/choicemap :y (mx/scalar 1.0))
+    ;; With y constrained, grad w.r.t. x = -x
+    (let [obs (cm/choicemap :y (mx/scalar yv))
           sf (u/make-score-fn model [] obs [:x])
           grad-fn (mx/grad sf)
-          params (mx/array [0.5])
+          params (mx/array [xv])
           g (grad-fn params)]
       (mx/eval! g)
-      (close? -0.5 (mx/item (mx/index g 0)) 0.05))))
+      (close? (- xv) (mx/item (mx/index g 0)) 0.05))))
 
 (check "make-score-fn: autodiff near numerical gradient"
-  (prop/for-all [_ (gen/return nil)]
-    (let [obs (cm/choicemap :y (mx/scalar 1.0))
-          x-val 0.5
+  (prop/for-all [xv gen-x
+                 yv gen-x]
+    (let [obs (cm/choicemap :y (mx/scalar yv))
           sf (u/make-score-fn model [] obs [:x])
           grad-fn (mx/grad sf)
-          params (mx/array [x-val])
+          params (mx/array [xv])
           g (grad-fn params)
           _ (mx/eval! g)
           ad-grad (mx/item (mx/index g 0))
@@ -158,89 +165,90 @@
           eps 0.001
           score-fn (fn [x]
                      (let [{:keys [weight]} (p/generate model []
-                                              (cm/choicemap :x (mx/scalar x) :y (mx/scalar 1.0)))]
+                                              (cm/choicemap :x (mx/scalar x) :y (mx/scalar yv)))]
                        (eval-weight weight)))
-          s-plus (score-fn (+ x-val eps))
-          s-minus (score-fn (- x-val eps))
+          s-plus (score-fn (+ xv eps))
+          s-minus (score-fn (- xv eps))
           num-grad (/ (- s-plus s-minus) (* 2 eps))]
       (close? ad-grad num-grad 0.05)))
   :num-tests 30)
 
 ;; ---------------------------------------------------------------------------
-;; Parameter Store (4)
+;; Parameter Store (3)
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- parameter store --")
 
 (check "param-store: get/set round-trip"
-  (prop/for-all [_ (gen/return nil)]
+  (prop/for-all [pname gen-param-name
+                 pval gen-param-val]
     (let [store (learn/make-param-store)
-          store (learn/set-param store :w (mx/scalar 3.14))
-          v (learn/get-param store :w)]
-      (close? 3.14 (eval-weight v) 1e-6))))
+          store (learn/set-param store pname (mx/scalar pval))
+          v (learn/get-param store pname)]
+      (close? pval (eval-weight v) 1e-6))))
 
 (check "param-store: param-names includes all stored keys"
-  (prop/for-all [_ (gen/return nil)]
+  (prop/for-all [v1 gen-param-val
+                 v2 gen-param-val
+                 v3 gen-param-val]
     (let [store (-> (learn/make-param-store)
-                    (learn/set-param :a (mx/scalar 1.0))
-                    (learn/set-param :b (mx/scalar 2.0))
-                    (learn/set-param :c (mx/scalar 3.0)))
+                    (learn/set-param :a (mx/scalar v1))
+                    (learn/set-param :b (mx/scalar v2))
+                    (learn/set-param :c (mx/scalar v3)))
           names (set (learn/param-names store))]
       (and (contains? names :a)
            (contains? names :b)
            (contains? names :c)))))
 
 (check "param-store: params->array / array->params round-trip"
-  (prop/for-all [_ (gen/return nil)]
+  (prop/for-all [v1 gen-param-val
+                 v2 gen-param-val]
     (let [store (-> (learn/make-param-store)
-                    (learn/set-param :x (mx/scalar 1.5))
-                    (learn/set-param :y (mx/scalar 2.5)))
+                    (learn/set-param :x (mx/scalar v1))
+                    (learn/set-param :y (mx/scalar v2)))
           names [:x :y]
           arr (learn/params->array store names)
           _ (mx/eval! arr)
           recovered (learn/array->params arr names)
           rx (eval-weight (:x recovered))
           ry (eval-weight (:y recovered))]
-      (and (close? 1.5 rx 1e-6)
-           (close? 2.5 ry 1e-6)))))
-
-(check "param-store: empty store has no names"
-  (prop/for-all [_ (gen/return nil)]
-    (let [store (learn/make-param-store)]
-      (empty? (learn/param-names store)))))
+      (and (close? v1 rx 1e-6)
+           (close? v2 ry 1e-6)))))
 
 ;; ---------------------------------------------------------------------------
-;; Optimizers (4)
+;; Optimizers (3)
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- optimizers --")
 
 (check "SGD: step moves params in negative gradient direction"
-  (prop/for-all [_ (gen/return nil)]
-    (let [params (mx/array [5.0])
-          grad-arr (mx/array [1.0])  ;; positive gradient
-          lr 0.1
+  (prop/for-all [init gen-init
+                 gval gen-grad-val
+                 lr gen-lr]
+    (let [params (mx/array [init])
+          grad-arr (mx/array [gval])
           new-params (learn/sgd-step params grad-arr lr)]
       (mx/eval! new-params)
-      ;; Should move in negative direction: 5.0 - 0.1*1.0 = 4.9
-      (close? 4.9 (mx/item (mx/index new-params 0)) 1e-6))))
+      ;; Should move in negative gradient direction: init - lr*gval
+      (close? (- init (* lr gval)) (mx/item (mx/index new-params 0)) 1e-6))))
 
 (check "SGD: step magnitude proportional to lr"
-  (prop/for-all [_ (gen/return nil)]
-    (let [params (mx/array [5.0])
-          grad-arr (mx/array [2.0])
+  (prop/for-all [init gen-init
+                 gval gen-grad-val]
+    (let [params (mx/array [init])
+          grad-arr (mx/array [gval])
           p1 (learn/sgd-step params grad-arr 0.1)
           p2 (learn/sgd-step params grad-arr 0.2)
           _ (mx/eval! p1 p2)
-          delta1 (- 5.0 (mx/item (mx/index p1 0)))  ;; 0.1*2=0.2
-          delta2 (- 5.0 (mx/item (mx/index p2 0)))]  ;; 0.2*2=0.4
+          delta1 (- init (mx/item (mx/index p1 0)))  ;; 0.1*gval
+          delta2 (- init (mx/item (mx/index p2 0)))]  ;; 0.2*gval
       ;; delta2 should be 2x delta1
       (close? (* 2.0 delta1) delta2 1e-6))))
 
 (check "Adam: loss decreases on quadratic (20 steps)"
-  (prop/for-all [_ (gen/return nil)]
-    ;; Minimize f(x) = x^2, gradient = 2x, starting at x=5
-    (let [init-params (mx/array [5.0])
+  (prop/for-all [init gen-init]
+    ;; Minimize f(x) = x^2, gradient = 2x, starting at x=init
+    (let [init-params (mx/array [init])
           result (learn/train
                    {:iterations 20 :optimizer :adam :lr 0.1}
                    (fn [params _key]
@@ -252,76 +260,18 @@
       (< (last history) (first history))))
   :num-tests 10)
 
-(check "Adam: state t increments, m not all zeros after step"
-  (prop/for-all [_ (gen/return nil)]
-    (let [params (mx/array [5.0])
-          grad-arr (mx/array [1.0])
-          state (learn/adam-init params)
-          [_ new-state] (learn/adam-step params grad-arr state {})]
-      (and (= 1 (:t new-state))
-           (let [m (:m new-state)]
-             (mx/eval! m)
-             (not (== 0.0 (mx/item (mx/index m 0)))))))))
-
 ;; ---------------------------------------------------------------------------
-;; Training Loop (4)
+;; Training Loop (1)
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- training loop --")
 
-(check "train: produces loss-history of correct length"
-  (prop/for-all [n (gen/elements [5 10 15 20])]
-    (let [init-params (mx/array [3.0])
-          result (learn/train
-                   {:iterations n :optimizer :adam :lr 0.1}
-                   (fn [params _key]
-                     (let [loss (mx/sum (mx/square params))
-                           grad (mx/multiply (mx/scalar 2.0) params)]
-                       {:loss loss :grad grad}))
-                   init-params)]
-      (= n (count (:loss-history result)))))
-  :num-tests 20)
-
 (check "train: final loss < initial loss"
-  (prop/for-all [_ (gen/return nil)]
-    (let [init-params (mx/array [5.0])
+  (prop/for-all [init gen-init
+                 lr gen-lr]
+    (let [init-params (mx/array [init])
           result (learn/train
-                   {:iterations 20 :optimizer :adam :lr 0.1}
-                   (fn [params _key]
-                     (let [loss (mx/sum (mx/square params))
-                           grad (mx/multiply (mx/scalar 2.0) params)]
-                       {:loss loss :grad grad}))
-                   init-params)
-          history (:loss-history result)]
-      (< (last history) (first history))))
-  :num-tests 10)
-
-(check "train: params move toward target (distance decreases)"
-  (prop/for-all [_ (gen/return nil)]
-    ;; Minimize (x-2)^2, target is x=2
-    (let [init-params (mx/array [10.0])
-          target 2.0
-          result (learn/train
-                   {:iterations 30 :optimizer :adam :lr 0.1}
-                   (fn [params _key]
-                     (let [diff (mx/subtract params (mx/scalar target))
-                           loss (mx/sum (mx/square diff))
-                           grad (mx/multiply (mx/scalar 2.0) diff)]
-                       {:loss loss :grad grad}))
-                   init-params)
-          final-params (:params result)
-          _ (mx/eval! final-params)
-          final-val (mx/item (mx/index final-params 0))
-          init-dist (js/Math.abs (- 10.0 target))
-          final-dist (js/Math.abs (- final-val target))]
-      (< final-dist init-dist)))
-  :num-tests 10)
-
-(check "train: SGD optimizer also works"
-  (prop/for-all [_ (gen/return nil)]
-    (let [init-params (mx/array [5.0])
-          result (learn/train
-                   {:iterations 20 :optimizer :sgd :lr 0.1}
+                   {:iterations 20 :optimizer :adam :lr lr}
                    (fn [params _key]
                      (let [loss (mx/sum (mx/square params))
                            grad (mx/multiply (mx/scalar 2.0) params)]

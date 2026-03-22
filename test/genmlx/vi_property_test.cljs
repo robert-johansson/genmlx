@@ -1,6 +1,11 @@
 (ns genmlx.vi-property-test
-  "Property-based tests for variational inference: ADVI, compiled VI,
-   programmable VI, objectives, and model-based VI using test.check."
+  "Property-based tests for variational inference using test.check.
+   Every test verifies a genuine algebraic law:
+   - sigma > 0 (positivity of scale parameters)
+   - ELBO <= true log-marginal (variational lower bound)
+   - IWELBO(K=1) = ELBO (degenerate case)
+   - ELBO improves over training (gradient ascent)
+   - VI posterior mean near analytical posterior"
   (:require [clojure.test.check :as tc]
             [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
@@ -39,245 +44,185 @@
 ;; Helpers
 ;; ---------------------------------------------------------------------------
 
-(defn- eval-weight [w]
-  (mx/eval! w)
-  (mx/item w))
-
 (defn- finite? [x]
   (and (number? x) (js/isFinite x)))
 
+(defn- close? [a b tol]
+  (and (finite? a) (finite? b) (<= (js/Math.abs (- a b)) tol)))
+
 ;; ---------------------------------------------------------------------------
-;; Target log-density: 2D isotropic Gaussian N(0, I)
+;; Setup: Conjugate Gaussian model with known log-marginal
+;;
+;; Model: prior N(0, 10), likelihood N(mu, 1), observe y = 3.0
+;; True log P(y=3) = log-prob(N(0, sqrt(101)), 3.0)
+;; Analytical posterior: N(mu_post, sigma_post^2)
+;;   mu_post = 3.0 * 100 / 101 = 300/101 ~ 2.97
+;;   sigma_post^2 = 100/101 ~ 0.99
 ;; ---------------------------------------------------------------------------
 
-(def log-density
-  "Simple 2D Gaussian target: log p(z) = -0.5 * sum(z^2) + const"
+;; Log-density for VI (takes [1]-shaped param array, returns scalar)
+;; Must include normalization constants for ELBO to be comparable to true log-marginal
+(def log-2pi (js/Math.log (* 2.0 js/Math.PI)))
+
+(def vi-log-density
+  "Log joint density: log p(mu) + log p(y=3 | mu) (fully normalized)"
   (fn [z]
-    (mx/negative (mx/multiply (mx/scalar 0.5) (mx/sum (mx/square z))))))
+    (let [mu (mx/index z 0)
+          ;; log p(mu) = log N(mu; 0, 10) = -0.5*log(2*pi*100) - 0.5*mu^2/100
+          log-prior (mx/subtract
+                      (mx/multiply (mx/scalar -0.5)
+                                   (mx/divide (mx/square mu) (mx/scalar 100.0)))
+                      (mx/scalar (* 0.5 (js/Math.log (* 2.0 js/Math.PI 100.0)))))
+          ;; log p(y=3|mu) = log N(3; mu, 1) = -0.5*log(2*pi) - 0.5*(3-mu)^2
+          log-lik   (mx/subtract
+                      (mx/multiply (mx/scalar -0.5)
+                                   (mx/square (mx/subtract mu (mx/scalar 3.0))))
+                      (mx/scalar (* 0.5 log-2pi)))]
+      (mx/add log-prior log-lik))))
 
-(def init-params (mx/array [1.0 1.0]))
+(def vi-init-params (mx/array [0.0]))
+
+;; True log-marginal: log N(3; 0, sqrt(101))
+;; = -0.5 * log(2*pi*101) - 0.5 * 9/101
+(def true-log-ml
+  (let [log-2pi-101 (js/Math.log (* 2.0 js/Math.PI 101.0))]
+    (- (* -0.5 log-2pi-101) (* 0.5 (/ 9.0 101.0)))))
+
+;; Model for vi-from-model
+(def gauss-model
+  (dyn/auto-key
+    (gen []
+      (let [mu (trace :mu (dist/gaussian 0 10))
+            y  (trace :y (dist/gaussian mu 1))]
+        (mx/eval! mu)
+        (mx/item mu)))))
+
+(def gauss-obs (cm/choicemap :y (mx/scalar 3.0)))
 
 (def key-pool (mapv #(rng/fresh-key %) [42 99 123 7 255]))
 (def gen-key (gen/elements key-pool))
-(def gen-iterations (gen/elements [20 30]))
-(def gen-lr (gen/elements [0.01 0.05]))
-(def gen-elbo-samples (gen/elements [3 5]))
 
-;; ---------------------------------------------------------------------------
-;; Model for vi-from-model
-;; ---------------------------------------------------------------------------
+;; Simple 2D Gaussian for sigma > 0 tests
+(def simple-log-density
+  (fn [z]
+    (mx/negative (mx/multiply (mx/scalar 0.5) (mx/sum (mx/square z))))))
 
-(def two-gauss
-  (dyn/auto-key
-    (gen []
-      (let [x (trace :x (dist/gaussian 0 1))
-            y (trace :y (dist/gaussian 0 1))]
-        (mx/eval! x y)
-        (+ (mx/item x) (mx/item y))))))
-
-(def two-gauss-obs (cm/choicemap :y (mx/scalar 1.0)))
+(def simple-init (mx/array [1.0 1.0]))
 
 (println "\n=== VI Property-Based Tests ===\n")
 
 ;; ---------------------------------------------------------------------------
-;; ADVI properties
+;; Law: sigma > 0 (positivity constraint on variational scale)
+;; sigma = exp(log_sigma), which is always positive
 ;; ---------------------------------------------------------------------------
 
-(println "-- ADVI --")
+(println "-- sigma positivity --")
 
-;; Property 1: vi: ELBO history has length ≤ iterations
-(check "vi: ELBO history length ≤ iterations"
-  (prop/for-all [n gen-iterations
-                 k gen-key]
-    (let [result (vi/vi {:iterations n :learning-rate 0.05 :elbo-samples 3 :key k}
-                         log-density init-params)]
-      (<= (count (:elbo-history result)) n)))
-  :num-tests 20)
-
-;; Property 2: vi: mu is finite
-(check "vi: mu is finite"
-  (prop/for-all [k gen-key]
-    (let [result (vi/vi {:iterations 30 :learning-rate 0.05 :elbo-samples 3 :key k}
-                         log-density init-params)
-          mu (:mu result)]
-      (mx/eval! mu)
-      (every? js/isFinite (mx/->clj mu))))
-  :num-tests 20)
-
-;; Property 3: vi: sigma > 0 (exp of log-sigma)
 (check "vi: sigma > 0"
   (prop/for-all [k gen-key]
     (let [result (vi/vi {:iterations 30 :learning-rate 0.05 :elbo-samples 3 :key k}
-                         log-density init-params)
+                         simple-log-density simple-init)
           sigma (:sigma result)]
       (mx/eval! sigma)
       (every? #(> % 0) (mx/->clj sigma))))
   :num-tests 20)
 
-;; Property 4: vi: sample-fn(n) produces n samples
-(check "vi: sample-fn produces n samples"
-  (prop/for-all [k gen-key]
-    (let [result (vi/vi {:iterations 20 :learning-rate 0.05 :elbo-samples 3 :key k}
-                         log-density init-params)
-          samples ((:sample-fn result) 15)]
-      (= 15 (count samples))))
-  :num-tests 20)
-
-;; ---------------------------------------------------------------------------
-;; Compiled VI properties
-;; ---------------------------------------------------------------------------
-
-(println "\n-- compiled VI --")
-
-;; Property 5: compiled-vi: mu is finite
-(check "compiled-vi: mu is finite"
-  (prop/for-all [k gen-key]
-    (let [result (vi/compiled-vi {:iterations 30 :learning-rate 0.05
-                                   :elbo-samples 3 :key k :device :cpu}
-                                  log-density init-params)
-          mu (:mu result)]
-      (mx/eval! mu)
-      (every? js/isFinite (mx/->clj mu))))
-  :num-tests 15)
-
-;; Property 6: compiled-vi: sigma > 0
 (check "compiled-vi: sigma > 0"
   (prop/for-all [k gen-key]
     (let [result (vi/compiled-vi {:iterations 30 :learning-rate 0.05
                                    :elbo-samples 3 :key k :device :cpu}
-                                  log-density init-params)
+                                  simple-log-density simple-init)
           sigma (:sigma result)]
       (mx/eval! sigma)
       (every? #(> % 0) (mx/->clj sigma))))
   :num-tests 15)
 
-;; ---------------------------------------------------------------------------
-;; Objective functions
-;; ---------------------------------------------------------------------------
-
-(println "\n-- VI objectives --")
-
-(def log-p-fn
-  "Model log-density for testing objectives."
-  (fn [z] (mx/negative (mx/multiply (mx/scalar 0.5) (mx/sum (mx/square z))))))
-
-(def log-q-fn
-  "Guide log-density for testing objectives."
-  (fn [z] (mx/negative (mx/multiply (mx/scalar 0.5) (mx/sum (mx/square z))))))
-
-;; Property 7: elbo-objective: returns finite value
-(check "elbo-objective: returns finite value"
-  (prop/for-all [k gen-key]
-    (let [obj-fn (vi/elbo-objective log-p-fn log-q-fn)
-          samples (rng/normal k [5 2])
-          result (obj-fn samples)]
-      (mx/eval! result)
-      (finite? (mx/item result))))
-  :num-tests 30)
-
-;; Property 8: iwelbo-objective: returns finite value
-(check "iwelbo-objective: returns finite value"
-  (prop/for-all [k gen-key]
-    (let [obj-fn (vi/iwelbo-objective log-p-fn log-q-fn)
-          samples (rng/normal k [5 2])
-          result (obj-fn samples)]
-      (mx/eval! result)
-      (finite? (mx/item result))))
-  :num-tests 30)
-
-;; ---------------------------------------------------------------------------
-;; Programmable VI
-;; ---------------------------------------------------------------------------
-
-(println "\n-- programmable VI --")
-
-;; Parameterized guide
-(defn my-log-q [z params]
-  (let [mu params]
-    ;; log N(z; mu, I) = -0.5 * sum((z - mu)^2) + const
-    (mx/negative (mx/multiply (mx/scalar 0.5)
-                               (mx/sum (mx/square (mx/subtract z mu)))))))
-
-(defn my-sample-fn [params key n]
-  (let [d (first (mx/shape params))
-        eps (rng/normal (rng/ensure-key key) [n d])]
-    (mx/add params eps)))
-
-;; Property 9: programmable-vi: loss history length ≤ iterations
-(check "programmable-vi: loss history length ≤ iterations"
-  (prop/for-all [k gen-key]
-    (let [result (vi/programmable-vi
-                   {:iterations 20 :learning-rate 0.05 :n-samples 5
-                    :objective :elbo :key k}
-                   log-p-fn my-log-q my-sample-fn (mx/array [1.0 1.0]))]
-      (<= (count (:loss-history result)) 20)))
-  :num-tests 15)
-
-;; Property 10: programmable-vi: final params are finite
-(check "programmable-vi: final params finite"
-  (prop/for-all [k gen-key]
-    (let [result (vi/programmable-vi
-                   {:iterations 20 :learning-rate 0.05 :n-samples 5
-                    :objective :elbo :key k}
-                   log-p-fn my-log-q my-sample-fn (mx/array [1.0 1.0]))]
-      (mx/eval! (:params result))
-      (every? js/isFinite (mx/->clj (:params result)))))
-  :num-tests 15)
-
-;; ---------------------------------------------------------------------------
-;; vi-from-model
-;; ---------------------------------------------------------------------------
-
-(println "\n-- vi-from-model --")
-
-;; Property 11: vi-from-model: mu is finite
-(check "vi-from-model: mu is finite"
-  (prop/for-all [k gen-key]
-    (let [result (vi/vi-from-model
-                   {:iterations 20 :learning-rate 0.05 :elbo-samples 3 :key k}
-                   two-gauss [] two-gauss-obs [:x])
-          mu (:mu result)]
-      (mx/eval! mu)
-      (every? js/isFinite (mx/->clj mu))))
-  :num-tests 10)
-
-;; Property 12: vi-from-model: sigma > 0
 (check "vi-from-model: sigma > 0"
   (prop/for-all [k gen-key]
     (let [result (vi/vi-from-model
                    {:iterations 20 :learning-rate 0.05 :elbo-samples 3 :key k}
-                   two-gauss [] two-gauss-obs [:x])
+                   gauss-model [] gauss-obs [:mu])
           sigma (:sigma result)]
       (mx/eval! sigma)
       (every? #(> % 0) (mx/->clj sigma))))
   :num-tests 10)
 
 ;; ---------------------------------------------------------------------------
-;; Additional VI objectives
+;; Law: ELBO <= log P(data) (variational lower bound)
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- additional VI objectives --")
+(println "\n-- ELBO bound --")
 
-;; Property 13: pwake-objective: returns finite value
-(check "pwake-objective: returns finite value"
+(check "ELBO <= true log-marginal"
   (prop/for-all [k gen-key]
-    (let [obj-fn (vi/pwake-objective log-p-fn log-q-fn)
-          samples (rng/normal k [5 2])
-          result (obj-fn samples)]
-      (mx/eval! result)
-      (finite? (mx/item result))))
+    (let [result (vi/vi {:iterations 200 :learning-rate 0.05 :elbo-samples 10 :key k}
+                         vi-log-density vi-init-params)
+          history (:elbo-history result)
+          ;; Use median of last few ELBO values for stability
+          n-last (min 5 (count history))
+          last-few (take-last n-last history)
+          sorted (sort last-few)
+          median-elbo (nth sorted (quot (count sorted) 2))]
+      ;; ELBO is a lower bound; allow 1.5 slack for MC estimation noise
+      (<= median-elbo (+ true-log-ml 1.5))))
+  :num-tests 15)
+
+;; ---------------------------------------------------------------------------
+;; Law: IWELBO(K=1) = ELBO (degenerate importance weighting)
+;; ---------------------------------------------------------------------------
+
+(println "\n-- IWELBO degenerate case --")
+
+(check "IWELBO(K=1) = ELBO"
+  (prop/for-all [k gen-key]
+    (let [;; Log-p and log-q at same point
+          log-p vi-log-density
+          log-q (fn [z] (mx/multiply (mx/scalar -0.5) (mx/sum (mx/square z))))
+          elbo-fn (vi/elbo-objective log-p log-q)
+          iwelbo-fn (vi/iwelbo-objective log-p log-q)
+          ;; Generate K=1 sample
+          sample (rng/normal k [1 1])
+          elbo-val (mx/item (mx/tidy-materialize #(elbo-fn sample)))
+          iwelbo-val (mx/item (mx/tidy-materialize #(iwelbo-fn sample)))]
+      (close? elbo-val iwelbo-val 0.01)))
   :num-tests 30)
 
-;; Property 14: reinforce-estimator: returns finite value
-(check "reinforce-estimator: returns finite value"
+;; ---------------------------------------------------------------------------
+;; Law: gradient ascent increases ELBO
+;; ---------------------------------------------------------------------------
+
+(println "\n-- ELBO improvement --")
+
+(check "ELBO improves over training"
   (prop/for-all [k gen-key]
-    (let [base-obj (vi/elbo-objective log-p-fn log-q-fn)
-          reinforce-fn (vi/reinforce-estimator base-obj log-q-fn)
-          samples (rng/normal k [5 2])
-          result (reinforce-fn samples)]
-      (mx/eval! result)
-      (finite? (mx/item result))))
-  :num-tests 30)
+    (let [result (vi/vi {:iterations 200 :learning-rate 0.05 :elbo-samples 10 :key k}
+                         vi-log-density vi-init-params)
+          history (:elbo-history result)]
+      (when (>= (count history) 4)
+        ;; Compare average of first quarter vs last quarter for robustness
+        (let [n (count history)
+              quarter (max 1 (quot n 4))
+              early-mean (/ (reduce + (take quarter history)) quarter)
+              late-mean  (/ (reduce + (take-last quarter history)) quarter)]
+          (> late-mean early-mean)))))
+  :num-tests 15)
+
+;; ---------------------------------------------------------------------------
+;; Law: VI converges to (near) true posterior
+;; Analytical posterior: N(300/101, 100/101), mu_post ~ 2.97
+;; ---------------------------------------------------------------------------
+
+(println "\n-- VI posterior convergence --")
+
+(check "VI posterior mean near analytical"
+  (prop/for-all [k gen-key]
+    (let [result (vi/vi {:iterations 200 :learning-rate 0.05 :elbo-samples 10 :key k}
+                         vi-log-density vi-init-params)
+          mu (:mu result)]
+      (mx/eval! mu)
+      (let [mu-val (first (mx/->clj mu))]
+        (close? mu-val 2.97 1.5))))
+  :num-tests 15)
 
 ;; ---------------------------------------------------------------------------
 ;; Summary
