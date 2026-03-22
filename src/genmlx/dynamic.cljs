@@ -247,6 +247,25 @@
                         (:discard handler-result)
                         constraints (:choices handler-result) handler-result)))
 
+(defn- add-deleted-to-discard
+  "Add old trace addresses not present in new trace to the discard.
+   When a model switches branches, addresses visited in the old trace
+   but absent in the new trace must appear in the discard (Gen.jl semantics)."
+  [discard old-choices new-choices]
+  (if (and (instance? cm/Node old-choices)
+           (instance? cm/Node new-choices))
+    (let [old-keys (set (keys (:m old-choices)))
+          new-keys (set (keys (:m new-choices)))
+          deleted (clojure.set/difference old-keys new-keys)]
+      (reduce (fn [d addr]
+                (let [old-sub (get (:m old-choices) addr)]
+                  (if (cm/has-value? old-sub)
+                    (cm/set-value d addr (cm/get-value old-sub))
+                    (cm/set-submap d addr old-sub))))
+              discard
+              deleted))
+    discard))
+
 (defn- run-update-handler
   "L0: handler fallback update."
   [gf trace key constraints body-fn this]
@@ -481,19 +500,24 @@
   p/IUpdate
   (update [this trace constraints]
     (let [key (ensure-key this)
-          _ (rng/seed! key)]
-      (cond
-        ;; L1: fully compiled update (static or branch-rewritten)
-        (:compiled-update schema)
-        (run-update-compiled (:compiled-update schema) this trace key constraints)
+          _ (rng/seed! key)
+          result
+          (cond
+            ;; L1: fully compiled update (static or branch-rewritten)
+            (:compiled-update schema)
+            (run-update-compiled (:compiled-update schema) this trace key constraints)
 
-        ;; L1-M3: compiled prefix update + replay handler
-        (:compiled-prefix-update schema)
-        (run-update-prefix (:compiled-prefix-update schema) this trace key constraints body-fn this)
+            ;; L1-M3: compiled prefix update + replay handler
+            (:compiled-prefix-update schema)
+            (run-update-prefix (:compiled-prefix-update schema) this trace key constraints body-fn this)
 
-        ;; L0: handler fallback
-        :else
-        (run-update-handler this trace key constraints body-fn this))))
+            ;; L0: handler fallback
+            :else
+            (run-update-handler this trace key constraints body-fn this))]
+      ;; Post-process: add addresses deleted by branch switches to discard.
+      ;; Old addresses not present in new trace must appear in discard (Gen.jl semantics).
+      (clojure.core/update result :discard
+                           add-deleted-to-discard (:choices trace) (:choices (:trace result)))))
 
   p/IRegenerate
   (regenerate [this trace selection]
