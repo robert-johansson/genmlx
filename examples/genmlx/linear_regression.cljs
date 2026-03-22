@@ -4,7 +4,7 @@
 ;; Given noisy observations y = slope * x + intercept + noise,
 ;; infer the posterior distribution over slope and intercept.
 ;;
-;; Demonstrates: gen macro, trace sites, IS + MH inference, posterior analysis.
+;; Demonstrates: gen macro, trace sites, IS + MALA inference, posterior analysis.
 ;;
 ;; Run: bun run --bun nbb examples/genmlx/linear_regression.cljs
 
@@ -74,14 +74,17 @@
   (println (str "  E[slope]     = " (.toFixed mean-slope 3) "  (true: 2.0)"))
   (println (str "  E[intercept] = " (.toFixed mean-int 3) "  (true: 0.5)")))
 
-;; --- MCMC ---
+;; --- MALA (gradient-informed MCMC) ---
+;; MALA uses the gradient of the log-posterior to make informed proposals,
+;; mixing much better than random-walk MH on correlated parameters.
 
-(println "\n-- Metropolis-Hastings (1000 samples, 200 burn-in) --")
-(let [traces (mcmc/mh {:samples 1000 :burn 200
-                        :selection (sel/select :slope :intercept)}
-                       model [xs] observations)
-      slopes     (mapv #(get-val % :slope) traces)
-      intercepts (mapv #(get-val % :intercept) traces)]
+(println "\n-- MALA (500 samples, 100 burn-in, gradient-informed) --")
+(let [samples (mcmc/mala {:samples 500 :burn 100 :step-size 0.1
+                          :addresses [:slope :intercept]
+                          :compile? false}
+                         model [xs] observations)
+      slopes     (mapv first samples)
+      intercepts (mapv second samples)]
   (println (str "  E[slope]     = " (.toFixed (mean slopes) 3)
                " +/- " (.toFixed (std slopes) 3) "  (true: 2.0)"))
   (println (str "  E[intercept] = " (.toFixed (mean intercepts) 3)
@@ -90,14 +93,12 @@
 ;; --- Posterior Predictive ---
 
 (println "\n-- Posterior Predictive --")
-(let [traces (mcmc/mh {:samples 200 :burn 100
-                        :selection (sel/select :slope :intercept)}
-                       model [xs] observations)
+(let [samples (mcmc/mala {:samples 200 :burn 100 :step-size 0.1
+                          :addresses [:slope :intercept]
+                          :compile? false}
+                         model [xs] observations)
       x-new 10.0
-      preds (mapv (fn [tr]
-                    (+ (* (get-val tr :slope) x-new)
-                       (get-val tr :intercept)))
-                  traces)]
+      preds (mapv (fn [s] (+ (* (first s) x-new) (second s))) samples)]
   (println (str "  y(x=10) = " (.toFixed (mean preds) 2)
                " +/- " (.toFixed (std preds) 2)
                "  (true: ~20.5)")))
