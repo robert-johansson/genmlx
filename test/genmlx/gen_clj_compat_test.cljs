@@ -5,7 +5,9 @@
 
    Note: GenMLX uses float32 (MLX default) while Gen.clj uses float64.
    Tolerances are set to 1e-6 for spot checks and 1e-5 for computed values."
-  (:require [genmlx.mlx :as mx]
+  (:require [cljs.test :as t :refer [deftest is testing]]
+            [genmlx.test-helpers :as th]
+            [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
@@ -15,658 +17,472 @@
   (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; ---------------------------------------------------------------------------
-;; Test helpers
+;; Helpers
 ;; ---------------------------------------------------------------------------
 
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- lp
+(defn lp
   "Extract log-prob as a plain number."
   [d v]
   (let [r (dist/log-prob d (if (mx/array? v) v (mx/scalar v)))]
     (mx/eval! r)
     (mx/item r)))
 
-(defn assert-true [msg actual]
-  (if actual
-    (do (vswap! pass-count inc)
-        (println "  PASS:" msg))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" msg "- expected truthy, got" actual))))
-
-(defn assert-close
-  "Assert expected ~= actual within tolerance."
-  [msg expected actual tolerance]
-  (let [diff (js/Math.abs (- expected actual))]
-    (if (<= diff tolerance)
-      (do (vswap! pass-count inc)
-          (println "  PASS:" msg))
-      (do (vswap! fail-count inc)
-          (println "  FAIL:" msg)
-          (println "    expected:" expected "+/-" tolerance)
-          (println "    actual:  " actual)
-          (println "    diff:    " diff)))))
-
-(defn assert-equal [msg expected actual]
-  (if (= expected actual)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" msg))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" msg)
-        (println "    expected:" expected)
-        (println "    actual:  " actual))))
-
-(defn assert-neg-inf [msg actual]
-  (if (= ##-Inf actual)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" msg))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" msg "- expected -Inf, got" actual))))
-
-(println "\n=== Gen.clj Compatibility Tests ===\n")
+(def ^:private f32-tol 1e-6)
+(def ^:private sym-tol 1e-10)
 
 ;; =========================================================================
 ;; SECTION 1: Distribution logpdf spot checks
-;; (From gen.distribution-test, verified against scipy.stats and Gen.jl)
-;;
-;; Note: GenMLX uses float32 (MLX default), Gen.clj uses float64.
-;; Tolerance is 1e-6 for spot checks (float32 has ~7 decimal digits).
 ;; =========================================================================
 
-(def ^:private f32-tol 1e-6)   ;; float32 tolerance for spot checks
-(def ^:private sym-tol 1e-10)  ;; relative comparisons within same precision
+(deftest s1-distribution-logpdf
+  (testing "Gaussian logpdf spot checks"
+    (is (th/close? -1.0439385332046727
+                   (lp (dist/gaussian 0 1) 0.5) f32-tol)
+        "normal(0,1) at 0.5")
+    (is (th/close? -1.643335713764618
+                   (lp (dist/gaussian 0 2) 0.5) f32-tol)
+        "normal(0,2) at 0.5")
+    (is (th/close? -1.612085713764618
+                   (lp (dist/gaussian 0 2) 0) f32-tol)
+        "normal(0,2) at 0"))
 
-;; ---- Gaussian / Normal ----
-(println "-- Gaussian logpdf spot checks (from Gen.clj) --")
+  (testing "Gaussian symmetry"
+    (doseq [sigma [0.5 1.0 2.0 5.0]
+            v     [0.1 1.0 3.0 10.0]]
+      (is (th/close? (lp (dist/gaussian 0 sigma) v)
+                     (lp (dist/gaussian 0 sigma) (- v))
+                     sym-tol)
+          (str "N(0," sigma ") symmetric at +/-" v))))
 
-(assert-close "normal(0,1) at 0.5"
-  -1.0439385332046727
-  (lp (dist/gaussian 0 1) 0.5) f32-tol)
+  (testing "Gaussian shift symmetry"
+    (doseq [[mu sigma v shift] [[2.0 1.0 3.0 5.0]
+                                 [-1.0 0.5 2.0 -3.0]
+                                 [0.0 3.0 1.0 10.0]]]
+      (is (th/close? (lp (dist/gaussian mu sigma) v)
+                     (lp (dist/gaussian (+ mu shift) sigma) (+ v shift))
+                     f32-tol)
+          (str "N(" mu "," sigma ") shift by " shift))))
 
-(assert-close "normal(0,2) at 0.5"
-  -1.643335713764618
-  (lp (dist/gaussian 0 2) 0.5) f32-tol)
+  (testing "Uniform logpdf inside bounds"
+    (doseq [[lo hi v] [[-5.0 5.0 0.0]
+                        [0.0 1.0 0.5]
+                        [-10.0 -0.1 -5.0]
+                        [0.1 10.0 5.0]]]
+      (let [expected (- (js/Math.log (- hi lo)))]
+        (is (th/close? expected (lp (dist/uniform lo hi) v) f32-tol)
+            (str "uniform(" lo "," hi ") at " v " (inside)")))))
 
-(assert-close "normal(0,2) at 0"
-  -1.612085713764618
-  (lp (dist/gaussian 0 2) 0) f32-tol)
+  (testing "Uniform logpdf outside bounds"
+    (doseq [[lo hi v] [[0.0 1.0 -0.1]
+                        [0.0 1.0 1.5]
+                        [-5.0 5.0 10.0]]]
+      (is (= ##-Inf (lp (dist/uniform lo hi) v))
+          (str "uniform(" lo "," hi ") at " v " (outside)"))))
 
-;; Symmetry: logpdf(N(0,sigma), v) = logpdf(N(0,sigma), -v)
-(println "\n-- Gaussian symmetry --")
-(doseq [sigma [0.5 1.0 2.0 5.0]
-        v     [0.1 1.0 3.0 10.0]]
-  (assert-close (str "N(0," sigma ") symmetric at +/-" v)
-    (lp (dist/gaussian 0 sigma) v)
-    (lp (dist/gaussian 0 sigma) (- v))
-    sym-tol))
+  (testing "Beta logpdf spot checks"
+    (is (th/close? -5.992380837839856
+                   (lp (dist/beta-dist 0.001 1) 0.4) 1e-4)
+        "beta(0.001, 1) at 0.4")
+    (is (th/close? -6.397440480839912
+                   (lp (dist/beta-dist 1 0.001) 0.4) 1e-4)
+        "beta(1, 0.001) at 0.4"))
 
-;; Shift symmetry: logpdf(N(mu,sigma), v) = logpdf(N(mu+s,sigma), v+s)
-(println "\n-- Gaussian shift symmetry --")
-(doseq [[mu sigma v shift] [[2.0 1.0 3.0 5.0]
-                             [-1.0 0.5 2.0 -3.0]
-                             [0.0 3.0 1.0 10.0]]]
-  (assert-close (str "N(" mu "," sigma ") shift by " shift)
-    (lp (dist/gaussian mu sigma) v)
-    (lp (dist/gaussian (+ mu shift) sigma) (+ v shift))
-    f32-tol))
+  (testing "Gamma logpdf spot checks"
+    (is (th/close? -6.391804444241573
+                   (lp (dist/gamma-dist 0.001 1) 0.4) 1e-4)
+        "gamma(shape=0.001, scale=1) at 0.4")
+    (is (th/close? -393.0922447210179
+                   (lp (dist/gamma-dist 1 1000) 0.4) 0.1)
+        "gamma(shape=1, scale=0.001) at 0.4"))
 
-;; ---- Uniform ----
-(println "\n-- Uniform logpdf (from Gen.clj) --")
+  (testing "Bernoulli logpdf"
+    (is (th/close? (lp (dist/bernoulli 0.5) 1.0)
+                   (lp (dist/bernoulli 0.5) 0.0)
+                   sym-tol)
+        "bernoulli(0.5) fair coin symmetry")
+    (doseq [p [0.1 0.3 0.5 0.7 0.9]]
+      (let [sum (+ (js/Math.exp (lp (dist/bernoulli p) 1.0))
+                   (js/Math.exp (lp (dist/bernoulli p) 0.0)))]
+        (is (th/close? 1.0 sum f32-tol)
+            (str "bernoulli(" p ") sums to 1"))))
+    (doseq [p [0.2 0.5 0.8]]
+      (is (th/close? (js/Math.log p)
+                     (lp (dist/bernoulli p) 1.0)
+                     f32-tol)
+          (str "bernoulli(" p ") at 1 = log(p)"))
+      (is (th/close? (js/Math.log (- 1 p))
+                     (lp (dist/bernoulli p) 0.0)
+                     f32-tol)
+          (str "bernoulli(" p ") at 0 = log(1-p)"))))
 
-;; Inside bounds: logpdf = -log(max - min)
-(doseq [[lo hi v] [[-5.0 5.0 0.0]
-                    [0.0 1.0 0.5]
-                    [-10.0 -0.1 -5.0]
-                    [0.1 10.0 5.0]]]
-  (let [expected (- (js/Math.log (- hi lo)))]
-    (assert-close (str "uniform(" lo "," hi ") at " v " (inside)")
-      expected (lp (dist/uniform lo hi) v) f32-tol)))
+  (testing "Exponential logpdf"
+    (doseq [v [-0.1 -1.0 -100.0]]
+      (is (= ##-Inf (lp (dist/exponential 1.0) v))
+          (str "exponential(1) at " v " (negative)")))
+    (doseq [v [0.5 1.0 2.0 5.0]]
+      (is (th/close? (- v) (lp (dist/exponential 1.0) v) sym-tol)
+          (str "exponential(1) at " v " = -v")))
+    (is (th/close? -3.3068528194400546
+                   (lp (dist/exponential 2.0) 2.0) f32-tol)
+        "exponential(2) at 2")
+    (is (th/close? -5.306852819440055
+                   (lp (dist/exponential 2.0) 3.0) f32-tol)
+        "exponential(2) at 3"))
 
-;; Outside bounds should return -Inf
-(doseq [[lo hi v] [[0.0 1.0 -0.1]
-                    [0.0 1.0 1.5]
-                    [-5.0 5.0 10.0]]]
-  (assert-neg-inf (str "uniform(" lo "," hi ") at " v " (outside)")
-    (lp (dist/uniform lo hi) v)))
+  (testing "Laplace logpdf"
+    (is (th/close? -1.6931471805599454
+                   (lp (dist/laplace 2 1) 1) f32-tol)
+        "laplace(2,1) at 1")
+    (is (th/close? -1.8862943611198906
+                   (lp (dist/laplace 0 2) 1) f32-tol)
+        "laplace(0,2) at 1")
+    (is (th/close? 4.214608098422191
+                   (lp (dist/laplace 0 0.001) 0.002) 1e-3)
+        "laplace(0,0.001) at 0.002")
+    (doseq [v [0.5 1.0 3.0 10.0]]
+      (is (th/close? (lp (dist/laplace 0 1) v)
+                     (lp (dist/laplace 0 1) (- v))
+                     sym-tol)
+          (str "laplace(0,1) symmetric at +/-" v)))
+    (doseq [v [0.0 1.5 -3.0 10.0]]
+      (is (th/close? (- (js/Math.log 2))
+                     (lp (dist/laplace v 1) v)
+                     f32-tol)
+          (str "laplace(" v ",1) at " v " = -log(2)"))))
 
-;; ---- Beta ----
-(println "\n-- Beta logpdf spot checks (from Gen.clj) --")
+  (testing "Student-t logpdf spot checks"
+    (is (th/close? -1.7347417805005154
+                   (lp (dist/student-t 2 2.1 2) 2) f32-tol)
+        "student-t(2, 2.1, 2) at 2")
+    (is (th/close? -2.795309741614719
+                   (lp (dist/student-t 1 0.8 4) 3) f32-tol)
+        "student-t(1, 0.8, 4) at 3")
+    (doseq [nu [1 2 5 10]
+            v  [-2.0 0.0 1.5 3.0]]
+      (is (th/close? (lp (dist/student-t nu 0 1) v)
+                     (lp (dist/student-t nu 0 1) v)
+                     sym-tol)
+          (str "student-t(" nu ", 0, 1) at " v " self-consistent"))))
 
-(assert-close "beta(0.001, 1) at 0.4"
-  -5.992380837839856
-  (lp (dist/beta-dist 0.001 1) 0.4) 1e-4)
+  (testing "Delta logpdf"
+    (doseq [c [0.0 1.5 -3.0 100.0]]
+      (is (th/close? 0.0 (lp (dist/delta c) c) sym-tol)
+          (str "delta(" c ") at " c " = 0")))
+    (doseq [[c v] [[0.0 1.0] [1.0 0.0] [5.0 5.1] [-3.0 3.0]]]
+      (is (= ##-Inf (lp (dist/delta c) v))
+          (str "delta(" c ") at " v " = -Inf"))))
 
-(assert-close "beta(1, 0.001) at 0.4"
-  -6.397440480839912
-  (lp (dist/beta-dist 1 0.001) 0.4) 1e-4)
-
-;; ---- Gamma ----
-;; IMPORTANT: Gen.clj uses (shape, SCALE) parameterization.
-;; GenMLX uses (shape, RATE) parameterization where rate = 1/scale.
-;; So Gen.clj's (->gamma shape scale) = GenMLX's (gamma-dist shape (/ 1 scale))
-(println "\n-- Gamma logpdf spot checks (from Gen.clj) --")
-
-;; Gen.clj: (->gamma 0.001 1) => shape=0.001, scale=1 => rate=1
-(assert-close "gamma(shape=0.001, scale=1) at 0.4"
-  -6.391804444241573
-  (lp (dist/gamma-dist 0.001 1) 0.4) 1e-4)
-
-;; Gen.clj: (->gamma 1 0.001) => shape=1, scale=0.001 => rate=1000
-(assert-close "gamma(shape=1, scale=0.001) at 0.4"
-  -393.0922447210179
-  (lp (dist/gamma-dist 1 1000) 0.4) 0.1)
-
-;; ---- Bernoulli ----
-(println "\n-- Bernoulli logpdf (from Gen.clj) --")
-
-;; Fair coin: equal probability
-(assert-close "bernoulli(0.5) fair coin symmetry"
-  (lp (dist/bernoulli 0.5) 1.0)
-  (lp (dist/bernoulli 0.5) 0.0)
-  sym-tol)
-
-;; Probabilities sum to 1
-(doseq [p [0.1 0.3 0.5 0.7 0.9]]
-  (let [sum (+ (js/Math.exp (lp (dist/bernoulli p) 1.0))
-               (js/Math.exp (lp (dist/bernoulli p) 0.0)))]
-    (assert-close (str "bernoulli(" p ") sums to 1")
-      1.0 sum f32-tol)))
-
-;; logpdf matches log(p) and log(1-p)
-(doseq [p [0.2 0.5 0.8]]
-  (assert-close (str "bernoulli(" p ") at 1 = log(p)")
-    (js/Math.log p)
-    (lp (dist/bernoulli p) 1.0)
-    f32-tol)
-  (assert-close (str "bernoulli(" p ") at 0 = log(1-p)")
-    (js/Math.log (- 1 p))
-    (lp (dist/bernoulli p) 0.0)
-    f32-tol))
-
-;; ---- Exponential ----
-(println "\n-- Exponential logpdf (from Gen.clj) --")
-
-;; Negative values should return -Inf
-(doseq [v [-0.1 -1.0 -100.0]]
-  (assert-neg-inf (str "exponential(1) at " v " (negative)")
-    (lp (dist/exponential 1.0) v)))
-
-;; Rate 1.0 produces log(1) - 1*v = -v
-(doseq [v [0.5 1.0 2.0 5.0]]
-  (assert-close (str "exponential(1) at " v " = -v")
-    (- v) (lp (dist/exponential 1.0) v) sym-tol))
-
-;; Spot checks from Gen.clj
-(assert-close "exponential(2) at 2"
-  -3.3068528194400546
-  (lp (dist/exponential 2.0) 2.0) f32-tol)
-
-(assert-close "exponential(2) at 3"
-  -5.306852819440055
-  (lp (dist/exponential 2.0) 3.0) f32-tol)
-
-;; ---- Laplace ----
-(println "\n-- Laplace logpdf (from Gen.clj) --")
-
-;; Spot checks from Gen.clj
-(assert-close "laplace(2,1) at 1"
-  -1.6931471805599454
-  (lp (dist/laplace 2 1) 1) f32-tol)
-
-(assert-close "laplace(0,2) at 1"
-  -1.8862943611198906
-  (lp (dist/laplace 0 2) 1) f32-tol)
-
-(assert-close "laplace(0,0.001) at 0.002"
-  4.214608098422191
-  (lp (dist/laplace 0 0.001) 0.002) 1e-3)
-
-;; Symmetry: logpdf(laplace(0,1), v) = logpdf(laplace(0,1), -v)
-(doseq [v [0.5 1.0 3.0 10.0]]
-  (assert-close (str "laplace(0,1) symmetric at +/-" v)
-    (lp (dist/laplace 0 1) v)
-    (lp (dist/laplace 0 1) (- v))
-    sym-tol))
-
-;; Location = v gives peak: logpdf = -log(2)
-(doseq [v [0.0 1.5 -3.0 10.0]]
-  (assert-close (str "laplace(" v ",1) at " v " = -log(2)")
-    (- (js/Math.log 2))
-    (lp (dist/laplace v 1) v)
-    f32-tol))
-
-;; ---- Student-t ----
-(println "\n-- Student-t logpdf spot checks (from Gen.clj) --")
-
-(assert-close "student-t(2, 2.1, 2) at 2"
-  -1.7347417805005154
-  (lp (dist/student-t 2 2.1 2) 2) f32-tol)
-
-(assert-close "student-t(1, 0.8, 4) at 3"
-  -2.795309741614719
-  (lp (dist/student-t 1 0.8 4) 3) f32-tol)
-
-;; Student-t(nu, 0, 1) self-consistency
-(doseq [nu [1 2 5 10]
-        v  [-2.0 0.0 1.5 3.0]]
-  (assert-close (str "student-t(" nu ", 0, 1) at " v " self-consistent")
-    (lp (dist/student-t nu 0 1) v)
-    (lp (dist/student-t nu 0 1) v)
-    sym-tol))
-
-;; ---- Delta ----
-(println "\n-- Delta logpdf (from Gen.clj) --")
-
-;; logpdf at center = 0
-(doseq [c [0.0 1.5 -3.0 100.0]]
-  (assert-close (str "delta(" c ") at " c " = 0")
-    0.0 (lp (dist/delta c) c) sym-tol))
-
-;; logpdf away from center = -Inf
-(doseq [[c v] [[0.0 1.0] [1.0 0.0] [5.0 5.1] [-3.0 3.0]]]
-  (assert-neg-inf (str "delta(" c ") at " v " = -Inf")
-    (lp (dist/delta c) v)))
-
-;; ---- Log-Gamma correctness ----
-(println "\n-- Log-Gamma function (from Gen.clj) --")
-
-;; log-Gamma(n) ~matches log((n-1)!)
-(defn factorial [n]
-  (if (zero? n) 1 (* n (factorial (dec n)))))
-
-;; Test indirectly via Gamma distribution:
-;; logpdf(Gamma(n, rate=1), x=1) = (n-1)*log(1) + n*log(1) - 1 - lgamma(n)
-;;                                = -1 - lgamma(n)
-;; So lgamma(n) = -1 - logpdf(Gamma(n, 1), 1)
-(doseq [n (range 1 15)]
-  (let [lgamma-n (- -1.0 (lp (dist/gamma-dist n 1) 1.0))
-        expected (js/Math.log (factorial (dec n)))]
-    (assert-close (str "lgamma(" n ") = log(" (dec n) "!)")
-      expected lgamma-n 1e-4)))
+  (testing "Log-Gamma correctness via Gamma distribution"
+    (letfn [(factorial [n]
+              (if (zero? n) 1 (* n (factorial (dec n)))))]
+      (doseq [n (range 1 15)]
+        (let [lgamma-n (- -1.0 (lp (dist/gamma-dist n 1) 1.0))
+              expected (js/Math.log (factorial (dec n)))]
+          (is (th/close? expected lgamma-n 1e-4)
+              (str "lgamma(" n ") = log(" (dec n) "!)")))))))
 
 ;; =========================================================================
 ;; SECTION 2: GFI interface for primitive distributions
-;; (From gen.distribution-test primitive-gfi-tests)
 ;; =========================================================================
 
-(println "\n-- Primitive GFI tests (from Gen.clj) --")
+(deftest s2-primitive-gfi
+  (testing "gaussian GFI round-trip"
+    (let [d (dist/gaussian 0 1)
+          trace (p/simulate d [])]
+      (is (= d (:gen-fn trace)) "gen-fn round-trips through trace")
+      (is (= [] (:args trace)) "args round-trip")
+      (let [choice (:choices trace)
+            retval (:retval trace)]
+        (mx/eval! retval (cm/get-value choice))
+        (is (th/close? (mx/item retval) (mx/item (cm/get-value choice)) sym-tol)
+            "retval = choice value"))))
 
-;; Distribution round-trips through trace
-(let [d (dist/gaussian 0 1)
-      trace (p/simulate d [])]
-  (assert-true "gaussian: gen-fn round-trips through trace"
-    (= d (:gen-fn trace)))
-  (assert-true "gaussian: args round-trip"
-    (= [] (:args trace)))
-  (let [choice (:choices trace)
-        retval (:retval trace)]
-    (mx/eval! retval (cm/get-value choice))
-    (assert-close "gaussian: retval = choice value"
-      (mx/item retval) (mx/item (cm/get-value choice)) sym-tol)))
-
-;; Bernoulli GFI tests (from Gen.clj bernoulli-gfi-tests)
-(println "\n-- Bernoulli GFI (from Gen.clj) --")
-
-(let [d (dist/bernoulli 0.5)
-      trace (p/simulate d [0.5])]
-  (assert-true "bernoulli: simulate returns trace"
-    (some? trace))
-  (let [retval (:retval trace)
-        score  (:score trace)]
-    (mx/eval! retval score)
-    (assert-close "bernoulli(0.5): score = log(0.5)"
-      0.5
-      (js/Math.exp (mx/item score))
-      f32-tol)))
-
-;; Bernoulli generate weight test (from Gen.clj)
-(println "\n-- Bernoulli generate weight (from Gen.clj) --")
-
-;; Generate with constraint then check weight
-(let [gf (dyn/auto-key (gen [] (trace :x (dist/bernoulli 0.3))))
-      {:keys [trace weight]} (p/generate gf [] (cm/choicemap :x (mx/scalar 1.0)))]
-  (mx/eval! weight)
-  ;; Weight = log(0.3) for constraining bernoulli(0.3) to true
-  (assert-close "generate bernoulli(0.3) constrained to 1: weight = log(0.3)"
-    (js/Math.log 0.3)
-    (mx/item weight)
-    f32-tol))
-
-;; Update via gen model (not raw distribution)
-(let [gf (dyn/auto-key (gen [] (trace :x (dist/bernoulli 0.3))))
-      {:keys [trace]} (p/generate gf [] (cm/choicemap :x (mx/scalar 1.0)))
-      ;; Update with same value
-      {:keys [weight]} (p/update gf trace (cm/choicemap :x (mx/scalar 1.0)))]
-  (mx/eval! weight)
-  (assert-close "update same value: exp(weight) = 1"
-    1.0 (js/Math.exp (mx/item weight)) f32-tol))
-
-;; Update from true to false => weight = log(0.7) - log(0.3)
-(let [gf (dyn/auto-key (gen [] (trace :x (dist/bernoulli 0.3))))
-      {:keys [trace]} (p/generate gf [] (cm/choicemap :x (mx/scalar 1.0)))
-      {:keys [weight]} (p/update gf trace (cm/choicemap :x (mx/scalar 0.0)))]
-  (mx/eval! weight)
-  (assert-close "update true->false: exp(weight) = 0.7/0.3"
-    (/ 0.7 0.3) (js/Math.exp (mx/item weight)) 1e-4))
+  (testing "bernoulli GFI"
+    (let [d (dist/bernoulli 0.5)
+          trace (p/simulate d [0.5])]
+      (is (some? trace) "simulate returns trace")
+      (let [retval (:retval trace)
+            score  (:score trace)]
+        (mx/eval! retval score)
+        (is (th/close? 0.5 (js/Math.exp (mx/item score)) f32-tol)
+            "bernoulli(0.5): score = log(0.5)")))))
 
 ;; =========================================================================
-;; SECTION 3: Dynamic DSL / gen macro tests
-;; (From gen.dynamic-test)
+;; SECTION 3: Bernoulli generate/update weight tests
 ;; =========================================================================
 
-(println "\n-- Dynamic DSL tests (from Gen.clj) --")
+(deftest s3-bernoulli-generate-weight
+  (testing "generate with constraint"
+    (let [gf (dyn/auto-key (gen [] (trace :x (dist/bernoulli 0.3))))
+          {:keys [trace weight]} (p/generate gf [] (cm/choicemap :x (mx/scalar 1.0)))]
+      (mx/eval! weight)
+      (is (th/close? (js/Math.log 0.3) (mx/item weight) f32-tol)
+          "weight = log(0.3)")))
 
-;; No-arity, no-return function returns nil
-(let [gf (gen [] nil)]
-  (assert-true "gen no-arity no-return"
-    (nil? (dyn/call gf))))
+  (testing "update same value"
+    (let [gf (dyn/auto-key (gen [] (trace :x (dist/bernoulli 0.3))))
+          {:keys [trace]} (p/generate gf [] (cm/choicemap :x (mx/scalar 1.0)))
+          {:keys [weight]} (p/update gf trace (cm/choicemap :x (mx/scalar 1.0)))]
+      (mx/eval! weight)
+      (is (th/close? 1.0 (js/Math.exp (mx/item weight)) f32-tol)
+          "exp(weight) = 1")))
 
-;; Round-trip through functions
-(let [gf (dyn/auto-key (gen [a b c d e]
-           (+ a b c d e)))
-      trace (p/simulate gf [1 2 3 4 5])]
-  (assert-true "deterministic gen: gen-fn round-trips"
-    (= gf (:gen-fn trace)))
-  (assert-true "deterministic gen: args round-trip"
-    (= [1 2 3 4 5] (:args trace)))
-  (assert-equal "deterministic gen: retval matches"
-    15 (:retval trace)))
-
-;; No choices for deterministic functions
-(let [gf (dyn/auto-key (gen [x y] (+ x y)))
-      trace (p/simulate gf [3 4])]
-  (assert-equal "deterministic: no choices"
-    0 (count (cm/addresses (:choices trace)))))
-
-;; trace! creates choices
-(println "\n-- Nested tracing semantics (from Gen.clj) --")
-(let [gf (dyn/auto-key (gen [p]
-           (trace :addr (dist/bernoulli p))))
-      trace (p/simulate gf [0.5])]
-  (let [choices (:choices trace)
-        retval  (:retval trace)]
-    (mx/eval! retval)
-    (let [v (cm/get-value (cm/get-submap choices :addr))]
-      (mx/eval! v)
-      (assert-close "trace choices match retval"
-        (mx/item retval) (mx/item v) sym-tol))))
-
-;; splice! bubbles up choices (from Gen.clj's "trace inside splice should bubble up")
-(let [gf0 (gen [] (trace :addr (dist/bernoulli 0.5)))
-      gf1 (dyn/auto-key (gen [] (splice :sub gf0)))
-      trace (p/simulate gf1 [])]
-  (let [choices (:choices trace)
-        sub-map (cm/get-submap choices :sub)]
-    (assert-true "splice bubbles up: sub-map exists"
-      (some? sub-map))
-    (let [addr-val (cm/get-submap sub-map :addr)]
-      (assert-true "splice bubbles up: addr exists in sub"
-        (cm/has-value? addr-val)))))
-
-;; trace inside trace nests (from Gen.clj's "trace inside of trace should nest")
-(let [inner (gen [] (trace :inner (dist/bernoulli 0.5)))
-      outer (dyn/auto-key (gen [] (splice :outer inner)))
-      trace (p/simulate outer [])]
-  (let [choices (:choices trace)
-        outer-sub (cm/get-submap choices :outer)
-        inner-val (cm/get-submap outer-sub :inner)]
-    (assert-true "nested tracing: outer exists"
-      (some? outer-sub))
-    (assert-true "nested tracing: inner exists within outer"
-      (cm/has-value? inner-val))))
-
-;; Generate through splice preserves structure
-(let [inner (gen [] (trace :addr (dist/bernoulli 0.5)))
-      outer (dyn/auto-key (gen [] (splice :sub inner)))
-      {:keys [trace]} (p/generate outer [] cm/EMPTY)]
-  (let [choices (:choices trace)
-        sub-map (cm/get-submap choices :sub)
-        addr-val (cm/get-submap sub-map :addr)]
-    (assert-true "generate+splice: structure preserved"
-      (cm/has-value? addr-val))))
-
-;; Score correctness (from Gen.clj's score test)
-(println "\n-- Score computation (from Gen.clj) --")
-(let [trace (p/simulate
-              (dyn/auto-key (gen [] (trace :addr (dist/bernoulli 0.5))))
-              [])]
-  (let [score (:score trace)]
-    (mx/eval! score)
-    (assert-close "bernoulli(0.5) score = log(0.5)"
-      0.5
-      (js/Math.exp (mx/item score))
-      f32-tol)))
+  (testing "update true->false"
+    (let [gf (dyn/auto-key (gen [] (trace :x (dist/bernoulli 0.3))))
+          {:keys [trace]} (p/generate gf [] (cm/choicemap :x (mx/scalar 1.0)))
+          {:keys [weight]} (p/update gf trace (cm/choicemap :x (mx/scalar 0.0)))]
+      (mx/eval! weight)
+      (is (th/close? (/ 0.7 0.3) (js/Math.exp (mx/item weight)) 1e-4)
+          "exp(weight) = 0.7/0.3"))))
 
 ;; =========================================================================
-;; SECTION 4: Update semantics
-;; (From gen.dynamic-test update-discard tests)
+;; SECTION 4: Dynamic DSL / gen macro tests
 ;; =========================================================================
 
-(println "\n-- Update discard semantics (from Gen.clj) --")
+(deftest s4-dynamic-dsl
+  (testing "no-arity, no-return"
+    (let [gf (gen [] nil)]
+      (is (nil? (dyn/call gf)) "returns nil")))
 
-;; Update with constraint => old value in discard
-(let [gf (dyn/auto-key (gen []
-           (trace :x (dist/bernoulli 0.5))))
-      trace (p/simulate gf [])
-      old-x (let [v (cm/get-value (cm/get-submap (:choices trace) :x))]
-              (mx/eval! v) (mx/item v))
-      new-val (if (> old-x 0.5) 0.0 1.0)  ;; flip the value
-      {:keys [trace discard]} (p/update gf trace
-                                 (cm/choicemap :x (mx/scalar new-val)))]
-  (assert-true "update: discard contains old value"
-    (cm/has-value? (cm/get-submap discard :x)))
-  (let [discarded (cm/get-value (cm/get-submap discard :x))]
-    (mx/eval! discarded)
-    (assert-close "update: discarded value matches old"
-      old-x (mx/item discarded) sym-tol))
-  (let [new-x (cm/get-value (cm/get-submap (:choices trace) :x))]
-    (mx/eval! new-x)
-    (assert-close "update: new trace has new value"
-      new-val (mx/item new-x) sym-tol)))
+  (testing "deterministic gen round-trip"
+    (let [gf (dyn/auto-key (gen [a b c d e] (+ a b c d e)))
+          trace (p/simulate gf [1 2 3 4 5])]
+      (is (= gf (:gen-fn trace)) "gen-fn round-trips")
+      (is (= [1 2 3 4 5] (:args trace)) "args round-trip")
+      (is (= 15 (:retval trace)) "retval matches")))
 
-;; Update weight for bernoulli (via gen model)
-(let [gf (dyn/auto-key (gen []
-           (trace :x (dist/bernoulli 0.3))))
-      {:keys [trace]} (p/generate gf [] (cm/choicemap :x (mx/scalar 1.0)))
-      {:keys [weight]} (p/update gf trace (cm/choicemap :x (mx/scalar 1.0)))]
-  (mx/eval! weight)
-  (assert-close "update same value: log-weight = 0"
-    0.0 (mx/item weight) f32-tol))
+  (testing "deterministic: no choices"
+    (let [gf (dyn/auto-key (gen [x y] (+ x y)))
+          trace (p/simulate gf [3 4])]
+      (is (= 0 (count (cm/addresses (:choices trace)))) "no choices")))
 
-;; Update with two addresses, only constrain one
-(let [gf (dyn/auto-key (gen []
-           (trace :kept (dist/bernoulli 0.5))
-           (trace :changed (dist/bernoulli 0.5))))
-      trace (p/simulate gf [])
-      old-kept (let [v (cm/get-value (cm/get-submap (:choices trace) :kept))]
-                 (mx/eval! v) (mx/item v))
-      {:keys [trace discard]} (p/update gf trace
-                                 (cm/choicemap :changed (mx/scalar 1.0)))]
-  ;; :kept should remain unchanged
-  (let [new-kept (cm/get-value (cm/get-submap (:choices trace) :kept))]
-    (mx/eval! new-kept)
-    (assert-close "update partial: unchanged addr kept"
-      old-kept (mx/item new-kept) sym-tol))
-  ;; :changed should have discard
-  (assert-true "update partial: changed addr in discard"
-    (cm/has-value? (cm/get-submap discard :changed))))
+  (testing "trace creates choices"
+    (let [gf (dyn/auto-key (gen [p] (trace :addr (dist/bernoulli p))))
+          trace (p/simulate gf [0.5])]
+      (let [choices (:choices trace)
+            retval  (:retval trace)]
+        (mx/eval! retval)
+        (let [v (cm/get-value (cm/get-submap choices :addr))]
+          (mx/eval! v)
+          (is (th/close? (mx/item retval) (mx/item v) sym-tol)
+              "trace choices match retval")))))
 
-;; =========================================================================
-;; SECTION 5: Generate semantics
-;; (From gen.dynamic-test gfi-tests)
-;; =========================================================================
+  (testing "splice bubbles up choices"
+    (let [gf0 (gen [] (trace :addr (dist/bernoulli 0.5)))
+          gf1 (dyn/auto-key (gen [] (splice :sub gf0)))
+          trace (p/simulate gf1 [])]
+      (let [choices (:choices trace)
+            sub-map (cm/get-submap choices :sub)]
+        (is (some? sub-map) "sub-map exists")
+        (let [addr-val (cm/get-submap sub-map :addr)]
+          (is (cm/has-value? addr-val) "addr exists in sub")))))
 
-(println "\n-- Generate semantics (from Gen.clj) --")
+  (testing "trace inside trace nests"
+    (let [inner (gen [] (trace :inner (dist/bernoulli 0.5)))
+          outer (dyn/auto-key (gen [] (splice :outer inner)))
+          trace (p/simulate outer [])]
+      (let [choices (:choices trace)
+            outer-sub (cm/get-submap choices :outer)
+            inner-val (cm/get-submap outer-sub :inner)]
+        (is (some? outer-sub) "outer exists")
+        (is (cm/has-value? inner-val) "inner exists within outer"))))
 
-;; Generate with empty constraints = simulate (weight ~ 0)
-(let [gf (dyn/auto-key (gen [] (trace :x (dist/gaussian 0 1))))
-      {:keys [trace weight]} (p/generate gf [] cm/EMPTY)]
-  (mx/eval! weight)
-  (assert-close "generate empty constraints: weight = 0"
-    0.0 (mx/item weight) sym-tol))
+  (testing "generate through splice preserves structure"
+    (let [inner (gen [] (trace :addr (dist/bernoulli 0.5)))
+          outer (dyn/auto-key (gen [] (splice :sub inner)))
+          {:keys [trace]} (p/generate outer [] cm/EMPTY)]
+      (let [choices (:choices trace)
+            sub-map (cm/get-submap choices :sub)
+            addr-val (cm/get-submap sub-map :addr)]
+        (is (cm/has-value? addr-val) "structure preserved"))))
 
-;; Generate with constraint
-(let [gf (dyn/auto-key (gen []
-           (trace :x (dist/gaussian 0 1))
-           (trace :y (dist/gaussian 0 1))))
-      constraints (cm/choicemap :x (mx/scalar 2.0))
-      {:keys [trace weight]} (p/generate gf [] constraints)]
-  ;; x should be constrained to 2.0
-  (let [x-val (cm/get-value (cm/get-submap (:choices trace) :x))]
-    (mx/eval! x-val)
-    (assert-close "generate: x constrained to 2.0"
-      2.0 (mx/item x-val) sym-tol))
-  ;; Weight should be log p(x=2) = logpdf(N(0,1), 2)
-  (mx/eval! weight)
-  (assert-close "generate: weight = logpdf(N(0,1), 2)"
-    (lp (dist/gaussian 0 1) 2.0)
-    (mx/item weight)
-    f32-tol))
+  (testing "score computation"
+    (let [trace (p/simulate
+                  (dyn/auto-key (gen [] (trace :addr (dist/bernoulli 0.5))))
+                  [])]
+      (let [score (:score trace)]
+        (mx/eval! score)
+        (is (th/close? 0.5 (js/Math.exp (mx/item score)) f32-tol)
+            "bernoulli(0.5) score = log(0.5)")))))
 
 ;; =========================================================================
-;; SECTION 6: Regenerate semantics
+;; SECTION 5: Update semantics
 ;; =========================================================================
 
-(println "\n-- Regenerate semantics --")
+(deftest s5-update-semantics
+  (testing "update with constraint => old value in discard"
+    (let [gf (dyn/auto-key (gen [] (trace :x (dist/bernoulli 0.5))))
+          trace (p/simulate gf [])
+          old-x (let [v (cm/get-value (cm/get-submap (:choices trace) :x))]
+                  (mx/eval! v) (mx/item v))
+          new-val (if (> old-x 0.5) 0.0 1.0)
+          {:keys [trace discard]} (p/update gf trace
+                                     (cm/choicemap :x (mx/scalar new-val)))]
+      (is (cm/has-value? (cm/get-submap discard :x)) "discard contains old value")
+      (let [discarded (cm/get-value (cm/get-submap discard :x))]
+        (mx/eval! discarded)
+        (is (th/close? old-x (mx/item discarded) sym-tol) "discarded value matches old"))
+      (let [new-x (cm/get-value (cm/get-submap (:choices trace) :x))]
+        (mx/eval! new-x)
+        (is (th/close? new-val (mx/item new-x) sym-tol) "new trace has new value"))))
 
-;; Regenerate keeps unselected addresses
-(let [gf (dyn/auto-key (gen []
-           (let [x (trace :x (dist/gaussian 0 1))
-                 y (trace :y (dist/gaussian 0 1))]
-             (mx/eval! x y)
-             [(mx/item x) (mx/item y)])))
-      trace (p/simulate gf [])
-      old-y (let [v (cm/get-value (cm/get-submap (:choices trace) :y))]
-              (mx/eval! v) (mx/item v))
-      {:keys [trace weight]} (p/regenerate gf trace (sel/select :x))]
-  (let [new-y (cm/get-value (cm/get-submap (:choices trace) :y))]
-    (mx/eval! new-y)
-    (assert-close "regenerate: unselected :y unchanged"
-      old-y (mx/item new-y) sym-tol))
-  (mx/eval! weight)
-  (assert-true "regenerate: returns finite weight"
-    (js/isFinite (mx/item weight))))
+  (testing "update same value: log-weight = 0"
+    (let [gf (dyn/auto-key (gen [] (trace :x (dist/bernoulli 0.3))))
+          {:keys [trace]} (p/generate gf [] (cm/choicemap :x (mx/scalar 1.0)))
+          {:keys [weight]} (p/update gf trace (cm/choicemap :x (mx/scalar 1.0)))]
+      (mx/eval! weight)
+      (is (th/close? 0.0 (mx/item weight) f32-tol) "log-weight = 0")))
 
-;; =========================================================================
-;; SECTION 7: Importance sampling with rejection
-;; (From gen.inference.importance-test)
-;; =========================================================================
-
-(println "\n-- Importance sampling rejection (from Gen.clj) --")
-
-;; Model that causes some particles to have low weight
-;; (bernoulli branch structure with observation)
-(let [model (gen []
-              (let [foo (trace :foo (dist/bernoulli 0.5))]
-                (mx/eval! foo)
-                (if (> (mx/item foo) 0.5)
-                  (trace :bar (dist/bernoulli 0.99))
-                  (trace :bar (dist/bernoulli 0.01)))))
-      observations (cm/choicemap :bar (mx/scalar 1.0))
-      ;; importance-resampling returns a vector of traces
-      traces (importance/importance-resampling
-               {:samples 1 :particles 20}
-               model [] observations)
-      trace (first traces)]
-  (assert-true "importance resampling: returns trace"
-    (some? trace))
-  (let [choices (:choices trace)
-        bar-val (cm/get-value (cm/get-submap choices :bar))]
-    (mx/eval! bar-val)
-    (assert-close "importance resampling: bar constrained to 1.0"
-      1.0 (mx/item bar-val) sym-tol)))
+  (testing "update partial: unchanged addr kept"
+    (let [gf (dyn/auto-key (gen []
+               (trace :kept (dist/bernoulli 0.5))
+               (trace :changed (dist/bernoulli 0.5))))
+          trace (p/simulate gf [])
+          old-kept (let [v (cm/get-value (cm/get-submap (:choices trace) :kept))]
+                     (mx/eval! v) (mx/item v))
+          {:keys [trace discard]} (p/update gf trace
+                                     (cm/choicemap :changed (mx/scalar 1.0)))]
+      (let [new-kept (cm/get-value (cm/get-submap (:choices trace) :kept))]
+        (mx/eval! new-kept)
+        (is (th/close? old-kept (mx/item new-kept) sym-tol) "unchanged addr kept"))
+      (is (cm/has-value? (cm/get-submap discard :changed)) "changed addr in discard"))))
 
 ;; =========================================================================
-;; SECTION 8: Mathematical properties of distributions
-;; (From gen.distribution-test property checks)
+;; SECTION 6: Generate semantics
 ;; =========================================================================
 
-(println "\n-- Distribution mathematical properties --")
+(deftest s6-generate-semantics
+  (testing "empty constraints: weight = 0"
+    (let [gf (dyn/auto-key (gen [] (trace :x (dist/gaussian 0 1))))
+          {:keys [trace weight]} (p/generate gf [] cm/EMPTY)]
+      (mx/eval! weight)
+      (is (th/close? 0.0 (mx/item weight) sym-tol) "weight = 0")))
 
-;; Laplace with scale 1, location = v: logpdf = -log(2)
-(doseq [v [-5.0 0.0 3.0 10.0]]
-  (assert-close (str "laplace(" v ",1) at " v " = -log(2)")
-    (- (js/Math.log 2))
-    (lp (dist/laplace v 1) v)
-    f32-tol))
-
-;; Exponential rate=1 at 0 gives logpdf = 0
-(assert-close "exponential(1) at 0 = 0"
-  0.0 (lp (dist/exponential 1.0) 0.0) sym-tol)
-
-;; Gaussian at mean gives peak: logpdf = -0.5*log(2pi) - log(sigma)
-(doseq [sigma [0.5 1.0 2.0 5.0]]
-  (let [expected (- (- (* 0.5 (js/Math.log (* 2 js/Math.PI))))
-                    (js/Math.log sigma))]
-    (assert-close (str "N(0," sigma ") at 0 = peak")
-      expected (lp (dist/gaussian 0 sigma) 0) f32-tol)))
-
-;; =========================================================================
-;; SECTION 9: End-to-end model test
-;; (Similar to Gen.clj's line-model in sci_test)
-;; =========================================================================
-
-(println "\n-- End-to-end line model (from Gen.clj) --")
-
-(let [line-model (dyn/auto-key (gen [xs]
-                   (let [slope     (trace :slope (dist/gaussian 0 1))
-                         intercept (trace :intercept (dist/gaussian 0 2))]
-                     (mx/eval! slope intercept)
-                     (let [s (mx/item slope) i (mx/item intercept)]
-                       (doseq [[idx x] (map-indexed vector xs)]
-                         (trace (keyword (str "y" idx))
-                                   (dist/gaussian (+ (* s x) i) 0.1)))
-                       (fn [x] (+ (* s x) i))))))
-      xs (range -5 6)
-      trace (p/simulate line-model [(vec xs)])]
-  (assert-true "line model: trace has choices"
-    (some? (:choices trace)))
-  (assert-true "line model: returns function"
-    (fn? (:retval trace)))
-  (assert-true "line model: has slope"
-    (cm/has-value? (cm/get-submap (:choices trace) :slope)))
-  (assert-true "line model: has intercept"
-    (cm/has-value? (cm/get-submap (:choices trace) :intercept)))
-  ;; Should have y0 through y10
-  (doseq [i (range 11)]
-    (assert-true (str "line model: has y" i)
-      (cm/has-value? (cm/get-submap (:choices trace)
-                                     (keyword (str "y" i)))))))
-
-;; Generate with observations should constrain ys
-(let [line-model (dyn/auto-key (gen [xs]
-                   (let [slope     (trace :slope (dist/gaussian 0 1))
-                         intercept (trace :intercept (dist/gaussian 0 2))]
-                     (mx/eval! slope intercept)
-                     (let [s (mx/item slope) i (mx/item intercept)]
-                       (doseq [[idx x] (map-indexed vector xs)]
-                         (trace (keyword (str "y" idx))
-                                   (dist/gaussian (+ (* s x) i) 0.1)))
-                       [s i]))))
-      xs [1.0 2.0 3.0]
-      observations (cm/choicemap :y0 (mx/scalar 2.0)
-                                  :y1 (mx/scalar 4.0)
-                                  :y2 (mx/scalar 6.0))
-      {:keys [trace weight]} (p/generate line-model [xs] observations)]
-  (assert-true "line model generate: returns trace"
-    (some? trace))
-  (mx/eval! weight)
-  (assert-true "line model generate: weight is finite"
-    (js/isFinite (mx/item weight)))
-  (let [y0 (cm/get-value (cm/get-submap (:choices trace) :y0))]
-    (mx/eval! y0)
-    (assert-close "line model generate: y0 = 2.0"
-      2.0 (mx/item y0) sym-tol)))
+  (testing "generate with constraint"
+    (let [gf (dyn/auto-key (gen []
+               (trace :x (dist/gaussian 0 1))
+               (trace :y (dist/gaussian 0 1))))
+          constraints (cm/choicemap :x (mx/scalar 2.0))
+          {:keys [trace weight]} (p/generate gf [] constraints)]
+      (let [x-val (cm/get-value (cm/get-submap (:choices trace) :x))]
+        (mx/eval! x-val)
+        (is (th/close? 2.0 (mx/item x-val) sym-tol) "x constrained to 2.0"))
+      (mx/eval! weight)
+      (is (th/close? (lp (dist/gaussian 0 1) 2.0) (mx/item weight) f32-tol)
+          "weight = logpdf(N(0,1), 2)"))))
 
 ;; =========================================================================
-;; Summary
+;; SECTION 7: Regenerate semantics
 ;; =========================================================================
 
-(println "\n=== Gen.clj Compatibility Test Results ===")
-(println (str "  Passed: " @pass-count))
-(println (str "  Failed: " @fail-count))
-(println (str "  Total:  " (+ @pass-count @fail-count)))
-(when (> @fail-count 0)
-  (println "\n  *** SOME TESTS FAILED ***"))
-(println)
+(deftest s7-regenerate-semantics
+  (testing "regenerate keeps unselected addresses"
+    (let [gf (dyn/auto-key (gen []
+               (let [x (trace :x (dist/gaussian 0 1))
+                     y (trace :y (dist/gaussian 0 1))]
+                 (mx/eval! x y)
+                 [(mx/item x) (mx/item y)])))
+          trace (p/simulate gf [])
+          old-y (let [v (cm/get-value (cm/get-submap (:choices trace) :y))]
+                  (mx/eval! v) (mx/item v))
+          {:keys [trace weight]} (p/regenerate gf trace (sel/select :x))]
+      (let [new-y (cm/get-value (cm/get-submap (:choices trace) :y))]
+        (mx/eval! new-y)
+        (is (th/close? old-y (mx/item new-y) sym-tol) "unselected :y unchanged"))
+      (mx/eval! weight)
+      (is (js/isFinite (mx/item weight)) "returns finite weight"))))
+
+;; =========================================================================
+;; SECTION 8: Importance sampling with rejection
+;; =========================================================================
+
+(deftest s8-importance-sampling
+  (testing "importance resampling"
+    (let [model (gen []
+                  (let [foo (trace :foo (dist/bernoulli 0.5))]
+                    (mx/eval! foo)
+                    (if (> (mx/item foo) 0.5)
+                      (trace :bar (dist/bernoulli 0.99))
+                      (trace :bar (dist/bernoulli 0.01)))))
+          observations (cm/choicemap :bar (mx/scalar 1.0))
+          traces (importance/importance-resampling
+                   {:samples 1 :particles 20}
+                   model [] observations)
+          trace (first traces)]
+      (is (some? trace) "returns trace")
+      (let [choices (:choices trace)
+            bar-val (cm/get-value (cm/get-submap choices :bar))]
+        (mx/eval! bar-val)
+        (is (th/close? 1.0 (mx/item bar-val) sym-tol) "bar constrained to 1.0")))))
+
+;; =========================================================================
+;; SECTION 9: Mathematical properties of distributions
+;; =========================================================================
+
+(deftest s9-distribution-properties
+  (testing "laplace at location = -log(2)"
+    (doseq [v [-5.0 0.0 3.0 10.0]]
+      (is (th/close? (- (js/Math.log 2))
+                     (lp (dist/laplace v 1) v)
+                     f32-tol)
+          (str "laplace(" v ",1) at " v " = -log(2)"))))
+
+  (testing "exponential(1) at 0 = 0"
+    (is (th/close? 0.0 (lp (dist/exponential 1.0) 0.0) sym-tol)))
+
+  (testing "Gaussian at mean gives peak"
+    (doseq [sigma [0.5 1.0 2.0 5.0]]
+      (let [expected (- (- (* 0.5 (js/Math.log (* 2 js/Math.PI))))
+                        (js/Math.log sigma))]
+        (is (th/close? expected (lp (dist/gaussian 0 sigma) 0) f32-tol)
+            (str "N(0," sigma ") at 0 = peak"))))))
+
+;; =========================================================================
+;; SECTION 10: End-to-end model test
+;; =========================================================================
+
+(deftest s10-end-to-end-model
+  (testing "line model simulate"
+    (let [line-model (dyn/auto-key (gen [xs]
+                       (let [slope     (trace :slope (dist/gaussian 0 1))
+                             intercept (trace :intercept (dist/gaussian 0 2))]
+                         (mx/eval! slope intercept)
+                         (let [s (mx/item slope) i (mx/item intercept)]
+                           (doseq [[idx x] (map-indexed vector xs)]
+                             (trace (keyword (str "y" idx))
+                                       (dist/gaussian (+ (* s x) i) 0.1)))
+                           (fn [x] (+ (* s x) i))))))
+          xs (range -5 6)
+          trace (p/simulate line-model [(vec xs)])]
+      (is (some? (:choices trace)) "has choices")
+      (is (fn? (:retval trace)) "returns function")
+      (is (cm/has-value? (cm/get-submap (:choices trace) :slope)) "has slope")
+      (is (cm/has-value? (cm/get-submap (:choices trace) :intercept)) "has intercept")
+      (doseq [i (range 11)]
+        (is (cm/has-value? (cm/get-submap (:choices trace)
+                                           (keyword (str "y" i))))
+            (str "has y" i)))))
+
+  (testing "line model generate with observations"
+    (let [line-model (dyn/auto-key (gen [xs]
+                       (let [slope     (trace :slope (dist/gaussian 0 1))
+                             intercept (trace :intercept (dist/gaussian 0 2))]
+                         (mx/eval! slope intercept)
+                         (let [s (mx/item slope) i (mx/item intercept)]
+                           (doseq [[idx x] (map-indexed vector xs)]
+                             (trace (keyword (str "y" idx))
+                                       (dist/gaussian (+ (* s x) i) 0.1)))
+                           [s i]))))
+          xs [1.0 2.0 3.0]
+          observations (cm/choicemap :y0 (mx/scalar 2.0)
+                                      :y1 (mx/scalar 4.0)
+                                      :y2 (mx/scalar 6.0))
+          {:keys [trace weight]} (p/generate line-model [xs] observations)]
+      (is (some? trace) "returns trace")
+      (mx/eval! weight)
+      (is (js/isFinite (mx/item weight)) "weight is finite")
+      (let [y0 (cm/get-value (cm/get-submap (:choices trace) :y0))]
+        (mx/eval! y0)
+        (is (th/close? 2.0 (mx/item y0) sym-tol) "y0 = 2.0")))))
+
+(t/run-tests)

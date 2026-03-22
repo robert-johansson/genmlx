@@ -1,7 +1,7 @@
 (ns genmlx.gfi-property-test
   "Property-based GFI contract tests using test.check.
    Verifies that GFI invariants hold across random models and inputs."
-  (:require [clojure.test.check :as tc]
+  (:require [cljs.test :as t]
             [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
             [genmlx.mlx :as mx]
@@ -10,30 +10,11 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel])
-  (:require-macros [genmlx.gen :refer [gen]]))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (println "    shrunk:" (get-in result [:shrunk :smallest])))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
-
-;; ---------------------------------------------------------------------------
-;; Helper: extract scalar from choicemap
+;; Helpers
 ;; ---------------------------------------------------------------------------
 
 (defn- choice-val
@@ -62,9 +43,6 @@
 ;; ---------------------------------------------------------------------------
 ;; Model generators
 ;; ---------------------------------------------------------------------------
-
-;; A pool of simple models with known structure.
-;; Each entry: {:model gf, :args vec, :addrs #{keywords}, :label string}
 
 (def single-gaussian
   {:model (dyn/auto-key (gen []
@@ -132,52 +110,36 @@
   "Generator that picks a random model from the pool."
   (gen/elements model-pool))
 
-;; Generator for a random scalar value (for constraints)
 (def gen-scalar
   (gen/fmap #(mx/scalar %) (gen/double* {:min -10.0 :max 10.0
                                           :NaN? false :infinite? false})))
 
-;; Generator for a random non-empty subset of addresses
 (defn gen-addr-subset [addrs]
   (let [addr-vec (vec addrs)]
     (gen/fmap set (gen/not-empty (gen/vector (gen/elements addr-vec))))))
 
-(println "\n=== GFI Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
-;; Property 1: simulate produces a valid trace
+;; Properties
 ;; ---------------------------------------------------------------------------
 
-(println "-- simulate properties --")
-
-(check "simulate: all addresses present"
+(defspec simulate-all-addresses-present 50
   (prop/for-all [m gen-model]
     (let [trace (p/simulate (:model m) (:args m))]
       (every? #(some? (choice-val (:choices trace) %))
               (:addrs m)))))
 
-(check "simulate: gen-fn round-trips"
+(defspec simulate-gen-fn-round-trips 50
   (prop/for-all [m gen-model]
     (let [trace (p/simulate (:model m) (:args m))]
       (= (:gen-fn trace) (:model m)))))
 
-;; ---------------------------------------------------------------------------
-;; Property 2: generate with empty constraints ≈ simulate (weight ≈ 0)
-;; ---------------------------------------------------------------------------
-
-(println "\n-- generate properties --")
-
-(check "generate(empty): weight ≈ 0"
+(defspec generate-empty-weight-approx-zero 50
   (prop/for-all [m gen-model]
     (let [{:keys [weight]} (p/generate (:model m) (:args m) cm/EMPTY)
           w (eval-weight weight)]
       (close? 0.0 w 0.01))))
 
-;; ---------------------------------------------------------------------------
-;; Property 3: generate with full constraints → weight ≈ score
-;; ---------------------------------------------------------------------------
-
-(check "generate(full): weight ≈ trace score"
+(defspec generate-full-weight-approx-score 50
   (prop/for-all [m gen-model]
     (let [trace (p/simulate (:model m) (:args m))
           {:keys [trace weight]} (p/generate (:model m) (:args m)
@@ -186,13 +148,7 @@
           s (trace-score trace)]
       (close? s w 0.01))))
 
-;; ---------------------------------------------------------------------------
-;; Property 4: assess weight ≈ generate score for same choices
-;; ---------------------------------------------------------------------------
-
-(println "\n-- assess properties --")
-
-(check "assess: weight ≈ generate score"
+(defspec assess-weight-approx-generate-score 50
   (prop/for-all [m gen-model]
     (let [trace (p/simulate (:model m) (:args m))
           choices (:choices trace)
@@ -202,84 +158,55 @@
           gen-s (trace-score trace)]
       (close? assess-w gen-s 0.01))))
 
-;; ---------------------------------------------------------------------------
-;; Property 5: update with same choices → weight ≈ 0
-;; ---------------------------------------------------------------------------
-
-(println "\n-- update properties --")
-
-(check "update(same): weight ≈ 0"
+(defspec update-same-weight-approx-zero 50
   (prop/for-all [m gen-model]
     (let [trace (p/simulate (:model m) (:args m))
           {:keys [weight]} (p/update (:model m) trace (:choices trace))
           w (eval-weight weight)]
       (close? 0.0 w 0.01))))
 
-;; ---------------------------------------------------------------------------
-;; Property 6: update round-trip via discard
-;; ---------------------------------------------------------------------------
-
-(check "update: round-trip via discard"
+(defspec update-round-trip-via-discard 50
   (prop/for-all [m gen-model]
     (let [trace (p/simulate (:model m) (:args m))
           orig-score (trace-score trace)
-          ;; Constrain :x (or first addr) to a new value
           first-addr (first (:addrs m))
           constraint (cm/choicemap first-addr (mx/scalar 42.0))
           {:keys [trace discard]} (p/update (:model m) trace constraint)
-          ;; Round-trip: apply discard
           {:keys [trace]} (p/update (:model m) trace discard)
           recovered-score (trace-score trace)]
       (close? orig-score recovered-score 0.01))))
 
-;; ---------------------------------------------------------------------------
-;; Property 7: update weight = new_score - old_score (for full constraint swap)
-;; ---------------------------------------------------------------------------
-
-(check "update: weight ≈ new_score - old_score"
+(defspec update-weight-approx-score-diff 50
   (prop/for-all [m gen-model]
     (let [trace (p/simulate (:model m) (:args m))
           old-score (trace-score trace)
-          ;; Generate a second trace for its choices
           trace2 (p/simulate (:model m) (:args m))
           {:keys [trace weight]} (p/update (:model m) trace (:choices trace2))
           w (eval-weight weight)
           new-score (trace-score trace)]
       (close? w (- new-score old-score) 0.1))))
 
-;; ---------------------------------------------------------------------------
-;; Property 8: regenerate(none) → weight ≈ 0, choices unchanged
-;; ---------------------------------------------------------------------------
-
-(println "\n-- regenerate properties --")
-
-(check "regenerate(none): weight ≈ 0"
+(defspec regenerate-none-weight-approx-zero 50
   (prop/for-all [m gen-model]
     (let [trace (p/simulate (:model m) (:args m))
           {:keys [weight]} (p/regenerate (:model m) trace sel/none)
           w (eval-weight weight)]
       (close? 0.0 w 0.01))))
 
-(check "regenerate(none): choices preserved"
+(defspec regenerate-none-choices-preserved 50
   (prop/for-all [m gen-model]
     (let [orig-trace (p/simulate (:model m) (:args m))
           orig-vals (into {} (map (fn [a] [a (choice-val (:choices orig-trace) a)])
                                   (:addrs m)))
           {:keys [trace]} (p/regenerate (:model m) orig-trace sel/none)]
-      ;; Identity law: regenerate with empty selection preserves all choices exactly
       (every? (fn [addr]
                 (let [new-v (choice-val (:choices trace) addr)]
                   (close? (get orig-vals addr) new-v 1e-10)))
               (:addrs m)))))
 
-;; ---------------------------------------------------------------------------
-;; Property 9: regenerate preserves unselected addresses
-;; ---------------------------------------------------------------------------
-
-(check "regenerate: unselected addresses preserved"
+(defspec regenerate-unselected-preserved 50
   (prop/for-all [m (gen/such-that #(> (count (:addrs %)) 1) gen-model)]
     (let [addrs-vec (vec (:addrs m))
-          ;; Select only the first address, leave rest unselected
           selected-addr (first addrs-vec)
           unselected (rest addrs-vec)
           trace (p/simulate (:model m) (:args m))
@@ -292,34 +219,20 @@
                   (close? (get orig-vals a) new-v 1e-6)))
               unselected))))
 
-;; ---------------------------------------------------------------------------
-;; Property 10: project(all) ≈ score
-;; ---------------------------------------------------------------------------
-
-(println "\n-- project properties --")
-
-(check "project(all) ≈ score"
+(defspec project-all-approx-score 50
   (prop/for-all [m gen-model]
     (let [trace (p/simulate (:model m) (:args m))
           s (trace-score trace)
           proj (eval-weight (p/project (:model m) trace sel/all))]
       (close? s proj 0.01))))
 
-;; ---------------------------------------------------------------------------
-;; Property 11: project(none) ≈ 0
-;; ---------------------------------------------------------------------------
-
-(check "project(none) ≈ 0"
+(defspec project-none-approx-zero 50
   (prop/for-all [m gen-model]
     (let [trace (p/simulate (:model m) (:args m))
           proj (eval-weight (p/project (:model m) trace sel/none))]
       (close? 0.0 proj 0.01))))
 
-;; ---------------------------------------------------------------------------
-;; Property 12: project(S) + project(complement(S)) ≈ score
-;; ---------------------------------------------------------------------------
-
-(check "project(S) + project(~S) ≈ score"
+(defspec project-S-plus-complement-S-approx-score 50
   (prop/for-all [m (gen/such-that #(> (count (:addrs %)) 1) gen-model)]
     (let [addrs-vec (vec (:addrs m))
           sel-addr (first addrs-vec)
@@ -330,13 +243,7 @@
           proj-cs (eval-weight (p/project (:model m) trace (sel/complement-sel s)))]
       (close? score (+ proj-s proj-cs) 0.1))))
 
-;; ---------------------------------------------------------------------------
-;; Property 13: propose → generate round-trip (weights match)
-;; ---------------------------------------------------------------------------
-
-(println "\n-- propose properties --")
-
-(check "propose: weight ≈ generate(proposed choices) weight"
+(defspec propose-weight-approx-generate-weight 50
   (prop/for-all [m gen-model]
     (let [{:keys [choices weight]} (p/propose (:model m) (:args m))
           propose-w (eval-weight weight)
@@ -344,13 +251,7 @@
           gen-w (eval-weight weight)]
       (close? propose-w gen-w 0.01))))
 
-;; ---------------------------------------------------------------------------
-;; Property 14: score consistency — simulate score = assess weight
-;; ---------------------------------------------------------------------------
-
-(println "\n-- cross-protocol consistency --")
-
-(check "simulate score ≈ assess weight (same choices)"
+(defspec simulate-score-approx-assess-weight 50
   (prop/for-all [m gen-model]
     (let [trace (p/simulate (:model m) (:args m))
           s (trace-score trace)
@@ -358,9 +259,4 @@
           w (eval-weight weight)]
       (close? s w 0.01))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== GFI Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)

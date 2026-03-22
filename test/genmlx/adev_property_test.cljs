@@ -6,37 +6,17 @@
    - REINFORCE gradient is unbiased (score function estimator)
    - More samples reduce score estimate variance (law of large numbers)
    - ADEV optimization decreases loss"
-  (:require [clojure.test.check :as tc]
-            [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
+            [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.inference.adev :as adev]
             [genmlx.learning :as learn])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -83,16 +63,12 @@
 (def gen-key (gen/elements key-pool))
 (def gen-n-samples (gen/elements [5 10]))
 
-(println "\n=== ADEV Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
 ;; Law: vadev-execute produces [N]-shaped score and reinforce-lp arrays
 ;; (Shape contract for vectorized ADEV)
 ;; ---------------------------------------------------------------------------
 
-(println "-- vadev shape contract --")
-
-(check "vadev-execute: shapes = [N]"
+(defspec vadev-execute-shapes-equal-n 50
   (prop/for-all [n gen-n-samples
                  k gen-key]
     (let [result (adev/vadev-execute vmixed-model [] n k)]
@@ -107,11 +83,7 @@
 ;; Average 200 single-sample gradient estimates
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- gradient unbiasedness --")
-
-;; Build parameterized model: x ~ N(mu, 1), compute E[x^2]
-;; The gradient d/dmu E[x^2] = d/dmu (mu^2 + 1) = 2*mu
-(check "reparam gradient unbiased"
+(defspec reparam-gradient-unbiased 20
   (prop/for-all [k gen-key]
     (let [mu-val (mx/scalar 1.0)
           grad-fn (mx/grad
@@ -130,15 +102,14 @@
           g (mx/tidy-materialize #(grad-fn mu-val))]
       (mx/eval! g)
       ;; Analytical: d/dmu E[(mu+eps)^2] = 2*mu = 2.0
-      (close? (mx/item g) 2.0 0.5)))
-  :num-tests 20)
+      (close? (mx/item g) 2.0 0.5))))
 
 ;; ---------------------------------------------------------------------------
 ;; Law: REINFORCE gradient is unbiased (score function estimator)
 ;; Same model but manually building the REINFORCE surrogate
 ;; ---------------------------------------------------------------------------
 
-(check "REINFORCE gradient unbiased"
+(defspec reinforce-gradient-unbiased 10
   (prop/for-all [k gen-key]
     (let [mu-val (mx/scalar 1.0)
           grad-fn (mx/grad
@@ -162,8 +133,7 @@
           g (mx/tidy-materialize #(grad-fn mu-val))]
       (mx/eval! g)
       ;; Analytical: 2*mu = 2.0, looser tolerance for REINFORCE
-      (close? (mx/item g) 2.0 1.0)))
-  :num-tests 10)
+      (close? (mx/item g) 2.0 1.0))))
 
 ;; ---------------------------------------------------------------------------
 ;; Law: more batch samples reduce score estimate variance (law of large numbers)
@@ -171,7 +141,7 @@
 ;; Compare vadev score-mean variance with N=100 vs N=5.
 ;; ---------------------------------------------------------------------------
 
-(check "more batch samples reduce score mean variance"
+(defspec more-batch-samples-reduce-score-mean-variance 5
   (prop/for-all [k gen-key]
     (let [n-estimates 30
           keys (rng/split-n k (* 2 n-estimates))
@@ -194,14 +164,11 @@
                          (count vs))))
           var-100 (var-fn means-100)
           var-3   (var-fn means-3)]
-      (< var-100 var-3)))
-  :num-tests 5)
+      (< var-100 var-3))))
 
 ;; ---------------------------------------------------------------------------
 ;; Law: ADEV optimization decreases loss over iterations
 ;; ---------------------------------------------------------------------------
-
-(println "\n-- adev optimization --")
 
 ;; Parameterized model: x ~ N(mu, 1) where mu is learnable
 ;; Cost: E[x^2] = mu^2 + 1, minimized at mu=0
@@ -220,7 +187,7 @@
 ;; Score is [N]-shaped, retval is [N]-shaped x values
 (def vec-x2-cost (fn [result] (mx/square (:retval result))))
 
-(check "ADEV loss decreases over optimization"
+(defspec adev-loss-decreases-over-optimization 10
   (prop/for-all [k gen-key]
     (let [result (adev/adev-optimize
                    {:iterations 50 :lr 0.05 :n-samples 20 :key k}
@@ -232,12 +199,6 @@
               quarter (max 1 (quot n 4))
               early-mean (/ (reduce + (take quarter history)) quarter)
               late-mean  (/ (reduce + (take-last quarter history)) quarter)]
-          (< late-mean early-mean)))))
-  :num-tests 10)
+          (< late-mean early-mean))))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== ADEV Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)

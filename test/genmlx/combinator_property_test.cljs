@@ -4,7 +4,7 @@
 
    Uses gen/elements with pre-built combinator instances to avoid
    SCI interop crashes during test.check shrink traversal."
-  (:require [clojure.test.check :as tc]
+  (:require [cljs.test :as t]
             [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
             [genmlx.mlx :as mx]
@@ -14,28 +14,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.combinators :as comb])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -73,20 +53,17 @@
         (mx/item y)))))
 
 ;; ---------------------------------------------------------------------------
-;; Pre-built combinator pools (gen/elements avoids SCI shrink crashes)
+;; Pre-built combinator pools
 ;; ---------------------------------------------------------------------------
 
-;; Map combinator pool: {n, args}
 (def map-pool
   [{:n 1 :args [[1.0]]        :label "map(n=1)"}
    {:n 3 :args [[1.0 2.0 3.0]] :label "map(n=3)"}
    {:n 5 :args [[1.0 2.0 3.0 4.0 5.0]] :label "map(n=5)"}])
 
 (def gen-map-spec (gen/elements map-pool))
-
 (def mapped (comb/map-combinator kernel))
 
-;; Unfold combinator pool
 (def unfold-step
   (dyn/auto-key
     (gen [t state]
@@ -103,7 +80,6 @@
 
 (def gen-unfold-spec (gen/elements unfold-pool))
 
-;; Switch combinator pool
 (def switch-g1 (dyn/auto-key (gen [] (trace :y (dist/gaussian 0 1)))))
 (def switch-g2 (dyn/auto-key (gen [] (trace :y (dist/gaussian 5 2)))))
 (def switched (comb/switch-combinator switch-g1 switch-g2))
@@ -114,7 +90,6 @@
 
 (def gen-switch-spec (gen/elements switch-pool))
 
-;; Scan combinator pool
 (def scan-kernel
   (dyn/auto-key
     (gen [carry x]
@@ -130,7 +105,6 @@
 
 (def gen-scan-spec (gen/elements scan-pool))
 
-;; Mask combinator pool
 (def masked (comb/mask-combinator kernel))
 
 (def mask-pool
@@ -139,16 +113,11 @@
 
 (def gen-mask-spec (gen/elements mask-pool))
 
-(println "\n=== Combinator Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
-;; Map properties
+;; Properties
 ;; ---------------------------------------------------------------------------
 
-(println "-- Map combinator --")
-
-;; Property 1: Map has n integer-keyed sub-traces
-(check "Map: n integer-keyed sub-traces"
+(defspec map-n-integer-keyed-sub-traces 50
   (prop/for-all [spec gen-map-spec]
     (let [trace (p/simulate mapped (:args spec))
           choices (:choices trace)
@@ -157,8 +126,7 @@
                 (not= (cm/get-submap choices i) cm/EMPTY))
               (range n)))))
 
-;; Property 2: Map score = sum(element-scores)
-(check "Map: score = sum(element-scores)"
+(defspec map-score-equals-sum-element-scores 50
   (prop/for-all [spec gen-map-spec]
     (let [trace (p/simulate mapped (:args spec))
           total (eval-score trace)
@@ -167,14 +135,12 @@
         (close? total (sum-meta-scores element-scores) 0.01)
         true))))
 
-;; Property 3: Map generate(empty) weight ≈ 0
-(check "Map: generate(empty) weight ≈ 0"
+(defspec map-generate-empty-weight-approx-zero 50
   (prop/for-all [spec gen-map-spec]
     (let [{:keys [weight]} (p/generate mapped (:args spec) cm/EMPTY)]
       (close? 0.0 (eval-weight weight) 0.01))))
 
-;; Property 4: Map generate(full) weight ≈ score
-(check "Map: generate(full) weight ≈ score"
+(defspec map-generate-full-weight-approx-score 50
   (prop/for-all [spec gen-map-spec]
     (let [trace (p/simulate mapped (:args spec))
           {:keys [trace weight]} (p/generate mapped (:args spec) (:choices trace))
@@ -182,21 +148,13 @@
           s (eval-score trace)]
       (close? s w 0.01))))
 
-;; Property 5: Map update(same) weight ≈ 0
-(check "Map: update(same) weight ≈ 0"
+(defspec map-update-same-weight-approx-zero 50
   (prop/for-all [spec gen-map-spec]
     (let [trace (p/simulate mapped (:args spec))
           {:keys [weight]} (p/update mapped trace (:choices trace))]
       (close? 0.0 (eval-weight weight) 0.01))))
 
-;; ---------------------------------------------------------------------------
-;; Unfold properties
-;; ---------------------------------------------------------------------------
-
-(println "\n-- Unfold combinator --")
-
-;; Property 6: Unfold has n step sub-traces
-(check "Unfold: n step sub-traces"
+(defspec unfold-n-step-sub-traces 50
   (prop/for-all [spec gen-unfold-spec]
     (let [trace (p/simulate unfolded (:args spec))
           choices (:choices trace)
@@ -205,8 +163,7 @@
                 (not= (cm/get-submap choices i) cm/EMPTY))
               (range n)))))
 
-;; Property 7: Unfold score = sum(step-scores)
-(check "Unfold: score = sum(step-scores)"
+(defspec unfold-score-equals-sum-step-scores 50
   (prop/for-all [spec gen-unfold-spec]
     (let [trace (p/simulate unfolded (:args spec))
           total (eval-score trace)
@@ -215,8 +172,7 @@
         (close? total (sum-meta-scores step-scores) 0.01)
         true))))
 
-;; Property 8: Unfold GFI contracts (generate/update)
-(check "Unfold: generate(empty) weight ≈ 0, update(same) weight ≈ 0"
+(defspec unfold-gfi-contracts 50
   (prop/for-all [spec gen-unfold-spec]
     (let [{:keys [weight]} (p/generate unfolded (:args spec) cm/EMPTY)
           gen-w (eval-weight weight)
@@ -226,14 +182,7 @@
       (and (close? 0.0 gen-w 0.01)
            (close? 0.0 upd-w 0.01)))))
 
-;; ---------------------------------------------------------------------------
-;; Switch properties
-;; ---------------------------------------------------------------------------
-
-(println "\n-- Switch combinator --")
-
-;; Property 9: Switch GFI contracts
-(check "Switch: GFI contracts (generate/update)"
+(defspec switch-gfi-contracts 50
   (prop/for-all [spec gen-switch-spec]
     (let [{:keys [weight]} (p/generate switched (:args spec) cm/EMPTY)
           gen-w (eval-weight weight)
@@ -245,14 +194,7 @@
       (and (close? 0.0 gen-w 0.01)
            (close? full-s full-w 0.01)))))
 
-;; ---------------------------------------------------------------------------
-;; Scan properties
-;; ---------------------------------------------------------------------------
-
-(println "\n-- Scan combinator --")
-
-;; Property 10: Scan retval has correct structure
-(check "Scan: retval has :carry and :outputs"
+(defspec scan-retval-structure 50
   (prop/for-all [spec gen-scan-spec]
     (let [trace (p/simulate scanned (:args spec))
           retval (:retval trace)]
@@ -260,8 +202,7 @@
            (contains? retval :outputs)
            (= (:n spec) (count (:outputs retval)))))))
 
-;; Property 11: Scan score = sum(step-scores)
-(check "Scan: score = sum(step-scores)"
+(defspec scan-score-equals-sum-step-scores 50
   (prop/for-all [spec gen-scan-spec]
     (let [trace (p/simulate scanned (:args spec))
           total (eval-score trace)
@@ -270,14 +211,7 @@
         (close? total (sum-meta-scores step-scores) 0.01)
         true))))
 
-;; ---------------------------------------------------------------------------
-;; Cross-combinator properties
-;; ---------------------------------------------------------------------------
-
-(println "\n-- Cross-combinator --")
-
-;; Property 12: Map(n=1) score ≈ kernel score (same constraint)
-(check "Map(n=1) score ≈ kernel score"
+(defspec map-n1-score-approx-kernel-score 50
   (prop/for-all [_ (gen/return nil)]
     (let [constraint-val (mx/scalar 2.5)
           map-constraint (cm/set-choice cm/EMPTY [0] (cm/choicemap :y constraint-val))
@@ -288,8 +222,7 @@
           kernel-score (eval-score trace)]
       (close? kernel-score map-score 0.01))))
 
-;; Property 13: Mask(true) ≈ kernel, Mask(false) score ≈ 0
-(check "Mask: true ≈ kernel, false score ≈ 0"
+(defspec mask-true-is-kernel-false-score-zero 50
   (prop/for-all [spec gen-mask-spec]
     (let [trace (p/simulate masked (:args spec))
           s (eval-score trace)]
@@ -297,14 +230,7 @@
         (finite? s)
         (close? 0.0 s 0.01)))))
 
-;; ---------------------------------------------------------------------------
-;; Project properties (all combinators)
-;; ---------------------------------------------------------------------------
-
-(println "\n-- Project properties --")
-
-;; Property 14: project(all) ≈ score for all combinators
-(check "All combinators: project(all) ≈ score"
+(defspec all-combinators-project-all-approx-score 50
   (prop/for-all [which (gen/elements [:map :unfold :switch :scan :mask-true])]
     (let [[gf args] (case which
                       :map       [mapped [[1.0 2.0]]]
@@ -317,8 +243,7 @@
           proj (eval-weight (p/project gf trace sel/all))]
       (close? s proj 0.01))))
 
-;; Property 15: project(none) ≈ 0 for all combinators
-(check "All combinators: project(none) ≈ 0"
+(defspec all-combinators-project-none-approx-zero 50
   (prop/for-all [which (gen/elements [:map :unfold :switch :scan :mask-true])]
     (let [[gf args] (case which
                       :map       [mapped [[1.0 2.0]]]
@@ -330,9 +255,4 @@
           proj (eval-weight (p/project gf trace sel/none))]
       (close? 0.0 proj 0.01))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== Combinator Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)

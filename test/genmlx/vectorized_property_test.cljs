@@ -2,9 +2,9 @@
   "Property-based vectorized inference tests using test.check.
    Verifies vsimulate/vgenerate shape invariants, statistical equivalence,
    VectorizedTrace operations, and batched vs scalar consistency."
-  (:require [clojure.test.check :as tc]
-            [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
+            [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
@@ -12,28 +12,8 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.vectorized :as vec])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -52,14 +32,14 @@
 ;; Models and fixture pools
 ;; ---------------------------------------------------------------------------
 
-;; Independent model — for vsimulate tests
+;; Independent model -- for vsimulate tests
 (def ind-model
   (gen []
     (let [x (trace :x (dist/gaussian 0 1))
           y (trace :y (dist/gaussian 0 1))]
       (mx/add x y))))
 
-;; Dependent model — for vgenerate tests (y depends on x)
+;; Dependent model -- for vgenerate tests (y depends on x)
 ;; This ensures weight is [N]-shaped when :y is constrained and :x is unconstrained
 (def dep-model
   (gen []
@@ -70,7 +50,7 @@
 (def n-pool [5 10 15 20])
 (def gen-n (gen/elements n-pool))
 
-;; Partial obs (constrain only :y, leave :x free) → [N]-shaped weight
+;; Partial obs (constrain only :y, leave :x free) -> [N]-shaped weight
 (def partial-obs-pool
   [(cm/choicemap :y (mx/scalar 1.0))
    (cm/choicemap :y (mx/scalar 0.0))
@@ -82,21 +62,17 @@
 (def key-pool (mapv #(rng/fresh-key %) [42 99 123 7 255]))
 (def gen-key (gen/elements key-pool))
 
-(println "\n=== Vectorized Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
 ;; vsimulate Shape (3)
 ;; ---------------------------------------------------------------------------
 
-(println "-- vsimulate shape --")
-
-(check "vsimulate: score shape is [N]"
+(defspec vsimulate-score-shape-is-n 50
   (prop/for-all [n gen-n
                  k gen-key]
     (let [vt (dyn/vsimulate ind-model [] n k)]
       (shape= (:score vt) [n]))))
 
-(check "vsimulate: all choice leaves are [N]-shaped"
+(defspec vsimulate-all-choice-leaves-are-n-shaped 50
   (prop/for-all [n gen-n
                  k gen-key]
     (let [vt (dyn/vsimulate ind-model [] n k)
@@ -104,7 +80,7 @@
       (and (shape= (cm/get-value (cm/get-submap choices :x)) [n])
            (shape= (cm/get-value (cm/get-submap choices :y)) [n])))))
 
-(check "vsimulate: n-particles matches N"
+(defspec vsimulate-n-particles-matches-n 50
   (prop/for-all [n gen-n
                  k gen-key]
     (let [vt (dyn/vsimulate ind-model [] n k)]
@@ -114,16 +90,14 @@
 ;; vgenerate Shape (4)
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- vgenerate shape --")
-
-(check "vgenerate: weight shape is [N] (dependent model, partial obs)"
+(defspec vgenerate-weight-shape-is-n 50
   (prop/for-all [n gen-n
                  obs gen-partial-obs
                  k gen-key]
     (let [vt (dyn/vgenerate dep-model [] obs n k)]
       (shape= (:weight vt) [n]))))
 
-(check "vgenerate: constrained site is scalar"
+(defspec vgenerate-constrained-site-is-scalar 50
   (prop/for-all [n gen-n
                  k gen-key]
     (let [obs (cm/choicemap :y (mx/scalar 2.0))
@@ -133,7 +107,7 @@
       ;; Constrained site is scalar
       (close? 2.0 (mx/realize y-val) 1e-6))))
 
-(check "vgenerate: unconstrained sites are [N]-shaped"
+(defspec vgenerate-unconstrained-sites-are-n-shaped 50
   (prop/for-all [n gen-n
                  k gen-key]
     (let [obs (cm/choicemap :y (mx/scalar 1.0))
@@ -141,22 +115,20 @@
           x-arr (cm/get-value (cm/get-submap (:choices vt) :x))]
       (shape= x-arr [n]))))
 
-(check "vgenerate: empty constraints weight is scalar 0"
+(defspec vgenerate-empty-constraints-weight-is-scalar-0 50
   (prop/for-all [n gen-n
                  k gen-key]
     (let [vt (dyn/vgenerate ind-model [] cm/EMPTY n k)
           w (:weight vt)
           _ (mx/eval! w)]
-      ;; Empty constraints → weight = 0 (scalar)
+      ;; Empty constraints -> weight = 0 (scalar)
       (close? 0.0 (mx/item w) 0.01))))
 
 ;; ---------------------------------------------------------------------------
 ;; Statistical Equivalence (1)
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- statistical equivalence --")
-
-(check "vsimulate mean score near mean of N sequential simulates"
+(defspec vsimulate-mean-score-near-mean-of-n-sequential-simulates 30
   (prop/for-all [k gen-key]
     (let [n 20
           ;; Vectorized
@@ -171,19 +143,16 @@
                                (mx/item (:score t))))
                            (range n))
           s-mean (/ (reduce + seq-scores) n)]
-      ;; Both should be around -log(2π) ≈ -1.84 for standard Gaussian
+      ;; Both should be around -log(2pi) ~ -1.84 for standard Gaussian
       ;; Loose tolerance since different random draws
       (and (finite? v-mean) (finite? s-mean)
-           (< (js/Math.abs (- v-mean s-mean)) 3.0))))
-  :num-tests 30)
+           (< (js/Math.abs (- v-mean s-mean)) 3.0)))))
 
 ;; ---------------------------------------------------------------------------
 ;; VectorizedTrace Operations (3)
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- vectorized trace ops --")
-
-(check "vtrace-ess in (0, N]"
+(defspec vtrace-ess-in-0-n 50
   (prop/for-all [n gen-n
                  obs gen-partial-obs
                  k gen-key]
@@ -191,7 +160,7 @@
           ess (vec/vtrace-ess vt)]
       (and (> ess 0) (<= ess (+ n 0.01))))))
 
-(check "resample-vtrace produces near-uniform weights"
+(defspec resample-vtrace-produces-near-uniform-weights 50
   (prop/for-all [n gen-n
                  obs gen-partial-obs
                  k gen-key]
@@ -203,7 +172,7 @@
       ;; After resampling, weights should be uniform (zeros in log-space)
       (every? #(close? 0.0 % 0.01) ws))))
 
-(check "resample-vtrace preserves n-particles"
+(defspec resample-vtrace-preserves-n-particles 50
   (prop/for-all [n gen-n
                  obs gen-partial-obs
                  k gen-key]
@@ -216,9 +185,7 @@
 ;; Batched vs Scalar (2)
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- batched vs scalar --")
-
-(check "N=1: score and weight shapes are [1]"
+(defspec n-1-score-and-weight-shapes-are-1 50
   (prop/for-all [k gen-key
                  obs gen-partial-obs]
     (let [vt-sim (dyn/vsimulate ind-model [] 1 k)
@@ -226,7 +193,7 @@
       (and (shape= (:score vt-sim) [1])
            (shape= (:weight vt-gen) [1])))))
 
-(check "resample preserves score shape [N]"
+(defspec resample-preserves-score-shape-n 50
   (prop/for-all [n gen-n
                  obs gen-partial-obs
                  k gen-key]
@@ -235,9 +202,4 @@
           resampled (vec/resample-vtrace vt k1)]
       (shape= (:score resampled) [n]))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== Vectorized Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)

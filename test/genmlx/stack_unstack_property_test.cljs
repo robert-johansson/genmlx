@@ -2,37 +2,17 @@
   "Property-based tests for choicemap stack/unstack isomorphism.
    Verifies: round-trip identity, shape promotion to [N], shape
    demotion to scalar, and address structure preservation."
-  (:require [clojure.test.check :as tc]
-            [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
+            [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 30}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -93,18 +73,14 @@
             (:choices (p/simulate (dyn/with-key model k) [])))
           keys)))
 
-(println "\n=== Stack/Unstack Property Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
 ;; E17.1: unstack(stack(cms)) = cms
-;; Law: Stack and unstack are inverse operations — stacking N scalar
+;; Law: Stack and unstack are inverse operations -- stacking N scalar
 ;;       choicemaps into one batched choicemap, then unstacking, recovers
 ;;       the original values at every address.
 ;; ---------------------------------------------------------------------------
 
-(println "-- stack/unstack isomorphism --")
-
-(check "unstack(stack(cms)) recovers original values"
+(defspec unstack-stack-recovers-original-values 30
   (prop/for-all [model (gen/elements model-pool)
                  n (gen/elements n-pool)
                  key (gen/elements key-pool)]
@@ -119,18 +95,15 @@
           (let [orig-v (cm/get-choice (nth cms i) path)
                 round-v (cm/get-choice (nth unstacked i) path)]
             (mx/eval! orig-v round-v)
-            (close? (mx/item orig-v) (mx/item round-v) 1e-6))))))
-  :num-tests 30)
+            (close? (mx/item orig-v) (mx/item round-v) 1e-6)))))))
 
 ;; ---------------------------------------------------------------------------
-;; E17.2: stack — leaf shapes become [N]
+;; E17.2: stack -- leaf shapes become [N]
 ;; Law: Stacking N scalar choicemaps promotes every leaf from shape []
-;;       to shape [N] — the fundamental batching operation.
+;;       to shape [N] -- the fundamental batching operation.
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- shape promotion --")
-
-(check "stack: leaf shapes become [N]"
+(defspec stack-leaf-shapes-become-n 30
   (prop/for-all [model (gen/elements model-pool)
                  n (gen/elements n-pool)
                  key (gen/elements key-pool)]
@@ -140,18 +113,15 @@
       (every? true?
         (for [path addrs]
           (let [v (cm/get-choice stacked path)]
-            (= [n] (vec (mx/shape v))))))))
-  :num-tests 30)
+            (= [n] (vec (mx/shape v)))))))))
 
 ;; ---------------------------------------------------------------------------
-;; E17.3: unstack — leaf shapes become scalar
+;; E17.3: unstack -- leaf shapes become scalar
 ;; Law: Unstacking removes the batch dimension, recovering scalar leaves
-;;       — the inverse of shape promotion.
+;;       -- the inverse of shape promotion.
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- shape demotion --")
-
-(check "unstack: leaf shapes become scalar []"
+(defspec unstack-leaf-shapes-become-scalar 30
   (prop/for-all [model (gen/elements model-pool)
                  n (gen/elements n-pool)
                  key (gen/elements key-pool)]
@@ -162,18 +132,15 @@
         (for [cm-i unstacked
               path (cm/addresses cm-i)]
           (let [v (cm/get-choice cm-i path)]
-            (= [] (vec (mx/shape v))))))))
-  :num-tests 30)
+            (= [] (vec (mx/shape v)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; E17.4: stack preserves addresses
-;; Law: Stacking does not alter the tree structure — the set of address
+;; Law: Stacking does not alter the tree structure -- the set of address
 ;;       paths in the stacked choicemap equals the set in any constituent.
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- address preservation --")
-
-(check "stack preserves address set"
+(defspec stack-preserves-address-set 30
   (prop/for-all [model (gen/elements model-pool)
                  n (gen/elements n-pool)
                  key (gen/elements key-pool)]
@@ -181,14 +148,6 @@
           stacked (cm/stack-choicemaps cms mx/stack)
           original-addrs (set (cm/addresses (first cms)))
           stacked-addrs (set (cm/addresses stacked))]
-      (= original-addrs stacked-addrs)))
-  :num-tests 30)
+      (= original-addrs stacked-addrs))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== Stack/Unstack Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
-(when (pos? @fail-count)
-  (js/process.exit 1))
+(t/run-tests)

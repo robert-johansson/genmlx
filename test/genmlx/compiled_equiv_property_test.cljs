@@ -6,9 +6,9 @@
 
    Every test verifies that a compiled operation and its handler counterpart
    agree to within floating-point tolerance on the same inputs."
-  (:require [clojure.test.check :as tc]
-            [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
+            [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
@@ -16,28 +16,8 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.tensor-trace :as tt])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -118,19 +98,15 @@
 (def seed-pool (vec (range 10)))
 (def gen-seed (gen/elements seed-pool))
 
-(println "\n=== Compiled/Handler Equivalence Property Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
 ;; E12.1: compiled simulate score = handler simulate score
 ;; Law: compilation preserves score semantics
 ;; ---------------------------------------------------------------------------
 
-(println "-- simulate equivalence --")
-
 ;; The compiled path uses mx/compile-fn which freezes the PRNG (all calls produce
 ;; the same samples). So we cannot compare samples directly. Instead we verify:
 ;; the compiled simulate score is consistent with handler generate for the same choices.
-(check "compiled simulate: score = handler assess weight for same choices"
+(defspec compiled-simulate-score-equals-handler-assess-weight 50
   (prop/for-all [m gen-model
                  seed gen-seed]
     (let [model (:model m)
@@ -151,7 +127,7 @@
 ;; ---------------------------------------------------------------------------
 
 ;; Verify compiled simulate produces valid choices: all addresses present and finite.
-(check "compiled simulate: all choices present and finite"
+(defspec compiled-simulate-all-choices-present-and-finite 50
   (prop/for-all [m gen-model
                  seed gen-seed]
     (let [model (:model m)
@@ -168,9 +144,7 @@
 ;; Law: compilation preserves importance weights
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- generate equivalence --")
-
-(check "compiled generate weight = handler generate weight"
+(defspec compiled-generate-weight-equals-handler-generate-weight 50
   (prop/for-all [m gen-model
                  seed gen-seed]
     (let [model (:model m)
@@ -178,11 +152,11 @@
           k0 (rng/fresh-key seed)
           source-trace (p/simulate (dyn/with-key model k0) [])
           constraints (:choices source-trace)
-          ;; Compiled generate — fresh key
+          ;; Compiled generate -- fresh key
           k1 (rng/fresh-key (+ seed 100))
           {:keys [weight]} (p/generate (dyn/with-key model k1) [] constraints)
           compiled-w (eval-weight weight)
-          ;; Handler generate — fresh key from same seed
+          ;; Handler generate -- fresh key from same seed
           k2 (rng/fresh-key (+ seed 100))
           handler-model (force-handler model)
           {:keys [weight]} (p/generate (dyn/with-key handler-model k2) [] constraints)
@@ -194,18 +168,18 @@
 ;; Law: compilation preserves scores under constraints
 ;; ---------------------------------------------------------------------------
 
-(check "compiled generate score = handler generate score"
+(defspec compiled-generate-score-equals-handler-generate-score 50
   (prop/for-all [m gen-model
                  seed gen-seed]
     (let [model (:model m)
           k0 (rng/fresh-key seed)
           source-trace (p/simulate (dyn/with-key model k0) [])
           constraints (:choices source-trace)
-          ;; Compiled generate — fresh key
+          ;; Compiled generate -- fresh key
           k1 (rng/fresh-key (+ seed 100))
           {:keys [trace]} (p/generate (dyn/with-key model k1) [] constraints)
           compiled-score (trace-score trace)
-          ;; Handler generate — fresh key from same seed
+          ;; Handler generate -- fresh key from same seed
           k2 (rng/fresh-key (+ seed 100))
           handler-model (force-handler model)
           {:keys [trace]} (p/generate (dyn/with-key handler-model k2) [] constraints)
@@ -217,9 +191,7 @@
 ;; Law: TensorTrace is a faithful representation of the trace's address-value map
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- TensorTrace round-trip --")
-
-(check "TensorTrace -> standard Trace -> generate recovers score"
+(defspec tensor-trace-to-standard-trace-generate-recovers-score 30
   (prop/for-all [m gen-model
                  seed gen-seed]
     (let [model (:model m)
@@ -231,7 +203,7 @@
           ;; Extract all choices as a standard choicemap
           ;; (works whether trace is TensorTrace or standard Trace)
           choices (:choices trace)
-          ;; Generate with handler using those choices — fresh key
+          ;; Generate with handler using those choices -- fresh key
           k2 (rng/fresh-key (+ seed 200))
           handler-model (force-handler model)
           {:keys [trace]} (p/generate (dyn/with-key handler-model k2) [] choices)
@@ -241,12 +213,6 @@
            ;; All addresses must be present
            (every? (fn [addr]
                      (some? (choice-val (:choices trace) addr)))
-                   addrs))))
-  :num-tests 30)
+                   addrs)))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== Compiled/Handler Equivalence Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)

@@ -5,9 +5,9 @@
    - Identity kernel (sel/none = no change)
    - MH stationary distribution = posterior (detailed balance)
    - Gibbs samples from full conditional"
-  (:require [clojure.test.check :as tc]
-            [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
+            [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
@@ -17,28 +17,8 @@
             [genmlx.selection :as sel]
             [genmlx.inference.mcmc :as mcmc]
             [genmlx.inference.util :as u])
-  (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+  (:require-macros [genmlx.gen :refer [gen]]
+                   [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -121,15 +101,11 @@
 (def key-pool (mapv #(rng/fresh-key %) [42 99 123 7 255]))
 (def gen-key (gen/elements key-pool))
 
-(println "\n=== MCMC Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
 ;; Law: MH transition preserves the set of trace addresses
 ;; ---------------------------------------------------------------------------
 
-(println "-- MH --")
-
-(check "mh-step: trace has same addresses"
+(defspec mh-step-trace-has-same-addresses 50
   (prop/for-all [k gen-key]
     (let [{:keys [trace]} (p/generate linreg [xs] obs)
           new-trace (mcmc/mh-step trace (sel/select :slope) k)]
@@ -141,7 +117,7 @@
 ;; Strengthened: check EXACT value equality and weight = 0
 ;; ---------------------------------------------------------------------------
 
-(check "mh-step(sel/none): all values identical, weight = 0"
+(defspec mh-step-sel-none-all-values-identical-weight-0 50
   (prop/for-all [k gen-key]
     (let [{:keys [trace]} (p/generate linreg [xs] obs)
           old-slope (choice-val (:choices trace) :slope)
@@ -157,7 +133,7 @@
 ;; The trace score after MH must equal assess(model, choices).weight
 ;; ---------------------------------------------------------------------------
 
-(check "mh-step: trace score = assess weight"
+(defspec mh-step-trace-score-equals-assess-weight 50
   (prop/for-all [k gen-key]
     (let [{:keys [trace]} (p/generate linreg [xs] obs)
           new-trace (mcmc/mh-step trace (sel/select :slope) k)
@@ -172,36 +148,27 @@
 ;; Posterior: N(1.0, 0.5), mean = 1.0
 ;; ---------------------------------------------------------------------------
 
-(check "MH detailed balance: posterior mean near analytical"
+(defspec mh-detailed-balance-posterior-mean-near-analytical 10
   (prop/for-all [k gen-key]
     (let [samples (mcmc/mh {:samples 200 :burn 50
                             :selection (sel/select :mu) :key k}
                            conjugate-gauss [] conjugate-obs)
           mu-vals (mapv #(choice-val (:choices %) :mu) samples)
           mean (/ (reduce + mu-vals) (count mu-vals))]
-      (close? mean 1.0 0.5)))
-  :num-tests 10)
+      (close? mean 1.0 0.5))))
 
 ;; ---------------------------------------------------------------------------
 ;; Law: Gibbs samples from the full conditional distribution
 ;; Beta(1,1) prior + 5 heads + 2 tails -> Beta(6,3), mean = 0.667
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- Gibbs --")
-
-(check "Gibbs on conjugate model: posterior mean near analytical"
+(defspec gibbs-on-conjugate-model-posterior-mean-near-analytical 10
   (prop/for-all [k gen-key]
     (let [samples (mcmc/mh {:samples 300 :burn 50
                             :selection (sel/select :p) :key k}
                            beta-bern [] beta-bern-obs)
           p-vals (mapv #(choice-val (:choices %) :p) samples)
           mean (/ (reduce + p-vals) (count p-vals))]
-      (close? mean 0.667 0.15)))
-  :num-tests 10)
+      (close? mean 0.667 0.15))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== MCMC Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)

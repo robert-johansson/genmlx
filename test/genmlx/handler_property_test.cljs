@@ -1,7 +1,7 @@
 (ns genmlx.handler-property-test
   "Property-based tests for handler.cljs state transitions using test.check.
    Verifies scalar and batched handler transitions are pure and correct."
-  (:require [clojure.test.check :as tc]
+  (:require [cljs.test :as t]
             [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
             [genmlx.mlx :as mx]
@@ -10,28 +10,8 @@
             [genmlx.dist.core :as dc]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
-            [genmlx.handler :as h]))
-
-;; ---------------------------------------------------------------------------
-;; Test infrastructure
-;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-
-(defn- report-result [name result]
-  (if (:pass? result)
-    (do (vswap! pass-count inc)
-        (println "  PASS:" name (str "(" (:num-tests result) " trials)")))
-    (do (vswap! fail-count inc)
-        (println "  FAIL:" name)
-        (println "    seed:" (:seed result))
-        (when-let [s (get-in result [:shrunk :smallest])]
-          (println "    shrunk:" s)))))
-
-(defn- check [name prop & {:keys [num-tests] :or {num-tests 50}}]
-  (let [result (tc/quick-check num-tests prop)]
-    (report-result name result)))
+            [genmlx.handler :as h])
+  (:require-macros [clojure.test.check.clojure-test :refer [defspec]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -48,7 +28,7 @@
   (and (finite? a) (finite? b) (<= (js/Math.abs (- a b)) tol)))
 
 ;; ---------------------------------------------------------------------------
-;; Fixtures
+;; Generators
 ;; ---------------------------------------------------------------------------
 
 (def addr-pool [:a :b :c :x :y])
@@ -89,16 +69,11 @@
    :discard cm/EMPTY
    :executor nil})
 
-(println "\n=== Handler Property-Based Tests ===\n")
-
 ;; ---------------------------------------------------------------------------
-;; Simulate transition properties
+;; Properties
 ;; ---------------------------------------------------------------------------
 
-(println "-- simulate-transition --")
-
-;; Property 1: simulate-transition: score increases by log-prob of sampled value
-(check "simulate-transition: score = log-prob of sampled value"
+(defspec simulate-transition-score-equals-log-prob 50
   (prop/for-all [k gen-key
                  addr gen-addr
                  d gen-dist]
@@ -109,8 +84,7 @@
           lp (mx/item (dc/dist-log-prob d value))]
       (close? score lp 0.01))))
 
-;; Property 2: simulate-transition: output key differs from input key
-(check "simulate-transition: key changes"
+(defspec simulate-transition-key-changes 50
   (prop/for-all [k gen-key
                  addr gen-addr
                  d gen-dist]
@@ -118,14 +92,7 @@
           [_ state'] (h/simulate-transition state addr d)]
       (not (identical? (:key state) (:key state'))))))
 
-;; ---------------------------------------------------------------------------
-;; Generate transition properties
-;; ---------------------------------------------------------------------------
-
-(println "\n-- generate-transition --")
-
-;; Property 3: generate-transition: constrained addr yields exact constraint value
-(check "generate-transition: constrained value matches constraint"
+(defspec generate-transition-constrained-value-matches 50
   (prop/for-all [k gen-key]
     (let [constraint-val (mx/scalar 2.5)
           constraints (cm/choicemap :x constraint-val)
@@ -135,26 +102,17 @@
       (mx/eval! value)
       (close? (mx/item value) 2.5 1e-6))))
 
-;; Property 4: generate-transition: unconstrained addr samples fresh value
-(check "generate-transition: unconstrained addr accumulates score"
+(defspec generate-transition-unconstrained-accumulates-score 50
   (prop/for-all [k gen-key]
     (let [state (make-generate-state k cm/EMPTY)
           d (dist/gaussian 0 1)
           [_ state'] (h/generate-transition state :x d)
           score (eval-weight (:score state'))
           weight (eval-weight (:weight state'))]
-      ;; Unconstrained: score increases, weight stays 0
       (and (finite? score)
            (close? 0.0 weight 0.01)))))
 
-;; ---------------------------------------------------------------------------
-;; Batched simulate transition properties
-;; ---------------------------------------------------------------------------
-
-(println "\n-- batched transitions --")
-
-;; Property 5: batched-simulate-transition: score shape = [N]
-(check "batched-simulate: score shape = [N]"
+(defspec batched-simulate-score-shape-equals-N 50
   (prop/for-all [k gen-key
                  n gen-batch-size]
     (let [state {:key k :choices cm/EMPTY :score (mx/zeros [n])
@@ -164,8 +122,7 @@
       (mx/eval! (:score state'))
       (= (mx/shape (:score state')) [n]))))
 
-;; Property 6: batched-generate-transition: constrained value is scalar (broadcast)
-(check "batched-generate: constrained value is scalar"
+(defspec batched-generate-constrained-value-is-scalar 50
   (prop/for-all [k gen-key
                  n gen-batch-size]
     (let [constraint-val (mx/scalar 2.5)
@@ -175,18 +132,10 @@
                  :executor nil :batch-size n :batched? true}
           d (dist/gaussian 0 1)
           [value _] (h/batched-generate-transition state :x d)]
-      ;; Constrained value should be the scalar constraint
       (mx/eval! value)
       (close? (mx/item value) 2.5 1e-6))))
 
-;; ---------------------------------------------------------------------------
-;; Update transition properties
-;; ---------------------------------------------------------------------------
-
-(println "\n-- update-transition --")
-
-;; Property 7: update-transition: new constraint replaces old, discard contains old val
-(check "update-transition: discard contains old value"
+(defspec update-transition-discard-contains-old-value 50
   (prop/for-all [k gen-key]
     (let [old-val (mx/scalar 1.0)
           new-val (mx/scalar 3.0)
@@ -197,22 +146,13 @@
           [value state'] (h/update-transition state :x d)
           discard-sub (cm/get-submap (:discard state') :x)]
       (and
-        ;; Value should be the new constraint
         (do (mx/eval! value) (close? (mx/item value) 3.0 1e-6))
-        ;; Discard should contain the old value
         (when (cm/has-value? discard-sub)
           (let [dv (cm/get-value discard-sub)]
             (mx/eval! dv)
             (close? (mx/item dv) 1.0 1e-6)))))))
 
-;; ---------------------------------------------------------------------------
-;; merge-sub-result properties
-;; ---------------------------------------------------------------------------
-
-(println "\n-- merge-sub-result --")
-
-;; Property 8: merge-sub-result: parent key and top-level fields preserved
-(check "merge-sub-result: preserves parent key and fields"
+(defspec merge-sub-result-preserves-parent-key-and-fields 50
   (prop/for-all [k gen-key]
     (let [parent-state {:key k
                         :choices cm/EMPTY
@@ -224,18 +164,10 @@
                       :weight (mx/scalar 0.1)}
           state' (h/merge-sub-result parent-state :child sub-result)]
       (and
-        ;; Key unchanged
         (identical? (:key state') k)
-        ;; Score = parent score + sub score
         (let [s (eval-weight (:score state'))]
           (close? s 1.3 0.01))
-        ;; Weight = parent weight + sub weight
         (let [w (eval-weight (:weight state'))]
           (close? w 0.6 0.01))))))
 
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== Handler Property Tests Complete: "
-              @pass-count " passed, " @fail-count " failed ==="))
+(t/run-tests)
