@@ -40,7 +40,14 @@
 
 (defn array
   ([v]      (.array core (clj->js v)))
-  ([v dtype] (.array core (clj->js v) dtype)))
+  ([v shape-or-dtype]
+   (if (or (vector? shape-or-dtype) (seq? shape-or-dtype))
+     ;; Second arg is a shape — create then reshape
+     (.reshape (.array core (clj->js v)) (clj->js shape-or-dtype))
+     ;; Second arg is a dtype
+     (.array core (clj->js v) shape-or-dtype)))
+  ([v shape dtype]
+   (.reshape (.array core (clj->js v) dtype) (clj->js shape))))
 
 (defn astype
   "Cast array to the given dtype."
