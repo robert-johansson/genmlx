@@ -16,6 +16,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.dynamic :as dyn]
+            [genmlx.mlx.random :as rng]
             [genmlx.nn :as nn]
             [genmlx.inference.mcmc :as mcmc])
   (:require-macros [genmlx.gen :refer [gen]]))
@@ -91,10 +92,13 @@
                    (dist/gaussian pred sigma))))
         log-sigma))))
 
-;; Noisy test data: sin(x) + noise(sigma=0.2)
+;; Noisy test data: sin(x) + Gaussian noise(sigma=0.2)
 (def noise-sigma 0.2)
 (def test-xs [0.0 0.5 1.0 1.5 2.0 2.5])
-(def test-ys (mapv #(+ (js/Math.sin %) (* noise-sigma (- (* 2 (js/Math.random)) 1))) test-xs))
+(def noise-key (genmlx.mlx.random/fresh-key))
+(def noise-vals (mapv #(mx/item (genmlx.mlx.random/normal % []))
+                      (genmlx.mlx.random/split-n noise-key (count test-xs))))
+(def test-ys (mapv (fn [x n] (+ (js/Math.sin x) (* noise-sigma n))) test-xs noise-vals))
 
 (def obs
   (reduce (fn [cm [j y]]
