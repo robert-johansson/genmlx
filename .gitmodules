@@ -13,3 +13,6 @@
 [submodule "dev"]
 	path = dev
 	url = https://github.com/robert-johansson/genmlx-dev.git
+[submodule "lib/test.check"]
+	path = lib/test.check
+	url = https://github.com/robert-johansson/test.check.git
