@@ -1,14 +1,41 @@
+;; Bayesian Linear Regression with GenMLX
+;; ========================================
+;;
+;; Given noisy observations y = slope * x + intercept + noise,
+;; infer the posterior distribution over slope and intercept.
+;;
+;; Demonstrates: gen macro, trace sites, IS + MH inference, posterior analysis.
+;;
+;; Run: bun run --bun nbb examples/genmlx/linear_regression.cljs
+
 (ns linear-regression
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
-            [genmlx.inference.mcmc :as mcmc])
+            [genmlx.inference.mcmc :as mcmc]
+            [genmlx.inference.importance :as is])
   (:require-macros [genmlx.gen :refer [gen]]))
 
-;; Bayesian linear regression — all values stay as MLX arrays
-;; Inside gen bodies, trace/splice/param are local bindings injected by the macro
+;; --- Helpers ---
+
+(defn get-val
+  "Extract a scalar JS number from a trace's choicemap at the given address."
+  [trace addr]
+  (mx/item (cm/get-value (cm/get-submap (:choices trace) addr))))
+
+(defn mean [vs] (/ (reduce + vs) (count vs)))
+
+(defn std [vs]
+  (let [m (mean vs)]
+    (js/Math.sqrt (/ (reduce + (map #(* (- % m) (- % m)) vs)) (count vs)))))
+
+;; --- Model ---
+;; A generative model is a regular ClojureScript function wrapped in `gen`.
+;; `trace` names random choices — these are the values inference reasons about.
+;; All arithmetic uses mx/ ops to stay in the MLX computation graph.
+
 (def model
   (gen [xs]
     (let [slope     (trace :slope (dist/gaussian 0 10))
@@ -16,26 +43,61 @@
       (doseq [[j x] (map-indexed vector xs)]
         (trace (keyword (str "y" j))
                (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
-                                      intercept) 1)))
-      slope)))
+                                      intercept)
+                              1)))
+      {:slope slope :intercept intercept})))
 
-;; Observations — data generated from y = 2x + 0.1 + noise
-(def xs [1.0 2.0 3.0 4.0 5.0])
+;; --- Data ---
+;; True parameters: slope=2.0, intercept=0.5
+
+(def xs [1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0])
 (def observations
-  (cm/choicemap :y0 (mx/scalar 2.1) :y1 (mx/scalar 3.9) :y2 (mx/scalar 6.2)
-                :y3 (mx/scalar 7.8) :y4 (mx/scalar 10.1)))
+  (reduce (fn [cm [j y]]
+            (cm/set-choice cm [(keyword (str "y" j))] (mx/scalar y)))
+          cm/EMPTY
+          (map-indexed vector [2.6 4.3 7.1 8.4 10.8 12.3 14.0 16.9])))
 
-;; Metropolis-Hastings
-(println "Running MH inference (500 samples, 100 burn-in)...")
-(def traces
-  (mcmc/mh {:samples 500 :burn 100
-            :selection (sel/select :slope :intercept)}
-           model [xs] observations))
+(println "=== Bayesian Linear Regression ===\n")
 
-;; Examine posterior
-(let [slopes     (mapv #(mx/item (cm/get-choice (:choices %) [:slope])) traces)
-      intercepts (mapv #(mx/item (cm/get-choice (:choices %) [:intercept])) traces)
-      mean-slope     (/ (reduce + slopes) (count slopes))
-      mean-intercept (/ (reduce + intercepts) (count intercepts))]
-  (println "Posterior slope mean:    " mean-slope "(true: ~2.0)")
-  (println "Posterior intercept mean:" mean-intercept "(true: ~0.1)"))
+;; --- Importance Sampling ---
+
+(println "-- Importance Sampling (1000 particles) --")
+(let [{:keys [traces log-weights]}
+      (is/importance-sampling {:samples 1000} model [xs] observations)
+      log-w (mx/array (mapv #(mx/item %) log-weights))
+      w (mx/softmax log-w)
+      _ (mx/eval! w)
+      slopes     (mx/array (mapv #(get-val % :slope) traces))
+      intercepts (mx/array (mapv #(get-val % :intercept) traces))
+      mean-slope (mx/item (mx/sum (mx/multiply w slopes)))
+      mean-int   (mx/item (mx/sum (mx/multiply w intercepts)))]
+  (println (str "  E[slope]     = " (.toFixed mean-slope 3) "  (true: 2.0)"))
+  (println (str "  E[intercept] = " (.toFixed mean-int 3) "  (true: 0.5)")))
+
+;; --- MCMC ---
+
+(println "\n-- Metropolis-Hastings (1000 samples, 200 burn-in) --")
+(let [traces (mcmc/mh {:samples 1000 :burn 200
+                        :selection (sel/select :slope :intercept)}
+                       model [xs] observations)
+      slopes     (mapv #(get-val % :slope) traces)
+      intercepts (mapv #(get-val % :intercept) traces)]
+  (println (str "  E[slope]     = " (.toFixed (mean slopes) 3)
+               " +/- " (.toFixed (std slopes) 3) "  (true: 2.0)"))
+  (println (str "  E[intercept] = " (.toFixed (mean intercepts) 3)
+               " +/- " (.toFixed (std intercepts) 3) "  (true: 0.5)")))
+
+;; --- Posterior Predictive ---
+
+(println "\n-- Posterior Predictive --")
+(let [traces (mcmc/mh {:samples 200 :burn 100
+                        :selection (sel/select :slope :intercept)}
+                       model [xs] observations)
+      x-new 10.0
+      preds (mapv (fn [tr]
+                    (+ (* (get-val tr :slope) x-new)
+                       (get-val tr :intercept)))
+                  traces)]
+  (println (str "  y(x=10) = " (.toFixed (mean preds) 2)
+               " +/- " (.toFixed (std preds) 2)
+               "  (true: ~20.5)")))

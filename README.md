@@ -45,13 +45,13 @@ bun install
 > ops required by GenMLX's distributions. Once these are merged upstream, the
 > standard `@frost-beta/mlx` npm package will work.
 
-Run the included example:
+Run the included examples:
 
 ```bash
-bun run --bun nbb examples/linear_regression.cljs
-# => Running MH inference (500 samples, 100 burn-in)...
-# => Posterior slope mean:     ~2.0 (true: ~2.0)
-# => Posterior intercept mean: ~0.1 (true: ~0.1)
+bun run --bun nbb examples/genmlx/linear_regression.cljs       # Bayesian regression (IS + MH)
+bun run --bun nbb examples/genmlx/hidden_markov_model.cljs      # HMM with particle filtering
+bun run --bun nbb examples/genmlx/variational_inference.cljs    # VI vs MCMC comparison
+bun run --bun nbb examples/genmlx/compositional_models.cljs     # Splice, Map, Switch, GFI algebra
 ```
 
 ### Define a model
