@@ -30,9 +30,9 @@
         log-2pi-scalar (mx/scalar (js/Math.log (* 2 js/Math.PI)))
         diff-norm (mx/divide (mx/subtract samples mu) sigma)
         log-q-per-dim (mx/multiply (mx/scalar -0.5)
-                                    (mx/add log-2pi-scalar
-                                            (mx/multiply (mx/scalar 2.0) log-sigma)
-                                            (mx/square diff-norm)))
+                                   (mx/add log-2pi-scalar
+                                           (mx/multiply (mx/scalar 2.0) log-sigma)
+                                           (mx/square diff-norm)))
         log-q (mx/sum log-q-per-dim [1])
         ;; log p for each sample via vmap
         log-p-vals (vmapped-log-density samples)
@@ -55,7 +55,9 @@
    init-params: MLX array of initial parameter values
 
    Returns {:mu MLX-array :sigma MLX-array :elbo-history [numbers]
-            :sample-fn (fn [n] -> samples)}"
+            :sample-fn (fn [n] -> samples)}
+
+   For compiled (faster) VI with pure tensor log-density, use compiled-vi."
   [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback key
            vectorized-log-density]
     :or {iterations 1000 learning-rate 0.01 elbo-samples 10
@@ -67,11 +69,11 @@
                   init-params)
         init-log-sigma (mx/zeros [d])
         init-vp (mx/tidy-materialize
-                  #(mx/concatenate [init-mu init-log-sigma]))
+                 #(mx/concatenate [init-mu init-log-sigma]))
         vmapped-log-density (or vectorized-log-density (mx/vmap log-density))
         neg-elbo-fn (fn [vp]
                       (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
-        grad-neg-elbo (mx/compile-fn (mx/grad neg-elbo-fn))]
+        grad-neg-elbo (mx/grad neg-elbo-fn)]
     (loop [i 0, vp init-vp
            opt-state (learn/adam-init init-vp)
            elbo-history (transient [])
@@ -95,7 +97,7 @@
         (let [[iter-key next-key] (rng/split-or-nils rk)
               g (mx/tidy-materialize #(grad-neg-elbo vp))
               [vp' opt-state'] (learn/adam-step vp g opt-state
-                                          {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
+                                                {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
               elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
                          (mx/item (mx/tidy-materialize #(elbo-estimate vp' log-density elbo-samples d vmapped-log-density iter-key))))]
           (when (and callback elbo-val)
@@ -145,7 +147,7 @@
                       init-params)
             init-log-sigma (mx/zeros [d])
             init-vp (mx/tidy-materialize
-                      #(mx/concatenate [init-mu init-log-sigma]))
+                     #(mx/concatenate [init-mu init-log-sigma]))
             vmapped-log-density (or vectorized-log-density (mx/vmap log-density))
             neg-elbo-fn (fn [vp]
                           (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
@@ -174,7 +176,7 @@
             (let [[iter-key next-key] (rng/split-or-nils rk)
                   g (mx/tidy-materialize #(grad-neg-elbo vp))
                   [vp' opt-state'] (learn/adam-step vp g opt-state
-                                              {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
+                                                    {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
                   elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
                              (mx/item (mx/tidy-materialize #(mx/negative (neg-elbo-compiled vp')))))]
               (when (and callback elbo-val)
@@ -299,7 +301,7 @@
       ;; Return surrogate loss whose gradient equals REINFORCE estimator
       (mx/add obj-val
               (mx/mean (mx/multiply (mx/stop-gradient
-                                      (mx/subtract obj-val baseline))
+                                     (mx/subtract obj-val baseline))
                                     log-q))))))
 
 (defn vimco-objective
@@ -392,7 +394,7 @@
               _ (when (zero? (mod i 50)) (mx/clear-cache!))
               loss-val (mx/item loss)
               [params' opt-state'] (learn/adam-step params grad opt-state
-                                              {:lr learning-rate})]
+                                                    {:lr learning-rate})]
           (when callback
             (callback {:iter i :loss loss-val}))
           (recur (inc i) params' opt-state'
@@ -440,7 +442,7 @@
                   loss (mx/tidy-materialize #(loss-compiled params samples))
                   loss-val (mx/item loss)
                   [params' opt-state'] (learn/adam-step params grad opt-state
-                                                  {:lr learning-rate})]
+                                                        {:lr learning-rate})]
               (when callback
                 (callback {:iter i :loss loss-val}))
               (recur (inc i) params' opt-state'

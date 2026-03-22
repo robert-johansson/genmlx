@@ -157,6 +157,15 @@
 (defn set-wired-limit! [n] (.setWiredLimit core n))
 (defn clear-cache! [] (.clearCache core))
 
+;; Metal resource tracking
+(defn get-num-resources
+  "Number of live Metal buffer allocations (active + cached).
+   When this hits the resource limit (~499K), allocations fail."
+  [] (.getNumResources core))
+(defn get-resource-limit
+  "Maximum Metal buffer allocations before failure."
+  [] (.getResourceLimit core))
+
 ;; Metal device info
 (defn metal-is-available? [] (.isAvailable (.-metal core)))
 
@@ -175,7 +184,8 @@
    :cache-bytes (get-cache-memory)
    :peak-bytes (get-peak-memory)
    :wrappers (get-wrappers-count)
-   :resource-limit (:resource-limit (metal-device-info))})
+   :num-resources (get-num-resources)
+   :resource-limit (get-resource-limit)})
 
 ;; ---------------------------------------------------------------------------
 ;; Arithmetic (element-wise)
@@ -532,6 +542,11 @@
    (if shapeless?
      (.compile core f true)
      (.compile core f))))
+
+(defn compile-clear-cache!
+  "Clear all compiled function caches, releasing associated Metal resources."
+  []
+  (.compileClearCache core))
 
 (defn vmap
   ([f]                     (.vmap core f))
