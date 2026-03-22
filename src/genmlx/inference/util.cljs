@@ -24,10 +24,10 @@
    {:log-probs <MLX array>, :probs <clj vector of doubles>}
    after log-softmax normalization."
   [log-weights]
-  (let [w-arr    (materialize-weights log-weights)
+  (let [w-arr (materialize-weights log-weights)
         log-probs (mx/subtract w-arr (mx/logsumexp w-arr))
-        _         (mx/materialize! log-probs)
-        probs     (mx/->clj (mx/exp log-probs))]
+        _ (mx/materialize! log-probs)
+        probs (mx/->clj (mx/exp log-probs))]
     {:log-probs log-probs :probs probs}))
 
 (defn compute-param-layout
@@ -61,22 +61,22 @@
        (let [entries (:layout layout)]
          (fn [params]
            (let [cm (reduce
-                      (fn [cm {:keys [addr shape offset size]}]
-                        (let [v (if (= size 1)
-                                  (mx/index params offset)
-                                  (mx/reshape (mx/slice params offset (+ offset size)) shape))]
-                          (cm/set-choice cm [addr] v)))
-                      observations
-                      entries)]
+                     (fn [cm {:keys [addr shape offset size]}]
+                       (let [v (if (= size 1)
+                                 (mx/index params offset)
+                                 (mx/reshape (mx/slice params offset (+ offset size)) shape))]
+                         (cm/set-choice cm [addr] v)))
+                     observations
+                     entries)]
              (:weight (p/generate model args cm)))))
        ;; Scalar-only path (original, unchanged)
        (let [indexed-addrs (mapv vector (range) addresses)]
          (fn [params]
            (let [cm (reduce
-                      (fn [cm [i addr]]
-                        (cm/set-choice cm [addr] (mx/index params i)))
-                      observations
-                      indexed-addrs)]
+                     (fn [cm [i addr]]
+                       (cm/set-choice cm [addr] (mx/index params i)))
+                     observations
+                     indexed-addrs)]
              (:weight (p/generate model args cm)))))))))
 
 (defn make-batched-score-fn
@@ -91,12 +91,12 @@
     (fn [params]
       (let [params-t (mx/transpose params)
             cm (reduce
-                 (fn [cm [i addr]]
+                (fn [cm [i addr]]
                    ;; take-idx with axis=0 extracts row i of [D,N] → [N]-shaped
-                   (cm/set-choice cm [addr]
-                     (mx/take-idx params-t (nth idx-scalars i) 0)))
-                 observations
-                 indexed-addrs)]
+                  (cm/set-choice cm [addr]
+                                 (mx/take-idx params-t (nth idx-scalars i) 0)))
+                observations
+                indexed-addrs)]
         (:weight (p/generate model args cm))))))
 
 (defn make-vectorized-score-fn
@@ -163,12 +163,12 @@
     (fn [params]
       (let [;; Extract column i via dot product: params [N,D] . one-hot [D] -> [N]
             cm (reduce
-                 (fn [cm [i addr]]
+                (fn [cm [i addr]]
                    ;; matmul [N,D] x [D,1] -> [N,1], squeeze -> [N]
-                   (cm/set-choice cm [addr]
-                     (mx/squeeze (mx/matmul params (mx/reshape (nth one-hots i) [d 1])))))
-                 observations
-                 indexed-addrs)]
+                  (cm/set-choice cm [addr]
+                                 (mx/squeeze (mx/matmul params (mx/reshape (nth one-hots i) [d 1])))))
+                observations
+                indexed-addrs)]
         (:weight (p/generate model args cm))))))
 
 (defn make-vectorized-grad-score
@@ -185,7 +185,7 @@
    Returns {:score-fn ([N,D]->[N]), :grad-fn ([N,D]->[N,D])}."
   [model args observations addresses]
   {:score-fn (make-vectorized-score-fn model args observations addresses)
-   :grad-fn  (mx/compile-fn (make-vectorized-grad-score model args observations addresses))})
+   :grad-fn (mx/compile-fn (make-vectorized-grad-score model args observations addresses))})
 
 (defn make-compiled-vectorized-val-grad
   "Compiled vectorized value-and-grad via sum trick.
@@ -201,10 +201,10 @@
   [model args observations addresses n-chains]
   (let [model (dyn/auto-key model)]
     (mx/stack
-      (mapv (fn [_]
-              (let [{:keys [trace]} (p/generate model args observations)]
-                (extract-params trace addresses)))
-            (range n-chains)))))
+     (mapv (fn [_]
+             (let [{:keys [trace]} (p/generate model args observations)]
+               (extract-params trace addresses)))
+           (range n-chains)))))
 
 (defn systematic-resample
   "Systematic resampling of particles. Returns vector of indices.
@@ -338,10 +338,10 @@
    3. Returning those arrays as a JS array for tidy to preserve"
   [step-fn state key]
   (mx/tidy-run
-    #(step-fn state key)
-    (fn [result]
-      (let [s (:state result)]
-        (if (mx/array? s) [s] (collect-trace-arrays s))))))
+   #(step-fn state key)
+   (fn [result]
+     (let [s (:state result)]
+       (if (mx/array? s) [s] (collect-trace-arrays s))))))
 
 ;; ===========================================================================
 ;; Level 3.5: Conjugate-aware score functions
@@ -419,11 +419,11 @@
   (let [schema (:schema model)
         source (:source model)]
     (if-let [result (cops/make-tensor-score-with-index
-                      schema source (vec args) observations)]
+                     schema source (vec args) observations)]
       (assoc result :tensor-native? true :compiled-generate? false)
       ;; Try compiled-generate before falling back to GFI handler
       (if-let [cg-result (make-compiled-generate-score-fn
-                           model args observations addresses)]
+                          model args observations addresses)]
         (assoc cg-result :tensor-native? false :compiled-generate? true)
         ;; Fall back to GFI-based score
         (let [gfi-fn (make-score-fn model args observations addresses)

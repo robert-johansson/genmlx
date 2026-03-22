@@ -878,7 +878,10 @@
           ;; Outer wrapper: GenMLX interface
           (fn compiled-simulate [key args-vec]
             (let [mlx-args (ensure-mlx-args args-vec)
-                  result (compiled-inner key mlx-args)
+                  ;; Arity mismatch (e.g. combinator passthrough) → uncompiled path
+                  result (if (not= (count mlx-args) n-params)
+                           (inner-fn key mlx-args)
+                           (compiled-inner key mlx-args))
                   ;; Unpack flat JS array → values map
                   values (loop [i 0 m {}]
                            (if (= i n-sites)

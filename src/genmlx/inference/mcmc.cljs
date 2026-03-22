@@ -2760,9 +2760,15 @@
            ;; Find best restart
              (let [final-scores (score-fn params)
                    _ (mx/materialize! final-scores params)
-                   best-idx (mx/item (mx/argmax final-scores))
-                   best-params (mx/take-idx params (mx/array best-idx mx/int32))
-                   best-score (mx/item (mx/index final-scores best-idx))
+                   ;; Handle scalar (0-dim) scores — single restart or collapsed batch
+                   scalar? (= 0 (count (mx/shape final-scores)))
+                   best-idx (if scalar? 0 (mx/item (mx/argmax final-scores)))
+                   best-params-raw (mx/take-idx params (mx/array best-idx mx/int32))
+                   ;; take-idx may squeeze to 0-dim for D=1; ensure 1D for indexing
+                   best-params (if (= 0 (count (mx/shape best-params-raw)))
+                                 (mx/reshape best-params-raw [1])
+                                 best-params-raw)
+                   best-score (if scalar? (mx/item final-scores) (mx/item (mx/index final-scores best-idx)))
                  ;; Reconstruct trace from best params
                    final-cm (reduce (fn [cm [j addr]]
                                       (cm/set-choice cm [addr] (mx/index best-params j)))

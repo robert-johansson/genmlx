@@ -63,15 +63,15 @@
         inv-obs-total (mx/divide t-val obs-var)
         new-var (mx/divide (mx/scalar 1.0) (mx/add inv-prior inv-obs-total))
         new-mean (mx/multiply new-var
-                   (mx/add (mx/multiply inv-prior mean)
-                           (mx/divide sum-obs obs-var)))
+                              (mx/add (mx/multiply inv-prior mean)
+                                      (mx/divide sum-obs obs-var)))
         ;; Marginal LL: sum of N(y_i; prior-mean, prior-var + obs-var)
         S (mx/add var obs-var)
         innov (mx/subtract obs-values mean)
         element-lls (mx/multiply (mx/scalar -0.5)
-                      (mx/add (mx/scalar LOG-2PI)
-                        (mx/add (mx/log S)
-                          (mx/divide (mx/multiply innov innov) S))))
+                                 (mx/add (mx/scalar LOG-2PI)
+                                         (mx/add (mx/log S)
+                                                 (mx/divide (mx/multiply innov innov) S))))
         ll (mx/sum element-lls)]
     {:mean new-mean :var new-var :ll ll}))
 
@@ -276,15 +276,25 @@
      (range (inc step-idx) n))))
 
 (defn- resolve-loading-offset
-  "Compute loading coefficient and offset for a Kalman observation dep type."
+  "Compute loading coefficient and offset for a Kalman observation dep type.
+   Returns [loading offset] for :direct and :affine with numeric coefficients.
+   Returns nil for :nonlinear or :affine with symbolic (non-numeric, non-array)
+   coefficients — caller should fall through to the base handler."
   [dep-type]
-  [(if (= :direct (:type dep-type))
-     (mx/scalar 1.0)
-     (let [c (:coefficient dep-type)] (if (number? c) (mx/scalar c) c)))
-   (if (= :direct (:type dep-type))
-     (mx/scalar 0.0)
-     (let [o (:offset dep-type)]
-       (if (number? o) (mx/scalar o) (if (= 0 o) (mx/scalar 0.0) o))))])
+  (case (:type dep-type)
+    :direct [(mx/scalar 1.0) (mx/scalar 0.0)]
+    :affine (let [c (:coefficient dep-type)
+                  o (:offset dep-type)]
+              ;; Only handle numeric or MLX array coefficients at runtime.
+              ;; Symbolic forms from schema extraction are not usable here.
+              (when (or (number? c) (mx/array? c))
+                [(if (number? c) (mx/scalar c) c)
+                 (cond (number? o) (mx/scalar o)
+                       (= 0 o) (mx/scalar 0.0)
+                       (mx/array? o) o
+                       :else (mx/scalar 0.0))]))
+    ;; :nonlinear or unknown — can't handle analytically
+    nil))
 
 (defn- kalman-init-belief
   "Initialize or predict Kalman belief for step i."
@@ -299,20 +309,21 @@
 
 (defn- kalman-obs-update
   "Pure Kalman observation update math.
-   Returns {:ll :new-belief} given current belief, obs value, obs variance, dep type."
+   Returns {:ll :new-belief} given current belief, obs value, obs variance, dep type.
+   Returns nil if dep-type is not resolvable (symbolic forms, nonlinear)."
   [belief obs-value obs-var dep-type]
-  (let [[loading offset] (resolve-loading-offset dep-type)
-        pred-obs (mx/add offset (mx/multiply loading (:mean belief)))
-        innov (mx/subtract obs-value pred-obs)
-        S (mx/add (mx/multiply loading (mx/multiply loading (:var belief))) obs-var)
-        K (mx/divide (mx/multiply loading (:var belief)) S)
-        ll (mx/multiply (mx/scalar -0.5)
-                        (mx/add (mx/scalar LOG-2PI)
-                                (mx/add (mx/log S)
-                                        (mx/divide (mx/multiply innov innov) S))))
-        new-mean (mx/add (:mean belief) (mx/multiply K innov))
-        new-var (mx/subtract (:var belief) (mx/multiply K (mx/multiply loading (:var belief))))]
-    {:ll ll :new-belief {:mean new-mean :var new-var}}))
+  (when-let [[loading offset] (resolve-loading-offset dep-type)]
+    (let [pred-obs (mx/add offset (mx/multiply loading (:mean belief)))
+          innov (mx/subtract obs-value pred-obs)
+          S (mx/add (mx/multiply loading (mx/multiply loading (:var belief))) obs-var)
+          K (mx/divide (mx/multiply loading (:var belief)) S)
+          ll (mx/multiply (mx/scalar -0.5)
+                          (mx/add (mx/scalar LOG-2PI)
+                                  (mx/add (mx/log S)
+                                          (mx/divide (mx/multiply innov innov) S))))
+          new-mean (mx/add (:mean belief) (mx/multiply K innov))
+          new-var (mx/subtract (:var belief) (mx/multiply K (mx/multiply loading (:var belief))))]
+      {:ll ll :new-belief {:mean new-mean :var new-var}})))
 
 (defn- make-kalman-handlers-core
   "Build Kalman handlers parameterized by mode.
@@ -366,21 +377,21 @@
                                 (let [s (cm/get-submap (:constraints state) addr)]
                                   (when (cm/has-value? s) (cm/get-value s))))]
                           (when obs-value
-                            (let [obs-var (mx/multiply (:sigma (:params dist)) (:sigma (:params dist)))
-                                  {:keys [ll new-belief]} (kalman-obs-update belief obs-value obs-var dep-type)
-                                  step-idx (get latent->idx latent)
-                                  state' (cond-> (-> state
-                                                     (assoc-in [:auto-kalman-beliefs latent] new-belief)
-                                                     (update :choices cm/set-value addr obs-value)
-                                                     (update :score #(mx/add % ll))
-                                                     (update :choices cm/set-value latent (:mean new-belief)))
-                                           (not regenerate?)
-                                           (update :weight #(mx/add % ll)))
-                                  noise-vars (:auto-kalman-noise-vars state')
-                                  state'' (if (and noise-vars (< (inc step-idx) n-steps))
-                                            (cascade-predictions steps step-idx state' noise-vars)
-                                            state')]
-                              [obs-value state'']))))))])
+                            (let [obs-var (mx/multiply (:sigma (:params dist)) (:sigma (:params dist)))]
+                              (when-let [{:keys [ll new-belief]} (kalman-obs-update belief obs-value obs-var dep-type)]
+                                (let [step-idx (get latent->idx latent)
+                                      state' (cond-> (-> state
+                                                         (assoc-in [:auto-kalman-beliefs latent] new-belief)
+                                                         (update :choices cm/set-value addr obs-value)
+                                                         (update :score #(mx/add % ll))
+                                                         (update :choices cm/set-value latent (:mean new-belief)))
+                                               (not regenerate?)
+                                               (update :weight #(mx/add % ll)))
+                                      noise-vars (:auto-kalman-noise-vars state')
+                                      state'' (if (and noise-vars (< (inc step-idx) n-steps))
+                                                (cascade-predictions steps step-idx state' noise-vars)
+                                                state')]
+                                  [obs-value state'']))))))))])
                obs-to-latent))]
     (merge latent-handlers obs-handlers)))
 
