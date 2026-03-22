@@ -165,7 +165,9 @@
                                 :executor execute-sub
                                 :param-store (::param-store (meta this))}
                                (fn [rt] (apply body-fn rt args)))
-        trace (make-result-trace gf args result)]
+        trace (make-result-trace gf args result)
+        ;; Tag trace with marginal score type so regenerate can match
+        trace (vary-meta trace assoc ::score-type :marginal)]
     (make-generate-result trace (:weight result) constraints (:choices result) result)))
 
 (defn- run-generate-compiled
@@ -303,8 +305,10 @@
                                 :old-splice-scores (::splice-scores (meta trace))
                                 :executor execute-sub
                                 :param-store (::param-store (meta this))}
-                               (fn [rt] (apply body-fn rt (:args trace))))]
-    (make-regen-result gf trace result old-score)))
+                               (fn [rt] (apply body-fn rt (:args trace))))
+        regen-result (make-regen-result gf trace result old-score)]
+    ;; Preserve marginal score type on the new trace
+    (update regen-result :trace vary-meta assoc ::score-type :marginal)))
 
 (defn- run-regen-compiled
   "L1: fully compiled regenerate (M2/M4)."
@@ -525,13 +529,13 @@
           _ (rng/seed! key)
           old-score (:score trace)]
       (cond
-        ;; L3.5: auto-analytical regenerate — only when a conjugate prior
-        ;; is actually selected. Otherwise the analytical handler marginalizes
-        ;; priors that should remain fixed, producing wrong scores.
+        ;; L3.5: auto-analytical regenerate — only when trace has marginal scoring.
+        ;; Case A (prior selected): handler returns nil, falls through to base
+        ;; Case B (prior NOT selected): replays old value with marginal LL
+        ;; Traces from simulate have joint LL (no ::score-type), so they fall
+        ;; through to the standard handler, preserving weight = 0 for empty selection.
         (and (:auto-regenerate-transition schema)
-             (some (fn [{:keys [prior-addr]}]
-                     (sel/selected? selection prior-addr))
-                   (:conjugate-pairs schema)))
+             (= :marginal (::score-type (meta trace))))
         (run-regen-analytical schema this trace key selection old-score body-fn this)
 
         ;; L1: fully compiled regenerate (M2/M4)
@@ -551,8 +555,10 @@
     (let [key (ensure-key this)
           _ (rng/seed! key)]
       (cond
-        ;; L3.5: auto-analytical assess (only when prior is free)
-        (analytical-applicable? schema choices)
+        ;; L3.5: auto-analytical assess — analytical obs handlers check
+        ;; constraints internally and return nil when not applicable.
+        (and (not (mx/in-grad?))
+             (:auto-handlers schema))
         (run-assess-analytical schema this args key choices body-fn this)
 
         ;; L1: fully compiled assess (M2/M4)
