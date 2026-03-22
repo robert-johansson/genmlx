@@ -47,33 +47,33 @@
 
 ;; --- Forward simulation ---
 
-(println "\n-- Forward simulation (8 timesteps) --")
+(println "\n-- Forward simulation (5 timesteps) --")
 (let [init (mx/scalar 0.0)
-      inputs (vec (repeat 8 (mx/scalar 0.0)))
+      inputs (vec (repeat 5 (mx/scalar 0.0)))
       trace (p/simulate (dyn/auto-key ssm) [init inputs])]
   (println "Trace structure: choices indexed [t :z] and [t :y]")
-  (doseq [t (range 8)]
+  (doseq [t (range 5)]
     (let [z (mx/item (cm/get-choice (:choices trace) [t :z]))
           y (mx/item (cm/get-choice (:choices trace) [t :y]))]
       (println (str "  t=" t "  z=" (.toFixed z 2) "  y=" (.toFixed y 2))))))
 
-;; --- Observations (true hidden states drift upward) ---
+;; --- Observations (true hidden states drift then return) ---
 
-(def true-states [0.3 0.8 1.5 2.0 1.7 1.2 0.6 0.1])
-(def obs-values  [0.5 1.2 1.8 2.5 1.5 0.9 0.3 -0.2])
+(def true-states [0.3 0.8 1.5 1.2 0.6])
+(def obs-values  [0.5 1.2 1.8 1.0 0.3])
 
 (def observations
   (reduce (fn [cm t]
             (cm/set-choice cm [t :y] (mx/scalar (nth obs-values t))))
           cm/EMPTY
-          (range 8)))
+          (range 5)))
 
 ;; --- Importance sampling to recover hidden states ---
 
-(println "\n-- IS filtering (500 particles) --")
+(println "\n-- IS filtering (2000 particles) --")
 (let [init (mx/scalar 0.0)
-      inputs (vec (repeat 8 (mx/scalar 0.0)))
-      result (is/importance-sampling {:samples 500}
+      inputs (vec (repeat 5 (mx/scalar 0.0)))
+      result (is/importance-sampling {:samples 2000}
                                      (dyn/auto-key ssm)
                                      [init inputs]
                                      observations)
@@ -83,7 +83,7 @@
   (println)
   (println "  t  true_z   obs_y   E[z|y]")
   (println "  ─  ──────   ─────   ──────")
-  (doseq [t (range 8)]
+  (doseq [t (range 5)]
     (let [z-vals (mapv #(mx/item (cm/get-choice (:choices %) [t :z])) traces)
           ez (weighted-mean z-vals log-ws)]
       (println (str "  " t "   "
