@@ -202,6 +202,25 @@
   :num-tests 30)
 
 ;; ---------------------------------------------------------------------------
+;; E13.5: EMPTY round-trip
+;; Law: Serialization preserves the identity element — the empty
+;;       choicemap serializes and deserializes to an empty choicemap.
+;; ---------------------------------------------------------------------------
+
+(println "\n-- identity element --")
+
+(check "EMPTY choicemap round-trips to empty"
+  (prop/for-all [_ (gen/return nil)]
+    (let [fake-trace (tr/make-trace {:gen-fn nil :args []
+                                     :choices cm/EMPTY
+                                     :retval nil
+                                     :score (mx/scalar 0.0)})
+          json-str (ser/save-choices fake-trace)
+          cm-restored (ser/load-choices json-str)]
+      (empty? (cm/addresses cm-restored))))
+  :num-tests 10)
+
+;; ---------------------------------------------------------------------------
 ;; Summary
 ;; ---------------------------------------------------------------------------
 
