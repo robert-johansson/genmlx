@@ -83,13 +83,14 @@
 
 (check "MALA: posterior mean near analytical"
   (prop/for-all [key gen-key]
-    (let [samples (mcmc/mala {:samples 200 :burn 50 :step-size 0.1
+    ;; step-size 1.0 gives ESS ~195/200 (vs ESS ~2 at 0.1)
+    (let [samples (mcmc/mala {:samples 200 :burn 50 :step-size 1.0
                               :addresses [:mu] :key key :compile? false}
                              gauss-model [] obs)
           mu-vals (mapv extract-mu samples)
           mean-mu (/ (reduce + mu-vals) (count mu-vals))]
-      (close? mean-mu posterior-mean 2.0)))
-  :num-tests 3)
+      (close? mean-mu posterior-mean 0.5)))
+  :num-tests 5)
 
 ;; ---------------------------------------------------------------------------
 ;; GM2. HMC: posterior mean near analytical
@@ -100,14 +101,14 @@
 
 (check "HMC: posterior mean near analytical"
   (prop/for-all [key gen-key]
-    (let [samples (mcmc/hmc {:samples 200 :burn 50 :step-size 0.1
+    (let [samples (mcmc/hmc {:samples 200 :burn 50 :step-size 1.0
                              :leapfrog-steps 5
                              :addresses [:mu] :key key :compile? false}
                             gauss-model [] obs)
           mu-vals (mapv extract-mu samples)
           mean-mu (/ (reduce + mu-vals) (count mu-vals))]
-      (close? mean-mu posterior-mean 1.5)))
-  :num-tests 3)
+      (close? mean-mu posterior-mean 0.5)))
+  :num-tests 5)
 
 ;; ---------------------------------------------------------------------------
 ;; GM3. MALA and HMC agree on posterior
@@ -118,10 +119,10 @@
 
 (check "MALA and HMC posterior means agree"
   (prop/for-all [key gen-key]
-    (let [mala-samples (mcmc/mala {:samples 200 :burn 50 :step-size 0.1
+    (let [mala-samples (mcmc/mala {:samples 200 :burn 50 :step-size 1.0
                                    :addresses [:mu] :key key :compile? false}
                                   gauss-model [] obs)
-          hmc-samples (mcmc/hmc {:samples 200 :burn 50 :step-size 0.1
+          hmc-samples (mcmc/hmc {:samples 200 :burn 50 :step-size 1.0
                                  :leapfrog-steps 5
                                  :addresses [:mu] :key key :compile? false}
                                 gauss-model [] obs)
@@ -130,8 +131,8 @@
           hmc-mean (/ (reduce + (mapv extract-mu hmc-samples))
                       (count hmc-samples))]
       ;; Both should be near the same posterior mean
-      (close? mala-mean hmc-mean 2.0)))
-  :num-tests 3)
+      (close? mala-mean hmc-mean 0.5)))
+  :num-tests 5)
 
 ;; ---------------------------------------------------------------------------
 ;; GM4. MALA samples are finite and in reasonable range
@@ -143,7 +144,7 @@
 
 (check "MALA: all samples finite and in posterior support"
   (prop/for-all [key gen-key]
-    (let [samples (mcmc/mala {:samples 50 :burn 10 :step-size 0.1
+    (let [samples (mcmc/mala {:samples 50 :burn 10 :step-size 1.0
                               :addresses [:mu] :key key :compile? false}
                              gauss-model [] obs)
           mu-vals (mapv extract-mu samples)]
