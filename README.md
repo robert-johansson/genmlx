@@ -50,8 +50,13 @@ Run the included examples:
 ```bash
 bun run --bun nbb examples/genmlx/linear_regression.cljs       # Bayesian regression (IS + MALA)
 bun run --bun nbb examples/genmlx/hidden_markov_model.cljs      # HMM with particle filtering
+bun run --bun nbb examples/genmlx/adaptive_hmc.cljs             # HMC with adaptive step-size
 bun run --bun nbb examples/genmlx/variational_inference.cljs    # VI vs MCMC comparison
+bun run --bun nbb examples/genmlx/analytical_elimination.cljs   # Auto-conjugacy detection (L3)
+bun run --bun nbb examples/genmlx/fit_api.cljs                  # One-call inference (L4)
 bun run --bun nbb examples/genmlx/compositional_models.cljs     # Splice, Map, Switch, GFI algebra
+bun run --bun nbb examples/genmlx/scan_time_series.cljs         # Scan combinator for SSMs
+bun run --bun nbb examples/genmlx/neural_probabilistic.cljs     # Neural networks + probabilistic models
 ```
 
 ### Define a model
