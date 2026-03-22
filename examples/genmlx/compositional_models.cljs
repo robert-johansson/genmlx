@@ -80,46 +80,58 @@
 ;; --- Part 3: Switch combinator (model selection) ---
 ;; Choose between different sub-models based on a discrete choice.
 
-(println "\n-- 3. Switch Combinator: Model Selection --")
+(println "\n-- 3. Model Selection via Marginal Likelihood --")
 
+;; Two competing models for the same data
 (def linear-model
-  (gen [x]
-    (let [slope (trace :slope (dist/gaussian 2 1))]
-      (trace :y (dist/gaussian (mx/multiply slope x) 0.5)))))
+  (dyn/auto-key
+    (gen [xs]
+      (let [slope     (trace :slope (dist/gaussian 0 5))
+            intercept (trace :intercept (dist/gaussian 0 5))]
+        (doseq [[j x] (map-indexed vector xs)]
+          (trace (keyword (str "y" j))
+                 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                        intercept) 0.5)))))))
 
 (def quadratic-model
-  (gen [x]
-    (let [a (trace :a (dist/gaussian 1 0.5))]
-      (trace :y (dist/gaussian (mx/multiply a (mx/multiply x x)) 0.5)))))
-
-(def model-selector
   (dyn/auto-key
-    (gen [x]
-      (let [;; Prior: 50/50 between linear and quadratic
-            choice (trace :model-choice (dist/bernoulli 0.5))]
-        ;; Branch on model choice
-        (if (> (mx/item choice) 0.5)
-          (splice :model linear-model x)
-          (splice :model quadratic-model x))))))
+    (gen [xs]
+      (let [a (trace :a (dist/gaussian 0 2))
+            b (trace :b (dist/gaussian 0 2))
+            c (trace :c (dist/gaussian 0 2))]
+        (doseq [[j x] (map-indexed vector xs)]
+          (let [xv (mx/scalar x)]
+            (trace (keyword (str "y" j))
+                   (dist/gaussian (mx/add (mx/add (mx/multiply a (mx/multiply xv xv))
+                                                  (mx/multiply b xv))
+                                          c) 0.5))))))))
 
-;; Generate data from the quadratic model (true: y = x^2)
-(def test-data
-  (cm/from-map {:y (mx/scalar 8.5)}))  ;; x=3 → y ≈ 9
+;; Data generated from y = x² (quadratic should win)
+(def xs-sel [1.0 2.0 3.0 4.0 5.0])
+(def ys-sel [1.1 3.9 9.2 15.8 25.3])  ;; ≈ x² + noise
 
-;; Compare models via importance sampling
-(println "  Data: x=3, y=8.5 (consistent with y=x²=9, not y=2x=6)")
-(let [n-samples 1000
-      {:keys [traces log-weights]}
-      (is/importance-sampling {:samples n-samples}
-                              model-selector [(mx/scalar 3.0)]
-                              (cm/from-map {:model (cm/from-map {:y (mx/scalar 8.5)})}))
-      ;; Count how many particles chose each model
-      choices (mapv #(mx/item (cm/get-choice (:choices %) [:model-choice])) traces)
-      n-linear (count (filter #(> % 0.5) choices))
-      n-quad   (- n-samples n-linear)]
-  (println (str "  Prior:     linear 50% / quadratic 50%"))
-  (println (str "  Posterior: linear " (.toFixed (* 100 (/ n-linear n-samples)) 0)
-               "% / quadratic " (.toFixed (* 100 (/ n-quad n-samples)) 0) "%")))
+(def obs-sel
+  (reduce (fn [cm [j y]]
+            (cm/set-choice cm [(keyword (str "y" j))] (mx/scalar y)))
+          cm/EMPTY
+          (map-indexed vector ys-sel)))
+
+;; Compare models via log marginal likelihood (IS estimate)
+(println "  Data: y ≈ x² at x = [1,2,3,4,5]")
+(let [n-particles 2000
+      lin-result (is/importance-sampling {:samples n-particles}
+                                         linear-model [xs-sel] obs-sel)
+      quad-result (is/importance-sampling {:samples n-particles}
+                                          quadratic-model [xs-sel] obs-sel)
+      log-ml-lin  (mx/item (:log-ml-estimate lin-result))
+      log-ml-quad (mx/item (:log-ml-estimate quad-result))
+      log-bf (- log-ml-quad log-ml-lin)]
+  (println (str "  log P(data | linear)    = " (.toFixed log-ml-lin 1)))
+  (println (str "  log P(data | quadratic) = " (.toFixed log-ml-quad 1)))
+  (println (str "  log Bayes factor        = " (.toFixed log-bf 1)
+               (cond (> log-bf 3) "  (strong evidence for quadratic)"
+                     (> log-bf 1) "  (moderate evidence for quadratic)"
+                     :else        "  (inconclusive)"))))
 
 ;; --- Part 4: Full GFI round-trip ---
 ;; Demonstrate the algebraic contracts: generate, update, project.
