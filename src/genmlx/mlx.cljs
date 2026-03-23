@@ -615,6 +615,20 @@
 ;; through these. Keeps side-effectful materialization confined to mlx.cljs.
 ;; ---------------------------------------------------------------------------
 
+(def ^:private jsc
+  "Bun JSC internals — exposes GC control, weak ref release, microtask drain."
+  (when (exists? js/Bun) (js/require "bun:jsc")))
+
+(defn jsc-cleanup!
+  "Trigger JSC garbage collection + microtask drain + weak ref cleanup.
+   Fires N-API destroy callbacks for dead MLX arrays, releasing Metal buffers.
+   Safe to call from synchronous code."
+  []
+  (when jsc
+    (.releaseWeakRefs jsc)
+    (.drainMicrotasks jsc)
+    (.gcAndSweep jsc)))
+
 (defn materialize!
   "Evaluate MLX arrays, materializing the computation graph.
    Use at inference/training loop boundaries to bound graph size."
@@ -654,6 +668,7 @@
         (vreset! result-vol result)
         (to-array arrays))))
     (when (> (get-cache-memory) cache-pressure-threshold)
+      (jsc-cleanup!)
       (clear-cache!))
     @result-vol))
 
@@ -684,14 +699,11 @@
       (.-gc js/globalThis)))
 
 (defn force-gc!
-  "Force a synchronous garbage collection cycle and immediately sweep dead
-   array wrappers to release Metal buffers. The sweep step is critical because
-   N-API finalizers are deferred to the event loop — without sweeping, Metal
-   buffers accumulate even after GC marks their JS wrappers as dead.
-   Uses Bun.gc(true) or global.gc() if available; sweep always runs."
+  "Force garbage collection and Metal buffer cleanup."
   []
-  (when gc-fn (gc-fn true))
-  (sweep-dead-arrays!))
+  (jsc-cleanup!)
+  (sweep-dead-arrays!)
+  (clear-cache!))
 
 (def ^:private DEFAULT-CACHE-LIMIT (* 256 1024 1024))
 
