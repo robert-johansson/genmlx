@@ -280,6 +280,7 @@
     :or {iterations 1000 wake-steps 1 sleep-steps 1 lr 0.001}}
    model guide args observations guide-addresses init-guide-params]
   (let [model (dyn/auto-key model)
+        guide (dyn/auto-key guide)
         ;; Auto-discover guide addresses if not provided
         guide-addresses (or guide-addresses
                             (discover-guide-addresses guide args))
