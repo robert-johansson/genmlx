@@ -231,6 +231,14 @@
          rejuvenation-selection sel/all}}
    model args observations-seq reference-trace]
   (let [model (dyn/auto-key model)
+        ;; Strip analytical handlers for particle generation — the analytical
+        ;; path returns deterministic posterior means, eliminating diversity.
+        ;; Particle methods need stochastic prior sampling for exploration.
+        particle-model (assoc model :schema
+                              (dissoc (:schema model)
+                                      :auto-handlers :conjugate-pairs
+                                      :has-conjugate? :analytical-plan
+                                      :auto-regenerate-transition))
         obs-vec (vec observations-seq)
         n-steps (count obs-vec)
         ref-idx 0]  ;; reference particle is always at index 0
@@ -250,7 +258,7 @@
           (if (zero? t)
             ;; Init step: reference trace at index 0, rest from prior
             (let [other-results (mapv (fn [_]
-                                        (let [r (p/generate model args obs-t)]
+                                        (let [r (p/generate particle-model args obs-t)]
                                           (mx/materialize! (:weight r) (:score (:trace r)))
                                           r))
                                       (range (dec particles)))
