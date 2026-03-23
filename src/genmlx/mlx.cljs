@@ -300,6 +300,15 @@
   ([a]      (.argsort core a))
   ([a axis] (.argsort core a axis)))
 
+(defn searchsorted
+  "Find insertion indices for values in a sorted 1D array.
+   Returns indices such that inserting values maintains sorted order.
+   side :left (default) returns first valid index, :right returns last."
+  ([sorted-arr values]
+   (.searchsorted core sorted-arr values))
+  ([sorted-arr values side]
+   (.searchsorted core sorted-arr values (= side :right))))
+
 (defn sort-arr
   "Sort array along the given axis (default: last axis).
    Requires custom MLX build with sort support."
