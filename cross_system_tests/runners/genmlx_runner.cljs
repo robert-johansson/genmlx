@@ -866,14 +866,15 @@
       (catch :default e
         #js {"id" (get spec "id") "error" (str e)}))))
 
-;; --- SSM model for SMC tests ---
+;; --- SSM model for SMC tests (lazy to avoid crash during module load) ---
 
 (def ssm-kernel
-  (dyn/auto-key
-    (gen [t state]
-      (let [x (trace :x (dist/gaussian (mx/scalar state) (mx/scalar 1)))]
-        (trace :y (dist/gaussian x (mx/scalar 0.5)))
-        x))))
+  (delay
+    (dyn/auto-key
+      (gen [t state]
+        (let [x (trace :x (dist/gaussian (mx/scalar state) (mx/scalar 1)))]
+          (trace :y (dist/gaussian x (mx/scalar 0.5)))
+          x)))))
 
 (defn run-smc-ssm
   "Run SMC on linear-Gaussian SSM using smc-unfold."
@@ -881,7 +882,7 @@
   (let [obs-seq (mapv (fn [y]
                         (cm/set-value (cm/choicemap) :y (mx/scalar y)))
                       observations)
-        result (smc/smc-unfold {:particles n-particles} ssm-kernel 0.0 obs-seq)
+        result (smc/smc-unfold {:particles n-particles} @ssm-kernel 0.0 obs-seq)
         log-ml (mx/item (:log-ml result))
         final-ess (:final-ess result)]
     {:log-ml log-ml :ess final-ess}))
@@ -898,6 +899,8 @@
     {:log-ml log-ml}))
 
 (defn eval-inference-smc [spec]
+  ;; Note: SMC crashes Bun when run from the full runner (all model defs + SMC
+  ;; exceed Metal buffer limits). Works standalone. Known Bun/nbb limitation.
   (let [algorithm   (get spec "algorithm")
         algo-params (get spec "algorithm_params")
         data        (get spec "data")
