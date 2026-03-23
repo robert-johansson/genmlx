@@ -27,11 +27,17 @@
 ;; --- Runner commands ---
 ;; Each runner reads {test_type, ...specs...} from stdin, writes JSON to stdout.
 
-(defn runner-cmd [system]
-  (case system
-    "gen_jl" ["julia" (str runners-dir "/gen_jl_runner.jl")]
-    "genjax" [venv-python (str runners-dir "/genjax_runner.py")]
-    "genmlx" ["bun" "run" "--bun" "nbb" (str runners-dir "/genmlx_runner.cljs")]))
+(defn runner-cmd
+  ([system] (runner-cmd system false))
+  ([system use-node?]
+   (case system
+     "gen_jl" ["julia" (str runners-dir "/gen_jl_runner.jl")]
+     "genjax" [venv-python (str runners-dir "/genjax_runner.py")]
+     "genmlx" (if use-node?
+                ;; Node.js fallback for SMC: Bun/JSC crashes on large SMC due to
+                ;; Metal pipeline leak (mlx#3297) + JSC GC interaction
+                ["npx" "nbb" (str runners-dir "/genmlx_runner.cljs")]
+                ["bun" "run" "--bun" "nbb" (str runners-dir "/genmlx_runner.cljs")]))))
 
 (defn run-system [system test-type spec-json output-file]
   (println (str "  Running " system "..."))
@@ -1142,16 +1148,22 @@
 
 (defn run-system-per-test
   "Run a system once per test to avoid OOM in long-running inference.
+   Uses Node.js for SMC tests (Bun/JSC crashes on large SMC, mlx#3297).
    Returns merged results as if it were a single run."
   [system tests out-file]
   (let [all-results (atom [])
         total (count tests)]
     (doseq [[idx test] (map-indexed vector tests)]
-      (print (str "    [" (inc idx) "/" total "] " (:id test) "... "))
-      (flush)
-      (let [single-spec (json/generate-string {:test_type "inference_quality"
+      (let [smc? (contains? #{"smc" "smc_single"} (:algorithm test))
+            use-node? (and (= system "genmlx") smc?)]
+        (print (str "    [" (inc idx) "/" total "] " (:id test)
+                    (when use-node? " [node]") "... "))
+        (flush))
+      (let [smc? (contains? #{"smc" "smc_single"} (:algorithm test))
+            use-node? (and (= system "genmlx") smc?)
+            single-spec (json/generate-string {:test_type "inference_quality"
                                                 :tests [test]})
-            cmd (runner-cmd system)]
+            cmd (runner-cmd system use-node?)]
         (try
           (let [result (p/shell {:in single-spec :out :string :err :string
                                   :dir (System/getProperty "user.dir")}
