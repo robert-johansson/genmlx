@@ -11,6 +11,17 @@
             [genmlx.combinators :as comb]))
 
 
+(defn- strip-analytical
+  "Strip analytical handlers from a model for particle-based inference.
+   The analytical path returns deterministic posterior means, eliminating
+   particle diversity. Particle methods need stochastic prior sampling."
+  [model]
+  (assoc model :schema
+         (dissoc (:schema model)
+                 :auto-handlers :conjugate-pairs
+                 :has-conjugate? :analytical-plan
+                 :auto-regenerate-transition)))
+
 (defn- residual-resample
   "Residual resampling: deterministically allocate floor(N * w_i) copies,
    then multinomially resample the remainder. Lower variance than systematic."
@@ -172,7 +183,7 @@
     :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0
          rejuvenation-selection sel/all}}
    model args observations-seq]
-  (let [model (dyn/auto-key model)
+  (let [model (-> model dyn/auto-key strip-analytical)
         obs-vec (vec observations-seq)
         n-steps (count obs-vec)]
     (loop [t 0
@@ -231,14 +242,7 @@
          rejuvenation-selection sel/all}}
    model args observations-seq reference-trace]
   (let [model (dyn/auto-key model)
-        ;; Strip analytical handlers for particle generation — the analytical
-        ;; path returns deterministic posterior means, eliminating diversity.
-        ;; Particle methods need stochastic prior sampling for exploration.
-        particle-model (assoc model :schema
-                              (dissoc (:schema model)
-                                      :auto-handlers :conjugate-pairs
-                                      :has-conjugate? :analytical-plan
-                                      :auto-regenerate-transition))
+        particle-model (strip-analytical model)
         obs-vec (vec observations-seq)
         n-steps (count obs-vec)
         ref-idx 0]  ;; reference particle is always at index 0
