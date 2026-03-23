@@ -707,7 +707,7 @@
              (let [[step-key next-key] (rng/split-or-nils rk)
                    {:keys [state n-accepted]} (vectorized-mh-step
                                                state score-fn std param-shape n-chains step-key)
-                   _ (when (zero? (mod i 50)) (mx/clear-cache!))
+                   _ (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
                    past-burn? (>= i burn)
                    keep? (and past-burn? (zero? (mod (- i burn) thin)))]
                (when (and callback keep?)
@@ -1669,7 +1669,7 @@
                    {:keys [state n-accepted]}
                    (vectorized-mala-step state score-fn grad-fn eps half-eps2 two-eps-sq
                                          n-chains step-key)
-                   _ (when (zero? (mod i 50)) (mx/clear-cache!))
+                   _ (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
                    past-burn? (>= i burn)
                    keep? (and past-burn? (zero? (mod (- i burn) thin)))]
                (when (and callback keep?)
@@ -2338,7 +2338,7 @@
                    {:keys [state n-accepted]}
                    (vectorized-hmc-step state neg-U-fn grad-fn eps half-eps half
                                         n-chains leapfrog-steps step-key)
-                   _ (when (zero? (mod i 50)) (mx/clear-cache!))
+                   _ (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
                    past-burn? (>= i burn)
                    keep? (and past-burn? (zero? (mod (- i burn) thin)))]
                (when (and callback keep?)

@@ -446,7 +446,7 @@
               resampled-state (resample-state new-state indices)
               _ (materialize-state! resampled-state)
               ;; 4. Periodic cleanup
-              _ (when (zero? (mod (inc t) 5)) (mx/clear-cache!))
+              _ (when (zero? (mod (inc t) 5)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
               _ (when callback (callback {:step t}))]
           (recur (inc t) resampled-state
                  (mx/add log-ml ml-inc) next-rk))))))
@@ -527,6 +527,7 @@
                                        rejuvenation-selection rejuv-key)]
           (when callback
             (callback {:step t :ess ess :resampled? resample?}))
+          (when (zero? (mod t 5)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
           (recur (inc t) vtrace (mx/add log-ml log-ml-inc) next-key))))))
 
 ;; ---------------------------------------------------------------------------

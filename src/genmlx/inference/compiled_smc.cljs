@@ -152,7 +152,7 @@
                 {:keys [particles state]}
                 (resample-particles new-particles new-state obs-log-prob
                                     resample-method noise t gumbel-noise tau-arr N)]
-            (when (zero? (mod (inc t) 5)) (mx/clear-cache!))
+            (when (zero? (mod (inc t) 5)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
             (when callback (callback {:step t :resampled? true}))
             (recur (inc t) particles state (mx/add log-ml ml-inc))))))))
 

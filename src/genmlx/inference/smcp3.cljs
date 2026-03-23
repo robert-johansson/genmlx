@@ -176,7 +176,7 @@
          :log-ml-estimate log-ml}
         (let [obs-t (nth obs-vec t)
               [step-key next-key] (rng/split-or-nils rk)
-              _ (when (and (pos? t) (zero? (mod t 10))) (mx/clear-cache!))]
+              _ (when (and (pos? t) (zero? (mod t 10))) (mx/sweep-dead-arrays!) (mx/clear-cache!))]
           (if (zero? t)
             ;; Init step
             (let [{:keys [traces log-weights log-ml-increment]}

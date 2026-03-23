@@ -102,6 +102,7 @@
                          (mx/item (mx/tidy-materialize #(elbo-estimate vp' log-density elbo-samples d vmapped-log-density iter-key))))]
           (when (and callback elbo-val)
             (callback {:iter i :elbo elbo-val :params (mx/->clj vp')}))
+          (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
           (recur (inc i) vp' opt-state'
                  (if elbo-val
                    (conj! elbo-history elbo-val)
@@ -181,6 +182,7 @@
                              (mx/item (mx/tidy-materialize #(mx/negative (neg-elbo-compiled vp')))))]
               (when (and callback elbo-val)
                 (callback {:iter i :elbo elbo-val :params (mx/->clj vp')}))
+              (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
               (recur (inc i) vp' opt-state'
                      (if elbo-val
                        (conj! elbo-history elbo-val)
@@ -391,7 +393,7 @@
         (let [[iter-key next-key] (rng/split-or-nils rk)
               {:keys [loss grad]} (grad-loss params iter-key)
               _ (mx/materialize! loss grad)
-              _ (when (zero? (mod i 50)) (mx/clear-cache!))
+              _ (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
               loss-val (mx/item loss)
               [params' opt-state'] (learn/adam-step params grad opt-state
                                                     {:lr learning-rate})]
@@ -445,6 +447,7 @@
                                                         {:lr learning-rate})]
               (when callback
                 (callback {:iter i :loss loss-val}))
+              (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
               (recur (inc i) params' opt-state'
                      (conj! losses loss-val)))))))))
 

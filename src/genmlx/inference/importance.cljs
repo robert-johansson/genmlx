@@ -22,10 +22,13 @@
   [{:keys [samples key] :or {samples 100}} model args observations]
   (let [model (dyn/auto-key model)
         keys (rng/split-n (rng/ensure-key key) samples)
-        results (mapv (fn [ki]
-                        (let [r (p/generate (dyn/with-key model ki) args observations)]
-                          (mx/materialize! (:weight r) (:score (:trace r)))
-                          r))
+        results (into []
+                      (map-indexed
+                       (fn [i ki]
+                         (let [r (p/generate (dyn/with-key model ki) args observations)]
+                           (mx/materialize! (:weight r) (:score (:trace r)))
+                           (when (zero? (mod (inc i) 50)) (mx/sweep-dead-arrays!))
+                           r)))
                       keys)
         traces     (mapv :trace results)
         log-weights (mapv :weight results)
