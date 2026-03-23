@@ -419,7 +419,7 @@
 
 ;; MAP for uniform(-10,10) + N(obs=5|mu,1): mu=5 (MLE, uniform is flat)
 (let [result (co/learn cg-model [true] cg-obs [:mu]
-               {:iterations 200 :lr 0.05 :log-every 50})]
+               {:iterations 500 :lr 0.05 :log-every 100})]
   (mx/materialize! (:params result))
   (assert-true "learn: compilation-level is :compiled-generate"
     (= :compiled-generate (:compilation-level result)))

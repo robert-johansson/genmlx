@@ -280,6 +280,7 @@
     :or {iterations 1000 wake-steps 1 sleep-steps 1 lr 0.001}}
    model guide args observations guide-addresses init-guide-params]
   (let [model (dyn/auto-key model)
+        guide (dyn/auto-key guide)
         ;; Auto-discover guide addresses if not provided
         guide-addresses (or guide-addresses
                             (discover-guide-addresses guide args))
@@ -318,7 +319,7 @@
                         _ (mx/materialize! loss grad)
                         [p' os'] (adam-step p grad os {:lr lr})]
                     (recur (inc j) p' os' (conj losses (mx/item loss)) sk2))))]
-          (when (zero? (mod i 50)) (mx/clear-cache!))
+          (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
           (when callback
             (callback {:iter i :wake-loss (last wl) :sleep-loss (last sl)}))
           (recur (inc i) params'' opt-st''

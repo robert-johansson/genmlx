@@ -707,7 +707,7 @@
              (let [[step-key next-key] (rng/split-or-nils rk)
                    {:keys [state n-accepted]} (vectorized-mh-step
                                                state score-fn std param-shape n-chains step-key)
-                   _ (when (zero? (mod i 50)) (mx/clear-cache!))
+                   _ (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
                    past-burn? (>= i burn)
                    keep? (and past-burn? (zero? (mod (- i burn) thin)))]
                (when (and callback keep?)
@@ -1669,7 +1669,7 @@
                    {:keys [state n-accepted]}
                    (vectorized-mala-step state score-fn grad-fn eps half-eps2 two-eps-sq
                                          n-chains step-key)
-                   _ (when (zero? (mod i 50)) (mx/clear-cache!))
+                   _ (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
                    past-burn? (>= i burn)
                    keep? (and past-burn? (zero? (mod (- i burn) thin)))]
                (when (and callback keep?)
@@ -2338,7 +2338,7 @@
                    {:keys [state n-accepted]}
                    (vectorized-hmc-step state neg-U-fn grad-fn eps half-eps half
                                         n-chains leapfrog-steps step-key)
-                   _ (when (zero? (mod i 50)) (mx/clear-cache!))
+                   _ (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
                    past-burn? (>= i burn)
                    keep? (and past-burn? (zero? (mod (- i burn) thin)))]
                (when (and callback keep?)
@@ -2760,9 +2760,15 @@
            ;; Find best restart
              (let [final-scores (score-fn params)
                    _ (mx/materialize! final-scores params)
-                   best-idx (mx/item (mx/argmax final-scores))
-                   best-params (mx/take-idx params (mx/array best-idx mx/int32))
-                   best-score (mx/item (mx/index final-scores best-idx))
+                   ;; Handle scalar (0-dim) scores — single restart or collapsed batch
+                   scalar? (= 0 (count (mx/shape final-scores)))
+                   best-idx (if scalar? 0 (mx/item (mx/argmax final-scores)))
+                   best-params-raw (mx/take-idx params (mx/array best-idx mx/int32))
+                   ;; take-idx may squeeze to 0-dim for D=1; ensure 1D for indexing
+                   best-params (if (= 0 (count (mx/shape best-params-raw)))
+                                 (mx/reshape best-params-raw [1])
+                                 best-params-raw)
+                   best-score (if scalar? (mx/item final-scores) (mx/item (mx/index final-scores best-idx)))
                  ;; Reconstruct trace from best params
                    final-cm (reduce (fn [cm [j addr]]
                                       (cm/set-choice cm [addr] (mx/index best-params j)))

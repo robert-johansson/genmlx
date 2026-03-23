@@ -35,12 +35,12 @@
      :resample-uniforms (rng/uniform k2 [T])}))
 
 ;; =========================================================================
-;; Systematic resampling on tensors (O(N²) via broadcasting)
+;; Systematic resampling on tensors (O(N) via searchsorted)
 ;; =========================================================================
 
 (defn systematic-resample-tensor
   "Systematic resampling: [N] log-weights + scalar uniform → resampled [N,K] particles.
-   Uses O(N²) broadcasting comparison instead of searchsorted.
+   Uses O(N) searchsorted for index computation.
 
    Returns {:particles [N,K] :ancestors [N] int32}."
   [particles log-weights uniform N]
@@ -48,10 +48,7 @@
         cumsum (mx/cumsum probs)
         indices-float (mx/astype (mx/arange 0 N 1) mx/float32)
         positions (mx/divide (mx/add indices-float uniform) (mx/scalar N))
-        cumsum-2d (mx/reshape cumsum [1 N])
-        positions-2d (mx/reshape positions [N 1])
-        lt-mask (mx/astype (mx/less cumsum-2d positions-2d) mx/float32)
-        ancestors (mx/astype (mx/sum lt-mask 1) mx/int32)
+        ancestors (mx/searchsorted cumsum positions)
         ancestors (mx/minimum ancestors (mx/scalar (dec N) mx/int32))
         resampled (mx/take-idx particles ancestors 0)]
     {:particles resampled :ancestors ancestors}))
@@ -155,7 +152,7 @@
                 {:keys [particles state]}
                 (resample-particles new-particles new-state obs-log-prob
                                     resample-method noise t gumbel-noise tau-arr N)]
-            (when (zero? (mod (inc t) 5)) (mx/clear-cache!))
+            (when (zero? (mod (inc t) 5)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
             (when callback (callback {:step t :resampled? true}))
             (recur (inc t) particles state (mx/add log-ml ml-inc))))))))
 

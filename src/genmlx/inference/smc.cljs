@@ -11,6 +11,17 @@
             [genmlx.combinators :as comb]))
 
 
+(defn- strip-analytical
+  "Strip analytical handlers from a model for particle-based inference.
+   The analytical path returns deterministic posterior means, eliminating
+   particle diversity. Particle methods need stochastic prior sampling."
+  [model]
+  (assoc model :schema
+         (dissoc (:schema model)
+                 :auto-handlers :conjugate-pairs
+                 :has-conjugate? :analytical-plan
+                 :auto-regenerate-transition)))
+
 (defn- residual-resample
   "Residual resampling: deterministically allocate floor(N * w_i) copies,
    then multinomially resample the remainder. Lower variance than systematic."
@@ -172,7 +183,7 @@
     :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0
          rejuvenation-selection sel/all}}
    model args observations-seq]
-  (let [model (dyn/auto-key model)
+  (let [model (-> model dyn/auto-key strip-analytical)
         obs-vec (vec observations-seq)
         n-steps (count obs-vec)]
     (loop [t 0
@@ -231,6 +242,7 @@
          rejuvenation-selection sel/all}}
    model args observations-seq reference-trace]
   (let [model (dyn/auto-key model)
+        particle-model (strip-analytical model)
         obs-vec (vec observations-seq)
         n-steps (count obs-vec)
         ref-idx 0]  ;; reference particle is always at index 0
@@ -250,7 +262,7 @@
           (if (zero? t)
             ;; Init step: reference trace at index 0, rest from prior
             (let [other-results (mapv (fn [_]
-                                        (let [r (p/generate model args obs-t)]
+                                        (let [r (p/generate particle-model args obs-t)]
                                           (mx/materialize! (:weight r) (:score (:trace r)))
                                           r))
                                       (range (dec particles)))
@@ -434,7 +446,7 @@
               resampled-state (resample-state new-state indices)
               _ (materialize-state! resampled-state)
               ;; 4. Periodic cleanup
-              _ (when (zero? (mod (inc t) 5)) (mx/clear-cache!))
+              _ (when (zero? (mod (inc t) 5)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
               _ (when callback (callback {:step t}))]
           (recur (inc t) resampled-state
                  (mx/add log-ml ml-inc) next-rk))))))
@@ -515,6 +527,7 @@
                                        rejuvenation-selection rejuv-key)]
           (when callback
             (callback {:step t :ess ess :resampled? resample?}))
+          (when (zero? (mod t 5)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
           (recur (inc t) vtrace (mx/add log-ml log-ml-inc) next-key))))))
 
 ;; ---------------------------------------------------------------------------

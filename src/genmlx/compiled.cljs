@@ -748,7 +748,8 @@
 
 (defn build-site-step
   "Build the reduce step function for one trace site using noise transforms.
-   Returns (fn [{:keys [values score key]} values-map args-vec] -> state)
+   Noise is pre-generated OUTSIDE mx/compile-fn and passed in via noise-array.
+   Returns (fn [{:keys [values score]} site-idx noise-array args-vec] -> state)
    or nil if the site can't use noise transforms."
   [site-spec]
   (let [{:keys [addr compiled-args dist-type]} site-spec
@@ -756,45 +757,36 @@
     (when nt
       (cond
         (:noise-fn nt)
-        ;; Standard distribution: generate noise, transform, score
-        (let [noise-fn (:noise-fn nt)
-              transform-fn (:transform nt)
+        ;; Standard distribution: noise pre-generated, transform + score inside compiled fn
+        (let [transform-fn (:transform nt)
               log-prob-fn (:log-prob nt)]
-          (fn [{:keys [values score key]} args-vec]
+          (fn [{:keys [values score]} site-idx noise-array args-vec]
             (let [eval-args (mapv #(% values args-vec) compiled-args)
-                  [k1 k2] (rng/split key)
-                  noise (noise-fn k2)
+                  noise (mx/index noise-array site-idx)
                   value (apply transform-fn noise eval-args)
                   lp (apply log-prob-fn value eval-args)]
               {:values (assoc values addr value)
-               :score (mx/add score lp)
-               :key k1})))
+               :score (mx/add score lp)})))
 
         (:args-noise-fn nt)
-        ;; Dynamic-shape noise (iid-gaussian): noise depends on eval-args
-        (let [args-noise-fn (:args-noise-fn nt)
-              transform-fn (:transform nt)
+        ;; Dynamic-shape noise: noise pre-generated outside, passed in
+        (let [transform-fn (:transform nt)
               log-prob-fn (:log-prob nt)]
-          (fn [{:keys [values score key]} args-vec]
+          (fn [{:keys [values score]} site-idx noise-array args-vec]
             (let [eval-args (mapv #(% values args-vec) compiled-args)
-                  [k1 k2] (rng/split key)
-                  noise (args-noise-fn eval-args k2)
+                  noise (mx/index noise-array site-idx)
                   value (apply transform-fn noise eval-args)
                   lp (apply log-prob-fn value eval-args)]
               {:values (assoc values addr value)
-               :score (mx/add score lp)
-               :key k1})))
+               :score (mx/add score lp)})))
 
         :else
-        ;; Delta: no noise, value = first arg, lp = 0 (in simulate, value always matches)
-        ;; Still consume a key split for PRNG equivalence with handler
-        (fn [{:keys [values score key]} args-vec]
+        ;; Delta: no noise, value = first arg, lp = 0
+        (fn [{:keys [values score]} _site-idx _noise-array args-vec]
           (let [eval-args (mapv #(% values args-vec) compiled-args)
-                [k1 _k2] (rng/split key)
                 value (first eval-args)]
             {:values (assoc values addr value)
-             :score score ;; delta log-prob is 0 in simulate
-             :key k1}))))))
+             :score score}))))))
 
 (defn prepare-static-sites
   "Common pipeline for static model compilation (M2).
@@ -816,14 +808,36 @@
            :n-sites (count static-sites)
            :binding-env binding-env})))))
 
+(defn- site-noise-fn
+  "Return the noise-generation function for a site-spec, or nil for delta."
+  [site-spec]
+  (let [nt (get noise-transforms-full (:dist-type site-spec))]
+    (when nt
+      (or (:noise-fn nt) (:args-noise-fn nt)))))
+
+(defn- generate-site-noise
+  "Pre-generate noise for all sites OUTSIDE mx/compile-fn.
+   Returns a flat JS array of noise values (one per site, nil for delta sites)."
+  [site-specs key]
+  (let [n (count site-specs)]
+    (loop [i 0, k key, noise-vals (transient [])]
+      (if (>= i n)
+        (mx/stack (persistent! noise-vals))
+        (let [[k1 k2] (rng/split k)
+              nfn (site-noise-fn (nth site-specs i))
+              v (if nfn (nfn k2) (mx/scalar 0.0))]
+          (recur (inc i) k1 (conj! noise-vals v)))))))
+
 (defn make-compiled-simulate
   "Build a compiled simulate function from a gen schema and source.
 
-   Returns (fn [key args-vec] -> {:values {addr->val} :score :retval :key})
+   Returns (fn [key args-vec] -> {:values {addr->val} :score :retval})
    or nil if the model can't be compiled.
 
    Uses noise transforms for inline sampling/scoring (bypasses multimethod
    dispatch). Wraps in mx/compile-fn for single Metal kernel dispatch.
+   Noise is generated OUTSIDE mx/compile-fn to avoid caching (compile-fn
+   freezes random ops). Follows the same pattern as compiled MCMC chains.
 
    Compilation fails (returns nil) when:
    - Schema is not static (dynamic addresses, branches, loops)
@@ -835,14 +849,14 @@
              (prepare-static-sites schema source)]
     (let [step-fns (mapv build-site-step site-specs)]
       (when (and (every? some? step-fns) retval-fn)
-        ;; Build the inner pure function (all MLX ops, no multimethod dispatch)
+        ;; Build the inner pure function: takes pre-generated noise array
         (let [inner-fn
-              (fn [key args-vec]
+              (fn [noise-array args-vec]
                 (let [result
-                      (reduce
-                       (fn [state step-fn]
-                         (step-fn state args-vec))
-                       {:values {} :score (mx/scalar 0.0) :key key}
+                      (reduce-kv
+                       (fn [state idx step-fn]
+                         (step-fn state idx noise-array args-vec))
+                       {:values {} :score (mx/scalar 0.0)}
                        step-fns)
                       vals (mapv #(get (:values result) %) addrs)]
                   ;; Return flat JS array: [v0 v1 ... vN score]
@@ -859,26 +873,31 @@
               compiled-inner
               (if has-dynamic-noise?
                 ;; Raw noise transforms — still faster than multimethod dispatch
-                (fn [key args] (inner-fn key args))
+                (fn [noise args] (inner-fn noise args))
                 (case n-params
-                  0 (let [f (fn [key] (inner-fn key []))
+                  0 (let [f (fn [noise] (inner-fn noise []))
                           cf (mx/compile-fn f)]
-                      (fn [key _args] (cf key)))
-                  1 (let [f (fn [key a0] (inner-fn key [a0]))
+                      (fn [noise _args] (cf noise)))
+                  1 (let [f (fn [noise a0] (inner-fn noise [a0]))
                           cf (mx/compile-fn f)]
-                      (fn [key args] (cf key (nth args 0))))
-                  2 (let [f (fn [key a0 a1] (inner-fn key [a0 a1]))
+                      (fn [noise args] (cf noise (nth args 0))))
+                  2 (let [f (fn [noise a0 a1] (inner-fn noise [a0 a1]))
                           cf (mx/compile-fn f)]
-                      (fn [key args] (cf key (nth args 0) (nth args 1))))
-                  3 (let [f (fn [key a0 a1 a2] (inner-fn key [a0 a1 a2]))
+                      (fn [noise args] (cf noise (nth args 0) (nth args 1))))
+                  3 (let [f (fn [noise a0 a1 a2] (inner-fn noise [a0 a1 a2]))
                           cf (mx/compile-fn f)]
-                      (fn [key args] (cf key (nth args 0) (nth args 1) (nth args 2))))
+                      (fn [noise args] (cf noise (nth args 0) (nth args 1) (nth args 2))))
                   ;; >3 params: no mx/compile-fn, use raw noise transforms
-                  (fn [key args] (inner-fn key args))))]
+                  (fn [noise args] (inner-fn noise args))))]
           ;; Outer wrapper: GenMLX interface
+          ;; Noise generated OUTSIDE compile-fn — fresh per call
           (fn compiled-simulate [key args-vec]
             (let [mlx-args (ensure-mlx-args args-vec)
-                  result (compiled-inner key mlx-args)
+                  noise (generate-site-noise site-specs key)
+                  ;; Arity mismatch (e.g. combinator passthrough) → uncompiled path
+                  result (if (not= (count mlx-args) n-params)
+                           (inner-fn noise mlx-args)
+                           (compiled-inner noise mlx-args))
                   ;; Unpack flat JS array → values map
                   values (loop [i 0 m {}]
                            (if (= i n-sites)
@@ -1076,28 +1095,28 @@
           n-sites (count compiled-sites)]
       (when (every? some? step-fns)
         (let [inner-fn
-              (fn [key args-vec]
+              (fn [noise-array args-vec]
                 (let [result
-                      (reduce
-                       (fn [state step-fn]
-                         (step-fn state args-vec))
-                       {:values {} :score (mx/scalar 0.0) :key key}
+                      (reduce-kv
+                       (fn [state idx step-fn]
+                         (step-fn state idx noise-array args-vec))
+                       {:values {} :score (mx/scalar 0.0)}
                        step-fns)
                       vals (mapv #(get (:values result) %) addrs)]
                   (to-array (conj vals (:score result)))))
               n-params (count (first source))
               ;; mx/compile-fn for 0-param models (no risk of complex args).
-              ;; For models with params, use raw noise transforms (still
-              ;; faster than multimethod dispatch, just without Metal fusion).
+              ;; Noise generated outside to avoid compile-fn caching.
               compiled-inner
               (if (zero? n-params)
-                (let [f (fn [key] (inner-fn key []))
+                (let [f (fn [noise] (inner-fn noise []))
                       cf (mx/compile-fn f)]
-                  (fn [key _args] (cf key)))
-                (fn [key args] (inner-fn key args)))]
+                  (fn [noise _args] (cf noise)))
+                (fn [noise args] (inner-fn noise args)))]
           {:fn (fn compiled-prefix [key args-vec]
                  (let [mlx-args (ensure-numeric-mlx-args args-vec)
-                       result (compiled-inner key mlx-args)
+                       noise (generate-site-noise compiled-sites key)
+                       result (compiled-inner noise mlx-args)
                        values (loop [i 0 m {}]
                                 (if (= i n-sites)
                                   m
@@ -1387,23 +1406,23 @@
       (when (every? some? step-fns)
         (let [n-sites (count site-specs)
               inner-fn
-              (fn [key args-vec]
+              (fn [noise-array args-vec]
                 (let [result
-                      (reduce
-                       (fn [state step-fn]
-                         (step-fn state args-vec))
-                       {:values {} :score (mx/scalar 0.0) :key key}
+                      (reduce-kv
+                       (fn [state idx step-fn]
+                         (step-fn state idx noise-array args-vec))
+                       {:values {} :score (mx/scalar 0.0)}
                        step-fns)
                       vals (mapv #(get (:values result) %) addrs)]
                   (to-array (conj vals (:score result)))))
-              ;; Skip mx/compile-fn for M4 — mx/where args vary per call
-              ;; and compile-fn traces with fixed values on first call.
-              ;; Raw noise transforms still bypass multimethod dispatch.
+              ;; Skip mx/compile-fn for M4 — mx/where args vary per call.
+              ;; Noise generated outside for consistency with M2/M3.
               compiled-inner
-              (fn [key args] (inner-fn key args))]
+              (fn [noise args] (inner-fn noise args))]
           (fn compiled-branch-simulate [key args-vec]
             (let [mlx-args (ensure-mlx-args args-vec)
-                  result (compiled-inner key mlx-args)
+                  noise (generate-site-noise site-specs key)
+                  result (compiled-inner noise mlx-args)
                   values (loop [i 0 m {}]
                            (if (= i n-sites)
                              m

@@ -19,28 +19,17 @@
 (defn systematic-resample-indices
   "Systematic resampling from [N]-shaped log-weights.
    Returns [N] int32 MLX array of ancestor indices.
-   GPU-accelerated: uses cumsum + broadcasting (no JS loops).
-   Note: creates [N,N] temporary matrix, so O(N^2) memory.
-   Fine for N up to ~20K. For larger N, would need searchsorted."
+   GPU-accelerated: uses cumsum + searchsorted (O(N) memory and compute)."
   [log-weights n key]
   (let [log-probs (mx/subtract log-weights (mx/logsumexp log-weights))
         probs     (mx/exp log-probs)
-        ;; Cumulative sum on GPU: [N] array
         cdf       (mx/cumsum probs)
-        ;; Systematic thresholds: u0 + j/N for j=0..N-1
         u0        (mx/divide (rng/uniform (rng/ensure-key key) [1])
                              (mx/scalar n))
         thresholds (mx/add u0 (mx/divide (mx/arange 0 n 1)
                                           (mx/scalar (float n))))
-        ;; For each threshold j, find smallest i where cdf[i] >= threshold[j].
-        ;; Equivalent: count how many cdf values are strictly less than threshold.
-        ;; cdf [N,1] < thresholds [1,N] => [N,N] bool matrix
-        ;; sum along axis 0 gives the index for each threshold.
-        lt      (mx/less (mx/reshape cdf [n 1])
-                         (mx/reshape thresholds [1 n]))
-        indices (mx/sum lt 0)
-        ;; Clamp to [0, N-1] for safety
-        indices (mx/minimum indices (mx/scalar (dec n)))]
+        indices   (mx/searchsorted cdf thresholds)
+        indices   (mx/minimum indices (mx/scalar (dec n)))]
     (.astype indices mx/int32)))
 
 (defn systematic-resample-indices-deterministic
@@ -55,10 +44,8 @@
         u0-scaled (mx/divide u0 (mx/scalar n))
         thresholds (mx/add u0-scaled (mx/divide (mx/arange 0 n 1)
                                                   (mx/scalar (float n))))
-        lt      (mx/less (mx/reshape cdf [n 1])
-                         (mx/reshape thresholds [1 n]))
-        indices (mx/sum lt 0)
-        indices (mx/minimum indices (mx/scalar (dec n)))]
+        indices   (mx/searchsorted cdf thresholds)
+        indices   (mx/minimum indices (mx/scalar (dec n)))]
     (.astype indices mx/int32)))
 
 ;; ---------------------------------------------------------------------------

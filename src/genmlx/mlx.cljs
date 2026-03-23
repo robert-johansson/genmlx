@@ -300,6 +300,15 @@
   ([a]      (.argsort core a))
   ([a axis] (.argsort core a axis)))
 
+(defn searchsorted
+  "Find insertion indices for values in a sorted 1D array.
+   Returns indices such that inserting values maintains sorted order.
+   side :left (default) returns first valid index, :right returns last."
+  ([sorted-arr values]
+   (.searchsorted core sorted-arr values))
+  ([sorted-arr values side]
+   (.searchsorted core sorted-arr values (= side :right))))
+
 (defn sort-arr
   "Sort array along the given axis (default: last axis).
    Requires custom MLX build with sort support."
@@ -536,17 +545,37 @@
 ;; Transforms
 ;; ---------------------------------------------------------------------------
 
+(def ^:private compile-generation
+  "Monotonic counter incremented on each compile-clear-cache! call.
+   Compiled functions compare their birth generation against this to
+   detect cache invalidation and recompile transparently."
+  (atom 0))
+
 (defn compile-fn
-  ([f]    (.compile core f))
+  "Wrap f in mx/compile-fn with auto-recompilation on cache clear.
+   If compile-clear-cache! has been called since this function was compiled,
+   the next invocation transparently recompiles — no crash, no manual
+   intervention. Cost: one atom deref per call (negligible)."
+  ([f]    (compile-fn f false))
   ([f shapeless?]
-   (if shapeless?
-     (.compile core f true)
-     (.compile core f))))
+   (let [compile! (if shapeless?
+                    #(.compile core f true)
+                    #(.compile core f))
+         cf-ref (atom (compile!))
+         gen-ref (atom @compile-generation)]
+     (fn [& args]
+       (when (not= @gen-ref @compile-generation)
+         (reset! cf-ref (compile!))
+         (reset! gen-ref @compile-generation))
+       (apply @cf-ref args)))))
 
 (defn compile-clear-cache!
-  "Clear all compiled function caches, releasing associated Metal resources."
+  "Clear all compiled function caches, releasing associated Metal resources.
+   Safe to call at any time — compiled functions transparently recompile
+   on next use via the compile-generation counter."
   []
-  (.compileClearCache core))
+  (.compileClearCache core)
+  (swap! compile-generation inc))
 
 (defn vmap
   ([f]                     (.vmap core f))
@@ -606,6 +635,20 @@
 ;; through these. Keeps side-effectful materialization confined to mlx.cljs.
 ;; ---------------------------------------------------------------------------
 
+(def ^:private jsc
+  "Bun JSC internals — exposes GC control, weak ref release, microtask drain."
+  (when (exists? js/Bun) (js/require "bun:jsc")))
+
+(defn jsc-cleanup!
+  "Trigger JSC garbage collection + microtask drain + weak ref cleanup.
+   Fires N-API destroy callbacks for dead MLX arrays, releasing Metal buffers.
+   Safe to call from synchronous code."
+  []
+  (when jsc
+    (.releaseWeakRefs jsc)
+    (.drainMicrotasks jsc)
+    (.gcAndSweep jsc)))
+
 (defn materialize!
   "Evaluate MLX arrays, materializing the computation graph.
    Use at inference/training loop boundaries to bound graph size."
@@ -645,6 +688,7 @@
         (vreset! result-vol result)
         (to-array arrays))))
     (when (> (get-cache-memory) cache-pressure-threshold)
+      (jsc-cleanup!)
       (clear-cache!))
     @result-vol))
 
@@ -675,14 +719,14 @@
       (.-gc js/globalThis)))
 
 (defn force-gc!
-  "Force a synchronous garbage collection cycle and immediately sweep dead
-   array wrappers to release Metal buffers. The sweep step is critical because
-   N-API finalizers are deferred to the event loop — without sweeping, Metal
-   buffers accumulate even after GC marks their JS wrappers as dead.
-   Uses Bun.gc(true) or global.gc() if available; sweep always runs."
+  "Force garbage collection and Metal buffer cleanup.
+   Clears compiled function caches too — compiled functions transparently
+   recompile on next use, so this is safe."
   []
-  (when gc-fn (gc-fn true))
-  (sweep-dead-arrays!))
+  (jsc-cleanup!)
+  (sweep-dead-arrays!)
+  (clear-cache!)
+  (compile-clear-cache!))
 
 (def ^:private DEFAULT-CACHE-LIMIT (* 256 1024 1024))
 

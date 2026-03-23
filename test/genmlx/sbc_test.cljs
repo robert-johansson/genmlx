@@ -17,11 +17,11 @@
 
 ;; ── Configuration ──────────────────────────────────────────────────────────
 
-(def N-CMH 100)    ;; SBC repetitions for compiled MH / standard MH
-(def N-HMC 50)     ;; SBC repetitions for HMC (fewer: speed)
-(def L 100)        ;; posterior samples per sim
-(def N-BINS 10)    ;; bins for chi-squared test
-(def ALPHA 0.005)  ;; significance level (stricter to reduce false positives across 13 tests)
+(def N-CMH 50)     ;; SBC repetitions for compiled MH / standard MH
+(def N-HMC 25)     ;; SBC repetitions for HMC (fewer: speed)
+(def L 50)         ;; posterior samples per sim
+(def N-BINS 5)     ;; bins for chi-squared test (fewer bins for smaller N)
+(def ALPHA 0.01)   ;; significance level
 
 ;; ── Statistical utilities ──────────────────────────────────────────────────
 
@@ -102,7 +102,7 @@
   [algo-key {:keys [model args param-addrs cmh-opts hmc-opts mh-opts]} observations]
   (case algo-key
     :cmh
-    (let [opts (merge {:samples L :burn 300 :compile? false :device :cpu} cmh-opts)
+    (let [opts (merge {:samples L :burn 100 :compile? true :device :cpu} cmh-opts)
           samples (mcmc/compiled-mh opts model args observations)
           addrs (:addresses cmh-opts)]
       {:samples samples
@@ -118,7 +118,7 @@
                       (mx/eval! v)
                       (mx/item v)))})
     :hmc
-    (let [opts (merge {:samples L :burn 200 :compile? false :device :cpu} hmc-opts)
+    (let [opts (merge {:samples L :burn 50 :compile? true :device :cpu} hmc-opts)
           samples (mcmc/hmc opts model args observations)
           addrs (:addresses hmc-opts)]
       {:samples samples

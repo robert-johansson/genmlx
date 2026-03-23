@@ -227,7 +227,7 @@
                 (adev-gradient {:n-samples n-samples :baseline baseline}
                                gf args cost-fn param-names params))
               _ (mx/materialize! loss grad)
-              _ (when (zero? (mod i 50)) (mx/clear-cache!))
+              _ (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
               loss-val (mx/item loss)
               new-baseline (when baseline-decay
                              (if baseline
