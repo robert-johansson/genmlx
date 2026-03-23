@@ -545,17 +545,37 @@
 ;; Transforms
 ;; ---------------------------------------------------------------------------
 
+(def ^:private compile-generation
+  "Monotonic counter incremented on each compile-clear-cache! call.
+   Compiled functions compare their birth generation against this to
+   detect cache invalidation and recompile transparently."
+  (atom 0))
+
 (defn compile-fn
-  ([f]    (.compile core f))
+  "Wrap f in mx/compile-fn with auto-recompilation on cache clear.
+   If compile-clear-cache! has been called since this function was compiled,
+   the next invocation transparently recompiles — no crash, no manual
+   intervention. Cost: one atom deref per call (negligible)."
+  ([f]    (compile-fn f false))
   ([f shapeless?]
-   (if shapeless?
-     (.compile core f true)
-     (.compile core f))))
+   (let [compile! (if shapeless?
+                    #(.compile core f true)
+                    #(.compile core f))
+         cf-ref (atom (compile!))
+         gen-ref (atom @compile-generation)]
+     (fn [& args]
+       (when (not= @gen-ref @compile-generation)
+         (reset! cf-ref (compile!))
+         (reset! gen-ref @compile-generation))
+       (apply @cf-ref args)))))
 
 (defn compile-clear-cache!
-  "Clear all compiled function caches, releasing associated Metal resources."
+  "Clear all compiled function caches, releasing associated Metal resources.
+   Safe to call at any time — compiled functions transparently recompile
+   on next use via the compile-generation counter."
   []
-  (.compileClearCache core))
+  (.compileClearCache core)
+  (swap! compile-generation inc))
 
 (defn vmap
   ([f]                     (.vmap core f))
@@ -699,11 +719,14 @@
       (.-gc js/globalThis)))
 
 (defn force-gc!
-  "Force garbage collection and Metal buffer cleanup."
+  "Force garbage collection and Metal buffer cleanup.
+   Clears compiled function caches too — compiled functions transparently
+   recompile on next use, so this is safe."
   []
   (jsc-cleanup!)
   (sweep-dead-arrays!)
-  (clear-cache!))
+  (clear-cache!)
+  (compile-clear-cache!))
 
 (def ^:private DEFAULT-CACHE-LIMIT (* 256 1024 1024))
 
