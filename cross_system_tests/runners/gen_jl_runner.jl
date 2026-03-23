@@ -802,9 +802,9 @@ function eval_inference(spec)
     try
         if algorithm == "importance_sampling"
             n_particles = get(algo_params, "n_particles", 1000)
-            (traces, log_weights, _) = importance_sampling(model, args, obs_cm, n_particles)
-            # Compute log-ML estimate
-            log_ml = logsumexp(log_weights) - log(n_particles)
+            (traces, log_weights, lml_estimate) = importance_sampling(model, args, obs_cm, n_particles)
+            # Use Gen.jl's built-in log-ML estimate (third return value)
+            log_ml = lml_estimate
             # Compute weighted mean
             max_w = maximum(log_weights)
             weights = exp.(log_weights .- max_w)
