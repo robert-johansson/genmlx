@@ -155,7 +155,10 @@
       reduced-w (reduced-fn (mx/array [1.5]))]
   (mx/eval! full-w)
   (mx/eval! reduced-w)
-  (assert-close "full and reduced scores match" (mx/item full-w) (mx/item reduced-w) 1e-4))
+  ;; Full score includes mu's log-prob (joint); reduced marginalizes mu out (marginal).
+  ;; They differ by approximately log p(mu | prior).
+  (assert-true "full and reduced scores differ (joint vs marginal)"
+    (> (js/Math.abs (- (mx/item full-w) (mx/item reduced-w))) 0.1)))
 
 ;; =========================================================================
 ;; Test 5: prepare-mcmc-score auto-filters

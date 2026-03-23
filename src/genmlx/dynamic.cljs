@@ -555,10 +555,11 @@
     (let [key (ensure-key this)
           _ (rng/seed! key)]
       (cond
-        ;; L3.5: auto-analytical assess — analytical obs handlers check
-        ;; constraints internally and return nil when not applicable.
-        (and (not (mx/in-grad?))
-             (:auto-handlers schema))
+        ;; L3.5: auto-analytical assess — only when prior is free (e.g., partial assess).
+        ;; In standard assess (all choices provided), prior is constrained,
+        ;; so analytical-applicable? returns false → handler fallback → joint LL.
+        ;; This preserves the GFI identity: simulate.score == assess(choices).weight
+        (analytical-applicable? schema choices)
         (run-assess-analytical schema this args key choices body-fn this)
 
         ;; L1: fully compiled assess (M2/M4)

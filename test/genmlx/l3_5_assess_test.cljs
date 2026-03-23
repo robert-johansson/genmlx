@@ -1,9 +1,9 @@
 (ns genmlx.l3-5-assess-test
   "Level 3.5 WP-1: Assess auto-handler integration tests.
 
-   Verifies that p/assess uses analytical elimination (marginal LL)
-   when conjugate structure is detected, and falls back to standard
-   joint LL when no conjugate structure exists.
+   Verifies that p/assess returns joint LL (sum of all log-probs) for
+   all models — conjugate and non-conjugate alike. The GFI identity:
+   simulate.score == assess(choices).weight must hold.
 
    Run: bun run --bun nbb test/genmlx/l3_5_assess_test.cljs"
   (:require [genmlx.gen :refer [gen]]
@@ -50,25 +50,28 @@
   (boolean (:auto-handlers (:schema gf))))
 
 ;; ---------------------------------------------------------------------------
-;; Exact marginal LL formulas (for verification)
+;; Joint LL helpers
 ;; ---------------------------------------------------------------------------
 
+(defn- gaussian-log-prob
+  "Log probability density of x under N(mean, variance)."
+  [x mean variance]
+  (* -0.5 (+ (js/Math.log (* 2 js/Math.PI))
+              (js/Math.log variance)
+              (/ (* (- x mean) (- x mean)) variance))))
+
+(defn- nn-joint-ll
+  "Joint LL for Normal-Normal model.
+   log p(mu, y1, y2) = log N(mu; prior-mean, prior-var) + sum_i log N(yi; mu, obs-var)"
+  [prior-mean prior-var obs-var mu ys]
+  (+ (gaussian-log-prob mu prior-mean prior-var)
+     (reduce + (map #(gaussian-log-prob % mu obs-var) ys))))
+
+;; Keep marginal LL formulas for verifying generate weight (not assess)
 (defn- nn-marginal-ll
-  "Exact marginal LL for Normal-Normal model.
-   Prior: mu ~ N(prior-mean, prior-var)
-   Obs: y_i ~ N(mu, obs-var)
-   p(y1,...,yn) = N(y | prior-mean*1, K) where K_ij = prior-var + delta_ij * obs-var"
+  "Exact marginal LL for Normal-Normal model."
   [prior-mean prior-var obs-var ys]
-  (let [n (count ys)
-        ;; For diagonal + rank-1: det = obs-var^n * (1 + n*prior-var/obs-var)
-        ;; Using Woodbury/matrix determinant lemma
-        S (+ obs-var (* n prior-var))  ;; obs-var + n * prior-var (marginal variance factor)
-        ;; Marginal mean for each obs is prior-mean
-        ;; Joint marginal is multivariate normal
-        ;; By sequential Kalman filter:
-        ;; log p(y1,...,yn) = sum_i log p(yi | y1,...,yi-1)
-        ;; where p(yi | ...) = N(yi; pred-mean, pred-var + obs-var)
-        result (reduce
+  (let [result (reduce
                  (fn [{:keys [mean var ll]} yi]
                    (let [pred-var (+ var obs-var)
                          innov (- yi mean)
@@ -80,62 +83,6 @@
                          new-var (- var (* K var))]
                      {:mean new-mean :var new-var :ll (+ ll ll-i)}))
                  {:mean prior-mean :var prior-var :ll 0.0}
-                 ys)]
-    (:ll result)))
-
-(defn- bb-marginal-ll
-  "Exact marginal LL for Beta-Bernoulli model.
-   Prior: p ~ Beta(alpha, beta)
-   Obs: y_i ~ Bernoulli(p)
-   p(y1,...,yn) = B(alpha+k, beta+n-k) / B(alpha, beta)
-   where k = number of 1s, n = total count"
-  [alpha beta ys]
-  (let [n (count ys)
-        k (reduce + ys)
-        ;; log B(a,b) = log Gamma(a) + log Gamma(b) - log Gamma(a+b)
-        log-beta (fn [a b]
-                   (- (+ (js/Math.log (js/Math.abs (js/Number.parseFloat
-                           (.toFixed (reduce * (range 1 a)) 10))))
-                         ;; Use stirling for gamma approx — actually let's use
-                         ;; the sequential update approach instead
-                         )))
-        ;; Better: compute sequentially
-        ;; p(y1) = alpha/(alpha+beta) if y1=1, beta/(alpha+beta) if y1=0
-        ;; p(y2|y1) uses updated alpha', beta'
-        result (reduce
-                 (fn [{:keys [a b ll]} yi]
-                   (let [total (+ a b)
-                         p-yi (if (> yi 0.5) (/ a total) (/ b total))
-                         ll-i (js/Math.log p-yi)]
-                     {:a (if (> yi 0.5) (+ a 1) a)
-                      :b (if (> yi 0.5) b (+ b 1))
-                      :ll (+ ll ll-i)}))
-                 {:a alpha :b beta :ll 0.0}
-                 ys)]
-    (:ll result)))
-
-(defn- gp-marginal-ll
-  "Exact marginal LL for Gamma-Poisson model.
-   Prior: rate ~ Gamma(shape, rate-param)
-   Obs: y_i ~ Poisson(rate)
-   Sequential: p(yi | y1,...,yi-1) = NegBin(yi; shape', rate'/(rate'+1))"
-  [shape rate-param ys]
-  (let [log-factorial (fn [n] (reduce + (map #(js/Math.log %) (range 1 (inc n)))))
-        result (reduce
-                 (fn [{:keys [a b ll]} yi]
-                   (let [;; Marginal: p(y|a,b) = C(a+y-1,y) * (b/(b+1))^a * (1/(b+1))^y
-                         ;; where C(n,k) = n!/(k!(n-k)!)
-                         ;; log p(y|a,b) = log Gamma(a+y) - log Gamma(a) - log(y!)
-                         ;;              + a*log(b/(b+1)) + y*log(1/(b+1))
-                         log-gamma-ratio (reduce + (map #(js/Math.log (+ a %)) (range yi)))
-                         ll-i (+ log-gamma-ratio
-                                 (- (log-factorial yi))
-                                 (* a (js/Math.log (/ b (+ b 1))))
-                                 (* yi (- (js/Math.log (+ b 1)))))]
-                     {:a (+ a yi)
-                      :b (+ b 1)
-                      :ll (+ ll ll-i)}))
-                 {:a shape :b rate-param :ll 0.0}
                  ys)]
     (:ll result)))
 
@@ -226,10 +173,10 @@
   (not (has-auto-handlers? no-conjugate-model)))
 
 ;; ---------------------------------------------------------------------------
-;; Test 2: NN model — assess marginal LL matches exact formula
+;; Test 2: NN model — assess returns joint LL
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 2. NN model: assess marginal LL --")
+(println "\n-- 2. NN model: assess joint LL --")
 
 (let [model (dyn/auto-key nn-model)
       choices (-> cm/EMPTY
@@ -238,35 +185,32 @@
                   (cm/set-value :y2 (mx/scalar 4.0)))
       result (p/assess model [] choices)
       assess-weight (mx/item (:weight result))
-      exact-marginal (nn-marginal-ll 0.0 100.0 1.0 [3.0 4.0])]
+      ;; Joint LL = log N(0; 0, 100) + log N(3; 0, 1) + log N(4; 0, 1)
+      exact-joint (nn-joint-ll 0.0 100.0 1.0 0.0 [3.0 4.0])]
   (mx/eval! (:weight result))
-  (assert-close "NN assess marginal LL matches exact formula"
-    exact-marginal assess-weight 1e-3))
+  (assert-close "NN assess joint LL matches exact formula"
+    exact-joint assess-weight 1e-3))
 
 ;; ---------------------------------------------------------------------------
-;; Test 3: NN model — assess marginal LL matches generate weight
+;; Test 3: NN model — GFI identity: simulate.score == assess.weight
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 3. NN model: assess matches generate --")
+(println "\n-- 3. NN model: GFI identity (simulate.score == assess.weight) --")
 
 (let [model (dyn/auto-key nn-model)
-      obs (-> cm/EMPTY
-              (cm/set-value :y1 (mx/scalar 3.0))
-              (cm/set-value :y2 (mx/scalar 4.0)))
-      gen-result (p/generate model [] obs)
-      gen-weight (do (mx/eval! (:weight gen-result)) (mx/item (:weight gen-result)))
-      ;; For assess, need ALL sites including mu
-      choices (-> obs (cm/set-value :mu (mx/scalar 3.5)))
+      trace (p/simulate model [])
+      sim-score (do (mx/eval! (:score trace)) (mx/item (:score trace)))
+      choices (:choices trace)
       assess-result (p/assess model [] choices)
       assess-weight (do (mx/eval! (:weight assess-result)) (mx/item (:weight assess-result)))]
-  (assert-close "NN assess weight ≈ generate weight (both marginal LL)"
-    gen-weight assess-weight 1e-3))
+  (assert-close "NN simulate.score == assess.weight (GFI identity)"
+    sim-score assess-weight 1e-6))
 
 ;; ---------------------------------------------------------------------------
-;; Test 4: NN model — assess WITHOUT auto-handlers returns joint LL (different)
+;; Test 4: NN model — with/without auto-handlers both return joint LL
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 4. NN model: stripped model returns joint LL --")
+(println "\n-- 4. NN model: analytical vs stripped both return joint LL --")
 
 (let [model-with (dyn/auto-key nn-model)
       model-without (dyn/auto-key (strip-analytical nn-model))
@@ -278,110 +222,100 @@
       without-result (p/assess model-without [] choices)
       with-weight (do (mx/eval! (:weight with-result)) (mx/item (:weight with-result)))
       without-weight (do (mx/eval! (:weight without-result)) (mx/item (:weight without-result)))]
-  (assert-true "Marginal LL ≠ joint LL (different values)"
-    (> (js/Math.abs (- with-weight without-weight)) 0.01))
-  (println (str "    Marginal LL: " (.toFixed with-weight 6)
-                " vs Joint LL: " (.toFixed without-weight 6))))
+  (assert-close "Both paths return same joint LL"
+    with-weight without-weight 1e-6)
+  (println (str "    Analytical path: " (.toFixed with-weight 6)
+                " Handler path: " (.toFixed without-weight 6))))
 
 ;; ---------------------------------------------------------------------------
-;; Test 5: BB model — assess marginal LL matches exact formula
+;; Test 5: BB model — GFI identity: simulate.score == assess.weight
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 5. BB model: assess marginal LL --")
+(println "\n-- 5. BB model: GFI identity --")
 
 (let [model (dyn/auto-key bb-model)
+      trace (p/simulate model [])
+      sim-score (do (mx/eval! (:score trace)) (mx/item (:score trace)))
+      choices (:choices trace)
+      assess-result (p/assess model [] choices)
+      assess-weight (do (mx/eval! (:weight assess-result)) (mx/item (:weight assess-result)))]
+  (assert-close "BB simulate.score == assess.weight (GFI identity)"
+    sim-score assess-weight 1e-6))
+
+;; ---------------------------------------------------------------------------
+;; Test 6: BB model — with/without auto-handlers both return joint LL
+;; ---------------------------------------------------------------------------
+
+(println "\n-- 6. BB model: analytical vs stripped both return joint LL --")
+
+(let [model-with (dyn/auto-key bb-model)
+      model-without (dyn/auto-key (strip-analytical bb-model))
       choices (-> cm/EMPTY
                   (cm/set-value :p (mx/scalar 0.3))
                   (cm/set-value :y1 (mx/scalar 1.0))
                   (cm/set-value :y2 (mx/scalar 0.0))
                   (cm/set-value :y3 (mx/scalar 1.0)))
-      result (p/assess model [] choices)
-      assess-weight (do (mx/eval! (:weight result)) (mx/item (:weight result)))
-      exact-marginal (bb-marginal-ll 2.0 5.0 [1.0 0.0 1.0])]
-  (assert-close "BB assess marginal LL matches exact formula"
-    exact-marginal assess-weight 1e-3))
+      with-result (p/assess model-with [] choices)
+      without-result (p/assess model-without [] choices)
+      with-weight (do (mx/eval! (:weight with-result)) (mx/item (:weight with-result)))
+      without-weight (do (mx/eval! (:weight without-result)) (mx/item (:weight without-result)))]
+  (assert-close "BB both paths return same joint LL"
+    with-weight without-weight 1e-6))
 
 ;; ---------------------------------------------------------------------------
-;; Test 6: BB model — assess matches generate weight
+;; Test 7: GP model — GFI identity: simulate.score == assess.weight
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 6. BB model: assess matches generate --")
-
-(let [model (dyn/auto-key bb-model)
-      obs (-> cm/EMPTY
-              (cm/set-value :y1 (mx/scalar 1.0))
-              (cm/set-value :y2 (mx/scalar 0.0))
-              (cm/set-value :y3 (mx/scalar 1.0)))
-      gen-result (p/generate model [] obs)
-      gen-weight (do (mx/eval! (:weight gen-result)) (mx/item (:weight gen-result)))
-      choices (-> obs (cm/set-value :p (mx/scalar 0.4)))
-      assess-result (p/assess model [] choices)
-      assess-weight (do (mx/eval! (:weight assess-result)) (mx/item (:weight assess-result)))]
-  (assert-close "BB assess weight ≈ generate weight"
-    gen-weight assess-weight 1e-3))
-
-;; ---------------------------------------------------------------------------
-;; Test 7: GP model — assess marginal LL matches exact formula
-;; ---------------------------------------------------------------------------
-
-(println "\n-- 7. GP model: assess marginal LL --")
+(println "\n-- 7. GP model: GFI identity --")
 
 (let [model (dyn/auto-key gp-model)
+      trace (p/simulate model [])
+      sim-score (do (mx/eval! (:score trace)) (mx/item (:score trace)))
+      choices (:choices trace)
+      assess-result (p/assess model [] choices)
+      assess-weight (do (mx/eval! (:weight assess-result)) (mx/item (:weight assess-result)))]
+  (assert-close "GP simulate.score == assess.weight (GFI identity)"
+    sim-score assess-weight 1e-6))
+
+;; ---------------------------------------------------------------------------
+;; Test 8: GP model — with/without auto-handlers both return joint LL
+;; ---------------------------------------------------------------------------
+
+(println "\n-- 8. GP model: analytical vs stripped both return joint LL --")
+
+(let [model-with (dyn/auto-key gp-model)
+      model-without (dyn/auto-key (strip-analytical gp-model))
       choices (-> cm/EMPTY
                   (cm/set-value :rate (mx/scalar 2.0))
                   (cm/set-value :y1 (mx/scalar 3.0))
                   (cm/set-value :y2 (mx/scalar 1.0)))
-      result (p/assess model [] choices)
-      assess-weight (do (mx/eval! (:weight result)) (mx/item (:weight result)))
-      exact-marginal (gp-marginal-ll 3.0 2.0 [3 1])]
-  (assert-close "GP assess marginal LL matches exact formula"
-    exact-marginal assess-weight 1e-3))
+      with-result (p/assess model-with [] choices)
+      without-result (p/assess model-without [] choices)
+      with-weight (do (mx/eval! (:weight with-result)) (mx/item (:weight with-result)))
+      without-weight (do (mx/eval! (:weight without-result)) (mx/item (:weight without-result)))]
+  (assert-close "GP both paths return same joint LL"
+    with-weight without-weight 1e-6))
 
 ;; ---------------------------------------------------------------------------
-;; Test 8: GP model — assess matches generate weight
+;; Test 9: Kalman chain — GFI identity
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 8. GP model: assess matches generate --")
-
-(let [model (dyn/auto-key gp-model)
-      obs (-> cm/EMPTY
-              (cm/set-value :y1 (mx/scalar 3.0))
-              (cm/set-value :y2 (mx/scalar 1.0)))
-      gen-result (p/generate model [] obs)
-      gen-weight (do (mx/eval! (:weight gen-result)) (mx/item (:weight gen-result)))
-      choices (-> obs (cm/set-value :rate (mx/scalar 1.5)))
-      assess-result (p/assess model [] choices)
-      assess-weight (do (mx/eval! (:weight assess-result)) (mx/item (:weight assess-result)))]
-  (assert-close "GP assess weight ≈ generate weight"
-    gen-weight assess-weight 1e-3))
-
-;; ---------------------------------------------------------------------------
-;; Test 9: Kalman chain — assess marginal LL
-;; ---------------------------------------------------------------------------
-
-(println "\n-- 9. Kalman chain: assess marginal LL --")
+(println "\n-- 9. Kalman chain: GFI identity --")
 
 (let [model (dyn/auto-key kalman-model)
-      ;; Generate to get marginal LL
-      obs (-> cm/EMPTY
-              (cm/set-value :y0 (mx/scalar 2.0))
-              (cm/set-value :y1 (mx/scalar 3.0)))
-      gen-result (p/generate model [] obs)
-      gen-weight (do (mx/eval! (:weight gen-result)) (mx/item (:weight gen-result)))
-      ;; Assess with all choices
-      choices (-> obs
-                  (cm/set-value :z0 (mx/scalar 1.0))
-                  (cm/set-value :z1 (mx/scalar 2.0)))
+      trace (p/simulate model [])
+      sim-score (do (mx/eval! (:score trace)) (mx/item (:score trace)))
+      choices (:choices trace)
       assess-result (p/assess model [] choices)
       assess-weight (do (mx/eval! (:weight assess-result)) (mx/item (:weight assess-result)))]
-  (assert-close "Kalman assess weight ≈ generate weight"
-    gen-weight assess-weight 1e-3))
+  (assert-close "Kalman simulate.score == assess.weight (GFI identity)"
+    sim-score assess-weight 1e-6))
 
 ;; ---------------------------------------------------------------------------
-;; Test 10: Mixed model — partial conjugacy in assess
+;; Test 10: Mixed model — auto-handler and standard both return joint LL
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 10. Mixed model: partial conjugacy --")
+(println "\n-- 10. Mixed model: both paths return joint LL --")
 
 (let [model (dyn/auto-key mixed-model)
       model-stripped (dyn/auto-key (strip-analytical mixed-model))
@@ -395,17 +329,16 @@
       without-result (p/assess model-stripped [] choices)
       with-weight (do (mx/eval! (:weight with-result)) (mx/item (:weight with-result)))
       without-weight (do (mx/eval! (:weight without-result)) (mx/item (:weight without-result)))]
-  (assert-true "Mixed model: auto-handler assess ≠ standard assess"
-    (> (js/Math.abs (- with-weight without-weight)) 0.01))
-  ;; The non-conjugate site (y3) should contribute the same to both
+  (assert-close "Mixed model: auto-handler assess == standard assess (both joint)"
+    with-weight without-weight 1e-6)
   (println (str "    Auto-handler: " (.toFixed with-weight 6)
-                " vs Standard: " (.toFixed without-weight 6))))
+                " Standard: " (.toFixed without-weight 6))))
 
 ;; ---------------------------------------------------------------------------
-;; Test 11: Mixed model — assess matches generate for same obs
+;; Test 11: Mixed model — assess (joint) differs from generate (marginal)
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 11. Mixed model: assess matches generate --")
+(println "\n-- 11. Mixed model: assess (joint) ≠ generate (marginal) --")
 
 (let [model (dyn/auto-key mixed-model)
       obs (-> cm/EMPTY
@@ -423,17 +356,12 @@
                   (cm/set-value :sigma sigma-val))
       assess-result (p/assess model [] choices)
       assess-weight (do (mx/eval! (:weight assess-result)) (mx/item (:weight assess-result)))]
-  ;; For mixed model, assess marginal LL for conjugate part should match
-  ;; generate's marginal LL for conjugate part. But sigma contributes differently:
-  ;; generate: sigma is sampled (no weight), y3 is sampled (no weight)
-  ;; assess: sigma score is added, y3 score is added
-  ;; So they won't match exactly. But the conjugate part should be same.
-  ;; Actually generate weight = marginal_LL(y1,y2) + log p(y3|sigma_sampled)
-  ;; while assess weight = marginal_LL(y1,y2) + log p(sigma) + log p(y3|sigma)
-  ;; These differ by log p(sigma). So let's just check assess runs without error.
-  (assert-true "Mixed model assess completes without error" true)
-  (println (str "    Assess weight: " (.toFixed assess-weight 6)
-                " Generate weight: " (.toFixed gen-weight 6))))
+  ;; assess = joint LL (includes prior log-probs), generate = marginal weight.
+  ;; They should differ for conjugate models.
+  (assert-true "Mixed model: assess (joint) ≠ generate (marginal)"
+    (> (js/Math.abs (- assess-weight gen-weight)) 0.01))
+  (println (str "    Assess (joint): " (.toFixed assess-weight 6)
+                " Generate (marginal): " (.toFixed gen-weight 6))))
 
 ;; ---------------------------------------------------------------------------
 ;; Test 12: No conjugacy — fallback to standard assess
@@ -450,8 +378,6 @@
   (assert-true "No-conjugate model assess returns finite weight"
     (js/isFinite weight))
   ;; Joint LL = log p(x|U(0,10)) + log p(y1|N(sin(3), 1))
-  ;; log p(x=3|U(0,10)) = log(1/10) = -log(10)
-  ;; log p(y1=0.5|N(sin(3),1)) = N(0.5; sin(3), 1)
   (let [sin3 (js/Math.sin 3.0)
         expected (+ (- (js/Math.log 10))
                     (* -0.5 (+ (js/Math.log (* 2 js/Math.PI))
@@ -471,9 +397,6 @@
                   (cm/set-value :y1 (mx/scalar 3.0))
                   (cm/set-value :y2 (mx/scalar 4.0)))
       result (p/assess model [] choices)]
-  ;; retval should be the value returned by the model body
-  ;; For auto-handler path, mu is set to posterior mean, not the provided value
-  ;; But that's OK — assess's retval is implementation-dependent
   (assert-true "Assess returns a retval"
     (some? (:retval result))))
 
@@ -495,10 +418,10 @@
   (assert-close "Assess is deterministic (run 2 = run 3)" w2 w3 1e-10))
 
 ;; ---------------------------------------------------------------------------
-;; Test 15: NN model — different prior values give same marginal LL
+;; Test 15: NN model — joint LL depends on prior value
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 15. Prior value independence --")
+(println "\n-- 15. Joint LL depends on prior value --")
 
 (let [model (dyn/auto-key nn-model)
       obs-y1 (mx/scalar 3.0)
@@ -512,11 +435,21 @@
       w3 (mx/item (:weight (p/assess model []
                     (-> cm/EMPTY (cm/set-value :mu (mx/scalar -10.0))
                         (cm/set-value :y1 obs-y1) (cm/set-value :y2 obs-y2)))))]
-  (assert-close "Marginal LL independent of prior value (mu=0 vs mu=5)" w1 w2 1e-6)
-  (assert-close "Marginal LL independent of prior value (mu=5 vs mu=-10)" w2 w3 1e-6))
+  ;; Joint LL depends on the prior value (different mu → different log p(mu))
+  (assert-true "Joint LL differs for mu=0 vs mu=5"
+    (> (js/Math.abs (- w1 w2)) 0.01))
+  (assert-true "Joint LL differs for mu=5 vs mu=-10"
+    (> (js/Math.abs (- w2 w3)) 0.01))
+  ;; Verify each matches exact joint formula
+  (assert-close "mu=0 matches exact joint LL"
+    (nn-joint-ll 0.0 100.0 1.0 0.0 [3.0 4.0]) w1 1e-3)
+  (assert-close "mu=5 matches exact joint LL"
+    (nn-joint-ll 0.0 100.0 1.0 5.0 [3.0 4.0]) w2 1e-3)
+  (assert-close "mu=-10 matches exact joint LL"
+    (nn-joint-ll 0.0 100.0 1.0 -10.0 [3.0 4.0]) w3 1e-3))
 
 ;; ---------------------------------------------------------------------------
-;; Test 16: Edge case — all sites are conjugate
+;; Test 16: All sites conjugate — joint LL matches formula
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- 16. All sites conjugate --")
@@ -530,13 +463,12 @@
       weight (do (mx/eval! (:weight result)) (mx/item (:weight result)))]
   (assert-true "All-conjugate model: assess returns finite weight"
     (js/isFinite weight))
-  ;; Score should be purely marginal LL (no joint components)
-  (let [exact (nn-marginal-ll 0.0 100.0 1.0 [3.0 4.0])]
-    (assert-close "All-conjugate model: weight = exact marginal LL"
+  (let [exact (nn-joint-ll 0.0 100.0 1.0 2.0 [3.0 4.0])]
+    (assert-close "All-conjugate model: weight = exact joint LL"
       exact weight 1e-3)))
 
 ;; ---------------------------------------------------------------------------
-;; Test 17: NN model with different obs values
+;; Test 17: NN model with different obs values — joint LL
 ;; ---------------------------------------------------------------------------
 
 (println "\n-- 17. Different observation values --")
@@ -546,20 +478,21 @@
                           [1.0 1.0 "y=(1,1)"]
                           [5.0 -5.0 "y=(5,-5)"]
                           [10.0 10.0 "y=(10,10)"]]]
-    (let [choices (-> cm/EMPTY
-                      (cm/set-value :mu (mx/scalar 0.0))
+    (let [mu 0.0
+          choices (-> cm/EMPTY
+                      (cm/set-value :mu (mx/scalar mu))
                       (cm/set-value :y1 (mx/scalar y1))
                       (cm/set-value :y2 (mx/scalar y2)))
           weight (mx/item (:weight (p/assess model [] choices)))
-          exact (nn-marginal-ll 0.0 100.0 1.0 [y1 y2])]
-      (assert-close (str "NN marginal LL correct for " label)
+          exact (nn-joint-ll 0.0 100.0 1.0 mu [y1 y2])]
+      (assert-close (str "NN joint LL correct for " label)
         exact weight 1e-3))))
 
 ;; ---------------------------------------------------------------------------
-;; Test 18: GE (Gamma-Exponential) model
+;; Test 18: GE (Gamma-Exponential) model — GFI identity
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 18. GE model: assess matches generate --")
+(println "\n-- 18. GE model: GFI identity --")
 
 (def ge-model
   (gen []
@@ -569,16 +502,13 @@
       rate)))
 
 (let [model (dyn/auto-key ge-model)
-      obs (-> cm/EMPTY
-              (cm/set-value :y1 (mx/scalar 0.5))
-              (cm/set-value :y2 (mx/scalar 1.0)))
-      gen-result (p/generate model [] obs)
-      gen-weight (do (mx/eval! (:weight gen-result)) (mx/item (:weight gen-result)))
-      choices (-> obs (cm/set-value :rate (mx/scalar 1.5)))
+      trace (p/simulate model [])
+      sim-score (do (mx/eval! (:score trace)) (mx/item (:score trace)))
+      choices (:choices trace)
       assess-result (p/assess model [] choices)
       assess-weight (do (mx/eval! (:weight assess-result)) (mx/item (:weight assess-result)))]
-  (assert-close "GE assess weight ≈ generate weight"
-    gen-weight assess-weight 1e-3))
+  (assert-close "GE simulate.score == assess.weight (GFI identity)"
+    sim-score assess-weight 1e-6))
 
 ;; ---------------------------------------------------------------------------
 ;; Summary
