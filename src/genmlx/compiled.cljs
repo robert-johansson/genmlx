@@ -360,8 +360,8 @@
                        (mx/subtract
                         (mx/multiply (mx/scalar -0.5)
                                      (mx/sum (mx/divide (mx/multiply o-diff o-diff)
-                                                        (mx/multiply o-std o-std)
-                                                        1))) ;; sum along obs dim
+                                                        (mx/multiply o-std o-std))
+                                             1)) ;; sum along obs dim (axis=1)
                         (mx/sum (mx/log o-std))) ;; this is scalar, broadcasts
                        (mx/scalar (* 0.5 obs-dim (js/Math.log (* 2 js/Math.PI)))))]
       [new-states log-weights])))
