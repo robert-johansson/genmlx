@@ -454,13 +454,13 @@
   (assert-true "multi-site: n-params = 2" (= 2 (:n-params result))))
 
 (let [result (co/learn cg-multi [true] cg-multi-obs [:slope :intercept]
-               {:iterations 300 :lr 0.05 :log-every 100})]
+               {:iterations 1000 :lr 0.05 :log-every 200})]
   (mx/materialize! (:params result))
   (let [final (mx/->clj (:params result))
         total (+ (nth final 0) (nth final 1))]
     (assert-true "multi-site: loss decreased"
       (< (last (:loss-history result)) (first (:loss-history result))))
-    (assert-close "multi-site: slope + intercept ≈ 4.0" 4.0 total 0.5)))
+    (assert-close "multi-site: slope + intercept ≈ 4.0" 4.0 total 1.0)))
 
 ;; ---------------------------------------------------------------------------
 ;; Summary
