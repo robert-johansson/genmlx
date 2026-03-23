@@ -983,16 +983,21 @@
                                         ;; Fix PRNG seed for reproducible inference results
                                         (rng/seed! (rng/fresh-key 42))
                                         (mapv (fn [spec]
-                                               (let [algo (get spec "algorithm")]
-                                                 (cond
-                                                   (contains? #{"smc" "smc_single"} algo)
-                                                   (eval-inference-smc spec)
+                                               (let [algo (get spec "algorithm")
+                                                     result
+                                                     (cond
+                                                       (contains? #{"smc" "smc_single"} algo)
+                                                       (eval-inference-smc spec)
 
-                                                   (= algo "vi")
-                                                   (eval-inference-vi spec)
+                                                       (= algo "vi")
+                                                       (eval-inference-vi spec)
 
-                                                   :else
-                                                   (eval-inference spec))))
+                                                       :else
+                                                       (eval-inference spec))]
+                                                 ;; Aggressive cleanup between tests to prevent Bun OOM/segfault
+                                                 (mx/clear-cache!)
+                                                 (mx/jsc-cleanup!)
+                                                 result))
                                              (get input-data "tests")))
                 (do (.error js/console (str "Unknown test type: " test-type))
                     (js/process.exit 1)))
