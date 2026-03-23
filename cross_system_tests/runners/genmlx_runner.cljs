@@ -119,6 +119,46 @@
                        val-arr (mx/array (clj->js value))]
                    (mx/item (dc/dist-log-prob d val-arr)))
 
+                 "neg_binomial"
+                 (let [d (dist/neg-binomial (mx/scalar (get params "r"))
+                                            (mx/scalar (get params "p")))]
+                   (mx/item (dist/log-prob d (mx/scalar value))))
+
+                 "discrete_uniform"
+                 (let [d (dist/discrete-uniform (mx/scalar (get params "lo"))
+                                                (mx/scalar (get params "hi")))]
+                   (mx/item (dist/log-prob d (mx/scalar value))))
+
+                 "truncated_normal"
+                 (let [d (dist/truncated-normal (mx/scalar (get params "mu"))
+                                                (mx/scalar (get params "sigma"))
+                                                (mx/scalar (get params "lo"))
+                                                (mx/scalar (get params "hi")))]
+                   (mx/item (dist/log-prob d v)))
+
+                 "von_mises"
+                 (let [d (dist/von-mises (mx/scalar (get params "mu"))
+                                         (mx/scalar (get params "kappa")))]
+                   (mx/item (dist/log-prob d v)))
+
+                 "wishart"
+                 (let [nested-scale (get params "scale_matrix")
+                       k            (count nested-scale)
+                       scale        (mx/reshape (mx/array (clj->js (flatten nested-scale)) :float32) [k k])
+                       d            (dist/wishart (get params "df") scale)
+                       nested-val   value
+                       val-arr      (mx/reshape (mx/array (clj->js (flatten nested-val)) :float32) [k k])]
+                   (mx/item (dc/dist-log-prob d val-arr)))
+
+                 "inv_wishart"
+                 (let [nested-scale (get params "scale_matrix")
+                       k            (count nested-scale)
+                       scale        (mx/reshape (mx/array (clj->js (flatten nested-scale)) :float32) [k k])
+                       d            (dist/inv-wishart (get params "df") scale)
+                       nested-val   value
+                       val-arr      (mx/reshape (mx/array (clj->js (flatten nested-val)) :float32) [k k])]
+                   (mx/item (dc/dist-log-prob d val-arr)))
+
                  ;; default
                  (throw (js/Error. (str "unsupported dist: " dist-name))))]
         #js {"id" (get spec "id") "logprob" lp})
@@ -939,7 +979,10 @@
                 "combinator"           (mapv eval-combinator (get input-data "combinator_tests"))
                 "mlx_ops"              (mapv (comp sanitize-js-obj eval-mlx-op) (get input-data "tests"))
                 "gradient"             (mapv eval-gradient (get input-data "gradient_tests"))
-                "inference_quality"    (mapv (fn [spec]
+                "inference_quality"    (do
+                                        ;; Fix PRNG seed for reproducible inference results
+                                        (rng/seed! (rng/fresh-key 42))
+                                        (mapv (fn [spec]
                                                (let [algo (get spec "algorithm")]
                                                  (cond
                                                    (contains? #{"smc" "smc_single"} algo)
@@ -950,7 +993,7 @@
 
                                                    :else
                                                    (eval-inference spec))))
-                                             (get input-data "tests"))
+                                             (get input-data "tests")))
                 (do (.error js/console (str "Unknown test type: " test-type))
                     (js/process.exit 1)))
       output  #js {"system"    "genmlx"

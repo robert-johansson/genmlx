@@ -2,8 +2,14 @@
 # Reads JSON from stdin, writes results to stdout.
 using Gen
 using JSON
-using SpecialFunctions: loggamma, digamma
-using LinearAlgebra: logdet, inv
+using Random
+using SpecialFunctions: loggamma, digamma, besselix, erfc
+using LinearAlgebra: logdet, inv, tr
+
+# Standard normal CDF via erfc (no Distributions.jl dependency)
+function std_normal_cdf(x)
+    0.5 * erfc(-x / sqrt(2.0))
+end
 
 # --- Distribution log-prob dispatch ---
 
@@ -62,6 +68,64 @@ function eval_logprob(spec)
             cov = Float64.(hcat([Float64.(row) for row in cov_rows]...)')
             val = Float64.(value)
             logpdf(mvnormal, val, mu, cov)
+
+        # --- New distributions (computed from formula, not native distribution) ---
+        elseif dist_name == "neg_binomial"
+            # Negative binomial: P(k | r, p) = C(k+r-1, k) * p^r * (1-p)^k
+            # log P = lgamma(k+r) - lgamma(k+1) - lgamma(r) + r*log(p) + k*log(1-p)
+            k = Float64(value); r = Float64(params["r"]); p = Float64(params["p"])
+            loggamma(k + r) - loggamma(k + 1) - loggamma(r) + r * log(p) + k * log(1 - p)
+        elseif dist_name == "discrete_uniform"
+            # Discrete uniform on {lo, lo+1, ..., hi}: P(k) = 1/(hi - lo + 1)
+            # log P = -log(hi - lo + 1) for lo <= k <= hi, else -Inf
+            k = Int(value); lo = Int(params["lo"]); hi = Int(params["hi"])
+            (lo <= k <= hi) ? -log(Float64(hi - lo + 1)) : -Inf
+        elseif dist_name == "truncated_normal"
+            # Truncated normal: logpdf = normal_logpdf(x, mu, sigma) - log(Phi((hi-mu)/sigma) - Phi((lo-mu)/sigma))
+            # for lo <= x <= hi, else -Inf
+            x = Float64(value); mu = Float64(params["mu"]); sigma = Float64(params["sigma"])
+            lo = Float64(params["lo"]); hi = Float64(params["hi"])
+            if lo <= x <= hi
+                normal_lp = -0.5 * log(2 * pi) - log(sigma) - 0.5 * ((x - mu) / sigma)^2
+                log_Z = log(std_normal_cdf((hi - mu) / sigma) - std_normal_cdf((lo - mu) / sigma))
+                normal_lp - log_Z
+            else
+                -Inf
+            end
+        elseif dist_name == "von_mises"
+            # Von Mises: log P = kappa*cos(x - mu) - log(2*pi) - log(I0(kappa))
+            # Use besselix(0, kappa) = I0(kappa) * exp(-kappa), so log(I0(kappa)) = log(besselix(0, kappa)) + kappa
+            x = Float64(value); mu = Float64(params["mu"]); kappa = Float64(params["kappa"])
+            log_i0 = log(besselix(0, kappa)) + kappa
+            kappa * cos(x - mu) - log(2 * pi) - log_i0
+        elseif dist_name == "wishart"
+            # Wishart: log P(X | df, V) = ((df-p-1)/2)*logdet(X) - tr(V^-1 X)/2
+            #   - (df*p/2)*log(2) - (df/2)*logdet(V) - log_multivariate_gamma(p, df/2)
+            # Computed from formula, not native distribution.
+            df = Float64(params["df"])
+            # Handle both "scale" and "scale_matrix" param names
+            V_rows = haskey(params, "scale") ? params["scale"] : params["scale_matrix"]
+            V = Float64.(hcat([Float64.(row) for row in V_rows]...)')
+            X_rows = value
+            X = Float64.(hcat([Float64.(row) for row in X_rows]...)')
+            p = size(X, 1)
+            log_mvgamma = (p * (p - 1) / 4) * log(pi) + sum(loggamma(df / 2 - (j - 1) / 2) for j in 1:p)
+            0.5 * (df - p - 1) * logdet(X) - 0.5 * tr(inv(V) * X) -
+              0.5 * df * p * log(2.0) - 0.5 * df * logdet(V) - log_mvgamma
+        elseif dist_name == "inv_wishart"
+            # Inverse Wishart: log P(X | df, Psi) = (df/2)*logdet(Psi) - ((df+p+1)/2)*logdet(X)
+            #   - tr(Psi * X^-1)/2 - (df*p/2)*log(2) - log_multivariate_gamma(p, df/2)
+            # Computed from formula, not native distribution.
+            df = Float64(params["df"])
+            # Handle both "scale" and "scale_matrix" param names
+            Psi_rows = haskey(params, "scale") ? params["scale"] : params["scale_matrix"]
+            Psi = Float64.(hcat([Float64.(row) for row in Psi_rows]...)')
+            X_rows = value
+            X = Float64.(hcat([Float64.(row) for row in X_rows]...)')
+            p = size(X, 1)
+            log_mvgamma = (p * (p - 1) / 4) * log(pi) + sum(loggamma(df / 2 - (j - 1) / 2) for j in 1:p)
+            0.5 * df * logdet(Psi) - 0.5 * (df + p + 1) * logdet(X) -
+              0.5 * tr(Psi * inv(X)) - 0.5 * df * p * log(2.0) - log_mvgamma
         else
             return Dict("id" => spec["id"], "error" => "unsupported dist: $dist_name")
         end
@@ -522,8 +586,20 @@ function eval_gradient(spec)
             rate = Float64(params["rate"])
             if grad_wrt == "value"
                 -rate
+            elseif grad_wrt == "rate"
+                # d/dr [log(r) - r*x] = 1/r - x
+                1.0 / rate - value
             else
                 error("unsupported grad_wrt for exponential: $grad_wrt")
+            end
+
+        elseif dist_name == "inv_gamma"
+            # d/dx log InvGamma(x; a, b) = -(a+1)/x + b/x^2
+            shape = Float64(params["shape"]); scale = Float64(params["scale"])
+            if grad_wrt == "value"
+                -(shape + 1.0) / value + scale / value^2
+            else
+                error("unsupported grad_wrt for inv_gamma: $grad_wrt")
             end
 
         elseif dist_name == "laplace"
@@ -556,6 +632,26 @@ function eval_gradient(spec)
                 -(df + 1.0) * (value - loc) / (df * scale^2 + (value - loc)^2)
             else
                 error("unsupported grad_wrt for student_t: $grad_wrt")
+            end
+
+        elseif dist_name == "truncated_normal"
+            # d/dv log TruncNorm(v; mu, sigma, lo, hi) = -(v - mu) / sigma^2
+            # (normalization constant Z is independent of v)
+            mu = Float64(params["mu"]); sigma = Float64(params["sigma"])
+            if grad_wrt == "value"
+                -(value - mu) / sigma^2
+            else
+                error("unsupported grad_wrt for truncated_normal: $grad_wrt")
+            end
+
+        elseif dist_name == "von_mises"
+            # d/dv [kappa * cos(v - mu)] = -kappa * sin(v - mu)
+            # (normalization is independent of v)
+            mu = Float64(params["mu"]); kappa = Float64(params["kappa"])
+            if grad_wrt == "value"
+                -kappa * sin(value - mu)
+            else
+                error("unsupported grad_wrt for von_mises: $grad_wrt")
             end
 
         else
@@ -917,6 +1013,8 @@ function main()
             push!(results, eval_gradient(spec))
         end
     elseif test_type == "inference_quality"
+        # Fix PRNG seed for reproducible inference results
+        Random.seed!(42)
         for spec in input["tests"]
             algo = spec["algorithm"]
             if algo in ("smc", "smc_single")

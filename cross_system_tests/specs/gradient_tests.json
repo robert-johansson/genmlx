@@ -1,6 +1,7 @@
 {
   "test_type": "gradient",
   "tolerance": 1e-3,
+  "tolerance_note": "1e-3 tolerance accounts for: (1) float32 precision in MLX autodiff (~1e-5 per op), (2) finite-difference verification uses h=1e-5 with O(h^2) error ~1e-10, (3) accumulated error over multi-op log-prob expressions. For parameter gradients involving lgamma derivatives (digamma), tolerance may need 1e-2.",
   "gradient_tests": [
     {
       "id": "grad-normal-val-1",
@@ -8,7 +9,8 @@
       "params": {"mu": 0.0, "sigma": 1.0},
       "value": 1.0,
       "grad_wrt": "value",
-      "expected": -1.0
+      "expected": -1.0,
+      "derivation": "d/dv [-0.5*log(2*pi) - 0.5*v^2] = -v = -1"
     },
     {
       "id": "grad-normal-val-0",
@@ -16,7 +18,8 @@
       "params": {"mu": 0.0, "sigma": 1.0},
       "value": 0.0,
       "grad_wrt": "value",
-      "expected": 0.0
+      "expected": 0.0,
+      "derivation": "d/dv at v=0: -v = 0 (at mode)"
     },
     {
       "id": "grad-normal-mu-1",
@@ -24,7 +27,8 @@
       "params": {"mu": 0.0, "sigma": 1.0},
       "value": 1.0,
       "grad_wrt": "mu",
-      "expected": 1.0
+      "expected": 1.0,
+      "derivation": "d/dmu = (v-mu)/sigma^2 = 1/1 = 1"
     },
     {
       "id": "grad-normal-sigma-1",
@@ -32,7 +36,8 @@
       "params": {"mu": 0.0, "sigma": 1.0},
       "value": 1.0,
       "grad_wrt": "sigma",
-      "expected": 0.0
+      "expected": 0.0,
+      "derivation": "d/dsigma = -1/sigma + (v-mu)^2/sigma^3 = -1 + 1 = 0"
     },
     {
       "id": "grad-beta-val-1",
@@ -40,7 +45,8 @@
       "params": {"alpha": 2.0, "beta": 2.0},
       "value": 0.5,
       "grad_wrt": "value",
-      "expected": 0.0
+      "expected": 0.0,
+      "derivation": "d/dv = (alpha-1)/v - (beta-1)/(1-v) = 1/0.5 - 1/0.5 = 0 (at mode for symmetric Beta)"
     },
     {
       "id": "grad-beta-val-2",
@@ -48,7 +54,8 @@
       "params": {"alpha": 2.0, "beta": 2.0},
       "value": 0.3,
       "grad_wrt": "value",
-      "expected": 1.904761904761905
+      "expected": 1.904761904761905,
+      "derivation": "d/dv = 1/0.3 - 1/0.7 = 3.3333 - 1.4286 = 1.9048"
     },
     {
       "id": "grad-gamma-val-1",
@@ -56,7 +63,8 @@
       "params": {"shape": 2.0, "rate": 1.0},
       "value": 1.0,
       "grad_wrt": "value",
-      "expected": 0.0
+      "expected": 0.0,
+      "derivation": "d/dv = (shape-1)/v - rate = 1/1 - 1 = 0 (at mode)"
     },
     {
       "id": "grad-gamma-val-2",
@@ -64,7 +72,8 @@
       "params": {"shape": 2.0, "rate": 1.0},
       "value": 2.0,
       "grad_wrt": "value",
-      "expected": -0.5
+      "expected": -0.5,
+      "derivation": "d/dv = 1/2 - 1 = -0.5"
     },
     {
       "id": "grad-exp-val-1",
@@ -72,7 +81,8 @@
       "params": {"rate": 1.0},
       "value": 1.0,
       "grad_wrt": "value",
-      "expected": -1.0
+      "expected": -1.0,
+      "derivation": "d/dv [log(rate) - rate*v] = -rate = -1"
     },
     {
       "id": "grad-exp-val-2",
@@ -80,7 +90,8 @@
       "params": {"rate": 2.0},
       "value": 0.5,
       "grad_wrt": "value",
-      "expected": -2.0
+      "expected": -2.0,
+      "derivation": "d/dv = -rate = -2"
     },
     {
       "id": "grad-laplace-val-pos",
@@ -88,7 +99,8 @@
       "params": {"loc": 0.0, "scale": 1.0},
       "value": 1.0,
       "grad_wrt": "value",
-      "expected": -1.0
+      "expected": -1.0,
+      "derivation": "d/dv [-log(2*b) - |v-loc|/b] = -sign(v-loc)/b = -1 for v>loc"
     },
     {
       "id": "grad-laplace-val-neg",
@@ -96,7 +108,8 @@
       "params": {"loc": 0.0, "scale": 1.0},
       "value": -1.0,
       "grad_wrt": "value",
-      "expected": 1.0
+      "expected": 1.0,
+      "derivation": "d/dv = -sign(-1)/1 = 1 for v<loc"
     },
     {
       "id": "grad-cauchy-val-0",
@@ -104,7 +117,8 @@
       "params": {"loc": 0.0, "scale": 1.0},
       "value": 0.0,
       "grad_wrt": "value",
-      "expected": 0.0
+      "expected": 0.0,
+      "derivation": "d/dv [-log(pi*s*(1+z^2))] = -2z/(s*(1+z^2)) = 0 at z=0 (at mode)"
     },
     {
       "id": "grad-cauchy-val-1",
@@ -112,7 +126,8 @@
       "params": {"loc": 0.0, "scale": 1.0},
       "value": 1.0,
       "grad_wrt": "value",
-      "expected": -1.0
+      "expected": -1.0,
+      "derivation": "d/dv = -2*1/(1*(1+1)) = -2/2 = -1"
     },
     {
       "id": "grad-lognormal-val-1",
@@ -120,7 +135,8 @@
       "params": {"mu": 0.0, "sigma": 1.0},
       "value": 1.0,
       "grad_wrt": "value",
-      "expected": -1.0
+      "expected": -1.0,
+      "derivation": "d/dv = -1/v - (log(v)-mu)/(sigma^2*v) = -1 - 0 = -1 at v=1"
     },
     {
       "id": "grad-studentt-val-0",
@@ -128,7 +144,8 @@
       "params": {"df": 3.0, "loc": 0.0, "scale": 1.0},
       "value": 0.0,
       "grad_wrt": "value",
-      "expected": 0.0
+      "expected": 0.0,
+      "derivation": "d/dv = -(df+1)*z/(s*df*(1+z^2/df)) = 0 at z=0 (at mode)"
     },
     {
       "id": "grad-normal-val-neg",
@@ -136,7 +153,8 @@
       "params": {"mu": 0.0, "sigma": 1.0},
       "value": -2.0,
       "grad_wrt": "value",
-      "expected": 2.0
+      "expected": 2.0,
+      "derivation": "d/dv = -(v-mu)/sigma^2 = -(-2)/1 = 2"
     },
     {
       "id": "grad-normal-large-sigma",
@@ -144,7 +162,8 @@
       "params": {"mu": 0.0, "sigma": 10.0},
       "value": 5.0,
       "grad_wrt": "value",
-      "expected": -0.05
+      "expected": -0.05,
+      "derivation": "d/dv = -(v-mu)/sigma^2 = -5/100 = -0.05"
     },
     {
       "id": "grad-beta-alpha",
@@ -152,7 +171,8 @@
       "params": {"alpha": 2.0, "beta": 2.0},
       "value": 0.5,
       "grad_wrt": "alpha",
-      "expected": 0.14019
+      "expected": 0.14019,
+      "derivation": "d/dalpha = log(v) - digamma(alpha) + digamma(alpha+beta) = log(0.5)-digamma(2)+digamma(4)"
     },
     {
       "id": "grad-gamma-shape",
@@ -160,7 +180,122 @@
       "params": {"shape": 2.0, "rate": 1.0},
       "value": 1.0,
       "grad_wrt": "shape",
-      "expected": -0.42278
+      "expected": -0.42278,
+      "derivation": "d/dshape = log(v)+log(rate)-digamma(shape) = 0+0-digamma(2) = -0.42278"
+    },
+
+    {
+      "id": "grad-truncnorm-val-1",
+      "dist": "truncated_normal",
+      "params": {"mu": 0.0, "sigma": 1.0, "lo": -2.0, "hi": 2.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0,
+      "derivation": "d/dv log p(v|TN) = -(v-mu)/sigma^2 = -(1-0)/1 = -1. Normalization Z is independent of v, so gradient matches Normal."
+    },
+    {
+      "id": "grad-truncnorm-val-0",
+      "dist": "truncated_normal",
+      "params": {"mu": 0.0, "sigma": 1.0, "lo": -2.0, "hi": 2.0},
+      "value": 0.0,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "d/dv = -(0-0)/1 = 0 (at mode)"
+    },
+    {
+      "id": "grad-truncnorm-val-3",
+      "dist": "truncated_normal",
+      "params": {"mu": 5.0, "sigma": 2.0, "lo": 0.0, "hi": 10.0},
+      "value": 3.0,
+      "grad_wrt": "value",
+      "expected": 0.5,
+      "derivation": "d/dv = -(3-5)/4 = 2/4 = 0.5"
+    },
+
+    {
+      "id": "grad-vonmises-val-0",
+      "dist": "von_mises",
+      "params": {"mu": 0.0, "kappa": 1.0},
+      "value": 0.0,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "d/dv [kappa*cos(v-mu)] = -kappa*sin(v-mu) = -1*sin(0) = 0 (at mean direction)"
+    },
+    {
+      "id": "grad-vonmises-val-pi4",
+      "dist": "von_mises",
+      "params": {"mu": 0.0, "kappa": 2.0},
+      "value": 0.7853981633974483,
+      "grad_wrt": "value",
+      "expected": -1.4142135623730951,
+      "derivation": "d/dv = -kappa*sin(v-mu) = -2*sin(pi/4) = -2*(sqrt(2)/2) = -sqrt(2) = -1.41421"
+    },
+    {
+      "id": "grad-vonmises-val-pi",
+      "dist": "von_mises",
+      "params": {"mu": 0.0, "kappa": 5.0},
+      "value": 3.141592653589793,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "d/dv = -5*sin(pi) = 0 (at antipodal point, local minimum of density)"
+    },
+
+    {
+      "id": "grad-lognormal-val-2",
+      "dist": "lognormal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 2.0,
+      "grad_wrt": "value",
+      "expected": -0.8465735902799727,
+      "derivation": "d/dv = -(1 + (log(v)-mu)/sigma^2)/v = -(1 + log(2))/2 = -(1+0.6931)/2 = -0.8466"
+    },
+
+    {
+      "id": "grad-invgamma-val-1",
+      "dist": "inv_gamma",
+      "params": {"shape": 2.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -2.0,
+      "derivation": "d/dv = -(shape+1)/v + scale/v^2 = -3/1 + 1/1 = -2"
+    },
+    {
+      "id": "grad-invgamma-mode",
+      "dist": "inv_gamma",
+      "params": {"shape": 3.0, "scale": 2.0},
+      "value": 0.5,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "mode = scale/(shape+1) = 2/4 = 0.5. d/dv = -4/0.5 + 2/0.25 = -8+8 = 0"
+    },
+
+    {
+      "id": "grad-studentt-val-1",
+      "dist": "student_t",
+      "params": {"df": 5.0, "loc": 0.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0,
+      "derivation": "d/dv = -(df+1)*z/(s*df*(1+z^2/df)) = -6*1/(1*5*(1+0.2)) = -6/6 = -1"
+    },
+    {
+      "id": "grad-studentt-val-2",
+      "dist": "student_t",
+      "params": {"df": 3.0, "loc": 0.0, "scale": 1.0},
+      "value": 2.0,
+      "grad_wrt": "value",
+      "expected": -1.1428571428571428,
+      "derivation": "d/dv log p(v|t(df,0,1)) = -(df+1)*v/(df + v^2). At df=3, v=2: -4*2/(3+4) = -8/7 = -1.14286"
+    },
+
+    {
+      "id": "grad-exp-rate",
+      "dist": "exponential",
+      "params": {"rate": 2.0},
+      "value": 1.0,
+      "grad_wrt": "rate",
+      "expected": -0.5,
+      "derivation": "d/drate [log(rate) - rate*v] = 1/rate - v = 0.5 - 1 = -0.5"
     }
   ]
 }
