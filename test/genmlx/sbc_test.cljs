@@ -378,6 +378,18 @@
 
 (def all-results (atom []))
 (def summary (atom {:pass 0 :fail 0}))
+(def results-path "dev/sbc_results.json")
+
+(defn write-results!
+  "Write current results to JSON incrementally."
+  []
+  (let [{:keys [pass fail]} @summary
+        output (clj->js {:config  {:N N :L L :N_BINS N-BINS :ALPHA ALPHA}
+                          :results @all-results
+                          :summary {:pass pass :fail fail :total (+ pass fail)
+                                    :complete? false}})
+        json   (js/JSON.stringify output nil 2)]
+    (fs/writeFileSync results-path json)))
 
 (doseq [model-spec all-models
         algo-key   (:algorithms model-spec)]
@@ -407,18 +419,20 @@
                                 param-results)
                 :elapsed_s elapsed}))
       (swap! summary update :fail inc))
-    (println (str "  [" (.toFixed elapsed 1) "s]"))))
+    (println (str "  [" (.toFixed elapsed 1) "s]"))
+    ;; Write after each combo so crashes don't lose everything
+    (write-results!)))
 
-;; ── Write results to JSON ────────────────────────────────────────────────
+;; ── Final write ──────────────────────────────────────────────────────────
 
 (let [{:keys [pass fail]} @summary
       total   (+ pass fail)
-      output  (clj->js {:config   {:N N :L L :N_BINS N-BINS :ALPHA ALPHA}
-                         :results  @all-results
-                         :summary  {:pass pass :fail fail :total total}})
-      json    (js/JSON.stringify output nil 2)
-      path    "dev/sbc_results.json"]
-  (fs/writeFileSync path json)
+      output  (clj->js {:config  {:N N :L L :N_BINS N-BINS :ALPHA ALPHA}
+                         :results @all-results
+                         :summary {:pass pass :fail fail :total total
+                                   :complete? true}})
+      json    (js/JSON.stringify output nil 2)]
+  (fs/writeFileSync results-path json)
   (println (str "\n=== SBC Summary: " pass "/" total " passed ==="))
-  (println (str "Results written to " path))
+  (println (str "Results written to " results-path))
   (js/process.exit (if (zero? fail) 0 1)))
