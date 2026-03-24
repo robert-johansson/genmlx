@@ -261,6 +261,45 @@
     (vswap! fail-count inc)
     (println "  FAIL: 5.2.4 threw:" (.-message e))))
 
+;; ---------------------------------------------------------------------------
+;; 5.2.5 Gibbs on discrete model
+;; ---------------------------------------------------------------------------
+;; z ~ Categorical(logits=[log(2), log(3)]) → P(z=0)=0.4, P(z=1)=0.6
+;; mu = 1 + 3*z  → z=0: mu=1, z=1: mu=4
+;; y ~ N(mu, 1), observe y=2
+;;
+;; Analytical posterior:
+;; P(z=1|y=2) = P(z=1)*N(2;4,1) / [P(z=0)*N(2;1,1) + P(z=1)*N(2;4,1)]
+;;            = 0.6*exp(-2) / (0.4*exp(-0.5) + 0.6*exp(-2))
+;;            = 0.08120 / 0.32381 = 0.2508
+
+(println "\n-- 5.2.5 Gibbs on discrete model --")
+
+(try
+  (let [model-g (gen []
+                  (let [z  (trace :z (dist/categorical [(js/Math.log 2) (js/Math.log 3)]))
+                        mu (mx/add (mx/scalar 1.0) (mx/multiply z (mx/scalar 3.0)))]
+                    (trace :y (dist/gaussian mu 1))
+                    z))
+        obs-g    (cm/choicemap :y (mx/scalar 2.0))
+        schedule [{:addr :z :support [0 1]}]
+        traces   (mcmc/gibbs {:samples 2000 :burn 200} model-g [] obs-g schedule)
+        ;; Categorical retval is JS number, not MLX array
+        vals     (mapv (fn [t] (let [rv (:retval t)]
+                                 (if (mx/array? rv) (do (mx/eval! rv) (mx/item rv)) rv)))
+                       traces)
+        frac-1   (/ (double (count (filter #(== 1 %) vals))) (count vals))
+        ;; Gibbs on 2-state model gives independent samples (exact conditional)
+        ;; SE = sqrt(p*(1-p)/N) = sqrt(0.251*0.749/2000) = 0.0097
+        ;; Tolerance = 3.5 * 1.5 * 0.0097 = 0.051
+        expected 0.2508]
+    (assert-true "Gibbs: correct sample count" (= 2000 (count traces)))
+    (assert-close "Gibbs: P(z=1|y=2) near 0.251" expected frac-1 0.051)
+    (println "    Gibbs P(z=1):" (.toFixed frac-1 4) " expected:" expected))
+  (catch :default e
+    (vswap! fail-count inc)
+    (println "  FAIL: 5.2.5 Gibbs threw:" (.-message e))))
+
 ;; --- summary ---
 (println (str "\n=== " @pass-count " passed, " @fail-count " failed ==="))
 (when (pos? @fail-count) (println "SOME TESTS FAILED"))

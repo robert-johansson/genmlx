@@ -115,16 +115,16 @@
 (println "\n-- 5.3.2 Effective sample size --")
 
 (try
-  (let [samples   (mcmc/compiled-mh {:samples 2000 :burn 500 :addresses [:mu]
-                                      :proposal-std 0.3}
+  (let [;; proposal-std 1.0 ≈ 2.38 * σ_post gives acceptance ~0.44 (optimal for 1D)
+        ;; and ESS/N ~ 0.2-0.4, so ESS > N/10 = 200 is achievable
+        samples   (mcmc/compiled-mh {:samples 2000 :burn 500 :addresses [:mu]
+                                      :proposal-std 1.0}
                                      model-b [] obs-b)
         mlx-samps (samples->mlx-arrays samples)
         ess-val   (diag/ess mlx-samps)]
     (assert-true "ESS is finite" (js/isFinite ess-val))
     (assert-true "ESS > 0" (pos? ess-val))
-    ;; Without thinning, ESS/N can be low for random-walk MH. The ground truth
-    ;; lower bound of 100 is conservative. We use 50 as a practical floor.
-    (assert-true "ESS > 50 (adequate mixing)" (> ess-val 50))
+    (assert-true "ESS > N/10 = 200 (well-tuned MH)" (> ess-val 200))
     (assert-true "ESS < 2000 (autocorrelated chain)" (< ess-val 2000))
     (println "    ESS:" ess-val))
   (catch :default e
@@ -142,17 +142,18 @@
 
 ;; MH
 (try
-  (let [samples (mcmc/compiled-mh {:samples 500 :burn 200 :addresses [:mu]
-                                    :proposal-std 0.5 :compile? false}
+  (let [;; proposal-std 2.0 ≈ 2.38 * σ_post for Model A gives acceptance ~0.44
+        ;; which is the Roberts et al. (1997) optimal for d=1 Gaussian target
+        samples (mcmc/compiled-mh {:samples 500 :burn 200 :addresses [:mu]
+                                    :proposal-std 2.0 :compile? false}
                                    model-a [] obs-a)
         rate    (:acceptance-rate (meta samples))
         mu-vals (mapv first samples)
         mu-mean (sample-mean mu-vals)]
     (assert-true "MH: has acceptance rate" (some? rate))
-    ;; MH with random-walk proposal std=0.5 on N(1,0.5) posterior. The
-    ;; acceptance rate depends on the proposal-to-posterior width ratio.
-    ;; For this 1D target, rates in the 0.4-0.85 range are typical.
-    (assert-true "MH: rate in (0.10, 0.90)" (and (> rate 0.10) (< rate 0.90)))
+    ;; Optimal acceptance for d=1 Gaussian target: 0.44 (Roberts et al. 1997)
+    ;; With proposal-std=2.0 on σ_post=0.707, we expect acceptance ~0.43
+    (assert-true "MH: rate near 0.44 optimal (0.30, 0.55)" (and (> rate 0.30) (< rate 0.55)))
     (assert-close "MH: mean near 1.0" 1.0 mu-mean 0.31)
     (println "    MH acceptance:" rate "  mean:" mu-mean))
   (catch :default e
@@ -196,6 +197,68 @@
   (catch :default e
     (vswap! fail-count inc)
     (println "  FAIL: MALA acceptance threw:" (.-message e))))
+
+;; ---------------------------------------------------------------------------
+;; 5.3.4 Adaptive acceptance on multi-dimensional target
+;; ---------------------------------------------------------------------------
+;; 1D quadratic targets are too easy for HMC/MALA (acceptance ≈ 1.0).
+;; A 5D model with dual averaging adaptation tests that:
+;; (a) the adaptation mechanism functions (rate is non-trivial)
+;; (b) rates are in sensible ranges for gradient-based methods
+;; Note: asymptotic optima (HMC ~0.65, MALA ~0.574) require d >> 5.
+
+(println "\n-- 5.3.4 Adaptive acceptance on 5D model --")
+
+(def model-5d
+  (gen []
+    (let [xs (mapv (fn [j] (trace (keyword (str "x" j)) (dist/gaussian 0 10)))
+                   (range 5))]
+      (doseq [[j x] (map-indexed vector xs)]
+        (trace (keyword (str "y" j)) (dist/gaussian x 1)))
+      (first xs))))
+
+(def obs-5d
+  (reduce (fn [cm [j y]]
+            (cm/set-choice cm [(keyword (str "y" j))] (mx/scalar y)))
+          cm/EMPTY
+          (map-indexed vector [2.5 3.0 1.5 2.0 2.8])))
+
+(def addrs-5d [:x0 :x1 :x2 :x3 :x4])
+
+;; HMC with dual averaging targeting 0.65
+(try
+  (let [samples (mcmc/hmc {:samples 200 :burn 200 :step-size 0.5 :leapfrog-steps 10
+                             :addresses addrs-5d :compile? false :device :cpu
+                             :adapt-step-size true :target-accept 0.65}
+                            model-5d [] obs-5d)
+        rate    (:acceptance-rate (meta samples))
+        x0-mean (sample-mean (mapv first samples))]
+    (assert-true "HMC-5D: has acceptance rate" (some? rate))
+    (assert-true "HMC-5D: rate non-trivial (0.50, 0.98)"
+                 (and (> rate 0.50) (< rate 0.98)))
+    ;; x0 posterior: N(2.475, 0.1996) — same conjugate formula
+    (assert-close "HMC-5D: x0 mean near 2.475" 2.475 x0-mean 0.30)
+    (println "    HMC-5D acceptance:" rate "  x0 mean:" x0-mean))
+  (catch :default e
+    (vswap! fail-count inc)
+    (println "  FAIL: HMC-5D threw:" (.-message e))))
+
+;; MALA with dual averaging targeting 0.574
+(try
+  (let [samples (mcmc/mala {:samples 200 :burn 200 :step-size 0.5
+                              :addresses addrs-5d :compile? false :device :cpu
+                              :adapt-step-size true :target-accept 0.574}
+                             model-5d [] obs-5d)
+        rate    (:acceptance-rate (meta samples))
+        x0-mean (sample-mean (mapv first samples))]
+    (assert-true "MALA-5D: has acceptance rate" (some? rate))
+    (assert-true "MALA-5D: rate non-trivial (0.40, 0.95)"
+                 (and (> rate 0.40) (< rate 0.95)))
+    (assert-close "MALA-5D: x0 mean near 2.475" 2.475 x0-mean 0.30)
+    (println "    MALA-5D acceptance:" rate "  x0 mean:" x0-mean))
+  (catch :default e
+    (vswap! fail-count inc)
+    (println "  FAIL: MALA-5D threw:" (.-message e))))
 
 ;; --- summary ---
 (println (str "\n=== " @pass-count " passed, " @fail-count " failed ==="))
