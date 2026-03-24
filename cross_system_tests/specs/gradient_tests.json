@@ -1,7 +1,7 @@
 {
   "test_type": "gradient",
   "tolerance": 1e-3,
-  "tolerance_note": "1e-3 tolerance accounts for: (1) float32 precision in MLX autodiff (~1e-5 per op), (2) finite-difference verification uses h=1e-5 with O(h^2) error ~1e-10, (3) accumulated error over multi-op log-prob expressions. For parameter gradients involving lgamma derivatives (digamma), tolerance may need 1e-2.",
+  "tolerance_note": "1e-3 tolerance accounts for: (1) float32 precision in MLX autodiff (~1e-7 per op), (2) finite-difference verification uses h=1e-3 (optimal for float32) with round-off-dominated error ~1e-4, (3) accumulated error over multi-op log-prob expressions. For parameter gradients involving lgamma derivatives (digamma), tolerance may need 1e-2.",
 
   "non_differentiable_distributions": {
     "note": "These distributions have discrete support or non-differentiable log-prob. They are excluded from gradient testing.",

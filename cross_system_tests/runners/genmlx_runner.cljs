@@ -600,58 +600,132 @@
     "student_t"   (dist/student-t (mx/scalar (get params "df"))
                                    (mx/scalar (get params "loc"))
                                    (mx/scalar (get params "scale")))
+    "uniform"     (dist/uniform (mx/scalar (get params "lo"))
+                                 (mx/scalar (get params "hi")))
+    "inv_gamma"   (dist/inv-gamma (mx/scalar (get params "shape"))
+                                   (mx/scalar (get params "scale")))
+    "von_mises"   (dist/von-mises (mx/scalar (get params "mu"))
+                                   (mx/scalar (get params "kappa")))
+    "wrapped_cauchy" (dist/wrapped-cauchy (mx/scalar (get params "mu"))
+                                          (mx/scalar (get params "rho")))
     (throw (js/Error. (str "unsupported gradient dist: " dist-name)))))
 
 (defn eval-gradient [spec]
   (let [dist-name (get spec "dist")
         params    (get spec "params")
         grad-wrt  (get spec "grad_wrt")
-        value     (get spec "value")]
+        value     (get spec "value")
+        v         (mx/scalar value)
+        p         (fn [k] (mx/scalar (get params k)))]
     (try
       (let [grad-val
             (case grad-wrt
               "value"
               (let [grad-fn (mx/grad
-                              (fn [v]
-                                (dc/dist-log-prob
-                                 (make-dist-from-spec dist-name params) v)))]
-                (mx/item (grad-fn (mx/scalar value))))
+                              (fn [v'] (dc/dist-log-prob
+                                        (make-dist-from-spec dist-name params) v')))]
+                (mx/item (grad-fn v)))
 
               "mu"
               (let [grad-fn (mx/grad
-                              (fn [mu]
-                                (dc/dist-log-prob
-                                 (case dist-name
-                                   "normal"   (dist/gaussian mu (mx/scalar (get params "sigma")))
-                                   "lognormal" (dist/log-normal mu (mx/scalar (get params "sigma"))))
-                                 (mx/scalar value))))]
-                (mx/item (grad-fn (mx/scalar (get params "mu")))))
+                              (fn [mu] (dc/dist-log-prob
+                                        (case dist-name
+                                          "normal"    (dist/gaussian mu (p "sigma"))
+                                          "lognormal" (dist/log-normal mu (p "sigma"))
+                                          "von_mises" (dist/von-mises mu (p "kappa"))
+                                          "wrapped_cauchy" (dist/wrapped-cauchy mu (p "rho")))
+                                        v)))]
+                (mx/item (grad-fn (p "mu"))))
 
               "sigma"
               (let [grad-fn (mx/grad
-                              (fn [sigma]
-                                (dc/dist-log-prob
-                                 (case dist-name
-                                   "normal"   (dist/gaussian (mx/scalar (get params "mu")) sigma)
-                                   "lognormal" (dist/log-normal (mx/scalar (get params "mu")) sigma))
-                                 (mx/scalar value))))]
-                (mx/item (grad-fn (mx/scalar (get params "sigma")))))
+                              (fn [sigma] (dc/dist-log-prob
+                                           (case dist-name
+                                             "normal"    (dist/gaussian (p "mu") sigma)
+                                             "lognormal" (dist/log-normal (p "mu") sigma))
+                                           v)))]
+                (mx/item (grad-fn (p "sigma"))))
 
               "alpha"
               (let [grad-fn (mx/grad
-                              (fn [alpha]
-                                (dc/dist-log-prob
-                                 (dist/beta-dist alpha (mx/scalar (get params "beta")))
-                                 (mx/scalar value))))]
-                (mx/item (grad-fn (mx/scalar (get params "alpha")))))
+                              (fn [alpha] (dc/dist-log-prob
+                                           (dist/beta-dist alpha (p "beta")) v)))]
+                (mx/item (grad-fn (p "alpha"))))
+
+              "beta"
+              (let [grad-fn (mx/grad
+                              (fn [beta'] (dc/dist-log-prob
+                                           (dist/beta-dist (p "alpha") beta') v)))]
+                (mx/item (grad-fn (p "beta"))))
 
               "shape"
               (let [grad-fn (mx/grad
-                              (fn [shape]
-                                (dc/dist-log-prob
-                                 (dist/gamma-dist shape (mx/scalar (get params "rate")))
-                                 (mx/scalar value))))]
-                (mx/item (grad-fn (mx/scalar (get params "shape")))))
+                              (fn [shape] (dc/dist-log-prob
+                                           (case dist-name
+                                             "gamma"    (dist/gamma-dist shape (p "rate"))
+                                             "inv_gamma" (dist/inv-gamma shape (p "scale")))
+                                           v)))]
+                (mx/item (grad-fn (p "shape"))))
+
+              "rate"
+              (let [grad-fn (mx/grad
+                              (fn [rate] (dc/dist-log-prob
+                                          (case dist-name
+                                            "gamma"       (dist/gamma-dist (p "shape") rate)
+                                            "exponential" (dist/exponential rate))
+                                          v)))]
+                (mx/item (grad-fn (p "rate"))))
+
+              "loc"
+              (let [grad-fn (mx/grad
+                              (fn [loc] (dc/dist-log-prob
+                                         (case dist-name
+                                           "laplace"   (dist/laplace loc (p "scale"))
+                                           "cauchy"    (dist/cauchy loc (p "scale"))
+                                           "student_t" (dist/student-t (p "df") loc (p "scale")))
+                                         v)))]
+                (mx/item (grad-fn (p "loc"))))
+
+              "scale"
+              (let [grad-fn (mx/grad
+                              (fn [scale] (dc/dist-log-prob
+                                           (case dist-name
+                                             "laplace"   (dist/laplace (p "loc") scale)
+                                             "cauchy"    (dist/cauchy (p "loc") scale)
+                                             "student_t" (dist/student-t (p "df") (p "loc") scale)
+                                             "inv_gamma" (dist/inv-gamma (p "shape") scale))
+                                           v)))]
+                (mx/item (grad-fn (p "scale"))))
+
+              "df"
+              (let [grad-fn (mx/grad
+                              (fn [df] (dc/dist-log-prob
+                                        (dist/student-t df (p "loc") (p "scale")) v)))]
+                (mx/item (grad-fn (p "df"))))
+
+              "kappa"
+              (let [grad-fn (mx/grad
+                              (fn [kappa] (dc/dist-log-prob
+                                           (dist/von-mises (p "mu") kappa) v)))]
+                (mx/item (grad-fn (p "kappa"))))
+
+              "rho"
+              (let [grad-fn (mx/grad
+                              (fn [rho] (dc/dist-log-prob
+                                         (dist/wrapped-cauchy (p "mu") rho) v)))]
+                (mx/item (grad-fn (p "rho"))))
+
+              "lo"
+              (let [grad-fn (mx/grad
+                              (fn [lo] (dc/dist-log-prob
+                                        (dist/uniform lo (p "hi")) v)))]
+                (mx/item (grad-fn (p "lo"))))
+
+              "hi"
+              (let [grad-fn (mx/grad
+                              (fn [hi] (dc/dist-log-prob
+                                        (dist/uniform (p "lo") hi) v)))]
+                (mx/item (grad-fn (p "hi"))))
 
               (throw (js/Error. (str "unsupported grad_wrt: " grad-wrt))))]
         #js {"id" (get spec "id") "gradient" grad-val})

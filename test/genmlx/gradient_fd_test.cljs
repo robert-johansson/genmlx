@@ -9,10 +9,11 @@
    - Boundary-aware: detects support boundaries and uses one-sided FD.
    - Covers value gradients AND parameter gradients.
 
-   FD step size: h=1e-3 is optimal for float32 MLX arrays.
-   Smaller h amplifies rounding error; larger h increases truncation error.
-   At h=1e-3, central difference achieves ~1e-5 relative error on smooth
-   log-prob functions in float32."
+   FD step size: h=1e-3 for float32 MLX arrays.
+   Optimal h = (3*eps_mach)^(1/3) = 7.1e-3; h=1e-3 is slightly below optimal
+   but safe. Dominant error at h=1e-3 is round-off: eps_mach/h ~ 1.2e-4.
+   Actual relative error for gradient-magnitude-1 functions is ~6e-5 to 1.2e-4.
+   Test tolerances (abs-tol=1e-2, rel-tol=5e-3) are well above this."
   (:require [cljs.test :refer [deftest is testing]]
             [genmlx.dist :as dist]
             [genmlx.mlx :as mx]
