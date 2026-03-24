@@ -1,54 +1,44 @@
 (ns genmlx.selection-test
-  (:require [genmlx.selection :as sel]))
+  "Selection algebra tests: all, none, select, from-set, hierarchical, complement."
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.selection :as sel]))
 
-(defn assert-true [msg actual]
-  (if actual
-    (println "  PASS:" msg)
-    (println "  FAIL:" msg "- expected truthy")))
+(deftest all-selection-test
+  (testing "all"
+    (is (sel/selected? sel/all :x) "all selects :x")
+    (is (sel/selected? sel/all :anything) "all selects :anything")))
 
-(defn assert-false [msg actual]
-  (if (not actual)
-    (println "  PASS:" msg)
-    (println "  FAIL:" msg "- expected falsy")))
+(deftest none-selection-test
+  (testing "none"
+    (is (not (sel/selected? sel/none :x)) "none rejects :x")
+    (is (not (sel/selected? sel/none :anything)) "none rejects :anything")))
 
-(println "\n=== Selection Tests ===\n")
+(deftest select-test
+  (testing "select"
+    (let [s (sel/select :x :y)]
+      (is (sel/selected? s :x) "select includes :x")
+      (is (sel/selected? s :y) "select includes :y")
+      (is (not (sel/selected? s :z)) "select excludes :z"))))
 
-;; Test all
-(println "-- all --")
-(assert-true "all selects :x" (sel/selected? sel/all :x))
-(assert-true "all selects :anything" (sel/selected? sel/all :anything))
+(deftest set-as-selection-test
+  (testing "set as selection"
+    (let [s (sel/from-set #{:a :b})]
+      (is (sel/selected? s :a) "set includes :a")
+      (is (not (sel/selected? s :c)) "set excludes :c"))))
 
-;; Test none
-(println "\n-- none --")
-(assert-false "none rejects :x" (sel/selected? sel/none :x))
-(assert-false "none rejects :anything" (sel/selected? sel/none :anything))
+(deftest hierarchical-test
+  (testing "hierarchical"
+    (let [s (sel/hierarchical :sub (sel/select :x :y))]
+      (is (sel/selected? s :sub) "hierarchical includes :sub")
+      (is (not (sel/selected? s :other)) "hierarchical excludes :other")
+      (let [sub (sel/get-subselection s :sub)]
+        (is (sel/selected? sub :x) "subselection includes :x")
+        (is (not (sel/selected? sub :z)) "subselection excludes :z")))))
 
-;; Test select
-(println "\n-- select --")
-(let [s (sel/select :x :y)]
-  (assert-true "select includes :x" (sel/selected? s :x))
-  (assert-true "select includes :y" (sel/selected? s :y))
-  (assert-false "select excludes :z" (sel/selected? s :z)))
+(deftest complement-test
+  (testing "complement"
+    (let [s (sel/complement-sel (sel/select :x :y))]
+      (is (not (sel/selected? s :x)) "complement excludes :x")
+      (is (sel/selected? s :z) "complement includes :z"))))
 
-;; Test set wrapper as selection
-(println "\n-- set as selection --")
-(let [s (sel/from-set #{:a :b})]
-  (assert-true "set includes :a" (sel/selected? s :a))
-  (assert-false "set excludes :c" (sel/selected? s :c)))
-
-;; Test hierarchical
-(println "\n-- hierarchical --")
-(let [s (sel/hierarchical :sub (sel/select :x :y))]
-  (assert-true "hierarchical includes :sub" (sel/selected? s :sub))
-  (assert-false "hierarchical excludes :other" (sel/selected? s :other))
-  (let [sub (sel/get-subselection s :sub)]
-    (assert-true "subselection includes :x" (sel/selected? sub :x))
-    (assert-false "subselection excludes :z" (sel/selected? sub :z))))
-
-;; Test complement
-(println "\n-- complement --")
-(let [s (sel/complement-sel (sel/select :x :y))]
-  (assert-false "complement excludes :x" (sel/selected? s :x))
-  (assert-true "complement includes :z" (sel/selected? s :z)))
-
-(println "\nAll selection tests complete.")
+(cljs.test/run-tests)
