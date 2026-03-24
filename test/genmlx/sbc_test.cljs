@@ -337,7 +337,10 @@
                                      failures "/" n-sims ")")
                             nil)
                         ranks-acc)
-                      (let [result (try
+                      (let [_ (when (zero? (mod i 50))
+                              (println (str "  rep " i "/" n-sims
+                                            " (" failures " failures so far)")))
+                            result (try
                                      (run-sbc-single model-spec algo-key)
                                      (catch :default e
                                        (when (zero? (mod failures 10))
