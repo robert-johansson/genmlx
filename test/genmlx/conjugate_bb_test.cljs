@@ -1,5 +1,5 @@
 (ns genmlx.conjugate-bb-test
-  "Conjugate posterior correctness tests — Beta-Bernoulli pair.
+  "Conjugate posterior correctness tests -- Beta-Bernoulli pair.
    Verifies that inference algorithms converge to the analytically-known
    posterior: Beta(10, 4), E=0.714, Var=0.0136.
 
@@ -7,10 +7,10 @@
 
    NOTE: Beta distribution log-prob uses the Lanczos gamma approximation,
    which creates many MLX scalar allocations per call. This limits the total
-   number of inference iterations possible within Metal's 499K resource pool.
-   Gradient-based methods (HMC, NUTS) are tested in conjugate_posterior_test
-   on Gaussian-Gaussian where the simpler log-prob avoids resource exhaustion."
-  (:require [genmlx.mlx :as mx]
+   number of inference iterations possible within Metal's 499K resource pool."
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.test-helpers :as h]
+            [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
@@ -20,30 +20,9 @@
             [genmlx.inference.mcmc :as mcmc])
   (:require-macros [genmlx.gen :refer [gen]]))
 
-(def ^:private pass-count (volatile! 0))
-(def ^:private fail-count (volatile! 0))
-(def ^:private skip-count (volatile! 0))
-
-(defn assert-close [msg expected actual tolerance]
-  (let [diff (js/Math.abs (- expected actual))]
-    (if (<= diff tolerance)
-      (do (vswap! pass-count inc)
-          (println "  PASS:" msg))
-      (do (vswap! fail-count inc)
-          (println "  FAIL:" msg)
-          (println "    expected:" expected "+/-" tolerance)
-          (println "    actual:  " actual)))))
-
-(defn skip-test [msg reason]
-  (vswap! skip-count inc)
-  (println "  SKIP:" msg "-" reason))
-
-(defn run-test [section-name test-fn]
-  (println (str "\n-- " section-name " --"))
-  (try
-    (test-fn)
-    (catch :default e
-      (skip-test section-name (str "error: " (.-message e))))))
+;; =========================================================================
+;; Helpers
+;; =========================================================================
 
 (defn weighted-stats [traces log-weights param-key]
   (let [raw-weights (mapv (fn [w] (mx/eval! w) (mx/item w)) log-weights)
@@ -90,8 +69,6 @@
 ;;   E[p|data]   = 10/14 = 0.714
 ;;   Var[p|data]  = 40/2940 = 0.0136
 
-(println "\n=== Conjugate Posterior: Beta-Bernoulli ===")
-
 (def model
   (gen [data]
     (let [p (trace :p (dist/beta-dist 2 2))]
@@ -108,37 +85,39 @@
 (def post-mean 0.714)
 (def post-var 0.0136)
 
-;; Run Compiled MH first (gradient-based, needs more resources)
-(run-test "Compiled MH"
-  (fn []
-    (let [samples (mcmc/compiled-mh {:samples 400 :burn 300 :addresses [:p]
-                                      :proposal-std 0.15 :compile? false :device :cpu}
-                                     model [data] observations)
-          p-vals (mapv first samples)
-          [mean variance] (sample-stats p-vals)]
-      (println "  mean:" mean "var:" variance)
-      (assert-close "Compiled MH posterior mean ≈ 0.714" post-mean mean 0.3)
-      (assert-close "Compiled MH posterior var ≈ 0.014" post-var variance 0.02))))
+(deftest compiled-mh-bb
+  (testing "Compiled MH"
+    (try
+      (let [samples (mcmc/compiled-mh {:samples 400 :burn 300 :addresses [:p]
+                                        :proposal-std 0.15 :compile? false :device :cpu}
+                                       model [data] observations)
+            p-vals (mapv first samples)
+            [mean variance] (sample-stats p-vals)]
+        (is (h/close? post-mean mean 0.3) "Compiled MH posterior mean ~ 0.714")
+        (is (h/close? post-var variance 0.02) "Compiled MH posterior var ~ 0.014"))
+      (catch :default e
+        (is false (str "Compiled MH error: " (.-message e)))))))
 
-(run-test "IS"
-  (fn []
-    (let [{:keys [traces log-weights]}
-          (is/importance-sampling {:samples 200} model [data] observations)
-          [mean variance] (weighted-stats traces log-weights :p)]
-      (println "  mean:" mean "var:" variance)
-      (assert-close "IS posterior mean ≈ 0.714" post-mean mean 0.3)
-      (assert-close "IS posterior var ≈ 0.014" post-var variance 0.02))))
+(deftest is-bb
+  (testing "IS"
+    (try
+      (let [{:keys [traces log-weights]}
+            (is/importance-sampling {:samples 200} model [data] observations)
+            [mean variance] (weighted-stats traces log-weights :p)]
+        (is (h/close? post-mean mean 0.3) "IS posterior mean ~ 0.714")
+        (is (h/close? post-var variance 0.02) "IS posterior var ~ 0.014"))
+      (catch :default e
+        (is false (str "IS error: " (.-message e)))))))
 
-(run-test "MH"
-  (fn []
-    (let [traces (mcmc/mh {:samples 300 :burn 100 :selection (sel/select :p)}
-                           model [data] observations)
-          [mean variance] (trace-stats traces :p)]
-      (println "  mean:" mean "var:" variance)
-      (assert-close "MH posterior mean ≈ 0.714" post-mean mean 0.3)
-      (assert-close "MH posterior var ≈ 0.014" post-var variance 0.02))))
+(deftest mh-bb
+  (testing "MH"
+    (try
+      (let [traces (mcmc/mh {:samples 300 :burn 100 :selection (sel/select :p)}
+                             model [data] observations)
+            [mean variance] (trace-stats traces :p)]
+        (is (h/close? post-mean mean 0.3) "MH posterior mean ~ 0.714")
+        (is (h/close? post-var variance 0.02) "MH posterior var ~ 0.014"))
+      (catch :default e
+        (is false (str "MH error: " (.-message e)))))))
 
-(println "\n=== Summary ===")
-(println (str @pass-count " passed, " @fail-count " failed, " @skip-count " skipped"))
-(when (pos? @fail-count)
-  (println "SOME TESTS FAILED"))
+(cljs.test/run-tests)

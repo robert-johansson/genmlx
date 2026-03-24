@@ -2,8 +2,9 @@
   "WP-7 tests: combinator compiled generate.
    Validates that compiled generate paths for Map, Unfold, Scan, Switch, Mix
    produce identical traces, scores, and weights as handler paths."
-  (:require-macros [genmlx.gen :refer [gen]])
-  (:require [genmlx.dynamic :as dyn]
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.test-helpers :as h]
+            [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
@@ -12,34 +13,12 @@
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
             [genmlx.compiled-ops :as compiled]
-            [genmlx.combinators :as comb]))
+            [genmlx.combinators :as comb])
+  (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Test helpers
 ;; ---------------------------------------------------------------------------
-
-(def pass-count (atom 0))
-(def fail-count (atom 0))
-
-(defn assert-true [msg pred]
-  (if pred
-    (do (swap! pass-count inc) (println (str "  PASS: " msg)))
-    (do (swap! fail-count inc) (println (str "  FAIL: " msg)))))
-
-(defn assert-close [msg expected actual tol]
-  (let [e (if (number? expected) expected (mx/item expected))
-        a (if (number? actual) actual (mx/item actual))
-        diff (js/Math.abs (- e a))]
-    (if (<= diff tol)
-      (do (swap! pass-count inc) (println (str "  PASS: " msg)))
-      (do (swap! fail-count inc)
-          (println (str "  FAIL: " msg " expected=" e " actual=" a " diff=" diff))))))
-
-(defn assert-equal [msg expected actual]
-  (if (= expected actual)
-    (do (swap! pass-count inc) (println (str "  PASS: " msg)))
-    (do (swap! fail-count inc)
-        (println (str "  FAIL: " msg " expected=" expected " actual=" actual)))))
 
 (defn force-handler
   "Strip compiled paths from a gen-fn so it falls back to handler."
@@ -53,8 +32,6 @@
   "Check if a gen-fn kernel has a compiled-generate function."
   [gf]
   (some? (compiled/get-compiled-generate gf)))
-
-(println "\n=== WP-7: Combinator Compiled Generate Tests ===\n")
 
 ;; ---------------------------------------------------------------------------
 ;; Test kernels
@@ -92,491 +69,461 @@
       y))))
 
 ;; ---------------------------------------------------------------------------
-;; Section 0: Prerequisites
+;; Tests
 ;; ---------------------------------------------------------------------------
 
-(println "-- Prerequisites --")
-(assert-true "map kernel has compiled-generate" (compilable-generate? k-map))
-(assert-true "unfold kernel has compiled-generate" (compilable-generate? k-unfold))
-(assert-true "scan kernel has compiled-generate" (compilable-generate? k-scan))
-(assert-true "switch kernel has compiled-generate" (compilable-generate? k-switch))
-(assert-true "beta kernel NOT compilable" (not (compilable-generate? k-beta)))
+(deftest prerequisites-test
+  (testing "Prerequisites"
+    (is (compilable-generate? k-map) "map kernel has compiled-generate")
+    (is (compilable-generate? k-unfold) "unfold kernel has compiled-generate")
+    (is (compilable-generate? k-scan) "scan kernel has compiled-generate")
+    (is (compilable-generate? k-switch) "switch kernel has compiled-generate")
+    (is (not (compilable-generate? k-beta)) "beta kernel NOT compilable")))
 
-;; ---------------------------------------------------------------------------
-;; Section 1: Map Combinator
-;; ---------------------------------------------------------------------------
+(deftest map-compiled-dispatch-test
+  (testing "Map: compiled dispatch"
+    (let [mapped (comb/map-combinator k-map)
+          result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)]] cm/EMPTY)]
+      (is (::comb/compiled-path (meta (:trace result))) "map compiled path used"))))
 
-(println "\n-- Map: compiled dispatch --")
-(let [mapped (comb/map-combinator k-map)
-      result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)]] cm/EMPTY)]
-  (assert-true "map compiled path used"
-    (::comb/compiled-path (meta (:trace result)))))
+(deftest map-no-constraints-test
+  (testing "Map: no constraints (weight=0)"
+    (let [mapped (comb/map-combinator k-map)
+          result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0)]] cm/EMPTY)
+          trace (:trace result)]
+      (mx/eval! (:weight result) (:score trace))
+      (is (h/close? 0.0 (h/realize (:weight result)) 1e-6) "map no-constraint weight=0")
+      (is (instance? tr/Trace trace) "map trace valid")
+      (is (= 2 (count (:retval trace))) "map retval count")
+      (is (js/isFinite (mx/item (:score trace))) "map score finite"))))
 
-(println "\n-- Map: no constraints (weight=0) --")
-(let [mapped (comb/map-combinator k-map)
-      result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0)]] cm/EMPTY)
-      trace (:trace result)]
-  (mx/eval! (:weight result) (:score trace))
-  (assert-close "map no-constraint weight=0" 0.0 (:weight result) 1e-6)
-  (assert-true "map trace valid" (instance? tr/Trace trace))
-  (assert-equal "map retval count" 2 (count (:retval trace)))
-  (assert-true "map score finite" (js/isFinite (mx/item (:score trace)))))
+(deftest map-all-constrained-test
+  (testing "Map: all elements constrained"
+    (let [mapped (comb/map-combinator k-map)
+          obs (-> cm/EMPTY
+                  (cm/set-choice [0 :y] (mx/scalar 1.5))
+                  (cm/set-choice [1 :y] (mx/scalar 2.5)))
+          result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0)]] obs)
+          mapped-h (comb/map-combinator (force-handler k-map))
+          result-h (p/generate mapped-h [[(mx/scalar 1.0) (mx/scalar 2.0)]] obs)]
+      (mx/eval! (:weight result) (:score (:trace result))
+                (:weight result-h) (:score (:trace result-h)))
+      (is (h/close? (mx/item (:weight result-h)) (h/realize (:weight result)) 1e-5)
+          "map constrained weight matches handler")
+      (is (h/close? (mx/item (:score (:trace result-h))) (h/realize (:score (:trace result))) 1e-5)
+          "map constrained score matches handler")
+      (is (h/close? 1.5 (h/realize (cm/get-choice (:choices (:trace result)) [0 :y])) 1e-6)
+          "map constrained val[0]")
+      (is (h/close? 2.5 (h/realize (cm/get-choice (:choices (:trace result)) [1 :y])) 1e-6)
+          "map constrained val[1]"))))
 
-(println "\n-- Map: all elements constrained --")
-(let [mapped (comb/map-combinator k-map)
-      obs (-> cm/EMPTY
-              (cm/set-choice [0 :y] (mx/scalar 1.5))
-              (cm/set-choice [1 :y] (mx/scalar 2.5)))
-      result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0)]] obs)
-      ;; Compare with handler
-      mapped-h (comb/map-combinator (force-handler k-map))
-      result-h (p/generate mapped-h [[(mx/scalar 1.0) (mx/scalar 2.0)]] obs)]
-  (mx/eval! (:weight result) (:score (:trace result))
-            (:weight result-h) (:score (:trace result-h)))
-  (assert-close "map constrained weight matches handler"
-    (mx/item (:weight result-h)) (:weight result) 1e-5)
-  (assert-close "map constrained score matches handler"
-    (mx/item (:score (:trace result-h))) (:score (:trace result)) 1e-5)
-  (assert-close "map constrained val[0]"
-    1.5 (cm/get-choice (:choices (:trace result)) [0 :y]) 1e-6)
-  (assert-close "map constrained val[1]"
-    2.5 (cm/get-choice (:choices (:trace result)) [1 :y]) 1e-6))
+(deftest map-partial-constraints-test
+  (testing "Map: partial constraints"
+    (let [mapped (comb/map-combinator k-map)
+          obs (-> cm/EMPTY (cm/set-choice [1 :y] (mx/scalar 5.0)))
+          result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)]] obs)
+          trace (:trace result)]
+      (mx/eval! (:weight result) (:score trace))
+      (is (not= 0.0 (mx/item (:weight result))) "map partial weight nonzero")
+      (is (h/close? 5.0 (h/realize (cm/get-choice (:choices trace) [1 :y])) 1e-6)
+          "map partial constrained value")
+      (is (= 3 (count (:retval trace))) "map partial retval count"))))
 
-(println "\n-- Map: partial constraints --")
-(let [mapped (comb/map-combinator k-map)
-      obs (-> cm/EMPTY (cm/set-choice [1 :y] (mx/scalar 5.0)))
-      result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)]] obs)
-      trace (:trace result)]
-  (mx/eval! (:weight result) (:score trace))
-  (assert-true "map partial weight nonzero" (not= 0.0 (mx/item (:weight result))))
-  (assert-close "map partial constrained value" 5.0
-    (cm/get-choice (:choices trace) [1 :y]) 1e-6)
-  (assert-equal "map partial retval count" 3 (count (:retval trace))))
+(deftest map-trace-structure-test
+  (testing "Map: trace structure"
+    (let [mapped (comb/map-combinator k-map)
+          result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0)]] cm/EMPTY)
+          trace (:trace result)
+          choices (:choices trace)]
+      (is (mx/array? (cm/get-choice choices [0 :y])) "map choices[0 :y] present")
+      (is (mx/array? (cm/get-choice choices [1 :y])) "map choices[1 :y] present"))))
 
-(println "\n-- Map: trace structure --")
-(let [mapped (comb/map-combinator k-map)
-      result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0)]] cm/EMPTY)
-      trace (:trace result)
-      choices (:choices trace)]
-  (assert-true "map choices[0 :y] present"
-    (mx/array? (cm/get-choice choices [0 :y])))
-  (assert-true "map choices[1 :y] present"
-    (mx/array? (cm/get-choice choices [1 :y]))))
+(deftest map-non-compilable-fallback-test
+  (testing "Map: non-compilable fallback"
+    (let [mapped (comb/map-combinator k-beta)
+          result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0)]] cm/EMPTY)]
+      (is (instance? tr/Trace (:trace result)) "map fallback trace valid")
+      (is (not (::comb/compiled-path (meta (:trace result)))) "map fallback NOT compiled"))))
 
-(println "\n-- Map: non-compilable fallback --")
-(let [mapped (comb/map-combinator k-beta)
-      result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0)]] cm/EMPTY)]
-  (assert-true "map fallback trace valid" (instance? tr/Trace (:trace result)))
-  (assert-true "map fallback NOT compiled"
-    (not (::comb/compiled-path (meta (:trace result))))))
+(deftest unfold-compiled-dispatch-test
+  (testing "Unfold: compiled dispatch"
+    (let [unfold (comb/unfold-combinator k-unfold)
+          result (p/generate unfold [3 (mx/scalar 0.5)] cm/EMPTY)]
+      (is (::comb/compiled-path (meta (:trace result))) "unfold compiled path used"))))
 
-;; ---------------------------------------------------------------------------
-;; Section 2: Unfold Combinator
-;; ---------------------------------------------------------------------------
+(deftest unfold-no-constraints-test
+  (testing "Unfold: no constraints (weight=0)"
+    (let [unfold (comb/unfold-combinator k-unfold)
+          result (p/generate unfold [3 (mx/scalar 0.5)] cm/EMPTY)
+          trace (:trace result)]
+      (mx/eval! (:weight result) (:score trace))
+      (is (h/close? 0.0 (h/realize (:weight result)) 1e-6) "unfold no-constraint weight=0")
+      (is (= 3 (count (:retval trace))) "unfold retval count")
+      (is (js/isFinite (mx/item (:score trace))) "unfold score finite"))))
 
-(println "\n-- Unfold: compiled dispatch --")
-(let [unfold (comb/unfold-combinator k-unfold)
-      result (p/generate unfold [3 (mx/scalar 0.5)] cm/EMPTY)]
-  (assert-true "unfold compiled path used"
-    (::comb/compiled-path (meta (:trace result)))))
+(deftest unfold-all-constrained-test
+  (testing "Unfold: all steps constrained"
+    (let [unfold (comb/unfold-combinator k-unfold)
+          obs (-> cm/EMPTY
+                  (cm/set-choice [0 :x] (mx/scalar 0.6))
+                  (cm/set-choice [1 :x] (mx/scalar 0.7))
+                  (cm/set-choice [2 :x] (mx/scalar 0.8)))
+          result (p/generate unfold [3 (mx/scalar 0.5)] obs)
+          unfold-h (comb/unfold-combinator (force-handler k-unfold))
+          result-h (p/generate unfold-h [3 (mx/scalar 0.5)] obs)]
+      (mx/eval! (:weight result) (:score (:trace result))
+                (:weight result-h) (:score (:trace result-h)))
+      (is (h/close? (mx/item (:weight result-h)) (h/realize (:weight result)) 1e-5)
+          "unfold constrained weight matches handler")
+      (is (h/close? (mx/item (:score (:trace result-h))) (h/realize (:score (:trace result))) 1e-5)
+          "unfold constrained score matches handler"))))
 
-(println "\n-- Unfold: no constraints (weight=0) --")
-(let [unfold (comb/unfold-combinator k-unfold)
-      result (p/generate unfold [3 (mx/scalar 0.5)] cm/EMPTY)
-      trace (:trace result)]
-  (mx/eval! (:weight result) (:score trace))
-  (assert-close "unfold no-constraint weight=0" 0.0 (:weight result) 1e-6)
-  (assert-equal "unfold retval count" 3 (count (:retval trace)))
-  (assert-true "unfold score finite" (js/isFinite (mx/item (:score trace)))))
+(deftest unfold-partial-constraints-test
+  (testing "Unfold: partial constraints"
+    (let [unfold (comb/unfold-combinator k-unfold)
+          obs (-> cm/EMPTY (cm/set-choice [1 :x] (mx/scalar 0.7)))
+          result (p/generate unfold [3 (mx/scalar 0.5)] obs)
+          trace (:trace result)]
+      (mx/eval! (:weight result) (:score trace))
+      (is (not= 0.0 (mx/item (:weight result))) "unfold partial weight nonzero")
+      (is (h/close? 0.7 (h/realize (cm/get-choice (:choices trace) [1 :x])) 1e-6)
+          "unfold partial constrained value"))))
 
-(println "\n-- Unfold: all steps constrained --")
-(let [unfold (comb/unfold-combinator k-unfold)
-      obs (-> cm/EMPTY
-              (cm/set-choice [0 :x] (mx/scalar 0.6))
-              (cm/set-choice [1 :x] (mx/scalar 0.7))
-              (cm/set-choice [2 :x] (mx/scalar 0.8)))
-      result (p/generate unfold [3 (mx/scalar 0.5)] obs)
-      unfold-h (comb/unfold-combinator (force-handler k-unfold))
-      result-h (p/generate unfold-h [3 (mx/scalar 0.5)] obs)]
-  (mx/eval! (:weight result) (:score (:trace result))
-            (:weight result-h) (:score (:trace result-h)))
-  (assert-close "unfold constrained weight matches handler"
-    (mx/item (:weight result-h)) (:weight result) 1e-5)
-  (assert-close "unfold constrained score matches handler"
-    (mx/item (:score (:trace result-h))) (:score (:trace result)) 1e-5))
+(deftest unfold-state-threading-test
+  (testing "Unfold: state threading"
+    (let [unfold (comb/unfold-combinator k-unfold)
+          obs (-> cm/EMPTY
+                  (cm/set-choice [0 :x] (mx/scalar 1.0))
+                  (cm/set-choice [1 :x] (mx/scalar 2.0))
+                  (cm/set-choice [2 :x] (mx/scalar 3.0)))
+          result (p/generate unfold [3 (mx/scalar 0.5)] obs)
+          trace (:trace result)
+          states (:retval trace)]
+      (mx/eval! (first states) (second states) (nth states 2))
+      (is (h/close? 1.0 (h/realize (first states)) 1e-6) "unfold state[0] = constrained :x")
+      (is (h/close? 2.0 (h/realize (second states)) 1e-6) "unfold state[1] = constrained :x")
+      (is (h/close? 3.0 (h/realize (nth states 2)) 1e-6) "unfold state[2] = constrained :x"))))
 
-(println "\n-- Unfold: partial constraints --")
-(let [unfold (comb/unfold-combinator k-unfold)
-      obs (-> cm/EMPTY (cm/set-choice [1 :x] (mx/scalar 0.7)))
-      result (p/generate unfold [3 (mx/scalar 0.5)] obs)
-      trace (:trace result)]
-  (mx/eval! (:weight result) (:score trace))
-  (assert-true "unfold partial weight nonzero" (not= 0.0 (mx/item (:weight result))))
-  (assert-close "unfold partial constrained value" 0.7
-    (cm/get-choice (:choices trace) [1 :x]) 1e-6))
+(deftest unfold-trace-structure-test
+  (testing "Unfold: trace structure"
+    (let [unfold (comb/unfold-combinator k-unfold)
+          result (p/generate unfold [3 (mx/scalar 0.5)] cm/EMPTY)
+          choices (:choices (:trace result))]
+      (is (mx/array? (cm/get-choice choices [0 :x])) "unfold choices[0 :x] present")
+      (is (mx/array? (cm/get-choice choices [1 :x])) "unfold choices[1 :x] present")
+      (is (mx/array? (cm/get-choice choices [2 :x])) "unfold choices[2 :x] present"))))
 
-(println "\n-- Unfold: state threading --")
-(let [unfold (comb/unfold-combinator k-unfold)
-      obs (-> cm/EMPTY
-              (cm/set-choice [0 :x] (mx/scalar 1.0))
-              (cm/set-choice [1 :x] (mx/scalar 2.0))
-              (cm/set-choice [2 :x] (mx/scalar 3.0)))
-      result (p/generate unfold [3 (mx/scalar 0.5)] obs)
-      trace (:trace result)
-      states (:retval trace)]
-  (mx/eval! (first states) (second states) (nth states 2))
-  ;; Kernel returns the sampled value as new state
-  (assert-close "unfold state[0] = constrained :x" 1.0 (first states) 1e-6)
-  (assert-close "unfold state[1] = constrained :x" 2.0 (second states) 1e-6)
-  (assert-close "unfold state[2] = constrained :x" 3.0 (nth states 2) 1e-6))
+(deftest unfold-non-compilable-fallback-test
+  (testing "Unfold: non-compilable fallback"
+    (let [k (dyn/auto-key (gen [t state] (let [x (trace :x (dist/beta-dist 2 5))] x)))
+          unfold (comb/unfold-combinator k)
+          result (p/generate unfold [3 (mx/scalar 0.5)] cm/EMPTY)]
+      (is (instance? tr/Trace (:trace result)) "unfold fallback valid")
+      (is (not (::comb/compiled-path (meta (:trace result)))) "unfold fallback NOT compiled"))))
 
-(println "\n-- Unfold: trace structure --")
-(let [unfold (comb/unfold-combinator k-unfold)
-      result (p/generate unfold [3 (mx/scalar 0.5)] cm/EMPTY)
-      choices (:choices (:trace result))]
-  (assert-true "unfold choices[0 :x] present"
-    (mx/array? (cm/get-choice choices [0 :x])))
-  (assert-true "unfold choices[1 :x] present"
-    (mx/array? (cm/get-choice choices [1 :x])))
-  (assert-true "unfold choices[2 :x] present"
-    (mx/array? (cm/get-choice choices [2 :x]))))
+(deftest scan-compiled-dispatch-test
+  (testing "Scan: compiled dispatch"
+    (let [scan (comb/scan-combinator k-scan)
+          inputs [(mx/scalar 0.1) (mx/scalar 0.2) (mx/scalar 0.3)]
+          result (p/generate scan [(mx/scalar 0.0) inputs] cm/EMPTY)]
+      (is (::comb/compiled-path (meta (:trace result))) "scan compiled path used"))))
 
-(println "\n-- Unfold: non-compilable fallback --")
-(let [k (dyn/auto-key (gen [t state] (let [x (trace :x (dist/beta-dist 2 5))] x)))
-      unfold (comb/unfold-combinator k)
-      result (p/generate unfold [3 (mx/scalar 0.5)] cm/EMPTY)]
-  (assert-true "unfold fallback valid" (instance? tr/Trace (:trace result)))
-  (assert-true "unfold fallback NOT compiled"
-    (not (::comb/compiled-path (meta (:trace result))))))
+(deftest scan-no-constraints-test
+  (testing "Scan: no constraints (weight=0)"
+    (let [scan (comb/scan-combinator k-scan)
+          inputs [(mx/scalar 0.1) (mx/scalar 0.2) (mx/scalar 0.3)]
+          result (p/generate scan [(mx/scalar 0.0) inputs] cm/EMPTY)
+          trace (:trace result)]
+      (mx/eval! (:weight result) (:score trace))
+      (is (h/close? 0.0 (h/realize (:weight result)) 1e-6) "scan no-constraint weight=0")
+      (is (= 3 (count (:outputs (:retval trace)))) "scan outputs count")
+      (is (mx/array? (:carry (:retval trace))) "scan carry present")
+      (is (js/isFinite (mx/item (:score trace))) "scan score finite"))))
 
-;; ---------------------------------------------------------------------------
-;; Section 3: Scan Combinator
-;; ---------------------------------------------------------------------------
+(deftest scan-all-constrained-test
+  (testing "Scan: all steps constrained"
+    (let [scan (comb/scan-combinator k-scan)
+          inputs [(mx/scalar 0.1) (mx/scalar 0.2) (mx/scalar 0.3)]
+          obs (-> cm/EMPTY
+                  (cm/set-choice [0 :x] (mx/scalar 0.15))
+                  (cm/set-choice [1 :x] (mx/scalar 0.4))
+                  (cm/set-choice [2 :x] (mx/scalar 0.8)))
+          result (p/generate scan [(mx/scalar 0.0) inputs] obs)
+          scan-h (comb/scan-combinator (force-handler k-scan))
+          result-h (p/generate scan-h [(mx/scalar 0.0) inputs] obs)]
+      (mx/eval! (:weight result) (:score (:trace result))
+                (:weight result-h) (:score (:trace result-h)))
+      (is (h/close? (mx/item (:weight result-h)) (h/realize (:weight result)) 1e-5)
+          "scan constrained weight matches handler")
+      (is (h/close? (mx/item (:score (:trace result-h))) (h/realize (:score (:trace result))) 1e-5)
+          "scan constrained score matches handler"))))
 
-(println "\n-- Scan: compiled dispatch --")
-(let [scan (comb/scan-combinator k-scan)
-      inputs [(mx/scalar 0.1) (mx/scalar 0.2) (mx/scalar 0.3)]
-      result (p/generate scan [(mx/scalar 0.0) inputs] cm/EMPTY)]
-  (assert-true "scan compiled path used"
-    (::comb/compiled-path (meta (:trace result)))))
+(deftest scan-partial-constraints-test
+  (testing "Scan: partial constraints"
+    (let [scan (comb/scan-combinator k-scan)
+          inputs [(mx/scalar 0.1) (mx/scalar 0.2) (mx/scalar 0.3)]
+          obs (-> cm/EMPTY (cm/set-choice [1 :x] (mx/scalar 0.4)))
+          result (p/generate scan [(mx/scalar 0.0) inputs] obs)
+          trace (:trace result)]
+      (mx/eval! (:weight result) (:score trace))
+      (is (not= 0.0 (mx/item (:weight result))) "scan partial weight nonzero")
+      (is (h/close? 0.4 (h/realize (cm/get-choice (:choices trace) [1 :x])) 1e-6)
+          "scan partial constrained value"))))
 
-(println "\n-- Scan: no constraints (weight=0) --")
-(let [scan (comb/scan-combinator k-scan)
-      inputs [(mx/scalar 0.1) (mx/scalar 0.2) (mx/scalar 0.3)]
-      result (p/generate scan [(mx/scalar 0.0) inputs] cm/EMPTY)
-      trace (:trace result)]
-  (mx/eval! (:weight result) (:score trace))
-  (assert-close "scan no-constraint weight=0" 0.0 (:weight result) 1e-6)
-  (assert-equal "scan outputs count" 3 (count (:outputs (:retval trace))))
-  (assert-true "scan carry present" (mx/array? (:carry (:retval trace))))
-  (assert-true "scan score finite" (js/isFinite (mx/item (:score trace)))))
+(deftest scan-carry-threading-test
+  (testing "Scan: carry threading"
+    (let [scan (comb/scan-combinator k-scan)
+          inputs [(mx/scalar 0.1) (mx/scalar 0.2) (mx/scalar 0.3)]
+          obs (-> cm/EMPTY
+                  (cm/set-choice [0 :x] (mx/scalar 0.5))
+                  (cm/set-choice [1 :x] (mx/scalar 1.0))
+                  (cm/set-choice [2 :x] (mx/scalar 1.5)))
+          result (p/generate scan [(mx/scalar 0.0) inputs] obs)
+          retval (:retval (:trace result))]
+      (mx/eval! (:carry retval))
+      (is (h/close? 1.5 (h/realize (:carry retval)) 1e-6) "scan final carry")
+      (is (= 3 (count (:outputs retval))) "scan outputs count"))))
 
-(println "\n-- Scan: all steps constrained --")
-(let [scan (comb/scan-combinator k-scan)
-      inputs [(mx/scalar 0.1) (mx/scalar 0.2) (mx/scalar 0.3)]
-      obs (-> cm/EMPTY
-              (cm/set-choice [0 :x] (mx/scalar 0.15))
-              (cm/set-choice [1 :x] (mx/scalar 0.4))
-              (cm/set-choice [2 :x] (mx/scalar 0.8)))
-      result (p/generate scan [(mx/scalar 0.0) inputs] obs)
-      scan-h (comb/scan-combinator (force-handler k-scan))
-      result-h (p/generate scan-h [(mx/scalar 0.0) inputs] obs)]
-  (mx/eval! (:weight result) (:score (:trace result))
-            (:weight result-h) (:score (:trace result-h)))
-  (assert-close "scan constrained weight matches handler"
-    (mx/item (:weight result-h)) (:weight result) 1e-5)
-  (assert-close "scan constrained score matches handler"
-    (mx/item (:score (:trace result-h))) (:score (:trace result)) 1e-5))
+(deftest scan-trace-structure-test
+  (testing "Scan: trace structure"
+    (let [scan (comb/scan-combinator k-scan)
+          inputs [(mx/scalar 0.1) (mx/scalar 0.2)]
+          result (p/generate scan [(mx/scalar 0.0) inputs] cm/EMPTY)
+          choices (:choices (:trace result))]
+      (is (mx/array? (cm/get-choice choices [0 :x])) "scan choices[0 :x] present")
+      (is (mx/array? (cm/get-choice choices [1 :x])) "scan choices[1 :x] present"))))
 
-(println "\n-- Scan: partial constraints --")
-(let [scan (comb/scan-combinator k-scan)
-      inputs [(mx/scalar 0.1) (mx/scalar 0.2) (mx/scalar 0.3)]
-      obs (-> cm/EMPTY (cm/set-choice [1 :x] (mx/scalar 0.4)))
-      result (p/generate scan [(mx/scalar 0.0) inputs] obs)
-      trace (:trace result)]
-  (mx/eval! (:weight result) (:score trace))
-  (assert-true "scan partial weight nonzero" (not= 0.0 (mx/item (:weight result))))
-  (assert-close "scan partial constrained value" 0.4
-    (cm/get-choice (:choices trace) [1 :x]) 1e-6))
+(deftest scan-non-compilable-fallback-test
+  (testing "Scan: non-compilable fallback"
+    (let [k (dyn/auto-key (gen [carry input]
+              (let [x (trace :x (dist/beta-dist 2 5))] [x x])))
+          scan (comb/scan-combinator k)
+          inputs [(mx/scalar 0.1) (mx/scalar 0.2)]
+          result (p/generate scan [(mx/scalar 0.0) inputs] cm/EMPTY)]
+      (is (instance? tr/Trace (:trace result)) "scan fallback valid")
+      (is (not (::comb/compiled-path (meta (:trace result)))) "scan fallback NOT compiled"))))
 
-(println "\n-- Scan: carry threading --")
-(let [scan (comb/scan-combinator k-scan)
-      inputs [(mx/scalar 0.1) (mx/scalar 0.2) (mx/scalar 0.3)]
-      obs (-> cm/EMPTY
-              (cm/set-choice [0 :x] (mx/scalar 0.5))
-              (cm/set-choice [1 :x] (mx/scalar 1.0))
-              (cm/set-choice [2 :x] (mx/scalar 1.5)))
-      result (p/generate scan [(mx/scalar 0.0) inputs] obs)
-      retval (:retval (:trace result))]
-  ;; Kernel: [carry input] -> (trace :x (gaussian (+ carry input) 0.1)) -> [x x]
-  ;; So carry = x at each step (retval is [new-carry output])
-  (mx/eval! (:carry retval))
-  (assert-close "scan final carry" 1.5 (:carry retval) 1e-6)
-  (assert-equal "scan outputs count" 3 (count (:outputs retval))))
+(deftest switch-compiled-dispatch-test
+  (testing "Switch: compiled dispatch"
+    (let [sw (comb/switch-combinator k-switch k-switch-b)
+          result (p/generate sw [0] cm/EMPTY)]
+      (is (::comb/compiled-path (meta (:trace result))) "switch compiled path used"))))
 
-(println "\n-- Scan: trace structure --")
-(let [scan (comb/scan-combinator k-scan)
-      inputs [(mx/scalar 0.1) (mx/scalar 0.2)]
-      result (p/generate scan [(mx/scalar 0.0) inputs] cm/EMPTY)
-      choices (:choices (:trace result))]
-  (assert-true "scan choices[0 :x] present"
-    (mx/array? (cm/get-choice choices [0 :x])))
-  (assert-true "scan choices[1 :x] present"
-    (mx/array? (cm/get-choice choices [1 :x]))))
+(deftest switch-no-constraints-test
+  (testing "Switch: no constraints (weight=0)"
+    (let [sw (comb/switch-combinator k-switch k-switch-b)
+          result (p/generate sw [0] cm/EMPTY)
+          trace (:trace result)]
+      (mx/eval! (:weight result) (:score trace))
+      (is (h/close? 0.0 (h/realize (:weight result)) 1e-6) "switch no-constraint weight=0")
+      (is (js/isFinite (mx/item (:score trace))) "switch score finite"))))
 
-(println "\n-- Scan: non-compilable fallback --")
-(let [k (dyn/auto-key (gen [carry input]
-          (let [x (trace :x (dist/beta-dist 2 5))] [x x])))
-      scan (comb/scan-combinator k)
-      inputs [(mx/scalar 0.1) (mx/scalar 0.2)]
-      result (p/generate scan [(mx/scalar 0.0) inputs] cm/EMPTY)]
-  (assert-true "scan fallback valid" (instance? tr/Trace (:trace result)))
-  (assert-true "scan fallback NOT compiled"
-    (not (::comb/compiled-path (meta (:trace result))))))
+(deftest switch-fully-constrained-test
+  (testing "Switch: fully constrained"
+    (let [sw (comb/switch-combinator k-switch k-switch-b)
+          obs (-> cm/EMPTY (cm/set-value :x (mx/scalar 2.0)))
+          result (p/generate sw [0] obs)
+          sw-h (comb/switch-combinator (force-handler k-switch) (force-handler k-switch-b))
+          result-h (p/generate sw-h [0] obs)]
+      (mx/eval! (:weight result) (:score (:trace result))
+                (:weight result-h) (:score (:trace result-h)))
+      (is (h/close? (mx/item (:weight result-h)) (h/realize (:weight result)) 1e-5)
+          "switch constrained weight matches handler")
+      (is (h/close? (mx/item (:score (:trace result-h))) (h/realize (:score (:trace result))) 1e-5)
+          "switch constrained score matches handler")
+      (is (h/close? 2.0 (h/realize (cm/get-value (cm/get-submap (:choices (:trace result)) :x))) 1e-6)
+          "switch constrained value"))))
 
-;; ---------------------------------------------------------------------------
-;; Section 4: Switch Combinator
-;; ---------------------------------------------------------------------------
+(deftest switch-different-branches-test
+  (testing "Switch: different branch indices"
+    (let [sw (comb/switch-combinator k-switch k-switch-b)
+          obs (-> cm/EMPTY (cm/set-value :x (mx/scalar 3.0)))
+          r0 (p/generate sw [0] obs)
+          r1 (p/generate sw [1] obs)]
+      (mx/eval! (:weight r0) (:weight r1) (:score (:trace r0)) (:score (:trace r1)))
+      (is (> (js/Math.abs (- (mx/item (:score (:trace r0)))
+                             (mx/item (:score (:trace r1))))) 0.1)
+          "switch branch scores differ"))))
 
-(println "\n-- Switch: compiled dispatch --")
-(let [sw (comb/switch-combinator k-switch k-switch-b)
-      result (p/generate sw [0] cm/EMPTY)]
-  (assert-true "switch compiled path used"
-    (::comb/compiled-path (meta (:trace result)))))
+(deftest switch-metadata-test
+  (testing "Switch: metadata preserved"
+    (let [sw (comb/switch-combinator k-switch k-switch-b)
+          r0 (p/generate sw [0] cm/EMPTY)
+          r1 (p/generate sw [1] cm/EMPTY)]
+      (is (= 0 (::comb/switch-idx (meta (:trace r0)))) "switch-idx branch 0")
+      (is (= 1 (::comb/switch-idx (meta (:trace r1)))) "switch-idx branch 1"))))
 
-(println "\n-- Switch: no constraints (weight=0) --")
-(let [sw (comb/switch-combinator k-switch k-switch-b)
-      result (p/generate sw [0] cm/EMPTY)
-      trace (:trace result)]
-  (mx/eval! (:weight result) (:score trace))
-  (assert-close "switch no-constraint weight=0" 0.0 (:weight result) 1e-6)
-  (assert-true "switch score finite" (js/isFinite (mx/item (:score trace)))))
+(deftest switch-non-compilable-fallback-test
+  (testing "Switch: non-compilable fallback"
+    (let [branch (dyn/auto-key (gen [] (let [x (trace :x (dist/beta-dist 2 5))] x)))
+          sw (comb/switch-combinator branch)
+          result (p/generate sw [0] cm/EMPTY)]
+      (is (instance? tr/Trace (:trace result)) "switch fallback valid")
+      (is (not (::comb/compiled-path (meta (:trace result)))) "switch fallback NOT compiled"))))
 
-(println "\n-- Switch: fully constrained --")
-(let [sw (comb/switch-combinator k-switch k-switch-b)
-      obs (-> cm/EMPTY (cm/set-value :x (mx/scalar 2.0)))
-      result (p/generate sw [0] obs)
-      sw-h (comb/switch-combinator (force-handler k-switch) (force-handler k-switch-b))
-      result-h (p/generate sw-h [0] obs)]
-  (mx/eval! (:weight result) (:score (:trace result))
-            (:weight result-h) (:score (:trace result-h)))
-  (assert-close "switch constrained weight matches handler"
-    (mx/item (:weight result-h)) (:weight result) 1e-5)
-  (assert-close "switch constrained score matches handler"
-    (mx/item (:score (:trace result-h))) (:score (:trace result)) 1e-5)
-  (assert-close "switch constrained value" 2.0
-    (cm/get-value (cm/get-submap (:choices (:trace result)) :x)) 1e-6))
+(deftest switch-mixed-branches-test
+  (testing "Switch: mixed branches"
+    (let [compilable (dyn/auto-key (gen [] (let [x (trace :x (dist/gaussian 0 1))] x)))
+          non-comp (dyn/auto-key (gen [] (let [x (trace :x (dist/beta-dist 2 5))] x)))
+          sw (comb/switch-combinator compilable non-comp)
+          r0 (p/generate sw [0] cm/EMPTY)
+          r1 (p/generate sw [1] cm/EMPTY)]
+      (is (::comb/compiled-path (meta (:trace r0))) "switch mixed: compilable branch compiled")
+      (is (not (::comb/compiled-path (meta (:trace r1)))) "switch mixed: non-compilable branch NOT compiled"))))
 
-(println "\n-- Switch: different branch indices --")
-(let [sw (comb/switch-combinator k-switch k-switch-b)
-      obs (-> cm/EMPTY (cm/set-value :x (mx/scalar 3.0)))
-      r0 (p/generate sw [0] obs)
-      r1 (p/generate sw [1] obs)]
-  (mx/eval! (:weight r0) (:weight r1) (:score (:trace r0)) (:score (:trace r1)))
-  ;; Branch 0: gaussian(0,1), Branch 1: gaussian(5,0.5) — different scores for x=3
-  (assert-true "switch branch scores differ"
-    (> (js/Math.abs (- (mx/item (:score (:trace r0)))
-                       (mx/item (:score (:trace r1))))) 0.1)))
+(deftest mix-compiled-dispatch-test
+  (testing "Mix: compiled dispatch"
+    (let [mix (comb/mix-combinator [k-switch k-switch-b]
+                (fn [_] (mx/array [0.0 0.0])))
+          result (p/generate mix [] cm/EMPTY)]
+      (is (::comb/compiled-path (meta (:trace result))) "mix compiled path used"))))
 
-(println "\n-- Switch: metadata preserved --")
-(let [sw (comb/switch-combinator k-switch k-switch-b)
-      r0 (p/generate sw [0] cm/EMPTY)
-      r1 (p/generate sw [1] cm/EMPTY)]
-  (assert-equal "switch-idx branch 0" 0 (::comb/switch-idx (meta (:trace r0))))
-  (assert-equal "switch-idx branch 1" 1 (::comb/switch-idx (meta (:trace r1)))))
+(deftest mix-no-constraints-test
+  (testing "Mix: no constraints"
+    (let [mix (comb/mix-combinator [k-switch k-switch-b]
+                (fn [_] (mx/array [0.0 0.0])))
+          result (p/generate mix [] cm/EMPTY)
+          trace (:trace result)]
+      (mx/eval! (:weight result) (:score trace))
+      (is (h/close? 0.0 (h/realize (:weight result)) 1e-6) "mix no-constraint weight=0")
+      (is (js/isFinite (mx/item (:score trace))) "mix score finite")
+      (is (mx/array? (cm/get-choice (:choices trace) [:component-idx])) "mix component-idx present"))))
 
-(println "\n-- Switch: non-compilable fallback --")
-(let [branch (dyn/auto-key (gen [] (let [x (trace :x (dist/beta-dist 2 5))] x)))
-      sw (comb/switch-combinator branch)
-      result (p/generate sw [0] cm/EMPTY)]
-  (assert-true "switch fallback valid" (instance? tr/Trace (:trace result)))
-  (assert-true "switch fallback NOT compiled"
-    (not (::comb/compiled-path (meta (:trace result))))))
+(deftest mix-fully-constrained-test
+  (testing "Mix: idx + component constrained matches handler"
+    (let [mix (comb/mix-combinator [k-switch k-switch-b]
+                (fn [_] (mx/array [0.0 0.0])))
+          obs (-> cm/EMPTY
+                  (cm/set-choice [:component-idx] (mx/scalar 0 mx/int32))
+                  (cm/set-value :x (mx/scalar 2.0)))
+          result (p/generate mix [] obs)
+          mix-h (comb/mix-combinator [(force-handler k-switch) (force-handler k-switch-b)]
+                  (fn [_] (mx/array [0.0 0.0])))
+          result-h (p/generate mix-h [] obs)]
+      (mx/eval! (:weight result) (:score (:trace result))
+                (:weight result-h) (:score (:trace result-h)))
+      (is (h/close? (mx/item (:weight result-h)) (h/realize (:weight result)) 1e-5)
+          "mix fully-constrained weight matches handler")
+      (is (h/close? (mx/item (:score (:trace result-h))) (h/realize (:score (:trace result))) 1e-5)
+          "mix fully-constrained score matches handler"))))
 
-(println "\n-- Switch: mixed branches --")
-(let [compilable (dyn/auto-key (gen [] (let [x (trace :x (dist/gaussian 0 1))] x)))
-      non-comp (dyn/auto-key (gen [] (let [x (trace :x (dist/beta-dist 2 5))] x)))
-      sw (comb/switch-combinator compilable non-comp)
-      r0 (p/generate sw [0] cm/EMPTY)
-      r1 (p/generate sw [1] cm/EMPTY)]
-  (assert-true "switch mixed: compilable branch compiled"
-    (::comb/compiled-path (meta (:trace r0))))
-  (assert-true "switch mixed: non-compilable branch NOT compiled"
-    (not (::comb/compiled-path (meta (:trace r1))))))
+(deftest mix-idx-and-component-constrained-test
+  (testing "Mix: index + component constrained"
+    (let [mix (comb/mix-combinator [k-switch k-switch-b]
+                (fn [_] (mx/array [0.0 0.0])))
+          obs (-> cm/EMPTY
+                  (cm/set-choice [:component-idx] (mx/scalar 1 mx/int32))
+                  (cm/set-value :x (mx/scalar 4.0)))
+          result (p/generate mix [] obs)
+          trace (:trace result)]
+      (mx/eval! (:weight result) (:score trace))
+      (is (not= 0.0 (mx/item (:weight result))) "mix idx+comp weight nonzero")
+      (is (h/close? 4.0 (h/realize (cm/get-choice (:choices trace) [:x])) 1e-6) "mix constrained x")
+      (is (= 1 (mx/item (cm/get-choice (:choices trace) [:component-idx]))) "mix constrained idx"))))
 
-;; ---------------------------------------------------------------------------
-;; Section 5: Mix Combinator
-;; ---------------------------------------------------------------------------
+(deftest mix-idx-only-constrained-test
+  (testing "Mix: index constrained only"
+    (let [mix (comb/mix-combinator [k-switch k-switch-b]
+                (fn [_] (mx/array [0.0 0.0])))
+          obs (-> cm/EMPTY
+                  (cm/set-choice [:component-idx] (mx/scalar 0 mx/int32)))
+          result (p/generate mix [] obs)
+          trace (:trace result)]
+      (mx/eval! (:weight result) (:score trace))
+      (is (not= 0.0 (mx/item (:weight result))) "mix idx-only weight nonzero")
+      (is (= 0 (mx/item (cm/get-choice (:choices trace) [:component-idx]))) "mix idx-only component"))))
 
-(println "\n-- Mix: compiled dispatch --")
-(let [mix (comb/mix-combinator [k-switch k-switch-b]
-            (fn [_] (mx/array [0.0 0.0])))
-      result (p/generate mix [] cm/EMPTY)]
-  (assert-true "mix compiled path used"
-    (::comb/compiled-path (meta (:trace result)))))
+(deftest mix-non-compilable-fallback-test
+  (testing "Mix: non-compilable fallback"
+    (let [comp-beta (dyn/auto-key (gen [] (let [x (trace :x (dist/beta-dist 2 5))] x)))
+          mix (comb/mix-combinator [comp-beta]
+                (fn [_] (mx/array [0.0])))
+          result (p/generate mix [] cm/EMPTY)]
+      (is (instance? tr/Trace (:trace result)) "mix fallback valid")
+      (is (not (::comb/compiled-path (meta (:trace result)))) "mix fallback NOT compiled"))))
 
-(println "\n-- Mix: no constraints --")
-(let [mix (comb/mix-combinator [k-switch k-switch-b]
-            (fn [_] (mx/array [0.0 0.0])))
-      result (p/generate mix [] cm/EMPTY)
-      trace (:trace result)]
-  (mx/eval! (:weight result) (:score trace))
-  ;; Weight should be 0 for unconstrained (both idx and component)
-  (assert-close "mix no-constraint weight=0" 0.0 (:weight result) 1e-6)
-  (assert-true "mix score finite" (js/isFinite (mx/item (:score trace))))
-  ;; component-idx should be in choices
-  (assert-true "mix component-idx present"
-    (mx/array? (cm/get-choice (:choices trace) [:component-idx]))))
+(deftest metadata-map-element-scores-test
+  (testing "Metadata: Map ::element-scores"
+    (let [mapped (comb/map-combinator k-map)
+          result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)]] cm/EMPTY)
+          trace (:trace result)
+          es (::comb/element-scores (meta trace))]
+      (is (some? es) "map meta: ::element-scores present")
+      (is (= 3 (count es)) "map meta: ::element-scores count")
+      (mx/eval! (first es) (second es) (nth es 2))
+      (is (js/isFinite (mx/item (first es))) "map meta: element-scores[0] finite")
+      (is (js/isFinite (mx/item (second es))) "map meta: element-scores[1] finite")
+      (is (js/isFinite (mx/item (nth es 2))) "map meta: element-scores[2] finite"))))
 
-(println "\n-- Mix: idx + component constrained matches handler --")
-(let [mix (comb/mix-combinator [k-switch k-switch-b]
-            (fn [_] (mx/array [0.0 0.0])))
-      ;; Constrain both idx and x to eliminate PRNG differences
-      obs (-> cm/EMPTY
-              (cm/set-choice [:component-idx] (mx/scalar 0 mx/int32))
-              (cm/set-value :x (mx/scalar 2.0)))
-      result (p/generate mix [] obs)
-      mix-h (comb/mix-combinator [(force-handler k-switch) (force-handler k-switch-b)]
-              (fn [_] (mx/array [0.0 0.0])))
-      result-h (p/generate mix-h [] obs)]
-  (mx/eval! (:weight result) (:score (:trace result))
-            (:weight result-h) (:score (:trace result-h)))
-  (assert-close "mix fully-constrained weight matches handler"
-    (mx/item (:weight result-h)) (:weight result) 1e-5)
-  (assert-close "mix fully-constrained score matches handler"
-    (mx/item (:score (:trace result-h))) (:score (:trace result)) 1e-5))
+(deftest metadata-unfold-step-scores-test
+  (testing "Metadata: Unfold ::step-scores"
+    (let [unfold (comb/unfold-combinator k-unfold)
+          result (p/generate unfold [3 (mx/scalar 0.5)] cm/EMPTY)
+          trace (:trace result)
+          ss (::comb/step-scores (meta trace))]
+      (is (some? ss) "unfold meta: ::step-scores present")
+      (is (= 3 (count ss)) "unfold meta: ::step-scores count")
+      (mx/eval! (first ss) (second ss) (nth ss 2))
+      (is (js/isFinite (mx/item (first ss))) "unfold meta: step-scores[0] finite")
+      (is (js/isFinite (mx/item (nth ss 2))) "unfold meta: step-scores[2] finite"))))
 
-(println "\n-- Mix: index + component constrained --")
-(let [mix (comb/mix-combinator [k-switch k-switch-b]
-            (fn [_] (mx/array [0.0 0.0])))
-      obs (-> cm/EMPTY
-              (cm/set-choice [:component-idx] (mx/scalar 1 mx/int32))
-              (cm/set-value :x (mx/scalar 4.0)))
-      result (p/generate mix [] obs)
-      trace (:trace result)]
-  (mx/eval! (:weight result) (:score trace))
-  (assert-true "mix idx+comp weight nonzero" (not= 0.0 (mx/item (:weight result))))
-  (assert-close "mix constrained x" 4.0
-    (cm/get-choice (:choices trace) [:x]) 1e-6)
-  (assert-equal "mix constrained idx" 1
-    (mx/item (cm/get-choice (:choices trace) [:component-idx]))))
+(deftest metadata-scan-step-scores-and-carries-test
+  (testing "Metadata: Scan ::step-scores + ::step-carries"
+    (let [scan (comb/scan-combinator k-scan)
+          inputs [(mx/scalar 0.1) (mx/scalar 0.2) (mx/scalar 0.3)]
+          result (p/generate scan [(mx/scalar 0.0) inputs] cm/EMPTY)
+          trace (:trace result)
+          ss (::comb/step-scores (meta trace))
+          sc (::comb/step-carries (meta trace))]
+      (is (some? ss) "scan meta: ::step-scores present")
+      (is (= 3 (count ss)) "scan meta: ::step-scores count")
+      (is (some? sc) "scan meta: ::step-carries present")
+      (is (= 3 (count sc)) "scan meta: ::step-carries count")
+      (mx/eval! (first ss) (nth ss 2) (first sc) (nth sc 2))
+      (is (js/isFinite (mx/item (first ss))) "scan meta: step-scores[0] finite")
+      (is (mx/array? (first sc)) "scan meta: step-carries[0] is array"))))
 
-(println "\n-- Mix: index constrained only --")
-(let [mix (comb/mix-combinator [k-switch k-switch-b]
-            (fn [_] (mx/array [0.0 0.0])))
-      obs (-> cm/EMPTY
-              (cm/set-choice [:component-idx] (mx/scalar 0 mx/int32)))
-      result (p/generate mix [] obs)
-      trace (:trace result)]
-  (mx/eval! (:weight result) (:score trace))
-  (assert-true "mix idx-only weight nonzero" (not= 0.0 (mx/item (:weight result))))
-  (assert-equal "mix idx-only component" 0
-    (mx/item (cm/get-choice (:choices trace) [:component-idx]))))
+(deftest metadata-switch-idx-test
+  (testing "Metadata: Switch ::switch-idx"
+    (let [sw (comb/switch-combinator k-switch k-switch-b)
+          r0 (p/generate sw [0] cm/EMPTY)
+          r1 (p/generate sw [1] cm/EMPTY)]
+      (is (= 0 (::comb/switch-idx (meta (:trace r0)))) "switch meta: idx=0")
+      (is (= 1 (::comb/switch-idx (meta (:trace r1)))) "switch meta: idx=1")
+      (is (::comb/compiled-path (meta (:trace r0))) "switch meta: ::compiled-path on idx=0"))))
 
-(println "\n-- Mix: non-compilable fallback --")
-(let [comp-beta (dyn/auto-key (gen [] (let [x (trace :x (dist/beta-dist 2 5))] x)))
-      mix (comb/mix-combinator [comp-beta]
-            (fn [_] (mx/array [0.0])))
-      result (p/generate mix [] cm/EMPTY)]
-  (assert-true "mix fallback valid" (instance? tr/Trace (:trace result)))
-  (assert-true "mix fallback NOT compiled"
-    (not (::comb/compiled-path (meta (:trace result))))))
+(deftest prng-consistency-test
+  (testing "PRNG consistency: Map"
+    (let [mapped (comb/map-combinator k-map)
+          result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0)]] cm/EMPTY)
+          trace (:trace result)]
+      (mx/eval! (:score trace) (:weight result))
+      (is (js/isFinite (mx/item (:score trace))) "map prng: score finite")
+      (is (h/close? 0.0 (h/realize (:weight result)) 1e-6) "map prng: weight=0")))
 
-;; ---------------------------------------------------------------------------
-;; Section 6: Metadata (WP-8 readiness)
-;; ---------------------------------------------------------------------------
-;; Compiled generate must set the same metadata as handler paths.
-;; update/regenerate rely on ::element-scores, ::step-scores, ::step-carries.
+  (testing "PRNG consistency: Unfold"
+    (let [unfold (comb/unfold-combinator k-unfold)
+          result (p/generate unfold [3 (mx/scalar 0.5)] cm/EMPTY)
+          trace (:trace result)]
+      (mx/eval! (:score trace) (:weight result))
+      (is (js/isFinite (mx/item (:score trace))) "unfold prng: score finite")
+      (is (h/close? 0.0 (h/realize (:weight result)) 1e-6) "unfold prng: weight=0")))
 
-(println "\n-- Metadata: Map ::element-scores --")
-(let [mapped (comb/map-combinator k-map)
-      result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)]] cm/EMPTY)
-      trace (:trace result)
-      es (::comb/element-scores (meta trace))]
-  (assert-true "map meta: ::element-scores present" (some? es))
-  (assert-equal "map meta: ::element-scores count" 3 (count es))
-  (mx/eval! (first es) (second es) (nth es 2))
-  (assert-true "map meta: element-scores[0] finite" (js/isFinite (mx/item (first es))))
-  (assert-true "map meta: element-scores[1] finite" (js/isFinite (mx/item (second es))))
-  (assert-true "map meta: element-scores[2] finite" (js/isFinite (mx/item (nth es 2)))))
+  (testing "PRNG consistency: Scan"
+    (let [scan (comb/scan-combinator k-scan)
+          inputs [(mx/scalar 0.1) (mx/scalar 0.2)]
+          result (p/generate scan [(mx/scalar 0.0) inputs] cm/EMPTY)
+          trace (:trace result)]
+      (mx/eval! (:score trace) (:weight result))
+      (is (js/isFinite (mx/item (:score trace))) "scan prng: score finite")
+      (is (h/close? 0.0 (h/realize (:weight result)) 1e-6) "scan prng: weight=0")))
 
-(println "\n-- Metadata: Unfold ::step-scores --")
-(let [unfold (comb/unfold-combinator k-unfold)
-      result (p/generate unfold [3 (mx/scalar 0.5)] cm/EMPTY)
-      trace (:trace result)
-      ss (::comb/step-scores (meta trace))]
-  (assert-true "unfold meta: ::step-scores present" (some? ss))
-  (assert-equal "unfold meta: ::step-scores count" 3 (count ss))
-  (mx/eval! (first ss) (second ss) (nth ss 2))
-  (assert-true "unfold meta: step-scores[0] finite" (js/isFinite (mx/item (first ss))))
-  (assert-true "unfold meta: step-scores[2] finite" (js/isFinite (mx/item (nth ss 2)))))
+  (testing "PRNG consistency: Switch"
+    (let [sw (comb/switch-combinator k-switch)
+          result (p/generate sw [0] cm/EMPTY)
+          trace (:trace result)]
+      (mx/eval! (:score trace) (:weight result))
+      (is (js/isFinite (mx/item (:score trace))) "switch prng: score finite")
+      (is (h/close? 0.0 (h/realize (:weight result)) 1e-6) "switch prng: weight=0"))))
 
-(println "\n-- Metadata: Scan ::step-scores + ::step-carries --")
-(let [scan (comb/scan-combinator k-scan)
-      inputs [(mx/scalar 0.1) (mx/scalar 0.2) (mx/scalar 0.3)]
-      result (p/generate scan [(mx/scalar 0.0) inputs] cm/EMPTY)
-      trace (:trace result)
-      ss (::comb/step-scores (meta trace))
-      sc (::comb/step-carries (meta trace))]
-  (assert-true "scan meta: ::step-scores present" (some? ss))
-  (assert-equal "scan meta: ::step-scores count" 3 (count ss))
-  (assert-true "scan meta: ::step-carries present" (some? sc))
-  (assert-equal "scan meta: ::step-carries count" 3 (count sc))
-  (mx/eval! (first ss) (nth ss 2) (first sc) (nth sc 2))
-  (assert-true "scan meta: step-scores[0] finite" (js/isFinite (mx/item (first ss))))
-  (assert-true "scan meta: step-carries[0] is array" (mx/array? (first sc))))
-
-(println "\n-- Metadata: Switch ::switch-idx --")
-(let [sw (comb/switch-combinator k-switch k-switch-b)
-      r0 (p/generate sw [0] cm/EMPTY)
-      r1 (p/generate sw [1] cm/EMPTY)]
-  (assert-equal "switch meta: idx=0" 0 (::comb/switch-idx (meta (:trace r0))))
-  (assert-equal "switch meta: idx=1" 1 (::comb/switch-idx (meta (:trace r1))))
-  (assert-true "switch meta: ::compiled-path on idx=0"
-    (::comb/compiled-path (meta (:trace r0)))))
-
-;; ---------------------------------------------------------------------------
-;; Section 7: PRNG consistency (generate(empty) ≈ simulate structure)
-;; ---------------------------------------------------------------------------
-
-(println "\n-- PRNG consistency: Map --")
-(let [mapped (comb/map-combinator k-map)
-      result (p/generate mapped [[(mx/scalar 1.0) (mx/scalar 2.0)]] cm/EMPTY)
-      trace (:trace result)]
-  (mx/eval! (:score trace) (:weight result))
-  (assert-true "map prng: score finite" (js/isFinite (mx/item (:score trace))))
-  (assert-close "map prng: weight=0" 0.0 (:weight result) 1e-6))
-
-(println "\n-- PRNG consistency: Unfold --")
-(let [unfold (comb/unfold-combinator k-unfold)
-      result (p/generate unfold [3 (mx/scalar 0.5)] cm/EMPTY)
-      trace (:trace result)]
-  (mx/eval! (:score trace) (:weight result))
-  (assert-true "unfold prng: score finite" (js/isFinite (mx/item (:score trace))))
-  (assert-close "unfold prng: weight=0" 0.0 (:weight result) 1e-6))
-
-(println "\n-- PRNG consistency: Scan --")
-(let [scan (comb/scan-combinator k-scan)
-      inputs [(mx/scalar 0.1) (mx/scalar 0.2)]
-      result (p/generate scan [(mx/scalar 0.0) inputs] cm/EMPTY)
-      trace (:trace result)]
-  (mx/eval! (:score trace) (:weight result))
-  (assert-true "scan prng: score finite" (js/isFinite (mx/item (:score trace))))
-  (assert-close "scan prng: weight=0" 0.0 (:weight result) 1e-6))
-
-(println "\n-- PRNG consistency: Switch --")
-(let [sw (comb/switch-combinator k-switch)
-      result (p/generate sw [0] cm/EMPTY)
-      trace (:trace result)]
-  (mx/eval! (:score trace) (:weight result))
-  (assert-true "switch prng: score finite" (js/isFinite (mx/item (:score trace))))
-  (assert-close "switch prng: weight=0" 0.0 (:weight result) 1e-6))
-
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n=== WP-7 Results: " @pass-count "/" (+ @pass-count @fail-count)
-              " passed ==="))
-(when (pos? @fail-count)
-  (println (str "  " @fail-count " FAILURES")))
+(cljs.test/run-tests)
