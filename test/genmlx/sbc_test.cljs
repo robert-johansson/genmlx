@@ -1,8 +1,12 @@
 (ns genmlx.sbc-test
   "Simulation-Based Calibration (SBC) test suite.
-   Talts et al. 2018: for each sim, sample θ* from prior, generate data,
-   run inference, compute rank of θ* among posterior samples.
+   Talts et al. 2018: for each sim, sample theta* from prior, generate data,
+   run inference, compute rank of theta* among posterior samples.
    If inference is correct, ranks ~ Uniform(0, L).
+
+   Configuration via environment variables:
+     SBC_N=500   Number of repetitions (default 500)
+     SBC_L=200   Posterior samples per repetition (default 200)
 
    NUTS excluded: triggers Bun segfault (Bun bug, not inference bug).
    HMC validates the same gradient-based math."
@@ -12,18 +16,19 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
-            [genmlx.inference.mcmc :as mcmc])
+            [genmlx.inference.mcmc :as mcmc]
+            [genmlx.inference.importance :as is]
+            ["fs" :as fs])
   (:require-macros [genmlx.gen :refer [gen]]))
 
-;; ── Configuration ──────────────────────────────────────────────────────────
+;; ── Configuration (from env vars, with defaults) ─────────────────────────
 
-(def N-CMH 50)     ;; SBC repetitions for compiled MH / standard MH
-(def N-HMC 25)     ;; SBC repetitions for HMC (fewer: speed)
-(def L 50)         ;; posterior samples per sim
-(def N-BINS 5)     ;; bins for chi-squared test (fewer bins for smaller N)
-(def ALPHA 0.01)   ;; significance level
+(def N     (js/parseInt (or (aget js/process.env "SBC_N") "500")))
+(def L     (js/parseInt (or (aget js/process.env "SBC_L") "200")))
+(def N-BINS (if (< N 100) 5 10))
+(def ALPHA  0.01)
 
-;; ── Statistical utilities ──────────────────────────────────────────────────
+;; ── Statistical utilities ────────────────────────────────────────────────
 
 (defn compute-rank
   "Count how many posterior samples are strictly less than the true value."
@@ -31,40 +36,54 @@
   (count (filter #(< % true-val) samples)))
 
 (def chi-sq-critical
-  "Chi-squared critical values at alpha=0.005 for common df."
-  {4  14.86
-   9  23.59
-   14 31.32
-   19 38.58})
+  "Chi-squared critical values at alpha=0.01."
+  {4  13.28, 9  21.67, 14 29.14, 19 36.19})
 
 (defn chi-squared-uniformity
   "Chi-squared goodness-of-fit test for uniformity of ranks.
    Returns {:statistic :pass? :df :critical}."
   [ranks n-sims]
-  (let [bins (mapv #(js/Math.floor (/ (* % N-BINS) (inc L))) ranks)
-        counts (reduce (fn [acc b] (update acc b (fnil inc 0))) {} bins)
-        expected (/ n-sims N-BINS)
-        df (dec N-BINS)
-        critical (get chi-sq-critical df 21.67)
+  (let [bins      (mapv #(js/Math.floor (/ (* % N-BINS) (inc L))) ranks)
+        counts    (reduce (fn [acc b] (update acc b (fnil inc 0))) {} bins)
+        expected  (/ n-sims N-BINS)
+        df        (dec N-BINS)
+        critical  (get chi-sq-critical df 21.67)
+        all-bins  (reduce (fn [m b] (if (contains? m b) m (assoc m b 0)))
+                          counts (range N-BINS))
         statistic (reduce-kv
                     (fn [sum _bin observed]
                       (+ sum (/ (* (- observed expected) (- observed expected)) expected)))
-                    0.0
-                    (reduce (fn [m b] (if (contains? m b) m (assoc m b 0)))
-                            counts (range N-BINS)))]
-    {:statistic statistic
-     :pass? (< statistic critical)
-     :df df
-     :critical critical}))
+                    0.0 all-bins)]
+    {:statistic statistic :pass? (< statistic critical) :df df :critical critical}))
 
-;; ── Parameter extraction ───────────────────────────────────────────────────
+(defn ecdf-ks-uniformity
+  "Kolmogorov-Smirnov test for uniformity of ranks.
+   Ranks should be Uniform(0, L). Returns {:statistic :pass? :critical}."
+  [ranks n-sims]
+  (let [;; Normalize ranks to [0, 1]
+        normalized (sort (mapv #(/ % (inc L)) ranks))
+        n          (count normalized)
+        ;; KS statistic: max |F_n(x) - x|
+        statistic  (reduce-kv
+                     (fn [max-d i u]
+                       (let [f-above (/ (inc i) n)
+                             f-below (/ i n)]
+                         (max max-d
+                              (js/Math.abs (- f-above u))
+                              (js/Math.abs (- f-below u)))))
+                     0.0 (vec normalized))
+        ;; Critical value: c(alpha) / sqrt(N), c(0.01) = 1.628
+        critical   (/ 1.628 (js/Math.sqrt n-sims))]
+    {:statistic statistic :pass? (< statistic critical) :critical critical}))
+
+;; ── Parameter extraction ─────────────────────────────────────────────────
 
 (defn extract-observations
   "Extract observation values from a simulated trace into a choicemap."
   [trace obs-addrs]
   (reduce (fn [obs addr]
             (let [sub (cm/get-submap (:choices trace) addr)
-                  v (cm/get-value sub)]
+                  v   (cm/get-value sub)]
               (mx/eval! v)
               (cm/set-choice obs [addr] v)))
           cm/EMPTY obs-addrs))
@@ -74,59 +93,84 @@
   [trace param-addrs]
   (mapv (fn [addr]
           (let [sub (cm/get-submap (:choices trace) addr)
-                v (cm/get-value sub)]
+                v   (cm/get-value sub)]
             (mx/eval! v)
             (mx/item v)))
         param-addrs))
 
-;; ── Inference dispatch ─────────────────────────────────────────────────────
-;; All algorithms return vectors of Clojure arrays/numbers (via mx/->clj).
-;; CMH = compiled MH with random-walk proposal (good for single-param & independent).
-;; HMC = gradient-based (good for all continuous models including correlated params).
+;; ── Inference dispatch ───────────────────────────────────────────────────
 
 (defn make-extractor
-  "Build extractor: (sample, param-idx) → JS number.
-   param-addrs: which params we test (SBC rank computed for these)
-   all-addrs: which addresses are in the parameter vector"
+  "Build extractor: (sample, param-idx) -> JS number."
   [param-addrs all-addrs]
   (let [index-map (into {} (map-indexed (fn [i a] [a i]) all-addrs))]
     (fn [sample param-idx]
-      (let [addr (nth param-addrs param-idx)
+      (let [addr    (nth param-addrs param-idx)
             arr-idx (get index-map addr)]
         (if (sequential? sample)
           (nth sample arr-idx)
           sample)))))
 
+(defn resample-from-is
+  "Resample L unweighted samples from IS weighted traces.
+   Returns vector of trace-like maps for extractor compatibility."
+  [is-result n-samples]
+  (let [log-weights (mapv (fn [w] (mx/eval! w) (mx/item w)) (:log-weights is-result))
+        max-w       (apply max log-weights)
+        weights     (mapv #(js/Math.exp (- % max-w)) log-weights)
+        sum-w       (reduce + weights)
+        norm-w      (mapv #(/ % sum-w) weights)
+        ;; Build CDF for inverse-transform sampling
+        cdf         (reductions + norm-w)
+        traces      (:traces is-result)]
+    (vec (repeatedly n-samples
+           (fn []
+             (let [u   (js/Math.random)
+                   idx (or (first (keep-indexed (fn [i c] (when (>= c u) i)) cdf))
+                           (dec (count traces)))]
+               (nth traces idx)))))))
+
 (defn run-inference
   "Run inference and return {:samples vector :extractor fn}."
-  [algo-key {:keys [model args param-addrs cmh-opts hmc-opts mh-opts]} observations]
+  [algo-key {:keys [model args param-addrs cmh-opts hmc-opts mh-opts is-opts]} observations]
   (case algo-key
     :cmh
-    (let [opts (merge {:samples L :burn 100 :compile? true :device :cpu} cmh-opts)
+    (let [opts    (merge {:samples L :burn (max 100 (quot L 2)) :compile? true :device :cpu} cmh-opts)
           samples (mcmc/compiled-mh opts model args observations)
-          addrs (:addresses cmh-opts)]
-      {:samples samples
-       :extractor (make-extractor param-addrs addrs)})
+          addrs   (:addresses cmh-opts)]
+      {:samples samples :extractor (make-extractor param-addrs addrs)})
+
     :mh
-    (let [opts (merge {:samples L :burn 200} mh-opts)
+    (let [opts   (merge {:samples L :burn (max 200 L)} mh-opts)
           traces (mcmc/mh opts model args observations)]
       {:samples traces
        :extractor (fn [sample param-idx]
                     (let [addr (nth param-addrs param-idx)
-                          sub (cm/get-submap (:choices sample) addr)
-                          v (cm/get-value sub)]
+                          sub  (cm/get-submap (:choices sample) addr)
+                          v    (cm/get-value sub)]
                       (mx/eval! v)
                       (mx/item v)))})
+
     :hmc
-    (let [opts (merge {:samples L :burn 50 :compile? true :device :cpu} hmc-opts)
+    (let [opts    (merge {:samples L :burn (max 50 (quot L 4)) :compile? true :device :cpu} hmc-opts)
           samples (mcmc/hmc opts model args observations)
-          addrs (:addresses hmc-opts)]
-      {:samples samples
-       :extractor (make-extractor param-addrs addrs)})))
+          addrs   (:addresses hmc-opts)]
+      {:samples samples :extractor (make-extractor param-addrs addrs)})
 
-;; ── Model definitions ──────────────────────────────────────────────────────
+    :is
+    (let [n-particles (or (:particles is-opts) (* L 20))
+          result      (is/importance-sampling {:samples n-particles} model args observations)
+          resampled   (resample-from-is result L)]
+      {:samples resampled
+       :extractor (fn [sample param-idx]
+                    (let [addr (nth param-addrs param-idx)
+                          sub  (cm/get-submap (:choices sample) addr)
+                          v    (cm/get-value sub)]
+                      (mx/eval! v)
+                      (mx/item v)))})))
 
-;; 1. Single Gaussian
+;; ── Model definitions ────────────────────────────────────────────────────
+
 (def single-gaussian
   {:name "single-gaussian"
    :model (dyn/auto-key (gen []
@@ -134,13 +178,12 @@
               (trace :obs (dist/gaussian mu 1))
               mu)))
    :args []
-   :param-addrs [:mu]
-   :obs-addrs [:obs]
-   :algorithms [:cmh :hmc]
+   :param-addrs [:mu], :obs-addrs [:obs]
+   :algorithms [:cmh :hmc :is]
    :cmh-opts {:addresses [:mu] :proposal-std 1.0}
-   :hmc-opts {:addresses [:mu] :step-size 0.1 :leapfrog-steps 10}})
+   :hmc-opts {:addresses [:mu] :step-size 0.1 :leapfrog-steps 10}
+   :is-opts  {}})
 
-;; 2. Two independent Gaussians
 (def two-gaussians
   {:name "two-gaussians"
    :model (dyn/auto-key (gen []
@@ -150,13 +193,12 @@
               (trace :obs-b (dist/gaussian b 1))
               [a b])))
    :args []
-   :param-addrs [:a :b]
-   :obs-addrs [:obs-a :obs-b]
-   :algorithms [:cmh :hmc]
+   :param-addrs [:a :b], :obs-addrs [:obs-a :obs-b]
+   :algorithms [:cmh :hmc :is]
    :cmh-opts {:addresses [:a :b] :proposal-std 0.7}
-   :hmc-opts {:addresses [:a :b] :step-size 0.1 :leapfrog-steps 10}})
+   :hmc-opts {:addresses [:a :b] :step-size 0.1 :leapfrog-steps 10}
+   :is-opts  {}})
 
-;; 3. Gaussian with multiple observations
 (def gaussian-multi-obs
   {:name "gaussian-multi-obs"
    :model (dyn/auto-key (gen []
@@ -166,13 +208,13 @@
               (trace :y2 (dist/gaussian mu 1))
               mu)))
    :args []
-   :param-addrs [:mu]
-   :obs-addrs [:y0 :y1 :y2]
-   :algorithms [:cmh :hmc]
+   :param-addrs [:mu], :obs-addrs [:y0 :y1 :y2]
+   :algorithms [:cmh :hmc :is]
    :cmh-opts {:addresses [:mu] :proposal-std 0.5}
-   :hmc-opts {:addresses [:mu] :step-size 0.1 :leapfrog-steps 10}})
+   :hmc-opts {:addresses [:mu] :step-size 0.1 :leapfrog-steps 10}
+   :is-opts  {}})
 
-;; 4. Exponential prior (mx/eval! in body — standard MH for positivity)
+;; Exponential prior (mx/eval! in body — standard MH for positivity)
 (def exponential-spec
   {:name "exponential"
    :model (dyn/auto-key (gen []
@@ -182,12 +224,11 @@
                 (trace :obs (dist/exponential (mx/scalar rate-val)))
                 rate-val))))
    :args []
-   :param-addrs [:rate]
-   :obs-addrs [:obs]
+   :param-addrs [:rate], :obs-addrs [:obs]
    :algorithms [:mh]
    :mh-opts {:selection (sel/select :rate)}})
 
-;; 5. Coin flip (mx/item in body — standard MH for bounded support)
+;; Coin flip (mx/item in body — standard MH for bounded support)
 (def coin-flip
   {:name "coin-flip"
    :model (dyn/auto-key (gen []
@@ -198,12 +239,11 @@
                   (trace (keyword (str "flip" i)) (dist/bernoulli p-num)))
                 p-num))))
    :args []
-   :param-addrs [:p]
-   :obs-addrs [:flip0 :flip1 :flip2 :flip3 :flip4]
+   :param-addrs [:p], :obs-addrs [:flip0 :flip1 :flip2 :flip3 :flip4]
    :algorithms [:mh]
    :mh-opts {:selection (sel/select :p)}})
 
-;; 6. Linear regression (HMC only — correlated params)
+;; Linear regression (correlated params)
 (def linear-regression
   {:name "linear-regression"
    :model (dyn/auto-key (gen [xs]
@@ -211,16 +251,16 @@
                   intercept (trace :intercept (dist/gaussian 0 2))]
               (doseq [[j x] (map-indexed vector xs)]
                 (trace (keyword (str "y" j))
-                           (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
-                                                  intercept) 1)))
+                       (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                              intercept) 1)))
               [slope intercept])))
    :args [[(mx/scalar 0.0) (mx/scalar 1.0) (mx/scalar 2.0)]]
-   :param-addrs [:slope :intercept]
-   :obs-addrs [:y0 :y1 :y2]
-   :algorithms [:hmc]
-   :hmc-opts {:addresses [:slope :intercept] :step-size 0.05 :leapfrog-steps 15}})
+   :param-addrs [:slope :intercept], :obs-addrs [:y0 :y1 :y2]
+   :algorithms [:hmc :is]
+   :hmc-opts {:addresses [:slope :intercept] :step-size 0.05 :leapfrog-steps 15}
+   :is-opts  {}})
 
-;; 7. Hierarchical model (HMC only — correlated params)
+;; Hierarchical model (correlated params)
 (def hierarchical
   {:name "hierarchical"
    :model (dyn/auto-key (gen []
@@ -229,22 +269,51 @@
               (trace :obs (dist/gaussian x 1))
               x)))
    :args []
-   :param-addrs [:x]
-   :obs-addrs [:obs]
+   :param-addrs [:x], :obs-addrs [:obs]
    :algorithms [:hmc]
-   ;; HMC addresses includes both :mu and :x, but we test only :x
    :hmc-opts {:addresses [:mu :x] :step-size 0.1 :leapfrog-steps 10}})
 
-;; ── SBC harness ────────────────────────────────────────────────────────────
+;; Beta-Bernoulli (conjugate — analytical posterior known)
+(def beta-bernoulli
+  {:name "beta-bernoulli"
+   :model (dyn/auto-key (gen []
+            (let [p (trace :p (dist/beta-dist (mx/scalar 2) (mx/scalar 2)))]
+              (mx/eval! p)
+              (let [p-num (mx/item p)]
+                (doseq [i (range 10)]
+                  (trace (keyword (str "x" i)) (dist/bernoulli p-num)))
+                p-num))))
+   :args []
+   :param-addrs [:p]
+   :obs-addrs [:x0 :x1 :x2 :x3 :x4 :x5 :x6 :x7 :x8 :x9]
+   :algorithms [:mh]
+   :mh-opts {:selection (sel/select :p)}})
+
+;; Gamma-Poisson (conjugate — analytical posterior known)
+(def gamma-poisson
+  {:name "gamma-poisson"
+   :model (dyn/auto-key (gen []
+            (let [lam (trace :lambda (dist/gamma-dist (mx/scalar 3) (mx/scalar 2)))]
+              (mx/eval! lam)
+              (let [lam-num (mx/item lam)]
+                (doseq [i (range 5)]
+                  (trace (keyword (str "y" i)) (dist/poisson (mx/scalar lam-num))))
+                lam-num))))
+   :args []
+   :param-addrs [:lambda]
+   :obs-addrs [:y0 :y1 :y2 :y3 :y4]
+   :algorithms [:mh]
+   :mh-opts {:selection (sel/select :lambda)}})
+
+;; ── SBC harness ──────────────────────────────────────────────────────────
 
 (defn run-sbc-single
-  "Run one SBC simulation. Returns vector of ranks (one per param).
-   Wrapped in mx/tidy to prevent Metal resource exhaustion."
+  "Run one SBC simulation. Returns vector of ranks (one per param)."
   [model-spec algo-key]
   (mx/tidy
     (fn []
       (let [{:keys [model args param-addrs obs-addrs]} model-spec
-            trace (p/simulate model args)
+            trace       (p/simulate model args)
             true-params (extract-true-params trace param-addrs)
             observations (extract-observations trace obs-addrs)
             {:keys [samples extractor]} (run-inference algo-key model-spec observations)
@@ -257,13 +326,13 @@
         ranks))))
 
 (defn run-sbc
-  "Run N SBC simulations and perform chi-squared test per parameter."
+  "Run N SBC simulations. Returns per-param results with ranks and tests."
   [model-spec algo-key n-sims]
   (let [{:keys [param-addrs]} model-spec
         n-params (count param-addrs)
         all-ranks (loop [i 0, ranks-acc (vec (repeat n-params [])), failures 0]
                     (if (>= i n-sims)
-                      (if (> (/ failures n-sims) 0.2)
+                      (if (> (/ failures (max 1 n-sims)) 0.2)
                         (do (println "  FAIL: >" 20 "% simulations failed ("
                                      failures "/" n-sims ")")
                             nil)
@@ -276,20 +345,20 @@
                                        nil))]
                         (if result
                           (recur (inc i)
-                                 (mapv (fn [j] (conj (nth ranks-acc j)
-                                                     (nth result j)))
+                                 (mapv (fn [j] (conj (nth ranks-acc j) (nth result j)))
                                        (range n-params))
                                  failures)
                           (recur (inc i) ranks-acc (inc failures))))))]
     (when all-ranks
       (mapv (fn [j]
-              (let [param (nth param-addrs j)
-                    ranks (nth all-ranks j)
-                    result (chi-squared-uniformity ranks (count ranks))]
-                {:param param :result result}))
+              (let [param  (nth param-addrs j)
+                    ranks  (nth all-ranks j)
+                    chi2   (chi-squared-uniformity ranks (count ranks))
+                    ecdf   (ecdf-ks-uniformity ranks (count ranks))]
+                {:param param :ranks ranks :chi2 chi2 :ecdf ecdf}))
             (range n-params)))))
 
-;; ── All model specs ────────────────────────────────────────────────────────
+;; ── All models ───────────────────────────────────────────────────────────
 
 (def all-models
   [single-gaussian
@@ -298,41 +367,58 @@
    exponential-spec
    coin-flip
    linear-regression
-   hierarchical])
+   hierarchical
+   beta-bernoulli
+   gamma-poisson])
 
-;; ── Top-level runner ───────────────────────────────────────────────────────
+;; ── Runner ───────────────────────────────────────────────────────────────
 
 (println (str "=== Simulation-Based Calibration (SBC) Tests ==="))
-(println (str "N_cmh=" N-CMH ", N_hmc=" N-HMC
-              ", L=" L ", " N-BINS " bins, alpha=" ALPHA))
+(println (str "N=" N ", L=" L ", " N-BINS " bins, alpha=" ALPHA))
 
-(def results (atom {:pass 0 :fail 0}))
+(def all-results (atom []))
+(def summary (atom {:pass 0 :fail 0}))
 
 (doseq [model-spec all-models
-        algo-key (:algorithms model-spec)]
-  (let [start (js/Date.now)
-        n-sims (if (= algo-key :hmc) N-HMC N-CMH)
-        _ (println (str "\n-- SBC: " (:name model-spec) " x " (name algo-key) " --"))
-        param-results (run-sbc model-spec algo-key n-sims)
-        elapsed (/ (- (js/Date.now) start) 1000)]
+        algo-key   (:algorithms model-spec)]
+  (let [start         (js/Date.now)
+        _             (println (str "\n-- SBC: " (:name model-spec) " x " (name algo-key) " --"))
+        param-results (run-sbc model-spec algo-key N)
+        elapsed       (/ (- (js/Date.now) start) 1000)]
     (if param-results
-      (doseq [{:keys [param result]} param-results]
-        (let [{:keys [statistic pass? critical df]} result]
-          (if pass?
-            (do (println (str "  PASS: " (name param)
-                              " chi2=" (.toFixed statistic 2)
-                              " (critical=" critical " df=" df ")"))
-                (swap! results update :pass inc))
-            (do (println (str "  FAIL: " (name param)
-                              " chi2=" (.toFixed statistic 2)
-                              " (critical=" critical " df=" df ")"))
-                (swap! results update :fail inc)))))
-      (swap! results update :fail inc))
+      (do
+        (doseq [{:keys [param chi2 ecdf]} param-results]
+          (let [pass? (and (:pass? chi2) (:pass? ecdf))]
+            (println (str "  " (if pass? "PASS" "FAIL") ": " (name param)
+                          "  chi2=" (.toFixed (:statistic chi2) 2)
+                          " (crit=" (:critical chi2) ")"
+                          "  ks=" (.toFixed (:statistic ecdf) 3)
+                          " (crit=" (.toFixed (:critical ecdf) 3) ")"))
+            (swap! summary update (if pass? :pass :fail) inc)))
+        (swap! all-results conj
+               {:model     (:name model-spec)
+                :algorithm (name algo-key)
+                :params    (mapv (fn [{:keys [param ranks chi2 ecdf]}]
+                                  {:name  (name param)
+                                   :ranks ranks
+                                   :chi2  (dissoc chi2 :pass?)
+                                   :ecdf  (dissoc ecdf :pass?)
+                                   :pass? (and (:pass? chi2) (:pass? ecdf))})
+                                param-results)
+                :elapsed_s elapsed}))
+      (swap! summary update :fail inc))
     (println (str "  [" (.toFixed elapsed 1) "s]"))))
 
-(let [{:keys [pass fail]} @results
-      total (+ pass fail)]
+;; ── Write results to JSON ────────────────────────────────────────────────
+
+(let [{:keys [pass fail]} @summary
+      total   (+ pass fail)
+      output  (clj->js {:config   {:N N :L L :N_BINS N-BINS :ALPHA ALPHA}
+                         :results  @all-results
+                         :summary  {:pass pass :fail fail :total total}})
+      json    (js/JSON.stringify output nil 2)
+      path    "dev/sbc_results.json"]
+  (fs/writeFileSync path json)
   (println (str "\n=== SBC Summary: " pass "/" total " passed ==="))
-  ;; Force-exit to avoid Bun segfault during MLX native addon cleanup.
-  ;; The OS reclaims all Metal/GPU resources on process exit anyway.
+  (println (str "Results written to " path))
   (js/process.exit (if (zero? fail) 0 1)))
