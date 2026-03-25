@@ -1,5 +1,8 @@
 (ns genmlx.vectorized-grad-test
-  (:require [genmlx.mlx :as mx]
+  "Vectorized gradient infrastructure tests."
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.test-helpers :as h]
+            [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
@@ -10,22 +13,7 @@
             [genmlx.vectorized :as v])
   (:require-macros [genmlx.gen :refer [gen]]))
 
-(defn assert-true [msg actual]
-  (if actual
-    (println "  PASS:" msg)
-    (println "  FAIL:" msg "- expected truthy")))
-
-(defn assert-close [msg expected actual tolerance]
-  (let [diff (js/Math.abs (- expected actual))]
-    (if (<= diff tolerance)
-      (println "  PASS:" msg)
-      (do (println "  FAIL:" msg)
-          (println "    expected:" expected "+/-" tolerance)
-          (println "    actual:  " actual)))))
-
-(println "\n=== Vectorized Gradient Infrastructure Tests ===\n")
-
-;; Simple Gaussian model: mu ~ N(0, σ), obs ~ N(mu, 1)
+;; Simple Gaussian model: mu ~ N(0, sigma), obs ~ N(mu, 1)
 (def model
   (gen [mu-prior-std]
     (let [mu (trace :mu (dist/gaussian 0 mu-prior-std))]
@@ -34,87 +22,67 @@
 
 (def observations (cm/choicemap :obs (mx/scalar 3.0)))
 
-;; ---------------------------------------------------------------------------
-;; Phase 1: Vectorized gradient correctness
-;; ---------------------------------------------------------------------------
+(deftest vectorized-gradient-correctness
+  (testing "vectorized gradient vs N scalar gradients"
+    (let [addresses [:mu]
+          n-chains 5
+          params-list (mapv (fn [_]
+                              (let [{:keys [trace]} (p/generate (dyn/auto-key model) [10] observations)]
+                                (u/extract-params trace addresses)))
+                            (range n-chains))
+          scalar-grad-fn (mx/grad (u/make-score-fn model [10] observations addresses))
+          scalar-grads (mapv (fn [p]
+                               (let [g (scalar-grad-fn p)]
+                                 (mx/eval! g)
+                                 (mx/->clj g)))
+                             params-list)
+          vec-grad-fn (u/make-vectorized-grad-score model [10] observations addresses)
+          params-matrix (mx/stack params-list)
+          vec-grads-arr (vec-grad-fn params-matrix)
+          _ (mx/eval! vec-grads-arr)
+          vec-grads (mx/->clj vec-grads-arr)]
+      (doseq [i (range n-chains)]
+        (let [s-g (if (vector? (nth scalar-grads i)) (first (nth scalar-grads i)) (nth scalar-grads i))
+              v-g (if (vector? (nth vec-grads i)) (first (nth vec-grads i)) (nth vec-grads i))]
+          (is (h/close? s-g v-g 0.01) (str "chain " i " gradient matches")))))))
 
-(println "-- Vectorized gradient vs N scalar gradients --")
-(let [addresses [:mu]
-      n-chains 5
-      ;; Create N independent parameter sets
-      params-list (mapv (fn [_]
-                          (let [{:keys [trace]} (p/generate (dyn/auto-key model) [10] observations)]
-                            (u/extract-params trace addresses)))
-                        (range n-chains))
-      ;; Scalar gradients (N independent calls)
-      scalar-grad-fn (mx/grad (u/make-score-fn model [10] observations addresses))
-      scalar-grads (mapv (fn [p]
-                           (let [g (scalar-grad-fn p)]
-                             (mx/eval! g)
-                             (mx/->clj g)))
-                         params-list)
-      ;; Vectorized gradient (one call)
-      vec-grad-fn (u/make-vectorized-grad-score model [10] observations addresses)
-      params-matrix (mx/stack params-list)
-      vec-grads-arr (vec-grad-fn params-matrix)
-      _ (mx/eval! vec-grads-arr)
-      vec-grads (mx/->clj vec-grads-arr)]
-  (doseq [i (range n-chains)]
-    (let [s-g (if (vector? (nth scalar-grads i)) (first (nth scalar-grads i)) (nth scalar-grads i))
-          v-g (if (vector? (nth vec-grads i)) (first (nth vec-grads i)) (nth vec-grads i))]
-      (assert-close (str "chain " i " gradient matches")
-                    s-g v-g 0.01))))
+(deftest mala-compiled
+  (testing "mala (compiled)"
+    (let [samples (mcmc/mala
+                    {:samples 50 :burn 20 :step-size 0.01 :addresses [:mu]
+                     :compile? true :device :cpu}
+                    model [10] observations)]
+      (is (= 50 (count samples)) "mala compiled returns correct sample count"))))
 
-;; ---------------------------------------------------------------------------
-;; Phase 2: Loop-Compiled MALA
-;; ---------------------------------------------------------------------------
+(deftest vectorized-mala-test
+  (testing "vectorized-mala"
+    (let [samples (mcmc/vectorized-mala
+                    {:samples 30 :burn 10 :step-size 0.005 :addresses [:mu]
+                     :n-chains 5 :device :cpu}
+                    model [10] observations)]
+      (is (= 30 (count samples)) "vectorized-mala returns correct sample count")
+      (let [rate (:acceptance-rate (meta samples))]
+        (is (> rate 0) "vectorized-mala has positive acceptance rate")))))
 
-(println "\n-- mala (compiled) --")
-(let [samples (mcmc/mala
-                {:samples 50 :burn 20 :step-size 0.01 :addresses [:mu]
-                 :compile? true :device :cpu}
-                model [10] observations)]
-  (assert-true "mala compiled returns correct sample count" (= 50 (count samples))))
+(deftest vectorized-hmc-test
+  (testing "vectorized-hmc"
+    (let [samples (mcmc/vectorized-hmc
+                    {:samples 20 :burn 5 :step-size 0.005 :leapfrog-steps 5
+                     :addresses [:mu] :n-chains 3 :device :cpu}
+                    model [10] observations)]
+      (is (= 20 (count samples)) "vectorized-hmc returns correct sample count")
+      (let [rate (:acceptance-rate (meta samples))]
+        (is (> rate 0) "vectorized-hmc has positive acceptance rate")))))
 
-;; ---------------------------------------------------------------------------
-;; Phase 3: Vectorized MALA
-;; ---------------------------------------------------------------------------
+(deftest vectorized-map-optimize-test
+  (testing "vectorized-map-optimize"
+    (let [result (mcmc/vectorized-map-optimize
+                   {:iterations 500 :lr 0.01 :addresses [:mu] :n-restarts 5 :device :cpu}
+                   model [10] observations)]
+      (is (some? (:trace result)) "vectorized-map has trace")
+      (is (number? (:score result)) "vectorized-map has score")
+      (let [p (:params result)
+            best-mu (if (sequential? p) (first p) p)]
+        (is (h/close? 3.0 best-mu 1.0) "MAP estimate near posterior mode")))))
 
-(println "\n-- vectorized-mala --")
-(let [samples (mcmc/vectorized-mala
-                {:samples 30 :burn 10 :step-size 0.005 :addresses [:mu]
-                 :n-chains 5 :device :cpu}
-                model [10] observations)]
-  (assert-true "vectorized-mala returns correct sample count" (= 30 (count samples)))
-  (let [rate (:acceptance-rate (meta samples))]
-    (assert-true "vectorized-mala has positive acceptance rate" (> rate 0))))
-
-;; ---------------------------------------------------------------------------
-;; Phase 4: Vectorized HMC
-;; ---------------------------------------------------------------------------
-
-(println "\n-- vectorized-hmc --")
-(let [samples (mcmc/vectorized-hmc
-                {:samples 20 :burn 5 :step-size 0.005 :leapfrog-steps 5
-                 :addresses [:mu] :n-chains 3 :device :cpu}
-                model [10] observations)]
-  (assert-true "vectorized-hmc returns correct sample count" (= 20 (count samples)))
-  (let [rate (:acceptance-rate (meta samples))]
-    (assert-true "vectorized-hmc has positive acceptance rate" (> rate 0))))
-
-;; ---------------------------------------------------------------------------
-;; Phase 5: Vectorized MAP
-;; ---------------------------------------------------------------------------
-
-(println "\n-- vectorized-map-optimize --")
-(let [result (mcmc/vectorized-map-optimize
-               {:iterations 500 :lr 0.01 :addresses [:mu] :n-restarts 5 :device :cpu}
-               model [10] observations)]
-  (assert-true "vectorized-map has trace" (some? (:trace result)))
-  (assert-true "vectorized-map has score" (number? (:score result)))
-  ;; MAP estimate for mu should be near 3.0 (posterior mean of Gaussian with obs=3)
-  (let [p (:params result)
-        best-mu (if (sequential? p) (first p) p)]
-    (assert-close "MAP estimate near posterior mode" 3.0 best-mu 1.0)))
-
-(println "\nAll vectorized gradient tests complete.")
+(cljs.test/run-tests)

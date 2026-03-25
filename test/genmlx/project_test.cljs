@@ -1,5 +1,8 @@
 (ns genmlx.project-test
-  (:require [genmlx.mlx :as mx]
+  "Tests for project (IProject protocol)."
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.test-helpers :as h]
+            [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
@@ -10,237 +13,210 @@
             [genmlx.combinators :as comb])
   (:require-macros [genmlx.gen :refer [gen]]))
 
-(defn assert-true [msg actual]
-  (if actual
-    (println "  PASS:" msg)
-    (println "  FAIL:" msg "- expected truthy")))
-
-(defn assert-close [msg expected actual tolerance]
-  (let [diff (js/Math.abs (- expected actual))]
-    (if (<= diff tolerance)
-      (println "  PASS:" msg)
-      (do (println "  FAIL:" msg)
-          (println "    expected:" expected "+/-" tolerance)
-          (println "    actual:  " actual)))))
-
-(println "\n=== Project Tests ===\n")
-
-;; --- Basic: project with sel/all should equal trace score ---
-(println "-- project all = score --")
-(let [model (dyn/auto-key (gen []
-              (trace :x (dist/gaussian 0 1))
-              (trace :y (dist/gaussian 0 1))
-              nil))
-      trace (p/simulate model [])
-      weight (p/project model trace sel/all)]
-  (mx/eval! weight (:score trace))
-  (assert-close "project all = trace score"
-                (mx/item (:score trace)) (mx/item weight) 0.001))
-
-;; --- Project with sel/none should return 0 ---
-(println "\n-- project none = 0 --")
-(let [model (dyn/auto-key (gen []
-              (trace :x (dist/gaussian 0 1))
-              (trace :y (dist/gaussian 0 1))
-              nil))
-      trace (p/simulate model [])
-      weight (p/project model trace sel/none)]
-  (mx/eval! weight)
-  (assert-close "project none = 0" 0.0 (mx/item weight) 0.001))
-
-;; --- Project with subset selection ---
-(println "\n-- project subset --")
-(let [model (dyn/auto-key (gen []
-              (trace :x (dist/gaussian 0 1))
-              (trace :y (dist/gaussian 0 1))
-              nil))
-      constraints (cm/choicemap :x (mx/scalar 2.0) :y (mx/scalar 3.0))
-      {:keys [trace]} (p/generate model [] constraints)
-      ;; Project just :x
-      weight-x (p/project model trace (sel/select :x))
-      ;; Manually compute expected: log-prob of x=2.0 under N(0,1)
-      expected-lp-x (dc/dist-log-prob (dist/gaussian 0 1) (mx/scalar 2.0))]
-  (mx/eval! weight-x expected-lp-x)
-  (assert-close "project :x = log-prob of x"
-                (mx/item expected-lp-x) (mx/item weight-x) 0.001))
-
-;; --- Project subset: :y only ---
-(println "\n-- project :y only --")
-(let [model (dyn/auto-key (gen []
-              (trace :x (dist/gaussian 0 1))
-              (trace :y (dist/gaussian 0 1))
-              nil))
-      constraints (cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar -1.0))
-      {:keys [trace]} (p/generate model [] constraints)
-      weight-y (p/project model trace (sel/select :y))
-      expected-lp-y (dc/dist-log-prob (dist/gaussian 0 1) (mx/scalar -1.0))]
-  (mx/eval! weight-y expected-lp-y)
-  (assert-close "project :y = log-prob of y"
-                (mx/item expected-lp-y) (mx/item weight-y) 0.001))
-
-;; --- Complement selection ---
-(println "\n-- project complement --")
-(let [model (dyn/auto-key (gen []
-              (trace :x (dist/gaussian 0 1))
-              (trace :y (dist/gaussian 0 1))
-              nil))
-      constraints (cm/choicemap :x (mx/scalar 1.5) :y (mx/scalar -0.5))
-      {:keys [trace]} (p/generate model [] constraints)
-      weight-not-x (p/project model trace (sel/complement-sel (sel/select :x)))
-      expected-lp-y (dc/dist-log-prob (dist/gaussian 0 1) (mx/scalar -0.5))]
-  (mx/eval! weight-not-x expected-lp-y)
-  (assert-close "project complement(:x) = log-prob of y"
-                (mx/item expected-lp-y) (mx/item weight-not-x) 0.001))
-
-;; --- Project on distribution directly ---
-(println "\n-- project distribution --")
-(let [d (dist/gaussian 5 2)
-      trace (p/simulate d [])
-      weight (p/project d trace sel/all)]
-  (mx/eval! weight (:score trace))
-  (assert-close "dist project = score" (mx/item (:score trace)) (mx/item weight) 0.001))
-
-;; --- Splice: model with sub-GF ---
-(println "\n-- project with splice --")
-(let [sub-model (dyn/auto-key (gen [mu]
-                  (trace :z (dist/gaussian mu 1))
+(deftest project-all-equals-score
+  (testing "project with sel/all should equal trace score"
+    (let [model (dyn/auto-key (gen []
+                  (trace :x (dist/gaussian 0 1))
+                  (trace :y (dist/gaussian 0 1))
                   nil))
-      model (dyn/auto-key (gen []
-              (let [x (trace :x (dist/gaussian 0 1))]
-                (splice :sub sub-model (mx/item x))
-                nil)))
-      trace (p/simulate model [])
-      weight-all (p/project model trace sel/all)]
-  (mx/eval! weight-all (:score trace))
-  (assert-close "project all with splice = trace score"
-                (mx/item (:score trace)) (mx/item weight-all) 0.001))
+          trace (p/simulate model [])
+          weight (p/project model trace sel/all)]
+      (mx/eval! weight (:score trace))
+      (is (h/close? (mx/item (:score trace)) (mx/item weight) 0.001)
+          "project all = trace score"))))
 
-;; --- Map combinator ---
-(println "\n-- project map combinator --")
-(let [kernel (dyn/auto-key (gen [x]
-               (trace :y (dist/gaussian x 1))
-               nil))
-      mapped (comb/map-combinator kernel)
-      constraints (cm/choicemap
-                    0 (cm/choicemap :y (mx/scalar 1.0))
-                    1 (cm/choicemap :y (mx/scalar 2.0))
-                    2 (cm/choicemap :y (mx/scalar 3.0)))
-      {:keys [trace]} (p/generate mapped [[0.0 0.0 0.0]] constraints)
-      weight-all (p/project mapped trace sel/all)]
-  (mx/eval! weight-all (:score trace))
-  (assert-close "map project all = score"
-                (mx/item (:score trace)) (mx/item weight-all) 0.001))
+(deftest project-none-equals-zero
+  (testing "project with sel/none should return 0"
+    (let [model (dyn/auto-key (gen []
+                  (trace :x (dist/gaussian 0 1))
+                  (trace :y (dist/gaussian 0 1))
+                  nil))
+          trace (p/simulate model [])
+          weight (p/project model trace sel/none)]
+      (mx/eval! weight)
+      (is (h/close? 0.0 (mx/item weight) 0.001) "project none = 0"))))
 
-;; --- Map combinator: select single element ---
-(println "\n-- project map combinator subset --")
-(let [kernel (dyn/auto-key (gen [x]
-               (trace :y (dist/gaussian x 1))
-               nil))
-      mapped (comb/map-combinator kernel)
-      constraints (cm/choicemap
-                    0 (cm/choicemap :y (mx/scalar 1.0))
-                    1 (cm/choicemap :y (mx/scalar 2.0)))
-      {:keys [trace]} (p/generate mapped [[0.0 0.0]] constraints)
-      ;; Select only element 0
-      weight-0 (p/project mapped trace (sel/hierarchical 0 sel/all))
-      expected-lp (dc/dist-log-prob (dist/gaussian 0 1) (mx/scalar 1.0))]
-  (mx/eval! weight-0 expected-lp)
-  (assert-close "map project element 0 = log-prob of y=1"
-                (mx/item expected-lp) (mx/item weight-0) 0.001))
+(deftest project-subset-x
+  (testing "project with subset selection :x"
+    (let [model (dyn/auto-key (gen []
+                  (trace :x (dist/gaussian 0 1))
+                  (trace :y (dist/gaussian 0 1))
+                  nil))
+          constraints (cm/choicemap :x (mx/scalar 2.0) :y (mx/scalar 3.0))
+          {:keys [trace]} (p/generate model [] constraints)
+          weight-x (p/project model trace (sel/select :x))
+          expected-lp-x (dc/dist-log-prob (dist/gaussian 0 1) (mx/scalar 2.0))]
+      (mx/eval! weight-x expected-lp-x)
+      (is (h/close? (mx/item expected-lp-x) (mx/item weight-x) 0.001)
+          "project :x = log-prob of x"))))
 
-;; --- Switch combinator ---
-(println "\n-- project switch combinator --")
-(let [branch-a (dyn/auto-key (gen []
-                 (trace :v (dist/gaussian 0 1))
-                 nil))
-      branch-b (dyn/auto-key (gen []
-                 (trace :v (dist/gaussian 10 1))
-                 nil))
-      sw (comb/switch-combinator branch-a branch-b)
-      constraints (cm/choicemap :v (mx/scalar 0.5))
-      {:keys [trace]} (p/generate sw [0] constraints)
-      weight (p/project sw trace sel/all)]
-  (mx/eval! weight (:score trace))
-  (assert-close "switch project = score"
-                (mx/item (:score trace)) (mx/item weight) 0.001))
+(deftest project-subset-y
+  (testing "project :y only"
+    (let [model (dyn/auto-key (gen []
+                  (trace :x (dist/gaussian 0 1))
+                  (trace :y (dist/gaussian 0 1))
+                  nil))
+          constraints (cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar -1.0))
+          {:keys [trace]} (p/generate model [] constraints)
+          weight-y (p/project model trace (sel/select :y))
+          expected-lp-y (dc/dist-log-prob (dist/gaussian 0 1) (mx/scalar -1.0))]
+      (mx/eval! weight-y expected-lp-y)
+      (is (h/close? (mx/item expected-lp-y) (mx/item weight-y) 0.001)
+          "project :y = log-prob of y"))))
 
-;; --- Unfold combinator ---
-(println "\n-- project unfold combinator --")
-(let [kernel (dyn/auto-key (gen [t state]
-               (let [v (trace :v (dist/gaussian state 1))]
-                 (mx/eval! v)
-                 (mx/item v))))
-      uf (comb/unfold-combinator kernel)
-      ;; 3 timesteps, init-state=0
-      constraints (cm/choicemap
-                    0 (cm/choicemap :v (mx/scalar 1.0))
-                    1 (cm/choicemap :v (mx/scalar 2.0))
-                    2 (cm/choicemap :v (mx/scalar 3.0)))
-      {:keys [trace]} (p/generate uf [3 0.0] constraints)
-      weight-all (p/project uf trace sel/all)]
-  (mx/eval! weight-all (:score trace))
-  (assert-close "unfold project all = score"
-                (mx/item (:score trace)) (mx/item weight-all) 0.001))
+(deftest project-complement
+  (testing "complement selection"
+    (let [model (dyn/auto-key (gen []
+                  (trace :x (dist/gaussian 0 1))
+                  (trace :y (dist/gaussian 0 1))
+                  nil))
+          constraints (cm/choicemap :x (mx/scalar 1.5) :y (mx/scalar -0.5))
+          {:keys [trace]} (p/generate model [] constraints)
+          weight-not-x (p/project model trace (sel/complement-sel (sel/select :x)))
+          expected-lp-y (dc/dist-log-prob (dist/gaussian 0 1) (mx/scalar -0.5))]
+      (mx/eval! weight-not-x expected-lp-y)
+      (is (h/close? (mx/item expected-lp-y) (mx/item weight-not-x) 0.001)
+          "project complement(:x) = log-prob of y"))))
 
-;; --- Unfold combinator: subset ---
-(println "\n-- project unfold subset --")
-(let [kernel (dyn/auto-key (gen [t state]
-               (let [v (trace :v (dist/gaussian state 1))]
-                 (mx/eval! v)
-                 (mx/item v))))
-      uf (comb/unfold-combinator kernel)
-      constraints (cm/choicemap
-                    0 (cm/choicemap :v (mx/scalar 1.0))
-                    1 (cm/choicemap :v (mx/scalar 2.0)))
-      {:keys [trace]} (p/generate uf [2 0.0] constraints)
-      ;; Select only timestep 0
-      weight-0 (p/project uf trace (sel/hierarchical 0 sel/all))
-      ;; v=1.0, state=0 → N(0,1) log-prob
-      expected-lp (dc/dist-log-prob (dist/gaussian 0 1) (mx/scalar 1.0))]
-  (mx/eval! weight-0 expected-lp)
-  (assert-close "unfold project timestep 0"
-                (mx/item expected-lp) (mx/item weight-0) 0.001))
+(deftest project-distribution
+  (testing "project on distribution directly"
+    (let [d (dist/gaussian 5 2)
+          trace (p/simulate d [])
+          weight (p/project d trace sel/all)]
+      (mx/eval! weight (:score trace))
+      (is (h/close? (mx/item (:score trace)) (mx/item weight) 0.001)
+          "dist project = score"))))
 
-;; --- Mask combinator ---
-(println "\n-- project mask combinator --")
-(let [inner (dyn/auto-key (gen []
-              (trace :v (dist/gaussian 0 1))
-              nil))
-      masked (comb/mask-combinator inner)
-      ;; Active=true
-      constraints-active (cm/choicemap :v (mx/scalar 1.5))
-      {:keys [trace]} (p/generate masked [true] constraints-active)
-      weight-active (p/project masked trace sel/all)]
-  (mx/eval! weight-active (:score trace))
-  (assert-close "mask active project = score"
-                (mx/item (:score trace)) (mx/item weight-active) 0.001))
+(deftest project-with-splice
+  (testing "project with splice"
+    (let [sub-model (dyn/auto-key (gen [mu]
+                      (trace :z (dist/gaussian mu 1))
+                      nil))
+          model (dyn/auto-key (gen []
+                  (let [x (trace :x (dist/gaussian 0 1))]
+                    (splice :sub sub-model (mx/item x))
+                    nil)))
+          trace (p/simulate model [])
+          weight-all (p/project model trace sel/all)]
+      (mx/eval! weight-all (:score trace))
+      (is (h/close? (mx/item (:score trace)) (mx/item weight-all) 0.001)
+          "project all with splice = trace score"))))
 
-(let [inner (dyn/auto-key (gen []
-              (trace :v (dist/gaussian 0 1))
-              nil))
-      masked (comb/mask-combinator inner)
-      ;; Active=false → score is 0, project should be 0
-      trace (p/simulate masked [false])
-      weight (p/project masked trace sel/all)]
-  (mx/eval! weight)
-  (assert-close "mask inactive project = 0" 0.0 (mx/item weight) 0.001))
+(deftest project-map-combinator
+  (testing "map combinator project all = score"
+    (let [kernel (dyn/auto-key (gen [x]
+                   (trace :y (dist/gaussian x 1))
+                   nil))
+          mapped (comb/map-combinator kernel)
+          constraints (cm/choicemap
+                        0 (cm/choicemap :y (mx/scalar 1.0))
+                        1 (cm/choicemap :y (mx/scalar 2.0))
+                        2 (cm/choicemap :y (mx/scalar 3.0)))
+          {:keys [trace]} (p/generate mapped [[0.0 0.0 0.0]] constraints)
+          weight-all (p/project mapped trace sel/all)]
+      (mx/eval! weight-all (:score trace))
+      (is (h/close? (mx/item (:score trace)) (mx/item weight-all) 0.001)
+          "map project all = score"))))
 
-;; --- Manual verification: known values ---
-(println "\n-- manual verification --")
-(let [model (dyn/auto-key (gen []
-              (trace :x (dist/gaussian 0 1))
-              (trace :y (dist/gaussian 0 1))
-              nil))
-      constraints (cm/choicemap :x (mx/scalar 0.0) :y (mx/scalar 0.0))
-      {:keys [trace]} (p/generate model [] constraints)
-      ;; log-prob of 0 under N(0,1) = -0.5*ln(2*pi) ~ -0.9189
-      weight-x (p/project model trace (sel/select :x))
-      weight-y (p/project model trace (sel/select :y))
-      weight-all (p/project model trace sel/all)]
-  (mx/eval! weight-x weight-y weight-all)
-  (assert-close "project x=0 under N(0,1)" -0.9189 (mx/item weight-x) 0.01)
-  (assert-close "project y=0 under N(0,1)" -0.9189 (mx/item weight-y) 0.01)
-  (assert-close "project all = x + y" (+ (mx/item weight-x) (mx/item weight-y))
-                (mx/item weight-all) 0.001))
+(deftest project-map-combinator-subset
+  (testing "map combinator select single element"
+    (let [kernel (dyn/auto-key (gen [x]
+                   (trace :y (dist/gaussian x 1))
+                   nil))
+          mapped (comb/map-combinator kernel)
+          constraints (cm/choicemap
+                        0 (cm/choicemap :y (mx/scalar 1.0))
+                        1 (cm/choicemap :y (mx/scalar 2.0)))
+          {:keys [trace]} (p/generate mapped [[0.0 0.0]] constraints)
+          weight-0 (p/project mapped trace (sel/hierarchical 0 sel/all))
+          expected-lp (dc/dist-log-prob (dist/gaussian 0 1) (mx/scalar 1.0))]
+      (mx/eval! weight-0 expected-lp)
+      (is (h/close? (mx/item expected-lp) (mx/item weight-0) 0.001)
+          "map project element 0 = log-prob of y=1"))))
 
-(println "\nAll project tests complete.")
+(deftest project-switch-combinator
+  (testing "switch combinator"
+    (let [branch-a (dyn/auto-key (gen []
+                     (trace :v (dist/gaussian 0 1))
+                     nil))
+          branch-b (dyn/auto-key (gen []
+                     (trace :v (dist/gaussian 10 1))
+                     nil))
+          sw (comb/switch-combinator branch-a branch-b)
+          constraints (cm/choicemap :v (mx/scalar 0.5))
+          {:keys [trace]} (p/generate sw [0] constraints)
+          weight (p/project sw trace sel/all)]
+      (mx/eval! weight (:score trace))
+      (is (h/close? (mx/item (:score trace)) (mx/item weight) 0.001)
+          "switch project = score"))))
+
+(deftest project-unfold-combinator
+  (testing "unfold combinator project all = score"
+    (let [kernel (dyn/auto-key (gen [t state]
+                   (let [v (trace :v (dist/gaussian state 1))]
+                     (mx/eval! v)
+                     (mx/item v))))
+          uf (comb/unfold-combinator kernel)
+          constraints (cm/choicemap
+                        0 (cm/choicemap :v (mx/scalar 1.0))
+                        1 (cm/choicemap :v (mx/scalar 2.0))
+                        2 (cm/choicemap :v (mx/scalar 3.0)))
+          {:keys [trace]} (p/generate uf [3 0.0] constraints)
+          weight-all (p/project uf trace sel/all)]
+      (mx/eval! weight-all (:score trace))
+      (is (h/close? (mx/item (:score trace)) (mx/item weight-all) 0.001)
+          "unfold project all = score"))))
+
+(deftest project-unfold-subset
+  (testing "unfold combinator subset"
+    (let [kernel (dyn/auto-key (gen [t state]
+                   (let [v (trace :v (dist/gaussian state 1))]
+                     (mx/eval! v)
+                     (mx/item v))))
+          uf (comb/unfold-combinator kernel)
+          constraints (cm/choicemap
+                        0 (cm/choicemap :v (mx/scalar 1.0))
+                        1 (cm/choicemap :v (mx/scalar 2.0)))
+          {:keys [trace]} (p/generate uf [2 0.0] constraints)
+          weight-0 (p/project uf trace (sel/hierarchical 0 sel/all))
+          expected-lp (dc/dist-log-prob (dist/gaussian 0 1) (mx/scalar 1.0))]
+      (mx/eval! weight-0 expected-lp)
+      (is (h/close? (mx/item expected-lp) (mx/item weight-0) 0.001)
+          "unfold project timestep 0"))))
+
+(deftest project-mask-combinator
+  (testing "mask combinator active and inactive"
+    (let [inner (dyn/auto-key (gen []
+                  (trace :v (dist/gaussian 0 1))
+                  nil))
+          masked (comb/mask-combinator inner)]
+      (let [constraints-active (cm/choicemap :v (mx/scalar 1.5))
+            {:keys [trace]} (p/generate masked [true] constraints-active)
+            weight-active (p/project masked trace sel/all)]
+        (mx/eval! weight-active (:score trace))
+        (is (h/close? (mx/item (:score trace)) (mx/item weight-active) 0.001)
+            "mask active project = score"))
+      (let [trace (p/simulate masked [false])
+            weight (p/project masked trace sel/all)]
+        (mx/eval! weight)
+        (is (h/close? 0.0 (mx/item weight) 0.001) "mask inactive project = 0")))))
+
+(deftest project-manual-verification
+  (testing "known values: x=0, y=0 under N(0,1)"
+    (let [model (dyn/auto-key (gen []
+                  (trace :x (dist/gaussian 0 1))
+                  (trace :y (dist/gaussian 0 1))
+                  nil))
+          constraints (cm/choicemap :x (mx/scalar 0.0) :y (mx/scalar 0.0))
+          {:keys [trace]} (p/generate model [] constraints)
+          weight-x (p/project model trace (sel/select :x))
+          weight-y (p/project model trace (sel/select :y))
+          weight-all (p/project model trace sel/all)]
+      (mx/eval! weight-x weight-y weight-all)
+      (is (h/close? -0.9189 (mx/item weight-x) 0.01) "project x=0 under N(0,1)")
+      (is (h/close? -0.9189 (mx/item weight-y) 0.01) "project y=0 under N(0,1)")
+      (is (h/close? (+ (mx/item weight-x) (mx/item weight-y))
+                    (mx/item weight-all) 0.001)
+          "project all = x + y"))))
+
+(cljs.test/run-tests)

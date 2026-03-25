@@ -1,36 +1,14 @@
 (ns genmlx.loop-obs-test
-  "Tests for loop-obs and merge-obs convenience helpers,
-   plus vgenerate-on-loop-model integration."
-  (:require [genmlx.mlx :as mx]
+  "Tests for loop-obs and merge-obs convenience helpers."
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.test-helpers :as h]
+            [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.choicemap :as cm]
             [genmlx.vectorized :as vec])
   (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test helpers
-;; ---------------------------------------------------------------------------
-
-(def pass-count (atom 0))
-(def fail-count (atom 0))
-
-(defn assert-true [msg pred]
-  (if pred
-    (do (swap! pass-count inc) (println "  PASS:" msg))
-    (do (swap! fail-count inc) (println "  FAIL:" msg))))
-
-(defn assert-equal [msg expected actual]
-  (if (= expected actual)
-    (do (swap! pass-count inc) (println "  PASS:" msg))
-    (do (swap! fail-count inc) (println "  FAIL:" msg "expected:" expected "got:" actual))))
-
-(defn assert-close [msg expected actual tol]
-  (let [diff (js/Math.abs (- expected actual))]
-    (if (<= diff tol)
-      (do (swap! pass-count inc) (println "  PASS:" msg))
-      (do (swap! fail-count inc) (println "  FAIL:" msg "expected:" expected "got:" actual "diff:" diff)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Shared models
@@ -50,87 +28,75 @@
 ;; 1. loop-obs basic
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 1. loop-obs basic --")
-
-(let [obs (dyn/loop-obs "y" [1.0 2.0 3.0])]
-  (assert-true "loop-obs returns Node" (instance? cm/Node obs))
-  (assert-equal "y0 value" 1 (cm/get-value (cm/get-submap obs :y0)))
-  (assert-equal "y1 value" 2 (cm/get-value (cm/get-submap obs :y1)))
-  (assert-equal "y2 value" 3 (cm/get-value (cm/get-submap obs :y2))))
+(deftest loop-obs-basic
+  (testing "loop-obs basic"
+    (let [obs (dyn/loop-obs "y" [1.0 2.0 3.0])]
+      (is (instance? cm/Node obs) "loop-obs returns Node")
+      (is (= 1 (cm/get-value (cm/get-submap obs :y0))) "y0 value")
+      (is (= 2 (cm/get-value (cm/get-submap obs :y1))) "y1 value")
+      (is (= 3 (cm/get-value (cm/get-submap obs :y2))) "y2 value"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 2. merge-obs
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 2. merge-obs --")
-
-(let [static (cm/choicemap :slope 2.0 :intercept 1.0)
-      loop-c (dyn/loop-obs "y" [10.0 20.0 30.0])
-      merged (dyn/merge-obs static loop-c)]
-  (assert-equal "merged has slope" 2 (cm/get-value (cm/get-submap merged :slope)))
-  (assert-equal "merged has y0" 10 (cm/get-value (cm/get-submap merged :y0)))
-  (assert-equal "merged has y2" 30 (cm/get-value (cm/get-submap merged :y2))))
+(deftest merge-obs-test
+  (testing "merge-obs"
+    (let [static (cm/choicemap :slope 2.0 :intercept 1.0)
+          loop-c (dyn/loop-obs "y" [10.0 20.0 30.0])
+          merged (dyn/merge-obs static loop-c)]
+      (is (= 2 (cm/get-value (cm/get-submap merged :slope))) "merged has slope")
+      (is (= 10 (cm/get-value (cm/get-submap merged :y0))) "merged has y0")
+      (is (= 30 (cm/get-value (cm/get-submap merged :y2))) "merged has y2"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 3. vgenerate + loop model
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 3. vgenerate + loop model --")
-
-(let [xs [1.0 2.0 3.0]
-      obs (dyn/loop-obs "y" [10.0 20.0 30.0])
-      key (rng/fresh-key)
-      vt (dyn/vgenerate linreg-model [xs] obs 10 key)]
-  (assert-equal "n-particles" 10 (:n-particles vt))
-  (assert-equal "weight shape" [10] (mx/shape (:weight vt)))
-  (assert-equal "score shape" [10] (mx/shape (:score vt)))
-  ;; Constrained sites should have scalar values (broadcast)
-  (let [y0-val (cm/get-value (cm/get-submap (:choices vt) :y0))]
-    (assert-true "y0 is constrained scalar" (= [] (mx/shape y0-val)))))
+(deftest vgenerate-loop-model
+  (testing "vgenerate + loop model"
+    (let [xs [1.0 2.0 3.0]
+          obs (dyn/loop-obs "y" [10.0 20.0 30.0])
+          key (rng/fresh-key)
+          vt (dyn/vgenerate linreg-model [xs] obs 10 key)]
+      (is (= 10 (:n-particles vt)) "n-particles")
+      (is (= [10] (mx/shape (:weight vt))) "weight shape")
+      (is (= [10] (mx/shape (:score vt))) "score shape")
+      (let [y0-val (cm/get-value (cm/get-submap (:choices vt) :y0))]
+        (is (= [] (mx/shape y0-val)) "y0 is constrained scalar")))))
 
 ;; ---------------------------------------------------------------------------
 ;; 4. Equivalence: loop-obs == manual choicemap
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 4. Equivalence: loop-obs vs manual choicemap --")
-
-(let [xs [1.0 2.0 3.0]
-      manual (cm/choicemap :y0 10.0 :y1 20.0 :y2 30.0)
-      loop-c (dyn/loop-obs "y" [10.0 20.0 30.0])
-      key (rng/fresh-key)
-      vt-manual (dyn/vgenerate linreg-model [xs] manual 100 key)
-      vt-loop (dyn/vgenerate linreg-model [xs] loop-c 100 key)
-      w-manual (mx/item (mx/mean (:weight vt-manual)))
-      w-loop (mx/item (mx/mean (:weight vt-loop)))]
-  (assert-close "mean weights match" w-manual w-loop 0.01)
-  (assert-equal "same n-particles" (:n-particles vt-manual) (:n-particles vt-loop)))
+(deftest loop-obs-equivalence
+  (testing "Equivalence: loop-obs vs manual choicemap"
+    (let [xs [1.0 2.0 3.0]
+          manual (cm/choicemap :y0 10.0 :y1 20.0 :y2 30.0)
+          loop-c (dyn/loop-obs "y" [10.0 20.0 30.0])
+          key (rng/fresh-key)
+          vt-manual (dyn/vgenerate linreg-model [xs] manual 100 key)
+          vt-loop (dyn/vgenerate linreg-model [xs] loop-c 100 key)
+          w-manual (mx/item (mx/mean (:weight vt-manual)))
+          w-loop (mx/item (mx/mean (:weight vt-loop)))]
+      (is (h/close? w-manual w-loop 0.01) "mean weights match")
+      (is (= (:n-particles vt-manual) (:n-particles vt-loop)) "same n-particles"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 5. merge-obs + vgenerate end-to-end
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- 5. merge-obs + vgenerate end-to-end --")
+(deftest merge-obs-vgenerate-e2e
+  (testing "merge-obs + vgenerate end-to-end"
+    (let [xs [1.0 2.0 3.0]
+          static (cm/choicemap :slope 2.0 :intercept 1.0)
+          loop-c (dyn/loop-obs "y" [3.0 5.0 7.0])
+          merged (dyn/merge-obs static loop-c)
+          key (rng/fresh-key)
+          vt (dyn/vgenerate linreg-model [xs] merged 50 key)]
+      (is (= 50 (:n-particles vt)) "vt n-particles")
+      (let [slope-val (cm/get-value (cm/get-submap (:choices vt) :slope))
+            slope-num (if (mx/array? slope-val) (mx/item slope-val) slope-val)]
+        (is (h/close? 2.0 slope-num 0.001) "slope constrained")))))
 
-(let [xs [1.0 2.0 3.0]
-      static (cm/choicemap :slope 2.0 :intercept 1.0)
-      loop-c (dyn/loop-obs "y" [3.0 5.0 7.0])
-      merged (dyn/merge-obs static loop-c)
-      key (rng/fresh-key)
-      vt (dyn/vgenerate linreg-model [xs] merged 50 key)]
-  (assert-equal "vt n-particles" 50 (:n-particles vt))
-  ;; Slope should be constrained to scalar 2.0
-  (let [slope-val (cm/get-value (cm/get-submap (:choices vt) :slope))
-        slope-num (if (mx/array? slope-val) (mx/item slope-val) slope-val)]
-    (assert-close "slope constrained" 2.0 slope-num 0.001)))
-
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println "\n========================================")
-(println (str "Loop Obs Helpers: " @pass-count "/" (+ @pass-count @fail-count)
-              " passed" (when (pos? @fail-count) (str ", " @fail-count " FAILED"))))
-(println "========================================")
-
-(when (pos? @fail-count)
-  (js/process.exit 1))
+(cljs.test/run-tests)
