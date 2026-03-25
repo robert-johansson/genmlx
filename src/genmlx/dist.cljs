@@ -188,10 +188,10 @@
             (mx/where (mx/less u p) ONE ZERO)))
   (log-prob [v]
             ;; xlogy pattern: 0 * log(0) = 0, not NaN (IEEE 754: 0 * -Inf = NaN)
-            (let [log-p   (mx/log p)
+            (let [log-p (mx/log p)
                   log-1-p (mx/log (mx/subtract ONE p))]
               (mx/add (mx/where (mx/equal v ZERO) ZERO (mx/multiply v log-p))
-                      (mx/where (mx/equal v ONE)  ZERO (mx/multiply (mx/subtract ONE v) log-1-p)))))
+                      (mx/where (mx/equal v ONE) ZERO (mx/multiply (mx/subtract ONE v) log-1-p)))))
   (support [] BERNOULLI-SUPPORT))
 
 (defmethod dc/dist-log-prob-support :bernoulli [d]
@@ -263,21 +263,30 @@
   "Gamma distribution with shape and rate parameters."
   [shape-param rate]
   (sample [key]
-    ;; Marsaglia and Tsang's method
+    ;; Marsaglia and Tsang's method (requires shape >= 1/3).
+    ;; For shape < 1: Ahrens-Dieter boost — sample Gamma(shape+1, rate),
+    ;; then scale by U^(1/shape). Matches gamma-sample-n logic.
           (let [a (mx/realize shape-param)
                 r (mx/realize rate)
-                d (- a (/ 1.0 3.0))
-                c (/ 1.0 (js/Math.sqrt (* 9.0 d)))]
-            (loop [k key]
-              (let [[k1 k2] (rng/split k)
-                    x (mx/realize (rng/normal k1 []))
-                    v (js/Math.pow (+ 1.0 (* c x)) 3)
-                    u (mx/realize (rng/uniform k2 []))]
-                (if (and (> v 0)
-                         (< (js/Math.log u) (+ (* 0.5 x x) (* d (+ 1 (- v) (js/Math.log v))))))
-                  (mx/scalar (/ (* d v) r))
-                  (let [[k' _] (rng/split k2)]
-                    (recur k')))))))
+                alpha<1? (< a 1.0)
+                a' (if alpha<1? (inc a) a)
+                d (- a' (/ 1.0 3.0))
+                c (/ 1.0 (js/Math.sqrt (* 9.0 d)))
+                [key-sample key-boost] (rng/split key)
+                raw (loop [k key-sample]
+                      (let [[k1 k2] (rng/split k)
+                            x (mx/realize (rng/normal k1 []))
+                            v (js/Math.pow (+ 1.0 (* c x)) 3)
+                            u (mx/realize (rng/uniform k2 []))]
+                        (if (and (> v 0)
+                                 (< (js/Math.log u) (+ (* 0.5 x x) (* d (+ 1 (- v) (js/Math.log v))))))
+                          (/ (* d v) r)
+                          (let [[k' _] (rng/split k2)]
+                            (recur k')))))]
+            (if alpha<1?
+              (let [u (mx/realize (rng/uniform key-boost []))]
+                (mx/scalar (* raw (js/Math.pow u (/ 1.0 a)))))
+              (mx/scalar raw))))
   (log-prob [v]
             (let [k shape-param]
               (-> (mx/add (mx/multiply (mx/subtract k ONE) (mx/log v))
