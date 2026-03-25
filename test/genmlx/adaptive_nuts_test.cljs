@@ -1,7 +1,9 @@
 (ns genmlx.adaptive-nuts-test
   "Tests for NUTS dual-averaging step-size + mass matrix adaptation,
    and HMC adapt-metric."
-  (:require [genmlx.protocols :as p]
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.test-helpers :as h]
+            [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.dynamic :as dyn]
@@ -10,19 +12,15 @@
             [genmlx.inference.mcmc :as mcmc]))
 
 ;; ---------------------------------------------------------------------------
-;; Test helpers
+;; Helpers
 ;; ---------------------------------------------------------------------------
-
-(defn- assert-true [desc pred]
-  (println (str "  " (if pred "PASS" "FAIL") ": " desc))
-  (when-not pred (throw (js/Error. (str "FAIL: " desc)))))
 
 (defn- mean [xs] (/ (reduce + xs) (count xs)))
 
 ;; ---------------------------------------------------------------------------
 ;; Model: Gaussian with known posterior
 ;; Prior: mu ~ N(0, 10), Likelihood: y_i ~ N(mu, 1)
-;; With y = [5.0, 5.5, 4.8]: posterior-mean ≈ 5.097, posterior-sd ≈ 0.577
+;; Posterior: mu | y ~ N(~5.097, ~0.577)
 ;; ---------------------------------------------------------------------------
 
 (def model
@@ -34,104 +32,77 @@
 
 (def obs (cm/choicemap :y0 5.0 :y1 5.5 :y2 4.8))
 
-(println "\n=== Adaptive NUTS Tests ===")
-
 ;; ---------------------------------------------------------------------------
-;; 1. NUTS adapted step-size is valid
+;; Tests
 ;; ---------------------------------------------------------------------------
 
-(println "\n-- NUTS adapted step-size validity --")
+(deftest nuts-adapted-step-size-test
+  (testing "NUTS adapted step-size is valid"
+    (let [samples (mcmc/nuts
+                    {:samples 50 :burn 100 :step-size 0.01
+                     :addresses [:mu] :adapt-step-size true :compile? false
+                     :device :cpu}
+                    model [3] obs)]
+      (is (= 50 (count samples)) "returns 50 samples")
+      (is (every? #(not (js/isNaN (first %))) samples) "samples are finite"))))
 
-(let [samples (mcmc/nuts
-                {:samples 50 :burn 100 :step-size 0.01
-                 :addresses [:mu] :adapt-step-size true :compile? false
-                 :device :cpu}
-                model [3] obs)]
-  (assert-true "returns 50 samples" (= 50 (count samples)))
-  (assert-true "samples are finite" (every? #(not (js/isNaN (first %))) samples)))
+(deftest nuts-posterior-accuracy-test
+  (testing "NUTS posterior accuracy"
+    (let [samples (mcmc/nuts
+                    {:samples 300 :burn 200 :step-size 0.01
+                     :addresses [:mu] :adapt-step-size true :compile? false
+                     :device :cpu}
+                    model [3] obs)
+          vals (mapv first samples)
+          m (mean vals)
+          expected 5.097]
+      (is (< (js/Math.abs (- m expected)) 0.5) "posterior mean ~ 5.1"))))
 
-;; ---------------------------------------------------------------------------
-;; 2. NUTS posterior accuracy
-;; ---------------------------------------------------------------------------
+(deftest nuts-bad-initial-recovery-test
+  (testing "NUTS from bad initial step-size adapts"
+    (let [samples (mcmc/nuts
+                    {:samples 100 :burn 150 :step-size 1.0
+                     :addresses [:mu] :adapt-step-size true :compile? false
+                     :device :cpu}
+                    model [3] obs)
+          vals (mapv first samples)
+          n-unique (count (distinct (map #(.toFixed % 2) vals)))
+          m (mean vals)]
+      (is (> n-unique 10) "adapted from bad init has diversity")
+      (is (< (js/Math.abs (- m 5.097)) 0.5) "posterior mean correct"))))
 
-(println "\n-- NUTS posterior accuracy --")
+(deftest nuts-adapt-metric-test
+  (testing "NUTS adapt-metric"
+    (let [samples (mcmc/nuts
+                    {:samples 200 :burn 200 :step-size 0.01
+                     :addresses [:mu] :adapt-step-size true :adapt-metric true
+                     :compile? false :device :cpu}
+                    model [3] obs)
+          vals (mapv first samples)
+          m (mean vals)]
+      (is (= 200 (count samples)) "adapt-metric returns 200 samples")
+      (is (every? #(not (js/isNaN (first %))) samples) "adapt-metric samples finite")
+      (is (< (js/Math.abs (- m 5.097)) 0.5) "adapt-metric posterior mean ~ 5.1"))))
 
-(let [samples (mcmc/nuts
-                {:samples 300 :burn 200 :step-size 0.01
-                 :addresses [:mu] :adapt-step-size true :compile? false
-                 :device :cpu}
-                model [3] obs)
-      vals (mapv first samples)
-      m (mean vals)
-      expected 5.097]
-  (assert-true (str "posterior mean ≈ 5.1 (got " (.toFixed m 3) ")")
-               (< (js/Math.abs (- m expected)) 0.5)))
+(deftest hmc-adapt-metric-test
+  (testing "HMC adapt-metric"
+    (let [samples (mcmc/hmc
+                    {:samples 400 :burn 300 :step-size 0.01 :leapfrog-steps 10
+                     :addresses [:mu] :adapt-step-size true :adapt-metric true
+                     :compile? false :device :cpu}
+                    model [3] obs)
+          vals (mapv first samples)
+          m (mean vals)]
+      (is (= 400 (count samples)) "HMC adapt-metric returns 400 samples")
+      (is (every? #(not (js/isNaN (first %))) samples) "HMC adapt-metric samples finite")
+      (is (< (js/Math.abs (- m 5.097)) 0.7) "HMC adapt-metric posterior mean ~ 5.1"))))
 
-;; ---------------------------------------------------------------------------
-;; 3. NUTS from bad initial step-size — adaptation recovers
-;; ---------------------------------------------------------------------------
+(deftest default-behavior-unchanged-test
+  (testing "default NUTS behavior unchanged"
+    (let [samples (mcmc/nuts
+                    {:samples 30 :burn 10 :step-size 0.05
+                     :addresses [:mu] :compile? true :device :cpu}
+                    model [3] obs)]
+      (is (= 30 (count samples)) "default NUTS (no adaptation) returns 30 samples"))))
 
-(println "\n-- NUTS from bad initial (eps=1.0) --")
-
-(let [samples (mcmc/nuts
-                {:samples 100 :burn 150 :step-size 1.0
-                 :addresses [:mu] :adapt-step-size true :compile? false
-                 :device :cpu}
-                model [3] obs)
-      vals (mapv first samples)
-      n-unique (count (distinct (map #(.toFixed % 2) vals)))
-      m (mean vals)]
-  (assert-true (str "adapted from bad init has diversity (" n-unique " unique)")
-               (> n-unique 10))
-  (assert-true (str "posterior mean correct (" (.toFixed m 3) ")")
-               (< (js/Math.abs (- m 5.097)) 0.5)))
-
-;; ---------------------------------------------------------------------------
-;; 4. NUTS adapt-metric — samples finite, posterior correct
-;; ---------------------------------------------------------------------------
-
-(println "\n-- NUTS adapt-metric --")
-
-(let [samples (mcmc/nuts
-                {:samples 200 :burn 200 :step-size 0.01
-                 :addresses [:mu] :adapt-step-size true :adapt-metric true
-                 :compile? false :device :cpu}
-                model [3] obs)
-      vals (mapv first samples)
-      m (mean vals)]
-  (assert-true "adapt-metric returns 200 samples" (= 200 (count samples)))
-  (assert-true "adapt-metric samples finite" (every? #(not (js/isNaN (first %))) samples))
-  (assert-true (str "adapt-metric posterior mean ≈ 5.1 (got " (.toFixed m 3) ")")
-               (< (js/Math.abs (- m 5.097)) 0.5)))
-
-;; ---------------------------------------------------------------------------
-;; 5. HMC adapt-metric — verify it works
-;; ---------------------------------------------------------------------------
-
-(println "\n-- HMC adapt-metric --")
-
-(let [samples (mcmc/hmc
-                {:samples 400 :burn 300 :step-size 0.01 :leapfrog-steps 10
-                 :addresses [:mu] :adapt-step-size true :adapt-metric true
-                 :compile? false :device :cpu}
-                model [3] obs)
-      vals (mapv first samples)
-      m (mean vals)]
-  (assert-true "HMC adapt-metric returns 400 samples" (= 400 (count samples)))
-  (assert-true "HMC adapt-metric samples finite" (every? #(not (js/isNaN (first %))) samples))
-  (assert-true (str "HMC adapt-metric posterior mean ≈ 5.1 (got " (.toFixed m 3) ")")
-               (< (js/Math.abs (- m 5.097)) 0.7)))
-
-;; ---------------------------------------------------------------------------
-;; 6. Default behavior unchanged (no adaptation flags)
-;; ---------------------------------------------------------------------------
-
-(println "\n-- default behavior unchanged --")
-
-(let [samples (mcmc/nuts
-                {:samples 30 :burn 10 :step-size 0.05
-                 :addresses [:mu] :compile? true :device :cpu}
-                model [3] obs)]
-  (assert-true "default NUTS (no adaptation) returns 30 samples" (= 30 (count samples))))
-
-(println "\nAll adaptive NUTS tests passed!")
+(cljs.test/run-tests)
