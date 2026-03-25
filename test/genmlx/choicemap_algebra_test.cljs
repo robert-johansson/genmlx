@@ -1,121 +1,102 @@
 (ns genmlx.choicemap-algebra-test
   "Algebraic property tests for ChoiceMap operations."
-  (:require [genmlx.choicemap :as cm]
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.test-helpers :as h]
+            [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]))
-
-(defn assert-true [msg actual]
-  (if actual
-    (println "  PASS:" msg)
-    (println "  FAIL:" msg "- expected truthy")))
-
-(defn assert= [msg expected actual]
-  (if (= expected actual)
-    (println "  PASS:" msg)
-    (do (println "  FAIL:" msg)
-        (println "    expected:" (pr-str expected))
-        (println "    actual:  " (pr-str actual)))))
 
 (defn cm= [a b]
   "Structural equality via to-map (handles Value wrapper comparison)."
   (= (cm/to-map a) (cm/to-map b)))
 
-(defn assert-cm= [msg expected actual]
-  (if (cm= expected actual)
-    (println "  PASS:" msg)
-    (do (println "  FAIL:" msg)
-        (println "    expected:" (pr-str (cm/to-map expected)))
-        (println "    actual:  " (pr-str (cm/to-map actual))))))
+(deftest merge-identity
+  (testing "merge identity laws"
+    (let [v1 (mx/scalar 1.0)
+          v2 (mx/scalar 2.0)
+          cm1 (cm/choicemap :x v1 :y v2)]
+      (is (cm= cm1 (cm/merge-cm cm/EMPTY cm1)) "left identity: merge(EMPTY, cm) = cm")
+      (is (cm= cm1 (cm/merge-cm cm1 cm/EMPTY)) "right identity: merge(cm, EMPTY) = cm"))))
 
-(println "\n=== ChoiceMap Algebra Tests ===\n")
+(deftest get-set-law
+  (testing "get-set law"
+    (let [v1 (mx/scalar 1.0)
+          v2 (mx/scalar 2.0)
+          v3 (mx/scalar 3.0)
+          cm1 (cm/choicemap :x v1 :y v2)
+          cm2 (cm/set-choice cm1 [:x] v3)]
+      (is (= (mx/realize v3) (mx/realize (cm/get-choice cm2 [:x]))) "get-set: get(set(cm, a, v), a) = v"))))
 
-;; Use MLX scalars as values to match real usage
-(let [v1 (mx/scalar 1.0)
-      v2 (mx/scalar 2.0)
-      v3 (mx/scalar 3.0)]
+(deftest set-get-non-interference
+  (testing "set-get (non-interference)"
+    (let [v1 (mx/scalar 1.0)
+          v2 (mx/scalar 2.0)
+          v3 (mx/scalar 3.0)
+          cm1 (cm/choicemap :x v1 :y v2)
+          cm2 (cm/set-choice cm1 [:x] v3)]
+      (is (= (mx/realize v2) (mx/realize (cm/get-choice cm2 [:y]))) "set-get: set at :x doesn't change :y"))))
 
-  ;; -- Identity laws --
-  (println "-- merge identity --")
-  (let [cm1 (cm/choicemap :x v1 :y v2)]
-    (assert-cm= "left identity: merge(EMPTY, cm) = cm"
-                cm1 (cm/merge-cm cm/EMPTY cm1))
-    (assert-cm= "right identity: merge(cm, EMPTY) = cm"
-                cm1 (cm/merge-cm cm1 cm/EMPTY)))
+(deftest merge-override
+  (testing "merge override"
+    (let [v1 (mx/scalar 1.0)
+          v2 (mx/scalar 2.0)
+          v3 (mx/scalar 3.0)
+          a (cm/choicemap :x v1 :y v2)
+          b (cm/choicemap :x v3)
+          merged (cm/merge-cm a b)]
+      (is (= (mx/realize v3) (mx/realize (cm/get-choice merged [:x]))) "merge override: b's :x wins"))))
 
-  ;; -- Get-set law --
-  (println "\n-- get-set --")
-  (let [cm1 (cm/choicemap :x v1 :y v2)
-        cm2 (cm/set-choice cm1 [:x] v3)]
-    (assert= "get-set: get(set(cm, a, v), a) = v"
-             (mx/realize v3) (mx/realize (cm/get-choice cm2 [:x]))))
+(deftest merge-preserves
+  (testing "merge preserves"
+    (let [v1 (mx/scalar 1.0)
+          v2 (mx/scalar 2.0)
+          v3 (mx/scalar 3.0)
+          a (cm/choicemap :x v1 :y v2)
+          b (cm/choicemap :z v3)
+          merged (cm/merge-cm a b)]
+      (is (= (mx/realize v1) (mx/realize (cm/get-choice merged [:x]))) "merge preserves: a's :x survives")
+      (is (= (mx/realize v2) (mx/realize (cm/get-choice merged [:y]))) "merge preserves: a's :y survives")
+      (is (= (mx/realize v3) (mx/realize (cm/get-choice merged [:z]))) "merge adds: b's :z added"))))
 
-  ;; -- Set-get (non-interference) --
-  (println "\n-- set-get (non-interference) --")
-  (let [cm1 (cm/choicemap :x v1 :y v2)
-        cm2 (cm/set-choice cm1 [:x] v3)]
-    (assert= "set-get: set at :x doesn't change :y"
-             (mx/realize v2) (mx/realize (cm/get-choice cm2 [:y]))))
+(deftest nested-paths
+  (testing "nested paths"
+    (let [v1 (mx/scalar 1.0)
+          v2 (mx/scalar 2.0)
+          cm1 (cm/set-choice cm/EMPTY [:a :b] v1)]
+      (is (= (mx/realize v1) (mx/realize (cm/get-choice cm1 [:a :b]))) "nested set/get")
+      (let [cm2 (cm/set-choice cm1 [:a :c] v2)]
+        (is (= (mx/realize v1) (mx/realize (cm/get-choice cm2 [:a :b]))) "nested: original path survives")
+        (is (= (mx/realize v2) (mx/realize (cm/get-choice cm2 [:a :c]))) "nested: new path accessible")))))
 
-  ;; -- Merge override --
-  (println "\n-- merge override --")
-  (let [a (cm/choicemap :x v1 :y v2)
-        b (cm/choicemap :x v3)
-        merged (cm/merge-cm a b)]
-    (assert= "merge override: b's :x wins"
-             (mx/realize v3) (mx/realize (cm/get-choice merged [:x]))))
+(deftest addresses-round-trip
+  (testing "addresses round-trip"
+    (let [v1 (mx/scalar 1.0)
+          v2 (mx/scalar 2.0)
+          v3 (mx/scalar 3.0)
+          cm1 (cm/choicemap :x v1 :y v2)
+          cm2 (cm/set-choice cm1 [:nested :deep] v3)
+          addrs (cm/addresses cm2)]
+      (is (every? (fn [path]
+                    (some? (cm/get-choice cm2 path)))
+                  addrs)
+          "all addresses retrievable")
+      (is (= 3 (count addrs)) "address count"))))
 
-  ;; -- Merge preserves --
-  (println "\n-- merge preserves --")
-  (let [a (cm/choicemap :x v1 :y v2)
-        b (cm/choicemap :z v3)
-        merged (cm/merge-cm a b)]
-    (assert= "merge preserves: a's :x survives"
-             (mx/realize v1) (mx/realize (cm/get-choice merged [:x])))
-    (assert= "merge preserves: a's :y survives"
-             (mx/realize v2) (mx/realize (cm/get-choice merged [:y])))
-    (assert= "merge adds: b's :z added"
-             (mx/realize v3) (mx/realize (cm/get-choice merged [:z]))))
+(deftest merge-associativity
+  (testing "merge associativity"
+    (let [v1 (mx/scalar 1.0)
+          v2 (mx/scalar 2.0)
+          v3 (mx/scalar 3.0)
+          a (cm/choicemap :x v1)
+          b (cm/choicemap :y v2)
+          c (cm/choicemap :z v3)
+          left  (cm/merge-cm (cm/merge-cm a b) c)
+          right (cm/merge-cm a (cm/merge-cm b c))]
+      (is (cm= left right) "associativity: merge(merge(a,b),c) = merge(a,merge(b,c))"))
+    (let [a (cm/choicemap :x (mx/scalar 1.0))
+          b (cm/choicemap :x (mx/scalar 2.0) :y (mx/scalar 3.0))
+          c (cm/choicemap :y (mx/scalar 4.0) :z (mx/scalar 5.0))
+          left  (cm/merge-cm (cm/merge-cm a b) c)
+          right (cm/merge-cm a (cm/merge-cm b c))]
+      (is (cm= left right) "associativity with overlapping keys"))))
 
-  ;; -- Nested paths --
-  (println "\n-- nested paths --")
-  (let [cm1 (cm/set-choice cm/EMPTY [:a :b] v1)]
-    (assert= "nested set/get"
-             (mx/realize v1) (mx/realize (cm/get-choice cm1 [:a :b])))
-    ;; Set deeper path, original still accessible
-    (let [cm2 (cm/set-choice cm1 [:a :c] v2)]
-      (assert= "nested: original path survives"
-               (mx/realize v1) (mx/realize (cm/get-choice cm2 [:a :b])))
-      (assert= "nested: new path accessible"
-               (mx/realize v2) (mx/realize (cm/get-choice cm2 [:a :c])))))
-
-  ;; -- Addresses round-trip --
-  (println "\n-- addresses round-trip --")
-  (let [cm1 (cm/choicemap :x v1 :y v2)
-        cm2 (cm/set-choice cm1 [:nested :deep] v3)
-        addrs (cm/addresses cm2)]
-    (assert-true "all addresses retrievable"
-                 (every? (fn [path]
-                           (some? (cm/get-choice cm2 path)))
-                         addrs))
-    (assert= "address count"
-             3 (count addrs)))
-
-  ;; -- Associativity --
-  (println "\n-- merge associativity --")
-  (let [a (cm/choicemap :x v1)
-        b (cm/choicemap :y v2)
-        c (cm/choicemap :z v3)
-        left  (cm/merge-cm (cm/merge-cm a b) c)
-        right (cm/merge-cm a (cm/merge-cm b c))]
-    (assert-cm= "associativity: merge(merge(a,b),c) = merge(a,merge(b,c))"
-                left right))
-
-  ;; Associativity with overlapping keys
-  (let [a (cm/choicemap :x (mx/scalar 1.0))
-        b (cm/choicemap :x (mx/scalar 2.0) :y (mx/scalar 3.0))
-        c (cm/choicemap :y (mx/scalar 4.0) :z (mx/scalar 5.0))
-        left  (cm/merge-cm (cm/merge-cm a b) c)
-        right (cm/merge-cm a (cm/merge-cm b c))]
-    (assert-cm= "associativity with overlapping keys"
-                left right)))
-
-(println "\nAll choicemap algebra tests complete.")
+(cljs.test/run-tests)

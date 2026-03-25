@@ -3,7 +3,9 @@
    Verify that extract-schema correctly analyzes gen body source forms
    to extract trace sites, splice sites, param sites, and classify
    models as static vs dynamic."
-  (:require [genmlx.schema :as schema]
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.test-helpers :as h]
+            [genmlx.schema :as schema]
             [genmlx.dynamic :as dyn]
             [genmlx.dist :as dist]
             [genmlx.mlx :as mx]
@@ -11,458 +13,456 @@
             [clojure.set])
   (:require-macros [genmlx.gen :refer [gen]]))
 
-(def pass-count (atom 0))
-(def fail-count (atom 0))
-
-(defn assert-true [msg actual]
-  (if actual
-    (do (swap! pass-count inc) (println "  PASS:" msg))
-    (do (swap! fail-count inc) (println "  FAIL:" msg "- expected truthy, got" actual))))
-
-(defn assert-equal [msg expected actual]
-  (if (= expected actual)
-    (do (swap! pass-count inc) (println "  PASS:" msg))
-    (do (swap! fail-count inc) (println "  FAIL:" msg "\n    expected:" expected "\n    actual:  " actual))))
-
-(defn assert-contains [msg coll item]
-  (if (some #(= % item) coll)
-    (do (swap! pass-count inc) (println "  PASS:" msg))
-    (do (swap! fail-count inc) (println "  FAIL:" msg "- expected" item "in" coll))))
-
-(println "\n=== L1-M1: Schema Extraction Tests ===\n")
-
 ;; ============================================================
 ;; Test 1: Single trace site
 ;; ============================================================
-(println "-- 1. Single trace site --")
-(let [model (gen []
-              (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
-      s (:schema model)]
-  (assert-true "schema exists" (some? s))
-  (assert-equal "one trace site" 1 (count (:trace-sites s)))
-  (assert-equal "trace addr is :x" :x (-> s :trace-sites first :addr))
-  (assert-true "dist recognized as gaussian" (= :gaussian (-> s :trace-sites first :dist-type)))
-  (assert-equal "no splice sites" 0 (count (:splice-sites s)))
-  (assert-equal "no param sites" 0 (count (:param-sites s)))
-  (assert-true "model is static" (:static? s))
-  (assert-true "no dynamic addresses" (not (:dynamic-addresses? s)))
-  (assert-true "no branches" (not (:has-branches? s))))
+(deftest test-1-single-trace-site
+  (testing "Single trace site"
+    (let [model (gen []
+                  (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
+          s (:schema model)]
+      (is (some? s) "schema exists")
+      (is (= 1 (count (:trace-sites s))) "one trace site")
+      (is (= :x (-> s :trace-sites first :addr)) "trace addr is :x")
+      (is (= :gaussian (-> s :trace-sites first :dist-type)) "dist recognized as gaussian")
+      (is (= 0 (count (:splice-sites s))) "no splice sites")
+      (is (= 0 (count (:param-sites s))) "no param sites")
+      (is (:static? s) "model is static")
+      (is (not (:dynamic-addresses? s)) "no dynamic addresses")
+      (is (not (:has-branches? s)) "no branches"))))
 
 ;; ============================================================
 ;; Test 2: Multiple trace sites with let bindings
 ;; ============================================================
-(println "\n-- 2. Multiple traces with let bindings --")
-(let [model (gen [x]
-              (let [slope (trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
-                    intercept (trace :intercept (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
-                (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept)
-                                         (mx/scalar 1)))))
-      s (:schema model)]
-  (assert-equal "three trace sites" 3 (count (:trace-sites s)))
-  (let [addrs (set (map :addr (:trace-sites s)))]
-    (assert-true ":slope present" (contains? addrs :slope))
-    (assert-true ":intercept present" (contains? addrs :intercept))
-    (assert-true ":y present" (contains? addrs :y)))
-  (assert-true "all static addresses" (every? :static? (:trace-sites s)))
-  (assert-true "model is static" (:static? s)))
+(deftest test-2-multiple-traces-with-let
+  (testing "Multiple traces with let bindings"
+    (let [model (gen [x]
+                  (let [slope (trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
+                        intercept (trace :intercept (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+                    (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept)
+                                             (mx/scalar 1)))))
+          s (:schema model)]
+      (is (= 3 (count (:trace-sites s))) "three trace sites")
+      (let [addrs (set (map :addr (:trace-sites s)))]
+        (is (contains? addrs :slope) ":slope present")
+        (is (contains? addrs :intercept) ":intercept present")
+        (is (contains? addrs :y) ":y present"))
+      (is (every? :static? (:trace-sites s)) "all static addresses")
+      (is (:static? s) "model is static"))))
 
 ;; ============================================================
 ;; Test 3: Distribution type recognition
 ;; ============================================================
-(println "\n-- 3. Distribution type recognition --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                    b (trace :b (dist/bernoulli (mx/scalar 0.5)))
-                    c (trace :c (dist/uniform (mx/scalar 0) (mx/scalar 1)))
-                    d (trace :d (dist/exponential (mx/scalar 1.0)))
-                    e (trace :e (dist/categorical (mx/array [0.2 0.3 0.5])))]
-                [a b c d e]))
-      s (:schema model)
-      types (into {} (map (fn [t] [(:addr t) (:dist-type t)]) (:trace-sites s)))]
-  (assert-equal "5 trace sites" 5 (count (:trace-sites s)))
-  (assert-equal ":a is gaussian" :gaussian (get types :a))
-  (assert-equal ":b is bernoulli" :bernoulli (get types :b))
-  (assert-equal ":c is uniform" :uniform (get types :c))
-  (assert-equal ":d is exponential" :exponential (get types :d))
-  (assert-equal ":e is categorical" :categorical (get types :e)))
+(deftest test-3-distribution-type-recognition
+  (testing "Distribution type recognition"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        b (trace :b (dist/bernoulli (mx/scalar 0.5)))
+                        c (trace :c (dist/uniform (mx/scalar 0) (mx/scalar 1)))
+                        d (trace :d (dist/exponential (mx/scalar 1.0)))
+                        e (trace :e (dist/categorical (mx/array [0.2 0.3 0.5])))]
+                    [a b c d e]))
+          s (:schema model)
+          types (into {} (map (fn [t] [(:addr t) (:dist-type t)]) (:trace-sites s)))]
+      (is (= 5 (count (:trace-sites s))) "5 trace sites")
+      (is (= :gaussian (get types :a)) ":a is gaussian")
+      (is (= :bernoulli (get types :b)) ":b is bernoulli")
+      (is (= :uniform (get types :c)) ":c is uniform")
+      (is (= :exponential (get types :d)) ":d is exponential")
+      (is (= :categorical (get types :e)) ":e is categorical"))))
 
 ;; ============================================================
 ;; Test 4: Computed addresses → dynamic
 ;; ============================================================
-(println "\n-- 4. Computed (dynamic) addresses --")
-(let [model (gen [data]
-              (doseq [[i x] (map-indexed vector data)]
-                (trace (keyword (str "y" i))
-                       (dist/gaussian x (mx/scalar 1)))))
-      s (:schema model)]
-  (assert-true "has dynamic addresses" (:dynamic-addresses? s))
-  (assert-true "model is NOT static" (not (:static? s)))
-  ;; Should still find the trace site, but marked as dynamic
-  (assert-true "has trace sites" (pos? (count (:trace-sites s))))
-  (assert-true "trace site marked dynamic" (some #(not (:static? %)) (:trace-sites s))))
+(deftest test-4-computed-dynamic-addresses
+  (testing "Computed (dynamic) addresses"
+    (let [model (gen [data]
+                  (doseq [[i x] (map-indexed vector data)]
+                    (trace (keyword (str "y" i))
+                           (dist/gaussian x (mx/scalar 1)))))
+          s (:schema model)]
+      (is (:dynamic-addresses? s) "has dynamic addresses")
+      (is (not (:static? s)) "model is NOT static")
+      (is (pos? (count (:trace-sites s))) "has trace sites")
+      (is (some #(not (:static? %)) (:trace-sites s)) "trace site marked dynamic"))))
 
 ;; ============================================================
 ;; Test 5: Data-dependent branching
 ;; ============================================================
-(println "\n-- 5. Data-dependent branching --")
-(let [model (gen [use-prior?]
-              (if use-prior?
-                (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                (trace :x (dist/gaussian (mx/scalar 10) (mx/scalar 1)))))
-      s (:schema model)]
-  (assert-true "has branches" (:has-branches? s))
-  ;; Both branches have trace :x, so it should appear
-  (assert-true "trace :x found" (some #(= :x (:addr %)) (:trace-sites s))))
+(deftest test-5-data-dependent-branching
+  (testing "Data-dependent branching"
+    (let [model (gen [use-prior?]
+                  (if use-prior?
+                    (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                    (trace :x (dist/gaussian (mx/scalar 10) (mx/scalar 1)))))
+          s (:schema model)]
+      (is (:has-branches? s) "has branches")
+      (is (some #(= :x (:addr %)) (:trace-sites s)) "trace :x found"))))
 
 ;; ============================================================
 ;; Test 6: Loop with traces (doseq)
 ;; ============================================================
-(println "\n-- 6. Loop with traces --")
-(let [model (gen [n]
-              (doseq [i (range n)]
-                (trace (keyword (str "x" i))
-                       (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
-      s (:schema model)]
-  (assert-true "has loops" (:has-loops? s))
-  (assert-true "model is not static" (not (:static? s))))
+(deftest test-6-loop-with-traces
+  (testing "Loop with traces"
+    (let [model (gen [n]
+                  (doseq [i (range n)]
+                    (trace (keyword (str "x" i))
+                           (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+          s (:schema model)]
+      (is (:has-loops? s) "has loops")
+      (is (not (:static? s)) "model is not static"))))
 
 ;; ============================================================
 ;; Test 7: Splice site detection
 ;; ============================================================
-(println "\n-- 7. Splice sites --")
-(let [inner (gen [mu]
-              (trace :x (dist/gaussian mu (mx/scalar 1))))
-      outer (gen [mu]
-              (let [z (trace :z (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
-                (splice :obs inner z)))
-      s (:schema outer)]
-  (assert-equal "one trace site" 1 (count (:trace-sites s)))
-  (assert-equal "one splice site" 1 (count (:splice-sites s)))
-  (assert-equal "splice addr is :obs" :obs (-> s :splice-sites first :addr))
-  (assert-true "splice is static" (-> s :splice-sites first :static?)))
+(deftest test-7-splice-site-detection
+  (testing "Splice sites"
+    (let [inner (gen [mu]
+                  (trace :x (dist/gaussian mu (mx/scalar 1))))
+          outer (gen [mu]
+                  (let [z (trace :z (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+                    (splice :obs inner z)))
+          s (:schema outer)]
+      (is (= 1 (count (:trace-sites s))) "one trace site")
+      (is (= 1 (count (:splice-sites s))) "one splice site")
+      (is (= :obs (-> s :splice-sites first :addr)) "splice addr is :obs")
+      (is (-> s :splice-sites first :static?) "splice is static"))))
 
 ;; ============================================================
 ;; Test 8: Param site detection
 ;; ============================================================
-(println "\n-- 8. Param sites --")
-(let [model (gen [x]
-              (let [w (param :weight (mx/scalar 1.0))
-                    b (param :bias (mx/scalar 0.0))]
-                (trace :y (dist/gaussian (mx/add (mx/multiply w x) b)
-                                         (mx/scalar 1)))))
-      s (:schema model)]
-  (assert-equal "one trace site" 1 (count (:trace-sites s)))
-  (assert-equal "two param sites" 2 (count (:param-sites s)))
-  (let [param-names (set (map :name (:param-sites s)))]
-    (assert-true ":weight param" (contains? param-names :weight))
-    (assert-true ":bias param" (contains? param-names :bias))))
+(deftest test-8-param-site-detection
+  (testing "Param sites"
+    (let [model (gen [x]
+                  (let [w (param :weight (mx/scalar 1.0))
+                        b (param :bias (mx/scalar 0.0))]
+                    (trace :y (dist/gaussian (mx/add (mx/multiply w x) b)
+                                             (mx/scalar 1)))))
+          s (:schema model)]
+      (is (= 1 (count (:trace-sites s))) "one trace site")
+      (is (= 2 (count (:param-sites s))) "two param sites")
+      (let [param-names (set (map :name (:param-sites s)))]
+        (is (contains? param-names :weight) ":weight param")
+        (is (contains? param-names :bias) ":bias param")))))
 
 ;; ============================================================
 ;; Test 9: Empty body (no trace/splice/param)
 ;; ============================================================
-(println "\n-- 9. Empty body (no trace sites) --")
-(let [model (gen [x]
-              (mx/add x (mx/scalar 1)))
-      s (:schema model)]
-  (assert-true "schema exists" (some? s))
-  (assert-equal "zero trace sites" 0 (count (:trace-sites s)))
-  (assert-equal "zero splice sites" 0 (count (:splice-sites s)))
-  (assert-equal "zero param sites" 0 (count (:param-sites s)))
-  (assert-true "model is static" (:static? s)))
+(deftest test-9-empty-body
+  (testing "Empty body (no trace sites)"
+    (let [model (gen [x]
+                  (mx/add x (mx/scalar 1)))
+          s (:schema model)]
+      (is (some? s) "schema exists")
+      (is (= 0 (count (:trace-sites s))) "zero trace sites")
+      (is (= 0 (count (:splice-sites s))) "zero splice sites")
+      (is (= 0 (count (:param-sites s))) "zero param sites")
+      (is (:static? s) "model is static"))))
 
 ;; ============================================================
 ;; Test 10: Nested let bindings
 ;; ============================================================
-(println "\n-- 10. Nested let bindings --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
-                (let [b (trace :b (dist/gaussian a (mx/scalar 1)))]
-                  (let [c (trace :c (dist/gaussian b (mx/scalar 1)))]
-                    c))))
-      s (:schema model)]
-  (assert-equal "three trace sites" 3 (count (:trace-sites s)))
-  (assert-true "all static" (:static? s))
-  (let [addrs (mapv :addr (:trace-sites s))]
-    (assert-true ":a found" (some #(= :a %) addrs))
-    (assert-true ":b found" (some #(= :b %) addrs))
-    (assert-true ":c found" (some #(= :c %) addrs))))
+(deftest test-10-nested-let-bindings
+  (testing "Nested let bindings"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                    (let [b (trace :b (dist/gaussian a (mx/scalar 1)))]
+                      (let [c (trace :c (dist/gaussian b (mx/scalar 1)))]
+                        c))))
+          s (:schema model)]
+      (is (= 3 (count (:trace-sites s))) "three trace sites")
+      (is (:static? s) "all static")
+      (let [addrs (mapv :addr (:trace-sites s))]
+        (is (some #(= :a %) addrs) ":a found")
+        (is (some #(= :b %) addrs) ":b found")
+        (is (some #(= :c %) addrs) ":c found")))))
 
 ;; ============================================================
 ;; Test 11: cond/when with traces → branches
 ;; ============================================================
-(println "\n-- 11. cond/when with traces --")
-(let [model (gen [mode]
-              (cond
-                (= mode 0) (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                (= mode 1) (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
-                :else (trace :c (dist/gaussian (mx/scalar 10) (mx/scalar 1)))))
-      s (:schema model)]
-  (assert-true "has branches" (:has-branches? s))
-  (assert-equal "three trace sites" 3 (count (:trace-sites s)))
-  (let [addrs (set (map :addr (:trace-sites s)))]
-    (assert-true ":a found" (contains? addrs :a))
-    (assert-true ":b found" (contains? addrs :b))
-    (assert-true ":c found" (contains? addrs :c))))
+(deftest test-11-cond-when-with-traces
+  (testing "cond/when with traces"
+    (let [model (gen [mode]
+                  (cond
+                    (= mode 0) (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                    (= mode 1) (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
+                    :else (trace :c (dist/gaussian (mx/scalar 10) (mx/scalar 1)))))
+          s (:schema model)]
+      (is (:has-branches? s) "has branches")
+      (is (= 3 (count (:trace-sites s))) "three trace sites")
+      (let [addrs (set (map :addr (:trace-sites s)))]
+        (is (contains? addrs :a) ":a found")
+        (is (contains? addrs :b) ":b found")
+        (is (contains? addrs :c) ":c found")))))
 
 ;; ============================================================
 ;; Test 12: Traces inside map/for (HOF patterns)
 ;; ============================================================
-(println "\n-- 12. Traces inside higher-order forms --")
-(let [model (gen [xs]
-              (let [slope (trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
-                (doall
-                  (map-indexed
-                    (fn [i x]
-                      (trace (keyword (str "y" i))
-                             (dist/gaussian (mx/multiply slope x) (mx/scalar 1))))
-                    xs))))
-      s (:schema model)]
-  ;; :slope is static, but the map-indexed traces are dynamic
-  (assert-true "has trace sites" (pos? (count (:trace-sites s))))
-  (assert-true "has dynamic addresses" (:dynamic-addresses? s))
-  ;; :slope should be found as static
-  (assert-true ":slope is static" (some #(and (= :slope (:addr %)) (:static? %))
-                                        (:trace-sites s))))
+(deftest test-12-traces-inside-hof
+  (testing "Traces inside higher-order forms"
+    (let [model (gen [xs]
+                  (let [slope (trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+                    (doall
+                      (map-indexed
+                        (fn [i x]
+                          (trace (keyword (str "y" i))
+                                 (dist/gaussian (mx/multiply slope x) (mx/scalar 1))))
+                        xs))))
+          s (:schema model)]
+      (is (pos? (count (:trace-sites s))) "has trace sites")
+      (is (:dynamic-addresses? s) "has dynamic addresses")
+      (is (some #(and (= :slope (:addr %)) (:static? %))
+                (:trace-sites s))
+          ":slope is static"))))
 
 ;; ============================================================
 ;; Test 13: Real-world linear regression model
 ;; ============================================================
-(println "\n-- 13. Linear regression model --")
-(let [model (gen [xs ys]
-              (let [slope (trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
-                    intercept (trace :intercept (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
-                    noise (trace :noise (dist/exponential (mx/scalar 1)))]
-                (doseq [[j [x y]] (map-indexed vector (map vector xs ys))]
-                  (trace (keyword (str "obs" j))
-                         (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
-                                                intercept)
-                                        noise)))
-                slope))
-      s (:schema model)]
-  ;; Static params + dynamic observations
-  (assert-true "has both static and dynamic traces"
-               (and (some :static? (:trace-sites s))
-                    (some #(not (:static? %)) (:trace-sites s))))
-  (assert-true "has dynamic addresses" (:dynamic-addresses? s))
-  (assert-true "not fully static" (not (:static? s)))
-  ;; Known static addresses
-  (let [static-addrs (set (map :addr (filter :static? (:trace-sites s))))]
-    (assert-true ":slope is static" (contains? static-addrs :slope))
-    (assert-true ":intercept is static" (contains? static-addrs :intercept))
-    (assert-true ":noise is static" (contains? static-addrs :noise))))
+(deftest test-13-linear-regression
+  (testing "Linear regression model"
+    (let [model (gen [xs ys]
+                  (let [slope (trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
+                        intercept (trace :intercept (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
+                        noise (trace :noise (dist/exponential (mx/scalar 1)))]
+                    (doseq [[j [x y]] (map-indexed vector (map vector xs ys))]
+                      (trace (keyword (str "obs" j))
+                             (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                                    intercept)
+                                            noise)))
+                    slope))
+          s (:schema model)]
+      (is (and (some :static? (:trace-sites s))
+               (some #(not (:static? %)) (:trace-sites s)))
+          "has both static and dynamic traces")
+      (is (:dynamic-addresses? s) "has dynamic addresses")
+      (is (not (:static? s)) "not fully static")
+      (let [static-addrs (set (map :addr (filter :static? (:trace-sites s))))]
+        (is (contains? static-addrs :slope) ":slope is static")
+        (is (contains? static-addrs :intercept) ":intercept is static")
+        (is (contains? static-addrs :noise) ":noise is static")))))
 
 ;; ============================================================
 ;; Test 14: Schema stored on DynamicGF record — all fields
 ;; ============================================================
-(println "\n-- 14. Schema stored on DynamicGF --")
-(let [model (gen [x]
-              (trace :a (dist/gaussian x (mx/scalar 1))))
-      s (:schema model)]
-  (assert-true "schema is on record" (some? s))
-  (assert-true "schema is a map" (map? s))
-  (assert-true "has :trace-sites key" (contains? s :trace-sites))
-  (assert-true "has :splice-sites key" (contains? s :splice-sites))
-  (assert-true "has :param-sites key" (contains? s :param-sites))
-  (assert-true "has :static? key" (contains? s :static?))
-  (assert-true "has :dynamic-addresses? key" (contains? s :dynamic-addresses?))
-  (assert-true "has :has-branches? key" (contains? s :has-branches?))
-  (assert-true "has :has-loops? key" (contains? s :has-loops?))
-  (assert-true "has :params key" (contains? s :params))
-  ;; New fields
-  (assert-true "has :return-form key" (contains? s :return-form))
-  (assert-true "has :dep-order key" (contains? s :dep-order))
-  ;; Trace site has deps and dist-args
-  (let [ts (first (:trace-sites s))]
-    (assert-true "trace site has :deps" (contains? ts :deps))
-    (assert-true "trace site has :dist-args" (contains? ts :dist-args))
-    (assert-true "deps is a set" (set? (:deps ts)))
-    (assert-true "dist-args is a vector" (vector? (:dist-args ts)))))
+(deftest test-14-schema-on-dynamic-gf
+  (testing "Schema stored on DynamicGF"
+    (let [model (gen [x]
+                  (trace :a (dist/gaussian x (mx/scalar 1))))
+          s (:schema model)]
+      (is (some? s) "schema is on record")
+      (is (map? s) "schema is a map")
+      (is (contains? s :trace-sites) "has :trace-sites key")
+      (is (contains? s :splice-sites) "has :splice-sites key")
+      (is (contains? s :param-sites) "has :param-sites key")
+      (is (contains? s :static?) "has :static? key")
+      (is (contains? s :dynamic-addresses?) "has :dynamic-addresses? key")
+      (is (contains? s :has-branches?) "has :has-branches? key")
+      (is (contains? s :has-loops?) "has :has-loops? key")
+      (is (contains? s :params) "has :params key")
+      (is (contains? s :return-form) "has :return-form key")
+      (is (contains? s :dep-order) "has :dep-order key")
+      (let [ts (first (:trace-sites s))]
+        (is (contains? ts :deps) "trace site has :deps")
+        (is (contains? ts :dist-args) "trace site has :dist-args")
+        (is (set? (:deps ts)) "deps is a set")
+        (is (vector? (:dist-args ts)) "dist-args is a vector")))))
 
 ;; ============================================================
 ;; Test 15: Formal parameters captured
 ;; ============================================================
-(println "\n-- 15. Formal parameters captured --")
-(let [m1 (gen [] (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
-      m2 (gen [a] (trace :x (dist/gaussian a (mx/scalar 1))))
-      m3 (gen [a b c] (trace :x (dist/gaussian a b)))]
-  (assert-equal "zero params" [] (:params (:schema m1)))
-  (assert-equal "one param" '[a] (:params (:schema m2)))
-  (assert-equal "three params" '[a b c] (:params (:schema m3))))
+(deftest test-15-formal-parameters
+  (testing "Formal parameters captured"
+    (let [m1 (gen [] (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
+          m2 (gen [a] (trace :x (dist/gaussian a (mx/scalar 1))))
+          m3 (gen [a b c] (trace :x (dist/gaussian a b)))]
+      (is (= [] (:params (:schema m1))) "zero params")
+      (is (= '[a] (:params (:schema m2))) "one param")
+      (is (= '[a b c] (:params (:schema m3))) "three params"))))
 
 ;; ============================================================
 ;; Test 16: Multiple splices
 ;; ============================================================
-(println "\n-- 16. Multiple splices --")
-(let [sub-a (gen [] (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
-      sub-b (gen [] (trace :x (dist/gaussian (mx/scalar 10) (mx/scalar 1))))
-      outer (gen []
-              (let [a (splice :part-a sub-a)
-                    b (splice :part-b sub-b)]
-                (mx/add a b)))
-      s (:schema outer)]
-  (assert-equal "zero trace sites" 0 (count (:trace-sites s)))
-  (assert-equal "two splice sites" 2 (count (:splice-sites s)))
-  (let [addrs (set (map :addr (:splice-sites s)))]
-    (assert-true ":part-a found" (contains? addrs :part-a))
-    (assert-true ":part-b found" (contains? addrs :part-b))))
+(deftest test-16-multiple-splices
+  (testing "Multiple splices"
+    (let [sub-a (gen [] (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
+          sub-b (gen [] (trace :x (dist/gaussian (mx/scalar 10) (mx/scalar 1))))
+          outer (gen []
+                  (let [a (splice :part-a sub-a)
+                        b (splice :part-b sub-b)]
+                    (mx/add a b)))
+          s (:schema outer)]
+      (is (= 0 (count (:trace-sites s))) "zero trace sites")
+      (is (= 2 (count (:splice-sites s))) "two splice sites")
+      (let [addrs (set (map :addr (:splice-sites s)))]
+        (is (contains? addrs :part-a) ":part-a found")
+        (is (contains? addrs :part-b) ":part-b found")))))
 
 ;; ============================================================
 ;; Test 17: Mixed trace + splice
 ;; ============================================================
-(println "\n-- 17. Mixed trace and splice --")
-(let [sub (gen [mu] (trace :x (dist/gaussian mu (mx/scalar 1))))
-      model (gen []
-              (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
-                (splice :obs sub mu)))
-      s (:schema model)]
-  (assert-equal "one trace site" 1 (count (:trace-sites s)))
-  (assert-equal "one splice site" 1 (count (:splice-sites s)))
-  (assert-equal "trace is :mu" :mu (-> s :trace-sites first :addr))
-  (assert-equal "splice is :obs" :obs (-> s :splice-sites first :addr)))
+(deftest test-17-mixed-trace-splice
+  (testing "Mixed trace and splice"
+    (let [sub (gen [mu] (trace :x (dist/gaussian mu (mx/scalar 1))))
+          model (gen []
+                  (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+                    (splice :obs sub mu)))
+          s (:schema model)]
+      (is (= 1 (count (:trace-sites s))) "one trace site")
+      (is (= 1 (count (:splice-sites s))) "one splice site")
+      (is (= :mu (-> s :trace-sites first :addr)) "trace is :mu")
+      (is (= :obs (-> s :splice-sites first :addr)) "splice is :obs"))))
 
 ;; ============================================================
 ;; Test 18: when/when-not with traces → branches
 ;; ============================================================
-(println "\n-- 18. when/when-not with traces --")
-(let [model (gen [flag]
-              (when flag
-                (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
-      s (:schema model)]
-  (assert-true "has branches" (:has-branches? s))
-  (assert-true "trace :x found" (some #(= :x (:addr %)) (:trace-sites s))))
+(deftest test-18-when-with-traces
+  (testing "when/when-not with traces"
+    (let [model (gen [flag]
+                  (when flag
+                    (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+          s (:schema model)]
+      (is (:has-branches? s) "has branches")
+      (is (some #(= :x (:addr %)) (:trace-sites s)) "trace :x found"))))
 
 ;; ============================================================
 ;; Test 19: case with traces → branches
 ;; ============================================================
-(println "\n-- 19. case with traces --")
-(let [model (gen [k]
-              (case k
-                0 (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                1 (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
-                (trace :c (dist/gaussian (mx/scalar 10) (mx/scalar 1)))))
-      s (:schema model)]
-  (assert-true "has branches" (:has-branches? s))
-  (assert-equal "three trace sites" 3 (count (:trace-sites s))))
+(deftest test-19-case-with-traces
+  (testing "case with traces"
+    (let [model (gen [k]
+                  (case k
+                    0 (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                    1 (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
+                    (trace :c (dist/gaussian (mx/scalar 10) (mx/scalar 1)))))
+          s (:schema model)]
+      (is (:has-branches? s) "has branches")
+      (is (= 3 (count (:trace-sites s))) "three trace sites"))))
 
 ;; ============================================================
 ;; Test 20: Deeply nested structure
 ;; ============================================================
-(println "\n-- 20. Deeply nested structure --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
-                (let [b (if true
-                          (let [c (trace :c (dist/gaussian a (mx/scalar 1)))]
-                            (trace :d (dist/gaussian c (mx/scalar 1))))
-                          (trace :e (dist/gaussian a (mx/scalar 1))))]
-                  b)))
-      s (:schema model)]
-  (assert-true "has branches" (:has-branches? s))
-  ;; Should find all trace sites regardless of nesting
-  (let [addrs (set (map :addr (:trace-sites s)))]
-    (assert-true ":a found" (contains? addrs :a))
-    (assert-true ":c found" (contains? addrs :c))
-    (assert-true ":d found" (contains? addrs :d))
-    (assert-true ":e found" (contains? addrs :e))))
+(deftest test-20-deeply-nested
+  (testing "Deeply nested structure"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                    (let [b (if true
+                              (let [c (trace :c (dist/gaussian a (mx/scalar 1)))]
+                                (trace :d (dist/gaussian c (mx/scalar 1))))
+                              (trace :e (dist/gaussian a (mx/scalar 1))))]
+                      b)))
+          s (:schema model)]
+      (is (:has-branches? s) "has branches")
+      (let [addrs (set (map :addr (:trace-sites s)))]
+        (is (contains? addrs :a) ":a found")
+        (is (contains? addrs :c) ":c found")
+        (is (contains? addrs :d) ":d found")
+        (is (contains? addrs :e) ":e found")))))
 
 ;; ============================================================
 ;; Test 21: Behavior preservation — schema doesn't change execution
 ;; ============================================================
-(println "\n-- 21. Behavior preservation --")
-(let [model (dyn/auto-key
-              (gen []
-                (let [x (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
-                  x)))
-      ;; Must still work identically to before
-      t1 (genmlx.protocols/simulate model [])
-      t2 (genmlx.protocols/simulate model [])]
-  (assert-true "simulate still works" (some? t1))
-  (assert-true "has retval" (some? (:retval t1)))
-  (assert-true "has score" (some? (:score t1)))
-  (assert-true "has choices" (some? (:choices t1)))
-  (mx/eval! (:retval t1))
-  (mx/eval! (:score t1))
-  (assert-true "score is scalar" (= [] (mx/shape (:score t1)))))
+(deftest test-21-behavior-preservation
+  (testing "Behavior preservation"
+    (let [model (dyn/auto-key
+                  (gen []
+                    (let [x (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                      x)))
+          t1 (genmlx.protocols/simulate model [])
+          t2 (genmlx.protocols/simulate model [])]
+      (is (some? t1) "simulate still works")
+      (is (some? (:retval t1)) "has retval")
+      (is (some? (:score t1)) "has score")
+      (is (some? (:choices t1)) "has choices")
+      (mx/eval! (:retval t1))
+      (mx/eval! (:score t1))
+      (is (= [] (mx/shape (:score t1))) "score is scalar"))))
 
 ;; ============================================================
 ;; Test 22: Behavior preservation — generate with constraints
 ;; ============================================================
-(println "\n-- 22. Behavior preservation — generate --")
-(let [model (dyn/auto-key
-              (gen []
-                (let [x (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
-                  (trace :y (dist/gaussian x (mx/scalar 1))))))
-      obs (genmlx.choicemap/set-value genmlx.choicemap/EMPTY :y (mx/scalar 3.0))
-      result (genmlx.protocols/generate model [] obs)]
-  (assert-true "generate still works" (some? result))
-  (assert-true "has trace" (some? (:trace result)))
-  (assert-true "has weight" (some? (:weight result)))
-  (mx/eval! (:weight result))
-  (assert-true "weight is scalar" (= [] (mx/shape (:weight result)))))
+(deftest test-22-behavior-preservation-generate
+  (testing "Behavior preservation — generate"
+    (let [model (dyn/auto-key
+                  (gen []
+                    (let [x (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                      (trace :y (dist/gaussian x (mx/scalar 1))))))
+          obs (genmlx.choicemap/set-value genmlx.choicemap/EMPTY :y (mx/scalar 3.0))
+          result (genmlx.protocols/generate model [] obs)]
+      (is (some? result) "generate still works")
+      (is (some? (:trace result)) "has trace")
+      (is (some? (:weight result)) "has weight")
+      (mx/eval! (:weight result))
+      (is (= [] (mx/shape (:weight result))) "weight is scalar"))))
 
 ;; ============================================================
 ;; Test 23: Behavior preservation — vsimulate
 ;; ============================================================
-(println "\n-- 23. Behavior preservation — vsimulate --")
-(let [model (gen []
-              (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
-      key (genmlx.mlx.random/fresh-key)
-      vt (dyn/vsimulate model [] 50 key)]
-  (assert-true "vsimulate still works" (some? vt))
-  (mx/eval! (:score vt))
-  (assert-equal "score shape [50]" [50] (mx/shape (:score vt))))
+(deftest test-23-behavior-preservation-vsimulate
+  (testing "Behavior preservation — vsimulate"
+    (let [model (gen []
+                  (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
+          key (genmlx.mlx.random/fresh-key)
+          vt (dyn/vsimulate model [] 50 key)]
+      (is (some? vt) "vsimulate still works")
+      (mx/eval! (:score vt))
+      (is (= [50] (mx/shape (:score vt))) "score shape [50]"))))
 
 ;; ============================================================
 ;; Test 24: dotimes → has-loops
 ;; ============================================================
-(println "\n-- 24. dotimes with traces --")
-(let [model (gen []
-              (dotimes [i 5]
-                (trace (keyword (str "x" i))
-                       (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
-      s (:schema model)]
-  (assert-true "has loops" (:has-loops? s))
-  (assert-true "has dynamic addresses" (:dynamic-addresses? s)))
+(deftest test-24-dotimes-with-traces
+  (testing "dotimes with traces"
+    (let [model (gen []
+                  (dotimes [i 5]
+                    (trace (keyword (str "x" i))
+                           (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+          s (:schema model)]
+      (is (:has-loops? s) "has loops")
+      (is (:dynamic-addresses? s) "has dynamic addresses"))))
 
 ;; ============================================================
 ;; Test 25: for loop → has-loops
 ;; ============================================================
-(println "\n-- 25. for with traces --")
-(let [model (gen [items]
-              (doall
-                (for [item items]
-                  (trace (keyword (str "obs-" item))
-                         (dist/gaussian (mx/scalar 0) (mx/scalar 1))))))
-      s (:schema model)]
-  (assert-true "has loops" (:has-loops? s)))
+(deftest test-25-for-with-traces
+  (testing "for with traces"
+    (let [model (gen [items]
+                  (doall
+                    (for [item items]
+                      (trace (keyword (str "obs-" item))
+                             (dist/gaussian (mx/scalar 0) (mx/scalar 1))))))
+          s (:schema model)]
+      (is (:has-loops? s) "has loops"))))
 
 ;; ============================================================
 ;; Test 26: Static model with many distributions
 ;; ============================================================
-(println "\n-- 26. Many distributions, all static --")
-(let [model (gen []
-              (let [x (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                    y (trace :y (dist/bernoulli (mx/scalar 0.5)))
-                    z (trace :z (dist/uniform (mx/scalar -1) (mx/scalar 1)))]
-                [x y z]))
-      s (:schema model)]
-  (assert-true "static model" (:static? s))
-  (assert-true "no dynamic addresses" (not (:dynamic-addresses? s)))
-  (assert-true "no branches" (not (:has-branches? s)))
-  (assert-true "no loops" (not (:has-loops? s)))
-  (assert-equal "three traces" 3 (count (:trace-sites s))))
+(deftest test-26-static-many-dists
+  (testing "Many distributions, all static"
+    (let [model (gen []
+                  (let [x (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        y (trace :y (dist/bernoulli (mx/scalar 0.5)))
+                        z (trace :z (dist/uniform (mx/scalar -1) (mx/scalar 1)))]
+                    [x y z]))
+          s (:schema model)]
+      (is (:static? s) "static model")
+      (is (not (:dynamic-addresses? s)) "no dynamic addresses")
+      (is (not (:has-branches? s)) "no branches")
+      (is (not (:has-loops? s)) "no loops")
+      (is (= 3 (count (:trace-sites s))) "three traces"))))
 
 ;; ============================================================
 ;; Test 27: Splice with dynamic address
 ;; ============================================================
-(println "\n-- 27. Splice with dynamic address --")
-(let [sub (gen [] (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
-      model (gen [n]
-              (doseq [i (range n)]
-                (splice (keyword (str "part" i)) sub)))
-      s (:schema model)]
-  (assert-true "has splice sites" (pos? (count (:splice-sites s))))
-  (assert-true "splice is dynamic" (some #(not (:static? %)) (:splice-sites s)))
-  (assert-true "has dynamic addresses" (:dynamic-addresses? s)))
+(deftest test-27-splice-dynamic-address
+  (testing "Splice with dynamic address"
+    (let [sub (gen [] (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
+          model (gen [n]
+                  (doseq [i (range n)]
+                    (splice (keyword (str "part" i)) sub)))
+          s (:schema model)]
+      (is (pos? (count (:splice-sites s))) "has splice sites")
+      (is (some #(not (:static? %)) (:splice-sites s)) "splice is dynamic")
+      (is (:dynamic-addresses? s) "has dynamic addresses"))))
 
 ;; ============================================================
 ;; DEPENDENCY TRACKING TESTS
@@ -471,526 +471,545 @@
 ;; ============================================================
 ;; Test 28: Simple dependency chain a → b → c
 ;; ============================================================
-(println "\n-- 28. Dependency chain a → b → c --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                    b (trace :b (dist/gaussian a (mx/scalar 1)))
-                    c (trace :c (dist/gaussian b (mx/scalar 1)))]
-                c))
-      s (:schema model)
-      deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
-  (assert-equal ":a has no deps" #{} (deps-of :a))
-  (assert-true ":b depends on :a" (contains? (deps-of :b) :a))
-  (assert-true ":c depends on :b" (contains? (deps-of :c) :b))
-  (assert-true ":c transitively depends on :a" (contains? (deps-of :c) :a)))
+(deftest test-28-dependency-chain
+  (testing "Dependency chain a -> b -> c"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        b (trace :b (dist/gaussian a (mx/scalar 1)))
+                        c (trace :c (dist/gaussian b (mx/scalar 1)))]
+                    c))
+          s (:schema model)
+          deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
+      (is (= #{} (deps-of :a)) ":a has no deps")
+      (is (contains? (deps-of :b) :a) ":b depends on :a")
+      (is (contains? (deps-of :c) :b) ":c depends on :b")
+      (is (contains? (deps-of :c) :a) ":c transitively depends on :a"))))
 
 ;; ============================================================
 ;; Test 29: Fan-out — a feeds both b and c
 ;; ============================================================
-(println "\n-- 29. Fan-out: a → b, a → c --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                    b (trace :b (dist/gaussian a (mx/scalar 1)))
-                    c (trace :c (dist/gaussian a (mx/scalar 2)))]
-                [b c]))
-      s (:schema model)
-      deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
-  (assert-equal ":a has no deps" #{} (deps-of :a))
-  (assert-equal ":b depends on :a" #{:a} (deps-of :b))
-  (assert-equal ":c depends on :a" #{:a} (deps-of :c)))
+(deftest test-29-fan-out
+  (testing "Fan-out: a -> b, a -> c"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        b (trace :b (dist/gaussian a (mx/scalar 1)))
+                        c (trace :c (dist/gaussian a (mx/scalar 2)))]
+                    [b c]))
+          s (:schema model)
+          deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
+      (is (= #{} (deps-of :a)) ":a has no deps")
+      (is (= #{:a} (deps-of :b)) ":b depends on :a")
+      (is (= #{:a} (deps-of :c)) ":c depends on :a"))))
 
 ;; ============================================================
 ;; Test 30: Fan-in — a, b both feed c
 ;; ============================================================
-(println "\n-- 30. Fan-in: a, b → c --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                    b (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
-                    c (trace :c (dist/gaussian (mx/add a b) (mx/scalar 1)))]
-                c))
-      s (:schema model)
-      deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
-  (assert-equal ":a has no deps" #{} (deps-of :a))
-  (assert-equal ":b has no deps" #{} (deps-of :b))
-  (assert-equal ":c depends on :a and :b" #{:a :b} (deps-of :c)))
+(deftest test-30-fan-in
+  (testing "Fan-in: a, b -> c"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        b (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
+                        c (trace :c (dist/gaussian (mx/add a b) (mx/scalar 1)))]
+                    c))
+          s (:schema model)
+          deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
+      (is (= #{} (deps-of :a)) ":a has no deps")
+      (is (= #{} (deps-of :b)) ":b has no deps")
+      (is (= #{:a :b} (deps-of :c)) ":c depends on :a and :b"))))
 
 ;; ============================================================
 ;; Test 31: Transitive deps through non-trace binding
 ;; ============================================================
-(println "\n-- 31. Transitive deps through computed binding --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                    b (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
-                    sum (mx/add a b)  ;; non-trace binding
-                    c (trace :c (dist/gaussian sum (mx/scalar 1)))]
-                c))
-      s (:schema model)
-      deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
-  (assert-equal ":c depends on :a and :b via sum" #{:a :b} (deps-of :c)))
+(deftest test-31-transitive-deps
+  (testing "Transitive deps through computed binding"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        b (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
+                        sum (mx/add a b)
+                        c (trace :c (dist/gaussian sum (mx/scalar 1)))]
+                    c))
+          s (:schema model)
+          deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
+      (is (= #{:a :b} (deps-of :c)) ":c depends on :a and :b via sum"))))
 
 ;; ============================================================
 ;; Test 32: Independent traces (no deps)
 ;; ============================================================
-(println "\n-- 32. Independent traces --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                    b (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
-                    c (trace :c (dist/uniform (mx/scalar -1) (mx/scalar 1)))]
-                [a b c]))
-      s (:schema model)
-      deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
-  (assert-equal ":a no deps" #{} (deps-of :a))
-  (assert-equal ":b no deps" #{} (deps-of :b))
-  (assert-equal ":c no deps" #{} (deps-of :c)))
+(deftest test-32-independent-traces
+  (testing "Independent traces"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        b (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
+                        c (trace :c (dist/uniform (mx/scalar -1) (mx/scalar 1)))]
+                    [a b c]))
+          s (:schema model)
+          deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
+      (is (= #{} (deps-of :a)) ":a no deps")
+      (is (= #{} (deps-of :b)) ":b no deps")
+      (is (= #{} (deps-of :c)) ":c no deps"))))
 
 ;; ============================================================
 ;; Test 33: and/or with traces → branches
 ;; ============================================================
-(println "\n-- 33. and/or with traces → branches --")
-(let [model-and (gen [flag]
-                  (and flag (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
-      model-or (gen [flag]
-                 (or flag (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
-      s-and (:schema model-and)
-      s-or (:schema model-or)]
-  (assert-true "and with trace → has-branches" (:has-branches? s-and))
-  (assert-true "or with trace → has-branches" (:has-branches? s-or))
-  (assert-true "and: trace :x found" (some #(= :x (:addr %)) (:trace-sites s-and)))
-  (assert-true "or: trace :x found" (some #(= :x (:addr %)) (:trace-sites s-or))))
+(deftest test-33-and-or-with-traces
+  (testing "and/or with traces -> branches"
+    (let [model-and (gen [flag]
+                      (and flag (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+          model-or (gen [flag]
+                     (or flag (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+          s-and (:schema model-and)
+          s-or (:schema model-or)]
+      (is (:has-branches? s-and) "and with trace -> has-branches")
+      (is (:has-branches? s-or) "or with trace -> has-branches")
+      (is (some #(= :x (:addr %)) (:trace-sites s-and)) "and: trace :x found")
+      (is (some #(= :x (:addr %)) (:trace-sites s-or)) "or: trace :x found"))))
 
 ;; ============================================================
 ;; Test 34: Splice with dependency on trace
 ;; ============================================================
-(println "\n-- 34. Splice dependencies --")
-(let [sub (gen [mu] (trace :x (dist/gaussian mu (mx/scalar 1))))
-      model (gen []
-              (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
-                (splice :obs sub mu)))
-      s (:schema model)
-      splice-site (first (:splice-sites s))]
-  (assert-true "splice :obs depends on :mu" (contains? (:deps splice-site) :mu)))
+(deftest test-34-splice-dependencies
+  (testing "Splice dependencies"
+    (let [sub (gen [mu] (trace :x (dist/gaussian mu (mx/scalar 1))))
+          model (gen []
+                  (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+                    (splice :obs sub mu)))
+          s (:schema model)
+          splice-site (first (:splice-sites s))]
+      (is (contains? (:deps splice-site) :mu) "splice :obs depends on :mu"))))
 
 ;; ============================================================
 ;; Test 35: Distribution args captured
 ;; ============================================================
-(println "\n-- 35. Distribution args captured --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
-                (trace :b (dist/gaussian a (mx/scalar 2)))))
-      s (:schema model)
-      site-a (first (filter #(= :a (:addr %)) (:trace-sites s)))
-      site-b (first (filter #(= :b (:addr %)) (:trace-sites s)))]
-  (assert-equal ":a has 2 dist args" 2 (count (:dist-args site-a)))
-  (assert-equal ":b has 2 dist args" 2 (count (:dist-args site-b))))
+(deftest test-35-dist-args-captured
+  (testing "Distribution args captured"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                    (trace :b (dist/gaussian a (mx/scalar 2)))))
+          s (:schema model)
+          site-a (first (filter #(= :a (:addr %)) (:trace-sites s)))
+          site-b (first (filter #(= :b (:addr %)) (:trace-sites s)))]
+      (is (= 2 (count (:dist-args site-a))) ":a has 2 dist args")
+      (is (= 2 (count (:dist-args site-b))) ":b has 2 dist args"))))
 
 ;; ============================================================
 ;; Test 36: Return form captured
 ;; ============================================================
-(println "\n-- 36. Return form --")
-(let [m1 (gen [] (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
-      m2 (gen []
-            (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
-              a))
-      m3 (gen []
-            (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-            (trace :b (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
-      s1 (:schema m1)
-      s2 (:schema m2)
-      s3 (:schema m3)]
-  (assert-true "m1 return-form is a trace call" (and (seq? (:return-form s1))
-                                                      (= 'trace (first (:return-form s1)))))
-  (assert-true "m2 return-form is a let" (and (seq? (:return-form s2))
-                                               (= 'let (first (:return-form s2)))))
-  ;; m3 has two body forms; return-form is the last one
-  (assert-true "m3 return-form is second trace" (and (seq? (:return-form s3))
-                                                      (= 'trace (first (:return-form s3))))))
+(deftest test-36-return-form
+  (testing "Return form"
+    (let [m1 (gen [] (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
+          m2 (gen []
+                (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                  a))
+          m3 (gen []
+                (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                (trace :b (dist/gaussian (mx/scalar 0) (mx/scalar 1))))
+          s1 (:schema m1)
+          s2 (:schema m2)
+          s3 (:schema m3)]
+      (is (and (seq? (:return-form s1))
+               (= 'trace (first (:return-form s1))))
+          "m1 return-form is a trace call")
+      (is (and (seq? (:return-form s2))
+               (= 'let (first (:return-form s2))))
+          "m2 return-form is a let")
+      (is (and (seq? (:return-form s3))
+               (= 'trace (first (:return-form s3))))
+          "m3 return-form is second trace"))))
 
 ;; ============================================================
 ;; Test 37: Topological order — linear chain
 ;; ============================================================
-(println "\n-- 37. Dep-order: linear chain --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                    b (trace :b (dist/gaussian a (mx/scalar 1)))
-                    c (trace :c (dist/gaussian b (mx/scalar 1)))]
-                c))
-      s (:schema model)
-      order (:dep-order s)
-      idx (fn [addr] (.indexOf order addr))]
-  (assert-true "dep-order has 3 elements" (= 3 (count order)))
-  (assert-true ":a before :b" (< (idx :a) (idx :b)))
-  (assert-true ":b before :c" (< (idx :b) (idx :c))))
+(deftest test-37-dep-order-linear-chain
+  (testing "Dep-order: linear chain"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        b (trace :b (dist/gaussian a (mx/scalar 1)))
+                        c (trace :c (dist/gaussian b (mx/scalar 1)))]
+                    c))
+          s (:schema model)
+          order (:dep-order s)
+          idx (fn [addr] (.indexOf order addr))]
+      (is (= 3 (count order)) "dep-order has 3 elements")
+      (is (< (idx :a) (idx :b)) ":a before :b")
+      (is (< (idx :b) (idx :c)) ":b before :c"))))
 
 ;; ============================================================
 ;; Test 38: Topological order — fan-in
 ;; ============================================================
-(println "\n-- 38. Dep-order: fan-in --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                    b (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
-                    c (trace :c (dist/gaussian (mx/add a b) (mx/scalar 1)))]
-                c))
-      s (:schema model)
-      order (:dep-order s)
-      idx (fn [addr] (.indexOf order addr))]
-  (assert-true "dep-order has 3 elements" (= 3 (count order)))
-  (assert-true ":a before :c" (< (idx :a) (idx :c)))
-  (assert-true ":b before :c" (< (idx :b) (idx :c))))
+(deftest test-38-dep-order-fan-in
+  (testing "Dep-order: fan-in"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        b (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
+                        c (trace :c (dist/gaussian (mx/add a b) (mx/scalar 1)))]
+                    c))
+          s (:schema model)
+          order (:dep-order s)
+          idx (fn [addr] (.indexOf order addr))]
+      (is (= 3 (count order)) "dep-order has 3 elements")
+      (is (< (idx :a) (idx :c)) ":a before :c")
+      (is (< (idx :b) (idx :c)) ":b before :c"))))
 
 ;; ============================================================
 ;; Test 39: Topological order — independent traces
 ;; ============================================================
-(println "\n-- 39. Dep-order: independent traces --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                    b (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
-                    c (trace :c (dist/uniform (mx/scalar -1) (mx/scalar 1)))]
-                [a b c]))
-      s (:schema model)
-      order (:dep-order s)]
-  ;; All should be present; order doesn't matter
-  (assert-equal "dep-order has 3 elements" 3 (count order))
-  (assert-true ":a in order" (some #(= :a %) order))
-  (assert-true ":b in order" (some #(= :b %) order))
-  (assert-true ":c in order" (some #(= :c %) order)))
+(deftest test-39-dep-order-independent
+  (testing "Dep-order: independent traces"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        b (trace :b (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
+                        c (trace :c (dist/uniform (mx/scalar -1) (mx/scalar 1)))]
+                    [a b c]))
+          s (:schema model)
+          order (:dep-order s)]
+      (is (= 3 (count order)) "dep-order has 3 elements")
+      (is (some #(= :a %) order) ":a in order")
+      (is (some #(= :b %) order) ":b in order")
+      (is (some #(= :c %) order) ":c in order"))))
 
 ;; ============================================================
 ;; Test 40: Parameter shadowing in nested fn
 ;; ============================================================
-(println "\n-- 40. Parameter shadowing in fn --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
-                ;; Inside the fn, 'a' is a parameter, NOT the trace result
-                (map (fn [a]
-                       (trace :b (dist/gaussian a (mx/scalar 1))))
-                     [1 2 3])))
-      s (:schema model)
-      site-b (first (filter #(= :b (:addr %)) (:trace-sites s)))]
-  ;; :b should NOT depend on :a because 'a' is shadowed by fn param
-  (assert-equal ":b has no trace deps (a is shadowed)" #{} (:deps site-b)))
+(deftest test-40-parameter-shadowing
+  (testing "Parameter shadowing in fn"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                    (map (fn [a]
+                           (trace :b (dist/gaussian a (mx/scalar 1))))
+                         [1 2 3])))
+          s (:schema model)
+          site-b (first (filter #(= :b (:addr %)) (:trace-sites s)))]
+      (is (= #{} (:deps site-b)) ":b has no trace deps (a is shadowed)"))))
 
 ;; ============================================================
 ;; Test 41: No shadowing — fn with different param name
 ;; ============================================================
-(println "\n-- 41. No shadowing — deps preserved --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
-                (map (fn [x]
-                       (trace :b (dist/gaussian a (mx/scalar 1))))
-                     [1 2 3])))
-      s (:schema model)
-      site-b (first (filter #(= :b (:addr %)) (:trace-sites s)))]
-  ;; :b SHOULD depend on :a because 'a' is NOT shadowed
-  (assert-true ":b depends on :a" (contains? (:deps site-b) :a)))
+(deftest test-41-no-shadowing
+  (testing "No shadowing — deps preserved"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                    (map (fn [x]
+                           (trace :b (dist/gaussian a (mx/scalar 1))))
+                         [1 2 3])))
+          s (:schema model)
+          site-b (first (filter #(= :b (:addr %)) (:trace-sites s)))]
+      (is (contains? (:deps site-b) :a) ":b depends on :a"))))
 
 ;; ============================================================
 ;; Test 42: letfn with traces
 ;; ============================================================
-(println "\n-- 42. letfn with traces --")
-(let [model (gen []
-              (letfn [(helper [x]
-                        (trace :inner (dist/gaussian x (mx/scalar 1))))]
-                (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
-                  (helper a))))
-      s (:schema model)]
-  (assert-true "trace :inner found" (some #(= :inner (:addr %)) (:trace-sites s)))
-  (assert-true "trace :a found" (some #(= :a (:addr %)) (:trace-sites s)))
-  (assert-equal "two trace sites" 2 (count (:trace-sites s))))
+(deftest test-42-letfn-with-traces
+  (testing "letfn with traces"
+    (let [model (gen []
+                  (letfn [(helper [x]
+                            (trace :inner (dist/gaussian x (mx/scalar 1))))]
+                    (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                      (helper a))))
+          s (:schema model)]
+      (is (some #(= :inner (:addr %)) (:trace-sites s)) "trace :inner found")
+      (is (some #(= :a (:addr %)) (:trace-sites s)) "trace :a found")
+      (is (= 2 (count (:trace-sites s))) "two trace sites"))))
 
 ;; ============================================================
 ;; Test 43: Dep-order matches full dep graph
 ;; ============================================================
-(println "\n-- 43. Dep-order: complex diamond --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                    b (trace :b (dist/gaussian a (mx/scalar 1)))
-                    c (trace :c (dist/gaussian a (mx/scalar 1)))
-                    d (trace :d (dist/gaussian (mx/add b c) (mx/scalar 1)))]
-                d))
-      s (:schema model)
-      order (:dep-order s)
-      idx (fn [addr] (.indexOf order addr))]
-  (assert-equal "4 in dep-order" 4 (count order))
-  (assert-true ":a before :b" (< (idx :a) (idx :b)))
-  (assert-true ":a before :c" (< (idx :a) (idx :c)))
-  (assert-true ":b before :d" (< (idx :b) (idx :d)))
-  (assert-true ":c before :d" (< (idx :c) (idx :d))))
+(deftest test-43-dep-order-complex-diamond
+  (testing "Dep-order: complex diamond"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        b (trace :b (dist/gaussian a (mx/scalar 1)))
+                        c (trace :c (dist/gaussian a (mx/scalar 1)))
+                        d (trace :d (dist/gaussian (mx/add b c) (mx/scalar 1)))]
+                    d))
+          s (:schema model)
+          order (:dep-order s)
+          idx (fn [addr] (.indexOf order addr))]
+      (is (= 4 (count order)) "4 in dep-order")
+      (is (< (idx :a) (idx :b)) ":a before :b")
+      (is (< (idx :a) (idx :c)) ":a before :c")
+      (is (< (idx :b) (idx :d)) ":b before :d")
+      (is (< (idx :c) (idx :d)) ":c before :d"))))
 
 ;; ============================================================
 ;; Test 44: and/or WITHOUT traces → no branches
 ;; ============================================================
-(println "\n-- 44. and/or without traces → no branches --")
-(let [model (gen [a b]
-              (let [flag (and a b)]
-                (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
-      s (:schema model)]
-  (assert-true "no branches (and doesn't contain trace)" (not (:has-branches? s))))
+(deftest test-44-and-or-without-traces
+  (testing "and/or without traces -> no branches"
+    (let [model (gen [a b]
+                  (let [flag (and a b)]
+                    (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+          s (:schema model)]
+      (is (not (:has-branches? s)) "no branches (and doesn't contain trace)"))))
 
 ;; ============================================================
 ;; Test 45: Deps through multiple intermediate bindings
 ;; ============================================================
-(println "\n-- 45. Deps through chain of intermediates --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                    x (mx/multiply a (mx/scalar 2))
-                    y (mx/add x (mx/scalar 1))
-                    z (mx/exp y)
-                    b (trace :b (dist/gaussian z (mx/scalar 1)))]
-                b))
-      s (:schema model)
-      deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
-  (assert-true ":b depends on :a through x→y→z" (contains? (deps-of :b) :a)))
+(deftest test-45-deps-through-intermediates
+  (testing "Deps through chain of intermediates"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        x (mx/multiply a (mx/scalar 2))
+                        y (mx/add x (mx/scalar 1))
+                        z (mx/exp y)
+                        b (trace :b (dist/gaussian z (mx/scalar 1)))]
+                    b))
+          s (:schema model)
+          deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
+      (is (contains? (deps-of :b) :a) ":b depends on :a through x->y->z"))))
 
 ;; ============================================================
 ;; Test 46: Nested let deps are scoped correctly
 ;; ============================================================
-(println "\n-- 46. Let scoping: inner bindings don't leak --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
-                (let [inner (mx/multiply a (mx/scalar 2))]
-                  (trace :b (dist/gaussian inner (mx/scalar 1)))))
-              ;; If we had another form here, 'inner' shouldn't be in scope
-              ;; but since gen bodies execute sequentially, this is fine
-              )
-      s (:schema model)
-      deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
-  (assert-true ":b depends on :a through inner" (contains? (deps-of :b) :a)))
+(deftest test-46-let-scoping
+  (testing "Let scoping: inner bindings don't leak"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                    (let [inner (mx/multiply a (mx/scalar 2))]
+                      (trace :b (dist/gaussian inner (mx/scalar 1))))))
+          s (:schema model)
+          deps-of (fn [addr] (:deps (first (filter #(= addr (:addr %)) (:trace-sites s)))))]
+      (is (contains? (deps-of :b) :a) ":b depends on :a through inner"))))
 
 ;; ============================================================
 ;; Test 47: Verify dep-order valid for all entries
 ;; ============================================================
-(println "\n-- 47. Dep-order valid: all deps precede dependents --")
-(let [model (gen []
-              (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                    b (trace :b (dist/gaussian a (mx/scalar 1)))
-                    c (trace :c (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
-                    d (trace :d (dist/gaussian (mx/add b c) (mx/scalar 1)))
-                    e (trace :e (dist/gaussian d (mx/scalar 1)))]
-                e))
-      s (:schema model)
-      order (:dep-order s)
-      ;; Build addr→deps map
-      dep-map (into {} (map (fn [ts] [(:addr ts) (:deps ts)])
-                            (filter :static? (:trace-sites s))))
-      ;; Verify: for each addr in order, all its deps (within addr-set) appear earlier
-      addr-set (set (keys dep-map))
-      valid? (loop [seen #{}
-                    [addr & rest] order]
-               (if addr
-                 (let [needed (clojure.set/intersection (get dep-map addr #{}) addr-set)]
-                   (if (clojure.set/subset? needed seen)
-                     (recur (conj seen addr) rest)
-                     false))
-                 true))]
-  (assert-equal "5 in dep-order" 5 (count order))
-  (assert-true "dep-order is valid topological order" valid?))
+(deftest test-47-dep-order-valid
+  (testing "Dep-order valid: all deps precede dependents"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        b (trace :b (dist/gaussian a (mx/scalar 1)))
+                        c (trace :c (dist/gaussian (mx/scalar 5) (mx/scalar 1)))
+                        d (trace :d (dist/gaussian (mx/add b c) (mx/scalar 1)))
+                        e (trace :e (dist/gaussian d (mx/scalar 1)))]
+                    e))
+          s (:schema model)
+          order (:dep-order s)
+          dep-map (into {} (map (fn [ts] [(:addr ts) (:deps ts)])
+                                (filter :static? (:trace-sites s))))
+          addr-set (set (keys dep-map))
+          valid? (loop [seen #{}
+                        [addr & rest] order]
+                   (if addr
+                     (let [needed (clojure.set/intersection (get dep-map addr #{}) addr-set)]
+                       (if (clojure.set/subset? needed seen)
+                         (recur (conj seen addr) rest)
+                         false))
+                     true))]
+      (is (= 5 (count order)) "5 in dep-order")
+      (is valid? "dep-order is valid topological order"))))
 
 ;; ============================================================
 ;; Test 48: Behavior preservation — update
 ;; ============================================================
-(println "\n-- 48. Behavior preservation — update --")
-(let [model (dyn/auto-key
-              (gen []
-                (let [x (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
-                  (trace :y (dist/gaussian x (mx/scalar 1))))))
-      obs (genmlx.choicemap/set-value genmlx.choicemap/EMPTY :y (mx/scalar 3.0))
-      {:keys [trace]} (genmlx.protocols/generate model [] obs)
-      new-obs (genmlx.choicemap/set-value genmlx.choicemap/EMPTY :x (mx/scalar 2.0))
-      result (genmlx.protocols/update model trace new-obs)]
-  (assert-true "update still works" (some? result))
-  (assert-true "update has trace" (some? (:trace result)))
-  (assert-true "update has weight" (some? (:weight result)))
-  (mx/eval! (:weight result))
-  (assert-true "update weight is scalar" (= [] (mx/shape (:weight result)))))
+(deftest test-48-behavior-preservation-update
+  (testing "Behavior preservation — update"
+    (let [model (dyn/auto-key
+                  (gen []
+                    (let [x (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                      (trace :y (dist/gaussian x (mx/scalar 1))))))
+          obs (genmlx.choicemap/set-value genmlx.choicemap/EMPTY :y (mx/scalar 3.0))
+          {:keys [trace]} (genmlx.protocols/generate model [] obs)
+          new-obs (genmlx.choicemap/set-value genmlx.choicemap/EMPTY :x (mx/scalar 2.0))
+          result (genmlx.protocols/update model trace new-obs)]
+      (is (some? result) "update still works")
+      (is (some? (:trace result)) "update has trace")
+      (is (some? (:weight result)) "update has weight")
+      (mx/eval! (:weight result))
+      (is (= [] (mx/shape (:weight result))) "update weight is scalar"))))
 
 ;; ============================================================
 ;; Test 49: Schema with quoted forms — should NOT walk into quotes
 ;; ============================================================
-(println "\n-- 49. Quoted forms not walked --")
-(let [model (gen []
-              (let [code '(trace :phantom (dist/gaussian 0 1))]
-                (trace :real (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
-      s (:schema model)]
-  (assert-equal "only one trace site (quoted ignored)" 1 (count (:trace-sites s)))
-  (assert-equal "trace is :real" :real (-> s :trace-sites first :addr)))
+(deftest test-49-quoted-forms-not-walked
+  (testing "Quoted forms not walked"
+    (let [model (gen []
+                  (let [code '(trace :phantom (dist/gaussian 0 1))]
+                    (trace :real (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+          s (:schema model)]
+      (is (= 1 (count (:trace-sites s))) "only one trace site (quoted ignored)")
+      (is (= :real (-> s :trace-sites first :addr)) "trace is :real"))))
 
 ;; ============================================================
 ;; M3: Loop analysis tests
 ;; ============================================================
 
 ;; Test 50: Simple doseq with keyword-str address pattern
-(println "\n-- 50. M3: doseq with keyword-str pattern --")
-(let [model (gen [xs]
-              (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
-                (doseq [[j x] (map-indexed vector xs)]
-                  (trace (keyword (str "y" j))
-                         (dist/gaussian mu (mx/scalar 1))))
-                mu))
-      s (:schema model)
-      ls (first (:loop-sites s))]
-  (assert-equal "one loop-site" 1 (count (:loop-sites s)))
-  (assert-equal "loop type is :doseq" :doseq (:type ls))
-  (assert-equal "index-sym is j" 'j (:index-sym ls))
-  (assert-equal "element-sym is x" 'x (:element-sym ls))
-  (assert-true "has collection-form" (some? (:collection-form ls)))
-  (assert-true "homogeneous" (:homogeneous? ls))
-  (assert-true "rewritable" (:rewritable? ls))
-  (assert-equal "no rewrite blockers" [] (:rewrite-blockers ls))
-  (let [ts (first (:trace-sites ls))]
-    (assert-equal "addr-pattern type" :keyword-str (:type (:addr-pattern ts)))
-    (assert-equal "addr prefix" "y" (:prefix (:addr-pattern ts)))
-    (assert-equal "addr index-sym" 'j (:index-sym (:addr-pattern ts)))
-    (assert-equal "dist-type gaussian" :gaussian (:dist-type ts))
-    (assert-true "outer-deps includes :mu" (contains? (:outer-deps ts) :mu)))
-  ;; Backward compat
-  (assert-true "has-loops? still true" (:has-loops? s))
-  (assert-true "dynamic-addresses? still true" (:dynamic-addresses? s))
-  (assert-true "not static" (not (:static? s))))
+(deftest test-50-doseq-keyword-str-pattern
+  (testing "M3: doseq with keyword-str pattern"
+    (let [model (gen [xs]
+                  (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+                    (doseq [[j x] (map-indexed vector xs)]
+                      (trace (keyword (str "y" j))
+                             (dist/gaussian mu (mx/scalar 1))))
+                    mu))
+          s (:schema model)
+          ls (first (:loop-sites s))]
+      (is (= 1 (count (:loop-sites s))) "one loop-site")
+      (is (= :doseq (:type ls)) "loop type is :doseq")
+      (is (= 'j (:index-sym ls)) "index-sym is j")
+      (is (= 'x (:element-sym ls)) "element-sym is x")
+      (is (some? (:collection-form ls)) "has collection-form")
+      (is (:homogeneous? ls) "homogeneous")
+      (is (:rewritable? ls) "rewritable")
+      (is (= [] (:rewrite-blockers ls)) "no rewrite blockers")
+      (let [ts (first (:trace-sites ls))]
+        (is (= :keyword-str (:type (:addr-pattern ts))) "addr-pattern type")
+        (is (= "y" (:prefix (:addr-pattern ts))) "addr prefix")
+        (is (= 'j (:index-sym (:addr-pattern ts))) "addr index-sym")
+        (is (= :gaussian (:dist-type ts)) "dist-type gaussian")
+        (is (contains? (:outer-deps ts) :mu) "outer-deps includes :mu"))
+      (is (:has-loops? s) "has-loops? still true")
+      (is (:dynamic-addresses? s) "dynamic-addresses? still true")
+      (is (not (:static? s)) "not static"))))
 
 ;; Test 51: Linear regression (3 static prefix + 1 loop)
-(println "\n-- 51. M3: linreg with prefix sites --")
-(let [model (gen [xs ys]
-              (let [slope (trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
-                    intercept (trace :intercept (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
-                    noise (trace :noise (dist/exponential (mx/scalar 1)))]
-                (doseq [[j [x y]] (map-indexed vector (map vector xs ys))]
-                  (trace (keyword (str "obs" j))
-                         (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
-                                                intercept)
-                                        noise)))
-                slope))
-      s (:schema model)
-      ls (first (:loop-sites s))
-      static-addrs (set (map :addr (filter :static? (:trace-sites s))))]
-  (assert-equal "one loop-site" 1 (count (:loop-sites s)))
-  (assert-true "slope is static prefix" (contains? static-addrs :slope))
-  (assert-true "intercept is static prefix" (contains? static-addrs :intercept))
-  (assert-true "noise is static prefix" (contains? static-addrs :noise))
-  (assert-true "homogeneous" (:homogeneous? ls))
-  (assert-true "rewritable" (:rewritable? ls))
-  (assert-equal "addr prefix is obs" "obs" (-> ls :trace-sites first :addr-pattern :prefix))
-  (let [deps (-> ls :trace-sites first :outer-deps)]
-    (assert-true "depends on :slope" (contains? deps :slope))
-    (assert-true "depends on :intercept" (contains? deps :intercept))
-    (assert-true "depends on :noise" (contains? deps :noise))))
+(deftest test-51-linreg-prefix-sites
+  (testing "M3: linreg with prefix sites"
+    (let [model (gen [xs ys]
+                  (let [slope (trace :slope (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
+                        intercept (trace :intercept (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
+                        noise (trace :noise (dist/exponential (mx/scalar 1)))]
+                    (doseq [[j [x y]] (map-indexed vector (map vector xs ys))]
+                      (trace (keyword (str "obs" j))
+                             (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                                    intercept)
+                                            noise)))
+                    slope))
+          s (:schema model)
+          ls (first (:loop-sites s))
+          static-addrs (set (map :addr (filter :static? (:trace-sites s))))]
+      (is (= 1 (count (:loop-sites s))) "one loop-site")
+      (is (contains? static-addrs :slope) "slope is static prefix")
+      (is (contains? static-addrs :intercept) "intercept is static prefix")
+      (is (contains? static-addrs :noise) "noise is static prefix")
+      (is (:homogeneous? ls) "homogeneous")
+      (is (:rewritable? ls) "rewritable")
+      (is (= "obs" (-> ls :trace-sites first :addr-pattern :prefix)) "addr prefix is obs")
+      (let [deps (-> ls :trace-sites first :outer-deps)]
+        (is (contains? deps :slope) "depends on :slope")
+        (is (contains? deps :intercept) "depends on :intercept")
+        (is (contains? deps :noise) "depends on :noise")))))
 
 ;; Test 52: dotimes with literal count
-(println "\n-- 52. M3: dotimes with literal count --")
-(let [model (gen []
-              (dotimes [i 5]
-                (trace (keyword (str "x" i))
-                       (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
-      s (:schema model)
-      ls (first (:loop-sites s))]
-  (assert-equal "loop type :dotimes" :dotimes (:type ls))
-  (assert-equal "count-form is 5" 5 (:count-form ls))
-  (assert-equal "count-arg-idx is -1" -1 (:count-arg-idx ls))
-  (assert-true "rewritable" (:rewritable? ls)))
+(deftest test-52-dotimes-literal-count
+  (testing "M3: dotimes with literal count"
+    (let [model (gen []
+                  (dotimes [i 5]
+                    (trace (keyword (str "x" i))
+                           (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+          s (:schema model)
+          ls (first (:loop-sites s))]
+      (is (= :dotimes (:type ls)) "loop type :dotimes")
+      (is (= 5 (:count-form ls)) "count-form is 5")
+      (is (= -1 (:count-arg-idx ls)) "count-arg-idx is -1")
+      (is (:rewritable? ls) "rewritable"))))
 
 ;; Test 53: for loop
-(println "\n-- 53. M3: for loop --")
-(let [model (gen [items]
-              (doall (for [item items]
-                (trace (keyword (str "obs-" item))
-                       (dist/gaussian (mx/scalar 0) (mx/scalar 1))))))
-      s (:schema model)
-      ls (first (:loop-sites s))]
-  (assert-equal "loop type :for" :for (:type ls))
-  (assert-equal "element-sym is item" 'item (:element-sym ls))
-  (assert-true "rewritable" (:rewritable? ls)))
+(deftest test-53-for-loop
+  (testing "M3: for loop"
+    (let [model (gen [items]
+                  (doall (for [item items]
+                    (trace (keyword (str "obs-" item))
+                           (dist/gaussian (mx/scalar 0) (mx/scalar 1))))))
+          s (:schema model)
+          ls (first (:loop-sites s))]
+      (is (= :for (:type ls)) "loop type :for")
+      (is (= 'item (:element-sym ls)) "element-sym is item")
+      (is (:rewritable? ls) "rewritable"))))
 
 ;; Test 54: Non-rewritable — mixed distribution types
-(println "\n-- 54. M3: mixed dist types → not rewritable --")
-(let [model (gen [xs]
-              (doseq [[j x] (map-indexed vector xs)]
-                (trace (keyword (str "y" j)) (dist/gaussian (mx/scalar x) (mx/scalar 1)))
-                (trace (keyword (str "z" j)) (dist/bernoulli (mx/scalar 0.5)))))
-      s (:schema model)
-      ls (first (:loop-sites s))]
-  (assert-true "not homogeneous" (not (:homogeneous? ls)))
-  (assert-true "not rewritable" (not (:rewritable? ls)))
-  (assert-true "blocker mentions heterogeneous"
-               (some #(re-find #"heterogeneous" %) (:rewrite-blockers ls))))
+(deftest test-54-mixed-dist-types
+  (testing "M3: mixed dist types -> not rewritable"
+    (let [model (gen [xs]
+                  (doseq [[j x] (map-indexed vector xs)]
+                    (trace (keyword (str "y" j)) (dist/gaussian (mx/scalar x) (mx/scalar 1)))
+                    (trace (keyword (str "z" j)) (dist/bernoulli (mx/scalar 0.5)))))
+          s (:schema model)
+          ls (first (:loop-sites s))]
+      (is (not (:homogeneous? ls)) "not homogeneous")
+      (is (not (:rewritable? ls)) "not rewritable")
+      (is (some #(re-find #"heterogeneous" %) (:rewrite-blockers ls))
+          "blocker mentions heterogeneous"))))
 
 ;; Test 55: Non-rewritable — branch with trace in loop
-(println "\n-- 55. M3: branch in loop → not rewritable --")
-(let [model (gen [xs]
-              (doseq [[j x] (map-indexed vector xs)]
-                (if (pos? x)
-                  (trace (keyword (str "y" j)) (dist/gaussian (mx/scalar x) (mx/scalar 1)))
-                  (trace (keyword (str "y" j)) (dist/gaussian (mx/scalar 0) (mx/scalar 1))))))
-      s (:schema model)
-      ls (first (:loop-sites s))]
-  (assert-true "not rewritable" (not (:rewritable? ls)))
-  (assert-true "blocker mentions branch"
-               (some #(re-find #"branch" %) (:rewrite-blockers ls))))
+(deftest test-55-branch-in-loop
+  (testing "M3: branch in loop -> not rewritable"
+    (let [model (gen [xs]
+                  (doseq [[j x] (map-indexed vector xs)]
+                    (if (pos? x)
+                      (trace (keyword (str "y" j)) (dist/gaussian (mx/scalar x) (mx/scalar 1)))
+                      (trace (keyword (str "y" j)) (dist/gaussian (mx/scalar 0) (mx/scalar 1))))))
+          s (:schema model)
+          ls (first (:loop-sites s))]
+      (is (not (:rewritable? ls)) "not rewritable")
+      (is (some #(re-find #"branch" %) (:rewrite-blockers ls))
+          "blocker mentions branch"))))
 
 ;; Test 56: Non-rewritable — unknown address pattern
-(println "\n-- 56. M3: unknown addr pattern → not rewritable --")
-(let [model (gen [xs]
-              (doseq [[j x] (map-indexed vector xs)]
-                (trace (nth [:a :b :c] j) (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
-      s (:schema model)
-      ls (first (:loop-sites s))]
-  (assert-true "not rewritable" (not (:rewritable? ls)))
-  (assert-true "blocker mentions address pattern"
-               (some #(re-find #"address pattern" %) (:rewrite-blockers ls))))
+(deftest test-56-unknown-addr-pattern
+  (testing "M3: unknown addr pattern -> not rewritable"
+    (let [model (gen [xs]
+                  (doseq [[j x] (map-indexed vector xs)]
+                    (trace (nth [:a :b :c] j) (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+          s (:schema model)
+          ls (first (:loop-sites s))]
+      (is (not (:rewritable? ls)) "not rewritable")
+      (is (some #(re-find #"address pattern" %) (:rewrite-blockers ls))
+          "blocker mentions address pattern"))))
 
 ;; Test 57: Static model — empty loop-sites
-(println "\n-- 57. M3: static model has no loop-sites --")
-(let [model (gen [x]
-              (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
-                (trace :y (dist/gaussian mu (mx/scalar 1)))))
-      s (:schema model)]
-  (assert-equal "loop-sites is empty" [] (:loop-sites s))
-  (assert-true "not has-loops" (not (:has-loops? s)))
-  (assert-true "static" (:static? s)))
+(deftest test-57-static-no-loop-sites
+  (testing "M3: static model has no loop-sites"
+    (let [model (gen [x]
+                  (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                    (trace :y (dist/gaussian mu (mx/scalar 1)))))
+          s (:schema model)]
+      (is (= [] (:loop-sites s)) "loop-sites is empty")
+      (is (not (:has-loops? s)) "not has-loops")
+      (is (:static? s) "static"))))
 
 ;; Test 58: loop/recur — has-loops but no loop-sites
-(println "\n-- 58. M3: loop/recur not analyzed --")
-(let [model (gen [n]
-              (loop [i 0]
-                (when (< i n)
-                  (trace (keyword (str "x" i)) (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
-                  (recur (inc i)))))
-      s (:schema model)]
-  (assert-true "has-loops" (:has-loops? s))
-  (assert-equal "loop-sites empty" [] (:loop-sites s)))
+(deftest test-58-loop-recur
+  (testing "M3: loop/recur not analyzed"
+    (let [model (gen [n]
+                  (loop [i 0]
+                    (when (< i n)
+                      (trace (keyword (str "x" i)) (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                      (recur (inc i)))))
+          s (:schema model)]
+      (is (:has-loops? s) "has-loops")
+      (is (= [] (:loop-sites s)) "loop-sites empty"))))
 
 ;; Test 59: Multiple loops in one model
-(println "\n-- 59. M3: multiple loops --")
-(let [model (gen [xs ys]
-              (let [mu-x (trace :mu-x (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
-                    mu-y (trace :mu-y (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
-                (doseq [[j x] (map-indexed vector xs)]
-                  (trace (keyword (str "x" j)) (dist/gaussian mu-x (mx/scalar 1))))
-                (doseq [[j y] (map-indexed vector ys)]
-                  (trace (keyword (str "y" j)) (dist/gaussian mu-y (mx/scalar 1))))
-                [mu-x mu-y]))
-      s (:schema model)]
-  (assert-equal "two loop-sites" 2 (count (:loop-sites s)))
-  (let [ls0 (first (:loop-sites s))
-        ls1 (second (:loop-sites s))]
-    (assert-equal "first prefix" "x" (-> ls0 :trace-sites first :addr-pattern :prefix))
-    (assert-equal "second prefix" "y" (-> ls1 :trace-sites first :addr-pattern :prefix))
-    (assert-true "first deps on :mu-x" (contains? (-> ls0 :trace-sites first :outer-deps) :mu-x))
-    (assert-true "second deps on :mu-y" (contains? (-> ls1 :trace-sites first :outer-deps) :mu-y))
-    (assert-true "both rewritable" (and (:rewritable? ls0) (:rewritable? ls1)))))
+(deftest test-59-multiple-loops
+  (testing "M3: multiple loops"
+    (let [model (gen [xs ys]
+                  (let [mu-x (trace :mu-x (dist/gaussian (mx/scalar 0) (mx/scalar 10)))
+                        mu-y (trace :mu-y (dist/gaussian (mx/scalar 0) (mx/scalar 10)))]
+                    (doseq [[j x] (map-indexed vector xs)]
+                      (trace (keyword (str "x" j)) (dist/gaussian mu-x (mx/scalar 1))))
+                    (doseq [[j y] (map-indexed vector ys)]
+                      (trace (keyword (str "y" j)) (dist/gaussian mu-y (mx/scalar 1))))
+                    [mu-x mu-y]))
+          s (:schema model)]
+      (is (= 2 (count (:loop-sites s))) "two loop-sites")
+      (let [ls0 (first (:loop-sites s))
+            ls1 (second (:loop-sites s))]
+        (is (= "x" (-> ls0 :trace-sites first :addr-pattern :prefix)) "first prefix")
+        (is (= "y" (-> ls1 :trace-sites first :addr-pattern :prefix)) "second prefix")
+        (is (contains? (-> ls0 :trace-sites first :outer-deps) :mu-x) "first deps on :mu-x")
+        (is (contains? (-> ls1 :trace-sites first :outer-deps) :mu-y) "second deps on :mu-y")
+        (is (and (:rewritable? ls0) (:rewritable? ls1)) "both rewritable")))))
 
 ;; Test 60: dotimes with param-derived count
-(println "\n-- 60. M3: dotimes count from param --")
-(let [model (gen [n]
-              (dotimes [i n]
-                (trace (keyword (str "x" i)) (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
-      s (:schema model)
-      ls (first (:loop-sites s))]
-  (assert-equal "count-form is n" 'n (:count-form ls))
-  (assert-equal "count-arg-idx is 0" 0 (:count-arg-idx ls)))
+(deftest test-60-dotimes-param-derived-count
+  (testing "M3: dotimes count from param"
+    (let [model (gen [n]
+                  (dotimes [i n]
+                    (trace (keyword (str "x" i)) (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+          s (:schema model)
+          ls (first (:loop-sites s))]
+      (is (= 'n (:count-form ls)) "count-form is n")
+      (is (= 0 (:count-arg-idx ls)) "count-arg-idx is 0"))))
 
-;; ============================================================
-;; Summary
-;; ============================================================
-(println "\n=== Schema Test Results ===")
-(println "  Passed:" @pass-count)
-(println "  Failed:" @fail-count)
-(println (if (zero? @fail-count) "  ALL PASS" "  *** FAILURES ***"))
+(cljs.test/run-tests)

@@ -1,14 +1,60 @@
 {
   "test_type": "gradient",
   "tolerance": 1e-3,
+  "tolerance_note": "1e-3 tolerance accounts for: (1) float32 precision in MLX autodiff (~1e-7 per op), (2) finite-difference verification uses h=1e-3 (optimal for float32) with round-off-dominated error ~1e-4, (3) accumulated error over multi-op log-prob expressions. For parameter gradients involving lgamma derivatives (digamma), tolerance may need 1e-2.",
+
+  "non_differentiable_distributions": {
+    "note": "These distributions have discrete support or non-differentiable log-prob. They are excluded from gradient testing.",
+    "list": [
+      {"dist": "bernoulli", "reason": "Discrete (v in {0,1}). log-prob uses indicator functions."},
+      {"dist": "categorical", "reason": "Discrete (v in {0,...,K-1}). log-prob is indexing into log-softmax."},
+      {"dist": "poisson", "reason": "Discrete (v in {0,1,2,...}). log-prob uses lgamma(v+1)."},
+      {"dist": "geometric", "reason": "Discrete (v in {0,1,2,...}). log-prob = v*log(1-p) + log(p)."},
+      {"dist": "neg_binomial", "reason": "Discrete. log-prob involves lgamma of discrete v."},
+      {"dist": "binomial", "reason": "Discrete. log-prob involves lgamma of discrete v."},
+      {"dist": "discrete_uniform", "reason": "Discrete. log-prob is constant -log(n) inside support."},
+      {"dist": "delta", "reason": "Point mass. log-prob is 0 or -Inf (not differentiable)."},
+      {"dist": "piecewise_uniform", "reason": "log-prob uses JS-side reduce with mx/where; not differentiable through bin assignment."}
+    ]
+  },
+
+  "not_implemented_distributions": {
+    "note": "Listed in CLAUDE.md catalog of 36 distributions but not yet defined in dist.cljs.",
+    "list": ["half_normal", "half_cauchy", "pareto", "weibull", "gumbel"]
+  },
+
+  "compound_distributions": {
+    "note": "These require specialized gradient tests (vector/matrix inputs, compound structure). Not covered by scalar gradient specs.",
+    "list": [
+      {"dist": "dirichlet", "reason": "Vector-valued. Gradient is per-component. Needs separate vector gradient spec."},
+      {"dist": "multivariate_normal", "reason": "Vector-valued. Gradient involves matrix inverse. Needs separate spec."},
+      {"dist": "wishart", "reason": "Matrix-valued. Uses JS-side log-gamma, not fully differentiable in MLX."},
+      {"dist": "inv_wishart", "reason": "Matrix-valued. Same as wishart."},
+      {"dist": "mixture", "reason": "Compound. Gradient flows through logsumexp of component log-probs."},
+      {"dist": "product", "reason": "Compound. Gradient is sum of component gradients."},
+      {"dist": "iid", "reason": "Compound. Delegates to base dist. Gradient is sum over T elements."},
+      {"dist": "iid_gaussian", "reason": "Compound. Specialized IID gaussian, same formula as gaussian summed."},
+      {"dist": "broadcasted_normal", "reason": "Same formula as gaussian but element-wise over arrays. Gradient is sum."},
+      {"dist": "gaussian_vec", "reason": "Same formula as gaussian, summed over last axis. Gradient per-element."}
+    ]
+  },
+
   "gradient_tests": [
+
+    {"_comment": "=== GAUSSIAN (Normal) ==="},
+    {"_comment": "log p(v;mu,sigma) = -0.5*log(2*pi) - log(sigma) - 0.5*((v-mu)/sigma)^2"},
+    {"_comment": "d/dv = -(v-mu)/sigma^2"},
+    {"_comment": "d/d(mu) = (v-mu)/sigma^2"},
+    {"_comment": "d/d(sigma) = -1/sigma + (v-mu)^2/sigma^3"},
+
     {
       "id": "grad-normal-val-1",
       "dist": "normal",
       "params": {"mu": 0.0, "sigma": 1.0},
       "value": 1.0,
       "grad_wrt": "value",
-      "expected": -1.0
+      "expected": -1.0,
+      "derivation": "d/dv = -(v-mu)/sigma^2 = -(1-0)/1 = -1"
     },
     {
       "id": "grad-normal-val-0",
@@ -16,119 +62,8 @@
       "params": {"mu": 0.0, "sigma": 1.0},
       "value": 0.0,
       "grad_wrt": "value",
-      "expected": 0.0
-    },
-    {
-      "id": "grad-normal-mu-1",
-      "dist": "normal",
-      "params": {"mu": 0.0, "sigma": 1.0},
-      "value": 1.0,
-      "grad_wrt": "mu",
-      "expected": 1.0
-    },
-    {
-      "id": "grad-normal-sigma-1",
-      "dist": "normal",
-      "params": {"mu": 0.0, "sigma": 1.0},
-      "value": 1.0,
-      "grad_wrt": "sigma",
-      "expected": 0.0
-    },
-    {
-      "id": "grad-beta-val-1",
-      "dist": "beta",
-      "params": {"alpha": 2.0, "beta": 2.0},
-      "value": 0.5,
-      "grad_wrt": "value",
-      "expected": 0.0
-    },
-    {
-      "id": "grad-beta-val-2",
-      "dist": "beta",
-      "params": {"alpha": 2.0, "beta": 2.0},
-      "value": 0.3,
-      "grad_wrt": "value",
-      "expected": 1.904761904761905
-    },
-    {
-      "id": "grad-gamma-val-1",
-      "dist": "gamma",
-      "params": {"shape": 2.0, "rate": 1.0},
-      "value": 1.0,
-      "grad_wrt": "value",
-      "expected": 0.0
-    },
-    {
-      "id": "grad-gamma-val-2",
-      "dist": "gamma",
-      "params": {"shape": 2.0, "rate": 1.0},
-      "value": 2.0,
-      "grad_wrt": "value",
-      "expected": -0.5
-    },
-    {
-      "id": "grad-exp-val-1",
-      "dist": "exponential",
-      "params": {"rate": 1.0},
-      "value": 1.0,
-      "grad_wrt": "value",
-      "expected": -1.0
-    },
-    {
-      "id": "grad-exp-val-2",
-      "dist": "exponential",
-      "params": {"rate": 2.0},
-      "value": 0.5,
-      "grad_wrt": "value",
-      "expected": -2.0
-    },
-    {
-      "id": "grad-laplace-val-pos",
-      "dist": "laplace",
-      "params": {"loc": 0.0, "scale": 1.0},
-      "value": 1.0,
-      "grad_wrt": "value",
-      "expected": -1.0
-    },
-    {
-      "id": "grad-laplace-val-neg",
-      "dist": "laplace",
-      "params": {"loc": 0.0, "scale": 1.0},
-      "value": -1.0,
-      "grad_wrt": "value",
-      "expected": 1.0
-    },
-    {
-      "id": "grad-cauchy-val-0",
-      "dist": "cauchy",
-      "params": {"loc": 0.0, "scale": 1.0},
-      "value": 0.0,
-      "grad_wrt": "value",
-      "expected": 0.0
-    },
-    {
-      "id": "grad-cauchy-val-1",
-      "dist": "cauchy",
-      "params": {"loc": 0.0, "scale": 1.0},
-      "value": 1.0,
-      "grad_wrt": "value",
-      "expected": -1.0
-    },
-    {
-      "id": "grad-lognormal-val-1",
-      "dist": "lognormal",
-      "params": {"mu": 0.0, "sigma": 1.0},
-      "value": 1.0,
-      "grad_wrt": "value",
-      "expected": -1.0
-    },
-    {
-      "id": "grad-studentt-val-0",
-      "dist": "student_t",
-      "params": {"df": 3.0, "loc": 0.0, "scale": 1.0},
-      "value": 0.0,
-      "grad_wrt": "value",
-      "expected": 0.0
+      "expected": 0.0,
+      "derivation": "d/dv at mode: -(0-0)/1 = 0"
     },
     {
       "id": "grad-normal-val-neg",
@@ -136,7 +71,8 @@
       "params": {"mu": 0.0, "sigma": 1.0},
       "value": -2.0,
       "grad_wrt": "value",
-      "expected": 2.0
+      "expected": 2.0,
+      "derivation": "d/dv = -((-2)-0)/1 = 2"
     },
     {
       "id": "grad-normal-large-sigma",
@@ -144,7 +80,112 @@
       "params": {"mu": 0.0, "sigma": 10.0},
       "value": 5.0,
       "grad_wrt": "value",
-      "expected": -0.05
+      "expected": -0.05,
+      "derivation": "d/dv = -5/100 = -0.05"
+    },
+    {
+      "id": "grad-normal-mu-1",
+      "dist": "normal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 1.0,
+      "grad_wrt": "mu",
+      "expected": 1.0,
+      "derivation": "d/dmu = (v-mu)/sigma^2 = (1-0)/1 = 1"
+    },
+    {
+      "id": "grad-normal-mu-2",
+      "dist": "normal",
+      "params": {"mu": 1.0, "sigma": 2.0},
+      "value": 3.0,
+      "grad_wrt": "mu",
+      "expected": 0.5,
+      "derivation": "d/dmu = (3-1)/4 = 0.5"
+    },
+    {
+      "id": "grad-normal-sigma-1",
+      "dist": "normal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 1.0,
+      "grad_wrt": "sigma",
+      "expected": 0.0,
+      "derivation": "d/dsigma = -1/sigma + (v-mu)^2/sigma^3 = -1 + 1 = 0 (v is 1 sigma from mean)"
+    },
+    {
+      "id": "grad-normal-sigma-2",
+      "dist": "normal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 2.0,
+      "grad_wrt": "sigma",
+      "expected": 3.0,
+      "derivation": "d/dsigma = -1/1 + 4/1 = 3"
+    },
+
+    {"_comment": "=== UNIFORM ==="},
+    {"_comment": "log p(v;lo,hi) = -log(hi-lo) for v in [lo,hi], else -Inf"},
+    {"_comment": "d/dv = 0 (constant density inside support)"},
+    {"_comment": "d/d(lo) = 1/(hi-lo)"},
+    {"_comment": "d/d(hi) = -1/(hi-lo)"},
+
+    {
+      "id": "grad-uniform-val",
+      "dist": "uniform",
+      "params": {"lo": 0.0, "hi": 1.0},
+      "value": 0.5,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "d/dv = 0. Log-prob is -log(hi-lo) = 0, constant in v for v in [lo,hi]."
+    },
+    {
+      "id": "grad-uniform-lo",
+      "dist": "uniform",
+      "params": {"lo": 0.0, "hi": 1.0},
+      "value": 0.5,
+      "grad_wrt": "lo",
+      "expected": 1.0,
+      "derivation": "d/d(lo) [-log(hi-lo)] = 1/(hi-lo) = 1/(1-0) = 1"
+    },
+    {
+      "id": "grad-uniform-hi",
+      "dist": "uniform",
+      "params": {"lo": 0.0, "hi": 1.0},
+      "value": 0.5,
+      "grad_wrt": "hi",
+      "expected": -1.0,
+      "derivation": "d/d(hi) [-log(hi-lo)] = -1/(hi-lo) = -1/(1-0) = -1"
+    },
+    {
+      "id": "grad-uniform-lo-wide",
+      "dist": "uniform",
+      "params": {"lo": 0.0, "hi": 5.0},
+      "value": 2.0,
+      "grad_wrt": "lo",
+      "expected": 0.2,
+      "derivation": "d/d(lo) = 1/(5-0) = 0.2"
+    },
+
+    {"_comment": "=== BETA ==="},
+    {"_comment": "log p(v;a,b) = (a-1)*log(v) + (b-1)*log(1-v) - lnB(a,b)"},
+    {"_comment": "d/dv = (a-1)/v - (b-1)/(1-v)"},
+    {"_comment": "d/d(alpha) = log(v) - digamma(a) + digamma(a+b)"},
+    {"_comment": "d/d(beta) = log(1-v) - digamma(b) + digamma(a+b)"},
+
+    {
+      "id": "grad-beta-val-1",
+      "dist": "beta",
+      "params": {"alpha": 2.0, "beta": 2.0},
+      "value": 0.5,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "d/dv = (2-1)/0.5 - (2-1)/0.5 = 2 - 2 = 0 (at mode of symmetric Beta)"
+    },
+    {
+      "id": "grad-beta-val-2",
+      "dist": "beta",
+      "params": {"alpha": 2.0, "beta": 2.0},
+      "value": 0.3,
+      "grad_wrt": "value",
+      "expected": 1.904761904761905,
+      "derivation": "d/dv = 1/0.3 - 1/0.7 = 3.33333 - 1.42857 = 1.90476"
     },
     {
       "id": "grad-beta-alpha",
@@ -152,7 +193,54 @@
       "params": {"alpha": 2.0, "beta": 2.0},
       "value": 0.5,
       "grad_wrt": "alpha",
-      "expected": 0.14019
+      "expected": 0.14019,
+      "tolerance": 1e-2,
+      "derivation": "d/dalpha = log(0.5) - digamma(2) + digamma(4) = -0.6931 - 0.4228 + 1.2561 = 0.1402. Tolerance 1e-2 for digamma float32."
+    },
+    {
+      "id": "grad-beta-beta",
+      "dist": "beta",
+      "params": {"alpha": 2.0, "beta": 2.0},
+      "value": 0.5,
+      "grad_wrt": "beta",
+      "expected": 0.14019,
+      "tolerance": 1e-2,
+      "derivation": "d/dbeta = log(1-0.5) - digamma(2) + digamma(4) = -0.6931 - 0.4228 + 1.2561 = 0.1402. Same as alpha by symmetry."
+    },
+    {
+      "id": "grad-beta-alpha-asym",
+      "dist": "beta",
+      "params": {"alpha": 3.0, "beta": 1.0},
+      "value": 0.5,
+      "grad_wrt": "alpha",
+      "expected": -0.35981,
+      "tolerance": 1e-2,
+      "derivation": "d/dalpha = log(0.5) - digamma(3) + digamma(4) = -0.6931 - 0.9228 + 1.2561 = -0.3598. digamma(3)=0.9228, digamma(4)=1.2561."
+    },
+
+    {"_comment": "=== GAMMA ==="},
+    {"_comment": "log p(v;k,r) = (k-1)*log(v) + k*log(r) - r*v - lgamma(k)"},
+    {"_comment": "d/dv = (k-1)/v - r"},
+    {"_comment": "d/d(shape) = log(v) + log(r) - digamma(k)"},
+    {"_comment": "d/d(rate) = k/r - v"},
+
+    {
+      "id": "grad-gamma-val-1",
+      "dist": "gamma",
+      "params": {"shape": 2.0, "rate": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "d/dv = (2-1)/1 - 1 = 0 (at mode k-1)/rate = 1)"
+    },
+    {
+      "id": "grad-gamma-val-2",
+      "dist": "gamma",
+      "params": {"shape": 2.0, "rate": 1.0},
+      "value": 2.0,
+      "grad_wrt": "value",
+      "expected": -0.5,
+      "derivation": "d/dv = 1/2 - 1 = -0.5"
     },
     {
       "id": "grad-gamma-shape",
@@ -160,7 +248,573 @@
       "params": {"shape": 2.0, "rate": 1.0},
       "value": 1.0,
       "grad_wrt": "shape",
-      "expected": -0.42278
+      "expected": -0.42278,
+      "tolerance": 1e-2,
+      "derivation": "d/dshape = log(1) + log(1) - digamma(2) = 0 + 0 - 0.42278 = -0.42278. digamma(2) = 1 - euler_gamma."
+    },
+    {
+      "id": "grad-gamma-rate",
+      "dist": "gamma",
+      "params": {"shape": 2.0, "rate": 1.0},
+      "value": 1.0,
+      "grad_wrt": "rate",
+      "expected": 1.0,
+      "derivation": "d/drate = shape/rate - v = 2/1 - 1 = 1"
+    },
+    {
+      "id": "grad-gamma-rate-mode",
+      "dist": "gamma",
+      "params": {"shape": 2.0, "rate": 1.0},
+      "value": 2.0,
+      "grad_wrt": "rate",
+      "expected": 0.0,
+      "derivation": "d/drate = 2/1 - 2 = 0. At v = shape/rate (mode for value gradient)."
+    },
+
+    {"_comment": "=== EXPONENTIAL ==="},
+    {"_comment": "log p(v;r) = log(r) - r*v for v >= 0"},
+    {"_comment": "d/dv = -r"},
+    {"_comment": "d/d(rate) = 1/r - v"},
+
+    {
+      "id": "grad-exp-val-1",
+      "dist": "exponential",
+      "params": {"rate": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0,
+      "derivation": "d/dv = -rate = -1"
+    },
+    {
+      "id": "grad-exp-val-2",
+      "dist": "exponential",
+      "params": {"rate": 2.0},
+      "value": 0.5,
+      "grad_wrt": "value",
+      "expected": -2.0,
+      "derivation": "d/dv = -rate = -2"
+    },
+    {
+      "id": "grad-exp-rate",
+      "dist": "exponential",
+      "params": {"rate": 2.0},
+      "value": 1.0,
+      "grad_wrt": "rate",
+      "expected": -0.5,
+      "derivation": "d/drate = 1/rate - v = 1/2 - 1 = -0.5"
+    },
+    {
+      "id": "grad-exp-rate-2",
+      "dist": "exponential",
+      "params": {"rate": 1.0},
+      "value": 2.0,
+      "grad_wrt": "rate",
+      "expected": -1.0,
+      "derivation": "d/drate = 1/1 - 2 = -1"
+    },
+
+    {"_comment": "=== LAPLACE ==="},
+    {"_comment": "log p(v;loc,b) = -log(2*b) - |v-loc|/b"},
+    {"_comment": "d/dv = -sign(v-loc)/b"},
+    {"_comment": "d/d(loc) = sign(v-loc)/b"},
+    {"_comment": "d/d(scale) = -1/b + |v-loc|/b^2"},
+
+    {
+      "id": "grad-laplace-val-pos",
+      "dist": "laplace",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0,
+      "derivation": "d/dv = -sign(1-0)/1 = -1 for v > loc"
+    },
+    {
+      "id": "grad-laplace-val-neg",
+      "dist": "laplace",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": -1.0,
+      "grad_wrt": "value",
+      "expected": 1.0,
+      "derivation": "d/dv = -sign(-1-0)/1 = 1 for v < loc"
+    },
+    {
+      "id": "grad-laplace-loc",
+      "dist": "laplace",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "loc",
+      "expected": 1.0,
+      "derivation": "d/d(loc) = sign(v-loc)/b = sign(1)/1 = 1"
+    },
+    {
+      "id": "grad-laplace-loc-neg",
+      "dist": "laplace",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": -1.0,
+      "grad_wrt": "loc",
+      "expected": -1.0,
+      "derivation": "d/d(loc) = sign(-1-0)/1 = -1"
+    },
+    {
+      "id": "grad-laplace-scale-at-mode",
+      "dist": "laplace",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "scale",
+      "expected": 0.0,
+      "derivation": "d/d(scale) = -1/b + |v-loc|/b^2 = -1/1 + 1/1 = 0. v is exactly 1 scale-unit from loc."
+    },
+    {
+      "id": "grad-laplace-scale-far",
+      "dist": "laplace",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": 2.0,
+      "grad_wrt": "scale",
+      "expected": 1.0,
+      "derivation": "d/d(scale) = -1/1 + 2/1 = 1"
+    },
+
+    {"_comment": "=== CAUCHY ==="},
+    {"_comment": "log p(v;loc,s) = -log(pi) - log(s) - log(1 + z^2), z = (v-loc)/s"},
+    {"_comment": "d/dv = -2*z / (s*(1+z^2))"},
+    {"_comment": "d/d(loc) = 2*z / (s*(1+z^2))"},
+    {"_comment": "d/d(scale) = (z^2 - 1) / (s*(1+z^2))"},
+
+    {
+      "id": "grad-cauchy-val-0",
+      "dist": "cauchy",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": 0.0,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "d/dv = -2*0/(1*(1+0)) = 0 (at mode)"
+    },
+    {
+      "id": "grad-cauchy-val-1",
+      "dist": "cauchy",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0,
+      "derivation": "d/dv = -2*1/(1*(1+1)) = -2/2 = -1"
+    },
+    {
+      "id": "grad-cauchy-loc",
+      "dist": "cauchy",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "loc",
+      "expected": 1.0,
+      "derivation": "d/d(loc) = 2*z/(s*(1+z^2)) = 2*1/(1*2) = 1. Note: d/d(loc) = -d/d(v)."
+    },
+    {
+      "id": "grad-cauchy-scale-at-z1",
+      "dist": "cauchy",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "scale",
+      "expected": 0.0,
+      "derivation": "d/d(scale) = (z^2-1)/(s*(1+z^2)) = (1-1)/(1*2) = 0"
+    },
+    {
+      "id": "grad-cauchy-scale-far",
+      "dist": "cauchy",
+      "params": {"loc": 0.0, "scale": 1.0},
+      "value": 2.0,
+      "grad_wrt": "scale",
+      "expected": 0.6,
+      "derivation": "d/d(scale) = (4-1)/(1*5) = 3/5 = 0.6. z=2, z^2=4, 1+z^2=5."
+    },
+
+    {"_comment": "=== LOG-NORMAL ==="},
+    {"_comment": "log p(v;mu,sigma) = -log(v) - 0.5*log(2*pi) - log(sigma) - 0.5*((log(v)-mu)/sigma)^2"},
+    {"_comment": "d/dv = -(1 + (log(v)-mu)/sigma^2) / v"},
+    {"_comment": "d/d(mu) = (log(v)-mu) / sigma^2"},
+    {"_comment": "d/d(sigma) = -1/sigma + (log(v)-mu)^2 / sigma^3"},
+
+    {
+      "id": "grad-lognormal-val-1",
+      "dist": "lognormal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0,
+      "derivation": "d/dv = -(1 + (log(1)-0)/1)/1 = -(1+0)/1 = -1"
+    },
+    {
+      "id": "grad-lognormal-val-2",
+      "dist": "lognormal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 2.0,
+      "grad_wrt": "value",
+      "expected": -0.8465735902799727,
+      "derivation": "d/dv = -(1 + log(2))/2 = -(1 + 0.69315)/2 = -0.84657"
+    },
+    {
+      "id": "grad-lognormal-mu",
+      "dist": "lognormal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 2.0,
+      "grad_wrt": "mu",
+      "expected": 0.6931471805599453,
+      "derivation": "d/dmu = (log(2)-0)/1 = log(2) = 0.69315"
+    },
+    {
+      "id": "grad-lognormal-sigma-at-1",
+      "dist": "lognormal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 1.0,
+      "grad_wrt": "sigma",
+      "expected": -1.0,
+      "derivation": "d/dsigma = -1/1 + (log(1)-0)^2/1 = -1 + 0 = -1"
+    },
+    {
+      "id": "grad-lognormal-sigma-at-2",
+      "dist": "lognormal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 2.0,
+      "grad_wrt": "sigma",
+      "expected": -0.5195469860817986,
+      "derivation": "d/dsigma = -1/1 + (log(2))^2/1 = -1 + 0.48045 = -0.51955. (log 2)^2 = 0.48045."
+    },
+
+    {"_comment": "=== STUDENT-T ==="},
+    {"_comment": "log p(v;df,loc,s) = lgamma((df+1)/2) - lgamma(df/2) - 0.5*log(df*pi) - log(s) - ((df+1)/2)*log(1+z^2/df)"},
+    {"_comment": "where z = (v-loc)/s"},
+    {"_comment": "d/dv = -(df+1)*z / (s*df*(1+z^2/df))   [equivalently -(df+1)*v / (df+v^2) when loc=0,s=1]"},
+    {"_comment": "d/d(loc) = (df+1)*z / (s*df*(1+z^2/df))  = -d/dv"},
+    {"_comment": "d/d(scale) = -1/s + (df+1)*z^2 / (s*df*(1+z^2/df))"},
+    {"_comment": "d/d(df) = 0.5*(digamma((df+1)/2) - digamma(df/2)) - 0.5/df - 0.5*log(1+z^2/df) + 0.5*(df+1)*z^2/(df^2*(1+z^2/df))"},
+
+    {
+      "id": "grad-studentt-val-0",
+      "dist": "student_t",
+      "params": {"df": 3.0, "loc": 0.0, "scale": 1.0},
+      "value": 0.0,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "d/dv = 0 at z=0 (mode)"
+    },
+    {
+      "id": "grad-studentt-val-1",
+      "dist": "student_t",
+      "params": {"df": 5.0, "loc": 0.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0,
+      "derivation": "d/dv = -6*1/(1*5*(1+0.2)) = -6/6 = -1"
+    },
+    {
+      "id": "grad-studentt-val-2",
+      "dist": "student_t",
+      "params": {"df": 3.0, "loc": 0.0, "scale": 1.0},
+      "value": 2.0,
+      "grad_wrt": "value",
+      "expected": -1.1428571428571428,
+      "derivation": "d/dv = -(3+1)*2/(3+4) = -8/7 = -1.14286"
+    },
+    {
+      "id": "grad-studentt-loc",
+      "dist": "student_t",
+      "params": {"df": 5.0, "loc": 0.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "loc",
+      "expected": 1.0,
+      "derivation": "d/d(loc) = -d/d(v) = 1.0"
+    },
+    {
+      "id": "grad-studentt-scale",
+      "dist": "student_t",
+      "params": {"df": 5.0, "loc": 0.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "scale",
+      "expected": 0.0,
+      "derivation": "d/d(scale) = -1/1 + 6*1/(1*5*1.2) = -1 + 1 = 0"
+    },
+    {
+      "id": "grad-studentt-scale-2",
+      "dist": "student_t",
+      "params": {"df": 3.0, "loc": 0.0, "scale": 2.0},
+      "value": 2.0,
+      "grad_wrt": "scale",
+      "expected": 0.0,
+      "derivation": "z=1, z^2/df=1/3. d/ds = -1/2 + 4*1/(2*3*(4/3)) = -0.5 + 4/8 = 0. At z^2 = df/(df+1)*s: zero gradient."
+    },
+    {
+      "id": "grad-studentt-df",
+      "dist": "student_t",
+      "params": {"df": 5.0, "loc": 0.0, "scale": 1.0},
+      "value": 0.0,
+      "grad_wrt": "df",
+      "expected": 0.009814,
+      "tolerance": 1e-2,
+      "derivation": "At z=0: d/d(df) = 0.5*(digamma(3)-digamma(2.5)) - 0.5/5 - 0 + 0 = 0.5*(0.9228-0.7032) - 0.1 = 0.1098 - 0.1 = 0.00981. Involves digamma, tolerance 1e-2."
+    },
+
+    {"_comment": "=== TRUNCATED NORMAL ==="},
+    {"_comment": "log p(v;mu,sigma,lo,hi) = log N(v;mu,sigma) - log(Phi(b)-Phi(a))"},
+    {"_comment": "where a=(lo-mu)/sigma, b=(hi-mu)/sigma, Phi = standard normal CDF"},
+    {"_comment": "d/dv = -(v-mu)/sigma^2  (normalization Z independent of v)"},
+    {"_comment": "d/d(mu) = (v-mu)/sigma^2 - [phi(a)-phi(b)] / (sigma*Z)   where phi=normal PDF, Z=Phi(b)-Phi(a)"},
+    {"_comment": "d/d(sigma) = [-1/sigma + (v-mu)^2/sigma^3] - [-b*phi(b)+a*phi(a)] / (sigma*Z)"},
+
+    {
+      "id": "grad-truncnorm-val-1",
+      "dist": "truncated_normal",
+      "params": {"mu": 0.0, "sigma": 1.0, "lo": -2.0, "hi": 2.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0,
+      "derivation": "d/dv = -(1-0)/1 = -1. Normalization Z is independent of v."
+    },
+    {
+      "id": "grad-truncnorm-val-0",
+      "dist": "truncated_normal",
+      "params": {"mu": 0.0, "sigma": 1.0, "lo": -2.0, "hi": 2.0},
+      "value": 0.0,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "d/dv = -(0-0)/1 = 0 (at mode)"
+    },
+    {
+      "id": "grad-truncnorm-val-3",
+      "dist": "truncated_normal",
+      "params": {"mu": 5.0, "sigma": 2.0, "lo": 0.0, "hi": 10.0},
+      "value": 3.0,
+      "grad_wrt": "value",
+      "expected": 0.5,
+      "derivation": "d/dv = -(3-5)/4 = 2/4 = 0.5"
+    },
+    {
+      "id": "grad-truncnorm-mu-sym",
+      "dist": "truncated_normal",
+      "params": {"mu": 0.0, "sigma": 1.0, "lo": -2.0, "hi": 2.0},
+      "value": 1.0,
+      "grad_wrt": "mu",
+      "expected": 1.0,
+      "derivation": "With symmetric bounds a=-2, b=2: phi(a)=phi(b) so normalization gradient vanishes. d/dmu = (1-0)/1 - 0 = 1."
+    },
+    {
+      "id": "grad-truncnorm-mu-asym",
+      "dist": "truncated_normal",
+      "params": {"mu": 1.0, "sigma": 1.0, "lo": -2.0, "hi": 2.0},
+      "value": 1.0,
+      "grad_wrt": "mu",
+      "expected": 0.28279,
+      "derivation": "a=(-2-1)/1=-3, b=(2-1)/1=1. phi(-3)=0.00443, phi(1)=0.24197. Z=Phi(1)-Phi(-3)=0.83999. d/dmu = (1-1)/1 - (0.00443-0.24197)/(1*0.83999) = 0 + 0.28279 = 0.28279."
+    },
+    {
+      "id": "grad-truncnorm-sigma",
+      "dist": "truncated_normal",
+      "params": {"mu": 0.0, "sigma": 1.0, "lo": -2.0, "hi": 2.0},
+      "value": 1.0,
+      "grad_wrt": "sigma",
+      "expected": 0.22626,
+      "derivation": "Normal part: -1+1=0. a=-2,b=2: [-2*phi(2)+(-2)*phi(-2)]/(1*Z)=-0.21596/0.95450=-0.22626. d/dsigma = 0-(-0.22626) = 0.22626."
+    },
+
+    {"_comment": "=== VON MISES ==="},
+    {"_comment": "log p(v;mu,kappa) = kappa*cos(v-mu) - log(2*pi) - log(I0(kappa))"},
+    {"_comment": "d/dv = -kappa*sin(v-mu)"},
+    {"_comment": "d/d(mu) = kappa*sin(v-mu)"},
+    {"_comment": "d/d(kappa) = cos(v-mu) - I1(kappa)/I0(kappa)"},
+
+    {
+      "id": "grad-vonmises-val-0",
+      "dist": "von_mises",
+      "params": {"mu": 0.0, "kappa": 1.0},
+      "value": 0.0,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "d/dv = -kappa*sin(0) = 0 (at mean direction)"
+    },
+    {
+      "id": "grad-vonmises-val-pi4",
+      "dist": "von_mises",
+      "params": {"mu": 0.0, "kappa": 2.0},
+      "value": 0.7853981633974483,
+      "grad_wrt": "value",
+      "expected": -1.4142135623730951,
+      "derivation": "d/dv = -2*sin(pi/4) = -2*sqrt(2)/2 = -sqrt(2) = -1.41421"
+    },
+    {
+      "id": "grad-vonmises-val-pi",
+      "dist": "von_mises",
+      "params": {"mu": 0.0, "kappa": 5.0},
+      "value": 3.141592653589793,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "d/dv = -5*sin(pi) = 0 (at antipodal point)"
+    },
+    {
+      "id": "grad-vonmises-mu",
+      "dist": "von_mises",
+      "params": {"mu": 0.0, "kappa": 2.0},
+      "value": 1.0,
+      "grad_wrt": "mu",
+      "expected": 1.6829419696157930,
+      "derivation": "d/d(mu) = kappa*sin(v-mu) = 2*sin(1) = 2*0.84147 = 1.68294"
+    },
+    {
+      "id": "grad-vonmises-kappa-at-mode",
+      "dist": "von_mises",
+      "params": {"mu": 0.0, "kappa": 1.0},
+      "value": 0.0,
+      "grad_wrt": "kappa",
+      "expected": 0.55361,
+      "derivation": "d/d(kappa) = cos(0) - I1(1)/I0(1) = 1 - 0.56516/1.26607 = 1 - 0.44629 = 0.55361. I0(1)=1.26607, I1(1)=0.56516."
+    },
+    {
+      "id": "grad-vonmises-kappa-off",
+      "dist": "von_mises",
+      "params": {"mu": 0.0, "kappa": 2.0},
+      "value": 1.0,
+      "grad_wrt": "kappa",
+      "expected": -0.15747,
+      "derivation": "d/d(kappa) = cos(1) - I1(2)/I0(2) = 0.54030 - 1.59064/2.27959 = 0.54030 - 0.69777 = -0.15747."
+    },
+
+    {"_comment": "=== INVERSE GAMMA ==="},
+    {"_comment": "log p(v;a,b) = a*log(b) - lgamma(a) - (a+1)*log(v) - b/v"},
+    {"_comment": "d/dv = -(a+1)/v + b/v^2"},
+    {"_comment": "d/d(shape) = log(b) - digamma(a) - log(v)"},
+    {"_comment": "d/d(scale) = a/b - 1/v"},
+
+    {
+      "id": "grad-invgamma-val-1",
+      "dist": "inv_gamma",
+      "params": {"shape": 2.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -2.0,
+      "derivation": "d/dv = -(2+1)/1 + 1/1 = -3 + 1 = -2"
+    },
+    {
+      "id": "grad-invgamma-mode",
+      "dist": "inv_gamma",
+      "params": {"shape": 3.0, "scale": 2.0},
+      "value": 0.5,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "mode = scale/(shape+1) = 2/4 = 0.5. d/dv = -4/0.5 + 2/0.25 = -8+8 = 0."
+    },
+    {
+      "id": "grad-invgamma-shape",
+      "dist": "inv_gamma",
+      "params": {"shape": 2.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "shape",
+      "expected": -0.42278,
+      "tolerance": 1e-2,
+      "derivation": "d/d(shape) = log(1) - digamma(2) - log(1) = -digamma(2) = -0.42278. digamma(2) = 1 - euler_gamma."
+    },
+    {
+      "id": "grad-invgamma-scale",
+      "dist": "inv_gamma",
+      "params": {"shape": 2.0, "scale": 1.0},
+      "value": 1.0,
+      "grad_wrt": "scale",
+      "expected": 1.0,
+      "derivation": "d/d(scale) = shape/scale - 1/v = 2/1 - 1/1 = 1"
+    },
+    {
+      "id": "grad-invgamma-scale-mode",
+      "dist": "inv_gamma",
+      "params": {"shape": 3.0, "scale": 2.0},
+      "value": 0.5,
+      "grad_wrt": "scale",
+      "expected": -0.5,
+      "derivation": "d/d(scale) = 3/2 - 1/0.5 = 1.5 - 2 = -0.5"
+    },
+
+    {"_comment": "=== WRAPPED CAUCHY ==="},
+    {"_comment": "log p(v;mu,rho) = log(1-rho^2) - log(2*pi) - log(1 - 2*rho*cos(v-mu) + rho^2)"},
+    {"_comment": "Let D = 1 - 2*rho*cos(v-mu) + rho^2"},
+    {"_comment": "d/dv = -2*rho*sin(v-mu) / D"},
+    {"_comment": "d/d(mu) = 2*rho*sin(v-mu) / D  (= -d/dv)"},
+    {"_comment": "d/d(rho) = -2*rho/(1-rho^2) + (2*cos(v-mu) - 2*rho)/D"},
+
+    {
+      "id": "grad-wrappedcauchy-val-0",
+      "dist": "wrapped_cauchy",
+      "params": {"mu": 0.0, "rho": 0.5},
+      "value": 0.0,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "d/dv = -2*0.5*sin(0)/D = 0 (at mean direction, sin(0)=0)"
+    },
+    {
+      "id": "grad-wrappedcauchy-val-1",
+      "dist": "wrapped_cauchy",
+      "params": {"mu": 0.0, "rho": 0.5},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.1856752413958853,
+      "derivation": "D = 1 - 2*0.5*cos(1) + 0.25 = 1.25 - 0.54030 = 0.70970. d/dv = -2*0.5*sin(1)/0.70970 = -0.84147/0.70970 = -1.18568."
+    },
+    {
+      "id": "grad-wrappedcauchy-mu",
+      "dist": "wrapped_cauchy",
+      "params": {"mu": 0.0, "rho": 0.5},
+      "value": 1.0,
+      "grad_wrt": "mu",
+      "expected": 1.1856752413958853,
+      "derivation": "d/d(mu) = -d/d(v) = 1.18568. Opposite sign since cos(v-mu) depends on v-mu."
+    },
+    {
+      "id": "grad-wrappedcauchy-rho",
+      "dist": "wrapped_cauchy",
+      "params": {"mu": 0.0, "rho": 0.5},
+      "value": 1.0,
+      "grad_wrt": "rho",
+      "expected": -1.2197573524575895,
+      "derivation": "term1 = -2*0.5/(1-0.25) = -1.33333. term2 = (2*cos(1)-1.0)/0.70970 = (1.08060-1.0)/0.70970 = 0.11358. Total = -1.33333 + 0.11358 = -1.21976."
+    },
+
+    {"_comment": "=== WRAPPED NORMAL ==="},
+    {"_comment": "log p(v;mu,sigma) = logsumexp_{k=-K..K} log N(v+2*pi*k; mu, sigma), K=3"},
+    {"_comment": "d/dv = sum_k w_k * (v+2*pi*k-mu)/sigma^2, where w_k = softmax weight of k-th term"},
+    {"_comment": "d/d(mu) = sum_k w_k * (v+2*pi*k-mu)/sigma^2  (same formula, through chain rule on v-mu)"},
+    {"_comment": "For small sigma or v near 0, the k=0 term dominates and gradients match N(mu,sigma)."},
+
+    {
+      "id": "grad-wrappednormal-val-0",
+      "dist": "wrapped_normal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 0.0,
+      "grad_wrt": "value",
+      "expected": 0.0,
+      "derivation": "By symmetry: for each k, the term (0+2*pi*k)/1 has equal-magnitude opposite-sign partner at -k. Sum = 0."
+    },
+    {
+      "id": "grad-wrappednormal-val-1",
+      "dist": "wrapped_normal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 1.0,
+      "grad_wrt": "value",
+      "expected": -1.0,
+      "tolerance": 1e-3,
+      "derivation": "k=0 term dominates (weight ~1.0 for sigma=1 at v=1). d/dv ~ -(1-0)/1 = -1. Tiny correction from k!=0 terms is ~1e-5."
+    },
+    {
+      "id": "grad-wrappednormal-mu",
+      "dist": "wrapped_normal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 0.5,
+      "grad_wrt": "mu",
+      "expected": 0.5,
+      "tolerance": 1e-3,
+      "derivation": "k=0 dominates. d/dmu ~ (0.5-0)/1 = 0.5. Wrap-around corrections negligible at v=0.5, sigma=1."
+    },
+    {
+      "id": "grad-wrappednormal-sigma",
+      "dist": "wrapped_normal",
+      "params": {"mu": 0.0, "sigma": 1.0},
+      "value": 1.0,
+      "grad_wrt": "sigma",
+      "expected": 0.0,
+      "tolerance": 1e-3,
+      "derivation": "k=0 dominates. d/dsigma ~ -1/1 + 1/1 = 0 (v is exactly 1 sigma from mu). Tiny corrections from wrapping."
     }
   ]
 }

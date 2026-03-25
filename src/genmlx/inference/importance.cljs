@@ -8,6 +8,16 @@
             [genmlx.dynamic :as dyn]
             [genmlx.vectorized :as vec]))
 
+(defn- strip-analytical
+  "Remove L3 analytical handlers so generate samples from the prior,
+   not the deterministic posterior mean. The analytical path is correct
+   for single-trace operations (MCMC, marginal LL) but returns identical
+   particles in multi-particle IS, breaking the method."
+  [model]
+  (if-let [schema (:schema model)]
+    (assoc model :schema (dissoc schema :auto-handlers :conjugate-pairs))
+    model))
+
 (defn importance-sampling
   "Importance sampling. Generate traces constrained by observations,
    return weighted samples.
@@ -20,7 +30,7 @@
    Returns {:traces [Trace ...] :log-weights [MLX-scalar ...]
             :log-ml-estimate MLX-scalar}"
   [{:keys [samples key] :or {samples 100}} model args observations]
-  (let [model (dyn/auto-key model)
+  (let [model (-> model dyn/auto-key strip-analytical)
         keys (rng/split-n (rng/ensure-key key) samples)
         results (into []
                       (map-indexed
@@ -53,7 +63,7 @@
    opts: {:samples N :key prng-key}
    Returns {:log-weights [JS-number ...] :log-ml-estimate JS-number}"
   [{:keys [samples key] :or {samples 100}} model args observations]
-  (let [model (dyn/auto-key model)
+  (let [model (-> model dyn/auto-key strip-analytical)
         keys (rng/split-n (rng/ensure-key key) samples)
         ws (mapv (fn [ki]
                    (mx/tidy-run

@@ -119,6 +119,46 @@
                        val-arr (mx/array (clj->js value))]
                    (mx/item (dc/dist-log-prob d val-arr)))
 
+                 "neg_binomial"
+                 (let [d (dist/neg-binomial (mx/scalar (get params "r"))
+                                            (mx/scalar (get params "p")))]
+                   (mx/item (dist/log-prob d (mx/scalar value))))
+
+                 "discrete_uniform"
+                 (let [d (dist/discrete-uniform (mx/scalar (get params "lo"))
+                                                (mx/scalar (get params "hi")))]
+                   (mx/item (dist/log-prob d (mx/scalar value))))
+
+                 "truncated_normal"
+                 (let [d (dist/truncated-normal (mx/scalar (get params "mu"))
+                                                (mx/scalar (get params "sigma"))
+                                                (mx/scalar (get params "lo"))
+                                                (mx/scalar (get params "hi")))]
+                   (mx/item (dist/log-prob d v)))
+
+                 "von_mises"
+                 (let [d (dist/von-mises (mx/scalar (get params "mu"))
+                                         (mx/scalar (get params "kappa")))]
+                   (mx/item (dist/log-prob d v)))
+
+                 "wishart"
+                 (let [nested-scale (get params "scale_matrix")
+                       k            (count nested-scale)
+                       scale        (mx/reshape (mx/array (clj->js (flatten nested-scale)) :float32) [k k])
+                       d            (dist/wishart (get params "df") scale)
+                       nested-val   value
+                       val-arr      (mx/reshape (mx/array (clj->js (flatten nested-val)) :float32) [k k])]
+                   (mx/item (dc/dist-log-prob d val-arr)))
+
+                 "inv_wishart"
+                 (let [nested-scale (get params "scale_matrix")
+                       k            (count nested-scale)
+                       scale        (mx/reshape (mx/array (clj->js (flatten nested-scale)) :float32) [k k])
+                       d            (dist/inv-wishart (get params "df") scale)
+                       nested-val   value
+                       val-arr      (mx/reshape (mx/array (clj->js (flatten nested-val)) :float32) [k k])]
+                   (mx/item (dc/dist-log-prob d val-arr)))
+
                  ;; default
                  (throw (js/Error. (str "unsupported dist: " dist-name))))]
         #js {"id" (get spec "id") "logprob" lp})
@@ -560,58 +600,132 @@
     "student_t"   (dist/student-t (mx/scalar (get params "df"))
                                    (mx/scalar (get params "loc"))
                                    (mx/scalar (get params "scale")))
+    "uniform"     (dist/uniform (mx/scalar (get params "lo"))
+                                 (mx/scalar (get params "hi")))
+    "inv_gamma"   (dist/inv-gamma (mx/scalar (get params "shape"))
+                                   (mx/scalar (get params "scale")))
+    "von_mises"   (dist/von-mises (mx/scalar (get params "mu"))
+                                   (mx/scalar (get params "kappa")))
+    "wrapped_cauchy" (dist/wrapped-cauchy (mx/scalar (get params "mu"))
+                                          (mx/scalar (get params "rho")))
     (throw (js/Error. (str "unsupported gradient dist: " dist-name)))))
 
 (defn eval-gradient [spec]
   (let [dist-name (get spec "dist")
         params    (get spec "params")
         grad-wrt  (get spec "grad_wrt")
-        value     (get spec "value")]
+        value     (get spec "value")
+        v         (mx/scalar value)
+        p         (fn [k] (mx/scalar (get params k)))]
     (try
       (let [grad-val
             (case grad-wrt
               "value"
               (let [grad-fn (mx/grad
-                              (fn [v]
-                                (dc/dist-log-prob
-                                 (make-dist-from-spec dist-name params) v)))]
-                (mx/item (grad-fn (mx/scalar value))))
+                              (fn [v'] (dc/dist-log-prob
+                                        (make-dist-from-spec dist-name params) v')))]
+                (mx/item (grad-fn v)))
 
               "mu"
               (let [grad-fn (mx/grad
-                              (fn [mu]
-                                (dc/dist-log-prob
-                                 (case dist-name
-                                   "normal"   (dist/gaussian mu (mx/scalar (get params "sigma")))
-                                   "lognormal" (dist/log-normal mu (mx/scalar (get params "sigma"))))
-                                 (mx/scalar value))))]
-                (mx/item (grad-fn (mx/scalar (get params "mu")))))
+                              (fn [mu] (dc/dist-log-prob
+                                        (case dist-name
+                                          "normal"    (dist/gaussian mu (p "sigma"))
+                                          "lognormal" (dist/log-normal mu (p "sigma"))
+                                          "von_mises" (dist/von-mises mu (p "kappa"))
+                                          "wrapped_cauchy" (dist/wrapped-cauchy mu (p "rho")))
+                                        v)))]
+                (mx/item (grad-fn (p "mu"))))
 
               "sigma"
               (let [grad-fn (mx/grad
-                              (fn [sigma]
-                                (dc/dist-log-prob
-                                 (case dist-name
-                                   "normal"   (dist/gaussian (mx/scalar (get params "mu")) sigma)
-                                   "lognormal" (dist/log-normal (mx/scalar (get params "mu")) sigma))
-                                 (mx/scalar value))))]
-                (mx/item (grad-fn (mx/scalar (get params "sigma")))))
+                              (fn [sigma] (dc/dist-log-prob
+                                           (case dist-name
+                                             "normal"    (dist/gaussian (p "mu") sigma)
+                                             "lognormal" (dist/log-normal (p "mu") sigma))
+                                           v)))]
+                (mx/item (grad-fn (p "sigma"))))
 
               "alpha"
               (let [grad-fn (mx/grad
-                              (fn [alpha]
-                                (dc/dist-log-prob
-                                 (dist/beta-dist alpha (mx/scalar (get params "beta")))
-                                 (mx/scalar value))))]
-                (mx/item (grad-fn (mx/scalar (get params "alpha")))))
+                              (fn [alpha] (dc/dist-log-prob
+                                           (dist/beta-dist alpha (p "beta")) v)))]
+                (mx/item (grad-fn (p "alpha"))))
+
+              "beta"
+              (let [grad-fn (mx/grad
+                              (fn [beta'] (dc/dist-log-prob
+                                           (dist/beta-dist (p "alpha") beta') v)))]
+                (mx/item (grad-fn (p "beta"))))
 
               "shape"
               (let [grad-fn (mx/grad
-                              (fn [shape]
-                                (dc/dist-log-prob
-                                 (dist/gamma-dist shape (mx/scalar (get params "rate")))
-                                 (mx/scalar value))))]
-                (mx/item (grad-fn (mx/scalar (get params "shape")))))
+                              (fn [shape] (dc/dist-log-prob
+                                           (case dist-name
+                                             "gamma"    (dist/gamma-dist shape (p "rate"))
+                                             "inv_gamma" (dist/inv-gamma shape (p "scale")))
+                                           v)))]
+                (mx/item (grad-fn (p "shape"))))
+
+              "rate"
+              (let [grad-fn (mx/grad
+                              (fn [rate] (dc/dist-log-prob
+                                          (case dist-name
+                                            "gamma"       (dist/gamma-dist (p "shape") rate)
+                                            "exponential" (dist/exponential rate))
+                                          v)))]
+                (mx/item (grad-fn (p "rate"))))
+
+              "loc"
+              (let [grad-fn (mx/grad
+                              (fn [loc] (dc/dist-log-prob
+                                         (case dist-name
+                                           "laplace"   (dist/laplace loc (p "scale"))
+                                           "cauchy"    (dist/cauchy loc (p "scale"))
+                                           "student_t" (dist/student-t (p "df") loc (p "scale")))
+                                         v)))]
+                (mx/item (grad-fn (p "loc"))))
+
+              "scale"
+              (let [grad-fn (mx/grad
+                              (fn [scale] (dc/dist-log-prob
+                                           (case dist-name
+                                             "laplace"   (dist/laplace (p "loc") scale)
+                                             "cauchy"    (dist/cauchy (p "loc") scale)
+                                             "student_t" (dist/student-t (p "df") (p "loc") scale)
+                                             "inv_gamma" (dist/inv-gamma (p "shape") scale))
+                                           v)))]
+                (mx/item (grad-fn (p "scale"))))
+
+              "df"
+              (let [grad-fn (mx/grad
+                              (fn [df] (dc/dist-log-prob
+                                        (dist/student-t df (p "loc") (p "scale")) v)))]
+                (mx/item (grad-fn (p "df"))))
+
+              "kappa"
+              (let [grad-fn (mx/grad
+                              (fn [kappa] (dc/dist-log-prob
+                                           (dist/von-mises (p "mu") kappa) v)))]
+                (mx/item (grad-fn (p "kappa"))))
+
+              "rho"
+              (let [grad-fn (mx/grad
+                              (fn [rho] (dc/dist-log-prob
+                                         (dist/wrapped-cauchy (p "mu") rho) v)))]
+                (mx/item (grad-fn (p "rho"))))
+
+              "lo"
+              (let [grad-fn (mx/grad
+                              (fn [lo] (dc/dist-log-prob
+                                        (dist/uniform lo (p "hi")) v)))]
+                (mx/item (grad-fn (p "lo"))))
+
+              "hi"
+              (let [grad-fn (mx/grad
+                              (fn [hi] (dc/dist-log-prob
+                                        (dist/uniform (p "lo") hi) v)))]
+                (mx/item (grad-fn (p "hi"))))
 
               (throw (js/Error. (str "unsupported grad_wrt: " grad-wrt))))]
         #js {"id" (get spec "id") "gradient" grad-val})
@@ -826,14 +940,15 @@
       (catch :default e
         #js {"id" (get spec "id") "error" (str e)}))))
 
-;; --- SSM model for SMC tests ---
+;; --- SSM model for SMC tests (lazy to avoid crash during module load) ---
 
 (def ssm-kernel
-  (dyn/auto-key
-    (gen [t state]
-      (let [x (trace :x (dist/gaussian (mx/scalar state) (mx/scalar 1)))]
-        (trace :y (dist/gaussian x (mx/scalar 0.5)))
-        x))))
+  (delay
+    (dyn/auto-key
+      (gen [t state]
+        (let [x (trace :x (dist/gaussian (mx/scalar state) (mx/scalar 1)))]
+          (trace :y (dist/gaussian x (mx/scalar 0.5)))
+          x)))))
 
 (defn run-smc-ssm
   "Run SMC on linear-Gaussian SSM using smc-unfold."
@@ -841,7 +956,7 @@
   (let [obs-seq (mapv (fn [y]
                         (cm/set-value (cm/choicemap) :y (mx/scalar y)))
                       observations)
-        result (smc/smc-unfold {:particles n-particles} ssm-kernel 0.0 obs-seq)
+        result (smc/smc-unfold {:particles n-particles} @ssm-kernel 0.0 obs-seq)
         log-ml (mx/item (:log-ml result))
         final-ess (:final-ess result)]
     {:log-ml log-ml :ess final-ess}))
@@ -858,6 +973,8 @@
     {:log-ml log-ml}))
 
 (defn eval-inference-smc [spec]
+  ;; Note: SMC crashes Bun when run from the full runner (all model defs + SMC
+  ;; exceed Metal buffer limits). Works standalone. Known Bun/nbb limitation.
   (let [algorithm   (get spec "algorithm")
         algo-params (get spec "algorithm_params")
         data        (get spec "data")
@@ -939,18 +1056,26 @@
                 "combinator"           (mapv eval-combinator (get input-data "combinator_tests"))
                 "mlx_ops"              (mapv (comp sanitize-js-obj eval-mlx-op) (get input-data "tests"))
                 "gradient"             (mapv eval-gradient (get input-data "gradient_tests"))
-                "inference_quality"    (mapv (fn [spec]
-                                               (let [algo (get spec "algorithm")]
-                                                 (cond
-                                                   (contains? #{"smc" "smc_single"} algo)
-                                                   (eval-inference-smc spec)
+                "inference_quality"    (do
+                                        ;; Fix PRNG seed for reproducible inference results
+                                        (rng/seed! (rng/fresh-key 42))
+                                        (mapv (fn [spec]
+                                               (let [algo (get spec "algorithm")
+                                                     result
+                                                     (cond
+                                                       (contains? #{"smc" "smc_single"} algo)
+                                                       (eval-inference-smc spec)
 
-                                                   (= algo "vi")
-                                                   (eval-inference-vi spec)
+                                                       (= algo "vi")
+                                                       (eval-inference-vi spec)
 
-                                                   :else
-                                                   (eval-inference spec))))
-                                             (get input-data "tests"))
+                                                       :else
+                                                       (eval-inference spec))]
+                                                 ;; Aggressive cleanup between tests to prevent Bun OOM/segfault
+                                                 (mx/clear-cache!)
+                                                 (mx/jsc-cleanup!)
+                                                 result))
+                                             (get input-data "tests")))
                 (do (.error js/console (str "Unknown test type: " test-type))
                     (js/process.exit 1)))
       output  #js {"system"    "genmlx"

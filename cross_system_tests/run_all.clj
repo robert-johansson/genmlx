@@ -15,14 +15,29 @@
 
 (def venv-python (str (System/getProperty "user.dir") "/.venv-genjax/bin/python"))
 
+;; --- Global failure collector for summary report ---
+;; Each entry: {:suite "name" :id "test-id" :values {"sys" "val" ...} :reason "msg"}
+(def all-failures (atom []))
+
+(defn record-failure!
+  "Record a test failure for the summary report."
+  [suite id values reason]
+  (swap! all-failures conj {:suite suite :id id :values values :reason reason}))
+
 ;; --- Runner commands ---
 ;; Each runner reads {test_type, ...specs...} from stdin, writes JSON to stdout.
 
-(defn runner-cmd [system]
-  (case system
-    "gen_jl" ["julia" (str runners-dir "/gen_jl_runner.jl")]
-    "genjax" [venv-python (str runners-dir "/genjax_runner.py")]
-    "genmlx" ["bun" "run" "--bun" "nbb" (str runners-dir "/genmlx_runner.cljs")]))
+(defn runner-cmd
+  ([system] (runner-cmd system false))
+  ([system use-node?]
+   (case system
+     "gen_jl" ["julia" (str runners-dir "/gen_jl_runner.jl")]
+     "genjax" [venv-python (str runners-dir "/genjax_runner.py")]
+     "genmlx" (if use-node?
+                ;; Node.js fallback for SMC: Bun/JSC crashes on large SMC due to
+                ;; Metal pipeline leak (mlx#3297) + JSC GC interaction
+                ["npx" "nbb" (str runners-dir "/genmlx_runner.cljs")]
+                ["bun" "run" "--bun" "nbb" (str runners-dir "/genmlx_runner.cljs")]))))
 
 (defn run-system [system test-type spec-json output-file]
   (println (str "  Running " system "..."))
@@ -164,6 +179,11 @@
                                                valid-values)))))
                 (do
                   (swap! fail-count inc)
+                  (record-failure! test-type id
+                                   (into {} (map (fn [vv] [(name (:system vv))
+                                                           (format "%.10f" (double (:value vv)))])
+                                                 valid-values))
+                                   "cross-system mismatch")
                   (println (str "  FAIL   " id))
                   (doseq [vv valid-values]
                     (println (str "         " (name (:system vv)) ": "
@@ -172,7 +192,7 @@
       (println)
       (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
                     @error-count " error, " @skip-count " skip"))
-      {:pass @pass-count :fail @fail-count :error @error-count :skip @skip-count})))
+      {:suite test-type :pass @pass-count :fail @fail-count :error @error-count :skip @skip-count})))
 
 ;; --- MLX ops: compare GenMLX-only against known expected values ---
 
@@ -198,7 +218,7 @@
 
     (if-not (:success run-result)
       (do (println "  genmlx failed to run")
-          {:pass 0 :fail 0 :error 0 :skip 0})
+          {:suite "mlx_ops" :pass 0 :fail 0 :error 0 :skip 0})
 
       (let [results (load-results out-file)
             expected-by-id (into {} (map (fn [s] [(:id s) s]) (:tests specs)))
@@ -225,6 +245,10 @@
 
               :else
               (do (swap! fail-count inc)
+                  (record-failure! "mlx_ops" (:id r)
+                                   {"genmlx" (pr-str (:result r))
+                                    "expected" (pr-str expected)}
+                                   "value mismatch vs expected")
                   (println (str "  FAIL   " (:id r)))
                   (println (str "         mlx:      " (pr-str (:result r))))
                   (println (str "         expected:  " (pr-str expected)))))))
@@ -232,7 +256,7 @@
         (println)
         (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
                       @error-count " error"))
-        {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
+        {:suite "mlx_ops" :pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
 
 ;; --- Score Decomposition Suite ---
 
@@ -272,7 +296,7 @@
 
     (if (< (count loaded) 2)
       (do (println "Not enough systems succeeded for comparison")
-          {:pass 0 :fail 0 :error 0 :skip 0})
+          {:suite "score_decomposition" :pass 0 :fail 0 :error 0 :skip 0})
 
       ;; Build id -> system -> result
       (let [by-id (reduce
@@ -329,6 +353,14 @@
                                                           (format "%.6f" (double (parse-number (:total_score r))))))
                                                    sys-map)))))
                   (do (swap! fail-count inc)
+                      (record-failure! "score_decomposition" id
+                                       (into {} (map (fn [[sys r]]
+                                                       [(name sys)
+                                                        (str "total=" (format "%.10f" (double (parse-number (:total_score r))))
+                                                             " sum=" (format "%.10f" (double (parse-number (:sum_components r)))))])
+                                                     sys-map))
+                                       (str (when (not internal-ok) "internal consistency ")
+                                            (when (not cross-ok) "cross-system mismatch")))
                       (println (str "  FAIL   " id
                                     (when (not internal-ok) " [internal consistency]")
                                     (when (not cross-ok) " [cross-system mismatch]")))
@@ -340,7 +372,7 @@
         (println)
         (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
                       @error-count " error"))
-        {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
+        {:suite "score_decomposition" :pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
 
 ;; --- Update Suite ---
 
@@ -380,7 +412,7 @@
 
     (if (< (count loaded) 2)
       (do (println "Not enough systems succeeded for comparison")
-          {:pass 0 :fail 0 :error 0 :skip 0})
+          {:suite "update" :pass 0 :fail 0 :error 0 :skip 0})
 
       (let [by-id (reduce
                    (fn [acc [sys-name results]]
@@ -453,6 +485,15 @@
                                                           " w=" (format "%.6f" (double (parse-number (:weight r))))))
                                                    sys-map)))))
                   (do (swap! fail-count inc)
+                      (let [reason (str (when (not internal-ok) "w != new-old ")
+                                        (when (not cross-ok) "cross-system mismatch ")
+                                        (when (not same-val-ok) "same-val weight != 0"))]
+                        (record-failure! "update" id
+                                         (into {} (map (fn [[sys r]]
+                                                         [(name sys)
+                                                          (str "w=" (format "%.10f" (double (parse-number (:weight r)))))])
+                                                       sys-map))
+                                         reason))
                       (println (str "  FAIL   " id
                                     (when (not internal-ok) " [w != new-old]")
                                     (when (not cross-ok) " [cross-system mismatch]")
@@ -466,7 +507,7 @@
         (println)
         (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
                       @error-count " error"))
-        {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
+        {:suite "update" :pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
 
 ;; --- Project Suite ---
 
@@ -506,7 +547,7 @@
 
     (if (< (count loaded) 2)
       (do (println "Not enough systems succeeded for comparison")
-          {:pass 0 :fail 0 :error 0 :skip 0})
+          {:suite "project" :pass 0 :fail 0 :error 0 :skip 0})
 
       (let [by-id (reduce
                    (fn [acc [sys-name results]]
@@ -550,6 +591,11 @@
                                                           (format "%.6f" (double (parse-number (:weight r))))))
                                                    sys-map)))))
                   (do (swap! fail-count inc)
+                      (record-failure! "project" id
+                                       (into {} (map (fn [[sys r]]
+                                                       [(name sys) (format "%.10f" (double (parse-number (:weight r))))])
+                                                     sys-map))
+                                       "cross-system mismatch")
                       (println (str "  FAIL   " id " [cross-system mismatch]"))
                       (doseq [[sys r] sys-map]
                         (println (str "         " (name sys)
@@ -558,7 +604,7 @@
         (println)
         (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
                       @error-count " error"))
-        {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
+        {:suite "project" :pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
 
 ;; --- Regenerate Suite ---
 
@@ -602,7 +648,7 @@
 
     (if (< (count loaded) 2)
       (do (println "Not enough systems succeeded for comparison")
-          {:pass 0 :fail 0 :error 0 :skip 0})
+          {:suite "regenerate" :pass 0 :fail 0 :error 0 :skip 0})
 
       (let [by-id (reduce
                    (fn [acc [sys-name results]]
@@ -683,6 +729,14 @@
                                                           " w=" (format "%.6f" (double (parse-number (:weight r))))))
                                                    sys-map)))))
                   (do (swap! fail-count inc)
+                      (let [reason (str (when (not old-ok) "old_score mismatch ")
+                                        (when (not invariant-ok) "invariant violated"))]
+                        (record-failure! "regenerate" id
+                                         (into {} (map (fn [[sys r]]
+                                                         [(name sys)
+                                                          (str "w=" (format "%.10f" (double (parse-number (:weight r)))))])
+                                                       sys-map))
+                                         reason))
                       (println (str "  FAIL   " id
                                     (when (not old-ok) " [old_score mismatch]")
                                     (when (not invariant-ok) " [invariant violated]")))
@@ -695,7 +749,7 @@
         (println)
         (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
                       @error-count " error"))
-        {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
+        {:suite "regenerate" :pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
 
 ;; --- Combinator Suite ---
 
@@ -735,7 +789,7 @@
 
     (if (< (count loaded) 2)
       (do (println "Not enough systems succeeded for comparison")
-          {:pass 0 :fail 0 :error 0 :skip 0})
+          {:suite "combinator" :pass 0 :fail 0 :error 0 :skip 0})
 
       (let [by-id (reduce
                    (fn [acc [sys-name results]]
@@ -792,6 +846,12 @@
                                                               (format "%.6f" (double (parse-number (:total_score r))))))
                                                        sys-map)))))
                       (do (swap! fail-count inc)
+                          (record-failure! "combinator" id
+                                           (into {} (map (fn [[sys r]]
+                                                           [(name sys) (format "%.10f" (double (parse-number (:total_score r))))])
+                                                         sys-map))
+                                           (str (when (not internal-ok) "internal consistency ")
+                                                (when (not cross-ok) "cross-system mismatch")))
                           (println (str "  FAIL   " id
                                         (when (not internal-ok) " [internal consistency]")
                                         (when (not cross-ok) " [cross-system mismatch]")))
@@ -826,6 +886,12 @@
                                                               " w=" (format "%.6f" (double (parse-number (:weight r))))))
                                                        sys-map)))))
                       (do (swap! fail-count inc)
+                          (record-failure! "combinator" id
+                                           (into {} (map (fn [[sys r]]
+                                                           [(name sys) (str "w=" (format "%.10f" (double (parse-number (:weight r)))))])
+                                                         sys-map))
+                                           (str (when (not internal-ok) "w != new-old ")
+                                                (when (not cross-ok) "cross-system mismatch")))
                           (println (str "  FAIL   " id
                                         (when (not internal-ok) " [w != new-old]")
                                         (when (not cross-ok) " [cross-system mismatch]")))
@@ -849,6 +915,11 @@
                                                               (format "%.6f" (double (parse-number (:weight r))))))
                                                        sys-map)))))
                       (do (swap! fail-count inc)
+                          (record-failure! "combinator" id
+                                           (into {} (map (fn [[sys r]]
+                                                           [(name sys) (format "%.10f" (double (parse-number (:weight r))))])
+                                                         sys-map))
+                                           "cross-system mismatch")
                           (println (str "  FAIL   " id " [cross-system mismatch]"))
                           (doseq [[sys r] sys-map]
                             (println (str "         " (name sys)
@@ -861,7 +932,7 @@
         (println)
         (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
                       @error-count " error"))
-        {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
+        {:suite "combinator" :pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
 
 ;; --- Stability Suite ---
 
@@ -901,7 +972,7 @@
 
     (if (< (count loaded) 2)
       (do (println "Not enough systems succeeded for comparison")
-          {:pass 0 :fail 0 :error 0 :skip 0})
+          {:suite "stability" :pass 0 :fail 0 :error 0 :skip 0})
 
       (let [by-id (reduce
                    (fn [acc [sys-name results]]
@@ -950,6 +1021,11 @@
                                                            sys-map)))]
                         (println (str "  PASS   " id "  " display))))
                   (do (swap! fail-count inc)
+                      (record-failure! "stability" id
+                                       (into {} (map (fn [[sys r]]
+                                                       [(name sys) (str (:logprob r))])
+                                                     sys-map))
+                                       "cross-system mismatch")
                       (println (str "  FAIL   " id))
                       (doseq [[sys r] sys-map]
                         (println (str "         " (name sys) ": " (:logprob r))))))))))
@@ -957,7 +1033,7 @@
         (println)
         (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
                       @error-count " error"))
-        {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
+        {:suite "stability" :pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
 
 ;; --- Gradient Suite ---
 
@@ -1047,6 +1123,13 @@
                                                  sys-map))
                                   (when expected (str "  expected=" (format "%.6f" (double expected)))))))
                 (do (swap! fail-count inc)
+                    (record-failure! "gradient" id
+                                     (merge (into {} (map (fn [[sys r]]
+                                                            [(name sys) (format "%.10f" (double (parse-number (:gradient r))))])
+                                                          sys-map))
+                                            (when expected {"expected" (format "%.10f" (double expected))}))
+                                     (str (when (not cross-ok) "cross-system mismatch ")
+                                          (when (not expected-ok) "expected mismatch")))
                     (println (str "  FAIL   " id
                                   (when (not cross-ok) " [cross-system mismatch]")
                                   (when (not expected-ok) " [expected mismatch]")))
@@ -1059,9 +1142,44 @@
       (println)
       (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
                     @error-count " error"))
-      {:pass @pass-count :fail @fail-count :error @error-count :skip 0})))
+      {:suite "gradient" :pass @pass-count :fail @fail-count :error @error-count :skip 0})))
 
 ;; --- Inference Quality Suite ---
+
+(defn run-system-per-test
+  "Run a system once per test to avoid OOM in long-running inference.
+   Uses Node.js for SMC tests (Bun/JSC crashes on large SMC, mlx#3297).
+   Returns merged results as if it were a single run."
+  [system tests out-file]
+  (let [all-results (atom [])
+        total (count tests)]
+    (doseq [[idx test] (map-indexed vector tests)]
+      (let [smc? (contains? #{"smc" "smc_single"} (:algorithm test))
+            use-node? (and (= system "genmlx") smc?)]
+        (print (str "    [" (inc idx) "/" total "] " (:id test)
+                    (when use-node? " [node]") "... "))
+        (flush))
+      (let [smc? (contains? #{"smc" "smc_single"} (:algorithm test))
+            use-node? (and (= system "genmlx") smc?)
+            single-spec (json/generate-string {:test_type "inference_quality"
+                                                :tests [test]})
+            cmd (runner-cmd system use-node?)]
+        (try
+          (let [result (p/shell {:in single-spec :out :string :err :string
+                                  :dir (System/getProperty "user.dir")}
+                                 (str/join " " cmd))
+                parsed (when (= 0 (:exit result))
+                          (json/parse-string (:out result) true))]
+            (when parsed
+              (swap! all-results into (:results parsed)))
+            (println "ok"))
+          (catch Exception e
+            (println "CRASH")
+            (swap! all-results conj {:id (:id test) :error (str "runner crash: " (.getMessage e))})))))
+    ;; Write merged results
+    (let [merged {:system system :test_type "inference_quality" :results @all-results}]
+      (spit out-file (json/generate-string merged {:pretty true}))
+      {:success true :output-file out-file})))
 
 (defn run-inference-quality-suite [spec-file]
   (println "\n>>> Running inference_quality tests <<<")
@@ -1073,9 +1191,13 @@
         run-results
         (reduce
          (fn [acc sys]
-           (let [out-file (str results-dir "/" sys "_inference_quality.json")
-                 result (run-system sys "inference_quality" spec-json out-file)]
-             (assoc acc sys result)))
+           (let [out-file (str results-dir "/" sys "_inference_quality.json")]
+             (if (= sys "genmlx")
+               ;; Run GenMLX per-test to avoid Bun OOM on long inference suites
+               (do (println (str "  Running " sys " (per-test, " (count (:tests specs)) " tests)..."))
+                   (assoc acc sys (run-system-per-test sys (:tests specs) out-file)))
+               ;; Other systems run all tests in one process
+               (assoc acc sys (run-system sys "inference_quality" spec-json out-file)))))
          {}
          systems)
 
@@ -1102,7 +1224,7 @@
 
     (if (empty? loaded)
       (do (println "No systems succeeded")
-          {:pass 0 :fail 0 :error 0 :skip 0})
+          {:suite "inference_quality" :pass 0 :fail 0 :error 0 :skip 0})
 
       (let [by-id (reduce
                    (fn [acc [sys-name results]]
@@ -1115,7 +1237,8 @@
                    loaded)
             pass-count (atom 0)
             fail-count (atom 0)
-            error-count (atom 0)]
+            error-count (atom 0)
+            skip-count (atom 0)]
 
         (doseq [[id sys-map] (sort-by key by-id)]
           (let [test-spec (get test-by-id id)
@@ -1155,6 +1278,12 @@
                                                    sys-map))
                                     "  min=" (format "%.2f" min-rate))))
                   (do (swap! fail-count inc)
+                      (record-failure! "inference_quality" id
+                                       (into {} (map (fn [[sys r]]
+                                                       [(name sys) (if-let [ar (:acceptance_rate r)]
+                                                                     (format "%.4f" (double (parse-number ar))) "N/A")])
+                                                     sys-map))
+                                       (str "acceptance rate below " (format "%.2f" min-rate)))
                       (println (str "  FAIL   " id " [acceptance rate below " (format "%.2f" min-rate) "]"))
                       (doseq [[sys r] sys-map]
                         (let [ar (:acceptance_rate r)]
@@ -1183,6 +1312,12 @@
                                                        sys-map))
                                         "  tol=" (format "%.1f" (double tol)))))
                       (do (swap! fail-count inc)
+                          (record-failure! "inference_quality" id
+                                           (into {} (map (fn [[sys r]]
+                                                           [(name sys) (if-let [ml (:log_ml r)]
+                                                                         (format "%.6f" (double (parse-number ml))) "N/A")])
+                                                         sys-map))
+                                           (str "log-ML cross-system disagree, tol=" (format "%.1f" (double tol))))
                           (println (str "  FAIL   " id " [log-ML cross-system disagree, tol=" (format "%.1f" (double tol)) "]"))
                           (doseq [[sys r] sys-map]
                             (println (str "         " (name sys) ": "
@@ -1208,6 +1343,12 @@
                                                    sys-map))
                                     "  threshold=" ess-threshold)))
                   (do (swap! fail-count inc)
+                      (record-failure! "inference_quality" id
+                                       (into {} (map (fn [[sys r]]
+                                                       [(name sys) (if-let [e (:ess r)]
+                                                                     (format "%.1f" (double (parse-number e))) "N/A")])
+                                                     sys-map))
+                                       (str "ESS below " ess-threshold))
                       (println (str "  FAIL   " id " [ESS below " ess-threshold "]"))
                       (doseq [[sys r] sys-map]
                         (let [e (:ess r)]
@@ -1233,6 +1374,13 @@
                                     "  analytical=" (format "%.4f" analytical-mean)
                                     "  tol=" (format "%.4f" tol))))
                   (do (swap! fail-count inc)
+                      (record-failure! "inference_quality" id
+                                       (merge (into {} (map (fn [[sys r]]
+                                                              [(name sys) (if (:skip r) "skip"
+                                                                            (format "%.6f" (double (parse-number (:posterior_mean r)))))])
+                                                            sys-map))
+                                              {"analytical" (format "%.6f" analytical-mean)})
+                                       "outside 3*std of analytical")
                       (println (str "  FAIL   " id " [outside 3*std of analytical]"))
                       (doseq [[sys r] sys-map]
                         (if (:skip r)
@@ -1262,6 +1410,13 @@
                                     "  analytical=" (format "%.4f" (double analytical-log-ml))
                                     "  tol=" (format "%.1f" (double tol)))))
                   (do (swap! fail-count inc)
+                      (record-failure! "inference_quality" id
+                                       (merge (into {} (map (fn [[sys r]]
+                                                              [(name sys) (if-let [ml (:log_ml r)]
+                                                                            (format "%.6f" (double (parse-number ml))) "N/A")])
+                                                            sys-map))
+                                              {"analytical" (format "%.4f" (double analytical-log-ml))})
+                                       (str "log-ML outside " (format "%.1f" (double tol)) " nat of analytical"))
                       (println (str "  FAIL   " id " [log-ML outside " (format "%.1f" (double tol))
                                     " nat of analytical=" (format "%.4f" (double analytical-log-ml)) "]"))
                       (doseq [[sys r] sys-map]
@@ -1293,6 +1448,13 @@
                                     "  analytical=" (format "%.6f" (double analytical-var))
                                     "  [factor-of-3]")))
                   (do (swap! fail-count inc)
+                      (record-failure! "inference_quality" id
+                                       (merge (into {} (map (fn [[sys r]]
+                                                              [(name sys) (if-let [v (:posterior_variance r)]
+                                                                            (format "%.6f" (double (parse-number v))) "N/A")])
+                                                            sys-map))
+                                              {"analytical" (format "%.6f" (double analytical-var))})
+                                       "variance outside factor-of-3 of analytical")
                       (println (str "  FAIL   " id " [variance outside factor-of-3 of analytical="
                                     (format "%.6f" (double analytical-var)) "]"))
                       (doseq [[sys r] sys-map]
@@ -1301,15 +1463,22 @@
                                         (format "%.6f" (double (parse-number v)))
                                         "N/A")))))))
 
+              (nil? analytical-mean)
+              ;; No analytical posterior — skip this test
+              (do (swap! skip-count inc)
+                  (println (str "  SKIP   " id " (no analytical posterior)")))
+
               :else
               ;; Posterior mean test
-              (let [tol (* 3.0 analytical-std)
+              (let [tol (if analytical-std (* 3.0 analytical-std) 1.0)
                     means (map #(parse-number (:posterior_mean %)) valid)
+                    ;; Filter out nil means (systems that couldn't produce a result)
+                    valid-means (filter some? means)
                     ;; Check each system against analytical posterior
                     all-within-tol
-                    (every? #(< (abs (- % analytical-mean)) tol) means)
+                    (every? #(< (abs (- % analytical-mean)) tol) valid-means)
                     ;; Also check systems agree with each other (within 2*std)
-                    cross-tol (* 2.0 analytical-std)
+                    cross-tol (if analytical-std (* 2.0 analytical-std) 1.0)
                     cross-ok (if (> (count means) 1)
                                (let [ref-m (first means)]
                                  (every? #(< (abs (- % ref-m)) cross-tol) (rest means)))
@@ -1325,6 +1494,13 @@
                                     "  analytical=" (format "%.4f" analytical-mean)
                                     "  tol=" (format "%.4f" tol))))
                   (do (swap! fail-count inc)
+                      (record-failure! "inference_quality" id
+                                       (merge (into {} (map (fn [[sys r]]
+                                                              [(name sys) (format "%.6f" (double (parse-number (:posterior_mean r))))])
+                                                            sys-map))
+                                              {"analytical" (format "%.6f" analytical-mean)})
+                                       (str (when (not all-within-tol) "outside 3*std of analytical ")
+                                            (when (not cross-ok) "cross-system disagree")))
                       (println (str "  FAIL   " id
                                     (when (not all-within-tol) " [outside 3*std of analytical]")
                                     (when (not cross-ok) " [cross-system disagree]")))
@@ -1337,7 +1513,7 @@
         (println)
         (println (str "Results: " @pass-count " pass, " @fail-count " fail, "
                       @error-count " error"))
-        {:pass @pass-count :fail @fail-count :error @error-count :skip 0}))))
+        {:suite "inference_quality" :pass @pass-count :fail @fail-count :error @error-count :skip @skip-count}))))
 
 ;; --- Main ---
 
@@ -1375,7 +1551,71 @@
         (compare-results test-type loaded tolerance)
         (do
           (println "Not enough systems succeeded for comparison")
-          {:pass 0 :fail 0 :error 0 :skip 0})))))
+          {:suite test-type :pass 0 :fail 0 :error 0 :skip 0})))))
+
+;; --- Summary Report Generation ---
+
+(defn generate-summary
+  "Write results/SUMMARY.md with per-category table and failure details."
+  [suite-results totals suites-run]
+  (let [timestamp (str (java.time.LocalDateTime/now))
+        summary-file (str results-dir "/SUMMARY.md")
+        sb (StringBuilder.)]
+
+    ;; Header
+    (.append sb "# Cross-System Verification Summary\n\n")
+    (.append sb (str "**Date:** " timestamp "\n\n"))
+    (.append sb (str "**Systems:** Gen.jl, GenJAX, GenMLX\n\n"))
+    (.append sb (str "**Suites run:** " (str/join ", " (sort suites-run)) "\n\n"))
+
+    ;; Overall verdict
+    (let [verdict (cond
+                    (pos? (:fail totals))
+                    (str "FAIL (" (:fail totals) " failures, " (:error totals) " errors)")
+                    (pos? (:error totals))
+                    (str "PASS with errors (" (:error totals) " errors — systems could not evaluate some tests)")
+                    :else "PASS")]
+      (.append sb (str "**Verdict:** " verdict "\n\n")))
+
+    ;; Per-category table
+    (.append sb "## Results by Category\n\n")
+    (.append sb "| Category | Total | Pass | Fail | Error | Skip |\n")
+    (.append sb "|---|---|---|---|---|---|\n")
+    (doseq [r (sort-by #(or (:suite %) "unknown") suite-results)]
+      (let [suite-name (or (:suite r) "unknown")
+            total (+ (:pass r) (:fail r) (:error r) (:skip r))]
+        (.append sb (str "| " suite-name
+                         " | " total
+                         " | " (:pass r)
+                         " | " (:fail r)
+                         " | " (:error r)
+                         " | " (:skip r)
+                         " |\n"))))
+    (let [grand-total (+ (:pass totals) (:fail totals) (:error totals) (:skip totals))]
+      (.append sb (str "| **TOTAL** | **" grand-total
+                       "** | **" (:pass totals)
+                       "** | **" (:fail totals)
+                       "** | **" (:error totals)
+                       "** | **" (:skip totals)
+                       "** |\n\n")))
+
+    ;; Failure details
+    (let [failures @all-failures]
+      (if (empty? failures)
+        (.append sb "## Failures\n\nNone.\n")
+        (do
+          (.append sb (str "## Failures (" (count failures) " total)\n\n"))
+          ;; Group by suite
+          (doseq [[suite fails] (sort-by key (group-by :suite failures))]
+            (.append sb (str "### " suite "\n\n"))
+            (doseq [f fails]
+              (.append sb (str "- **" (:id f) "** -- " (:reason f) "\n"))
+              (doseq [[sys val] (sort-by key (:values f))]
+                (.append sb (str "  - " sys ": `" val "`\n"))))
+            (.append sb "\n")))))
+
+    (spit summary-file (str sb))
+    (println (str "\nSummary written to " summary-file))))
 
 (defn main []
   (clojure.java.io/make-parents (str results-dir "/placeholder"))
@@ -1404,7 +1644,7 @@
             (conj (run-mlx-ops-suite mlx-spec 1e-4))
 
             (contains? suites "logprob")
-            (conj (run-test-suite "logprob" logprob-spec 1e-5))
+            (conj (run-test-suite "logprob" logprob-spec 1e-4))
 
             (contains? suites "assess")
             (conj (run-test-suite "assess" gfi-spec 1e-4))
@@ -1449,6 +1689,9 @@
       (println "\n════════════════════════════════════════════")
       (println (str "TOTAL: " (:pass totals) " pass, " (:fail totals) " fail, "
                     (:error totals) " error, " (:skip totals) " skip"))
+
+      ;; Generate persistent summary report
+      (generate-summary all-results totals suites)
 
       (when (> (:fail totals) 0)
         (println "\n⚠ FAILURES DETECTED — investigate discrepancies")

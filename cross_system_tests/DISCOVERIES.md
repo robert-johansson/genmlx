@@ -106,6 +106,83 @@ work around limitations.
 | Missing `rsqrt` | **OPEN** | `1/sqrt(x)` requires two ops. `rsqrt` is a single GPU kernel. Used in layer normalization, Gaussian density. |
 | Missing `choleskyInv` | **OPEN** | `inv(chol(A))` requires two CPU linalg calls. `choleskyInv` is a single call. Performance win for MVN-heavy models. |
 
+## Gradient Bugs (found during Phase 4.1 verification)
+
+### Root cause: MLX linalg VJP gaps
+
+MLX (as of node-mlx 0.0.1-dev / MLX ~0.31.x) does **not** implement reverse-mode
+autodiff (VJP) for `Cholesky` or `Inverse` primitives. Both throw at grad time:
+
+```
+[Primitive::vjp] Not implemented for Cholesky.
+[Primitive::vjp] Not implemented for Inverse.
+```
+
+This interacts with `mx/materialize!` calls in log-prob to create **silent wrong
+gradients** (the worst kind of bug -- no error, just wrong answers).
+
+### Wishart: silent wrong gradient (no error, wrong values)
+
+| Field | Detail |
+|---|---|
+| Distribution | `wishart` |
+| Bug location | `dist.cljs` line 1208: `(mx/materialize! log-det-X)` inside `dist-log-prob :wishart` |
+| Mechanism | `log-det-X` is computed via `cholesky(x)` which has no VJP. The `materialize!` call detaches `log-det-X` from the computation graph, turning it into a constant w.r.t. autodiff. This **hides** the missing Cholesky VJP -- instead of throwing an error, `mx/grad` silently drops the `log|X|` term's gradient and only returns the gradient of the trace term `tr(V^{-1} X)`. |
+| Impact | HMC/NUTS/MALA/VI/ADEV on models with Wishart priors silently produce **wrong gradients**. The gradient magnitude error is large (example below). No error is raised, so inference appears to run but produces incorrect results. |
+
+REPL evidence (df=5, V=I, x=[[2, 0.5], [0.5, 1]]):
+
+```
+;; Analytical gradient from mx/grad (BROKEN):
+[[-0.5  0.0]
+ [ 0.0 -0.5]]
+
+;; Numerical gradient via finite differences (CORRECT):
+[[ 0.0715  0.0   ]
+ [-0.5722  0.6437]]
+
+;; The broken gradient equals the trace-term-only gradient,
+;; confirming the log-det term's gradient is completely lost:
+(mx/grad (fn [x] (* -0.5 (tr (V^{-1} @ x))))) => [[-0.5 0] [0 -0.5]]  ;; matches broken
+```
+
+### Inv-Wishart: hard error (throws on grad)
+
+| Field | Detail |
+|---|---|
+| Distribution | `inv-wishart` |
+| Bug location | `dist.cljs` lines 1257 and 1260 |
+| Mechanism | `dist-log-prob :inv-wishart` calls `mx/inv x-2d` (line 1257) which has no VJP. Unlike Wishart, the `mx/inv` call is NOT hidden behind `materialize!`, so `mx/grad` hits the missing VJP and throws: `[Primitive::vjp] Not implemented for Inverse.` |
+| Impact | Any gradient-based inference on inv-Wishart priors **crashes** immediately. This is actually better than Wishart's silent failure -- at least the user knows something is wrong. |
+
+REPL evidence:
+
+```
+;; Throws immediately:
+((mx/grad (fn [x] (dist/log-prob (dist/inv-wishart 5 I) x))) x)
+=> Error: [Primitive::vjp] Not implemented for Inverse.
+
+;; Numerical gradient (what it SHOULD return):
+[[-2.077 -0.243]
+ [ 2.041 -3.877]]
+```
+
+### MVN: not affected (materialize! is in constructor, not log-prob)
+
+MVN has `mx/materialize!` calls on `L-inv` and `norm-const` in its constructor
+(lines 981, 989), but these are computed from distribution **parameters** (mu, cov),
+not from the log-prob **input** x. The gradient w.r.t. x flows through a clean
+path (`L-inv @ (x - mu)` using precomputed `L-inv`), so `mx/grad` works correctly.
+
+### Fix options
+
+| Option | Approach | Difficulty |
+|---|---|---|
+| A: Custom VJP wrappers | Implement Cholesky/Inverse VJPs manually using `custom_vjp` or by computing `dL/dA` analytically. Cholesky VJP is well-known: `dA = L^{-T} (phi(L^T dL)) L^{-1}` where `phi` symmetrizes the lower triangle. | Medium -- requires MLX `custom_vjp` support |
+| B: Rewrite log-prob without linalg | Compute `log|X|` via `eigvalsh` (if VJP exists) or LU decomposition. Compute `tr(A X^{-1})` via `solve(X, A)` instead of explicit inverse. | Medium -- depends on which MLX linalg ops have VJPs |
+| C: Numerical gradient fallback | Detect Wishart/inv-Wishart in gradient-based inference and use finite-difference gradients. | Easy but slow and inaccurate |
+| D: Document as limitation | Mark Wishart/inv-Wishart as incompatible with gradient-based inference until MLX adds linalg VJPs. | Easy -- but limits functionality |
+
 ## Distribution Gaps
 
 | Discovery | Status | Notes |

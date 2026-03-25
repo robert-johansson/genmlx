@@ -1,5 +1,8 @@
 (ns genmlx.smcp3-kernel-test
-  (:require [genmlx.mlx :as mx]
+  "Tests for SMCP3 kernel interface."
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.test-helpers :as h]
+            [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
@@ -7,21 +10,6 @@
             [genmlx.inference.smcp3 :as smcp3]
             [genmlx.mlx.random :as rng])
   (:require-macros [genmlx.gen :refer [gen]]))
-
-(defn assert-true [msg actual]
-  (if actual
-    (println "  PASS:" msg)
-    (println "  FAIL:" msg "- expected truthy")))
-
-(defn assert-close [msg expected actual tolerance]
-  (let [diff (js/Math.abs (- expected actual))]
-    (if (<= diff tolerance)
-      (println "  PASS:" msg)
-      (do (println "  FAIL:" msg)
-          (println "    expected:" expected "+/-" tolerance)
-          (println "    actual:  " actual)))))
-
-(println "\n=== SMCP3 Kernel Tests ===\n")
 
 ;; Model: x ~ N(0, 1), y ~ N(x, 0.5)
 (def model
@@ -48,114 +36,100 @@
               (cm/choicemap :y (mx/scalar 3.0))])
 
 ;; ---------------------------------------------------------------------------
-;; Test 1: Runs without error
+;; Tests
 ;; ---------------------------------------------------------------------------
-(println "-- SMCP3 with kernels runs --")
-(let [result (smcp3/smcp3
-               {:particles 10
-                :forward-kernel fwd-kernel
-                :backward-kernel bwd-kernel
-                :key (rng/fresh-key)}
-               model [] obs-seq)]
-  (assert-true "smcp3 returns result" (some? result)))
 
-;; ---------------------------------------------------------------------------
-;; Test 2: Structure — correct keys and particle count
-;; ---------------------------------------------------------------------------
-(println "\n-- Structure --")
-(let [n 10
-      result (smcp3/smcp3
-               {:particles n
-                :forward-kernel fwd-kernel
-                :backward-kernel bwd-kernel
-                :key (rng/fresh-key)}
-               model [] obs-seq)]
-  (assert-true "result has :traces" (some? (:traces result)))
-  (assert-true "result has :log-weights" (some? (:log-weights result)))
-  (assert-true "result has :log-ml-estimate" (some? (:log-ml-estimate result)))
-  (assert-true "correct particle count for traces" (= n (count (:traces result))))
-  (assert-true "correct particle count for weights" (= n (count (:log-weights result)))))
+(deftest smcp3-runs-test
+  (testing "SMCP3 with kernels runs"
+    (let [result (smcp3/smcp3
+                   {:particles 10
+                    :forward-kernel fwd-kernel
+                    :backward-kernel bwd-kernel
+                    :key (rng/fresh-key)}
+                   model [] obs-seq)]
+      (is (some? result) "smcp3 returns result"))))
 
-;; ---------------------------------------------------------------------------
-;; Test 3: Traces valid — each trace has :x (finite) and :y (matches obs)
-;; ---------------------------------------------------------------------------
-(println "\n-- Traces valid --")
-(let [result (smcp3/smcp3
-               {:particles 10
-                :forward-kernel fwd-kernel
-                :backward-kernel bwd-kernel
-                :key (rng/fresh-key)}
-               model [] obs-seq)
-      traces (:traces result)
-      all-x-finite (every? (fn [t]
-                             (let [x (mx/realize (cm/get-choice (:choices t) [:x]))]
-                               (js/isFinite x)))
-                           traces)
-      all-y-correct (every? (fn [t]
-                              (let [y (mx/realize (cm/get-choice (:choices t) [:y]))]
-                                (< (js/Math.abs (- y 3.0)) 1e-6)))
-                            traces)]
-  (assert-true "all traces have finite :x" all-x-finite)
-  (assert-true "all traces have :y = 3.0" all-y-correct))
+(deftest structure-test
+  (testing "correct keys and particle count"
+    (let [n 10
+          result (smcp3/smcp3
+                   {:particles n
+                    :forward-kernel fwd-kernel
+                    :backward-kernel bwd-kernel
+                    :key (rng/fresh-key)}
+                   model [] obs-seq)]
+      (is (some? (:traces result)) "result has :traces")
+      (is (some? (:log-weights result)) "result has :log-weights")
+      (is (some? (:log-ml-estimate result)) "result has :log-ml-estimate")
+      (is (= n (count (:traces result))) "correct particle count for traces")
+      (is (= n (count (:log-weights result))) "correct particle count for weights"))))
 
-;; ---------------------------------------------------------------------------
-;; Test 4: Weights finite
-;; ---------------------------------------------------------------------------
-(println "\n-- Weights finite --")
-(let [result (smcp3/smcp3
-               {:particles 10
-                :forward-kernel fwd-kernel
-                :backward-kernel bwd-kernel
-                :key (rng/fresh-key)}
-               model [] obs-seq)
-      all-w-finite (every? (fn [w] (js/isFinite (mx/realize w)))
-                           (:log-weights result))
-      ml-finite (js/isFinite (mx/realize (:log-ml-estimate result)))]
-  (assert-true "all log-weights finite" all-w-finite)
-  (assert-true "log-ml-estimate finite" ml-finite))
+(deftest traces-valid-test
+  (testing "each trace has finite :x and :y matches obs"
+    (let [result (smcp3/smcp3
+                   {:particles 10
+                    :forward-kernel fwd-kernel
+                    :backward-kernel bwd-kernel
+                    :key (rng/fresh-key)}
+                   model [] obs-seq)
+          traces (:traces result)
+          all-x-finite (every? (fn [t]
+                                 (let [x (mx/realize (cm/get-choice (:choices t) [:x]))]
+                                   (js/isFinite x)))
+                               traces)
+          all-y-correct (every? (fn [t]
+                                  (let [y (mx/realize (cm/get-choice (:choices t) [:y]))]
+                                    (< (js/Math.abs (- y 3.0)) 1e-6)))
+                                traces)]
+      (is all-x-finite "all traces have finite :x")
+      (is all-y-correct "all traces have :y = 3.0"))))
 
-;; ---------------------------------------------------------------------------
-;; Test 5: Log-ML reasonable
-;; ---------------------------------------------------------------------------
-(println "\n-- Log-ML reasonable --")
-(let [result (smcp3/smcp3
-               {:particles 50
-                :forward-kernel fwd-kernel
-                :backward-kernel bwd-kernel
-                :key (rng/fresh-key)}
-               model [] obs-seq)
-      log-ml (mx/realize (:log-ml-estimate result))]
-  ;; For x~N(0,1), y|x~N(x,0.5), p(y=3) can be computed analytically:
-  ;; marginal y ~ N(0, 1+0.25) = N(0, 1.25), so log p(y=3) ≈ -4.8
-  ;; Two steps with same observation, so total around -5 to -15
-  (assert-true "log-ML in plausible range [-30, 0]"
-    (and (> log-ml -30) (< log-ml 0))))
+(deftest weights-finite-test
+  (testing "weights are finite"
+    (let [result (smcp3/smcp3
+                   {:particles 10
+                    :forward-kernel fwd-kernel
+                    :backward-kernel bwd-kernel
+                    :key (rng/fresh-key)}
+                   model [] obs-seq)
+          all-w-finite (every? (fn [w] (js/isFinite (mx/realize w)))
+                               (:log-weights result))
+          ml-finite (js/isFinite (mx/realize (:log-ml-estimate result)))]
+      (is all-w-finite "all log-weights finite")
+      (is ml-finite "log-ml-estimate finite"))))
 
-;; ---------------------------------------------------------------------------
-;; Test 6: Direct smcp3-init + smcp3-step with kernels
-;; ---------------------------------------------------------------------------
-(println "\n-- Direct smcp3-init + smcp3-step --")
-(let [n 10
-      key (rng/fresh-key)
-      [k1 k2] (rng/split-n (rng/ensure-key key) 2)
-      ;; Step 0: init
-      init-result (smcp3/smcp3-init model [] (first obs-seq) nil n k1)
-      ;; Step 1: step with kernels
-      step-result (smcp3/smcp3-step
-                    (:traces init-result)
-                    (:log-weights init-result)
-                    model (second obs-seq)
-                    fwd-kernel bwd-kernel
-                    n 0.5 nil k2)]
-  (assert-true "init has :traces" (some? (:traces init-result)))
-  (assert-true "init has :log-weights" (some? (:log-weights init-result)))
-  (assert-true "init has :log-ml-increment" (some? (:log-ml-increment init-result)))
-  (assert-true "step has :traces" (some? (:traces step-result)))
-  (assert-true "step has :log-weights" (some? (:log-weights step-result)))
-  (assert-true "step has :log-ml-increment" (some? (:log-ml-increment step-result)))
-  (assert-true "step has :ess" (some? (:ess step-result)))
-  (assert-true "step has :resampled?" (contains? step-result :resampled?))
-  (assert-true "step traces count" (= n (count (:traces step-result))))
-  (assert-true "step weights count" (= n (count (:log-weights step-result)))))
+(deftest log-ml-reasonable-test
+  (testing "log-ML in plausible range"
+    (let [result (smcp3/smcp3
+                   {:particles 50
+                    :forward-kernel fwd-kernel
+                    :backward-kernel bwd-kernel
+                    :key (rng/fresh-key)}
+                   model [] obs-seq)
+          log-ml (mx/realize (:log-ml-estimate result))]
+      (is (and (> log-ml -30) (< log-ml 0)) "log-ML in plausible range [-30, 0]"))))
 
-(println "\nAll SMCP3 kernel tests complete.")
+(deftest direct-init-step-test
+  (testing "direct smcp3-init + smcp3-step with kernels"
+    (let [n 10
+          key (rng/fresh-key)
+          [k1 k2] (rng/split-n (rng/ensure-key key) 2)
+          init-result (smcp3/smcp3-init model [] (first obs-seq) nil n k1)
+          step-result (smcp3/smcp3-step
+                        (:traces init-result)
+                        (:log-weights init-result)
+                        model (second obs-seq)
+                        fwd-kernel bwd-kernel
+                        n 0.5 nil k2)]
+      (is (some? (:traces init-result)) "init has :traces")
+      (is (some? (:log-weights init-result)) "init has :log-weights")
+      (is (some? (:log-ml-increment init-result)) "init has :log-ml-increment")
+      (is (some? (:traces step-result)) "step has :traces")
+      (is (some? (:log-weights step-result)) "step has :log-weights")
+      (is (some? (:log-ml-increment step-result)) "step has :log-ml-increment")
+      (is (some? (:ess step-result)) "step has :ess")
+      (is (contains? step-result :resampled?) "step has :resampled?")
+      (is (= n (count (:traces step-result))) "step traces count")
+      (is (= n (count (:log-weights step-result))) "step weights count"))))
+
+(cljs.test/run-tests)

@@ -10,7 +10,9 @@
    6. GFI contracts on compiled models
    7. Fallback to handler for non-static models
    8. Design constraints (no atoms/volatile! in compiled path)"
-  (:require [genmlx.gen :refer [gen]]
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.test-helpers :as h]
+            [genmlx.gen :refer [gen]]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.mlx :as mx]
@@ -23,33 +25,8 @@
             [genmlx.schema :as schema]))
 
 ;; ---------------------------------------------------------------------------
-;; Test helpers
+;; Test utilities
 ;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (atom 0))
-(def ^:private fail-count (atom 0))
-
-(defn- assert-true [desc pred]
-  (if pred
-    (do (swap! pass-count inc)
-        (println (str "  PASS: " desc)))
-    (do (swap! fail-count inc)
-        (println (str "  FAIL: " desc)))))
-
-(defn- assert-close [desc expected actual tol]
-  (let [diff (js/Math.abs (- expected actual))]
-    (if (<= diff tol)
-      (do (swap! pass-count inc)
-          (println (str "  PASS: " desc " (diff=" (.toFixed diff 6) ")")))
-      (do (swap! fail-count inc)
-          (println (str "  FAIL: " desc " expected=" expected " actual=" actual " diff=" diff))))))
-
-(defn- assert-equal [desc expected actual]
-  (if (= expected actual)
-    (do (swap! pass-count inc)
-        (println (str "  PASS: " desc)))
-    (do (swap! fail-count inc)
-        (println (str "  FAIL: " desc " expected=" expected " actual=" actual)))))
 
 (defn- force-handler
   "Return a copy of gf that always uses the handler path (no compiled-simulate)."
@@ -61,394 +38,387 @@
 ;; 1. Binding environment construction
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 1. Binding environment ==")
+(deftest binding-environment-test
+  (testing "single param + single trace"
+    (let [source '([x] (let [slope (trace :slope (dist/gaussian 0 10))] slope))
+          env (compiled/build-binding-env source)]
+      (is (= {:kind :param :index 0} (get env "x")) "param x")
+      (is (= {:kind :trace :addr :slope} (get env "slope")) "trace slope")))
 
-(let [source '([x] (let [slope (trace :slope (dist/gaussian 0 10))] slope))]
-  (let [env (compiled/build-binding-env source)]
-    (assert-equal "param x" {:kind :param :index 0} (get env "x"))
-    (assert-equal "trace slope" {:kind :trace :addr :slope} (get env "slope"))))
-
-(let [source '([x y] (let [a (trace :a (dist/gaussian 0 1))
-                            b (trace :b (dist/gaussian 0 1))
-                            c (mx/add a b)]
-                        (trace :d (dist/gaussian c 1))))]
-  (let [env (compiled/build-binding-env source)]
-    (assert-equal "param x idx 0" {:kind :param :index 0} (get env "x"))
-    (assert-equal "param y idx 1" {:kind :param :index 1} (get env "y"))
-    (assert-equal "trace a" {:kind :trace :addr :a} (get env "a"))
-    (assert-equal "trace b" {:kind :trace :addr :b} (get env "b"))
-    (assert-equal "expr c" {:kind :expr :form '(mx/add a b)} (get env "c"))))
+  (testing "multiple params + multiple traces + expr binding"
+    (let [source '([x y] (let [a (trace :a (dist/gaussian 0 1))
+                                b (trace :b (dist/gaussian 0 1))
+                                c (mx/add a b)]
+                            (trace :d (dist/gaussian c 1))))
+          env (compiled/build-binding-env source)]
+      (is (= {:kind :param :index 0} (get env "x")) "param x idx 0")
+      (is (= {:kind :param :index 1} (get env "y")) "param y idx 1")
+      (is (= {:kind :trace :addr :a} (get env "a")) "trace a")
+      (is (= {:kind :trace :addr :b} (get env "b")) "trace b")
+      (is (= {:kind :expr :form '(mx/add a b)} (get env "c")) "expr c"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 2. Expression compiler
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 2. Expression compiler ==")
+(deftest expression-compiler-test
+  (let [env {"x" {:kind :param :index 0}
+             "slope" {:kind :trace :addr :slope}
+             "predicted" {:kind :expr :form '(mx/multiply slope x)}}]
 
-(let [env {"x" {:kind :param :index 0}
-           "slope" {:kind :trace :addr :slope}
-           "predicted" {:kind :expr :form '(mx/multiply slope x)}}]
+    (testing "number literal"
+      (let [f (compiled/compile-expr 5 env #{})]
+        (is (= 5 (f {} [])) "number literal")))
 
-  ;; Number literal
-  (let [f (compiled/compile-expr 5 env #{})]
-    (assert-true "number literal" (= 5 (f {} []))))
+    (testing "param symbol"
+      (let [f (compiled/compile-expr 'x env #{})]
+        (is (= 42 (f {} [42])) "param symbol")))
 
-  ;; Param symbol
-  (let [f (compiled/compile-expr 'x env #{})]
-    (assert-true "param symbol" (= 42 (f {} [42]))))
+    (testing "trace symbol"
+      (let [f (compiled/compile-expr 'slope env #{})]
+        (is (= :val (f {:slope :val} [])) "trace symbol")))
 
-  ;; Trace symbol
-  (let [f (compiled/compile-expr 'slope env #{})]
-    (assert-true "trace symbol" (= :val (f {:slope :val} []))))
+    (testing "expr symbol (intermediate let binding)"
+      (let [f (compiled/compile-expr 'predicted env #{})
+            v {:slope (mx/scalar 3.0)}
+            a [(mx/scalar 2.0)]]
+        (is (some? f) "expr symbol compiled")
+        (is (h/close? 6.0 (mx/item (f v a)) 1e-6) "expr symbol value")))
 
-  ;; Expr symbol (intermediate let binding)
-  (let [f (compiled/compile-expr 'predicted env #{})
-        v {:slope (mx/scalar 3.0)}
-        a [(mx/scalar 2.0)]]
-    (assert-true "expr symbol compiled" (some? f))
-    (assert-close "expr symbol value" 6.0 (mx/item (f v a)) 1e-6))
+    (testing "function call: mx/add"
+      (let [f (compiled/compile-expr '(mx/add slope x) env #{})]
+        (is (some? f) "mx/add compiled")
+        (is (h/close? 5.0 (mx/item (f {:slope (mx/scalar 3.0)} [(mx/scalar 2.0)])) 1e-6)
+            "mx/add value")))
 
-  ;; Function call: mx/add
-  (let [f (compiled/compile-expr '(mx/add slope x) env #{})]
-    (assert-true "mx/add compiled" (some? f))
-    (assert-close "mx/add value" 5.0
-                  (mx/item (f {:slope (mx/scalar 3.0)} [(mx/scalar 2.0)])) 1e-6))
+    (testing "nested expression"
+      (let [f (compiled/compile-expr '(mx/add (mx/multiply slope x) slope) env #{})]
+        (is (some? f) "nested expr compiled")
+        (is (h/close? 9.0 (mx/item (f {:slope (mx/scalar 3.0)} [(mx/scalar 2.0)])) 1e-6)
+            "nested expr value")))
 
-  ;; Nested expression
-  (let [f (compiled/compile-expr '(mx/add (mx/multiply slope x) slope) env #{})]
-    (assert-true "nested expr compiled" (some? f))
-    (assert-close "nested expr value" 9.0
-                  (mx/item (f {:slope (mx/scalar 3.0)} [(mx/scalar 2.0)])) 1e-6))
+    (testing "unsupported: unknown symbol"
+      (let [f (compiled/compile-expr 'unknown env #{})]
+        (is (nil? f) "unknown symbol -> nil")))
 
-  ;; Unsupported: unknown symbol
-  (let [f (compiled/compile-expr 'unknown env #{})]
-    (assert-true "unknown symbol → nil" (nil? f)))
+    (testing "unsupported: unknown function"
+      (let [f (compiled/compile-expr '(custom/fn 1 2) env #{})]
+        (is (nil? f) "unknown fn -> nil")))
 
-  ;; Unsupported: unknown function
-  (let [f (compiled/compile-expr '(custom/fn 1 2) env #{})]
-    (assert-true "unknown fn → nil" (nil? f)))
+    (testing "keyword literal"
+      (let [f (compiled/compile-expr :foo env #{})]
+        (is (= :foo (f {} [])) "keyword literal")))
 
-  ;; Keyword literal
-  (let [f (compiled/compile-expr :foo env #{})]
-    (assert-true "keyword literal" (= :foo (f {} []))))
-
-  ;; Boolean literal
-  (let [f (compiled/compile-expr true env #{})]
-    (assert-true "boolean literal" (= true (f {} [])))))
+    (testing "boolean literal"
+      (let [f (compiled/compile-expr true env #{})]
+        (is (= true (f {} [])) "boolean literal")))))
 
 ;; ---------------------------------------------------------------------------
 ;; 3. Compilation gate tests
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 3. Compilation gates ==")
+(deftest compilation-gates-test
+  (testing "static model compiles"
+    (let [m (gen [] (trace :x (dist/gaussian 0 1)))]
+      (is (some? (:compiled-simulate (:schema m))) "static model compiles")))
 
-;; Static model → compiled
-(let [m (gen [] (trace :x (dist/gaussian 0 1)))]
-  (assert-true "static model compiles" (some? (:compiled-simulate (:schema m)))))
+  (testing "splice model not compiled"
+    (let [sub (gen [] (trace :a (dist/gaussian 0 1)))
+          m (gen [] (splice :sub sub))]
+      (is (nil? (:compiled-simulate (:schema m))) "splice model not compiled")))
 
-;; Model with splice → not compiled
-(let [sub (gen [] (trace :a (dist/gaussian 0 1)))
-      m (gen [] (splice :sub sub))]
-  (assert-true "splice model not compiled" (nil? (:compiled-simulate (:schema m)))))
+  (testing "dynamic addr schema not static"
+    (let [source '([n] (doseq [i (range n)]
+                         (trace (keyword (str "x" i)) (dist/gaussian 0 1))))
+          schema (schema/extract-schema source)]
+      (is (not (:static? schema)) "dynamic addr schema not static")))
 
-;; Model with dynamic addresses → not compiled
-(let [source '([n] (doseq [i (range n)]
-                     (trace (keyword (str "x" i)) (dist/gaussian 0 1))))
-      schema (schema/extract-schema source)]
-  (assert-true "dynamic addr schema not static" (not (:static? schema))))
-
-;; Model with branches → not compiled
-(let [m (gen [flag]
-          (if flag
-            (trace :a (dist/gaussian 0 1))
-            (trace :b (dist/gaussian 0 1))))]
-  (assert-true "branching model not compiled" (nil? (:compiled-simulate (:schema m)))))
+  (testing "branching model not compiled"
+    (let [m (gen [flag]
+              (if flag
+                (trace :a (dist/gaussian 0 1))
+                (trace :b (dist/gaussian 0 1))))]
+      (is (nil? (:compiled-simulate (:schema m))) "branching model not compiled"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 4. Model tests: compiled simulate correctness
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 4. Compiled simulate correctness ==")
+(deftest compiled-simulate-correctness-test
+  (testing "single site, constant args"
+    (let [m (gen [] (trace :x (dist/gaussian 0 1)))
+          k (rng/fresh-key 42)
+          t (p/simulate (dyn/with-key m k) [])]
+      (is (cm/has-value? (cm/get-submap (:choices t) :x)) "single site: has :x")
+      (is (js/isFinite (mx/item (:score t))) "single site: finite score")))
 
-;; Model 1: Single site, constant args
-(let [m (gen [] (trace :x (dist/gaussian 0 1)))
-      k (rng/fresh-key 42)
-      t (p/simulate (dyn/with-key m k) [])]
-  (assert-true "single site: has :x" (cm/has-value? (cm/get-submap (:choices t) :x)))
-  (assert-true "single site: finite score" (js/isFinite (mx/item (:score t)))))
+  (testing "multi-site, independent"
+    (let [m (gen []
+              (trace :a (dist/gaussian 0 10))
+              (trace :b (dist/uniform 0 1))
+              (trace :c (dist/bernoulli 0.5)))
+          k (rng/fresh-key 42)
+          t (p/simulate (dyn/with-key m k) [])]
+      (is (cm/has-value? (cm/get-submap (:choices t) :a)) "multi-site: has :a")
+      (is (cm/has-value? (cm/get-submap (:choices t) :b)) "multi-site: has :b")
+      (is (cm/has-value? (cm/get-submap (:choices t) :c)) "multi-site: has :c")
+      (is (js/isFinite (mx/item (:score t))) "multi-site: finite score")))
 
-;; Model 2: Multi-site, independent
-(let [m (gen []
-          (trace :a (dist/gaussian 0 10))
-          (trace :b (dist/uniform 0 1))
-          (trace :c (dist/bernoulli 0.5)))
-      k (rng/fresh-key 42)
-      t (p/simulate (dyn/with-key m k) [])]
-  (assert-true "multi-site: has :a" (cm/has-value? (cm/get-submap (:choices t) :a)))
-  (assert-true "multi-site: has :b" (cm/has-value? (cm/get-submap (:choices t) :b)))
-  (assert-true "multi-site: has :c" (cm/has-value? (cm/get-submap (:choices t) :c)))
-  (assert-true "multi-site: finite score" (js/isFinite (mx/item (:score t)))))
+  (testing "dependent sites with gen arg"
+    (let [m (gen [x]
+              (let [slope (trace :slope (dist/gaussian 0 10))
+                    intercept (trace :intercept (dist/gaussian 0 5))]
+                (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
+                slope))
+          k (rng/fresh-key 42)
+          t (p/simulate (dyn/with-key m k) [(mx/scalar 2.0)])]
+      (is (cm/has-value? (cm/get-submap (:choices t) :slope)) "dependent: has :slope")
+      (is (cm/has-value? (cm/get-submap (:choices t) :intercept)) "dependent: has :intercept")
+      (is (cm/has-value? (cm/get-submap (:choices t) :y)) "dependent: has :y")
+      (is (js/isFinite (mx/item (:score t))) "dependent: finite score")
+      (is (mx/array? (:retval t)) "dependent: retval is slope")))
 
-;; Model 3: Dependent sites with gen arg
-(let [m (gen [x]
-          (let [slope (trace :slope (dist/gaussian 0 10))
-                intercept (trace :intercept (dist/gaussian 0 5))]
-            (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
-            slope))
-      k (rng/fresh-key 42)
-      t (p/simulate (dyn/with-key m k) [(mx/scalar 2.0)])]
-  (assert-true "dependent: has :slope" (cm/has-value? (cm/get-submap (:choices t) :slope)))
-  (assert-true "dependent: has :intercept" (cm/has-value? (cm/get-submap (:choices t) :intercept)))
-  (assert-true "dependent: has :y" (cm/has-value? (cm/get-submap (:choices t) :y)))
-  (assert-true "dependent: finite score" (js/isFinite (mx/item (:score t))))
-  (assert-true "dependent: retval is slope" (mx/array? (:retval t))))
+  (testing "return expression (not just a symbol)"
+    (let [m (gen [x]
+              (let [a (trace :a (dist/gaussian 0 1))]
+                (mx/multiply a x)))
+          k (rng/fresh-key 42)
+          t (p/simulate (dyn/with-key m k) [(mx/scalar 5.0)])
+          a-val (mx/item (cm/get-value (cm/get-submap (:choices t) :a)))
+          retval (mx/item (:retval t))]
+      (is (h/close? (* a-val 5.0) retval 1e-5) "return expr: retval = a * x")))
 
-;; Model 4: Return expression (not just a symbol)
-(let [m (gen [x]
-          (let [a (trace :a (dist/gaussian 0 1))]
-            (mx/multiply a x)))
-      k (rng/fresh-key 42)
-      t (p/simulate (dyn/with-key m k) [(mx/scalar 5.0)])]
-  (let [a-val (mx/item (cm/get-value (cm/get-submap (:choices t) :a)))
-        retval (mx/item (:retval t))]
-    (assert-close "return expr: retval = a * x" (* a-val 5.0) retval 1e-5)))
+  (testing "intermediate let binding (expr, not trace)"
+    (let [m (gen [x]
+              (let [slope (trace :slope (dist/gaussian 0 10))
+                    predicted (mx/multiply slope x)]
+                (trace :y (dist/gaussian predicted 1))
+                predicted))
+          k (rng/fresh-key 42)
+          t (p/simulate (dyn/with-key m k) [(mx/scalar 3.0)])
+          slope-val (mx/item (cm/get-value (cm/get-submap (:choices t) :slope)))
+          retval (mx/item (:retval t))]
+      (is (h/close? (* slope-val 3.0) retval 1e-5) "intermediate let: retval = slope * x")))
 
-;; Model 5: Intermediate let binding (expr, not trace)
-(let [m (gen [x]
-          (let [slope (trace :slope (dist/gaussian 0 10))
-                predicted (mx/multiply slope x)]
-            (trace :y (dist/gaussian predicted 1))
-            predicted))
-      k (rng/fresh-key 42)
-      t (p/simulate (dyn/with-key m k) [(mx/scalar 3.0)])]
-  (let [slope-val (mx/item (cm/get-value (cm/get-submap (:choices t) :slope)))
-        retval (mx/item (:retval t))]
-    (assert-close "intermediate let: retval = slope * x" (* slope-val 3.0) retval 1e-5)))
-
-;; Model 6: Multiple distributions
-(let [m (gen []
-          (let [mu (trace :mu (dist/gaussian 0 5))
-                p  (trace :p (dist/uniform 0 1))]
-            (trace :obs (dist/gaussian mu 1))
-            (trace :coin (dist/bernoulli p))
-            mu))
-      k (rng/fresh-key 42)
-      t (p/simulate (dyn/with-key m k) [])]
-  (assert-true "multi-dist: has :mu" (cm/has-value? (cm/get-submap (:choices t) :mu)))
-  (assert-true "multi-dist: has :p" (cm/has-value? (cm/get-submap (:choices t) :p)))
-  (assert-true "multi-dist: has :obs" (cm/has-value? (cm/get-submap (:choices t) :obs)))
-  (assert-true "multi-dist: has :coin" (cm/has-value? (cm/get-submap (:choices t) :coin)))
-  (assert-true "multi-dist: finite score" (js/isFinite (mx/item (:score t)))))
+  (testing "multiple distributions"
+    (let [m (gen []
+              (let [mu (trace :mu (dist/gaussian 0 5))
+                    p  (trace :p (dist/uniform 0 1))]
+                (trace :obs (dist/gaussian mu 1))
+                (trace :coin (dist/bernoulli p))
+                mu))
+          k (rng/fresh-key 42)
+          t (p/simulate (dyn/with-key m k) [])]
+      (is (cm/has-value? (cm/get-submap (:choices t) :mu)) "multi-dist: has :mu")
+      (is (cm/has-value? (cm/get-submap (:choices t) :p)) "multi-dist: has :p")
+      (is (cm/has-value? (cm/get-submap (:choices t) :obs)) "multi-dist: has :obs")
+      (is (cm/has-value? (cm/get-submap (:choices t) :coin)) "multi-dist: has :coin")
+      (is (js/isFinite (mx/item (:score t))) "multi-dist: finite score"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 5. PRNG equivalence: compiled vs handler
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 5. PRNG equivalence ==")
+(deftest prng-equivalence-test
+  (letfn [(test-equivalence [desc model args]
+            (let [k (rng/fresh-key 77)
+                  compiled-trace (p/simulate (dyn/with-key model k) args)
+                  k2 (rng/fresh-key 77)
+                  handler-trace (p/simulate (dyn/with-key (force-handler model) k2) args)]
+              (is (h/close? (mx/item (:score compiled-trace))
+                            (mx/item (:score handler-trace))
+                            1e-5)
+                  (str desc " score"))
+              (doseq [ts (:trace-sites (:schema model))]
+                (let [addr (:addr ts)
+                      cv (mx/item (cm/get-value (cm/get-submap (:choices compiled-trace) addr)))
+                      hv (mx/item (cm/get-value (cm/get-submap (:choices handler-trace) addr)))]
+                  (is (h/close? cv hv 1e-5) (str desc " " addr))))))]
 
-(defn- test-equivalence [desc model args]
-  (let [k (rng/fresh-key 77)
-        compiled-trace (p/simulate (dyn/with-key model k) args)
-        k2 (rng/fresh-key 77)
-        handler-trace (p/simulate (dyn/with-key (force-handler model) k2) args)]
-    ;; Compare scores — mx/compile-fn graph fusion may introduce ~1e-6 diffs
-    (assert-close (str desc " score")
-                  (mx/item (:score compiled-trace))
-                  (mx/item (:score handler-trace))
-                  1e-5)
-    ;; Compare each choice
-    (doseq [ts (:trace-sites (:schema model))]
-      (let [addr (:addr ts)
-            cv (mx/item (cm/get-value (cm/get-submap (:choices compiled-trace) addr)))
-            hv (mx/item (cm/get-value (cm/get-submap (:choices handler-trace) addr)))]
-        (assert-close (str desc " " addr) cv hv 1e-5)))))
+    (testing "single-site"
+      (test-equivalence "single-site"
+        (gen [] (trace :x (dist/gaussian 0 1)))
+        []))
 
-(test-equivalence "single-site"
-  (gen [] (trace :x (dist/gaussian 0 1)))
-  [])
+    (testing "multi-site"
+      (test-equivalence "multi-site"
+        (gen []
+          (trace :a (dist/gaussian 0 10))
+          (trace :b (dist/gaussian 5 2)))
+        []))
 
-(test-equivalence "multi-site"
-  (gen []
-    (trace :a (dist/gaussian 0 10))
-    (trace :b (dist/gaussian 5 2)))
-  [])
+    (testing "dependent-linreg"
+      (test-equivalence "dependent-linreg"
+        (gen [x]
+          (let [slope (trace :slope (dist/gaussian 0 10))
+                intercept (trace :intercept (dist/gaussian 0 5))]
+            (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
+            slope))
+        [(mx/scalar 2.5)]))
 
-(test-equivalence "dependent-linreg"
-  (gen [x]
-    (let [slope (trace :slope (dist/gaussian 0 10))
-          intercept (trace :intercept (dist/gaussian 0 5))]
-      (trace :y (dist/gaussian (mx/add (mx/multiply slope x) intercept) 1))
-      slope))
-  [(mx/scalar 2.5)])
+    (testing "intermediate-let"
+      (test-equivalence "intermediate-let"
+        (gen [x]
+          (let [slope (trace :slope (dist/gaussian 0 10))
+                predicted (mx/multiply slope x)]
+            (trace :y (dist/gaussian predicted 1))
+            predicted))
+        [(mx/scalar 3.0)]))
 
-(test-equivalence "intermediate-let"
-  (gen [x]
-    (let [slope (trace :slope (dist/gaussian 0 10))
-          predicted (mx/multiply slope x)]
-      (trace :y (dist/gaussian predicted 1))
-      predicted))
-  [(mx/scalar 3.0)])
-
-(test-equivalence "uniform+bernoulli"
-  (gen []
-    (let [p (trace :p (dist/uniform 0 1))]
-      (trace :coin (dist/bernoulli p))
-      p))
-  [])
+    (testing "uniform+bernoulli"
+      (test-equivalence "uniform+bernoulli"
+        (gen []
+          (let [p (trace :p (dist/uniform 0 1))]
+            (trace :coin (dist/bernoulli p))
+            p))
+        []))))
 
 ;; ---------------------------------------------------------------------------
 ;; 6. Score correctness (manual verification)
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 6. Score correctness ==")
+(deftest score-correctness-test
+  (testing "single site: score = manual log-prob"
+    (let [m (gen [] (trace :x (dist/gaussian 0 1)))
+          k (rng/fresh-key 42)
+          t (p/simulate (dyn/with-key m k) [])
+          x-val (cm/get-value (cm/get-submap (:choices t) :x))
+          manual-lp (mx/item (dc/dist-log-prob (dist/gaussian 0 1) x-val))]
+      (is (h/close? manual-lp (mx/item (:score t)) 1e-6) "score = manual log-prob")))
 
-(let [m (gen [] (trace :x (dist/gaussian 0 1)))
-      k (rng/fresh-key 42)
-      t (p/simulate (dyn/with-key m k) [])
-      x-val (cm/get-value (cm/get-submap (:choices t) :x))
-      ;; Manual: log-prob of gaussian(0,1) at x
-      manual-lp (mx/item (dc/dist-log-prob (dist/gaussian 0 1) x-val))]
-  (assert-close "score = manual log-prob" manual-lp (mx/item (:score t)) 1e-6))
-
-(let [m (gen []
-          (let [a (trace :a (dist/gaussian 0 10))]
-            (trace :b (dist/gaussian a 1))
-            a))
-      k (rng/fresh-key 42)
-      t (p/simulate (dyn/with-key m k) [])
-      a-val (cm/get-value (cm/get-submap (:choices t) :a))
-      b-val (cm/get-value (cm/get-submap (:choices t) :b))
-      manual-score (+ (mx/item (dc/dist-log-prob (dist/gaussian 0 10) a-val))
-                      (mx/item (dc/dist-log-prob (dist/gaussian a-val 1) b-val)))]
-  (assert-close "multi-site score = sum of log-probs" manual-score (mx/item (:score t)) 1e-5))
+  (testing "multi-site: score = sum of log-probs"
+    (let [m (gen []
+              (let [a (trace :a (dist/gaussian 0 10))]
+                (trace :b (dist/gaussian a 1))
+                a))
+          k (rng/fresh-key 42)
+          t (p/simulate (dyn/with-key m k) [])
+          a-val (cm/get-value (cm/get-submap (:choices t) :a))
+          b-val (cm/get-value (cm/get-submap (:choices t) :b))
+          manual-score (+ (mx/item (dc/dist-log-prob (dist/gaussian 0 10) a-val))
+                          (mx/item (dc/dist-log-prob (dist/gaussian a-val 1) b-val)))]
+      (is (h/close? manual-score (mx/item (:score t)) 1e-5)
+          "multi-site score = sum of log-probs"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 7. GFI operations still work on compiled models
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 7. GFI operations on compiled models ==")
+(deftest gfi-operations-test
+  (let [m (gen [x]
+            (let [slope (trace :slope (dist/gaussian 0 10))]
+              (trace :y (dist/gaussian (mx/multiply slope x) 1))
+              slope))
+        k (rng/fresh-key 42)]
 
-(let [m (gen [x]
-          (let [slope (trace :slope (dist/gaussian 0 10))]
-            (trace :y (dist/gaussian (mx/multiply slope x) 1))
-            slope))
-      k (rng/fresh-key 42)]
+    (testing "simulate works (compiled)"
+      (let [t (p/simulate (dyn/with-key m k) [(mx/scalar 2.0)])]
+        (is (some? t) "simulate works")
+        (is (cm/has-value? (cm/get-submap (:choices t) :slope)) "simulate has choices")))
 
-  ;; simulate works (compiled)
-  (let [t (p/simulate (dyn/with-key m k) [(mx/scalar 2.0)])]
-    (assert-true "simulate works" (some? t))
-    (assert-true "simulate has choices" (cm/has-value? (cm/get-submap (:choices t) :slope))))
+    (testing "generate works"
+      (let [obs (cm/set-value cm/EMPTY :y (mx/scalar 5.0))
+            {:keys [trace weight]} (p/generate (dyn/with-key m (rng/fresh-key 42))
+                                               [(mx/scalar 2.0)] obs)]
+        (is (some? trace) "generate works")
+        (is (js/isFinite (mx/item weight)) "generate has weight")))
 
-  ;; generate works (falls back to handler since only simulate is compiled)
-  (let [obs (cm/set-value cm/EMPTY :y (mx/scalar 5.0))
-        {:keys [trace weight]} (p/generate (dyn/with-key m (rng/fresh-key 42))
-                                           [(mx/scalar 2.0)] obs)]
-    (assert-true "generate works" (some? trace))
-    (assert-true "generate has weight" (js/isFinite (mx/item weight))))
-
-  ;; update works (handler path)
-  (let [t1 (p/simulate (dyn/with-key m (rng/fresh-key 42)) [(mx/scalar 2.0)])
-        new-obs (cm/set-value cm/EMPTY :y (mx/scalar 3.0))
-        {:keys [trace weight]} (p/update (dyn/with-key m (rng/fresh-key 43)) t1 new-obs)]
-    (assert-true "update works" (some? trace))
-    (assert-true "update has weight" (js/isFinite (mx/item weight)))))
+    (testing "update works (handler path)"
+      (let [t1 (p/simulate (dyn/with-key m (rng/fresh-key 42)) [(mx/scalar 2.0)])
+            new-obs (cm/set-value cm/EMPTY :y (mx/scalar 3.0))
+            {:keys [trace weight]} (p/update (dyn/with-key m (rng/fresh-key 43)) t1 new-obs)]
+        (is (some? trace) "update works")
+        (is (js/isFinite (mx/item weight)) "update has weight")))))
 
 ;; ---------------------------------------------------------------------------
 ;; 8. Handler fallback for non-compilable models
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 8. Handler fallback ==")
+(deftest handler-fallback-test
+  (testing "splice model simulates via handler"
+    (let [sub (gen [] (trace :a (dist/gaussian 0 1)))
+          m (gen [] (splice :sub sub))
+          t (p/simulate (dyn/auto-key m) [])]
+      (is (some? t) "splice model simulates")))
 
-;; Model with splice → handler
-(let [sub (gen [] (trace :a (dist/gaussian 0 1)))
-      m (gen [] (splice :sub sub))]
-  (let [t (p/simulate (dyn/auto-key m) [])]
-    (assert-true "splice model simulates" (some? t))))
-
-;; Model with loop → handler
-(let [m (gen [n]
-          (doseq [i (range n)]
-            (trace (keyword (str "x" i)) (dist/gaussian 0 1))))]
-  (assert-true "loop model: not compiled" (nil? (:compiled-simulate (:schema m))))
-  (assert-true "loop model: not static" (not (:static? (:schema m)))))
+  (testing "loop model: not compiled, not static"
+    (let [m (gen [n]
+              (doseq [i (range n)]
+                (trace (keyword (str "x" i)) (dist/gaussian 0 1))))]
+      (is (nil? (:compiled-simulate (:schema m))) "loop model: not compiled")
+      (is (not (:static? (:schema m))) "loop model: not static"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 9. Design constraint verification
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 9. Design constraints ==")
+(deftest design-constraints-test
+  (testing "DC-3: compiled-simulate is a pure function"
+    (let [m (gen [] (trace :x (dist/gaussian 0 1)))
+          csim (:compiled-simulate (:schema m))
+          k (rng/fresh-key 42)
+          _ (rng/seed! k)
+          r1 (csim k [])
+          _ (mx/materialize! (:score r1) (get (:values r1) :x))
+          _ (rng/seed! k)
+          r2 (csim k [])]
+      (is (h/close? (mx/item (:score r1)) (mx/item (:score r2)) 1e-6)
+          "DC-3: same key -> same score")
+      (is (h/close? (mx/item (get (:values r1) :x))
+                    (mx/item (get (:values r2) :x))
+                    1e-6)
+          "DC-3: same key -> same value")))
 
-;; DC-3: compiled-simulate is a pure function
-;; Calling it twice with same inputs and same seed gives same results
-(let [m (gen [] (trace :x (dist/gaussian 0 1)))
-      csim (:compiled-simulate (:schema m))
-      k (rng/fresh-key 42)
-      _ (rng/seed! k)
-      r1 (csim k [])
-      _ (mx/materialize! (:score r1) (get (:values r1) :x))
-      _ (rng/seed! k)
-      r2 (csim k [])]
-  (assert-close "DC-3: same key → same score"
-                (mx/item (:score r1)) (mx/item (:score r2)) 1e-6)
-  (assert-close "DC-3: same key → same value"
-                (mx/item (get (:values r1) :x))
-                (mx/item (get (:values r2) :x))
-                1e-6))
+  (testing "DC-4: DynamicGF dispatches compiled vs handler"
+    (let [m (gen [] (trace :x (dist/gaussian 0 1)))]
+      (is (some? (:compiled-simulate (:schema m)))
+          "DC-4: static model has compiled-simulate")
+      (is (fn? (:compiled-simulate (:schema m)))
+          "DC-4: compiled-simulate is a fn")))
 
-;; DC-4: DynamicGF dispatches compiled vs handler
-(let [m (gen [] (trace :x (dist/gaussian 0 1)))]
-  (assert-true "DC-4: static model has compiled-simulate"
-               (some? (:compiled-simulate (:schema m))))
-  (assert-true "DC-4: compiled-simulate is a fn"
-               (fn? (:compiled-simulate (:schema m)))))
-
-;; DC-6: compiled fn returns raw values, not choicemaps
-(let [m (gen [] (trace :x (dist/gaussian 0 1)))
-      csim (:compiled-simulate (:schema m))
-      result (csim (rng/fresh-key 42) [])]
-  (assert-true "DC-6: values is a map" (map? (:values result)))
-  (assert-true "DC-6: values :x is MLX array" (mx/array? (get (:values result) :x)))
-  (assert-true "DC-6: score is MLX array" (mx/array? (:score result))))
+  (testing "DC-6: compiled fn returns raw values, not choicemaps"
+    (let [m (gen [] (trace :x (dist/gaussian 0 1)))
+          csim (:compiled-simulate (:schema m))
+          result (csim (rng/fresh-key 42) [])]
+      (is (map? (:values result)) "DC-6: values is a map")
+      (is (mx/array? (get (:values result) :x)) "DC-6: values :x is MLX array")
+      (is (mx/array? (:score result)) "DC-6: score is MLX array"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 10. Edge cases
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 10. Edge cases ==")
+(deftest edge-cases-test
+  (testing "model with nil return value"
+    (let [m (gen [] (trace :x (dist/gaussian 0 1)) nil)
+          t (p/simulate (dyn/auto-key m) [])]
+      (is (nil? (:retval t)) "nil return")))
 
-;; Model with no return value (returns nil)
-(let [m (gen [] (trace :x (dist/gaussian 0 1)) nil)
-      t (p/simulate (dyn/auto-key m) [])]
-  (assert-true "nil return" (nil? (:retval t))))
+  (testing "model returning a number"
+    (let [m (gen [] (trace :x (dist/gaussian 0 1)) 42)
+          t (p/simulate (dyn/auto-key m) [])]
+      (is (= 42 (:retval t)) "number return")))
 
-;; Model returning a number
-(let [m (gen [] (trace :x (dist/gaussian 0 1)) 42)
-      t (p/simulate (dyn/auto-key m) [])]
-  (assert-equal "number return" 42 (:retval t)))
+  (testing "single-site model where return IS the trace call"
+    (let [m (gen [] (trace :x (dist/gaussian 0 1)))
+          t (p/simulate (dyn/auto-key m) [])]
+      (is (mx/array? (:retval t)) "trace-as-return: retval is MLX array")
+      (is (h/close? (mx/item (:retval t))
+                    (mx/item (cm/get-value (cm/get-submap (:choices t) :x)))
+                    1e-6)
+          "trace-as-return: retval = :x value")))
 
-;; Single-site model where return IS the trace call
-(let [m (gen [] (trace :x (dist/gaussian 0 1)))
-      t (p/simulate (dyn/auto-key m) [])]
-  (assert-true "trace-as-return: retval is MLX array" (mx/array? (:retval t)))
-  (assert-close "trace-as-return: retval = :x value"
-                (mx/item (:retval t))
-                (mx/item (cm/get-value (cm/get-submap (:choices t) :x)))
-                1e-6))
-
-;; Model with multiple gen params
-(let [m (gen [a b c]
-          (trace :x (dist/gaussian a b))
-          (trace :y (dist/gaussian b c)))
-      t (p/simulate (dyn/auto-key m) [(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)])]
-  (assert-true "multi-param: compiles" (some? (:compiled-simulate (:schema m))))
-  (assert-true "multi-param: has :x" (cm/has-value? (cm/get-submap (:choices t) :x)))
-  (assert-true "multi-param: has :y" (cm/has-value? (cm/get-submap (:choices t) :y))))
+  (testing "model with multiple gen params"
+    (let [m (gen [a b c]
+              (trace :x (dist/gaussian a b))
+              (trace :y (dist/gaussian b c)))
+          t (p/simulate (dyn/auto-key m) [(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)])]
+      (is (some? (:compiled-simulate (:schema m))) "multi-param: compiles")
+      (is (cm/has-value? (cm/get-submap (:choices t) :x)) "multi-param: has :x")
+      (is (cm/has-value? (cm/get-submap (:choices t) :y)) "multi-param: has :y"))))
 
 ;; ---------------------------------------------------------------------------
-;; Summary
+;; Run
 ;; ---------------------------------------------------------------------------
 
-(println (str "\n== L1-M2 Results: " @pass-count "/" (+ @pass-count @fail-count)
-              " passed =="))
-(when (pos? @fail-count)
-  (println (str "FAILURES: " @fail-count)))
+(cljs.test/run-tests)

@@ -4,25 +4,13 @@
    the cumulative iteration threshold that triggers a known MLX/nbb segfault
    in fresh processes (both Bun and Node.js). See memory/bug_bun_segfault_vmap.md.
    Full convergence testing is done via REPL where no limit exists."
-  (:require [genmlx.mlx :as mx]
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.test-helpers :as h]
+            [genmlx.mlx :as mx]
             [genmlx.choicemap :as cm]
             [genmlx.dist :as dist]
             [genmlx.inference.compiled-optimizer :as co])
   (:require-macros [genmlx.gen :refer [gen]]))
-
-;; ---------------------------------------------------------------------------
-;; Test helpers
-;; ---------------------------------------------------------------------------
-
-(def ^:dynamic *pass-count* (atom 0))
-(def ^:dynamic *fail-count* (atom 0))
-
-(defn assert-true [msg pred]
-  (if pred
-    (do (swap! *pass-count* inc)
-        (println (str "  PASS: " msg)))
-    (do (swap! *fail-count* inc)
-        (println (str "  FAIL: " msg)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Test model
@@ -36,52 +24,26 @@
          mu)))
 
 ;; ---------------------------------------------------------------------------
-;; Single fused-learn :vi call — all assertions in one shot
-;; ---------------------------------------------------------------------------
-;; NOTE: Cumulative VI iterations in a fresh nbb process trigger a segfault
-;; (MLX/nbb interaction, not Bun). We use ONE call with 20 iterations to
-;; verify the full :vi dispatch path without hitting the threshold.
-
-(println "\n=== WP-2 Fused VI Tests ===")
-
-(let [obs (cm/choicemap {:y (mx/scalar 5.0)})
-      result (co/fused-learn simple-model [] obs [:mu :sigma] :vi
-                             {:iterations 20 :lr 0.01})]
-
-  ;; Dispatch metadata
-  (assert-true ":compilation-level is :vi"
-               (= :vi (:compilation-level result)))
-  (assert-true ":method is :vi"
-               (= :vi (:method result)))
-
-  ;; VI output structure
-  (assert-true "returns :mu"
-               (some? (:mu result)))
-  (assert-true "returns :sigma"
-               (some? (:sigma result)))
-  (assert-true "returns :elbo-history"
-               (some? (:elbo-history result)))
-  (assert-true "returns :sample-fn"
-               (fn? (:sample-fn result)))
-
-  ;; ELBO history
-  (assert-true "elbo-history is non-empty"
-               (pos? (count (:elbo-history result))))
-
-  ;; sample-fn works
-  (let [samples ((:sample-fn result) 5)]
-    (assert-true "sample-fn produces 5 samples"
-                 (= 5 (count samples)))))
-
-;; ---------------------------------------------------------------------------
-;; Summary
+;; Tests
 ;; ---------------------------------------------------------------------------
 
-(println (str "\n=== WP-2 Fused VI Test Summary ==="))
-(println (str "  PASS: " @*pass-count*))
-(println (str "  FAIL: " @*fail-count*))
-(println (str "  TOTAL: " (+ @*pass-count* @*fail-count*)))
-(when (pos? @*fail-count*)
-  (println "  *** FAILURES DETECTED ***"))
-(when (zero? @*fail-count*)
-  (println "  All tests passed!"))
+(deftest fused-vi-dispatch-test
+  (testing "single fused-learn :vi call"
+    (let [obs (cm/choicemap {:y (mx/scalar 5.0)})
+          result (co/fused-learn simple-model [] obs [:mu :sigma] :vi
+                                 {:iterations 20 :lr 0.01})]
+      ;; Dispatch metadata
+      (is (= :vi (:compilation-level result)) ":compilation-level is :vi")
+      (is (= :vi (:method result)) ":method is :vi")
+      ;; VI output structure
+      (is (some? (:mu result)) "returns :mu")
+      (is (some? (:sigma result)) "returns :sigma")
+      (is (some? (:elbo-history result)) "returns :elbo-history")
+      (is (fn? (:sample-fn result)) "returns :sample-fn")
+      ;; ELBO history
+      (is (pos? (count (:elbo-history result))) "elbo-history is non-empty")
+      ;; sample-fn works
+      (let [samples ((:sample-fn result) 5)]
+        (is (= 5 (count samples)) "sample-fn produces 5 samples")))))
+
+(cljs.test/run-tests)

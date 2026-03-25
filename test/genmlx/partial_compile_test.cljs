@@ -3,7 +3,7 @@
 
    Tests cover:
    1. Prefix extraction (extract-prefix-sites)
-   2. Prefix gates (splice/param → no prefix; static → L1-M2 not M3)
+   2. Prefix gates (splice/param -> no prefix; static -> L1-M2 not M3)
    3. Single-prefix-site models
    4. Multi-prefix-site models
    5. Dependent prefix sites (b depends on a)
@@ -15,7 +15,9 @@
    11. Non-compilable cutoff (unsupported dist truncates prefix)
    12. All distributions in prefix (each noise transform type)
    13. Edge cases"
-  (:require [genmlx.gen :refer [gen]]
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.test-helpers :as h]
+            [genmlx.gen :refer [gen]]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.mlx :as mx]
@@ -25,37 +27,12 @@
             [genmlx.trace :as tr]
             [genmlx.compiled :as compiled]
             [genmlx.schema :as schema]
-            [genmlx.handler :as h]
+            [genmlx.handler :as handler]
             [genmlx.selection :as sel]))
 
 ;; ---------------------------------------------------------------------------
-;; Test helpers
+;; Test utilities
 ;; ---------------------------------------------------------------------------
-
-(def ^:private pass-count (atom 0))
-(def ^:private fail-count (atom 0))
-
-(defn- assert-true [desc pred]
-  (if pred
-    (do (swap! pass-count inc)
-        (println (str "  PASS: " desc)))
-    (do (swap! fail-count inc)
-        (println (str "  FAIL: " desc)))))
-
-(defn- assert-close [desc expected actual tol]
-  (let [diff (js/Math.abs (- expected actual))]
-    (if (<= diff tol)
-      (do (swap! pass-count inc)
-          (println (str "  PASS: " desc " (diff=" (.toFixed diff 6) ")")))
-      (do (swap! fail-count inc)
-          (println (str "  FAIL: " desc " expected=" expected " actual=" actual " diff=" diff))))))
-
-(defn- assert-equal [desc expected actual]
-  (if (= expected actual)
-    (do (swap! pass-count inc)
-        (println (str "  PASS: " desc)))
-    (do (swap! fail-count inc)
-        (println (str "  FAIL: " desc " expected=" expected " actual=" actual)))))
 
 (defn- force-handler
   "Return a copy of gf that always uses the handler path (no compiled paths)."
@@ -171,399 +148,363 @@
         (trace (keyword (str "y" i)) (dist/gaussian a 1)))
       a)))
 
-(println "\n========================================")
-(println "L1-M3: Partial Compilation for Dynamic Models")
-(println "========================================")
-
 ;; ---------------------------------------------------------------------------
 ;; 1. Prefix extraction
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 1. Prefix extraction ==")
+(deftest prefix-extraction-test
+  (testing "loop model: 2 prefix sites before doseq"
+    (let [sites (compiled/extract-prefix-sites (:source loop-model))]
+      (is (= 2 (count sites)) "loop-model has 2 prefix sites")
+      (is (= :mu (:addr (first sites))) "first prefix addr is :mu")
+      (is (= :sigma (:addr (second sites))) "second prefix addr is :sigma")
+      (is (= :gaussian (:dist-type (first sites))) "mu dist-type is gaussian")
+      (is (= :exponential (:dist-type (second sites))) "sigma dist-type is exponential")))
 
-;; Loop model: 2 prefix sites before doseq
-(let [sites (compiled/extract-prefix-sites (:source loop-model))]
-  (assert-true "loop-model has 2 prefix sites" (= 2 (count sites)))
-  (assert-equal "first prefix addr is :mu" :mu (:addr (first sites)))
-  (assert-equal "second prefix addr is :sigma" :sigma (:addr (second sites)))
-  (assert-equal "mu dist-type is gaussian" :gaussian (:dist-type (first sites)))
-  (assert-equal "sigma dist-type is exponential" :exponential (:dist-type (second sites))))
+  (testing "branch model: 1 prefix site before if"
+    (let [sites (compiled/extract-prefix-sites (:source branch-model))]
+      (is (= 1 (count sites)) "branch-model has 1 prefix site")
+      (is (= :mu (:addr (first sites))) "prefix addr is :mu")))
 
-;; Branch model: 1 prefix site before if
-(let [sites (compiled/extract-prefix-sites (:source branch-model))]
-  (assert-true "branch-model has 1 prefix site" (= 1 (count sites)))
-  (assert-equal "prefix addr is :mu" :mu (:addr (first sites))))
+  (testing "single prefix model: 1 prefix site before doseq"
+    (let [sites (compiled/extract-prefix-sites (:source single-prefix-model))]
+      (is (= 1 (count sites)) "single-prefix has 1 site")
+      (is (= :x (:addr (first sites))) "prefix addr is :x")))
 
-;; Single prefix model: 1 prefix site before doseq
-(let [sites (compiled/extract-prefix-sites (:source single-prefix-model))]
-  (assert-true "single-prefix has 1 site" (= 1 (count sites)))
-  (assert-equal "prefix addr is :x" :x (:addr (first sites))))
+  (testing "all-dynamic: 0 prefix sites"
+    (let [sites (compiled/extract-prefix-sites (:source all-dynamic-model))]
+      (is (= 0 (count sites)) "all-dynamic has 0 prefix sites")))
 
-;; All-dynamic: 0 prefix sites (doseq immediately)
-(let [sites (compiled/extract-prefix-sites (:source all-dynamic-model))]
-  (assert-true "all-dynamic has 0 prefix sites" (= 0 (count sites))))
+  (testing "dependent prefix: 2 prefix sites"
+    (let [sites (compiled/extract-prefix-sites (:source dep-prefix-model))]
+      (is (= 2 (count sites)) "dep-prefix has 2 prefix sites")
+      (is (= :a (:addr (first sites))) "first is :a")
+      (is (= :b (:addr (second sites))) "second is :b")))
 
-;; Dependent prefix: 2 prefix sites
-(let [sites (compiled/extract-prefix-sites (:source dep-prefix-model))]
-  (assert-true "dep-prefix has 2 prefix sites" (= 2 (count sites)))
-  (assert-equal "first is :a" :a (:addr (first sites)))
-  (assert-equal "second is :b" :b (:addr (second sites))))
-
-;; Multi-dist prefix: 6 prefix sites
-(let [sites (compiled/extract-prefix-sites (:source multi-dist-prefix))]
-  (assert-true "multi-dist has 6 prefix sites" (= 6 (count sites))))
+  (testing "multi-dist prefix: 6 prefix sites"
+    (let [sites (compiled/extract-prefix-sites (:source multi-dist-prefix))]
+      (is (= 6 (count sites)) "multi-dist has 6 prefix sites"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 2. Prefix gates
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 2. Prefix gates ==")
+(deftest prefix-gates-test
+  (testing "static model gets compiled-simulate (L1-M2), NOT compiled-prefix"
+    (is (some? (:compiled-simulate (:schema static-model)))
+        "static model has compiled-simulate")
+    (is (nil? (:compiled-prefix (:schema static-model)))
+        "static model has NO compiled-prefix"))
 
-;; Static model should get compiled-simulate (L1-M2), NOT compiled-prefix
-(assert-true "static model has compiled-simulate"
-  (some? (:compiled-simulate (:schema static-model))))
-(assert-true "static model has NO compiled-prefix"
-  (nil? (:compiled-prefix (:schema static-model))))
+  (testing "loop model gets compiled-prefix (non-static with prefix sites)"
+    (is (some? (:compiled-prefix (:schema loop-model)))
+        "loop model has compiled-prefix")
+    (is (nil? (:compiled-simulate (:schema loop-model)))
+        "loop model has NO compiled-simulate"))
 
-;; Loop model should get compiled-prefix (non-static with prefix sites)
-(assert-true "loop model has compiled-prefix"
-  (some? (:compiled-prefix (:schema loop-model))))
-(assert-true "loop model has NO compiled-simulate"
-  (nil? (:compiled-simulate (:schema loop-model))))
+  (testing "all-dynamic model: no compiled paths"
+    (is (nil? (:compiled-prefix (:schema all-dynamic-model)))
+        "all-dynamic has no compiled-prefix")
+    (is (nil? (:compiled-simulate (:schema all-dynamic-model)))
+        "all-dynamic has no compiled-simulate"))
 
-;; All-dynamic model: no compiled paths (empty prefix)
-(assert-true "all-dynamic has no compiled-prefix"
-  (nil? (:compiled-prefix (:schema all-dynamic-model))))
-(assert-true "all-dynamic has no compiled-simulate"
-  (nil? (:compiled-simulate (:schema all-dynamic-model))))
-
-;; No-compilable-prefix model: prefix extraction finds :a but beta-dist
-;; isn't compilable, so no compiled-prefix
-(assert-true "no-compilable-prefix has no compiled-prefix"
-  (nil? (:compiled-prefix (:schema no-compilable-prefix-model))))
+  (testing "no-compilable-prefix model: beta-dist not compilable"
+    (is (nil? (:compiled-prefix (:schema no-compilable-prefix-model)))
+        "no-compilable-prefix has no compiled-prefix")))
 
 ;; ---------------------------------------------------------------------------
-;; 3. Single-prefix-site: value + score + choices
+;; 3. Single prefix site: value + score + choices
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 3. Single prefix site ==")
-
-(let [k (rng/fresh-key 42)
-      model-c (dyn/with-key single-prefix-model k)
-      model-h (dyn/with-key (force-handler single-prefix-model) k)
-      trace-c (p/simulate model-c [])
-      trace-h (p/simulate model-h [])]
-  (assert-close "single-prefix: :x value matches"
-    (cv trace-h :x) (cv trace-c :x) 1e-5)
-  (assert-close "single-prefix: score matches"
-    (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-4)
-  ;; All 4 choices present (x + y0 y1 y2)
-  (assert-true "single-prefix: has :x choice"
-    (cm/has-value? (cm/get-submap (:choices trace-c) :x)))
-  (assert-true "single-prefix: has :y0 choice"
-    (cm/has-value? (cm/get-submap (:choices trace-c) :y0))))
+(deftest single-prefix-site-test
+  (let [k (rng/fresh-key 42)
+        model-c (dyn/with-key single-prefix-model k)
+        model-h (dyn/with-key (force-handler single-prefix-model) k)
+        trace-c (p/simulate model-c [])
+        trace-h (p/simulate model-h [])]
+    (is (h/close? (cv trace-h :x) (cv trace-c :x) 1e-5)
+        "single-prefix: :x value matches")
+    (is (h/close? (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-4)
+        "single-prefix: score matches")
+    (is (cm/has-value? (cm/get-submap (:choices trace-c) :x))
+        "single-prefix: has :x choice")
+    (is (cm/has-value? (cm/get-submap (:choices trace-c) :y0))
+        "single-prefix: has :y0 choice")))
 
 ;; ---------------------------------------------------------------------------
-;; 4. Multi-prefix-site: loop model
+;; 4. Multi prefix site: loop model
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 4. Multi-prefix sites ==")
-
-(let [k (rng/fresh-key 55)
-      xs [(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)]
-      model-c (dyn/with-key loop-model k)
-      model-h (dyn/with-key (force-handler loop-model) k)
-      trace-c (p/simulate model-c [xs])
-      trace-h (p/simulate model-h [xs])]
-  (assert-close "loop-model: :mu matches"
-    (cv trace-h :mu) (cv trace-c :mu) 1e-5)
-  (assert-close "loop-model: :sigma matches"
-    (cv trace-h :sigma) (cv trace-c :sigma) 1e-5)
-  (assert-close "loop-model: score matches"
-    (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-4)
-  ;; Dynamic choices present
-  (assert-true "loop-model: has :y0"
-    (cm/has-value? (cm/get-submap (:choices trace-c) :y0)))
-  (assert-true "loop-model: has :y1"
-    (cm/has-value? (cm/get-submap (:choices trace-c) :y1)))
-  (assert-true "loop-model: has :y2"
-    (cm/has-value? (cm/get-submap (:choices trace-c) :y2))))
+(deftest multi-prefix-site-test
+  (let [k (rng/fresh-key 55)
+        xs [(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)]
+        model-c (dyn/with-key loop-model k)
+        model-h (dyn/with-key (force-handler loop-model) k)
+        trace-c (p/simulate model-c [xs])
+        trace-h (p/simulate model-h [xs])]
+    (is (h/close? (cv trace-h :mu) (cv trace-c :mu) 1e-5)
+        "loop-model: :mu matches")
+    (is (h/close? (cv trace-h :sigma) (cv trace-c :sigma) 1e-5)
+        "loop-model: :sigma matches")
+    (is (h/close? (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-4)
+        "loop-model: score matches")
+    (is (cm/has-value? (cm/get-submap (:choices trace-c) :y0))
+        "loop-model: has :y0")
+    (is (cm/has-value? (cm/get-submap (:choices trace-c) :y1))
+        "loop-model: has :y1")
+    (is (cm/has-value? (cm/get-submap (:choices trace-c) :y2))
+        "loop-model: has :y2")))
 
 ;; ---------------------------------------------------------------------------
 ;; 5. Dependent prefix sites
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 5. Dependent prefix sites ==")
-
-(let [k (rng/fresh-key 66)
-      model-c (dyn/with-key dep-prefix-model k)
-      model-h (dyn/with-key (force-handler dep-prefix-model) k)
-      trace-c (p/simulate model-c [(mx/scalar 5.0)])
-      trace-h (p/simulate model-h [(mx/scalar 5.0)])]
-  (assert-close "dep-prefix: :a matches"
-    (cv trace-h :a) (cv trace-c :a) 1e-5)
-  (assert-close "dep-prefix: :b matches (depends on :a)"
-    (cv trace-h :b) (cv trace-c :b) 1e-5)
-  (assert-close "dep-prefix: score matches"
-    (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-4)
-  (assert-close "dep-prefix: retval matches"
-    (mx/item (:retval trace-h)) (mx/item (:retval trace-c)) 1e-5))
+(deftest dependent-prefix-sites-test
+  (let [k (rng/fresh-key 66)
+        model-c (dyn/with-key dep-prefix-model k)
+        model-h (dyn/with-key (force-handler dep-prefix-model) k)
+        trace-c (p/simulate model-c [(mx/scalar 5.0)])
+        trace-h (p/simulate model-h [(mx/scalar 5.0)])]
+    (is (h/close? (cv trace-h :a) (cv trace-c :a) 1e-5)
+        "dep-prefix: :a matches")
+    (is (h/close? (cv trace-h :b) (cv trace-c :b) 1e-5)
+        "dep-prefix: :b matches (depends on :a)")
+    (is (h/close? (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-4)
+        "dep-prefix: score matches")
+    (is (h/close? (mx/item (:retval trace-h)) (mx/item (:retval trace-c)) 1e-5)
+        "dep-prefix: retval matches")))
 
 ;; ---------------------------------------------------------------------------
 ;; 6. Prefix with gen args
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 6. Prefix with gen args ==")
-
-(let [k (rng/fresh-key 77)
-      model-c (dyn/with-key args-prefix-model k)
-      model-h (dyn/with-key (force-handler args-prefix-model) k)
-      trace-c (p/simulate model-c [(mx/scalar 5.0) (mx/scalar 2.0)])
-      trace-h (p/simulate model-h [(mx/scalar 5.0) (mx/scalar 2.0)])]
-  (assert-close "args-prefix: :x matches (uses gen args)"
-    (cv trace-h :x) (cv trace-c :x) 1e-5)
-  (assert-close "args-prefix: :y matches"
-    (cv trace-h :y) (cv trace-c :y) 1e-5)
-  (assert-close "args-prefix: score matches"
-    (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-4)
-  ;; Dynamic choices present
-  (assert-true "args-prefix: has :z0"
-    (cm/has-value? (cm/get-submap (:choices trace-c) :z0))))
+(deftest prefix-with-gen-args-test
+  (let [k (rng/fresh-key 77)
+        model-c (dyn/with-key args-prefix-model k)
+        model-h (dyn/with-key (force-handler args-prefix-model) k)
+        trace-c (p/simulate model-c [(mx/scalar 5.0) (mx/scalar 2.0)])
+        trace-h (p/simulate model-h [(mx/scalar 5.0) (mx/scalar 2.0)])]
+    (is (h/close? (cv trace-h :x) (cv trace-c :x) 1e-5)
+        "args-prefix: :x matches (uses gen args)")
+    (is (h/close? (cv trace-h :y) (cv trace-c :y) 1e-5)
+        "args-prefix: :y matches")
+    (is (h/close? (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-4)
+        "args-prefix: score matches")
+    (is (cm/has-value? (cm/get-submap (:choices trace-c) :z0))
+        "args-prefix: has :z0")))
 
 ;; ---------------------------------------------------------------------------
 ;; 7. Value equivalence across multiple models
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 7. Value equivalence ==")
+(deftest value-equivalence-test
+  (testing "branch model (flag=true path)"
+    (let [k (rng/fresh-key 88)
+          model-c (dyn/with-key branch-model k)
+          model-h (dyn/with-key (force-handler branch-model) k)
+          trace-c (p/simulate model-c [true])
+          trace-h (p/simulate model-h [true])]
+      (is (h/close? (cv trace-h :mu) (cv trace-c :mu) 1e-5)
+          "branch(true): :mu matches")
+      (is (h/close? (cv trace-h :a) (cv trace-c :a) 1e-5)
+          "branch(true): :a matches")))
 
-;; Branch model (flag=true path)
-(let [k (rng/fresh-key 88)
-      model-c (dyn/with-key branch-model k)
-      model-h (dyn/with-key (force-handler branch-model) k)
-      trace-c (p/simulate model-c [true])
-      trace-h (p/simulate model-h [true])]
-  (assert-close "branch(true): :mu matches"
-    (cv trace-h :mu) (cv trace-c :mu) 1e-5)
-  (assert-close "branch(true): :a matches"
-    (cv trace-h :a) (cv trace-c :a) 1e-5))
-
-;; Branch model (flag=false path)
-(let [k (rng/fresh-key 88)
-      model-c (dyn/with-key branch-model k)
-      model-h (dyn/with-key (force-handler branch-model) k)
-      trace-c (p/simulate model-c [false])
-      trace-h (p/simulate model-h [false])]
-  (assert-close "branch(false): :mu matches"
-    (cv trace-h :mu) (cv trace-c :mu) 1e-5)
-  (assert-close "branch(false): :b matches"
-    (cv trace-h :b) (cv trace-c :b) 1e-5))
+  (testing "branch model (flag=false path)"
+    (let [k (rng/fresh-key 88)
+          model-c (dyn/with-key branch-model k)
+          model-h (dyn/with-key (force-handler branch-model) k)
+          trace-c (p/simulate model-c [false])
+          trace-h (p/simulate model-h [false])]
+      (is (h/close? (cv trace-h :mu) (cv trace-c :mu) 1e-5)
+          "branch(false): :mu matches")
+      (is (h/close? (cv trace-h :b) (cv trace-c :b) 1e-5)
+          "branch(false): :b matches"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 8. Score equivalence
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 8. Score equivalence ==")
-
-;; Run each model 3 times with different keys, verify score matches
-(doseq [[label model args-fn]
-        [["loop-model" loop-model
-          (fn [] [[(mx/scalar 1.0) (mx/scalar 2.0)]])]
-         ["branch-model" branch-model
-          (fn [] [true])]
-         ["dep-prefix" dep-prefix-model
-          (fn [] [(mx/scalar 3.0)])]
-         ["args-prefix" args-prefix-model
-          (fn [] [(mx/scalar 1.0) (mx/scalar 0.5)])]]]
-  (doseq [seed [10 20 30]]
-    (let [k (rng/fresh-key seed)
-          tc (p/simulate (dyn/with-key model k) (args-fn))
-          th (p/simulate (dyn/with-key (force-handler model) k) (args-fn))]
-      (assert-close (str label " score@seed=" seed)
-        (mx/item (:score th)) (mx/item (:score tc)) 1e-4))))
+(deftest score-equivalence-test
+  (doseq [[label model args-fn]
+          [["loop-model" loop-model
+            (fn [] [[(mx/scalar 1.0) (mx/scalar 2.0)]])]
+           ["branch-model" branch-model
+            (fn [] [true])]
+           ["dep-prefix" dep-prefix-model
+            (fn [] [(mx/scalar 3.0)])]
+           ["args-prefix" args-prefix-model
+            (fn [] [(mx/scalar 1.0) (mx/scalar 0.5)])]]]
+    (doseq [seed [10 20 30]]
+      (let [k (rng/fresh-key seed)
+            tc (p/simulate (dyn/with-key model k) (args-fn))
+            th (p/simulate (dyn/with-key (force-handler model) k) (args-fn))]
+        (is (h/close? (mx/item (:score th)) (mx/item (:score tc)) 1e-4)
+            (str label " score@seed=" seed))))))
 
 ;; ---------------------------------------------------------------------------
 ;; 9. PRNG consistency — dynamic sites get correct keys
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 9. PRNG consistency ==")
+(deftest prng-consistency-test
+  (testing "loop model: dynamic sites match handler"
+    (let [k (rng/fresh-key 99)
+          xs [(mx/scalar 1.0) (mx/scalar 2.0)]
+          trace-c (p/simulate (dyn/with-key loop-model k) [xs])
+          trace-h (p/simulate (dyn/with-key (force-handler loop-model) k) [xs])]
+      (doseq [addr [:y0 :y1]]
+        (is (h/close? (cv trace-h addr) (cv trace-c addr) 1e-5)
+            (str "PRNG: " addr " matches handler")))))
 
-;; Loop model: dynamic sites :y0 :y1 must match handler
-(let [k (rng/fresh-key 99)
-      xs [(mx/scalar 1.0) (mx/scalar 2.0)]
-      trace-c (p/simulate (dyn/with-key loop-model k) [xs])
-      trace-h (p/simulate (dyn/with-key (force-handler loop-model) k) [xs])]
-  (doseq [addr [:y0 :y1]]
-    (assert-close (str "PRNG: " addr " matches handler")
-      (cv trace-h addr) (cv trace-c addr) 1e-5)))
-
-;; Dep-prefix model: dynamic sites :y0 :y1 must match
-(let [k (rng/fresh-key 99)
-      trace-c (p/simulate (dyn/with-key dep-prefix-model k) [(mx/scalar 2.0)])
-      trace-h (p/simulate (dyn/with-key (force-handler dep-prefix-model) k) [(mx/scalar 2.0)])]
-  (doseq [addr [:y0 :y1]]
-    (assert-close (str "PRNG dep: " addr " matches handler")
-      (cv trace-h addr) (cv trace-c addr) 1e-5)))
+  (testing "dep-prefix model: dynamic sites match handler"
+    (let [k (rng/fresh-key 99)
+          trace-c (p/simulate (dyn/with-key dep-prefix-model k) [(mx/scalar 2.0)])
+          trace-h (p/simulate (dyn/with-key (force-handler dep-prefix-model) k) [(mx/scalar 2.0)])]
+      (doseq [addr [:y0 :y1]]
+        (is (h/close? (cv trace-h addr) (cv trace-c addr) 1e-5)
+            (str "PRNG dep: " addr " matches handler"))))))
 
 ;; ---------------------------------------------------------------------------
 ;; 10. GFI operations on partially-compiled models
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 10. GFI operations ==")
+(deftest gfi-operations-test
+  (testing "generate with constraints"
+    (let [k (rng/fresh-key 42)
+          obs (cm/choicemap :y0 (mx/scalar 5.0) :y1 (mx/scalar 6.0) :y2 (mx/scalar 7.0))
+          {:keys [trace weight]} (p/generate (dyn/with-key single-prefix-model k) [] obs)]
+      (is (some? trace) "generate: trace exists")
+      (is (js/isFinite (mx/item weight)) "generate: weight is finite")
+      (is (h/close? 5.0 (cv trace :y0) 1e-6) "generate: :y0 constrained")))
 
-;; generate with constraints
-(let [k (rng/fresh-key 42)
-      obs (cm/choicemap :y0 (mx/scalar 5.0) :y1 (mx/scalar 6.0) :y2 (mx/scalar 7.0))
-      {:keys [trace weight]} (p/generate (dyn/with-key single-prefix-model k) [] obs)]
-  (assert-true "generate: trace exists" (some? trace))
-  (assert-true "generate: weight is finite"
-    (js/isFinite (mx/item weight)))
-  (assert-close "generate: :y0 constrained"
-    5.0 (cv trace :y0) 1e-6))
+  (testing "update from a trace"
+    (let [k1 (rng/fresh-key 42)
+          t1 (p/simulate (dyn/with-key single-prefix-model k1) [])
+          new-obs (cm/choicemap :y0 (mx/scalar 10.0))
+          {:keys [trace weight]} (p/update (dyn/with-key single-prefix-model (rng/fresh-key 43)) t1 new-obs)]
+      (is (some? trace) "update: trace exists")
+      (is (js/isFinite (mx/item weight)) "update: weight is finite")))
 
-;; update from a trace
-(let [k1 (rng/fresh-key 42)
-      t1 (p/simulate (dyn/with-key single-prefix-model k1) [])
-      new-obs (cm/choicemap :y0 (mx/scalar 10.0))
-      {:keys [trace weight]} (p/update (dyn/with-key single-prefix-model (rng/fresh-key 43)) t1 new-obs)]
-  (assert-true "update: trace exists" (some? trace))
-  (assert-true "update: weight is finite"
-    (js/isFinite (mx/item weight))))
+  (testing "regenerate with selection"
+    (let [k (rng/fresh-key 42)
+          t1 (p/simulate (dyn/with-key loop-model k) [[(mx/scalar 1.0)]])
+          sel (sel/select :mu)
+          {:keys [trace weight]} (p/regenerate (dyn/with-key loop-model (rng/fresh-key 43)) t1 sel)]
+      (is (some? trace) "regenerate: trace exists")
+      (is (js/isFinite (mx/item weight)) "regenerate: weight is finite")))
 
-;; regenerate with selection
-(let [k (rng/fresh-key 42)
-      t1 (p/simulate (dyn/with-key loop-model k) [[(mx/scalar 1.0)]])
-      sel (sel/select :mu)
-      {:keys [trace weight]} (p/regenerate (dyn/with-key loop-model (rng/fresh-key 43)) t1 sel)]
-  (assert-true "regenerate: trace exists" (some? trace))
-  (assert-true "regenerate: weight is finite"
-    (js/isFinite (mx/item weight))))
-
-;; assess
-(let [k (rng/fresh-key 42)
-      t1 (p/simulate (dyn/with-key single-prefix-model k) [])
-      {:keys [weight]} (p/assess (dyn/with-key single-prefix-model (rng/fresh-key 42))
-                                  [] (:choices t1))]
-  (assert-true "assess: weight is finite"
-    (js/isFinite (mx/item weight))))
+  (testing "assess"
+    (let [k (rng/fresh-key 42)
+          t1 (p/simulate (dyn/with-key single-prefix-model k) [])
+          {:keys [weight]} (p/assess (dyn/with-key single-prefix-model (rng/fresh-key 42))
+                                      [] (:choices t1))]
+      (is (js/isFinite (mx/item weight)) "assess: weight is finite"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 11. Non-compilable cutoff
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 11. Non-compilable cutoff ==")
+(deftest non-compilable-cutoff-test
+  (testing "cutoff model: gaussian prefix stops at beta-dist"
+    (let [sites (compiled/extract-prefix-sites (:source cutoff-model))]
+      (is (= 2 (count sites)) "cutoff: 2 raw prefix sites (before doseq)")
+      (is (= :a (:addr (first sites))) "cutoff: first is :a")
+      (is (= :b (:addr (second sites))) "cutoff: second is :b (beta-dist)")))
 
-;; Cutoff model: gaussian prefix stops at beta-dist
-(let [sites (compiled/extract-prefix-sites (:source cutoff-model))]
-  (assert-true "cutoff: 2 raw prefix sites (before doseq)"
-    (= 2 (count sites)))
-  (assert-equal "cutoff: first is :a" :a (:addr (first sites)))
-  (assert-equal "cutoff: second is :b (beta-dist)" :b (:addr (second sites))))
+  (testing "schema has compiled-prefix with only :a"
+    (is (some? (:compiled-prefix (:schema cutoff-model)))
+        "cutoff model has compiled-prefix")
+    (is (= [:a] (:compiled-prefix-addrs (:schema cutoff-model)))
+        "cutoff: prefix-addrs is [:a]"))
 
-;; Schema should have compiled-prefix with only :a (beta-dist truncated)
-(assert-true "cutoff model has compiled-prefix"
-  (some? (:compiled-prefix (:schema cutoff-model))))
-(assert-equal "cutoff: prefix-addrs is [:a]"
-  [:a] (:compiled-prefix-addrs (:schema cutoff-model)))
-
-;; Values still correct despite truncation
-(let [k (rng/fresh-key 42)
-      trace-c (p/simulate (dyn/with-key cutoff-model k) [])
-      trace-h (p/simulate (dyn/with-key (force-handler cutoff-model) k) [])]
-  (assert-close "cutoff: :a matches handler"
-    (cv trace-h :a) (cv trace-c :a) 1e-5)
-  (assert-close "cutoff: score matches"
-    (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-4))
+  (testing "values still correct despite truncation"
+    (let [k (rng/fresh-key 42)
+          trace-c (p/simulate (dyn/with-key cutoff-model k) [])
+          trace-h (p/simulate (dyn/with-key (force-handler cutoff-model) k) [])]
+      (is (h/close? (cv trace-h :a) (cv trace-c :a) 1e-5)
+          "cutoff: :a matches handler")
+      (is (h/close? (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-4)
+          "cutoff: score matches"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 12. All distributions in prefix
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 12. All distributions in prefix ==")
+(deftest all-distributions-in-prefix-test
+  (testing "multi-dist model: gaussian, uniform, bernoulli, exponential, laplace, cauchy"
+    (is (some? (:compiled-prefix (:schema multi-dist-prefix)))
+        "multi-dist has compiled-prefix")
+    (let [k (rng/fresh-key 42)
+          trace-c (p/simulate (dyn/with-key multi-dist-prefix k) [])
+          trace-h (p/simulate (dyn/with-key (force-handler multi-dist-prefix) k) [])]
+      (doseq [addr [:a :b :c :d :e :f]]
+        (let [tol (if (= addr :f) 1e-3 1e-4)]
+          (is (h/close? (cv trace-h addr) (cv trace-c addr) tol)
+              (str "multi-dist: " addr " matches"))))
+      (is (h/close? (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-3)
+          "multi-dist: score matches")))
 
-;; Multi-dist model: gaussian, uniform, bernoulli, exponential, laplace, cauchy
-(assert-true "multi-dist has compiled-prefix"
-  (some? (:compiled-prefix (:schema multi-dist-prefix))))
-
-(let [k (rng/fresh-key 42)
-      trace-c (p/simulate (dyn/with-key multi-dist-prefix k) [])
-      trace-h (p/simulate (dyn/with-key (force-handler multi-dist-prefix) k) [])]
-  (doseq [addr [:a :b :c :d :e :f]]
-    ;; cauchy has wider tolerance: tan() amplifies float32 precision diffs
-    (let [tol (if (= addr :f) 1e-3 1e-4)]
-      (assert-close (str "multi-dist: " addr " matches")
-        (cv trace-h addr) (cv trace-c addr) tol)))
-  (assert-close "multi-dist: score matches"
-    (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-3))
-
-;; Log-normal + delta prefix
-(assert-true "lognormal-delta has compiled-prefix"
-  (some? (:compiled-prefix (:schema lognormal-delta-prefix))))
-
-(let [k (rng/fresh-key 42)
-      trace-c (p/simulate (dyn/with-key lognormal-delta-prefix k) [])
-      trace-h (p/simulate (dyn/with-key (force-handler lognormal-delta-prefix) k) [])]
-  (assert-close "log-normal prefix: :a matches"
-    (cv trace-h :a) (cv trace-c :a) 1e-4)
-  (assert-close "delta prefix: :b matches"
-    (cv trace-h :b) (cv trace-c :b) 1e-6)
-  (assert-close "lognormal-delta: score matches"
-    (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-3))
+  (testing "log-normal + delta prefix"
+    (is (some? (:compiled-prefix (:schema lognormal-delta-prefix)))
+        "lognormal-delta has compiled-prefix")
+    (let [k (rng/fresh-key 42)
+          trace-c (p/simulate (dyn/with-key lognormal-delta-prefix k) [])
+          trace-h (p/simulate (dyn/with-key (force-handler lognormal-delta-prefix) k) [])]
+      (is (h/close? (cv trace-h :a) (cv trace-c :a) 1e-4)
+          "log-normal prefix: :a matches")
+      (is (h/close? (cv trace-h :b) (cv trace-c :b) 1e-6)
+          "delta prefix: :b matches")
+      (is (h/close? (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-3)
+          "lognormal-delta: score matches"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 13. Edge cases
 ;; ---------------------------------------------------------------------------
 
-(println "\n== 13. Edge cases ==")
+(deftest edge-cases-test
+  (testing "prefix-only model: static prefix site + branch with no traces"
+    (let [k (rng/fresh-key 42)
+          m (gen []
+              (let [x (trace :x (dist/gaussian 0 1))]
+                (if (> (mx/item x) 0)
+                  (mx/scalar 1.0)
+                  (mx/scalar -1.0))))
+          trace-c (p/simulate (dyn/with-key m k) [])
+          trace-h (p/simulate (dyn/with-key (force-handler m) k) [])]
+      (is (h/close? (cv trace-h :x) (cv trace-c :x) 1e-5)
+          "edge: branch-no-trace prefix :x matches")
+      (is (h/close? (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-4)
+          "edge: branch-no-trace score matches")))
 
-;; Prefix-only model: static prefix site + branch with no traces (non-static)
-(let [k (rng/fresh-key 42)
-      m (gen []
-          (let [x (trace :x (dist/gaussian 0 1))]
-            (if (> (mx/item x) 0)
-              (mx/scalar 1.0)
-              (mx/scalar -1.0))))
-      trace-c (p/simulate (dyn/with-key m k) [])
-      trace-h (p/simulate (dyn/with-key (force-handler m) k) [])]
-  (assert-close "edge: branch-no-trace prefix :x matches"
-    (cv trace-h :x) (cv trace-c :x) 1e-5)
-  (assert-close "edge: branch-no-trace score matches"
-    (mx/item (:score trace-h)) (mx/item (:score trace-c)) 1e-4))
+  (testing "prefix with 0-arg gen fn"
+    (let [k (rng/fresh-key 42)
+          m (gen []
+              (let [x (trace :x (dist/gaussian 0 1))]
+                (doseq [i (range 2)]
+                  (trace (keyword (str "y" i)) (dist/gaussian x 1)))
+                x))
+          trace-c (p/simulate (dyn/with-key m k) [])
+          trace-h (p/simulate (dyn/with-key (force-handler m) k) [])]
+      (is (h/close? (cv trace-h :x) (cv trace-c :x) 1e-5)
+          "edge: 0-arg model :x matches")))
 
-;; Prefix with 0-arg gen fn
-(let [k (rng/fresh-key 42)
-      m (gen []
-          (let [x (trace :x (dist/gaussian 0 1))]
-            (doseq [i (range 2)]
-              (trace (keyword (str "y" i)) (dist/gaussian x 1)))
-            x))
-      trace-c (p/simulate (dyn/with-key m k) [])
-      trace-h (p/simulate (dyn/with-key (force-handler m) k) [])]
-  (assert-close "edge: 0-arg model :x matches"
-    (cv trace-h :x) (cv trace-c :x) 1e-5))
+  (testing "reproducibility: same key -> same result twice"
+    (let [k (rng/fresh-key 42)
+          t1 (p/simulate (dyn/with-key loop-model k) [[(mx/scalar 1.0)]])
+          t2 (p/simulate (dyn/with-key loop-model k) [[(mx/scalar 1.0)]])]
+      (is (h/close? (cv t1 :mu) (cv t2 :mu) 1e-6)
+          "edge: reproducible :mu")
+      (is (h/close? (mx/item (:score t1)) (mx/item (:score t2)) 1e-6)
+          "edge: reproducible score")))
 
-;; Reproducibility: same key → same result twice
-(let [k (rng/fresh-key 42)
-      t1 (p/simulate (dyn/with-key loop-model k) [[(mx/scalar 1.0)]])
-      t2 (p/simulate (dyn/with-key loop-model k) [[(mx/scalar 1.0)]])]
-  (assert-close "edge: reproducible :mu"
-    (cv t1 :mu) (cv t2 :mu) 1e-6)
-  (assert-close "edge: reproducible score"
-    (mx/item (:score t1)) (mx/item (:score t2)) 1e-6))
-
-;; Return value correct for partially-compiled model
-(let [k (rng/fresh-key 42)
-      trace-c (p/simulate (dyn/with-key loop-model k) [[(mx/scalar 1.0)]])
-      trace-h (p/simulate (dyn/with-key (force-handler loop-model) k) [[(mx/scalar 1.0)]])]
-  (assert-close "edge: retval matches handler"
-    (mx/item (:retval trace-h)) (mx/item (:retval trace-c)) 1e-5))
+  (testing "return value correct for partially-compiled model"
+    (let [k (rng/fresh-key 42)
+          trace-c (p/simulate (dyn/with-key loop-model k) [[(mx/scalar 1.0)]])
+          trace-h (p/simulate (dyn/with-key (force-handler loop-model) k) [[(mx/scalar 1.0)]])]
+      (is (h/close? (mx/item (:retval trace-h)) (mx/item (:retval trace-c)) 1e-5)
+          "edge: retval matches handler"))))
 
 ;; ---------------------------------------------------------------------------
-;; Summary
+;; Run
 ;; ---------------------------------------------------------------------------
 
-(println "\n========================================")
-(println (str "L1-M3 Partial Compilation: " @pass-count " passed, " @fail-count " failed"))
-(println "========================================")
-
-(when (> @fail-count 0)
-  (js/process.exit 1))
+(cljs.test/run-tests)

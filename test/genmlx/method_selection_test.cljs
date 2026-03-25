@@ -1,8 +1,9 @@
 (ns genmlx.method-selection-test
-  "WP-3 Gate 3: Automatic method selection tests.
+  "Automatic method selection tests.
    Tests select-method decision tree and tune-method-opts across
-   8 model categories + edge cases (~35 tests)."
-  (:require [genmlx.mlx :as mx]
+   8 model categories + edge cases."
+  (:require [cljs.test :refer [deftest is testing]]
+            [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.choicemap :as cm]
@@ -11,33 +12,16 @@
   (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; ---------------------------------------------------------------------------
-;; Test helpers
-;; ---------------------------------------------------------------------------
-
-(def pass-count (atom 0))
-(def fail-count (atom 0))
-
-(defn assert-true [msg v]
-  (if v
-    (do (swap! pass-count inc) (println (str "  PASS: " msg)))
-    (do (swap! fail-count inc) (println (str "  FAIL: " msg)))))
-
-(defn assert-equal [msg expected actual]
-  (if (= expected actual)
-    (do (swap! pass-count inc) (println (str "  PASS: " msg)))
-    (do (swap! fail-count inc) (println (str "  FAIL: " msg " expected=" expected " actual=" actual)))))
-
-;; ---------------------------------------------------------------------------
 ;; Test models
 ;; ---------------------------------------------------------------------------
 
-;; 1. All-conjugate: Normal-Normal prior + observed → :exact
+;; 1. All-conjugate: Normal-Normal prior + observed -> :exact
 (def m-conjugate
   (gen [x]
        (let [mu (trace :mu (dist/gaussian 0 10))]
          (trace :y (dist/gaussian mu 1)))))
 
-;; 2. Non-conjugate, small static (3 latents) → :hmc
+;; 2. Non-conjugate, small static (3 latents) -> :hmc
 (def m-static-small
   (gen []
        (let [a (trace :a (dist/gaussian 0 1))
@@ -45,7 +29,7 @@
              c (trace :c (dist/gaussian 0 1))]
          (mx/add a b))))
 
-;; 3. Non-conjugate, large static (11+ latents) → :vi
+;; 3. Non-conjugate, large static (11+ latents) -> :vi
 (def m-static-large
   (gen []
        (let [x1 (trace :x1 (dist/gaussian 0 1))
@@ -61,7 +45,7 @@
              x11 (trace :x11 (dist/gaussian 0 1))]
          x1)))
 
-;; 4. Mixed conjugate: 2 of 5 sites conjugate, obs on y1/y2 → :hmc with residual :p
+;; 4. Mixed conjugate: 2 of 5 sites conjugate, obs on y1/y2 -> :hmc with residual :p
 (def m-mixed
   (gen [xs]
        (let [mu1 (trace :mu1 (dist/gaussian 0 10))
@@ -125,207 +109,161 @@
          (splice :sub helper a))))
 
 ;; ---------------------------------------------------------------------------
-;; Category 1: All-conjugate → :exact
+;; Tests
 ;; ---------------------------------------------------------------------------
 
-(println "\n== Category 1: All-conjugate → :exact ==")
+(deftest category-1-conjugate-exact
+  (testing "All-conjugate model -> :exact"
+    (let [obs (cm/choicemap :y 1.0)
+          result (ms/select-method m-conjugate obs)]
+      (is (= :exact (:method result)) "conjugate model -> :exact")
+      (is (contains? (:eliminated result) :mu) "conjugate: :mu eliminated")
+      (is (= 0 (:n-residual result)) "conjugate: 0 residual")
+      (is (some? (:reason result)) "conjugate: reason mentions analytical")
+      (is (map? (:opts result)) "conjugate: opts is map"))))
 
-(let [obs (cm/choicemap :y 1.0)
-      result (ms/select-method m-conjugate obs)]
-  (assert-equal "conjugate model → :exact" :exact (:method result))
-  (assert-true "conjugate: :mu eliminated" (contains? (:eliminated result) :mu))
-  (assert-equal "conjugate: 0 residual" 0 (:n-residual result))
-  (assert-true "conjugate: reason mentions analytical" (some? (:reason result)))
-  (assert-true "conjugate: opts is map" (map? (:opts result))))
+(deftest category-2-static-small-hmc
+  (testing "Static small -> :hmc"
+    (let [result (ms/select-method m-static-small nil)]
+      (is (= :hmc (:method result)) "static small -> :hmc")
+      (is (= 3 (:n-residual result)) "static small: 3 residual")
+      (is (some? (:reason result)) "static small: reason mentions static")
+      (is (contains? (:opts result) :n-samples) "static small: opts has :n-samples")
+      (is (contains? (:opts result) :n-leapfrog) "static small: opts has :n-leapfrog"))))
 
-;; ---------------------------------------------------------------------------
-;; Category 2: Static small → :hmc
-;; ---------------------------------------------------------------------------
+(deftest category-3-static-large-vi
+  (testing "Static large -> :vi"
+    (let [result (ms/select-method m-static-large nil)]
+      (is (= :vi (:method result)) "static large -> :vi")
+      (is (= 11 (:n-residual result)) "static large: 11 residual")
+      (is (contains? (:opts result) :n-iters) "static large: opts has :n-iters")
+      (is (contains? (:opts result) :learning-rate) "static large: opts has :learning-rate"))))
 
-(println "\n== Category 2: Static small → :hmc ==")
+(deftest category-4-mixed-conjugate-hmc
+  (testing "Mixed conjugate -> :hmc with reduced residual"
+    (let [obs (cm/choicemap :y1 1.0 :y2 2.0)
+          result (ms/select-method m-mixed obs)]
+      (is (= :hmc (:method result)) "mixed conjugate -> :hmc")
+      (is (contains? (:eliminated result) :mu1) "mixed: :mu1 eliminated")
+      (is (contains? (:eliminated result) :mu2) "mixed: :mu2 eliminated")
+      (is (contains? (:residual-addrs result) :p) "mixed: :p is residual")
+      (is (= 1 (:n-residual result)) "mixed: 1 residual"))))
 
-(let [result (ms/select-method m-static-small nil)]
-  (assert-equal "static small → :hmc" :hmc (:method result))
-  (assert-equal "static small: 3 residual" 3 (:n-residual result))
-  (assert-true "static small: reason mentions static" (some? (:reason result)))
-  (assert-true "static small: opts has :n-samples" (contains? (:opts result) :n-samples))
-  (assert-true "static small: opts has :n-leapfrog" (contains? (:opts result) :n-leapfrog)))
+(deftest category-5-temporal-unfold-smc
+  (testing "Temporal (Unfold) -> :smc"
+    (let [result (ms/select-method m-unfold nil)]
+      (is (= :smc (:method result)) "unfold -> :smc")
+      (is (clojure.string/includes? (:reason result) "emporal") "unfold: reason mentions temporal")
+      (is (contains? (:opts result) :n-particles) "unfold: opts has :n-particles"))))
 
-;; ---------------------------------------------------------------------------
-;; Category 3: Static large → :vi
-;; ---------------------------------------------------------------------------
+(deftest category-6-temporal-scan-smc
+  (testing "Temporal (Scan) -> :smc"
+    (let [result (ms/select-method m-scan nil)]
+      (is (= :smc (:method result)) "scan -> :smc")
+      (is (clojure.string/includes? (:reason result) "emporal") "scan: reason mentions temporal"))))
 
-(println "\n== Category 3: Static large → :vi ==")
+(deftest category-7-dynamic-handler-is
+  (testing "Dynamic addresses -> :handler-is"
+    (let [result (ms/select-method m-dynamic nil)]
+      (is (= :handler-is (:method result)) "dynamic -> :handler-is")
+      (is (clojure.string/includes? (:reason result) "ynamic") "dynamic: reason mentions dynamic")
+      (is (contains? (:opts result) :n-particles) "dynamic: opts has :n-particles"))))
 
-(let [result (ms/select-method m-static-large nil)]
-  (assert-equal "static large → :vi" :vi (:method result))
-  (assert-equal "static large: 11 residual" 11 (:n-residual result))
-  (assert-true "static large: opts has :n-iters" (contains? (:opts result) :n-iters))
-  (assert-true "static large: opts has :learning-rate" (contains? (:opts result) :learning-rate)))
+(deftest category-8-generic-splice-smc
+  (testing "Generic splice (non-temporal name) -> :smc"
+    (let [result (ms/select-method m-splice-generic nil)]
+      (is (= :smc (:method result)) "generic splice -> :smc")
+      (is (clojure.string/includes? (:reason result) "plice") "generic splice: reason mentions splice"))))
 
-;; ---------------------------------------------------------------------------
-;; Category 4: Mixed conjugate → :hmc with reduced residual
-;; ---------------------------------------------------------------------------
+(deftest edge-cases
+  (testing "Empty model -> :exact"
+    (let [result (ms/select-method m-empty nil)]
+      (is (= :exact (:method result)) "empty model -> :exact")
+      (is (= 0 (:n-residual result)) "empty: 0 residual")
+      (is (= 0 (:n-latent result)) "empty: 0 latent")))
 
-(println "\n== Category 4: Mixed conjugate → :hmc ==")
+  (testing "All observed -> :exact"
+    (let [obs (cm/choicemap :x 1.0 :y 2.0)
+          result (ms/select-method m-all-obs obs)]
+      (is (= :exact (:method result)) "all observed -> :exact")
+      (is (= 0 (:n-residual result)) "all observed: 0 residual")
+      (is (= 0 (:n-latent result)) "all observed: 0 latent")))
 
-(let [obs (cm/choicemap :y1 1.0 :y2 2.0)
-      result (ms/select-method m-mixed obs)]
-  (assert-equal "mixed conjugate → :hmc" :hmc (:method result))
-  (assert-true "mixed: :mu1 eliminated" (contains? (:eliminated result) :mu1))
-  (assert-true "mixed: :mu2 eliminated" (contains? (:eliminated result) :mu2))
-  (assert-true "mixed: :p is residual" (contains? (:residual-addrs result) :p))
-  (assert-equal "mixed: 1 residual" 1 (:n-residual result)))
+  (testing "Conjugate without observations -> :hmc"
+    (let [result (ms/select-method m-conjugate nil)]
+      (is (= :hmc (:method result)) "conjugate no obs -> :hmc")
+      (is (contains? (:residual-addrs result) :y) "conjugate no obs: :y is residual")))
 
-;; ---------------------------------------------------------------------------
-;; Category 5: Temporal (Unfold) → :smc
-;; ---------------------------------------------------------------------------
+  (testing "nil analytical-plan is safe"
+    (let [result (ms/select-method m-static-small nil)]
+      (is (some? (:method result)) "nil analytical-plan: safe")
+      (is (= #{} (:eliminated result)) "nil plan: eliminated is empty set"))))
 
-(println "\n== Category 5: Temporal (Unfold) → :smc ==")
+(deftest return-structure-validation
+  (testing "Return structure has all required keys"
+    (let [result (ms/select-method m-static-small nil)]
+      (is (contains? result :method) "has :method")
+      (is (contains? result :reason) "has :reason")
+      (is (contains? result :opts) "has :opts")
+      (is (contains? result :eliminated) "has :eliminated")
+      (is (contains? result :residual-addrs) "has :residual-addrs")
+      (is (contains? result :n-residual) "has :n-residual")
+      (is (contains? result :n-latent) "has :n-latent")
+      (is (keyword? (:method result)) ":method is keyword")
+      (is (string? (:reason result)) ":reason is string")
+      (is (map? (:opts result)) ":opts is map")
+      (is (set? (:eliminated result)) ":eliminated is set")
+      (is (set? (:residual-addrs result)) ":residual-addrs is set")
+      (is (number? (:n-residual result)) ":n-residual is number")
+      (is (number? (:n-latent result)) ":n-latent is number"))))
 
-(let [result (ms/select-method m-unfold nil)]
-  (assert-equal "unfold → :smc" :smc (:method result))
-  (assert-true "unfold: reason mentions temporal"
-               (clojure.string/includes? (:reason result) "emporal"))
-  (assert-true "unfold: opts has :n-particles" (contains? (:opts result) :n-particles)))
+(deftest tune-method-opts-hmc
+  (testing "HMC tuning (small residual)"
+    (let [sel (ms/select-method m-static-small nil)
+          tuned (ms/tune-method-opts sel)]
+      (is (= 10 (:n-leapfrog tuned)) "hmc tune: n-leapfrog for 3 residual")
+      (is (= 0.05 (:step-size tuned)) "hmc tune: step-size for 3 residual")
+      (is (= 200 (:n-warmup tuned)) "hmc tune: n-warmup for 3 residual"))))
 
-;; ---------------------------------------------------------------------------
-;; Category 6: Temporal (Scan) → :smc
-;; ---------------------------------------------------------------------------
+(deftest tune-method-opts-vi
+  (testing "VI tuning (large residual)"
+    (let [sel (ms/select-method m-static-large nil)
+          tuned (ms/tune-method-opts sel)]
+      (is (= 2000 (:n-iters tuned)) "vi tune: n-iters for 11 residual")
+      (is (= 10 (:n-samples tuned)) "vi tune: n-samples for 11 residual"))))
 
-(println "\n== Category 6: Temporal (Scan) → :smc ==")
+(deftest tune-method-opts-smc
+  (testing "SMC tuning"
+    (let [sel (ms/select-method m-unfold nil)
+          tuned (ms/tune-method-opts sel)]
+      (is (contains? tuned :n-particles) "smc tune: has :n-particles")
+      (is (contains? tuned :ess-threshold) "smc tune: has :ess-threshold"))))
 
-(let [result (ms/select-method m-scan nil)]
-  (assert-equal "scan → :smc" :smc (:method result))
-  (assert-true "scan: reason mentions temporal"
-               (clojure.string/includes? (:reason result) "emporal")))
+(deftest tune-method-opts-handler-is
+  (testing "handler-is tuning"
+    (let [sel (ms/select-method m-dynamic nil)
+          tuned (ms/tune-method-opts sel)]
+      (is (contains? tuned :n-particles) "handler-is tune: has :n-particles"))))
 
-;; ---------------------------------------------------------------------------
-;; Category 7: Dynamic addresses → :handler-is
-;; ---------------------------------------------------------------------------
+(deftest tune-method-opts-exact
+  (testing "exact tuning"
+    (let [obs (cm/choicemap :y 1.0)
+          sel (ms/select-method m-conjugate obs)
+          tuned (ms/tune-method-opts sel)]
+      (is (= {} tuned) "exact tune: empty opts"))))
 
-(println "\n== Category 7: Dynamic addresses → :handler-is ==")
+(deftest tune-method-opts-user-overrides
+  (testing "User overrides take priority"
+    (let [sel (ms/select-method m-static-small nil)
+          tuned (ms/tune-method-opts sel {:step-size 0.001 :custom-key 42})]
+      (is (= 0.001 (:step-size tuned)) "user override: step-size")
+      (is (= 42 (:custom-key tuned)) "user override: custom-key")
+      (is (contains? tuned :n-leapfrog) "user override: preserves n-leapfrog"))))
 
-(let [result (ms/select-method m-dynamic nil)]
-  (assert-equal "dynamic → :handler-is" :handler-is (:method result))
-  (assert-true "dynamic: reason mentions dynamic"
-               (clojure.string/includes? (:reason result) "ynamic"))
-  (assert-true "dynamic: opts has :n-particles" (contains? (:opts result) :n-particles)))
+(deftest tune-method-opts-1-arity
+  (testing "1-arity version works"
+    (let [sel (ms/select-method m-static-small nil)
+          tuned (ms/tune-method-opts sel)]
+      (is (map? tuned) "1-arity: returns map"))))
 
-;; ---------------------------------------------------------------------------
-;; Category 8: Generic splice (non-temporal name) → :smc
-;; ---------------------------------------------------------------------------
-
-(println "\n== Category 8: Generic splice → :smc ==")
-
-(let [result (ms/select-method m-splice-generic nil)]
-  (assert-equal "generic splice → :smc" :smc (:method result))
-  (assert-true "generic splice: reason mentions splice"
-               (clojure.string/includes? (:reason result) "plice")))
-
-;; ---------------------------------------------------------------------------
-;; Edge cases
-;; ---------------------------------------------------------------------------
-
-(println "\n== Edge cases ==")
-
-;; Empty model → :exact
-(let [result (ms/select-method m-empty nil)]
-  (assert-equal "empty model → :exact" :exact (:method result))
-  (assert-equal "empty: 0 residual" 0 (:n-residual result))
-  (assert-equal "empty: 0 latent" 0 (:n-latent result)))
-
-;; All observed → :exact
-(let [obs (cm/choicemap :x 1.0 :y 2.0)
-      result (ms/select-method m-all-obs obs)]
-  (assert-equal "all observed → :exact" :exact (:method result))
-  (assert-equal "all observed: 0 residual" 0 (:n-residual result))
-  (assert-equal "all observed: 0 latent" 0 (:n-latent result)))
-
-;; Conjugate without observations → :hmc (not :exact, since :y not observed)
-(let [result (ms/select-method m-conjugate nil)]
-  (assert-equal "conjugate no obs → :hmc" :hmc (:method result))
-  (assert-true "conjugate no obs: :y is residual" (contains? (:residual-addrs result) :y)))
-
-;; nil analytical-plan is safe
-(let [result (ms/select-method m-static-small nil)]
-  (assert-true "nil analytical-plan: safe" (some? (:method result)))
-  (assert-equal "nil plan: eliminated is empty set" #{} (:eliminated result)))
-
-;; ---------------------------------------------------------------------------
-;; Return structure validation
-;; ---------------------------------------------------------------------------
-
-(println "\n== Return structure ==")
-
-(let [result (ms/select-method m-static-small nil)]
-  (assert-true "has :method" (contains? result :method))
-  (assert-true "has :reason" (contains? result :reason))
-  (assert-true "has :opts" (contains? result :opts))
-  (assert-true "has :eliminated" (contains? result :eliminated))
-  (assert-true "has :residual-addrs" (contains? result :residual-addrs))
-  (assert-true "has :n-residual" (contains? result :n-residual))
-  (assert-true "has :n-latent" (contains? result :n-latent))
-  (assert-true ":method is keyword" (keyword? (:method result)))
-  (assert-true ":reason is string" (string? (:reason result)))
-  (assert-true ":opts is map" (map? (:opts result)))
-  (assert-true ":eliminated is set" (set? (:eliminated result)))
-  (assert-true ":residual-addrs is set" (set? (:residual-addrs result)))
-  (assert-true ":n-residual is number" (number? (:n-residual result)))
-  (assert-true ":n-latent is number" (number? (:n-latent result))))
-
-;; ---------------------------------------------------------------------------
-;; tune-method-opts tests
-;; ---------------------------------------------------------------------------
-
-(println "\n== tune-method-opts ==")
-
-;; HMC tuning (small residual)
-(let [sel (ms/select-method m-static-small nil)
-      tuned (ms/tune-method-opts sel)]
-  (assert-equal "hmc tune: n-leapfrog for 3 residual" 10 (:n-leapfrog tuned))
-  (assert-equal "hmc tune: step-size for 3 residual" 0.05 (:step-size tuned))
-  (assert-equal "hmc tune: n-warmup for 3 residual" 200 (:n-warmup tuned)))
-
-;; VI tuning (large residual)
-(let [sel (ms/select-method m-static-large nil)
-      tuned (ms/tune-method-opts sel)]
-  (assert-equal "vi tune: n-iters for 11 residual" 2000 (:n-iters tuned))
-  (assert-equal "vi tune: n-samples for 11 residual" 10 (:n-samples tuned)))
-
-;; SMC tuning
-(let [sel (ms/select-method m-unfold nil)
-      tuned (ms/tune-method-opts sel)]
-  (assert-true "smc tune: has :n-particles" (contains? tuned :n-particles))
-  (assert-true "smc tune: has :ess-threshold" (contains? tuned :ess-threshold)))
-
-;; handler-is tuning
-(let [sel (ms/select-method m-dynamic nil)
-      tuned (ms/tune-method-opts sel)]
-  (assert-true "handler-is tune: has :n-particles" (contains? tuned :n-particles)))
-
-;; exact tuning
-(let [obs (cm/choicemap :y 1.0)
-      sel (ms/select-method m-conjugate obs)
-      tuned (ms/tune-method-opts sel)]
-  (assert-equal "exact tune: empty opts" {} tuned))
-
-;; User overrides take priority
-(let [sel (ms/select-method m-static-small nil)
-      tuned (ms/tune-method-opts sel {:step-size 0.001 :custom-key 42})]
-  (assert-equal "user override: step-size" 0.001 (:step-size tuned))
-  (assert-equal "user override: custom-key" 42 (:custom-key tuned))
-  (assert-true "user override: preserves n-leapfrog" (contains? tuned :n-leapfrog)))
-
-;; 1-arity version works
-(let [sel (ms/select-method m-static-small nil)
-      tuned (ms/tune-method-opts sel)]
-  (assert-true "1-arity: returns map" (map? tuned)))
-
-;; ---------------------------------------------------------------------------
-;; Summary
-;; ---------------------------------------------------------------------------
-
-(println (str "\n== SUMMARY: " @pass-count "/" (+ @pass-count @fail-count) " passed =="))
-(when (pos? @fail-count)
-  (println (str "  FAILURES: " @fail-count)))
+(cljs.test/run-tests)

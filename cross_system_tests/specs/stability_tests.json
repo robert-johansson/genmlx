@@ -1,7 +1,7 @@
 {
   "description": "Numerical stability edge cases — extreme parameters/values for float32 vs float64 comparison",
   "tolerance": 0.01,
-  "tolerance_note": "Wider tolerance for extreme values where float32 (GenMLX/MLX) precision diverges from float64 (Gen.jl/Julia)",
+  "tolerance_note": "Wider tolerance for extreme values where float32 (GenMLX/MLX) precision diverges from float64 (Gen.jl/Julia). For new distribution tests, tolerance may need to be 0.1 for lgamma-heavy computations at extreme arguments.",
   "tests": [
     {"id": "stab-normal-tiny-sigma", "dist": "normal", "value": 0.0, "params": {"mu": 0.0, "sigma": 1e-10}, "note": "Very peaked — large positive logpdf"},
     {"id": "stab-normal-huge-sigma", "dist": "normal", "value": 0.0, "params": {"mu": 0.0, "sigma": 1e10}, "note": "Very flat — large negative logpdf"},
@@ -14,6 +14,50 @@
     {"id": "stab-categorical-extreme", "dist": "categorical", "value": 0, "params": {"logits": [100, -100, -100]}, "note": "Extreme logits"},
     {"id": "stab-exp-large", "dist": "exponential", "value": 100.0, "params": {"rate": 0.01}, "note": "Large value, small rate"},
     {"id": "stab-normal-extreme-sigma", "dist": "normal", "value": 0.0, "params": {"mu": 0.0, "sigma": 1e-30}, "note": "Extreme sigma — may overflow to Inf"},
-    {"id": "stab-beta-uniform", "dist": "beta", "value": 0.5, "params": {"alpha": 1.0, "beta": 1.0}, "note": "Beta(1,1) = Uniform — logpdf should be 0.0"}
+    {"id": "stab-beta-uniform", "dist": "beta", "value": 0.5, "params": {"alpha": 1.0, "beta": 1.0}, "note": "Beta(1,1) = Uniform — logpdf should be 0.0",
+     "analytical": 0.0},
+
+    {"id": "stab-negbin-large-r", "dist": "neg_binomial", "value": 50, "params": {"r": 100, "p": 0.5},
+     "analytical": -11.574585628913674,
+     "note": "Large r: lgamma(150)-lgamma(51)-lgamma(100) requires cancellation of large lgamma values. Float32 may lose precision."},
+    {"id": "stab-negbin-small-p", "dist": "neg_binomial", "value": 10, "params": {"r": 1, "p": 0.01},
+     "note": "Small p: k*log(1-p) ~ k*(-p) for small p. log(0.99)~-0.01, so result ~ 10*(-0.01)+log(0.01) ~ -4.71."},
+    {"id": "stab-negbin-large-k", "dist": "neg_binomial", "value": 200, "params": {"r": 5, "p": 0.5},
+     "note": "Large k: lgamma(205) is very large. Tests lgamma precision for large arguments."},
+
+    {"id": "stab-truncnorm-tight", "dist": "truncated_normal", "value": 0.0, "params": {"mu": 0.0, "sigma": 1.0, "lo": -0.001, "hi": 0.001},
+     "analytical": 6.214629136573427,
+     "note": "Very tight truncation. Phi(0.001)-Phi(-0.001) ~ 2*phi(0)*0.001 ~ 0.000798. log of small CDF difference is numerically sensitive."},
+    {"id": "stab-truncnorm-one-tail", "dist": "truncated_normal", "value": 3.0, "params": {"mu": 0.0, "sigma": 1.0, "lo": 3.0, "hi": 100.0},
+     "note": "Left truncation in far tail. Phi(3)-base is ~0.0013. Evaluating at the boundary tests log(Phi(100)-Phi(3)) ~ log(0.00135)."},
+    {"id": "stab-truncnorm-wide", "dist": "truncated_normal", "value": 0.0, "params": {"mu": 0.0, "sigma": 1.0, "lo": -100.0, "hi": 100.0},
+     "note": "Wide truncation — should match Normal(0,1) exactly. Phi(100)-Phi(-100)~1.0. log-norm~0."},
+
+    {"id": "stab-vonmises-large-kappa", "dist": "von_mises", "value": 0.0, "params": {"mu": 0.0, "kappa": 100.0},
+     "analytical": 1.3823911831023707,
+     "note": "Large kappa: I0(100) is very large. log(I0) ~ kappa-0.5*log(2*pi*kappa). Tests bessel_i0e stability."},
+    {"id": "stab-vonmises-small-kappa", "dist": "von_mises", "value": 0.0, "params": {"mu": 0.0, "kappa": 0.01},
+     "analytical": -1.8279020556566674,
+     "note": "Small kappa: I0(kappa)~1, distribution approaches uniform on circle. log p ~ kappa*cos(x) - log(2*pi)."},
+    {"id": "stab-vonmises-opposite", "dist": "von_mises", "value": 3.141592653589793, "params": {"mu": 0.0, "kappa": 50.0},
+     "note": "Large kappa at opposite point (x=pi, mu=0): cos(pi)=-1. log p = -50-log(2*pi)-log(I0(50)). Very negative."},
+
+    {"id": "stab-wishart-large-df", "dist": "wishart", "value": [[50.0, 0.0], [0.0, 50.0]], "params": {"df": 50, "scale_matrix": [[1.0, 0.0], [0.0, 1.0]]},
+     "note": "Large df: lgamma values and (df*k/2)*log(2) are large. Tests cancellation precision."},
+    {"id": "stab-wishart-near-singular", "dist": "wishart", "value": [[1.0, 0.99], [0.99, 1.0]], "params": {"df": 5, "scale_matrix": [[1.0, 0.0], [0.0, 1.0]]},
+     "note": "Near-singular X: det(X)=1-0.9801=0.0199. log|X|~-3.917. Cholesky may be numerically sensitive."},
+
+    {"id": "stab-invwishart-near-min-df", "dist": "inv_wishart", "value": [[1.0, 0.0], [0.0, 1.0]], "params": {"df": 4, "scale_matrix": [[1.0, 0.0], [0.0, 1.0]]},
+     "note": "df=k+2=4 is just above minimum df=k+1=3 for existence. lgamma((4-2+1)/2)=lgamma(1.5) near pole."},
+    {"id": "stab-invwishart-large-df", "dist": "inv_wishart", "value": [[0.1, 0.0], [0.0, 0.1]], "params": {"df": 50, "scale_matrix": [[1.0, 0.0], [0.0, 1.0]]},
+     "note": "Large df, small X: tr(Psi*X^{-1})=10+10=20 (large). -(df+k+1)/2*log|X| also large."},
+
+    {"id": "stab-discunif-large-range", "dist": "discrete_uniform", "value": 500000, "params": {"lo": 0, "hi": 1000000},
+     "note": "Large range: log p = -log(1000001) ~ -13.816. Tests integer handling for large ranges."},
+
+    {"id": "stab-lognormal-tiny", "dist": "lognormal", "value": 1e-10, "params": {"mu": 0.0, "sigma": 1.0},
+     "note": "Very small v: log(v)~-23.03 is far in left tail. z=-23.03, z^2~530. logpdf ~ 23.03-0.919-265 ~ -243."},
+    {"id": "stab-invgamma-tiny", "dist": "inv_gamma", "value": 1e-6, "params": {"shape": 2.0, "scale": 1.0},
+     "note": "Very small v: scale/v = 1e6 dominates. logpdf ~ -1e6. Tests for overflow to -Inf vs finite."}
   ]
 }
