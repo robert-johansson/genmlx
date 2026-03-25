@@ -337,9 +337,16 @@
                                      failures "/" n-sims ")")
                             nil)
                         ranks-acc)
-                      (let [_ (when (zero? (mod i 50))
-                              (println (str "  rep " i "/" n-sims
-                                            " (" failures " failures so far)")))
+                      (let [_ (do
+                              (when (zero? (mod i 50))
+                                (println (str "  rep " i "/" n-sims
+                                              " (" failures " failures so far)")))
+                              ;; Flush Metal caches every 10 reps to prevent RSS blowup
+                              ;; HMC creates many gradient graphs that accumulate
+                              (when (zero? (mod i 10))
+                                (mx/clear-cache!)
+                                (mx/sweep-dead-arrays!)
+                                (when (.-gc js/globalThis) (.gc js/globalThis))))
                             result (try
                                      (run-sbc-single model-spec algo-key)
                                      (catch :default e
@@ -376,8 +383,12 @@
 
 ;; ── Runner ───────────────────────────────────────────────────────────────
 
+;; Cap Metal cache to 2GB to prevent RSS blowup (machine has 36GB)
+(mx/set-cache-limit! (* 2 1024 1024 1024))
+
 (println (str "=== Simulation-Based Calibration (SBC) Tests ==="))
 (println (str "N=" N ", L=" L ", " N-BINS " bins, alpha=" ALPHA))
+(println (str "Metal cache limit: 2GB"))
 
 (def all-results (atom []))
 (def summary (atom {:pass 0 :fail 0}))
@@ -424,7 +435,15 @@
       (swap! summary update :fail inc))
     (println (str "  [" (.toFixed elapsed 1) "s]"))
     ;; Write after each combo so crashes don't lose everything
-    (write-results!)))
+    (write-results!)
+    ;; Aggressive cleanup between combos
+    (mx/clear-cache!)
+    (mx/sweep-dead-arrays!)
+    (when (.-gc js/globalThis) (.gc js/globalThis))
+    (let [rss-mb (/ (.-rss (js/process.memoryUsage)) 1048576)]
+      (println (str "  [RSS: " (.toFixed rss-mb 0) "MB, Metal active: "
+                    (.toFixed (/ (mx/get-active-memory) 1048576) 0) "MB, cache: "
+                    (.toFixed (/ (mx/get-cache-memory) 1048576) 0) "MB]")))))
 
 ;; ── Final write ──────────────────────────────────────────────────────────
 
