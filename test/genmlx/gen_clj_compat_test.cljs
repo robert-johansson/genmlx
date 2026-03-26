@@ -160,9 +160,9 @@
     (doseq [nu [1 2 5 10]
             v  [-2.0 0.0 1.5 3.0]]
       (is (th/close? (lp (dist/student-t nu 0 1) v)
-                     (lp (dist/student-t nu 0 1) v)
+                     (lp (dist/student-t nu 0 1) (- v))
                      sym-tol)
-          (str "student-t(" nu ", 0, 1) at " v " self-consistent"))))
+          (str "student-t(" nu ", 0, 1) symmetric at +/-" v))))
 
   (testing "Delta logpdf"
     (doseq [c [0.0 1.5 -3.0 100.0]]

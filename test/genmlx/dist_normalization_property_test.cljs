@@ -151,8 +151,10 @@
                  key (gen/elements key-pool)]
     (let [support (dc/dist-support d)
           n-support (count support)
-          ;; Sample 200 times, collect unique values
-          keys (rng/split-n key 200)
+          ;; Need enough samples so even the rarest support value is likely covered.
+          ;; For binomial(4,0.3): P(4)=0.0081, need ~600 samples for P(miss)<1%.
+          n-samples (max 500 (* 100 n-support))
+          keys (rng/split-n key n-samples)
           samples (mapv (fn [k]
                           (let [v (dc/dist-sample d k)]
                             (mx/eval! v)
