@@ -649,6 +649,56 @@
     (.drainMicrotasks jsc)
     (.gcAndSweep jsc)))
 
+(def ^:private gc-fn
+  "Synchronous GC function (Bun.gc or global.gc if available)."
+  (or (when (exists? js/Bun) (.-gc js/Bun))
+      (.-gc js/globalThis)))
+
+;; ---------------------------------------------------------------------------
+;; Resource-pressure auto-cleanup (Bun GC integration)
+;; ---------------------------------------------------------------------------
+
+(def ^:private resource-pressure-threshold
+  "When Metal buffer count exceeds this, auto-cleanup triggers.
+   Set to ~40% of the 499K hard limit — leaves headroom for bursts."
+  200000)
+
+(def ^:private ^:mutable ops-since-check
+  "Counter to amortize the cost of get-num-resources calls.
+   Only check resource pressure every N operations."
+  0)
+
+(def ^:private check-interval
+  "Check resource pressure every N auto-cleanup! calls.
+   get-num-resources is cheap (~0.01ms) but not free in tight loops."
+  50)
+
+(defn auto-cleanup!
+  "Resource-pressure cleanup for hot paths. Two tiers:
+
+   Lightweight (default): sweep + clear only. Harvests Metal buffers
+   that Bun's natural GC has already freed. Safe to call from anywhere —
+   including inside tight handler loops (SMC rejuvenation, MH chains).
+   The handler's purity (each trace op produces a clean batch of dead
+   intermediates via vreset!) makes sweep highly effective.
+
+   Aggressive (aggressive? true): also forces GC via jsc-cleanup! before
+   sweeping. Use ONLY from leaf operations (dist-sample-n) that are not
+   called from inside complex state-holding loops. Never from trace-fn —
+   forced GC during tight handler loops causes use-after-free segfaults."
+  ([] (auto-cleanup! false))
+  ([aggressive?]
+   (set! ops-since-check (inc ops-since-check))
+   (when (>= ops-since-check check-interval)
+     (set! ops-since-check 0)
+     (when (and (not (in-tidy?))
+                (> (get-num-resources) resource-pressure-threshold))
+       (when aggressive?
+         (jsc-cleanup!)
+         (when gc-fn (gc-fn)))
+       (sweep-dead-arrays!)
+       (clear-cache!)))))
+
 (defn materialize!
   "Evaluate MLX arrays, materializing the computation graph.
    Use at inference/training loop boundaries to bound graph size."
@@ -689,6 +739,8 @@
         (to-array arrays))))
     (when (> (get-cache-memory) cache-pressure-threshold)
       (jsc-cleanup!)
+      (when gc-fn (gc-fn))
+      (sweep-dead-arrays!)
       (clear-cache!))
     @result-vol))
 
@@ -706,6 +758,9 @@
         (vreset! result-vol (item arr))
         (to-array [arr]))))
     (when (> (get-cache-memory) cache-pressure-threshold)
+      (jsc-cleanup!)
+      (when gc-fn (gc-fn))
+      (sweep-dead-arrays!)
       (clear-cache!))
     @result-vol))
 
@@ -713,17 +768,13 @@
 ;; Resource management (moved from inference/util.cljs)
 ;; ---------------------------------------------------------------------------
 
-(def ^:private gc-fn
-  "Synchronous GC function (Bun.gc or global.gc if available)."
-  (or (when (exists? js/Bun) (.-gc js/Bun))
-      (.-gc js/globalThis)))
-
 (defn force-gc!
   "Force garbage collection and Metal buffer cleanup.
    Clears compiled function caches too — compiled functions transparently
    recompile on next use, so this is safe."
   []
   (jsc-cleanup!)
+  (when gc-fn (gc-fn))
   (sweep-dead-arrays!)
   (clear-cache!)
   (compile-clear-cache!))

@@ -46,6 +46,7 @@
         (fn [addr dist]
           (let [[value state'] (transition @vol addr dist)]
             (vreset! vol state')
+            (mx/auto-cleanup!)
             value))
 
         ;; param closure: read a trainable parameter
