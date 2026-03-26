@@ -348,6 +348,13 @@
               new-vals (mx/multiply d-arr safe-v)
               result (mx/where newly-done new-vals result)
               done (mx/where newly-done ONE done)]
+          ;; Cut lazy graph chains — prevents 20 iterations of intermediates
+          ;; from accumulating as a single massive computation graph.
+          (mx/eval! result done)
+          ;; Periodically sweep dead arrays to release Metal buffers.
+          ;; No-op inside tidy scopes (in-tidy? guard in sweep-dead-arrays!).
+          (when (zero? (mod iter 5))
+            (mx/sweep-dead-arrays!))
           (recur (inc iter) result done k3))))))
 
 (defmethod dc/dist-sample-n* :gamma [d key n]

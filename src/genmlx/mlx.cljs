@@ -649,6 +649,11 @@
     (.drainMicrotasks jsc)
     (.gcAndSweep jsc)))
 
+(def ^:private gc-fn
+  "Synchronous GC function (Bun.gc or global.gc if available)."
+  (or (when (exists? js/Bun) (.-gc js/Bun))
+      (.-gc js/globalThis)))
+
 (defn materialize!
   "Evaluate MLX arrays, materializing the computation graph.
    Use at inference/training loop boundaries to bound graph size."
@@ -689,6 +694,8 @@
         (to-array arrays))))
     (when (> (get-cache-memory) cache-pressure-threshold)
       (jsc-cleanup!)
+      (when gc-fn (gc-fn))
+      (sweep-dead-arrays!)
       (clear-cache!))
     @result-vol))
 
@@ -706,6 +713,9 @@
         (vreset! result-vol (item arr))
         (to-array [arr]))))
     (when (> (get-cache-memory) cache-pressure-threshold)
+      (jsc-cleanup!)
+      (when gc-fn (gc-fn))
+      (sweep-dead-arrays!)
       (clear-cache!))
     @result-vol))
 
@@ -713,17 +723,13 @@
 ;; Resource management (moved from inference/util.cljs)
 ;; ---------------------------------------------------------------------------
 
-(def ^:private gc-fn
-  "Synchronous GC function (Bun.gc or global.gc if available)."
-  (or (when (exists? js/Bun) (.-gc js/Bun))
-      (.-gc js/globalThis)))
-
 (defn force-gc!
   "Force garbage collection and Metal buffer cleanup.
    Clears compiled function caches too — compiled functions transparently
    recompile on next use, so this is safe."
   []
   (jsc-cleanup!)
+  (when gc-fn (gc-fn))
   (sweep-dead-arrays!)
   (clear-cache!)
   (compile-clear-cache!))
