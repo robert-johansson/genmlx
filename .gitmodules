@@ -10,9 +10,6 @@
 [submodule "internet-psychology"]
 	path = internet-psychology
 	url = https://github.com/robert-johansson/internet-psychology.git
-[submodule "dev"]
-	path = dev
-	url = https://github.com/robert-johansson/genmlx-dev.git
 [submodule "test.check"]
 	path = test.check
 	url = https://github.com/robert-johansson/test.check.git

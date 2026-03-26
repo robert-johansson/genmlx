@@ -31,3 +31,6 @@ cross_system_tests/results/
 
 # Working notes
 notes/
+
+# Private dev directory (not synced)
+dev/
