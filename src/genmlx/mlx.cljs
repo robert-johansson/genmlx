@@ -674,20 +674,30 @@
   50)
 
 (defn auto-cleanup!
-  "Resource-pressure triggered cleanup. Call from hot paths (handler trace,
-   inference loops). Fast no-op most of the time — only triggers GC when
-   Metal buffer count exceeds threshold. Amortized cost: one integer
-   increment per call, one N-API read per check-interval calls."
-  []
-  (set! ops-since-check (inc ops-since-check))
-  (when (>= ops-since-check check-interval)
-    (set! ops-since-check 0)
-    (when (and (not (in-tidy?))
-               (> (get-num-resources) resource-pressure-threshold))
-      (jsc-cleanup!)
-      (when gc-fn (gc-fn))
-      (sweep-dead-arrays!)
-      (clear-cache!))))
+  "Resource-pressure cleanup for hot paths. Two tiers:
+
+   Lightweight (default): sweep + clear only. Harvests Metal buffers
+   that Bun's natural GC has already freed. Safe to call from anywhere —
+   including inside tight handler loops (SMC rejuvenation, MH chains).
+   The handler's purity (each trace op produces a clean batch of dead
+   intermediates via vreset!) makes sweep highly effective.
+
+   Aggressive (aggressive? true): also forces GC via jsc-cleanup! before
+   sweeping. Use ONLY from leaf operations (dist-sample-n) that are not
+   called from inside complex state-holding loops. Never from trace-fn —
+   forced GC during tight handler loops causes use-after-free segfaults."
+  ([] (auto-cleanup! false))
+  ([aggressive?]
+   (set! ops-since-check (inc ops-since-check))
+   (when (>= ops-since-check check-interval)
+     (set! ops-since-check 0)
+     (when (and (not (in-tidy?))
+                (> (get-num-resources) resource-pressure-threshold))
+       (when aggressive?
+         (jsc-cleanup!)
+         (when gc-fn (gc-fn)))
+       (sweep-dead-arrays!)
+       (clear-cache!)))))
 
 (defn materialize!
   "Evaluate MLX arrays, materializing the computation graph.

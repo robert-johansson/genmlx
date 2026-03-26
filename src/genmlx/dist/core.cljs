@@ -44,7 +44,7 @@
   [d key n]
   (let [key (rng/ensure-key key)
         result (dist-sample-n* d key n)]
-    (mx/auto-cleanup!)
+    (mx/auto-cleanup! true) ;; aggressive: leaf op, safe for forced GC
     result))
 
 ;; Defaults: helpful errors
