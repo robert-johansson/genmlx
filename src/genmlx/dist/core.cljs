@@ -42,8 +42,10 @@
 (defn dist-sample-n
   "Batch-sample n values from distribution d using PRNG key."
   [d key n]
-  (let [key (rng/ensure-key key)]
-    (dist-sample-n* d key n)))
+  (let [key (rng/ensure-key key)
+        result (dist-sample-n* d key n)]
+    (mx/auto-cleanup!)
+    result))
 
 ;; Defaults: helpful errors
 (defmethod dist-reparam :default [d _]

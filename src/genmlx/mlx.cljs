@@ -654,6 +654,41 @@
   (or (when (exists? js/Bun) (.-gc js/Bun))
       (.-gc js/globalThis)))
 
+;; ---------------------------------------------------------------------------
+;; Resource-pressure auto-cleanup (Bun GC integration)
+;; ---------------------------------------------------------------------------
+
+(def ^:private resource-pressure-threshold
+  "When Metal buffer count exceeds this, auto-cleanup triggers.
+   Set to ~40% of the 499K hard limit — leaves headroom for bursts."
+  200000)
+
+(def ^:private ^:mutable ops-since-check
+  "Counter to amortize the cost of get-num-resources calls.
+   Only check resource pressure every N operations."
+  0)
+
+(def ^:private check-interval
+  "Check resource pressure every N auto-cleanup! calls.
+   get-num-resources is cheap (~0.01ms) but not free in tight loops."
+  50)
+
+(defn auto-cleanup!
+  "Resource-pressure triggered cleanup. Call from hot paths (handler trace,
+   inference loops). Fast no-op most of the time — only triggers GC when
+   Metal buffer count exceeds threshold. Amortized cost: one integer
+   increment per call, one N-API read per check-interval calls."
+  []
+  (set! ops-since-check (inc ops-since-check))
+  (when (>= ops-since-check check-interval)
+    (set! ops-since-check 0)
+    (when (and (not (in-tidy?))
+               (> (get-num-resources) resource-pressure-threshold))
+      (jsc-cleanup!)
+      (when gc-fn (gc-fn))
+      (sweep-dead-arrays!)
+      (clear-cache!))))
+
 (defn materialize!
   "Evaluate MLX arrays, materializing the computation graph.
    Use at inference/training loop boundaries to bound graph size."
