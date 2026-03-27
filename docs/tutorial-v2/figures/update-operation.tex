@@ -66,7 +66,7 @@
     (con-inter) -- (new-inter);
 
 \draw[->, line width=0.8pt, discardborder, dashed]
-    (old-inter) |- (dis-inter);
+    (old-inter.west) -- ++(-0.8, 0) |- (dis-inter.west);
 
 % === WEIGHT ===
 \node[annot, color=accent, below=0.6cm of new-y1]

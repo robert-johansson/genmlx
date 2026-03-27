@@ -33,12 +33,10 @@
 \node[annot, right=0.3cm of h3] {$\cdots$};
 \node[hbox, right=0.8cm of h3] (hN) {handler};
 
-\node[annot, below=0.5cm of h2] (sn) {$N$ calls $\times$ $N$ dispatches};
-
 % Brace
 \draw[decorate, decoration={brace, amplitude=5pt, mirror}, line width=0.6pt]
     ([yshift=-2pt]h1.south west) -- ([yshift=-2pt]hN.south east)
-    node[midway, below=7pt, annot] {$N$ particles};
+    node[midway, below=7pt, annot] {$N$ particles, $N$ dispatches};
 
 % ======== VECTORIZED ========
 \node[title, below=2.8cm of st] (vt) {Vectorized: 1 execution, $[N]$-shaped arrays};
