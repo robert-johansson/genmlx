@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-04011d1e.js";
+            window.path_to_searchindex_js = "searchindex-8cd6cad9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4ff5b9f.js"></script>
@@ -428,7 +428,7 @@ bun install
 </tbody>
 </table>
 </div>
-<p>You can also define your own distributions — we’ll cover that in <a href="#placeholder-8">Chapter 10</a>.</p>
+<p>You can also define your own distributions — we’ll cover that in <a href="#placeholder-7">Chapter 10</a>.</p>
 <h2 id="what-weve-learned"><a class="header" href="#what-weve-learned">What we’ve learned</a></h2>
 <ul>
 <li>The <code>gen</code> macro turns a function into a generative function.</li>
@@ -438,6 +438,145 @@ bun install
 <li>Values are MLX arrays (GPU tensors). Use <code>mx/item</code> to extract JavaScript numbers.</li>
 </ul>
 <p>In the next chapter, we’ll condition the model on observed data — and see how the same model code, with no modifications, gives us importance weights for inference.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="conditioning-the-core-trick"><a class="header" href="#conditioning-the-core-trick">Conditioning: The Core Trick</a></h1>
+<p>In the previous chapter, we ran models forward with <code>simulate</code> — sampling every random choice from its prior distribution. That’s useful for understanding what a model can generate, but it’s not inference. Inference starts when you have <strong>data</strong> and want to ask: given what I observed, what are the likely values of the things I didn’t observe?</p>
+<p>The answer is one operation: <code>generate</code>. It takes the same model, the same arguments, but also a <strong>choice map of observations</strong> — values you want to fix. The model runs as before, but at observed addresses, the handler uses the constrained value instead of sampling. Everything else is sampled from the prior. The result includes a <strong>weight</strong> — the log-probability of the observations given the sampled latent variables.</p>
+<p>This is the core trick of probabilistic programming: <strong>the same model code, with no modifications, supports both simulation and conditioned inference.</strong> The model declares <em>what</em> it needs; the handler decides <em>how</em>.</p>
+<h2 id="building-choice-maps"><a class="header" href="#building-choice-maps">Building choice maps</a></h2>
+<p>A choice map specifies which addresses to constrain and what values to fix them to:</p>
+<pre><code class="language-clojure">(def obs (cm/choicemap :y0 (mx/scalar 2.5)
+                       :y1 (mx/scalar 4.5)
+                       :y2 (mx/scalar 6.5)))
+</code></pre>
+<p>This says: “at address <code>:y0</code>, the value must be 2.5; at <code>:y1</code>, it must be 4.5; at <code>:y2</code>, it must be 6.5.” All other addresses (<code>:slope</code>, <code>:intercept</code>) are unconstrained — the handler will sample them from the prior.</p>
+<h2 id="generate-constrained-execution"><a class="header" href="#generate-constrained-execution">Generate: constrained execution</a></h2>
+<p>Pass the observations to <code>generate</code> along with the model and its arguments:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)
+      obs (cm/choicemap :y0 (mx/scalar 2.5) :y1 (mx/scalar 4.5) :y2 (mx/scalar 6.5))
+      {:keys [trace weight]} (p/generate model [xs] obs)]
+  (println "slope:" (mx/item (cm/get-choice (:choices trace) [:slope])))
+  (println "intercept:" (mx/item (cm/get-choice (:choices trace) [:intercept])))
+  (println "y0:" (mx/item (cm/get-choice (:choices trace) [:y0])))
+  (println "weight:" (mx/item weight)))
+</code></pre>
+<p>The trace looks just like one from <code>simulate</code> — it has all the same addresses. But the observed addresses are fixed to the values you provided:</p>
+<ul>
+<li><code>:slope</code> and <code>:intercept</code> — <strong>sampled</strong> from the prior (different each time you call <code>generate</code>)</li>
+<li><code>:y0</code>, <code>:y1</code>, <code>:y2</code> — <strong>constrained</strong> to exactly 2.5, 4.5, 6.5 (same every time)</li>
+</ul>
+<h2 id="the-weight"><a class="header" href="#the-weight">The weight</a></h2>
+<p><code>generate</code> returns a weight alongside the trace. The weight is the log-probability of the observed values under the distributions they were constrained to:</p>
+<p>\[
+\log w = \sum_{a \in \text{observed}} \log p_a(\text{observed value})
+\]</p>
+<p>In our linear regression, this is \(\log p(y_0 \mid \text{slope}, \text{intercept}) + \log p(y_1 \mid \cdots) + \log p(y_2 \mid \cdots)\). When the sampled slope and intercept happen to explain the data well, the weight is high. When they don’t, the weight is low.</p>
+<p>This weight is what makes inference possible.</p>
+<h2 id="same-model-different-interpretation"><a class="header" href="#same-model-different-interpretation">Same model, different interpretation</a></h2>
+<p>Here’s the key insight. Compare what happens at address <code>:y0</code>:</p>
+<ul>
+<li>Under <code>simulate</code>: the handler <strong>samples</strong> \(y_0 \sim \mathcal{N}(\text{slope} \cdot x_0 + \text{intercept}, 1)\) and records the value.</li>
+<li>Under <code>generate</code> with <code>:y0</code> constrained: the handler <strong>uses</strong> the constrained value 2.5 and adds \(\log p(2.5 \mid \text{slope} \cdot x_0 + \text{intercept}, 1)\) to the weight.</li>
+</ul>
+<p>The model body is identical in both cases. It calls <code>(trace :y0 (dist/gaussian ...))</code> — declaring what it needs. The handler decides the semantics. This is what we mean by “your model is pure; the framework manages state.”</p>
+<p><img src="figures/conditioning.svg" alt="Simulate vs Generate"></p>
+<h2 id="importance-sampling-by-hand"><a class="header" href="#importance-sampling-by-hand">Importance sampling by hand</a></h2>
+<p>With <code>generate</code> and weights, we can build importance sampling from scratch. The idea: run <code>generate</code> many times, each time sampling different latent values from the prior. The weights tell us which samples explain the data best.</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)
+      obs (cm/choicemap :y0 (mx/scalar 2.5) :y1 (mx/scalar 4.5) :y2 (mx/scalar 6.5))
+      n 50
+      results (mapv (fn [_] (p/generate model [xs] obs)) (range n))
+      log-weights (mapv #(mx/item (:weight %)) results)
+      ;; Normalize weights to probabilities
+      max-w (apply max log-weights)
+      unnorm (mapv #(js/Math.exp (- % max-w)) log-weights)
+      total (reduce + unnorm)
+      weights (mapv #(/ % total) unnorm)
+      ;; Weighted mean of slope
+      slopes (mapv #(mx/item (cm/get-choice (:choices (:trace %)) [:slope])) results)
+      weighted-mean (reduce + (map * slopes weights))]
+  (println "estimated slope:" (.toFixed weighted-mean 3)))
+</code></pre>
+<p>The normalization trick (subtract <code>max-w</code> before exponentiating) prevents numerical underflow. The weighted mean gives an estimate of the posterior mean of the slope — the expected value of the slope given the data.</p>
+<p>With data points at \(x = [1, 2, 3]\) and \(y = [2.5, 4.5, 6.5]\), the true relationship is roughly \(y = 2x + 0.5\), so we expect the posterior mean of the slope to be near 2.</p>
+<h2 id="the-built-in-version"><a class="header" href="#the-built-in-version">The built-in version</a></h2>
+<p>GenMLX provides <code>importance-sampling</code> so you don’t have to write the loop yourself:</p>
+<pre><code class="language-clojure">(let [model linear-model
+      obs (cm/choicemap :y0 (mx/scalar 2.5) :y1 (mx/scalar 4.5) :y2 (mx/scalar 6.5))
+      {:keys [traces log-weights log-ml-estimate]}
+      (importance/importance-sampling {:samples 100} model [xs] obs)]
+  (println "number of traces:" (count traces))
+  (println "log marginal likelihood:" (mx/item log-ml-estimate)))
+</code></pre>
+<p>It returns:</p>
+<ul>
+<li><code>:traces</code> — a vector of 100 traces, each with different latent values</li>
+<li><code>:log-weights</code> — the log-weight of each trace</li>
+<li><code>:log-ml-estimate</code> — an estimate of the log marginal likelihood of the data</li>
+</ul>
+<h2 id="log-marginal-likelihood"><a class="header" href="#log-marginal-likelihood">Log marginal likelihood</a></h2>
+<p>The log marginal likelihood \(\log \hat{Z}\) estimates how well the model explains the data, averaged over all possible parameter values:</p>
+<p>\[
+\log \hat{Z} = \log \frac{1}{N} \sum_{i=1}^{N} \exp(\log w_i)
+\]</p>
+<p>This is computed via <code>logsumexp</code> for numerical stability. It’s useful for model comparison — a model with higher log marginal likelihood explains the data better.</p>
+<p>Running importance sampling twice with the same observations gives similar estimates:</p>
+<pre><code class="language-clojure">(let [model linear-model
+      obs (cm/choicemap :y0 (mx/scalar 2.5) :y1 (mx/scalar 4.5) :y2 (mx/scalar 6.5))
+      r1 (importance/importance-sampling {:samples 200} model [xs] obs)
+      r2 (importance/importance-sampling {:samples 200} model [xs] obs)]
+  (println "estimate 1:" (.toFixed (mx/item (:log-ml-estimate r1)) 2))
+  (println "estimate 2:" (.toFixed (mx/item (:log-ml-estimate r2)) 2)))
+</code></pre>
+<p>The estimates won’t be identical (they’re stochastic) but they should be close. More particles means less variance.</p>
+<h2 id="prior-vs-posterior"><a class="header" href="#prior-vs-posterior">Prior vs posterior</a></h2>
+<p>The whole point of conditioning is that the posterior is different from the prior. Let’s verify:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)
+      obs (cm/choicemap :y0 (mx/scalar 2.5) :y1 (mx/scalar 4.5) :y2 (mx/scalar 6.5))
+      ;; Prior: simulate 50 times, collect slopes
+      prior-slopes (mapv (fn [_]
+                           (mx/item (cm/get-choice
+                                      (:choices (p/simulate model [xs])) [:slope])))
+                         (range 50))
+      prior-mean (/ (reduce + prior-slopes) (count prior-slopes))
+      ;; Posterior: generate 100 times, weight, compute weighted mean
+      results (mapv (fn [_] (p/generate model [xs] obs)) (range 100))
+      log-ws (mapv #(mx/item (:weight %)) results)
+      slopes (mapv #(mx/item (cm/get-choice (:choices (:trace %)) [:slope])) results)
+      max-w (apply max log-ws)
+      ws (mapv #(/ (js/Math.exp (- % max-w))
+                    (reduce + (mapv (fn [lw] (js/Math.exp (- lw max-w))) log-ws)))
+               log-ws)
+      post-mean (reduce + (map * slopes ws))]
+  (println "prior mean slope:" (.toFixed prior-mean 2))
+  (println "posterior mean slope:" (.toFixed post-mean 2)))
+</code></pre>
+<p>The prior mean should be near 0 (our prior is \(\mathcal{N}(0, 10)\)). The posterior mean should be near 2 — pulled toward the data. That shift from prior to posterior is inference.</p>
+<h2 id="nested-choice-maps"><a class="header" href="#nested-choice-maps">Nested choice maps</a></h2>
+<p>When models are composed via <code>splice</code> (which we’ll cover in <a href="#placeholder-3">Chapter 6</a>), choice maps can be nested. You can build nested choice maps directly:</p>
+<pre><code class="language-clojure">(def nested-obs
+  (cm/choicemap :params (cm/choicemap :slope (mx/scalar 2.0)
+                                      :intercept (mx/scalar 1.0))))
+
+;; Access nested values
+(println (mx/item (cm/get-choice nested-obs [:params :slope])))  ;; =&gt; 2.0
+</code></pre>
+<p>Or use <code>cm/from-map</code> for convenience:</p>
+<pre><code class="language-clojure">(def from-map-obs (cm/from-map {:a {:b 3.0} :c 5.0}))
+(println (cm/get-choice from-map-obs [:a :b]))  ;; =&gt; 3.0
+</code></pre>
+<p>Nested choice maps mirror the hierarchical address structure that <code>splice</code> creates — each sub-model’s choices live under the splice address.</p>
+<h2 id="what-weve-learned-1"><a class="header" href="#what-weve-learned-1">What we’ve learned</a></h2>
+<ul>
+<li><code>generate</code> runs a model with some addresses constrained to observed values.</li>
+<li>The <strong>weight</strong> is the log-probability of the observations given the sampled latent variables.</li>
+<li>The same model code works with both <code>simulate</code> and <code>generate</code> — the handler determines the interpretation.</li>
+<li><strong>Importance sampling</strong> runs <code>generate</code> many times and uses the weights to estimate posterior expectations.</li>
+<li>The <strong>log marginal likelihood</strong> estimates how well the model explains the data.</li>
+<li>Choice maps can be nested for composed models.</li>
+</ul>
+<p>The key idea: <strong>conditioning is not a modification to the model. It’s a different interpretation of the same model by a different handler.</strong> The model declares random choices; the handler decides whether to sample or constrain.</p>
+<p>In the next chapter, we’ll look inside the handler to see exactly how this works.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="placeholder"><a class="header" href="#placeholder">Placeholder</a></h1>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -454,8 +593,6 @@ bun install
 <h1 id="placeholder-6"><a class="header" href="#placeholder-6">Placeholder</a></h1>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="placeholder-7"><a class="header" href="#placeholder-7">Placeholder</a></h1>
-<div style="break-before: page; page-break-before: always;"></div>
-<h1 id="placeholder-8"><a class="header" href="#placeholder-8">Placeholder</a></h1>
 
                     </main>
 
