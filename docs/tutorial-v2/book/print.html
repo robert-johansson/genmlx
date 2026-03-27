@@ -39,7 +39,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4c0abff0.js";
+            window.path_to_searchindex_js = "searchindex-fad9e08e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4ff5b9f.js"></script>
@@ -430,7 +430,7 @@ bun install
 </tbody>
 </table>
 </div>
-<p>You can also define your own distributions — we’ll cover that in <a href="#placeholder-3">Chapter 10</a>.</p>
+<p>You can also define your own distributions — we’ll cover that in <a href="#placeholder-1">Chapter 10</a>.</p>
 <h2 id="what-weve-learned"><a class="header" href="#what-weve-learned">What we’ve learned</a></h2>
 <ul>
 <li>The <code>gen</code> macro turns a function into a generative function.</li>
@@ -725,11 +725,11 @@ bun install
                        (range n))]
       values)))
 </code></pre>
-<p>The <code>gen</code> macro also captures the source form as quoted data — a ClojureScript list — which enables schema extraction and compilation (covered in <a href="#placeholder-1">Chapter 8</a>).</p>
+<p>The <code>gen</code> macro also captures the source form as quoted data — a ClojureScript list — which enables schema extraction and compilation (covered in <a href="#going-fast-vectorization-and-compilation">Chapter 8</a>).</p>
 <h2 id="why-purity-matters"><a class="header" href="#why-purity-matters">Why purity matters</a></h2>
 <p>The handler transitions are pure functions. The model body is pure (it only calls <code>trace</code>, which is a closure — the mutation is inside <code>run-handler</code>, not in the model). This purity has three consequences that we’ll see throughout the rest of the tutorial:</p>
 <p><strong>Composition.</strong> Pure transitions compose. The same transition signature <code>(state, addr, dist) → (value, state')</code> is used by <code>simulate</code>, <code>generate</code>, <code>update</code>, <code>regenerate</code>, and <code>project</code>. Analytical middleware can wrap a transition to intercept specific addresses. Compilation can replace a transition with a fused version. They all plug into the same slot.</p>
-<p><strong>Shape polymorphism.</strong> The transitions never inspect value shapes. If you pass <code>[N]</code>-shaped arrays instead of scalars, the same code works — MLX broadcasting handles the arithmetic. This is why vectorized inference (running N particles in one call) works with zero code changes (<a href="#placeholder-1">Chapter 8</a>).</p>
+<p><strong>Shape polymorphism.</strong> The transitions never inspect value shapes. If you pass <code>[N]</code>-shaped arrays instead of scalars, the same code works — MLX broadcasting handles the arithmetic. This is why vectorized inference (running N particles in one call) works with zero code changes (<a href="#going-fast-vectorization-and-compilation">Chapter 8</a>).</p>
 <p><strong>Correctness.</strong> Each transition can be tested in isolation — pass in a state, check the output state. No mocking, no setup, no teardown. The GFI contracts (measure-theoretic invariants) can be verified by calling transitions directly.</p>
 <h2 id="where-impurity-lives"><a class="header" href="#where-impurity-lives">Where impurity lives</a></h2>
 <p>GenMLX is not “purely functional” in the type-theoretic sense. The <code>volatile!</code> is real mutation. The GPU memory layer (<code>mx/eval!</code>, <code>mx/sweep-dead-arrays!</code>) is side-effectful. Several atoms track nesting depth for safety.</p>
@@ -838,7 +838,7 @@ bun install
 ;; =&gt; [[:params :slope] [:params :intercept]]
 </code></pre>
 <h2 id="stacking-and-unstacking-for-batching"><a class="header" href="#stacking-and-unstacking-for-batching">Stacking and unstacking for batching</a></h2>
-<p>For vectorized inference (<a href="#placeholder-1">Chapter 8</a>), GenMLX runs N particles through a model simultaneously using \([N]\)-shaped arrays. <code>stack-choicemaps</code> combines N scalar choice maps into one choice map with \([N]\)-shaped leaves:</p>
+<p>For vectorized inference (<a href="#going-fast-vectorization-and-compilation">Chapter 8</a>), GenMLX runs N particles through a model simultaneously using \([N]\)-shaped arrays. <code>stack-choicemaps</code> combines N scalar choice maps into one choice map with \([N]\)-shaped leaves:</p>
 <pre><code class="language-clojure">(def cm1 (cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar 10.0)))
 (def cm2 (cm/choicemap :x (mx/scalar 2.0) :y (mx/scalar 20.0)))
 (def cm3 (cm/choicemap :x (mx/scalar 3.0) :y (mx/scalar 30.0)))
@@ -1087,7 +1087,7 @@ bun install
                  samples)
                (if accept? (inc accepted) accepted))))))
 </code></pre>
-<p>With observations \(y = [2.5, 4.5, 6.5]\) at \(x = [1, 2, 3]\), the posterior mean of the slope should be near 2. The acceptance rate depends on the proposal — prior proposals (regenerating from \(\mathcal{N}(0, 10)\)) tend to have low acceptance rates because the prior is broad. In <a href="#placeholder">Chapter 7</a> we’ll see smarter proposals like random walks and HMC.</p>
+<p>With observations \(y = [2.5, 4.5, 6.5]\) at \(x = [1, 2, 3]\), the posterior mean of the slope should be near 2. The acceptance rate depends on the proposal — prior proposals (regenerating from \(\mathcal{N}(0, 10)\)) tend to have low acceptance rates because the prior is broad. In <a href="#the-inference-toolkit">Chapter 7</a> we’ll see smarter proposals like random walks and HMC.</p>
 <h2 id="burn-in-and-thinning"><a class="header" href="#burn-in-and-thinning">Burn-in and thinning</a></h2>
 <p>Two practical considerations for MCMC:</p>
 <p><strong>Burn-in:</strong> The chain starts from a random initialization that may be far from the posterior. Early samples are unrepresentative. Discard the first <code>burn</code> samples before collecting.</p>
@@ -1295,13 +1295,225 @@ bun install
 </ul>
 <p>In the next chapter, we’ll use these composition tools with GenMLX’s inference toolkit — composable kernels, gradient-based MCMC, SMC, and variational inference.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="the-inference-toolkit"><a class="header" href="#the-inference-toolkit">The Inference Toolkit</a></h1>
+<p>In Chapter 2 we built importance sampling by hand. In Chapter 5 we built Metropolis-Hastings by hand. GenMLX provides a library of inference algorithms and composable building blocks so you don’t have to. This chapter covers the toolkit: kernel constructors, kernel composition, built-in MCMC and SMC, and diagnostics.</p>
+<h2 id="importance-sampling"><a class="header" href="#importance-sampling">Importance sampling</a></h2>
+<p>The built-in IS function from Chapter 2, for reference:</p>
+<pre><code class="language-clojure">(let [{:keys [traces log-weights log-ml-estimate]}
+      (importance/importance-sampling {:samples 50} simple-model [] obs)]
+  (println "traces:" (count traces))
+  (println "log-ML:" (mx/item log-ml-estimate)))
+</code></pre>
+<h2 id="kernel-constructors"><a class="header" href="#kernel-constructors">Kernel constructors</a></h2>
+<p>GenMLX provides ready-made inference kernels — functions of type <code>(trace, key) -&gt; trace</code>:</p>
+<pre><code class="language-clojure">;; Prior-proposal MH: resample :mu from the prior
+(def k1 (kern/mh-kernel (sel/select :mu)))
+
+;; Random-walk MH: propose mu' = mu + N(0, 0.5)
+(def k2 (kern/random-walk :mu 0.5))
+
+;; Prior resample (shorthand for mh-kernel with select)
+(def k3 (kern/prior :mu))
+
+;; Gibbs: cycle through addresses with prior proposals
+(def k4 (kern/gibbs :mu))
+</code></pre>
+<p>All kernels have the same type. This uniform interface enables composition.</p>
+<h2 id="kernel-composition"><a class="header" href="#kernel-composition">Kernel composition</a></h2>
+<p>Kernels compose algebraically:</p>
+<pre><code class="language-clojure">;; Sequential: apply k1 then k2
+(def composed (kern/chain (kern/prior :mu) (kern/random-walk :mu 0.5)))
+
+;; Repeat: apply the same kernel 10 times
+(def repeated (kern/repeat-kernel 10 (kern/prior :mu)))
+
+;; Cycle: round-robin through a list
+(def cycled (kern/cycle-kernels 6 [(kern/prior :mu) (kern/random-walk :mu 0.5)]))
+</code></pre>
+<p>Reversals propagate automatically: the reversal of <code>(chain k1 k2 k3)</code> is <code>(chain (rev k3) (rev k2) (rev k1))</code>. This is essential for reversible-jump MCMC.</p>
+<h2 id="running-a-kernel"><a class="header" href="#running-a-kernel">Running a kernel</a></h2>
+<p><code>run-kernel</code> executes a kernel for a specified number of iterations with burn-in, thinning, and optional callbacks:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key simple-model)
+      init-trace (:trace (p/generate model [] obs))
+      kernel (kern/random-walk :mu 1.0)
+      samples (kern/run-kernel {:samples 50 :burn 20} kernel init-trace)]
+  (println "samples:" (count samples))
+  (println "acceptance rate:" (:acceptance-rate (meta samples))))
+</code></pre>
+<p>The return value is a vector of traces with an acceptance rate in the metadata.</p>
+<h2 id="built-in-mh"><a class="header" href="#built-in-mh">Built-in MH</a></h2>
+<p>For convenience, <code>mcmc/mh</code> initializes from observations and runs a chain:</p>
+<pre><code class="language-clojure">(let [samples (mcmc/mh {:samples 50 :burn 20 :selection (sel/select :mu)}
+                        simple-model [] obs)]
+  (println "samples:" (count samples))
+  (println "acceptance:" (:acceptance-rate (meta samples))))
+</code></pre>
+<h2 id="hamiltonian-monte-carlo"><a class="header" href="#hamiltonian-monte-carlo">Hamiltonian Monte Carlo</a></h2>
+<p>HMC uses gradients of the log-posterior for more efficient proposals. Specify the step size, number of leapfrog steps, and which addresses to update:</p>
+<pre><code class="language-clojure">(let [samples (mcmc/hmc {:samples 30 :burn 10
+                          :step-size 0.1 :leapfrog-steps 5
+                          :addresses [:mu]}
+                         simple-model [] obs)]
+  (println "HMC samples:" (count samples)))
+</code></pre>
+<p>HMC also supports adaptive step-size tuning (dual averaging) and diagonal mass matrix estimation during burn-in via <code>:adapt-step-size true</code> and <code>:adapt-metric true</code>.</p>
+<p>GenMLX also provides MALA (<code>mcmc/mala</code>), NUTS (<code>mcmc/nuts</code>), elliptical slice sampling (<code>mcmc/elliptical-slice</code>), and MAP optimization (<code>mcmc/map-optimize</code>).</p>
+<h2 id="sequential-monte-carlo"><a class="header" href="#sequential-monte-carlo">Sequential Monte Carlo</a></h2>
+<p>SMC maintains a population of weighted particles, extending them through a sequence of observations:</p>
+<pre><code class="language-clojure">(let [result (smc/smc {:particles 20 :ess-threshold 0.5}
+                       model args observations)]
+  (println "traces:" (count (:traces result)))
+  (println "log-ML:" (mx/item (:log-ml-estimate result))))
+</code></pre>
+<p>SMC supports systematic, stratified, and residual resampling, rejuvenation via MCMC kernels, and conditional SMC (cSMC) for particle MCMC.</p>
+<h2 id="diagnostics"><a class="header" href="#diagnostics">Diagnostics</a></h2>
+<p>After collecting samples, assess convergence and summarize:</p>
+<pre><code class="language-clojure">(let [traces (kern/run-kernel {:samples 100 :burn 50} kernel init-trace)
+      mu-arrays (mapv #(cm/get-choice (:choices %) [:mu]) traces)]
+  (println "mean:" (mx/item (diag/sample-mean mu-arrays)))
+  (println "std:" (mx/item (diag/sample-std mu-arrays)))
+  (let [qs (diag/sample-quantiles mu-arrays)]
+    (println "2.5%:" (:q025 qs))
+    (println "median:" (:median qs))
+    (println "97.5%:" (:q975 qs))))
+</code></pre>
+<p>For multiple chains, <code>diag/r-hat</code> computes the Gelman-Rubin convergence diagnostic. Values near 1.0 indicate convergence.</p>
+<h2 id="when-to-use-what"><a class="header" href="#when-to-use-what">When to use what</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Situation</th><th>Recommended method</th></tr>
+</thead>
+<tbody>
+<tr><td>Quick posterior estimate</td><td>Importance sampling</td></tr>
+<tr><td>Few continuous parameters</td><td>Random-walk MH or HMC</td></tr>
+<tr><td>Many continuous parameters</td><td>HMC or NUTS with adaptation</td></tr>
+<tr><td>Sequential/temporal data</td><td>SMC</td></tr>
+<tr><td>Discrete latent variables</td><td>Gibbs with enumeration</td></tr>
+<tr><td>Model comparison</td><td>Log marginal likelihood from IS or SMC</td></tr>
+<tr><td>Fast prototyping</td><td><code>kern/run-kernel</code> with <code>kern/prior</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-weve-learned-6"><a class="header" href="#what-weve-learned-6">What we’ve learned</a></h2>
+<ul>
+<li>Inference kernels are functions <code>(trace, key) -&gt; trace</code> with a uniform interface.</li>
+<li><code>chain</code>, <code>repeat-kernel</code>, <code>cycle-kernels</code>, and <code>mix-kernels</code> compose kernels algebraically.</li>
+<li><code>run-kernel</code> collects samples with burn-in, thinning, and acceptance tracking.</li>
+<li>Built-in algorithms: MH, HMC, NUTS, MALA, SMC, elliptical slice, Gibbs, MAP.</li>
+<li>Diagnostics: mean, std, quantiles, R-hat.</li>
+</ul>
+<p>In the next chapter, we’ll make everything faster — vectorized inference via shape polymorphism and the compilation ladder.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="going-fast-vectorization-and-compilation"><a class="header" href="#going-fast-vectorization-and-compilation">Going Fast: Vectorization and Compilation</a></h1>
+<p>GenMLX runs on Apple’s MLX GPU framework. This chapter shows how to exploit the GPU: vectorized inference via shape polymorphism, and the compilation ladder that progressively moves computation into fused Metal kernels.</p>
+<h2 id="shape-polymorphism"><a class="header" href="#shape-polymorphism">Shape polymorphism</a></h2>
+<p>The key insight: run the model <strong>once</strong> with \([N]\)-shaped arrays instead of \(N\) times with scalars. The handler transitions never inspect value shapes — so \([N]\)-shaped values flow through the same code paths as scalars. MLX broadcasting handles all arithmetic.</p>
+<p>This works because the handler is pure. It doesn’t know or care whether <code>:mu</code> holds a scalar or a 100-element vector. It calls <code>dist-sample-n</code> instead of <code>dist-sample</code>, and everything downstream — log-probability, score accumulation, weight computation — broadcasts correctly.</p>
+<p><img src="figures/vectorization.png" alt="Scalar vs Vectorized"></p>
+<h2 id="vsimulate-and-vgenerate"><a class="header" href="#vsimulate-and-vgenerate">vsimulate and vgenerate</a></h2>
+<p><code>vsimulate</code> runs a model forward with \(N\) particles in parallel:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key simple-model)
+      vtrace (dyn/vsimulate model [] 100 (rng/fresh-key))]
+  (println "score shape:" (mx/shape (:score vtrace)))  ;; [100]
+  (let [mu-arr (cm/get-value (cm/get-submap (:choices vtrace) :mu))]
+    (println ":mu shape:" (mx/shape mu-arr))))           ;; [100]
+</code></pre>
+<p>Everything is \([N]\)-shaped: the score, the choices, the weights. One execution, \(N\) results.</p>
+<p><code>vgenerate</code> adds observations — the constrained addresses get scalar values (broadcast to all particles), while latent addresses get \([N]\)-shaped samples:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key simple-model)
+      vtrace (dyn/vgenerate model [] obs 100 (rng/fresh-key))]
+  (println "weight shape:" (mx/shape (:weight vtrace))))  ;; [100]
+</code></pre>
+<h2 id="ess-and-log-marginal-likelihood"><a class="header" href="#ess-and-log-marginal-likelihood">ESS and log marginal likelihood</a></h2>
+<p>From a vectorized trace, compute the effective sample size and log marginal likelihood:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key simple-model)
+      vtrace (dyn/vgenerate model [] obs 200 (rng/fresh-key))
+      ess (vec/vtrace-ess vtrace)
+      log-ml (vec/vtrace-log-ml-estimate vtrace)]
+  (println "ESS:" ess)
+  (println "log-ML:" log-ml))
+</code></pre>
+<p>ESS tells you how many effective independent samples you have. Low ESS (relative to \(N\)) means the weights are concentrated on few particles — the proposal doesn’t match the posterior well.</p>
+<h2 id="resampling"><a class="header" href="#resampling">Resampling</a></h2>
+<p>Resampling produces a new set of equally-weighted particles from the weighted set. GenMLX provides systematic resampling on GPU:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key simple-model)
+      vtrace (dyn/vgenerate model [] obs 50 (rng/fresh-key))
+      resampled (vec/resample-vtrace vtrace (rng/fresh-key))]
+  (println "resampled score shape:" (mx/shape (:score resampled))))
+</code></pre>
+<p>Resampling is implemented as pure MLX operations: cumulative weight sums via <code>mx/cumsum</code>, uniform offsets via <code>mx/arange</code>, and index lookup via <code>mx/searchsorted</code>. No host-side branching.</p>
+<h2 id="the-schema"><a class="header" href="#the-schema">The schema</a></h2>
+<p>When the <code>gen</code> macro creates a model, it also extracts a <strong>schema</strong> from the source code — a structural description of all trace sites, their distribution types, dependencies, and classifications:</p>
+<pre><code class="language-clojure">(let [schema (:schema simple-model)]
+  (println "static?" (:static? schema))
+  (println "trace sites:" (mapv :addr (:trace-sites schema))))
+</code></pre>
+<p>The schema enables everything that follows: compiled execution, partial compilation, and auto-analytical elimination.</p>
+<h2 id="compiled-generative-functions"><a class="header" href="#compiled-generative-functions">Compiled generative functions</a></h2>
+<p>For <strong>static models</strong> — where all trace addresses are known at construction time — GenMLX compiles the model body into a single function that performs all sampling and scoring as flat tensor operations:</p>
+<pre><code class="language-clojure">(def static-model
+  (gen []
+    (let [a (trace :a (dist/gaussian 0 1))
+          b (trace :b (dist/gaussian 0 1))]
+      (mx/add a b))))
+
+(println "static?" (:static? (:schema static-model)))  ;; true
+</code></pre>
+<p>When a static model is simulated or generated, the compiled path fires automatically — one Metal dispatch instead of per-site handler calls. For partially static models (some dynamic addresses), the static prefix is compiled and the dynamic suffix falls through to the handler.</p>
+<p><img src="figures/compilation-ladder.png" alt="The Compilation Ladder"></p>
+<h2 id="the-compilation-ladder"><a class="header" href="#the-compilation-ladder">The compilation ladder</a></h2>
+<p>GenMLX implements five compilation levels, each moving more computation into the MLX graph:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Level</th><th>What’s compiled</th><th>Speedup</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td>Shape-based GPU batching</td><td>baseline</td></tr>
+<tr><td>1</td><td>Model body as single Metal dispatch</td><td>3-5x</td></tr>
+<tr><td>2</td><td>Full SMC/MCMC sweep in one graph</td><td>15-77x</td></tr>
+<tr><td>3</td><td>Conjugate structure eliminated analytically</td><td>33x variance reduction</td></tr>
+<tr><td>4</td><td>Model + inference + gradient + optimizer fused</td><td>9x</td></tr>
+</tbody>
+</table>
+</div>
+<p>Each level subsumes the previous. Models written at Level 0 run unchanged at Level 4. The handler path remains ground truth at every stage.</p>
+<h2 id="auto-analytical-elimination"><a class="header" href="#auto-analytical-elimination">Auto-analytical elimination</a></h2>
+<p>Level 3 detects conjugate prior-likelihood pairs in the model schema and eliminates sampling algebraically. For example, in a model with a Gaussian prior on the mean and Gaussian observations, the system computes the exact marginal likelihood instead of sampling the mean:</p>
+<ul>
+<li>Normal-Normal (unknown mean)</li>
+<li>Beta-Bernoulli (unknown probability)</li>
+<li>Gamma-Poisson (unknown rate)</li>
+<li>Gamma-Exponential (unknown rate)</li>
+<li>Dirichlet-Categorical (unknown mixing weights)</li>
+</ul>
+<p>This happens automatically — no annotations, no middleware composition. The <code>gen</code> macro detects the structure and wires the analytical handlers at construction time.</p>
+<h2 id="the-fit-api"><a class="header" href="#the-fit-api">The fit API</a></h2>
+<p>For users who want results without choosing algorithms, <code>fit</code> auto-selects the inference method from the model’s schema metadata:</p>
+<pre><code class="language-clojure">;; (fit model args data) — auto-selects method, runs inference
+</code></pre>
+<p>The decision tree examines conjugate structure, temporal patterns, dimensionality, and stochastic control flow to choose between exact (conjugate), Kalman filter (linear-Gaussian temporal), SMC (nonlinear temporal), HMC (static, few dimensions), VI (high-dimensional), or handler-based IS (fallback).</p>
+<h2 id="limitations"><a class="header" href="#limitations">Limitations</a></h2>
+<ul>
+<li><strong>No splice in vectorized mode</strong>: <code>vsimulate</code>/<code>vgenerate</code> don’t support <code>splice</code> for non-<code>DynamicGF</code> sub-functions. Use the <code>vmap-gf</code> combinator instead.</li>
+<li><strong>Scalar observations only</strong>: constrained addresses in <code>vgenerate</code> must have scalar values (they broadcast to all particles).</li>
+<li><strong>Dynamic models</strong>: models with stochastic control flow or data-dependent addresses get less compilation benefit.</li>
+</ul>
+<h2 id="what-weve-learned-7"><a class="header" href="#what-weve-learned-7">What we’ve learned</a></h2>
+<ul>
+<li><strong>Shape polymorphism</strong>: the same handler code works at any shape because it never inspects values.</li>
+<li><code>vsimulate</code> and <code>vgenerate</code> run \(N\) particles in a single execution.</li>
+<li>The <strong>schema</strong> describes model structure at construction time.</li>
+<li><strong>Compiled paths</strong> replace per-site handler calls with fused Metal dispatches.</li>
+<li><strong>Auto-analytical elimination</strong> detects conjugate structure and eliminates sampling.</li>
+<li>The <strong>compilation ladder</strong> (Levels 0-4) progressively fuses more computation into the GPU graph.</li>
+</ul>
+<p>In the next chapter, we’ll cover gradients, parameter learning, and neural network integration.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="placeholder"><a class="header" href="#placeholder">Placeholder</a></h1>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="placeholder-1"><a class="header" href="#placeholder-1">Placeholder</a></h1>
-<div style="break-before: page; page-break-before: always;"></div>
-<h1 id="placeholder-2"><a class="header" href="#placeholder-2">Placeholder</a></h1>
-<div style="break-before: page; page-break-before: always;"></div>
-<h1 id="placeholder-3"><a class="header" href="#placeholder-3">Placeholder</a></h1>
 
                     </main>
 

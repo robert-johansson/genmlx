@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4c0abff0.js";
+            window.path_to_searchindex_js = "searchindex-fad9e08e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4ff5b9f.js"></script>
@@ -180,7 +180,111 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="placeholder"><a class="header" href="#placeholder">Placeholder</a></h1>
+                        <h1 id="going-fast-vectorization-and-compilation"><a class="header" href="#going-fast-vectorization-and-compilation">Going Fast: Vectorization and Compilation</a></h1>
+<p>GenMLX runs on Apple’s MLX GPU framework. This chapter shows how to exploit the GPU: vectorized inference via shape polymorphism, and the compilation ladder that progressively moves computation into fused Metal kernels.</p>
+<h2 id="shape-polymorphism"><a class="header" href="#shape-polymorphism">Shape polymorphism</a></h2>
+<p>The key insight: run the model <strong>once</strong> with \([N]\)-shaped arrays instead of \(N\) times with scalars. The handler transitions never inspect value shapes — so \([N]\)-shaped values flow through the same code paths as scalars. MLX broadcasting handles all arithmetic.</p>
+<p>This works because the handler is pure. It doesn’t know or care whether <code>:mu</code> holds a scalar or a 100-element vector. It calls <code>dist-sample-n</code> instead of <code>dist-sample</code>, and everything downstream — log-probability, score accumulation, weight computation — broadcasts correctly.</p>
+<p><img src="figures/vectorization.png" alt="Scalar vs Vectorized"></p>
+<h2 id="vsimulate-and-vgenerate"><a class="header" href="#vsimulate-and-vgenerate">vsimulate and vgenerate</a></h2>
+<p><code>vsimulate</code> runs a model forward with \(N\) particles in parallel:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key simple-model)
+      vtrace (dyn/vsimulate model [] 100 (rng/fresh-key))]
+  (println "score shape:" (mx/shape (:score vtrace)))  ;; [100]
+  (let [mu-arr (cm/get-value (cm/get-submap (:choices vtrace) :mu))]
+    (println ":mu shape:" (mx/shape mu-arr))))           ;; [100]
+</code></pre>
+<p>Everything is \([N]\)-shaped: the score, the choices, the weights. One execution, \(N\) results.</p>
+<p><code>vgenerate</code> adds observations — the constrained addresses get scalar values (broadcast to all particles), while latent addresses get \([N]\)-shaped samples:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key simple-model)
+      vtrace (dyn/vgenerate model [] obs 100 (rng/fresh-key))]
+  (println "weight shape:" (mx/shape (:weight vtrace))))  ;; [100]
+</code></pre>
+<h2 id="ess-and-log-marginal-likelihood"><a class="header" href="#ess-and-log-marginal-likelihood">ESS and log marginal likelihood</a></h2>
+<p>From a vectorized trace, compute the effective sample size and log marginal likelihood:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key simple-model)
+      vtrace (dyn/vgenerate model [] obs 200 (rng/fresh-key))
+      ess (vec/vtrace-ess vtrace)
+      log-ml (vec/vtrace-log-ml-estimate vtrace)]
+  (println "ESS:" ess)
+  (println "log-ML:" log-ml))
+</code></pre>
+<p>ESS tells you how many effective independent samples you have. Low ESS (relative to \(N\)) means the weights are concentrated on few particles — the proposal doesn’t match the posterior well.</p>
+<h2 id="resampling"><a class="header" href="#resampling">Resampling</a></h2>
+<p>Resampling produces a new set of equally-weighted particles from the weighted set. GenMLX provides systematic resampling on GPU:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key simple-model)
+      vtrace (dyn/vgenerate model [] obs 50 (rng/fresh-key))
+      resampled (vec/resample-vtrace vtrace (rng/fresh-key))]
+  (println "resampled score shape:" (mx/shape (:score resampled))))
+</code></pre>
+<p>Resampling is implemented as pure MLX operations: cumulative weight sums via <code>mx/cumsum</code>, uniform offsets via <code>mx/arange</code>, and index lookup via <code>mx/searchsorted</code>. No host-side branching.</p>
+<h2 id="the-schema"><a class="header" href="#the-schema">The schema</a></h2>
+<p>When the <code>gen</code> macro creates a model, it also extracts a <strong>schema</strong> from the source code — a structural description of all trace sites, their distribution types, dependencies, and classifications:</p>
+<pre><code class="language-clojure">(let [schema (:schema simple-model)]
+  (println "static?" (:static? schema))
+  (println "trace sites:" (mapv :addr (:trace-sites schema))))
+</code></pre>
+<p>The schema enables everything that follows: compiled execution, partial compilation, and auto-analytical elimination.</p>
+<h2 id="compiled-generative-functions"><a class="header" href="#compiled-generative-functions">Compiled generative functions</a></h2>
+<p>For <strong>static models</strong> — where all trace addresses are known at construction time — GenMLX compiles the model body into a single function that performs all sampling and scoring as flat tensor operations:</p>
+<pre><code class="language-clojure">(def static-model
+  (gen []
+    (let [a (trace :a (dist/gaussian 0 1))
+          b (trace :b (dist/gaussian 0 1))]
+      (mx/add a b))))
+
+(println "static?" (:static? (:schema static-model)))  ;; true
+</code></pre>
+<p>When a static model is simulated or generated, the compiled path fires automatically — one Metal dispatch instead of per-site handler calls. For partially static models (some dynamic addresses), the static prefix is compiled and the dynamic suffix falls through to the handler.</p>
+<p><img src="figures/compilation-ladder.png" alt="The Compilation Ladder"></p>
+<h2 id="the-compilation-ladder"><a class="header" href="#the-compilation-ladder">The compilation ladder</a></h2>
+<p>GenMLX implements five compilation levels, each moving more computation into the MLX graph:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Level</th><th>What’s compiled</th><th>Speedup</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td>Shape-based GPU batching</td><td>baseline</td></tr>
+<tr><td>1</td><td>Model body as single Metal dispatch</td><td>3-5x</td></tr>
+<tr><td>2</td><td>Full SMC/MCMC sweep in one graph</td><td>15-77x</td></tr>
+<tr><td>3</td><td>Conjugate structure eliminated analytically</td><td>33x variance reduction</td></tr>
+<tr><td>4</td><td>Model + inference + gradient + optimizer fused</td><td>9x</td></tr>
+</tbody>
+</table>
+</div>
+<p>Each level subsumes the previous. Models written at Level 0 run unchanged at Level 4. The handler path remains ground truth at every stage.</p>
+<h2 id="auto-analytical-elimination"><a class="header" href="#auto-analytical-elimination">Auto-analytical elimination</a></h2>
+<p>Level 3 detects conjugate prior-likelihood pairs in the model schema and eliminates sampling algebraically. For example, in a model with a Gaussian prior on the mean and Gaussian observations, the system computes the exact marginal likelihood instead of sampling the mean:</p>
+<ul>
+<li>Normal-Normal (unknown mean)</li>
+<li>Beta-Bernoulli (unknown probability)</li>
+<li>Gamma-Poisson (unknown rate)</li>
+<li>Gamma-Exponential (unknown rate)</li>
+<li>Dirichlet-Categorical (unknown mixing weights)</li>
+</ul>
+<p>This happens automatically — no annotations, no middleware composition. The <code>gen</code> macro detects the structure and wires the analytical handlers at construction time.</p>
+<h2 id="the-fit-api"><a class="header" href="#the-fit-api">The fit API</a></h2>
+<p>For users who want results without choosing algorithms, <code>fit</code> auto-selects the inference method from the model’s schema metadata:</p>
+<pre><code class="language-clojure">;; (fit model args data) — auto-selects method, runs inference
+</code></pre>
+<p>The decision tree examines conjugate structure, temporal patterns, dimensionality, and stochastic control flow to choose between exact (conjugate), Kalman filter (linear-Gaussian temporal), SMC (nonlinear temporal), HMC (static, few dimensions), VI (high-dimensional), or handler-based IS (fallback).</p>
+<h2 id="limitations"><a class="header" href="#limitations">Limitations</a></h2>
+<ul>
+<li><strong>No splice in vectorized mode</strong>: <code>vsimulate</code>/<code>vgenerate</code> don’t support <code>splice</code> for non-<code>DynamicGF</code> sub-functions. Use the <code>vmap-gf</code> combinator instead.</li>
+<li><strong>Scalar observations only</strong>: constrained addresses in <code>vgenerate</code> must have scalar values (they broadcast to all particles).</li>
+<li><strong>Dynamic models</strong>: models with stochastic control flow or data-dependent addresses get less compilation benefit.</li>
+</ul>
+<h2 id="what-weve-learned"><a class="header" href="#what-weve-learned">What we’ve learned</a></h2>
+<ul>
+<li><strong>Shape polymorphism</strong>: the same handler code works at any shape because it never inspects values.</li>
+<li><code>vsimulate</code> and <code>vgenerate</code> run \(N\) particles in a single execution.</li>
+<li>The <strong>schema</strong> describes model structure at construction time.</li>
+<li><strong>Compiled paths</strong> replace per-site handler calls with fused Metal dispatches.</li>
+<li><strong>Auto-analytical elimination</strong> detects conjugate structure and eliminates sampling.</li>
+<li>The <strong>compilation ladder</strong> (Levels 0-4) progressively fuses more computation into the GPU graph.</li>
+</ul>
+<p>In the next chapter, we’ll cover gradients, parameter learning, and neural network integration.</p>
 
                     </main>
 
