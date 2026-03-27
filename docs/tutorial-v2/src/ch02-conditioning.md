@@ -58,7 +58,7 @@ Here's the key insight. Compare what happens at address `:y0`:
 
 The model body is identical in both cases. It calls `(trace :y0 (dist/gaussian ...))` — declaring what it needs. The handler decides the semantics. This is what we mean by "your model is pure; the framework manages state."
 
-![Simulate vs Generate](figures/conditioning.svg)
+![Simulate vs Generate](figures/conditioning.png)
 
 ## Importance sampling by hand
 

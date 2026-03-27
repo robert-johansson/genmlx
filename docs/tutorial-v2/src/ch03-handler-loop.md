@@ -153,7 +153,7 @@ When the body calls `trace-fn`, here's what happens:
 
 The volatile is the **only** mutable state in the entire system. It never escapes `run-handler` — it's created and consumed within one synchronous function call. From the model's perspective, `trace` is just a function that takes an address and a distribution and returns a value.
 
-![The Handler Architecture](figures/handler-loop.svg)
+![The Handler Architecture](figures/handler-loop.png)
 
 ## The `gen` macro
 

@@ -30,6 +30,8 @@
         <!-- Custom theme stylesheets -->
         <link rel="stylesheet" href="custom-4c8aca2d.css">
 
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
 
         <!-- Provide site root and default themes to javascript -->
         <script>
@@ -218,7 +220,7 @@
 <li>Under <code>generate</code> with <code>:y0</code> constrained: the handler <strong>uses</strong> the constrained value 2.5 and adds \(\log p(2.5 \mid \text{slope} \cdot x_0 + \text{intercept}, 1)\) to the weight.</li>
 </ul>
 <p>The model body is identical in both cases. It calls <code>(trace :y0 (dist/gaussian ...))</code> — declaring what it needs. The handler decides the semantics. This is what we mean by “your model is pure; the framework manages state.”</p>
-<p><img src="figures/conditioning.svg" alt="Simulate vs Generate"></p>
+<p><img src="figures/conditioning.png" alt="Simulate vs Generate"></p>
 <h2 id="importance-sampling-by-hand"><a class="header" href="#importance-sampling-by-hand">Importance sampling by hand</a></h2>
 <p>With <code>generate</code> and weights, we can build importance sampling from scratch. The idea: run <code>generate</code> many times, each time sampling different latent values from the prior. The weights tell us which samples explain the data best.</p>
 <pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)

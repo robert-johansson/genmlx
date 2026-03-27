@@ -24,7 +24,7 @@ So far we've used two GFI operations: `simulate` (sample everything) and `genera
 - **`:weight`** — \\(\log w = \log p(\boldsymbol{\tau}'; x') - \log p(\boldsymbol{\tau}; x)\\), the log ratio of new to old probability
 - **`:discard`** — a choice map containing the old values that were replaced
 
-![The update operation](figures/update-operation.svg)
+![The update operation](figures/update-operation.png)
 
 ## Weight semantics
 

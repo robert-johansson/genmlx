@@ -30,6 +30,8 @@
         <!-- Custom theme stylesheets -->
         <link rel="stylesheet" href="custom-4c8aca2d.css">
 
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
 
         <!-- Provide site root and default themes to javascript -->
         <script>
@@ -198,7 +200,7 @@
 <li><strong><code>:weight</code></strong> — \(\log w = \log p(\boldsymbol{\tau}‘; x’) - \log p(\boldsymbol{\tau}; x)\), the log ratio of new to old probability</li>
 <li><strong><code>:discard</code></strong> — a choice map containing the old values that were replaced</li>
 </ul>
-<p><img src="figures/update-operation.svg" alt="The update operation"></p>
+<p><img src="figures/update-operation.png" alt="The update operation"></p>
 <h2 id="weight-semantics"><a class="header" href="#weight-semantics">Weight semantics</a></h2>
 <p>The weight from <code>update</code> is the log ratio of the new trace’s score to the old trace’s score:</p>
 <pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)

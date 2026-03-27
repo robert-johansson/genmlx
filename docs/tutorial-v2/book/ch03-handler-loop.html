@@ -30,6 +30,8 @@
         <!-- Custom theme stylesheets -->
         <link rel="stylesheet" href="custom-4c8aca2d.css">
 
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
 
         <!-- Provide site root and default themes to javascript -->
         <script>
@@ -306,7 +308,7 @@
 <li>Return the value to the model body</li>
 </ul>
 <p>The volatile is the <strong>only</strong> mutable state in the entire system. It never escapes <code>run-handler</code> — it’s created and consumed within one synchronous function call. From the model’s perspective, <code>trace</code> is just a function that takes an address and a distribution and returns a value.</p>
-<p><img src="figures/handler-loop.svg" alt="The Handler Architecture"></p>
+<p><img src="figures/handler-loop.png" alt="The Handler Architecture"></p>
 <h2 id="the-gen-macro"><a class="header" href="#the-gen-macro">The <code>gen</code> macro</a></h2>
 <p>The <code>gen</code> macro bridges the gap between <code>run-handler</code> and the user. It injects the runtime parameter and binds <code>trace</code>, <code>splice</code>, and <code>param</code> as local names:</p>
 <pre><code class="language-clojure">(def my-model
