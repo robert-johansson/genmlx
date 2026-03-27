@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4ff17f29.js";
+            window.path_to_searchindex_js = "searchindex-b628758d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4ff5b9f.js"></script>
@@ -329,9 +329,9 @@
 <p><strong>Composition.</strong> Pure transitions compose. The same transition signature <code>(state, addr, dist) → (value, state')</code> is used by <code>simulate</code>, <code>generate</code>, <code>update</code>, <code>regenerate</code>, and <code>project</code>. Analytical middleware can wrap a transition to intercept specific addresses. Compilation can replace a transition with a fused version. They all plug into the same slot.</p>
 <p><strong>Shape polymorphism.</strong> The transitions never inspect value shapes. If you pass <code>[N]</code>-shaped arrays instead of scalars, the same code works — MLX broadcasting handles the arithmetic. This is why vectorized inference (running N particles in one call) works with zero code changes (<a href="./ch08-vectorization.html">Chapter 8</a>).</p>
 <p><strong>Correctness.</strong> Each transition can be tested in isolation — pass in a state, check the output state. No mocking, no setup, no teardown. The GFI contracts (measure-theoretic invariants) can be verified by calling transitions directly.</p>
-<h2 id="being-honest-about-impurity"><a class="header" href="#being-honest-about-impurity">Being honest about impurity</a></h2>
+<h2 id="where-impurity-lives"><a class="header" href="#where-impurity-lives">Where impurity lives</a></h2>
 <p>GenMLX is not “purely functional” in the type-theoretic sense. The <code>volatile!</code> is real mutation. The GPU memory layer (<code>mx/eval!</code>, <code>mx/sweep-dead-arrays!</code>) is side-effectful. Several atoms track nesting depth for safety.</p>
-<p>What GenMLX does claim: <strong>all code you write is pure</strong>, and <strong>all handler logic is pure</strong>. The impurity is confined to a single managed boundary — the <code>volatile!</code> inside <code>run-handler</code> — that you never see or interact with. This is the same pragmatic stance that has made functional architectures successful in practice: not purity as a type-system guarantee, but purity as an architectural principle that maximizes the surface area where reasoning, composition, and optimization are possible.</p>
+<p>What GenMLX does claim: <strong>all code you write is pure</strong>, and <strong>all handler logic is pure</strong>. The impurity is confined to a single managed boundary — the <code>volatile!</code> inside <code>run-handler</code> — that you never see or interact with. Purity here is an architectural principle: it maximizes the surface area where reasoning, composition, and optimization are possible.</p>
 <h2 id="what-weve-learned"><a class="header" href="#what-weve-learned">What we’ve learned</a></h2>
 <ul>
 <li>Each GFI operation is a <strong>pure state transition</strong>: <code>(state, addr, dist) → (value, state')</code>.</li>
@@ -340,7 +340,7 @@
 <li><code>run-handler</code> creates a <strong>single <code>volatile!</code></strong> that threads state through closures — the only mutation in the system.</li>
 <li>The <code>gen</code> macro binds <code>trace</code>/<code>splice</code>/<code>param</code> as <strong>local names</strong> — they work with all ClojureScript constructs.</li>
 <li>Purity enables composition, shape polymorphism, and testability.</li>
-<li>The system is honest about where impurity lives: the volatile and the GPU layer.</li>
+<li>Impurity is confined to the volatile and the GPU layer — your code never touches it.</li>
 </ul>
 <p>In the next chapter, we’ll look at the data structures in detail — choice maps, traces, and selections.</p>
 

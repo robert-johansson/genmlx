@@ -190,11 +190,11 @@ The handler transitions are pure functions. The model body is pure (it only call
 
 **Correctness.** Each transition can be tested in isolation — pass in a state, check the output state. No mocking, no setup, no teardown. The GFI contracts (measure-theoretic invariants) can be verified by calling transitions directly.
 
-## Being honest about impurity
+## Where impurity lives
 
 GenMLX is not "purely functional" in the type-theoretic sense. The `volatile!` is real mutation. The GPU memory layer (`mx/eval!`, `mx/sweep-dead-arrays!`) is side-effectful. Several atoms track nesting depth for safety.
 
-What GenMLX does claim: **all code you write is pure**, and **all handler logic is pure**. The impurity is confined to a single managed boundary — the `volatile!` inside `run-handler` — that you never see or interact with. This is the same pragmatic stance that has made functional architectures successful in practice: not purity as a type-system guarantee, but purity as an architectural principle that maximizes the surface area where reasoning, composition, and optimization are possible.
+What GenMLX does claim: **all code you write is pure**, and **all handler logic is pure**. The impurity is confined to a single managed boundary — the `volatile!` inside `run-handler` — that you never see or interact with. Purity here is an architectural principle: it maximizes the surface area where reasoning, composition, and optimization are possible.
 
 ## What we've learned
 
@@ -204,6 +204,6 @@ What GenMLX does claim: **all code you write is pure**, and **all handler logic 
 - `run-handler` creates a **single `volatile!`** that threads state through closures — the only mutation in the system.
 - The `gen` macro binds `trace`/`splice`/`param` as **local names** — they work with all ClojureScript constructs.
 - Purity enables composition, shape polymorphism, and testability.
-- The system is honest about where impurity lives: the volatile and the GPU layer.
+- Impurity is confined to the volatile and the GPU layer — your code never touches it.
 
 In the next chapter, we'll look at the data structures in detail — choice maps, traces, and selections.

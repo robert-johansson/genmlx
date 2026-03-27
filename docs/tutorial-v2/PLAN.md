@@ -4,7 +4,7 @@
 
 - **One running example** (Bayesian linear regression) that grows across chapters
 - **Show, then explain** — every concept starts with runnable code before theory
-- **Honest about impurity** — show the volatile!, explain why it's there
+- **Clear about impurity** — show the volatile!, explain why it's there
 - **No prerequisites** beyond basic Clojure — probability taught inline
 - **Each chapter self-contained** but builds on previous chapters
 - **Frame in PP terms** — no web framework analogies; explain the pure-core / managed-shell idea through models, handlers, and inference
@@ -204,7 +204,7 @@ The new tutorial must cover everything the old tutorial covered.
 - [ ] `run-handler` creates closures, passes runtime to model body
 - [ ] The `gen` macro: 8 lines, injects runtime, binds trace/splice/param
 - [ ] The pure core / managed shell philosophy
-- [ ] Honest about impurity: the volatile! is real, the GPU layer is effectful
+- [ ] Where impurity lives: the volatile! is real, the GPU layer is effectful
 - [ ] Why purity matters: composition, shape polymorphism, compilation
 - [ ] The analogy: the volatile! is to GenMLX what a single state cell is to any functional architecture — isolated, managed, invisible to the user
 
