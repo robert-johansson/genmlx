@@ -146,7 +146,8 @@
   "Synchronously free Metal buffers for arrays whose JS wrappers have been GC'd
    but whose deferred N-API finalizers haven't run yet. Returns count swept.
    Call this in synchronous loops where event loop yields are rare.
-   No-op when called inside mx/tidy (tidy manages its own disposal)."
+   No-op when called inside mx/tidy (tidy manages its own disposal).
+   Uses double-check protocol to work around Bun/JSC weak reference bug."
   []
   (when-not (in-tidy?)
     (.sweepDeadArrays core)))
