@@ -1242,6 +1242,7 @@
 
         (doseq [[id sys-map] (sort-by key by-id)]
           (let [test-spec (get test-by-id id)
+                skip? (get test-spec :skip false)
                 comparison (get test-spec :comparison "posterior_mean")
                 analytical-mean (get-in test-spec [:analytical_posterior :mean])
                 analytical-std  (get-in test-spec [:analytical_posterior :std])
@@ -1249,6 +1250,12 @@
                 errors (filter :error all-sys)
                 valid (remove :error all-sys)]
             (cond
+              skip?
+              (do (swap! skip-count inc)
+                  (println (str "  SKIP   " id
+                                (when-let [reason (get test-spec :skip_reason)]
+                                  (str " — " reason)))))
+
               (seq errors)
               (do (swap! error-count inc)
                   (println (str "  ERROR  " id))
