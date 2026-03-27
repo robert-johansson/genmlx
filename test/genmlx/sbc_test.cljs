@@ -339,14 +339,15 @@
                         ranks-acc)
                       (let [_ (do
                               (when (zero? (mod i 50))
-                                (println (str "  rep " i "/" n-sims
-                                              " (" failures " failures so far)")))
-                              ;; Flush Metal caches every 10 reps to prevent RSS blowup
-                              ;; HMC creates many gradient graphs that accumulate
-                              (when (zero? (mod i 10))
-                                (mx/clear-cache!)
-                                (mx/sweep-dead-arrays!)
-                                (when (.-gc js/globalThis) (.gc js/globalThis))))
+                                (let [rss-mb (/ (.-rss (js/process.memoryUsage)) 1048576)]
+                                  (println (str "  rep " i "/" n-sims
+                                                " (" failures " failures)"
+                                                " RSS=" (.toFixed rss-mb 0) "MB"))))
+                              ;; Aggressive cleanup every rep to prevent RSS blowup
+                              ;; in long-running SBC. Each rep creates ~200 MCMC traces.
+                              (mx/clear-cache!)
+                              (mx/sweep-dead-arrays!)
+                              (when (.-gc js/globalThis) (.gc js/globalThis)))
                             result (try
                                      (run-sbc-single model-spec algo-key)
                                      (catch :default e
@@ -405,10 +406,22 @@
         json   (js/JSON.stringify output nil 2)]
     (fs/writeFileSync results-path json)))
 
-(doseq [model-spec all-models
-        algo-key   (:algorithms model-spec)]
+(def all-combos (vec (for [m all-models a (:algorithms m)] [m a])))
+(def total-combos (count all-combos))
+(def combo-idx (atom 0))
+(def run-start (js/Date.now))
+
+(doseq [[model-spec algo-key] all-combos]
+  (swap! combo-idx inc)
   (let [start         (js/Date.now)
-        _             (println (str "\n-- SBC: " (:name model-spec) " x " (name algo-key) " --"))
+        elapsed-total (/ (- start run-start) 1000)
+        eta           (if (> @combo-idx 1)
+                        (let [avg (/ elapsed-total (dec @combo-idx))]
+                          (str " ~" (.toFixed (/ (* avg (- total-combos (dec @combo-idx))) 3600) 1) "h left"))
+                        "")
+        _             (println (str "\n-- [" @combo-idx "/" total-combos "] SBC: "
+                                    (:name model-spec) " x " (name algo-key)
+                                    " (" (.toFixed (/ elapsed-total 60) 0) "min elapsed" eta ")" " --"))
         param-results (run-sbc model-spec algo-key N)
         elapsed       (/ (- (js/Date.now) start) 1000)]
     (if param-results
@@ -436,10 +449,14 @@
     (println (str "  [" (.toFixed elapsed 1) "s]"))
     ;; Write after each combo so crashes don't lose everything
     (write-results!)
-    ;; Aggressive cleanup between combos
+    ;; Aggressive cleanup between combos — multiple GC passes to reclaim
+    ;; JS heap accumulated during 500 reps of MCMC inference
     (mx/clear-cache!)
     (mx/sweep-dead-arrays!)
-    (when (.-gc js/globalThis) (.gc js/globalThis))
+    (dotimes [_ 3]
+      (when (.-gc js/globalThis) (.gc js/globalThis))
+      (mx/sweep-dead-arrays!))
+    (mx/compile-clear-cache!)
     (let [rss-mb (/ (.-rss (js/process.memoryUsage)) 1048576)]
       (println (str "  [RSS: " (.toFixed rss-mb 0) "MB, Metal active: "
                     (.toFixed (/ (mx/get-active-memory) 1048576) 0) "MB, cache: "
