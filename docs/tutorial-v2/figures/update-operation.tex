@@ -52,8 +52,8 @@
 \node[entry, fill=keep, draw=keepborder, below=of new-y0]
     (new-y1) {:y1 \enspace 5.8};
 
-% === DISCARD (below old trace, not below constraints) ===
-\node[title, below=1cm of old-y1] (distitle) {Discard};
+% === DISCARD (below constraints, middle column) ===
+\node[title, below=2.5cm of contitle] (distitle) {Discard};
 \node[entry, fill=discard, draw=discardborder, below=0.4cm of distitle]
     (dis-inter) {:intercept \enspace 1.1};
 
@@ -67,9 +67,9 @@
 \draw[->, line width=0.8pt, changeborder]
     (con-inter) -- (new-inter);
 
-% Old value drops straight down to discard
+% Old value to discard: route below old trace, then right to discard
 \draw[->, line width=0.8pt, discardborder, dashed]
-    (old-inter.south) -- ++(0, -0.3) -- (dis-inter.north -| old-inter) -- (dis-inter.north);
+    (old-y1.south) -- ++(0, -0.4) -| (dis-inter);
 
 % === WEIGHT ===
 \node[annot, color=accent, below=0.6cm of new-y1]
@@ -77,7 +77,7 @@
 
 % === LEGEND ===
 \node[entry, fill=keep, draw=keepborder, inner sep=3pt,
-      below=0.6cm of dis-inter] (lk) {};
+      below=0.8cm of dis-inter] (lk) {};
 \node[annot, right=3pt of lk] {Kept};
 \node[entry, fill=change, draw=changeborder, inner sep=3pt,
       right=1.5cm of lk] (lc) {};
