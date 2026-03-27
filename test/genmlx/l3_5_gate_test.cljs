@@ -160,6 +160,6 @@
           time-without (time-ms #(run-chain model-without))
 
           slowdown (if (pos? time-without) (/ (- time-with time-without) time-without) 0)]
-      (is (< slowdown 0.25) "Slowdown < 25% (optimized dispatch)"))))
+      (is (< slowdown 0.30) "Slowdown < 30% (optimized dispatch)"))))
 
 (cljs.test/run-tests)

@@ -747,6 +747,40 @@
        (sweep-dead-arrays!)
        (clear-cache!)))))
 
+(def ^:private ^:mutable gfi-ops-count
+  "Counter for amortizing GFI-boundary cleanup."
+  0)
+
+(def ^:private gfi-cleanup-interval
+  "Check resource pressure every N GFI operations."
+  10)
+
+(def ^:private gfi-pressure-threshold
+  "Only force jsc-cleanup! when Metal resources exceed this count.
+   Prevents aggressive GC in small inference loops where it can cause
+   SIGTRAP crashes. Set high enough to avoid overhead in benchmarks
+   but low enough to catch accumulation before the 499K limit."
+  30000)
+
+(defn gfi-cleanup!
+  "Cleanup at GFI operation boundaries. Every N calls, checks resource
+   pressure. If Metal buffers exceed the threshold, forces N-API weak
+   reference release via jsc-cleanup!, then sweeps freed Metal buffers.
+
+   Called after each DynamicGF protocol operation (simulate, generate,
+   update, regenerate, assess, project). Unlike auto-cleanup! (which
+   uses sweep-only from inside handlers), this runs AFTER the handler
+   returns, when old-iteration arrays are unreachable. jsc-cleanup!
+   forces their weak refs to fire, making sweep effective in sync code."
+  []
+  (set! gfi-ops-count (inc gfi-ops-count))
+  (when (>= gfi-ops-count gfi-cleanup-interval)
+    (set! gfi-ops-count 0)
+    (when (> (get-num-resources) gfi-pressure-threshold)
+      (jsc-cleanup!)
+      (sweep-dead-arrays!)
+      (clear-cache!))))
+
 (defn materialize!
   "Evaluate MLX arrays, materializing the computation graph.
    Use at inference/training loop boundaries to bound graph size."

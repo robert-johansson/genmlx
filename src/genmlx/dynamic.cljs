@@ -474,7 +474,7 @@
             ;; L0: handler fallback
             :else
             (run-simulate-handler this args key body-fn this))]
-      (mx/sweep-dead-arrays!)
+      (mx/gfi-cleanup!)
       result))
 
   p/IGenerate
@@ -498,7 +498,7 @@
             ;; L0: handler fallback
             :else
             (run-generate-handler this args key constraints body-fn this))]
-      (mx/sweep-dead-arrays!)
+      (mx/gfi-cleanup!)
       result))
 
   p/IUpdate
@@ -520,6 +520,7 @@
             (run-update-handler this trace key constraints body-fn this))]
       ;; Post-process: add addresses deleted by branch switches to discard.
       ;; Old addresses not present in new trace must appear in discard (Gen.jl semantics).
+      (mx/gfi-cleanup!)
       (clojure.core/update result :discard
                            add-deleted-to-discard (:choices trace) (:choices (:trace result)))))
 
@@ -527,54 +528,60 @@
   (regenerate [this trace selection]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          old-score (:score trace)]
-      (cond
-        ;; L3.5: auto-analytical regenerate — only when trace has marginal scoring.
-        ;; Case A (prior selected): handler returns nil, falls through to base
-        ;; Case B (prior NOT selected): replays old value with marginal LL
-        ;; Traces from simulate have joint LL (no ::score-type), so they fall
-        ;; through to the standard handler, preserving weight = 0 for empty selection.
-        (and (:auto-regenerate-transition schema)
-             (= :marginal (::score-type (meta trace))))
-        (run-regen-analytical schema this trace key selection old-score body-fn this)
+          old-score (:score trace)
+          result
+          (cond
+            ;; L3.5: auto-analytical regenerate — only when trace has marginal scoring.
+            ;; Case A (prior selected): handler returns nil, falls through to base
+            ;; Case B (prior NOT selected): replays old value with marginal LL
+            ;; Traces from simulate have joint LL (no ::score-type), so they fall
+            ;; through to the standard handler, preserving weight = 0 for empty selection.
+            (and (:auto-regenerate-transition schema)
+                 (= :marginal (::score-type (meta trace))))
+            (run-regen-analytical schema this trace key selection old-score body-fn this)
 
-        ;; L1: fully compiled regenerate (M2/M4)
-        (:compiled-regenerate schema)
-        (run-regen-compiled (:compiled-regenerate schema) this trace key selection old-score)
+            ;; L1: fully compiled regenerate (M2/M4)
+            (:compiled-regenerate schema)
+            (run-regen-compiled (:compiled-regenerate schema) this trace key selection old-score)
 
-        ;; L1-M3: prefix regenerate + replay handler
-        (:compiled-prefix-regenerate schema)
-        (run-regen-prefix (:compiled-prefix-regenerate schema) this trace key selection old-score body-fn this)
+            ;; L1-M3: prefix regenerate + replay handler
+            (:compiled-prefix-regenerate schema)
+            (run-regen-prefix (:compiled-prefix-regenerate schema) this trace key selection old-score body-fn this)
 
-        ;; L0: handler fallback
-        :else
-        (run-regen-handler this trace key selection old-score body-fn this))))
+            ;; L0: handler fallback
+            :else
+            (run-regen-handler this trace key selection old-score body-fn this))]
+      (mx/gfi-cleanup!)
+      result))
 
   p/IAssess
   (assess [this args choices]
     (let [key (ensure-key this)
-          _ (rng/seed! key)]
-      (cond
-        ;; L3.5: auto-analytical assess — only when prior is free (e.g., partial assess).
-        ;; In standard assess (all choices provided), prior is constrained,
-        ;; so analytical-applicable? returns false → handler fallback → joint LL.
-        ;; This preserves the GFI identity: simulate.score == assess(choices).weight
-        (analytical-applicable? schema choices)
-        (run-assess-analytical schema this args key choices body-fn this)
+          _ (rng/seed! key)
+          result
+          (cond
+            ;; L3.5: auto-analytical assess — only when prior is free (e.g., partial assess).
+            ;; In standard assess (all choices provided), prior is constrained,
+            ;; so analytical-applicable? returns false → handler fallback → joint LL.
+            ;; This preserves the GFI identity: simulate.score == assess(choices).weight
+            (analytical-applicable? schema choices)
+            (run-assess-analytical schema this args key choices body-fn this)
 
-        ;; L1: fully compiled assess (M2/M4)
-        (:compiled-assess schema)
-        (let [result ((:compiled-assess schema) (vec args) choices)]
-          {:retval (:retval result)
-           :weight (:score result)})
+            ;; L1: fully compiled assess (M2/M4)
+            (:compiled-assess schema)
+            (let [r ((:compiled-assess schema) (vec args) choices)]
+              {:retval (:retval r)
+               :weight (:score r)})
 
-        ;; L1-M3: prefix assess + replay
-        (:compiled-prefix-assess schema)
-        (run-assess-prefix (:compiled-prefix-assess schema) this args key choices body-fn this)
+            ;; L1-M3: prefix assess + replay
+            (:compiled-prefix-assess schema)
+            (run-assess-prefix (:compiled-prefix-assess schema) this args key choices body-fn this)
 
-        ;; L0: handler fallback
-        :else
-        (run-assess-handler this args key choices body-fn this))))
+            ;; L0: handler fallback
+            :else
+            (run-assess-handler this args key choices body-fn this))]
+      (mx/gfi-cleanup!)
+      result))
 
   p/IPropose
   (propose [this args]
@@ -585,6 +592,7 @@
                                   :executor execute-sub
                                   :param-store (::param-store (meta this))}
                                  (fn [rt] (apply body-fn rt args)))]
+      (mx/gfi-cleanup!)
       {:choices (:choices result)
        :weight (:score result)
        :retval (:retval result)}))
@@ -592,19 +600,22 @@
   p/IProject
   (project [this trace selection]
     (let [key (ensure-key this)
-          _ (rng/seed! key)]
-      (cond
-        ;; L1: fully compiled project (M2/M4)
-        (:compiled-project schema)
-        ((:compiled-project schema) (vec (:args trace)) (:choices trace) selection)
+          _ (rng/seed! key)
+          result
+          (cond
+            ;; L1: fully compiled project (M2/M4)
+            (:compiled-project schema)
+            ((:compiled-project schema) (vec (:args trace)) (:choices trace) selection)
 
-        ;; L1-M3: prefix project + replay
-        (:compiled-prefix-project schema)
-        (run-project-prefix (:compiled-prefix-project schema) this trace key selection body-fn this)
+            ;; L1-M3: prefix project + replay
+            (:compiled-prefix-project schema)
+            (run-project-prefix (:compiled-prefix-project schema) this trace key selection body-fn this)
 
-        ;; L0: handler fallback
-        :else
-        (run-project-handler this trace key selection body-fn this)))))
+            ;; L0: handler fallback
+            :else
+            (run-project-handler this trace key selection body-fn this))]
+      (mx/gfi-cleanup!)
+      result)))
 
 (defn- execute-sub
   "Execute a sub-generative-function during handler execution.
