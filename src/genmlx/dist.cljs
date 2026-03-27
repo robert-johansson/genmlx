@@ -1221,7 +1221,6 @@
         x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
         log-det-X (mx/multiply TWO
                                (mx/sum (mx/log (mx/diag (mx/cholesky x-2d)))))
-        _ (mx/materialize! log-det-X)
         ;; log p(X) = ((df-k-1)/2)*log|X| - (1/2)*tr(V^{-1}X) - (df*k/2)*log(2)
         ;;            - (df/2)*log|V| - log_multivariate_gamma(df/2, k)
         half-df (/ df 2.0)
