@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-06d0d707.js";
+            window.path_to_searchindex_js = "searchindex-04011d1e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4ff5b9f.js"></script>
@@ -178,7 +178,214 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="placeholder"><a class="header" href="#placeholder">Placeholder</a></h1>
+                        <h1 id="your-first-model"><a class="header" href="#your-first-model">Your First Model</a></h1>
+<p>A probabilistic model is a program that makes random choices. GenMLX lets you write these programs as ordinary ClojureScript functions — with one addition: you <strong>name</strong> each random choice by giving it an address. That’s all the <code>gen</code> macro adds to a regular function.</p>
+<h2 id="the-gen-macro"><a class="header" href="#the-gen-macro">The <code>gen</code> macro</a></h2>
+<pre><code class="language-clojure">(def simple-model
+  (gen []
+    (trace :x (dist/gaussian 0 1))))
+</code></pre>
+<p>This defines a generative function called <code>simple-model</code>. Inside the body:</p>
+<ul>
+<li><code>trace</code> declares a random choice. It says: “I want a value from this distribution at this address.”</li>
+<li><code>:x</code> is the <strong>address</strong> — a keyword that names this particular choice.</li>
+<li><code>(dist/gaussian 0 1)</code> is the <strong>distribution</strong> — a Gaussian with mean 0 and standard deviation 1.</li>
+</ul>
+<p>The model doesn’t sample, doesn’t constrain, doesn’t know what will happen to the value. It just declares what it needs. The framework decides the rest.</p>
+<h2 id="running-a-model-simulate"><a class="header" href="#running-a-model-simulate">Running a model: <code>simulate</code></a></h2>
+<p>To run the model forward — sampling every random choice from its distribution — use <code>simulate</code>:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key simple-model)
+      trace (p/simulate model [])]
+  (println "value:" (mx/item (cm/get-choice (:choices trace) [:x])))
+  (println "score:" (mx/item (:score trace))))
+</code></pre>
+<p><code>simulate</code> returns a <strong>trace</strong> — a record of one complete execution. A trace has five fields:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>What it holds</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:gen-fn</code></td><td>The generative function that produced this trace</td></tr>
+<tr><td><code>:args</code></td><td>The arguments passed to the function</td></tr>
+<tr><td><code>:choices</code></td><td>A <strong>choice map</strong> — a map from addresses to the values chosen</td></tr>
+<tr><td><code>:retval</code></td><td>The return value of the function</td></tr>
+<tr><td><code>:score</code></td><td>The log-probability of all choices: \(\log p(\text{all choices})\)</td></tr>
+</tbody>
+</table>
+</div>
+<p>The score is the sum of log-probabilities of every random choice made during execution. For a single Gaussian choice, it’s the log-density of the sampled value under \(\mathcal{N}(0, 1)\).</p>
+<h2 id="inspecting-choices"><a class="header" href="#inspecting-choices">Inspecting choices</a></h2>
+<p>The choice map is a persistent Clojure data structure. You can read individual values:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key simple-model)
+      trace (p/simulate model [])
+      choices (:choices trace)]
+  ;; Check if an address exists
+  (println "has :x?" (cm/has-value? (cm/get-submap choices :x)))
+  ;; Get the value at an address
+  (println "x =" (mx/item (cm/get-choice choices [:x])))
+  ;; The score
+  (println "score =" (mx/item (:score trace))))
+</code></pre>
+<p>Values in GenMLX are <strong>MLX arrays</strong> — GPU-resident tensors. Use <code>mx/item</code> to extract a plain JavaScript number when you need to print or compare.</p>
+<h2 id="a-coin-flip-model"><a class="header" href="#a-coin-flip-model">A coin flip model</a></h2>
+<p>Let’s build something with more structure. A classic Bayesian model: we have a coin with unknown bias, and we flip it three times.</p>
+<pre><code class="language-clojure">(def coin-model
+  (gen []
+    (let [bias (trace :bias (dist/beta-dist 2 2))]
+      (trace :flip1 (dist/bernoulli bias))
+      (trace :flip2 (dist/bernoulli bias))
+      (trace :flip3 (dist/bernoulli bias))
+      bias)))
+</code></pre>
+<p>Here:</p>
+<ul>
+<li><code>:bias</code> is sampled from a Beta(2, 2) distribution — a prior that favors values near 0.5 but allows anything between 0 and 1.</li>
+<li>Each flip is a Bernoulli trial with probability equal to the bias.</li>
+<li>The function returns the bias value.</li>
+</ul>
+<p>Each <code>trace</code> call names its choice. The model has four addresses: <code>:bias</code>, <code>:flip1</code>, <code>:flip2</code>, <code>:flip3</code>. Simulate it:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key coin-model)
+      trace (p/simulate model [])]
+  (println "bias:" (mx/item (cm/get-choice (:choices trace) [:bias])))
+  (println "flip1:" (mx/item (cm/get-choice (:choices trace) [:flip1])))
+  (println "flip2:" (mx/item (cm/get-choice (:choices trace) [:flip2])))
+  (println "flip3:" (mx/item (cm/get-choice (:choices trace) [:flip3])))
+  (println "score:" (mx/item (:score trace))))
+</code></pre>
+<p>The score is the sum: \(\log p(\text{bias}) + \log p(\text{flip1} \mid \text{bias}) + \log p(\text{flip2} \mid \text{bias}) + \log p(\text{flip3} \mid \text{bias})\).</p>
+<h2 id="the-running-example-linear-regression"><a class="header" href="#the-running-example-linear-regression">The running example: linear regression</a></h2>
+<p>This model will grow throughout the tutorial. We’ll keep coming back to it, adding conditioning, inference, composition, and compilation.</p>
+<p>A Bayesian linear regression: unknown slope and intercept, with noisy observations at known x-coordinates.</p>
+<pre><code class="language-clojure">(def linear-model
+  (gen [xs]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
+      (doseq [[j x] (map-indexed vector xs)]
+        (trace (keyword (str "y" j))
+               (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                      intercept) 1)))
+      slope)))
+</code></pre>
+<p>This model:</p>
+<ol>
+<li>Samples a slope from \(\mathcal{N}(0, 10)\) — a broad prior.</li>
+<li>Samples an intercept from \(\mathcal{N}(0, 10)\).</li>
+<li>For each x-coordinate, samples an observation \(y_j \sim \mathcal{N}(\text{slope} \cdot x_j + \text{intercept}, 1)\).</li>
+<li>Returns the slope.</li>
+</ol>
+<p>Notice the addresses: <code>:slope</code> and <code>:intercept</code> are fixed keywords, but <code>:y0</code>, <code>:y1</code>, <code>:y2</code> are computed dynamically with <code>(keyword (str "y" j))</code>. GenMLX handles both.</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)
+      xs [1.0 2.0 3.0]
+      trace (p/simulate model [xs])]
+  (println "slope:" (mx/item (cm/get-choice (:choices trace) [:slope])))
+  (println "intercept:" (mx/item (cm/get-choice (:choices trace) [:intercept])))
+  (println "y0:" (mx/item (cm/get-choice (:choices trace) [:y0])))
+  (println "y1:" (mx/item (cm/get-choice (:choices trace) [:y1])))
+  (println "y2:" (mx/item (cm/get-choice (:choices trace) [:y2])))
+  (println "score:" (mx/item (:score trace))))
+</code></pre>
+<h2 id="every-simulation-is-different"><a class="header" href="#every-simulation-is-different">Every simulation is different</a></h2>
+<p>Each call to <code>simulate</code> draws fresh random values:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)
+      xs [1.0 2.0 3.0]]
+  (dotimes [i 5]
+    (let [trace (p/simulate model [xs])
+          slope (mx/item (cm/get-choice (:choices trace) [:slope]))]
+      (println (str "run " i ": slope=" (.toFixed slope 3))))))
+</code></pre>
+<p>You’ll see five different slopes. The model defines a probability distribution over possible worlds — each simulation is one draw from that distribution.</p>
+<h2 id="what-the-score-means"><a class="header" href="#what-the-score-means">What the score means</a></h2>
+<p>The score of a trace is \(\log p(\boldsymbol{\tau}; x)\) — the log of the joint probability of all random choices, given the arguments. For our simple Gaussian model, we can verify this manually:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key simple-model)
+      trace (p/simulate model [])
+      x-val (cm/get-choice (:choices trace) [:x])
+      ;; Manually compute log p(x) under N(0,1)
+      manual-lp (mx/item (dc/dist-log-prob (dist/gaussian 0 1) x-val))
+      trace-score (mx/item (:score trace))]
+  (println "manual log-prob:" (.toFixed manual-lp 6))
+  (println "trace score:    " (.toFixed trace-score 6))
+  (println "match?" (&lt; (js/Math.abs (- manual-lp trace-score)) 0.0001)))
+</code></pre>
+<p>They match. The score is the sum of log-probabilities across all trace sites.</p>
+<h2 id="mlx-arrays"><a class="header" href="#mlx-arrays">MLX arrays</a></h2>
+<p>Values in GenMLX live as MLX arrays — lazy GPU tensors. A few operations you’ll use often:</p>
+<pre><code class="language-clojure">;; Create scalars and arrays
+(def a (mx/scalar 3.0))
+(def b (mx/scalar 2.0))
+(def arr (mx/array [1.0 2.0 3.0]))
+
+;; Extract to JavaScript
+(mx/item a)        ;; =&gt; 3.0
+(mx/shape arr)     ;; =&gt; [3]
+
+;; Arithmetic (returns new MLX arrays)
+(mx/add a b)       ;; =&gt; 5.0
+(mx/multiply a b)  ;; =&gt; 6.0
+(mx/subtract a b)  ;; =&gt; 1.0
+(mx/divide a b)    ;; =&gt; 1.5
+</code></pre>
+<p>MLX operations are <strong>lazy</strong> — they build a computation graph that executes on the GPU when you read a value with <code>mx/item</code> or call <code>mx/eval!</code>. Inside model bodies, you never need to call <code>eval!</code> — the framework handles materialization at inference boundaries.</p>
+<h2 id="distribution-catalog"><a class="header" href="#distribution-catalog">Distribution catalog</a></h2>
+<p>GenMLX includes 27 built-in distributions. Here are the most common ones:</p>
+<p><strong>Continuous:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Distribution</th><th>Constructor</th><th>Parameters</th></tr>
+</thead>
+<tbody>
+<tr><td>Gaussian (Normal)</td><td><code>(dist/gaussian mean std)</code></td><td>mean, standard deviation</td></tr>
+<tr><td>Uniform</td><td><code>(dist/uniform low high)</code></td><td>lower bound, upper bound</td></tr>
+<tr><td>Beta</td><td><code>(dist/beta-dist alpha beta)</code></td><td>shape parameters</td></tr>
+<tr><td>Gamma</td><td><code>(dist/gamma-dist shape rate)</code></td><td>shape, rate</td></tr>
+<tr><td>Exponential</td><td><code>(dist/exponential rate)</code></td><td>rate</td></tr>
+<tr><td>Laplace</td><td><code>(dist/laplace location scale)</code></td><td>location, scale</td></tr>
+<tr><td>Log-Normal</td><td><code>(dist/log-normal log-mean log-std)</code></td><td>log-mean, log-std</td></tr>
+<tr><td>Student-t</td><td><code>(dist/student-t df loc scale)</code></td><td>degrees of freedom, location, scale</td></tr>
+<tr><td>Cauchy</td><td><code>(dist/cauchy location scale)</code></td><td>location, scale</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Discrete:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Distribution</th><th>Constructor</th><th>Parameters</th></tr>
+</thead>
+<tbody>
+<tr><td>Bernoulli</td><td><code>(dist/bernoulli prob)</code></td><td>success probability</td></tr>
+<tr><td>Categorical</td><td><code>(dist/categorical log-weights)</code></td><td>log-probabilities (unnormalized)</td></tr>
+<tr><td>Poisson</td><td><code>(dist/poisson rate)</code></td><td>rate</td></tr>
+<tr><td>Geometric</td><td><code>(dist/geometric prob)</code></td><td>success probability</td></tr>
+<tr><td>Binomial</td><td><code>(dist/binomial n prob)</code></td><td>trials, probability</td></tr>
+<tr><td>Discrete Uniform</td><td><code>(dist/discrete-uniform low high)</code></td><td>range</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Multivariate / Special:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Distribution</th><th>Constructor</th><th>Parameters</th></tr>
+</thead>
+<tbody>
+<tr><td>Multivariate Normal</td><td><code>(dist/multivariate-normal mean cov)</code></td><td>mean vector, covariance matrix</td></tr>
+<tr><td>Dirichlet</td><td><code>(dist/dirichlet concentration)</code></td><td>concentration vector</td></tr>
+<tr><td>Delta</td><td><code>(dist/delta value)</code></td><td>fixed value (score = 0)</td></tr>
+</tbody>
+</table>
+</div>
+<p>You can also define your own distributions — we’ll cover that in <a href="./ch10-extensions.html">Chapter 10</a>.</p>
+<h2 id="what-weve-learned"><a class="header" href="#what-weve-learned">What we’ve learned</a></h2>
+<ul>
+<li>The <code>gen</code> macro turns a function into a generative function.</li>
+<li><code>trace</code> declares a random choice at a named address — it says <em>what</em> you need, not <em>how</em> to get it.</li>
+<li><code>simulate</code> runs the model forward, producing a trace with choices, a return value, and a score.</li>
+<li>The score is \(\log p(\text{all choices})\) — the log joint probability.</li>
+<li>Values are MLX arrays (GPU tensors). Use <code>mx/item</code> to extract JavaScript numbers.</li>
+</ul>
+<p>In the next chapter, we’ll condition the model on observed data — and see how the same model code, with no modifications, gives us importance weights for inference.</p>
 
                     </main>
 
