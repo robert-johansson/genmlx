@@ -1010,6 +1010,8 @@ function main()
         end
     elseif test_type == "gradient"
         for spec in input["gradient_tests"]
+            # Skip comment entries (no "id" key)
+            haskey(spec, "id") || continue
             push!(results, eval_gradient(spec))
         end
     elseif test_type == "inference_quality"

@@ -1055,7 +1055,15 @@
                 "regenerate"           (mapv eval-regenerate (get input-data "regenerate_tests"))
                 "combinator"           (mapv eval-combinator (get input-data "combinator_tests"))
                 "mlx_ops"              (mapv (comp sanitize-js-obj eval-mlx-op) (get input-data "tests"))
-                "gradient"             (mapv eval-gradient (get input-data "gradient_tests"))
+                "gradient"             (let [tests (filter #(get % "id") (get input-data "gradient_tests"))]
+                                         (mapv (fn [spec]
+                                                 (let [r (eval-gradient spec)]
+                                                   ;; Cleanup Metal buffers between grad tests
+                                                   (mx/clear-cache!)
+                                                   (mx/sweep-dead-arrays!)
+                                                   (when (.-gc js/globalThis) (.gc js/globalThis))
+                                                   r))
+                                               tests))
                 "inference_quality"    (do
                                         ;; Fix PRNG seed for reproducible inference results
                                         (rng/seed! (rng/fresh-key 42))
