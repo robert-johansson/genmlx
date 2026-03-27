@@ -361,14 +361,9 @@
           samples (mapv #(h/realize (dist/sample d %)) keys)
           R (mean-resultant-length samples)]
       (is (h/close? 0.0 (circular-mean samples) 0.1) "circular mean ≈ 0")
-      ;; BUG: Von Mises sampler under-concentration.
-      ;; Analytical R = 0.6978. Observed R ~ 0.49 due to acceptance condition bug.
-      ;; See dev/dist_moments_spec.md Part 12.
-      ;; When the sampler is fixed, change this to:
-      ;;   (is (h/close? 0.6978 R 0.03) "R converges to I1/I0")
-      (is (< R 0.6)
-          (str "XFAIL: R=" R " is under-concentrated (expected ~0.70, "
-               "will pass once sampler bug is fixed)"))))
+      ;; Analytical: R = I_1(2)/I_0(2) = 0.6978
+      ;; Tolerance: 0.05 (N=2000, SE ~ 1/sqrt(N) ~ 0.022, 3.5*SE ~ 0.08)
+      (is (h/close? 0.6978 R 0.05) "R converges to I1/I0")))
 
   (testing "VonMises(pi/4,5): circular mean and R"
     ;; Analytical: circular mean = pi/4 = 0.7854, R = I_1(5)/I_0(5) = 0.8934
@@ -378,12 +373,9 @@
           samples (mapv #(h/realize (dist/sample d %)) keys)
           R (mean-resultant-length samples)]
       (is (h/close? 0.7854 (circular-mean samples) 0.1) "circular mean ≈ pi/4")
-      ;; BUG: Von Mises sampler under-concentration.
-      ;; When the sampler is fixed, change this to:
-      ;;   (is (h/close? 0.8934 R 0.03) "R converges to I1/I0")
-      (is (< R 0.75)
-          (str "XFAIL: R=" R " is under-concentrated (expected ~0.89, "
-               "will pass once sampler bug is fixed)")))))
+      ;; Analytical: R = I_1(5)/I_0(5) = 0.8934
+      ;; Tolerance: 0.04 (N=2000, SE ~ 0.01 for concentrated dist, 3.5*SE ~ 0.035)
+      (is (h/close? 0.8934 R 0.04) "R converges to I1/I0"))))
 
 ;; ==========================================================================
 ;; Student-t

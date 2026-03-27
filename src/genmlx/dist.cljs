@@ -1322,8 +1322,11 @@
                     f (/ (+ 1.0 (* r z)) (+ r z))
                     c (* k-val (- r f))
                     u2 (mx/realize (rng/uniform k2 []))]
-                (if (or (>= c (- (* 2.0 (js/Math.log u2)) c 1.0))
-                        (>= (js/Math.log c) (+ (js/Math.log u2) 1.0 (- c))))
+                ;; Best (1979) acceptance conditions for ratio c*exp(1-c):
+                ;; Squeeze (no log): c*(2-c) >= u2  [since exp(x) >= 1+x]
+                ;; Log test (exact): log(c/u2) >= c - 1
+                (if (or (>= (* c (- 2.0 c)) u2)
+                        (>= (js/Math.log (/ c u2)) (- c 1.0)))
             ;; Accept: angle = sign(u3 - 0.5) * acos(f) + mu
                   (let [u3 (mx/realize (rng/uniform k3 []))
                         theta (* (js/Math.sign (- u3 0.5)) (js/Math.acos f))]
@@ -1370,14 +1373,14 @@
               f (mx/divide (mx/add ONE (mx/multiply r-arr z))
                            (mx/add r-arr z))
               c (mx/multiply k-arr (mx/subtract r-arr f))
-              ;; Accept condition (float masks, OR via maximum):
-              log-u2 (mx/log u2)
+              ;; Best (1979) acceptance conditions for ratio c*exp(1-c):
+              ;; Squeeze (no log): c*(2-c) >= u2  [since exp(x) >= 1+x]
+              ;; Log test (exact): log(c/u2) >= c - 1
               safe-c (mx/maximum c (mx/scalar 1e-30))
-              cond1 (mx/greater-equal c
-                                      (mx/subtract (mx/multiply (mx/scalar 2.0) log-u2)
-                                                   (mx/add c ONE)))
-              cond2 (mx/greater-equal (mx/log safe-c)
-                                      (mx/subtract (mx/add log-u2 ONE) c))
+              cond1 (mx/greater-equal (mx/multiply c (mx/subtract (mx/scalar 2.0) c))
+                                      u2)
+              cond2 (mx/greater-equal (mx/log (mx/divide safe-c u2))
+                                      (mx/subtract c ONE))
               accepted (mx/maximum cond1 cond2)
               ;; theta = sign(u3 - 0.5) * arccos(clamp(f))
               sign-u3 (mx/sign (mx/subtract u3 HALF))
