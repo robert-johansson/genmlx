@@ -119,9 +119,19 @@
    and uses compiled-generate or handler instead."
   (atom 0))
 
+(def ^:private compile-depth
+  "Tracks nesting depth of mx/compile-fn tracing scopes.
+   When compile-depth > 0, mx/grad skips tidy wrapping because
+   tidy would dispose trace arrays needed by the compilation graph."
+  (atom 0))
+
 (defn in-grad?
   "Returns true if currently executing inside an mx/grad or mx/value-and-grad scope."
   [] (pos? @grad-depth))
+
+(defn in-compile?
+  "Returns true if currently executing inside an mx/compile-fn trace."
+  [] (pos? @compile-depth))
 
 (defn tidy [f]
   (swap! tidy-depth inc)
@@ -501,35 +511,67 @@
 
 (defn grad
   "Compute gradient of f. Tracks grad-depth so p/generate can skip
-   the L3 analytical path (which uses volatile! and breaks gradient flow)."
+   the L3 analytical path (which uses volatile! and breaks gradient flow).
+   Each call runs inside mx/tidy to prevent Metal buffer accumulation.
+   Tidy is skipped inside mx/compile-fn (would dispose trace arrays)."
   ([f]
    (let [gf (.grad core f)]
      (fn [& args]
        (swap! grad-depth inc)
-       (try (apply gf args)
+       (try (if (in-compile?)
+              (apply gf args)
+              (let [r (tidy #(apply gf args))]
+                (eval! r)
+                r))
             (finally (swap! grad-depth dec))))))
   ([f argnums]
    (let [gf (.grad core f (clj->js argnums))]
      (fn [& args]
        (swap! grad-depth inc)
-       (try (apply gf args)
+       (try (if (in-compile?)
+              (apply gf args)
+              (let [r (tidy #(apply gf args))]
+                (eval! r)
+                r))
             (finally (swap! grad-depth dec)))))))
 
 (defn value-and-grad
-  "Compute value and gradient of f. Tracks grad-depth."
+  "Compute value and gradient of f. Tracks grad-depth.
+   Each call runs inside mx/tidy to prevent Metal buffer accumulation.
+   Tidy is skipped inside mx/compile-fn (would dispose trace arrays)."
   ([f]
    (let [vg (.valueAndGrad core f)]
      (fn [& args]
        (swap! grad-depth inc)
-       (try (let [result (apply vg args)]
-              [(aget result 0) (aget result 1)])
+       (try (if (in-compile?)
+              (let [result (apply vg args)]
+                [(aget result 0) (aget result 1)])
+              (let [result-vol (volatile! nil)]
+                (tidy (fn []
+                        (let [result (apply vg args)
+                              v (aget result 0)
+                              g (aget result 1)]
+                          (eval! v g)
+                          (vreset! result-vol [v g])
+                          (to-array [v g]))))
+                @result-vol))
             (finally (swap! grad-depth dec))))))
   ([f argnums]
    (let [vg (.valueAndGrad core f (clj->js argnums))]
      (fn [& args]
        (swap! grad-depth inc)
-       (try (let [result (apply vg args)]
-              [(aget result 0) (aget result 1)])
+       (try (if (in-compile?)
+              (let [result (apply vg args)]
+                [(aget result 0) (aget result 1)])
+              (let [result-vol (volatile! nil)]
+                (tidy (fn []
+                        (let [result (apply vg args)
+                              v (aget result 0)
+                              g (aget result 1)]
+                          (eval! v g)
+                          (vreset! result-vol [v g])
+                          (to-array [v g]))))
+                @result-vol))
             (finally (swap! grad-depth dec)))))))
 
 (defn jvp [f primals tangents]
@@ -556,12 +598,17 @@
   "Wrap f in mx/compile-fn with auto-recompilation on cache clear.
    If compile-clear-cache! has been called since this function was compiled,
    the next invocation transparently recompiles — no crash, no manual
-   intervention. Cost: one atom deref per call (negligible)."
+   intervention. Cost: one atom deref per call (negligible).
+   Tracks compile-depth so mx/grad can skip tidy during tracing."
   ([f]    (compile-fn f false))
   ([f shapeless?]
-   (let [compile! (if shapeless?
-                    #(.compile core f true)
-                    #(.compile core f))
+   (let [cf (fn [& args]
+              (swap! compile-depth inc)
+              (try (apply f args)
+                   (finally (swap! compile-depth dec))))
+         compile! (if shapeless?
+                    #(.compile core cf true)
+                    #(.compile core cf))
          cf-ref (atom (compile!))
          gen-ref (atom @compile-generation)]
      (fn [& args]
