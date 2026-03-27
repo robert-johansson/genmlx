@@ -818,6 +818,179 @@
         "categorical([1,2,3])")))
 
 ;; =========================================================================
+;; SECTION 1f: Finite-difference gradient checks (issue #12)
+;; Verify analytical gradients (mx/grad) match numerical (central differences)
+;; for all differentiable distributions — value AND parameter gradients.
+;; =========================================================================
+
+(def ^:private grad-eps 1e-4)
+(def ^:private grad-tol 0.01)
+
+(defn- grad-pair
+  "Compute [analytical numerical] gradient of (f scalar-x)."
+  [f x]
+  (let [ana-f (mx/grad f)
+        ana (ana-f (mx/scalar x))
+        x+ (mx/scalar (+ x grad-eps))
+        x- (mx/scalar (- x grad-eps))
+        fp (f x+) fm (f x-)
+        _ (mx/eval! ana fp fm)]
+    [(mx/item ana) (/ (- (mx/item fp) (mx/item fm)) (* 2 grad-eps))]))
+
+(deftest s1f-gradient-finite-diff
+  (testing "Value gradients: d/dv log-prob(v)"
+    (doseq [[label f x] [["gaussian(0,1) at 0.5"
+                          #(dist/log-prob (dist/gaussian 0 1) %) 0.5]
+                         ["uniform(0,1) at 0.5"
+                          #(dist/log-prob (dist/uniform 0 1) %) 0.5]
+                         ["beta(2,5) at 0.3"
+                          #(dist/log-prob (dist/beta-dist 2 5) %) 0.3]
+                         ["gamma(3,2) at 1.0"
+                          #(dist/log-prob (dist/gamma-dist 3 2) %) 1.0]
+                         ["exponential(2) at 1.0"
+                          #(dist/log-prob (dist/exponential 2) %) 1.0]
+                         ["laplace(0,1) at 0.5"
+                          #(dist/log-prob (dist/laplace 0 1) %) 0.5]
+                         ["student-t(5,0,1) at 1.0"
+                          #(dist/log-prob (dist/student-t 5 0 1) %) 1.0]
+                         ["log-normal(0,1) at 1.0"
+                          #(dist/log-prob (dist/log-normal 0 1) %) 1.0]
+                         ["cauchy(0,1) at 0.5"
+                          #(dist/log-prob (dist/cauchy 0 1) %) 0.5]
+                         ["inv-gamma(2,1) at 1.0"
+                          #(dist/log-prob (dist/inv-gamma 2 1) %) 1.0]
+                         ["truncated-normal(0,1,-2,2) at 0.5"
+                          #(dist/log-prob (dist/truncated-normal 0 1 -2 2) %) 0.5]
+                         ["von-mises(0,2) at 0.5"
+                          #(dist/log-prob (dist/von-mises 0 2) %) 0.5]]]
+      (let [[a n] (grad-pair f x)]
+        (is (th/close? a n grad-tol) (str label ": analytical=" a " numerical=" n)))))
+
+  (testing "Parameter gradients: d/d(param) log-prob"
+    (doseq [[label f x]
+            [["exponential d/d(rate)"
+              #(dist/log-prob (dist/exponential %) (mx/scalar 1.0)) 2.0]
+             ["inv-gamma d/d(shape)"
+              #(dist/log-prob (dist/inv-gamma % (mx/scalar 1.0)) (mx/scalar 1.0)) 2.0]
+             ["inv-gamma d/d(scale)"
+              #(dist/log-prob (dist/inv-gamma (mx/scalar 2.0) %) (mx/scalar 1.0)) 1.0]
+             ["von-mises d/d(mu)"
+              #(dist/log-prob (dist/von-mises % (mx/scalar 2.0)) (mx/scalar 0.5)) 0.0]
+             ["von-mises d/d(kappa)"
+              #(dist/log-prob (dist/von-mises (mx/scalar 0.0) %) (mx/scalar 0.5)) 2.0]
+             ["truncated-normal d/d(mu)"
+              #(dist/log-prob (dist/truncated-normal % (mx/scalar 1.0) (mx/scalar -2.0) (mx/scalar 2.0)) (mx/scalar 0.5)) 0.0]
+             ["truncated-normal d/d(sigma)"
+              #(dist/log-prob (dist/truncated-normal (mx/scalar 0.0) % (mx/scalar -2.0) (mx/scalar 2.0)) (mx/scalar 0.5)) 1.0]
+             ["gaussian d/d(mu)"
+              #(dist/log-prob (dist/gaussian % (mx/scalar 1.0)) (mx/scalar 0.5)) 0.0]
+             ["gaussian d/d(sigma)"
+              #(dist/log-prob (dist/gaussian (mx/scalar 0.0) %) (mx/scalar 0.5)) 1.0]]]
+      (let [[a n] (grad-pair f x)]
+        (is (th/close? a n grad-tol) (str label ": analytical=" a " numerical=" n)))))
+
+  (testing "Wishart value gradient (Cholesky VJP)"
+    (let [d (dist/wishart 5 (mx/array [[1.0 0.0] [0.0 1.0]]))
+          ;; Analytical gradient at X = I
+          g (mx/grad (fn [x] (dist/log-prob d x)))
+          X (mx/array [[1.0 0.0] [0.0 1.0]])
+          grad-X (g X)
+          _ (mx/eval! grad-X)
+          grad-vals (mx/->clj grad-X)
+          ;; Numerical at X[0,0]
+          eps grad-eps
+          lp (fn [xv] (let [r (dist/log-prob d (mx/array xv))] (mx/eval! r) (mx/item r)))
+          num-00 (/ (- (lp [[1.0001 0] [0 1]]) (lp [[0.9999 0] [0 1]])) 0.0002)
+          num-11 (/ (- (lp [[1 0] [0 1.0001]]) (lp [[1 0] [0 0.9999]])) 0.0002)]
+      (is (th/close? (get-in grad-vals [0 0]) num-00 grad-tol)
+          "wishart d/dX[0,0]")
+      (is (th/close? (get-in grad-vals [1 1]) num-11 grad-tol)
+          "wishart d/dX[1,1]"))))
+
+;; =========================================================================
+;; SECTION 1g: Model-level gradient tests (issue #12)
+;; Verify gradient of score flows correctly through full generative functions.
+;; =========================================================================
+
+(deftest s1g-model-gradients
+  (testing "Single-site model: d(score)/dx = d(log N(x;0,1))/dx = -x"
+    (let [model (dyn/auto-key (gen [] (trace :x (dist/gaussian 0 1))))
+          score-fn (fn [x-val]
+                     (let [{:keys [trace]} (p/generate model [] (cm/choicemap :x x-val))]
+                       (:score trace)))
+          g (mx/grad score-fn)]
+      (doseq [x-val [0.5 1.0 2.0 -1.5]]
+        (let [result (g (mx/scalar x-val))
+              _ (mx/eval! result)
+              ana (mx/item result)]
+          (is (th/close? (- x-val) ana 1e-4)
+              (str "d(score)/dx at x=" x-val " = " ana " expected " (- x-val)))))))
+
+  (testing "Two-site model: d(score)/dx for each choice independently"
+    (let [model (dyn/auto-key (gen []
+                                   (let [x (trace :x (dist/gaussian 0 1))
+                                         y (trace :y (dist/gaussian 0 2))]
+                                     [x y])))
+          ;; Gradient w.r.t. x with y fixed
+          gx (mx/grad (fn [x-val]
+                        (let [{:keys [trace]} (p/generate model []
+                                                          (cm/choicemap :x x-val :y (mx/scalar 1.0)))]
+                          (:score trace))))
+          ;; Gradient w.r.t. y with x fixed
+          gy (mx/grad (fn [y-val]
+                        (let [{:keys [trace]} (p/generate model []
+                                                          (cm/choicemap :x (mx/scalar 0.5) :y y-val))]
+                          (:score trace))))
+          rx (gx (mx/scalar 0.5))
+          ry (gy (mx/scalar 1.0))
+          _ (mx/eval! rx ry)]
+      ;; d(score)/dx = d(log N(x;0,1))/dx + 0 = -x = -0.5
+      (is (th/close? -0.5 (mx/item rx) 1e-4) "d(score)/dx at x=0.5")
+      ;; d(score)/dy = 0 + d(log N(y;0,2))/dy = -y/4 = -0.25
+      (is (th/close? -0.25 (mx/item ry) 1e-4) "d(score)/dy at y=1.0")))
+
+  (testing "Hierarchical model: gradient flows through dependent sites"
+    ;; model: mu ~ N(0,10), y ~ N(mu, 1)
+    ;; score = log N(mu;0,10) + log N(y;mu,1)
+    ;; d(score)/dmu = -mu/100 + (y - mu)   [chain rule through mu]
+    ;; NOTE: mu stays as MLX array (no mx/eval! + mx/item) to preserve AD graph
+    (let [model (dyn/auto-key (gen []
+                                   (let [mu (trace :mu (dist/gaussian 0 10))]
+                                     (trace :y (dist/gaussian mu 1))
+                                     mu)))
+          g (mx/grad (fn [mu-val]
+                       (let [{:keys [trace]} (p/generate model []
+                                                         (cm/choicemap :mu mu-val :y (mx/scalar 3.0)))]
+                         (:score trace))))
+          result (g (mx/scalar 1.0))
+          _ (mx/eval! result)
+          ;; Expected: -1/100 + (3-1) = -0.01 + 2 = 1.99
+          ana (mx/item result)]
+      (is (th/close? 1.99 ana 1e-3) (str "hierarchical d(score)/dmu = " ana " expected 1.99"))))
+
+  (testing "Score gradient matches numerical finite difference"
+    (let [model (dyn/auto-key (gen []
+                                   (let [x (trace :x (dist/gaussian 0 1))]
+                                     (trace :y (dist/exponential 2))
+                                     x)))
+          score-at (fn [x-val]
+                     (let [{:keys [trace]} (p/generate model []
+                                                       (cm/choicemap :x (mx/scalar x-val) :y (mx/scalar 0.5)))]
+                       (mx/eval! (:score trace))
+                       (mx/item (:score trace))))
+          ;; Analytical
+          g (mx/grad (fn [x-val]
+                       (let [{:keys [trace]} (p/generate model []
+                                                         (cm/choicemap :x x-val :y (mx/scalar 0.5)))]
+                         (:score trace))))
+          ana-result (g (mx/scalar 1.0))
+          _ (mx/eval! ana-result)
+          ana (mx/item ana-result)
+          ;; Numerical
+          num (/ (- (score-at 1.0001) (score-at 0.9999)) 0.0002)]
+      (is (th/close? ana num 0.01) (str "model score grad: analytical=" ana " numerical=" num)))))
+
+;; =========================================================================
 ;; SECTION 2: GFI interface for primitive distributions
 ;; =========================================================================
 
