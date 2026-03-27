@@ -1,0 +1,15 @@
+[book]
+title = "GenMLX API Reference"
+authors = ["Robert Johansson"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/probcomp/genmlx"
+additional-css = ["theme/custom.css"]
+mathjax-support = true

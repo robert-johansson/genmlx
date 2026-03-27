@@ -1,0 +1,44 @@
+/* GenMLX API Reference — custom styles */
+
+/* Function signature blocks */
+.fn-sig {
+  background: #f6f8fa;
+  border: 1px solid #e1e4e8;
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-family: monospace;
+  margin: 1em 0 0.5em;
+}
+
+/* Parameter tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5em 0 1.5em;
+}
+
+th, td {
+  border: 1px solid #e1e4e8;
+  padding: 6px 12px;
+  text-align: left;
+}
+
+th {
+  background: #f6f8fa;
+  font-weight: 600;
+}
+
+/* Source file references */
+.source-ref {
+  font-size: 0.85em;
+  color: #6a737d;
+  margin-top: -0.5em;
+  margin-bottom: 1em;
+}
+
+/* Since/version badges */
+.since {
+  font-size: 0.8em;
+  color: #6a737d;
+  font-style: italic;
+}

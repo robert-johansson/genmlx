@@ -1,0 +1,3348 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>MLX Operations - GenMLX API Reference</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="theme/custom-070636da.css">
+
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-bf8e1655.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-fc2a8a04.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">GenMLX API Reference</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/probcomp/genmlx" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="mlx-operations"><a class="header" href="#mlx-operations">MLX Operations</a></h1>
+<p>Thin ClojureScript wrapper over Apple’s MLX framework (<code>@frost-beta/mlx</code>).
+All operations produce lazy computation graphs – call <code>mx/eval!</code> to materialize.
+Values stay as MLX arrays from sampling through scoring through gradient computation.</p>
+<p>Source: <code>src/genmlx/mlx.cljs</code>, <code>src/genmlx/mlx/random.cljs</code></p>
+<hr>
+<h2 id="array-creation"><a class="header" href="#array-creation">Array Creation</a></h2>
+<h3 id="scalar"><a class="header" href="#scalar"><code>scalar</code></a></h3>
+<pre><code class="language-clojure">(mx/scalar 3.14)
+(mx/scalar 3.14 mx/float64)
+</code></pre>
+<p>Create a scalar (0-dimensional) MLX array from a JS number.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>v</code></td><td>number</td><td>JS number value</td></tr>
+<tr><td><code>dtype</code></td><td>dtype (optional)</td><td>Data type (default: inferred)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX scalar array with shape <code>[]</code></p>
+<hr>
+<h3 id="array"><a class="header" href="#array"><code>array</code></a></h3>
+<pre><code class="language-clojure">(mx/array [1 2 3])
+(mx/array [1 2 3 4 5 6] [2 3])
+(mx/array [1 2 3] mx/float32)
+(mx/array [1 2 3 4] [2 2] mx/float64)
+</code></pre>
+<p>Create an MLX array from a Clojure collection. Optionally reshape and/or cast to a dtype.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>v</code></td><td>collection</td><td>Clojure vector or sequence</td></tr>
+<tr><td><code>shape</code></td><td>vector (optional)</td><td>Target shape (triggers reshape)</td></tr>
+<tr><td><code>dtype</code></td><td>dtype (optional)</td><td>Data type</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="zeros"><a class="header" href="#zeros"><code>zeros</code></a></h3>
+<pre><code class="language-clojure">(mx/zeros [3 4])
+(mx/zeros [3 4] mx/float64)
+</code></pre>
+<p>Create an array filled with zeros. Like <code>numpy.zeros</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>shape</code></td><td>vector</td><td>Shape of the output array</td></tr>
+<tr><td><code>dtype</code></td><td>dtype (optional)</td><td>Data type (default: float32)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="ones"><a class="header" href="#ones"><code>ones</code></a></h3>
+<pre><code class="language-clojure">(mx/ones [3 4])
+(mx/ones [2 2] mx/int32)
+</code></pre>
+<p>Create an array filled with ones. Like <code>numpy.ones</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>shape</code></td><td>vector</td><td>Shape of the output array</td></tr>
+<tr><td><code>dtype</code></td><td>dtype (optional)</td><td>Data type (default: float32)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="full"><a class="header" href="#full"><code>full</code></a></h3>
+<pre><code class="language-clojure">(mx/full [3 3] 7.0)
+</code></pre>
+<p>Create an array filled with a constant value. Like <code>numpy.full</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>shape</code></td><td>vector</td><td>Shape of the output array</td></tr>
+<tr><td><code>val</code></td><td>number</td><td>Fill value</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="eye"><a class="header" href="#eye"><code>eye</code></a></h3>
+<pre><code class="language-clojure">(mx/eye 3)
+(mx/eye 4 mx/float64)
+</code></pre>
+<p>Create an identity matrix. Like <code>numpy.eye</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>n</code></td><td>integer</td><td>Size of the square matrix</td></tr>
+<tr><td><code>dtype</code></td><td>dtype (optional)</td><td>Data type (default: float32)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array with shape <code>[n n]</code></p>
+<hr>
+<h3 id="arange"><a class="header" href="#arange"><code>arange</code></a></h3>
+<pre><code class="language-clojure">(mx/arange 5)          ;; [0 1 2 3 4]
+(mx/arange 2 7)        ;; [2 3 4 5 6]
+(mx/arange 0 10 2)     ;; [0 2 4 6 8]
+</code></pre>
+<p>Create an array of evenly spaced values. Like <code>numpy.arange</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>start</code></td><td>number (optional)</td><td>Start value (default: 0)</td></tr>
+<tr><td><code>stop</code></td><td>number</td><td>End value (exclusive)</td></tr>
+<tr><td><code>step</code></td><td>number (optional)</td><td>Step size (default: 1)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX 1-D array</p>
+<hr>
+<h3 id="linspace"><a class="header" href="#linspace"><code>linspace</code></a></h3>
+<pre><code class="language-clojure">(mx/linspace 0 1 5)    ;; [0.0 0.25 0.5 0.75 1.0]
+</code></pre>
+<p>Create an array of evenly spaced values over an interval. Like <code>numpy.linspace</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>start</code></td><td>number</td><td>Start value</td></tr>
+<tr><td><code>stop</code></td><td>number</td><td>End value (inclusive)</td></tr>
+<tr><td><code>num</code></td><td>integer</td><td>Number of samples</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX 1-D array</p>
+<hr>
+<h3 id="meshgrid"><a class="header" href="#meshgrid"><code>meshgrid</code></a></h3>
+<pre><code class="language-clojure">(mx/meshgrid (mx/arange 3) (mx/arange 4))
+</code></pre>
+<p>Create coordinate grids from 1-D arrays. Like <code>numpy.meshgrid</code>. Returns a JS array of two MLX arrays, each with shape <code>[len(a) len(b)]</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First 1-D coordinate array</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second 1-D coordinate array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> JS array <code>#js [grid-a grid-b]</code></p>
+<hr>
+<h2 id="array-properties"><a class="header" href="#array-properties">Array Properties</a></h2>
+<h3 id="shape"><a class="header" href="#shape"><code>shape</code></a></h3>
+<pre><code class="language-clojure">(mx/shape a)    ;; =&gt; [3 4]
+</code></pre>
+<p>Get the shape of an array as a Clojure vector.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Clojure vector of integers</p>
+<hr>
+<h3 id="ndim"><a class="header" href="#ndim"><code>ndim</code></a></h3>
+<pre><code class="language-clojure">(mx/ndim a)     ;; =&gt; 2
+</code></pre>
+<p>Get the number of dimensions of an array.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> integer</p>
+<hr>
+<h3 id="dtype"><a class="header" href="#dtype"><code>dtype</code></a></h3>
+<pre><code class="language-clojure">(mx/dtype a)    ;; =&gt; mx/float32
+</code></pre>
+<p>Get the data type of an array.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> dtype object</p>
+<hr>
+<h3 id="size"><a class="header" href="#size"><code>size</code></a></h3>
+<pre><code class="language-clojure">(mx/size a)     ;; =&gt; 12
+</code></pre>
+<p>Get the total number of elements in an array.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> integer</p>
+<hr>
+<h3 id="item"><a class="header" href="#item"><code>item</code></a></h3>
+<pre><code class="language-clojure">(mx/item a)     ;; =&gt; 3.14
+</code></pre>
+<p>Extract a JS number from a scalar (0-dimensional) array. Triggers evaluation.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Scalar array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> JS number</p>
+<blockquote>
+<p><strong>Warning:</strong> Do not call <code>mx/item</code> inside model bodies during batched execution – it breaks vectorization by materializing intermediate values.</p>
+</blockquote>
+<hr>
+<h3 id="array-1"><a class="header" href="#array-1"><code>array?</code></a></h3>
+<pre><code class="language-clojure">(mx/array? x)   ;; =&gt; true
+</code></pre>
+<p>Check whether <code>x</code> is an MLX array.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>x</code></td><td>any</td><td>Value to test</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> boolean</p>
+<hr>
+<h3 id="realize"><a class="header" href="#realize"><code>realize</code></a></h3>
+<pre><code class="language-clojure">(mx/realize a)  ;; =&gt; 3.14
+</code></pre>
+<p>Evaluate a lazy MLX array and return its scalar JS value. Equivalent to <code>(do (mx/eval! x) (mx/item x))</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>x</code></td><td>MLX array</td><td>Scalar array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> JS number</p>
+<hr>
+<h3 id="ensure-array"><a class="header" href="#ensure-array"><code>ensure-array</code></a></h3>
+<pre><code class="language-clojure">(mx/ensure-array 3.14)              ;; JS number -&gt; scalar array
+(mx/ensure-array [1 2 3])           ;; vector -&gt; MLX array
+(mx/ensure-array some-array)        ;; pass through
+(mx/ensure-array 3.14 mx/float64)   ;; with dtype
+</code></pre>
+<p>Wrap a JS number as a scalar MLX array, convert vectors/sequences to arrays, and pass through existing MLX arrays unchanged. Functions, keywords, and maps pass through unchanged.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>x</code></td><td>any</td><td>Value to convert</td></tr>
+<tr><td><code>dtype</code></td><td>dtype (optional)</td><td>Target dtype (casts if needed)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array (or pass-through for fn/keyword/map)</p>
+<hr>
+<h3 id="-clj"><a class="header" href="#-clj"><code>-&gt;clj</code></a></h3>
+<pre><code class="language-clojure">(mx/-&gt;clj a)    ;; =&gt; [1 2 3]
+</code></pre>
+<p>Evaluate an MLX array and convert to a ClojureScript value (number or nested vector).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> ClojureScript value</p>
+<hr>
+<h3 id="realize-clj"><a class="header" href="#realize-clj"><code>realize-clj</code></a></h3>
+<pre><code class="language-clojure">(mx/realize-clj a)    ;; =&gt; [1 2 3]
+</code></pre>
+<p>Evaluate an MLX array and convert to ClojureScript data. Same as <code>-&gt;clj</code> (evaluates then converts).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>x</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> ClojureScript value</p>
+<hr>
+<h2 id="type-conversion"><a class="header" href="#type-conversion">Type Conversion</a></h2>
+<h3 id="astype"><a class="header" href="#astype"><code>astype</code></a></h3>
+<pre><code class="language-clojure">(mx/astype a mx/float64)
+(mx/astype a mx/int32)
+</code></pre>
+<p>Cast an array to a different dtype. Like <code>numpy.ndarray.astype</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>dtype</code></td><td>dtype</td><td>Target data type</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array with new dtype</p>
+<h3 id="data-type-constants"><a class="header" href="#data-type-constants">Data type constants</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Constant</th><th>MLX dtype</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mx/float32</code></td><td>32-bit float (default)</td></tr>
+<tr><td><code>mx/float64</code></td><td>64-bit float</td></tr>
+<tr><td><code>mx/int32</code></td><td>32-bit integer</td></tr>
+<tr><td><code>mx/int64</code></td><td>64-bit integer</td></tr>
+<tr><td><code>mx/bool-dt</code></td><td>Boolean</td></tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="arithmetic"><a class="header" href="#arithmetic">Arithmetic</a></h2>
+<p>All arithmetic operations are element-wise and support broadcasting.</p>
+<h3 id="add"><a class="header" href="#add"><code>add</code></a></h3>
+<pre><code class="language-clojure">(mx/add a b)
+(mx/add a b c d)
+</code></pre>
+<p>Element-wise addition. Variadic – accepts two or more arguments.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand</td></tr>
+<tr><td><code>more</code></td><td>MLX arrays (optional)</td><td>Additional operands</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="subtract"><a class="header" href="#subtract"><code>subtract</code></a></h3>
+<pre><code class="language-clojure">(mx/subtract a b)
+(mx/subtract a b c)
+</code></pre>
+<p>Element-wise subtraction. Variadic – accepts two or more arguments.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand</td></tr>
+<tr><td><code>more</code></td><td>MLX arrays (optional)</td><td>Additional operands</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="multiply"><a class="header" href="#multiply"><code>multiply</code></a></h3>
+<pre><code class="language-clojure">(mx/multiply a b)
+(mx/multiply a b c)
+</code></pre>
+<p>Element-wise multiplication. Variadic – accepts two or more arguments.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand</td></tr>
+<tr><td><code>more</code></td><td>MLX arrays (optional)</td><td>Additional operands</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="divide"><a class="header" href="#divide"><code>divide</code></a></h3>
+<pre><code class="language-clojure">(mx/divide a b)
+</code></pre>
+<p>Element-wise division.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Dividend</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Divisor</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="negative"><a class="header" href="#negative"><code>negative</code></a></h3>
+<pre><code class="language-clojure">(mx/negative a)
+</code></pre>
+<p>Element-wise negation.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="power"><a class="header" href="#power"><code>power</code></a></h3>
+<pre><code class="language-clojure">(mx/power a b)
+</code></pre>
+<p>Element-wise exponentiation.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Base</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Exponent</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="square"><a class="header" href="#square"><code>square</code></a></h3>
+<pre><code class="language-clojure">(mx/square a)
+</code></pre>
+<p>Element-wise square.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="sqrt"><a class="header" href="#sqrt"><code>sqrt</code></a></h3>
+<pre><code class="language-clojure">(mx/sqrt a)
+</code></pre>
+<p>Element-wise square root.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="abs"><a class="header" href="#abs"><code>abs</code></a></h3>
+<pre><code class="language-clojure">(mx/abs a)
+</code></pre>
+<p>Element-wise absolute value.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="maximum"><a class="header" href="#maximum"><code>maximum</code></a></h3>
+<pre><code class="language-clojure">(mx/maximum a b)
+</code></pre>
+<p>Element-wise maximum of two arrays.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="minimum"><a class="header" href="#minimum"><code>minimum</code></a></h3>
+<pre><code class="language-clojure">(mx/minimum a b)
+</code></pre>
+<p>Element-wise minimum of two arrays.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="clip"><a class="header" href="#clip"><code>clip</code></a></h3>
+<pre><code class="language-clojure">(mx/clip a lo hi)
+</code></pre>
+<p>Clamp values to the range <code>[lo, hi]</code>. Like <code>numpy.clip</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>lo</code></td><td>MLX array / number</td><td>Lower bound</td></tr>
+<tr><td><code>hi</code></td><td>MLX array / number</td><td>Upper bound</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="sign"><a class="header" href="#sign"><code>sign</code></a></h3>
+<pre><code class="language-clojure">(mx/sign a)
+</code></pre>
+<p>Element-wise sign function. Returns -1, 0, or +1.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="reciprocal"><a class="header" href="#reciprocal"><code>reciprocal</code></a></h3>
+<pre><code class="language-clojure">(mx/reciprocal a)
+</code></pre>
+<p>Element-wise reciprocal (1/a).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="floor-divide"><a class="header" href="#floor-divide"><code>floor-divide</code></a></h3>
+<pre><code class="language-clojure">(mx/floor-divide a b)
+</code></pre>
+<p>Element-wise integer division (floor of a/b). Like Python’s <code>//</code> operator.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Dividend</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Divisor</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="remainder"><a class="header" href="#remainder"><code>remainder</code></a></h3>
+<pre><code class="language-clojure">(mx/remainder a b)
+</code></pre>
+<p>Element-wise remainder after division. Like Python’s <code>%</code> operator.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Dividend</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Divisor</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h2 id="math-functions"><a class="header" href="#math-functions">Math Functions</a></h2>
+<h3 id="exp"><a class="header" href="#exp"><code>exp</code></a></h3>
+<pre><code class="language-clojure">(mx/exp a)
+</code></pre>
+<p>Element-wise exponential.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="expm1"><a class="header" href="#expm1"><code>expm1</code></a></h3>
+<pre><code class="language-clojure">(mx/expm1 a)
+</code></pre>
+<p>Element-wise exp(a) - 1. Numerically stable for small values of a.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="log"><a class="header" href="#log"><code>log</code></a></h3>
+<pre><code class="language-clojure">(mx/log a)
+</code></pre>
+<p>Element-wise natural logarithm.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="log2"><a class="header" href="#log2"><code>log2</code></a></h3>
+<pre><code class="language-clojure">(mx/log2 a)
+</code></pre>
+<p>Element-wise base-2 logarithm.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="log10"><a class="header" href="#log10"><code>log10</code></a></h3>
+<pre><code class="language-clojure">(mx/log10 a)
+</code></pre>
+<p>Element-wise base-10 logarithm.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="log1p"><a class="header" href="#log1p"><code>log1p</code></a></h3>
+<pre><code class="language-clojure">(mx/log1p a)
+</code></pre>
+<p>Element-wise log(1 + a). Numerically stable for small values of a.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="logaddexp"><a class="header" href="#logaddexp"><code>logaddexp</code></a></h3>
+<pre><code class="language-clojure">(mx/logaddexp a b)
+</code></pre>
+<p>Element-wise log(exp(a) + exp(b)). Numerically stable log-space addition.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="sin"><a class="header" href="#sin"><code>sin</code></a></h3>
+<pre><code class="language-clojure">(mx/sin a)
+</code></pre>
+<p>Element-wise sine.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array (radians)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="cos"><a class="header" href="#cos"><code>cos</code></a></h3>
+<pre><code class="language-clojure">(mx/cos a)
+</code></pre>
+<p>Element-wise cosine.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array (radians)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="tan"><a class="header" href="#tan"><code>tan</code></a></h3>
+<pre><code class="language-clojure">(mx/tan a)
+</code></pre>
+<p>Element-wise tangent.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array (radians)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="arccos"><a class="header" href="#arccos"><code>arccos</code></a></h3>
+<pre><code class="language-clojure">(mx/arccos a)
+</code></pre>
+<p>Element-wise inverse cosine (arccosine). Returns values in [0, pi].</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array (values in [-1, 1])</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array (radians)</p>
+<hr>
+<h3 id="tanh"><a class="header" href="#tanh"><code>tanh</code></a></h3>
+<pre><code class="language-clojure">(mx/tanh a)
+</code></pre>
+<p>Element-wise hyperbolic tangent.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="sigmoid"><a class="header" href="#sigmoid"><code>sigmoid</code></a></h3>
+<pre><code class="language-clojure">(mx/sigmoid a)
+</code></pre>
+<p>Element-wise sigmoid function: 1 / (1 + exp(-a)).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="softmax"><a class="header" href="#softmax"><code>softmax</code></a></h3>
+<pre><code class="language-clojure">(mx/softmax a)
+(mx/softmax a axis)
+</code></pre>
+<p>Softmax along the given axis (default: all elements).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis for softmax</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="erf"><a class="header" href="#erf"><code>erf</code></a></h3>
+<pre><code class="language-clojure">(mx/erf a)
+</code></pre>
+<p>Element-wise error function. Used in Gaussian CDF computations.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="erfinv"><a class="header" href="#erfinv"><code>erfinv</code></a></h3>
+<pre><code class="language-clojure">(mx/erfinv a)
+</code></pre>
+<p>Element-wise inverse error function. Useful for computing quantiles of the normal distribution.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array (values in (-1, 1))</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="lgamma"><a class="header" href="#lgamma"><code>lgamma</code></a></h3>
+<pre><code class="language-clojure">(mx/lgamma a)
+</code></pre>
+<p>Element-wise log-gamma function: ln(Gamma(a)). Essential for log-probability computations involving Beta, Gamma, and Dirichlet distributions.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array (positive values)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="digamma"><a class="header" href="#digamma"><code>digamma</code></a></h3>
+<pre><code class="language-clojure">(mx/digamma a)
+</code></pre>
+<p>Element-wise digamma function: psi(a) = Gamma’(a) / Gamma(a). The derivative of the log-gamma function.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array (positive values)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="bessel-i0e"><a class="header" href="#bessel-i0e"><code>bessel-i0e</code></a></h3>
+<pre><code class="language-clojure">(mx/bessel-i0e a)
+</code></pre>
+<p>Element-wise exponentially scaled modified Bessel function of the first kind, order 0. Returns I0(a) * exp(-|a|). Used in von Mises distribution.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="bessel-i1e"><a class="header" href="#bessel-i1e"><code>bessel-i1e</code></a></h3>
+<pre><code class="language-clojure">(mx/bessel-i1e a)
+</code></pre>
+<p>Element-wise exponentially scaled modified Bessel function of the first kind, order 1. Returns I1(a) * exp(-|a|).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="floor"><a class="header" href="#floor"><code>floor</code></a></h3>
+<pre><code class="language-clojure">(mx/floor a)
+</code></pre>
+<p>Element-wise floor (round toward negative infinity).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="ceil"><a class="header" href="#ceil"><code>ceil</code></a></h3>
+<pre><code class="language-clojure">(mx/ceil a)
+</code></pre>
+<p>Element-wise ceiling (round toward positive infinity).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="round"><a class="header" href="#round"><code>round</code></a></h3>
+<pre><code class="language-clojure">(mx/round a)
+</code></pre>
+<p>Element-wise rounding to nearest integer.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h2 id="comparison"><a class="header" href="#comparison">Comparison</a></h2>
+<h3 id="equal"><a class="header" href="#equal"><code>equal</code></a></h3>
+<pre><code class="language-clojure">(mx/equal a b)
+</code></pre>
+<p>Element-wise equality test. Returns boolean array.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX boolean array</p>
+<hr>
+<h3 id="not-equal"><a class="header" href="#not-equal"><code>not-equal</code></a></h3>
+<pre><code class="language-clojure">(mx/not-equal a b)
+</code></pre>
+<p>Element-wise inequality test. Returns boolean array.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX boolean array</p>
+<hr>
+<h3 id="greater"><a class="header" href="#greater"><code>greater</code></a></h3>
+<pre><code class="language-clojure">(mx/greater a b)
+</code></pre>
+<p>Element-wise greater-than test.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX boolean array</p>
+<hr>
+<h3 id="greater-equal"><a class="header" href="#greater-equal"><code>greater-equal</code></a></h3>
+<pre><code class="language-clojure">(mx/greater-equal a b)
+</code></pre>
+<p>Element-wise greater-or-equal test.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX boolean array</p>
+<hr>
+<h3 id="less"><a class="header" href="#less"><code>less</code></a></h3>
+<pre><code class="language-clojure">(mx/less a b)
+</code></pre>
+<p>Element-wise less-than test.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX boolean array</p>
+<hr>
+<h3 id="less-equal"><a class="header" href="#less-equal"><code>less-equal</code></a></h3>
+<pre><code class="language-clojure">(mx/less-equal a b)
+</code></pre>
+<p>Element-wise less-or-equal test.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX boolean array</p>
+<hr>
+<h3 id="eq"><a class="header" href="#eq"><code>eq?</code></a></h3>
+<pre><code class="language-clojure">(mx/eq? a b)
+(mx/eq? prize 0)
+</code></pre>
+<p>Model-level equality helper. Auto-promotes integers to scalars, returns <code>float32</code> (not bool). Designed for use in gen bodies where traced values are tensors during enumeration.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array / number</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array / number</td><td>Second operand</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX float32 array (1.0 for true, 0.0 for false)</p>
+<hr>
+<h3 id="neq"><a class="header" href="#neq"><code>neq?</code></a></h3>
+<pre><code class="language-clojure">(mx/neq? a b)
+</code></pre>
+<p>Model-level inequality helper. Auto-promotes integers, returns <code>float32</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array / number</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array / number</td><td>Second operand</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX float32 array (1.0 for true, 0.0 for false)</p>
+<hr>
+<h3 id="gt"><a class="header" href="#gt"><code>gt?</code></a></h3>
+<pre><code class="language-clojure">(mx/gt? a b)
+</code></pre>
+<p>Model-level greater-than helper. Auto-promotes integers, returns <code>float32</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array / number</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array / number</td><td>Second operand</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX float32 array (1.0 for true, 0.0 for false)</p>
+<hr>
+<h3 id="lt"><a class="header" href="#lt"><code>lt?</code></a></h3>
+<pre><code class="language-clojure">(mx/lt? a b)
+</code></pre>
+<p>Model-level less-than helper. Auto-promotes integers, returns <code>float32</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array / number</td><td>First operand</td></tr>
+<tr><td><code>b</code></td><td>MLX array / number</td><td>Second operand</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX float32 array (1.0 for true, 0.0 for false)</p>
+<hr>
+<h3 id="and"><a class="header" href="#and"><code>and*</code></a></h3>
+<pre><code class="language-clojure">(mx/and* a b)
+</code></pre>
+<p>Differentiable logical AND for model bodies. Implemented as <code>(mx/multiply a b)</code> so that both arguments contribute to gradients.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand (float32, 0.0/1.0)</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand (float32, 0.0/1.0)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX float32 array</p>
+<hr>
+<h3 id="or"><a class="header" href="#or"><code>or*</code></a></h3>
+<pre><code class="language-clojure">(mx/or* a b)
+</code></pre>
+<p>Differentiable logical OR for model bodies. Implemented as <code>(mx/maximum a b)</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First operand (float32, 0.0/1.0)</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second operand (float32, 0.0/1.0)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX float32 array</p>
+<hr>
+<h3 id="where"><a class="header" href="#where"><code>where</code></a></h3>
+<pre><code class="language-clojure">(mx/where cond a b)
+</code></pre>
+<p>Element-wise conditional selection. Like <code>numpy.where</code>. Use this instead of <code>if</code> for conditional values in models under vectorized inference, since different particles may take different branches.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cond</code></td><td>MLX array</td><td>Boolean condition array</td></tr>
+<tr><td><code>a</code></td><td>MLX array</td><td>Values where condition is true</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Values where condition is false</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="isnan"><a class="header" href="#isnan"><code>isnan</code></a></h3>
+<pre><code class="language-clojure">(mx/isnan a)
+</code></pre>
+<p>Element-wise NaN check.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX boolean array</p>
+<hr>
+<h3 id="isinf"><a class="header" href="#isinf"><code>isinf</code></a></h3>
+<pre><code class="language-clojure">(mx/isinf a)
+</code></pre>
+<p>Element-wise infinity check.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX boolean array</p>
+<hr>
+<h3 id="nan-to-num"><a class="header" href="#nan-to-num"><code>nan-to-num</code></a></h3>
+<pre><code class="language-clojure">(mx/nan-to-num a)
+(mx/nan-to-num a 0.0)
+(mx/nan-to-num a 0.0 1e30 -1e30)
+</code></pre>
+<p>Replace NaN and Inf values with finite numbers. Like <code>numpy.nan_to_num</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>nan-val</code></td><td>number (optional)</td><td>Replacement for NaN (default: 0.0)</td></tr>
+<tr><td><code>posinf-val</code></td><td>number (optional)</td><td>Replacement for +Inf</td></tr>
+<tr><td><code>neginf-val</code></td><td>number (optional)</td><td>Replacement for -Inf</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="all"><a class="header" href="#all"><code>all</code></a></h3>
+<pre><code class="language-clojure">(mx/all a)
+(mx/all a axis)
+</code></pre>
+<p>True if all elements are nonzero. With optional axis, reduces along that axis.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis to reduce along</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX boolean array</p>
+<hr>
+<h3 id="any"><a class="header" href="#any"><code>any</code></a></h3>
+<pre><code class="language-clojure">(mx/any a)
+(mx/any a axis)
+</code></pre>
+<p>True if any element is nonzero. With optional axis, reduces along that axis.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis to reduce along</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX boolean array</p>
+<hr>
+<h2 id="reduction"><a class="header" href="#reduction">Reduction</a></h2>
+<p>All reductions accept optional <code>axes</code> (integer or vector) and some accept <code>keepdims</code> (boolean).</p>
+<h3 id="sum"><a class="header" href="#sum"><code>sum</code></a></h3>
+<pre><code class="language-clojure">(mx/sum a)
+(mx/sum a [0])
+(mx/sum a [0 1] true)
+</code></pre>
+<p>Sum of array elements. Like <code>numpy.sum</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axes</code></td><td>int/vector (optional)</td><td>Axes to reduce</td></tr>
+<tr><td><code>keepdims</code></td><td>boolean (optional)</td><td>Keep reduced dimensions</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="prod"><a class="header" href="#prod"><code>prod</code></a></h3>
+<pre><code class="language-clojure">(mx/prod a)
+(mx/prod a [0])
+</code></pre>
+<p>Product of array elements. Like <code>numpy.prod</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axes</code></td><td>int/vector (optional)</td><td>Axes to reduce</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="mean"><a class="header" href="#mean"><code>mean</code></a></h3>
+<pre><code class="language-clojure">(mx/mean a)
+(mx/mean a [0])
+</code></pre>
+<p>Mean of array elements. Like <code>numpy.mean</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axes</code></td><td>int/vector (optional)</td><td>Axes to reduce</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="variance"><a class="header" href="#variance"><code>variance</code></a></h3>
+<pre><code class="language-clojure">(mx/variance a)
+(mx/variance a [0])
+</code></pre>
+<p>Variance of array elements. Like <code>numpy.var</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axes</code></td><td>int/vector (optional)</td><td>Axes to reduce</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="std"><a class="header" href="#std"><code>std</code></a></h3>
+<pre><code class="language-clojure">(mx/std a)
+(mx/std a [0])
+</code></pre>
+<p>Standard deviation of array elements. Like <code>numpy.std</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axes</code></td><td>int/vector (optional)</td><td>Axes to reduce</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="amax"><a class="header" href="#amax"><code>amax</code></a></h3>
+<pre><code class="language-clojure">(mx/amax a)
+(mx/amax a [0])
+</code></pre>
+<p>Maximum value of array elements. Like <code>numpy.amax</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axes</code></td><td>int/vector (optional)</td><td>Axes to reduce</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="amin"><a class="header" href="#amin"><code>amin</code></a></h3>
+<pre><code class="language-clojure">(mx/amin a)
+(mx/amin a [0])
+</code></pre>
+<p>Minimum value of array elements. Like <code>numpy.amin</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axes</code></td><td>int/vector (optional)</td><td>Axes to reduce</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="argmax"><a class="header" href="#argmax"><code>argmax</code></a></h3>
+<pre><code class="language-clojure">(mx/argmax a)
+(mx/argmax a 0)
+</code></pre>
+<p>Index of the maximum value. Like <code>numpy.argmax</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis to reduce along</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX integer array</p>
+<hr>
+<h3 id="argmin"><a class="header" href="#argmin"><code>argmin</code></a></h3>
+<pre><code class="language-clojure">(mx/argmin a)
+(mx/argmin a 0)
+</code></pre>
+<p>Index of the minimum value. Like <code>numpy.argmin</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis to reduce along</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX integer array</p>
+<hr>
+<h3 id="logsumexp"><a class="header" href="#logsumexp"><code>logsumexp</code></a></h3>
+<pre><code class="language-clojure">(mx/logsumexp a)
+(mx/logsumexp a [0])
+(mx/logsumexp a [0] true)
+</code></pre>
+<p>Numerically stable log-sum-exp: log(sum(exp(a))). Essential for log-probability normalization.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axes</code></td><td>int/vector (optional)</td><td>Axes to reduce</td></tr>
+<tr><td><code>keepdims</code></td><td>boolean (optional)</td><td>Keep reduced dimensions</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="logcumsumexp"><a class="header" href="#logcumsumexp"><code>logcumsumexp</code></a></h3>
+<pre><code class="language-clojure">(mx/logcumsumexp a)
+(mx/logcumsumexp a 0)
+</code></pre>
+<p>Cumulative log-sum-exp along an axis. Numerically stable cumulative version of <code>logsumexp</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis for cumulative operation</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="cumsum"><a class="header" href="#cumsum"><code>cumsum</code></a></h3>
+<pre><code class="language-clojure">(mx/cumsum a)
+(mx/cumsum a 0)
+</code></pre>
+<p>Cumulative sum along an axis. Like <code>numpy.cumsum</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis for cumulative sum</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h2 id="shape-manipulation"><a class="header" href="#shape-manipulation">Shape Manipulation</a></h2>
+<h3 id="reshape"><a class="header" href="#reshape"><code>reshape</code></a></h3>
+<pre><code class="language-clojure">(mx/reshape a [2 3])
+</code></pre>
+<p>Reshape an array to a new shape. Like <code>numpy.reshape</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>shape</code></td><td>vector</td><td>Target shape</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="flatten"><a class="header" href="#flatten"><code>flatten</code></a></h3>
+<pre><code class="language-clojure">(mx/flatten a)
+</code></pre>
+<p>Flatten an array to 1-D. Like <code>numpy.ndarray.flatten</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX 1-D array</p>
+<hr>
+<h3 id="squeeze"><a class="header" href="#squeeze"><code>squeeze</code></a></h3>
+<pre><code class="language-clojure">(mx/squeeze a)
+(mx/squeeze a [0 2])
+</code></pre>
+<p>Remove dimensions of size 1. Like <code>numpy.squeeze</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axes</code></td><td>vector (optional)</td><td>Specific axes to squeeze</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="expand-dims"><a class="header" href="#expand-dims"><code>expand-dims</code></a></h3>
+<pre><code class="language-clojure">(mx/expand-dims a 0)
+</code></pre>
+<p>Add a dimension of size 1 at the given axis. Like <code>numpy.expand_dims</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axis</code></td><td>integer</td><td>Position for new axis</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="transpose"><a class="header" href="#transpose"><code>transpose</code></a></h3>
+<pre><code class="language-clojure">(mx/transpose a)
+(mx/transpose a [1 0 2])
+</code></pre>
+<p>Transpose an array. Without axes, reverses all dimensions. Like <code>numpy.transpose</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axes</code></td><td>vector (optional)</td><td>Permutation of axes</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="stack"><a class="header" href="#stack"><code>stack</code></a></h3>
+<pre><code class="language-clojure">(mx/stack [a b c])
+(mx/stack [a b c] 1)
+</code></pre>
+<p>Stack arrays along a new axis. Like <code>numpy.stack</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>arrs</code></td><td>vector</td><td>Arrays to stack (must have same shape)</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis for the new dimension (default: 0)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="concatenate"><a class="header" href="#concatenate"><code>concatenate</code></a></h3>
+<pre><code class="language-clojure">(mx/concatenate [a b c])
+(mx/concatenate [a b c] 1)
+</code></pre>
+<p>Concatenate arrays along an existing axis. Like <code>numpy.concatenate</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>arrs</code></td><td>vector</td><td>Arrays to concatenate</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis to concatenate along (default: 0)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="broadcast-to"><a class="header" href="#broadcast-to"><code>broadcast-to</code></a></h3>
+<pre><code class="language-clojure">(mx/broadcast-to a [3 4])
+</code></pre>
+<p>Broadcast an array to a target shape. Like <code>numpy.broadcast_to</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>shape</code></td><td>vector</td><td>Target shape</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="tile"><a class="header" href="#tile"><code>tile</code></a></h3>
+<pre><code class="language-clojure">(mx/tile a [2 3])
+</code></pre>
+<p>Tile an array by repeating it along each axis. Like <code>numpy.tile</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>reps</code></td><td>vector</td><td>Number of repetitions along each axis</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="repeat-arr"><a class="header" href="#repeat-arr"><code>repeat-arr</code></a></h3>
+<pre><code class="language-clojure">(mx/repeat-arr a 3 0)
+</code></pre>
+<p>Repeat elements of an array along an axis. Like <code>numpy.repeat</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>repeats</code></td><td>integer</td><td>Number of repetitions per element</td></tr>
+<tr><td><code>axis</code></td><td>integer</td><td>Axis along which to repeat</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="split-arr"><a class="header" href="#split-arr"><code>split-arr</code></a></h3>
+<pre><code class="language-clojure">(mx/split-arr a 3)
+(mx/split-arr a 3 1)
+</code></pre>
+<p>Split an array into sections. Like <code>numpy.split</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>sections</code></td><td>integer</td><td>Number of equal sections</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis to split along (default: 0)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Clojure vector of MLX arrays</p>
+<hr>
+<h2 id="indexing"><a class="header" href="#indexing">Indexing</a></h2>
+<h3 id="take-idx"><a class="header" href="#take-idx"><code>take-idx</code></a></h3>
+<pre><code class="language-clojure">(mx/take-idx a indices)
+(mx/take-idx a indices 1)
+</code></pre>
+<p>Gather elements by index along an axis. Like <code>numpy.take</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>indices</code></td><td>MLX int array</td><td>Index array</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis to take along</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="idx"><a class="header" href="#idx"><code>idx</code></a></h3>
+<pre><code class="language-clojure">(mx/idx probs 2)
+(mx/idx a 0 1)
+</code></pre>
+<p>Extract element at index <code>i</code> along axis (default 0). Convenience wrapper around <code>take-idx</code> that auto-promotes integers to MLX int32 scalars.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>i</code></td><td>integer / MLX array</td><td>Index</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis (default: 0)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="take-along-axis"><a class="header" href="#take-along-axis"><code>take-along-axis</code></a></h3>
+<pre><code class="language-clojure">(mx/take-along-axis a indices 1)
+</code></pre>
+<p>Gather elements along an axis using an index array (same shape as input). Like <code>numpy.take_along_axis</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>indices</code></td><td>MLX int array</td><td>Index array</td></tr>
+<tr><td><code>axis</code></td><td>integer</td><td>Axis to gather along</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="index"><a class="header" href="#index"><code>index</code></a></h3>
+<pre><code class="language-clojure">(mx/index a 0)
+</code></pre>
+<p>Index along axis 0. For 1-D arrays returns a scalar element. For 2-D arrays returns a row.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>i</code></td><td>integer</td><td>Index</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="slice"><a class="header" href="#slice"><code>slice</code></a></h3>
+<pre><code class="language-clojure">(mx/slice a 2 5)
+(mx/slice a 0 10 2)
+</code></pre>
+<p>Slice along axis 0. Returns elements <code>[start, stop)</code> with optional step.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>start</code></td><td>integer</td><td>Start index (inclusive)</td></tr>
+<tr><td><code>stop</code></td><td>integer</td><td>Stop index (exclusive)</td></tr>
+<tr><td><code>step</code></td><td>integer (optional)</td><td>Step size</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="mat-get"><a class="header" href="#mat-get"><code>mat-get</code></a></h3>
+<pre><code class="language-clojure">(mx/mat-get a 1 2)
+</code></pre>
+<p>Get element <code>[i, j]</code> from a 2-D array. Returns a scalar MLX array.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>2-D input array</td></tr>
+<tr><td><code>i</code></td><td>integer</td><td>Row index</td></tr>
+<tr><td><code>j</code></td><td>integer</td><td>Column index</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX scalar array</p>
+<hr>
+<h3 id="searchsorted"><a class="header" href="#searchsorted"><code>searchsorted</code></a></h3>
+<pre><code class="language-clojure">(mx/searchsorted sorted-arr values)
+(mx/searchsorted sorted-arr values :right)
+</code></pre>
+<p>Find insertion indices for values in a sorted 1-D array. Like <code>numpy.searchsorted</code>. Returns indices such that inserting <code>values</code> at those positions maintains sorted order.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>sorted-arr</code></td><td>MLX array</td><td>Sorted 1-D array</td></tr>
+<tr><td><code>values</code></td><td>MLX array</td><td>Values to insert</td></tr>
+<tr><td><code>side</code></td><td>keyword (optional)</td><td><code>:left</code> (default) or <code>:right</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX integer array</p>
+<hr>
+<h2 id="linear-algebra"><a class="header" href="#linear-algebra">Linear Algebra</a></h2>
+<h3 id="matmul"><a class="header" href="#matmul"><code>matmul</code></a></h3>
+<pre><code class="language-clojure">(mx/matmul a b)
+</code></pre>
+<p>Matrix multiplication. Like <code>numpy.matmul</code> or the <code>@</code> operator.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Left matrix</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Right matrix</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="inner"><a class="header" href="#inner"><code>inner</code></a></h3>
+<pre><code class="language-clojure">(mx/inner a b)
+</code></pre>
+<p>Inner (dot) product of two arrays. Like <code>numpy.inner</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First array</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="outer"><a class="header" href="#outer"><code>outer</code></a></h3>
+<pre><code class="language-clojure">(mx/outer a b)
+</code></pre>
+<p>Outer product of two 1-D arrays. Like <code>numpy.outer</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>First 1-D array</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Second 1-D array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX 2-D array</p>
+<hr>
+<h3 id="diag"><a class="header" href="#diag"><code>diag</code></a></h3>
+<pre><code class="language-clojure">(mx/diag a)
+</code></pre>
+<p>Extract diagonal from a matrix, or create a diagonal matrix from a 1-D array. Like <code>numpy.diag</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>2-D matrix (extract) or 1-D array (create)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="trace-mat"><a class="header" href="#trace-mat"><code>trace-mat</code></a></h3>
+<pre><code class="language-clojure">(mx/trace-mat a)
+(mx/trace-mat a 1)
+(mx/trace-mat a 0 0 1)
+</code></pre>
+<p>Matrix trace (sum of diagonal elements). Like <code>numpy.trace</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input matrix</td></tr>
+<tr><td><code>offset</code></td><td>integer (optional)</td><td>Diagonal offset (default: 0)</td></tr>
+<tr><td><code>ax1</code></td><td>integer (optional)</td><td>First axis (default: 0)</td></tr>
+<tr><td><code>ax2</code></td><td>integer (optional)</td><td>Second axis (default: 1)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX scalar array</p>
+<hr>
+<h3 id="einsum"><a class="header" href="#einsum"><code>einsum</code></a></h3>
+<pre><code class="language-clojure">(mx/einsum "ij,jk-&gt;ik" a b)
+(mx/einsum "ii-&gt;" a)
+</code></pre>
+<p>Einstein summation convention. Like <code>numpy.einsum</code>. Supports arbitrary contraction patterns via subscript notation.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>subscripts</code></td><td>string</td><td>Einstein summation subscript string</td></tr>
+<tr><td><code>arrays</code></td><td>MLX arrays</td><td>Input arrays (variadic)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="cholesky"><a class="header" href="#cholesky"><code>cholesky</code></a></h3>
+<pre><code class="language-clojure">(mx/cholesky a)
+</code></pre>
+<p>Cholesky decomposition of a positive-definite matrix. Returns lower triangular factor L where A = LL^T. Runs on CPU stream.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Positive-definite matrix</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX lower triangular array</p>
+<hr>
+<h3 id="solve"><a class="header" href="#solve"><code>solve</code></a></h3>
+<pre><code class="language-clojure">(mx/solve a b)
+</code></pre>
+<p>Solve the linear system Ax = b. Runs on CPU stream. Like <code>numpy.linalg.solve</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Coefficient matrix</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Right-hand side</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array (solution x)</p>
+<hr>
+<h3 id="solve-triangular"><a class="header" href="#solve-triangular"><code>solve-triangular</code></a></h3>
+<pre><code class="language-clojure">(mx/solve-triangular a b true)
+</code></pre>
+<p>Solve a triangular linear system. Runs on CPU stream.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Triangular matrix</td></tr>
+<tr><td><code>b</code></td><td>MLX array</td><td>Right-hand side</td></tr>
+<tr><td><code>upper</code></td><td>boolean</td><td><code>true</code> for upper triangular, <code>false</code> for lower</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array (solution)</p>
+<hr>
+<h3 id="inv"><a class="header" href="#inv"><code>inv</code></a></h3>
+<pre><code class="language-clojure">(mx/inv a)
+</code></pre>
+<p>Matrix inverse. Runs on CPU stream. Like <code>numpy.linalg.inv</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Square matrix</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="tri-inv"><a class="header" href="#tri-inv"><code>tri-inv</code></a></h3>
+<pre><code class="language-clojure">(mx/tri-inv L false)
+(mx/tri-inv U true)
+</code></pre>
+<p>Triangular matrix inverse. More efficient than general <code>inv</code> for triangular matrices. Runs on CPU stream.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Triangular matrix</td></tr>
+<tr><td><code>upper</code></td><td>boolean</td><td><code>true</code> for upper triangular, <code>false</code> for lower</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="cholesky-inv"><a class="header" href="#cholesky-inv"><code>cholesky-inv</code></a></h3>
+<pre><code class="language-clojure">(mx/cholesky-inv L)
+(mx/cholesky-inv U true)
+</code></pre>
+<p>Inverse of A from its Cholesky factor L (where A = LL^T). More efficient than computing <code>(inv A)</code> when you already have the Cholesky factor. Runs on CPU stream.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Cholesky factor</td></tr>
+<tr><td><code>upper</code></td><td>boolean (optional)</td><td><code>true</code> if upper triangular (default: <code>false</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array (A^-1)</p>
+<hr>
+<h3 id="qr"><a class="header" href="#qr"><code>qr</code></a></h3>
+<pre><code class="language-clojure">(let [[Q R] (mx/qr a)] ...)
+</code></pre>
+<p>QR decomposition. Runs on CPU stream. Like <code>numpy.linalg.qr</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input matrix</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> vector <code>[Q R]</code> of MLX arrays</p>
+<hr>
+<h3 id="svd"><a class="header" href="#svd"><code>svd</code></a></h3>
+<pre><code class="language-clojure">(let [[U S V] (mx/svd a)] ...)
+</code></pre>
+<p>Singular value decomposition. Runs on CPU stream. Like <code>numpy.linalg.svd</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input matrix</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> vector <code>[U S V]</code> of MLX arrays</p>
+<hr>
+<h3 id="eigh"><a class="header" href="#eigh"><code>eigh</code></a></h3>
+<pre><code class="language-clojure">(let [[eigenvalues eigenvectors] (mx/eigh a)] ...)
+</code></pre>
+<p>Eigendecomposition of a symmetric (Hermitian) matrix. Runs on CPU stream. Like <code>numpy.linalg.eigh</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Symmetric matrix</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> vector <code>[eigenvalues eigenvectors]</code> of MLX arrays</p>
+<hr>
+<h3 id="eigvalsh"><a class="header" href="#eigvalsh"><code>eigvalsh</code></a></h3>
+<pre><code class="language-clojure">(mx/eigvalsh a)
+</code></pre>
+<p>Eigenvalues of a symmetric (Hermitian) matrix. Runs on CPU stream. Like <code>numpy.linalg.eigvalsh</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Symmetric matrix</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array of eigenvalues</p>
+<hr>
+<h3 id="logdet"><a class="header" href="#logdet"><code>logdet</code></a></h3>
+<pre><code class="language-clojure">(mx/logdet a)
+</code></pre>
+<p>Log-determinant of a positive-definite matrix. Computed via Cholesky: <code>2 * sum(log(diag(L)))</code>. More numerically stable than <code>log(det(A))</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Positive-definite matrix</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX scalar array</p>
+<hr>
+<h3 id="det"><a class="header" href="#det"><code>det</code></a></h3>
+<pre><code class="language-clojure">(mx/det a)
+</code></pre>
+<p>Determinant of a positive-definite matrix. Computed via Cholesky: <code>prod(diag(L))^2</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Positive-definite matrix</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX scalar array</p>
+<hr>
+<h3 id="norm"><a class="header" href="#norm"><code>norm</code></a></h3>
+<pre><code class="language-clojure">(mx/norm a)
+(mx/norm a 2)
+</code></pre>
+<p>Matrix or vector norm. Like <code>numpy.linalg.norm</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>ord</code></td><td>number (optional)</td><td>Norm order (default: Frobenius/L2)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX scalar array</p>
+<hr>
+<h2 id="autograd"><a class="header" href="#autograd">Autograd</a></h2>
+<h3 id="grad"><a class="header" href="#grad"><code>grad</code></a></h3>
+<pre><code class="language-clojure">(def grad-f (mx/grad (fn [x] (mx/multiply x x))))
+(mx/item (grad-f (mx/scalar 3.0)))  ;; =&gt; 6.0
+
+;; Differentiate with respect to specific arguments
+(def grad-f (mx/grad f [0 2]))
+</code></pre>
+<p>Create a gradient function. The returned function computes the gradient of <code>f</code> with respect to its arguments. Internally tracks grad-depth so that <code>p/generate</code> can skip the L3 analytical path (which uses <code>volatile!</code> and breaks gradient flow).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f</code></td><td>function</td><td>Scalar-valued function to differentiate</td></tr>
+<tr><td><code>argnums</code></td><td>vector (optional)</td><td>Which argument indices to differentiate</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> gradient function</p>
+<hr>
+<h3 id="value-and-grad"><a class="header" href="#value-and-grad"><code>value-and-grad</code></a></h3>
+<pre><code class="language-clojure">(def vg (mx/value-and-grad (fn [x] (mx/power x (mx/scalar 3)))))
+(let [[val grad] (vg (mx/scalar 2.0))]
+  (println "f(2)=" (mx/item val) "f'(2)=" (mx/item grad)))
+;; f(2)= 8.0 f'(2)= 12.0
+</code></pre>
+<p>Create a function that returns both the value and gradient. More efficient than calling <code>f</code> and <code>(grad f)</code> separately. Tracks grad-depth.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f</code></td><td>function</td><td>Scalar-valued function to differentiate</td></tr>
+<tr><td><code>argnums</code></td><td>vector (optional)</td><td>Which argument indices to differentiate</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> function returning <code>[value gradient]</code></p>
+<hr>
+<h3 id="jvp"><a class="header" href="#jvp"><code>jvp</code></a></h3>
+<pre><code class="language-clojure">(let [[primals tangents] (mx/jvp f [x] [dx])] ...)
+</code></pre>
+<p>Jacobian-vector product (forward-mode AD). Computes <code>f(primals)</code> and the directional derivative along <code>tangents</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f</code></td><td>function</td><td>Function to differentiate</td></tr>
+<tr><td><code>primals</code></td><td>vector</td><td>Input values</td></tr>
+<tr><td><code>tangents</code></td><td>vector</td><td>Tangent vectors (directions)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> vector <code>[primals tangents-out]</code></p>
+<hr>
+<h3 id="vjp"><a class="header" href="#vjp"><code>vjp</code></a></h3>
+<pre><code class="language-clojure">(let [[primals cotangents] (mx/vjp f [x] [dy])] ...)
+</code></pre>
+<p>Vector-Jacobian product (reverse-mode AD). Computes <code>f(primals)</code> and propagates <code>cotangents</code> backward.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f</code></td><td>function</td><td>Function to differentiate</td></tr>
+<tr><td><code>primals</code></td><td>vector</td><td>Input values</td></tr>
+<tr><td><code>cotangents</code></td><td>vector</td><td>Cotangent vectors</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> vector <code>[primals cotangents-out]</code></p>
+<hr>
+<h3 id="stop-gradient"><a class="header" href="#stop-gradient"><code>stop-gradient</code></a></h3>
+<pre><code class="language-clojure">(mx/stop-gradient a)
+</code></pre>
+<p>Stop gradient flow through an array. The returned array has the same value but is treated as a constant during differentiation.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array (detached from gradient tape)</p>
+<hr>
+<h3 id="in-grad"><a class="header" href="#in-grad"><code>in-grad?</code></a></h3>
+<pre><code class="language-clojure">(mx/in-grad?)  ;; =&gt; false (or true inside grad/value-and-grad)
+</code></pre>
+<p>Returns <code>true</code> if currently executing inside an <code>mx/grad</code> or <code>mx/value-and-grad</code> scope. Used by <code>p/generate</code> to skip the L3 analytical path.</p>
+<p><strong>Returns:</strong> boolean</p>
+<hr>
+<h2 id="vectorization"><a class="header" href="#vectorization">Vectorization</a></h2>
+<h3 id="vmap"><a class="header" href="#vmap"><code>vmap</code></a></h3>
+<pre><code class="language-clojure">(def batched-f (mx/vmap f))
+(def batched-f (mx/vmap f [0 nil]))
+(def batched-f (mx/vmap f [0] [0]))
+</code></pre>
+<p>Vectorize a function over a batch dimension. Like JAX’s <code>vmap</code>. Automatically maps <code>f</code> over the leading axis of inputs.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f</code></td><td>function</td><td>Function to vectorize</td></tr>
+<tr><td><code>in-axes</code></td><td>vector (optional)</td><td>Which axis to map over per input (<code>nil</code> = broadcast)</td></tr>
+<tr><td><code>out-axes</code></td><td>vector (optional)</td><td>Which axis the output batch dim appears on</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> vectorized function</p>
+<hr>
+<h2 id="compilation"><a class="header" href="#compilation">Compilation</a></h2>
+<h3 id="compile-fn"><a class="header" href="#compile-fn"><code>compile-fn</code></a></h3>
+<pre><code class="language-clojure">(def fast-f (mx/compile-fn f))
+(def fast-f (mx/compile-fn f true))  ;; shapeless mode
+</code></pre>
+<p>Compile a function into a fused MLX computation graph for faster execution. The compiled function transparently recompiles if <code>compile-clear-cache!</code> has been called since compilation.</p>
+<p>Set <code>shapeless?</code> to <code>true</code> if input shapes may vary between calls.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f</code></td><td>function</td><td>Function to compile</td></tr>
+<tr><td><code>shapeless?</code></td><td>boolean (optional)</td><td>Allow varying shapes (default: <code>false</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> compiled function (same interface as <code>f</code>)</p>
+<hr>
+<h3 id="compile-clear-cache"><a class="header" href="#compile-clear-cache"><code>compile-clear-cache!</code></a></h3>
+<pre><code class="language-clojure">(mx/compile-clear-cache!)
+</code></pre>
+<p>Clear all compiled function caches, releasing associated Metal resources. Safe to call at any time – compiled functions transparently recompile on next use via the compile-generation counter.</p>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h2 id="random-number-generation"><a class="header" href="#random-number-generation">Random Number Generation</a></h2>
+<p>Source: <code>src/genmlx/mlx/random.cljs</code></p>
+<p>Functional PRNG with key-based splitting. No global mutable state – all randomness flows through explicit keys. Every sample consumes a key and produces a deterministic result.</p>
+<h3 id="key-management"><a class="header" href="#key-management">Key Management</a></h3>
+<h4 id="fresh-key"><a class="header" href="#fresh-key"><code>fresh-key</code></a></h4>
+<pre><code class="language-clojure">(rng/fresh-key)
+(rng/fresh-key 42)
+</code></pre>
+<p>Create a fresh PRNG key. Without a seed, uses a random integer.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>seed</code></td><td>integer (optional)</td><td>Deterministic seed</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array (PRNG key)</p>
+<hr>
+<h4 id="split"><a class="header" href="#split"><code>split</code></a></h4>
+<pre><code class="language-clojure">(let [[k1 k2] (rng/split key)] ...)
+</code></pre>
+<p>Split a key into two independent sub-keys. The original key should not be reused after splitting.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> vector <code>[k1 k2]</code></p>
+<hr>
+<h4 id="split-n"><a class="header" href="#split-n"><code>split-n</code></a></h4>
+<pre><code class="language-clojure">(let [keys (rng/split-n key 10)] ...)
+</code></pre>
+<p>Split a key into <code>n</code> independent sub-keys.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+<tr><td><code>n</code></td><td>integer</td><td>Number of sub-keys</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> vector of <code>n</code> PRNG keys</p>
+<hr>
+<h4 id="ensure-key"><a class="header" href="#ensure-key"><code>ensure-key</code></a></h4>
+<pre><code class="language-clojure">(rng/ensure-key key)
+</code></pre>
+<p>Return <code>key</code> if non-nil, otherwise create a fresh random key.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array / nil</td><td>PRNG key or nil</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array (PRNG key)</p>
+<hr>
+<h4 id="key-seed"><a class="header" href="#key-seed"><code>key-&gt;seed</code></a></h4>
+<pre><code class="language-clojure">(rng/key-&gt;seed key)  ;; =&gt; 1234567
+</code></pre>
+<p>Derive a non-negative integer seed from a PRNG key. Combines both uint32 elements via XOR, then masks to 31 bits to ensure non-negative.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> non-negative integer</p>
+<hr>
+<h4 id="seed"><a class="header" href="#seed"><code>seed!</code></a></h4>
+<pre><code class="language-clojure">(rng/seed! key)
+</code></pre>
+<p>Seed the global MLX PRNG state from a key array. MLX random functions require this for deterministic output.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h4 id="split-or-nils"><a class="header" href="#split-or-nils"><code>split-or-nils</code></a></h4>
+<pre><code class="language-clojure">(let [[k1 k2] (rng/split-or-nils key)] ...)
+</code></pre>
+<p>Split key into <code>[k1 k2]</code> if non-nil, otherwise return <code>[nil nil]</code>. Useful for optional key threading.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array / nil</td><td>PRNG key or nil</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> vector <code>[k1 k2]</code> or <code>[nil nil]</code></p>
+<hr>
+<h4 id="split-n-or-nils"><a class="header" href="#split-n-or-nils"><code>split-n-or-nils</code></a></h4>
+<pre><code class="language-clojure">(rng/split-n-or-nils key 5)
+</code></pre>
+<p>Split key into <code>n</code> sub-keys if non-nil, otherwise return a vector of <code>n</code> nils.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array / nil</td><td>PRNG key or nil</td></tr>
+<tr><td><code>n</code></td><td>integer</td><td>Number of sub-keys</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> vector of keys or nils</p>
+<hr>
+<h3 id="sampling-functions"><a class="header" href="#sampling-functions">Sampling Functions</a></h3>
+<h4 id="normal"><a class="header" href="#normal"><code>normal</code></a></h4>
+<pre><code class="language-clojure">(rng/normal key [])       ;; scalar
+(rng/normal key [100])    ;; 100 samples
+(rng/normal key [3 4])    ;; 3x4 matrix
+</code></pre>
+<p>Sample from the standard normal distribution N(0, 1).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+<tr><td><code>shape</code></td><td>vector</td><td>Output shape (<code>[]</code> for scalar)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h4 id="uniform"><a class="header" href="#uniform"><code>uniform</code></a></h4>
+<pre><code class="language-clojure">(rng/uniform key [100])
+</code></pre>
+<p>Sample from the uniform distribution on [0, 1).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+<tr><td><code>shape</code></td><td>vector</td><td>Output shape</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h4 id="bernoulli"><a class="header" href="#bernoulli"><code>bernoulli</code></a></h4>
+<pre><code class="language-clojure">(rng/bernoulli key 0.3 [100])
+</code></pre>
+<p>Sample from the Bernoulli distribution with probability <code>p</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+<tr><td><code>p</code></td><td>number / MLX array</td><td>Success probability</td></tr>
+<tr><td><code>shape</code></td><td>vector</td><td>Output shape</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX boolean array</p>
+<hr>
+<h4 id="categorical"><a class="header" href="#categorical"><code>categorical</code></a></h4>
+<pre><code class="language-clojure">(rng/categorical key log-probs)
+</code></pre>
+<p>Sample from a categorical distribution parameterized by log-probabilities.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+<tr><td><code>logits</code></td><td>MLX array</td><td>Unnormalized log-probabilities</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX integer array</p>
+<hr>
+<h4 id="randint"><a class="header" href="#randint"><code>randint</code></a></h4>
+<pre><code class="language-clojure">(rng/randint key 0 10 [5])
+</code></pre>
+<p>Sample random integers uniformly from [lo, hi).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+<tr><td><code>lo</code></td><td>integer</td><td>Lower bound (inclusive)</td></tr>
+<tr><td><code>hi</code></td><td>integer</td><td>Upper bound (exclusive)</td></tr>
+<tr><td><code>shape</code></td><td>vector</td><td>Output shape</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX integer array</p>
+<hr>
+<h4 id="gumbel"><a class="header" href="#gumbel"><code>gumbel</code></a></h4>
+<pre><code class="language-clojure">(rng/gumbel key [100])
+</code></pre>
+<p>Sample from the standard Gumbel distribution. Useful for the Gumbel-softmax trick.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+<tr><td><code>shape</code></td><td>vector</td><td>Output shape</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h4 id="laplace"><a class="header" href="#laplace"><code>laplace</code></a></h4>
+<pre><code class="language-clojure">(rng/laplace key [100])
+</code></pre>
+<p>Sample from the standard Laplace distribution (location=0, scale=1).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+<tr><td><code>shape</code></td><td>vector</td><td>Output shape</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h4 id="truncated-normal"><a class="header" href="#truncated-normal"><code>truncated-normal</code></a></h4>
+<pre><code class="language-clojure">(rng/truncated-normal key -2.0 2.0 [100])
+</code></pre>
+<p>Sample from a truncated normal distribution. Values are clipped to [lower, upper].</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+<tr><td><code>lower</code></td><td>number / MLX array</td><td>Lower bound</td></tr>
+<tr><td><code>upper</code></td><td>number / MLX array</td><td>Upper bound</td></tr>
+<tr><td><code>shape</code></td><td>vector</td><td>Output shape</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h4 id="multivariate-normal"><a class="header" href="#multivariate-normal"><code>multivariate-normal</code></a></h4>
+<pre><code class="language-clojure">(rng/multivariate-normal key mean cov)
+(rng/multivariate-normal key mean cov [10])
+</code></pre>
+<p>Sample from the multivariate normal distribution N(mean, cov). Runs on CPU stream because MLX’s internal Cholesky requires it. For high dimensions (k &gt; 10), manual Cholesky + matmul is faster.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+<tr><td><code>mean</code></td><td>MLX array / vector</td><td>Mean vector of shape <code>[k]</code></td></tr>
+<tr><td><code>cov</code></td><td>MLX array / vector</td><td>Covariance matrix of shape <code>[k k]</code> (positive definite)</td></tr>
+<tr><td><code>shape</code></td><td>vector (optional)</td><td>Batch shape prefix</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array of shape <code>[...shape k]</code></p>
+<hr>
+<h4 id="permutation"><a class="header" href="#permutation"><code>permutation</code></a></h4>
+<pre><code class="language-clojure">(rng/permutation key 10)          ;; random permutation of [0..9]
+(rng/permutation key arr 0)       ;; shuffle array along axis 0
+</code></pre>
+<p>Return a random permutation of integers [0, n) or shuffle an array along an axis.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+<tr><td><code>n</code> / <code>arr</code></td><td>integer / MLX array</td><td>Length or array to shuffle</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis to shuffle along (for array input)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h2 id="memory-management"><a class="header" href="#memory-management">Memory Management</a></h2>
+<h3 id="materialize"><a class="header" href="#materialize"><code>materialize!</code></a></h3>
+<pre><code class="language-clojure">(mx/materialize! a b c)
+</code></pre>
+<p>Evaluate MLX arrays, materializing the computation graph. Use at inference/training loop boundaries to bound graph size. Alias for <code>eval!</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>arrs</code></td><td>MLX arrays (variadic)</td><td>Arrays to evaluate</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h3 id="eval"><a class="header" href="#eval"><code>eval!</code></a></h3>
+<pre><code class="language-clojure">(mx/eval! a b c)
+</code></pre>
+<p>Evaluate (materialize) one or more lazy MLX arrays. Forces computation of the accumulated graph.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>arrs</code></td><td>MLX arrays (variadic)</td><td>Arrays to evaluate</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h3 id="async-eval"><a class="header" href="#async-eval"><code>async-eval!</code></a></h3>
+<pre><code class="language-clojure">(mx/async-eval! a b)
+</code></pre>
+<p>Asynchronous evaluation. Triggers computation without blocking.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>arrays</code></td><td>MLX arrays (variadic)</td><td>Arrays to evaluate asynchronously</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h3 id="tidy"><a class="header" href="#tidy"><code>tidy</code></a></h3>
+<pre><code class="language-clojure">(mx/tidy (fn [] (let [a (mx/ones [100 100])] (mx/sum a))))
+</code></pre>
+<p>Execute a function with automatic memory management. Arrays created inside the scope are freed unless returned. Use for bounding memory in tight loops.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f</code></td><td>function</td><td>Zero-argument function to execute</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> return value of <code>f</code></p>
+<hr>
+<h3 id="tidy-run"><a class="header" href="#tidy-run"><code>tidy-run</code></a></h3>
+<pre><code class="language-clojure">(mx/tidy-run
+  (fn [] (compute-something))
+  (fn [result] [(:array1 result) (:array2 result)]))
+</code></pre>
+<p>Run <code>f</code> inside <code>mx/tidy</code>, then call <code>collect-fn</code> on the result to identify which arrays to preserve. Materializes those arrays (detaching from computation graph intermediates), frees everything else. Automatically clears Metal cache when memory pressure is high.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f</code></td><td>function</td><td>Zero-argument function to execute</td></tr>
+<tr><td><code>collect-fn</code></td><td>function</td><td><code>(result) -&gt; [arrays to preserve]</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> return value of <code>f</code></p>
+<hr>
+<h3 id="tidy-scalar"><a class="header" href="#tidy-scalar"><code>tidy-scalar</code></a></h3>
+<pre><code class="language-clojure">(mx/tidy-scalar (fn [] (mx/sum (mx/ones [1000]))))  ;; =&gt; 1000.0
+</code></pre>
+<p>Run <code>f</code> inside <code>mx/tidy</code>, extract a JS number via <code>item</code>, return it. All intermediate MLX arrays are freed. The returned value is a plain JS number with no MLX references. Automatically clears Metal cache when memory pressure is high.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f</code></td><td>function</td><td>Zero-argument function returning an MLX scalar</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> JS number</p>
+<hr>
+<h3 id="tidy-materialize"><a class="header" href="#tidy-materialize"><code>tidy-materialize</code></a></h3>
+<pre><code class="language-clojure">(mx/tidy-materialize (fn [] (mx/add (mx/ones [3]) (mx/ones [3]))))
+</code></pre>
+<p>Run <code>f</code> inside <code>mx/tidy</code>, materialize the result, return it. For simple cases where <code>f</code> returns a single MLX array.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f</code></td><td>function</td><td>Zero-argument function returning an MLX array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array</p>
+<hr>
+<h3 id="in-tidy"><a class="header" href="#in-tidy"><code>in-tidy?</code></a></h3>
+<pre><code class="language-clojure">(mx/in-tidy?)  ;; =&gt; false
+</code></pre>
+<p>Returns <code>true</code> if currently executing inside an <code>mx/tidy</code> scope.</p>
+<p><strong>Returns:</strong> boolean</p>
+<hr>
+<h3 id="dispose"><a class="header" href="#dispose"><code>dispose!</code></a></h3>
+<pre><code class="language-clojure">(mx/dispose! a)
+</code></pre>
+<p>Explicitly free an array’s memory.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Array to free</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h3 id="with-resource-guard"><a class="header" href="#with-resource-guard"><code>with-resource-guard</code></a></h3>
+<pre><code class="language-clojure">(mx/with-resource-guard (fn [] (run-inference ...)))
+</code></pre>
+<p>Run <code>f</code> with cache-limit set to 0, preventing Metal buffer accumulation. Freed buffers are released immediately instead of being cached. Restores the previous cache limit on exit.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>f</code></td><td>function</td><td>Zero-argument function to execute</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> return value of <code>f</code></p>
+<hr>
+<h3 id="force-gc"><a class="header" href="#force-gc"><code>force-gc!</code></a></h3>
+<pre><code class="language-clojure">(mx/force-gc!)
+</code></pre>
+<p>Force garbage collection and Metal buffer cleanup. Triggers JSC GC, sweeps dead arrays, clears cache, and clears compiled function caches. Compiled functions transparently recompile on next use, so this is safe to call at any time.</p>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h3 id="auto-cleanup"><a class="header" href="#auto-cleanup"><code>auto-cleanup!</code></a></h3>
+<pre><code class="language-clojure">(mx/auto-cleanup!)
+(mx/auto-cleanup! true)  ;; aggressive mode
+</code></pre>
+<p>Resource-pressure cleanup for hot paths. Checks Metal buffer count periodically (every 50 calls) and cleans up when pressure exceeds threshold (~200K buffers).</p>
+<ul>
+<li><strong>Lightweight</strong> (default): sweep + clear only. Safe to call from anywhere including tight handler loops.</li>
+<li><strong>Aggressive</strong> (<code>true</code>): also forces GC via <code>jsc-cleanup!</code>. Use only from leaf operations, never from tight handler loops.</li>
+</ul>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>aggressive?</code></td><td>boolean (optional)</td><td>Force GC before sweep (default: <code>false</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h3 id="sweep-dead-arrays"><a class="header" href="#sweep-dead-arrays"><code>sweep-dead-arrays!</code></a></h3>
+<pre><code class="language-clojure">(mx/sweep-dead-arrays!)
+</code></pre>
+<p>Synchronously free Metal buffers for arrays whose JS wrappers have been GC’d but whose deferred N-API finalizers have not run yet. No-op when called inside <code>mx/tidy</code>.</p>
+<p><strong>Returns:</strong> count of arrays swept (or nil inside tidy)</p>
+<hr>
+<h3 id="memory-monitoring"><a class="header" href="#memory-monitoring">Memory Monitoring</a></h3>
+<h4 id="get-active-memory"><a class="header" href="#get-active-memory"><code>get-active-memory</code></a></h4>
+<pre><code class="language-clojure">(mx/get-active-memory)  ;; =&gt; 1048576
+</code></pre>
+<p>Current active GPU memory in bytes.</p>
+<p><strong>Returns:</strong> integer (bytes)</p>
+<hr>
+<h4 id="get-cache-memory"><a class="header" href="#get-cache-memory"><code>get-cache-memory</code></a></h4>
+<pre><code class="language-clojure">(mx/get-cache-memory)
+</code></pre>
+<p>Current Metal cache memory in bytes.</p>
+<p><strong>Returns:</strong> integer (bytes)</p>
+<hr>
+<h4 id="get-peak-memory"><a class="header" href="#get-peak-memory"><code>get-peak-memory</code></a></h4>
+<pre><code class="language-clojure">(mx/get-peak-memory)
+</code></pre>
+<p>Peak memory usage since last reset.</p>
+<p><strong>Returns:</strong> integer (bytes)</p>
+<hr>
+<h4 id="reset-peak-memory"><a class="header" href="#reset-peak-memory"><code>reset-peak-memory!</code></a></h4>
+<pre><code class="language-clojure">(mx/reset-peak-memory!)
+</code></pre>
+<p>Reset the peak memory counter to current active memory.</p>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h4 id="get-wrappers-count"><a class="header" href="#get-wrappers-count"><code>get-wrappers-count</code></a></h4>
+<pre><code class="language-clojure">(mx/get-wrappers-count)
+</code></pre>
+<p>Number of live JS wrapper objects for MLX arrays.</p>
+<p><strong>Returns:</strong> integer</p>
+<hr>
+<h4 id="get-num-resources"><a class="header" href="#get-num-resources"><code>get-num-resources</code></a></h4>
+<pre><code class="language-clojure">(mx/get-num-resources)
+</code></pre>
+<p>Number of live Metal buffer allocations (active + cached). When this hits the resource limit (~499K), allocations fail.</p>
+<p><strong>Returns:</strong> integer</p>
+<hr>
+<h4 id="get-resource-limit"><a class="header" href="#get-resource-limit"><code>get-resource-limit</code></a></h4>
+<pre><code class="language-clojure">(mx/get-resource-limit)
+</code></pre>
+<p>Maximum Metal buffer allocations before failure.</p>
+<p><strong>Returns:</strong> integer</p>
+<hr>
+<h4 id="memory-report"><a class="header" href="#memory-report"><code>memory-report</code></a></h4>
+<pre><code class="language-clojure">(mx/memory-report)
+;; =&gt; {:active-bytes 1048576
+;;     :cache-bytes 524288
+;;     :peak-bytes 2097152
+;;     :wrappers 150
+;;     :num-resources 300
+;;     :resource-limit 499000}
+</code></pre>
+<p>Comprehensive memory usage report as a Clojure map.</p>
+<p><strong>Returns:</strong> map with keys <code>:active-bytes</code>, <code>:cache-bytes</code>, <code>:peak-bytes</code>, <code>:wrappers</code>, <code>:num-resources</code>, <code>:resource-limit</code></p>
+<hr>
+<h3 id="memory-limits"><a class="header" href="#memory-limits">Memory Limits</a></h3>
+<h4 id="set-memory-limit"><a class="header" href="#set-memory-limit"><code>set-memory-limit!</code></a></h4>
+<pre><code class="language-clojure">(mx/set-memory-limit! (* 4 1024 1024 1024))  ;; 4 GB
+</code></pre>
+<p>Set the maximum GPU memory limit in bytes.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>n</code></td><td>integer</td><td>Memory limit in bytes</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h4 id="set-cache-limit"><a class="header" href="#set-cache-limit"><code>set-cache-limit!</code></a></h4>
+<pre><code class="language-clojure">(mx/set-cache-limit! (* 256 1024 1024))  ;; 256 MB
+</code></pre>
+<p>Set the Metal cache limit in bytes. GenMLX defaults to 256 MB.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>n</code></td><td>integer</td><td>Cache limit in bytes</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h4 id="set-wired-limit"><a class="header" href="#set-wired-limit"><code>set-wired-limit!</code></a></h4>
+<pre><code class="language-clojure">(mx/set-wired-limit! n)
+</code></pre>
+<p>Set the wired memory limit in bytes.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>n</code></td><td>integer</td><td>Wired memory limit in bytes</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h4 id="clear-cache"><a class="header" href="#clear-cache"><code>clear-cache!</code></a></h4>
+<pre><code class="language-clojure">(mx/clear-cache!)
+</code></pre>
+<p>Clear the Metal memory cache, releasing cached buffers.</p>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h3 id="metal-device"><a class="header" href="#metal-device">Metal Device</a></h3>
+<h4 id="metal-is-available"><a class="header" href="#metal-is-available"><code>metal-is-available?</code></a></h4>
+<pre><code class="language-clojure">(mx/metal-is-available?)  ;; =&gt; true
+</code></pre>
+<p>Check if a Metal GPU is available.</p>
+<p><strong>Returns:</strong> boolean</p>
+<hr>
+<h4 id="metal-device-info"><a class="header" href="#metal-device-info"><code>metal-device-info</code></a></h4>
+<pre><code class="language-clojure">(mx/metal-device-info)
+;; =&gt; {:architecture "applegpu_g14s"
+;;     :device-name "Apple M2 Pro"
+;;     :memory-size 32000000000
+;;     :max-buffer-length 16000000000
+;;     :max-recommended-working-set-size 22000000000
+;;     :resource-limit 499000}
+</code></pre>
+<p>Return Metal device information as a Clojure map.</p>
+<p><strong>Returns:</strong> map with device details</p>
+<hr>
+<h2 id="sorting"><a class="header" href="#sorting">Sorting</a></h2>
+<h3 id="argsort"><a class="header" href="#argsort"><code>argsort</code></a></h3>
+<pre><code class="language-clojure">(mx/argsort a)
+(mx/argsort a 0)
+</code></pre>
+<p>Return indices that sort the array along the given axis (default: last axis). Like <code>numpy.argsort</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis to sort along</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX integer array of indices</p>
+<hr>
+<h3 id="sort-arr"><a class="header" href="#sort-arr"><code>sort-arr</code></a></h3>
+<pre><code class="language-clojure">(mx/sort-arr a)
+(mx/sort-arr a 0)
+</code></pre>
+<p>Sort array along the given axis (default: last axis). Like <code>numpy.sort</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>axis</code></td><td>integer (optional)</td><td>Axis to sort along</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array (sorted)</p>
+<hr>
+<h3 id="topk"><a class="header" href="#topk"><code>topk</code></a></h3>
+<pre><code class="language-clojure">(mx/topk a 5)
+</code></pre>
+<p>Return the top-k largest values along the last axis.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a</code></td><td>MLX array</td><td>Input array</td></tr>
+<tr><td><code>k</code></td><td>integer</td><td>Number of top values</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array of top-k values</p>
+<hr>
+<h2 id="device-and-constants"><a class="header" href="#device-and-constants">Device and Constants</a></h2>
+<h3 id="device"><a class="header" href="#device">Device</a></h3>
+<h4 id="default-device"><a class="header" href="#default-device"><code>default-device</code></a></h4>
+<pre><code class="language-clojure">(mx/default-device)
+</code></pre>
+<p>Get the current default compute device.</p>
+<p><strong>Returns:</strong> device object</p>
+<hr>
+<h4 id="set-default-device"><a class="header" href="#set-default-device"><code>set-default-device!</code></a></h4>
+<pre><code class="language-clojure">(mx/set-default-device! mx/gpu)
+</code></pre>
+<p>Set the default compute device.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>d</code></td><td>device</td><td>Device to use (<code>mx/cpu</code> or <code>mx/gpu</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> nil</p>
+<hr>
+<h4 id="mxcpu"><a class="header" href="#mxcpu"><code>mx/cpu</code></a></h4>
+<p>CPU device constant.</p>
+<h4 id="mxgpu"><a class="header" href="#mxgpu"><code>mx/gpu</code></a></h4>
+<p>GPU device constant.</p>
+<h3 id="constants"><a class="header" href="#constants">Constants</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Constant</th><th>Value</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mx/pi</code></td><td>3.14159…</td></tr>
+<tr><td><code>mx/e-val</code></td><td>2.71828…</td></tr>
+<tr><td><code>mx/inf</code></td><td>Positive infinity</td></tr>
+<tr><td><code>mx/nan</code></td><td>Not a number</td></tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="utilities"><a class="header" href="#utilities">Utilities</a></h2>
+<h3 id="training-step"><a class="header" href="#training-step"><code>training-step!</code></a></h3>
+<pre><code class="language-clojure">(mx/training-step! module optimizer vg-fn input1 input2)
+</code></pre>
+<p>One neural network training step: compute loss + gradients, update module parameters. Returns the loss as a JS number.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>module</code></td><td>NN module</td><td>Neural network module</td></tr>
+<tr><td><code>optim</code></td><td>optimizer</td><td>MLX optimizer</td></tr>
+<tr><td><code>vg-fn</code></td><td>function</td><td>Value-and-grad function</td></tr>
+<tr><td><code>inputs</code></td><td>any (variadic)</td><td>Training inputs</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> JS number (loss value)</p>
+<hr>
+<h3 id="jsc-cleanup"><a class="header" href="#jsc-cleanup"><code>jsc-cleanup!</code></a></h3>
+<pre><code class="language-clojure">(mx/jsc-cleanup!)
+</code></pre>
+<p>Trigger JSC (Bun’s JavaScript engine) garbage collection, microtask drain, and weak reference cleanup. Fires N-API destroy callbacks for dead MLX arrays, releasing Metal buffers. Safe to call from synchronous code. Only available when running under Bun.</p>
+<p><strong>Returns:</strong> nil</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="verify.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="serialize.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="verify.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="serialize.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

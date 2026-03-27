@@ -1,0 +1,743 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Learning - GenMLX API Reference</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="theme/custom-070636da.css">
+
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-bf8e1655.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-fc2a8a04.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">GenMLX API Reference</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/probcomp/genmlx" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="learning"><a class="header" href="#learning">Learning</a></h1>
+<p>Parameter stores, optimizers, and training loops for learning model parameters through gradient-based optimization. This module provides the building blocks for maximum likelihood estimation, MAP inference, and amortized inference via wake-sleep learning.</p>
+<p>The typical workflow: create a parameter store, build a loss-gradient function from a model and observations, then run a training loop with SGD or Adam. For amortized inference, wake-sleep alternates between fitting a recognition model (guide) to the posterior and fitting it to the prior.</p>
+<pre><code class="language-clojure">(require '[genmlx.learning :as learn])
+</code></pre>
+<p>Source: <code>src/genmlx/learning.cljs</code></p>
+<hr>
+<h2 id="parameter-store"><a class="header" href="#parameter-store">Parameter Store</a></h2>
+<p>A parameter store is a purely functional map holding named MLX arrays and a version counter. Every mutation returns a new store – no mutable state.</p>
+<h3 id="make-param-store"><a class="header" href="#make-param-store"><code>make-param-store</code></a></h3>
+<pre><code class="language-clojure">(learn/make-param-store)
+(learn/make-param-store init-params)
+</code></pre>
+<p>Create a functional parameter store. With no arguments, returns an empty store. With a map of <code>{name -&gt; value}</code>, initializes all parameters (converting plain numbers to MLX scalars).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>init-params</code></td><td>map (optional)</td><td>Map of <code>{keyword -&gt; MLX-array-or-number}</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:params {keyword -&gt; MLX-array} :version 0}</code></p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Empty store
+(learn/make-param-store)
+;; =&gt; {:params {} :version 0}
+
+;; Pre-initialized store
+(learn/make-param-store {:slope (mx/scalar 0.5) :intercept 1.0})
+;; =&gt; {:params {:slope #mlx 0.5 :intercept #mlx 1.0} :version 0}
+</code></pre>
+<hr>
+<h3 id="get-param"><a class="header" href="#get-param"><code>get-param</code></a></h3>
+<pre><code class="language-clojure">(learn/get-param store name)
+</code></pre>
+<p>Get a parameter value from the store by name.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>store</code></td><td>map</td><td>Parameter store</td></tr>
+<tr><td><code>name</code></td><td>keyword</td><td>Parameter name</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array, or <code>nil</code> if not found.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def store (learn/make-param-store {:lr (mx/scalar 0.01)}))
+(learn/get-param store :lr)
+;; =&gt; #mlx 0.01
+</code></pre>
+<hr>
+<h3 id="set-param"><a class="header" href="#set-param"><code>set-param</code></a></h3>
+<pre><code class="language-clojure">(learn/set-param store name value)
+</code></pre>
+<p>Set a parameter value in the store. Plain numbers are converted to MLX scalars. Increments the version counter.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>store</code></td><td>map</td><td>Parameter store</td></tr>
+<tr><td><code>name</code></td><td>keyword</td><td>Parameter name</td></tr>
+<tr><td><code>value</code></td><td>MLX array or number</td><td>New value</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Updated parameter store with incremented <code>:version</code>.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def store (learn/make-param-store {:x (mx/scalar 1.0)}))
+(def store' (learn/set-param store :x (mx/scalar 2.0)))
+(:version store')
+;; =&gt; 1
+</code></pre>
+<hr>
+<h3 id="update-params"><a class="header" href="#update-params"><code>update-params</code></a></h3>
+<pre><code class="language-clojure">(learn/update-params store updates)
+</code></pre>
+<p>Apply a map of updates to the store. Each entry in <code>updates</code> calls <code>set-param</code>, so the version increments once per parameter updated.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>store</code></td><td>map</td><td>Parameter store</td></tr>
+<tr><td><code>updates</code></td><td>map</td><td>Map of <code>{keyword -&gt; new-value}</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Updated parameter store.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def store (learn/make-param-store {:a (mx/scalar 1.0) :b (mx/scalar 2.0)}))
+(learn/update-params store {:a (mx/scalar 10.0) :b (mx/scalar 20.0)})
+</code></pre>
+<hr>
+<h3 id="param-names"><a class="header" href="#param-names"><code>param-names</code></a></h3>
+<pre><code class="language-clojure">(learn/param-names store)
+</code></pre>
+<p>List all parameter names in the store.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>store</code></td><td>map</td><td>Parameter store</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Sequence of keywords.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def store (learn/make-param-store {:slope (mx/scalar 0.5) :intercept (mx/scalar 1.0)}))
+(learn/param-names store)
+;; =&gt; (:slope :intercept)
+</code></pre>
+<hr>
+<h3 id="params-array"><a class="header" href="#params-array"><code>params-&gt;array</code></a></h3>
+<pre><code class="language-clojure">(learn/params-&gt;array store names)
+</code></pre>
+<p>Flatten named parameters into a single 1-D MLX array. The order is determined by <code>names</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>store</code></td><td>map</td><td>Parameter store</td></tr>
+<tr><td><code>names</code></td><td>vector</td><td>Ordered vector of parameter names</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array of shape <code>[N]</code> where <code>N = (count names)</code>.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def store (learn/make-param-store {:a (mx/scalar 1.0) :b (mx/scalar 2.0)}))
+(learn/params-&gt;array store [:a :b])
+;; =&gt; #mlx [1.0, 2.0]
+</code></pre>
+<hr>
+<h3 id="array-params"><a class="header" href="#array-params"><code>array-&gt;params</code></a></h3>
+<pre><code class="language-clojure">(learn/array-&gt;params arr names)
+</code></pre>
+<p>Unflatten a 1-D MLX array back into a map of named parameters. The inverse of <code>params-&gt;array</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>arr</code></td><td>MLX array</td><td>1-D array of shape <code>[N]</code></td></tr>
+<tr><td><code>names</code></td><td>vector</td><td>Ordered vector of parameter names (length <code>N</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Map of <code>{keyword -&gt; MLX-scalar}</code>.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(learn/array-&gt;params (mx/array [1.0 2.0]) [:a :b])
+;; =&gt; {:a #mlx 1.0 :b #mlx 2.0}
+</code></pre>
+<hr>
+<h2 id="optimizers"><a class="header" href="#optimizers">Optimizers</a></h2>
+<h3 id="sgd-step"><a class="header" href="#sgd-step"><code>sgd-step</code></a></h3>
+<pre><code class="language-clojure">(learn/sgd-step params grad lr)
+</code></pre>
+<p>One step of stochastic gradient descent: <code>params - lr * grad</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>params</code></td><td>MLX array</td><td>Current parameter array</td></tr>
+<tr><td><code>grad</code></td><td>MLX array</td><td>Gradient array (same shape as <code>params</code>)</td></tr>
+<tr><td><code>lr</code></td><td>number</td><td>Learning rate</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array – updated parameters.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def p (mx/array [1.0 2.0]))
+(def g (mx/array [0.1 -0.2]))
+(learn/sgd-step p g 0.01)
+;; =&gt; #mlx [0.999, 2.002]
+</code></pre>
+<hr>
+<h3 id="adam-init"><a class="header" href="#adam-init"><code>adam-init</code></a></h3>
+<pre><code class="language-clojure">(learn/adam-init params)
+</code></pre>
+<p>Initialize Adam optimizer state. Creates zero-filled first-moment (<code>m</code>) and second-moment (<code>v</code>) accumulators matching the shape of <code>params</code>, and sets the step counter <code>t</code> to 0.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>params</code></td><td>MLX array</td><td>Parameter array (used only for shape)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:m MLX-zeros :v MLX-zeros :t 0}</code></p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def state (learn/adam-init (mx/array [1.0 2.0 3.0])))
+;; state =&gt; {:m #mlx [0 0 0], :v #mlx [0 0 0], :t 0}
+</code></pre>
+<hr>
+<h3 id="adam-step"><a class="header" href="#adam-step"><code>adam-step</code></a></h3>
+<pre><code class="language-clojure">(learn/adam-step params grad state opts)
+</code></pre>
+<p>One Adam optimizer step with bias-corrected first and second moment estimates. Calls <code>mx/materialize!</code> on the updated parameters and moment accumulators before returning.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>params</code></td><td>MLX array</td><td>Current parameter array</td></tr>
+<tr><td><code>grad</code></td><td>MLX array</td><td>Gradient array (same shape as <code>params</code>)</td></tr>
+<tr><td><code>state</code></td><td>map</td><td>Adam state from <code>adam-init</code> or previous <code>adam-step</code></td></tr>
+<tr><td><code>opts</code></td><td>map</td><td>Hyperparameters (all optional)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Options for <code>opts</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:lr</code></td><td><code>0.001</code></td><td>Learning rate</td></tr>
+<tr><td><code>:beta1</code></td><td><code>0.9</code></td><td>First moment decay</td></tr>
+<tr><td><code>:beta2</code></td><td><code>0.999</code></td><td>Second moment decay</td></tr>
+<tr><td><code>:epsilon</code></td><td><code>1e-8</code></td><td>Numerical stability constant</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>[new-params new-state]</code> – a two-element vector.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def p (mx/array [1.0 2.0]))
+(def g (mx/array [0.1 -0.2]))
+(def state (learn/adam-init p))
+
+(let [[p' state'] (learn/adam-step p g state {:lr 0.001})]
+  ;; p' is updated parameters, state' has incremented :t
+  (:t state'))
+;; =&gt; 1
+</code></pre>
+<hr>
+<h2 id="training"><a class="header" href="#training">Training</a></h2>
+<h3 id="train"><a class="header" href="#train"><code>train</code></a></h3>
+<pre><code class="language-clojure">(learn/train opts loss-grad-fn init-params)
+</code></pre>
+<p>Generic training loop for parameter learning. Runs <code>iterations</code> steps of gradient-based optimization, choosing between SGD and Adam. Periodically clears the MLX computation cache to manage memory for large models.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>opts</code></td><td>map</td><td>Training options (see below)</td></tr>
+<tr><td><code>loss-grad-fn</code></td><td>function</td><td><code>(fn [params key] -&gt; {:loss MLX-scalar :grad MLX-array})</code></td></tr>
+<tr><td><code>init-params</code></td><td>MLX array</td><td>Initial parameter values</td></tr>
+</tbody>
+</table>
+</div>
+<p>Options for <code>opts</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:iterations</code></td><td><code>1000</code></td><td>Number of training steps</td></tr>
+<tr><td><code>:optimizer</code></td><td><code>:adam</code></td><td>Optimizer: <code>:sgd</code> or <code>:adam</code></td></tr>
+<tr><td><code>:lr</code></td><td><code>0.001</code></td><td>Learning rate</td></tr>
+<tr><td><code>:callback</code></td><td><code>nil</code></td><td><code>(fn [{:iter :loss :params}])</code> called each step</td></tr>
+<tr><td><code>:key</code></td><td><code>nil</code></td><td>PRNG key for reproducibility</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:params MLX-array :loss-history [numbers...]}</code></p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Train a simple quadratic loss
+(def result
+  (learn/train
+    {:iterations 500 :lr 0.01 :optimizer :adam}
+    (fn [params _key]
+      (let [loss (mx/sum (mx/square params))
+            grad-fn (mx/grad (fn [p] (mx/sum (mx/square p))))
+            grad (grad-fn params)]
+        {:loss loss :grad grad}))
+    (mx/array [5.0 3.0 -2.0])))
+
+(mx/item (mx/index (:params result) 0))
+;; =&gt; ~0.0 (converged to zero)
+(count (:loss-history result))
+;; =&gt; 500
+</code></pre>
+<hr>
+<h3 id="make-param-loss-fn"><a class="header" href="#make-param-loss-fn"><code>make-param-loss-fn</code></a></h3>
+<pre><code class="language-clojure">(learn/make-param-loss-fn model args observations param-names-vec)
+</code></pre>
+<p>Create a loss-gradient function for training model parameters via maximum likelihood. The loss is the negative log-joint probability (minimize to maximize likelihood). Uses <code>mx/grad</code> to differentiate through the <code>generate</code> interface.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>model</code></td><td>generative function</td><td>Model using <code>param</code> declarations</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>ChoiceMap</td><td>Observed data</td></tr>
+<tr><td><code>param-names-vec</code></td><td>vector</td><td>Ordered vector of parameter names (keywords)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>(fn [params-array key] -&gt; {:loss MLX-scalar :grad MLX-array})</code> – suitable for passing to <code>train</code>.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def model
+  (gen [xs]
+    (let [slope (param :slope 0.0)
+          intercept (param :intercept 0.0)]
+      (doseq [[j x] (map-indexed vector xs)]
+        (trace (keyword (str "y" j))
+               (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                      intercept)
+                              (mx/scalar 1.0))))
+      slope)))
+
+(def xs [1.0 2.0 3.0])
+(def obs (cm/choicemap :y0 (mx/scalar 2.1) :y1 (mx/scalar 3.9) :y2 (mx/scalar 6.2)))
+
+;; Create loss-gradient function
+(def loss-grad (learn/make-param-loss-fn model [xs] obs [:slope :intercept]))
+
+;; Train
+(def result
+  (learn/train
+    {:iterations 200 :lr 0.01}
+    loss-grad
+    (mx/array [0.0 0.0])))
+
+;; Recover learned parameters
+(learn/array-&gt;params (:params result) [:slope :intercept])
+;; =&gt; {:slope ~2.0 :intercept ~0.1}
+</code></pre>
+<hr>
+<h2 id="parameterized-execution"><a class="header" href="#parameterized-execution">Parameterized Execution</a></h2>
+<h3 id="simulate-with-params"><a class="header" href="#simulate-with-params"><code>simulate-with-params</code></a></h3>
+<pre><code class="language-clojure">(learn/simulate-with-params model args param-store)
+</code></pre>
+<p>Simulate a generative function with a parameter store bound. Parameters declared via <code>param</code> inside the model body read their values from this store instead of using defaults.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>model</code></td><td>generative function</td><td>Model with <code>param</code> declarations</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>param-store</code></td><td>map</td><td>Parameter store from <code>make-param-store</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>Trace</code> – the simulation trace with parameter values from the store.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def store (learn/make-param-store {:slope (mx/scalar 2.0) :intercept (mx/scalar 0.5)}))
+(def trace (learn/simulate-with-params model [xs] store))
+(:retval trace)
+;; =&gt; #mlx 2.0 (the slope parameter)
+</code></pre>
+<hr>
+<h3 id="generate-with-params"><a class="header" href="#generate-with-params"><code>generate-with-params</code></a></h3>
+<pre><code class="language-clojure">(learn/generate-with-params model args constraints param-store)
+</code></pre>
+<p>Generate from a generative function with a parameter store bound. Combines parameter binding with constrained generation.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>model</code></td><td>generative function</td><td>Model with <code>param</code> declarations</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>constraints</code></td><td>ChoiceMap</td><td>Observed values to condition on</td></tr>
+<tr><td><code>param-store</code></td><td>map</td><td>Parameter store from <code>make-param-store</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:trace Trace :weight MLX-scalar}</code> – the generation result.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def store (learn/make-param-store {:slope (mx/scalar 2.0) :intercept (mx/scalar 0.5)}))
+(def result (learn/generate-with-params model [xs] obs store))
+(mx/item (:weight result))
+;; =&gt; log-probability of observations under these parameters
+</code></pre>
+<hr>
+<h2 id="wake-sleep"><a class="header" href="#wake-sleep">Wake-Sleep</a></h2>
+<p>Wake-sleep learning trains a recognition model (guide) to approximate the posterior by alternating two phases. The wake phase minimizes KL(q||p) using samples from the guide. The sleep phase minimizes KL(p||q) using samples from the model prior.</p>
+<h3 id="wake-phase-loss"><a class="header" href="#wake-phase-loss"><code>wake-phase-loss</code></a></h3>
+<pre><code class="language-clojure">(learn/wake-phase-loss model guide args observations guide-addresses)
+</code></pre>
+<p>Build a wake phase loss-gradient function. The wake phase optimizes guide parameters to minimize KL(q||p) – the negative ELBO. Samples from the guide, scores under the model, and differentiates the gap.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>guide</code></td><td>generative function</td><td>Recognition model (guide)</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>ChoiceMap</td><td>Observed data</td></tr>
+<tr><td><code>guide-addresses</code></td><td>vector</td><td>Addresses in the guide to parameterize</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>(fn [guide-params key] -&gt; {:loss MLX-scalar :grad MLX-array})</code> – the wake phase loss function.</p>
+<hr>
+<h3 id="sleep-phase-loss"><a class="header" href="#sleep-phase-loss"><code>sleep-phase-loss</code></a></h3>
+<pre><code class="language-clojure">(learn/sleep-phase-loss model guide args guide-addresses)
+</code></pre>
+<p>Build a sleep phase loss-gradient function. The sleep phase samples from the model prior and trains the guide to reconstruct those samples, minimizing KL(p||q).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>guide</code></td><td>generative function</td><td>Recognition model (guide)</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>guide-addresses</code></td><td>vector</td><td>Addresses in the guide to parameterize</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>(fn [guide-params key] -&gt; {:loss MLX-scalar :grad MLX-array})</code> – the sleep phase loss function.</p>
+<hr>
+<h3 id="wake-sleep-1"><a class="header" href="#wake-sleep-1"><code>wake-sleep</code></a></h3>
+<pre><code class="language-clojure">(learn/wake-sleep opts model guide args observations guide-addresses init-guide-params)
+</code></pre>
+<p>Full wake-sleep learning loop for amortized inference. Alternates wake and sleep phases, using Adam optimization within each phase.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>opts</code></td><td>map</td><td>Training options (see below)</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>guide</code></td><td>generative function</td><td>Recognition model</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>ChoiceMap</td><td>Observed data</td></tr>
+<tr><td><code>guide-addresses</code></td><td>vector or nil</td><td>Guide addresses (nil to auto-discover)</td></tr>
+<tr><td><code>init-guide-params</code></td><td>MLX array or nil</td><td>Initial guide params (nil for zero-init)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Options for <code>opts</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:iterations</code></td><td><code>1000</code></td><td>Number of wake-sleep cycles</td></tr>
+<tr><td><code>:wake-steps</code></td><td><code>1</code></td><td>Wake phase steps per cycle</td></tr>
+<tr><td><code>:sleep-steps</code></td><td><code>1</code></td><td>Sleep phase steps per cycle</td></tr>
+<tr><td><code>:lr</code></td><td><code>0.001</code></td><td>Learning rate</td></tr>
+<tr><td><code>:callback</code></td><td><code>nil</code></td><td><code>(fn [{:iter :wake-loss :sleep-loss}])</code> called each cycle</td></tr>
+<tr><td><code>:key</code></td><td><code>nil</code></td><td>PRNG key for reproducibility</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:params MLX-array :wake-losses [numbers...] :sleep-losses [numbers...]}</code></p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def model
+  (gen [x]
+    (let [z (trace :z (dist/gaussian 0 1))]
+      (trace :x (dist/gaussian z 0.5)))))
+
+(def guide
+  (gen [x]
+    (trace :z (dist/gaussian 0 1))))
+
+(def obs (cm/choicemap :x (mx/scalar 2.0)))
+
+(def result
+  (learn/wake-sleep
+    {:iterations 500 :lr 0.001 :key (rng/key 42)}
+    model guide [2.0] obs
+    nil    ;; auto-discover guide addresses
+    nil))  ;; zero-init guide params
+
+(count (:wake-losses result))
+;; =&gt; 500
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="gradients.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="nn.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="gradients.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="nn.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

@@ -1,0 +1,1185 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>MCMC - GenMLX API Reference</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="theme/custom-070636da.css">
+
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-bf8e1655.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-fc2a8a04.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">GenMLX API Reference</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/probcomp/genmlx" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="mcmc"><a class="header" href="#mcmc">MCMC</a></h1>
+<p>Markov Chain Monte Carlo methods generate samples from posterior distributions by constructing Markov chains whose stationary distribution matches the target. GenMLX provides a full suite of MCMC algorithms, from basic Metropolis-Hastings through gradient-based methods (MALA, HMC, NUTS) to specialized samplers (Gibbs, elliptical slice, involutive MCMC). All algorithms support optional loop compilation into fused Metal computation graphs for GPU acceleration.</p>
+<pre><code class="language-clojure">(require '[genmlx.inference.mcmc :as mcmc])
+</code></pre>
+<p>Source: <code>src/genmlx/inference/mcmc.cljs</code></p>
+<hr>
+<h2 id="metropolis-hastings"><a class="header" href="#metropolis-hastings">Metropolis-Hastings</a></h2>
+<p>The foundation of MCMC inference. MH proposes new states by regenerating selected addresses from the prior, then accepts or rejects based on the importance weight.</p>
+<h3 id="mh-step"><a class="header" href="#mh-step"><code>mh-step</code></a></h3>
+<pre><code class="language-clojure">(mcmc/mh-step current-trace selection)
+(mcmc/mh-step current-trace selection key)
+</code></pre>
+<p>Single Metropolis-Hastings step. Calls <code>regenerate</code> on the given selection, then accepts or rejects the proposal with probability min(1, exp(w)) where w is the regeneration weight.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>current-trace</code></td><td>Trace</td><td>Current model trace</td></tr>
+<tr><td><code>selection</code></td><td>Selection</td><td>Addresses to resample</td></tr>
+<tr><td><code>key</code></td><td>MLX array (optional)</td><td>PRNG key for reproducibility</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A <code>Trace</code> – either the new trace (accepted) or the original (rejected).</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [{:keys [trace]} (p/generate model args obs)
+      new-trace (mcmc/mh-step trace (sel/select :slope :intercept))]
+  (:retval new-trace))
+</code></pre>
+<hr>
+<h3 id="mh"><a class="header" href="#mh"><code>mh</code></a></h3>
+<pre><code class="language-clojure">(mcmc/mh opts model args observations)
+</code></pre>
+<p>Full Metropolis-Hastings inference chain. Initializes from <code>generate</code>, then runs <code>mh-step</code> repeatedly with burn-in, thinning, and callback support.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>opts</code></td><td>map</td><td>Configuration options</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>choicemap</td><td>Observed values</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Options map:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td>–</td><td>Number of post-burn-in samples to collect</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>0</code></td><td>Burn-in samples to discard</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Keep every thin-th sample</td></tr>
+<tr><td><code>:selection</code></td><td>Selection</td><td><code>sel/all</code></td><td>Addresses to resample each step</td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td><code>(fn [i trace] ...)</code> called each iteration</td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key for reproducibility</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Vector of <code>Trace</code> records.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def traces
+  (mcmc/mh {:samples 1000 :burn 200 :thin 2
+             :selection (sel/select :slope :intercept)}
+            model [xs] obs))
+
+;; Extract posterior samples
+(map #(cm/get-value (:choices %) :slope) traces)
+</code></pre>
+<hr>
+<h3 id="mh-custom-step"><a class="header" href="#mh-custom-step"><code>mh-custom-step</code></a></h3>
+<pre><code class="language-clojure">(mcmc/mh-custom-step current-trace model proposal-gf key)
+(mcmc/mh-custom-step current-trace model proposal-gf backward-gf key)
+</code></pre>
+<p>Single MH step with a custom proposal generative function instead of the prior. The proposal takes the current trace’s choices and proposes new values. An optional backward proposal handles asymmetric kernels; if omitted, the proposal is assumed symmetric.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>current-trace</code></td><td>Trace</td><td>Current model trace</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>proposal-gf</code></td><td>generative function</td><td>Forward proposal: takes <code>[current-choices]</code></td></tr>
+<tr><td><code>backward-gf</code></td><td>generative function (optional)</td><td>Backward proposal for asymmetric kernels</td></tr>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A <code>Trace</code> – either the new trace (accepted) or the original (rejected).</p>
+<hr>
+<h3 id="mh-custom"><a class="header" href="#mh-custom"><code>mh-custom</code></a></h3>
+<pre><code class="language-clojure">(mcmc/mh-custom opts model args observations)
+</code></pre>
+<p>Full MH chain with a custom proposal generative function. Same chain structure as <code>mh</code>, but uses <code>mh-custom-step</code> internally.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>opts</code></td><td>map</td><td>Configuration options</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>choicemap</td><td>Observed values</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Options map:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td>–</td><td>Number of post-burn-in samples</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>0</code></td><td>Burn-in samples to discard</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Keep every thin-th sample</td></tr>
+<tr><td><code>:proposal-gf</code></td><td>generative function</td><td>–</td><td>Custom proposal (takes <code>[current-choices]</code>)</td></tr>
+<tr><td><code>:backward-gf</code></td><td>generative function</td><td><code>nil</code></td><td>Backward proposal (nil = symmetric)</td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td><code>(fn [i trace] ...)</code> called each iteration</td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Vector of <code>Trace</code> records.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Custom random-walk proposal with tuned width
+(def proposal
+  (gen [current-choices]
+    (let [old-slope (cm/get-value current-choices :slope)]
+      (trace :slope (dist/gaussian old-slope 0.5)))))
+
+(mcmc/mh-custom {:samples 500 :burn 100 :proposal-gf proposal}
+                 model [xs] obs)
+</code></pre>
+<hr>
+<h2 id="compiled-mh"><a class="header" href="#compiled-mh">Compiled MH</a></h2>
+<p>Compiled MH extracts latent parameters into a flat array, compiles the score function, and iterates in parameter space – bypassing the GFI regenerate overhead per step.</p>
+<h3 id="compiled-mh-1"><a class="header" href="#compiled-mh-1"><code>compiled-mh</code></a></h3>
+<pre><code class="language-clojure">(mcmc/compiled-mh opts model args observations)
+</code></pre>
+<p>MH with random-walk Gaussian proposals in compiled parameter space. When <code>:compile?</code> is true (the default), entire K-step chains are compiled into single Metal dispatches. Burn-in runs in blocks; collection uses compiled trajectories that return <code>[K, D]</code> tensors per dispatch.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>opts</code></td><td>map</td><td>Configuration options</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>choicemap</td><td>Observed values</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Options map:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td>–</td><td>Number of post-burn-in samples</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>0</code></td><td>Burn-in samples to discard</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Keep every thin-th sample</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Vector of address keywords to sample</td></tr>
+<tr><td><code>:proposal-std</code></td><td>float</td><td><code>0.1</code></td><td>Gaussian random walk standard deviation</td></tr>
+<tr><td><code>:compile?</code></td><td>bool</td><td><code>true</code></td><td>Whether to compile the inner loop</td></tr>
+<tr><td><code>:block-size</code></td><td>int</td><td><code>50</code></td><td>Burn-in chain length per Metal dispatch</td></tr>
+<tr><td><code>:block-size-collect</code></td><td>int</td><td><code>25</code></td><td>Collection trajectory length (thin=1 path)</td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td><code>(fn [{:iter :value}] ...)</code> called per sample</td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:cpu</code></td><td><code>:cpu</code> or <code>:gpu</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Vector of parameter samples (JS arrays via <code>mx/-&gt;clj</code>).</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def samples
+  (mcmc/compiled-mh {:samples 2000 :burn 500 :addresses [:slope :intercept]
+                      :proposal-std 0.1}
+                     model [xs] obs))
+
+;; Each sample is a flat JS array [slope, intercept]
+(first samples) ;; =&gt; [0.47 1.23]
+</code></pre>
+<hr>
+<h3 id="fused-mh"><a class="header" href="#fused-mh"><code>fused-mh</code></a></h3>
+<pre><code class="language-clojure">(mcmc/fused-mh opts model args observations)
+</code></pre>
+<p>Fully fused MH: burn-in and thinned collection in ONE Metal dispatch. Pre-generates all noise upfront and compiles the entire chain into a single function. Auto-falls back to <code>compiled-mh</code> when the chain exceeds Metal graph size limits.</p>
+<p>The first call incurs compilation overhead (2-10s depending on chain length). Pass <code>:chain-fn</code> from a previous call to skip recompilation.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>opts</code></td><td>map</td><td>Configuration options</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>choicemap</td><td>Observed values</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Options map:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td><code>1000</code></td><td>Number of samples</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>500</code></td><td>Burn-in samples</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Thinning interval</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Latent addresses to sample</td></tr>
+<tr><td><code>:proposal-std</code></td><td>float</td><td><code>0.1</code></td><td>Random walk standard deviation</td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:cpu</code></td><td><code>:cpu</code> or <code>:gpu</code></td></tr>
+<tr><td><code>:chain-fn</code></td><td>compiled fn</td><td><code>nil</code></td><td>Reuse compiled chain from a previous call</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:samples MLX-array, :final-params MLX-array, :chain-fn compiled-fn, :acceptance-rate float}</code></p>
+<ul>
+<li><code>:samples</code> – <code>[S, D]</code> MLX tensor of collected samples</li>
+<li><code>:final-params</code> – <code>[D]</code> MLX array of final parameter state</li>
+<li><code>:chain-fn</code> – the compiled function (reusable across calls)</li>
+<li><code>:acceptance-rate</code> – fraction of accepted proposals</li>
+</ul>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [result (mcmc/fused-mh {:samples 1000 :burn 500
+                              :addresses [:slope :intercept]}
+                             model [xs] obs)]
+  (println "Acceptance rate:" (:acceptance-rate result))
+  ;; Reuse compiled chain for another run
+  (mcmc/fused-mh {:samples 1000 :burn 0
+                   :addresses [:slope :intercept]
+                   :chain-fn (:chain-fn result)}
+                  model [xs] obs))
+</code></pre>
+<hr>
+<h3 id="vectorized-compiled-mh"><a class="header" href="#vectorized-compiled-mh"><code>vectorized-compiled-mh</code></a></h3>
+<pre><code class="language-clojure">(mcmc/vectorized-compiled-mh opts model args observations)
+</code></pre>
+<p>Run N independent compiled MH chains in parallel. MLX broadcasting executes the score function ONCE per step for all N chains simultaneously.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td>–</td><td>Samples to collect</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>0</code></td><td>Burn-in</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Thinning</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Latent addresses</td></tr>
+<tr><td><code>:proposal-std</code></td><td>float</td><td><code>0.1</code></td><td>Random walk std</td></tr>
+<tr><td><code>:compile?</code></td><td>bool</td><td><code>true</code></td><td>Compile score function</td></tr>
+<tr><td><code>:n-chains</code></td><td>int</td><td><code>10</code></td><td>Number of parallel chains</td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td><code>(fn [{:iter :value :n-accepted}] ...)</code></td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:gpu</code></td><td>Default <code>:gpu</code> for vectorized ops</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Vector of <code>[N-chains, D]</code> JS arrays (one per sample). Metadata contains <code>{:acceptance-rate mean-rate}</code>.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def samples
+  (mcmc/vectorized-compiled-mh
+    {:samples 500 :burn 200 :n-chains 8
+     :addresses [:slope :intercept]}
+    model [xs] obs))
+
+(:acceptance-rate (meta samples))
+</code></pre>
+<hr>
+<h3 id="vectorized-compiled-trajectory-mh"><a class="header" href="#vectorized-compiled-trajectory-mh"><code>vectorized-compiled-trajectory-mh</code></a></h3>
+<pre><code class="language-clojure">(mcmc/vectorized-compiled-trajectory-mh opts model args observations)
+</code></pre>
+<p>Vectorized compiled trajectory MH: N parallel chains with K steps per Metal dispatch. Combines multi-chain parallelism with loop compilation. Samples are pooled across chains. Uses a single compiled trajectory chain for both burn-in and collection.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td>–</td><td>Total samples to collect (pooled across chains)</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>0</code></td><td>Burn-in steps</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Latent addresses</td></tr>
+<tr><td><code>:proposal-std</code></td><td>float</td><td><code>0.1</code></td><td>Random walk std</td></tr>
+<tr><td><code>:n-chains</code></td><td>int</td><td><code>10</code></td><td>Number of parallel chains</td></tr>
+<tr><td><code>:block-size</code></td><td>int</td><td><code>10</code></td><td>Steps per Metal dispatch</td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td>Called with <code>{:total count}</code> at completion</td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:gpu</code></td><td>Default <code>:gpu</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Vector of <code>[D]</code> JS arrays (pooled from all chains).</p>
+<hr>
+<h3 id="fused-vectorized-mh"><a class="header" href="#fused-vectorized-mh"><code>fused-vectorized-mh</code></a></h3>
+<pre><code class="language-clojure">(mcmc/fused-vectorized-mh opts model args observations)
+</code></pre>
+<p>Fully fused vectorized MH: N parallel chains with burn-in and thinned collection in ONE Metal dispatch per call. Same API shape as <code>fused-mh</code> but operates on <code>[N, D]</code> parameter tensors.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td><code>1000</code></td><td>Samples to collect</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>500</code></td><td>Burn-in</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Thinning</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Latent addresses</td></tr>
+<tr><td><code>:proposal-std</code></td><td>float</td><td><code>0.1</code></td><td>Random walk std</td></tr>
+<tr><td><code>:n-chains</code></td><td>int</td><td><code>8</code></td><td>Number of parallel chains</td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:gpu</code></td><td>Default <code>:gpu</code></td></tr>
+<tr><td><code>:chain-fn</code></td><td>compiled fn</td><td><code>nil</code></td><td>Reuse compiled chain from previous call</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:samples [S,N,D], :final-params [N,D], :chain-fn compiled-fn, :acceptance-rate [N]}</code></p>
+<hr>
+<h2 id="mala--metropolis-adjusted-langevin-algorithm"><a class="header" href="#mala--metropolis-adjusted-langevin-algorithm">MALA – Metropolis-Adjusted Langevin Algorithm</a></h2>
+<p>MALA uses gradient information to guide proposals toward high-density regions. The proposal follows the score gradient with added noise:</p>
+<p>x’ = x + (epsilon^2 / 2) * grad(log p(x)) + epsilon * z,  where z ~ N(0, I)</p>
+<p>The asymmetric proposal density is corrected via Hastings ratio to maintain detailed balance. Use MALA when the posterior is smooth and continuous – it converges faster than random-walk MH for well-conditioned targets.</p>
+<h3 id="mala"><a class="header" href="#mala"><code>mala</code></a></h3>
+<pre><code class="language-clojure">(mcmc/mala opts model args observations)
+</code></pre>
+<p>MALA inference with optional loop compilation and adaptive step-size tuning.</p>
+<p>When <code>:compile?</code> is true (the default), entire K-step chains are compiled into single Metal dispatches. Score and gradient are cached across iterations, reducing val-grad calls from 3 to 1 per step.</p>
+<p>When <code>:adapt-step-size</code> is true, the burn-in phase uses dual averaging (Hoffman and Gelman 2014) to tune the step-size to achieve the target acceptance rate (default 0.574).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>opts</code></td><td>map</td><td>Configuration options</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>choicemap</td><td>Observed values</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Options map:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td>–</td><td>Number of samples</td></tr>
+<tr><td><code>:step-size</code></td><td>float</td><td><code>0.01</code></td><td>Langevin step size (epsilon)</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>0</code></td><td>Burn-in samples</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Thinning interval</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Continuous addresses to update</td></tr>
+<tr><td><code>:compile?</code></td><td>bool</td><td><code>true</code></td><td>Compile inner loop</td></tr>
+<tr><td><code>:block-size</code></td><td>int</td><td><code>50</code></td><td>Steps per compiled burn-in block</td></tr>
+<tr><td><code>:adapt-step-size</code></td><td>bool</td><td><code>false</code></td><td>Enable dual averaging adaptation</td></tr>
+<tr><td><code>:target-accept</code></td><td>float</td><td><code>0.574</code></td><td>Target acceptance rate for adaptation</td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td><code>(fn [{:iter :value}] ...)</code></td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:cpu</code></td><td><code>:cpu</code> or <code>:gpu</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Vector of parameter samples (JS arrays).</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(mcmc/mala {:samples 1000 :burn 500 :step-size 0.01
+            :addresses [:slope :intercept]
+            :adapt-step-size true}
+           model [xs] obs)
+</code></pre>
+<hr>
+<h3 id="fused-mala"><a class="header" href="#fused-mala"><code>fused-mala</code></a></h3>
+<pre><code class="language-clojure">(mcmc/fused-mala opts model args observations)
+</code></pre>
+<p>Fully fused MALA: burn-in and thinned collection in ONE Metal dispatch. Auto-falls back to block-compiled MALA when the chain exceeds Metal graph size limits.</p>
+<p>When <code>:adapt-step-size</code> is true, runs a short eager warmup phase using dual averaging to tune the step-size, then compiles the fused chain with the adapted value.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td><code>1000</code></td><td>Number of samples</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>500</code></td><td>Burn-in</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Thinning</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Latent addresses</td></tr>
+<tr><td><code>:step-size</code></td><td>float</td><td><code>0.01</code></td><td>Langevin step size</td></tr>
+<tr><td><code>:adapt-step-size</code></td><td>bool</td><td><code>false</code></td><td>Dual averaging adaptation</td></tr>
+<tr><td><code>:target-accept</code></td><td>float</td><td><code>0.574</code></td><td>Target acceptance rate</td></tr>
+<tr><td><code>:warmup-steps</code></td><td>int</td><td><code>200</code></td><td>Number of adaptive warmup steps</td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:cpu</code></td><td><code>:cpu</code> or <code>:gpu</code></td></tr>
+<tr><td><code>:chain-fn</code></td><td>compiled fn</td><td><code>nil</code></td><td>Reuse compiled chain</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:samples [S,D], :final-params [D], :chain-fn compiled-fn, :acceptance-rate float}</code></p>
+<hr>
+<h3 id="vectorized-mala"><a class="header" href="#vectorized-mala"><code>vectorized-mala</code></a></h3>
+<pre><code class="language-clojure">(mcmc/vectorized-mala opts model args observations)
+</code></pre>
+<p>N independent MALA chains running in parallel. MLX broadcasting computes gradients for all N chains simultaneously via the sum trick.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td>–</td><td>Samples to collect</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>0</code></td><td>Burn-in</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Thinning</td></tr>
+<tr><td><code>:step-size</code></td><td>float</td><td><code>0.01</code></td><td>Langevin step size</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Continuous addresses</td></tr>
+<tr><td><code>:compile?</code></td><td>bool</td><td><code>true</code></td><td>Compile score/gradient</td></tr>
+<tr><td><code>:n-chains</code></td><td>int</td><td><code>10</code></td><td>Number of parallel chains</td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td><code>(fn [{:iter :value :n-accepted}] ...)</code></td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:gpu</code></td><td>Default <code>:gpu</code> for vectorized ops</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Vector of <code>[N-chains, D]</code> JS arrays. Metadata contains <code>{:acceptance-rate mean-rate}</code>.</p>
+<hr>
+<h2 id="hmc--hamiltonian-monte-carlo"><a class="header" href="#hmc--hamiltonian-monte-carlo">HMC – Hamiltonian Monte Carlo</a></h2>
+<p>HMC simulates Hamiltonian dynamics to make distant, low-correlation proposals. By introducing auxiliary momentum variables, HMC explores the target distribution more efficiently than random-walk methods – especially in high dimensions.</p>
+<p>Each HMC step: (1) sample momentum from N(0, M), (2) run L leapfrog integration steps, (3) accept/reject based on Hamiltonian energy conservation. GenMLX uses fused leapfrog (L+1 gradient evaluations instead of 2L) for efficiency.</p>
+<h3 id="hmc"><a class="header" href="#hmc"><code>hmc</code></a></h3>
+<pre><code class="language-clojure">(mcmc/hmc opts model args observations)
+</code></pre>
+<p>Hamiltonian Monte Carlo with leapfrog integration. Supports identity, diagonal, and dense mass matrices. When <code>:compile?</code> is true and the mass matrix is nil (identity), uses loop compilation for Metal acceleration.</p>
+<p>When <code>:adapt-step-size</code> is true, burn-in uses dual averaging (Hoffman and Gelman 2014) to tune the step-size. When <code>:adapt-metric</code> is true, a diagonal mass matrix is estimated from warmup samples using Welford’s online algorithm.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>opts</code></td><td>map</td><td>Configuration options</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>choicemap</td><td>Observed values</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Options map:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td>–</td><td>Number of samples</td></tr>
+<tr><td><code>:step-size</code></td><td>float</td><td><code>0.01</code></td><td>Leapfrog step size</td></tr>
+<tr><td><code>:leapfrog-steps</code></td><td>int</td><td><code>20</code></td><td>Leapfrog steps per proposal</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>100</code></td><td>Burn-in samples</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Thinning interval</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Continuous addresses to sample</td></tr>
+<tr><td><code>:metric</code></td><td>MLX array</td><td><code>nil</code></td><td>Mass matrix (nil=identity, vector=diagonal, matrix=dense)</td></tr>
+<tr><td><code>:compile?</code></td><td>bool</td><td><code>true</code></td><td>Compile inner loop (identity metric only)</td></tr>
+<tr><td><code>:block-size</code></td><td>int</td><td><code>20</code></td><td>Steps per compiled burn-in block</td></tr>
+<tr><td><code>:adapt-step-size</code></td><td>bool</td><td><code>false</code></td><td>Dual averaging step-size adaptation</td></tr>
+<tr><td><code>:target-accept</code></td><td>float</td><td><code>0.65</code></td><td>Target acceptance rate</td></tr>
+<tr><td><code>:adapt-metric</code></td><td>bool</td><td><code>false</code></td><td>Adapt diagonal mass matrix during warmup</td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td><code>(fn [{:iter :value}] ...)</code></td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:cpu</code></td><td><code>:cpu</code> or <code>:gpu</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Vector of parameter samples (JS arrays via <code>mx/-&gt;clj</code>).</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Basic HMC
+(mcmc/hmc {:samples 1000 :burn 500 :step-size 0.01 :leapfrog-steps 20
+            :addresses [:mu :sigma]}
+           model args obs)
+
+;; With full adaptation (step-size + mass matrix)
+(mcmc/hmc {:samples 2000 :burn 1000 :addresses [:mu :sigma]
+            :adapt-step-size true :adapt-metric true}
+           model args obs)
+
+;; With a known diagonal mass matrix
+(mcmc/hmc {:samples 1000 :addresses [:mu :sigma]
+            :metric (mx/array [1.0 0.1])}
+           model args obs)
+</code></pre>
+<hr>
+<h3 id="fused-hmc"><a class="header" href="#fused-hmc"><code>fused-hmc</code></a></h3>
+<pre><code class="language-clojure">(mcmc/fused-hmc opts model args observations)
+</code></pre>
+<p>Fully fused HMC: burn-in and thinned collection in ONE Metal dispatch. Pre-generates all momentum and acceptance noise upfront. Auto-falls back to block-compiled HMC when the chain exceeds Metal graph size limits (estimated from total-steps * leapfrog-steps). Identity mass matrix only for fused chains.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td><code>1000</code></td><td>Number of samples</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>500</code></td><td>Burn-in</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Thinning</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Latent addresses</td></tr>
+<tr><td><code>:step-size</code></td><td>float</td><td><code>0.01</code></td><td>Leapfrog step size</td></tr>
+<tr><td><code>:leapfrog-steps</code></td><td>int</td><td><code>20</code></td><td>Leapfrog steps per proposal</td></tr>
+<tr><td><code>:adapt-step-size</code></td><td>bool</td><td><code>false</code></td><td>Dual averaging adaptation</td></tr>
+<tr><td><code>:target-accept</code></td><td>float</td><td><code>0.65</code></td><td>Target acceptance rate</td></tr>
+<tr><td><code>:warmup-steps</code></td><td>int</td><td><code>200</code></td><td>Adaptive warmup steps</td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:cpu</code></td><td><code>:cpu</code> or <code>:gpu</code></td></tr>
+<tr><td><code>:chain-fn</code></td><td>compiled fn</td><td><code>nil</code></td><td>Reuse compiled chain</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:samples [S,D], :final-params [D], :chain-fn compiled-fn, :acceptance-rate float}</code></p>
+<hr>
+<h3 id="vectorized-hmc"><a class="header" href="#vectorized-hmc"><code>vectorized-hmc</code></a></h3>
+<pre><code class="language-clojure">(mcmc/vectorized-hmc opts model args observations)
+</code></pre>
+<p>N independent HMC chains running in parallel. MLX broadcasting computes leapfrog trajectories for all N chains simultaneously via the sum trick for gradients. Identity mass matrix only.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td>–</td><td>Samples to collect</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>100</code></td><td>Burn-in</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Thinning</td></tr>
+<tr><td><code>:step-size</code></td><td>float</td><td><code>0.01</code></td><td>Leapfrog step size</td></tr>
+<tr><td><code>:leapfrog-steps</code></td><td>int</td><td><code>20</code></td><td>Leapfrog steps per proposal</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Continuous addresses</td></tr>
+<tr><td><code>:n-chains</code></td><td>int</td><td><code>10</code></td><td>Number of parallel chains</td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td><code>(fn [{:iter :value :n-accepted}] ...)</code></td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:gpu</code></td><td>Default <code>:gpu</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Vector of <code>[N-chains, D]</code> JS arrays. Metadata contains <code>{:acceptance-rate mean-rate}</code>.</p>
+<hr>
+<h2 id="nuts--no-u-turn-sampler"><a class="header" href="#nuts--no-u-turn-sampler">NUTS – No-U-Turn Sampler</a></h2>
+<p>NUTS automatically tunes the number of leapfrog steps by building a binary tree of trajectory states until a U-turn is detected. This eliminates the need to hand-tune <code>:leapfrog-steps</code> – the most sensitive HMC parameter. Use NUTS as the default gradient-based sampler when you do not know the optimal trajectory length.</p>
+<h3 id="nuts"><a class="header" href="#nuts"><code>nuts</code></a></h3>
+<pre><code class="language-clojure">(mcmc/nuts opts model args observations)
+</code></pre>
+<p>No-U-Turn Sampler with adaptive step-size and optional mass matrix estimation.</p>
+<p>When <code>:adapt-step-size</code> is true, burn-in uses dual averaging with <code>find-reasonable-epsilon</code> initialization. When <code>:adapt-metric</code> is true, a diagonal mass matrix is estimated from warmup samples via Welford’s algorithm.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>opts</code></td><td>map</td><td>Configuration options</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>choicemap</td><td>Observed values</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Options map:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td>–</td><td>Number of samples</td></tr>
+<tr><td><code>:step-size</code></td><td>float</td><td><code>0.01</code></td><td>Initial leapfrog step size</td></tr>
+<tr><td><code>:max-depth</code></td><td>int</td><td><code>10</code></td><td>Maximum binary tree depth</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>0</code></td><td>Burn-in samples</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Thinning interval</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Continuous addresses to sample</td></tr>
+<tr><td><code>:metric</code></td><td>MLX array</td><td><code>nil</code></td><td>Mass matrix (nil=identity, vector=diagonal, matrix=dense)</td></tr>
+<tr><td><code>:compile?</code></td><td>bool</td><td><code>true</code></td><td>Compile gradient function</td></tr>
+<tr><td><code>:adapt-step-size</code></td><td>bool</td><td><code>false</code></td><td>Dual averaging step-size adaptation</td></tr>
+<tr><td><code>:target-accept</code></td><td>float</td><td><code>0.8</code></td><td>Target acceptance rate</td></tr>
+<tr><td><code>:adapt-metric</code></td><td>bool</td><td><code>false</code></td><td>Adapt diagonal mass matrix during warmup</td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td><code>(fn [{:iter :value}] ...)</code></td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:cpu</code></td><td><code>:cpu</code> or <code>:gpu</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Vector of parameter samples (JS arrays via <code>mx/-&gt;clj</code>).</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; NUTS with full adaptation -- the recommended default
+(mcmc/nuts {:samples 1000 :burn 500
+            :addresses [:mu :log-sigma]
+            :adapt-step-size true
+            :adapt-metric true}
+           model args obs)
+
+;; Manual step-size, deeper tree for complex posteriors
+(mcmc/nuts {:samples 2000 :step-size 0.005 :max-depth 12
+            :addresses [:mu :sigma]}
+           model args obs)
+</code></pre>
+<hr>
+<h2 id="gibbs-sampling"><a class="header" href="#gibbs-sampling">Gibbs Sampling</a></h2>
+<p>Gibbs sampling sweeps through discrete addresses one at a time, sampling each from its full conditional distribution via explicit support enumeration. Use Gibbs for models with discrete latent variables that have known finite support.</p>
+<h3 id="gibbs-step-with-support"><a class="header" href="#gibbs-step-with-support"><code>gibbs-step-with-support</code></a></h3>
+<pre><code class="language-clojure">(mcmc/gibbs-step-with-support current-trace addr support-values key)
+</code></pre>
+<p>Single Gibbs step: enumerate all support values for the given address, compute the conditional log-probabilities via model <code>update</code>, normalize, and sample one.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>current-trace</code></td><td>Trace</td><td>Current model trace</td></tr>
+<tr><td><code>addr</code></td><td>keyword</td><td>Address to resample</td></tr>
+<tr><td><code>support-values</code></td><td>vector</td><td>All possible values for the address</td></tr>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A new <code>Trace</code> with the resampled address.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Resample a discrete cluster assignment
+(mcmc/gibbs-step-with-support trace :z [0 1 2] key)
+</code></pre>
+<hr>
+<h3 id="gibbs"><a class="header" href="#gibbs"><code>gibbs</code></a></h3>
+<pre><code class="language-clojure">(mcmc/gibbs opts model args observations schedule)
+</code></pre>
+<p>Systematic Gibbs sampling over discrete addresses. Each iteration sweeps through all addresses in the schedule, resampling each from its full conditional.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>opts</code></td><td>map</td><td>Configuration options</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>choicemap</td><td>Observed values</td></tr>
+<tr><td><code>schedule</code></td><td>vector</td><td>Sweep specification</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Options map:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td>–</td><td>Number of samples</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>0</code></td><td>Burn-in</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Thinning</td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td>Iteration callback</td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Schedule format:</strong> Vector of <code>{:addr keyword, :support [values...]}</code> maps specifying which addresses to sweep and their finite support.</p>
+<p><strong>Returns:</strong> Vector of <code>Trace</code> records.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Mixture model with 3 components
+(mcmc/gibbs {:samples 1000 :burn 200}
+             model args obs
+             [{:addr :z0 :support [0 1 2]}
+              {:addr :z1 :support [0 1 2]}
+              {:addr :z2 :support [0 1 2]}])
+</code></pre>
+<hr>
+<h2 id="elliptical-slice-sampling"><a class="header" href="#elliptical-slice-sampling">Elliptical Slice Sampling</a></h2>
+<p>Elliptical slice sampling (Murray, Adams, and MacKay 2010) is designed for models with Gaussian priors. It requires no tuning parameters and always accepts – making it ideal for Gaussian process models and other settings with multivariate Gaussian priors.</p>
+<p>The algorithm proposes along an ellipse defined by the current state and a draw from the prior, then shrinks a bracket until the log-likelihood threshold is exceeded.</p>
+<h3 id="elliptical-slice-step"><a class="header" href="#elliptical-slice-step"><code>elliptical-slice-step</code></a></h3>
+<pre><code class="language-clojure">(mcmc/elliptical-slice-step current-trace selection prior-std key)
+</code></pre>
+<p>Single elliptical slice sampling step.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>current-trace</code></td><td>Trace</td><td>Current model trace</td></tr>
+<tr><td><code>selection</code></td><td>vector of keywords</td><td>Addresses with Gaussian prior to resample</td></tr>
+<tr><td><code>prior-std</code></td><td>float</td><td>Standard deviation of the Gaussian prior N(0, prior-std^2 * I)</td></tr>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A new <code>Trace</code> (always accepts – no MH rejection).</p>
+<hr>
+<h3 id="elliptical-slice"><a class="header" href="#elliptical-slice"><code>elliptical-slice</code></a></h3>
+<pre><code class="language-clojure">(mcmc/elliptical-slice opts model args observations)
+</code></pre>
+<p>Full elliptical slice sampling chain.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>opts</code></td><td>map</td><td>Configuration options</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>choicemap</td><td>Observed values</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Options map:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td>–</td><td>Number of samples</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>0</code></td><td>Burn-in</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Thinning</td></tr>
+<tr><td><code>:selection</code></td><td>vector</td><td>–</td><td>Addresses with Gaussian prior</td></tr>
+<tr><td><code>:prior-std</code></td><td>float</td><td><code>1.0</code></td><td>Prior standard deviation</td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Vector of <code>Trace</code> records.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Gaussian process regression -- sample function values
+(mcmc/elliptical-slice {:samples 500 :burn 100
+                         :selection [:f0 :f1 :f2 :f3]
+                         :prior-std 2.0}
+                        gp-model args obs)
+</code></pre>
+<hr>
+<h2 id="involutive-mcmc"><a class="header" href="#involutive-mcmc">Involutive MCMC</a></h2>
+<p>Involutive MCMC (Cusumano-Towner et al. 2019) generalizes MH by introducing auxiliary random variables and a deterministic involution that maps <code>(trace, aux) -&gt; (trace', aux')</code>. The involution must be its own inverse. This framework subsumes many MCMC kernels as special cases, including reversible-jump MCMC for trans-dimensional models.</p>
+<h3 id="involutive-mh-step"><a class="header" href="#involutive-mh-step"><code>involutive-mh-step</code></a></h3>
+<pre><code class="language-clojure">(mcmc/involutive-mh-step current-trace model proposal-gf involution key)
+</code></pre>
+<p>Single involutive MH step.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>current-trace</code></td><td>Trace</td><td>Current model trace</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>proposal-gf</code></td><td>generative function</td><td>Proposal for auxiliary variables (takes <code>[current-choices]</code>)</td></tr>
+<tr><td><code>involution</code></td><td>function</td><td><code>(fn [trace-cm aux-cm] -&gt; [new-trace-cm new-aux-cm])</code> or 3-element vector with log</td></tr>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p>The involution may return a 2-element vector <code>[new-trace-cm new-aux-cm]</code> or a 3-element vector <code>[new-trace-cm new-aux-cm log-abs-det-J]</code> to include a Jacobian correction.</p>
+<p><strong>Returns:</strong> A <code>Trace</code> – either the new trace (accepted) or the original (rejected).</p>
+<hr>
+<h3 id="involutive-mh"><a class="header" href="#involutive-mh"><code>involutive-mh</code></a></h3>
+<pre><code class="language-clojure">(mcmc/involutive-mh opts model args observations)
+</code></pre>
+<p>Full involutive MCMC chain.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>opts</code></td><td>map</td><td>Configuration options</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>choicemap</td><td>Observed values</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Options map:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:samples</code></td><td>int</td><td>–</td><td>Number of samples</td></tr>
+<tr><td><code>:burn</code></td><td>int</td><td><code>0</code></td><td>Burn-in</td></tr>
+<tr><td><code>:thin</code></td><td>int</td><td><code>1</code></td><td>Thinning</td></tr>
+<tr><td><code>:proposal-gf</code></td><td>generative function</td><td>–</td><td>Proposal for auxiliary variables</td></tr>
+<tr><td><code>:involution</code></td><td>function</td><td>–</td><td><code>(fn [trace-cm aux-cm] -&gt; [trace-cm' aux-cm'])</code></td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td>Iteration callback</td></tr>
+<tr><td><code>:key</code></td><td>MLX array</td><td>random</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Vector of <code>Trace</code> records.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Birth-death move for variable-dimensional model
+(def birth-death-proposal
+  (gen [current-choices]
+    (trace :move-type (dist/bernoulli 0.5))
+    (trace :new-value (dist/gaussian 0 1))))
+
+(defn birth-death-involution [trace-cm aux-cm]
+  (let [move (cm/get-value aux-cm :move-type)]
+    (if (pos? (mx/item move))
+      ;; Birth: add a component
+      [(cm/set-choice trace-cm [:new-comp] (cm/get-value aux-cm :new-value))
+       (cm/choicemap :move-type (mx/scalar 0)
+                     :new-value (cm/get-value trace-cm :new-comp))]
+      ;; Death: remove a component
+      [(cm/remove-choice trace-cm :new-comp)
+       (cm/choicemap :move-type (mx/scalar 1)
+                     :new-value (cm/get-value trace-cm :new-comp))])))
+
+(mcmc/involutive-mh {:samples 500 :burn 200
+                      :proposal-gf birth-death-proposal
+                      :involution birth-death-involution}
+                     model args obs)
+</code></pre>
+<hr>
+<h2 id="map-optimization"><a class="header" href="#map-optimization">MAP Optimization</a></h2>
+<p>MAP finds the maximum a posteriori estimate by gradient ascent on log p(latents | observations). This is point estimation, not sampling – useful as initialization for MCMC or when a single best estimate is needed.</p>
+<h3 id="map-optimize"><a class="header" href="#map-optimize"><code>map-optimize</code></a></h3>
+<pre><code class="language-clojure">(mcmc/map-optimize opts model args observations)
+</code></pre>
+<p>MAP optimization via gradient ascent on the joint log-density.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>opts</code></td><td>map</td><td>Configuration options</td></tr>
+<tr><td><code>model</code></td><td>generative function</td><td>Target model</td></tr>
+<tr><td><code>args</code></td><td>vector</td><td>Model arguments</td></tr>
+<tr><td><code>observations</code></td><td>choicemap</td><td>Observed values</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Options map:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:iterations</code></td><td>int</td><td><code>1000</code></td><td>Number of gradient steps</td></tr>
+<tr><td><code>:optimizer</code></td><td>keyword</td><td><code>:adam</code></td><td><code>:sgd</code> or <code>:adam</code></td></tr>
+<tr><td><code>:lr</code></td><td>float</td><td><code>0.01</code></td><td>Learning rate</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Latent addresses to optimize</td></tr>
+<tr><td><code>:compile?</code></td><td>bool</td><td><code>true</code></td><td>Compile val-grad function</td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td><code>(fn [{:iter :score :params}] ...)</code></td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:cpu</code></td><td><code>:cpu</code> or <code>:gpu</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:trace Trace, :score number, :params [numbers], :score-history [numbers]}</code></p>
+<ul>
+<li><code>:trace</code> – final model trace at the MAP estimate</li>
+<li><code>:score</code> – log-density at the MAP estimate</li>
+<li><code>:params</code> – optimized parameter values</li>
+<li><code>:score-history</code> – log-density at each iteration</li>
+</ul>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [result (mcmc/map-optimize {:iterations 500 :lr 0.01
+                                  :addresses [:slope :intercept]}
+                                 model [xs] obs)]
+  (println "MAP score:" (:score result))
+  (println "MAP params:" (:params result))
+  ;; Use MAP trace as MCMC initialization
+  (:trace result))
+</code></pre>
+<hr>
+<h3 id="vectorized-map-optimize"><a class="header" href="#vectorized-map-optimize"><code>vectorized-map-optimize</code></a></h3>
+<pre><code class="language-clojure">(mcmc/vectorized-map-optimize opts model args observations)
+</code></pre>
+<p>Vectorized MAP: N random restarts optimized simultaneously. All N parameter vectors are updated in parallel via the sum trick for gradients. After optimization, returns the best restart (highest score).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:iterations</code></td><td>int</td><td><code>1000</code></td><td>Gradient steps</td></tr>
+<tr><td><code>:optimizer</code></td><td>keyword</td><td><code>:adam</code></td><td><code>:sgd</code> or <code>:adam</code></td></tr>
+<tr><td><code>:lr</code></td><td>float</td><td><code>0.01</code></td><td>Learning rate</td></tr>
+<tr><td><code>:addresses</code></td><td>vector</td><td>–</td><td>Latent addresses</td></tr>
+<tr><td><code>:n-restarts</code></td><td>int</td><td><code>10</code></td><td>Number of parallel random restarts</td></tr>
+<tr><td><code>:callback</code></td><td>fn</td><td><code>nil</code></td><td><code>(fn [{:iter :best-score :scores}] ...)</code></td></tr>
+<tr><td><code>:device</code></td><td>keyword</td><td><code>:gpu</code></td><td>Default <code>:gpu</code> for vectorized ops</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:trace Trace, :score number, :params [best], :all-params [N,D], :all-scores [N], :score-history [best-per-iter]}</code></p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Multi-modal posterior -- use 20 random restarts
+(let [result (mcmc/vectorized-map-optimize
+               {:iterations 1000 :n-restarts 20
+                :addresses [:mu :sigma]}
+               model args obs)]
+  (println "Best score:" (:score result))
+  (println "Best params:" (:params result))
+  (println "All scores:" (:all-scores result)))
+</code></pre>
+<hr>
+<h2 id="utilities"><a class="header" href="#utilities">Utilities</a></h2>
+<h3 id="fused-chain-graph-limits"><a class="header" href="#fused-chain-graph-limits">Fused chain graph limits</a></h3>
+<p>GenMLX automatically estimates whether a chain can be compiled into a single Metal dispatch based on the method type and total step count. When the estimated graph size exceeds safe limits, fused functions (<code>fused-mh</code>, <code>fused-mala</code>, <code>fused-hmc</code>) fall back to block-compiled paths transparently.</p>
+<p>Empirical limits (conservative, leaving headroom below measured failure points):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Method</th><th>GFI score</th><th>Tensor-native score</th></tr>
+</thead>
+<tbody>
+<tr><td>MH</td><td>2,500 steps</td><td>80,000 steps</td></tr>
+<tr><td>MALA</td><td>1,500 steps</td><td>50,000 steps</td></tr>
+<tr><td>HMC</td><td>8,000 steps</td><td>200,000 steps</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="step-size-adaptation"><a class="header" href="#step-size-adaptation">Step-size adaptation</a></h3>
+<p>All gradient-based methods (MALA, HMC, NUTS) support automatic step-size tuning via dual averaging (Hoffman and Gelman 2014, Algorithm 5). Enable with <code>:adapt-step-size true</code>. The algorithm:</p>
+<ol>
+<li>Initializes epsilon via <code>find-reasonable-epsilon</code> (doubling/halving until ~50% acceptance)</li>
+<li>Runs warmup steps, adjusting epsilon toward the target acceptance rate</li>
+<li>Uses the averaged step-size for the sampling phase</li>
+</ol>
+<p>Recommended target acceptance rates (defaults):</p>
+<ul>
+<li><strong>MALA:</strong> 0.574</li>
+<li><strong>HMC:</strong> 0.65</li>
+<li><strong>NUTS:</strong> 0.8</li>
+</ul>
+<h3 id="mass-matrix-adaptation"><a class="header" href="#mass-matrix-adaptation">Mass matrix adaptation</a></h3>
+<p>HMC and NUTS support diagonal mass matrix estimation via Welford’s online algorithm. Enable with <code>:adapt-metric true</code>. The mass matrix M is set to 1/Var(q) so that parameters with larger posterior variance receive proportionally larger position updates in leapfrog integration. Requires at least 10 warmup samples before the metric estimate is used.</p>
+<h3 id="device-selection"><a class="header" href="#device-selection">Device selection</a></h3>
+<p>Scalar MCMC methods default to <code>:cpu</code> (faster for single-chain, low-dimensional inference). Vectorized methods default to <code>:gpu</code> (parallelism benefits from Metal acceleration). Override with <code>:device :cpu</code> or <code>:device :gpu</code> in the options map.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="inference.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="smc.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="inference.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="smc.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

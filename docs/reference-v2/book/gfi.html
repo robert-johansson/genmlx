@@ -1,0 +1,1193 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>GFI Protocols - GenMLX API Reference</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="theme/custom-070636da.css">
+
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-bf8e1655.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-fc2a8a04.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">GenMLX API Reference</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/probcomp/genmlx" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="gfi-protocols"><a class="header" href="#gfi-protocols">GFI Protocols</a></h1>
+<p>The <strong>Generative Function Interface (GFI)</strong> is the core abstraction of GenMLX. Every generative function – whether built with <code>gen</code>, a combinator, or <code>nn-&gt;gen-fn</code> – implements these protocols. The GFI defines six core operations (simulate, generate, assess, update, regenerate, project) plus three extension protocols (edit, batched splice, argument gradients, update with diffs).</p>
+<p>Source: <code>src/genmlx/protocols.cljs</code></p>
+<hr>
+<h2 id="gfi-protocols-1"><a class="header" href="#gfi-protocols-1">GFI Protocols</a></h2>
+<p>The protocol definitions live in <code>genmlx.protocols</code>. In code, they are accessed via the <code>p/</code> alias:</p>
+<pre><code class="language-clojure">(require '[genmlx.protocols :as p])
+</code></pre>
+<h3 id="simulate"><a class="header" href="#simulate"><code>simulate</code></a></h3>
+<pre><code class="language-clojure">(p/simulate gf args)
+</code></pre>
+<p>Forward-sample all random choices from their prior distributions. No observations are provided – every <code>trace</code> site in the model body samples freely. The joint log-probability of all sampled choices is accumulated in the trace’s <code>:score</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model to execute</td></tr>
+<tr><td><code>args</code></td><td>Vector</td><td>Arguments passed to the model body</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A <a href="trace.html"><code>Trace</code></a> record with <code>{:gen-fn :args :choices :retval :score}</code>.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def model
+  (gen [x]
+    (let [slope (trace :slope (dist/gaussian 0 10))]
+      (trace :y (dist/gaussian (mx/multiply slope x) 1))
+      slope)))
+
+(let [tr (p/simulate model [(mx/scalar 2.0)])]
+  (println "slope:" (mx/item (cm/get-value (:choices tr) :slope)))
+  (println "score:" (mx/item (:score tr))))
+</code></pre>
+<hr>
+<h3 id="generate"><a class="header" href="#generate"><code>generate</code></a></h3>
+<pre><code class="language-clojure">(p/generate gf args constraints)
+</code></pre>
+<p>Execute the model with some choices constrained to observed values. Unconstrained choices are sampled from the prior. Returns a trace and an importance weight.</p>
+<p>The weight is \(\log p(\text{constraints} \mid \text{args})\) – specifically, the sum of log-probabilities at constrained addresses. For a fully constrained model, this equals the joint log-probability.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model to execute</td></tr>
+<tr><td><code>args</code></td><td>Vector</td><td>Arguments passed to the model body</td></tr>
+<tr><td><code>constraints</code></td><td><a href="choicemap.html">ChoiceMap</a></td><td>Observed values at specific addresses</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:trace Trace, :weight MLX-scalar}</code></p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [obs (cm/choicemap {:y (mx/scalar 3.5)})
+      {:keys [trace weight]} (p/generate model [(mx/scalar 2.0)] obs)]
+  (println "sampled slope:" (mx/item (cm/get-value (:choices trace) :slope)))
+  (println "log-weight:" (mx/item weight)))
+</code></pre>
+<hr>
+<h3 id="assess"><a class="header" href="#assess"><code>assess</code></a></h3>
+<pre><code class="language-clojure">(p/assess gf args choices)
+</code></pre>
+<p>Score fully-specified choices without any sampling. Every address visited by the model body must be present in the choice map. Throws an error if any address is missing.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model</td></tr>
+<tr><td><code>args</code></td><td>Vector</td><td>Model arguments</td></tr>
+<tr><td><code>choices</code></td><td><a href="choicemap.html">ChoiceMap</a></td><td>Complete choice map (all addresses)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:retval any, :weight MLX-scalar}</code> where <code>:weight</code> is \(\log p(\text{choices} \mid \text{args})\).</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [choices (cm/choicemap {:slope (mx/scalar 1.5) :y (mx/scalar 4.0)})
+      {:keys [weight]} (p/assess model [(mx/scalar 2.0)] choices)]
+  (println "log-joint:" (mx/item weight)))
+</code></pre>
+<hr>
+<h3 id="update"><a class="header" href="#update"><code>update</code></a></h3>
+<pre><code class="language-clojure">(p/update gf trace constraints)
+</code></pre>
+<p>Update an existing trace with new constraints. At each address:</p>
+<ul>
+<li>If a new constraint is provided, use it (the old value goes to the discard).</li>
+<li>If no new constraint and the address existed before, keep the old value.</li>
+<li>If the address is entirely new, sample from the prior.</li>
+</ul>
+<p>Returns the updated trace, an incremental weight, and the discarded old values.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model</td></tr>
+<tr><td><code>trace</code></td><td><a href="trace.html">Trace</a></td><td>Previous execution trace</td></tr>
+<tr><td><code>constraints</code></td><td><a href="choicemap.html">ChoiceMap</a></td><td>New constraints to apply</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:trace Trace, :weight MLX-scalar, :discard ChoiceMap}</code></p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [tr (p/simulate model [(mx/scalar 2.0)])
+      new-obs (cm/choicemap {:slope (mx/scalar 0.5)})
+      {:keys [trace weight discard]} (p/update model tr new-obs)]
+  (println "new slope:" (mx/item (cm/get-value (:choices trace) :slope)))
+  (println "incremental weight:" (mx/item weight))
+  (println "old slope:" (mx/item (cm/get-value discard :slope))))
+</code></pre>
+<hr>
+<h3 id="regenerate"><a class="header" href="#regenerate"><code>regenerate</code></a></h3>
+<pre><code class="language-clojure">(p/regenerate gf trace selection)
+</code></pre>
+<p>Resample the selected addresses from the prior while keeping unselected choices fixed. The weight is the MH acceptance ratio:</p>
+<p>\[
+w = \log p_{\text{new}}(\text{all choices}) - \log p_{\text{old}}(\text{all choices}) - \log q(\text{new selected} \mid \text{new unselected})
+\]</p>
+<p>Used as the default proposal in Metropolis-Hastings inference.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model</td></tr>
+<tr><td><code>trace</code></td><td><a href="trace.html">Trace</a></td><td>Previous execution trace</td></tr>
+<tr><td><code>selection</code></td><td><a href="selection.html">Selection</a></td><td>Addresses to resample</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:trace Trace, :weight MLX-scalar}</code></p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [tr (p/simulate model [(mx/scalar 2.0)])
+      sel (sel/select :slope)
+      {:keys [trace weight]} (p/regenerate model tr sel)]
+  (println "resampled slope:" (mx/item (cm/get-value (:choices trace) :slope)))
+  (println "MH weight:" (mx/item weight)))
+</code></pre>
+<hr>
+<h3 id="propose"><a class="header" href="#propose"><code>propose</code></a></h3>
+<pre><code class="language-clojure">(p/propose gf args)
+</code></pre>
+<p>Forward-sample all choices and return them as a choice map together with their joint log-probability. No observations are involved. This is used for proposal distributions in inference algorithms like SMCP3.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The proposal model</td></tr>
+<tr><td><code>args</code></td><td>Vector</td><td>Arguments passed to the model body</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:choices ChoiceMap, :weight MLX-scalar, :retval any}</code></p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [{:keys [choices weight]} (p/propose model [(mx/scalar 2.0)])]
+  (println "proposed slope:" (mx/item (cm/get-value choices :slope)))
+  (println "log-joint:" (mx/item weight)))
+</code></pre>
+<hr>
+<h3 id="project"><a class="header" href="#project"><code>project</code></a></h3>
+<pre><code class="language-clojure">(p/project gf trace selection)
+</code></pre>
+<p>Compute the log-probability of the selected choices within a trace, without resampling anything. Replays all values from the existing trace and accumulates log-probabilities only at selected addresses.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model</td></tr>
+<tr><td><code>trace</code></td><td><a href="trace.html">Trace</a></td><td>Execution trace to evaluate</td></tr>
+<tr><td><code>selection</code></td><td><a href="selection.html">Selection</a></td><td>Addresses to compute log-prob for</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX scalar – the log-probability of the selected choices.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [tr (p/simulate model [(mx/scalar 2.0)])
+      sel (sel/select :slope)
+      log-prob (p/project model tr sel)]
+  (println "log p(slope):" (mx/item log-prob)))
+</code></pre>
+<hr>
+<h3 id="edit"><a class="header" href="#edit"><code>edit</code></a></h3>
+<pre><code class="language-clojure">(p/edit gf trace edit-request)
+</code></pre>
+<p>Apply a parametric edit request to a trace. This generalizes <code>update</code>, <code>regenerate</code>, and proposal-based trace modifications into a single interface. The backward request in the return value enables automatic computation of acceptance weights for reversible kernels – the foundation of SMCP3.</p>
+<p>Source: <code>src/genmlx/edit.cljs</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model</td></tr>
+<tr><td><code>trace</code></td><td><a href="trace.html">Trace</a></td><td>Previous execution trace</td></tr>
+<tr><td><code>edit-request</code></td><td><code>EditRequest</code></td><td>One of <code>ConstraintEdit</code>, <code>SelectionEdit</code>, or <code>ProposalEdit</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:trace Trace, :weight MLX-scalar, :discard ChoiceMap, :backward-request EditRequest}</code></p>
+<p>There are three edit request types:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Type</th><th>Constructor</th><th>Equivalent to</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ConstraintEdit</code></td><td><code>(constraint-edit constraints)</code></td><td><code>update</code> – change observed values</td></tr>
+<tr><td><code>SelectionEdit</code></td><td><code>(selection-edit selection)</code></td><td><code>regenerate</code> – resample selected addresses</td></tr>
+<tr><td><code>ProposalEdit</code></td><td><code>(proposal-edit fwd-gf bwd-gf)</code></td><td>Reversible kernel for SMCP3-style proposals</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(require '[genmlx.edit :as edit])
+
+;; Constraint edit (equivalent to update)
+(let [tr (p/simulate model [(mx/scalar 2.0)])
+      req (edit/constraint-edit (cm/choicemap {:slope (mx/scalar 1.0)}))
+      {:keys [trace weight backward-request]} (p/edit model tr req)]
+  (println "new slope:" (mx/item (cm/get-value (:choices trace) :slope)))
+  ;; backward-request is a ConstraintEdit with the old discarded values
+  (println "backward type:" (type backward-request)))
+</code></pre>
+<hr>
+<h3 id="update-with-diffs"><a class="header" href="#update-with-diffs"><code>update-with-diffs</code></a></h3>
+<pre><code class="language-clojure">(p/update-with-diffs gf trace constraints argdiffs)
+</code></pre>
+<p>Like <code>update</code> but with change hints (diffs) describing which arguments changed. This enables combinators to skip unchanged sub-computations during incremental re-execution. When arguments have not changed and constraints are empty, returns the original trace with zero weight.</p>
+<p>Source: <code>src/genmlx/protocols.cljs</code> (protocol), <code>src/genmlx/dynamic.cljs</code> (implementation)</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model</td></tr>
+<tr><td><code>trace</code></td><td><a href="trace.html">Trace</a></td><td>Previous execution trace</td></tr>
+<tr><td><code>constraints</code></td><td><a href="choicemap.html">ChoiceMap</a></td><td>New constraints to apply</td></tr>
+<tr><td><code>argdiffs</code></td><td>Diff</td><td>Change hints from <code>genmlx.diff</code> describing which args changed</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:trace Trace, :weight MLX-scalar, :discard ChoiceMap}</code></p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(require '[genmlx.diff :as diff])
+
+;; No changes -- fast path returns original trace
+(let [tr (p/simulate model [(mx/scalar 2.0)])
+      {:keys [trace weight]} (p/update-with-diffs model tr cm/EMPTY (diff/no-change))]
+  (println "same trace?:" (= (:choices trace) (:choices tr)))
+  (println "weight:" (mx/item weight)))
+;; =&gt; same trace?: true, weight: 0.0
+</code></pre>
+<hr>
+<h3 id="has-argument-grads"><a class="header" href="#has-argument-grads"><code>has-argument-grads</code></a></h3>
+<pre><code class="language-clojure">(p/has-argument-grads gf)
+</code></pre>
+<p>Returns a vector of booleans indicating which argument positions are differentiable, or <code>nil</code> if unknown. Used by gradient-based inference algorithms to determine which arguments can be differentiated through.</p>
+<p>DynamicGF returns <code>nil</code> (unknown). Custom generative functions and neural network gen-fns may return specific vectors.</p>
+<p>Source: <code>src/genmlx/protocols.cljs</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The generative function to query</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Vector of booleans (e.g. <code>[true false true]</code>) or <code>nil</code>.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(p/has-argument-grads model)
+;; =&gt; nil  (DynamicGF does not declare argument differentiability)
+</code></pre>
+<hr>
+<h3 id="batched-splice"><a class="header" href="#batched-splice"><code>batched-splice</code></a></h3>
+<pre><code class="language-clojure">(p/batched-splice gf state addr args)
+</code></pre>
+<p>Execute a combinator in batched mode within a parent handler. This protocol is used during vectorized execution when a parent gen-fn splices into a sub-generative-function. Combinators that implement this protocol can run natively in batched mode without falling back to per-particle scalar execution.</p>
+<p>Source: <code>src/genmlx/protocols.cljs</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The combinator being spliced into</td></tr>
+<tr><td><code>state</code></td><td>Map</td><td>Parent handler state (with <code>:batched? true</code>, <code>:batch-size N</code>)</td></tr>
+<tr><td><code>addr</code></td><td>Keyword</td><td>The splice address in the parent</td></tr>
+<tr><td><code>args</code></td><td>Vector</td><td>Arguments to this combinator</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>[state' retval]</code> – updated parent handler state and the return value.</p>
+<hr>
+<h2 id="gen-macro"><a class="header" href="#gen-macro">gen Macro</a></h2>
+<p>Source: <code>src/genmlx/gen.cljc</code></p>
+<h3 id="gen"><a class="header" href="#gen"><code>gen</code></a></h3>
+<pre><code class="language-clojure">(gen [params ...] body ...)
+</code></pre>
+<p>Define a generative function. The <code>gen</code> macro transforms a function body into a <code>DynamicGF</code> that implements the full GFI. Inside the body, three local bindings are available:</p>
+<ul>
+<li><strong><code>trace</code></strong> – sample from (or constrain to) a distribution at an address</li>
+<li><strong><code>splice</code></strong> – call a sub-generative-function at a namespaced address</li>
+<li><strong><code>param</code></strong> – declare or read a trainable parameter</li>
+</ul>
+<p>The return value of the body becomes the trace’s <code>:retval</code>.</p>
+<p>The macro injects a hidden runtime parameter as the first argument and binds <code>trace</code>, <code>splice</code>, <code>param</code> as local names from the runtime object. Because these are local bindings (not namespace-qualified calls), they work naturally with all Clojure constructs: <code>map</code>, <code>for</code>, higher-order functions, closures.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>params</code></td><td>Vector</td><td>Parameter list for the model (like <code>defn</code>)</td></tr>
+<tr><td><code>body</code></td><td>Forms</td><td>Model body with <code>trace</code>, <code>splice</code>, <code>param</code> calls</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A <code>DynamicGF</code> record implementing the full GFI.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def linear-model
+  (gen [xs]
+    (let [slope     (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 10))]
+      (doseq [[j x] (map-indexed vector xs)]
+        (trace (keyword (str "y" j))
+               (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                      intercept) 1)))
+      slope)))
+</code></pre>
+<h3 id="inside-gen-bodies"><a class="header" href="#inside-gen-bodies">Inside <code>gen</code> bodies</a></h3>
+<h4 id="trace"><a class="header" href="#trace"><code>trace</code></a></h4>
+<pre><code class="language-clojure">(trace addr dist)
+</code></pre>
+<p>Sample from (or constrain to) a distribution at the given address. The behavior depends on which handler is active:</p>
+<ul>
+<li><strong>simulate:</strong> sample from the prior</li>
+<li><strong>generate:</strong> use the constrained value if present, otherwise sample</li>
+<li><strong>update:</strong> apply new constraint, keep old value, or sample fresh</li>
+<li><strong>regenerate:</strong> resample if selected, keep old value otherwise</li>
+<li><strong>assess:</strong> use the constrained value (error if missing)</li>
+</ul>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>addr</code></td><td>Keyword</td><td>Address for this random choice (e.g. <code>:slope</code>)</td></tr>
+<tr><td><code>dist</code></td><td>Distribution</td><td>Distribution to sample from</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> The sampled (or constrained) value as an MLX array.</p>
+<h4 id="splice"><a class="header" href="#splice"><code>splice</code></a></h4>
+<pre><code class="language-clojure">(splice addr gf &amp; args)
+</code></pre>
+<p>Call a sub-generative-function at the given address. The sub-function’s choices are nested under <code>addr</code> in the trace’s choice map. This is how models compose hierarchically.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>addr</code></td><td>Keyword</td><td>Namespace address for the sub-call</td></tr>
+<tr><td><code>gf</code></td><td>Generative function</td><td>Sub-model to invoke</td></tr>
+<tr><td><code>args</code></td><td>Any</td><td>Arguments passed to the sub-model</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> The sub-model’s return value.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def sub-model
+  (gen [mu]
+    (trace :x (dist/gaussian mu 1))))
+
+(def parent-model
+  (gen []
+    (let [mu (trace :mu (dist/gaussian 0 10))]
+      (splice :sub sub-model mu))))
+
+;; Choices: {:mu 1.2, :sub {:x 0.8}}
+</code></pre>
+<h4 id="param"><a class="header" href="#param"><code>param</code></a></h4>
+<pre><code class="language-clojure">(param name default-value)
+</code></pre>
+<p>Declare or read a trainable parameter. If a parameter store is bound (during learning), reads from it; otherwise returns the default value as an MLX array. Used for learnable model parameters in variational inference and amortized inference.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>name</code></td><td>Keyword</td><td>Parameter name</td></tr>
+<tr><td><code>default-value</code></td><td>Number or MLX array</td><td>Default value when no param store is bound</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> The parameter value as an MLX array.</p>
+<hr>
+<h2 id="dynamic-dsl"><a class="header" href="#dynamic-dsl">Dynamic DSL</a></h2>
+<p>Source: <code>src/genmlx/dynamic.cljs</code></p>
+<p>The <code>DynamicGF</code> record is the concrete type returned by the <code>gen</code> macro. It holds the body function, the source form, and the extracted schema. All GFI protocol implementations live on this record.</p>
+<h3 id="make-gen-fn"><a class="header" href="#make-gen-fn"><code>make-gen-fn</code></a></h3>
+<pre><code class="language-clojure">(dyn/make-gen-fn body-fn source)
+</code></pre>
+<p>Create a <code>DynamicGF</code> from a body function and its quoted source form. This is the function the <code>gen</code> macro expands into. It extracts the schema from the source form and attempts Level 1 compilation for eligible models:</p>
+<ul>
+<li>Static models get full compiled paths (L1-M2).</li>
+<li>Branch models get branch-rewritten paths (L1-M4).</li>
+<li>Other models get compiled prefix paths (L1-M3).</li>
+</ul>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>body-fn</code></td><td>Function</td><td>The transformed model body (with runtime parameter)</td></tr>
+<tr><td><code>source</code></td><td>List</td><td>Quoted source form <code>(params &amp; body)</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A <code>DynamicGF</code> record.</p>
+<hr>
+<h3 id="with-key"><a class="header" href="#with-key"><code>with-key</code></a></h3>
+<pre><code class="language-clojure">(dyn/with-key gf key)
+</code></pre>
+<p>Return a copy of the generative function with a specific PRNG key attached as metadata. The key is consumed by GFI methods for reproducible execution. Inference entry points manage keys automatically; use <code>with-key</code> when calling GFI methods directly and you need reproducibility.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The gen-fn to attach a key to</td></tr>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key from <code>rng/key</code> or <code>rng/split</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> The same gen-fn with the key stored as metadata.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(require '[genmlx.mlx.random :as rng])
+
+(let [k (rng/key 42)
+      model-k (dyn/with-key model k)
+      tr1 (p/simulate model-k [(mx/scalar 1.0)])
+      tr2 (p/simulate model-k [(mx/scalar 1.0)])]
+  ;; Same key =&gt; same trace
+  (= (:choices tr1) (:choices tr2)))
+;; =&gt; true
+</code></pre>
+<hr>
+<h3 id="auto-key"><a class="header" href="#auto-key"><code>auto-key</code></a></h3>
+<pre><code class="language-clojure">(dyn/auto-key gf)
+</code></pre>
+<p>Mark a generative function to auto-generate fresh PRNG keys for each GFI call. Each call to <code>simulate</code>, <code>generate</code>, etc. gets a fresh key, so repeated calls produce different results. For REPL use, tests, and interactive exploration. Inference entry points manage keys automatically.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The gen-fn to mark</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> The same gen-fn with an auto-key sentinel as metadata.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [m (dyn/auto-key model)
+      tr1 (p/simulate m [(mx/scalar 1.0)])
+      tr2 (p/simulate m [(mx/scalar 1.0)])]
+  ;; Different keys =&gt; different traces
+  (not= (:choices tr1) (:choices tr2)))
+;; =&gt; true
+</code></pre>
+<hr>
+<h3 id="call"><a class="header" href="#call"><code>call</code></a></h3>
+<pre><code class="language-clojure">(dyn/call gf &amp; args)
+</code></pre>
+<p>Call a generative function as a regular function: simulate and return the value. Auto-keys the gen-fn for convenience so you do not need to manage PRNG keys.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model to call</td></tr>
+<tr><td><code>args</code></td><td>Any</td><td>Arguments passed to the model body</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> The model’s return value (<code>:retval</code> from the trace).</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [slope (dyn/call model (mx/scalar 2.0))]
+  (println "slope:" (mx/item slope)))
+</code></pre>
+<hr>
+<h3 id="vsimulate"><a class="header" href="#vsimulate"><code>vsimulate</code></a></h3>
+<pre><code class="language-clojure">(dyn/vsimulate gf args n key)
+</code></pre>
+<p>Run the model body <strong>once</strong> with a batched handler that samples <code>[n]</code>-shaped arrays at each trace site. All downstream arithmetic (log-prob, score accumulation) broadcasts naturally via MLX. Returns a <code>VectorizedTrace</code> where every field has an <code>[n]</code> batch dimension.</p>
+<p>No <code>splice</code> is supported in shape-based batched mode. Use <code>vmap-gf</code> for models with splice.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>DynamicGF</td><td>The model (must be a DynamicGF)</td></tr>
+<tr><td><code>args</code></td><td>Vector</td><td>Model arguments</td></tr>
+<tr><td><code>n</code></td><td>Integer</td><td>Number of particles</td></tr>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>VectorizedTrace</code></p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [k (rng/key 0)
+      vtr (dyn/vsimulate model [(mx/scalar 2.0)] 1000 k)]
+  (println "particles:" (:n-particles vtr))
+  (println "score shape:" (mx/shape (:score vtr))))
+;; =&gt; particles: 1000
+;; =&gt; score shape: [1000]
+</code></pre>
+<hr>
+<h3 id="vgenerate"><a class="header" href="#vgenerate"><code>vgenerate</code></a></h3>
+<pre><code class="language-clojure">(dyn/vgenerate gf args constraints n key)
+</code></pre>
+<p>Batched <code>generate</code>. Constrained sites use the scalar observation (broadcast to all particles via MLX broadcasting); unconstrained sites sample <code>[n]</code> independent values. Returns a <code>VectorizedTrace</code> with <code>[n]</code>-shaped weights.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>DynamicGF</td><td>The model</td></tr>
+<tr><td><code>args</code></td><td>Vector</td><td>Model arguments</td></tr>
+<tr><td><code>constraints</code></td><td><a href="choicemap.html">ChoiceMap</a></td><td>Observed values (scalar, broadcast to all particles)</td></tr>
+<tr><td><code>n</code></td><td>Integer</td><td>Number of particles</td></tr>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>VectorizedTrace</code> with <code>[n]</code>-shaped weights.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [k (rng/key 0)
+      obs (cm/choicemap {:y (mx/scalar 3.5)})
+      vtr (dyn/vgenerate model [(mx/scalar 2.0)] obs 1000 k)]
+  (println "weight shape:" (mx/shape (:weight vtr))))
+;; =&gt; weight shape: [1000]
+</code></pre>
+<hr>
+<h3 id="vupdate"><a class="header" href="#vupdate"><code>vupdate</code></a></h3>
+<pre><code class="language-clojure">(dyn/vupdate gf vtrace constraints key)
+</code></pre>
+<p>Batched <code>update</code> on a <code>VectorizedTrace</code>. Runs the model body once with a batched update handler. Returns a map with the new <code>VectorizedTrace</code>, weights, and discarded values.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>DynamicGF</td><td>The model</td></tr>
+<tr><td><code>vtrace</code></td><td>VectorizedTrace</td><td>Previous batched trace with <code>[n]</code>-shaped choices</td></tr>
+<tr><td><code>constraints</code></td><td><a href="choicemap.html">ChoiceMap</a></td><td>New constraints to apply</td></tr>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:vtrace VectorizedTrace, :weight MLX-array, :discard ChoiceMap}</code></p>
+<hr>
+<h3 id="vregenerate"><a class="header" href="#vregenerate"><code>vregenerate</code></a></h3>
+<pre><code class="language-clojure">(dyn/vregenerate gf vtrace selection key)
+</code></pre>
+<p>Batched <code>regenerate</code> on a <code>VectorizedTrace</code>. Resamples selected addresses for all particles simultaneously. Returns a map with the new <code>VectorizedTrace</code> and the MH weight.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>DynamicGF</td><td>The model</td></tr>
+<tr><td><code>vtrace</code></td><td>VectorizedTrace</td><td>Previous batched trace with <code>[n]</code>-shaped choices</td></tr>
+<tr><td><code>selection</code></td><td><a href="selection.html">Selection</a></td><td>Addresses to resample</td></tr>
+<tr><td><code>key</code></td><td>MLX array</td><td>PRNG key</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:vtrace VectorizedTrace, :weight MLX-array}</code></p>
+<hr>
+<h3 id="loop-obs"><a class="header" href="#loop-obs"><code>loop-obs</code></a></h3>
+<pre><code class="language-clojure">(dyn/loop-obs prefix values)
+</code></pre>
+<p>Create flat constraints from a prefix string and a sequence of values. A convenience for building observation choicemaps for loop-based models.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>prefix</code></td><td>String</td><td>Address prefix (e.g. <code>"y"</code>)</td></tr>
+<tr><td><code>values</code></td><td>Sequence</td><td>Values to assign</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> ChoiceMap with addresses <code>:y0</code>, <code>:y1</code>, <code>:y2</code>, …</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(dyn/loop-obs "y" [1.0 2.0 3.0])
+;; =&gt; choicemap with {:y0 1.0, :y1 2.0, :y2 3.0}
+</code></pre>
+<hr>
+<h3 id="merge-obs"><a class="header" href="#merge-obs"><code>merge-obs</code></a></h3>
+<pre><code class="language-clojure">(dyn/merge-obs &amp; cms)
+</code></pre>
+<p>Merge multiple choicemaps into one. A convenience for combining observation sets.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cms</code></td><td>ChoiceMaps</td><td>Any number of choicemaps to merge</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A single merged ChoiceMap.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(dyn/merge-obs
+  (cm/choicemap {:slope (mx/scalar 1.0)})
+  (dyn/loop-obs "y" [2.0 3.0 4.0]))
+;; =&gt; {:slope 1.0, :y0 2.0, :y1 3.0, :y2 4.0}
+</code></pre>
+<hr>
+<h3 id="param-standalone"><a class="header" href="#param-standalone"><code>param</code> (standalone)</a></h3>
+<pre><code class="language-clojure">(dyn/param name default-value)
+</code></pre>
+<p>Read a trainable parameter outside a gen body. Returns the default value as an MLX array (no param store is available outside gen body execution). Inside gen bodies, use the <code>param</code> local binding from the <code>gen</code> macro instead.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>name</code></td><td>Keyword</td><td>Parameter name</td></tr>
+<tr><td><code>default-value</code></td><td>Number or MLX array</td><td>Default value</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> MLX array.</p>
+<hr>
+<h2 id="handler-system"><a class="header" href="#handler-system">Handler System</a></h2>
+<p>Source: <code>src/genmlx/handler.cljs</code>, <code>src/genmlx/runtime.cljs</code></p>
+<p>The handler system is the heart of GenMLX. When <code>gen</code> body code calls <code>trace</code>, it dispatches to whichever handler is active. Each handler is a <strong>pure state transition</strong>:</p>
+<pre><code class="language-clojure">(fn [state addr dist] -&gt; [value state'])
+</code></pre>
+<p>State flows through an immutable map with mode-specific keys:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Mode</th><th>State keys</th></tr>
+</thead>
+<tbody>
+<tr><td>simulate</td><td><code>:key</code> <code>:choices</code> <code>:score</code> <code>:executor</code></td></tr>
+<tr><td>generate</td><td><code>:key</code> <code>:choices</code> <code>:score</code> <code>:weight</code> <code>:constraints</code> <code>:executor</code></td></tr>
+<tr><td>update</td><td><code>:key</code> <code>:choices</code> <code>:score</code> <code>:weight</code> <code>:constraints</code> <code>:old-choices</code> <code>:discard</code> <code>:executor</code></td></tr>
+<tr><td>regenerate</td><td><code>:key</code> <code>:choices</code> <code>:score</code> <code>:weight</code> <code>:old-choices</code> <code>:selection</code> <code>:executor</code></td></tr>
+<tr><td>project</td><td><code>:key</code> <code>:choices</code> <code>:score</code> <code>:weight</code> <code>:old-choices</code> <code>:selection</code> <code>:constraints</code> <code>:executor</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Batched variants add <code>:batch-size</code> (integer N) and <code>:batched?</code> (true). All other keys and semantics are identical – MLX broadcasting handles the shape difference between scalar and <code>[N]</code>-shaped values.</p>
+<p>The handler never inspects value shapes. This is what makes batched execution (<code>[N]</code>-shaped arrays) work transparently.</p>
+<h3 id="scalar-transitions"><a class="header" href="#scalar-transitions">Scalar transitions</a></h3>
+<h3 id="simulate-transition"><a class="header" href="#simulate-transition"><code>simulate-transition</code></a></h3>
+<pre><code class="language-clojure">(h/simulate-transition state addr dist)
+</code></pre>
+<p>Sample from the prior at <code>addr</code>, accumulate log-prob into <code>:score</code>. Splits the PRNG key, samples a value, computes <code>log-prob(dist, value)</code>, and threads the updated state.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>state</code></td><td>Map</td><td>Handler state with <code>:key</code>, <code>:choices</code>, <code>:score</code></td></tr>
+<tr><td><code>addr</code></td><td>Keyword</td><td>Address for this choice</td></tr>
+<tr><td><code>dist</code></td><td>Distribution</td><td>Distribution to sample from</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>[value state']</code></p>
+<hr>
+<h3 id="generate-transition"><a class="header" href="#generate-transition"><code>generate-transition</code></a></h3>
+<pre><code class="language-clojure">(h/generate-transition state addr dist)
+</code></pre>
+<p>If <code>addr</code> is constrained, use the constraint and add its log-prob to both <code>:score</code> and <code>:weight</code>. Otherwise delegate to <code>simulate-transition</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>state</code></td><td>Map</td><td>Handler state with <code>:constraints</code></td></tr>
+<tr><td><code>addr</code></td><td>Keyword</td><td>Address for this choice</td></tr>
+<tr><td><code>dist</code></td><td>Distribution</td><td>Distribution to sample from</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>[value state']</code></p>
+<hr>
+<h3 id="assess-transition"><a class="header" href="#assess-transition"><code>assess-transition</code></a></h3>
+<pre><code class="language-clojure">(h/assess-transition state addr dist)
+</code></pre>
+<p>All addresses must be constrained. Throws <code>ex-info</code> if <code>addr</code> is not found in <code>:constraints</code>. Adds the log-prob to both <code>:score</code> and <code>:weight</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>state</code></td><td>Map</td><td>Handler state with <code>:constraints</code></td></tr>
+<tr><td><code>addr</code></td><td>Keyword</td><td>Address for this choice</td></tr>
+<tr><td><code>dist</code></td><td>Distribution</td><td>Distribution to score</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>[value state']</code></p>
+<hr>
+<h3 id="update-transition"><a class="header" href="#update-transition"><code>update-transition</code></a></h3>
+<pre><code class="language-clojure">(h/update-transition state addr dist)
+</code></pre>
+<p>Three cases: (1) new constraint provided – use it, compute weight as difference of new and old log-probs, discard old value; (2) old value exists – keep it; (3) address is new – sample fresh from the prior.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>state</code></td><td>Map</td><td>Handler state with <code>:constraints</code>, <code>:old-choices</code>, <code>:discard</code></td></tr>
+<tr><td><code>addr</code></td><td>Keyword</td><td>Address for this choice</td></tr>
+<tr><td><code>dist</code></td><td>Distribution</td><td>Distribution to evaluate</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>[value state']</code></p>
+<hr>
+<h3 id="regenerate-transition"><a class="header" href="#regenerate-transition"><code>regenerate-transition</code></a></h3>
+<pre><code class="language-clojure">(h/regenerate-transition state addr dist)
+</code></pre>
+<p>If <code>addr</code> is selected, resample from the prior and compute the weight adjustment (new log-prob minus old log-prob). If not selected, keep the old value. Throws if the address was never sampled before.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>state</code></td><td>Map</td><td>Handler state with <code>:selection</code>, <code>:old-choices</code></td></tr>
+<tr><td><code>addr</code></td><td>Keyword</td><td>Address for this choice</td></tr>
+<tr><td><code>dist</code></td><td>Distribution</td><td>Distribution to resample from</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>[value state']</code></p>
+<hr>
+<h3 id="project-transition"><a class="header" href="#project-transition"><code>project-transition</code></a></h3>
+<pre><code class="language-clojure">(h/project-transition state addr dist)
+</code></pre>
+<p>Replay the old value (no sampling). If <code>addr</code> is selected, add its log-prob to <code>:weight</code>. Always add to <code>:score</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>state</code></td><td>Map</td><td>Handler state with <code>:selection</code>, <code>:old-choices</code></td></tr>
+<tr><td><code>addr</code></td><td>Keyword</td><td>Address for this choice</td></tr>
+<tr><td><code>dist</code></td><td>Distribution</td><td>Distribution to evaluate</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>[value state']</code></p>
+<hr>
+<h3 id="batched-transitions"><a class="header" href="#batched-transitions">Batched transitions</a></h3>
+<p>The batched variants have identical semantics to their scalar counterparts but operate on <code>[N]</code>-shaped arrays. They use <code>dist-sample-n</code> for batch sampling. MLX broadcasting handles all score and weight accumulation.</p>
+<h3 id="batched-simulate-transition"><a class="header" href="#batched-simulate-transition"><code>batched-simulate-transition</code></a></h3>
+<pre><code class="language-clojure">(h/batched-simulate-transition state addr dist)
+</code></pre>
+<p>Sample <code>[N]</code> values via <code>dist-sample-n</code>, accumulate <code>[N]</code>-shaped score.</p>
+<p><strong>Returns:</strong> <code>[value state']</code> where <code>value</code> has shape <code>[N, ...]</code>.</p>
+<hr>
+<h3 id="batched-generate-transition"><a class="header" href="#batched-generate-transition"><code>batched-generate-transition</code></a></h3>
+<pre><code class="language-clojure">(h/batched-generate-transition state addr dist)
+</code></pre>
+<p>Constrained sites use scalar observation (broadcasts into <code>[N]</code> score/weight). Unconstrained sites delegate to <code>batched-simulate-transition</code>.</p>
+<p><strong>Returns:</strong> <code>[value state']</code></p>
+<hr>
+<h3 id="batched-update-transition"><a class="header" href="#batched-update-transition"><code>batched-update-transition</code></a></h3>
+<pre><code class="language-clojure">(h/batched-update-transition state addr dist)
+</code></pre>
+<p>Batched update with <code>[N]</code>-shaped old values and scalar or <code>[N]</code>-shaped new constraints.</p>
+<p><strong>Returns:</strong> <code>[value state']</code></p>
+<hr>
+<h3 id="batched-regenerate-transition"><a class="header" href="#batched-regenerate-transition"><code>batched-regenerate-transition</code></a></h3>
+<pre><code class="language-clojure">(h/batched-regenerate-transition state addr dist)
+</code></pre>
+<p>Batched regenerate: resample <code>[N]</code> values at selected addresses, keep old <code>[N]</code>-shaped values at unselected addresses.</p>
+<p><strong>Returns:</strong> <code>[value state']</code></p>
+<hr>
+<h3 id="run-handler"><a class="header" href="#run-handler"><code>run-handler</code></a></h3>
+<pre><code class="language-clojure">(rt/run-handler transition init-state body-fn)
+</code></pre>
+<p>Execute <code>body-fn</code> under the given transition function, returning the final state map. This is the single mutable boundary above MLX. It creates a <code>volatile!</code> cell, builds closure-based <code>trace</code>/<code>splice</code>/<code>param</code> operations, packages them into a runtime object, and passes it to <code>body-fn</code>.</p>
+<p>Source: <code>src/genmlx/runtime.cljs</code></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>transition</code></td><td>Function</td><td>Pure state transition <code>(fn [state addr dist] -&gt; [value state'])</code></td></tr>
+<tr><td><code>init-state</code></td><td>Map</td><td>Initial handler state (immutable)</td></tr>
+<tr><td><code>body-fn</code></td><td>Function</td><td><code>(fn [runtime] -&gt; retval)</code> receiving the runtime object</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Final state map with <code>:retval</code> added.</p>
+<p>The runtime object <code>rt</code> has three fields:</p>
+<ul>
+<li><code>(.-trace rt)</code> – <code>(fn [addr dist] -&gt; value)</code></li>
+<li><code>(.-splice rt)</code> – <code>(fn [addr gf &amp; args] -&gt; retval)</code></li>
+<li><code>(.-param rt)</code> – <code>(fn [name default] -&gt; value)</code></li>
+</ul>
+<hr>
+<h3 id="merge-sub-result"><a class="header" href="#merge-sub-result"><code>merge-sub-result</code></a></h3>
+<pre><code class="language-clojure">(h/merge-sub-result state addr sub-result)
+</code></pre>
+<p>Merge a sub-generative-function’s result into the parent handler state. Nests the sub-choices under <code>addr</code>, accumulates scores, and propagates weights and discards.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>state</code></td><td>Map</td><td>Parent handler state</td></tr>
+<tr><td><code>addr</code></td><td>Keyword</td><td>The splice address</td></tr>
+<tr><td><code>sub-result</code></td><td>Map</td><td><code>{:choices :score :weight :discard :retval}</code> from the sub-GF</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> Updated parent state.</p>
+<hr>
+<h3 id="combinator-batched-fallback"><a class="header" href="#combinator-batched-fallback"><code>combinator-batched-fallback</code></a></h3>
+<pre><code class="language-clojure">(h/combinator-batched-fallback state addr gf args)
+</code></pre>
+<p>Fallback for splicing a non-DynamicGF (e.g. a combinator) in batched mode. Unstacks the <code>[N]</code>-particle state, runs the combinator’s scalar GFI methods N times, then stacks the results back into <code>[N]</code>-shaped arrays.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>state</code></td><td>Map</td><td>Parent batched handler state</td></tr>
+<tr><td><code>addr</code></td><td>Keyword</td><td>The splice address</td></tr>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The combinator to execute</td></tr>
+<tr><td><code>args</code></td><td>Vector</td><td>Arguments to the combinator</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>[state' retval]</code></p>
+<hr>
+<h3 id="edit-request-constructors"><a class="header" href="#edit-request-constructors">Edit request constructors</a></h3>
+<p>Source: <code>src/genmlx/edit.cljs</code></p>
+<h3 id="constraint-edit"><a class="header" href="#constraint-edit"><code>constraint-edit</code></a></h3>
+<pre><code class="language-clojure">(edit/constraint-edit constraints)
+</code></pre>
+<p>Create a <code>ConstraintEdit</code> request – equivalent to <code>update</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>constraints</code></td><td>ChoiceMap</td><td>New constraints to apply</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>ConstraintEdit</code> record.</p>
+<hr>
+<h3 id="selection-edit"><a class="header" href="#selection-edit"><code>selection-edit</code></a></h3>
+<pre><code class="language-clojure">(edit/selection-edit selection)
+</code></pre>
+<p>Create a <code>SelectionEdit</code> request – equivalent to <code>regenerate</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>selection</code></td><td>Selection</td><td>Addresses to resample</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>SelectionEdit</code> record.</p>
+<hr>
+<h3 id="proposal-edit"><a class="header" href="#proposal-edit"><code>proposal-edit</code></a></h3>
+<pre><code class="language-clojure">(edit/proposal-edit forward-gf backward-gf)
+(edit/proposal-edit forward-gf forward-args backward-gf backward-args)
+</code></pre>
+<p>Create a <code>ProposalEdit</code> request for SMCP3-style reversible kernels. The forward GF proposes new choices; the backward GF scores the reverse move.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>forward-gf</code></td><td>Generative function</td><td>Proposes new choices</td></tr>
+<tr><td><code>forward-args</code></td><td>Vector or nil</td><td>Arguments for forward proposal</td></tr>
+<tr><td><code>backward-gf</code></td><td>Generative function</td><td>Scores the reverse move</td></tr>
+<tr><td><code>backward-args</code></td><td>Vector or nil</td><td>Arguments for backward proposal</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>ProposalEdit</code> record.</p>
+<hr>
+<h3 id="edit-dispatch"><a class="header" href="#edit-dispatch"><code>edit-dispatch</code></a></h3>
+<pre><code class="language-clojure">(edit/edit-dispatch gf trace edit-request)
+</code></pre>
+<p>Dispatch an edit based on the <code>EditRequest</code> type. Called automatically by <code>p/edit</code> on <code>DynamicGF</code>. Routes to <code>update</code> for <code>ConstraintEdit</code>, <code>regenerate</code> for <code>SelectionEdit</code>, and the full forward/backward proposal protocol for <code>ProposalEdit</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The model</td></tr>
+<tr><td><code>trace</code></td><td>Trace</td><td>Previous execution trace</td></tr>
+<tr><td><code>edit-request</code></td><td>EditRequest</td><td>The edit to apply</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:trace Trace, :weight MLX-scalar, :discard ChoiceMap, :backward-request EditRequest}</code></p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="choicemap.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="choicemap.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

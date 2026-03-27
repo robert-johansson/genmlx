@@ -1,0 +1,1129 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Distributions - GenMLX API Reference</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="theme/custom-070636da.css">
+
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-bf8e1655.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-fc2a8a04.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">GenMLX API Reference</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/probcomp/genmlx" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="distributions"><a class="header" href="#distributions">Distributions</a></h1>
+<p>GenMLX provides 30+ built-in distributions, all sharing a single <code>Distribution</code> record type with behavior dispatched via open multimethods. New distributions can be added from any namespace using <code>defdist</code> or manual <code>defmethod</code>, without modifying core code.</p>
+<p><strong>Source files:</strong></p>
+<ul>
+<li><code>src/genmlx/dist.cljs</code> – all built-in distribution definitions</li>
+<li><code>src/genmlx/dist/core.cljs</code> – <code>Distribution</code> record, multimethods, <code>mixture</code>, <code>product</code>, <code>map-&gt;dist</code></li>
+<li><code>src/genmlx/dist/macros.cljc</code> – <code>defdist</code> macro</li>
+</ul>
+<p><strong>Usage:</strong></p>
+<pre><code class="language-clojure">(require '[genmlx.dist :as dist]
+         '[genmlx.dist.core :as dc])
+
+;; Inside a gen body:
+(trace :x (dist/gaussian 0 1))
+
+;; Standalone:
+(dist/gaussian 0 1)  ;; =&gt; Distribution record
+</code></pre>
+<p>Every distribution constructor returns a <code>Distribution</code> record that can be passed to <code>trace</code>, used with <code>p/simulate</code>, <code>p/generate</code>, <code>p/assess</code>, or called directly with the core multimethods.</p>
+<hr>
+<h2 id="distribution-system"><a class="header" href="#distribution-system">Distribution System</a></h2>
+<h3 id="distribution-record"><a class="header" href="#distribution-record">Distribution record</a></h3>
+<p>All distributions share a single record type. Behavior is dispatched via open multimethods keyed by the <code>:type</code> keyword.</p>
+<pre><code class="language-clojure">(defrecord Distribution [type params])
+</code></pre>
+<p>The <code>Distribution</code> record implements the GFI protocols (<code>IGenerativeFunction</code>, <code>IGenerate</code>, <code>IAssess</code>, <code>IPropose</code>, <code>IProject</code>), so distributions are themselves generative functions. You can call <code>(p/simulate (dist/gaussian 0 1) [])</code> directly.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>type</code></td><td>keyword</td><td>Dispatch key (e.g. <code>:gaussian</code>, <code>:beta-dist</code>)</td></tr>
+<tr><td><code>params</code></td><td>map</td><td>Named parameters (e.g. <code>{:mu &lt;mlx&gt; :sigma &lt;mlx&gt;}</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="core-multimethods"><a class="header" href="#core-multimethods">Core multimethods</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Multimethod</th><th>Dispatch</th><th>Signature</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>dc/dist-sample</code></td><td><code>:type</code></td><td><code>(dist-sample dist key)</code></td><td>Draw one sample. Returns MLX scalar.</td></tr>
+<tr><td><code>dc/dist-log-prob</code></td><td><code>:type</code></td><td><code>(dist-log-prob dist value)</code></td><td>Compute log-probability. Returns MLX scalar.</td></tr>
+<tr><td><code>dc/dist-sample-n</code></td><td><code>:type</code></td><td><code>(dist-sample-n dist key n)</code></td><td>Draw <code>n</code> samples as <code>[n]</code>-shaped array. Used by vectorized inference.</td></tr>
+<tr><td><code>dc/dist-reparam</code></td><td><code>:type</code></td><td><code>(dist-reparam dist key)</code></td><td>Reparameterized sample for gradient estimation. Returns MLX value.</td></tr>
+<tr><td><code>dc/dist-support</code></td><td><code>:type</code></td><td><code>(dist-support dist)</code></td><td>Return support as a sequence of MLX values (for enumerable distributions).</td></tr>
+<tr><td><code>dc/dist-log-prob-support</code></td><td><code>:type</code></td><td><code>(dist-log-prob-support dist)</code></td><td>Log-probabilities for all support values at once. Returns <code>[K]</code>-shaped tensor.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="public-api-wrappers"><a class="header" href="#public-api-wrappers">Public API wrappers</a></h3>
+<p>The <code>genmlx.dist</code> namespace provides convenience wrappers that delegate to the multimethods:</p>
+<pre><code class="language-clojure">(dist/sample d)           ;; or (dist/sample d key)
+(dist/log-prob d value)
+(dist/sample-reparam d key)
+(dist/support d)
+</code></pre>
+<h3 id="defdist"><a class="header" href="#defdist"><code>defdist</code></a></h3>
+<pre><code class="language-clojure">(defdist dist-name
+  "Optional docstring."
+  [params ...]
+  (sample [key] body)
+  (log-prob [v] body)
+  ;; Optional:
+  (reparam [key] body)
+  (support [] body))
+</code></pre>
+<p>Define a new distribution type with a constructor function and multimethod implementations. Only <code>sample</code> and <code>log-prob</code> are required. Parameters are automatically wrapped with <code>mx/ensure-array</code> in the constructor.</p>
+<p><strong>Example – custom Laplace:</strong></p>
+<pre><code class="language-clojure">(defdist my-laplace [loc scale]
+  (sample [key]
+    (let [u (mx/subtract (rng/uniform key []) (mx/scalar 0.5))]
+      (mx/add loc (mx/multiply scale
+        (mx/multiply (mx/sign u)
+                     (mx/log (mx/abs u)))))))
+  (log-prob [v]
+    (let [z (mx/abs (mx/divide (mx/subtract v loc) scale))]
+      (mx/subtract (mx/negative z)
+                   (mx/log (mx/multiply (mx/scalar 2) scale))))))
+</code></pre>
+<h3 id="batch-sampling"><a class="header" href="#batch-sampling">Batch sampling</a></h3>
+<p>For vectorized inference, distributions should provide a <code>dc/dist-sample-n*</code> implementation. If not provided, a sequential fallback loops <code>n</code> times.</p>
+<pre><code class="language-clojure">(defmethod dc/dist-sample-n* :my-dist [d key n]
+  (let [{:keys [loc scale]} (:params d)]
+    (mx/add loc (mx/multiply scale (rng/normal key [n])))))
+</code></pre>
+<h3 id="gamma-sample-n"><a class="header" href="#gamma-sample-n"><code>gamma-sample-n</code></a></h3>
+<pre><code class="language-clojure">(dist/gamma-sample-n shape-val rate key n)
+</code></pre>
+<p>Vectorized Marsaglia-Tsang gamma sampling. <code>shape-val</code> is a JS number, <code>rate</code> is an MLX scalar. Exposed for reuse by distributions built on Gamma (Beta, Dirichlet, Inverse-Gamma, Chi-squared).</p>
+<hr>
+<h2 id="continuous-distributions"><a class="header" href="#continuous-distributions">Continuous Distributions</a></h2>
+<h3 id="gaussian"><a class="header" href="#gaussian"><code>gaussian</code></a></h3>
+<pre><code class="language-clojure">(dist/gaussian mu sigma)
+</code></pre>
+<p>\( p(x \mid \mu, \sigma) = \frac{1}{\sigma\sqrt{2\pi}} \exp!\left(-\frac{(x - \mu)^2}{2\sigma^2}\right) \)</p>
+<p>Gaussian (normal) distribution. Reparameterizable. Alias: <code>dist/normal</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mu</code></td><td>MLX scalar</td><td>Mean</td></tr>
+<tr><td><code>sigma</code></td><td>MLX scalar</td><td>Standard deviation (must be positive)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in (-\infty, +\infty) \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [slope (trace :slope (dist/gaussian 0 10))
+      noise (trace :noise (dist/gaussian 0 1))]
+  (mx/add (mx/multiply slope x) noise))
+</code></pre>
+<h3 id="normal"><a class="header" href="#normal"><code>normal</code></a></h3>
+<p>Alias for <code>gaussian</code>.</p>
+<pre><code class="language-clojure">(dist/normal 0 1)  ;; identical to (dist/gaussian 0 1)
+</code></pre>
+<h3 id="uniform"><a class="header" href="#uniform"><code>uniform</code></a></h3>
+<pre><code class="language-clojure">(dist/uniform lo hi)
+</code></pre>
+<p>\( p(x \mid a, b) = \frac{1}{b - a} \quad \text{for } x \in [a, b] \)</p>
+<p>Continuous uniform distribution. Reparameterizable.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>lo</code></td><td>MLX scalar</td><td>Lower bound</td></tr>
+<tr><td><code>hi</code></td><td>MLX scalar</td><td>Upper bound (must be greater than <code>lo</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in [a, b] \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :threshold (dist/uniform 0 1))
+</code></pre>
+<h3 id="beta-dist"><a class="header" href="#beta-dist"><code>beta-dist</code></a></h3>
+<pre><code class="language-clojure">(dist/beta-dist alpha beta-param)
+</code></pre>
+<p>\( p(x \mid \alpha, \beta) = \frac{x^{\alpha-1}(1-x)^{\beta-1}}{B(\alpha, \beta)} \)</p>
+<p>Beta distribution. Sampled via Johnk’s algorithm. Batch sampling uses the Gamma ratio method.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>alpha</code></td><td>MLX scalar</td><td>Shape parameter \(\alpha &gt; 0\)</td></tr>
+<tr><td><code>beta-param</code></td><td>MLX scalar</td><td>Shape parameter \(\beta &gt; 0\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in (0, 1) \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [p (trace :p (dist/beta-dist 2 5))]
+  (trace :outcome (dist/bernoulli p)))
+</code></pre>
+<h3 id="gamma-dist"><a class="header" href="#gamma-dist"><code>gamma-dist</code></a></h3>
+<pre><code class="language-clojure">(dist/gamma-dist shape rate)
+</code></pre>
+<p>\( p(x \mid k, \lambda) = \frac{\lambda^k}{\Gamma(k)} x^{k-1} e^{-\lambda x} \)</p>
+<p>Gamma distribution (shape-rate parameterization). Uses the Marsaglia-Tsang method with Ahrens-Dieter boost for \(\alpha &lt; 1\).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>shape</code></td><td>MLX scalar</td><td>Shape parameter \(k &gt; 0\)</td></tr>
+<tr><td><code>rate</code></td><td>MLX scalar</td><td>Rate parameter \(\lambda &gt; 0\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in (0, +\infty) \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :precision (dist/gamma-dist 2 1))
+</code></pre>
+<h3 id="exponential"><a class="header" href="#exponential"><code>exponential</code></a></h3>
+<pre><code class="language-clojure">(dist/exponential rate)
+</code></pre>
+<p>\( p(x \mid \lambda) = \lambda e^{-\lambda x} \)</p>
+<p>Exponential distribution. Reparameterizable (inverse CDF method).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>rate</code></td><td>MLX scalar</td><td>Rate parameter \(\lambda &gt; 0\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in [0, +\infty) \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :wait-time (dist/exponential 0.5))
+</code></pre>
+<h3 id="log-normal"><a class="header" href="#log-normal"><code>log-normal</code></a></h3>
+<pre><code class="language-clojure">(dist/log-normal mu sigma)
+</code></pre>
+<p>\( p(x \mid \mu, \sigma) = \frac{1}{x \sigma \sqrt{2\pi}} \exp!\left(-\frac{(\ln x - \mu)^2}{2\sigma^2}\right) \)</p>
+<p>Log-normal distribution. Reparameterizable (exponential transform of Gaussian).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mu</code></td><td>MLX scalar</td><td>Log-mean</td></tr>
+<tr><td><code>sigma</code></td><td>MLX scalar</td><td>Log-standard-deviation (must be positive)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in (0, +\infty) \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :income (dist/log-normal 10 1))
+</code></pre>
+<h3 id="cauchy"><a class="header" href="#cauchy"><code>cauchy</code></a></h3>
+<pre><code class="language-clojure">(dist/cauchy loc scale)
+</code></pre>
+<p>\( p(x \mid x_0, \gamma) = \frac{1}{\pi \gamma \left[1 + \left(\frac{x - x_0}{\gamma}\right)^2\right]} \)</p>
+<p>Cauchy distribution. Reparameterizable (inverse CDF via tangent). Heavy tails – no finite moments.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>loc</code></td><td>MLX scalar</td><td>Location \(x_0\)</td></tr>
+<tr><td><code>scale</code></td><td>MLX scalar</td><td>Scale \(\gamma &gt; 0\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in (-\infty, +\infty) \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :outlier (dist/cauchy 0 1))
+</code></pre>
+<h3 id="student-t"><a class="header" href="#student-t"><code>student-t</code></a></h3>
+<pre><code class="language-clojure">(dist/student-t df loc scale)
+</code></pre>
+<p>\( p(x \mid \nu, \mu, \sigma) = \frac{\Gamma!\left(\frac{\nu+1}{2}\right)}{\sigma\sqrt{\nu\pi};\Gamma!\left(\frac{\nu}{2}\right)} \left(1 + \frac{1}{\nu}\left(\frac{x-\mu}{\sigma}\right)^2\right)^{-(\nu+1)/2} \)</p>
+<p>Student’s t-distribution with location and scale. Sampled via chi-squared ratio method.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>df</code></td><td>MLX scalar</td><td>Degrees of freedom \(\nu &gt; 0\)</td></tr>
+<tr><td><code>loc</code></td><td>MLX scalar</td><td>Location \(\mu\)</td></tr>
+<tr><td><code>scale</code></td><td>MLX scalar</td><td>Scale \(\sigma &gt; 0\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in (-\infty, +\infty) \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :robust-obs (dist/student-t 4 0 1))
+</code></pre>
+<h3 id="laplace"><a class="header" href="#laplace"><code>laplace</code></a></h3>
+<pre><code class="language-clojure">(dist/laplace loc scale)
+</code></pre>
+<p>\( p(x \mid \mu, b) = \frac{1}{2b} \exp!\left(-\frac{|x - \mu|}{b}\right) \)</p>
+<p>Laplace distribution. Reparameterizable (inverse CDF method).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>loc</code></td><td>MLX scalar</td><td>Location \(\mu\)</td></tr>
+<tr><td><code>scale</code></td><td>MLX scalar</td><td>Scale \(b &gt; 0\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in (-\infty, +\infty) \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :sparse-weight (dist/laplace 0 0.1))
+</code></pre>
+<h3 id="inv-gamma"><a class="header" href="#inv-gamma"><code>inv-gamma</code></a></h3>
+<pre><code class="language-clojure">(dist/inv-gamma shape scale)
+</code></pre>
+<p>\( p(x \mid \alpha, \beta) = \frac{\beta^\alpha}{\Gamma(\alpha)} x^{-\alpha-1} \exp!\left(-\frac{\beta}{x}\right) \)</p>
+<p>Inverse-Gamma distribution. Sampled as the reciprocal of a Gamma variate.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>shape</code></td><td>MLX scalar</td><td>Shape \(\alpha &gt; 0\)</td></tr>
+<tr><td><code>scale</code></td><td>MLX scalar</td><td>Scale \(\beta &gt; 0\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in (0, +\infty) \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Conjugate prior for Gaussian variance
+(let [var (trace :var (dist/inv-gamma 3 1))]
+  (trace :obs (dist/gaussian 0 (mx/sqrt var))))
+</code></pre>
+<h3 id="truncated-normal"><a class="header" href="#truncated-normal"><code>truncated-normal</code></a></h3>
+<pre><code class="language-clojure">(dist/truncated-normal mu sigma lo hi)
+</code></pre>
+<p>\( p(x \mid \mu, \sigma, a, b) = \frac{\phi!\left(\frac{x-\mu}{\sigma}\right)}{\sigma\left[\Phi!\left(\frac{b-\mu}{\sigma}\right) - \Phi!\left(\frac{a-\mu}{\sigma}\right)\right]} \quad \text{for } x \in [a, b] \)</p>
+<p>Gaussian truncated to interval \([a, b]\). Reparameterizable. Uses <code>rng/truncated-normal</code> for sampling.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mu</code></td><td>MLX scalar</td><td>Mean of the untruncated Gaussian</td></tr>
+<tr><td><code>sigma</code></td><td>MLX scalar</td><td>Standard deviation (must be positive)</td></tr>
+<tr><td><code>lo</code></td><td>MLX scalar</td><td>Lower truncation bound</td></tr>
+<tr><td><code>hi</code></td><td>MLX scalar</td><td>Upper truncation bound (must be greater than <code>lo</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in [a, b] \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Positive-only Gaussian
+(trace :positive (dist/truncated-normal 5 2 0 100))
+</code></pre>
+<h3 id="von-mises"><a class="header" href="#von-mises"><code>von-mises</code></a></h3>
+<pre><code class="language-clojure">(dist/von-mises mu kappa)
+</code></pre>
+<p>\( p(\theta \mid \mu, \kappa) = \frac{e^{\kappa \cos(\theta - \mu)}}{2\pi I_0(\kappa)} \)</p>
+<p>Von Mises distribution on the circle \([-\pi, \pi)\). Sampled via Best’s rejection algorithm. \(I_0\) is the modified Bessel function of the first kind.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mu</code></td><td>MLX scalar</td><td>Mean direction</td></tr>
+<tr><td><code>kappa</code></td><td>MLX scalar</td><td>Concentration \(\kappa &gt; 0\) (higher = more concentrated)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( \theta \in [-\pi, \pi) \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :heading (dist/von-mises 0 5))
+</code></pre>
+<h3 id="wrapped-cauchy"><a class="header" href="#wrapped-cauchy"><code>wrapped-cauchy</code></a></h3>
+<pre><code class="language-clojure">(dist/wrapped-cauchy mu rho)
+</code></pre>
+<p>\( p(\theta \mid \mu, \rho) = \frac{1 - \rho^2}{2\pi\left(1 - 2\rho\cos(\theta - \mu) + \rho^2\right)} \)</p>
+<p>Wrapped Cauchy distribution on \([-\pi, \pi)\). Closed-form density with inverse CDF sampling.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mu</code></td><td>MLX scalar</td><td>Mean direction</td></tr>
+<tr><td><code>rho</code></td><td>MLX scalar</td><td>Concentration \(\rho \in (0, 1)\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( \theta \in [-\pi, \pi) \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :wind-dir (dist/wrapped-cauchy 0 0.8))
+</code></pre>
+<h3 id="wrapped-normal"><a class="header" href="#wrapped-normal"><code>wrapped-normal</code></a></h3>
+<pre><code class="language-clojure">(dist/wrapped-normal mu sigma)
+</code></pre>
+<p>\( p(\theta \mid \mu, \sigma) = \sum_{k=-\infty}^{\infty} \frac{1}{\sigma\sqrt{2\pi}} \exp!\left(-\frac{(\theta + 2\pi k - \mu)^2}{2\sigma^2}\right) \)</p>
+<p>Gaussian wrapped onto the circle \([-\pi, \pi)\). Log-probability computed via truncated series sum (\(k = -3\) to \(3\)).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mu</code></td><td>MLX scalar</td><td>Mean direction</td></tr>
+<tr><td><code>sigma</code></td><td>MLX scalar</td><td>Standard deviation (must be positive)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( \theta \in [-\pi, \pi) \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :angle (dist/wrapped-normal 0 0.5))
+</code></pre>
+<hr>
+<h2 id="discrete-distributions"><a class="header" href="#discrete-distributions">Discrete Distributions</a></h2>
+<h3 id="bernoulli"><a class="header" href="#bernoulli"><code>bernoulli</code></a></h3>
+<pre><code class="language-clojure">(dist/bernoulli p)
+</code></pre>
+<p>\( P(x = 1) = p, \quad P(x = 0) = 1 - p \)</p>
+<p>Bernoulli distribution. Enumerable (support: \(\{0, 1\}\)). Alias: <code>dist/flip</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>p</code></td><td>MLX scalar</td><td>Probability of success \(p \in [0, 1]\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in \{0, 1\} \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [biased (trace :coin (dist/bernoulli 0.7))]
+  (if (pos? (mx/item biased)) :heads :tails))
+</code></pre>
+<h3 id="flip"><a class="header" href="#flip"><code>flip</code></a></h3>
+<p>Alias for <code>bernoulli</code>.</p>
+<pre><code class="language-clojure">(dist/flip 0.5)  ;; identical to (dist/bernoulli 0.5)
+</code></pre>
+<h3 id="categorical"><a class="header" href="#categorical"><code>categorical</code></a></h3>
+<pre><code class="language-clojure">(dist/categorical logits)
+</code></pre>
+<p>\( P(x = k) = \frac{e^{\ell_k}}{\sum_j e^{\ell_j}} \)</p>
+<p>Categorical distribution over \(K\) categories, parameterized by unnormalized log-probabilities (logits). Sampling uses the Gumbel-max trick. Enumerable.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>logits</code></td><td>MLX array <code>[K]</code></td><td>Unnormalized log-probabilities</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in \{0, 1, \ldots, K-1\} \) (MLX int32)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :category (dist/categorical (mx/array [0.0 1.0 2.0])))
+</code></pre>
+<h3 id="categorical-weights"><a class="header" href="#categorical-weights"><code>categorical-weights</code></a></h3>
+<pre><code class="language-clojure">(dist/categorical-weights weights)
+</code></pre>
+<p>Categorical distribution from unnormalized weights (not log-space). Handles zero weights safely – no <code>log(0)</code>, no NaN gradients. Zero weights get a large negative logit with zero gradient.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>weights</code></td><td>MLX array <code>[K]</code></td><td>Non-negative weights (may contain zeros)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(dist/categorical-weights (mx/array [1.0 0.0 3.0]))
+</code></pre>
+<h3 id="weighted"><a class="header" href="#weighted"><code>weighted</code></a></h3>
+<pre><code class="language-clojure">(dist/weighted [w1 w2 ...])
+</code></pre>
+<p>Categorical distribution from a Clojure vector of weights. Each weight may be a number or an MLX array. Handles scalar promotion, stacking, and log transform automatically. Use this to write model code at the distribution layer without dropping to raw MLX operations.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>weights</code></td><td>Clojure vector</td><td>Numbers or MLX arrays</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Clean distribution-layer code:
+(trace :eval (dist/weighted [1.0 1.5 w]))
+
+;; Instead of noisy MLX-layer code:
+(trace :eval (dist/categorical
+  (mx/log (mx/stack #js [(mx/scalar 1.0) (mx/scalar 1.5) w]))))
+</code></pre>
+<h3 id="poisson"><a class="header" href="#poisson"><code>poisson</code></a></h3>
+<pre><code class="language-clojure">(dist/poisson rate)
+</code></pre>
+<p>\( P(x = k \mid \lambda) = \frac{\lambda^k e^{-\lambda}}{k!} \)</p>
+<p>Poisson distribution. Sampled via Knuth’s algorithm.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>rate</code></td><td>MLX scalar</td><td>Rate \(\lambda &gt; 0\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in \{0, 1, 2, \ldots\} \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :count (dist/poisson 3.5))
+</code></pre>
+<h3 id="geometric"><a class="header" href="#geometric"><code>geometric</code></a></h3>
+<pre><code class="language-clojure">(dist/geometric p)
+</code></pre>
+<p>\( P(x = k \mid p) = (1 - p)^k , p \)</p>
+<p>Number of failures before the first success. Sampled via inverse CDF. Enumerable (support capped at the 0.999 quantile).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>p</code></td><td>MLX scalar</td><td>Success probability \(p \in (0, 1]\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in \{0, 1, 2, \ldots\} \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :attempts (dist/geometric 0.3))
+</code></pre>
+<h3 id="binomial"><a class="header" href="#binomial"><code>binomial</code></a></h3>
+<pre><code class="language-clojure">(dist/binomial n p)
+</code></pre>
+<p>\( P(x = k \mid n, p) = \binom{n}{k} p^k (1-p)^{n-k} \)</p>
+<p>Number of successes in \(n\) independent Bernoulli trials. Enumerable.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>n</code></td><td>MLX scalar</td><td>Number of trials</td></tr>
+<tr><td><code>p</code></td><td>MLX scalar</td><td>Success probability \(p \in [0, 1]\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in \{0, 1, \ldots, n\} \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :successes (dist/binomial 10 0.4))
+</code></pre>
+<h3 id="neg-binomial"><a class="header" href="#neg-binomial"><code>neg-binomial</code></a></h3>
+<pre><code class="language-clojure">(dist/neg-binomial r p)
+</code></pre>
+<p>\( P(x = k \mid r, p) = \binom{k + r - 1}{k} p^r (1-p)^k \)</p>
+<p>Negative binomial (Polya) distribution: number of failures before \(r\) successes. Sampled via the Gamma-Poisson mixture method.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>r</code></td><td>MLX scalar</td><td>Number of successes \(r &gt; 0\)</td></tr>
+<tr><td><code>p</code></td><td>MLX scalar</td><td>Success probability \(p \in [0, 1]\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in \{0, 1, 2, \ldots\} \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :failures (dist/neg-binomial 5 0.6))
+</code></pre>
+<h3 id="discrete-uniform"><a class="header" href="#discrete-uniform"><code>discrete-uniform</code></a></h3>
+<pre><code class="language-clojure">(dist/discrete-uniform lo hi)
+</code></pre>
+<p>\( P(x = k) = \frac{1}{b - a + 1} \quad \text{for } k \in \{a, a+1, \ldots, b\} \)</p>
+<p>Discrete uniform over integers. Enumerable.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>lo</code></td><td>MLX scalar</td><td>Lower bound (integer)</td></tr>
+<tr><td><code>hi</code></td><td>MLX scalar</td><td>Upper bound (integer, must be greater than <code>lo</code>)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in \{a, a+1, \ldots, b\} \) (MLX int32)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :die (dist/discrete-uniform 1 6))
+</code></pre>
+<hr>
+<h2 id="multivariate-distributions"><a class="header" href="#multivariate-distributions">Multivariate Distributions</a></h2>
+<h3 id="multivariate-normal"><a class="header" href="#multivariate-normal"><code>multivariate-normal</code></a></h3>
+<pre><code class="language-clojure">(dist/multivariate-normal mean-vec cov-matrix)
+</code></pre>
+<p>\( p(\mathbf{x} \mid \boldsymbol{\mu}, \Sigma) = \frac{1}{\sqrt{(2\pi)^k |\Sigma|}} \exp!\left(-\frac{1}{2}(\mathbf{x} - \boldsymbol{\mu})^\top \Sigma^{-1} (\mathbf{x} - \boldsymbol{\mu})\right) \)</p>
+<p>Multivariate normal distribution. Cholesky decomposition and \(L^{-1}\) are computed once at construction time. Reparameterizable.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mean-vec</code></td><td>MLX array <code>[k]</code></td><td>Mean vector</td></tr>
+<tr><td><code>cov-matrix</code></td><td>MLX array <code>[k, k]</code></td><td>Positive definite covariance matrix</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( \mathbf{x} \in \mathbb{R}^k \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [mu (mx/array [0 0])
+      cov (mx/array [[1 0.5] [0.5 2]])]
+  (trace :latent (dist/multivariate-normal mu cov)))
+</code></pre>
+<h3 id="dirichlet"><a class="header" href="#dirichlet"><code>dirichlet</code></a></h3>
+<pre><code class="language-clojure">(dist/dirichlet alpha)
+</code></pre>
+<p>\( p(\mathbf{x} \mid \boldsymbol{\alpha}) = \frac{\Gamma!\left(\sum_i \alpha_i\right)}{\prod_i \Gamma(\alpha_i)} \prod_{i=1}^{k} x_i^{\alpha_i - 1} \)</p>
+<p>Dirichlet distribution. Sampled via independent Gamma variates followed by normalization. Batch sampling uses <code>gamma-sample-n</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>alpha</code></td><td>MLX array <code>[k]</code></td><td>Concentration parameters \(\alpha_i &gt; 0\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( \mathbf{x} \in \Delta^{k-1} \) (the probability simplex: \(x_i &gt; 0\), \(\sum x_i = 1\))</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [probs (trace :probs (dist/dirichlet (mx/array [1 1 1])))]
+  (trace :choice (dist/categorical (mx/log probs))))
+</code></pre>
+<h3 id="wishart"><a class="header" href="#wishart"><code>wishart</code></a></h3>
+<pre><code class="language-clojure">(dist/wishart df scale-matrix)
+</code></pre>
+<p>\( p(X \mid \nu, V) = \frac{|X|^{(\nu-k-1)/2} \exp!\left(-\frac{1}{2}\text{tr}(V^{-1}X)\right)}{2^{\nu k/2} |V|^{\nu/2} \Gamma_k(\nu/2)} \)</p>
+<p>Wishart distribution over positive definite matrices. Sampled via Bartlett decomposition.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>df</code></td><td>number</td><td>Degrees of freedom \(\nu \geq k\)</td></tr>
+<tr><td><code>scale-matrix</code></td><td>MLX array <code>[k, k]</code></td><td>Positive definite scale matrix \(V\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( X \in \mathbb{S}_{++}^k \) (\(k \times k\) positive definite matrices)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [V (mx/array [[1 0] [0 1]])]
+  (trace :precision (dist/wishart 5 V)))
+</code></pre>
+<h3 id="inv-wishart"><a class="header" href="#inv-wishart"><code>inv-wishart</code></a></h3>
+<pre><code class="language-clojure">(dist/inv-wishart df scale-matrix)
+</code></pre>
+<p>\( p(X \mid \nu, \Psi) = \frac{|\Psi|^{\nu/2} |X|^{-(\nu+k+1)/2} \exp!\left(-\frac{1}{2}\text{tr}(\Psi X^{-1})\right)}{2^{\nu k/2} \Gamma_k(\nu/2)} \)</p>
+<p>Inverse Wishart distribution. Sampled by drawing \(W \sim \text{Wishart}(\nu, \Psi^{-1})\) and returning \(W^{-1}\).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>df</code></td><td>number</td><td>Degrees of freedom \(\nu &gt; k + 1\)</td></tr>
+<tr><td><code>scale-matrix</code></td><td>MLX array <code>[k, k]</code></td><td>Positive definite scale matrix \(\Psi\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( X \in \mathbb{S}_{++}^k \) (\(k \times k\) positive definite matrices)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Conjugate prior for MVN covariance
+(let [Psi (mx/array [[1 0] [0 1]])
+      cov (trace :cov (dist/inv-wishart 5 Psi))]
+  (trace :obs (dist/multivariate-normal mu cov)))
+</code></pre>
+<hr>
+<h2 id="special-distributions"><a class="header" href="#special-distributions">Special Distributions</a></h2>
+<h3 id="delta"><a class="header" href="#delta"><code>delta</code></a></h3>
+<pre><code class="language-clojure">(dist/delta v)
+</code></pre>
+<p>\( P(x = v) = 1, \quad \log p(v) = 0 \)</p>
+<p>Point mass (Dirac delta) at value \(v\). Score is 0 when the value matches, \(-\infty\) otherwise. Enumerable (support is <code>[v]</code>). Used for deterministic values in traces.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>v</code></td><td>MLX value</td><td>The point mass location</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :fixed (dist/delta (mx/scalar 42)))
+</code></pre>
+<h3 id="broadcasted-normal"><a class="header" href="#broadcasted-normal"><code>broadcasted-normal</code></a></h3>
+<pre><code class="language-clojure">(dist/broadcasted-normal mu sigma)
+</code></pre>
+<p>\( p(\mathbf{x} \mid \boldsymbol{\mu}, \boldsymbol{\sigma}) = \prod_i \frac{1}{\sigma_i\sqrt{2\pi}} \exp!\left(-\frac{(x_i - \mu_i)^2}{2\sigma_i^2}\right) \)</p>
+<p>Independent element-wise normal distribution. <code>mu</code> and <code>sigma</code> can be MLX arrays of any matching shape. Log-probability is the sum over all elements. Reparameterizable.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mu</code></td><td>MLX array</td><td>Mean (any shape)</td></tr>
+<tr><td><code>sigma</code></td><td>MLX array</td><td>Standard deviation (same shape as <code>mu</code>, positive)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [mu (mx/array [1 2 3])
+      sigma (mx/array [0.1 0.2 0.3])]
+  (trace :obs (dist/broadcasted-normal mu sigma)))
+</code></pre>
+<h3 id="gaussian-vec"><a class="header" href="#gaussian-vec"><code>gaussian-vec</code></a></h3>
+<pre><code class="language-clojure">(dist/gaussian-vec mu sigma)
+</code></pre>
+<p>\( p(\mathbf{x} \mid \boldsymbol{\mu}, \boldsymbol{\sigma}) = \prod_i \frac{1}{\sigma_i\sqrt{2\pi}} \exp!\left(-\frac{(x_i - \mu_i)^2}{2\sigma_i^2}\right) \)</p>
+<p>Vector of independent Gaussians with log-prob summed over the last axis. For a <code>[D]</code>-shaped value, returns a scalar log-prob. For an <code>[N, D]</code>-shaped value, returns <code>[N]</code>-shaped log-probs. Ideal for vectorized inference with one trace site per latent vector. Reparameterizable.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mu</code></td><td>MLX array <code>[D]</code></td><td>Per-element means</td></tr>
+<tr><td><code>sigma</code></td><td>MLX array (scalar or <code>[D]</code>)</td><td>Standard deviation(s)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [mu (mx/zeros [10])
+      sigma (mx/scalar 1.0)]
+  (trace :latent (dist/gaussian-vec mu sigma)))
+</code></pre>
+<h3 id="beta-uniform-mixture"><a class="header" href="#beta-uniform-mixture"><code>beta-uniform-mixture</code></a></h3>
+<pre><code class="language-clojure">(dist/beta-uniform-mixture theta alpha beta-param)
+</code></pre>
+<p>\( p(x \mid \theta, \alpha, \beta) = \theta \cdot \text{Beta}(x; \alpha, \beta) + (1 - \theta) \cdot \text{Uniform}(x; 0, 1) \)</p>
+<p>Mixture of \(\text{Beta}(\alpha, \beta)\) with probability \(\theta\) and \(\text{Uniform}(0, 1)\) with probability \(1 - \theta\). Built using <code>dc/mixture</code>. Common prior for bounded parameters.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>theta</code></td><td>number</td><td>Mixing weight for Beta component \(\theta \in (0, 1)\)</td></tr>
+<tr><td><code>alpha</code></td><td>MLX scalar</td><td>Beta shape \(\alpha &gt; 0\)</td></tr>
+<tr><td><code>beta-param</code></td><td>MLX scalar</td><td>Beta shape \(\beta &gt; 0\)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Support:</strong> \( x \in (0, 1) \)</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(trace :rate (dist/beta-uniform-mixture 0.9 2 5))
+</code></pre>
+<h3 id="piecewise-uniform"><a class="header" href="#piecewise-uniform"><code>piecewise-uniform</code></a></h3>
+<pre><code class="language-clojure">(dist/piecewise-uniform bounds probs)
+</code></pre>
+<p>\( p(x) = \frac{p_i}{w_i \sum_j p_j} \quad \text{for } x \in [b_i, b_{i+1}) \)</p>
+<p>Piecewise uniform distribution over bins defined by sorted boundary points. Bin selection uses categorical sampling; uniform sampling within the selected bin.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>bounds</code></td><td>MLX array <code>[N+1]</code></td><td>Sorted boundary points</td></tr>
+<tr><td><code>probs</code></td><td>MLX array <code>[N]</code></td><td>Unnormalized bin probabilities</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [bounds (mx/array [0 1 3 10])
+      probs  (mx/array [0.5 0.3 0.2])]
+  (trace :x (dist/piecewise-uniform bounds probs)))
+</code></pre>
+<hr>
+<h2 id="constructors-and-combinators"><a class="header" href="#constructors-and-combinators">Constructors and Combinators</a></h2>
+<h3 id="iid"><a class="header" href="#iid"><code>iid</code></a></h3>
+<pre><code class="language-clojure">(dist/iid base-dist t)
+</code></pre>
+<p>IID (independent and identically distributed) constructor. Wraps any base distribution to sample \(T\) independent values as a single trace site.</p>
+<ul>
+<li><strong>Scalar mode:</strong> sample returns <code>[T]</code>-shaped tensor, log-prob returns scalar (sum).</li>
+<li><strong>Batch mode:</strong> <code>sample-n(N)</code> returns <code>[N, T]</code>-shaped tensor, log-prob returns <code>[N]</code>.</li>
+</ul>
+<p>When base-dist parameters are already batched (e.g., means <code>[N, T]</code> from batched latent variables), <code>iid</code> detects this and handles correctly.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>base-dist</code></td><td>Distribution</td><td>Any distribution record</td></tr>
+<tr><td><code>t</code></td><td>integer</td><td>Number of independent samples</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Sample 5 independent Gaussian values as one trace site
+(trace :observations (dist/iid (dist/gaussian mu sigma) 5))
+</code></pre>
+<h3 id="iid-gaussian"><a class="header" href="#iid-gaussian"><code>iid-gaussian</code></a></h3>
+<pre><code class="language-clojure">(dist/iid-gaussian mu sigma t)
+</code></pre>
+<p>Optimized IID Gaussian. Generates all \(T\) samples in a single MLX noise draw instead of \(T\) separate draws. <code>mu</code> and <code>sigma</code> can be scalar (shared across elements) or <code>[T]</code>-shaped (per-element parameters).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mu</code></td><td>MLX scalar or <code>[T]</code></td><td>Mean(s)</td></tr>
+<tr><td><code>sigma</code></td><td>MLX scalar or <code>[T]</code></td><td>Standard deviation(s) (must be positive)</td></tr>
+<tr><td><code>t</code></td><td>integer</td><td>Number of independent samples</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; 100 i.i.d. standard normal samples in one op
+(trace :noise (dist/iid-gaussian 0 1 100))
+
+;; Per-element means
+(trace :obs (dist/iid-gaussian (mx/array [1 2 3]) 0.5 3))
+</code></pre>
+<h3 id="dcmixture"><a class="header" href="#dcmixture"><code>dc/mixture</code></a></h3>
+<pre><code class="language-clojure">(dc/mixture components log-weights)
+</code></pre>
+<p>Create a mixture distribution from component distributions and unnormalized log mixing weights. Sampling draws from all components, then selects by categorical index (stays in the MLX graph – vectorizable and differentiable).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>components</code></td><td>vector of Distributions</td><td>Component distributions</td></tr>
+<tr><td><code>log-weights</code></td><td>MLX array <code>[K]</code></td><td>Unnormalized log mixing weights</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(let [mix (dc/mixture [(dist/gaussian -2 1) (dist/gaussian 2 1)]
+                       (mx/array [0.0 0.0]))]  ;; equal weights
+  (trace :x mix))
+</code></pre>
+<h3 id="dcproduct"><a class="header" href="#dcproduct"><code>dc/product</code></a></h3>
+<pre><code class="language-clojure">(dc/product components)
+</code></pre>
+<p>Create a product (joint independent) distribution from a vector or map of component distributions. Sampling is independent; log-prob is the sum of component log-probs.</p>
+<p><strong>Vector form</strong> – returns a vector of MLX values:</p>
+<pre><code class="language-clojure">(dc/product [(dist/gaussian 0 1) (dist/uniform 0 1)])
+</code></pre>
+<p><strong>Map form</strong> – returns a map of named MLX values:</p>
+<pre><code class="language-clojure">(dc/product {:loc (dist/gaussian 0 10)
+             :scale (dist/exponential 1)})
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>components</code></td><td>vector or map</td><td>Component distributions</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="dcmap-dist"><a class="header" href="#dcmap-dist"><code>dc/map-&gt;dist</code></a></h3>
+<pre><code class="language-clojure">(dc/map-&gt;dist {:type :my-dist
+               :sample (fn [key] ...)
+               :log-prob (fn [value] ...)})
+</code></pre>
+<p>Create a <code>Distribution</code> from a plain map with function-valued keys. Registers multimethod implementations automatically. This is an alternative to <code>defdist</code> for programmatic distribution construction.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Required</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:type</code></td><td>no</td><td>Keyword identifier (auto-generated if omitted)</td></tr>
+<tr><td><code>:sample</code></td><td>yes</td><td><code>(fn [key] -&gt; MLX-value)</code></td></tr>
+<tr><td><code>:log-prob</code></td><td>yes</td><td><code>(fn [value] -&gt; MLX-scalar)</code></td></tr>
+<tr><td><code>:reparam</code></td><td>no</td><td><code>(fn [key] -&gt; MLX-value)</code> reparameterized sample</td></tr>
+<tr><td><code>:support</code></td><td>no</td><td><code>(fn [] -&gt; seq)</code> enumerable support</td></tr>
+<tr><td><code>:sample-n</code></td><td>no</td><td><code>(fn [key n] -&gt; MLX-array)</code> batch sampling</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def my-dist
+  (dc/map-&gt;dist
+    {:type :spike-and-slab
+     :sample (fn [key]
+               (let [[k1 k2] (rng/split key)
+                     spike? (&lt; (mx/item (rng/uniform k1 [])) 0.5)]
+                 (if spike?
+                   (mx/scalar 0)
+                   (mx/add (mx/scalar 0) (mx/multiply (mx/scalar 5) (rng/normal k2 []))))))
+     :log-prob (fn [v]
+                 (mx/logsumexp
+                   (mx/array [(+ (js/Math.log 0.5)
+                                 (mx/item (dc/dist-log-prob (dist/delta (mx/scalar 0)) v)))
+                              (+ (js/Math.log 0.5)
+                                 (mx/item (dc/dist-log-prob (dist/gaussian 0 5) v)))])))}))
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="selection.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="combinators.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="selection.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="combinators.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

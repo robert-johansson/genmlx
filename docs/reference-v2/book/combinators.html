@@ -1,0 +1,876 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Combinators - GenMLX API Reference</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-2459343d.css">
+        <link rel="stylesheet" href="css/chrome-ae938929.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="theme/custom-070636da.css">
+
+        <!-- MathJax -->
+        <script async src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "light";
+            const default_dark_theme = "ayu";
+            window.path_to_searchindex_js = "searchindex-bf8e1655.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-fc2a8a04.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">GenMLX API Reference</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/probcomp/genmlx" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="combinators"><a class="header" href="#combinators">Combinators</a></h1>
+<p>Combinators compose generative functions into larger models with structured
+address spaces. Each combinator implements the full GFI – simulate, generate,
+update, regenerate – with efficient incremental computation. Compiled paths
+(Level 1+) accelerate execution without changing semantics.</p>
+<p><strong>Source:</strong> <code>src/genmlx/combinators.cljs</code>, <code>src/genmlx/vmap.cljs</code></p>
+<hr>
+<h2 id="map"><a class="header" href="#map">Map</a></h2>
+<h3 id="map-combinator"><a class="header" href="#map-combinator"><code>map-combinator</code></a></h3>
+<pre><code class="language-clojure">(comb/map-combinator kernel)
+</code></pre>
+<p>Apply a kernel generative function independently to each element of the input
+sequences. Each application is addressed by its integer index. Supports
+incremental update: only re-executes changed elements.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>kernel</code></td><td>Generative function</td><td>Applied independently to each element</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Arguments:</strong> <code>[n &amp; per-element-args]</code> where each per-element arg is a vector of
+length <code>n</code>.</p>
+<p><strong>Returns:</strong> A <code>MapCombinator</code> implementing <code>IGenerativeFunction</code>, <code>IGenerate</code>,
+<code>IUpdate</code>, <code>IRegenerate</code>, <code>IProject</code>, <code>IUpdateWithDiffs</code>, and <code>IEdit</code>.</p>
+<p><strong>Address space:</strong> Integer keys <code>0, 1, ..., n-1</code>. A choice at address <code>:x</code> in
+element <code>i</code> lives at <code>[i :x]</code> in the combined choicemap.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def kernel (gen [x] (trace :y (dist/gaussian x 1))))
+(def mapped (comb/map-combinator kernel))
+
+;; Simulate 3 independent draws
+(def tr (p/simulate mapped [3 [(mx/scalar 1) (mx/scalar 2) (mx/scalar 3)]]))
+
+;; Choices at addresses: [0 :y], [1 :y], [2 :y]
+(cm/get-choice (:choices tr) [0 :y])  ;; =&gt; scalar near 1
+(cm/get-choice (:choices tr) [2 :y])  ;; =&gt; scalar near 3
+
+;; Generate with constraints on element 1
+(def obs (cm/from-map {[1 :y] (mx/scalar 5.0)}))
+(def {:keys [trace weight]} (p/generate mapped
+                              [3 [(mx/scalar 1) (mx/scalar 2) (mx/scalar 3)]]
+                              obs))
+
+;; Update: only element 0 is re-executed
+(def new-obs (cm/from-map {[0 :y] (mx/scalar 10.0)}))
+(p/update mapped trace new-obs)
+</code></pre>
+<p><strong>GFI behavior:</strong></p>
+<ul>
+<li><strong>simulate</strong> calls <code>(p/simulate kernel elem-args)</code> for each element. Compiled
+paths (fused or per-element) are used when available.</li>
+<li><strong>generate</strong> constrains each element independently via <code>(cm/get-submap constraints i)</code>.</li>
+<li><strong>update</strong> reconstructs per-element traces and delegates to <code>(p/update kernel ...)</code>.
+With <code>IUpdateWithDiffs</code>, unchanged elements are skipped entirely.</li>
+<li><strong>regenerate</strong> delegates <code>(sel/get-subselection selection i)</code> per element.</li>
+</ul>
+<hr>
+<h2 id="unfold"><a class="header" href="#unfold">Unfold</a></h2>
+<h3 id="unfold-combinator"><a class="header" href="#unfold-combinator"><code>unfold-combinator</code></a></h3>
+<pre><code class="language-clojure">(comb/unfold-combinator kernel)
+</code></pre>
+<p>Sequentially apply a kernel for <code>n</code> time steps, threading state through each
+step. Models time series, Markov chains, state-space models, and any process
+with sequential dependencies.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>kernel</code></td><td>Generative function</td><td>Takes <code>[t state &amp; extra-args]</code>, returns new state</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Arguments:</strong> <code>[n init-state &amp; extra-args]</code></p>
+<p><strong>Returns:</strong> An <code>UnfoldCombinator</code> implementing the full GFI. The trace’s
+<code>:retval</code> is a vector of states <code>[state-0 state-1 ... state-(n-1)]</code>.</p>
+<p><strong>Address space:</strong> Integer keys <code>1, 2, ..., n</code> (but stored 0-indexed internally as
+<code>0, 1, ..., n-1</code>). Choice <code>:x</code> at step <code>t</code> is at <code>[t :x]</code>.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def step (gen [t state]
+            (let [s (trace :state (dist/gaussian state 0.3))]
+              (trace :obs (dist/gaussian s 1.0))
+              s)))
+
+(def hmm (comb/unfold-combinator step))
+
+;; Run 5-step HMM from initial state 0
+(def tr (p/simulate hmm [5 (mx/scalar 0.0)]))
+
+;; Choices at: [0 :state], [0 :obs], [1 :state], [1 :obs], ...
+(:retval tr)  ;; =&gt; [state0 state1 state2 state3 state4]
+
+;; Generate with observations at each step
+(def obs (cm/from-map {[0 :obs] (mx/scalar 0.5)
+                       [1 :obs] (mx/scalar 1.2)
+                       [2 :obs] (mx/scalar 0.8)
+                       [3 :obs] (mx/scalar 1.5)
+                       [4 :obs] (mx/scalar 2.0)}))
+(def {:keys [trace weight]} (p/generate hmm [5 (mx/scalar 0.0)] obs))
+
+;; Update with prefix-skip: only re-runs from the first changed step
+(def new-obs (cm/from-map {[3 :obs] (mx/scalar 99.0)}))
+(p/update hmm trace new-obs)  ;; steps 0-2 reused, steps 3-4 re-executed
+</code></pre>
+<p><strong>GFI behavior:</strong></p>
+<ul>
+<li><strong>simulate</strong> loops <code>n</code> times, passing the previous step’s return value as the
+next step’s state. Three paths: fused (2 Metal dispatches for all T steps),
+compiled (per-step compiled-simulate), and handler (per-step <code>p/simulate</code>).</li>
+<li><strong>generate</strong> constrains each step via <code>(cm/get-submap constraints t)</code>.</li>
+<li><strong>update</strong> implements prefix-skip: finds the first step with non-empty constraints
+and reuses all prior steps from the old trace without re-execution.</li>
+<li><strong>batched-splice</strong> (IBatchedSplice) enables efficient vectorized inference by
+running the kernel body once per step with all N particles via the batched handler.</li>
+</ul>
+<h3 id="unfold-empty-trace"><a class="header" href="#unfold-empty-trace"><code>unfold-empty-trace</code></a></h3>
+<pre><code class="language-clojure">(comb/unfold-empty-trace unfold-gf init-state &amp; extra-args)
+</code></pre>
+<p>Create a valid T=0 Unfold trace with no steps executed. Used to initialize
+particles for incremental extension with <code>unfold-extend</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>unfold-gf</code></td><td>UnfoldCombinator</td><td>The unfold generative function</td></tr>
+<tr><td><code>init-state</code></td><td>any</td><td>Initial carry state</td></tr>
+<tr><td><code>extra-args</code></td><td>any</td><td>Additional arguments passed to kernel</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A <code>Trace</code> with empty choices, empty retval vector, and zero score.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def hmm (comb/unfold-combinator step))
+(def t0 (comb/unfold-empty-trace hmm (mx/scalar 0.0)))
+
+(:choices t0)  ;; =&gt; EMPTY
+(:retval t0)   ;; =&gt; []
+(:score t0)    ;; =&gt; 0.0
+</code></pre>
+<h3 id="unfold-extend"><a class="header" href="#unfold-extend"><code>unfold-extend</code></a></h3>
+<pre><code class="language-clojure">(comb/unfold-extend trace step-constraints key)
+</code></pre>
+<p>Extend an Unfold trace by one step, returning <code>{:trace :weight}</code>. The new step
+is generated with the given constraints. Calls <code>mx/materialize!</code> on weight and
+score to break lazy graph accumulation – critical for Metal buffer management
+in long sequential inference.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>trace</code></td><td>Trace</td><td>An existing Unfold trace (from simulate, generate, or prior extend)</td></tr>
+<tr><td><code>step-constraints</code></td><td>ChoiceMap</td><td>Constraints for the new step</td></tr>
+<tr><td><code>key</code></td><td>PRNG key</td><td>Random key for the new step</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:trace Trace, :weight scalar}</code> where the trace has one additional
+step appended.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Incremental SMC: extend one step at a time
+(def t0 (comb/unfold-empty-trace hmm (mx/scalar 0.0)))
+
+(def {:keys [trace weight]}
+  (comb/unfold-extend t0
+                      (cm/from-map {:obs (mx/scalar 0.5)})
+                      (rng/fresh-key)))
+;; trace now has 1 step, weight is the log-likelihood of the observation
+
+(def {:keys [trace weight]}
+  (comb/unfold-extend trace
+                      (cm/from-map {:obs (mx/scalar 1.2)})
+                      (rng/fresh-key)))
+;; trace now has 2 steps
+</code></pre>
+<hr>
+<h2 id="switch"><a class="header" href="#switch">Switch</a></h2>
+<h3 id="switch-combinator"><a class="header" href="#switch-combinator"><code>switch-combinator</code></a></h3>
+<pre><code class="language-clojure">(comb/switch-combinator &amp; branches)
+</code></pre>
+<p>Select one of several generative functions based on an integer index argument.
+Models mixture components, regime switching, and conditional structure.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>branches</code></td><td>Generative functions (varargs)</td><td>One or more branch GFs</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Arguments:</strong> <code>[index &amp; branch-args]</code> where <code>index</code> (integer) selects which
+branch to execute (0-indexed).</p>
+<p><strong>Returns:</strong> A <code>SwitchCombinator</code> implementing the full GFI.</p>
+<p><strong>Address space:</strong> The selected branch’s addresses are used directly (no
+additional nesting). If branch 0 traces at <code>:y</code>, the switch traces at <code>:y</code>.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def branch-a (gen [x] (trace :y (dist/gaussian x 1))))
+(def branch-b (gen [x] (trace :y (dist/gaussian x 10))))
+
+(def switched (comb/switch-combinator branch-a branch-b))
+
+(p/simulate switched [0 (mx/scalar 5)])  ;; executes branch-a (tight around 5)
+(p/simulate switched [1 (mx/scalar 5)])  ;; executes branch-b (wide around 5)
+
+;; Generate with constraints
+(def obs (cm/from-map {:y (mx/scalar 7.0)}))
+(p/generate switched [0 (mx/scalar 5)] obs)
+</code></pre>
+<p><strong>GFI behavior:</strong></p>
+<ul>
+<li><strong>simulate/generate</strong> selects <code>(nth branches index)</code> and delegates.</li>
+<li><strong>update</strong> checks whether the branch index changed. Same branch: updates in
+place. Different branch: generates the new branch from scratch and discards
+old choices.</li>
+<li><strong>regenerate</strong> delegates to the current branch’s regenerate.</li>
+<li><strong>batched-splice</strong> (IBatchedSplice) runs ALL branches once with the batched
+handler, then combines results per-particle using <code>mx/where</code> on the
+<code>[N]</code>-shaped index array.</li>
+</ul>
+<h3 id="vectorized-switch"><a class="header" href="#vectorized-switch"><code>vectorized-switch</code></a></h3>
+<pre><code class="language-clojure">(comb/vectorized-switch branches index branch-args)
+</code></pre>
+<p>Execute all branches with <code>[N]</code> independent samples each, then mask-select
+results per-particle using an <code>[N]</code>-shaped index array. Used in vectorized
+inference with stochastic control flow (mixture models, clustering).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>branches</code></td><td>Vector of GFs</td><td>The branch generative functions</td></tr>
+<tr><td><code>index</code></td><td>MLX array <code>[N]</code>, int32</td><td>Per-particle branch indices</td></tr>
+<tr><td><code>branch-args</code></td><td>Vector</td><td>Arguments shared across all branches</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> <code>{:choices :score :retval}</code> with <code>[N]</code>-shaped arrays at each address.
+Choices and scores from non-selected branches are masked out per particle.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def branches [(gen [x] (trace :y (dist/gaussian x 1)))
+               (gen [x] (trace :y (dist/gaussian x 10)))])
+
+;; 4 particles: first two use branch 0, last two use branch 1
+(def idx (mx/array [0 0 1 1] mx/int32))
+(def result (comb/vectorized-switch branches idx [(mx/scalar 5)]))
+
+(:score result)   ;; [4]-shaped: log-probs from selected branches
+(:choices result) ;; :y is [4]-shaped, mixing both branches
+</code></pre>
+<hr>
+<h2 id="scan"><a class="header" href="#scan">Scan</a></h2>
+<h3 id="scan-combinator"><a class="header" href="#scan-combinator"><code>scan-combinator</code></a></h3>
+<pre><code class="language-clojure">(comb/scan-combinator kernel)
+</code></pre>
+<p>State-threading sequential combinator, analogous to <code>jax.lax.scan</code>. More
+general than Unfold: the kernel takes <code>[carry input]</code> and returns
+<code>[new-carry output]</code>, processing external inputs at each step while
+accumulating both carry-state and outputs.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>kernel</code></td><td>Generative function</td><td>Takes <code>[carry input]</code>, returns <code>[new-carry output]</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Arguments:</strong> <code>[init-carry inputs]</code> where <code>inputs</code> is a vector of per-step inputs.</p>
+<p><strong>Returns:</strong> A <code>ScanCombinator</code> implementing the full GFI. The trace’s <code>:retval</code>
+is <code>{:carry final-carry, :outputs [output0 output1 ...]}</code>.</p>
+<p><strong>Address space:</strong> Integer keys <code>0, 1, ..., n-1</code> where <code>n = (count inputs)</code>.
+Choice <code>:x</code> at step <code>t</code> is at <code>[t :x]</code>.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def scan-step
+  (gen [carry input]
+    (let [new-carry (trace :state (dist/gaussian
+                                    (mx/add carry input) 0.1))
+          obs (trace :obs (dist/gaussian new-carry 1.0))]
+      [new-carry obs])))
+
+(def scanner (comb/scan-combinator scan-step))
+
+(def inputs [(mx/scalar 0.1) (mx/scalar 0.2) (mx/scalar -0.1)])
+(def tr (p/simulate scanner [(mx/scalar 0.0) inputs]))
+
+;; retval is {:carry final-state, :outputs [obs0 obs1 obs2]}
+(:carry (:retval tr))   ;; final carry state
+(:outputs (:retval tr)) ;; vector of observations
+
+;; Choices at: [0 :state], [0 :obs], [1 :state], [1 :obs], ...
+</code></pre>
+<p><strong>GFI behavior:</strong></p>
+<ul>
+<li><strong>simulate</strong> loops over inputs, threading carry. Three paths: fused, compiled,
+and handler.</li>
+<li><strong>generate</strong> constrains each step via <code>(cm/get-submap constraints t)</code>.</li>
+<li><strong>update</strong> implements prefix-skip like Unfold: unchanged prefix steps are reused.</li>
+<li><strong>batched-splice</strong> (IBatchedSplice) runs one batched kernel call per step.</li>
+</ul>
+<hr>
+<h2 id="mask"><a class="header" href="#mask">Mask</a></h2>
+<h3 id="mask-combinator"><a class="header" href="#mask-combinator"><code>mask-combinator</code></a></h3>
+<pre><code class="language-clojure">(comb/mask-combinator inner)
+</code></pre>
+<p>Conditionally execute a generative function based on a boolean flag. When
+<code>active?</code> is false, the inner GF is not executed and contributes no choices
+or score. Used internally by vectorized switch to implement all-branch
+execution.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>inner</code></td><td>Generative function</td><td>GF to conditionally execute</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Arguments:</strong> <code>[active? &amp; inner-args]</code> where <code>active?</code> is a boolean.</p>
+<p><strong>Returns:</strong> A <code>MaskCombinator</code> implementing <code>IGenerativeFunction</code>, <code>IGenerate</code>,
+<code>IUpdate</code>, <code>IRegenerate</code>, <code>IProject</code>, <code>IUpdateWithDiffs</code>, and <code>IEdit</code>.</p>
+<p><strong>Address space:</strong> When active, identical to the inner GF’s address space. When
+inactive, the choicemap is empty.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def inner-gf (gen [x] (trace :y (dist/gaussian x 1))))
+(def masked (comb/mask-combinator inner-gf))
+
+;; Active: executes inner, choices present
+(def t1 (p/simulate masked [true (mx/scalar 5)]))
+(cm/get-choice (:choices t1) [:y])  ;; =&gt; scalar near 5
+
+;; Inactive: no execution, empty choices, zero score
+(def t2 (p/simulate masked [false (mx/scalar 5)]))
+(:choices t2)  ;; =&gt; EMPTY
+(:score t2)    ;; =&gt; 0.0
+(:retval t2)   ;; =&gt; nil
+</code></pre>
+<p><strong>GFI behavior:</strong></p>
+<ul>
+<li><strong>simulate/generate</strong> check <code>active?</code>: if true, delegate to inner; if false,
+return empty trace with zero score.</li>
+<li><strong>update/regenerate</strong> delegate to inner when active, return unchanged trace
+with zero weight when inactive.</li>
+</ul>
+<hr>
+<h2 id="mix"><a class="header" href="#mix">Mix</a></h2>
+<h3 id="mix-combinator"><a class="header" href="#mix-combinator"><code>mix-combinator</code></a></h3>
+<pre><code class="language-clojure">(comb/mix-combinator components log-weights-fn)
+</code></pre>
+<p>Create a first-class mixture model. Samples a component index from a
+categorical distribution over the log-weights, then simulates that component.
+The component index is stored at address <code>:component-idx</code> in the choicemap.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>components</code></td><td>Vector of GFs</td><td>Mixture component generative functions</td></tr>
+<tr><td><code>log-weights-fn</code></td><td>Function or MLX array</td><td><code>(fn [args] -&gt; MLX array)</code> of log mixing weights, or a fixed MLX array</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A <code>MixCombinator</code> implementing the full GFI.</p>
+<p><strong>Address space:</strong> The selected component’s addresses plus <code>:component-idx</code>
+(an int32 scalar indicating which component was chosen).</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def comp-a (gen [x] (trace :y (dist/gaussian x 1))))
+(def comp-b (gen [x] (trace :y (dist/gaussian x 10))))
+
+;; Equal mixing weights (log 0.5 each)
+(def mixture (comb/mix-combinator
+               [comp-a comp-b]
+               (mx/array [(Math/log 0.5) (Math/log 0.5)])))
+
+(def tr (p/simulate mixture [(mx/scalar 0)]))
+
+;; Which component was selected?
+(mx/item (cm/get-choice (:choices tr) [:component-idx]))  ;; =&gt; 0 or 1
+
+;; The component's choices
+(cm/get-choice (:choices tr) [:y])  ;; =&gt; sampled value
+
+;; Generate with constrained component index
+(def obs (cm/from-map {:component-idx (mx/scalar 0 mx/int32)
+                       :y (mx/scalar 3.0)}))
+(p/generate mixture [(mx/scalar 0)] obs)
+</code></pre>
+<p><strong>GFI behavior:</strong></p>
+<ul>
+<li><strong>simulate</strong> samples an index from <code>categorical(log-weights)</code>, then simulates
+the selected component.</li>
+<li><strong>generate</strong> constrains the component index if present in the constraints.</li>
+<li><strong>update</strong> checks whether the component index changed. Same component: updates
+inner choices. Different component: generates new component from scratch.</li>
+<li><strong>regenerate</strong> with <code>:component-idx</code> selected resamples the index and
+simulates a new component. Without it selected, regenerates within the
+current component.</li>
+<li><strong>batched-splice</strong> (IBatchedSplice) runs ALL components once with the batched
+handler, samples <code>[N]</code>-shaped indices, and combines per-particle using <code>mx/where</code>.</li>
+</ul>
+<hr>
+<h2 id="recurse"><a class="header" href="#recurse">Recurse</a></h2>
+<h3 id="recurse-1"><a class="header" href="#recurse-1"><code>recurse</code></a></h3>
+<pre><code class="language-clojure">(comb/recurse maker)
+</code></pre>
+<p>Create a recursive generative function. The <code>maker</code> receives a reference to
+the combinator being defined, enabling self-referential models: random trees,
+recursive grammars, linked lists, and other variable-depth structures.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>maker</code></td><td>Function</td><td><code>(fn [self] -&gt; GF)</code> where <code>self</code> is the <code>RecurseCombinator</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A <code>RecurseCombinator</code> implementing <code>IGenerativeFunction</code>, <code>IGenerate</code>,
+<code>IUpdate</code>, <code>IRegenerate</code>, <code>IProject</code>, <code>IUpdateWithDiffs</code>, and <code>IEdit</code>.</p>
+<p><strong>Address space:</strong> Determined by the inner GF returned by <code>maker</code>. Since the inner
+GF can <code>splice</code> back into <code>self</code>, addresses nest recursively. Typical pattern: use
+<code>:left</code>/<code>:right</code> or indexed addresses to distinguish recursive branches.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">;; Recursive random tree
+(def tree-model
+  (comb/recurse
+    (fn [self]
+      (gen [depth]
+        (let [leaf? (trace :leaf? (dist/bernoulli 0.3))]
+          (if (or (pos? (mx/item leaf?)) (&gt;= depth 5))
+            (trace :value (dist/gaussian 0 1))
+            (let [left  (splice :left self [(inc depth)])
+                  right (splice :right self [(inc depth)])]
+              (mx/add left right))))))))
+
+(def tr (p/simulate tree-model [0]))
+
+;; Address structure depends on the random tree shape:
+;; :leaf? at each node
+;; :value at leaves
+;; [:left :leaf?], [:left :value], [:right :left :leaf?], etc.
+</code></pre>
+<p><strong>GFI behavior:</strong></p>
+<ul>
+<li><strong>simulate/generate</strong> call <code>(maker this)</code> to get the inner GF, then delegate.
+The self-reference enables recursion: the inner GF can <code>splice</code> back to <code>this</code>.</li>
+<li><strong>update</strong> reconstructs the inner GF via <code>maker</code> and delegates.</li>
+<li><strong>regenerate</strong> delegates to the inner GF’s regenerate.</li>
+<li><strong>update-with-diffs</strong> short-circuits when args and constraints are unchanged.</li>
+</ul>
+<hr>
+<h2 id="vmap"><a class="header" href="#vmap">Vmap</a></h2>
+<p><strong>Source:</strong> <code>src/genmlx/vmap.cljs</code></p>
+<h3 id="vmap-gf"><a class="header" href="#vmap-gf"><code>vmap-gf</code></a></h3>
+<pre><code class="language-clojure">(vmap/vmap-gf kernel &amp; {:keys [in-axes axis-size]})
+</code></pre>
+<p>Create a Vmap combinator that maps a kernel over a batch dimension of the
+arguments. Unlike <code>map-combinator</code> (which uses integer-indexed sub-traces),
+<code>vmap-gf</code> stores choices with <code>[N]</code>-shaped leaf arrays and supports <code>splice</code>
+by falling back to per-invocation execution when needed.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>kernel</code></td><td>Generative function</td><td>The model to map</td></tr>
+<tr><td><code>:in-axes</code></td><td>Vector or nil</td><td><code>0</code> or <code>nil</code> per argument (0 = batch along axis 0, nil = broadcast). Default: nil (all args batched)</td></tr>
+<tr><td><code>:axis-size</code></td><td>Integer or nil</td><td>Explicit batch size N (required when all in-axes are nil or args are empty)</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A <code>VmapCombinator</code> implementing <code>IGenerativeFunction</code>, <code>IGenerate</code>,
+<code>IUpdate</code>, <code>IRegenerate</code>, <code>IAssess</code>, <code>IPropose</code>, and <code>IProject</code>.</p>
+<p><strong>Address space:</strong> Same address structure as the kernel, but leaf values are
+<code>[N]</code>-shaped arrays instead of scalars. Address <code>:y</code> in the kernel becomes
+address <code>:y</code> in the vmap trace, holding an <code>[N]</code>-shaped array.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def kernel (gen [x] (trace :y (dist/gaussian x 1))))
+
+;; Batch over a [5]-shaped array of means
+(def vmapped (vmap/vmap-gf kernel))
+(def tr (p/simulate vmapped [(mx/array [1 2 3 4 5])]))
+;; (:choices tr) has :y as a [5]-shaped array
+
+;; Broadcast: x is batched, sigma is shared
+(def kernel2 (gen [x sigma]
+               (trace :y (dist/gaussian x sigma))))
+(def vmapped2 (vmap/vmap-gf kernel2 :in-axes [0 nil]))
+(def tr2 (p/simulate vmapped2 [(mx/array [1 2 3]) (mx/scalar 0.5)]))
+;; :y is [3]-shaped; sigma=0.5 is shared across all 3
+
+;; Generate with [N]-shaped constraints
+(def obs (cm/from-map {:y (mx/array [10 20 30])}))
+(def {:keys [trace weight]} (vmap/vmap-gf kernel)
+  (p/generate vmapped [(mx/array [1 2 3])] obs))
+</code></pre>
+<p><strong>Execution paths:</strong></p>
+<ul>
+<li><strong>Fast path:</strong> When the kernel has a <code>body-fn</code> and all batched args are MLX
+arrays, the kernel body runs ONCE with the batched handler, producing
+<code>[N]</code>-shaped arrays at each trace site.</li>
+<li><strong>Slow path:</strong> When args include sequences or the kernel lacks <code>body-fn</code>,
+falls back to N independent <code>p/simulate</code>/<code>p/generate</code> calls, then stacks
+results.</li>
+</ul>
+<h3 id="repeat-gf"><a class="header" href="#repeat-gf"><code>repeat-gf</code></a></h3>
+<pre><code class="language-clojure">(vmap/repeat-gf kernel n)
+</code></pre>
+<p>Create a Vmap combinator that runs the kernel <code>n</code> times with no batched
+arguments. Shorthand for <code>(vmap-gf kernel :axis-size n)</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>kernel</code></td><td>Generative function</td><td>The model to repeat</td></tr>
+<tr><td><code>n</code></td><td>Integer</td><td>Number of independent repetitions</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A <code>VmapCombinator</code> with <code>:axis-size n</code> and no in-axes.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def coin (gen [] (trace :flip (dist/bernoulli 0.5))))
+
+;; Flip 100 independent coins
+(def repeated (vmap/repeat-gf coin 100))
+(def tr (p/simulate repeated []))
+
+;; :flip is a [100]-shaped array of 0s and 1s
+(mx/sum (cm/get-choice (:choices tr) [:flip]))  ;; approximately 50
+</code></pre>
+<hr>
+<h2 id="contramap--dimap"><a class="header" href="#contramap--dimap">Contramap / Dimap</a></h2>
+<p>Functional transforms on generative functions that modify inputs, outputs, or
+both. These do not change the address space – they only transform the data
+flowing in and out.</p>
+<h3 id="contramap-gf"><a class="header" href="#contramap-gf"><code>contramap-gf</code></a></h3>
+<pre><code class="language-clojure">(comb/contramap-gf gf f)
+</code></pre>
+<p>Transform arguments before passing to the inner generative function.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The inner GF to wrap</td></tr>
+<tr><td><code>f</code></td><td>Function</td><td><code>(fn [args] -&gt; transformed-args)</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A <code>ContramapGF</code> implementing <code>IGenerativeFunction</code>, <code>IGenerate</code>,
+<code>IUpdate</code>, <code>IRegenerate</code>, <code>IUpdateWithDiffs</code>, and <code>IEdit</code>.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def model (gen [x y] (trace :z (dist/gaussian (mx/add x y) 1))))
+
+;; Swap arguments
+(def swapped (comb/contramap-gf model (fn [[a b]] [b a])))
+(p/simulate swapped [(mx/scalar 1) (mx/scalar 2)])
+;; model receives args [2, 1]
+
+;; Extract from a map
+(def from-map (comb/contramap-gf model
+                (fn [[m]] [(:x m) (:y m)])))
+</code></pre>
+<h3 id="map-retval"><a class="header" href="#map-retval"><code>map-retval</code></a></h3>
+<pre><code class="language-clojure">(comb/map-retval gf g)
+</code></pre>
+<p>Transform the return value of a generative function. The address space and
+score are unchanged.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The inner GF to wrap</td></tr>
+<tr><td><code>g</code></td><td>Function</td><td><code>(fn [retval] -&gt; transformed-retval)</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A <code>MapRetvalGF</code> implementing <code>IGenerativeFunction</code>, <code>IGenerate</code>,
+<code>IUpdate</code>, <code>IRegenerate</code>, <code>IUpdateWithDiffs</code>, and <code>IEdit</code>.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def model (gen [x] (trace :y (dist/gaussian x 1))))
+
+;; Square the return value
+(def squared (comb/map-retval model (fn [v] (mx/multiply v v))))
+(def tr (p/simulate squared [(mx/scalar 3)]))
+;; (:retval tr) is the squared value of :y
+</code></pre>
+<h3 id="dimap"><a class="header" href="#dimap"><code>dimap</code></a></h3>
+<pre><code class="language-clojure">(comb/dimap gf f g)
+</code></pre>
+<p>Transform both arguments and return value of a generative function. Equivalent
+to <code>(-&gt; gf (contramap-gf f) (map-retval g))</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gf</code></td><td>Generative function</td><td>The inner GF to wrap</td></tr>
+<tr><td><code>f</code></td><td>Function</td><td><code>(fn [args] -&gt; transformed-args)</code> for input</td></tr>
+<tr><td><code>g</code></td><td>Function</td><td><code>(fn [retval] -&gt; transformed-retval)</code> for output</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Returns:</strong> A composed <code>MapRetvalGF</code> wrapping a <code>ContramapGF</code>.</p>
+<p><strong>Example:</strong></p>
+<pre><code class="language-clojure">(def model (gen [x] (trace :y (dist/gaussian x 1))))
+
+;; Double the input, negate the output
+(def transformed (comb/dimap model
+                   (fn [[x]] [(mx/multiply x (mx/scalar 2))])
+                   (fn [v] (mx/negative v))))
+
+(def tr (p/simulate transformed [(mx/scalar 3)]))
+;; model receives x=6, retval is negated
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="distributions.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="edit.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="distributions.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="edit.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-c2a407aa.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>
