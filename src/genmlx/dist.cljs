@@ -1272,7 +1272,6 @@
         X-inv (mx/inv x-2d)
         log-det-X (mx/multiply TWO
                                (mx/sum (mx/log (mx/diag (mx/cholesky x-2d)))))
-        _ (mx/materialize! log-det-X)
         ;; log p(X) = (df/2)*log|Psi| - (df*k/2)*log(2) - log_multivariate_gamma(df/2, k)
         ;;            - ((df+k+1)/2)*log|X| - (1/2)*tr(Psi * X^{-1})
         half-df (/ df 2.0)
