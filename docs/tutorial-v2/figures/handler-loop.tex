@@ -1,10 +1,10 @@
-\documentclass[border=12pt,tikz]{standalone}
+\documentclass[border=14pt,tikz]{standalone}
 \usepackage{fontspec}
 \setmainfont{Helvetica Neue}
 \setsansfont{Helvetica Neue}
 \setmonofont{Menlo}
 \usepackage{tikz}
-\usetikzlibrary{positioning, arrows.meta, fit, backgrounds, calc, decorations.pathreplacing}
+\usetikzlibrary{positioning, arrows.meta, fit, backgrounds}
 
 \definecolor{pure}{HTML}{E8F5E9}
 \definecolor{pureborder}{HTML}{4CAF50}
@@ -12,86 +12,57 @@
 \definecolor{impureborder}{HTML}{FF9800}
 \definecolor{model}{HTML}{E3F2FD}
 \definecolor{modelborder}{HTML}{2196F3}
-\definecolor{accent}{HTML}{7B1FA2}
-\definecolor{gray50}{HTML}{9E9E9E}
 
 \begin{document}
 \begin{tikzpicture}[
     >=Stealth,
-    node distance=1.2cm and 1.8cm,
-    box/.style={draw, rounded corners=4pt, minimum height=1cm, minimum width=2.8cm,
+    node distance=1.8cm,
+    box/.style={draw, rounded corners=4pt, inner sep=10pt,
                 font=\sffamily\small, align=center, line width=0.8pt},
-    purebox/.style={box, fill=pure, draw=pureborder},
-    impurebox/.style={box, fill=impure, draw=impureborder},
-    modelbox/.style={box, fill=model, draw=modelborder},
-    label/.style={font=\sffamily\scriptsize\color{gray50}, align=center},
-    arrow/.style={->, line width=0.8pt, color=gray50},
-    thickarrow/.style={->, line width=1.2pt},
+    annot/.style={font=\sffamily\scriptsize, text=black!50},
 ]
 
-% Model body (left)
-\node[modelbox, minimum width=3.2cm, minimum height=2.4cm] (model) {};
-\node[font=\sffamily\small\bfseries, color=modelborder] at (model.north) [below=3pt] {Model Body};
-\node[font=\ttfamily\scriptsize, align=left] at (model.center) [yshift=-2pt] {
-  (let [slope (trace :slope\\
-  \quad\quad\quad(gaussian 0 10))]\\
-  \quad...)
-};
+% Three main boxes in a row
+\node[box, fill=model, draw=modelborder]
+    (model) {Model Body\\[2pt]{\ttfamily\scriptsize (trace :slope (gaussian 0 10))}};
 
-% trace closure (center)
-\node[impurebox, right=2cm of model, minimum width=2.6cm] (closure) {trace closure};
-\node[label, below=2pt of closure] {reads \& writes\\the volatile!};
+\node[box, fill=impure, draw=impureborder, right=of model]
+    (closure) {Trace Closure\\[2pt]{\scriptsize reads/writes \texttt{volatile!}}};
 
-% volatile (below closure)
-\node[impurebox, below=1.2cm of closure, minimum width=2.6cm, minimum height=0.8cm] (vol) {\texttt{volatile!}};
-\node[label, below=2pt of vol] {single mutable cell};
+\node[box, fill=pure, draw=pureborder, right=of closure]
+    (transition) {Pure Transition\\[2pt]{\ttfamily\scriptsize (state, addr, dist)}\\{\ttfamily\scriptsize $\to$ (value, state')}};
 
-% Pure transition (right)
-\node[purebox, right=2cm of closure, minimum width=3.4cm, minimum height=1.4cm] (transition) {};
-\node[font=\sffamily\small\bfseries, color=pureborder] at (transition.north) [below=3pt] {Pure Transition};
-\node[font=\ttfamily\scriptsize, align=center] at (transition.center) [yshift=-2pt] {
-  (state, addr, dist)\\
-  $\to$ (value, state')
-};
+% volatile! below closure
+\node[box, fill=impure, draw=impureborder, below=1.2cm of closure]
+    (vol) {\texttt{volatile!}\\[1pt]{\scriptsize single mutable cell}};
 
-% Arrows
-% Model -> closure: calls trace
-\draw[thickarrow, color=modelborder] (model.east) -- (closure.west)
-    node[midway, above, font=\sffamily\scriptsize] {calls \texttt{trace}};
+% Forward arrows (top path)
+\draw[->, line width=1pt, modelborder]
+    (model) -- (closure) node[midway, above, annot] {calls \texttt{trace}};
+\draw[->, line width=1pt, pureborder]
+    (closure) -- (transition) node[midway, above, annot] {calls pure fn};
 
-% closure -> volatile: reads state
-\draw[arrow] (closure.south) -- (vol.north)
-    node[midway, right, font=\sffamily\scriptsize, xshift=2pt] {@vol};
+% Return arrows (bottom path, using bend)
+\draw[->, line width=1pt, pureborder, dashed]
+    (transition.south) -- ++(0,-0.5) -| (closure.south east)
+    node[pos=0.25, below, annot] {(value, state')};
+\draw[->, line width=1pt, modelborder, dashed]
+    (closure.north west) -- ++(0,0.5) -| (model.north east)
+    node[pos=0.25, above, annot] {returns value};
 
-% volatile -> closure: writes state'
-\draw[arrow] (vol.north west) -- (closure.south west)
-    node[midway, left, font=\sffamily\scriptsize, xshift=-2pt] {vreset!};
+% Closure <-> volatile
+\draw[->, line width=0.8pt] (closure) -- (vol) node[midway, right, annot] {@vol};
+\draw[->, line width=0.8pt] (vol.west) -- ++(-.6,0) |- (closure.south west)
+    node[pos=0.25, left, annot] {vreset!};
 
-% closure -> transition: calls pure fn
-\draw[thickarrow, color=pureborder] (closure.east) -- (transition.west)
-    node[midway, above, font=\sffamily\scriptsize] {calls};
-
-% transition -> closure: returns (value, state')
-\draw[thickarrow, color=pureborder, dashed] ([yshift=-4pt]transition.west) -- ([yshift=-4pt]closure.east)
-    node[midway, below, font=\sffamily\scriptsize] {(value, state')};
-
-% closure -> model: returns value
-\draw[thickarrow, color=modelborder, dashed] ([yshift=-4pt]closure.west) -- ([yshift=-4pt]model.east)
-    node[midway, below, font=\sffamily\scriptsize] {returns value};
-
-% Background regions
+% Background zones via fit
 \begin{scope}[on background layer]
-    % Pure region
-    \node[fit=(transition), fill=pure!30, rounded corners=8pt, inner sep=12pt] (purebg) {};
-    \node[font=\sffamily\scriptsize\bfseries, color=pureborder] at (purebg.north east) [below left=4pt] {PURE};
-
-    % Impure region
-    \node[fit=(closure)(vol), fill=impure!30, rounded corners=8pt, inner sep=12pt] (impurebg) {};
-    \node[font=\sffamily\scriptsize\bfseries, color=impureborder] at (impurebg.south east) [above left=4pt] {MANAGED};
-
-    % Model region
-    \node[fit=(model), fill=model!30, rounded corners=8pt, inner sep=12pt] (modelbg) {};
-    \node[font=\sffamily\scriptsize\bfseries, color=modelborder] at (modelbg.south west) [above right=4pt] {YOUR CODE};
+    \node[fit=(model), fill=model!20, rounded corners=8pt, inner sep=14pt,
+          label={[annot, modelborder]below:YOUR CODE}] {};
+    \node[fit=(closure)(vol), fill=impure!20, rounded corners=8pt, inner sep=14pt,
+          label={[annot, impureborder]below:MANAGED BOUNDARY}] {};
+    \node[fit=(transition), fill=pure!20, rounded corners=8pt, inner sep=14pt,
+          label={[annot, pureborder]below:PURE}] {};
 \end{scope}
 
 \end{tikzpicture}

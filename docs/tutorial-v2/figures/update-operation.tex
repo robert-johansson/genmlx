@@ -1,10 +1,11 @@
-\documentclass[border=12pt,tikz]{standalone}
+\documentclass[border=14pt,tikz]{standalone}
 \usepackage{fontspec}
 \setmainfont{Helvetica Neue}
 \setsansfont{Helvetica Neue}
 \setmonofont{Menlo}
+\usepackage{amsmath}
 \usepackage{tikz}
-\usetikzlibrary{positioning, arrows.meta, fit, backgrounds, calc, decorations.pathreplacing}
+\usetikzlibrary{positioning, arrows.meta}
 
 \definecolor{keep}{HTML}{E3F2FD}
 \definecolor{keepborder}{HTML}{2196F3}
@@ -12,71 +13,75 @@
 \definecolor{changeborder}{HTML}{FF9800}
 \definecolor{discard}{HTML}{FFEBEE}
 \definecolor{discardborder}{HTML}{E53935}
-\definecolor{gray50}{HTML}{9E9E9E}
 \definecolor{accent}{HTML}{7B1FA2}
 
 \begin{document}
 \begin{tikzpicture}[
     >=Stealth,
-    node distance=0.6cm and 0.4cm,
-    entry/.style={draw, rounded corners=2pt, minimum height=0.7cm, minimum width=4cm,
-                  font=\ttfamily\scriptsize, line width=0.6pt, align=left},
-    keepentry/.style={entry, fill=keep, draw=keepborder},
-    changeentry/.style={entry, fill=change, draw=changeborder},
-    discardentry/.style={entry, fill=discard, draw=discardborder},
-    traceheader/.style={font=\sffamily\small\bfseries, minimum height=0.7cm},
-    label/.style={font=\sffamily\scriptsize, color=gray50},
+    node distance=0.3cm,
+    entry/.style={draw, rounded corners=2pt, inner sep=6pt,
+                  font=\ttfamily\scriptsize, line width=0.6pt},
+    title/.style={font=\sffamily\small\bfseries},
+    annot/.style={font=\sffamily\scriptsize, text=black!50},
 ]
 
-% === OLD TRACE (left) ===
-\node[traceheader] (oldtitle) {Old Trace $\mathbf{t}$};
-\node[keepentry, below=0.3cm of oldtitle] (old-slope) {:slope \quad 2.3};
-\node[changeentry, below=0.15cm of old-slope] (old-inter) {:intercept \quad 1.1};
-\node[keepentry, below=0.15cm of old-inter] (old-y0) {:y0 \quad\quad 4.5};
-\node[keepentry, below=0.15cm of old-y0] (old-y1) {:y1 \quad\quad 5.8};
+% === OLD TRACE ===
+\node[title] (oldtitle) {Old Trace};
+\node[entry, fill=keep, draw=keepborder, below=0.4cm of oldtitle]
+    (old-slope) {:slope \enspace 2.3};
+\node[entry, fill=change, draw=changeborder, below=of old-slope]
+    (old-inter) {:intercept \enspace 1.1};
+\node[entry, fill=keep, draw=keepborder, below=of old-inter]
+    (old-y0) {:y0 \enspace 4.5};
+\node[entry, fill=keep, draw=keepborder, below=of old-y0]
+    (old-y1) {:y1 \enspace 5.8};
 
-\node[label, below=0.3cm of old-y1] {score $= \log p(\boldsymbol{\tau}; x)$};
+% === CONSTRAINTS ===
+\node[title, right=3cm of oldtitle] (contitle) {Constraints};
+\node[entry, fill=change, draw=changeborder, below=0.4cm of contitle]
+    (con-inter) {:intercept \enspace 0.5};
 
-% === CONSTRAINTS (middle top) ===
-\node[traceheader, right=3.5cm of oldtitle] (constitle) {Constraints $\boldsymbol{v}$};
-\node[changeentry, below=0.3cm of constitle, minimum width=4cm] (con-inter) {:intercept \quad 0.5};
+% === NEW TRACE ===
+\node[title, right=3cm of contitle] (newtitle) {New Trace};
+\node[entry, fill=keep, draw=keepborder, below=0.4cm of newtitle]
+    (new-slope) {:slope \enspace 2.3};
+\node[entry, fill=change, draw=changeborder, below=of new-slope]
+    (new-inter) {:intercept \enspace 0.5};
+\node[entry, fill=keep, draw=keepborder, below=of new-inter]
+    (new-y0) {:y0 \enspace 4.5};
+\node[entry, fill=keep, draw=keepborder, below=of new-y0]
+    (new-y1) {:y1 \enspace 5.8};
 
-% === NEW TRACE (right) ===
-\node[traceheader, right=3.5cm of constitle] (newtitle) {New Trace $\mathbf{t}'$};
-\node[keepentry, below=0.3cm of newtitle] (new-slope) {:slope \quad 2.3};
-\node[changeentry, below=0.15cm of new-slope] (new-inter) {:intercept \quad 0.5};
-\node[keepentry, below=0.15cm of new-inter] (new-y0) {:y0 \quad\quad 4.5};
-\node[keepentry, below=0.15cm of new-y0] (new-y1) {:y1 \quad\quad 5.8};
-
-\node[label, below=0.3cm of new-y1] {score $= \log p(\boldsymbol{\tau}'; x')$};
-
-% === DISCARD (below constraints) ===
-\node[traceheader, below=1.8cm of constitle] (distitle) {Discard $\boldsymbol{v}'$};
-\node[discardentry, below=0.3cm of distitle, minimum width=4cm] (dis-inter) {:intercept \quad 1.1};
+% === DISCARD ===
+\node[title, below=2.5cm of contitle] (distitle) {Discard};
+\node[entry, fill=discard, draw=discardborder, below=0.4cm of distitle]
+    (dis-inter) {:intercept \enspace 1.1};
 
 % === ARROWS ===
-% Old trace -> new trace
-\draw[->, line width=1.2pt, color=accent] ([yshift=-5pt]old-slope.east) -- ([yshift=-5pt]new-slope.west)
-    node[midway, above, font=\sffamily\scriptsize\bfseries, color=accent, yshift=8pt] {update};
+\draw[->, line width=1.2pt, accent]
+    (old-slope.east) -- (new-slope.west)
+    node[midway, above, font=\sffamily\scriptsize\bfseries, accent] {update};
 
-% Constraints -> new trace
-\draw[->, line width=0.8pt, color=changeborder] (con-inter.east) -- (new-inter.west);
+\draw[->, line width=0.8pt, changeborder]
+    (con-inter) -- (new-inter);
 
-% Old value -> discard
-\draw[->, line width=0.8pt, color=discardborder, dashed] (old-inter.south) |- (dis-inter.west);
+\draw[->, line width=0.8pt, discardborder, dashed]
+    (old-inter) |- (dis-inter);
 
-% Weight annotation
-\node[font=\sffamily\scriptsize, color=accent, below=2.5cm of new-y1, align=center] {
-  $\log w = \log p(\boldsymbol{\tau}'; x') - \log p(\boldsymbol{\tau}; x)$
-};
+% === WEIGHT ===
+\node[annot, color=accent, below=0.6cm of new-y1]
+    {$\log w = \log p(\boldsymbol{\tau}'; x') - \log p(\boldsymbol{\tau}; x)$};
 
-% Legend
-\node[keepentry, minimum width=1.4cm, minimum height=0.4cm, below=4cm of old-y1] (legkeep) {};
-\node[label, right=4pt of legkeep] {Kept};
-\node[changeentry, minimum width=1.4cm, minimum height=0.4cm, right=2cm of legkeep] (legchange) {};
-\node[label, right=4pt of legchange] {Changed};
-\node[discardentry, minimum width=1.4cm, minimum height=0.4cm, right=2cm of legchange] (legdiscard) {};
-\node[label, right=4pt of legdiscard] {Discarded};
+% === LEGEND ===
+\node[entry, fill=keep, draw=keepborder, inner sep=3pt,
+      below=1.5cm of old-y1] (lk) {};
+\node[annot, right=3pt of lk] {Kept};
+\node[entry, fill=change, draw=changeborder, inner sep=3pt,
+      right=1.5cm of lk] (lc) {};
+\node[annot, right=3pt of lc] {Changed};
+\node[entry, fill=discard, draw=discardborder, inner sep=3pt,
+      right=1.5cm of lc] (ld) {};
+\node[annot, right=3pt of ld] {Discarded};
 
 \end{tikzpicture}
 \end{document}

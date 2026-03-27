@@ -1,83 +1,80 @@
-\documentclass[border=12pt,tikz]{standalone}
+\documentclass[border=14pt,tikz]{standalone}
 \usepackage{fontspec}
 \setmainfont{Helvetica Neue}
 \setsansfont{Helvetica Neue}
 \setmonofont{Menlo}
+\usepackage{amsmath}
 \usepackage{tikz}
-\usetikzlibrary{positioning, arrows.meta, fit, backgrounds, calc}
+\usetikzlibrary{positioning, arrows.meta, fit, backgrounds}
 
 \definecolor{latent}{HTML}{E3F2FD}
 \definecolor{latentborder}{HTML}{2196F3}
 \definecolor{observed}{HTML}{E8F5E9}
 \definecolor{observedborder}{HTML}{4CAF50}
-\definecolor{gray50}{HTML}{9E9E9E}
-\definecolor{accent}{HTML}{7B1FA2}
 \definecolor{weightcolor}{HTML}{E65100}
 
 \begin{document}
 \begin{tikzpicture}[
     >=Stealth,
-    node distance=1cm and 1.6cm,
-    rv/.style={draw, circle, minimum size=1.1cm, font=\sffamily\small, line width=0.8pt},
-    latentnode/.style={rv, fill=latent, draw=latentborder},
-    obsnode/.style={rv, fill=observed, draw=observedborder},
-    choiceval/.style={font=\ttfamily\scriptsize, color=gray50},
-    arrow/.style={->, line width=0.8pt},
-    label/.style={font=\sffamily\scriptsize},
+    node distance=1.2cm and 1.4cm,
+    rv/.style={draw, circle, inner sep=6pt, font=\sffamily\scriptsize, line width=0.8pt},
+    annot/.style={font=\sffamily\scriptsize, text=black!50},
+    title/.style={font=\sffamily\small\bfseries},
 ]
 
-% === SIMULATE (left) ===
-\node[font=\sffamily\small\bfseries] (simtitle) {simulate};
+% === SIMULATE ===
+\node[title] (simtitle) {simulate};
 
-\node[latentnode, below=0.6cm of simtitle] (sim-slope) {:slope};
-\node[latentnode, right=1cm of sim-slope] (sim-inter) {:intercept};
-\node[latentnode, below=1.2cm of sim-slope] (sim-y0) {:y0};
-\node[latentnode, right=1cm of sim-y0] (sim-y1) {:y1};
-\node[latentnode, right=1cm of sim-y1] (sim-y2) {:y2};
+\node[rv, fill=latent, draw=latentborder, below left=1cm and 0.4cm of simtitle]
+    (sim-slope) {:slope};
+\node[rv, fill=latent, draw=latentborder, below right=1cm and 0.4cm of simtitle]
+    (sim-inter) {:intercept};
 
-\draw[arrow] (sim-slope) -- (sim-y0);
-\draw[arrow] (sim-slope) -- (sim-y1);
-\draw[arrow] (sim-slope) -- (sim-y2);
-\draw[arrow] (sim-inter) -- (sim-y0);
-\draw[arrow] (sim-inter) -- (sim-y1);
-\draw[arrow] (sim-inter) -- (sim-y2);
+\node[rv, fill=latent, draw=latentborder, below=of sim-slope] (sim-y0) {:y0};
+\node[rv, fill=latent, draw=latentborder, right=of sim-y0] (sim-y1) {:y1};
+\node[rv, fill=latent, draw=latentborder, right=of sim-y1] (sim-y2) {:y2};
 
-\node[choiceval, right=2pt of sim-slope] [xshift=8pt] {$\sim$ prior};
-\node[choiceval, right=2pt of sim-inter] [xshift=8pt] {$\sim$ prior};
+\draw[->] (sim-slope) -- (sim-y0);
+\draw[->] (sim-slope) -- (sim-y1);
+\draw[->] (sim-slope) -- (sim-y2);
+\draw[->] (sim-inter) -- (sim-y0);
+\draw[->] (sim-inter) -- (sim-y1);
+\draw[->] (sim-inter) -- (sim-y2);
 
-\node[label, below=4pt of sim-y1, color=latentborder] {all sampled from prior};
+\node[annot, below=0.6cm of sim-y1] {all sampled from prior};
 
-% === GENERATE (right) ===
-\node[font=\sffamily\small\bfseries, right=5.5cm of simtitle] (gentitle) {generate};
+% === GENERATE ===
+\node[title, right=4.5cm of simtitle] (gentitle) {generate};
 
-\node[latentnode, below=0.6cm of gentitle] (gen-slope) {:slope};
-\node[latentnode, right=1cm of gen-slope] (gen-inter) {:intercept};
-\node[obsnode, below=1.2cm of gen-slope] (gen-y0) {:y0};
-\node[obsnode, right=1cm of gen-y0] (gen-y1) {:y1};
-\node[obsnode, right=1cm of gen-y1] (gen-y2) {:y2};
+\node[rv, fill=latent, draw=latentborder, below left=1cm and 0.4cm of gentitle]
+    (gen-slope) {:slope};
+\node[rv, fill=latent, draw=latentborder, below right=1cm and 0.4cm of gentitle]
+    (gen-inter) {:intercept};
 
-\draw[arrow] (gen-slope) -- (gen-y0);
-\draw[arrow] (gen-slope) -- (gen-y1);
-\draw[arrow] (gen-slope) -- (gen-y2);
-\draw[arrow] (gen-inter) -- (gen-y0);
-\draw[arrow] (gen-inter) -- (gen-y1);
-\draw[arrow] (gen-inter) -- (gen-y2);
+\node[rv, fill=observed, draw=observedborder, below=of gen-slope] (gen-y0) {:y0};
+\node[rv, fill=observed, draw=observedborder, right=of gen-y0] (gen-y1) {:y1};
+\node[rv, fill=observed, draw=observedborder, right=of gen-y1] (gen-y2) {:y2};
 
-\node[choiceval, right=2pt of gen-slope] [xshift=8pt] {$\sim$ prior};
-\node[choiceval, right=2pt of gen-inter] [xshift=8pt] {$\sim$ prior};
+\draw[->] (gen-slope) -- (gen-y0);
+\draw[->] (gen-slope) -- (gen-y1);
+\draw[->] (gen-slope) -- (gen-y2);
+\draw[->] (gen-inter) -- (gen-y0);
+\draw[->] (gen-inter) -- (gen-y1);
+\draw[->] (gen-inter) -- (gen-y2);
 
-\node[label, below=4pt of gen-y1, color=observedborder] {constrained to data};
+\node[annot, color=observedborder, below=0.6cm of gen-y1] {constrained to data};
 
-% Weight annotation
-\node[font=\sffamily\scriptsize, color=weightcolor, below=0.8cm of gen-y1] (wt) {
-  weight $= \log p(y_0, y_1, y_2 \mid \text{slope}, \text{intercept})$
-};
+\node[annot, color=weightcolor, below=1.2cm of gen-y1]
+    {weight $= \log p(y_0, y_1, y_2 \mid \text{slope}, \text{intercept})$};
 
-% Legend
-\node[latentnode, minimum size=0.5cm, below=2.8cm of simtitle] (leglatent) {};
-\node[label, right=4pt of leglatent] {Sampled (latent)};
-\node[obsnode, minimum size=0.5cm, right=2.5cm of leglatent] (legobs) {};
-\node[label, right=4pt of legobs] {Constrained (observed)};
+% === LEGEND ===
+\node[rv, fill=latent, draw=latentborder, inner sep=3pt,
+      below=3cm of sim-y0] (legL) {};
+\node[annot, right=4pt of legL] {Sampled (latent)};
+
+\node[rv, fill=observed, draw=observedborder, inner sep=3pt,
+      right=2cm of legL] (legO) {};
+\node[annot, right=4pt of legO] {Constrained (observed)};
 
 \end{tikzpicture}
 \end{document}

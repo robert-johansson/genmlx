@@ -1,10 +1,10 @@
-\documentclass[border=12pt,tikz]{standalone}
+\documentclass[border=14pt,tikz]{standalone}
 \usepackage{fontspec}
 \setmainfont{Helvetica Neue}
 \setsansfont{Helvetica Neue}
 \setmonofont{Menlo}
 \usepackage{tikz}
-\usetikzlibrary{positioning, arrows.meta, fit, backgrounds, calc}
+\usetikzlibrary{positioning, arrows.meta}
 
 \definecolor{l0}{HTML}{E3F2FD}
 \definecolor{l0b}{HTML}{90CAF9}
@@ -16,57 +16,41 @@
 \definecolor{l3b}{HTML}{BA68C8}
 \definecolor{l4}{HTML}{FCE4EC}
 \definecolor{l4b}{HTML}{E57373}
-\definecolor{gray50}{HTML}{9E9E9E}
 
 \begin{document}
 \begin{tikzpicture}[
     >=Stealth,
-    node distance=0.15cm,
-    level/.style={draw, rounded corners=4pt, minimum height=1.1cm, line width=0.8pt,
-                  font=\sffamily\small, align=left, text width=11cm, inner sep=8pt},
-    label/.style={font=\sffamily\tiny, color=gray50},
-    numlabel/.style={font=\sffamily\footnotesize\bfseries, minimum width=1.2cm, align=center},
+    node distance=0.25cm,
+    level/.style={draw, rounded corners=4pt, inner sep=8pt, line width=0.8pt,
+                  font=\sffamily\small, align=left},
+    annot/.style={font=\sffamily\scriptsize, text=black!50},
 ]
 
-% Levels (bottom to top, stacking)
-\node[level, fill=l0, draw=l0b] (lev0) {
-  \textbf{Level 0: Shape-Based GPU Batching}\\[-2pt]
-  {\scriptsize Model body runs once with $[N]$-shaped arrays. Inference loop is host-driven.}
-};
+% Stack levels bottom to top
+\node[level, fill=l0, draw=l0b]
+    (lev0) {\textbf{Level 0} \enspace Shape-based GPU batching};
 
-\node[level, fill=l1, draw=l1b, above=of lev0] (lev1) {
-  \textbf{Level 1: Compiled Generative Functions}\\[-2pt]
-  {\scriptsize Macro-time schema extraction. Model compiles to single Metal dispatch.}
-};
+\node[level, fill=l1, draw=l1b, above=of lev0]
+    (lev1) {\textbf{Level 1} \enspace Compiled generative functions};
 
-\node[level, fill=l2, draw=l2b, above=of lev1] (lev2) {
-  \textbf{Level 2: Compiled Inference Sweeps}\\[-2pt]
-  {\scriptsize Full SMC/MCMC sweep in one graph. Pre-generated randomness. Differentiable resampling.}
-};
+\node[level, fill=l2, draw=l2b, above=of lev1]
+    (lev2) {\textbf{Level 2} \enspace Compiled inference sweeps};
 
-\node[level, fill=l3, draw=l3b, above=of lev2] (lev3) {
-  \textbf{Level 3: Automatic Analytical Elimination}\\[-2pt]
-  {\scriptsize Conjugacy detection eliminates sampling. Only irreducible stochastic computation remains.}
-};
+\node[level, fill=l3, draw=l3b, above=of lev2]
+    (lev3) {\textbf{Level 3} \enspace Automatic analytical elimination};
 
-\node[level, fill=l4, draw=l4b, above=of lev3] (lev4) {
-  \textbf{Level 4: Single Fused Graph}\\[-2pt]
-  {\scriptsize Model + inference + gradient + optimizer = one \texttt{mx/eval!} call. The PPL is a compiler.}
-};
+\node[level, fill=l4, draw=l4b, above=of lev3]
+    (lev4) {\textbf{Level 4} \enspace Single fused graph};
 
-% Arrow on the right side
-\draw[->, line width=1.5pt, color=gray50]
-    ([xshift=1.2cm]lev0.east) -- ([xshift=1.2cm]lev4.east)
-    node[midway, right=6pt, font=\sffamily\scriptsize, color=gray50, align=center, text width=2.5cm] {
-      more computation\\in the MLX graph\\[4pt]
-      less host\\orchestration
-    };
+% Arrow on right
+\draw[->, line width=1.2pt, black!40]
+    ([xshift=1cm]lev0.east) -- ([xshift=1cm]lev4.east)
+    node[midway, right=6pt, annot, align=center] {more in\\MLX graph};
 
-% "Each level subsumes the previous" note
-\node[label, below=0.4cm of lev0, text width=11cm, align=center] {
-  Each level subsumes the previous. Models written at Level 0 run unchanged at Level 4.\\
-  The handler path remains ground truth at every stage.
-};
+% Note below
+\node[annot, below=0.5cm of lev0, align=center] {%
+    Each level subsumes the previous.\\
+    Models written at Level 0 run unchanged at Level 4.};
 
 \end{tikzpicture}
 \end{document}
