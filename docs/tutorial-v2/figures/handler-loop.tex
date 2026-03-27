@@ -1,0 +1,98 @@
+\documentclass[border=12pt,tikz]{standalone}
+\usepackage{fontspec}
+\setmainfont{Helvetica Neue}
+\setsansfont{Helvetica Neue}
+\setmonofont{Menlo}
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, fit, backgrounds, calc, decorations.pathreplacing}
+
+\definecolor{pure}{HTML}{E8F5E9}
+\definecolor{pureborder}{HTML}{4CAF50}
+\definecolor{impure}{HTML}{FFF3E0}
+\definecolor{impureborder}{HTML}{FF9800}
+\definecolor{model}{HTML}{E3F2FD}
+\definecolor{modelborder}{HTML}{2196F3}
+\definecolor{accent}{HTML}{7B1FA2}
+\definecolor{gray50}{HTML}{9E9E9E}
+
+\begin{document}
+\begin{tikzpicture}[
+    >=Stealth,
+    node distance=1.2cm and 1.8cm,
+    box/.style={draw, rounded corners=4pt, minimum height=1cm, minimum width=2.8cm,
+                font=\sffamily\small, align=center, line width=0.8pt},
+    purebox/.style={box, fill=pure, draw=pureborder},
+    impurebox/.style={box, fill=impure, draw=impureborder},
+    modelbox/.style={box, fill=model, draw=modelborder},
+    label/.style={font=\sffamily\scriptsize\color{gray50}, align=center},
+    arrow/.style={->, line width=0.8pt, color=gray50},
+    thickarrow/.style={->, line width=1.2pt},
+]
+
+% Model body (left)
+\node[modelbox, minimum width=3.2cm, minimum height=2.4cm] (model) {};
+\node[font=\sffamily\small\bfseries, color=modelborder] at (model.north) [below=3pt] {Model Body};
+\node[font=\ttfamily\scriptsize, align=left] at (model.center) [yshift=-2pt] {
+  (let [slope (trace :slope\\
+  \quad\quad\quad(gaussian 0 10))]\\
+  \quad...)
+};
+
+% trace closure (center)
+\node[impurebox, right=2cm of model, minimum width=2.6cm] (closure) {trace closure};
+\node[label, below=2pt of closure] {reads \& writes\\the volatile!};
+
+% volatile (below closure)
+\node[impurebox, below=1.2cm of closure, minimum width=2.6cm, minimum height=0.8cm] (vol) {\texttt{volatile!}};
+\node[label, below=2pt of vol] {single mutable cell};
+
+% Pure transition (right)
+\node[purebox, right=2cm of closure, minimum width=3.4cm, minimum height=1.4cm] (transition) {};
+\node[font=\sffamily\small\bfseries, color=pureborder] at (transition.north) [below=3pt] {Pure Transition};
+\node[font=\ttfamily\scriptsize, align=center] at (transition.center) [yshift=-2pt] {
+  (state, addr, dist)\\
+  $\to$ (value, state')
+};
+
+% Arrows
+% Model -> closure: calls trace
+\draw[thickarrow, color=modelborder] (model.east) -- (closure.west)
+    node[midway, above, font=\sffamily\scriptsize] {calls \texttt{trace}};
+
+% closure -> volatile: reads state
+\draw[arrow] (closure.south) -- (vol.north)
+    node[midway, right, font=\sffamily\scriptsize, xshift=2pt] {@vol};
+
+% volatile -> closure: writes state'
+\draw[arrow] (vol.north west) -- (closure.south west)
+    node[midway, left, font=\sffamily\scriptsize, xshift=-2pt] {vreset!};
+
+% closure -> transition: calls pure fn
+\draw[thickarrow, color=pureborder] (closure.east) -- (transition.west)
+    node[midway, above, font=\sffamily\scriptsize] {calls};
+
+% transition -> closure: returns (value, state')
+\draw[thickarrow, color=pureborder, dashed] ([yshift=-4pt]transition.west) -- ([yshift=-4pt]closure.east)
+    node[midway, below, font=\sffamily\scriptsize] {(value, state')};
+
+% closure -> model: returns value
+\draw[thickarrow, color=modelborder, dashed] ([yshift=-4pt]closure.west) -- ([yshift=-4pt]model.east)
+    node[midway, below, font=\sffamily\scriptsize] {returns value};
+
+% Background regions
+\begin{scope}[on background layer]
+    % Pure region
+    \node[fit=(transition), fill=pure!30, rounded corners=8pt, inner sep=12pt] (purebg) {};
+    \node[font=\sffamily\scriptsize\bfseries, color=pureborder] at (purebg.north east) [below left=4pt] {PURE};
+
+    % Impure region
+    \node[fit=(closure)(vol), fill=impure!30, rounded corners=8pt, inner sep=12pt] (impurebg) {};
+    \node[font=\sffamily\scriptsize\bfseries, color=impureborder] at (impurebg.south east) [above left=4pt] {MANAGED};
+
+    % Model region
+    \node[fit=(model), fill=model!30, rounded corners=8pt, inner sep=12pt] (modelbg) {};
+    \node[font=\sffamily\scriptsize\bfseries, color=modelborder] at (modelbg.south west) [above right=4pt] {YOUR CODE};
+\end{scope}
+
+\end{tikzpicture}
+\end{document}

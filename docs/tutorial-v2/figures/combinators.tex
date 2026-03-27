@@ -1,0 +1,119 @@
+\documentclass[border=12pt,tikz]{standalone}
+\usepackage{fontspec}
+\setmainfont{Helvetica Neue}
+\setsansfont{Helvetica Neue}
+\setmonofont{Menlo}
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, fit, backgrounds, calc, decorations.pathreplacing}
+
+\definecolor{kernel}{HTML}{E3F2FD}
+\definecolor{kernelborder}{HTML}{2196F3}
+\definecolor{state}{HTML}{E8F5E9}
+\definecolor{stateborder}{HTML}{4CAF50}
+\definecolor{choice}{HTML}{FFF3E0}
+\definecolor{choiceborder}{HTML}{FF9800}
+\definecolor{gray50}{HTML}{9E9E9E}
+\definecolor{accent}{HTML}{7B1FA2}
+
+\begin{document}
+\begin{tikzpicture}[
+    >=Stealth,
+    node distance=0.8cm and 1.2cm,
+    kern/.style={draw, rounded corners=3pt, minimum height=0.9cm, minimum width=1.6cm,
+                 font=\sffamily\scriptsize, fill=kernel, draw=kernelborder, line width=0.7pt},
+    statebox/.style={draw, rounded corners=3pt, minimum height=0.6cm, minimum width=1cm,
+                     font=\ttfamily\tiny, fill=state, draw=stateborder, line width=0.5pt},
+    choicebox/.style={draw, rounded corners=3pt, minimum height=0.5cm, minimum width=0.8cm,
+                      font=\ttfamily\tiny, fill=choice, draw=choiceborder, line width=0.5pt},
+    secheader/.style={font=\sffamily\small\bfseries},
+    label/.style={font=\sffamily\tiny, color=gray50},
+    arrow/.style={->, line width=0.7pt},
+]
+
+% ============================================================
+% UNFOLD (top)
+% ============================================================
+\node[secheader] (unfold-title) {Unfold};
+\node[label, right=4pt of unfold-title] {sequential state threading};
+
+\node[statebox, below=0.5cm of unfold-title, xshift=-4cm] (s0) {$s_0$};
+\node[kern, right=0.8cm of s0] (k1) {step};
+\node[statebox, right=0.8cm of k1] (s1) {$s_1$};
+\node[kern, right=0.8cm of s1] (k2) {step};
+\node[statebox, right=0.8cm of k2] (s2) {$s_2$};
+\node[kern, right=0.8cm of s2] (k3) {step};
+\node[statebox, right=0.8cm of k3] (s3) {$s_3$};
+\node[label, right=0.3cm of s3] {$\cdots$};
+
+\draw[arrow] (s0) -- (k1);
+\draw[arrow] (k1) -- (s1);
+\draw[arrow] (s1) -- (k2);
+\draw[arrow] (k2) -- (s2);
+\draw[arrow] (s2) -- (k3);
+\draw[arrow] (k3) -- (s3);
+
+% Choices below each step
+\node[choicebox, below=0.3cm of k1] (c1) {$\boldsymbol{\tau}_1$};
+\node[choicebox, below=0.3cm of k2] (c2) {$\boldsymbol{\tau}_2$};
+\node[choicebox, below=0.3cm of k3] (c3) {$\boldsymbol{\tau}_3$};
+\draw[arrow, dashed, color=choiceborder] (k1) -- (c1);
+\draw[arrow, dashed, color=choiceborder] (k2) -- (c2);
+\draw[arrow, dashed, color=choiceborder] (k3) -- (c3);
+
+% ============================================================
+% MAP (middle)
+% ============================================================
+\node[secheader, below=2.2cm of unfold-title] (map-title) {Map};
+\node[label, right=4pt of map-title] {independent repetition};
+
+\node[kern, below=0.5cm of map-title, xshift=-2.5cm] (m1) {kernel};
+\node[kern, right=1.2cm of m1] (m2) {kernel};
+\node[kern, right=1.2cm of m2] (m3) {kernel};
+\node[kern, right=1.2cm of m3] (m4) {kernel};
+
+% Inputs above
+\node[statebox, above=0.3cm of m1] (x1) {$x_1$};
+\node[statebox, above=0.3cm of m2] (x2) {$x_2$};
+\node[statebox, above=0.3cm of m3] (x3) {$x_3$};
+\node[statebox, above=0.3cm of m4] (x4) {$x_4$};
+\draw[arrow] (x1) -- (m1);
+\draw[arrow] (x2) -- (m2);
+\draw[arrow] (x3) -- (m3);
+\draw[arrow] (x4) -- (m4);
+
+% Choices below
+\node[choicebox, below=0.3cm of m1] (mc1) {$\boldsymbol{\tau}_1$};
+\node[choicebox, below=0.3cm of m2] (mc2) {$\boldsymbol{\tau}_2$};
+\node[choicebox, below=0.3cm of m3] (mc3) {$\boldsymbol{\tau}_3$};
+\node[choicebox, below=0.3cm of m4] (mc4) {$\boldsymbol{\tau}_4$};
+\draw[arrow, dashed, color=choiceborder] (m1) -- (mc1);
+\draw[arrow, dashed, color=choiceborder] (m2) -- (mc2);
+\draw[arrow, dashed, color=choiceborder] (m3) -- (mc3);
+\draw[arrow, dashed, color=choiceborder] (m4) -- (mc4);
+
+% ============================================================
+% SWITCH (bottom)
+% ============================================================
+\node[secheader, below=2.2cm of map-title] (switch-title) {Switch};
+\node[label, right=4pt of switch-title] {conditional branching};
+
+\node[draw, diamond, minimum size=0.9cm, fill=state, draw=stateborder,
+      font=\sffamily\tiny, below=0.5cm of switch-title] (idx) {idx};
+
+\node[kern, below right=0.8cm and -0.2cm of idx] (sw1) {branch A};
+\node[kern, right=1.2cm of sw1] (sw2) {branch B};
+\node[kern, right=1.2cm of sw2] (sw3) {branch C};
+
+\draw[arrow] (idx) -| (sw1) node[near start, left, font=\sffamily\tiny] {0};
+\draw[arrow, color=gray50!50] (idx) -| (sw2) node[near start, left, font=\sffamily\tiny, xshift=-2pt] {1};
+\draw[arrow, color=gray50!50] (idx) -| (sw3) node[near start, right, font=\sffamily\tiny, xshift=2pt] {2};
+
+% Highlight selected branch
+\node[choicebox, below=0.3cm of sw1] (swc) {$\boldsymbol{\tau}_A$};
+\draw[arrow, dashed, color=choiceborder] (sw1) -- (swc);
+
+\node[label, below=0.3cm of sw2] {(not executed)};
+\node[label, below=0.3cm of sw3] {(not executed)};
+
+\end{tikzpicture}
+\end{document}
