@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-fad9e08e.js";
+            window.path_to_searchindex_js = "searchindex-240d9c13.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4ff5b9f.js"></script>
@@ -180,7 +180,85 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="placeholder"><a class="header" href="#placeholder">Placeholder</a></h1>
+                        <h1 id="gradients-learning-and-neural-models"><a class="header" href="#gradients-learning-and-neural-models">Gradients, Learning, and Neural Models</a></h1>
+<p>GenMLX supports differentiable probabilistic programming: gradients flow through models, enabling gradient-based inference and parameter learning. This chapter covers choice gradients, parameter stores, optimizers, and the bridge to neural networks.</p>
+<h2 id="choice-gradients"><a class="header" href="#choice-gradients">Choice gradients</a></h2>
+<p>Given a trace, <code>choice-gradients</code> computes the gradient of the log-joint probability with respect to specific random choices:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key grad-model)
+      trace (p/simulate model [0])
+      grads (grad/choice-gradients model trace [:mu])]
+  (println ":mu gradient:" (mx/item (:mu grads))))
+</code></pre>
+<p>This returns a map from addresses to MLX gradient arrays. The gradient \(\partial \log p / \partial \mu\) tells you which direction to move \(\mu\) to increase the log-probability. This is the foundation for HMC, MALA, and variational inference.</p>
+<h2 id="parameter-stores"><a class="header" href="#parameter-stores">Parameter stores</a></h2>
+<p>Models can have <strong>trainable parameters</strong> — values that persist across inference runs and are optimized by gradient descent. A parameter store is a map:</p>
+<pre><code class="language-clojure">(def ps (learn/make-param-store {:theta (mx/scalar 1.0)
+                                  :sigma (mx/scalar 0.5)}))
+;; ps = {:params {:theta #mlx[1.0], :sigma #mlx[0.5]}, :version 0}
+</code></pre>
+<p>Inside a <code>gen</code> body, <code>param</code> reads from the store:</p>
+<pre><code class="language-clojure">(def parameterized-model
+  (gen []
+    (let [mu (param :mu 0.0)]  ;; reads :mu from store, or 0.0 if absent
+      (trace :x (dist/gaussian mu 1))
+      mu)))
+</code></pre>
+<p>Use <code>simulate-with-params</code> or <code>generate-with-params</code> to run with a specific parameter store:</p>
+<pre><code class="language-clojure">(let [ps (learn/make-param-store {:mu (mx/scalar 5.0)})
+      trace (learn/simulate-with-params parameterized-model [] ps)]
+  ;; :x is sampled from N(5.0, 1) because :mu was set to 5.0
+  )
+</code></pre>
+<h2 id="optimizers"><a class="header" href="#optimizers">Optimizers</a></h2>
+<p>GenMLX provides SGD and Adam on flat MLX arrays:</p>
+<pre><code class="language-clojure">;; SGD: params' = params - lr * grad
+(let [params (mx/scalar 5.0)
+      grad (mx/scalar 1.0)
+      updated (learn/sgd-step params grad 0.1)]
+  (println "updated:" (mx/item updated)))  ;; 4.9
+
+;; Adam: maintains momentum and variance estimates
+(let [params (mx/array [5.0 3.0])
+      state (learn/adam-init params)
+      grad (mx/array [1.0 0.5])
+      [new-params new-state] (learn/adam-step params grad state {:lr 0.01})]
+  (println "new params:" (mx/-&gt;clj new-params)))
+</code></pre>
+<h2 id="training-loop"><a class="header" href="#training-loop">Training loop</a></h2>
+<p><code>learn/train</code> runs a generic optimization loop:</p>
+<pre><code class="language-clojure">;; Minimize (theta - 3)^2
+(let [loss-grad-fn (fn [params _key]
+                     (let [theta (mx/item params)
+                           loss (mx/scalar (* (- theta 3.0) (- theta 3.0)))
+                           grad (mx/scalar (* 2.0 (- theta 3.0)))]
+                       {:loss loss :grad grad}))
+      result (learn/train {:iterations 50 :optimizer :sgd :lr 0.1}
+                           loss-grad-fn (mx/scalar 0.0))]
+  (println "final theta:" (mx/item (:params result)))
+  (println "final loss:" (last (:loss-history result))))
+</code></pre>
+<p>The loss-grad function receives <code>(params, key)</code> and returns <code>{:loss MLX-scalar, :grad MLX-array}</code>. The training loop handles optimizer state management, loss history tracking, and optional callbacks.</p>
+<p>For models with multiple parameters, represent parameters as a flat MLX array and use <code>learn/params-&gt;array</code> / <code>learn/array-&gt;params</code> to convert between named parameters and flat arrays.</p>
+<h2 id="wake-sleep-learning"><a class="header" href="#wake-sleep-learning">Wake-sleep learning</a></h2>
+<p>For amortized inference, <code>learn/wake-sleep</code> alternates between two phases:</p>
+<ul>
+<li><strong>Wake phase</strong>: fix the model, improve the proposal (guide) to match the posterior.</li>
+<li><strong>Sleep phase</strong>: fix the proposal, improve the model to match the guide’s samples.</li>
+</ul>
+<p>This trains a neural proposal to produce good importance sampling proposals without running MCMC at test time.</p>
+<h2 id="neural-networks-as-generative-functions"><a class="header" href="#neural-networks-as-generative-functions">Neural networks as generative functions</a></h2>
+<p>GenMLX bridges MLX’s neural network module with the GFI via <code>nn-&gt;gen-fn</code>. A neural network wrapped as a generative function has no random choices (it’s deterministic) but implements the GFI protocols, so it can be used with <code>splice</code>, combinators, and all inference algorithms.</p>
+<p>This enables VAE-style architectures: a neural encoder maps data to approximate posterior parameters, and a generative decoder maps latent variables to observations. Both are generative functions composed via <code>splice</code>.</p>
+<h2 id="what-weve-learned"><a class="header" href="#what-weve-learned">What we’ve learned</a></h2>
+<ul>
+<li><code>choice-gradients</code> computes \(\partial \log p / \partial \text{choice}\) for gradient-based inference.</li>
+<li>Parameter stores hold trainable values; <code>param</code> reads them inside models.</li>
+<li>SGD and Adam operate on flat MLX arrays.</li>
+<li><code>learn/train</code> runs optimization loops with loss-grad functions.</li>
+<li>Wake-sleep learning trains amortized proposals.</li>
+<li>Neural networks bridge to the GFI via <code>nn-&gt;gen-fn</code>.</li>
+</ul>
+<p>In the final chapter, we’ll cover extending GenMLX with custom distributions, verifying GFI correctness, and where to go next.</p>
 
                     </main>
 

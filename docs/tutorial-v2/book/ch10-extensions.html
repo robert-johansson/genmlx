@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-fad9e08e.js";
+            window.path_to_searchindex_js = "searchindex-240d9c13.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4ff5b9f.js"></script>
@@ -180,7 +180,121 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="placeholder"><a class="header" href="#placeholder">Placeholder</a></h1>
+                        <h1 id="extensions-and-verification"><a class="header" href="#extensions-and-verification">Extensions and Verification</a></h1>
+<p>GenMLX is designed to be extended. This final chapter covers defining custom distributions, verifying GFI correctness with contracts and static validation, and where to go from here.</p>
+<h2 id="custom-distributions-with-defdist"><a class="header" href="#custom-distributions-with-defdist">Custom distributions with <code>defdist</code></a></h2>
+<p>The <code>defdist</code> macro defines a new distribution type with sampling and log-probability:</p>
+<pre><code class="language-clojure">(defdist my-uniform-int
+  "Uniform integer distribution on [lo, hi]."
+  [lo hi]
+  (sample [key]
+    (let [range-size (- hi lo -1)
+          u (rng/uniform key [] mx/float32)
+          idx (mx/astype (mx/floor (mx/multiply u (mx/scalar range-size)))
+                         mx/int32)]
+      (mx/add idx (mx/scalar lo mx/int32))))
+  (log-prob [value]
+    (let [range-size (- hi lo -1)]
+      (mx/negative (mx/log (mx/scalar range-size))))))
+</code></pre>
+<p>This creates a constructor function <code>my-uniform-int</code> and registers multimethod implementations for <code>dist-sample*</code> and <code>dist-log-prob</code>. The new distribution works immediately with all GFI operations:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key (gen []
+              (trace :roll (my-uniform-int 1 6))))
+      trace (p/simulate model [])]
+  (println "roll:" (mx/item (cm/get-choice (:choices trace) [:roll]))))
+</code></pre>
+<p>Optional clauses: <code>(reparam [key] ...)</code> for reparameterized sampling (gradient flow), and <code>(support [] ...)</code> for enumerable distributions.</p>
+<h2 id="quick-custom-distributions-with-map-dist"><a class="header" href="#quick-custom-distributions-with-map-dist">Quick custom distributions with <code>map-&gt;dist</code></a></h2>
+<p>For one-off distributions, <code>map-&gt;dist</code> creates a <code>Distribution</code> from a plain map without the macro:</p>
+<pre><code class="language-clojure">(def spike (dc/map-&gt;dist {:type :my-spike
+                           :sample (fn [key] (mx/scalar 42.0))
+                           :log-prob (fn [value] (mx/scalar 0.0))}))
+(dc/dist-sample spike (rng/fresh-key))  ;; =&gt; 42.0
+</code></pre>
+<h2 id="gfi-contracts"><a class="header" href="#gfi-contracts">GFI contracts</a></h2>
+<p>GenMLX includes 11 executable contracts that verify the measure-theoretic invariants of GFI implementations. These are property-based tests that any valid generative function should satisfy:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key (gen []
+              (let [mu (trace :mu (dist/gaussian 0 1))]
+                (trace :x (dist/gaussian mu 1))
+                mu)))
+      result (contracts/verify-gfi-contracts model [] :n-trials 5)]
+  (println "pass:" (:total-pass result) "fail:" (:total-fail result)))
+</code></pre>
+<p>The contracts include:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Contract</th><th>What it checks</th></tr>
+</thead>
+<tbody>
+<tr><td><code>generate-weight-equals-score</code></td><td>Fully constrained generate: weight = score</td></tr>
+<tr><td><code>update-empty-identity</code></td><td>Update with same choices: weight \(\approx 0\)</td></tr>
+<tr><td><code>update-weight-correctness</code></td><td>Weight = new_score - old_score</td></tr>
+<tr><td><code>update-round-trip</code></td><td>Update then reverse recovers original</td></tr>
+<tr><td><code>regenerate-empty-identity</code></td><td>Empty selection changes nothing</td></tr>
+<tr><td><code>project-all-equals-score</code></td><td>Project everything = total score</td></tr>
+<tr><td><code>score-decomposition</code></td><td>Per-address projections sum to total</td></tr>
+<tr><td><code>simulate-has-valid-score</code></td><td>Simulated traces have finite scores</td></tr>
+<tr><td><code>assess-agrees-with-score</code></td><td>Assess on trace choices matches score</td></tr>
+</tbody>
+</table>
+</div>
+<p>Use contracts to verify custom generative functions and combinators.</p>
+<h2 id="static-validation"><a class="header" href="#static-validation">Static validation</a></h2>
+<p><code>validate-gen-fn</code> catches structural errors before running inference:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key (gen []
+              (trace :x (dist/gaussian 0 1))))
+      result (verify/validate-gen-fn model [] {:n-trials 3})]
+  (println "valid?" (:valid? result)))
+</code></pre>
+<p>It checks for: duplicate addresses, non-finite scores, execution errors, and materialization warnings. Running validation with multiple trials catches branch-dependent issues in models with stochastic control flow.</p>
+<h2 id="the-compilation-ladder"><a class="header" href="#the-compilation-ladder">The compilation ladder</a></h2>
+<p>To recap the performance story from <a href="./ch08-vectorization.html">Chapter 8</a>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Level</th><th>What it does</th><th>How it works</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td>GPU batching</td><td>\([N]\)-shaped arrays through unchanged handlers</td></tr>
+<tr><td>1</td><td>Compiled models</td><td>Macro-time schema \(\to\) single Metal dispatch</td></tr>
+<tr><td>2</td><td>Compiled inference</td><td>Full SMC/MCMC sweep in one graph</td></tr>
+<tr><td>3</td><td>Analytical elimination</td><td>Conjugacy detection \(\to\) exact marginal</td></tr>
+<tr><td>4</td><td>Fused graph</td><td>Model + inference + gradient + optimizer fused</td></tr>
+</tbody>
+</table>
+</div>
+<p>Each level subsumes the previous. The handler path remains ground truth.</p>
+<h2 id="the-functional-probabilistic-correspondence"><a class="header" href="#the-functional-probabilistic-correspondence">The functional-probabilistic correspondence</a></h2>
+<p>Throughout this tutorial, we’ve seen functional programming concepts map onto probabilistic programming:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Functional Programming</th><th>Probabilistic Programming</th></tr>
+</thead>
+<tbody>
+<tr><td>Algebraic effect (declare what)</td><td>Random choice (declare what)</td></tr>
+<tr><td>Effect handler (determine how)</td><td>GFI operation (determine how)</td></tr>
+<tr><td>Pure function</td><td>Generative function</td></tr>
+<tr><td>Immutable record</td><td>Trace</td></tr>
+<tr><td>Persistent map</td><td>Choice map</td></tr>
+<tr><td>Boolean algebra</td><td>Selection</td></tr>
+<tr><td>Function composition</td><td>Model composition (splice)</td></tr>
+<tr><td>Higher-order function</td><td>Combinator (Map, Unfold, Switch)</td></tr>
+<tr><td>Lazy evaluation</td><td>MLX computation graph</td></tr>
+<tr><td>Macro / metaprogramming</td><td>Schema extraction</td></tr>
+</tbody>
+</table>
+</div>
+<p>This correspondence is the organizing principle behind GenMLX’s architecture. Your model is pure — the framework manages state.</p>
+<h2 id="where-to-go-next"><a class="header" href="#where-to-go-next">Where to go next</a></h2>
+<ul>
+<li><strong>Source code</strong>: Browse the complete implementation at <a href="https://github.com/robert-johansson/genmlx">github.com/robert-johansson/genmlx</a></li>
+<li><strong>The paper</strong>: “GenMLX: A Functional Probabilistic Programming Language on GPU via Algebraic Effects and Lazy Evaluation” describes the architecture and compilation ladder in detail</li>
+<li><strong>Gen.jl</strong>: The original Julia implementation of the GFI — <a href="https://www.gen.dev/">gen.dev</a></li>
+<li><strong>Level 5</strong>: The frontier — LLMs as generative functions, theory search, composing language with continuous models through the same GFI</li>
+</ul>
+<p>Thank you for working through this tutorial. You now understand the core of GenMLX: the <code>gen</code> macro, the handler loop, the GFI operations, composition via splice and combinators, inference as composable kernels, vectorized GPU execution, gradients and learning, and the compilation ladder. Everything else is built from these pieces.</p>
 
                     </main>
 
