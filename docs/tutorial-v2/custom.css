@@ -1,0 +1,36 @@
+/* GenMLX Tutorial — custom styles */
+
+/* Slightly wider content area */
+.content {
+    max-width: 900px;
+}
+
+/* Subtle note boxes */
+.note {
+    background-color: #f0f7ff;
+    border-left: 4px solid #4a90d9;
+    padding: 12px 16px;
+    margin: 16px 0;
+    border-radius: 0 4px 4px 0;
+}
+
+/* Output blocks (terminal output) */
+.output {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin: 8px 0 16px 0;
+    font-family: monospace;
+    font-size: 0.9em;
+    white-space: pre-wrap;
+}
+
+/* Key concept callouts */
+.key-concept {
+    background-color: #f5f0ff;
+    border-left: 4px solid #7c5cbf;
+    padding: 12px 16px;
+    margin: 16px 0;
+    border-radius: 0 4px 4px 0;
+}
