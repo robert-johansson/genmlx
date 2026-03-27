@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-0b0d12be.js";
+            window.path_to_searchindex_js = "searchindex-06d0d707.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4ff5b9f.js"></script>
@@ -181,7 +181,7 @@
                         <h1 id="genmlx-tutorial"><a class="header" href="#genmlx-tutorial">GenMLX Tutorial</a></h1>
 <p><strong>Probabilistic programming with a functional core.</strong></p>
 <p>GenMLX is a probabilistic programming language in ClojureScript that runs on Apple’s MLX GPU framework. It implements the <em>Generative Function Interface</em> — a small set of operations that separate how you write models from how you run inference.</p>
-<p>The architecture follows a principle shared with <a href="https://github.com/day8/re-frame">re-frame</a>: <strong>your code is pure; the framework manages state.</strong> When you write a model, you declare random choices — you say <em>what</em> you need. The handler determines <em>how</em> to provide it: sampling from the prior, constraining to observed data, updating from a previous execution, or regenerating for MCMC. You never touch mutable state. The framework handles it.</p>
+<p>The architecture is organized around one principle: <strong>your model is pure; the framework manages state.</strong> When you write a model, you declare random choices — you say <em>what</em> you need (a value from this distribution at this address). The handler determines <em>how</em> to provide it: sampling from the prior, constraining to observed data, updating from a previous execution, or regenerating for MCMC. The same model code works with all of these — without modification, without knowing which one is running. You never touch mutable state. The framework handles it.</p>
 <p>By the end of this tutorial, you will:</p>
 <ul>
 <li>Write probabilistic models using <code>gen</code> and <code>trace</code></li>

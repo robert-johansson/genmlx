@@ -4,7 +4,7 @@
 
 GenMLX is a probabilistic programming language in ClojureScript that runs on Apple's MLX GPU framework. It implements the *Generative Function Interface* — a small set of operations that separate how you write models from how you run inference.
 
-The architecture follows a principle shared with [re-frame](https://github.com/day8/re-frame): **your code is pure; the framework manages state.** When you write a model, you declare random choices — you say *what* you need. The handler determines *how* to provide it: sampling from the prior, constraining to observed data, updating from a previous execution, or regenerating for MCMC. You never touch mutable state. The framework handles it.
+The architecture is organized around one principle: **your model is pure; the framework manages state.** When you write a model, you declare random choices — you say *what* you need (a value from this distribution at this address). The handler determines *how* to provide it: sampling from the prior, constraining to observed data, updating from a previous execution, or regenerating for MCMC. The same model code works with all of these — without modification, without knowing which one is running. You never touch mutable state. The framework handles it.
 
 By the end of this tutorial, you will:
 
