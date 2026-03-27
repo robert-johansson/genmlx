@@ -13,3 +13,6 @@
 [submodule "test.check"]
 	path = test.check
 	url = https://github.com/robert-johansson/test.check.git
+[submodule "paper/MDPI_paper"]
+	path = paper/MDPI_paper
+	url = https://git.overleaf.com/69c61e3d0d3f822ca2c85da4
