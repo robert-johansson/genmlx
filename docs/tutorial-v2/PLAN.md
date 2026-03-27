@@ -2,12 +2,12 @@
 
 ## Design Principles
 
-Following re-frame's tutorial approach:
 - **One running example** (Bayesian linear regression) that grows across chapters
 - **Show, then explain** — every concept starts with runnable code before theory
 - **Honest about impurity** — show the volatile!, explain why it's there
 - **No prerequisites** beyond basic Clojure — probability taught inline
 - **Each chapter self-contained** but builds on previous chapters
+- **Frame in PP terms** — no web framework analogies; explain the pure-core / managed-shell idea through models, handlers, and inference
 
 ## Test Strategy
 
@@ -149,7 +149,7 @@ The new tutorial must cover everything the old tutorial covered.
 **Test:** none (no code)
 
 - [ ] What is GenMLX? (one paragraph)
-- [ ] The re-frame parallel: pure core, managed shell
+- [ ] The principle: your model is pure, the framework manages state
 - [ ] What you'll build: Bayesian linear regression from scratch to GPU
 - [ ] Prerequisites: macOS + Apple Silicon, Bun, npm install
 - [ ] How to run examples: `bun run --bun nbb example.cljs`
@@ -206,7 +206,7 @@ The new tutorial must cover everything the old tutorial covered.
 - [ ] The pure core / managed shell philosophy
 - [ ] Honest about impurity: the volatile! is real, the GPU layer is effectful
 - [ ] Why purity matters: composition, shape polymorphism, compilation
-- [ ] Parallel to re-frame: app-db = volatile!, event handler = transition
+- [ ] The analogy: the volatile! is to GenMLX what a single state cell is to any functional architecture — isolated, managed, invisible to the user
 
 ---
 
