@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-2bc44886.js";
+            window.path_to_searchindex_js = "searchindex-4c0abff0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4ff5b9f.js"></script>
@@ -180,7 +180,178 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="placeholder"><a class="header" href="#placeholder">Placeholder</a></h1>
+                        <h1 id="composition-splice-and-combinators"><a class="header" href="#composition-splice-and-combinators">Composition: Splice and Combinators</a></h1>
+<p>So far every model has been a single <code>gen</code> function. Real models have structure: a prior over parameters composed with a likelihood, a time series with repeated steps, a mixture of components. GenMLX provides two composition mechanisms:</p>
+<ul>
+<li><strong>Splice</strong> — call a sub-generative function at a namespaced address within a parent model.</li>
+<li><strong>Combinators</strong> — higher-order generative functions that build structured models from simple components.</li>
+</ul>
+<p>Both produce hierarchical choice maps, and both implement the full GFI — so every inference algorithm from the previous chapters works with composed models automatically.</p>
+<h2 id="splice-calling-sub-models"><a class="header" href="#splice-calling-sub-models">Splice: calling sub-models</a></h2>
+<p>The <code>splice</code> effect calls a sub-generative function and nests its choices under a namespace address:</p>
+<pre><code class="language-clojure">(def prior-model
+  (gen []
+    (let [slope (trace :slope (dist/gaussian 0 10))
+          intercept (trace :intercept (dist/gaussian 0 5))]
+      {:slope slope :intercept intercept})))
+
+(def obs-model
+  (gen [params xs]
+    (let [slope (:slope params)
+          intercept (:intercept params)]
+      (doseq [[j x] (map-indexed vector xs)]
+        (trace (keyword (str "y" j))
+               (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
+                                      intercept) 1))))
+    nil))
+
+(def composed-model
+  (gen [xs]
+    (let [params (splice :prior prior-model [])
+          _ (splice :obs obs-model [params xs])]
+      params)))
+</code></pre>
+<p>The composed model’s choice map has two sub-maps: <code>:prior</code> (containing <code>:slope</code> and <code>:intercept</code>) and <code>:obs</code> (containing <code>:y0</code>, <code>:y1</code>, <code>:y2</code>). Each sub-model’s choices live under its splice address, preventing name collisions.</p>
+<p>When you condition with <code>generate</code>, you provide nested choice maps:</p>
+<pre><code class="language-clojure">(def nested-obs
+  (cm/choicemap :obs (cm/choicemap :y0 (mx/scalar 2.5)
+                                    :y1 (mx/scalar 4.5)
+                                    :y2 (mx/scalar 6.5))))
+</code></pre>
+<h2 id="map-independent-repetition"><a class="header" href="#map-independent-repetition">Map: independent repetition</a></h2>
+<p>The Map combinator applies a kernel generative function independently to each element of an input sequence:</p>
+<p><img src="figures/combinator-map.png" alt="Map combinator"></p>
+<pre><code class="language-clojure">(def noisy-obs
+  (gen [x]
+    (trace :y (dist/gaussian (mx/scalar x) 1))))
+
+(def mapped (comb/map-combinator noisy-obs))
+</code></pre>
+<p>Simulate it with a sequence of inputs (each input is a vector of args to the kernel):</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key mapped)
+      trace (p/simulate model [[[1.0] [2.0] [3.0] [4.0]]])]
+  (println "index 0 :y" (mx/item (cm/get-choice (:choices trace) [0 :y])))
+  (println "index 3 :y" (mx/item (cm/get-choice (:choices trace) [3 :y]))))
+</code></pre>
+<p>Choices are indexed by integers: <code>(cm/get-submap (:choices trace) 0)</code> gives the first element’s choice map, <code>(cm/get-submap (:choices trace) 3)</code> gives the fourth.</p>
+<h2 id="unfold-sequential-state-threading"><a class="header" href="#unfold-sequential-state-threading">Unfold: sequential state threading</a></h2>
+<p>The Unfold combinator threads state through a sequence of steps. Each step is a generative function that takes a timestep index and the current state, makes random choices, and returns the next state:</p>
+<p><img src="figures/combinator-unfold.png" alt="Unfold combinator"></p>
+<pre><code class="language-clojure">(def step-kernel
+  (gen [t state]
+    (let [next-state (trace :z (dist/gaussian state 1))]
+      (trace :obs (dist/gaussian next-state 0.5))
+      next-state)))
+
+(def unfolded (comb/unfold-combinator step-kernel))
+</code></pre>
+<p>Simulate with <code>[T init-state]</code> — the number of steps and the initial state:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key unfolded)
+      trace (p/simulate model [3 0.0])]
+  ;; Choices indexed by timestep (0-based)
+  (println "step 0 :z" (mx/item (cm/get-choice (:choices trace) [0 :z])))
+  (println "step 0 :obs" (mx/item (cm/get-choice (:choices trace) [0 :obs])))
+  (println "step 2 :z" (mx/item (cm/get-choice (:choices trace) [2 :z]))))
+</code></pre>
+<p>Unfold is the natural choice for hidden Markov models, state-space models, and any sequential generative process. Because it implements the full GFI, you can condition on observations at any timestep using <code>generate</code> with a nested choice map.</p>
+<h2 id="switch-conditional-branching"><a class="header" href="#switch-conditional-branching">Switch: conditional branching</a></h2>
+<p>The Switch combinator selects one of several branch generative functions based on a discrete index:</p>
+<p><img src="figures/combinator-switch.png" alt="Switch combinator"></p>
+<pre><code class="language-clojure">(def branch-a (dyn/auto-key (gen [] (trace :x (dist/gaussian 0 1)))))
+(def branch-b (dyn/auto-key (gen [] (trace :x (dist/gaussian 10 1)))))
+
+(let [switched (comb/switch-combinator branch-a branch-b)
+      model (dyn/auto-key switched)]
+  ;; Index 0 selects branch-a (samples near 0)
+  (let [trace (p/simulate model [0])]
+    (println "branch 0 :x" (mx/item (cm/get-choice (:choices trace) [:x]))))
+  ;; Index 1 selects branch-b (samples near 10)
+  (let [trace (p/simulate model [1])]
+    (println "branch 1 :x" (mx/item (cm/get-choice (:choices trace) [:x])))))
+</code></pre>
+<p>Only the selected branch executes. The trace contains only that branch’s choices. Switch supports branchless GPU execution via <code>mx/where</code> when all branches have compatible trace structures — this is how GenMLX compiles conditional models (Chapter 8).</p>
+<h2 id="scan-fold-with-carry-and-inputs"><a class="header" href="#scan-fold-with-carry-and-inputs">Scan: fold with carry and inputs</a></h2>
+<p>The Scan combinator is like Unfold but takes per-step inputs in addition to the carried state. The kernel receives the carry and the current input, and returns a <code>[output carry']</code> pair:</p>
+<pre><code class="language-clojure">(def scan-step
+  (gen [carry input]
+    (let [x (trace :x (dist/gaussian (mx/add carry input) 1))]
+      [x x])))  ;; [output, new-carry]
+
+(let [scanned (comb/scan-combinator scan-step)
+      model (dyn/auto-key scanned)
+      inputs [(mx/scalar 0.0) (mx/scalar 1.0) (mx/scalar 2.0)]
+      trace (p/simulate model [(mx/scalar 0.0) inputs])]
+  (println "step 0 :x" (mx/item (cm/get-choice (:choices trace) [0 :x])))
+  (println "step 2 :x" (mx/item (cm/get-choice (:choices trace) [2 :x]))))
+</code></pre>
+<h2 id="mix-mixture-models"><a class="header" href="#mix-mixture-models">Mix: mixture models</a></h2>
+<p>The Mix combinator creates a stochastic mixture of component generative functions with mixing weights:</p>
+<pre><code class="language-clojure">(def component-a (gen [] (trace :x (dist/gaussian -5 1))))
+(def component-b (gen [] (trace :x (dist/gaussian 5 1))))
+
+(let [mixed (comb/mix-combinator [component-a component-b]
+                                  (mx/array [(js/Math.log 0.5) (js/Math.log 0.5)]))]
+  ;; Each simulate randomly selects a component
+  ;; With equal weights, roughly half the samples come from each
+  )
+</code></pre>
+<p>The second argument is a log-weight vector (unnormalized). Mix is useful for Gaussian mixture models, model averaging, and any scenario where the generative process has discrete latent structure.</p>
+<h2 id="recurse-self-referential-models"><a class="header" href="#recurse-self-referential-models">Recurse: self-referential models</a></h2>
+<p>The Recurse combinator creates generative functions that can call themselves, enabling tree-structured and grammar-based models:</p>
+<pre><code class="language-clojure">(let [tree (comb/recurse
+             (fn [self]
+               (dyn/auto-key
+                (gen [depth]
+                  (let [x (trace :x (dist/gaussian 0 1))]
+                    (mx/eval! x)
+                    (if (&gt; depth 0)
+                      (do (splice :child self [(dec depth)])
+                          x)
+                      x))))))]
+  (let [model (dyn/auto-key tree)
+        trace (p/simulate model [2])]
+    (println "has :x" (cm/has-value? (cm/get-submap (:choices trace) :x)))
+    (println "has :child" (not= cm/EMPTY (cm/get-submap (:choices trace) :child)))))
+</code></pre>
+<p>The <code>recurse</code> function takes a <em>maker</em> — a function that receives <code>self</code> (the combinator being defined) and returns a generative function that can <code>splice</code> to <code>self</code>. The depth parameter controls termination.</p>
+<h2 id="composing-combinators"><a class="header" href="#composing-combinators">Composing combinators</a></h2>
+<p>Because every combinator implements the full GFI, combinators compose with each other. A Map of models runs independent instances:</p>
+<pre><code class="language-clojure">(let [series-model (dyn/auto-key (gen [x] (trace :y (dist/gaussian (mx/scalar x) 1))))
+      mapped (comb/map-combinator series-model)
+      model (dyn/auto-key mapped)
+      trace (p/simulate model [[[1.0] [2.0] [3.0]]])]
+  (println "3 series:" (count (cm/addresses (:choices trace)))))
+</code></pre>
+<p>You can compose Map with Unfold (multiple independent time series), Switch with Mix (hierarchical mixture selection), or any other combination. The GFI guarantees that <code>simulate</code>, <code>generate</code>, <code>update</code>, and <code>regenerate</code> all work correctly through any nesting.</p>
+<h2 id="addressing-conventions"><a class="header" href="#addressing-conventions">Addressing conventions</a></h2>
+<p>Each combinator uses a specific addressing scheme:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Combinator</th><th>Address type</th><th>Example</th></tr>
+</thead>
+<tbody>
+<tr><td>Map</td><td>Integer index</td><td><code>(cm/get-submap choices 0)</code></td></tr>
+<tr><td>Unfold</td><td>Integer timestep (0-based)</td><td><code>(cm/get-submap choices 2)</code></td></tr>
+<tr><td>Switch</td><td>Transparent (branch choices at top level)</td><td><code>(cm/get-choice choices [:x])</code></td></tr>
+<tr><td>Scan</td><td>Integer timestep (0-based)</td><td><code>(cm/get-submap choices 1)</code></td></tr>
+<tr><td>Mix</td><td>Transparent (selected component at top level)</td><td><code>(cm/get-choice choices [:x])</code></td></tr>
+<tr><td>Splice</td><td>Keyword namespace</td><td><code>(cm/get-submap choices :prior)</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-weve-learned"><a class="header" href="#what-weve-learned">What we’ve learned</a></h2>
+<ul>
+<li><strong>Splice</strong> calls sub-models at namespaced addresses, producing hierarchical choice maps.</li>
+<li><strong>Map</strong> applies a kernel independently to each element of a sequence (integer-indexed).</li>
+<li><strong>Unfold</strong> threads state through sequential steps — the natural choice for HMMs and time series.</li>
+<li><strong>Switch</strong> selects one of several branches based on a discrete index.</li>
+<li><strong>Scan</strong> is fold-with-carry, taking per-step inputs.</li>
+<li><strong>Mix</strong> creates stochastic mixtures with log-weights.</li>
+<li><strong>Recurse</strong> enables self-referential models for trees and grammars.</li>
+<li>All combinators implement the full GFI, so they compose with each other and with all inference algorithms.</li>
+</ul>
+<p>In the next chapter, we’ll use these composition tools with GenMLX’s inference toolkit — composable kernels, gradient-based MCMC, SMC, and variational inference.</p>
 
                     </main>
 
