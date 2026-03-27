@@ -59,8 +59,8 @@
 
 % === ARROWS ===
 \draw[->, line width=1.2pt, accent]
-    (old-slope.east) -- (new-slope.west)
-    node[midway, above, font=\sffamily\scriptsize\bfseries, accent] {update};
+    (oldtitle.north) -- ++(0, 0.5) -| (newtitle.north)
+    node[pos=0.25, above, font=\sffamily\scriptsize\bfseries, accent] {update};
 
 \draw[->, line width=0.8pt, changeborder]
     (con-inter) -- (new-inter);
