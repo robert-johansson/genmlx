@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-8cd6cad9.js";
+            window.path_to_searchindex_js = "searchindex-4ff17f29.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4ff5b9f.js"></script>
@@ -428,7 +428,7 @@ bun install
 </tbody>
 </table>
 </div>
-<p>You can also define your own distributions — we’ll cover that in <a href="#placeholder-7">Chapter 10</a>.</p>
+<p>You can also define your own distributions — we’ll cover that in <a href="#placeholder-6">Chapter 10</a>.</p>
 <h2 id="what-weve-learned"><a class="header" href="#what-weve-learned">What we’ve learned</a></h2>
 <ul>
 <li>The <code>gen</code> macro turns a function into a generative function.</li>
@@ -553,7 +553,7 @@ bun install
 </code></pre>
 <p>The prior mean should be near 0 (our prior is \(\mathcal{N}(0, 10)\)). The posterior mean should be near 2 — pulled toward the data. That shift from prior to posterior is inference.</p>
 <h2 id="nested-choice-maps"><a class="header" href="#nested-choice-maps">Nested choice maps</a></h2>
-<p>When models are composed via <code>splice</code> (which we’ll cover in <a href="#placeholder-3">Chapter 6</a>), choice maps can be nested. You can build nested choice maps directly:</p>
+<p>When models are composed via <code>splice</code> (which we’ll cover in <a href="#placeholder-2">Chapter 6</a>), choice maps can be nested. You can build nested choice maps directly:</p>
 <pre><code class="language-clojure">(def nested-obs
   (cm/choicemap :params (cm/choicemap :slope (mx/scalar 2.0)
                                       :intercept (mx/scalar 1.0))))
@@ -578,6 +578,172 @@ bun install
 <p>The key idea: <strong>conditioning is not a modification to the model. It’s a different interpretation of the same model by a different handler.</strong> The model declares random choices; the handler decides whether to sample or constrain.</p>
 <p>In the next chapter, we’ll look inside the handler to see exactly how this works.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="how-it-works-the-handler-loop"><a class="header" href="#how-it-works-the-handler-loop">How It Works: The Handler Loop</a></h1>
+<p>The previous two chapters showed you <code>simulate</code> and <code>generate</code> — two operations on the same model that produce different results. Now we’ll look inside to see <em>how</em> they work. The mechanism is simple, elegant, and worth understanding because it explains why everything else in GenMLX — composition, vectorization, compilation — works the way it does.</p>
+<p>The core idea: <strong>each GFI operation is a pure function that interprets <code>trace</code> differently</strong>. The model body doesn’t know which interpretation is running. A thin runtime layer manages the single piece of mutable state that threads between calls.</p>
+<h2 id="the-handler-is-a-pure-function"><a class="header" href="#the-handler-is-a-pure-function">The handler is a pure function</a></h2>
+<p>Every GFI operation is implemented as a <em>handler transition</em> — a pure function with this signature:</p>
+<pre><code>(state, address, distribution) → (value, state')
+</code></pre>
+<p>It takes the current state, an address, and a distribution. It returns a value and a new state. No mutation, no global variables, no side effects. The state is an immutable Clojure map.</p>
+<p>Here is the actual <code>simulate-transition</code> from GenMLX’s source:</p>
+<pre><code class="language-clojure">(defn simulate-transition [state addr dist]
+  (let [[k1 k2] (rng/split (:key state))
+        value    (dc/dist-sample dist k2)
+        lp       (dc/dist-log-prob dist value)]
+    [value (-&gt; state
+               (assoc :key k1)
+               (update :choices cm/set-value addr value)
+               (update :score #(mx/add % lp)))]))
+</code></pre>
+<p>Step by step:</p>
+<ol>
+<li>Split the PRNG key into two: <code>k1</code> for future use, <code>k2</code> for this sample.</li>
+<li>Sample a value from the distribution using <code>k2</code>.</li>
+<li>Compute the log-probability of that value.</li>
+<li>Return the value and a new state with: the advanced key, the choice recorded, and the score accumulated.</li>
+</ol>
+<p>The original state is untouched — <code>assoc</code> and <code>update</code> return new maps. This is what we mean by <em>pure</em>.</p>
+<p>We can call it directly and verify:</p>
+<pre><code class="language-clojure">(let [key (rng/fresh-key)
+      init-state {:key key :choices cm/EMPTY :score (mx/scalar 0.0)}
+      d (dist/gaussian 0 1)
+      [value state'] (h/simulate-transition init-state :x d)]
+  (println "value:" (mx/item value))
+  (println "has :x?" (cm/has-value? (cm/get-submap (:choices state') :x)))
+  (println "score:" (mx/item (:score state')))
+  ;; The original state is unchanged
+  (println "original choices still empty?" (= cm/EMPTY (:choices init-state))))
+</code></pre>
+<h2 id="the-generate-transition"><a class="header" href="#the-generate-transition">The generate transition</a></h2>
+<p>Now look at <code>generate-transition</code>:</p>
+<pre><code class="language-clojure">(defn generate-transition [state addr dist]
+  (let [constraint (cm/get-submap (:constraints state) addr)]
+    (if (cm/has-value? constraint)
+      (let [value (cm/get-value constraint)
+            lp    (dc/dist-log-prob dist value)]
+        [value (-&gt; state
+                   (update :choices cm/set-value addr value)
+                   (update :score #(mx/add % lp))
+                   (update :weight #(mx/add % lp)))])
+      (simulate-transition state addr dist))))
+</code></pre>
+<p>The only difference from <code>simulate-transition</code>: it checks whether a constraint exists at this address. If yes, it uses the constrained value and adds the log-probability to both <code>:score</code> and <code>:weight</code>. If no, it delegates to <code>simulate-transition</code>.</p>
+<p>That’s it. The entire difference between <code>simulate</code> and <code>generate</code> at the handler level is a single <code>if</code>.</p>
+<pre><code class="language-clojure">;; Constrained: uses the value you provide
+(let [constraints (cm/choicemap :x (mx/scalar 3.0))
+      state {:key (rng/fresh-key) :choices cm/EMPTY :score (mx/scalar 0.0)
+             :weight (mx/scalar 0.0) :constraints constraints}
+      [value state'] (h/generate-transition state :x (dist/gaussian 0 1))]
+  (println "value:" (mx/item value))           ;; =&gt; 3.0
+  (println "weight:" (mx/item (:weight state')))) ;; =&gt; log p(3.0 | N(0,1))
+
+;; Unconstrained: falls through to simulate
+(let [state {:key (rng/fresh-key) :choices cm/EMPTY :score (mx/scalar 0.0)
+             :weight (mx/scalar 0.0) :constraints cm/EMPTY}
+      [value state'] (h/generate-transition state :x (dist/gaussian 0 1))]
+  (println "value:" (mx/item value))           ;; =&gt; random sample
+  (println "weight:" (mx/item (:weight state')))) ;; =&gt; 0.0
+</code></pre>
+<h2 id="handler-state"><a class="header" href="#handler-state">Handler state</a></h2>
+<p>The handler state is a plain Clojure map. Different operations carry different keys:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Simulate</th><th>Generate</th><th>Present in</th></tr>
+</thead>
+<tbody>
+<tr><td><code>:key</code></td><td>PRNG key</td><td>PRNG key</td><td>all</td></tr>
+<tr><td><code>:choices</code></td><td>accumulated choices</td><td>accumulated choices</td><td>all</td></tr>
+<tr><td><code>:score</code></td><td>\(\sum \log p\)</td><td>\(\sum \log p\)</td><td>all</td></tr>
+<tr><td><code>:weight</code></td><td>—</td><td>\(\sum \log p_\text{observed}\)</td><td>generate, update, regenerate</td></tr>
+<tr><td><code>:constraints</code></td><td>—</td><td>observed values</td><td>generate, update</td></tr>
+</tbody>
+</table>
+</div>
+<p>The state is immutable. Each transition produces a <em>new</em> state. The handler never modifies anything in place.</p>
+<h2 id="chaining-transitions"><a class="header" href="#chaining-transitions">Chaining transitions</a></h2>
+<p>A model with multiple trace sites is just multiple transitions chained together. The output state of one becomes the input state of the next:</p>
+<pre><code class="language-clojure">(let [key (rng/fresh-key)
+      init {:key key :choices cm/EMPTY :score (mx/scalar 0.0)}
+      d1 (dist/gaussian 0 10)
+      d2 (dist/gaussian 0 1)
+      ;; First trace site
+      [slope state1] (h/simulate-transition init :slope d1)
+      ;; Second trace site — uses state1, not init
+      [noise state2] (h/simulate-transition state1 :noise d2)]
+  (println "slope:" (mx/item slope))
+  (println "noise:" (mx/item noise))
+  (println "score:" (mx/item (:score state2))))
+</code></pre>
+<p>The score in <code>state2</code> is \(\log p(\text{slope}) + \log p(\text{noise})\) — the sum of log-probabilities across both sites. This is how the handler accumulates the joint log-probability of all choices.</p>
+<h2 id="the-single-mutable-boundary"><a class="header" href="#the-single-mutable-boundary">The single mutable boundary</a></h2>
+<p>The handler transitions are pure, but the model body expects <code>trace</code> to be a callable function that returns a value. Something has to connect the two. That something is <code>run-handler</code>:</p>
+<pre><code class="language-clojure">(let [result (rt/run-handler
+               h/simulate-transition
+               {:key (rng/fresh-key) :choices cm/EMPTY
+                :score (mx/scalar 0.0) :executor (fn [_ _ _] nil)}
+               (fn [rt]
+                 (let [trace-fn (.-trace rt)
+                       x (trace-fn :x (dist/gaussian 0 1))
+                       y (trace-fn :y (dist/gaussian 0 1))]
+                   (mx/add x y))))]
+  (println "x:" (mx/item (cm/get-choice (:choices result) [:x])))
+  (println "y:" (mx/item (cm/get-choice (:choices result) [:y])))
+  (println "retval:" (mx/item (:retval result))))
+</code></pre>
+<p><code>run-handler</code> does three things:</p>
+<ol>
+<li>Creates a single <code>volatile!</code> — Clojure’s lightweight mutable reference — holding the initial state.</li>
+<li>Wraps it in closures: <code>trace-fn</code> reads the current state, calls the pure transition, and writes the new state back.</li>
+<li>Passes these closures to the model body as a runtime object.</li>
+</ol>
+<p>When the body calls <code>trace-fn</code>, here’s what happens:</p>
+<ul>
+<li>Read the current state from the volatile</li>
+<li>Call the pure transition: <code>(transition @vol addr dist) → [value, state']</code></li>
+<li>Write the new state back: <code>(vreset! vol state')</code></li>
+<li>Return the value to the model body</li>
+</ul>
+<p>The volatile is the <strong>only</strong> mutable state in the entire system. It never escapes <code>run-handler</code> — it’s created and consumed within one synchronous function call. From the model’s perspective, <code>trace</code> is just a function that takes an address and a distribution and returns a value.</p>
+<p><img src="figures/handler-loop.svg" alt="The Handler Architecture"></p>
+<h2 id="the-gen-macro-1"><a class="header" href="#the-gen-macro-1">The <code>gen</code> macro</a></h2>
+<p>The <code>gen</code> macro bridges the gap between <code>run-handler</code> and the user. It injects the runtime parameter and binds <code>trace</code>, <code>splice</code>, and <code>param</code> as local names:</p>
+<pre><code class="language-clojure">(def my-model
+  (gen [a b]
+    (let [x (trace :x (dist/gaussian a b))]
+      (mx/multiply x x))))
+</code></pre>
+<p>The macro transforms this into a function that takes a hidden runtime parameter as its first argument and extracts <code>trace</code>, <code>splice</code>, and <code>param</code> from it. Because they’re local bindings — not special forms, not macros — they work with every ClojureScript construct:</p>
+<pre><code class="language-clojure">;; trace works inside mapv, for, closures — it's just a function
+(def hof-model
+  (gen [n]
+    (let [values (mapv (fn [i]
+                         (trace (keyword (str "x" i)) (dist/gaussian 0 1)))
+                       (range n))]
+      values)))
+</code></pre>
+<p>The <code>gen</code> macro also captures the source form as quoted data — a ClojureScript list — which enables schema extraction and compilation (covered in <a href="#placeholder-4">Chapter 8</a>).</p>
+<h2 id="why-purity-matters"><a class="header" href="#why-purity-matters">Why purity matters</a></h2>
+<p>The handler transitions are pure functions. The model body is pure (it only calls <code>trace</code>, which is a closure — the mutation is inside <code>run-handler</code>, not in the model). This purity has three consequences that we’ll see throughout the rest of the tutorial:</p>
+<p><strong>Composition.</strong> Pure transitions compose. The same transition signature <code>(state, addr, dist) → (value, state')</code> is used by <code>simulate</code>, <code>generate</code>, <code>update</code>, <code>regenerate</code>, and <code>project</code>. Analytical middleware can wrap a transition to intercept specific addresses. Compilation can replace a transition with a fused version. They all plug into the same slot.</p>
+<p><strong>Shape polymorphism.</strong> The transitions never inspect value shapes. If you pass <code>[N]</code>-shaped arrays instead of scalars, the same code works — MLX broadcasting handles the arithmetic. This is why vectorized inference (running N particles in one call) works with zero code changes (<a href="#placeholder-4">Chapter 8</a>).</p>
+<p><strong>Correctness.</strong> Each transition can be tested in isolation — pass in a state, check the output state. No mocking, no setup, no teardown. The GFI contracts (measure-theoretic invariants) can be verified by calling transitions directly.</p>
+<h2 id="being-honest-about-impurity"><a class="header" href="#being-honest-about-impurity">Being honest about impurity</a></h2>
+<p>GenMLX is not “purely functional” in the type-theoretic sense. The <code>volatile!</code> is real mutation. The GPU memory layer (<code>mx/eval!</code>, <code>mx/sweep-dead-arrays!</code>) is side-effectful. Several atoms track nesting depth for safety.</p>
+<p>What GenMLX does claim: <strong>all code you write is pure</strong>, and <strong>all handler logic is pure</strong>. The impurity is confined to a single managed boundary — the <code>volatile!</code> inside <code>run-handler</code> — that you never see or interact with. This is the same pragmatic stance that has made functional architectures successful in practice: not purity as a type-system guarantee, but purity as an architectural principle that maximizes the surface area where reasoning, composition, and optimization are possible.</p>
+<h2 id="what-weve-learned-2"><a class="header" href="#what-weve-learned-2">What we’ve learned</a></h2>
+<ul>
+<li>Each GFI operation is a <strong>pure state transition</strong>: <code>(state, addr, dist) → (value, state')</code>.</li>
+<li><code>simulate-transition</code> samples; <code>generate-transition</code> adds one <code>if</code> to check for constraints.</li>
+<li>The handler state is an <strong>immutable Clojure map</strong> with keys for choices, score, weight, etc.</li>
+<li><code>run-handler</code> creates a <strong>single <code>volatile!</code></strong> that threads state through closures — the only mutation in the system.</li>
+<li>The <code>gen</code> macro binds <code>trace</code>/<code>splice</code>/<code>param</code> as <strong>local names</strong> — they work with all ClojureScript constructs.</li>
+<li>Purity enables composition, shape polymorphism, and testability.</li>
+<li>The system is honest about where impurity lives: the volatile and the GPU layer.</li>
+</ul>
+<p>In the next chapter, we’ll look at the data structures in detail — choice maps, traces, and selections.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="placeholder"><a class="header" href="#placeholder">Placeholder</a></h1>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="placeholder-1"><a class="header" href="#placeholder-1">Placeholder</a></h1>
@@ -591,8 +757,6 @@ bun install
 <h1 id="placeholder-5"><a class="header" href="#placeholder-5">Placeholder</a></h1>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="placeholder-6"><a class="header" href="#placeholder-6">Placeholder</a></h1>
-<div style="break-before: page; page-break-before: always;"></div>
-<h1 id="placeholder-7"><a class="header" href="#placeholder-7">Placeholder</a></h1>
 
                     </main>
 
