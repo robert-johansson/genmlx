@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-d7d66367.js";
+            window.path_to_searchindex_js = "searchindex-2bc44886.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e4ff5b9f.js"></script>
@@ -428,7 +428,7 @@ bun install
 </tbody>
 </table>
 </div>
-<p>You can also define your own distributions — we’ll cover that in <a href="#placeholder-5">Chapter 10</a>.</p>
+<p>You can also define your own distributions — we’ll cover that in <a href="#placeholder-4">Chapter 10</a>.</p>
 <h2 id="what-weve-learned"><a class="header" href="#what-weve-learned">What we’ve learned</a></h2>
 <ul>
 <li>The <code>gen</code> macro turns a function into a generative function.</li>
@@ -553,7 +553,7 @@ bun install
 </code></pre>
 <p>The prior mean should be near 0 (our prior is \(\mathcal{N}(0, 10)\)). The posterior mean should be near 2 — pulled toward the data. That shift from prior to posterior is inference.</p>
 <h2 id="nested-choice-maps"><a class="header" href="#nested-choice-maps">Nested choice maps</a></h2>
-<p>When models are composed via <code>splice</code> (which we’ll cover in <a href="#placeholder-1">Chapter 6</a>), choice maps can be nested. You can build nested choice maps directly:</p>
+<p>When models are composed via <code>splice</code> (which we’ll cover in <a href="#placeholder">Chapter 6</a>), choice maps can be nested. You can build nested choice maps directly:</p>
 <pre><code class="language-clojure">(def nested-obs
   (cm/choicemap :params (cm/choicemap :slope (mx/scalar 2.0)
                                       :intercept (mx/scalar 1.0))))
@@ -723,11 +723,11 @@ bun install
                        (range n))]
       values)))
 </code></pre>
-<p>The <code>gen</code> macro also captures the source form as quoted data — a ClojureScript list — which enables schema extraction and compilation (covered in <a href="#placeholder-3">Chapter 8</a>).</p>
+<p>The <code>gen</code> macro also captures the source form as quoted data — a ClojureScript list — which enables schema extraction and compilation (covered in <a href="#placeholder-2">Chapter 8</a>).</p>
 <h2 id="why-purity-matters"><a class="header" href="#why-purity-matters">Why purity matters</a></h2>
 <p>The handler transitions are pure functions. The model body is pure (it only calls <code>trace</code>, which is a closure — the mutation is inside <code>run-handler</code>, not in the model). This purity has three consequences that we’ll see throughout the rest of the tutorial:</p>
 <p><strong>Composition.</strong> Pure transitions compose. The same transition signature <code>(state, addr, dist) → (value, state')</code> is used by <code>simulate</code>, <code>generate</code>, <code>update</code>, <code>regenerate</code>, and <code>project</code>. Analytical middleware can wrap a transition to intercept specific addresses. Compilation can replace a transition with a fused version. They all plug into the same slot.</p>
-<p><strong>Shape polymorphism.</strong> The transitions never inspect value shapes. If you pass <code>[N]</code>-shaped arrays instead of scalars, the same code works — MLX broadcasting handles the arithmetic. This is why vectorized inference (running N particles in one call) works with zero code changes (<a href="#placeholder-3">Chapter 8</a>).</p>
+<p><strong>Shape polymorphism.</strong> The transitions never inspect value shapes. If you pass <code>[N]</code>-shaped arrays instead of scalars, the same code works — MLX broadcasting handles the arithmetic. This is why vectorized inference (running N particles in one call) works with zero code changes (<a href="#placeholder-2">Chapter 8</a>).</p>
 <p><strong>Correctness.</strong> Each transition can be tested in isolation — pass in a state, check the output state. No mocking, no setup, no teardown. The GFI contracts (measure-theoretic invariants) can be verified by calling transitions directly.</p>
 <h2 id="where-impurity-lives"><a class="header" href="#where-impurity-lives">Where impurity lives</a></h2>
 <p>GenMLX is not “purely functional” in the type-theoretic sense. The <code>volatile!</code> is real mutation. The GPU memory layer (<code>mx/eval!</code>, <code>mx/sweep-dead-arrays!</code>) is side-effectful. Several atoms track nesting depth for safety.</p>
@@ -836,7 +836,7 @@ bun install
 ;; =&gt; [[:params :slope] [:params :intercept]]
 </code></pre>
 <h2 id="stacking-and-unstacking-for-batching"><a class="header" href="#stacking-and-unstacking-for-batching">Stacking and unstacking for batching</a></h2>
-<p>For vectorized inference (<a href="#placeholder-3">Chapter 8</a>), GenMLX runs N particles through a model simultaneously using \([N]\)-shaped arrays. <code>stack-choicemaps</code> combines N scalar choice maps into one choice map with \([N]\)-shaped leaves:</p>
+<p>For vectorized inference (<a href="#placeholder-2">Chapter 8</a>), GenMLX runs N particles through a model simultaneously using \([N]\)-shaped arrays. <code>stack-choicemaps</code> combines N scalar choice maps into one choice map with \([N]\)-shaped leaves:</p>
 <pre><code class="language-clojure">(def cm1 (cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar 10.0)))
 (def cm2 (cm/choicemap :x (mx/scalar 2.0) :y (mx/scalar 20.0)))
 (def cm3 (cm/choicemap :x (mx/scalar 3.0) :y (mx/scalar 30.0)))
@@ -939,6 +939,187 @@ bun install
 </ul>
 <p>In the next chapter, we’ll use these data structures with <code>update</code> and <code>regenerate</code> — the operations that make MCMC possible.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="updating-and-regenerating"><a class="header" href="#updating-and-regenerating">Updating and Regenerating</a></h1>
+<p>So far we’ve used two GFI operations: <code>simulate</code> (sample everything) and <code>generate</code> (constrain some addresses, sample the rest). This chapter introduces the remaining operations — <code>update</code>, <code>regenerate</code>, <code>assess</code>, and <code>project</code> — and shows how they combine to build Metropolis-Hastings from scratch.</p>
+<h2 id="update-change-some-choices"><a class="header" href="#update-change-some-choices">Update: change some choices</a></h2>
+<p><code>update</code> takes an existing trace and a choice map of new constraints. It produces a new trace where the constrained addresses take the new values, unconstrained addresses keep their old values, and the weight reflects the change in probability:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)
+      trace (p/simulate model [xs])
+      old-slope (mx/item (cm/get-choice (:choices trace) [:slope]))
+      ;; Change :slope to 2.0, keep everything else
+      {:keys [trace weight discard]} (p/update model trace
+                                       (cm/choicemap :slope (mx/scalar 2.0)))]
+  (println "new slope:" (mx/item (cm/get-choice (:choices trace) [:slope])))
+  (println "weight:" (mx/item weight))
+  (println "old slope in discard:" (mx/item (cm/get-choice discard [:slope]))))
+</code></pre>
+<p><code>update</code> returns three things:</p>
+<ul>
+<li><strong><code>:trace</code></strong> — the new trace with the updated choices</li>
+<li><strong><code>:weight</code></strong> — \(\log w = \log p(\boldsymbol{\tau}‘; x’) - \log p(\boldsymbol{\tau}; x)\), the log ratio of new to old probability</li>
+<li><strong><code>:discard</code></strong> — a choice map containing the old values that were replaced</li>
+</ul>
+<p><img src="figures/update-operation.svg" alt="The update operation"></p>
+<h2 id="weight-semantics"><a class="header" href="#weight-semantics">Weight semantics</a></h2>
+<p>The weight from <code>update</code> is the log ratio of the new trace’s score to the old trace’s score:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)
+      trace (p/simulate model [xs])
+      old-score (mx/item (:score trace))
+      {:keys [trace weight]} (p/update model trace
+                               (cm/choicemap :slope (mx/scalar 2.0)))
+      new-score (mx/item (:score trace))
+      w (mx/item weight)]
+  (println "old score:" (.toFixed old-score 4))
+  (println "new score:" (.toFixed new-score 4))
+  (println "weight:" (.toFixed w 4))
+  (println "new - old:" (.toFixed (- new-score old-score) 4)))
+;; weight and (new - old) match
+</code></pre>
+<p>This weight is what makes <code>update</code> useful for inference: it tells you how much more (or less) probable the new trace is compared to the old one.</p>
+<h2 id="the-discard"><a class="header" href="#the-discard">The discard</a></h2>
+<p>The discard contains exactly the old values that were replaced — nothing more. If you update <code>:slope</code> and <code>:intercept</code>, the discard has those two addresses. Addresses you didn’t change (like the observations <code>:y0</code>, <code>:y1</code>, <code>:y2</code>) are absent from the discard:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)
+      trace (p/simulate model [xs])
+      {:keys [discard]} (p/update model trace
+                          (cm/choicemap :slope (mx/scalar 2.0)
+                                       :intercept (mx/scalar 0.5)))]
+  (println "discard has :slope?" (cm/has-value? (cm/get-submap discard :slope)))
+  (println "discard has :intercept?" (cm/has-value? (cm/get-submap discard :intercept)))
+  (println "discard has :y0?" (cm/has-value? (cm/get-submap discard :y0))))
+;; true, true, false
+</code></pre>
+<p>The discard is the reverse update: if you pass it back to <code>update</code> on the new trace, you get the old trace back. This reversibility is what makes <code>update</code> correct for MCMC.</p>
+<h2 id="regenerate-resample-selected-addresses"><a class="header" href="#regenerate-resample-selected-addresses">Regenerate: resample selected addresses</a></h2>
+<p>While <code>update</code> lets you specify <em>which</em> values to use, <code>regenerate</code> lets you specify <em>which addresses to resample from the prior</em>. You provide a selection, and the handler resamples the selected addresses while keeping everything else:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)
+      trace (p/simulate model [xs])
+      old-intercept (mx/item (cm/get-choice (:choices trace) [:intercept]))
+      ;; Resample only :slope; keep :intercept and all y's
+      {:keys [trace weight]} (p/regenerate model trace (sel/select :slope))]
+  (println "new slope:" (mx/item (cm/get-choice (:choices trace) [:slope])))
+  (println "intercept (unchanged):" (mx/item (cm/get-choice (:choices trace) [:intercept])))
+  (println "weight:" (mx/item weight)))
+</code></pre>
+<p>The weight from <code>regenerate</code> accounts for the proposal: the ratio of the new log-probability to the old, adjusted for the proposal mechanism. This weight is used directly in the Metropolis-Hastings acceptance criterion.</p>
+<p>Selections control which addresses are resampled. You can target one address, several, or all:</p>
+<pre><code class="language-clojure">;; Resample both slope and intercept
+(p/regenerate model trace (sel/select :slope :intercept))
+
+;; Resample everything
+(p/regenerate model trace sel/all)
+
+;; Resample everything except :slope
+(p/regenerate model trace (sel/complement-sel (sel/select :slope)))
+</code></pre>
+<h2 id="assess-score-fully-specified-choices"><a class="header" href="#assess-score-fully-specified-choices">Assess: score fully-specified choices</a></h2>
+<p><code>assess</code> computes the log-probability of a fully-specified choice map — every address must be provided. No sampling occurs:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)
+      trace (p/simulate model [xs])
+      ;; Assess the trace's own choices
+      {:keys [weight]} (p/assess model [xs] (:choices trace))]
+  (println "assess weight:" (mx/item weight))
+  (println "trace score:" (mx/item (:score trace))))
+;; These match — assess scores the same choices the trace recorded
+</code></pre>
+<p><code>assess</code> is useful for computing the log-density of a specific configuration, for example when evaluating a proposal or scoring a model against fixed data.</p>
+<h2 id="project-score-a-selection"><a class="header" href="#project-score-a-selection">Project: score a selection</a></h2>
+<p><code>project</code> computes the log-probability contribution of a subset of addresses:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)
+      trace (p/simulate model [xs])
+      ;; Score all addresses
+      all-proj (mx/item (p/project model trace sel/all))
+      ;; Score no addresses
+      none-proj (mx/item (p/project model trace sel/none))
+      ;; Score just :slope
+      slope-proj (mx/item (p/project model trace (sel/select :slope)))]
+  (println "project(all) =" (.toFixed all-proj 4) " = score")
+  (println "project(none) =" (.toFixed none-proj 4))
+  (println "project(:slope) =" (.toFixed slope-proj 4)))
+</code></pre>
+<p><code>project(all)</code> equals the total score. <code>project(none)</code> is zero. <code>project</code> on a single address gives that address’s log-probability contribution. This enables score decomposition — understanding how much each random choice contributes to the overall probability.</p>
+<h2 id="building-metropolis-hastings-by-hand"><a class="header" href="#building-metropolis-hastings-by-hand">Building Metropolis-Hastings by hand</a></h2>
+<p>With <code>regenerate</code> and the accept-reject criterion, we can build MH from scratch. The algorithm:</p>
+<ol>
+<li>Start with a trace (from <code>generate</code> with observations).</li>
+<li>Propose a new trace by calling <code>regenerate</code> with a selection.</li>
+<li>Accept the proposal with probability \(\min(1, \exp(\log w))\).</li>
+<li>Repeat.</li>
+</ol>
+<p>The accept-reject step: draw \(u \sim \text{Uniform}(0,1)\). Accept if \(\log u &lt; \log w\).</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)
+      obs (cm/choicemap :y0 (mx/scalar 2.5) :y1 (mx/scalar 4.5) :y2 (mx/scalar 6.5))
+      ;; Initialize
+      init-trace (:trace (p/generate model [xs] obs))
+      ;; One MH step
+      {:keys [trace weight]} (p/regenerate model init-trace (sel/select :slope))
+      log-alpha (mx/item weight)
+      log-u (js/Math.log (js/Math.random))
+      accept? (&lt; log-u log-alpha)
+      next-trace (if accept? trace init-trace)]
+  (println "log-alpha:" (.toFixed log-alpha 3))
+  (println "accepted?" accept?))
+</code></pre>
+<h2 id="running-an-mh-chain"><a class="header" href="#running-an-mh-chain">Running an MH chain</a></h2>
+<p>Wrap the single step in a loop to collect posterior samples. Use burn-in (discard early samples before the chain converges) and keep samples after:</p>
+<pre><code class="language-clojure">(let [model (dyn/auto-key linear-model)
+      obs (cm/choicemap :y0 (mx/scalar 2.5) :y1 (mx/scalar 4.5) :y2 (mx/scalar 6.5))
+      init-trace (:trace (p/generate model [xs] obs))
+      selection (sel/select :slope :intercept)
+      n-steps 200
+      burn 50]
+  (loop [i 0, trace init-trace, samples [], accepted 0]
+    (if (&gt;= i n-steps)
+      (let [mean (/ (reduce + samples) (count samples))]
+        (println "samples:" (count samples))
+        (println "acceptance rate:" (.toFixed (/ accepted n-steps) 2))
+        (println "posterior mean slope:" (.toFixed mean 3)))
+      (let [{t :trace w :weight} (p/regenerate model trace selection)
+            log-alpha (mx/item w)
+            accept? (&lt; (js/Math.log (js/Math.random)) log-alpha)
+            next-trace (if accept? t trace)]
+        (when (zero? (mod i 50)) (mx/sweep-dead-arrays!))
+        (recur (inc i)
+               next-trace
+               (if (&gt;= i burn)
+                 (conj samples (mx/item (cm/get-choice (:choices next-trace) [:slope])))
+                 samples)
+               (if accept? (inc accepted) accepted))))))
+</code></pre>
+<p>With observations \(y = [2.5, 4.5, 6.5]\) at \(x = [1, 2, 3]\), the posterior mean of the slope should be near 2. The acceptance rate depends on the proposal — prior proposals (regenerating from \(\mathcal{N}(0, 10)\)) tend to have low acceptance rates because the prior is broad. In <a href="#placeholder-1">Chapter 7</a> we’ll see smarter proposals like random walks and HMC.</p>
+<h2 id="burn-in-and-thinning"><a class="header" href="#burn-in-and-thinning">Burn-in and thinning</a></h2>
+<p>Two practical considerations for MCMC:</p>
+<p><strong>Burn-in:</strong> The chain starts from a random initialization that may be far from the posterior. Early samples are unrepresentative. Discard the first <code>burn</code> samples before collecting.</p>
+<p><strong>Thinning:</strong> Consecutive samples are correlated (the chain moves in small steps). Taking every \(k\)-th sample reduces autocorrelation. For example, with <code>thin=5</code>, keep every 5th sample.</p>
+<p>Both are handled naturally by the loop above. The built-in kernel framework (Chapter 7) supports burn-in and thinning as parameters.</p>
+<h2 id="the-five-gfi-operations-together"><a class="header" href="#the-five-gfi-operations-together">The five GFI operations together</a></h2>
+<p>Here’s the complete picture of what each operation does:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Operation</th><th>Input</th><th>Output</th><th>What it does</th></tr>
+</thead>
+<tbody>
+<tr><td><code>simulate</code></td><td>args</td><td>trace</td><td>Sample everything from the prior</td></tr>
+<tr><td><code>generate</code></td><td>args, constraints</td><td>trace, weight</td><td>Constrain observed, sample latent</td></tr>
+<tr><td><code>update</code></td><td>trace, constraints</td><td>trace, weight, discard</td><td>Change specific choices</td></tr>
+<tr><td><code>regenerate</code></td><td>trace, selection</td><td>trace, weight</td><td>Resample selected addresses</td></tr>
+<tr><td><code>assess</code></td><td>args, choices</td><td>weight</td><td>Score fully-specified choices</td></tr>
+<tr><td><code>project</code></td><td>trace, selection</td><td>weight</td><td>Score a subset of addresses</td></tr>
+</tbody>
+</table>
+</div>
+<p>All six are implemented as handler transitions — pure functions with the same signature. The model body is identical in every case. Only the handler changes.</p>
+<h2 id="what-weve-learned-4"><a class="header" href="#what-weve-learned-4">What we’ve learned</a></h2>
+<ul>
+<li><code>update</code> changes specific choices and returns the log probability ratio as a weight, plus a discard of old values.</li>
+<li><code>regenerate</code> resamples selected addresses from the prior, keeping everything else fixed.</li>
+<li><code>assess</code> scores fully-specified choices without sampling.</li>
+<li><code>project</code> decomposes the score by address selection.</li>
+<li>Metropolis-Hastings is <code>regenerate</code> + accept/reject in a loop.</li>
+<li>Burn-in discards early samples; thinning reduces autocorrelation.</li>
+</ul>
+<p>In the next chapter, we’ll see how models compose via <code>splice</code> and combinators — building hierarchical and sequential models from simple components.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="placeholder"><a class="header" href="#placeholder">Placeholder</a></h1>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="placeholder-1"><a class="header" href="#placeholder-1">Placeholder</a></h1>
@@ -948,8 +1129,6 @@ bun install
 <h1 id="placeholder-3"><a class="header" href="#placeholder-3">Placeholder</a></h1>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="placeholder-4"><a class="header" href="#placeholder-4">Placeholder</a></h1>
-<div style="break-before: page; page-break-before: always;"></div>
-<h1 id="placeholder-5"><a class="header" href="#placeholder-5">Placeholder</a></h1>
 
                     </main>
 
