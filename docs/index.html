@@ -56,7 +56,7 @@
     <a href="https://www.gen.dev/">Gen.jl</a> and
     <a href="https://github.com/probcomp/genjax">GenJAX</a>.
     Built on Apple&rsquo;s <a href="https://github.com/ml-explore/mlx">MLX</a> framework.
-    ~10,800 lines of ClojureScript.
+    ~25,000 lines of ClojureScript.
   </p>
 
   <div class="features">
@@ -102,7 +102,7 @@
       </a>
       <a class="card" href="tutorial-v2/book/index.html">
         <h3>Tutorial v2 <span class="badge badge-live">new</span></h3>
-        <p>Re-frame-inspired tutorial. Functional core, algebraic effects, pure handlers. Built with mdBook.</p>
+        <p>Functional core, algebraic effects, pure handlers. 10 chapters with verified code. Built with mdBook.</p>
       </a>
       <a class="card" href="examples/index.html">
         <h3>Examples <span class="badge badge-soon">coming soon</span></h3>
@@ -127,12 +127,21 @@
 
   <section>
     <h2>Quick Start</h2>
+    <p style="color:#555; font-size:0.9em;">Requirements: macOS with Apple Silicon, <a href="https://bun.sh/">Bun</a> (or Node.js 18+), Xcode Command Line Tools.</p>
 <pre>
-<span style="color:#888"># Requirements: macOS with Apple Silicon, Bun (or Node.js 18+)</span>
-git clone https://github.com/robert-johansson/genmlx.git
+<span style="color:#888"># Clone with the node-mlx submodule (includes MLX C++ source)</span>
+git clone https://github.com/robert-johansson/genmlx
 cd genmlx
-npm install
-bun run --bun nbb examples/linear_regression.cljs
+git submodule update --init --recursive node-mlx
+
+<span style="color:#888"># Build node-mlx (compiles MLX C++ and the Node.js native addon)</span>
+cd node-mlx && npm install && npm run build && cd ..
+
+<span style="color:#888"># Install GenMLX dependencies (links local node-mlx as @frost-beta/mlx)</span>
+bun install
+
+<span style="color:#888"># Run an example</span>
+bun run --bun nbb examples/genmlx/linear_regression.cljs
 </pre>
   </section>
 
