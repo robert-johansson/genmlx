@@ -41,7 +41,8 @@
             [genmlx.selection :as sel]
             [genmlx.dist.core :as dc]
             [genmlx.protocols :as p]
-            [genmlx.trace :as tr]))
+            [genmlx.trace :as tr]
+            [genmlx.schemas :as schemas]))
 
 ;; Cached zero constant for init states and fallback log-probs
 (def ^:private ZERO (mx/scalar 0.0))
@@ -260,6 +261,8 @@
 (defn merge-sub-result
   "Pure: merge a sub-generative-function result into parent state."
   [state addr sub-result]
+  (schemas/validated schemas/SubResult sub-result
+    (str "merge-sub-result at addr " addr))
   (-> state
       (update :choices cm/set-submap addr (:choices sub-result))
       (update :score (fn [sc] (mx/add sc (:score sub-result))))

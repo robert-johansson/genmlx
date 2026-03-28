@@ -19,6 +19,7 @@
             [genmlx.conjugacy :as conjugacy]
             [genmlx.rewrite :as rewrite]
             [genmlx.inference.auto-analytical :as auto-analytical]
+            [genmlx.schemas :as schemas]
             [clojure.set]))
 
 ;; Cached zero constant for init states (MLX scalars are immutable)
@@ -475,6 +476,7 @@
             :else
             (run-simulate-handler this args key body-fn this))]
       (mx/gfi-cleanup!)
+      (schemas/validated schemas/SimulateReturn result "DynamicGF/simulate")
       result))
 
   p/IGenerate
@@ -499,6 +501,7 @@
             :else
             (run-generate-handler this args key constraints body-fn this))]
       (mx/gfi-cleanup!)
+      (schemas/validated schemas/GenerateReturn result "DynamicGF/generate")
       result))
 
   p/IUpdate
@@ -521,8 +524,10 @@
       ;; Post-process: add addresses deleted by branch switches to discard.
       ;; Old addresses not present in new trace must appear in discard (Gen.jl semantics).
       (mx/gfi-cleanup!)
-      (clojure.core/update result :discard
-                           add-deleted-to-discard (:choices trace) (:choices (:trace result)))))
+      (let [final (clojure.core/update result :discard
+                    add-deleted-to-discard (:choices trace) (:choices (:trace result)))]
+        (schemas/validated schemas/UpdateReturn final "DynamicGF/update")
+        final)))
 
   p/IRegenerate
   (regenerate [this trace selection]
@@ -552,6 +557,7 @@
             :else
             (run-regen-handler this trace key selection old-score body-fn this))]
       (mx/gfi-cleanup!)
+      (schemas/validated schemas/RegenerateReturn result "DynamicGF/regenerate")
       result))
 
   p/IAssess
@@ -581,6 +587,7 @@
             :else
             (run-assess-handler this args key choices body-fn this))]
       (mx/gfi-cleanup!)
+      (schemas/validated schemas/AssessReturn result "DynamicGF/assess")
       result))
 
   p/IPropose
@@ -593,9 +600,11 @@
                                   :param-store (::param-store (meta this))}
                                  (fn [rt] (apply body-fn rt args)))]
       (mx/gfi-cleanup!)
-      {:choices (:choices result)
-       :weight (:score result)
-       :retval (:retval result)}))
+      (let [ret {:choices (:choices result)
+                  :weight (:score result)
+                  :retval (:retval result)}]
+        (schemas/validated schemas/ProposeReturn ret "DynamicGF/propose")
+        ret)))
 
   p/IProject
   (project [this trace selection]
@@ -615,6 +624,7 @@
             :else
             (run-project-handler this trace key selection body-fn this))]
       (mx/gfi-cleanup!)
+      (schemas/validated schemas/ProjectReturn result "DynamicGF/project")
       result)))
 
 (defn- execute-sub
@@ -810,11 +820,11 @@
   (let [key (rng/ensure-key key)
         _ (rng/seed! key)
         result (rt/run-handler h/batched-simulate-transition
-                 {:choices cm/EMPTY :score SCORE-ZERO
-                  :key key :batch-size n :batched? true
-                  :executor execute-sub
-                  :param-store (::param-store (meta gf))}
-                 (fn [rt] (apply (:body-fn gf) rt args)))]
+                               {:choices cm/EMPTY :score SCORE-ZERO
+                                :key key :batch-size n :batched? true
+                                :executor execute-sub
+                                :param-store (::param-store (meta gf))}
+                               (fn [rt] (apply (:body-fn gf) rt args)))]
     (vec/->VectorizedTrace gf args (:choices result) (:score result)
                            (mx/zeros [n]) n (:retval result))))
 
@@ -828,12 +838,12 @@
   (let [key (rng/ensure-key key)
         _ (rng/seed! key)
         result (rt/run-handler h/batched-generate-transition
-                 {:choices cm/EMPTY :score SCORE-ZERO
-                  :weight SCORE-ZERO :key key
-                  :constraints constraints :batch-size n :batched? true
-                  :executor execute-sub
-                  :param-store (::param-store (meta gf))}
-                 (fn [rt] (apply (:body-fn gf) rt args)))]
+                               {:choices cm/EMPTY :score SCORE-ZERO
+                                :weight SCORE-ZERO :key key
+                                :constraints constraints :batch-size n :batched? true
+                                :executor execute-sub
+                                :param-store (::param-store (meta gf))}
+                               (fn [rt] (apply (:body-fn gf) rt args)))]
     (vec/->VectorizedTrace gf args (:choices result) (:score result)
                            (:weight result) n (:retval result))))
 

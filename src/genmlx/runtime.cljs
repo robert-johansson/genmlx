@@ -26,7 +26,8 @@
             [genmlx.mlx.random :as rng]
             [genmlx.selection :as sel]
             [genmlx.protocols :as p]
-            [genmlx.dist.core :as dc]))
+            [genmlx.dist.core :as dc]
+            [genmlx.schemas :as schemas]))
 
 (def ^:private ZERO (mx/scalar 0.0))
 
@@ -39,6 +40,7 @@
 
    The only mutable state is a volatile! created and consumed here."
   [transition init-state body-fn]
+  (schemas/validated schemas/BaseState init-state "run-handler init-state")
   (let [vol (volatile! init-state)
 
         ;; trace closure: sample/constrain at an address
@@ -72,7 +74,7 @@
                       sub-constraints (cm/get-submap (:constraints state) addr)
                       sub-old-choices (cm/get-submap (:old-choices state) addr)
                       sub-selection (when-let [s (:selection state)]
-                                     (sel/get-subselection s addr))
+                                      (sel/get-subselection s addr))
                       sub-body-fn (:body-fn gf)
                       ;; Choose transition + build init-state based on mode
                       [sub-transition sub-init-state]
@@ -111,11 +113,11 @@
                                        sub-init-state)
                       ;; Recursive call to run-handler
                       sub-result (run-handler sub-transition sub-init-state
-                                   (fn [rt] (apply sub-body-fn rt (vec args))))
+                                              (fn [rt] (apply sub-body-fn rt (vec args))))
                       ;; Merge into parent state
                       state' (-> state
-                               (assoc :key k1)
-                               (h/merge-sub-result addr sub-result))]
+                                 (assoc :key k1)
+                                 (h/merge-sub-result addr sub-result))]
                   (vreset! vol state')
                   (:retval sub-result))
 
@@ -141,15 +143,15 @@
                     sub-constraints (cm/get-submap (:constraints state) addr)
                     sub-old-choices (cm/get-submap (:old-choices state) addr)
                     sub-selection (when-let [s (:selection state)]
-                                   (sel/get-subselection s addr))
+                                    (sel/get-subselection s addr))
                     old-splice-score (get (:old-splice-scores state) addr)
                     sub-result ((:executor state) gf (vec args)
-                                 {:constraints sub-constraints
-                                  :old-choices sub-old-choices
-                                  :selection sub-selection
-                                  :key sk
-                                  :old-splice-score old-splice-score
-                                  :param-store (:param-store state)})]
+                                                  {:constraints sub-constraints
+                                                   :old-choices sub-old-choices
+                                                   :selection sub-selection
+                                                   :key sk
+                                                   :old-splice-score old-splice-score
+                                                   :param-store (:param-store state)})]
                 (vswap! vol h/merge-sub-result addr sub-result)
                 (:retval sub-result)))))
 
