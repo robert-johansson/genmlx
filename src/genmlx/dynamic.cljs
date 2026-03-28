@@ -20,6 +20,7 @@
             [genmlx.rewrite :as rewrite]
             [genmlx.inference.auto-analytical :as auto-analytical]
             [genmlx.schemas :as schemas]
+            [genmlx.dispatch :as dispatch]
             [clojure.set]))
 
 ;; Cached zero constant for init states (MLX scalars are immutable)
@@ -454,6 +455,177 @@
         (:conjugate-pairs schema) constraints)))
 
 ;; ---------------------------------------------------------------------------
+;; Dispatchers — select execution path for each GFI operation
+;; ---------------------------------------------------------------------------
+
+(def ^:private compiled-keys
+  "Map from GFI op to the schema key for the compiled path."
+  {:simulate   :compiled-simulate
+   :generate   :compiled-generate
+   :update     :compiled-update
+   :regenerate :compiled-regenerate
+   :assess     :compiled-assess
+   :project    :compiled-project})
+
+(def ^:private prefix-keys
+  "Map from GFI op to the schema key for the prefix-compiled path."
+  {:simulate   :compiled-prefix
+   :generate   :compiled-prefix-generate
+   :update     :compiled-prefix-update
+   :regenerate :compiled-prefix-regenerate
+   :assess     :compiled-prefix-assess
+   :project    :compiled-prefix-project})
+
+(def ^:private custom-transition-dispatcher
+  "Checks for ::dispatch/custom-transition in the gen-fn's metadata.
+   Highest priority — overrides all other dispatchers."
+  (reify dispatch/IDispatcher
+    (resolve-transition [_ op schema opts]
+      (when-let [t (::dispatch/custom-transition (meta (:gf opts)))]
+        {:run t :score-type (or (:score-type (meta t)) :joint)}))))
+
+(def ^:private analytical-dispatcher
+  "L3 auto-analytical handlers. Applies to generate, assess, regenerate
+   when conjugate observations are constrained."
+  (reify dispatch/IDispatcher
+    (resolve-transition [_ op schema opts]
+      (case op
+        :generate
+        (when (analytical-applicable? schema (:constraints opts))
+          {:run (fn [gf args key {:keys [constraints]}]
+                  (run-generate-analytical schema gf args key constraints (:body-fn gf) gf))
+           :score-type :marginal})
+
+        :assess
+        (when (analytical-applicable? schema (:constraints opts))
+          {:run (fn [gf args key {:keys [constraints]}]
+                  (run-assess-analytical schema gf args key constraints (:body-fn gf) gf))
+           :score-type :marginal})
+
+        :regenerate
+        (when (and (:auto-regenerate-transition schema)
+                   (= :marginal (::score-type (meta (:trace opts)))))
+          {:run (fn [gf args key {:keys [trace selection]}]
+                  (let [old-score (:score trace)]
+                    (run-regen-analytical schema gf trace key selection old-score (:body-fn gf) gf)))
+           :score-type :marginal})
+
+        nil))))
+
+(def ^:private compiled-dispatcher
+  "L1 compiled paths and L1-M3 prefix paths."
+  (reify dispatch/IDispatcher
+    (resolve-transition [_ op schema opts]
+      (let [compiled-key (get compiled-keys op)
+            prefix-key (get prefix-keys op)]
+        (cond
+          ;; L1-M2: fully compiled
+          (and compiled-key (get schema compiled-key))
+          {:run (case op
+                  :simulate
+                  (fn [gf args key _]
+                    (run-simulate-compiled (get schema compiled-key) gf args key))
+
+                  :generate
+                  (fn [gf args key {:keys [constraints]}]
+                    (run-generate-compiled (get schema compiled-key) gf args key constraints))
+
+                  :update
+                  (fn [gf args key {:keys [trace constraints]}]
+                    (run-update-compiled (get schema compiled-key) gf trace key constraints))
+
+                  :regenerate
+                  (fn [gf args key {:keys [trace selection]}]
+                    (let [old-score (:score trace)]
+                      (run-regen-compiled (get schema compiled-key) gf trace key selection old-score)))
+
+                  :assess
+                  (fn [gf args key {:keys [constraints]}]
+                    (let [r ((get schema compiled-key) (clojure.core/vec args) constraints)]
+                      {:retval (:retval r) :weight (:score r)}))
+
+                  :project
+                  (fn [gf args key {:keys [trace selection]}]
+                    ((get schema compiled-key) (clojure.core/vec (:args trace)) (:choices trace) selection)))
+           :score-type :joint}
+
+          ;; L1-M3: prefix compiled
+          (and prefix-key (get schema prefix-key))
+          {:run (case op
+                  :simulate
+                  (fn [gf args key _]
+                    (run-simulate-prefix (get schema prefix-key) gf args key (:body-fn gf) gf))
+
+                  :generate
+                  (fn [gf args key {:keys [constraints]}]
+                    (run-generate-prefix (get schema prefix-key) gf args key constraints (:body-fn gf) gf))
+
+                  :update
+                  (fn [gf args key {:keys [trace constraints]}]
+                    (run-update-prefix (get schema prefix-key) gf trace key constraints (:body-fn gf) gf))
+
+                  :regenerate
+                  (fn [gf args key {:keys [trace selection]}]
+                    (let [old-score (:score trace)]
+                      (run-regen-prefix (get schema prefix-key) gf trace key selection old-score (:body-fn gf) gf)))
+
+                  :assess
+                  (fn [gf args key {:keys [constraints]}]
+                    (run-assess-prefix (get schema prefix-key) gf args key constraints (:body-fn gf) gf))
+
+                  :project
+                  (fn [gf args key {:keys [trace selection]}]
+                    (run-project-prefix (get schema prefix-key) gf trace key selection (:body-fn gf) gf)))
+           :score-type :joint})))))
+
+(def ^:private handler-dispatcher
+  "L0 handler fallback. Always succeeds."
+  (reify dispatch/IDispatcher
+    (resolve-transition [_ op schema opts]
+      {:run (case op
+              :simulate
+              (fn [gf args key _]
+                (run-simulate-handler gf args key (:body-fn gf) gf))
+
+              :generate
+              (fn [gf args key {:keys [constraints]}]
+                (run-generate-handler gf args key constraints (:body-fn gf) gf))
+
+              :update
+              (fn [gf args key {:keys [trace constraints]}]
+                (run-update-handler gf trace key constraints (:body-fn gf) gf))
+
+              :regenerate
+              (fn [gf args key {:keys [trace selection]}]
+                (let [old-score (:score trace)]
+                  (run-regen-handler gf trace key selection old-score (:body-fn gf) gf)))
+
+              :assess
+              (fn [gf args key {:keys [constraints]}]
+                (run-assess-handler gf args key constraints (:body-fn gf) gf))
+
+              :project
+              (fn [gf args key {:keys [trace selection]}]
+                (run-project-handler gf trace key selection (:body-fn gf) gf)))
+       :score-type :joint})))
+
+(def ^:private default-dispatcher-stack
+  "The default dispatcher stack. Custom > Analytical > Compiled > Handler."
+  [custom-transition-dispatcher
+   analytical-dispatcher
+   compiled-dispatcher
+   handler-dispatcher])
+
+(defn- run-dispatched
+  "Resolve the dispatch for an op and execute it."
+  [gf op args key opts]
+  (let [schema (:schema gf)
+        spec (dispatch/resolve default-dispatcher-stack op schema
+               (assoc opts :gf gf))
+        result ((:run spec) gf args key opts)]
+    result))
+
+;; ---------------------------------------------------------------------------
 ;; DynamicGF record — GFI protocol implementations
 ;; ---------------------------------------------------------------------------
 
@@ -462,19 +634,7 @@
   (simulate [this args]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result
-          (cond
-            ;; L1-M2: full compiled simulate
-            (:compiled-simulate schema)
-            (run-simulate-compiled (:compiled-simulate schema) this args key)
-
-            ;; L1-M3: compiled prefix + replay handler
-            (:compiled-prefix schema)
-            (run-simulate-prefix (:compiled-prefix schema) this args key body-fn this)
-
-            ;; L0: handler fallback
-            :else
-            (run-simulate-handler this args key body-fn this))]
+          result (run-dispatched this :simulate args key {})]
       (mx/gfi-cleanup!)
       (schemas/validated schemas/SimulateReturn result "DynamicGF/simulate")
       result))
@@ -483,23 +643,7 @@
   (generate [this args constraints]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result
-          (cond
-            ;; L3: auto-analytical generate
-            (analytical-applicable? schema constraints)
-            (run-generate-analytical schema this args key constraints body-fn this)
-
-            ;; L1: fully compiled generate (static or branch-rewritten)
-            (:compiled-generate schema)
-            (run-generate-compiled (:compiled-generate schema) this args key constraints)
-
-            ;; L1-M3: compiled prefix generate + replay handler
-            (:compiled-prefix-generate schema)
-            (run-generate-prefix (:compiled-prefix-generate schema) this args key constraints body-fn this)
-
-            ;; L0: handler fallback
-            :else
-            (run-generate-handler this args key constraints body-fn this))]
+          result (run-dispatched this :generate args key {:constraints constraints})]
       (mx/gfi-cleanup!)
       (schemas/validated schemas/GenerateReturn result "DynamicGF/generate")
       result))
@@ -508,21 +652,9 @@
   (update [this trace constraints]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result
-          (cond
-            ;; L1: fully compiled update (static or branch-rewritten)
-            (:compiled-update schema)
-            (run-update-compiled (:compiled-update schema) this trace key constraints)
-
-            ;; L1-M3: compiled prefix update + replay handler
-            (:compiled-prefix-update schema)
-            (run-update-prefix (:compiled-prefix-update schema) this trace key constraints body-fn this)
-
-            ;; L0: handler fallback
-            :else
-            (run-update-handler this trace key constraints body-fn this))]
+          result (run-dispatched this :update (:args trace) key
+                   {:trace trace :constraints constraints})]
       ;; Post-process: add addresses deleted by branch switches to discard.
-      ;; Old addresses not present in new trace must appear in discard (Gen.jl semantics).
       (mx/gfi-cleanup!)
       (let [final (clojure.core/update result :discard
                     add-deleted-to-discard (:choices trace) (:choices (:trace result)))]
@@ -533,29 +665,8 @@
   (regenerate [this trace selection]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          old-score (:score trace)
-          result
-          (cond
-            ;; L3.5: auto-analytical regenerate — only when trace has marginal scoring.
-            ;; Case A (prior selected): handler returns nil, falls through to base
-            ;; Case B (prior NOT selected): replays old value with marginal LL
-            ;; Traces from simulate have joint LL (no ::score-type), so they fall
-            ;; through to the standard handler, preserving weight = 0 for empty selection.
-            (and (:auto-regenerate-transition schema)
-                 (= :marginal (::score-type (meta trace))))
-            (run-regen-analytical schema this trace key selection old-score body-fn this)
-
-            ;; L1: fully compiled regenerate (M2/M4)
-            (:compiled-regenerate schema)
-            (run-regen-compiled (:compiled-regenerate schema) this trace key selection old-score)
-
-            ;; L1-M3: prefix regenerate + replay handler
-            (:compiled-prefix-regenerate schema)
-            (run-regen-prefix (:compiled-prefix-regenerate schema) this trace key selection old-score body-fn this)
-
-            ;; L0: handler fallback
-            :else
-            (run-regen-handler this trace key selection old-score body-fn this))]
+          result (run-dispatched this :regenerate (:args trace) key
+                   {:trace trace :selection selection})]
       (mx/gfi-cleanup!)
       (schemas/validated schemas/RegenerateReturn result "DynamicGF/regenerate")
       result))
@@ -564,28 +675,7 @@
   (assess [this args choices]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result
-          (cond
-            ;; L3.5: auto-analytical assess — only when prior is free (e.g., partial assess).
-            ;; In standard assess (all choices provided), prior is constrained,
-            ;; so analytical-applicable? returns false → handler fallback → joint LL.
-            ;; This preserves the GFI identity: simulate.score == assess(choices).weight
-            (analytical-applicable? schema choices)
-            (run-assess-analytical schema this args key choices body-fn this)
-
-            ;; L1: fully compiled assess (M2/M4)
-            (:compiled-assess schema)
-            (let [r ((:compiled-assess schema) (vec args) choices)]
-              {:retval (:retval r)
-               :weight (:score r)})
-
-            ;; L1-M3: prefix assess + replay
-            (:compiled-prefix-assess schema)
-            (run-assess-prefix (:compiled-prefix-assess schema) this args key choices body-fn this)
-
-            ;; L0: handler fallback
-            :else
-            (run-assess-handler this args key choices body-fn this))]
+          result (run-dispatched this :assess args key {:constraints choices})]
       (mx/gfi-cleanup!)
       (schemas/validated schemas/AssessReturn result "DynamicGF/assess")
       result))
@@ -610,19 +700,8 @@
   (project [this trace selection]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result
-          (cond
-            ;; L1: fully compiled project (M2/M4)
-            (:compiled-project schema)
-            ((:compiled-project schema) (vec (:args trace)) (:choices trace) selection)
-
-            ;; L1-M3: prefix project + replay
-            (:compiled-prefix-project schema)
-            (run-project-prefix (:compiled-prefix-project schema) this trace key selection body-fn this)
-
-            ;; L0: handler fallback
-            :else
-            (run-project-handler this trace key selection body-fn this))]
+          result (run-dispatched this :project (:args trace) key
+                   {:trace trace :selection selection})]
       (mx/gfi-cleanup!)
       (schemas/validated schemas/ProjectReturn result "DynamicGF/project")
       result)))
