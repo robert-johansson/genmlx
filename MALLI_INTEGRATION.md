@@ -31,67 +31,28 @@ At 39ns per compiled validation (Malli benchmark), the overhead is negligible du
 
 Lines 15-28 of `handler.cljs` document the handler state schemas as a markdown table in a docstring. This table is the most important structural contract in GenMLX -- every transition reads from and writes to these keys, every `run-*` helper constructs an initial state with these keys, and `merge-sub-result` assumes this shape. Today, misspelling `:constraints` as `:constraint` produces a silent nil lookup and wrong importance weights.
 
-Malli makes the table a value:
+Malli makes the table a value. Each mode is a separate `def`, composed via `mu/merge`:
 
 ```clojure
 (def BaseState
   "Keys common to all handler modes."
   [:map
    [:key some?]
-   [:choices [:fn cm/choicemap?]]
+   [:choices [:fn {:error/message "should be a ChoiceMap"} choicemap?]]
    [:score some?]
    [:executor {:optional true} fn?]])
 
-(def HandlerState
-  "Handler state schema, dispatching on mode.
-   Mode is inferred from which keys are present."
-  [:multi {:dispatch (fn [s]
-                       (cond (:selection s)    :regenerate
-                             (:old-choices s)  :update
-                             (:constraints s)  :generate
-                             :else             :simulate))}
-   [:simulate
-    BaseState]
-
-   [:generate
-    (mu/merge BaseState
-      [:map
-       [:weight some?]
-       [:constraints [:fn cm/choicemap?]]])]
-
-   [:update
-    (mu/merge BaseState
-      [:map
-       [:weight some?]
-       [:constraints [:fn cm/choicemap?]]
-       [:old-choices [:fn cm/choicemap?]]
-       [:discard [:fn cm/choicemap?]]])]
-
-   [:regenerate
-    (mu/merge BaseState
-      [:map
-       [:weight some?]
-       [:old-choices [:fn cm/choicemap?]]
-       [:selection some?]])]])
+(def SimulateState  BaseState)
+(def GenerateState  (mu/merge BaseState [:map [:weight some?] [:constraints ...]]))
+(def AssessState    GenerateState)
+(def UpdateState    (mu/merge GenerateState [:map [:old-choices ...] [:discard ...]]))
+(def RegenerateState (mu/merge BaseState [:map [:weight some?] [:old-choices ...] [:selection some?]]))
+(def ProjectState   (mu/merge BaseState [:map [:weight some?] [:old-choices ...] [:selection some?] [:constraints ...]]))
 ```
 
 The `mu/merge` composition mirrors the code: generate-state is simulate-state plus `:weight` and `:constraints`. Update-state is generate-state plus `:old-choices` and `:discard`. The inheritance is data composition, not class hierarchy.
 
-**Batched variants** extend with two additional keys:
-
-```clojure
-(def BatchedState
-  "Additional keys for batched (vectorized) handler state."
-  [:map
-   [:batch-size pos-int?]
-   [:batched? [:= true]]])
-
-(def BatchedGenerateState
-  (mu/merge (second (nth (rest HandlerState) 1)) ;; generate branch
-            BatchedState))
-```
-
-**Validation point:** Entry to `run-handler` in `runtime.cljs`, before the volatile is created.
+**Validation point:** Entry to `run-handler` in `runtime.cljs` validates against `BaseState` (the common subset). Mode-specific validation is not yet implemented — the dispatcher knows the mode but does not currently pass it to `run-handler`.
 
 
 ## 2. Sub-Result Shape
@@ -104,11 +65,11 @@ If a new domain integration returns a map missing `:score`, `merge-sub-result` c
 (def SubResult
   "Shape of sub-generative-function results for merge-sub-result."
   [:map
-   [:choices [:fn cm/choicemap?]]
+   [:choices [:fn {:error/message "should be a ChoiceMap"} choicemap?]]
    [:score some?]
-   [:retval {:optional true} some?]
-   [:weight {:optional true} some?]
-   [:discard {:optional true} [:fn cm/choicemap?]]
+   [:retval {:optional true} any?]
+   [:weight {:optional true} any?]
+   [:discard {:optional true} [:or nil? [:fn {:error/message "should be a ChoiceMap"} choicemap?]]]
    [:splice-scores {:optional true} map?]])
 ```
 
@@ -171,15 +132,12 @@ The ARCHITECTURE.md refactoring introduces transition-specs returned by dispatch
   [:enum :joint :marginal :collapsed :beam-marginal])
 
 (def TransitionSpec
-  "Shape returned by IDispatcher/resolve-transition."
+  "Shape returned by IDispatcher/resolve-transition.
+   Note: the actual key is :run, not :transition — the :run function
+   encapsulates the full execution path for a given GFI operation."
   [:map
-   [:transition fn?]
-   [:score-type ScoreType]
-   [:init-state-fn {:optional true} fn?]
-   [:post-fn {:optional true} fn?]
-   [:compiled-fn {:optional true} fn?]
-   [:op {:optional true}
-    [:enum :simulate :generate :update :regenerate :assess :project]]])
+   [:run fn?]
+   [:score-type ScoreType]])
 ```
 
 **Validation point:** Return value of `dispatch/resolve`, before `execute-spec` processes it.
@@ -193,13 +151,11 @@ The ARCHITECTURE.md refactoring introduces transition-specs returned by dispatch
 (def TraceSite
   [:map
    [:addr some?]
+   [:addr-form some?]
    [:dist-type keyword?]
    [:dist-args vector?]
    [:deps set?]
-   [:static? boolean?]
-   [:in-branch? {:optional true} boolean?]
-   [:in-loop? {:optional true} boolean?]
-   [:loop-idx-sym {:optional true} symbol?]])
+   [:static? boolean?]])
 
 (def SpliceSite
   [:map
@@ -207,35 +163,36 @@ The ARCHITECTURE.md refactoring introduces transition-specs returned by dispatch
    [:gf-sym some?]
    [:deps set?]])
 
-(def ParamSite
-  [:map
-   [:name some?]
-   [:default-expr {:optional true} some?]])
-
 (def ModelSchema
-  "Output of schema/extract-schema."
+  "Output of schema/extract-schema, augmented by conjugacy and compilation."
   [:map
    [:trace-sites [:vector TraceSite]]
-   [:splice-sites {:optional true} [:vector SpliceSite]]
-   [:param-sites {:optional true} [:vector ParamSite]]
    [:static? boolean?]
    [:dynamic-addresses? boolean?]
    [:has-branches? boolean?]
+   ;; Optional keys added by various augmentation passes
+   [:splice-sites {:optional true} vector?]
+   [:param-sites {:optional true} vector?]
+   [:loop-sites {:optional true} vector?]
    [:dep-order {:optional true} vector?]
    [:return-form {:optional true} some?]
-   ;; Added by conjugacy augmentation
-   [:conjugate-pairs {:optional true} map?]
+   [:has-loops? {:optional true} boolean?]
+   [:params {:optional true} some?]
+   ;; Added by conjugacy detection
+   [:conjugate-pairs {:optional true} [:or vector? map?]]
+   [:has-conjugate? {:optional true} boolean?]
+   [:analytical-plan {:optional true} some?]
    ;; Added by compilation
    [:compiled-simulate {:optional true} fn?]
    [:compiled-generate {:optional true} fn?]
    [:compiled-update {:optional true} fn?]
    [:compiled-regenerate {:optional true} fn?]
    [:compiled-assess {:optional true} fn?]
-   [:compiled-prefix {:optional true} fn?]
-   [:compiled-prefix-generate {:optional true} fn?]
+   [:compiled-project {:optional true} fn?]
    ;; Added by auto-analytical
    [:auto-handlers {:optional true} map?]
-   [:auto-regenerate-transition {:optional true} fn?]])
+   [:auto-regenerate-transition {:optional true} fn?]
+   [:auto-regenerate-handlers {:optional true} map?]])
 ```
 
 This makes the schema system's output self-documenting. When a new compilation level or domain integration reads the schema, the Malli definition tells it exactly what fields exist and what types they carry.
@@ -249,52 +206,19 @@ The conjugacy table in `conjugacy.cljs` is already a plain Clojure map. Its valu
 
 ```clojure
 (def ConjugacyEntry
-  "Shape of entries in the conjugacy table."
-  [:multi {:dispatch :family}
-   [:normal-normal
-    [:map
-     [:family [:= :normal-normal]]
-     [:prior-mean-key keyword?]
-     [:prior-std-key keyword?]
-     [:obs-mean-key keyword?]
-     [:obs-noise-key keyword?]
-     [:natural-param-idx int?]]]
-
-   [:beta-bernoulli
-    [:map
-     [:family [:= :beta-bernoulli]]
-     [:prior-alpha-key keyword?]
-     [:prior-beta-key keyword?]
-     [:obs-prob-key keyword?]
-     [:natural-param-idx int?]]]
-
-   [:gamma-poisson
-    [:map
-     [:family [:= :gamma-poisson]]
-     [:prior-shape-key keyword?]
-     [:prior-rate-key keyword?]
-     [:obs-rate-key keyword?]
-     [:natural-param-idx int?]]]
-
-   [:gamma-exponential
-    [:map
-     [:family [:= :gamma-exponential]]
-     [:prior-shape-key keyword?]
-     [:prior-rate-key keyword?]
-     [:obs-rate-key keyword?]
-     [:natural-param-idx int?]]]
-
-   [:dirichlet-categorical
-    [:map
-     [:family [:= :dirichlet-categorical]]
-     [:prior-alpha-key keyword?]
-     [:obs-logits-key keyword?]
-     [:natural-param-idx int?]]]])
+  "One entry in the conjugacy table. All families have :family and
+   :natural-param-idx. Additional keys are family-specific param accessors
+   (e.g., :prior-mean-key, :obs-noise-key) — validated as a plain map
+   rather than per-family :multi dispatch, since new families are added
+   infrequently and the additional keys are all keywords."
+  [:map
+   [:family keyword?]
+   [:natural-param-idx int?]])
 ```
 
-When a new conjugate family is added (e.g., multivariate Normal-Normal for the LLM integration), the schema tells the developer exactly which keys are required.
+The schema validates the common structure. Family-specific keys (`:prior-mean-key`, `:obs-noise-key`, etc.) are open map entries — Malli's open map semantics allow them without listing each one.
 
-**Validation point:** At conjugacy table construction (static, one-time).
+**Validation point:** Not currently implemented at runtime. The schema is available for development-time REPL checks.
 
 
 ## 7. Domain Extension via mu/merge
@@ -339,23 +263,16 @@ This is the same pattern as `mu/merge` for web request schemas in Reitit/Ring --
 The `Distribution` record in `dist/core.cljs` has `{:type keyword :params map}`. The `:params` shape varies by distribution type. Malli's `:multi` dispatch validates per-type:
 
 ```clojure
-(def DistributionParams
-  [:multi {:dispatch :type}
-   [:gaussian     [:map [:mu some?] [:sigma some?]]]
-   [:bernoulli    [:map [:p some?]]]
-   [:beta-dist    [:map [:alpha some?] [:beta-param some?]]]
-   [:gamma-dist   [:map [:shape-param some?] [:rate some?]]]
-   [:categorical  [:map [:logits some?]]]
-   [:uniform      [:map [:low some?] [:high some?]]]
-   [:exponential  [:map [:rate some?]]]
-   [:poisson      [:map [:rate some?]]]
-   [:dirichlet    [:map [:alpha some?]]]
-   [:mvn-gaussian [:map [:mu some?] [:cov some?]]]])
+(def DistRecord
+  "A GenMLX Distribution record: {:type keyword :params map}."
+  [:map
+   [:type keyword?]
+   [:params map?]])
 ```
 
-This is primarily useful for debugging "wrong params passed to distribution" errors. When `(dist/gaussian x y)` is called and `x` is accidentally a vector instead of a scalar, the schema catches it at construction time with a clear message.
+The schema validates the common structure of all distributions. Per-type param validation (e.g., gaussian requires `:mu` and `:sigma`) was considered but skipped — it would break when new distributions are added via `defdist`, and the structural check is too basic to catch real param errors at the constructor level.
 
-**Validation point:** Distribution constructors (the functions generated by `defdist`).
+**Validation point:** Not currently implemented at constructors. Available for development-time REPL checks.
 
 
 ## 9. What Malli Does NOT Replace
@@ -371,16 +288,16 @@ This is primarily useful for debugging "wrong params passed to distribution" err
 
 | Component | Schema | When | Catches |
 |---|---|---|---|
-| `run-handler` entry | `HandlerState` | Init state construction | Missing/misspelled keys in init states |
-| `merge-sub-result` entry | `SubResult` | Each splice | Domain integrations returning wrong shapes |
-| GFI method exit | `GenerateReturn` etc. | Each GFI call | Protocol impls returning wrong types |
-| Dispatcher resolution | `TransitionSpec` | Each dispatch | New dispatchers returning malformed specs |
-| Schema extraction output | `ModelSchema` | Gen-fn construction | Schema extractor bugs |
-| Distribution construction | `DistributionParams` | Each `defdist` call | Wrong params to distributions |
-| Conjugacy table | `ConjugacyEntry` | Static, one-time | New families with missing keys |
-| Domain state extensions | `mu/merge` compositions | Domain-specific init | Domain-specific state keys |
+| `run-handler` entry | `BaseState` | Init state construction | **Implemented.** Missing `:key`, `:choices`, or `:score` |
+| `merge-sub-result` entry | `SubResult` | Each splice | **Implemented.** Missing `:choices` or `:score` from sub-models |
+| GFI method exit | `GenerateReturn` etc. | Each GFI call | **Implemented.** All 7 methods validated (simulate, generate, update, regenerate, assess, propose, project) |
+| Dispatcher resolution | `TransitionSpec` | Each dispatch | *Not yet implemented.* Schema defined but not wired into `run-dispatched`. |
+| Schema extraction output | `ModelSchema` | Gen-fn construction | *Not yet implemented.* Schema defined but not wired into `make-gen-fn`. |
+| Distribution construction | `DistRecord` | Each constructor | *Not yet implemented.* Schema defined for REPL use only. |
+| Conjugacy table | `ConjugacyEntry` | Static, one-time | *Not yet implemented.* Schema defined for REPL use only. |
+| Domain state extensions | `mu/merge` compositions | Domain-specific init | *Mechanism verified.* Real schemas created when LLM integration is built. |
 
-All validation is gated behind `*validate?*` and has zero cost in production.
+Implemented validation points are gated behind `*validate?*` and have zero cost in production. The remaining schemas are defined and available for development-time REPL validation but not wired into automatic runtime checks.
 
 
 ## 11. File Placement

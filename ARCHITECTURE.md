@@ -561,45 +561,47 @@ This part describes the concrete refactoring that eliminates the ladders without
 
 ## 5.1 What Changes
 
-Three additions, one modification. Total new code: approximately 60 lines.
+Three additions, one modification.
 
-**The dispatcher protocol** (`dispatch.cljs`, new file, ~30 lines):
+**The dispatcher protocol** (`dispatch.cljs`, 63 lines):
 
 ```clojure
 (defprotocol IDispatcher
   (resolve-transition [this op schema opts]
-    "Return a transition-spec or nil.
-     op:     keyword (:simulate :generate :update :regenerate :assess :project)
+    "Return a dispatch-spec or nil.
+     op:     :simulate | :generate | :update | :regenerate | :assess | :project
      schema: the model's schema map
-     opts:   operation context {:constraints :selection :trace :in-grad?}
-     Returns: {:transition fn :init-state-fn fn :post-fn fn :score-type kw} or nil."))
+     opts:   {:gf gen-fn, :op op, :constraints cm, :trace trace, :selection sel}
+     Returns: {:run (fn [gf args key opts] -> gfi-result)
+               :score-type :joint|:marginal|:collapsed|:beam-marginal}
+     or nil."))
 ```
 
-Four dispatcher implementations:
+Four dispatcher implementations (defined in `dynamic.cljs` where they access the private run-* helpers):
 
 ```clojure
 (def default-dispatcher-stack
-  [(->CustomTransitionDispatcher)    ;; with-handler metadata
-   (->AnalyticalDispatcher)          ;; L3 conjugacy
-   (->CompiledDispatcher)            ;; L1 compiled paths
-   (->HandlerDispatcher)])           ;; L0 fallback (always succeeds)
+  [custom-transition-dispatcher    ;; with-handler metadata
+   analytical-dispatcher           ;; L3 conjugacy
+   compiled-dispatcher             ;; L1 compiled paths
+   handler-dispatcher])            ;; L0 fallback (always succeeds)
 ```
 
-Resolution walks the stack, returns the first non-nil result.
+Resolution walks the stack, returns the first non-nil dispatch-spec. The `:run` function in the spec encapsulates the full execution path for that level.
 
-**`with-handler`** (~10 lines): Attaches a custom transition to a GF's metadata. The custom-transition-dispatcher checks for it.
+**`with-handler`** (in `dispatch.cljs`): Attaches a custom `:run` function to a GF's metadata via `vary-meta`. The custom-transition-dispatcher checks for it.
 
-**Score encoding** (~20 lines): Transitions carry `:score-type` metadata (`:joint`, `:marginal`, `:collapsed`, `:beam-marginal`). `merge-sub-result` respects this.
+**Score encoding**: Each dispatch-spec carries `:score-type` (`:joint`, `:marginal`, `:collapsed`, `:beam-marginal`).
 
 **DynamicGF protocol methods** (modified): The six `cond` ladders collapse. Each method becomes:
 
 ```clojure
 (simulate [this args]
   (let [key (ensure-key this)
-        spec (dispatch/resolve dispatcher-stack :simulate schema
-               {:gf this})
-        result (execute-spec spec this args key {})]
+        _ (rng/seed! key)
+        result (run-dispatched this :simulate args key {})]
     (mx/gfi-cleanup!)
+    (schemas/validated schemas/SimulateReturn result "DynamicGF/simulate")
     result))
 ```
 
@@ -660,19 +662,20 @@ src/genmlx/
     auto_analytical.cljs       ;; Address-dispatch analytical handlers
     conjugate.cljs, kalman.cljs, ekf.cljs, hmm_forward.cljs
     compiled_smc.cljs, compiled_optimizer.cljs, compiled_gradient.cljs
-    awrs.cljs                  ;; NEW: AWRS sampler for constrained LLMs
+    awrs.cljs                  ;; PLANNED: AWRS sampler for constrained LLMs
 
-  ;; Layer 8: Domain Integrations (new namespace tree)
-  llm/
-    backend.cljs               ;; MLX model loading, forward pass, KV cache
-    tokenizer.cljs             ;; byte_vocab extraction
-    trie.cljs                  ;; TokenByteTrie, sparse weight propagation
-    bytes.cljs                 ;; ByteBeamState, beam-transition
-  grammar/
-    semiring.cljs              ;; Boolean, Float, Log, MaxPlus, Entropy
-    wfsa.cljs                  ;; Weighted FSA
-    wcfg.cljs                  ;; Weighted CFG + Earley parser
-    fst.cljs                   ;; Weighted FST + Mohri composition
+  ;; Layer 8: Domain Integrations (PLANNED — not yet implemented)
+  ;; These namespaces will be created when LLM/grammar work begins.
+  ;; llm/
+  ;;   backend.cljs             ;; MLX model loading, forward pass, KV cache
+  ;;   tokenizer.cljs           ;; byte_vocab extraction
+  ;;   trie.cljs                ;; TokenByteTrie, sparse weight propagation
+  ;;   bytes.cljs               ;; ByteBeamState, beam-transition
+  ;; grammar/
+  ;;   semiring.cljs            ;; Boolean, Float, Log, MaxPlus, Entropy
+  ;;   wfsa.cljs                ;; Weighted FSA
+  ;;   wcfg.cljs                ;; Weighted CFG + Earley parser
+  ;;   fst.cljs                 ;; Weighted FST + Mohri composition
 
   ;; Layer 9: Analysis (unchanged)
   affine.cljs, conjugacy.cljs, dep_graph.cljs

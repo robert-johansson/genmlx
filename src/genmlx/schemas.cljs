@@ -178,15 +178,11 @@
 ;; ---------------------------------------------------------------------------
 
 (def TransitionSpec
-  "Shape returned by IDispatcher/resolve-transition."
+  "Shape returned by IDispatcher/resolve-transition.
+   :run is a function (fn [gf args key opts] -> gfi-result)."
   [:map
-   [:transition fn?]
-   [:score-type ScoreType]
-   [:init-state-fn {:optional true} fn?]
-   [:post-fn {:optional true} fn?]
-   [:compiled-fn {:optional true} fn?]
-   [:op {:optional true}
-    [:enum :simulate :generate :update :regenerate :assess :project]]])
+   [:run fn?]
+   [:score-type ScoreType]])
 
 ;; ---------------------------------------------------------------------------
 ;; Model schema (schema.cljs output)
