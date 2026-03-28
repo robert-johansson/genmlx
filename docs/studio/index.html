@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GenStudio — Probabilistic Programming in the Browser</title>
+
+  <!-- esm.sh resolves all transitive ESM dependencies automatically -->
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'SF Mono', monospace;
+           background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+    h1 { font-size: 1.4em; margin-bottom: 4px; color: #8be9fd; }
+    .subtitle { font-size: 0.85em; color: #6272a4; margin-bottom: 20px; }
+    #status { padding: 8px 12px; border-radius: 4px; margin-bottom: 16px;
+              font-size: 0.85em; background: #282a36; }
+    .status-init { color: #ffb86c; }
+    .status-ready { color: #50fa7b; }
+    .status-error { color: #ff5555; }
+    #editor-container { border: 1px solid #44475a; border-radius: 4px; overflow: hidden; }
+    .cm-editor { background: #282a36; min-height: 200px; }
+    .cm-editor .cm-content { font-family: 'SF Mono', 'Fira Code', 'Menlo', monospace;
+                              font-size: 14px; line-height: 1.6; padding: 8px 0; color: #f8f8f2; }
+    .cm-editor .cm-gutters { background: #282a36; border-right: 1px solid #44475a; color: #6272a4; }
+    .cm-editor .cm-activeLineGutter { background: #44475a; }
+    .cm-editor .cm-activeLine { background: rgba(68, 71, 90, 0.3); }
+    .cm-editor .cm-selectionBackground { background: rgba(98, 114, 164, 0.4) !important; }
+    .cm-editor .cm-cursor { border-left-color: #f8f8f2; }
+    .cm-editor .cm-matchingBracket { color: #50fa7b !important; font-weight: bold; }
+    /* Dracula-ish syntax colors */
+    .cm-editor .ͼc  { color: #6272a4; }  /* comment */
+    .cm-editor .ͼb  { color: #f1fa8c; }  /* string */
+    .cm-editor .ͼd  { color: #bd93f9; }  /* number */
+    .cm-editor .ͼe  { color: #ff79c6; }  /* keyword */
+    .cm-editor .ͼi  { color: #8be9fd; }  /* definition */
+    .cm-editor .ͼg  { color: #ffb86c; }  /* atom (keywords, booleans) */
+    .cm-editor .ͼl  { color: #6272a4; }  /* regexp */
+    .cm-editor .ͼm  { color: #ff5555; }  /* invalid */
+
+    #eval-btn { background: #6272a4; color: #f8f8f2; border: none; padding: 8px 20px;
+                border-radius: 4px; cursor: pointer; font-size: 14px; margin-top: 8px;
+                font-family: inherit; }
+    #eval-btn:hover { background: #8be9fd; color: #282a36; }
+    #eval-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #output { width: 100%; min-height: 120px; background: #282a36; color: #50fa7b;
+              border: 1px solid #44475a; border-radius: 4px; padding: 12px;
+              font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px;
+              line-height: 1.5; margin-top: 16px; white-space: pre-wrap;
+              overflow-y: auto; max-height: 400px; }
+    .section-label { font-size: 0.75em; color: #6272a4; text-transform: uppercase;
+                     letter-spacing: 1px; margin-bottom: 4px; margin-top: 16px; }
+    .kbd { background: #44475a; padding: 1px 6px; border-radius: 3px; font-size: 0.8em; }
+  </style>
+</head>
+<body>
+  <h1>GenStudio</h1>
+  <div class="subtitle">Probabilistic programming on GPU — entirely in the browser</div>
+  <div id="status" class="status-init">Initializing WebGPU + jax-js...</div>
+
+  <div class="section-label">Code</div>
+  <div id="editor-container"></div>
+  <button id="eval-btn" disabled>Evaluate (<span class="kbd">Cmd+Enter</span>)</button>
+
+  <div class="section-label">Output</div>
+  <div id="output"></div>
+
+  <!-- Scittle: SCI for the browser -->
+  <script>window.scittle_disable_auto_eval = true;</script>
+  <script src="https://cdn.jsdelivr.net/npm/scittle@0.8.31/dist/scittle.js"></script>
+
+  <script type="module">
+    const statusEl = document.getElementById('status');
+    const outputEl = document.getElementById('output');
+    const evalBtn  = document.getElementById('eval-btn');
+
+    function log(msg) {
+      outputEl.textContent += msg + '\n';
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+
+    // ---------------------------------------------------------------
+    // 1. Set up CodeMirror with clojure-mode
+    // ---------------------------------------------------------------
+    let editorView;
+    try {
+      const { EditorState } = await import('https://esm.sh/@codemirror/state@6');
+      const { EditorView, keymap: cmKeymap, lineNumbers, highlightActiveLine,
+              highlightActiveLineGutter, drawSelection } = await import('https://esm.sh/@codemirror/view@6');
+      const { defaultKeymap, history, historyKeymap } = await import('https://esm.sh/@codemirror/commands@6');
+      const { syntaxHighlighting, defaultHighlightStyle, bracketMatching } = await import('https://esm.sh/@codemirror/language@6');
+      const cm = await import('https://esm.sh/@nextjournal/clojure-mode@0.3.3');
+
+      const initialCode = `;; GenStudio — GPU-accelerated computing in the browser
+;; Cmd+Enter to evaluate
+
+;; Bayesian-style analysis on GPU:
+;; 1. Generate synthetic data from a known model
+;; 2. Fit via maximum likelihood (gradient descent + autodiff)
+;; 3. Estimate uncertainty via the curvature (Hessian) at the optimum
+;; 4. Compare recovered params to ground truth
+
+(let [;; Ground truth: y = 2.5x + 0.7 + noise
+      true-slope     2.5
+      true-intercept 0.7
+      n-data         100
+
+      ;; Generate data on GPU
+      key  (mx/fresh-key 123)
+      [k1 k2] (mx/split-key key)
+      xs   (mx/normal k1 [n-data])
+      noise (mx/multiply (mx/scalar 0.3) (mx/normal k2 [n-data]))
+      ys   (mx/add (mx/add (mx/multiply (mx/scalar true-slope) xs)
+                            (mx/scalar true-intercept))
+                   noise)
+
+      ;; Negative log-likelihood (Gaussian, known sigma=0.3)
+      ;; params = [slope, intercept] as a 2-element array
+      nll (fn [params]
+            (let [slope  (mx/idx params 0)
+                  interc (mx/idx params 1)
+                  pred   (mx/add (mx/multiply slope xs) interc)
+                  resid  (mx/subtract ys pred)]
+              (mx/divide (mx/sum (mx/square resid))
+                         (mx/scalar (* 2.0 0.3 0.3)))))
+
+      ;; Gradient descent to find MLE
+      ;; JIT-compile the step: traced once, runs as fused GPU kernel
+      grad-fn (mx/grad nll)
+      lr 0.001
+      step (mx/compile-fn (fn [params]
+              (mx/subtract params
+                (mx/multiply (mx/scalar lr) (grad-fn params)))))
+
+      t0 (js/Date.now)
+      mle (loop [params (mx/zeros [2]) i 0]
+            (if (>= i 300)
+              params
+              (recur (step params) (inc i))))
+      t1 (js/Date.now)
+
+      ;; Compute Hessian diagonal via finite differences
+      ;; (approximate posterior std = 1/sqrt(H_ii))
+      eps 1e-4
+      nll-at-mle (mx/item (nll mle))
+      h0 (/ (- (+ (mx/item (nll (mx/add mle (mx/array [eps 0]))))
+                   (mx/item (nll (mx/add mle (mx/array [(- eps) 0])))))
+                (* 2.0 nll-at-mle))
+             (* eps eps))
+      h1 (/ (- (+ (mx/item (nll (mx/add mle (mx/array [0 eps]))))
+                   (mx/item (nll (mx/add mle (mx/array [0 (- eps)])))))
+                (* 2.0 nll-at-mle))
+             (* eps eps))
+
+      mle-vec (mx/to-vec mle)]
+
+  (println "=== Bayesian Linear Regression on GPU ===")
+  (println "")
+  (println "Ground truth:  slope=" true-slope " intercept=" true-intercept)
+  (println "MLE estimate:  slope=" (nth mle-vec 0) " intercept=" (nth mle-vec 1))
+  (println "")
+  (println "Posterior std: slope~" (.toFixed (js/Math.sqrt (/ 1.0 h0)) 4)
+                       " intercept~" (.toFixed (js/Math.sqrt (/ 1.0 h1)) 4))
+  (println "")
+  (println "NLL at MLE:   " nll-at-mle)
+  (println "Data points:  " n-data)
+  (println "GD time:      " (- t1 t0) "ms (300 JIT-compiled steps)")
+  (println "")
+  (println "(Generated data, fit model, estimated uncertainty")
+  (println " — all on GPU via WebGPU + autodiff + JIT)"))`;
+
+      editorView = new EditorView({
+        parent: document.getElementById('editor-container'),
+        state: EditorState.create({
+          doc: initialCode,
+          extensions: [
+            lineNumbers(),
+            highlightActiveLine(),
+            highlightActiveLineGutter(),
+            drawSelection(),
+            history(),
+            bracketMatching(),
+            syntaxHighlighting(defaultHighlightStyle),
+            cm.default_extensions,
+            cmKeymap.of([
+              { key: 'Mod-Enter', run: () => { evalFromEditor(); return true; } },
+              ...historyKeymap,
+              ...defaultKeymap,
+            ]),
+            EditorView.theme({
+              '&': { maxHeight: '400px' },
+              '.cm-scroller': { overflow: 'auto' },
+            }),
+          ],
+        }),
+      });
+      console.log('CodeMirror + clojure-mode initialized');
+    } catch (e) {
+      console.error('CodeMirror init failed:', e.message, e);
+      // Fallback to textarea
+      const ta = document.createElement('textarea');
+      ta.id = 'editor-fallback';
+      ta.style.cssText = 'width:100%;min-height:200px;background:#282a36;color:#f8f8f2;border:1px solid #44475a;border-radius:4px;padding:12px;font-family:monospace;font-size:14px;line-height:1.5;resize:vertical;tab-size:2;';
+      ta.value = ';; CodeMirror failed to load — using plain editor\n(let [a (mx/array [1 2 3])] (println (mx/to-vec a)))';
+      document.getElementById('editor-container').appendChild(ta);
+      editorView = null;
+    }
+
+    function getEditorCode() {
+      if (editorView) return editorView.state.doc.toString();
+      const fb = document.getElementById('editor-fallback');
+      return fb ? fb.value : '';
+    }
+
+    // ---------------------------------------------------------------
+    // 2. Initialize jax-js
+    // ---------------------------------------------------------------
+    let np, jxRandom, scipySpecial, linalg, nnMod, laxMod;
+    let jxGrad, jxValueAndGrad, jxJit, jxVmap, jxVjp, jxJvp;
+
+    try {
+      statusEl.textContent = 'Loading jax-js...';
+      const jax = await import('https://cdn.jsdelivr.net/npm/@jax-js/jax@0.1.10/dist/index.js');
+
+      np = jax.numpy;
+      jxRandom = jax.random;
+      jxGrad = jax.grad;
+      jxValueAndGrad = jax.valueAndGrad;
+      jxJit = jax.jit;
+      jxVmap = jax.vmap;
+      jxVjp = jax.vjp;
+      jxJvp = jax.jvp;
+      scipySpecial = jax.scipySpecial;
+      linalg = np.linalg;
+      nnMod = jax.nn;
+      laxMod = jax.lax;
+
+      statusEl.textContent = 'Initializing compute backend...';
+      const devices = await jax.init();
+
+      let backend = 'cpu';
+      if (devices.includes('webgpu')) { backend = 'webgpu'; }
+      else if (devices.includes('wasm')) { backend = 'wasm'; }
+      jax.defaultDevice(backend);
+
+      const labels = { webgpu: 'WebGPU (GPU accelerated)', wasm: 'WebAssembly (CPU)', cpu: 'CPU (debug)' };
+      statusEl.textContent = 'Ready — ' + labels[backend];
+      statusEl.className = 'status-ready';
+
+    } catch (e) {
+      statusEl.textContent = 'Error: ' + e.message;
+      statusEl.className = 'status-error';
+      log('Init failed: ' + e.message);
+      throw e;
+    }
+
+    // ---------------------------------------------------------------
+    // 3. Expose mx functions as globals callable from Scittle
+    // ---------------------------------------------------------------
+    function R(a) { return (a && typeof a === 'object' && a.ref) ? a.ref : a; }
+
+    window.__mx = {
+      // --- Array creation ---
+      array:    (v) => np.array(v),
+      scalar:   (v, dtype) => dtype ? np.astype(np.array(v), dtype) : np.array(v),
+      zeros:    (sh, dtype) => dtype ? np.zeros(sh, {dtype}) : np.zeros(sh),
+      ones:     (sh, dtype) => dtype ? np.ones(sh, {dtype}) : np.ones(sh),
+      eye:      (n) => np.eye(n),
+      arange:   (...a) => np.arange(...a),
+      linspace: (a,b,n) => np.linspace(a,b,n),
+      full:     (sh,v) => np.full(sh, v),
+      meshgrid: (a,b) => np.meshgrid(R(a), R(b)),
+      astype:   (a, dtype) => np.astype(R(a), dtype),
+
+      // --- Eval & inspect ---
+      item:   (a) => R(a).item(),
+      toVec:  (a) => Array.from(R(a).dataSync()),
+      shape:  (a) => a?.shape ? Array.from(a.shape) : [],
+      ndim:   (a) => a?.shape?.length || 0,
+      dtype:  (a) => a?.dtype,
+
+      // --- Arithmetic ---
+      add:      (a,b) => np.add(R(a), R(b)),
+      subtract: (a,b) => np.subtract(R(a), R(b)),
+      multiply: (a,b) => np.multiply(R(a), R(b)),
+      divide:   (a,b) => np.divide(R(a), R(b)),
+      negative: (a) => np.negative(R(a)),
+      power:    (a,b) => np.power(R(a), R(b)),
+      square:   (a) => np.square(R(a)),
+      sqrt:     (a) => np.sqrt(R(a)),
+      abs:      (a) => np.abs(R(a)),
+      maximum:  (a,b) => np.maximum(R(a), R(b)),
+      minimum:  (a,b) => np.minimum(R(a), R(b)),
+      clip:     (a,lo,hi) => np.clip(R(a), R(lo), R(hi)),
+      sign:     (a) => np.sign(R(a)),
+      reciprocal: (a) => np.reciprocal(R(a)),
+      floorDivide: (a,b) => np.floorDivide(R(a), R(b)),
+      remainder:   (a,b) => np.remainder(R(a), R(b)),
+
+      // --- Math functions ---
+      exp:     (a) => np.exp(R(a)),
+      expm1:   (a) => np.expm1(R(a)),
+      log:     (a) => np.log(R(a)),
+      log2:    (a) => np.log2(R(a)),
+      log10:   (a) => np.log10(R(a)),
+      log1p:   (a) => np.log1p(R(a)),
+      logaddexp: (a,b) => {
+        const m = np.maximum(R(a), R(b));
+        return np.add(R(m), np.log(np.add(np.exp(np.subtract(R(a), R(m))),
+                                           np.exp(np.subtract(R(b), R(m))))));
+      },
+      sin:     (a) => np.sin(R(a)),
+      cos:     (a) => np.cos(R(a)),
+      tan:     (a) => np.tan(R(a)),
+      arccos:  (a) => np.arccos(R(a)),
+      tanh:    (a) => np.tanh(R(a)),
+      sigmoid: (a) => nnMod.sigmoid(R(a)),
+      softmax: (a, axis) => axis !== undefined ? nnMod.softmax(R(a), {axis}) : nnMod.softmax(R(a)),
+      erf:     (a) => scipySpecial.erf(R(a)),
+      erfinv:  (a) => { throw new Error('erfinv not available in jax-js WebGPU'); },
+      lgamma:  (a) => { throw new Error('lgamma not available in jax-js WebGPU — use nbb adapter'); },
+      digamma: (a) => { throw new Error('digamma not available in jax-js WebGPU — use nbb adapter'); },
+      besselI0e: (a) => { throw new Error('bessel-i0e not available in jax-js WebGPU'); },
+      besselI1e: (a) => { throw new Error('bessel-i1e not available in jax-js WebGPU'); },
+      floor:   (a) => np.floor(R(a)),
+      ceil:    (a) => np.ceil(R(a)),
+      round:   (a) => np.round(R(a)),
+
+      // --- Reductions ---
+      sum:       (a, ...rest) => rest.length ? np.sum(R(a), ...rest) : np.sum(R(a)),
+      prod:      (a, ...rest) => rest.length ? np.prod(R(a), ...rest) : np.prod(R(a)),
+      mean:      (a, ...rest) => rest.length ? np.mean(R(a), ...rest) : np.mean(R(a)),
+      variance:  (a, ...rest) => rest.length ? np.var_(R(a), {axis: rest[0]}) : np.var_(R(a)),
+      std:       (a, ...rest) => rest.length ? np.std(R(a), {axis: rest[0]}) : np.std(R(a)),
+      amax:      (a, ...rest) => rest.length ? np.max(R(a), ...rest) : np.max(R(a)),
+      amin:      (a, ...rest) => rest.length ? np.min(R(a), ...rest) : np.min(R(a)),
+      argmax:    (a, ...rest) => rest.length ? np.argmax(R(a), ...rest) : np.argmax(R(a)),
+      argmin:    (a, ...rest) => rest.length ? np.argmin(R(a), ...rest) : np.argmin(R(a)),
+      all:       (a, ...rest) => rest.length ? np.all(R(a), ...rest) : np.all(R(a)),
+      any:       (a, ...rest) => rest.length ? np.any(R(a), ...rest) : np.any(R(a)),
+      argsort:   (a, ...rest) => rest.length ? np.argsort(R(a), ...rest) : np.argsort(R(a)),
+      sortArr:   (a, ...rest) => rest.length ? np.sort(R(a), ...rest) : np.sort(R(a)),
+      topk:      (a, k) => { const [vals] = laxMod.topK(R(a), k); return vals; },
+      logsumexp: (a, ...rest) => rest.length ? scipySpecial.logsumexp(R(a), {axis: rest[0]}) : scipySpecial.logsumexp(R(a)),
+      cumsum:    (a, ...rest) => rest.length ? np.cumsum(R(a), ...rest) : np.cumsum(R(a)),
+      logcumsumexp: (a, ...rest) => np.log(rest.length ? np.cumsum(np.exp(R(a)), ...rest) : np.cumsum(np.exp(R(a)))),
+      searchsorted: (a, v) => {
+        const expanded = np.expandDims(R(a), 0);
+        const vals = np.expandDims(R(v), 1);
+        return np.sum(np.less(R(expanded), R(vals)), [1]);
+      },
+
+      // --- Comparison & selection ---
+      equal:       (a,b) => np.equal(R(a), R(b)),
+      notEqual:    (a,b) => np.notEqual(R(a), R(b)),
+      greater:     (a,b) => np.greater(R(a), R(b)),
+      greaterEqual:(a,b) => np.greaterEqual(R(a), R(b)),
+      less:        (a,b) => np.less(R(a), R(b)),
+      lessEqual:   (a,b) => np.lessEqual(R(a), R(b)),
+      where:       (c,a,b) => np.where(R(c), R(a), R(b)),
+      isnan:       (a) => np.isnan(R(a)),
+      isinf:       (a) => np.isinf(R(a)),
+      nanToNum:    (a, ...rest) => np.nanToNum(R(a), ...rest),
+
+      // --- Shape manipulation ---
+      reshape:     (a, sh) => np.reshape(R(a), sh),
+      flatten:     (a) => np.ravel(R(a)),
+      squeeze:     (a, ...rest) => rest.length ? np.squeeze(R(a), ...rest) : np.squeeze(R(a)),
+      expandDims:  (a, ax) => np.expandDims(R(a), ax),
+      transpose:   (a, ...rest) => rest.length ? np.transpose(R(a), ...rest) : np.transpose(R(a)),
+      stack:       (arrs, ...rest) => rest.length ? np.stack(arrs.map(R), ...rest) : np.stack(arrs.map(R)),
+      concatenate: (arrs, ...rest) => rest.length ? np.concatenate(arrs.map(R), ...rest) : np.concatenate(arrs.map(R)),
+      broadcastTo: (a, sh) => np.broadcastTo(R(a), sh),
+      tile:        (a, reps) => np.tile(R(a), reps),
+      repeatArr:   (a, reps, axis) => np.repeat(R(a), reps, axis),
+      splitArr:    (a, sections, ...rest) => {
+        const result = rest.length ? np.split(R(a), sections, ...rest) : np.split(R(a), sections);
+        return Array.isArray(result) ? result : Array.from(result);
+      },
+
+      // --- Indexing ---
+      take:          (a, idx, ax) => np.take(R(a), R(idx), ax ?? 0),
+      idx:           (a, i, ax) => np.take(R(a), np.astype(np.array(i), 'int32'), ax ?? 0),
+      oneHot:        (i, n) => nnMod.oneHot(np.astype(np.array(i), 'int32'), n),
+      takeAlongAxis: (a, idx, ax) => np.take(R(a), R(idx), ax),
+      slice:         (a, start, stop, step) => {
+        const indices = step ? np.arange(start, stop, step) : np.arange(start, stop);
+        return np.take(R(a), indices, 0);
+      },
+
+      // --- Matrix operations ---
+      matmul:   (a,b) => np.matmul(R(a), R(b)),
+      dot:      (a,b) => np.dot(R(a), R(b)),
+      inner:    (a,b) => np.inner(R(a), R(b)),
+      outer:    (a,b) => np.outer(R(a), R(b)),
+      diag:     (a) => np.diag(R(a)),
+      traceMat: (a, ...rest) => rest.length ? np.trace(R(a), ...rest) : np.trace(R(a)),
+      einsum:   (s, ...arrs) => np.einsum(s, ...arrs.map(R)),
+
+      // --- Linear algebra ---
+      cholesky:       (a) => linalg.cholesky(R(a)),
+      solve:          (a,b) => linalg.solve(R(a), R(b)),
+      solveTriangular:(a,b,upper) => np.matmul(linalg.inv(R(a)), R(b)),
+      inv:            (a) => linalg.inv(R(a)),
+      triInv:         (a, upper) => linalg.inv(R(a)),
+      choleskyInv:    (a) => linalg.inv(np.matmul(R(a), np.transpose(R(a)))),
+      qr:             (a) => { throw new Error('qr not available in jax-js'); },
+      svd:            (a) => { throw new Error('svd not available in jax-js'); },
+      eigh:           (a) => { throw new Error('eigh not available in jax-js'); },
+      eigvalsh:       (a) => { throw new Error('eigvalsh not available in jax-js'); },
+      norm:           (a, ...rest) => rest.length ? linalg.norm(R(a), ...rest) : linalg.norm(R(a)),
+      logdet:         (a) => { const [sign, logabsdet] = linalg.slogdet(R(a)); return logabsdet; },
+      det:            (a) => linalg.det(R(a)),
+
+      // --- Autograd ---
+      grad: (f, argnums) => argnums !== undefined
+        ? jxGrad(f, {argnums})
+        : jxGrad(f),
+      valueAndGrad: (f, argnums) => {
+        const vg = argnums !== undefined
+          ? jxValueAndGrad(f, {argnums})
+          : jxValueAndGrad(f);
+        return (...args) => vg(...args.map(R));
+      },
+      jvp: (f, primals, tangents) => jxJvp(f, primals.map(R), tangents.map(R)),
+      vjp: (f, primals, cotangents) => {
+        const [out, vjpFn] = jxVjp(f, R(primals));
+        const grads = vjpFn(R(cotangents));
+        return [out, Array.isArray(grads) ? grads : [grads]];
+      },
+      stopGradient: (a) => laxMod.stopGradient(R(a)),
+
+      // --- Transforms ---
+      jit:  (f) => jxJit(f),
+      vmap: (f, inAxes, outAxes) => {
+        const opts = {};
+        if (inAxes !== undefined) opts.inAxes = inAxes;
+        if (outAxes !== undefined) opts.outAxes = outAxes;
+        return Object.keys(opts).length ? jxVmap(f, opts) : jxVmap(f);
+      },
+
+      // --- Random PRNG ---
+      freshKey: (seed) => jxRandom.key(seed ?? Math.floor(Math.random() * 2147483647)),
+      splitKey: (key) => {
+        const ks = jxRandom.split(key);
+        return [np.take(ks.ref, np.array(0), 0), np.take(ks, np.array(1), 0)];
+      },
+      normal:            (key, shape) => jxRandom.normal(key, shape),
+      uniform:           (key, shape) => jxRandom.uniform(key, shape),
+      bernoulli:         (key, p, shape) => jxRandom.bernoulli(key, p, shape),
+      categorical:       (key, logits) => jxRandom.categorical(key, logits),
+      gumbel:            (key, shape) => jxRandom.gumbel(key, shape),
+      laplace:           (key, shape) => jxRandom.laplace(key, shape),
+      multivariateNormal:(key, mean, cov, shape) =>
+        shape ? jxRandom.multivariateNormal(key, mean, cov, shape)
+              : jxRandom.multivariateNormal(key, mean, cov),
+      permutation:       (key, n) => np.argsort(jxRandom.uniform(key, [n])),
+
+      // --- Constants ---
+      pi: Math.PI, e: Math.E, inf: Infinity, nan: NaN,
+    };
+
+    // Set each as window.mx_<name> for Scittle js/ access
+    for (const [k, v] of Object.entries(window.__mx)) {
+      window['mx_' + k] = v;
+    }
+
+    // ---------------------------------------------------------------
+    // 4. Load mx/ namespace from mx.cljs file (one parse, cached)
+    // ---------------------------------------------------------------
+    try {
+      const mxSrc = await fetch('mx.cljs').then(r => r.text());
+      scittle.core.eval_string(mxSrc);
+      console.log('mx namespace loaded from mx.cljs');
+    } catch (e) {
+      console.error('mx namespace error:', e.message);
+      log('mx namespace error: ' + e.message);
+    }
+
+    // ---------------------------------------------------------------
+    // 5. Wire up eval
+    // ---------------------------------------------------------------
+    window.studioLog = log;
+
+    try {
+      scittle.core.eval_string('(ns user (:require [mx]))');
+      scittle.core.eval_string('(defn println [& args] (js/studioLog (apply str (interpose " " args))))');
+    } catch (e) {
+      log('user ns error: ' + e.message);
+    }
+
+    function evalFromEditor() {
+      const code = getEditorCode();
+      outputEl.textContent = '';
+      try {
+        const wrapped = '(in-ns (quote user))\n' + code;
+        const result = scittle.core.eval_string(wrapped);
+        if (result !== undefined && result !== null) {
+          const s = (typeof result === 'object' && result.shape)
+            ? '<array ' + Array.from(result.shape) + ' ' + result.dtype + '>'
+            : String(result);
+          log('=> ' + s);
+        }
+      } catch (e) {
+        log('Error: ' + e.message);
+      }
+    }
+
+    evalBtn.disabled = false;
+    evalBtn.addEventListener('click', evalFromEditor);
+
+    // Textarea fallback Shift+Enter
+    const fb = document.getElementById('editor-fallback');
+    if (fb) {
+      fb.addEventListener('keydown', (e) => {
+        if (e.shiftKey && e.key === 'Enter') { e.preventDefault(); evalFromEditor(); }
+      });
+    }
+
+    log('GenStudio ready. Edit code and press Cmd+Enter.');
+  </script>
+</body>
+</html>

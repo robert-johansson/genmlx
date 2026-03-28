@@ -34,3 +34,6 @@ notes/
 
 # Private dev directory (not synced)
 dev/
+
+# Local HTTPS certs
+*.pem

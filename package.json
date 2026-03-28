@@ -1,5 +1,7 @@
 {
   "dependencies": {
-    "@frost-beta/mlx": "file:./node-mlx"
+    "@frost-beta/mlx": "file:./node-mlx",
+    "@jax-js/jax": "^0.1.10",
+    "webgpu": "^0.4.0"
   }
 }

@@ -1,0 +1,89 @@
+;; ============================================================
+;; GenStudio Examples — paste into editor, Cmd+Enter to run
+;; ============================================================
+
+;; --- 1. Autograd — gradients on GPU ---
+
+(let [loss-fn (fn [x] (mx/sum (mx/square x)))
+      grad-fn (mx/grad loss-fn)
+      x       (mx/array [3.0 4.0 5.0])
+      g       (grad-fn x)]
+  (println "x     =" (mx/to-vec x))
+  (println "grad  =" (mx/to-vec g))
+  (println "Expected: [6 8 10] (2x)"))
+
+;; --- 2. Gradient descent — optimize on GPU ---
+;; Minimize f(p) = sum((p - target)^2) via gradient descent
+
+(let [target  (mx/array [3.0 -1.0 2.5])
+      loss    (fn [params]
+                (mx/sum (mx/square (mx/subtract params target))))
+      grad-fn (mx/grad loss)
+      lr      0.1]
+  (loop [params (mx/zeros [3])
+         i      0]
+    (if (>= i 50)
+      (do (println "After 50 steps:" (mx/to-vec params))
+          (println "Target:         " (mx/to-vec target)))
+      (let [g (grad-fn params)]
+        (recur (mx/subtract params (mx/multiply (mx/scalar lr) g))
+               (inc i))))))
+
+;; --- 3. Random sampling + statistics ---
+
+(let [key     (mx/fresh-key 42)
+      samples (mx/normal key [10000])
+      mu      (mx/item (mx/mean samples))
+      sigma   (mx/item (mx/sqrt (mx/mean (mx/square
+                (mx/subtract samples (mx/mean samples))))))]
+  (println "10K normal samples on GPU:")
+  (println "  mean =" mu "(expected: ~0)")
+  (println "  std  =" sigma "(expected: ~1)"))
+
+;; --- 4. Matrix ops — Cholesky + linear solve ---
+
+(let [A (mx/array [[4 2] [2 3]])
+      b (mx/array [1 2])
+      L (mx/cholesky A)
+      x (mx/solve A b)]
+  (println "A ="  (mx/to-vec A))
+  (println "b ="  (mx/to-vec b))
+  (println "L (cholesky) =" (mx/to-vec L))
+  (println "x (solve)    =" (mx/to-vec x)))
+
+;; --- 5. JIT-compiled computation ---
+
+(let [euclidean (mx/jit (fn [a b]
+                          (mx/sqrt (mx/sum (mx/square (mx/subtract a b))))))
+      p1 (mx/array [1.0 2.0 3.0])
+      p2 (mx/array [4.0 6.0 8.0])]
+  (println "Euclidean distance:" (mx/item (euclidean p1 p2)))
+  (println "Expected:" (js/Math.sqrt (+ 9 16 25))))
+
+;; --- 6. Matmul + einsum ---
+
+(let [A (mx/array [[1 2] [3 4]])
+      B (mx/array [[5 6] [7 8]])
+      C (mx/matmul A B)]
+  (println "A @ B =" (mx/to-vec C))
+  (println "shape =" (mx/shape C)))
+
+;; --- 7. Broadcasting + element-wise math ---
+
+(let [x  (mx/linspace 0 6.28 20)
+      y  (mx/sin x)
+      y2 (mx/cos x)]
+  (println "x   =" (mx/to-vec x))
+  (println "sin =" (mx/to-vec y))
+  (println "cos =" (mx/to-vec y2)))
+
+;; --- 8. Value-and-grad (simultaneous value + gradient) ---
+
+(let [f     (fn [x] (mx/sum (mx/multiply x x)))
+      vg-fn (mx/value-and-grad f)
+      x     (mx/array [1.0 2.0 3.0])
+      result (vg-fn x)
+      v     (aget result 0)
+      g     (aget result 1)]
+  (println "f(x) =" (mx/item v) "(expected: 14)")
+  (println "grad =" (mx/to-vec g) "(expected: [2 4 6])"))
