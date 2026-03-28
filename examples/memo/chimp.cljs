@@ -231,10 +231,10 @@
 (check-close "NOISES/VISUAL P(box2)" 0.9617 (:box2 (second-results [1 2])) 0.01)
 
 ;; Demonstrate exact/thinks and exact/observes directly
-;; exact/thinks: wrap world model as ExactGF for use with splice
+;; exact/thinks: wrap world model for exact enumeration via handler substitution
 (let [world-gf (exact/thinks (world-model-1 1))]
-  (check "exact/thinks produces ExactGF"
-         (instance? genmlx.inference.exact/ExactGF world-gf)))
+  (check "exact/thinks produces enumerate-wrapped GF"
+         (some? (:genmlx.dispatch/custom-transition (meta world-gf)))))
 
 ;; exact/observes: P(box1-fs | e1=1) for NOISES — should match exact/pr
 (let [posterior (exact/observes (world-model-1 1) :e1 1 :box1-fs)

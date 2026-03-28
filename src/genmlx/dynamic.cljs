@@ -620,9 +620,9 @@
   "Resolve the dispatch for an op and execute it."
   [gf op args key opts]
   (let [schema (:schema gf)
-        spec (dispatch/resolve default-dispatcher-stack op schema
-               (assoc opts :gf gf))
-        result ((:run spec) gf args key opts)]
+        full-opts (assoc opts :gf gf :op op)
+        spec (dispatch/resolve default-dispatcher-stack op schema full-opts)
+        result ((:run spec) gf args key full-opts)]
     result))
 
 ;; ---------------------------------------------------------------------------
