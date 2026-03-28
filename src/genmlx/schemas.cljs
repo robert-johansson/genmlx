@@ -212,7 +212,7 @@
 (def ModelSchema
   "Output of schema/extract-schema, augmented by conjugacy and compilation."
   [:map
-   [:trace-sites [:vector [:fn map?]]]
+   [:trace-sites [:vector TraceSite]]
    [:static? boolean?]
    [:dynamic-addresses? boolean?]
    [:has-branches? boolean?]
@@ -239,3 +239,24 @@
    [:auto-handlers {:optional true} map?]
    [:auto-regenerate-transition {:optional true} fn?]
    [:auto-regenerate-handlers {:optional true} map?]])
+
+;; ---------------------------------------------------------------------------
+;; Conjugacy table entry
+;; ---------------------------------------------------------------------------
+
+(def ConjugacyEntry
+  "One entry in the conjugacy table. All families have :family and
+   :natural-param-idx. Additional keys are family-specific param accessors."
+  [:map
+   [:family keyword?]
+   [:natural-param-idx int?]])
+
+;; ---------------------------------------------------------------------------
+;; Distribution record
+;; ---------------------------------------------------------------------------
+
+(def DistRecord
+  "A GenMLX Distribution record: {:type keyword :params map}."
+  [:map
+   [:type keyword?]
+   [:params map?]])
