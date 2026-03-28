@@ -140,8 +140,9 @@
 (defn- enumerate-run
   "Run function for the enumerate dispatcher. Handles all GFI ops by running
    the model with enumerate-transition and post-processing the result.
-   Replaces the ExactGF record — same semantics, uses dispatch instead."
-  [gf args key {:keys [op constraints trace selection]}]
+   Replaces the ExactGF record — same semantics, uses dispatch instead.
+   Called as (enumerate-run op gf args key opts) by custom-transition-dispatcher."
+  [op gf args key {:keys [constraints trace selection]}]
   (case op
     :simulate
     (let [{:keys [probs]} (enumerate-and-normalize gf args nil)]

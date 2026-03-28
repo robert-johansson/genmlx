@@ -59,40 +59,40 @@ Then the dispatchers become lookup tables:
 
 ### A.1 Handler helpers (L0)
 
-- [ ] **`run-simulate-handler`** — Change from `[gf args key body-fn this]` to `[gf args key opts]`. Get `body-fn` from `(:body-fn gf)`. Remove `this` (it's the same as `gf`). Get `param-store` from `(::param-store (meta gf))` instead of `(::param-store (meta this))`.
-- [ ] **`run-generate-handler`** — Same pattern. Get `constraints` from `(:constraints opts)`.
-- [ ] **`run-update-handler`** — Get `trace` and `constraints` from opts.
-- [ ] **`run-regen-handler`** — Get `trace`, `selection`, `old-score` from opts. Note: `old-score` is `(:score trace)`.
-- [ ] **`run-assess-handler`** — Get `choices` from `(:constraints opts)` (assess passes choices as constraints).
-- [ ] **`run-project-handler`** — Get `trace` and `selection` from opts.
-- [ ] **Run tests:** L0 certification (68/68), Gen.clj compat (356/356).
+- [x] **`run-simulate-handler`** — Change from `[gf args key body-fn this]` to `[gf args key opts]`. Get `body-fn` from `(:body-fn gf)`. Remove `this` (it's the same as `gf`). Get `param-store` from `(::param-store (meta gf))` instead of `(::param-store (meta this))`.
+- [x] **`run-generate-handler`** — Same pattern. Get `constraints` from `(:constraints opts)`.
+- [x] **`run-update-handler`** — Get `trace` and `constraints` from opts.
+- [x] **`run-regen-handler`** — Get `trace`, `selection`, `old-score` from opts. Note: `old-score` is `(:score trace)`.
+- [x] **`run-assess-handler`** — Get `choices` from `(:constraints opts)` (assess passes choices as constraints).
+- [x] **`run-project-handler`** — Get `trace` and `selection` from opts.
+- [x] **Run tests:** L0 certification (68/68), Gen.clj compat (356/356).
 
 ### A.2 Compiled helpers (L1-M2)
 
-- [ ] **`run-simulate-compiled`** — Change from `[compiled-sim gf args key]` to `[gf args key opts]`. Get `compiled-sim` from `(:compiled-simulate (:schema gf))`.
-- [ ] **`run-generate-compiled`** — Get `compiled-gen` from schema, `constraints` from opts.
-- [ ] **`run-update-compiled`** — Get `compiled-upd` from schema, `trace` and `constraints` from opts.
-- [ ] **`run-regen-compiled`** — Get from schema and opts.
-- [ ] **Compiled assess** — Currently inline in the dispatcher. Extract to `run-assess-compiled`.
-- [ ] **Compiled project** — Currently inline in the dispatcher. Extract to `run-project-compiled`.
-- [ ] **Run tests:** Compiled simulate (82/82), L4 certification (41/41).
+- [x] **`run-simulate-compiled`** — Change from `[compiled-sim gf args key]` to `[gf args key opts]`. Get `compiled-sim` from `(:compiled-simulate (:schema gf))`.
+- [x] **`run-generate-compiled`** — Get `compiled-gen` from schema, `constraints` from opts.
+- [x] **`run-update-compiled`** — Get `compiled-upd` from schema, `trace` and `constraints` from opts.
+- [x] **`run-regen-compiled`** — Get from schema and opts.
+- [x] **Compiled assess** — Currently inline in the dispatcher. Extract to `run-assess-compiled`.
+- [x] **Compiled project** — Currently inline in the dispatcher. Extract to `run-project-compiled`.
+- [x] **Run tests:** Compiled simulate (82/82), L4 certification (41/41).
 
 ### A.3 Prefix helpers (L1-M3)
 
-- [ ] **`run-simulate-prefix`** — Change from `[compiled-pfx gf args key body-fn this]` to `[gf args key opts]`. Get `compiled-pfx` from schema.
-- [ ] **`run-generate-prefix`** — Same pattern.
-- [ ] **`run-update-prefix`** — Same pattern.
-- [ ] **`run-regen-prefix`** — Same pattern.
-- [ ] **`run-assess-prefix`** — Same pattern.
-- [ ] **`run-project-prefix`** — Same pattern.
-- [ ] **Run tests:** Partial compile (92/92), combinator compile (92/92).
+- [x] **`run-simulate-prefix`** — Change from `[compiled-pfx gf args key body-fn this]` to `[gf args key opts]`. Get `compiled-pfx` from schema.
+- [x] **`run-generate-prefix`** — Same pattern.
+- [x] **`run-update-prefix`** — Same pattern.
+- [x] **`run-regen-prefix`** — Same pattern.
+- [x] **`run-assess-prefix`** — Same pattern.
+- [x] **`run-project-prefix`** — Same pattern.
+- [x] **Run tests:** Partial compile (92/92), combinator compile (92/92).
 
 ### A.4 Analytical helpers (L3)
 
-- [ ] **`run-generate-analytical`** — Change from `[schema gf args key constraints body-fn this]` to `[gf args key opts]`. Get `schema` from gf, `constraints` from opts.
-- [ ] **`run-assess-analytical`** — Same pattern.
-- [ ] **`run-regen-analytical`** — Same pattern.
-- [ ] **Run tests:** GenJAX compat (73/73), full suite (1,031/1,031).
+- [x] **`run-generate-analytical`** — Change from `[schema gf args key constraints body-fn this]` to `[gf args key opts]`. Get `schema` from gf, `constraints` from opts.
+- [x] **`run-assess-analytical`** — Same pattern.
+- [x] **`run-regen-analytical`** — Same pattern.
+- [x] **Run tests:** GenJAX compat (73/73), full suite (1,031/1,031).
 
 **Done criterion for Phase A:** All 18 run-\* helpers take `[gf args key opts]`. All tests pass. Dispatchers still use `(case op ...)` with closures (they'll be simplified in Phase B).
 
@@ -102,14 +102,14 @@ Then the dispatchers become lookup tables:
 
 *Goal: Each dispatcher is 5-15 lines instead of 30-65 lines.*
 
-- [ ] **Define `handler-table`** — Map from op keyword to handler run-fn.
-- [ ] **Simplify `handler-dispatcher`** — `{:run (get handler-table op) :score-type :joint}`.
-- [ ] **Define `compiled-table`** — Map from op keyword to compiled run-fn. Only return if schema has the compiled key.
-- [ ] **Simplify `compiled-dispatcher`** — Check schema, return `{:run (get compiled-table op)}` or check prefix-table.
-- [ ] **Simplify `analytical-dispatcher`** — This one keeps conditional logic (it checks constraints), but the `:run` values are direct references instead of closures.
-- [ ] **Remove `:op` from `full-opts` in `run-dispatched`** — Standard helpers no longer need it. For `enumerate-run` (custom handler), inject op via the custom-transition-dispatcher: `{:run (fn [gf args key opts] (t op gf args key opts))}`.
-- [ ] **Run full test suite** — 1,031/1,031.
-- [ ] **Run all 26 memo examples.**
+- [x] **Define `handler-table`** — Map from op keyword to handler run-fn.
+- [x] **Simplify `handler-dispatcher`** — `{:run (get handler-table op) :score-type :joint}`.
+- [x] **Define `compiled-table`** — Map from op keyword to compiled run-fn. Only return if schema has the compiled key.
+- [x] **Simplify `compiled-dispatcher`** — Check schema, return `{:run (get compiled-table op)}` or check prefix-table.
+- [x] **Simplify `analytical-dispatcher`** — This one keeps conditional logic (it checks constraints), but the `:run` values are direct references instead of closures.
+- [x] **Remove `:op` from `full-opts` in `run-dispatched`** — Standard helpers no longer need it. For `enumerate-run` (custom handler), inject op via the custom-transition-dispatcher: `{:run (fn [gf args key opts] (t op gf args key opts))}`.
+- [x] **Run full test suite** — 1,031/1,031.
+- [x] **Run all 26 memo examples.**
 
 **Done criterion for Phase B:** Dispatchers are ~50 lines total (down from ~150). No `(case op ...)` blocks with closure wrappers.
 
@@ -117,19 +117,19 @@ Then the dispatchers become lookup tables:
 
 ## Phase C: Inline `analytical-applicable?`
 
-- [ ] **Move the predicate into `analytical-dispatcher`'s `resolve-transition`** — It's a 5-line private function used in one place. Inline it.
-- [ ] **Run tests.**
+- [x] **Move the predicate into `analytical-dispatcher`'s `resolve-transition`** — It's a 5-line private function used in one place. Inline it.
+- [x] **Run tests.**
 
 ---
 
 ## Phase D: Verify and Measure
 
-- [ ] **Count lines:** `dynamic.cljs` should be shorter than the original 939 lines (main branch baseline).
-- [ ] **Full test suite:** 1,031/1,031.
-- [ ] **All 26 memo examples.**
-- [ ] **Run with `*validate?*` true:** All tests pass with Malli validation enabled.
-- [ ] **Review the dispatcher code** — Each dispatcher should fit on one screen. The `(reify ...)` bodies should be obvious at a glance.
-- [ ] **Review the run-\* helpers** — Each should be self-contained: get what it needs from `gf` and `opts`, do its work, return the result.
+- [x] **Count lines:** `dynamic.cljs` should be shorter than the original 939 lines (main branch baseline).
+- [x] **Full test suite:** 1,031/1,031.
+- [x] **All 26 memo examples.**
+- [x] **Run with `*validate?*` true:** All tests pass with Malli validation enabled.
+- [x] **Review the dispatcher code** — Each dispatcher should fit on one screen. The `(reify ...)` bodies should be obvious at a glance.
+- [x] **Review the run-\* helpers** — Each should be self-contained: get what it needs from `gf` and `opts`, do its work, return the result.
 
 **Done criterion for Phase D:** `dynamic.cljs` < 939 lines. Code reads cleanly. No boilerplate closures. Each function does one thing.
 
