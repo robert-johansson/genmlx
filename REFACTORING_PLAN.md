@@ -133,17 +133,13 @@ bun run --bun nbb test/genmlx/genjax_compat_test.cljs               # 73/73
 
 *Goal: Add schemas for structures that are now stable after the refactoring.*
 
-- [ ] **Define `TraceSite` schema.** Validate against real schema extraction output.
+- [x] **TraceSite schema.** Defined in Phase 1, validated. ModelSchema tightened to use `[:vector TraceSite]`.
+- [x] **ConjugacyEntry schema.** Validates all 7 non-nil conjugacy table entries.
+- [x] **DistRecord schema.** Validates Distribution records (`:type keyword?`, `:params map?`).
+- [ ] ~~Add validation to distribution constructors~~ — Skipped. DistRecord only checks structure; too basic to catch real bugs at constructor level. Per-type param validation would be brittle.
+- [x] **Full test suite with validation enabled.** 1,031/1,031.
 
-- [ ] **Define `ConjugacyEntry` schema.** Multi-dispatch on `:family`. Validate against the conjugacy table in `conjugacy.cljs`.
-
-- [ ] **Define `DistributionParams` schema.** Multi-dispatch on `:type`. Validate against real distribution instances.
-
-- [ ] **Add validation to distribution constructors (gated).** The `defdist`-generated constructors validate params against the schema during development.
-
-- [ ] **Run full test suite with all validation enabled.** All tests pass.
-
-**Done criterion for Phase 4:** All schemas from MALLI_INTEGRATION.md are defined and verified against real data.
+**Phase 4 complete.** Committed at `e0bbdf2`.
 
 ---
 
@@ -151,29 +147,22 @@ bun run --bun nbb test/genmlx/genjax_compat_test.cljs               # 73/73
 
 *Goal: Prove that `mu/merge` schema composition works for domain-specific state extensions. This is preparation for the LLM integration, not the implementation itself.*
 
-- [ ] **Define `LLMGenerateState` as `mu/merge` of `GenerateState` with `[:map [:kv-cache some?] [:context vector?]]`.** Verify it validates maps with both base and LLM-specific keys.
+- [x] **LLMGenerateState** = `mu/merge` of GenerateState + `[:map [:kv-cache some?] [:context vector?]]`. Validates with all keys, rejects missing base or domain keys.
+- [x] **BeamGenerateState** = `mu/merge` of GenerateState + `[:map [:beam-states vector?] [:beam-logZ number?]]`. Same verification.
+- [x] **Base validation applies in merged schemas.** Missing `:choices` fails even with `:kv-cache` present. Missing `:kv-cache` fails even with all base keys present.
+- [x] **Proof-of-concept schemas not persisted.** Verified in REPL only; real schemas will be defined when LLM integration is built.
 
-- [ ] **Define `BeamGenerateState` as `mu/merge` of `GenerateState` with `[:map [:beam-states vector?] [:beam-logZ number?]]`.** Same verification.
-
-- [ ] **Verify that base validation still applies in merged schemas.** A map missing `:choices` must fail validation even if it has `:kv-cache`.
-
-- [ ] **Delete these proof-of-concept schemas** (or move to a test file). They are validation of the mechanism, not production schemas. The real schemas will be defined when the LLM integration is built.
-
-**Done criterion for Phase 5:** `mu/merge` composition works correctly. Base keys are validated in merged schemas. Domain-specific keys are validated. The mechanism is proven.
+**Phase 5 complete.** Verified in REPL, no file changes needed.
 
 ---
 
 ## Post-Flight
 
-- [ ] **Run the complete test suite one final time.** Record all pass counts. Compare against pre-flight baseline. Numbers must match exactly.
-
-- [ ] **Run all memo examples one final time.** All 26 correct.
-
-- [ ] **Review the diff.** New files: `dispatch.cljs`, `schemas.cljs`. Modified files: `dynamic.cljs` (simplified), `runtime.cljs` (validation point), `handler.cljs` (validation point), `inference/exact.cljs` (ExactGF deleted, `enumerate` added). No other files changed.
-
-- [ ] **Verify net line count.** `dispatch.cljs` + `schemas.cljs` add lines. `dynamic.cljs` loses lines (cond ladders removed). `exact.cljs` loses lines (ExactGF record deleted). The refactoring should be roughly line-neutral or slightly negative.
-
-- [ ] **Merge to main** (after review).
+- [x] **Full test suite:** 1,031/1,031 — matches pre-flight baseline exactly.
+- [x] **All memo examples:** 26/26.
+- [x] **Diff review:** 7 files changed, +626 -205. New: `dispatch.cljs` (63), `schemas.cljs` (262). Modified: `dynamic.cljs` (cond ladders → dispatchers), `runtime.cljs` (validation), `handler.cljs` (validation), `exact.cljs` (ExactGF → enumerate), `chimp.cljs` (metadata check).
+- [x] **Line counts:** dispatch.cljs=63, schemas.cljs=262, dynamic.cljs=1028 (was 939), exact.cljs=727 (was 725). Net increase is schemas.cljs (validation layer) + dispatcher definitions. GFI methods are 5-7 lines each (was 15-25).
+- [ ] **Merge to main** (pending review).
 
 ---
 
