@@ -11,7 +11,7 @@
    the stack walk, and the with-handler mechanism.
 
    See ARCHITECTURE.md Part II, Section 2.5."
-  (:require [genmlx.schemas :as schemas]))
+)
 
 ;; ---------------------------------------------------------------------------
 ;; Dispatcher protocol

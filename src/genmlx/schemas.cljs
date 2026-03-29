@@ -1,36 +1,15 @@
 (ns genmlx.schemas
   "Malli schemas for GenMLX's data boundaries.
 
-   Validates shapes at component seams — handler state initialization,
-   sub-result merging, GFI return values, dispatcher transition-specs,
-   and model schema extraction output. Never runs in the inference hot
-   path. Gated by *validate?* dynamic var.
+   Defines shapes for handler state, sub-results, GFI return values,
+   dispatcher transition-specs, and model schema extraction output.
+   Used by genmlx.dev for runtime instrumentation via start!/stop!.
 
    See MALLI_INTEGRATION.md for the design rationale."
   (:require [malli.core :as m]
             [malli.util :as mu]
-            [malli.error :as me]
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]))
-
-;; ---------------------------------------------------------------------------
-;; Validation gate
-;; ---------------------------------------------------------------------------
-
-(def ^:dynamic *validate?*
-  "When true, schema validation is active. Set to true during development
-   and testing, false in production inference. Default: false."
-  false)
-
-(defn validated
-  "Validate value against schema when *validate?* is true.
-   No-op in production. Throws with humanized errors on failure."
-  [schema value context]
-  (when *validate?*
-    (when-not (m/validate schema value)
-      (throw (ex-info (str "Schema violation: " context)
-                      {:errors (me/humanize (m/explain schema value))
-                       :context context})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Predicates for custom schema types

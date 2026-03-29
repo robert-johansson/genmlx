@@ -20,7 +20,6 @@
             [genmlx.conjugacy :as conjugacy]
             [genmlx.rewrite :as rewrite]
             [genmlx.inference.auto-analytical :as auto-analytical]
-            [genmlx.schemas :as schemas]
             [genmlx.dispatch :as dispatch]
             [clojure.set]))
 
@@ -491,11 +490,18 @@
    compiled-dispatcher
    handler-dispatcher])
 
-(defn- run-dispatched [gf op args key opts]
+(defn run-dispatched*
+  "Core dispatch: walk the dispatcher stack and execute the first match.
+   Public so genmlx.dev can reference it for start!/stop!."
+  [gf op args key opts]
   (let [spec (dispatch/resolve default-dispatcher-stack op (:schema gf)
                (assoc opts :gf gf))]
     (assert spec (str "No dispatcher resolved for op " op))
     ((:run spec) gf args key opts)))
+
+;; Dispatch function atom. Defaults to run-dispatched*.
+;; genmlx.dev/start! swaps this with a validating wrapper.
+(defonce dispatch-fn (atom run-dispatched*))
 
 (defn resolve-dispatch
   "Resolve the dispatch spec for a GFI operation on gf.
@@ -512,69 +518,60 @@
   (simulate [this args]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result (run-dispatched this :simulate args key {})]
+          result (@dispatch-fn this :simulate args key {})]
       (mx/gfi-cleanup!)
-      (schemas/validated schemas/SimulateReturn result "DynamicGF/simulate")
       result))
 
   p/IGenerate
   (generate [this args constraints]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result (run-dispatched this :generate args key {:constraints constraints})]
+          result (@dispatch-fn this :generate args key {:constraints constraints})]
       (mx/gfi-cleanup!)
-      (schemas/validated schemas/GenerateReturn result "DynamicGF/generate")
       result))
 
   p/IUpdate
   (update [this trace constraints]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result (run-dispatched this :update (:args trace) key
+          result (@dispatch-fn this :update (:args trace) key
                    {:trace trace :constraints constraints})]
-      ;; Post-process: add addresses deleted by branch switches to discard.
       (mx/gfi-cleanup!)
-      (let [final (clojure.core/update result :discard
-                    add-deleted-to-discard (:choices trace) (:choices (:trace result)))]
-        (schemas/validated schemas/UpdateReturn final "DynamicGF/update")
-        final)))
+      (clojure.core/update result :discard
+        add-deleted-to-discard (:choices trace) (:choices (:trace result)))))
 
   p/IRegenerate
   (regenerate [this trace selection]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result (run-dispatched this :regenerate (:args trace) key
+          result (@dispatch-fn this :regenerate (:args trace) key
                    {:trace trace :selection selection})]
       (mx/gfi-cleanup!)
-      (schemas/validated schemas/RegenerateReturn result "DynamicGF/regenerate")
       result))
 
   p/IAssess
   (assess [this args choices]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result (run-dispatched this :assess args key {:constraints choices})]
+          result (@dispatch-fn this :assess args key {:constraints choices})]
       (mx/gfi-cleanup!)
-      (schemas/validated schemas/AssessReturn result "DynamicGF/assess")
       result))
 
   p/IPropose
   (propose [this args]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result (run-dispatched this :propose args key {})]
+          result (@dispatch-fn this :propose args key {})]
       (mx/gfi-cleanup!)
-      (schemas/validated schemas/ProposeReturn result "DynamicGF/propose")
       result))
 
   p/IProject
   (project [this trace selection]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result (run-dispatched this :project (:args trace) key
+          result (@dispatch-fn this :project (:args trace) key
                    {:trace trace :selection selection})]
       (mx/gfi-cleanup!)
-      (schemas/validated schemas/ProjectReturn result "DynamicGF/project")
       result)))
 
 (defn- execute-sub

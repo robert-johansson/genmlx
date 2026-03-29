@@ -26,10 +26,13 @@
             [genmlx.mlx.random :as rng]
             [genmlx.selection :as sel]
             [genmlx.protocols :as p]
-            [genmlx.dist.core :as dc]
-            [genmlx.schemas :as schemas]))
+            [genmlx.dist.core :as dc]))
 
 (def ^:private ZERO (mx/scalar 0.0))
+
+;; Validation hook atom. No-op by default.
+;; genmlx.dev/start! swaps this with a real validator.
+(defonce validate-fn (atom (fn [_schema-key _value _context])))
 
 (defn run-handler
   "Execute body-fn under a transition-based handler, returning final state map.
@@ -40,7 +43,7 @@
 
    The only mutable state is a volatile! created and consumed here."
   [transition init-state body-fn]
-  (schemas/validated schemas/BaseState init-state "run-handler init-state")
+  (@validate-fn :base-state init-state "run-handler init-state")
   (let [vol (volatile! init-state)
 
         ;; trace closure: sample/constrain at an address
@@ -115,7 +118,7 @@
                       sub-result (run-handler sub-transition sub-init-state
                                               (fn [rt] (apply sub-body-fn rt (vec args))))
                       ;; Merge into parent state
-                      _ (schemas/validated schemas/SubResult sub-result
+                      _ (@validate-fn :sub-result sub-result
                           (str "splice sub-result at " addr))
                       state' (-> state
                                  (assoc :key k1)
@@ -154,7 +157,7 @@
                                                    :key sk
                                                    :old-splice-score old-splice-score
                                                    :param-store (:param-store state)})]
-                (schemas/validated schemas/SubResult sub-result
+                (@validate-fn :sub-result sub-result
                   (str "executor sub-result at " addr))
                 (vswap! vol h/merge-sub-result addr sub-result)
                 (:retval sub-result)))))
