@@ -359,7 +359,7 @@ The current DynamicGF protocol methods use a `cond` ladder to select the executi
 The GFI method walks the stack and uses the first non-nil result:
 
 ```clojure
-(def default-dispatchers
+(def ^:private default-dispatcher-stack
   [custom-transition-dispatcher    ;; with-handler metadata
    analytical-dispatcher           ;; L3 conjugacy
    compiled-dispatcher             ;; L1 compiled paths
@@ -369,6 +369,8 @@ The GFI method walks the stack and uses the first non-nil result:
 `handler-dispatcher` at the bottom always returns the appropriate base transition. Every dispatcher above it is optional. Adding a new execution mode means adding a dispatcher to the stack. No changes to `DynamicGF`. No changes to existing dispatchers. The stack is data: a vector of functions that can be extended per-model, per-inference-run, or globally.
 
 ---
+
+**Note on vectorized execution.** The batched functions (`vsimulate`, `vgenerate`, `vupdate`, `vregenerate`) bypass the dispatcher stack and directly use batched handler transitions. This is by design: vectorized execution is shape-based (`[N]`-shaped arrays via MLX broadcasting) and always runs through the handler path. The dispatcher stack applies to scalar GFI operations, not to batched particle execution.
 
 The handler system reduces GenMLX's execution model to a single primitive: a pure function from `(State, Address, Distribution)` to `(Value, State')`. GFI operations are choices of initial state and transition function. Vectorization is a transition that samples tensors instead of scalars. Exact enumeration is a transition that expands support sets as tensor axes. Analytical elimination is middleware that intercepts conjugate sites. Grammar-constrained decoding is middleware that rejects invalid extensions. All of these compose under function composition, and all of them produce generative functions that satisfy the same external GFI contract.
 
@@ -423,6 +425,8 @@ The score encoding should be explicit metadata on the transition result, not an 
 ---
 
 # Part IV -- Domain Integration Pattern
+
+*Parts IV and VI describe planned integration patterns and research directions. The architectural foundations (Parts I--III, V) are implemented; the domain-specific integrations below show how they extend to new computational domains.*
 
 ## 4.1 The Universal Recipe
 
@@ -569,7 +573,7 @@ Three additions, one modification.
 (defprotocol IDispatcher
   (resolve-transition [this op schema opts]
     "Return a dispatch-spec or nil.
-     op:     :simulate | :generate | :update | :regenerate | :assess | :project
+     op:     :simulate | :generate | :update | :regenerate | :assess | :project | :propose
      schema: the model's schema map
      opts:   {:gf gen-fn, :op op, :constraints cm, :trace trace, :selection sel}
      Returns: {:run (fn [gf args key opts] -> gfi-result)
@@ -580,7 +584,7 @@ Three additions, one modification.
 Four dispatcher implementations (defined in `dynamic.cljs` where they access the private run-* helpers):
 
 ```clojure
-(def default-dispatcher-stack
+(def ^:private default-dispatcher-stack
   [custom-transition-dispatcher    ;; with-handler metadata
    analytical-dispatcher           ;; L3 conjugacy
    compiled-dispatcher             ;; L1 compiled paths

@@ -1,7 +1,8 @@
 (ns genmlx.dynamic
-  "DynamicDSLFunction — implements the full GFI by delegating to
-   handler-based execution, with optional compiled fast path for
-   static models (Level 1)."
+  "DynamicGF — implements the full GFI via a dispatcher stack that
+   selects execution strategy per operation: custom handlers, L3
+   analytical, L1 compiled, or L0 handler fallback. See dispatch.cljs
+   for the protocol and ARCHITECTURE.md Part V for the design."
   (:require [genmlx.protocols :as p]
             [genmlx.handler :as h]
             [genmlx.runtime :as rt]
@@ -117,9 +118,9 @@
 
 ;; -- Common: param-store and body-fn extraction --
 
-(defn- ^:private ps  [gf] (::param-store (meta gf)))
-(defn- ^:private bfn [gf] (:body-fn gf))
-(defn- ^:private run-body [gf rt args] (apply (bfn gf) rt args))
+(defn- ps  [gf] (::param-store (meta gf)))
+(defn- bfn [gf] (:body-fn gf))
+(defn- run-body [gf rt args] (apply (bfn gf) rt args))
 
 ;; -- L0: Handler path --
 
@@ -181,6 +182,15 @@
                   :executor execute-sub-project :param-store (ps gf)}
                  (fn [rt] (run-body gf rt (:args trace))))]
     (:weight result)))
+
+(defn- run-propose-handler [gf args key opts]
+  (let [result (rt/run-handler h/simulate-transition
+                 {:choices cm/EMPTY :score SCORE-ZERO :key key
+                  :executor execute-sub :param-store (ps gf)}
+                 (fn [rt] (run-body gf rt args)))]
+    {:choices (:choices result)
+     :weight (:score result)
+     :retval (:retval result)}))
 
 ;; -- L1-M2: Compiled path --
 
@@ -371,7 +381,8 @@
 (def ^:private handler-table
   {:simulate run-simulate-handler, :generate run-generate-handler
    :update run-update-handler,     :regenerate run-regen-handler
-   :assess run-assess-handler,     :project run-project-handler})
+   :assess run-assess-handler,     :project run-project-handler
+   :propose run-propose-handler})
 
 (def ^:private compiled-table
   {:simulate run-simulate-compiled, :generate run-generate-compiled
@@ -510,17 +521,10 @@
   (propose [this args]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result (rt/run-handler h/simulate-transition
-                                 {:choices cm/EMPTY :score SCORE-ZERO :key key
-                                  :executor execute-sub
-                                  :param-store (::param-store (meta this))}
-                                 (fn [rt] (apply body-fn rt args)))]
+          result (run-dispatched this :propose args key {})]
       (mx/gfi-cleanup!)
-      (let [ret {:choices (:choices result)
-                  :weight (:score result)
-                  :retval (:retval result)}]
-        (schemas/validated schemas/ProposeReturn ret "DynamicGF/propose")
-        ret)))
+      (schemas/validated schemas/ProposeReturn result "DynamicGF/propose")
+      result))
 
   p/IProject
   (project [this trace selection]
@@ -710,11 +714,9 @@
   (:retval (p/simulate (auto-key gf) (vec args))))
 
 ;; ---------------------------------------------------------------------------
-;; Direct-mode param access (outside gen bodies)
-;; ---------------------------------------------------------------------------
-
-;; ---------------------------------------------------------------------------
 ;; Vectorized execution (batched: N particles in one model run)
+;; These bypass the dispatcher stack by design — vectorized execution always
+;; uses batched handler transitions with [N]-shaped arrays via MLX broadcasting.
 ;; ---------------------------------------------------------------------------
 
 (defn vsimulate
@@ -728,8 +730,8 @@
                                {:choices cm/EMPTY :score SCORE-ZERO
                                 :key key :batch-size n :batched? true
                                 :executor execute-sub
-                                :param-store (::param-store (meta gf))}
-                               (fn [rt] (apply (:body-fn gf) rt args)))]
+                                :param-store (ps gf)}
+                               (fn [rt] (run-body gf rt args)))]
     (vec/->VectorizedTrace gf args (:choices result) (:score result)
                            (mx/zeros [n]) n (:retval result))))
 
@@ -747,8 +749,8 @@
                                 :weight SCORE-ZERO :key key
                                 :constraints constraints :batch-size n :batched? true
                                 :executor execute-sub
-                                :param-store (::param-store (meta gf))}
-                               (fn [rt] (apply (:body-fn gf) rt args)))]
+                                :param-store (ps gf)}
+                               (fn [rt] (run-body gf rt args)))]
     (vec/->VectorizedTrace gf args (:choices result) (:score result)
                            (:weight result) n (:retval result))))
 
@@ -768,8 +770,8 @@
                                 :discard cm/EMPTY
                                 :batch-size n :batched? true
                                 :executor execute-sub
-                                :param-store (::param-store (meta gf))}
-                               (fn [rt] (apply (:body-fn gf) rt (:args vtrace))))]
+                                :param-store (ps gf)}
+                               (fn [rt] (apply (bfn gf) rt (:args vtrace))))]
     {:vtrace (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
                                     (:score result) (:weight result)
                                     n (:retval result))
@@ -792,8 +794,8 @@
                                 :old-choices (:choices vtrace)
                                 :batch-size n :batched? true
                                 :executor execute-sub
-                                :param-store (::param-store (meta gf))}
-                               (fn [rt] (apply (:body-fn gf) rt (:args vtrace))))
+                                :param-store (ps gf)}
+                               (fn [rt] (apply (bfn gf) rt (:args vtrace))))
         new-score (:score result)
         proposal-ratio (:weight result)
         weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)]

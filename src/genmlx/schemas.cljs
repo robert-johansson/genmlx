@@ -174,7 +174,7 @@
   [:enum :joint :marginal :collapsed :beam-marginal])
 
 ;; ---------------------------------------------------------------------------
-;; Dispatcher transition-spec (for ARCHITECTURE.md refactoring)
+;; Dispatcher transition-spec
 ;; ---------------------------------------------------------------------------
 
 (def TransitionSpec
@@ -224,13 +224,21 @@
    [:conjugate-pairs {:optional true} [:or vector? map?]]
    [:has-conjugate? {:optional true} boolean?]
    [:analytical-plan {:optional true} some?]
-   ;; Added by compilation
+   ;; Added by full compilation (L1-M2, L1-M4)
    [:compiled-simulate {:optional true} fn?]
    [:compiled-generate {:optional true} fn?]
    [:compiled-update {:optional true} fn?]
    [:compiled-regenerate {:optional true} fn?]
    [:compiled-assess {:optional true} fn?]
    [:compiled-project {:optional true} fn?]
+   ;; Added by prefix compilation (L1-M3)
+   [:compiled-prefix {:optional true} fn?]
+   [:compiled-prefix-addrs {:optional true} vector?]
+   [:compiled-prefix-generate {:optional true} fn?]
+   [:compiled-prefix-update {:optional true} fn?]
+   [:compiled-prefix-assess {:optional true} fn?]
+   [:compiled-prefix-project {:optional true} fn?]
+   [:compiled-prefix-regenerate {:optional true} fn?]
    ;; Added by auto-analytical
    [:auto-handlers {:optional true} map?]
    [:auto-regenerate-transition {:optional true} fn?]

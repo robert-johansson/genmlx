@@ -21,7 +21,7 @@
   (resolve-transition [this op schema opts]
     "Return a dispatch-spec or nil.
 
-     op:     :simulate | :generate | :update | :regenerate | :assess | :project
+     op:     :simulate | :generate | :update | :regenerate | :assess | :project | :propose
      schema: the model's schema map (trace-sites, compiled fns, conjugacy, etc.)
      opts:   operation context map, keys depend on op:
              :gf          - the generative function (always present)

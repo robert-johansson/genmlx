@@ -175,6 +175,12 @@
       (mx/eval! score)
       {:retval (:retval result) :weight score})
 
+    :propose
+    (let [{:keys [probs]} (enumerate-and-normalize gf args nil)]
+      {:choices cm/EMPTY
+       :weight (mx/scalar 0.0)
+       :retval probs})
+
     :project
     (mx/scalar 0.0)))
 
