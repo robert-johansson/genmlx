@@ -62,7 +62,7 @@ bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 
 No build step, no compilation. nbb interprets ClojureScript directly.
 
-**Requirements:** macOS with Apple Silicon (or Linux/Windows with CUDA — MLX supports both), Bun (or Node.js 18+), `npm install` for `@frost-beta/mlx`.
+**Requirements:** macOS with Apple Silicon (or Linux/Windows with CUDA — MLX supports both), Bun (or Node.js 18+), `npm install` for `@frost-beta/mlx`. Malli (included as git submodule, temporary until upstream nbb/malli releases align).
 
 ## Project structure
 
@@ -75,9 +75,12 @@ src/genmlx/
   selection.cljs        Composable address selection algebra
   protocols.cljs        GFI protocols: simulate, generate, update, regenerate, assess
   handler.cljs          Pure state transitions (simulate, generate, update, regenerate, ...)
+  dispatch.cljs         IDispatcher protocol, stack resolution, with-handler, with-dispatch
   runtime.cljs          Execution runtime: run-handler with volatile! dispatch
   gen.cljc              gen macro (converts fn bodies into DynamicGF)
-  dynamic.cljs          DynamicGF record (full GFI via handlers), vsimulate, vgenerate
+  dynamic.cljs          DynamicGF record (full GFI via dispatcher stack), vsimulate, vgenerate
+  schemas.cljs          Malli schemas for data boundaries (handler state, GFI returns, etc.)
+  inspect.cljs          Model introspection: compilation level, dispatch resolution, conjugacy
   schema.cljs           Schema extraction from gen body source forms (L1-M1)
   compiled.cljs         Compiled execution paths: noise transforms, compiled simulate (L1-M2),
                         partial prefix (L1-M3), branch rewriting (L1-M4)
@@ -154,8 +157,8 @@ test/genmlx/
 ```
 Layer 0: MLX + Runtime    (mlx.cljs, mlx/random.cljs, runtime.cljs — mutable boundary)
 Layer 1: Core Data        (choicemap, trace, selection — pure)
-Layer 2: GFI & Execution  (protocols, handler, edit, diff — pure)
-Layer 3: DSL + Schema     (gen macro, dynamic, schema — pure)
+Layer 2: GFI & Execution  (protocols, handler, dispatch, edit, diff — pure)
+Layer 3: DSL + Schema     (gen macro, dynamic, schema, schemas — pure)
 Layer 4: Distributions    (dist/core, dist/macros, dist — 27 types, pure)
 Layer 5: Combinators      (Map, Unfold, Switch, etc. — pure)
 Layer 6: Inference        (IS, MCMC, SMC, VI, ADEV, MAP + kernels — pure)
@@ -302,6 +305,9 @@ After any change, verify:
   `defmethod dc/dist-sample-n` for batch sampling.
 - **Adding inference:** New file in `inference/`. Follow existing patterns
   (pure functions, MLX arrays for weights, `u/materialize-weights` at boundaries).
+- **Adding an execution strategy:** Write a handler transition `(fn [state addr dist])`
+  and attach via `dispatch/with-handler`. For full op-level control, use
+  `dispatch/with-dispatch`. See `inference/exact.cljs` for the canonical example.
 - **Modifying handlers:** Edit transitions in `handler.cljs`. Keep them pure
   (`[state addr dist] -> [value state']`). The volatile! wrapper is separate.
 - **Testing:** Create `test/genmlx/<name>_test.cljs`, run with `bun run --bun nbb`.

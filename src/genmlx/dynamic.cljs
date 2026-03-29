@@ -1,7 +1,8 @@
 (ns genmlx.dynamic
-  "DynamicDSLFunction — implements the full GFI by delegating to
-   handler-based execution, with optional compiled fast path for
-   static models (Level 1)."
+  "DynamicGF — implements the full GFI via a dispatcher stack that
+   selects execution strategy per operation: custom handlers, L3
+   analytical, L1 compiled, or L0 handler fallback. See dispatch.cljs
+   for the protocol and ARCHITECTURE.md Part V for the design."
   (:require [genmlx.protocols :as p]
             [genmlx.handler :as h]
             [genmlx.runtime :as rt]
@@ -19,6 +20,7 @@
             [genmlx.conjugacy :as conjugacy]
             [genmlx.rewrite :as rewrite]
             [genmlx.inference.auto-analytical :as auto-analytical]
+            [genmlx.dispatch :as dispatch]
             [clojure.set]))
 
 ;; Cached zero constant for init states (MLX scalars are immutable)
@@ -109,145 +111,253 @@
      :weight weight}))
 
 ;; ---------------------------------------------------------------------------
-;; Simulate path helpers
+;; Execution helpers — each takes [gf args key opts] and returns a GFI result.
+;; Grouped by execution strategy (handler, compiled, prefix, analytical).
 ;; ---------------------------------------------------------------------------
 
-(defn- run-simulate-compiled
-  "L1-M2: full compiled simulate path."
-  [compiled-sim gf args key]
-  (let [result (compiled-sim key (vec args))
-        choices (cm/from-flat-map (:values result))]
-    (tr/make-trace {:gen-fn gf :args args
-                    :choices choices
-                    :retval (:retval result)
-                    :score (:score result)})))
+;; -- Common: param-store and body-fn extraction --
 
-(defn- run-simulate-prefix
-  "L1-M3: compiled prefix + replay handler."
-  [compiled-pfx gf args key body-fn this]
-  (let [result (compiled-pfx key (vec args))
-        replay (compiled/make-replay-simulate-transition (:values result))
-        handler-result (rt/run-handler replay
-                                       {:choices cm/EMPTY :score (:score result) :key key
-                                        :executor execute-sub
-                                        :param-store (::param-store (meta this))}
-                                       (fn [rt] (apply body-fn rt args)))
-        trace (make-result-trace gf args handler-result)]
-    (attach-splice-scores trace handler-result)))
+(defn- ps  [gf] (::param-store (meta gf)))
+(defn- bfn [gf] (:body-fn gf))
+(defn- run-body [gf rt args] (apply (bfn gf) rt args))
 
-(defn- run-simulate-handler
-  "L0: handler fallback simulate."
-  [gf args key body-fn this]
-  (let [result (rt/run-handler h/simulate-transition
-                               {:choices cm/EMPTY :score SCORE-ZERO :key key
-                                :executor execute-sub
-                                :param-store (::param-store (meta this))}
-                               (fn [rt] (apply body-fn rt args)))
+;; -- Transition-parameterized handler execution --
+;;
+;; Each function takes [transition gf args key opts] and runs the model
+;; body through run-handler with the given transition. The handler-table
+;; partially applies standard transitions; with-handler uses custom ones.
+
+(defn- run-simulate [transition gf args key _opts]
+  (let [result (rt/run-handler transition
+                 {:choices cm/EMPTY :score SCORE-ZERO :key key
+                  :executor execute-sub :param-store (ps gf)}
+                 (fn [rt] (run-body gf rt args)))]
+    (attach-splice-scores (make-result-trace gf args result) result)))
+
+(defn- run-generate [transition gf args key {:keys [constraints]}]
+  (let [result (rt/run-handler transition
+                 {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
+                  :key key :constraints constraints
+                  :executor execute-sub :param-store (ps gf)}
+                 (fn [rt] (run-body gf rt args)))
         trace (make-result-trace gf args result)]
-    (attach-splice-scores trace result)))
-
-;; ---------------------------------------------------------------------------
-;; Generate path helpers
-;; ---------------------------------------------------------------------------
-
-(defn- run-generate-analytical
-  "L3: auto-analytical generate with conjugate elimination."
-  [schema gf args key constraints body-fn this]
-  (let [transition (auto-analytical/make-address-dispatch
-                    h/generate-transition (:auto-handlers schema))
-        result (rt/run-handler transition
-                               {:choices cm/EMPTY :score SCORE-ZERO
-                                :weight SCORE-ZERO
-                                :key key :constraints constraints
-                                :auto-posteriors {}
-                                :auto-kalman-beliefs {}
-                                :auto-kalman-noise-vars {}
-                                :executor execute-sub
-                                :param-store (::param-store (meta this))}
-                               (fn [rt] (apply body-fn rt args)))
-        trace (make-result-trace gf args result)
-        ;; Tag trace with marginal score type so regenerate can match
-        trace (vary-meta trace assoc ::score-type :marginal)]
     (make-generate-result trace (:weight result) constraints (:choices result) result)))
 
-(defn- run-generate-compiled
-  "L1: fully compiled generate (static or branch-rewritten)."
-  [compiled-gen gf args key constraints]
-  (let [result (compiled-gen key (vec args) constraints)
-        choices (cm/from-flat-map (:values result))
-        trace (tr/make-trace {:gen-fn gf :args args
-                              :choices choices
-                              :retval (:retval result)
-                              :score (:score result)})]
-    {:trace trace :weight (:weight result)}))
+(defn- run-update [transition gf _args key {:keys [trace constraints]}]
+  (let [result (rt/run-handler transition
+                 {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
+                  :key key :constraints constraints
+                  :old-choices (:choices trace)
+                  :old-splice-scores (::splice-scores (meta trace))
+                  :discard cm/EMPTY
+                  :executor execute-sub :param-store (ps gf)}
+                 (fn [rt] (run-body gf rt (:args trace))))
+        new-trace (make-result-trace gf (:args trace) result)]
+    (make-update-result new-trace
+      (mx/subtract (:score result) (:score trace))
+      (:discard result) constraints (:choices result) result)))
 
-(defn- run-generate-prefix
-  "L1-M3: compiled prefix generate + replay handler."
-  [compiled-pfx-gen gf args key constraints body-fn this]
-  (let [result (compiled-pfx-gen key (vec args) constraints)
+(defn- run-regen [transition gf _args key {:keys [trace selection]}]
+  (let [old-score (:score trace)
+        result (rt/run-handler transition
+                 {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
+                  :key key :selection selection
+                  :old-choices (:choices trace)
+                  :old-splice-scores (::splice-scores (meta trace))
+                  :executor execute-sub :param-store (ps gf)}
+                 (fn [rt] (run-body gf rt (:args trace))))]
+    (make-regen-result gf trace result old-score)))
+
+(defn- run-assess [transition gf args key {:keys [constraints]}]
+  (let [result (rt/run-handler transition
+                 {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
+                  :key key :constraints constraints
+                  :executor execute-sub-assess :param-store (ps gf)}
+                 (fn [rt] (run-body gf rt args)))]
+    {:retval (:retval result) :weight (:score result)}))
+
+(defn- run-project [transition gf _args key {:keys [trace selection]}]
+  (let [result (rt/run-handler transition
+                 {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
+                  :key key :selection selection
+                  :old-choices (:choices trace)
+                  :constraints cm/EMPTY
+                  :executor execute-sub-project :param-store (ps gf)}
+                 (fn [rt] (run-body gf rt (:args trace))))]
+    (:weight result)))
+
+(defn- run-propose [transition gf args key _opts]
+  (let [result (rt/run-handler transition
+                 {:choices cm/EMPTY :score SCORE-ZERO :key key
+                  :executor execute-sub :param-store (ps gf)}
+                 (fn [rt] (run-body gf rt args)))]
+    {:choices (:choices result)
+     :weight (:score result)
+     :retval (:retval result)}))
+
+;; -- L1-M2: Compiled path --
+
+(defn- run-simulate-compiled [gf args key _opts]
+  (let [cfn (:compiled-simulate (:schema gf))
+        result (cfn key (vec args))]
+    (tr/make-trace {:gen-fn gf :args args
+                    :choices (cm/from-flat-map (:values result))
+                    :retval (:retval result) :score (:score result)})))
+
+(defn- run-generate-compiled [gf args key {:keys [constraints]}]
+  (let [cfn (:compiled-generate (:schema gf))
+        result (cfn key (vec args) constraints)]
+    {:trace (tr/make-trace {:gen-fn gf :args args
+                            :choices (cm/from-flat-map (:values result))
+                            :retval (:retval result) :score (:score result)})
+     :weight (:weight result)}))
+
+(defn- run-update-compiled [gf _args key {:keys [trace constraints]}]
+  (let [cfn (:compiled-update (:schema gf))
+        result (cfn key (vec (:args trace)) constraints (:choices trace))]
+    {:trace (tr/make-trace {:gen-fn gf :args (:args trace)
+                            :choices (cm/from-flat-map (:values result))
+                            :retval (:retval result) :score (:score result)})
+     :weight (mx/subtract (:score result) (:score trace))
+     :discard (cm/from-flat-map (:discard result))}))
+
+(defn- run-regen-compiled [gf _args key {:keys [trace selection]}]
+  (let [cfn (:compiled-regenerate (:schema gf))
+        old-score (:score trace)
+        result (cfn key (vec (:args trace)) (:choices trace) selection)
+        weight (mx/subtract (mx/subtract (:score result) old-score) (:weight result))]
+    {:trace (tr/make-trace {:gen-fn gf :args (:args trace)
+                            :choices (cm/from-flat-map (:values result))
+                            :retval (:retval result) :score (:score result)})
+     :weight weight}))
+
+(defn- run-assess-compiled [gf args key {:keys [constraints]}]
+  (let [cfn (:compiled-assess (:schema gf))
+        r (cfn (vec args) constraints)]
+    {:retval (:retval r) :weight (:score r)}))
+
+(defn- run-project-compiled [gf _args key {:keys [trace selection]}]
+  (let [cfn (:compiled-project (:schema gf))]
+    (cfn (vec (:args trace)) (:choices trace) selection)))
+
+;; -- L1-M3: Prefix compiled path --
+
+(defn- run-simulate-prefix [gf args key _opts]
+  (let [pfx (:compiled-prefix (:schema gf))
+        result (pfx key (vec args))
+        replay (compiled/make-replay-simulate-transition (:values result))
+        handler-result (rt/run-handler replay
+                         {:choices cm/EMPTY :score (:score result) :key key
+                          :executor execute-sub :param-store (ps gf)}
+                         (fn [rt] (run-body gf rt args)))]
+    (attach-splice-scores (make-result-trace gf args handler-result) handler-result)))
+
+(defn- run-generate-prefix [gf args key {:keys [constraints]}]
+  (let [pfx (:compiled-prefix-generate (:schema gf))
+        result (pfx key (vec args) constraints)
         replay (compiled/make-replay-generate-transition (:values result))
         handler-result (rt/run-handler replay
-                                       {:choices cm/EMPTY :score (:score result)
-                                        :weight (:weight result)
-                                        :key key :constraints constraints
-                                        :executor execute-sub
-                                        :param-store (::param-store (meta this))}
-                                       (fn [rt] (apply body-fn rt args)))
+                         {:choices cm/EMPTY :score (:score result)
+                          :weight (:weight result) :key key :constraints constraints
+                          :executor execute-sub :param-store (ps gf)}
+                         (fn [rt] (run-body gf rt args)))
         trace (make-result-trace gf args handler-result)]
     (make-generate-result trace (:weight handler-result) constraints
                           (:choices handler-result) handler-result)))
 
-(defn- run-generate-handler
-  "L0: handler fallback generate."
-  [gf args key constraints body-fn this]
-  (let [result (rt/run-handler h/generate-transition
-                               {:choices cm/EMPTY :score SCORE-ZERO
-                                :weight SCORE-ZERO
-                                :key key :constraints constraints
-                                :executor execute-sub
-                                :param-store (::param-store (meta this))}
-                               (fn [rt] (apply body-fn rt args)))
-        trace (make-result-trace gf args result)]
-    (make-generate-result trace (:weight result) constraints (:choices result) result)))
-
-;; ---------------------------------------------------------------------------
-;; Update path helpers
-;; ---------------------------------------------------------------------------
-
-(defn- run-update-compiled
-  "L1: fully compiled update (static or branch-rewritten)."
-  [compiled-upd gf trace key constraints]
-  (let [result (compiled-upd key (vec (:args trace)) constraints (:choices trace))
-        choices (cm/from-flat-map (:values result))
-        discard (cm/from-flat-map (:discard result))
-        new-trace (tr/make-trace {:gen-fn gf :args (:args trace)
-                                  :choices choices
-                                  :retval (:retval result)
-                                  :score (:score result)})]
-    {:trace new-trace
-     :weight (mx/subtract (:score result) (:score trace))
-     :discard discard}))
-
-(defn- run-update-prefix
-  "L1-M3: compiled prefix update + replay handler."
-  [compiled-pfx-upd gf trace key constraints body-fn this]
-  (let [result (compiled-pfx-upd key (vec (:args trace)) constraints (:choices trace))
-        prefix-discard (cm/from-flat-map (:discard result))
+(defn- run-update-prefix [gf _args key {:keys [trace constraints]}]
+  (let [pfx (:compiled-prefix-update (:schema gf))
+        result (pfx key (vec (:args trace)) constraints (:choices trace))
         replay (cops/make-replay-update-transition (:values result))
         handler-result (rt/run-handler replay
-                                       {:choices cm/EMPTY :score (:score result)
-                                        :weight SCORE-ZERO
-                                        :key key :constraints constraints
-                                        :old-choices (:choices trace)
-                                        :discard prefix-discard
-                                        :executor execute-sub
-                                        :param-store (::param-store (meta this))}
-                                       (fn [rt] (apply body-fn rt (:args trace))))
+                         {:choices cm/EMPTY :score (:score result)
+                          :weight SCORE-ZERO :key key :constraints constraints
+                          :old-choices (:choices trace) :discard (cm/from-flat-map (:discard result))
+                          :executor execute-sub :param-store (ps gf)}
+                         (fn [rt] (run-body gf rt (:args trace))))
         new-trace (make-result-trace gf (:args trace) handler-result)]
     (make-update-result new-trace
-                        (mx/subtract (:score handler-result) (:score trace))
-                        (:discard handler-result)
-                        constraints (:choices handler-result) handler-result)))
+      (mx/subtract (:score handler-result) (:score trace))
+      (:discard handler-result) constraints (:choices handler-result) handler-result)))
+
+(defn- run-regen-prefix [gf _args key {:keys [trace selection]}]
+  (let [pfx (:compiled-prefix-regenerate (:schema gf))
+        old-score (:score trace)
+        result (pfx key (vec (:args trace)) (:choices trace) selection)
+        replay (cops/make-replay-regenerate-transition (:values result))
+        handler-result (rt/run-handler replay
+                         {:choices cm/EMPTY :score (:score result)
+                          :weight (:weight result) :key key :selection selection
+                          :old-choices (:choices trace)
+                          :executor execute-sub :param-store (ps gf)}
+                         (fn [rt] (run-body gf rt (:args trace))))]
+    (make-regen-result gf trace handler-result old-score)))
+
+(defn- run-assess-prefix [gf args key {:keys [constraints]}]
+  (let [pfx (:compiled-prefix-assess (:schema gf))
+        result (pfx (vec args) constraints)
+        replay (cops/make-replay-assess-transition (:values result))
+        handler-result (rt/run-handler replay
+                         {:choices cm/EMPTY :score (:score result)
+                          :weight (:score result) :key key :constraints constraints
+                          :executor execute-sub-assess :param-store (ps gf)}
+                         (fn [rt] (run-body gf rt args)))]
+    {:retval (:retval handler-result) :weight (:score handler-result)}))
+
+(defn- run-project-prefix [gf args key {:keys [trace selection]}]
+  (let [pfx (:compiled-prefix-project (:schema gf))
+        result (pfx (vec (:args trace)) (:choices trace) selection)
+        replay (cops/make-replay-project-transition (:values result))
+        handler-result (rt/run-handler replay
+                         {:choices cm/EMPTY :score SCORE-ZERO
+                          :weight (:weight result) :key key :selection selection
+                          :old-choices (:choices trace) :constraints cm/EMPTY
+                          :executor execute-sub-project :param-store (ps gf)}
+                         (fn [rt] (run-body gf rt (:args trace))))]
+    (:weight handler-result)))
+
+;; -- L3: Analytical path --
+
+(defn- run-generate-analytical [gf args key {:keys [constraints]}]
+  (let [schema (:schema gf)
+        transition (auto-analytical/make-address-dispatch
+                     h/generate-transition (:auto-handlers schema))
+        result (rt/run-handler transition
+                 {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
+                  :key key :constraints constraints
+                  :auto-posteriors {} :auto-kalman-beliefs {} :auto-kalman-noise-vars {}
+                  :executor execute-sub :param-store (ps gf)}
+                 (fn [rt] (run-body gf rt args)))
+        trace (vary-meta (make-result-trace gf args result) assoc ::score-type :marginal)]
+    (make-generate-result trace (:weight result) constraints (:choices result) result)))
+
+(defn- run-assess-analytical [gf args key {:keys [constraints]}]
+  (let [schema (:schema gf)
+        transition (auto-analytical/make-address-dispatch
+                     h/assess-transition (:auto-handlers schema))
+        result (rt/run-handler transition
+                 {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
+                  :key key :constraints constraints
+                  :auto-posteriors {} :auto-kalman-beliefs {} :auto-kalman-noise-vars {}
+                  :executor execute-sub-assess :param-store (ps gf)}
+                 (fn [rt] (run-body gf rt args)))]
+    {:retval (:retval result) :weight (:score result)}))
+
+(defn- run-regen-analytical [gf _args key {:keys [trace selection]}]
+  (let [schema (:schema gf)
+        old-score (:score trace)
+        result (rt/run-handler (:auto-regenerate-transition schema)
+                 {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
+                  :key key :selection selection
+                  :old-choices (:choices trace)
+                  :auto-posteriors {} :auto-kalman-beliefs {} :auto-kalman-noise-vars {}
+                  :old-splice-scores (::splice-scores (meta trace))
+                  :executor execute-sub :param-store (ps gf)}
+                 (fn [rt] (run-body gf rt (:args trace))))
+        regen-result (make-regen-result gf trace result old-score)]
+    (clojure.core/update regen-result :trace vary-meta assoc ::score-type :marginal)))
+
+;; -- Utility --
 
 (defn- add-deleted-to-discard
   "Add old trace addresses not present in new trace to the discard.
@@ -264,193 +374,140 @@
                   (if (cm/has-value? old-sub)
                     (cm/set-value d addr (cm/get-value old-sub))
                     (cm/set-submap d addr old-sub))))
-              discard
-              deleted))
+              discard deleted))
     discard))
 
-(defn- run-update-handler
-  "L0: handler fallback update."
-  [gf trace key constraints body-fn this]
-  (let [result (rt/run-handler h/update-transition
-                               {:choices cm/EMPTY :score SCORE-ZERO
-                                :weight SCORE-ZERO
-                                :key key :constraints constraints
-                                :old-choices (:choices trace)
-                                :old-splice-scores (::splice-scores (meta trace))
-                                :discard cm/EMPTY
-                                :executor execute-sub
-                                :param-store (::param-store (meta this))}
-                               (fn [rt] (apply body-fn rt (:args trace))))
-        new-trace (make-result-trace gf (:args trace) result)]
-    (make-update-result new-trace
-                        (mx/subtract (:score result) (:score trace))
-                        (:discard result)
-                        constraints (:choices result) result)))
-
 ;; ---------------------------------------------------------------------------
-;; Regenerate path helpers
+;; Dispatchers — lookup tables mapping op → run-fn
 ;; ---------------------------------------------------------------------------
 
-(defn- run-regen-analytical
-  "L3.5: auto-analytical regenerate with precomputed transition."
-  [schema gf trace key selection old-score body-fn this]
-  (let [result (rt/run-handler (:auto-regenerate-transition schema)
-                               {:choices cm/EMPTY :score SCORE-ZERO
-                                :weight SCORE-ZERO
-                                :key key :selection selection
-                                :old-choices (:choices trace)
-                                :auto-posteriors {}
-                                :auto-kalman-beliefs {}
-                                :auto-kalman-noise-vars {}
-                                :old-splice-scores (::splice-scores (meta trace))
-                                :executor execute-sub
-                                :param-store (::param-store (meta this))}
-                               (fn [rt] (apply body-fn rt (:args trace))))
-        regen-result (make-regen-result gf trace result old-score)]
-    ;; Preserve marginal score type on the new trace
-    (update regen-result :trace vary-meta assoc ::score-type :marginal)))
+;; Transition-parameterized table: maps op to the generic run-* function.
+;; Used by handler-dispatcher (with standard transitions) and
+;; custom-transition-dispatcher (with the user-supplied transition).
+(def ^:private transition-run-fns
+  {:simulate run-simulate, :generate run-generate
+   :update run-update,     :regenerate run-regen
+   :assess run-assess,     :project run-project
+   :propose run-propose})
 
-(defn- run-regen-compiled
-  "L1: fully compiled regenerate (M2/M4)."
-  [cregen gf trace key selection old-score]
-  (let [result (cregen key (vec (:args trace)) (:choices trace) selection)
-        new-score (:score result)
-        proposal-ratio (:weight result)
-        weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)
-        choices (cm/from-flat-map (:values result))
-        new-trace (tr/make-trace {:gen-fn gf :args (:args trace)
-                                  :choices choices
-                                  :retval (:retval result)
-                                  :score new-score})]
-    {:trace new-trace :weight weight}))
+;; Standard handler transitions per op.
+(def ^:private standard-transitions
+  {:simulate h/simulate-transition, :generate h/generate-transition
+   :update h/update-transition,     :regenerate h/regenerate-transition
+   :assess h/assess-transition,     :project h/project-transition
+   :propose h/simulate-transition})
 
-(defn- run-regen-prefix
-  "L1-M3: prefix regenerate + replay handler."
-  [prefix-regen gf trace key selection old-score body-fn this]
-  (let [prefix-result (prefix-regen key (vec (:args trace))
-                                    (:choices trace) selection)
-        replay (cops/make-replay-regenerate-transition (:values prefix-result))
-        handler-result (rt/run-handler replay
-                                       {:choices cm/EMPTY :score (:score prefix-result)
-                                        :weight (:weight prefix-result)
-                                        :key key :selection selection
-                                        :old-choices (:choices trace)
-                                        :executor execute-sub
-                                        :param-store (::param-store (meta this))}
-                                       (fn [rt] (apply body-fn rt (:args trace))))]
-    (make-regen-result gf trace handler-result old-score)))
+;; Handler table: each entry is (partial run-* standard-transition).
+(def ^:private handler-table
+  (into {} (map (fn [[op run-fn]]
+                  [op (partial run-fn (get standard-transitions op))]))
+        transition-run-fns))
 
-(defn- run-regen-handler
-  "L0: handler fallback regenerate."
-  [gf trace key selection old-score body-fn this]
-  (let [result (rt/run-handler h/regenerate-transition
-                               {:choices cm/EMPTY :score SCORE-ZERO
-                                :weight SCORE-ZERO
-                                :key key :selection selection
-                                :old-choices (:choices trace)
-                                :old-splice-scores (::splice-scores (meta trace))
-                                :executor execute-sub
-                                :param-store (::param-store (meta this))}
-                               (fn [rt] (apply body-fn rt (:args trace))))]
-    (make-regen-result gf trace result old-score)))
+(def ^:private compiled-table
+  {:simulate run-simulate-compiled, :generate run-generate-compiled
+   :update run-update-compiled,     :regenerate run-regen-compiled
+   :assess run-assess-compiled,     :project run-project-compiled})
 
-;; ---------------------------------------------------------------------------
-;; Assess path helpers
-;; ---------------------------------------------------------------------------
+(def ^:private prefix-table
+  {:simulate run-simulate-prefix, :generate run-generate-prefix
+   :update run-update-prefix,     :regenerate run-regen-prefix
+   :assess run-assess-prefix,     :project run-project-prefix})
 
-(defn- run-assess-analytical
-  "L3.5: auto-analytical assess with conjugate elimination."
-  [schema gf args key choices body-fn this]
-  (let [transition (auto-analytical/make-address-dispatch
-                    h/assess-transition (:auto-handlers schema))
-        result (rt/run-handler transition
-                               {:choices cm/EMPTY :score SCORE-ZERO
-                                :weight SCORE-ZERO
-                                :key key :constraints choices
-                                :auto-posteriors {}
-                                :auto-kalman-beliefs {}
-                                :auto-kalman-noise-vars {}
-                                :executor execute-sub-assess
-                                :param-store (::param-store (meta this))}
-                               (fn [rt] (apply body-fn rt args)))]
-    {:retval (:retval result)
-     :weight (:score result)}))
+(def ^:private analytical-table
+  {:generate run-generate-analytical
+   :assess   run-assess-analytical
+   :regenerate run-regen-analytical})
 
-(defn- run-assess-prefix
-  "L1-M3: prefix assess + replay handler."
-  [prefix-assess gf args key choices body-fn this]
-  (let [prefix-result (prefix-assess (vec args) choices)
-        replay-transition (cops/make-replay-assess-transition (:values prefix-result))
-        result (rt/run-handler replay-transition
-                               {:choices cm/EMPTY :score (:score prefix-result)
-                                :weight (:score prefix-result)
-                                :key key :constraints choices
-                                :executor execute-sub-assess
-                                :param-store (::param-store (meta this))}
-                               (fn [rt] (apply body-fn rt args)))]
-    {:retval (:retval result)
-     :weight (:score result)}))
+(def ^:private compiled-keys
+  {:simulate :compiled-simulate,   :generate :compiled-generate
+   :update :compiled-update,       :regenerate :compiled-regenerate
+   :assess :compiled-assess,       :project :compiled-project})
 
-(defn- run-assess-handler
-  "L0: handler fallback assess."
-  [gf args key choices body-fn this]
-  (let [result (rt/run-handler h/assess-transition
-                               {:choices cm/EMPTY :score SCORE-ZERO
-                                :weight SCORE-ZERO
-                                :key key :constraints choices
-                                :executor execute-sub-assess
-                                :param-store (::param-store (meta this))}
-                               (fn [rt] (apply body-fn rt args)))]
-    {:retval (:retval result)
-     :weight (:score result)}))
+(def ^:private prefix-keys
+  {:simulate :compiled-prefix,              :generate :compiled-prefix-generate
+   :update :compiled-prefix-update,         :regenerate :compiled-prefix-regenerate
+   :assess :compiled-prefix-assess,         :project :compiled-prefix-project})
 
-;; ---------------------------------------------------------------------------
-;; Project path helpers
-;; ---------------------------------------------------------------------------
+(def ^:private custom-dispatcher
+  "Handles both with-handler (transition substitution) and with-dispatch
+   (full dispatch override). Checks ::custom-dispatch first, then
+   ::custom-transition."
+  (reify dispatch/IDispatcher
+    (resolve-transition [_ op _schema opts]
+      (let [gf-meta (meta (:gf opts))]
+        (cond
+          ;; Full dispatch override: (fn [op gf args key opts] -> result)
+          (::dispatch/custom-dispatch gf-meta)
+          (let [df (::dispatch/custom-dispatch gf-meta)]
+            {:run (fn [gf args key opts] (df op gf args key opts))
+             :score-type (or (:score-type (meta df)) :joint)
+             :label :custom})
 
-(defn- run-project-prefix
-  "L1-M3: prefix project + replay handler."
-  [prefix-proj gf trace key selection body-fn this]
-  (let [prefix-result (prefix-proj (vec (:args trace)) (:choices trace) selection)
-        replay-transition (cops/make-replay-project-transition (:values prefix-result))
-        result (rt/run-handler replay-transition
-                               {:choices cm/EMPTY :score SCORE-ZERO
-                                :weight (:weight prefix-result)
-                                :key key :selection selection
-                                :old-choices (:choices trace)
-                                :constraints cm/EMPTY
-                                :executor execute-sub-project
-                                :param-store (::param-store (meta this))}
-                               (fn [rt] (apply body-fn rt (:args trace))))]
-    (:weight result)))
+          ;; Transition substitution: (fn [state addr dist] -> [value state'])
+          (::dispatch/custom-transition gf-meta)
+          (let [t (::dispatch/custom-transition gf-meta)]
+            {:run (partial (get transition-run-fns op) t)
+             :score-type (or (:score-type (meta t)) :joint)
+             :label :custom}))))))
 
-(defn- run-project-handler
-  "L0: handler fallback project."
-  [gf trace key selection body-fn this]
-  (let [result (rt/run-handler h/project-transition
-                               {:choices cm/EMPTY :score SCORE-ZERO
-                                :weight SCORE-ZERO
-                                :key key :selection selection
-                                :old-choices (:choices trace)
-                                :constraints cm/EMPTY
-                                :executor execute-sub-project
-                                :param-store (::param-store (meta this))}
-                               (fn [rt] (apply body-fn rt (:args trace))))]
-    (:weight result)))
+(def ^:private analytical-dispatcher
+  (reify dispatch/IDispatcher
+    (resolve-transition [_ op schema opts]
+      (when-let [run-fn (get analytical-table op)]
+        (case op
+          (:generate :assess)
+          (when (and (not (mx/in-grad?))
+                     (:auto-handlers schema)
+                     (auto-analytical/some-conjugate-obs-constrained?
+                       (:conjugate-pairs schema) (:constraints opts)))
+            {:run run-fn :score-type :marginal :label :analytical})
 
-;; ---------------------------------------------------------------------------
-;; Analytical applicability predicate
-;; ---------------------------------------------------------------------------
+          :regenerate
+          (when (and (:auto-regenerate-transition schema)
+                     (= :marginal (::score-type (meta (:trace opts)))))
+            {:run run-fn :score-type :marginal :label :analytical})
 
-(defn- analytical-applicable?
-  "Check if L3 auto-analytical handlers apply for the given schema + constraints.
-   Skips analytical path inside mx/grad or mx/value-and-grad because the
-   analytical handler uses volatile! which breaks gradient flow."
-  [schema constraints]
-  (and (not (mx/in-grad?))
-       (:auto-handlers schema)
-       (auto-analytical/some-conjugate-obs-constrained?
-        (:conjugate-pairs schema) constraints)))
+          nil)))))
+
+(def ^:private compiled-dispatcher
+  (reify dispatch/IDispatcher
+    (resolve-transition [_ op schema _opts]
+      (cond
+        (get schema (get compiled-keys op))
+        {:run (get compiled-table op) :score-type :joint :label :compiled}
+
+        (get schema (get prefix-keys op))
+        {:run (get prefix-table op) :score-type :joint :label :prefix}))))
+
+(def ^:private handler-dispatcher
+  (reify dispatch/IDispatcher
+    (resolve-transition [_ op _ _]
+      {:run (get handler-table op) :score-type :joint :label :handler})))
+
+(def ^:private default-dispatcher-stack
+  [custom-dispatcher
+   analytical-dispatcher
+   compiled-dispatcher
+   handler-dispatcher])
+
+(defn run-dispatched*
+  "Core dispatch: walk the dispatcher stack and execute the first match.
+   Public so genmlx.dev can reference it for start!/stop!."
+  [gf op args key opts]
+  (let [spec (dispatch/resolve default-dispatcher-stack op (:schema gf)
+               (assoc opts :gf gf))]
+    (assert spec (str "No dispatcher resolved for op " op))
+    ((:run spec) gf args key opts)))
+
+;; Dispatch function atom. Defaults to run-dispatched*.
+;; genmlx.dev/start! swaps this with a validating wrapper.
+(defonce dispatch-fn (atom run-dispatched*))
+
+(defn resolve-dispatch
+  "Resolve the dispatch spec for a GFI operation on gf.
+   Returns {:run fn :score-type kw :label kw}. Used by inspect."
+  [gf op]
+  (dispatch/resolve default-dispatcher-stack op (:schema gf) {:gf gf}))
 
 ;; ---------------------------------------------------------------------------
 ;; DynamicGF record — GFI protocol implementations
@@ -461,19 +518,7 @@
   (simulate [this args]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result
-          (cond
-            ;; L1-M2: full compiled simulate
-            (:compiled-simulate schema)
-            (run-simulate-compiled (:compiled-simulate schema) this args key)
-
-            ;; L1-M3: compiled prefix + replay handler
-            (:compiled-prefix schema)
-            (run-simulate-prefix (:compiled-prefix schema) this args key body-fn this)
-
-            ;; L0: handler fallback
-            :else
-            (run-simulate-handler this args key body-fn this))]
+          result (@dispatch-fn this :simulate args key {})]
       (mx/gfi-cleanup!)
       result))
 
@@ -481,23 +526,7 @@
   (generate [this args constraints]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result
-          (cond
-            ;; L3: auto-analytical generate
-            (analytical-applicable? schema constraints)
-            (run-generate-analytical schema this args key constraints body-fn this)
-
-            ;; L1: fully compiled generate (static or branch-rewritten)
-            (:compiled-generate schema)
-            (run-generate-compiled (:compiled-generate schema) this args key constraints)
-
-            ;; L1-M3: compiled prefix generate + replay handler
-            (:compiled-prefix-generate schema)
-            (run-generate-prefix (:compiled-prefix-generate schema) this args key constraints body-fn this)
-
-            ;; L0: handler fallback
-            :else
-            (run-generate-handler this args key constraints body-fn this))]
+          result (@dispatch-fn this :generate args key {:constraints constraints})]
       (mx/gfi-cleanup!)
       result))
 
@@ -505,52 +534,18 @@
   (update [this trace constraints]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result
-          (cond
-            ;; L1: fully compiled update (static or branch-rewritten)
-            (:compiled-update schema)
-            (run-update-compiled (:compiled-update schema) this trace key constraints)
-
-            ;; L1-M3: compiled prefix update + replay handler
-            (:compiled-prefix-update schema)
-            (run-update-prefix (:compiled-prefix-update schema) this trace key constraints body-fn this)
-
-            ;; L0: handler fallback
-            :else
-            (run-update-handler this trace key constraints body-fn this))]
-      ;; Post-process: add addresses deleted by branch switches to discard.
-      ;; Old addresses not present in new trace must appear in discard (Gen.jl semantics).
+          result (@dispatch-fn this :update (:args trace) key
+                   {:trace trace :constraints constraints})]
       (mx/gfi-cleanup!)
       (clojure.core/update result :discard
-                           add-deleted-to-discard (:choices trace) (:choices (:trace result)))))
+        add-deleted-to-discard (:choices trace) (:choices (:trace result)))))
 
   p/IRegenerate
   (regenerate [this trace selection]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          old-score (:score trace)
-          result
-          (cond
-            ;; L3.5: auto-analytical regenerate — only when trace has marginal scoring.
-            ;; Case A (prior selected): handler returns nil, falls through to base
-            ;; Case B (prior NOT selected): replays old value with marginal LL
-            ;; Traces from simulate have joint LL (no ::score-type), so they fall
-            ;; through to the standard handler, preserving weight = 0 for empty selection.
-            (and (:auto-regenerate-transition schema)
-                 (= :marginal (::score-type (meta trace))))
-            (run-regen-analytical schema this trace key selection old-score body-fn this)
-
-            ;; L1: fully compiled regenerate (M2/M4)
-            (:compiled-regenerate schema)
-            (run-regen-compiled (:compiled-regenerate schema) this trace key selection old-score)
-
-            ;; L1-M3: prefix regenerate + replay handler
-            (:compiled-prefix-regenerate schema)
-            (run-regen-prefix (:compiled-prefix-regenerate schema) this trace key selection old-score body-fn this)
-
-            ;; L0: handler fallback
-            :else
-            (run-regen-handler this trace key selection old-score body-fn this))]
+          result (@dispatch-fn this :regenerate (:args trace) key
+                   {:trace trace :selection selection})]
       (mx/gfi-cleanup!)
       result))
 
@@ -558,28 +553,7 @@
   (assess [this args choices]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result
-          (cond
-            ;; L3.5: auto-analytical assess — only when prior is free (e.g., partial assess).
-            ;; In standard assess (all choices provided), prior is constrained,
-            ;; so analytical-applicable? returns false → handler fallback → joint LL.
-            ;; This preserves the GFI identity: simulate.score == assess(choices).weight
-            (analytical-applicable? schema choices)
-            (run-assess-analytical schema this args key choices body-fn this)
-
-            ;; L1: fully compiled assess (M2/M4)
-            (:compiled-assess schema)
-            (let [r ((:compiled-assess schema) (vec args) choices)]
-              {:retval (:retval r)
-               :weight (:score r)})
-
-            ;; L1-M3: prefix assess + replay
-            (:compiled-prefix-assess schema)
-            (run-assess-prefix (:compiled-prefix-assess schema) this args key choices body-fn this)
-
-            ;; L0: handler fallback
-            :else
-            (run-assess-handler this args key choices body-fn this))]
+          result (@dispatch-fn this :assess args key {:constraints choices})]
       (mx/gfi-cleanup!)
       result))
 
@@ -587,33 +561,16 @@
   (propose [this args]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result (rt/run-handler h/simulate-transition
-                                 {:choices cm/EMPTY :score SCORE-ZERO :key key
-                                  :executor execute-sub
-                                  :param-store (::param-store (meta this))}
-                                 (fn [rt] (apply body-fn rt args)))]
+          result (@dispatch-fn this :propose args key {})]
       (mx/gfi-cleanup!)
-      {:choices (:choices result)
-       :weight (:score result)
-       :retval (:retval result)}))
+      result))
 
   p/IProject
   (project [this trace selection]
     (let [key (ensure-key this)
           _ (rng/seed! key)
-          result
-          (cond
-            ;; L1: fully compiled project (M2/M4)
-            (:compiled-project schema)
-            ((:compiled-project schema) (vec (:args trace)) (:choices trace) selection)
-
-            ;; L1-M3: prefix project + replay
-            (:compiled-prefix-project schema)
-            (run-project-prefix (:compiled-prefix-project schema) this trace key selection body-fn this)
-
-            ;; L0: handler fallback
-            :else
-            (run-project-handler this trace key selection body-fn this))]
+          result (@dispatch-fn this :project (:args trace) key
+                   {:trace trace :selection selection})]
       (mx/gfi-cleanup!)
       result)))
 
@@ -795,11 +752,9 @@
   (:retval (p/simulate (auto-key gf) (vec args))))
 
 ;; ---------------------------------------------------------------------------
-;; Direct-mode param access (outside gen bodies)
-;; ---------------------------------------------------------------------------
-
-;; ---------------------------------------------------------------------------
 ;; Vectorized execution (batched: N particles in one model run)
+;; These bypass the dispatcher stack by design — vectorized execution always
+;; uses batched handler transitions with [N]-shaped arrays via MLX broadcasting.
 ;; ---------------------------------------------------------------------------
 
 (defn vsimulate
@@ -810,11 +765,11 @@
   (let [key (rng/ensure-key key)
         _ (rng/seed! key)
         result (rt/run-handler h/batched-simulate-transition
-                 {:choices cm/EMPTY :score SCORE-ZERO
-                  :key key :batch-size n :batched? true
-                  :executor execute-sub
-                  :param-store (::param-store (meta gf))}
-                 (fn [rt] (apply (:body-fn gf) rt args)))]
+                               {:choices cm/EMPTY :score SCORE-ZERO
+                                :key key :batch-size n :batched? true
+                                :executor execute-sub
+                                :param-store (ps gf)}
+                               (fn [rt] (run-body gf rt args)))]
     (vec/->VectorizedTrace gf args (:choices result) (:score result)
                            (mx/zeros [n]) n (:retval result))))
 
@@ -828,12 +783,12 @@
   (let [key (rng/ensure-key key)
         _ (rng/seed! key)
         result (rt/run-handler h/batched-generate-transition
-                 {:choices cm/EMPTY :score SCORE-ZERO
-                  :weight SCORE-ZERO :key key
-                  :constraints constraints :batch-size n :batched? true
-                  :executor execute-sub
-                  :param-store (::param-store (meta gf))}
-                 (fn [rt] (apply (:body-fn gf) rt args)))]
+                               {:choices cm/EMPTY :score SCORE-ZERO
+                                :weight SCORE-ZERO :key key
+                                :constraints constraints :batch-size n :batched? true
+                                :executor execute-sub
+                                :param-store (ps gf)}
+                               (fn [rt] (run-body gf rt args)))]
     (vec/->VectorizedTrace gf args (:choices result) (:score result)
                            (:weight result) n (:retval result))))
 
@@ -853,8 +808,8 @@
                                 :discard cm/EMPTY
                                 :batch-size n :batched? true
                                 :executor execute-sub
-                                :param-store (::param-store (meta gf))}
-                               (fn [rt] (apply (:body-fn gf) rt (:args vtrace))))]
+                                :param-store (ps gf)}
+                               (fn [rt] (apply (bfn gf) rt (:args vtrace))))]
     {:vtrace (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
                                     (:score result) (:weight result)
                                     n (:retval result))
@@ -877,8 +832,8 @@
                                 :old-choices (:choices vtrace)
                                 :batch-size n :batched? true
                                 :executor execute-sub
-                                :param-store (::param-store (meta gf))}
-                               (fn [rt] (apply (:body-fn gf) rt (:args vtrace))))
+                                :param-store (ps gf)}
+                               (fn [rt] (apply (bfn gf) rt (:args vtrace))))
         new-score (:score result)
         proposal-ratio (:weight result)
         weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)]

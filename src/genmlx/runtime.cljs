@@ -30,6 +30,10 @@
 
 (def ^:private ZERO (mx/scalar 0.0))
 
+;; Validation hook atom. No-op by default.
+;; genmlx.dev/start! swaps this with a real validator.
+(defonce validate-fn (atom (fn [_schema-key _value _context])))
+
 (defn run-handler
   "Execute body-fn under a transition-based handler, returning final state map.
 
@@ -39,6 +43,7 @@
 
    The only mutable state is a volatile! created and consumed here."
   [transition init-state body-fn]
+  (@validate-fn :base-state init-state "run-handler init-state")
   (let [vol (volatile! init-state)
 
         ;; trace closure: sample/constrain at an address
@@ -72,7 +77,7 @@
                       sub-constraints (cm/get-submap (:constraints state) addr)
                       sub-old-choices (cm/get-submap (:old-choices state) addr)
                       sub-selection (when-let [s (:selection state)]
-                                     (sel/get-subselection s addr))
+                                      (sel/get-subselection s addr))
                       sub-body-fn (:body-fn gf)
                       ;; Choose transition + build init-state based on mode
                       [sub-transition sub-init-state]
@@ -111,11 +116,13 @@
                                        sub-init-state)
                       ;; Recursive call to run-handler
                       sub-result (run-handler sub-transition sub-init-state
-                                   (fn [rt] (apply sub-body-fn rt (vec args))))
+                                              (fn [rt] (apply sub-body-fn rt (vec args))))
                       ;; Merge into parent state
+                      _ (@validate-fn :sub-result sub-result
+                          (str "splice sub-result at " addr))
                       state' (-> state
-                               (assoc :key k1)
-                               (h/merge-sub-result addr sub-result))]
+                                 (assoc :key k1)
+                                 (h/merge-sub-result addr sub-result))]
                   (vreset! vol state')
                   (:retval sub-result))
 
@@ -141,15 +148,17 @@
                     sub-constraints (cm/get-submap (:constraints state) addr)
                     sub-old-choices (cm/get-submap (:old-choices state) addr)
                     sub-selection (when-let [s (:selection state)]
-                                   (sel/get-subselection s addr))
+                                    (sel/get-subselection s addr))
                     old-splice-score (get (:old-splice-scores state) addr)
                     sub-result ((:executor state) gf (vec args)
-                                 {:constraints sub-constraints
-                                  :old-choices sub-old-choices
-                                  :selection sub-selection
-                                  :key sk
-                                  :old-splice-score old-splice-score
-                                  :param-store (:param-store state)})]
+                                                  {:constraints sub-constraints
+                                                   :old-choices sub-old-choices
+                                                   :selection sub-selection
+                                                   :key sk
+                                                   :old-splice-score old-splice-score
+                                                   :param-store (:param-store state)})]
+                (@validate-fn :sub-result sub-result
+                  (str "executor sub-result at " addr))
                 (vswap! vol h/merge-sub-result addr sub-result)
                 (:retval sub-result)))))
 

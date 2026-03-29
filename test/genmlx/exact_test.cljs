@@ -3,7 +3,7 @@
    Phase 1: single-model enumeration, conditioning, post-processing.
    Phase 2: multi-agent theory-of-mind (Monty Hall, bernoulli trick, cross-verify).
    Phase 3: Exact combinator (splice, nested exact, caching).
-   Phase 4: ExactGF record (full GFI), mixed inference, ADEV."
+   Phase 4: enumerate (full GFI), mixed inference, ADEV."
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
@@ -517,13 +517,13 @@
                (js/Math.exp (mx/item (dc/dist-log-prob d (mx/scalar 0 mx/int32)))) 1e-5))
 
 ;; ===========================================================================
-;; Phase 4: ExactGF — Proper Generative Function
+;; Phase 4: enumerate — Full GFI via Handler Substitution
 ;; ===========================================================================
 
-(println "\n== Phase 4: ExactGF — Proper Generative Function ==\n")
+(println "\n== Phase 4: enumerate — Full GFI via Handler Substitution ==\n")
 
-;; -- Test 35: ExactGF simulate --
-(println "\n-- 35. ExactGF simulate --")
+;; -- Test 35: enumerate simulate --
+(println "\n-- 35. enumerate simulate --")
 (let [model (gen [] (trace :x (dist/weighted [0.2 0.5 0.3])))
       egf (exact/thinks model)
       trace (p/simulate egf [])]
@@ -534,8 +534,8 @@
     (check "simulate: retval shape [3]" (= [3] (mx/shape probs)))
     (check-close "simulate: P(x=1)" 0.5 (mx/item (mx/slice probs 1 2)) 1e-5)))
 
-;; -- Test 36: ExactGF generate --
-(println "\n-- 36. ExactGF generate --")
+;; -- Test 36: enumerate generate --
+(println "\n-- 36. enumerate generate --")
 (let [model (gen []
               (let [coin (trace :coin (dist/bernoulli 0.5))
                     p (mx/where coin (mx/scalar 0.9) (mx/scalar 0.1))
@@ -553,8 +553,8 @@
   (check-close "generate: score = log-ml"
                (mx/item weight) (mx/item (:score trace)) 1e-5))
 
-;; -- Test 37: ExactGF update --
-(println "\n-- 37. ExactGF update --")
+;; -- Test 37: enumerate update --
+(println "\n-- 37. enumerate update --")
 (let [model (gen []
               (let [coin (trace :coin (dist/bernoulli 0.5))
                     p (mx/where coin (mx/scalar 0.9) (mx/scalar 0.1))
@@ -573,8 +573,8 @@
   ;; Weight = delta log-ml = log(0.5) - log(0.5) = 0
   (check-close "update: weight = 0 (same log-ml)" 0.0 (mx/item weight) 1e-5))
 
-;; -- Test 38: ExactGF assess --
-(println "\n-- 38. ExactGF assess --")
+;; -- Test 38: enumerate assess --
+(println "\n-- 38. enumerate assess --")
 (let [model (gen []
               (let [coin (trace :coin (dist/bernoulli 0.5))
                     obs (trace :obs (dist/bernoulli (mx/where coin (mx/scalar 0.9) (mx/scalar 0.1))))]
@@ -586,21 +586,21 @@
   ;; P(coin=1, obs=1) = 0.5 * 0.9 = 0.45 → log ≈ -0.799
   (check-close "assess: log P(coin=1,obs=1)" (js/Math.log 0.45) (mx/item weight) 1e-4))
 
-;; -- Test 39: ExactGF via splice --
-(println "\n-- 39. ExactGF via splice --")
+;; -- Test 39: enumerate via splice --
+(println "\n-- 39. enumerate via splice --")
 (let [sub-model (gen [] (trace :coin (dist/bernoulli 0.7)))
       parent (gen []
                (let [probs (splice :agent (exact/thinks sub-model))]
                  probs))
       r (exact/exact-joint parent [] nil)]
   (mx/eval! (:retval r))
-  (check-close "ExactGF splice: P(coin=0)" 0.3
+  (check-close "enumerate splice: P(coin=0)" 0.3
                (mx/item (mx/slice (:retval r) 0 1)) 1e-5)
-  (check-close "ExactGF splice: P(coin=1)" 0.7
+  (check-close "enumerate splice: P(coin=1)" 0.7
                (mx/item (mx/slice (:retval r) 1 2)) 1e-5))
 
-;; -- Test 40: ExactGF matches Exact annotation --
-(println "\n-- 40. ExactGF matches Exact annotation --")
+;; -- Test 40: enumerate matches Exact annotation --
+(println "\n-- 40. enumerate matches Exact annotation --")
 (let [model (gen []
               (let [coin (trace :coin (dist/bernoulli 0.5))
                     p (mx/where coin (mx/scalar 0.9) (mx/scalar 0.1))
@@ -611,7 +611,7 @@
                      (splice :agent (exact/Exact model)))
       r-annot (exact/exact-joint parent-annot []
                 (cm/choicemap :agent (cm/choicemap :obs (mx/scalar 1))))
-      ;; Via ExactGF record
+      ;; Via enumerate
       parent-gf (gen []
                   (splice :agent (exact/thinks model)))
       r-gf (exact/exact-joint parent-gf []
@@ -620,10 +620,10 @@
   ;; Both should produce identical results
   (let [diff (mx/sum (mx/abs (mx/subtract (:retval r-annot) (:retval r-gf))))]
     (mx/eval! diff)
-    (check-close "ExactGF == Exact annotation" 0.0 (mx/item diff) 1e-5)))
+    (check-close "enumerate == Exact annotation" 0.0 (mx/item diff) 1e-5)))
 
-;; -- Test 41: Mixed inference (MCMC parent + ExactGF sub-model) --
-(println "\n-- 41. Mixed inference (MCMC + ExactGF) --")
+;; -- Test 41: Mixed inference (MCMC + enumerate) --
+(println "\n-- 41. Mixed inference (MCMC + enumerate) --")
 (let [;; Model: continuous mu + discrete agent (exactly marginalized)
       mixed (gen []
               (let [mu (trace :mu (dist/gaussian 0 5))
@@ -655,8 +655,8 @@
   ;; effective = mu + 1.2, obs = 5 → posterior mu ≈ 3.8
   (check-close "MCMC posterior mu near 3.8" 3.8 mean-mu 1.0))
 
-;; -- Test 42: Gradient descent through ExactGF (ADEV) --
-(println "\n-- 42. Gradient descent through ExactGF --")
+;; -- Test 42: Gradient descent through enumerate (ADEV) --
+(println "\n-- 42. Gradient descent through enumerate --")
 (let [;; RSA beta fitting: gradient descent on beta to match human data
       ;; Target: "green" → 64% green_circle (Qing & Franke)
       target-green (mx/array #js [0.36 0.64 0.0])

@@ -15,6 +15,8 @@
      (exact-joint model args observations)
      ;; => {:log-probs [2 2] tensor :axes [...] :retval ...}
 
+     (enumerate model)   ;; handler substitution — returns a GF with full GFI
+
    Constraints:
    - All free trace sites must have finite discrete support (dist-support)
    - Model must not use mx/item or scalar if/when on traced values
@@ -27,7 +29,8 @@
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.trace :as tr]
-            [genmlx.dist :as dist]))
+            [genmlx.dist :as dist]
+            [genmlx.dispatch :as dispatch]))
 
 ;; ---------------------------------------------------------------------------
 ;; Axis layout convention
@@ -107,14 +110,10 @@
 (defn Exact
   "Annotate a gen function for exact enumeration when spliced.
    Lightweight version — only works inside enumerate mode (run-enumerate).
-   For full GFI support, use ExactGF instead.
+   For full GFI support, use enumerate instead.
    Usage: (splice :agent (Exact agent-model) args)"
   [gf]
   (vary-meta gf assoc ::inference-strategy :exact))
-
-;; ---------------------------------------------------------------------------
-;; ExactGF — proper generative function with full GFI
-;; ---------------------------------------------------------------------------
 
 (declare run-enumerate)
 
@@ -134,59 +133,72 @@
     (mx/eval! probs log-ml)
     {:probs probs :log-ml log-ml :retval (:retval result) :axes axes}))
 
-(defrecord ExactGF [kernel]
-  ;; ExactGF is a "collapsed" generative function: all discrete latent
-  ;; variables are analytically marginalized via exact tensor enumeration.
-  ;; Traces have empty choices (no random choices remain after marginalization).
-  ;;
-  ;; Score convention: generate sets score = log-ml (marginal likelihood of
-  ;; constrained sites). This overloads the standard score = log P(choices)
-  ;; convention, but is necessary for correct weight propagation when
-  ;; ExactGF is spliced into a parent model via merge-sub-result.
+;; ---------------------------------------------------------------------------
+;; enumerate — handler substitution for exact enumeration
+;; ---------------------------------------------------------------------------
 
-  p/IGenerativeFunction
-  (simulate [this args]
-    (let [{:keys [probs]} (enumerate-and-normalize kernel args nil)]
-      (tr/make-trace {:gen-fn this :args (vec args) :choices cm/EMPTY
-                      :retval probs :score (mx/scalar 0.0)})))
+(defn- enumerate-run
+  "Run function for the enumerate dispatcher. Handles all GFI ops by running
+   the model with enumerate-transition and post-processing the result.
+   Replaces the former ExactGF record with dispatch-based execution.
+   Called as (enumerate-run op gf args key opts) by custom-transition-dispatcher."
+  [op gf args key {:keys [constraints trace selection]}]
+  (case op
+    :simulate
+    (let [{:keys [probs]} (enumerate-and-normalize gf args nil)]
+      (tr/make-trace {:gen-fn gf :args (vec args) :choices cm/EMPTY
+                      :retval probs :score (mx/scalar 0.0)}))
 
-  p/IGenerate
-  (generate [this args constraints]
-    (let [{:keys [probs log-ml]} (enumerate-and-normalize kernel args constraints)]
-      {:trace (tr/make-trace {:gen-fn this :args (vec args) :choices cm/EMPTY
+    :generate
+    (let [{:keys [probs log-ml]} (enumerate-and-normalize gf args constraints)]
+      {:trace (tr/make-trace {:gen-fn gf :args (vec args) :choices cm/EMPTY
                               :retval probs :score log-ml})
-       :weight log-ml}))
+       :weight log-ml})
 
-  p/IUpdate
-  (update [this trace new-constraints]
+    :update
     (let [old-score (:score trace)
-          {:keys [trace weight]} (p/generate this (:args trace) new-constraints)]
-      {:trace trace
-       :weight (mx/subtract weight old-score)
-       :discard cm/EMPTY}))
+          {:keys [probs log-ml]} (enumerate-and-normalize gf (:args trace) constraints)]
+      {:trace (tr/make-trace {:gen-fn gf :args (:args trace) :choices cm/EMPTY
+                              :retval probs :score log-ml})
+       :weight (mx/subtract log-ml old-score)
+       :discard cm/EMPTY})
 
-  p/IRegenerate
-  (regenerate [this trace selection]
-    ;; No random choices to resample. Re-enumerate to ensure retval is
-    ;; valid (kernel params may depend on changed parent values).
-    ;; Weight = 0 because no stochastic choices changed.
-    (let [{:keys [probs]} (enumerate-and-normalize kernel (:args trace) nil)]
-      {:trace (tr/make-trace {:gen-fn this :args (:args trace) :choices cm/EMPTY
+    :regenerate
+    (let [{:keys [probs]} (enumerate-and-normalize gf (:args trace) nil)]
+      {:trace (tr/make-trace {:gen-fn gf :args (:args trace) :choices cm/EMPTY
                               :retval probs :score (mx/scalar 0.0)})
-       :weight (mx/scalar 0.0)}))
+       :weight (mx/scalar 0.0)})
 
-  p/IProject
-  (project [this trace selection]
-    ;; No choices to project — log-prob of empty selection is 0.
-    (mx/scalar 0.0))
-
-  p/IAssess
-  (assess [this args choices]
-    (let [gf (dyn/auto-key kernel)
-          result (run-enumerate gf args choices)
+    :assess
+    (let [result (run-enumerate (dyn/auto-key gf) args constraints)
           score (:score result)]
       (mx/eval! score)
-      {:retval (:retval result) :weight score})))
+      {:retval (:retval result) :weight score})
+
+    :propose
+    (let [{:keys [probs]} (enumerate-and-normalize gf args nil)]
+      {:choices cm/EMPTY
+       :weight (mx/scalar 0.0)
+       :retval probs})
+
+    :project
+    (mx/scalar 0.0)
+
+    (throw (ex-info (str "enumerate: unsupported op " op) {:op op}))))
+
+(defn enumerate
+  "Wrap a gen function for exact enumeration via handler substitution.
+   Returns a DynamicGF that implements the full GFI by running the model
+   with enumerate-transition — all discrete latent variables are analytically
+   marginalized. Traces have empty choices; score is the marginal likelihood.
+
+   Usage:
+     (p/simulate (enumerate model) args)
+     (p/generate (enumerate model) args observations)
+     (splice :agent (enumerate agent-model) args)"
+  [gf]
+  (dispatch/with-dispatch (dyn/auto-key gf)
+    (with-meta enumerate-run {:score-type :collapsed})))
 
 (defn categorical-argmax
   "Categorical distribution that deterministically picks the argmax.
@@ -216,7 +228,6 @@
   "Clear the cache on a with-cache wrapped function."
   [f]
   (when-let [cache (::cache (meta f))] (reset! cache {})))
-
 
 (defn- execute-exact
   "Execute a sub-GF in exact enumerate mode. Returns result map compatible
@@ -263,15 +274,15 @@
 
 (defn- enumerate-executor
   "Executor for splice calls within enumerate mode. Dispatches on sub-GF
-   metadata: ::inference-strategy :exact uses exact enumeration, otherwise
-   falls back to standard GFI dispatch."
+   metadata: ::inference-strategy :exact or ::dispatch/custom-dispatch
+   uses exact enumeration, otherwise falls back to standard GFI dispatch."
   [gf args opts]
   (cond
-    ;; ExactGF record: extract kernel, enumerate it
-    (instance? ExactGF gf)
-    (execute-exact (:kernel gf) args opts)
-    ;; Exact metadata annotation
+    ;; Exact metadata annotation (lightweight, inside enumerate mode)
     (= :exact (::inference-strategy (meta gf)))
+    (execute-exact gf args opts)
+    ;; enumerate-wrapped model (via dispatch/with-dispatch)
+    (::dispatch/custom-dispatch (meta gf))
     (execute-exact gf args opts)
     ;; Default: standard GFI dispatch
     :else
@@ -306,7 +317,7 @@
               :ndim 0
               :executor enumerate-executor}
         result (rt/run-handler enumerate-transition init
-                 (fn [runtime] (apply body-fn runtime args)))]
+                               (fn [runtime] (apply body-fn runtime args)))]
     ;; No mx/eval! here — keep the graph lazy.
     ;; Evaluate at API boundaries (exact-posterior, exact-joint, etc.)
     result))
@@ -450,8 +461,8 @@
         ;; Find support index matching value
         value-num (if (mx/array? value) (mx/item value) value)
         idx (first (keep-indexed
-                     (fn [i sv] (when (= (mx/item sv) value-num) i))
-                     (:support target)))
+                    (fn [i sv] (when (= (mx/item sv) value-num) i))
+                    (:support target)))
         _ (when (nil? idx)
             (throw (ex-info (str "condition-on: value " value-num " not in support")
                             {:addr addr :value value-num
@@ -465,11 +476,11 @@
         target-dim (:dim target)
         new-axes (into []
                        (comp
-                         (remove #(= (:addr %) addr))
-                         (map (fn [ax]
-                                (if (> (:dim ax) target-dim)
-                                  (update ax :dim dec)
-                                  ax))))
+                        (remove #(= (:addr %) addr))
+                        (map (fn [ax]
+                               (if (> (:dim ax) target-dim)
+                                 (update ax :dim dec)
+                                 ax))))
                        axes)]
     {:log-probs normalized :axes new-axes}))
 
@@ -646,7 +657,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn thinks
-  "Wrap a gen function as ExactGF — one agent modeling another.
+  "Wrap a gen function for exact enumeration — one agent modeling another.
    Use with splice inside a gen body:
 
      (gen []
@@ -656,7 +667,7 @@
    Reads as: this agent THINKS about the belief-model, getting back
    the exact probability table over all the model's discrete choices."
   [model]
-  (->ExactGF model))
+  (enumerate model))
 
 (defn observes
   "Observe a discrete choice and get the posterior.
@@ -717,8 +728,8 @@
   (let [joint (exact-joint model [] nil)
         lp (:log-probs joint)
         ax (:axes joint)
-        h-a  (entropy lp ax addr-set-a)
-        h-b  (entropy lp ax addr-set-b)
+        h-a (entropy lp ax addr-set-a)
+        h-b (entropy lp ax addr-set-b)
         h-ab (entropy lp ax (into addr-set-a addr-set-b))
         mi (mx/subtract (mx/add h-a h-b) h-ab)
         _ (mx/eval! mi)]

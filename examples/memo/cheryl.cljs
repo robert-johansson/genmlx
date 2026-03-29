@@ -353,7 +353,7 @@
   (println (str "\nexact/pr: P(April | day 30) = " (.toFixed p 4)))
   (assert (> p 0.3) (str "Expected P(April|day30) > 0.3, got " p)))
 
-;; exact/thinks: Alice splices an ExactGF to reason about the birthday
+;; exact/thinks: Alice splices an enumerate-wrapped GF to reason about the birthday
 (let [alice-reasons (gen []
                       (let [probs (splice :world (exact/thinks birthday-model))]
                         probs))
