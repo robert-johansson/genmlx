@@ -57,7 +57,7 @@ The `mu/merge` composition mirrors the code: generate-state is simulate-state pl
 
 ## 2. Sub-Result Shape
 
-`merge-sub-result` (`handler.cljs:260`) merges a sub-generative-function's result into the parent state. It is the most fragile junction in GenMLX. Different execution paths produce slightly different shapes: ExactGF returns `{:choices cm/EMPTY :score log-ml :retval probs}`, standard `execute-sub` returns `{:choices ... :score ... :retval ... :weight ...}`, compiled paths return `{:values ... :score ... :retval ...}`.
+`merge-sub-result` (`handler.cljs:260`) merges a sub-generative-function's result into the parent state. It is the most fragile junction in GenMLX. Different execution paths produce slightly different shapes: enumerate-wrapped GFs return `{:choices cm/EMPTY :score log-ml :retval probs}`, standard `execute-sub` returns `{:choices ... :score ... :retval ... :weight ...}`, compiled paths return `{:values ... :score ... :retval ...}`.
 
 If a new domain integration returns a map missing `:score`, `merge-sub-result` calls `(mx/add sc nil)` and crashes deep in MLX with an opaque error.
 

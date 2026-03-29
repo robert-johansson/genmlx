@@ -1,7 +1,8 @@
 (ns genmlx.inspect
   "Model introspection — reports compilation, conjugacy, and dispatch
-   resolution for any generative function. Pure read, no execution."
-  (:require [genmlx.dispatch :as dispatch]))
+   resolution for any generative function. Pure read, no execution.
+   Uses the actual dispatcher stack via dyn/resolve-dispatch."
+  (:require [genmlx.dynamic :as dyn]))
 
 (def ^:private ops
   [:simulate :generate :update :regenerate :assess :project :propose])
@@ -25,16 +26,11 @@
       has-prefix?                                  :L1-M3
       :else                                        :L0)))
 
-(defn- resolve-dispatch [schema gf-meta]
-  (let [custom? (some? (::dispatch/custom-transition gf-meta))]
-    (into {}
-      (map (fn [op]
-             [op (cond
-                   custom?                                :custom
-                   (get schema (compiled-schema-keys op)) :compiled
-                   (get schema (prefix-schema-keys op))   :prefix
-                   :else                                  :handler)])
-           ops))))
+(defn- resolve-dispatch [gf]
+  (into {}
+    (map (fn [op]
+           [op (:label (dyn/resolve-dispatch gf op))])
+         ops)))
 
 (defn inspect
   "Return a structured report of a generative function's compilation
@@ -48,7 +44,7 @@
          :classification (select-keys schema [:static? :has-branches? :has-loops?
                                               :dynamic-addresses?])
          :compilation    (compilation-level schema)
-         :dispatch       (resolve-dispatch schema (meta gf))}
+         :dispatch       (resolve-dispatch gf)}
 
         (:has-conjugate? schema)
         (assoc :conjugacy {:pairs (mapv #(select-keys % [:prior-addr :obs-addr :family

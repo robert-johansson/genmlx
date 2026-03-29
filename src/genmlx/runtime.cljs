@@ -115,6 +115,8 @@
                       sub-result (run-handler sub-transition sub-init-state
                                               (fn [rt] (apply sub-body-fn rt (vec args))))
                       ;; Merge into parent state
+                      _ (schemas/validated schemas/SubResult sub-result
+                          (str "splice sub-result at " addr))
                       state' (-> state
                                  (assoc :key k1)
                                  (h/merge-sub-result addr sub-result))]
@@ -152,6 +154,8 @@
                                                    :key sk
                                                    :old-splice-score old-splice-score
                                                    :param-store (:param-store state)})]
+                (schemas/validated schemas/SubResult sub-result
+                  (str "executor sub-result at " addr))
                 (vswap! vol h/merge-sub-result addr sub-result)
                 (:retval sub-result)))))
 

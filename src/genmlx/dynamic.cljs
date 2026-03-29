@@ -122,17 +122,21 @@
 (defn- bfn [gf] (:body-fn gf))
 (defn- run-body [gf rt args] (apply (bfn gf) rt args))
 
-;; -- L0: Handler path --
+;; -- Transition-parameterized handler execution --
+;;
+;; Each function takes [transition gf args key opts] and runs the model
+;; body through run-handler with the given transition. The handler-table
+;; partially applies standard transitions; with-handler uses custom ones.
 
-(defn- run-simulate-handler [gf args key opts]
-  (let [result (rt/run-handler h/simulate-transition
+(defn- run-simulate [transition gf args key _opts]
+  (let [result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :key key
                   :executor execute-sub :param-store (ps gf)}
                  (fn [rt] (run-body gf rt args)))]
     (attach-splice-scores (make-result-trace gf args result) result)))
 
-(defn- run-generate-handler [gf args key {:keys [constraints]}]
-  (let [result (rt/run-handler h/generate-transition
+(defn- run-generate [transition gf args key {:keys [constraints]}]
+  (let [result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
                   :key key :constraints constraints
                   :executor execute-sub :param-store (ps gf)}
@@ -140,8 +144,8 @@
         trace (make-result-trace gf args result)]
     (make-generate-result trace (:weight result) constraints (:choices result) result)))
 
-(defn- run-update-handler [gf args key {:keys [trace constraints]}]
-  (let [result (rt/run-handler h/update-transition
+(defn- run-update [transition gf _args key {:keys [trace constraints]}]
+  (let [result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
                   :key key :constraints constraints
                   :old-choices (:choices trace)
@@ -154,9 +158,9 @@
       (mx/subtract (:score result) (:score trace))
       (:discard result) constraints (:choices result) result)))
 
-(defn- run-regen-handler [gf args key {:keys [trace selection]}]
+(defn- run-regen [transition gf _args key {:keys [trace selection]}]
   (let [old-score (:score trace)
-        result (rt/run-handler h/regenerate-transition
+        result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
                   :key key :selection selection
                   :old-choices (:choices trace)
@@ -165,16 +169,16 @@
                  (fn [rt] (run-body gf rt (:args trace))))]
     (make-regen-result gf trace result old-score)))
 
-(defn- run-assess-handler [gf args key {:keys [constraints]}]
-  (let [result (rt/run-handler h/assess-transition
+(defn- run-assess [transition gf args key {:keys [constraints]}]
+  (let [result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
                   :key key :constraints constraints
                   :executor execute-sub-assess :param-store (ps gf)}
                  (fn [rt] (run-body gf rt args)))]
     {:retval (:retval result) :weight (:score result)}))
 
-(defn- run-project-handler [gf args key {:keys [trace selection]}]
-  (let [result (rt/run-handler h/project-transition
+(defn- run-project [transition gf _args key {:keys [trace selection]}]
+  (let [result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
                   :key key :selection selection
                   :old-choices (:choices trace)
@@ -183,8 +187,8 @@
                  (fn [rt] (run-body gf rt (:args trace))))]
     (:weight result)))
 
-(defn- run-propose-handler [gf args key opts]
-  (let [result (rt/run-handler h/simulate-transition
+(defn- run-propose [transition gf args key _opts]
+  (let [result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :key key
                   :executor execute-sub :param-store (ps gf)}
                  (fn [rt] (run-body gf rt args)))]
@@ -194,7 +198,7 @@
 
 ;; -- L1-M2: Compiled path --
 
-(defn- run-simulate-compiled [gf args key opts]
+(defn- run-simulate-compiled [gf args key _opts]
   (let [cfn (:compiled-simulate (:schema gf))
         result (cfn key (vec args))]
     (tr/make-trace {:gen-fn gf :args args
@@ -209,7 +213,7 @@
                             :retval (:retval result) :score (:score result)})
      :weight (:weight result)}))
 
-(defn- run-update-compiled [gf args key {:keys [trace constraints]}]
+(defn- run-update-compiled [gf _args key {:keys [trace constraints]}]
   (let [cfn (:compiled-update (:schema gf))
         result (cfn key (vec (:args trace)) constraints (:choices trace))]
     {:trace (tr/make-trace {:gen-fn gf :args (:args trace)
@@ -218,7 +222,7 @@
      :weight (mx/subtract (:score result) (:score trace))
      :discard (cm/from-flat-map (:discard result))}))
 
-(defn- run-regen-compiled [gf args key {:keys [trace selection]}]
+(defn- run-regen-compiled [gf _args key {:keys [trace selection]}]
   (let [cfn (:compiled-regenerate (:schema gf))
         old-score (:score trace)
         result (cfn key (vec (:args trace)) (:choices trace) selection)
@@ -233,13 +237,13 @@
         r (cfn (vec args) constraints)]
     {:retval (:retval r) :weight (:score r)}))
 
-(defn- run-project-compiled [gf args key {:keys [trace selection]}]
+(defn- run-project-compiled [gf _args key {:keys [trace selection]}]
   (let [cfn (:compiled-project (:schema gf))]
     (cfn (vec (:args trace)) (:choices trace) selection)))
 
 ;; -- L1-M3: Prefix compiled path --
 
-(defn- run-simulate-prefix [gf args key opts]
+(defn- run-simulate-prefix [gf args key _opts]
   (let [pfx (:compiled-prefix (:schema gf))
         result (pfx key (vec args))
         replay (compiled/make-replay-simulate-transition (:values result))
@@ -262,7 +266,7 @@
     (make-generate-result trace (:weight handler-result) constraints
                           (:choices handler-result) handler-result)))
 
-(defn- run-update-prefix [gf args key {:keys [trace constraints]}]
+(defn- run-update-prefix [gf _args key {:keys [trace constraints]}]
   (let [pfx (:compiled-prefix-update (:schema gf))
         result (pfx key (vec (:args trace)) constraints (:choices trace))
         replay (cops/make-replay-update-transition (:values result))
@@ -277,7 +281,7 @@
       (mx/subtract (:score handler-result) (:score trace))
       (:discard handler-result) constraints (:choices handler-result) handler-result)))
 
-(defn- run-regen-prefix [gf args key {:keys [trace selection]}]
+(defn- run-regen-prefix [gf _args key {:keys [trace selection]}]
   (let [pfx (:compiled-prefix-regenerate (:schema gf))
         old-score (:score trace)
         result (pfx key (vec (:args trace)) (:choices trace) selection)
@@ -340,7 +344,7 @@
                  (fn [rt] (run-body gf rt args)))]
     {:retval (:retval result) :weight (:score result)}))
 
-(defn- run-regen-analytical [gf args key {:keys [trace selection]}]
+(defn- run-regen-analytical [gf _args key {:keys [trace selection]}]
   (let [schema (:schema gf)
         old-score (:score trace)
         result (rt/run-handler (:auto-regenerate-transition schema)
@@ -378,11 +382,27 @@
 ;; Dispatchers — lookup tables mapping op → run-fn
 ;; ---------------------------------------------------------------------------
 
+;; Transition-parameterized table: maps op to the generic run-* function.
+;; Used by handler-dispatcher (with standard transitions) and
+;; custom-transition-dispatcher (with the user-supplied transition).
+(def ^:private transition-run-fns
+  {:simulate run-simulate, :generate run-generate
+   :update run-update,     :regenerate run-regen
+   :assess run-assess,     :project run-project
+   :propose run-propose})
+
+;; Standard handler transitions per op.
+(def ^:private standard-transitions
+  {:simulate h/simulate-transition, :generate h/generate-transition
+   :update h/update-transition,     :regenerate h/regenerate-transition
+   :assess h/assess-transition,     :project h/project-transition
+   :propose h/simulate-transition})
+
+;; Handler table: each entry is (partial run-* standard-transition).
 (def ^:private handler-table
-  {:simulate run-simulate-handler, :generate run-generate-handler
-   :update run-update-handler,     :regenerate run-regen-handler
-   :assess run-assess-handler,     :project run-project-handler
-   :propose run-propose-handler})
+  (into {} (map (fn [[op run-fn]]
+                  [op (partial run-fn (get standard-transitions op))]))
+        transition-run-fns))
 
 (def ^:private compiled-table
   {:simulate run-simulate-compiled, :generate run-generate-compiled
@@ -409,12 +429,27 @@
    :update :compiled-prefix-update,         :regenerate :compiled-prefix-regenerate
    :assess :compiled-prefix-assess,         :project :compiled-prefix-project})
 
-(def ^:private custom-transition-dispatcher
+(def ^:private custom-dispatcher
+  "Handles both with-handler (transition substitution) and with-dispatch
+   (full dispatch override). Checks ::custom-dispatch first, then
+   ::custom-transition."
   (reify dispatch/IDispatcher
-    (resolve-transition [_ op schema opts]
-      (when-let [t (::dispatch/custom-transition (meta (:gf opts)))]
-        {:run (fn [gf args key opts] (t op gf args key opts))
-         :score-type (or (:score-type (meta t)) :joint)}))))
+    (resolve-transition [_ op _schema opts]
+      (let [gf-meta (meta (:gf opts))]
+        (cond
+          ;; Full dispatch override: (fn [op gf args key opts] -> result)
+          (::dispatch/custom-dispatch gf-meta)
+          (let [df (::dispatch/custom-dispatch gf-meta)]
+            {:run (fn [gf args key opts] (df op gf args key opts))
+             :score-type (or (:score-type (meta df)) :joint)
+             :label :custom})
+
+          ;; Transition substitution: (fn [state addr dist] -> [value state'])
+          (::dispatch/custom-transition gf-meta)
+          (let [t (::dispatch/custom-transition gf-meta)]
+            {:run (partial (get transition-run-fns op) t)
+             :score-type (or (:score-type (meta t)) :joint)
+             :label :custom}))))))
 
 (def ^:private analytical-dispatcher
   (reify dispatch/IDispatcher
@@ -426,41 +461,47 @@
                      (:auto-handlers schema)
                      (auto-analytical/some-conjugate-obs-constrained?
                        (:conjugate-pairs schema) (:constraints opts)))
-            {:run run-fn :score-type :marginal})
+            {:run run-fn :score-type :marginal :label :analytical})
 
           :regenerate
           (when (and (:auto-regenerate-transition schema)
                      (= :marginal (::score-type (meta (:trace opts)))))
-            {:run run-fn :score-type :marginal})
+            {:run run-fn :score-type :marginal :label :analytical})
 
           nil)))))
 
 (def ^:private compiled-dispatcher
   (reify dispatch/IDispatcher
-    (resolve-transition [_ op schema opts]
+    (resolve-transition [_ op schema _opts]
       (cond
         (get schema (get compiled-keys op))
-        {:run (get compiled-table op) :score-type :joint}
+        {:run (get compiled-table op) :score-type :joint :label :compiled}
 
         (get schema (get prefix-keys op))
-        {:run (get prefix-table op) :score-type :joint}))))
+        {:run (get prefix-table op) :score-type :joint :label :prefix}))))
 
 (def ^:private handler-dispatcher
   (reify dispatch/IDispatcher
     (resolve-transition [_ op _ _]
-      {:run (get handler-table op) :score-type :joint})))
+      {:run (get handler-table op) :score-type :joint :label :handler})))
 
 (def ^:private default-dispatcher-stack
-  [custom-transition-dispatcher
+  [custom-dispatcher
    analytical-dispatcher
    compiled-dispatcher
    handler-dispatcher])
 
 (defn- run-dispatched [gf op args key opts]
   (let [spec (dispatch/resolve default-dispatcher-stack op (:schema gf)
-               (assoc opts :gf gf))
-        result ((:run spec) gf args key opts)]
-    result))
+               (assoc opts :gf gf))]
+    (assert spec (str "No dispatcher resolved for op " op))
+    ((:run spec) gf args key opts)))
+
+(defn resolve-dispatch
+  "Resolve the dispatch spec for a GFI operation on gf.
+   Returns {:run fn :score-type kw :label kw}. Used by inspect."
+  [gf op]
+  (dispatch/resolve default-dispatcher-stack op (:schema gf) {:gf gf}))
 
 ;; ---------------------------------------------------------------------------
 ;; DynamicGF record — GFI protocol implementations

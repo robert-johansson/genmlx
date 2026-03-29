@@ -52,12 +52,32 @@
 ;; ---------------------------------------------------------------------------
 
 (defn with-handler
-  "Attach a custom transition to a generative function via metadata.
-   The CustomTransitionDispatcher checks for ::custom-transition in
-   the gen-fn's metadata and uses it if present.
+  "Attach a custom handler transition to a generative function via metadata.
+   The transition has the standard handler signature:
+
+       (fn [state addr dist] -> [value state'])
+
+   The dispatcher wraps it into run-handler with the correct init-state
+   per GFI operation. Use this for domain-specific execution strategies
+   that fit the standard handler state shape (grammar constraints,
+   custom proposals, etc.).
 
    Usage:
-     (with-handler model enumerate-transition)
-     (with-handler llm (wrap-grammar base-transition grammar))"
+     (with-handler llm (wrap-grammar generate-transition grammar))
+     (with-handler model (wrap-analytical generate-transition conjugacy-map))"
   [gf transition]
   (vary-meta gf assoc ::custom-transition transition))
+
+(defn with-dispatch
+  "Attach a custom dispatch function to a generative function via metadata.
+   The dispatch function has signature:
+
+       (fn [op gf args key opts] -> gfi-result)
+
+   where op is :simulate|:generate|:update|:regenerate|:assess|:project|:propose.
+   Use this for execution modes that need custom init-state or post-processing
+   per operation (e.g., exact enumeration).
+
+   Prefer with-handler when a transition substitution suffices."
+  [gf dispatch-fn]
+  (vary-meta gf assoc ::custom-dispatch dispatch-fn))

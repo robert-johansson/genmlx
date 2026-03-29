@@ -50,7 +50,7 @@
 ;; Offerer model — reasons about receiver via thinks
 ;; ---------------------------------------------------------------------------
 ;; The offerer THINKS about the receiver's response for each candidate
-;; proposal. exact/thinks wraps the receiver as an ExactGF, returning
+;; proposal. exact/thinks wraps the receiver for exact enumeration, returning
 ;; the full probability table. exact/pr extracts P(dec=0) = P(accept).
 ;;
 ;; Expected utility:
@@ -86,7 +86,7 @@
 ;; ---------------------------------------------------------------------------
 ;; This version uses splice + exact/thinks directly inside the gen body,
 ;; which is the idiomatic GenMLX pattern for theory-of-mind reasoning.
-;; The offerer's gen body splices each receiver sub-model as an ExactGF.
+;; The offerer's gen body splices each receiver sub-model via exact enumeration.
 
 (def offerer-thinks
   (let [receivers (mapv (fn [i] (exact/thinks (make-receiver (mx/squeeze (mx/idx proposals i)))))
@@ -95,7 +95,7 @@
       (let [;; Think about receiver's response for each proposal
             eus (mx/stack
                   (mapv (fn [i]
-                          (let [;; splice the ExactGF — returns [P(accept), P(reject)]
+                          (let [;; splice the enumerate-wrapped GF — returns [P(accept), P(reject)]
                                 recv-probs (splice (keyword (str "recv" i))
                                                    (nth receivers i))
                                 p-accept (mx/squeeze (mx/idx recv-probs 0))

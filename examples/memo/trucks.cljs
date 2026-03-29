@@ -299,7 +299,7 @@
   (println (str "  P(Lebanese| right) = " (.toFixed p-l-right 4)))
   (println (str "  P(Lebanese| left)  = " (.toFixed p-l-left 4))))
 
-;; exact/thinks: observer splices student model as ExactGF
+;; exact/thinks: observer splices student model via exact enumeration
 (println "\n-- exact/thinks: observer reasons about student --")
 (let [obs-model (vary-meta
                   (gen []
@@ -309,7 +309,7 @@
       tr (p/simulate obs-model [])
       retval (:retval tr)]
   (mx/eval! retval)
-  (println (str "  ExactGF retval shape: " (vec (mx/shape retval))))
+  (println (str "  enumerate retval shape: " (vec (mx/shape retval))))
   (println "  (Joint probability table over student's discrete choices)"))
 
 ;; =========================================================================

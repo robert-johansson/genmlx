@@ -234,7 +234,7 @@
 ;; exact/thinks: wrap world model for exact enumeration via handler substitution
 (let [world-gf (exact/thinks (world-model-1 1))]
   (check "exact/thinks produces enumerate-wrapped GF"
-         (some? (:genmlx.dispatch/custom-transition (meta world-gf)))))
+         (some? (:genmlx.dispatch/custom-dispatch (meta world-gf)))))
 
 ;; exact/observes: P(box1-fs | e1=1) for NOISES — should match exact/pr
 (let [posterior (exact/observes (world-model-1 1) :e1 1 :box1-fs)

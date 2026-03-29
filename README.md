@@ -240,7 +240,7 @@ Aliases: `normal` → `gaussian`, `flip` → `bernoulli`
 - **Kalman Filter** — handler middleware for linear-Gaussian SSMs, sequential updates, exact marginal LL
 - **Extended Kalman Filter** — nonlinear SSMs via auto-diff linearization (1D and N-dimensional)
 - **HMM Forward Algorithm** — discrete latent state-space models, exact marginal likelihood
-- **Exact Enumeration** — `ExactGF` record with full GFI (simulate, generate, update, regenerate, assess, project); discrete latent variables with finite support
+- **Exact Enumeration** — Exact enumeration via `enumerate` with full GFI (simulate, generate, update, regenerate, assess, project); discrete latent variables with finite support
 - **Fisher Information** — `observed-fisher` (Fisher information matrix, Cramer-Rao bounds)
 - **Differentiable Inference** — differentiable resampling, differentiable importance sampling
 - **Compiled Optimization** — `mx/compile-fn` + Adam, 9.2x speedup over handler loops

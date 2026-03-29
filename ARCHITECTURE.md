@@ -6,6 +6,8 @@
 
 # Part I -- The Protocol
 
+> **Status: IMPLEMENTED** -- Parts I-III and V describe the current GenMLX architecture as built.
+
 A probabilistic programming system needs a contract. Not a set of library functions, not an API surface area, but a *mathematical contract* that specifies exactly what operations are available on probabilistic computations, what guarantees they provide, and what callers may assume. The Generative Function Interface (GFI) is that contract.
 
 The GFI was formalized by Cusumano-Towner in the Gen probabilistic programming framework. GenMLX implements it faithfully in ClojureScript, with one additional constraint: all numerical values are MLX arrays that remain on the GPU throughout the protocol boundary. The protocol is the same; the substrate is different.
@@ -319,21 +321,18 @@ This middleware approach extends to any domain-specific execution strategy. A gr
 
 ## 2.4 Handler Substitution
 
-GenMLX provides a mechanism for attaching a custom transition to any generative function: metadata annotation.
+GenMLX provides two mechanisms for attaching custom execution to a generative function, both via metadata annotation.
+
+**Transition substitution** replaces the handler transition while keeping the standard handler machinery (init-state construction, result packaging, `run-handler` orchestration):
 
 ```clojure
 (defn with-handler [gf transition]
   (vary-meta gf assoc ::custom-transition transition))
 ```
 
-`vary-meta` attaches metadata to a value without changing its identity or behavior. The generative function remains a `DynamicGF` record. Its `body-fn`, `source`, and `schema` are untouched. But when the GFI dispatch encounters `::custom-transition` in the metadata, it uses the custom transition instead of the default.
-
-The same mechanism enables all domain-specific execution modes:
+The transition has the standard handler signature `(fn [state addr dist] -> [value state'])`. The dispatcher wraps it into `run-handler` with the correct init-state per GFI operation. This is the common case for domain-specific execution strategies:
 
 ```clojure
-;; Exact enumeration
-(def exact-model (with-handler model enumerate-transition))
-
 ;; Grammar-constrained decoding
 (def constrained-llm
   (with-handler llm (wrap-grammar generate-transition json-schema)))
@@ -343,12 +342,26 @@ The same mechanism enables all domain-specific execution modes:
   (with-handler model (wrap-analytical generate-transition conjugacy-map)))
 ```
 
-Each produces a generative function that satisfies the full GFI. No new record types. No manual protocol reimplementation. The existing `DynamicGF` machinery handles everything.
+**Full dispatch override** replaces the entire execution path per GFI operation, for cases that need custom init-state or post-processing:
+
+```clojure
+(defn with-dispatch [gf dispatch-fn]
+  (vary-meta gf assoc ::custom-dispatch dispatch-fn))
+```
+
+The dispatch function has signature `(fn [op gf args key opts] -> gfi-result)`. Exact enumeration uses this because it needs custom state (`:axes`, `:ndim`) and custom post-processing (logsumexp normalization):
+
+```clojure
+;; Exact enumeration — internally uses with-dispatch
+(def exact-model (enumerate model))
+```
+
+Both mechanisms produce generative functions that satisfy the full GFI. No new record types. No manual protocol reimplementation. The existing `DynamicGF` machinery handles everything. Prefer `with-handler` when a transition substitution suffices; use `with-dispatch` only when the standard handler state shape is insufficient.
 
 
 ## 2.5 The Dispatcher Stack
 
-The current DynamicGF protocol methods use a `cond` ladder to select the execution path. The natural generalization is a dispatcher stack: a sequence of dispatch functions, each implementing:
+The DynamicGF protocol methods delegate to a dispatcher stack: a sequence of dispatch functions, each implementing:
 
 ```clojure
 (defprotocol IDispatcher
@@ -360,7 +373,7 @@ The GFI method walks the stack and uses the first non-nil result:
 
 ```clojure
 (def ^:private default-dispatcher-stack
-  [custom-transition-dispatcher    ;; with-handler metadata
+  [custom-dispatcher              ;; with-handler / with-dispatch metadata
    analytical-dispatcher           ;; L3 conjugacy
    compiled-dispatcher             ;; L1 compiled paths
    handler-dispatcher])            ;; L0 fallback (always succeeds)
@@ -426,6 +439,8 @@ The score encoding should be explicit metadata on the transition result, not an 
 
 # Part IV -- Domain Integration Pattern
 
+> **Status: PLANNED** -- The architectural patterns below are defined but not yet implemented. They show how the GFI extends to new computational domains.
+
 *Parts IV and VI describe planned integration patterns and research directions. The architectural foundations (Parts I--III, V) are implemented; the domain-specific integrations below show how they extend to new computational domains.*
 
 ## 4.1 The Universal Recipe
@@ -485,7 +500,7 @@ WFSAs from regular expressions and WCFGs from Lark grammars implement the same i
 - **Full GFI interface.** `update` and `regenerate` enable MCMC on text. GenLM has only SMC.
 - **The edit interface.** `ProposalEdit` with forward/backward generative functions enables reversible-jump MCMC on text structure -- insert a paragraph, delete a clause, restructure an argument -- with correct acceptance probabilities. GenLM has no equivalent.
 - **Heterogeneous composition via splice.** LLM + continuous + discrete in one model.
-- **ExactGF composition.** Small discrete latent spaces controlling LLM generation, enumerated exactly.
+- **Exact enumeration composition.** Small discrete latent spaces controlling LLM generation, enumerated exactly.
 - **Vectorized inference.** `[N]`-shaped batched particles through shape polymorphism.
 - **The compilation ladder.** Eventually fusing LLM + constraint + inference into compiled graphs.
 
@@ -698,7 +713,7 @@ src/genmlx/
 
 Each existing pattern maps cleanly:
 
-- **ExactGF record** → `(with-handler model enumerate-transition)`. The record's manual protocol reimplementations are deleted. The `enumerate-transition` function, the post-processing algebra (`marginal`, `condition-on`, `joint-marginal`, `extract-table`, `expectation`, `entropy`, `variance`, `mutual-info`), the high-level API (`exact-posterior`, `exact-joint`, `pr`, `observes`), and the utilities (`categorical-argmax`, `with-cache`) all stay in `inference/exact.cljs` -- they operate on the raw handler output, not on the ExactGF record.
+- **ExactGF record** → `(enumerate model)` via `with-dispatch`. The record's manual protocol reimplementations are deleted. The `enumerate-transition` function, the post-processing algebra (`marginal`, `condition-on`, `joint-marginal`, `extract-table`, `expectation`, `entropy`, `variance`, `mutual-info`), the high-level API (`exact-posterior`, `exact-joint`, `pr`, `observes`), and the utilities (`categorical-argmax`, `with-cache`) all stay in `inference/exact.cljs` -- they operate on the raw handler output, not on a separate record.
 - **`exact/Exact` annotation** → `(enumerate model)`. Same metadata mechanism, cleaner name.
 - **`analytical-applicable?` predicate** → moves into `AnalyticalDispatcher/resolve-transition`.
 - **Compiled path selection** → moves into `CompiledDispatcher/resolve-transition`.
@@ -709,6 +724,8 @@ Existing tests pass unchanged because the GFI protocol surface is identical. The
 ---
 
 # Part VI -- Research Directions
+
+> **Status: RESEARCH DIRECTIONS** -- Not yet implemented.
 
 ## 6.1 L5 -- LLMs in the Fused Graph
 

@@ -140,7 +140,7 @@
 (defn- enumerate-run
   "Run function for the enumerate dispatcher. Handles all GFI ops by running
    the model with enumerate-transition and post-processing the result.
-   Replaces the ExactGF record — same semantics, uses dispatch instead.
+   Replaces the former ExactGF record with dispatch-based execution.
    Called as (enumerate-run op gf args key opts) by custom-transition-dispatcher."
   [op gf args key {:keys [constraints trace selection]}]
   (case op
@@ -182,7 +182,9 @@
        :retval probs})
 
     :project
-    (mx/scalar 0.0)))
+    (mx/scalar 0.0)
+
+    (throw (ex-info (str "enumerate: unsupported op " op) {:op op}))))
 
 (defn enumerate
   "Wrap a gen function for exact enumeration via handler substitution.
@@ -195,7 +197,7 @@
      (p/generate (enumerate model) args observations)
      (splice :agent (enumerate agent-model) args)"
   [gf]
-  (dispatch/with-handler (dyn/auto-key gf)
+  (dispatch/with-dispatch (dyn/auto-key gf)
     (with-meta enumerate-run {:score-type :collapsed})))
 
 (defn categorical-argmax
@@ -272,15 +274,15 @@
 
 (defn- enumerate-executor
   "Executor for splice calls within enumerate mode. Dispatches on sub-GF
-   metadata: ::inference-strategy :exact or ::dispatch/custom-transition
+   metadata: ::inference-strategy :exact or ::dispatch/custom-dispatch
    uses exact enumeration, otherwise falls back to standard GFI dispatch."
   [gf args opts]
   (cond
     ;; Exact metadata annotation (lightweight, inside enumerate mode)
     (= :exact (::inference-strategy (meta gf)))
     (execute-exact gf args opts)
-    ;; enumerate-wrapped model (via dispatch/with-handler)
-    (::dispatch/custom-transition (meta gf))
+    ;; enumerate-wrapped model (via dispatch/with-dispatch)
+    (::dispatch/custom-dispatch (meta gf))
     (execute-exact gf args opts)
     ;; Default: standard GFI dispatch
     :else
