@@ -5,6 +5,9 @@
    dispatcher transition-specs, and model schema extraction output.
    Used by genmlx.dev for runtime instrumentation via start!/stop!.
 
+   Citations reference [T] Cusumano-Towner 2020 PhD thesis and
+   [D] gen.dev/docs/stable/ref/core/gfi.
+
    See MALLI_INTEGRATION.md for the design rationale."
   (:require [malli.core :as m]
             [malli.util :as mu]
@@ -35,7 +38,7 @@
 ;; ---------------------------------------------------------------------------
 
 (def BaseState
-  "Keys common to all handler modes."
+  "[T] section 2.3.1 trace ADT internal state. Keys common to all handler modes."
   [:map
    [:key some?]
    [:choices [:fn {:error/message "should be a ChoiceMap"} choicemap?]]
@@ -47,7 +50,7 @@
   BaseState)
 
 (def GenerateState
-  "Handler state for generate mode. Adds :weight and :constraints."
+  "[T] section 4.1.1 extended generate with internal proposal. Adds :weight and :constraints."
   (mu/merge BaseState
     [:map
      [:weight some?]
@@ -58,14 +61,14 @@
   GenerateState)
 
 (def UpdateState
-  "Handler state for update mode. Adds :old-choices and :discard."
+  "[T] section 2.3.1, Def 2.3.1 h_update. Adds :old-choices and :discard."
   (mu/merge GenerateState
     [:map
      [:old-choices [:fn {:error/message "should be a ChoiceMap"} choicemap?]]
      [:discard [:fn {:error/message "should be a ChoiceMap"} choicemap?]]]))
 
 (def RegenerateState
-  "Handler state for regenerate mode. Adds :old-choices and :selection."
+  "[T] section 4.1.2 regenerate with internal proposal. Adds :old-choices and :selection."
   (mu/merge BaseState
     [:map
      [:weight some?]
@@ -103,18 +106,18 @@
 ;; ---------------------------------------------------------------------------
 
 (def SimulateReturn
-  "Return value of p/simulate: a Trace."
+  "[T] Def 2.1.16, section 2.3.1 SIMULATE. Return value of p/simulate: a Trace."
   [:fn {:error/message "should be a Trace"} trace?])
 
 (def GenerateReturn
-  "Return value of p/generate: {:trace Trace :weight mlx-scalar}."
+  "[T] section 2.3.1 GENERATE. Return value: {:trace Trace :weight MLX-scalar}."
   [:map
    [:trace [:fn {:error/message "should be a Trace"} trace?]]
    [:weight some?]
    [:unused-constraints {:optional true} set?]])
 
 (def UpdateReturn
-  "Return value of p/update: {:trace Trace :weight mlx-scalar :discard choicemap}."
+  "[T] section 2.3.1 UPDATE. Return value: {:trace Trace :weight MLX-scalar :discard ChoiceMap}."
   [:map
    [:trace [:fn {:error/message "should be a Trace"} trace?]]
    [:weight some?]
@@ -122,26 +125,26 @@
    [:unused-constraints {:optional true} set?]])
 
 (def RegenerateReturn
-  "Return value of p/regenerate: {:trace Trace :weight mlx-scalar}."
+  "[T] section 4.1.2, Eq 4.1. Return value: {:trace Trace :weight MLX-scalar}."
   [:map
    [:trace [:fn {:error/message "should be a Trace"} trace?]]
    [:weight some?]])
 
 (def AssessReturn
-  "Return value of p/assess: {:retval any :weight mlx-scalar}."
+  "[T] section 2.3.1 LOGPDF extension. Return value: {:retval any :weight MLX-scalar}."
   [:map
    [:retval some?]
    [:weight some?]])
 
 (def ProposeReturn
-  "Return value of p/propose: {:choices choicemap :weight mlx-scalar :retval any}."
+  "[D] propose. Return value: {:choices ChoiceMap :weight MLX-scalar :retval any}."
   [:map
    [:choices [:fn {:error/message "should be a ChoiceMap"} choicemap?]]
    [:weight some?]
    [:retval some?]])
 
 (def ProjectReturn
-  "Return value of p/project: an mlx scalar."
+  "[D] project. Return value: an MLX scalar."
   some?)
 
 ;; ---------------------------------------------------------------------------
@@ -168,7 +171,7 @@
 ;; ---------------------------------------------------------------------------
 
 (def TraceSite
-  "One trace site extracted from a gen body."
+  "[T] Fig 2-1, Addrs[[E]]. One trace site extracted from a gen body."
   [:map
    [:addr some?]
    [:addr-form some?]
@@ -185,7 +188,8 @@
    [:deps set?]])
 
 (def ModelSchema
-  "Output of schema/extract-schema, augmented by conjugacy and compilation."
+  "[T] section 2.2.2 denotational semantics. Output of schema/extract-schema,
+   augmented by conjugacy and compilation."
   [:map
    [:trace-sites [:vector TraceSite]]
    [:static? boolean?]

@@ -1,7 +1,24 @@
 (ns genmlx.contracts
-  "Data-driven GFI contract registry.
-   Each contract is {:theorem string :check (fn [{:keys [model args trace]}] -> bool)}.
-   Contracts verify that GFI operations satisfy their measure-theoretic invariants."
+  "DEPRECATED — use genmlx.gfi instead.
+
+   All 11 contracts in this namespace are subsumed by the 53 algebraic
+   laws in genmlx.gfi. The mapping:
+
+     :generate-weight-equals-score  -> gfi :generate-full-weight-equals-score
+     :update-empty-identity         -> gfi :update-identity
+     :update-weight-correctness     -> gfi :update-density-ratio
+     :update-round-trip             -> gfi :update-round-trip
+     :regenerate-empty-identity     -> gfi :regenerate-empty-identity
+     :project-all-equals-score      -> gfi :project-all-equals-score
+     :project-none-equals-zero      -> gfi :project-none-equals-zero
+     :assess-equals-generate-score  -> gfi :assess-equals-generate-score
+     :propose-generate-round-trip   -> gfi :propose-weight-equals-generate
+     :score-decomposition           -> gfi :score-full-decomposition
+     :broadcast-equivalence         -> gfi :vsimulate-shape-correctness
+
+   Prefer (gfi/verify model args) over (contracts/verify-gfi-contracts model args).
+   This namespace is retained for backward compatibility and will be
+   removed in a future release."
   (:require [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]

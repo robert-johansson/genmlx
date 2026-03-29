@@ -12,7 +12,10 @@
             genmlx.gfi-project-test
             genmlx.gfi-contracts-test
             ;; GFI property tests
-            genmlx.gfi-property-test))
+            genmlx.gfi-property-test
+            ;; GFI algebraic theory
+            genmlx.gfi-laws-test
+            genmlx.well-formedness-test))
 
 (defmethod t/report [:cljs.test/default :end-run-tests] [{:keys [test pass fail error]}]
   (println (str "\n" test " tests, "
@@ -22,4 +25,4 @@
   (when (pos? (+ fail error))
     (js/process.exit 1)))
 
-(t/run-all-tests #"genmlx\.gfi.*-test")
+(t/run-all-tests #"genmlx\.(gfi|well-formedness).*-test")

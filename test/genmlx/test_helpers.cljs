@@ -9,6 +9,11 @@
 ;; Numerical comparison
 ;; ---------------------------------------------------------------------------
 
+(defn finite?
+  "True if x is a finite number (not NaN, not Infinity)."
+  [x]
+  (and (number? x) (js/isFinite x)))
+
 (defn close?
   "True if |expected - actual| <= tolerance."
   ([expected actual] (close? expected actual 1e-6))
