@@ -170,20 +170,44 @@
 
 (def splice-pool [splice-dependent splice-independent])
 
+;; Family 8: Larger models (5+ trace sites, diverse distributions)
+(def five-site
+  {:model (dyn/auto-key (gen []
+                             (let [a (trace :a (dist/gaussian 0 1))
+                                   b (trace :b (dist/exponential 1))
+                                   c (trace :c (dist/uniform -1 1))
+                                   d (trace :d (dist/gaussian a 0.5))
+                                   e (trace :e (dist/laplace (mx/add b c) 1))]
+                               e)))
+   :args []
+   :label "five-site"})
+
+;; Family 9: Argument-dependent branching
+(def arg-branching
+  {:model (dyn/auto-key (gen [threshold]
+                             (let [x (trace :x (dist/gaussian 0 1))]
+                               (mx/eval! x)
+                               (if (pos? (mx/item (mx/subtract x threshold)))
+                                 (trace :high (dist/exponential 1))
+                                 (trace :low (dist/uniform -1 0))))))
+   :args [(mx/scalar 0.0)]
+   :label "arg-branching"})
+
 ;; ---------------------------------------------------------------------------
 ;; Model pool and generator
 ;; ---------------------------------------------------------------------------
 
 (def model-pool
   "Diverse model families for comprehensive GFI law testing.
-   Includes branching-model for structured-density coverage."
+   Includes branching models for structured-density coverage."
   [single-gaussian single-uniform single-exponential single-beta
    two-independent three-independent
    gaussian-chain three-chain
    mixed-disc-cont
-   branching-model
+   branching-model arg-branching
    linear-regression single-arg-model two-arg-model
-   splice-dependent splice-independent])
+   splice-dependent splice-independent
+   five-site])
 
 ;; Branching models need special handling for some laws (update/regenerate
 ;; may change control flow), so we keep them in a separate pool
@@ -194,7 +218,8 @@
    gaussian-chain three-chain
    mixed-disc-cont
    linear-regression single-arg-model two-arg-model
-   splice-dependent splice-independent])
+   splice-dependent splice-independent
+   five-site])
 
 ;; Multi-site models with flat addresses only (for decomposition laws that
 ;; assume per-leaf projection decomposes additively — not valid through splices)
@@ -704,9 +729,10 @@
 
 (defspec law:mh-acceptance-correctness 10
   ;; [T] Alg 5, §3.4.2 — MH with regenerate weight converges to correct posterior.
-  ;; Uses fixed Normal-Normal conjugate model (independent of gen-nonbranching pool).
   ;; Prior: x ~ N(0,1), Likelihood: y ~ N(x, 0.5), observe y=2.
-  ;; Posterior: x | y=2 ~ N(1.6, sqrt(0.2)). 10 trials (each runs 500 MH steps).
+  ;; Posterior: x | y=2 ~ N(1.6, sqrt(0.2)).
+  ;; 10 trials x 2000 steps (500 burn-in, 1500 post-burn samples).
+  ;; SE = sqrt(0.2/1500) * 3.5 = 0.040. Tolerance 0.15 (conservative for ESS < N).
   (prop/for-all [_ (gen/return nil)]
                 (let [mh-model (dyn/auto-key
                                 (gen []
@@ -716,7 +742,7 @@
                       init-trace (:trace (p/generate mh-model [] obs))
                       sel (sel/select :x)
                       samples (loop [t init-trace i 0 acc [] k (rng/fresh-key 7)]
-                                (if (>= i 500)
+                                (if (>= i 2000)
                                   acc
                                   (let [[k1 k2] (rng/split k)
                                         {:keys [trace weight]}
@@ -727,10 +753,10 @@
                                         x-val (ev (cm/get-value
                                                    (cm/get-submap (:choices next-t) :x)))]
                                     (recur next-t (inc i)
-                                           (if (>= i 100) (conj acc x-val) acc)
+                                           (if (>= i 500) (conj acc x-val) acc)
                                            k2))))
                       mean (/ (reduce + samples) (count samples))]
-                  (close? mean 1.6 0.3))))
+                  (close? mean 1.6 0.15))))
 
 (defspec law:mh-proposal-reversibility 100
   ;; [T] §3.4.2 — regenerate-based MH is reversible: forward and reverse
@@ -1407,17 +1433,20 @@
                            (conj acc (+ x-val y-val))
                            acc)
                          k2)))))
+          ;; 8000 steps, 2000 burn-in, 6000 post-burn samples.
+          ;; Posterior var of x+y: Var[x]+Var[y]+2Cov = 0.4+0.4+0 = 0.8 (approx, ignoring correlation)
+          ;; SE = sqrt(0.8/N_eff). Conservative N_eff ~ 1000. SE ~ 0.028, 3.5*SE ~ 0.10.
           mix-samples (run-chain
                        (fn [_ k] (sel/select (if (pos? (mx/item (rng/bernoulli k 0.5 []))) :x :y)))
-                       4000 1000)
+                       8000 2000)
           cycle-samples (run-chain
                          (fn [i _k] (sel/select (if (even? i) :x :y)))
-                         4000 1000)
+                         8000 2000)
           mean-mix (/ (reduce + mix-samples) (count mix-samples))
           mean-cycle (/ (reduce + cycle-samples) (count cycle-samples))]
-      (t/is (close? mean-mix analytical-mean 0.3)
+      (t/is (close? mean-mix analytical-mean 0.15)
             (str "Mix mean=" mean-mix " expected=" analytical-mean))
-      (t/is (close? mean-cycle analytical-mean 0.3)
+      (t/is (close? mean-cycle analytical-mean 0.15)
             (str "Cycle mean=" mean-cycle " expected=" analytical-mean)))))
 
 ;; ---------------------------------------------------------------------------
@@ -1639,7 +1668,8 @@
     ;; gfi/verify API on algebraic laws, not MCMC/training convergence.
     (let [slow-laws #{:mixture-kernel-stationarity
                       :hmc-acceptance-correctness
-                      :proposal-training-objective}
+                      :proposal-training-objective
+                      :involutive-mh-convergence}
           algebraic-laws (->> gfi/laws
                               (remove #(slow-laws (:name %)))
                               (mapv :name))
