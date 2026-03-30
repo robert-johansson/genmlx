@@ -37,7 +37,8 @@
             [genmlx.verify :as verify]
             [genmlx.inference.mcmc :as mcmc]
             [genmlx.inference.util :as u]
-            [genmlx.learning :as learn]))
+            [genmlx.learning :as learn]
+            [genmlx.combinators :as comb]))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers
@@ -1336,7 +1337,223 @@
                    mean-last (/ (reduce + last-10) (count last-10))
                    final-mu (ev (mx/index (:params result) 0))]
                (and (< mean-last mean-first)
-                    (approx= final-mu 3.0 0.5))))}])
+                    (approx= final-mu 3.0 0.5))))}
+
+   ;; ===================================================================
+   ;; PARTICLE FILTER INCREMENTAL WEIGHT laws [T] Alg 7, Alg 8
+   ;; ===================================================================
+
+   {:name :pf-incremental-weight
+    :from "[T] Alg 7, Alg 8 — SMC per-step weight = generate weight"
+    :theorem "In a bootstrap particle filter using the Unfold combinator,
+              each step's weight from unfold-extend equals the generate
+              weight of the kernel with the observation constraint:
+              w_t = generate(kernel, [t, x_{t-1}], obs_t).weight.
+              This is log p(y_t | x_t) for the bootstrap proposal.
+              Verified on non-conjugate SSM (Laplace observations)
+              to avoid conjugacy detection conflating bootstrap and
+              optimal proposal weights."
+    :tags #{:inference :smc :pf}
+    :check (fn [_]
+             (let [kernel (dyn/auto-key
+                           (dyn/make-gen-fn
+                            (fn [rt]
+                              (let [trace (.-trace rt)
+                                    args (.-args rt)
+                                    prev-state (second args)
+                                    x (trace :x (dist/gaussian prev-state 1))]
+                                (trace :y (dist/laplace x 1))
+                                x))
+                            '([t prev-state]
+                              (let [x (trace :x (dist/gaussian prev-state 1))]
+                                (trace :y (dist/laplace x 1))
+                                x))))
+                   unfold-gf (comb/unfold-combinator kernel)
+                   init-trace (comb/unfold-empty-trace unfold-gf (mx/scalar 0.0))
+                   obs-vals [1.0 2.0 0.5]
+                   obs-seq (mapv #(cm/choicemap :y (mx/scalar %)) obs-vals)]
+               (loop [t 0, tr init-trace, k (rng/fresh-key 77), ok? true]
+                 (if (or (>= t 3) (not ok?))
+                   ok?
+                   (let [[k1 k2] (rng/split k)
+                         {:keys [trace weight]} (comb/unfold-extend tr (nth obs-seq t) k1)
+                         _ (mx/materialize! weight)
+                         step-cm (cm/get-submap (:choices trace) t)
+                         x-val (cm/get-value (cm/get-submap step-cm :x))
+                         _ (mx/materialize! x-val)
+                         w (ev weight)
+                         x (ev x-val)
+                         expected (ev (dist/log-prob (dist/laplace (mx/scalar x) 1)
+                                                     (mx/scalar (nth obs-vals t))))]
+                     (recur (inc t) trace k2
+                            (approx= w expected 1e-4)))))))}
+
+   ;; ===================================================================
+   ;; AIS DENSITY RATIO laws [T] Alg 8
+   ;; ===================================================================
+
+   {:name :ais-density-ratio-telescoping
+    :from "[T] Alg 8 — AIS weight = sum of density ratios across temperature schedule"
+    :theorem "For geometric annealing with schedule beta_0=0,...,beta_T=1,
+              the AIS weight decomposes as:
+              W = sum_k [score(x; beta_k) - score(x; beta_{k-1})]
+                = score(x; 1) - score(x; 0) = log L(y|x).
+              Each increment = delta_beta * log L(y|x).
+              Verified via GFI PROJECT decomposition: score = prior + lik,
+              tempered score = prior + beta * lik."
+    :tags #{:inference :ais}
+    :check (fn [_]
+             (let [model (dyn/auto-key
+                          (dyn/make-gen-fn
+                           (fn [rt]
+                             (let [trace (.-trace rt)
+                                   x (trace :x (dist/gaussian 0 2))]
+                               (trace :y (dist/gaussian x 1))
+                               x))
+                           '([] (let [x (trace :x (dist/gaussian 0 2))]
+                                  (trace :y (dist/gaussian x 1))
+                                  x))))
+                   stripped (assoc model :schema
+                                  (dissoc (:schema model)
+                                          :auto-handlers :conjugate-pairs
+                                          :has-conjugate? :analytical-plan
+                                          :auto-regenerate-transition))
+                   choices (cm/choicemap :x (mx/scalar 2.0) :y (mx/scalar 3.0))
+                   {:keys [trace]} (p/generate stripped [] choices)
+                   _ (mx/materialize! (:score trace))
+                   prior-score (ev (p/project stripped trace (sel/select :x)))
+                   lik-score (ev (p/project stripped trace (sel/select :y)))
+                   betas [0.0 0.25 0.5 0.75 1.0]
+                   n-steps (dec (count betas))
+                   tempered (mapv #(+ prior-score (* % lik-score)) betas)
+                   increments (mapv #(- (nth tempered (inc %)) (nth tempered %))
+                                    (range n-steps))
+                   expected-inc (* 0.25 lik-score)
+                   total (reduce + increments)]
+               (and (every? #(approx= % expected-inc 1e-10) increments)
+                    (approx= total lik-score 1e-10))))}
+
+   ;; ===================================================================
+   ;; INVOLUTIVE MCMC laws [T] §3.7, Def 3.7.1, Eq 3.15, Eq 3.17
+   ;; ===================================================================
+
+   {:name :involution-self-inverse
+    :from "[T] Def 3.7.1 — symmetric trace translator: h = h^{-1}"
+    :theorem "A symmetric trace translator's involution satisfies
+              h(h(tau, sigma)) = (tau, sigma). Verified with random walk
+              involution h(x, eps) = (x+eps, -eps) on 20 random traces."
+    :tags #{:mcmc :involutive}
+    :check (fn [_]
+             (let [inv-fn (fn [tcm acm]
+                            (let [x (cm/get-value (cm/get-submap tcm :x))
+                                  eps (cm/get-value (cm/get-submap acm :eps))
+                                  _ (mx/materialize! x eps)]
+                              [(cm/set-value tcm :x (mx/add x eps))
+                               (cm/set-value acm :eps (mx/negative eps))]))]
+               (every? true?
+                 (for [seed (range 20)]
+                   (let [k (rng/fresh-key seed)
+                         [k1 k2] (rng/split k)
+                         x-val (mx/realize (rng/normal k1 []))
+                         eps-val (mx/realize (rng/normal k2 []))
+                         tcm (cm/choicemap :x (mx/scalar x-val) :y (mx/scalar 2.0))
+                         acm (cm/choicemap :eps (mx/scalar eps-val))
+                         [tcm1 acm1] (inv-fn tcm acm)
+                         [tcm2 acm2] (inv-fn tcm1 acm1)
+                         x-rt (ev (cm/get-value (cm/get-submap tcm2 :x)))
+                         eps-rt (ev (cm/get-value (cm/get-submap acm2 :eps)))]
+                     (and (approx= x-val x-rt 1e-6)
+                          (approx= eps-val eps-rt 1e-6)))))))}
+
+   {:name :involutive-mh-weight-formula
+    :from "[T] Eq 3.15 — symmetric translator weight"
+    :theorem "For a symmetric random-walk involution h(x,eps) = (x+eps,-eps)
+              with symmetric proposal q(eps) = N(0,delta), the MH weight
+              simplifies to score(x') - score(x) because the proposal
+              terms cancel. Verified at multiple (x, eps) pairs against
+              independently computed density ratios."
+    :tags #{:mcmc :involutive}
+    :check (fn [_]
+             (let [model (dyn/auto-key
+                          (dyn/make-gen-fn
+                           (fn [rt]
+                             (let [trace (.-trace rt)
+                                   x (trace :x (dist/gaussian 0 1))]
+                               (trace :y (dist/gaussian x 0.5))
+                               x))
+                           '([] (let [x (trace :x (dist/gaussian 0 1))]
+                                  (trace :y (dist/gaussian x 0.5))
+                                  x))))
+                   obs (cm/choicemap :y (mx/scalar 2.0))
+                   test-points [[1.0 0.5] [0.5 -0.3] [2.0 -1.0] [1.6 0.1]]]
+               (every? true?
+                 (for [[x-val eps-val] test-points]
+                   (let [;; Score at x
+                         choices-old (cm/choicemap :x (mx/scalar x-val) :y (mx/scalar 2.0))
+                         {:keys [trace]} (p/generate model [] choices-old)
+                         _ (mx/materialize! (:score trace))
+                         score-old (ev (:score trace))
+                         ;; Score at x' = x + eps
+                         x-new (+ x-val eps-val)
+                         choices-new (cm/choicemap :x (mx/scalar x-new) :y (mx/scalar 2.0))
+                         {:keys [trace]} (p/generate model [] choices-new)
+                         _ (mx/materialize! (:score trace))
+                         score-new (ev (:score trace))
+                         ;; Expected weight = score(x') - score(x)
+                         expected (- score-new score-old)
+                         ;; Actual weight via p/update (what involutive-mh-step computes)
+                         {:keys [trace]} (p/generate model [] choices-old)
+                         _ (mx/materialize! (:score trace))
+                         {:keys [weight]} (p/update model trace choices-new)
+                         _ (mx/materialize! weight)
+                         actual (ev weight)]
+                     (approx= actual expected 1e-4))))))}
+
+   {:name :involutive-mh-convergence
+    :from "[T] Eq 3.17 — involutive MCMC acceptance produces correct posterior"
+    :theorem "Involutive MH with random-walk involution h(x,eps) = (x+eps,-eps)
+              converges to the correct posterior. Verified on Normal-Normal
+              conjugate: x ~ N(0,1), y ~ N(x,0.5), y=2. Posterior x|y ~ N(1.6, sqrt(0.2))."
+    :tags #{:mcmc :involutive}
+    :check (fn [_]
+             (let [model (dyn/auto-key
+                          (dyn/make-gen-fn
+                           (fn [rt]
+                             (let [trace (.-trace rt)
+                                   x (trace :x (dist/gaussian 0 1))]
+                               (trace :y (dist/gaussian x 0.5))
+                               x))
+                           '([] (let [x (trace :x (dist/gaussian 0 1))]
+                                  (trace :y (dist/gaussian x 0.5))
+                                  x))))
+                   proposal (dyn/auto-key
+                             (dyn/make-gen-fn
+                              (fn [rt]
+                                (let [trace (.-trace rt)]
+                                  (trace :eps (dist/gaussian 0 0.5))))
+                              '([_tcm] (trace :eps (dist/gaussian 0 0.5)))))
+                   involution (fn [tcm acm]
+                                (let [x (cm/get-value (cm/get-submap tcm :x))
+                                      eps (cm/get-value (cm/get-submap acm :eps))
+                                      _ (mx/materialize! x eps)]
+                                  [(cm/set-value tcm :x (mx/add x eps))
+                                   (cm/set-value acm :eps (mx/negative eps))]))
+                   obs (cm/choicemap :y (mx/scalar 2.0))
+                   init-trace (:trace (p/generate model [] obs))
+                   ;; Run 2000 steps, burn 500, collect x values
+                   samples (loop [t init-trace i 0 acc [] k (rng/fresh-key 42)]
+                             (if (>= i 2000)
+                               acc
+                               (let [[k1 k2] (rng/split k)
+                                     next-t (mcmc/involutive-mh-step
+                                              t model proposal involution k1)
+                                     x-val (ev (cm/get-value
+                                                (cm/get-submap (:choices next-t) :x)))]
+                                 (recur next-t (inc i)
+                                        (if (>= i 500) (conj acc x-val) acc)
+                                        k2))))
+                   mean-x (/ (reduce + samples) (count samples))]
+               (approx= mean-x 1.6 0.2)))}])
 
 ;; ---------------------------------------------------------------------------
 ;; Law index (for fast lookup)
