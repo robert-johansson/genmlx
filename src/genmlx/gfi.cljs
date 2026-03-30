@@ -337,13 +337,15 @@
               statistics converge to the correct posterior.
               Verified on Normal-Normal conjugate: prior N(0,1),
               likelihood N(x, 0.5), observe y=2.
-              Posterior mean = 1.6, checked after 500 MH steps."
+              Posterior mean = 1.6, checked after 2000 MH steps."
     :tags #{:regenerate :inference :mcmc}
     :check (fn [_]
              ;; Fixed conjugate model — tests the full MH pipeline
              ;; independent of the passed-in model.
              ;; Prior: x ~ N(0,1), Likelihood: y ~ N(x, 0.5), y=2
              ;; Posterior: x | y=2 ~ N(1.6, sqrt(0.2))
+             ;; 2000 steps, 500 burn-in, 1500 samples.
+             ;; SE = sqrt(0.2/N_eff), N_eff ~ 500, SE ~ 0.02, 3.5*SE ~ 0.07.
              (let [mh-model (dyn/auto-key
                              (dyn/make-gen-fn
                               (fn [rt]
@@ -356,7 +358,7 @@
                    init-trace (:trace (p/generate mh-model [] obs))
                    sel (sel/select :x)
                    final (loop [t init-trace i 0 acc [] k (rng/fresh-key 7)]
-                           (if (>= i 500)
+                           (if (>= i 2000)
                              acc
                              (let [[k1 k2] (rng/split k)
                                    {:keys [trace weight]} (p/regenerate mh-model t sel)
@@ -366,10 +368,10 @@
                                    x-val (ev (cm/get-value
                                               (cm/get-submap (:choices next-t) :x)))]
                                (recur next-t (inc i)
-                                      (if (>= i 100) (conj acc x-val) acc)
+                                      (if (>= i 500) (conj acc x-val) acc)
                                       k2))))
                    mean (/ (reduce + final) (count final))]
-               (approx= mean 1.6 0.3)))}
+               (approx= mean 1.6 0.15)))}
 
    {:name :mh-proposal-reversibility
     :from "[T] §3.4.2"
@@ -1087,17 +1089,21 @@
                                     (conj acc (+ x-val y-val))
                                     acc)
                                   k2)))))
+                   ;; 2000 steps, 500 burn. gfi/verify runs all laws sequentially,
+                   ;; so Metal buffer budget is shared. Deftest version uses 8000/0.15.
                    mix-samples (run-chain
                                 (fn [_ k] (sel/select (if (pos? (mx/item (rng/bernoulli k 0.5 []))) :x :y)))
-                                4000 1000)
+                                2000 500)
+                   _ (mx/sweep-dead-arrays!)
+                   _ (mx/clear-cache!)
                    cycle-samples (run-chain
                                   (fn [i _k] (sel/select (if (even? i) :x :y)))
-                                  4000 1000)
+                                  2000 500)
                    mean-mix (/ (reduce + mix-samples) (count mix-samples))
                    mean-cycle (/ (reduce + cycle-samples) (count cycle-samples))]
                ;; Both kernels converge to the same analytical posterior
-               (and (approx= mean-mix analytical-mean 0.3)
-                    (approx= mean-cycle analytical-mean 0.3))))}
+               (and (approx= mean-mix analytical-mean 0.25)
+                    (approx= mean-cycle analytical-mean 0.25))))}
 
    ;; ===================================================================
    ;; WELL-FORMEDNESS laws [T] §2.2.1 (DML restrictions)
