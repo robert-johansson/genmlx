@@ -19,3 +19,6 @@
 [submodule "malli"]
 	path = malli
 	url = https://github.com/robert-johansson/malli.git
+[submodule "mlx-node"]
+	path = mlx-node
+	url = https://github.com/robert-johansson/mlx-node.git
