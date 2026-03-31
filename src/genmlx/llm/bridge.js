@@ -66,6 +66,42 @@ exports.logSoftmax = function(arr) { return arr.logSoftmax(); };
 /** Argmax. */
 exports.argmax = function(arr) { return arr.argmax(); };
 
+// ============================================================================
+// Key-based PRNG (wraps BigInt64Array shape conversion)
+// ============================================================================
+
+exports.randomKey = function(seed) { return MxArray.randomKey(seed); };
+exports.randomSplit = function(key) { return key.randomSplit(); };
+exports.randomSplitN = function(key, n) { return key.randomSplitN(n); };
+
+exports.keyNormal = function(key, shape, dtype) {
+  return key.keyNormal(toBigShape(shape), dtype);
+};
+exports.keyUniform = function(key, shape, low, high, dtype) {
+  return key.keyUniform(toBigShape(shape), low, high, dtype);
+};
+exports.keyBernoulli = function(key, prob, shape) {
+  return key.keyBernoulli(prob, toBigShape(shape));
+};
+exports.keyCategorical = function(key, logits, axis) {
+  return key.keyCategorical(logits, axis);
+};
+exports.keyRandint = function(key, low, high, shape, dtype) {
+  return key.keyRandint(low, high, toBigShape(shape), dtype);
+};
+exports.keyGumbel = function(key, shape, dtype) {
+  return key.keyGumbel(toBigShape(shape), dtype);
+};
+exports.keyLaplace = function(key, shape, dtype) {
+  return key.keyLaplace(toBigShape(shape), dtype);
+};
+exports.keyTruncatedNormal = function(key, lower, upper, shape, dtype) {
+  return key.keyTruncatedNormal(lower, upper, toBigShape(shape), dtype);
+};
+exports.keyMultivariateNormal = function(key, mean, cov, shape, dtype) {
+  return key.keyMultivariateNormal(mean, cov, toBigShape(shape), dtype);
+};
+
 /**
  * Run a forward pass and return last-position logits as Float32Array.
  * Handles all MxArray creation/slicing on the JS side to avoid
