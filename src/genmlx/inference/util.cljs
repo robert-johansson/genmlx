@@ -134,7 +134,6 @@
      ;; Array-valued path: flatten all choices into single 1-D array
      (let [parts (mapv (fn [{:keys [addr size]}]
                          (let [v (cm/get-choice (:choices trace) [addr])]
-                           (mx/eval! v)
                            (if (= size 1)
                              (mx/reshape v [1])
                              (mx/reshape v [-1]))))

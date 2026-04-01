@@ -47,7 +47,7 @@
 ;; Internal helpers
 ;; ---------------------------------------------------------------------------
 
-(defn- to-big-shape
+(defn to-big-shape
   "Convert a clj vector/seq of numbers to BigInt64Array for NAPI-RS shape params."
   [sh]
   (js/BigInt64Array.from (clj->js (mapv js/BigInt sh))))
@@ -270,19 +270,9 @@
    and uses compiled-generate or handler instead."
   (atom 0))
 
-(def ^:private compile-depth
-  "Tracks nesting depth of mx/compile-fn tracing scopes.
-   When compile-depth > 0, mx/grad skips tidy wrapping because
-   tidy would dispose trace arrays needed by the compilation graph."
-  (atom 0))
-
 (defn in-grad?
   "Returns true if currently executing inside an mx/grad or mx/value-and-grad scope."
   [] (pos? @grad-depth))
-
-(defn in-compile?
-  "Returns true if currently executing inside an mx/compile-fn trace."
-  [] (pos? @compile-depth))
 
 (defn tidy
   "Run f, cleaning up intermediate arrays afterward.
@@ -741,94 +731,50 @@
 (defn grad
   "Compute gradient of f. Tracks grad-depth so p/generate can skip
    the L3 analytical path (which uses volatile! and breaks gradient flow).
-   Each call runs inside mx/tidy to prevent Metal buffer accumulation.
-   Tidy is skipped inside mx/compile-fn (would dispose trace arrays).
 
-   Adaptation: mlx-node has no .grad() that returns a function.
-   We use MxArray.computeGradients(fn, inputs) which applies immediately.
-   The returned wrapper function adapts the curried API."
+   mlx-node's computeGradients(fn, inputs) applies immediately and returns
+   materialized results — no need for explicit eval or compile-depth gating."
   ([f]
-   ;; Default: gradient w.r.t. first argument
    (fn [& args]
      (swap! grad-depth inc)
      (try
-       (let [inputs (to-array args)
-             ;; computeGradients returns [grad0, grad1, ...] for all inputs
-             grads (.computeGradients M f inputs)
-             ;; Return gradient of first argument (matching node-mlx .grad behavior)
-             r (aget grads 0)]
-         (when-not (in-compile?)
-           (eval! r))
-         r)
+       (let [grads (.computeGradients M f (to-array args))]
+         (aget grads 0))
        (finally (swap! grad-depth dec)))))
   ([f argnums]
-   ;; Gradient w.r.t. specific arguments
    (fn [& args]
      (swap! grad-depth inc)
      (try
        (let [argnum-vec (if (vector? argnums) argnums [argnums])
-             ;; Build a wrapper that only passes the selected args to valueAndGrad
-             ;; then unpacks the gradients for those specific positions
-             inputs (to-array args)
-             grads (.computeGradients M f inputs)]
-         ;; Return grads for the specified argnums
+             grads (.computeGradients M f (to-array args))]
          (if (= 1 (count argnum-vec))
-           (let [r (aget grads (first argnum-vec))]
-             (when-not (in-compile?)
-               (eval! r))
-             r)
-           (let [r (mapv #(aget grads %) argnum-vec)]
-             (when-not (in-compile?)
-               (apply eval! r))
-             r)))
+           (aget grads (first argnum-vec))
+           (mapv #(aget grads %) argnum-vec)))
        (finally (swap! grad-depth dec))))))
 
 (defn value-and-grad
   "Compute value and gradient of f. Tracks grad-depth.
-   Each call runs inside mx/tidy to prevent Metal buffer accumulation.
-   Tidy is skipped inside mx/compile-fn (would dispose trace arrays).
 
-   Adaptation: mlx-node MxArray.valueAndGrad(fn, inputs) returns [loss, grad0, grad1, ...].
-   node-mlx returns [value, gradient_of_first_arg] for the no-argnums case.
-   We match that convention: always return [value, single_gradient]."
+   mlx-node's valueAndGrad(fn, inputs) returns [loss, grad0, grad1, ...].
+   We return [value, gradient] for the default case (first arg),
+   or [value, selected-gradients] for the argnums variant."
   ([f]
-   ;; Default: gradient w.r.t. first argument (matching node-mlx behavior)
    (fn [& args]
      (swap! grad-depth inc)
      (try
-       (let [inputs (to-array args)
-             ;; valueAndGrad returns [loss, grad0, grad1, ...]
-             result (.valueAndGrad M f inputs)
-             v (aget result 0)
-             ;; Return gradient of first argument only (node-mlx convention)
-             g (aget result 1)]
-         (when-not (in-compile?)
-           (eval! v g))
-         [v g])
+       (let [result (.valueAndGrad M f (to-array args))]
+         [(aget result 0) (aget result 1)])
        (finally (swap! grad-depth dec)))))
   ([f argnums]
-   ;; argnums variant: differentiate w.r.t. specified argument(s).
-   ;; mlx-node always computes all gradients; we select the requested ones.
    (fn [& args]
      (swap! grad-depth inc)
      (try
-       (let [inputs (to-array args)
-             result (.valueAndGrad M f inputs)
+       (let [result (.valueAndGrad M f (to-array args))
              v (aget result 0)
              argnum-vec (if (vector? argnums) argnums [argnums])
-             ;; For single argnum, return the gradient directly.
-             ;; For multiple, return JS array of gradients.
              g (if (= 1 (count argnum-vec))
                  (aget result (inc (first argnum-vec)))
-                 (let [gs #js []]
-                   (doseq [i argnum-vec]
-                     (.push gs (aget result (inc i))))
-                   gs))]
-         (when-not (in-compile?)
-           (if (instance? M g)
-             (eval! v g)
-             (do (eval! v)
-                 (.evalArrays c (to-array (vec (js->clj g)))))))
+                 (mapv #(aget result (inc %)) argnum-vec))]
          [v g])
        (finally (swap! grad-depth dec))))))
 
@@ -880,43 +826,17 @@
 ;; Transforms
 ;; ---------------------------------------------------------------------------
 
-(def ^:private compile-generation
-  "Monotonic counter incremented on each compile-clear-cache! call.
-   Compiled functions compare their birth generation against this to
-   detect cache invalidation and recompile transparently."
-  (atom 0))
-
 (defn compile-fn
-  "Wrap f in mx/compile-fn with auto-recompilation on cache clear.
-   If compile-clear-cache! has been called since this function was compiled,
-   the next invocation transparently recompiles -- no crash, no manual
-   intervention. Cost: one atom deref per call (negligible).
-   Tracks compile-depth so mx/grad can skip tidy during tracing.
-
-   Adaptation: mlx-node MxArray.compileFn(fn, inputs, shapeless) applies immediately.
-   Adaptation: mlx-node compileFn applies immediately. We return a wrapper
-   that calls the function directly — compile is a no-op optimization hint.
-   The handler path is ground truth; compilation is optimization."
-  ([f] (compile-fn f false))
-  ([f shapeless?]
-   ;; In node-mlx, compile() traced and cached the graph for reuse.
-   ;; In mlx-node, compileFn applies immediately — no persistent cache.
-   ;; For correctness, we just call f directly. This matches the handler
-   ;; path behavior. Performance optimization via compileFn can be added
-   ;; later once multi-output and nested-callback issues are resolved.
-   (fn [& args]
-     (swap! compile-depth inc)
-     (try
-       (apply f args)
-       (finally (swap! compile-depth dec))))))
+  "Identity wrapper — mlx-node has no persistent compilation cache yet.
+   Returns f unchanged. The handler path is ground truth; compilation
+   is optimization that can be added when mlx-node supports it."
+  ([f] f)
+  ([f _shapeless?] f))
 
 (defn compile-clear-cache!
-  "Clear all compiled function caches, releasing associated Metal resources.
-   Safe to call at any time -- compiled functions transparently recompile
-   on next use via the compile-generation counter."
+  "Clear MLX compilation caches, releasing associated Metal resources."
   []
-  (.compileClearCache c)
-  (swap! compile-generation inc))
+  (.compileClearCache c))
 
 (defn vmap
   "Vectorized map. Applies f to batched inputs.

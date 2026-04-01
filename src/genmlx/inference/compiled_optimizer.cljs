@@ -1,15 +1,14 @@
 (ns genmlx.inference.compiled-optimizer
-  "Compiled optimization step: gradient + Adam update in a single mx/compile-fn.
-   Eliminates per-iteration mx/materialize! calls, keeping the MLX lazy graph
-   intact across the full step. Part of Level 4 (fused graph) — WP-0, WP-1, WP-2.
+  "Optimization step: gradient + Adam update via mx/compile-fn.
+
+   NOTE: mx/compile-fn is currently identity in mlx-node (no persistent
+   compilation cache). The code structure supports future compilation —
+   when mlx-node adds persistent compileFn, these paths will fuse
+   automatically. Until then, the lazy graph materializes per iteration.
 
    WP-0: compiled-train, make-compiled-opt-step
    WP-1: make-compiled-loss-grad, learn
-   WP-2: make-fused-mcmc-train, fused-learn
-
-   Key insight: t (iteration counter) is passed as an MLX scalar argument,
-   not closed over. This allows mx/power for bias correction inside the
-   compiled graph, avoiding host-side js/Math.pow."
+   WP-2: make-fused-mcmc-train, fused-learn"
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.protocols :as p]

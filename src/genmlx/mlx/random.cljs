@@ -1,14 +1,15 @@
 (ns genmlx.mlx.random
   "Functional PRNG key management for GenMLX.
    Every sample consumes a key — no hidden PRNG state.
-   Keys are MLX arrays that split deterministically."
+   Keys are MLX arrays that split deterministically.
+
+   Calls mlx-node MxArray methods directly — no bridge.js dependency."
   (:require [genmlx.mlx :as mx]))
 
 ;; ---------------------------------------------------------------------------
-;; Bridge and MxArray references for PRNG ops
+;; MxArray class reference (for static methods like randomKey)
 ;; ---------------------------------------------------------------------------
 
-(defonce ^:private bridge (js/require (str (.cwd js/process) "/src/genmlx/llm/bridge.js")))
 (defonce ^:private M (.-MxArray (js/require "@mlx-node/core")))
 
 ;; ---------------------------------------------------------------------------
@@ -17,8 +18,8 @@
 
 (defn fresh-key
   "Create a fresh random key from an optional integer seed."
-  ([]    (.randomKey bridge (js/Math.floor (* (js/Math.random) 2147483647))))
-  ([seed] (.randomKey bridge seed)))
+  ([] (.randomKey M (js/Math.floor (* (js/Math.random) 2147483647))))
+  ([seed] (.randomKey M seed)))
 
 (defn key->seed
   "Derive a non-negative integer seed from a PRNG key array.
@@ -30,24 +31,20 @@
              0x7FFFFFFF)))
 
 (defn seed!
-  "Seed the global MLX PRNG state from a key array.
-   Note: mlx-node's key-based sampling doesn't use global state,
-   but this is kept for compatibility."
-  [key]
-  ;; mlx-node doesn't have a global seed function — no-op
+  "No-op — mlx-node uses key-based sampling, no global PRNG state."
+  [_key]
   nil)
 
 (defn split
   "Split a key into two independent sub-keys. Returns [k1 k2]."
   [key]
-  (let [ks (.randomSplit bridge key)]
+  (let [ks (.randomSplit key)]
     [(aget ks 0) (aget ks 1)]))
 
 (defn split-n
   "Split a key into n independent sub-keys. Returns vector of n keys."
   [key n]
-  (let [ks (.randomSplitN bridge key n)]
-    ;; splitN returns [n, 2] array — extract each row
+  (let [ks (.randomSplitN key n)]
     (mapv #(mx/index ks %) (range n))))
 
 (defn ensure-key
@@ -66,76 +63,73 @@
   (if key (split-n key n) (vec (repeat n nil))))
 
 ;; ---------------------------------------------------------------------------
-;; Key-based sampling (functional — no global PRNG state)
+;; Key-based sampling — direct mlx-node MxArray instance methods
 ;; ---------------------------------------------------------------------------
 
 (defn normal
   "Sample from standard normal using the given key."
   [key shape]
-  (.keyNormal bridge key (clj->js shape) nil))
+  (.keyNormal key (mx/to-big-shape shape) nil))
 
 (defn uniform
   "Sample from uniform [0,1) using the given key."
   [key shape]
-  (.keyUniform bridge key (clj->js shape) nil nil nil))
+  (.keyUniform key (mx/to-big-shape shape) nil nil nil))
 
 (defn bernoulli
   "Sample Bernoulli(p) using the given key."
   [key p shape]
-  (.keyBernoulli bridge key p (clj->js shape)))
+  (.keyBernoulli key p (mx/to-big-shape shape)))
 
 (defn categorical
   "Sample from categorical distribution (log-probabilities) using the given key."
   [key logits]
-  (.keyCategorical bridge key logits nil))
+  (.keyCategorical key logits nil))
 
 (defn randint
   "Sample random integers in [lo, hi) using the given key."
   [key lo hi shape]
-  (.keyRandint bridge key lo hi (clj->js shape) nil))
+  (.keyRandint key lo hi (mx/to-big-shape shape) nil))
 
 (defn gumbel
   "Sample from standard Gumbel distribution using the given key."
   [key shape]
-  (.keyGumbel bridge key (clj->js shape) nil))
+  (.keyGumbel key (mx/to-big-shape shape) nil))
 
 (defn laplace
   "Sample from standard Laplace distribution using the given key."
   [key shape]
-  (.keyLaplace bridge key (clj->js shape) nil))
+  (.keyLaplace key (mx/to-big-shape shape) nil))
 
 (defn truncated-normal
   "Sample from truncated normal distribution using the given key.
    Values are clipped to [lower, upper]."
   [key lower upper shape]
-  (.keyTruncatedNormal bridge key
+  (.keyTruncatedNormal key
     (mx/ensure-array lower) (mx/ensure-array upper)
-    (clj->js shape) nil))
+    (mx/to-big-shape shape) nil))
 
 (defn multivariate-normal
   "Sample from multivariate normal N(mean, cov) using the given key.
    mean: [k] array, cov: [k k] positive definite array."
   ([key mean cov]
-   (.keyMultivariateNormal bridge key
+   (.keyMultivariateNormal key
      (if (mx/array? mean) mean (mx/array mean))
      (if (mx/array? cov) cov (mx/array cov))
-     #js [] nil))
+     (mx/to-big-shape []) nil))
   ([key mean cov shape]
-   (.keyMultivariateNormal bridge key
+   (.keyMultivariateNormal key
      (if (mx/array? mean) mean (mx/array mean))
      (if (mx/array? cov) cov (mx/array cov))
-     (clj->js shape) nil)))
+     (mx/to-big-shape shape) nil)))
 
 (defn permutation
   "Return a random permutation of integers [0, n).
-   Note: mlx-node permutation not yet implemented — falls back to
-   Fisher-Yates shuffle using key-based randint."
+   Implemented via argsort of uniform random values."
   ([key n]
-   ;; Simple implementation: generate random indices and argsort
    (let [rand-vals (uniform key [n])]
      (.argsort rand-vals nil)))
   ([key arr axis]
-   ;; Shuffle array along axis by permuting indices
    (let [n (nth (mx/shape arr) axis)
          perm (permutation key n)]
      (mx/take-idx arr perm axis))))

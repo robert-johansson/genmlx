@@ -149,15 +149,18 @@
 
 (defn cycle-kernels
   "Cycle through kernels repeatedly for n total applications.
+   (cycle-kernels [k1 k2 k3]) applies each kernel once (n = count).
    (cycle-kernels 10 [k1 k2 k3]) applies k1, k2, k3, k1, k2, k3, k1, k2, k3, k1.
    If all kernels have reversals, the composite does too."
-  [n kernels]
-  (let [kernel-vec (vec kernels)
-        result (cycle-raw n kernel-vec)
-        reversals (mapv reversal kernel-vec)]
-    (if (every? some? reversals)
-      (with-reversal result (cycle-raw n (vec (reverse reversals))))
-      result)))
+  ([kernels]
+   (cycle-kernels (count kernels) kernels))
+  ([n kernels]
+   (let [kernel-vec (vec kernels)
+         result (cycle-raw n kernel-vec)
+         reversals (mapv reversal kernel-vec)]
+     (if (every? some? reversals)
+       (with-reversal result (cycle-raw n (vec (reverse reversals))))
+       result))))
 
 (defn- mix-raw
   "Internal: mix kernels without reversal propagation."
@@ -284,8 +287,8 @@
           bwd-result    (p/assess backward [(:choices trace')] (:discard update-result))
           bwd-score     (:weight bwd-result)
           _             (mx/materialize! update-weight fwd-score bwd-score)
-          log-alpha     (- (+ (mx/item update-weight) (mx/item bwd-score))
-                           (mx/item fwd-score))]
+          log-alpha     (mx/item (mx/subtract (mx/add update-weight bwd-score)
+                                              fwd-score))]
       (if (u/accept-mh? log-alpha k3)
         trace'
         trace))))
