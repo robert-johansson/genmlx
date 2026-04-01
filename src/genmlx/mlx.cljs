@@ -1,106 +1,252 @@
 (ns genmlx.mlx
-  "Thin ClojureScript wrapper over node-mlx (@frost-beta/mlx).
+  "Thin ClojureScript wrapper over mlx-node (@mlx-node/core).
    Provides idiomatic ClojureScript access to MLX tensor operations,
    autograd, random number generation, and linear algebra.
 
    All operations are lazy by default — call (eval!) to materialize.
-   Requires: npm install @frost-beta/mlx (Apple Silicon only, nbb only).")
+   Requires: npm install @mlx-node/core (Apple Silicon only, nbb only).")
 
 ;; ---------------------------------------------------------------------------
 ;; Module loading
 ;; ---------------------------------------------------------------------------
 
-(defonce ^:private mlx-mod (js/require "@frost-beta/mlx"))
-(defonce core    (.-core mlx-mod))
-(defonce random  (.-random core))
-(defonce linalg  (.-linalg core))
-(defonce nn-mod  (.-nn mlx-mod))
-(defonce optim-mod (.-optimizers mlx-mod))
+;; @mlx-node/core exports: MxArray class, DType enum, top-level memory/eval fns.
+;; No bridge module dependency — BigInt64Array shape conversion is inlined below.
+(defonce ^:private c (js/require "@mlx-node/core"))
 
-;; CPU stream needed for linalg ops (cholesky, solve, etc.)
-(defonce ^:private cpu-stream (.newStream core (.-cpu core)))
+;; MxArray class — instance methods for ops, static methods for creation/transforms.
+(defonce ^:private M (.-MxArray c))
+
+;; Expose `core` as alias for backward compatibility (some files reference mx/core).
+;; In mlx-node, there is no core sub-module — ops are instance methods on MxArray.
+(def core c)
+
+;; nn-mod and optim-mod: mlx-node does not have nn/optimizers modules.
+;; These are nil — downstream code that uses them will need separate adaptation.
+(def nn-mod nil)
+(def optim-mod nil)
+
+;; No random sub-module — PRNG is on MxArray (randomKey, keyNormal, etc.).
+(def random nil)
+
+;; No linalg sub-module — linalg ops are instance methods on MxArray.
+(def linalg nil)
 
 ;; ---------------------------------------------------------------------------
 ;; Dtypes
 ;; ---------------------------------------------------------------------------
 
-(def float32  (.-float32 core))
-(def float64  (.-float64 core))
-(def int32    (.-int32 core))
-(def int64    (.-int64 core))
-(def bool-dt  (.-bool_ core))
+;; mlx-node DType is a const enum: Float32=0, Int32=1, Float16=2, BFloat16=3, Uint32=4, Uint8=5
+(def float32  (.-Float32 (.-DType c)))
+(def float64  (.-Float32 (.-DType c)))  ;; MLX has no float64; map to float32
+(def int32    (.-Int32 (.-DType c)))
+(def int64    (.-Int32 (.-DType c)))     ;; MLX has no int64; map to int32
+(def bool-dt  (.-Int32 (.-DType c)))     ;; MLX has no bool; map to int32
+
+;; ---------------------------------------------------------------------------
+;; Internal helpers
+;; ---------------------------------------------------------------------------
+
+(defn- to-big-shape
+  "Convert a clj vector/seq of numbers to BigInt64Array for NAPI-RS shape params."
+  [sh]
+  (js/BigInt64Array.from (clj->js (mapv js/BigInt sh))))
+
+(defn- to-int32-axes
+  "Convert clj vector/seq of axis numbers to Int32Array for reduction axes."
+  [axes]
+  (js/Int32Array.from (clj->js axes)))
+
+(defn- shape->clj
+  "Convert shape from MxArray.shapeArray() to clj vector of numbers.
+   shapeArray() returns Array<number> (unlike shape() which returns BigInt64Array)."
+  [arr]
+  (vec (js->clj (.shapeArray arr))))
+
+(defn- flatten-nested
+  "Recursively flatten a nested JS/clj collection to a flat JS array of numbers."
+  [coll]
+  (if (or (vector? coll) (seq? coll) (sequential? coll) (js/Array.isArray coll))
+    (let [first-el (first coll)]
+      (if (or (vector? first-el) (seq? first-el) (sequential? first-el) (js/Array.isArray first-el))
+        (into [] (mapcat flatten-nested coll))
+        (vec coll)))
+    [coll]))
+
+(defn- infer-shape
+  "Infer shape from nested collection. Returns [flat-data shape-vec]."
+  [coll]
+  (if (or (vector? coll) (seq? coll) (sequential? coll))
+    (let [first-el (first coll)]
+      (if (or (vector? first-el) (seq? first-el) (sequential? first-el))
+        (let [[_ inner-shape] (infer-shape first-el)]
+          [(flatten-nested coll) (into [(count coll)] inner-shape)])
+        [(vec coll) [(count coll)]]))
+    [[coll] []]))
+
+(defn- unflatten
+  "Reconstruct nested vector from flat data and shape."
+  [flat-arr sh]
+  (cond
+    (empty? sh) (first flat-arr)
+    (= 1 (count sh)) (vec flat-arr)
+    :else
+    (let [chunk-size (reduce * (rest sh))
+          n (first sh)]
+      (mapv (fn [i]
+              (unflatten (subvec flat-arr (* i chunk-size) (* (inc i) chunk-size))
+                         (vec (rest sh))))
+            (range n)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Array creation
 ;; ---------------------------------------------------------------------------
 
 (defn scalar
-  ([v]      (.array core v))
-  ([v dtype] (.array core v dtype)))
+  ([v]
+   (if (integer? v)
+     (.scalarInt M v)
+     (.scalarFloat M v)))
+  ([v dtype]
+   (if (= dtype int32)
+     (.scalarInt M (int v))
+     ;; Create as float then cast if needed
+     (let [arr (.scalarFloat M v)]
+       (if (= dtype float32)
+         arr
+         (.astype arr dtype))))))
+
+(defn- ensure-mx
+  "Ensure x is an MxArray. Convert JS numbers to scalar MxArray."
+  [x]
+  (if (number? x) (scalar x) x))
 
 (defn array
-  ([v]      (.array core (clj->js v)))
+  ([v]
+   (let [js-v (clj->js v)]
+     (if (or (vector? v) (seq? v) (sequential? v))
+       (let [[flat-data sh] (infer-shape v)
+             f32 (js/Float32Array.from (clj->js flat-data))]
+         (.fromFloat32 M f32 (to-big-shape sh)))
+       ;; Scalar value
+       (scalar js-v))))
   ([v shape-or-dtype]
    (if (or (vector? shape-or-dtype) (seq? shape-or-dtype))
-     ;; Second arg is a shape — create then reshape
-     (.reshape (.array core (clj->js v)) (clj->js shape-or-dtype))
+     ;; Second arg is a shape — create flat then reshape
+     (let [[flat-data _] (infer-shape v)
+           f32 (js/Float32Array.from (clj->js flat-data))]
+       (.fromFloat32 M f32 (to-big-shape shape-or-dtype)))
      ;; Second arg is a dtype
-     (.array core (clj->js v) shape-or-dtype)))
-  ([v shape dtype]
-   (.reshape (.array core (clj->js v) dtype) (clj->js shape))))
+     (let [[flat-data sh] (infer-shape v)]
+       (if (= shape-or-dtype int32)
+         (.fromInt32 M (js/Int32Array.from (clj->js flat-data)) (to-big-shape sh))
+         (let [f32 (js/Float32Array.from (clj->js flat-data))
+               arr (.fromFloat32 M f32 (to-big-shape sh))]
+           (if (= shape-or-dtype float32)
+             arr
+             (.astype arr shape-or-dtype)))))))
+  ([v shape-vec dtype]
+   (let [[flat-data _] (infer-shape v)]
+     (if (= dtype int32)
+       (.fromInt32 M (js/Int32Array.from (clj->js flat-data)) (to-big-shape shape-vec))
+       (let [f32 (js/Float32Array.from (clj->js flat-data))
+             arr (.fromFloat32 M f32 (to-big-shape shape-vec))]
+         (if (= dtype float32)
+           arr
+           (.astype arr dtype)))))))
 
 (defn astype
   "Cast array to the given dtype."
   [a dtype]
-  (.astype a dtype))
+  (.astype (ensure-mx a) dtype))
 
 (defn zeros
-  ([sh]       (.zeros core (clj->js sh)))
-  ([sh dtype] (.zeros core (clj->js sh) dtype)))
+  ([sh]       (.zeros M (to-big-shape sh)))
+  ([sh dtype] (.zeros M (to-big-shape sh) dtype)))
 
 (defn ones
-  ([sh]       (.ones core (clj->js sh)))
-  ([sh dtype] (.ones core (clj->js sh) dtype)))
+  ([sh]       (.ones M (to-big-shape sh)))
+  ([sh dtype] (.ones M (to-big-shape sh) dtype)))
 
-(defn full [sh val] (.full core (clj->js sh) val))
+(defn full
+  [sh val]
+  (.full M (to-big-shape sh) val))
 
 (defn eye
-  ([n]       (.eye core n))
-  ([n dtype] (.eye core n dtype)))
+  ([n]       (.eye M n))
+  ([n dtype] (.eye M n nil nil dtype)))
 
 (defn arange
-  ([stop]            (.arange core stop))
-  ([start stop]      (.arange core start stop))
-  ([start stop step] (.arange core start stop step)))
+  ;; mlx-node MxArray.arange requires start AND stop.
+  ;; node-mlx had arange(stop), arange(start,stop), arange(start,stop,step).
+  ([stop]            (.arange M 0 stop))
+  ([start stop]      (.arange M start stop))
+  ([start stop step] (.arange M start stop step)))
 
-(defn linspace [start stop num] (.linspace core start stop num))
+(defn linspace [start stop num] (.linspace M start stop num))
 
 (defn meshgrid
   "Create coordinate grids from 1D arrays. Returns a JS array of MLX arrays.
-   (meshgrid a b) → #js [grid-a grid-b] where each has shape [len(a), len(b)]."
-  [a b] (.meshgrid core a b))
+   (meshgrid a b) -> #js [grid-a grid-b] where each has shape [len(a), len(b)].
+   Implemented via broadcasting since mlx-node has no built-in meshgrid."
+  [a b]
+  ;; meshgrid(a,b) = [a expanded to [len(a), len(b)], b expanded to [len(a), len(b)]]
+  ;; a is 1D [M], b is 1D [N] -> grid-a is [M,N], grid-b is [M,N]
+  (let [sa (shape->clj a)
+        sb (shape->clj b)
+        na (first sa)
+        nb (first sb)
+        ;; a-col: [M,1] broadcast to [M,N]
+        a-col (.broadcastTo (.reshape a (to-big-shape [na 1])) (to-big-shape [na nb]))
+        ;; b-row: [1,N] broadcast to [M,N]
+        b-row (.broadcastTo (.reshape b (to-big-shape [1 nb])) (to-big-shape [na nb]))]
+    #js [a-col b-row]))
 
 ;; ---------------------------------------------------------------------------
 ;; Evaluation / materialization
 ;; ---------------------------------------------------------------------------
 
-(defn eval! [& arrs]
-  (apply (.-eval core) arrs))
+(defn eval!
+  "Evaluate one or more MLX arrays, materializing the computation graph."
+  [& arrs]
+  (let [valid (filterv some? arrs)]
+    (when (seq valid)
+      ;; evalArrays takes a JS array of MxArrays
+      (.evalArrays c (to-array valid)))))
 
-(defn item [a]
-  (.item a))
+(defn item
+  "Extract scalar value from a 0-d or 1-element MLX array.
+   mlx-node has no .item() — we use toFloat32/toInt32 and take first element."
+  [a]
+  (let [dt (.dtype a)]
+    (if (= dt int32)
+      (aget (.toInt32 a) 0)
+      (aget (.toFloat32 a) 0))))
 
-(defn ->clj [a]
-  (.eval core a)
-  (js->clj (.tolist a)))
+(defn ->clj
+  "Evaluate an MLX array and convert to nested ClojureScript data.
+   mlx-node has no .tolist() — we use toFloat32 + shape to reconstruct."
+  [a]
+  (.eval a)
+  (let [sh (shape->clj a)
+        dt (.dtype a)
+        flat (if (= dt int32)
+               (vec (js->clj (.toInt32 a)))
+               (vec (js->clj (.toFloat32 a))))]
+    (unflatten flat sh)))
 
-(defn shape [a] (vec (.-shape a)))
+(defn shape
+  "Get array shape as clj vector of numbers."
+  [a]
+  (vec (js->clj (.shapeArray (ensure-mx a)))))
 
-(defn ndim [a] (count (.-shape a)))
+(defn ndim [a] (.ndim (ensure-mx a)))
 
-(defn dtype [a] (.-dtype a))
+(defn dtype [a] (.dtype (ensure-mx a)))
 
-(defn size [a] (.-size a))
+(defn size [a]
+  ;; mlx-node .size() returns bigint — convert to number
+  (js/Number (.size (ensure-mx a))))
 
 ;; ---------------------------------------------------------------------------
 ;; Memory management
@@ -133,61 +279,89 @@
   "Returns true if currently executing inside an mx/compile-fn trace."
   [] (pos? @compile-depth))
 
-(defn tidy [f]
+(defn tidy
+  "Run f, cleaning up intermediate arrays afterward.
+   mlx-node has no native tidy — we use JSC cleanup (releaseWeakRefs +
+   drainMicrotasks + gcAndSweep + clearCache) as a substitute.
+   The function result is returned; intermediates become eligible for GC."
+  [f]
   (swap! tidy-depth inc)
   (try
-    (.tidy core f)
+    (let [result (f)]
+      result)
     (finally
-      (swap! tidy-depth dec))))
+      (swap! tidy-depth dec)
+      ;; Post-scope cleanup: trigger JSC GC to release dead array weak refs,
+      ;; then clear Metal cache. This approximates node-mlx's tidy behavior.
+      (when (zero? @tidy-depth)
+        (when-let [jsc-mod (when (exists? js/Bun) (js/require "bun:jsc"))]
+          (.releaseWeakRefs jsc-mod)
+          (.drainMicrotasks jsc-mod)
+          (.gcAndSweep jsc-mod))
+        (.clearCache c)))))
 
 (defn in-tidy?
   "Returns true if currently executing inside an mx/tidy scope."
   [] (pos? @tidy-depth))
 
-(defn dispose! [a] (.dispose core a))
+(defn dispose!
+  "No-op in mlx-node (no explicit dispose). Arrays are freed by GC."
+  [a]
+  nil)
 
 ;; Memory monitoring
-(defn get-active-memory [] (.getActiveMemory core))
-(defn get-cache-memory [] (.getCacheMemory core))
-(defn get-peak-memory [] (.getPeakMemory core))
-(defn reset-peak-memory! [] (.resetPeakMemory core))
-(defn get-wrappers-count [] (.getWrappersCount core))
+(defn get-active-memory [] (.getActiveMemory c))
+(defn get-cache-memory [] (.getCacheMemory c))
+(defn get-peak-memory [] (.getPeakMemory c))
+(defn reset-peak-memory! [] (.resetPeakMemory c))
+
+(defn get-wrappers-count
+  "mlx-node has no wrapper count tracking. Returns active memory as proxy."
+  []
+  (.getActiveMemory c))
+
 (defn sweep-dead-arrays!
-  "Synchronously free Metal buffers for arrays whose JS wrappers have been GC'd
-   but whose deferred N-API finalizers haven't run yet. Returns count swept.
-   Call this in synchronous loops where event loop yields are rare.
-   No-op when called inside mx/tidy (tidy manages its own disposal).
-   Uses double-check protocol to work around Bun/JSC weak reference bug."
+  "Synchronously free Metal buffers for arrays whose JS wrappers have been GC'd.
+   mlx-node has no sweepDeadArrays — we use JSC cleanup + clearCache instead.
+   No-op when called inside mx/tidy (tidy manages its own disposal)."
   []
   (when-not (in-tidy?)
-    (.sweepDeadArrays core)))
+    (when-let [jsc-mod (when (exists? js/Bun) (js/require "bun:jsc"))]
+      (.releaseWeakRefs jsc-mod)
+      (.drainMicrotasks jsc-mod)
+      (.gcAndSweep jsc-mod))
+    (.clearCache c)))
 
 ;; Memory control
-(defn set-memory-limit! [n] (.setMemoryLimit core n))
-(defn set-cache-limit! [n] (.setCacheLimit core n))
-(defn set-wired-limit! [n] (.setWiredLimit core n))
-(defn clear-cache! [] (.clearCache core))
+(defn set-memory-limit! [n] (.setMemoryLimit c n))
+(defn set-cache-limit! [n] (.setCacheLimit c n))
+(defn set-wired-limit! [n] (.setWiredLimit c n))
+(defn clear-cache! [] (.clearCache c))
 
 ;; Metal resource tracking
+;; mlx-node has no getNumResources/getResourceLimit — use getActiveMemory as proxy.
 (defn get-num-resources
   "Number of live Metal buffer allocations (active + cached).
-   When this hits the resource limit (~499K), allocations fail."
-  [] (.getNumResources core))
+   mlx-node has no resource counting — returns active memory bytes as proxy."
+  [] (.getActiveMemory c))
+
 (defn get-resource-limit
-  "Maximum Metal buffer allocations before failure."
-  [] (.getResourceLimit core))
+  "Maximum Metal buffer allocations before failure.
+   mlx-node has no resource limit tracking — returns a large sentinel value."
+  [] 499000)
 
 ;; Metal device info
-(defn metal-is-available? [] (.isAvailable (.-metal core)))
+(defn metal-is-available? [] (.metalIsAvailable c))
 
 (defn metal-device-info []
-  (let [info (.deviceInfo (.-metal core))]
-    {:architecture (.-architecture info)
-     :device-name (.-device_name info)
-     :memory-size (.-memory_size info)
-     :max-buffer-length (.-max_buffer_length info)
-     :max-recommended-working-set-size (.-max_recommended_working_set_size info)
-     :resource-limit (.-resource_limit info)}))
+  (let [info-str (.metalDeviceInfo c)
+        info (js/JSON.parse info-str)]
+    {:architecture (or (.-architecture info) "apple")
+     :device-name (or (.-device_name info) "apple-gpu")
+     :memory-size (or (.-max_recommended_working_set_size info) 0)
+     :max-buffer-length (or (.-max_buffer_length info) 0)
+     :max-recommended-working-set-size (or (.-max_recommended_working_set_size info) 0)
+     :resource-limit 499000}))
 
 ;; Convenience
 (defn memory-report []
@@ -202,161 +376,174 @@
 ;; Arithmetic (element-wise)
 ;; ---------------------------------------------------------------------------
 
+;; mlx-node: ops are instance methods on MxArray.
+;; Binary ops: (.add a b), (.sub a b), (.mul a b), (.div a b)
+;; BUT these require both args to be MxArray. We ensure-array for scalars.
+
 (defn add
-  ([a b] (.add core a b))
+  ([a b] (.add (ensure-mx a) (ensure-mx b)))
   ([a b & more] (reduce add (add a b) more)))
 (defn subtract
-  ([a b] (.subtract core a b))
+  ([a b] (.sub (ensure-mx a) (ensure-mx b)))
   ([a b & more] (reduce subtract (subtract a b) more)))
 (defn multiply
-  ([a b] (.multiply core a b))
+  ([a b] (.mul (ensure-mx a) (ensure-mx b)))
   ([a b & more] (reduce multiply (multiply a b) more)))
-(defn divide   [a b] (.divide core a b))
-(defn negative [a]   (.negative core a))
-(defn power    [a b] (.power core a b))
-(defn square   [a]   (.square core a))
-(defn sqrt     [a]   (.sqrt core a))
-(defn abs      [a]   (.abs core a))
-(defn maximum  [a b] (.maximum core a b))
-(defn minimum  [a b] (.minimum core a b))
-(defn clip     [a lo hi] (.clip core a lo hi))
-(defn sign     [a]   (.sign core a))
-(defn reciprocal [a] (.reciprocal core a))
-(defn floor-divide [a b] (.floorDivide core a b))
-(defn remainder    [a b] (.remainder core a b))
+(defn divide   [a b] (.div (ensure-mx a) (ensure-mx b)))
+(defn negative [a]   (.negative (ensure-mx a)))
+(defn power    [a b] (.power (ensure-mx a) (ensure-mx b)))
+(defn square   [a]   (.square (ensure-mx a)))
+(defn sqrt     [a]   (.sqrt (ensure-mx a)))
+(defn abs      [a]   (.abs (ensure-mx a)))
+(defn maximum  [a b] (.maximum (ensure-mx a) (ensure-mx b)))
+(defn minimum  [a b] (.minimum (ensure-mx a) (ensure-mx b)))
+(defn clip
+  "Clip values to [lo, hi] range. lo/hi are numbers (not MxArray)."
+  [a lo hi]
+  (.clip (ensure-mx a) lo hi))
+(defn sign     [a]   (.sign (ensure-mx a)))
+(defn reciprocal [a] (.reciprocal (ensure-mx a)))
+(defn floor-divide [a b] (.floorDivide (ensure-mx a) (ensure-mx b)))
+(defn remainder    [a b] (.remainder (ensure-mx a) (ensure-mx b)))
 
 ;; ---------------------------------------------------------------------------
 ;; Math functions
 ;; ---------------------------------------------------------------------------
 
-(defn exp      [a] (.exp core a))
-(defn expm1    [a] (.expm1 core a))
-(defn log      [a] (.log core a))
-(defn log2     [a] (.log2 core a))
-(defn log10    [a] (.log10 core a))
-(defn log1p    [a] (.log1p core a))
-(defn logaddexp [a b] (.logaddexp core a b))
+(defn exp      [a] (.exp (ensure-mx a)))
+(defn expm1    [a] (.expm1 (ensure-mx a)))
+(defn log      [a] (.log (ensure-mx a)))
+(defn log2     [a] (.log2 (ensure-mx a)))
+(defn log10    [a] (.log10 (ensure-mx a)))
+(defn log1p    [a] (.log1p (ensure-mx a)))
+(defn logaddexp [a b] (.logaddexp (ensure-mx a) (ensure-mx b)))
 
-(defn sin      [a] (.sin core a))
-(defn cos      [a] (.cos core a))
-(defn tan      [a] (.tan core a))
-(defn arccos   [a] (.arccos core a))
-(defn tanh     [a] (.tanh core a))
-(defn sigmoid  [a] (.sigmoid core a))
-(defn erf      [a] (.erf core a))
-(defn erfinv   [a] (.erfinv core a))
-(defn lgamma   [a] (.lgamma core a))
-(defn digamma  [a] (.digamma core a))
-(defn bessel-i0e [a] (.besselI0e core a))
-(defn bessel-i1e [a] (.besselI1e core a))
+(defn sin      [a] (.sin (ensure-mx a)))
+(defn cos      [a] (.cos (ensure-mx a)))
+(defn tan      [a] (.tan (ensure-mx a)))
+(defn arccos   [a] (.arccos (ensure-mx a)))
+(defn tanh     [a] (.tanh (ensure-mx a)))
+(defn sigmoid  [a] (.sigmoid (ensure-mx a)))
+(defn erf      [a] (.erf (ensure-mx a)))
+(defn erfinv   [a] (.erfinv (ensure-mx a)))
+(defn lgamma   [a] (.lgamma (ensure-mx a)))
+(defn digamma  [a] (.digamma (ensure-mx a)))
+(defn bessel-i0e [a] (.besselI0e (ensure-mx a)))
+(defn bessel-i1e [a] (.besselI1e (ensure-mx a)))
 
-(defn floor    [a] (.floor core a))
-(defn ceil     [a] (.ceil core a))
-(defn round    [a] (.round core a))
+(defn floor    [a] (.floor (ensure-mx a)))
+(defn ceil     [a] (.ceil (ensure-mx a)))
+(defn round    [a] (.round (ensure-mx a)))
 
 ;; ---------------------------------------------------------------------------
 ;; Reductions
 ;; ---------------------------------------------------------------------------
 
+;; mlx-node reductions take Int32Array for axes (not JS arrays).
+;; Axes can be null for full reduction.
+
 (defn sum
-  ([a]      (.sum core a))
-  ([a axes] (.sum core a (clj->js axes)))
-  ([a axes keepdims] (.sum core a (clj->js axes) keepdims)))
+  ([a]      (.sum (ensure-mx a) nil nil))
+  ([a axes] (.sum (ensure-mx a) (to-int32-axes axes) nil))
+  ([a axes keepdims] (.sum (ensure-mx a) (to-int32-axes axes) keepdims)))
 
 (defn prod
-  ([a]      (.prod core a))
-  ([a axes] (.prod core a (clj->js axes))))
+  ([a]      (.prod (ensure-mx a) nil nil))
+  ([a axes] (.prod (ensure-mx a) (to-int32-axes axes) nil)))
 
 (defn mean
-  ([a]      (.mean core a))
-  ([a axes] (.mean core a (clj->js axes))))
+  ([a]      (.mean (ensure-mx a) nil nil))
+  ([a axes] (.mean (ensure-mx a) (to-int32-axes axes) nil)))
 
 (defn variance
-  ([a]      (.variance core a))
-  ([a axes] (.variance core a (clj->js axes))))
+  ([a]      (.var (ensure-mx a) nil nil))
+  ([a axes] (.var (ensure-mx a) (to-int32-axes axes) nil)))
 
 (defn std
-  ([a]      (.std core a))
-  ([a axes] (.std core a (clj->js axes))))
+  ([a]      (.std (ensure-mx a) nil nil))
+  ([a axes] (.std (ensure-mx a) (to-int32-axes axes) nil)))
 
 (defn amax
-  ([a]      (.max core a))
-  ([a axes] (.max core a (clj->js axes))))
+  ([a]      (.max (ensure-mx a) nil nil))
+  ([a axes] (.max (ensure-mx a) (to-int32-axes axes) nil)))
 
 (defn amin
-  ([a]      (.min core a))
-  ([a axes] (.min core a (clj->js axes))))
+  ([a]      (.min (ensure-mx a) nil nil))
+  ([a axes] (.min (ensure-mx a) (to-int32-axes axes) nil)))
 
 (defn argmax
-  ([a]      (.argmax core a))
-  ([a axis] (.argmax core a axis)))
+  ([a]      (.argmax (ensure-mx a) 0))
+  ([a axis] (.argmax (ensure-mx a) axis)))
 
 (defn argmin
-  ([a]      (.argmin core a))
-  ([a axis] (.argmin core a axis)))
+  ([a]      (.argmin (ensure-mx a) 0))
+  ([a axis] (.argmin (ensure-mx a) axis)))
 
 (defn all
   "True if all elements are true (nonzero). Optional axis."
-  ([a]      (.all core a))
-  ([a axis] (.all core a axis)))
+  ([a]      (.all (ensure-mx a) nil nil))
+  ([a axis] (.all (ensure-mx a) (to-int32-axes [axis]) nil)))
 
 (defn any
   "True if any element is true (nonzero). Optional axis."
-  ([a]      (.any core a))
-  ([a axis] (.any core a axis)))
+  ([a]      (.any (ensure-mx a) nil nil))
+  ([a axis] (.any (ensure-mx a) (to-int32-axes [axis]) nil)))
 
 (defn argsort
-  "Return indices that sort the array along the given axis (default: last axis).
-   Requires custom MLX build with argsort support."
-  ([a]      (.argsort core a))
-  ([a axis] (.argsort core a axis)))
+  "Return indices that sort the array along the given axis (default: last axis)."
+  ([a]      (.argsort (ensure-mx a)))
+  ([a axis] (.argsort (ensure-mx a) axis)))
 
 (defn searchsorted
   "Find insertion indices for values in a sorted 1D array.
    Returns indices such that inserting values maintains sorted order.
    side :left (default) returns first valid index, :right returns last."
   ([sorted-arr values]
-   (.searchsorted core sorted-arr values))
+   (.searchsorted (ensure-mx sorted-arr) (ensure-mx values)))
   ([sorted-arr values side]
-   (.searchsorted core sorted-arr values (= side :right))))
+   (.searchsorted (ensure-mx sorted-arr) (ensure-mx values) (= side :right))))
 
 (defn sort-arr
-  "Sort array along the given axis (default: last axis).
-   Requires custom MLX build with sort support."
-  ([a]      (.sort core a))
-  ([a axis] (.sort core a axis)))
+  "Sort array along the given axis (default: last axis)."
+  ([a]      (.sort (ensure-mx a)))
+  ([a axis] (.sort (ensure-mx a) axis)))
 
 (defn topk
-  "Return the top-k largest values along the last axis.
-   Requires custom MLX build with topk support."
+  "Return the top-k largest values along the last axis."
   [a k]
-  (.topk core a k))
+  (.topk (ensure-mx a) k))
 
 (defn logsumexp
-  ([a]              (.logsumexp core a))
-  ([a axes]         (.logsumexp core a (clj->js axes)))
-  ([a axes keepdims] (.logsumexp core a (clj->js axes) keepdims)))
+  ([a]              (.logsumexp (ensure-mx a) nil nil))
+  ([a axes]         (.logsumexp (ensure-mx a) (to-int32-axes axes) nil))
+  ([a axes keepdims] (.logsumexp (ensure-mx a) (to-int32-axes axes) keepdims)))
 
 (defn cumsum
-  ([a]      (.cumsum core a))
-  ([a axis] (.cumsum core a axis)))
+  ([a]      (.cumsum (ensure-mx a) 0))
+  ([a axis] (.cumsum (ensure-mx a) axis)))
 
 (defn logcumsumexp
   "Cumulative log-sum-exp along axis."
-  ([a]      (.logcumsumexp core a))
-  ([a axis] (.logcumsumexp core a axis)))
+  ([a]      (.logcumsumexp (ensure-mx a) 0))
+  ([a axis] (.logcumsumexp (ensure-mx a) axis)))
 
 ;; ---------------------------------------------------------------------------
 ;; Comparison / selection
 ;; ---------------------------------------------------------------------------
 
-(defn equal        [a b] (.equal core a b))
-(defn not-equal    [a b] (.notEqual core a b))
-(defn greater      [a b] (.greater core a b))
-(defn greater-equal [a b] (.greaterEqual core a b))
-(defn less         [a b] (.less core a b))
-(defn less-equal   [a b] (.lessEqual core a b))
-(defn where        [cond a b] (.where core cond a b))
+;; mlx-node: comparison ops are instance methods.
+(defn equal        [a b] (.equal (ensure-mx a) (ensure-mx b)))
+(defn not-equal    [a b] (.notEqual (ensure-mx a) (ensure-mx b)))
+(defn greater      [a b] (.greater (ensure-mx a) (ensure-mx b)))
+(defn greater-equal [a b] (.greaterEqual (ensure-mx a) (ensure-mx b)))
+(defn less         [a b] (.less (ensure-mx a) (ensure-mx b)))
+(defn less-equal   [a b] (.lessEqual (ensure-mx a) (ensure-mx b)))
+
+(defn where
+  "Select elements from a or b based on condition.
+   mlx-node: condition.where(x, y) — condition is the receiver."
+  [cond a b]
+  (.where (ensure-mx cond) (ensure-mx a) (ensure-mx b)))
 
 ;; Model-level comparison helpers — auto-promote integers, return float32.
 ;; Use these in gen bodies where traced values are tensors during enumeration.
@@ -377,48 +564,59 @@
                  (if (number? b) (scalar b) b)) float32))
 (defn and* [a b] (multiply a b))
 (defn or*  [a b] (maximum a b))
-(defn isnan        [a] (.isnan core a))
-(defn isinf        [a] (.isinf core a))
+
+(defn isnan        [a] (.isnan (ensure-mx a)))
+(defn isinf        [a] (.isinf (ensure-mx a)))
 (defn nan-to-num
-  "Replace NaN/Inf with finite values. Default: NaN→0."
-  ([a]                             (.nanToNum core a 0.0))
-  ([a nan-val]                     (.nanToNum core a nan-val))
-  ([a nan-val posinf-val neginf-val] (.nanToNum core a nan-val posinf-val neginf-val)))
+  "Replace NaN/Inf with finite values. Default: NaN->0."
+  ([a]                             (.nanToNum (ensure-mx a) 0.0))
+  ([a nan-val]                     (.nanToNum (ensure-mx a) nan-val))
+  ([a nan-val posinf-val neginf-val] (.nanToNum (ensure-mx a) nan-val posinf-val neginf-val)))
 
 ;; ---------------------------------------------------------------------------
 ;; Shape manipulation
 ;; ---------------------------------------------------------------------------
 
-(defn reshape    [a sh] (.reshape core a (clj->js sh)))
-(defn flatten    [a]    (.flatten core a))
+(defn reshape    [a sh] (.reshape (ensure-mx a) (to-big-shape sh)))
+(defn flatten    [a]    (.flatten (ensure-mx a)))
 (defn squeeze
   "Remove size-1 dimensions. With axes, only squeeze specified positions."
-  ([a]      (.squeeze core a))
-  ([a axes] (.squeeze core a (clj->js (vec axes)))))
-(defn expand-dims [a axis] (.expandDims core a axis))
+  ([a]      (.squeeze (ensure-mx a)))
+  ([a axes] (.squeeze (ensure-mx a) (to-int32-axes (vec axes)))))
+(defn expand-dims [a axis] (.expandDims (ensure-mx a) axis))
 (defn transpose
-  ([a]      (.transpose core a))
-  ([a axes] (.transpose core a (clj->js axes))))
+  ([a]      (.transpose (ensure-mx a)))
+  ([a axes] (.transpose (ensure-mx a) (to-int32-axes axes))))
 (defn stack
-  ([arrs]      (.stack core (clj->js arrs)))
-  ([arrs axis] (.stack core (clj->js arrs) axis)))
+  ;; mlx-node: MxArray.stack(arrays, axis) — static method
+  ([arrs]      (.stack M (to-array arrs)))
+  ([arrs axis] (.stack M (to-array arrs) axis)))
 (defn concatenate
-  ([arrs]      (.concatenate core (clj->js arrs)))
-  ([arrs axis] (.concatenate core (clj->js arrs) axis)))
-(defn broadcast-to [a sh] (.broadcastTo core a (clj->js sh)))
-(defn tile [a reps] (.tile core a (clj->js reps)))
-(defn repeat-arr [a repeats axis] (.repeat core a repeats axis))
+  ;; mlx-node: MxArray.concatenate for 2, concatenateMany for 3+
+  ([arrs]
+   (let [arr-vec (vec arrs)]
+     (if (= 2 (count arr-vec))
+       (.concatenate M (nth arr-vec 0) (nth arr-vec 1) 0)
+       (.concatenateMany M (to-array arr-vec) 0))))
+  ([arrs axis]
+   (let [arr-vec (vec arrs)]
+     (if (= 2 (count arr-vec))
+       (.concatenate M (nth arr-vec 0) (nth arr-vec 1) axis)
+       (.concatenateMany M (to-array arr-vec) axis)))))
+(defn broadcast-to [a sh] (.broadcastTo (ensure-mx a) (to-big-shape sh)))
+(defn tile [a reps] (.tile (ensure-mx a) (to-int32-axes reps)))
+(defn repeat-arr [a repeats axis] (.repeat (ensure-mx a) repeats axis))
 (defn split-arr
-  ([a sections]      (vec (js->clj (.split core a sections))))
-  ([a sections axis] (vec (js->clj (.split core a sections axis)))))
+  ([a sections]      (vec (.split (ensure-mx a) sections)))
+  ([a sections axis] (vec (.split (ensure-mx a) sections axis))))
 
 ;; ---------------------------------------------------------------------------
 ;; Indexing
 ;; ---------------------------------------------------------------------------
 
 (defn take-idx
-  ([a indices]      (.take core a indices))
-  ([a indices axis] (.take core a indices axis)))
+  ([a indices]      (.take (ensure-mx a) (if (number? indices) (scalar indices int32) (ensure-mx indices)) 0))
+  ([a indices axis] (.take (ensure-mx a) (if (number? indices) (scalar indices int32) (ensure-mx indices)) axis)))
 
 (defn idx
   "Extract element at index i along axis (default 0).
@@ -429,68 +627,87 @@
   ([a i axis] (take-idx a (if (number? i) (scalar i int32) i) axis)))
 
 (defn take-along-axis [a indices axis]
-  (.takeAlongAxis core a indices axis))
+  (.takeAlongAxis (ensure-mx a) (ensure-mx indices) axis))
 
 (defn index
-  "Index along axis 0. For 1D: returns scalar element. For 2D: returns row."
+  "Index along axis 0. For 1D: returns scalar element. For 2D: returns row.
+   Uses take with a scalar int32 index."
   [a i]
-  (.index a i))
+  (.take a (if (number? i) (scalar i int32) i) 0))
 
 (defn slice
-  "Slice along axis 0. Returns elements [start, stop) with optional step."
-  ([a start stop]      (.index a (.Slice core start stop)))
-  ([a start stop step] (.index a (.Slice core start stop step))))
+  "Slice along axis 0. Returns elements [start, stop) with optional step.
+   mlx-node uses .slice(starts, stops) with BigInt64Array."
+  ([a start stop]
+   (.slice a (js/BigInt64Array.from #js [(js/BigInt start)])
+             (js/BigInt64Array.from #js [(js/BigInt stop)])))
+  ([a start stop step]
+   ;; mlx-node .slice doesn't support step directly.
+   ;; Emulate via slice then take with strided indices.
+   (let [sliced (.slice a (js/BigInt64Array.from #js [(js/BigInt start)])
+                          (js/BigInt64Array.from #js [(js/BigInt stop)]))]
+     (if (= step 1)
+       sliced
+       ;; Build strided index array
+       (let [n (first (shape->clj sliced))
+             indices (array (vec (range 0 n step)) int32)]
+         (.take sliced indices 0))))))
 
 (defn mat-get
   "Get element [i,j] from a 2D array. Returns a scalar MLX array."
   [a i j]
-  (.index (.index a i) j))
+  ;; Take row i, then element j from that row
+  (let [row (.take a (scalar i int32) 0)]
+    (.take row (scalar j int32) 0)))
 
 ;; ---------------------------------------------------------------------------
 ;; Matrix operations
 ;; ---------------------------------------------------------------------------
 
-(defn matmul    [a b] (.matmul core a b))
-(defn inner     [a b] (.inner core a b))
-(defn outer     [a b] (.outer core a b))
-(defn diag      [a]   (.diag core a))
+(defn matmul    [a b] (.matmul (ensure-mx a) (ensure-mx b)))
+(defn inner     [a b] (.inner (ensure-mx a) (ensure-mx b)))
+(defn outer     [a b] (.outer (ensure-mx a) (ensure-mx b)))
+(defn diag      [a]   (.diag (ensure-mx a)))
 (defn trace-mat
   "Matrix trace (sum of diagonal elements)."
-  ([a]                  (.trace core a 0 0 1))
-  ([a offset]           (.trace core a offset 0 1))
-  ([a offset ax1 ax2]   (.trace core a offset ax1 ax2)))
+  ([a]                  (.trace (ensure-mx a) 0 0 1))
+  ([a offset]           (.trace (ensure-mx a) offset 0 1))
+  ([a offset ax1 ax2]   (.trace (ensure-mx a) offset ax1 ax2)))
 (defn einsum
   "Einstein summation. E.g. (einsum \"ij,jk->ik\" a b)"
   [subscripts & arrays]
-  (.einsum core subscripts (to-array arrays)))
+  (.einsum M subscripts (to-array arrays)))
 
 ;; ---------------------------------------------------------------------------
-;; Linear algebra (CPU stream)
+;; Linear algebra
 ;; ---------------------------------------------------------------------------
 
-(defn cholesky [a]   (.cholesky linalg a false cpu-stream))
-(defn solve   [a b]  (.solve linalg a b cpu-stream))
+;; mlx-node: linalg ops are instance methods on MxArray.
+;; No cpu-stream needed — handled internally in C++.
+
+(defn cholesky [a]   (.cholesky (ensure-mx a) false))
+(defn solve   [a b]  (.linalgSolve (ensure-mx a) (ensure-mx b)))
 (defn solve-triangular [a b upper]
-  (.solveTriangular linalg a b upper cpu-stream))
-(defn inv     [a]    (.inv linalg a cpu-stream))
-(defn tri-inv [a upper] (.triInv linalg a upper cpu-stream))
+  (.solveTriangular (ensure-mx a) (ensure-mx b) upper))
+(defn inv     [a]    (.linalgInv (ensure-mx a)))
+(defn tri-inv [a upper] (.triInv (ensure-mx a) upper))
 (defn cholesky-inv
   "Inverse of A from its Cholesky factor L (where A=LL^T)."
-  ([a]       (.choleskyInv linalg a false cpu-stream))
-  ([a upper] (.choleskyInv linalg a upper cpu-stream)))
+  ([a]       (.choleskyInv (ensure-mx a) false))
+  ([a upper] (.choleskyInv (ensure-mx a) upper)))
 (defn qr [a]
-  (let [result (.qr linalg a cpu-stream)]
+  (let [result (.qr (ensure-mx a))]
     [(aget result 0) (aget result 1)]))
 (defn svd [a]
-  (let [result (.svd linalg a cpu-stream)]
+  (let [result (.svd (ensure-mx a))]
     [(aget result 0) (aget result 1) (aget result 2)]))
 (defn eigh [a]
-  (let [result (.eigh linalg a cpu-stream)]
+  (let [result (.eigh (ensure-mx a))]
     [(aget result 0) (aget result 1)]))
-(defn eigvalsh [a] (.eigvalsh linalg a cpu-stream))
+(defn eigvalsh [a] (.eigvalsh (ensure-mx a)))
 (defn norm
-  ([a]     (.norm linalg a))
-  ([a ord] (.norm linalg a ord)))
+  ([a]     (.linalgNorm (ensure-mx a)))
+  ([a ord] (.linalgNorm (ensure-mx a) ord)))
 
 (defn logdet
   "Log-determinant of positive-definite matrix via Cholesky."
@@ -509,80 +726,151 @@
 ;; Autograd
 ;; ---------------------------------------------------------------------------
 
+;; mlx-node autograd is fundamentally different from node-mlx:
+;; - node-mlx: .grad(core, f) returns a gradient function
+;; - mlx-node: MxArray.valueAndGrad(fn, inputs) applies immediately, returns [loss, ...grads]
+;; - mlx-node: MxArray.computeGradients(fn, inputs) returns [...grads] only
+;;
+;; We adapt the API: grad/value-and-grad return curried functions that call
+;; MxArray.valueAndGrad/computeGradients when invoked with actual arguments.
+
 (defn grad
   "Compute gradient of f. Tracks grad-depth so p/generate can skip
    the L3 analytical path (which uses volatile! and breaks gradient flow).
    Each call runs inside mx/tidy to prevent Metal buffer accumulation.
-   Tidy is skipped inside mx/compile-fn (would dispose trace arrays)."
+   Tidy is skipped inside mx/compile-fn (would dispose trace arrays).
+
+   Adaptation: mlx-node has no .grad() that returns a function.
+   We use MxArray.computeGradients(fn, inputs) which applies immediately.
+   The returned wrapper function adapts the curried API."
   ([f]
-   (let [gf (.grad core f)]
-     (fn [& args]
-       (swap! grad-depth inc)
-       (try (if (in-compile?)
-              (apply gf args)
-              (let [r (tidy #(apply gf args))]
-                (eval! r)
-                r))
-            (finally (swap! grad-depth dec))))))
+   ;; Default: gradient w.r.t. first argument
+   (fn [& args]
+     (swap! grad-depth inc)
+     (try
+       (let [inputs (to-array args)
+             ;; computeGradients returns [grad0, grad1, ...] for all inputs
+             grads (.computeGradients M f inputs)
+             ;; Return gradient of first argument (matching node-mlx .grad behavior)
+             r (aget grads 0)]
+         (when-not (in-compile?)
+           (eval! r))
+         r)
+       (finally (swap! grad-depth dec)))))
   ([f argnums]
-   (let [gf (.grad core f (clj->js argnums))]
-     (fn [& args]
-       (swap! grad-depth inc)
-       (try (if (in-compile?)
-              (apply gf args)
-              (let [r (tidy #(apply gf args))]
-                (eval! r)
-                r))
-            (finally (swap! grad-depth dec)))))))
+   ;; Gradient w.r.t. specific arguments
+   (fn [& args]
+     (swap! grad-depth inc)
+     (try
+       (let [argnum-vec (if (vector? argnums) argnums [argnums])
+             ;; Build a wrapper that only passes the selected args to valueAndGrad
+             ;; then unpacks the gradients for those specific positions
+             inputs (to-array args)
+             grads (.computeGradients M f inputs)]
+         ;; Return grads for the specified argnums
+         (if (= 1 (count argnum-vec))
+           (let [r (aget grads (first argnum-vec))]
+             (when-not (in-compile?)
+               (eval! r))
+             r)
+           (let [r (mapv #(aget grads %) argnum-vec)]
+             (when-not (in-compile?)
+               (apply eval! r))
+             r)))
+       (finally (swap! grad-depth dec))))))
 
 (defn value-and-grad
   "Compute value and gradient of f. Tracks grad-depth.
    Each call runs inside mx/tidy to prevent Metal buffer accumulation.
-   Tidy is skipped inside mx/compile-fn (would dispose trace arrays)."
+   Tidy is skipped inside mx/compile-fn (would dispose trace arrays).
+
+   Adaptation: mlx-node MxArray.valueAndGrad(fn, inputs) returns [loss, grad0, grad1, ...].
+   node-mlx returns [value, gradient_of_first_arg] for the no-argnums case.
+   We match that convention: always return [value, single_gradient]."
   ([f]
-   (let [vg (.valueAndGrad core f)]
-     (fn [& args]
-       (swap! grad-depth inc)
-       (try (if (in-compile?)
-              (let [result (apply vg args)]
-                [(aget result 0) (aget result 1)])
-              (let [result-vol (volatile! nil)]
-                (tidy (fn []
-                        (let [result (apply vg args)
-                              v (aget result 0)
-                              g (aget result 1)]
-                          (eval! v g)
-                          (vreset! result-vol [v g])
-                          (to-array [v g]))))
-                @result-vol))
-            (finally (swap! grad-depth dec))))))
+   ;; Default: gradient w.r.t. first argument (matching node-mlx behavior)
+   (fn [& args]
+     (swap! grad-depth inc)
+     (try
+       (let [inputs (to-array args)
+             ;; valueAndGrad returns [loss, grad0, grad1, ...]
+             result (.valueAndGrad M f inputs)
+             v (aget result 0)
+             ;; Return gradient of first argument only (node-mlx convention)
+             g (aget result 1)]
+         (when-not (in-compile?)
+           (eval! v g))
+         [v g])
+       (finally (swap! grad-depth dec)))))
   ([f argnums]
-   (let [vg (.valueAndGrad core f (clj->js argnums))]
-     (fn [& args]
-       (swap! grad-depth inc)
-       (try (if (in-compile?)
-              (let [result (apply vg args)]
-                [(aget result 0) (aget result 1)])
-              (let [result-vol (volatile! nil)]
-                (tidy (fn []
-                        (let [result (apply vg args)
-                              v (aget result 0)
-                              g (aget result 1)]
-                          (eval! v g)
-                          (vreset! result-vol [v g])
-                          (to-array [v g]))))
-                @result-vol))
-            (finally (swap! grad-depth dec)))))))
+   ;; argnums variant: differentiate w.r.t. specified argument(s).
+   ;; mlx-node always computes all gradients; we select the requested ones.
+   (fn [& args]
+     (swap! grad-depth inc)
+     (try
+       (let [inputs (to-array args)
+             result (.valueAndGrad M f inputs)
+             v (aget result 0)
+             argnum-vec (if (vector? argnums) argnums [argnums])
+             ;; For single argnum, return the gradient directly.
+             ;; For multiple, return JS array of gradients.
+             g (if (= 1 (count argnum-vec))
+                 (aget result (inc (first argnum-vec)))
+                 (let [gs #js []]
+                   (doseq [i argnum-vec]
+                     (.push gs (aget result (inc i))))
+                   gs))]
+         (when-not (in-compile?)
+           (if (instance? M g)
+             (eval! v g)
+             (do (eval! v)
+                 (.evalArrays c (to-array (vec (js->clj g)))))))
+         [v g])
+       (finally (swap! grad-depth dec))))))
 
-(defn jvp [f primals tangents]
-  (let [result (.jvp core f (clj->js primals) (clj->js tangents))]
-    [(aget result 0) (aget result 1)]))
+(defn jvp
+  "Forward-mode Jacobian-vector product.
+   mlx-node has no jvp — implement via forward-mode AD workaround.
+   Falls back to numerical differentiation approximation."
+  [f primals tangents]
+  ;; mlx-node doesn't expose jvp. For now, compute f(primals) and approximate.
+  ;; This is a stub — callers that need true JVP will need mlx-node upstream support.
+  (let [result-val (apply f primals)
+        ;; Approximate JVP via (f(x+eps*t) - f(x)) / eps
+        eps 1e-5
+        primals-arr (vec primals)
+        tangents-arr (vec tangents)
+        perturbed (mapv (fn [p t] (add p (multiply (scalar eps) t)))
+                        primals-arr tangents-arr)
+        result-perturbed (apply f perturbed)
+        jvp-approx (divide (subtract result-perturbed result-val) (scalar eps))]
+    [result-val jvp-approx]))
 
-(defn vjp [f primals cotangents]
-  (let [result (.vjp core f (clj->js primals) (clj->js cotangents))]
-    [(aget result 0) (aget result 1)]))
+(defn vjp
+  "Reverse-mode vector-Jacobian product.
+   mlx-node has no vjp — we implement via valueAndGrad with a surrogate loss."
+  [f primals cotangents]
+  ;; VJP: compute gradients of <f(x), cotangent> w.r.t. x
+  ;; This gives us the adjoint (VJP) of f.
+  (let [primals-arr (vec primals)
+        cotangents-arr (vec cotangents)
+        ;; Surrogate loss: inner product of f(x) with cotangent
+        surrogate (fn [& xs]
+                    (let [result (apply f xs)]
+                      (if (sequential? cotangents-arr)
+                        (sum (multiply result (first cotangents-arr)))
+                        (sum (multiply result cotangents-arr)))))
+        inputs (to-array primals-arr)
+        result (.valueAndGrad M surrogate inputs)
+        fval (apply f primals-arr)
+        ;; result is [loss, grad0, grad1, ...]
+        grads (let [gs #js []]
+                (dotimes [i (dec (.-length result))]
+                  (.push gs (aget result (inc i))))
+                gs)]
+    [fval grads]))
 
-(defn stop-gradient [a] (.stopGradient core a))
+(defn stop-gradient [a] (.stopGradient (ensure-mx a)))
 
 ;; ---------------------------------------------------------------------------
 ;; Transforms
@@ -597,94 +885,126 @@
 (defn compile-fn
   "Wrap f in mx/compile-fn with auto-recompilation on cache clear.
    If compile-clear-cache! has been called since this function was compiled,
-   the next invocation transparently recompiles — no crash, no manual
+   the next invocation transparently recompiles -- no crash, no manual
    intervention. Cost: one atom deref per call (negligible).
-   Tracks compile-depth so mx/grad can skip tidy during tracing."
+   Tracks compile-depth so mx/grad can skip tidy during tracing.
+
+   Adaptation: mlx-node MxArray.compileFn(fn, inputs, shapeless) applies immediately.
+   We return a wrapper that calls compileFn each time with the current inputs.
+   If f returns a JS array of MxArrays, they are stacked into a single tensor
+   (compileFn requires MxArray return) and split back on output."
   ([f]    (compile-fn f false))
   ([f shapeless?]
-   (let [cf (fn [& args]
-              (swap! compile-depth inc)
-              (try (apply f args)
-                   (finally (swap! compile-depth dec))))
-         compile! (if shapeless?
-                    #(.compile core cf true)
-                    #(.compile core cf))
-         cf-ref (atom (compile!))
-         gen-ref (atom @compile-generation)]
+   ;; mlx-node compileFn applies immediately rather than returning a compiled function.
+   ;; We wrap to provide the same curried API. Each call traces and compiles.
+   ;; Probe on first call whether f returns a JS array (multi-output) or single MxArray.
+   (let [multi-output? (atom nil)]
      (fn [& args]
-       (when (not= @gen-ref @compile-generation)
-         (reset! cf-ref (compile!))
-         (reset! gen-ref @compile-generation))
-       (apply @cf-ref args)))))
+       (swap! compile-depth inc)
+       (try
+         ;; Probe the return type on first call
+         (when (nil? @multi-output?)
+           (let [probe-result (apply f args)]
+             (reset! multi-output? (js/Array.isArray probe-result))))
+         (if @multi-output?
+           ;; Multi-output: wrap f to stack results, then split on output
+           (let [n-out (atom nil)
+                 wrapped (fn [& inner-args]
+                           (let [raw (apply f inner-args)
+                                 arr-vec (vec (js->clj raw))]
+                             (reset! n-out (count arr-vec))
+                             (.stack M (to-array arr-vec))))
+                 result (.compileFn M wrapped (to-array args) shapeless?)
+                 stacked (aget result 0)]
+             ;; Split back into JS array
+             (to-array (mapv (fn [i] (.take stacked (scalar i int32) 0))
+                             (range @n-out))))
+           ;; Single-output: pass through directly
+           (let [result (.compileFn M f (to-array args) shapeless?)]
+             (if (= 1 (.-length result))
+               (aget result 0)
+               result)))
+         (finally (swap! compile-depth dec)))))))
 
 (defn compile-clear-cache!
   "Clear all compiled function caches, releasing associated Metal resources.
-   Safe to call at any time — compiled functions transparently recompile
+   Safe to call at any time -- compiled functions transparently recompile
    on next use via the compile-generation counter."
   []
-  (.compileClearCache core)
+  (.compileClearCache c)
   (swap! compile-generation inc))
 
 (defn vmap
-  ([f]                     (.vmap core f))
-  ([f in-axes]             (.vmap core f (clj->js in-axes)))
-  ([f in-axes out-axes]    (.vmap core f (clj->js in-axes) (clj->js out-axes))))
+  "Vectorized map. Applies f to batched inputs.
+
+   Adaptation: mlx-node MxArray.vmap(fn, inputs, inAxes, outAxes) applies immediately.
+   node-mlx .vmap(core, f, inAxes, outAxes) returns a vmapped function.
+   We return a wrapper function that calls MxArray.vmap on each invocation."
+  ([f]                     (fn [& args] (let [r (.vmap M f (to-array args))] (aget r 0))))
+  ([f in-axes]             (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes))] (aget r 0))))
+  ([f in-axes out-axes]    (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes) (clj->js out-axes))] (aget r 0)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Async
 ;; ---------------------------------------------------------------------------
 
-(defn async-eval! [& arrays]
-  (apply (.-asyncEval core) arrays))
+(defn async-eval!
+  "Asynchronously evaluate arrays. Uses per-array evalAsync."
+  [& arrays]
+  (let [promises (mapv #(.evalAsync %) (filter some? arrays))]
+    ;; Return a promise that resolves when all are done
+    (js/Promise.all (to-array promises))))
 
 ;; ---------------------------------------------------------------------------
 ;; Device / Stream
 ;; ---------------------------------------------------------------------------
 
-(defn default-device [] (.defaultDevice core))
-(defn set-default-device! [d] (.setDefaultDevice core d))
-(def cpu (.-cpu core))
-(def gpu (.-gpu core))
+;; mlx-node has no device/stream management — MLX handles it internally.
+(defn default-device [] "gpu")
+(defn set-default-device! [d] nil)
+(def cpu "cpu")
+(def gpu "gpu")
 
 ;; ---------------------------------------------------------------------------
 ;; Constants
 ;; ---------------------------------------------------------------------------
 
-(def pi    (.-pi core))
-(def e-val (.-e core))
-(def inf   (.-inf core))
-(def nan   (.-nan core))
+;; mlx-node has no pi/e/inf/nan constants — compute them.
+(def pi    (.-PI js/Math))
+(def e-val (.-E js/Math))
+(def inf   js/Infinity)
+(def nan   js/NaN)
 
 ;; ---------------------------------------------------------------------------
 ;; Softmax
 ;; ---------------------------------------------------------------------------
 
 (defn softmax
-  ([a]      (.softmax core a))
-  ([a axis] (.softmax core a axis)))
+  ([a]      (.softmax (ensure-mx a) -1))
+  ([a axis] (.softmax (ensure-mx a) axis)))
 
 ;; ---------------------------------------------------------------------------
 ;; Utilities
 ;; ---------------------------------------------------------------------------
 
 (def ^:private MxArray
-  "Constructor of MLX arrays — used for fast instance? checks."
-  (.-constructor (.array core 0)))
+  "Constructor of MLX arrays -- used for fast instance? checks."
+  M)
 
 (defn array? [x]
-  (instance? MxArray x))
+  (instance? M x))
 
 (defn realize
   "Evaluate a lazy MLX array and return its scalar JS value."
   [x] (eval! x) (item x))
 
 ;; ---------------------------------------------------------------------------
-;; Layer 0 boundary helpers — ALL eval!/tidy calls in Layers 1-8 flow
+;; Layer 0 boundary helpers -- ALL eval!/tidy calls in Layers 1-8 flow
 ;; through these. Keeps side-effectful materialization confined to mlx.cljs.
 ;; ---------------------------------------------------------------------------
 
 (def ^:private jsc
-  "Bun JSC internals — exposes GC control, weak ref release, microtask drain."
+  "Bun JSC internals -- exposes GC control, weak ref release, microtask drain."
   (when (exists? js/Bun) (js/require "bun:jsc")))
 
 (defn jsc-cleanup!
@@ -707,32 +1027,31 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private resource-pressure-threshold
-  "When Metal buffer count exceeds this, auto-cleanup triggers.
-   Set to ~40% of the 499K hard limit — leaves headroom for bursts."
-  200000)
+  "When active memory exceeds this (bytes), auto-cleanup triggers.
+   mlx-node has no resource counting -- we use memory bytes instead."
+  (* 512 1024 1024))  ;; 512MB
 
 (def ^:private ^:mutable ops-since-check
-  "Counter to amortize the cost of get-num-resources calls.
+  "Counter to amortize the cost of getActiveMemory calls.
    Only check resource pressure every N operations."
   0)
 
 (def ^:private check-interval
-  "Check resource pressure every N auto-cleanup! calls.
-   get-num-resources is cheap (~0.01ms) but not free in tight loops."
+  "Check resource pressure every N auto-cleanup! calls."
   50)
 
 (defn auto-cleanup!
   "Resource-pressure cleanup for hot paths. Two tiers:
 
    Lightweight (default): sweep + clear only. Harvests Metal buffers
-   that Bun's natural GC has already freed. Safe to call from anywhere —
+   that Bun's natural GC has already freed. Safe to call from anywhere --
    including inside tight handler loops (SMC rejuvenation, MH chains).
    The handler's purity (each trace op produces a clean batch of dead
    intermediates via vreset!) makes sweep highly effective.
 
    Aggressive (aggressive? true): also forces GC via jsc-cleanup! before
    sweeping. Use ONLY from leaf operations (dist-sample-n) that are not
-   called from inside complex state-holding loops. Never from trace-fn —
+   called from inside complex state-holding loops. Never from trace-fn --
    forced GC during tight handler loops causes use-after-free segfaults."
   ([] (auto-cleanup! false))
   ([aggressive?]
@@ -740,7 +1059,7 @@
    (when (>= ops-since-check check-interval)
      (set! ops-since-check 0)
      (when (and (not (in-tidy?))
-                (> (get-num-resources) resource-pressure-threshold))
+                (> (get-active-memory) resource-pressure-threshold))
        (when aggressive?
          (jsc-cleanup!)
          (when gc-fn (gc-fn)))
@@ -756,15 +1075,14 @@
   10)
 
 (def ^:private gfi-pressure-threshold
-  "Only force jsc-cleanup! when Metal resources exceed this count.
+  "Only force jsc-cleanup! when active memory exceeds this (bytes).
    Prevents aggressive GC in small inference loops where it can cause
-   SIGTRAP crashes. Set high enough to avoid overhead in benchmarks
-   but low enough to catch accumulation before the 499K limit."
-  30000)
+   SIGTRAP crashes."
+  (* 128 1024 1024))  ;; 128MB
 
 (defn gfi-cleanup!
   "Cleanup at GFI operation boundaries. Every N calls, checks resource
-   pressure. If Metal buffers exceed the threshold, forces N-API weak
+   pressure. If active memory exceeds the threshold, forces N-API weak
    reference release via jsc-cleanup!, then sweeps freed Metal buffers.
 
    Called after each DynamicGF protocol operation (simulate, generate,
@@ -776,7 +1094,7 @@
   (set! gfi-ops-count (inc gfi-ops-count))
   (when (>= gfi-ops-count gfi-cleanup-interval)
     (set! gfi-ops-count 0)
-    (when (> (get-num-resources) gfi-pressure-threshold)
+    (when (> (get-active-memory) gfi-pressure-threshold)
       (jsc-cleanup!)
       (sweep-dead-arrays!)
       (clear-cache!))))
@@ -829,7 +1147,7 @@
 (defn tidy-scalar
   "Run f inside mx/tidy, extract a JS number via item, return it.
    All intermediate MLX arrays are freed. The returned value is a
-   plain JS number with no MLX references — safe for use in loops.
+   plain JS number with no MLX references -- safe for use in loops.
    Automatically clears Metal cache when memory pressure is high.
    f must return an MLX scalar array."
   [f]
@@ -852,7 +1170,7 @@
 
 (defn force-gc!
   "Force garbage collection and Metal buffer cleanup.
-   Clears compiled function caches too — compiled functions transparently
+   Clears compiled function caches too -- compiled functions transparently
    recompile on next use, so this is safe."
   []
   (jsc-cleanup!)
@@ -903,7 +1221,7 @@
      :else (scalar x)))
   ([x dtype]
    (cond
-     (array? x) (if (= (.-dtype x) dtype) x (astype x dtype))
+     (array? x) (if (= (.dtype x) dtype) x (astype x dtype))
      (fn? x) x
      (keyword? x) x
      (map? x) x

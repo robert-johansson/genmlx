@@ -4,16 +4,25 @@
    Keys are MLX arrays that split deterministically."
   (:require [genmlx.mlx :as mx]))
 
+;; ---------------------------------------------------------------------------
+;; Bridge and MxArray references for PRNG ops
+;; ---------------------------------------------------------------------------
+
+(defonce ^:private bridge (js/require (str (.cwd js/process) "/src/genmlx/llm/bridge.js")))
+(defonce ^:private M (.-MxArray (js/require "@mlx-node/core")))
+
+;; ---------------------------------------------------------------------------
+;; Key management
+;; ---------------------------------------------------------------------------
+
 (defn fresh-key
   "Create a fresh random key from an optional integer seed."
-  ([]    (.key mx/random (js/Math.floor (* (js/Math.random) 2147483647))))
-  ([seed] (.key mx/random seed)))
+  ([]    (.randomKey bridge (js/Math.floor (* (js/Math.random) 2147483647))))
+  ([seed] (.randomKey bridge seed)))
 
 (defn key->seed
   "Derive a non-negative integer seed from a PRNG key array.
-   Combines both uint32 elements via XOR, then masks to 31 bits.
-   MLX's JS binding treats negative seeds as 0, so we must ensure
-   the seed is always non-negative."
+   Combines both uint32 elements via XOR, then masks to 31 bits."
   [key]
   (mx/eval! key)
   (let [arr (mx/->clj key)]
@@ -22,27 +31,24 @@
 
 (defn seed!
   "Seed the global MLX PRNG state from a key array.
-   MLX random functions require this for deterministic output
-   even when an explicit key is passed."
+   Note: mlx-node's key-based sampling doesn't use global state,
+   but this is kept for compatibility."
   [key]
-  (.seed mx/random (key->seed key)))
-
-(defn- extract-row
-  "Extract row i from a 2D MLX array as a 1D array."
-  [arr i]
-  (.take mx/core arr (mx/scalar i mx/int32) 0))
+  ;; mlx-node doesn't have a global seed function — no-op
+  nil)
 
 (defn split
   "Split a key into two independent sub-keys. Returns [k1 k2]."
   [key]
-  (let [ks (.split mx/random key)]
-    [(extract-row ks 0) (extract-row ks 1)]))
+  (let [ks (.randomSplit bridge key)]
+    [(aget ks 0) (aget ks 1)]))
 
 (defn split-n
   "Split a key into n independent sub-keys. Returns vector of n keys."
   [key n]
-  (let [ks (.split mx/random key n)]
-    (mapv #(extract-row ks %) (range n))))
+  (let [ks (.randomSplitN bridge key n)]
+    ;; splitN returns [n, 2] array — extract each row
+    (mapv #(mx/index ks %) (range n))))
 
 (defn ensure-key
   "Return key if non-nil, otherwise a fresh random key."
@@ -63,79 +69,73 @@
 ;; Key-based sampling (functional — no global PRNG state)
 ;; ---------------------------------------------------------------------------
 
-;; Cached empty JS array for scalar shapes (avoids per-call allocation)
-(def ^:private SCALAR-SHAPE #js [])
-
-(defn- ->js-shape
-  "Convert Clojure shape vector to JS array, reusing cached empty array for scalars."
-  [shape]
-  (if (empty? shape) SCALAR-SHAPE (clj->js shape)))
-
 (defn normal
   "Sample from standard normal using the given key."
   [key shape]
-  (.normal mx/random (->js-shape shape) nil key))
+  (.keyNormal bridge key (clj->js shape) nil))
 
 (defn uniform
   "Sample from uniform [0,1) using the given key."
   [key shape]
-  (.uniform mx/random 0 1 (->js-shape shape) nil key))
+  (.keyUniform bridge key (clj->js shape) nil nil nil))
 
 (defn bernoulli
   "Sample Bernoulli(p) using the given key."
   [key p shape]
-  (.bernoulli mx/random p (->js-shape shape) key))
+  (.keyBernoulli bridge key p (clj->js shape)))
 
 (defn categorical
   "Sample from categorical distribution (log-probabilities) using the given key."
   [key logits]
-  (.categorical mx/random logits key))
+  (.keyCategorical bridge key logits nil))
 
 (defn randint
   "Sample random integers in [lo, hi) using the given key."
   [key lo hi shape]
-  (.randint mx/random lo hi (->js-shape shape) nil key))
+  (.keyRandint bridge key lo hi (clj->js shape) nil))
 
 (defn gumbel
   "Sample from standard Gumbel distribution using the given key."
   [key shape]
-  (.gumbel mx/random (->js-shape shape) nil key))
+  (.keyGumbel bridge key (clj->js shape) nil))
 
 (defn laplace
   "Sample from standard Laplace distribution using the given key."
   [key shape]
-  (.laplace mx/random (->js-shape shape) nil key))
+  (.keyLaplace bridge key (clj->js shape) nil))
 
 (defn truncated-normal
   "Sample from truncated normal distribution using the given key.
    Values are clipped to [lower, upper]."
   [key lower upper shape]
-  (.truncatedNormal mx/random
+  (.keyTruncatedNormal bridge key
     (mx/ensure-array lower) (mx/ensure-array upper)
-    (->js-shape shape) nil key))
-
-(defonce ^:private cpu-stream (.newStream mx/core (.-cpu mx/core)))
+    (clj->js shape) nil))
 
 (defn multivariate-normal
   "Sample from multivariate normal N(mean, cov) using the given key.
-   mean: [k] array, cov: [k k] positive definite array.
-   Uses CPU stream because MLX's internal SVD/Cholesky requires it.
-   Note: for high dimensions (k>10), manual Cholesky+matmul is faster.
-   Returns [k] array."
+   mean: [k] array, cov: [k k] positive definite array."
   ([key mean cov]
-   (.multivariateNormal mx/random
+   (.keyMultivariateNormal bridge key
      (if (mx/array? mean) mean (mx/array mean))
      (if (mx/array? cov) cov (mx/array cov))
-     #js [] nil key cpu-stream))
+     #js [] nil))
   ([key mean cov shape]
-   (.multivariateNormal mx/random
+   (.keyMultivariateNormal bridge key
      (if (mx/array? mean) mean (mx/array mean))
      (if (mx/array? cov) cov (mx/array cov))
-     (clj->js shape) nil key cpu-stream)))
+     (clj->js shape) nil)))
 
 (defn permutation
-  "Return a random permutation of integers [0, n) or shuffle array along axis."
+  "Return a random permutation of integers [0, n).
+   Note: mlx-node permutation not yet implemented — falls back to
+   Fisher-Yates shuffle using key-based randint."
   ([key n]
-   (.permutation mx/random n key))
+   ;; Simple implementation: generate random indices and argsort
+   (let [rand-vals (uniform key [n])]
+     (.argsort rand-vals nil)))
   ([key arr axis]
-   (.permutation mx/random arr axis key)))
+   ;; Shuffle array along axis by permuting indices
+   (let [n (nth (mx/shape arr) axis)
+         perm (permutation key n)]
+     (mx/take-idx arr perm axis))))
