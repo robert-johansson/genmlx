@@ -72,6 +72,11 @@
 ;; Forward pass
 ;; ---------------------------------------------------------------------------
 
+(defn- ->id-vec
+  "Coerce token IDs to a ClojureScript vector of ints."
+  [token-ids]
+  (if (vector? token-ids) token-ids (vec token-ids)))
+
 (defn forward-pass
   "Run a forward pass through the model.
 
@@ -80,16 +85,10 @@
 
    All operations stay on the MLX graph — no materialization to typed arrays."
   [model token-ids]
-  (let [ids (cond
-              (vector? token-ids) token-ids
-              (instance? js/Uint32Array token-ids) (vec token-ids)
-              :else (vec token-ids))
+  (let [ids (->id-vec token-ids)
         n (count ids)
-        ;; [1, n] int32 input — model accepts any integer dtype
         input (mx/reshape (mx/array ids mx/int32) [1 n])
-        ;; Forward pass → [1, seq_len, vocab_size]
         logits (.forward model input)]
-    ;; Batch element 0 → [seq_len, vocab_size], last position → [vocab_size]
     (-> logits (mx/index 0) (mx/index (dec n)))))
 
 (defn next-token-logprobs
@@ -106,6 +105,47 @@
         max-val (mx/amax logits)
         shifted (mx/subtract logits max-val)]
     (mx/subtract shifted (mx/log (mx/sum (mx/exp shifted))))))
+
+;; ---------------------------------------------------------------------------
+;; KV cache management
+;; ---------------------------------------------------------------------------
+
+(defn init-cache!
+  "Initialize KV caches for incremental generation.
+   Must be called before forward-step. Mutates model state."
+  [model]
+  (.initKvCaches model))
+
+(defn reset-cache!
+  "Clear KV caches after generation. Mutates model state."
+  [model]
+  (.resetKvCaches model))
+
+(defn forward-prefill
+  "Run a cached forward pass over the full prompt.
+
+   Processes all tokens at once, populates the KV cache, and returns
+   logits for the last position as an MxArray of shape [vocab_size].
+
+   Must call init-cache! before this."
+  [model token-ids]
+  (let [ids (->id-vec token-ids)
+        n (count ids)
+        input (mx/reshape (mx/array ids mx/int32) [1 n])
+        logits (.forwardWithCache model input true)]
+    (-> logits (mx/index 0) (mx/index (dec n)))))
+
+(defn forward-step
+  "Run a single-token cached forward pass.
+
+   Takes one token ID (integer), uses the KV cache from previous calls,
+   and returns logits for the next position as an MxArray of shape [vocab_size].
+
+   Constant time in sequence length — does not recompute the full context."
+  [model token-id]
+  (let [input (mx/reshape (mx/scalar token-id mx/int32) [1 1])
+        logits (.forwardWithCache model input true)]
+    (-> logits (mx/index 0) (mx/index 0))))
 
 ;; ---------------------------------------------------------------------------
 ;; Text generation (smoke test / convenience)

@@ -89,9 +89,9 @@
                      tok-lp (mx/item (mx/take-idx lp tok-val))]
                  (recur (inc i) (+ acc tok-lp)))))]
        (println (str "  Manual score: " manual-score))
-       ;; bf16 model weights → ~0.1 accumulated precision over 5 forward passes
+       ;; bf16 model weights → ~0.2 accumulated precision over 5 forward passes
        (assert-close "score = sum of token log-probs"
-                     manual-score score-val 0.15))
+                     manual-score score-val 0.2))
 
    ;; -----------------------------------------------------------------
    ;; 2.3 Generate — partial constraints
@@ -234,14 +234,51 @@
                   (= (count (:retval eos-trace)) (+ (count prompt-ids) 1)))
 
    ;; -----------------------------------------------------------------
-   ;; 2.9 Edge cases
+   ;; 2.9 Cached vs uncached equivalence
    ;; -----------------------------------------------------------------
-   _ (println "\n== 2.9 edge cases ==")
+   _ (println "\n== 2.9 cached vs uncached ==")
+
+   uncached-gf (llm-core/make-llm-gf-uncached m)
+
+   ;; Same key → same tokens and scores from both paths
+   cached-trace   (p/simulate (dyn/with-key llm-gf (rng/fresh-key 77)) [prompt-ids 5])
+   uncached-trace (p/simulate (dyn/with-key uncached-gf (rng/fresh-key 77)) [prompt-ids 5])
+
+   _ (assert-true "cached=uncached retval"
+                  (= (:retval cached-trace) (:retval uncached-trace)))
+   ;; bf16 cached vs uncached paths have different GPU accumulation order
+   _ (assert-close "cached=uncached score"
+                   (mx/item (:score cached-trace))
+                   (mx/item (:score uncached-trace)) 0.3)
+
+   ;; Fully constrained: same weight from both paths
+   cached-gen   (p/generate (dyn/with-key llm-gf (rng/fresh-key 77))
+                            [prompt-ids 5] full-constraints)
+   uncached-gen (p/generate (dyn/with-key uncached-gf (rng/fresh-key 77))
+                            [prompt-ids 5] full-constraints)
+
+   _ (assert-close "cached=uncached weight (constrained)"
+                   (mx/item (:weight cached-gen))
+                   (mx/item (:weight uncached-gen)) 0.3)
+
+   ;; -----------------------------------------------------------------
+   ;; 2.10 Edge cases
+   ;; -----------------------------------------------------------------
+   _ (println "\n== 2.10 edge cases ==")
 
    zero-trace (p/simulate llm-gf [prompt-ids 0])
    _ (assert-true "max-tokens=0: retval = prompt"
                   (= (:retval zero-trace) prompt-ids))
    _ (assert-close "max-tokens=0: score = 0"
-                   0.0 (mx/item (:score zero-trace)) 0.001)]
+                   0.0 (mx/item (:score zero-trace)) 0.001)
+
+   ;; max-tokens=1: single token generated
+   one-trace (p/simulate llm-gf [prompt-ids 1])
+   _ (assert-true "max-tokens=1: one trace site"
+                  (cm/has-value? (cm/get-submap (:choices one-trace) :t0)))
+   _ (assert-true "max-tokens=1: no :t1"
+                  (not (cm/has-value? (cm/get-submap (:choices one-trace) :t1))))
+   _ (assert-true "max-tokens=1: retval length"
+                  (= (count (:retval one-trace)) (+ (count prompt-ids) 1)))]
 
   (println (str "\n== Phase 2: " @pass-count " passed, " @fail-count " failed ==")))

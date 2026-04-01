@@ -7,10 +7,10 @@
    automatically — no custom dispatch needed.
 
    Usage:
-     (p/let [m (llm/load-model model-dir)]
-       (let [gf      (make-llm-gf m)
-             ids     (llm/encode (:tokenizer m) \"Hello\")
-             trace   (p/simulate gf [(vec ids) 20])]))"
+     (pr/let [m   (llm/load-model model-dir)
+              gf  (make-llm-gf m)
+              ids (vec (llm/encode (:tokenizer m) \"Hello\"))]
+       (p/simulate gf [ids 20]))"
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
@@ -29,7 +29,42 @@
 
    Each generated token is a trace site :t0, :t1, ..., :tN with
    a categorical distribution over the vocabulary. Generation stops
-   at EOS or max-tokens, whichever comes first."
+   at EOS or max-tokens, whichever comes first.
+
+   Uses KV cache for O(n) generation instead of O(n²). The cache is
+   initialized at the start of each gen body execution and reset at
+   the end (including on early EOS exit).
+
+   Not safe for concurrent execution on the same model — each concurrent
+   path needs its own model instance. Not compatible with vsimulate/vgenerate
+   (uses mx/item for EOS check, which requires scalar values)."
+  [model-map]
+  (let [{:keys [model tokenizer]} model-map
+        eos (llm/eos-token-id tokenizer)]
+    (dyn/auto-key
+     (gen [prompt-ids max-tokens]
+          (if (zero? max-tokens)
+            prompt-ids
+            (do
+              (llm/init-cache! model)
+              (try
+                (let [logits (llm/forward-prefill model prompt-ids)]
+                  (loop [i 0, context prompt-ids, logits logits]
+                    (if (>= i max-tokens)
+                      context
+                      (let [tok (trace (keyword (str "t" i)) (dist/categorical logits))
+                            tok-id (mx/item tok)]
+                        (if (= tok-id eos)
+                          (conj context tok-id)
+                          (let [next-logits (llm/forward-step model tok-id)]
+                            (recur (inc i) (conj context tok-id) next-logits)))))))
+                (finally
+                  (llm/reset-cache! model)))))))))
+
+(defn make-llm-gf-uncached
+  "Like make-llm-gf but without KV cache. Recomputes full context at
+   each token step — O(n²) but stateless. Useful for debugging or when
+   the model doesn't support KV cache."
   [model-map]
   (let [{:keys [model tokenizer]} model-map
         eos (llm/eos-token-id tokenizer)]
@@ -55,9 +90,8 @@
    Returns a promise (tokenizer decode is async)."
   [tokenizer trace]
   (let [choices (:choices trace)
-        tokens (loop [i 0, acc []]
-                 (let [sub (cm/get-submap choices (keyword (str "t" i)))]
-                   (if (cm/has-value? sub)
-                     (recur (inc i) (conj acc (mx/item (cm/get-value sub))))
-                     acc)))]
+        tokens (->> (range)
+                    (map #(cm/get-submap choices (keyword (str "t" %))))
+                    (take-while cm/has-value?)
+                    (mapv #(mx/item (cm/get-value %))))]
     (llm/decode tokenizer (js/Uint32Array.from (clj->js tokens)))))
