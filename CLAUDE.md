@@ -156,6 +156,7 @@ test/genmlx/
 
 ```
 Layer 0: MLX + Runtime    (mlx.cljs, mlx/random.cljs, runtime.cljs — mutable boundary)
+         Rust: genmlx.rs  (mlx-node module-level NAPI exports — type coercion, shape conversion)
 Layer 1: Core Data        (choicemap, trace, selection — pure)
 Layer 2: GFI & Execution  (protocols, handler, dispatch, edit, diff — pure)
 Layer 3: DSL + Schema     (gen macro, dynamic, schema, schemas — pure)
@@ -324,6 +325,9 @@ After any change, verify:
 - Don't import `genmlx.dynamic` from `genmlx.handler` (circular dependency).
 - Don't modify existing GFI protocol signatures — everything downstream depends
   on them.
+- Don't add `ensure-mx` or `to-big-shape` calls — Rust `Either<&MxArray, f64>`
+  and `Vec<f64>` handle type coercion and shape conversion at the NAPI boundary.
+  Layer 0 ops accept both MxArray and JS number directly.
 
 ## Milestone delivery protocol
 
