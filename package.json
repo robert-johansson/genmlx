@@ -1,6 +1,5 @@
 {
   "dependencies": {
-    "@frost-beta/mlx": "file:./node-mlx",
     "@mlx-node/core": "file:./mlx-node/packages/core",
     "@mlx-node/lm": "file:./mlx-node/packages/lm"
   }

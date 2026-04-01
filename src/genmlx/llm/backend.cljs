@@ -1,6 +1,6 @@
 (ns genmlx.llm.backend
   "Thin wrapper over mlx-node: model loading, tokenizer, forward pass,
-   and array boundary conversion (mlx-node MxArray → node-mlx array).
+   and log-probability extraction for LLM integration.
 
    This is Layer 0 of the LLM integration — everything above (token-transition
    handler, beam search, grammar constraints) builds on these functions."
@@ -78,7 +78,7 @@
   "Run a forward pass through the model.
 
    Takes a model and token IDs (Uint32Array or cljs vector of ints).
-   Returns logits for the last position as a node-mlx array of shape [vocab_size].
+   Returns logits for the last position as a MLX array of shape [vocab_size].
 
    The logits are sliced on the mlx-node side before crossing the boundary,
    so only [vocab_size] floats are materialized (not [1, T, vocab_size])."
@@ -89,14 +89,14 @@
         ;; forwardLastLogits handles MxArray creation, forward pass,
         ;; slicing, and Float32Array extraction entirely in JS context
         f32 (.forwardLastLogits bridge model ids)]
-    ;; Cross the boundary: Float32Array → node-mlx array
+    ;; Cross the boundary: Float32Array → MLX array
     (mx/array f32)))
 
 (defn next-token-logprobs
   "Get log-probabilities for the next token given context.
 
    Takes a model and token IDs (Uint32Array or cljs vector).
-   Returns a node-mlx array of shape [vocab_size] containing log p(token | context)
+   Returns a MLX array of shape [vocab_size] containing log p(token | context)
    for every token in the vocabulary.
 
    Uses numerically stable log-softmax: log_softmax(x) = x - log(sum(exp(x)))
