@@ -399,11 +399,10 @@
 (defn size  [a] (js/Number (.sizeOf c a)))
 
 (defn item
-  "Extract scalar value from a 0-d or 1-element array."
+  "Extract scalar value from a 0-d or 1-element array.
+   Fused eval + read in one NAPI call — no TypedArray allocation."
   [a]
-  (if (= (.dtypeOf c a) int32)
-    (aget (.toInt32 a) 0)
-    (aget (.toFloat32 a) 0)))
+  (.item c a))
 
 (defn ->clj
   "Evaluate an MLX array and convert to nested ClojureScript data."
