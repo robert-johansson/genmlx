@@ -2,7 +2,7 @@
   <img src="genmlx.png" alt="GenMLX" width="528">
 </p>
 
-A probabilistic programming language implemented in ClojureScript on Node.js ([nbb](https://github.com/babashka/nbb)), using the [MLX framework](https://github.com/ml-explore/mlx) for GPU acceleration via [`@frost-beta/mlx`](https://github.com/nicebyte/node-mlx).
+A probabilistic programming language implemented in ClojureScript on Node.js ([nbb](https://github.com/babashka/nbb)), using the [MLX framework](https://github.com/ml-explore/mlx) for GPU acceleration via [`mlx-node`](https://github.com/robert-johansson/mlx-node).
 
 GenMLX implements Gen's **Generative Function Interface (GFI)** — the same architecture used by [GenJAX](https://github.com/probcomp/GenJAX) (JAX) and [Gen.jl](https://github.com/probcomp/Gen.jl) (Julia).
 
@@ -27,23 +27,22 @@ Gen implementations exist for Julia and JAX — but nothing for MLX. MLX's unifi
 ## Quick Start
 
 ```bash
-# Clone with the node-mlx submodule (includes MLX C++ source)
+# Clone with the mlx-node submodule (includes MLX C++ source + Rust NAPI bindings)
 git clone https://github.com/robert-johansson/genmlx
 cd genmlx
-git submodule update --init --recursive node-mlx
+git submodule update --init --recursive mlx-node
 
-# Build node-mlx (installs devDependencies, compiles MLX C++ and Node.js native addon)
-cd node-mlx && npm install && npm run build && cd ..
+# Build mlx-node (compiles MLX C++, Rust NAPI addon, ~3-4 min first build)
+cd mlx-node && npm install && npm run build:native && cd ..
 
-# Install GenMLX dependencies (links local node-mlx as @frost-beta/mlx)
+# Install GenMLX dependencies
 bun install
 ```
 
-> **Note:** GenMLX uses a [fork of node-mlx](https://github.com/robert-johansson/node-mlx)
-> that includes `lgamma`, `digamma` ([ml-explore/mlx#3181](https://github.com/ml-explore/mlx/pull/3181))
-> and `bessel_i0e`, `bessel_i1e` ([ml-explore/mlx#3193](https://github.com/ml-explore/mlx/pull/3193))
-> ops required by GenMLX's distributions. Once these are merged upstream, the
-> standard `@frost-beta/mlx` npm package will work.
+> **Note:** GenMLX uses a [fork of mlx-node](https://github.com/robert-johansson/mlx-node)
+> with a custom `genmlx.rs` Rust module that provides 138 module-level NAPI exports
+> optimized for ClojureScript: `Either<MxArray, number>` inputs, `number[]` shapes,
+> CPU-stream PRNG, and fused scalar extraction.
 
 Run the included examples:
 
@@ -119,7 +118,7 @@ The handler system is ground truth; compilation is optimization. Compiled paths 
 
 ```
 Layer 0: MLX Foundation
-  genmlx.mlx          — thin wrapper over @frost-beta/mlx
+  genmlx.mlx          — thin wrapper over mlx-node (Rust genmlx.rs + CLJS)
   genmlx.mlx.random   — functional PRNG key management
 
 Layer 1: Core Data Types
@@ -468,7 +467,7 @@ This means too many Metal buffer objects are alive simultaneously. Solutions:
 **Q: Inference is slow / memory keeps growing**
 
 - Call `(mx/eval!)` on result arrays inside your loop to materialize the computation graph. Without eval, MLX builds an ever-growing lazy graph.
-- Check `(mx/get-wrappers-count)` — if it grows linearly with iterations, arrays aren't being freed. Use `mx/tidy` or `mx/dispose!` to release them.
+- Check `(mx/get-active-memory)` — if it grows linearly with iterations, arrays aren't being freed. Use `mx/tidy` to release them.
 
 ## License
 
