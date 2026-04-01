@@ -37,11 +37,11 @@
 ;; ---------------------------------------------------------------------------
 
 ;; mlx-node DType is a const enum: Float32=0, Int32=1, Float16=2, BFloat16=3, Uint32=4, Uint8=5
-(def float32  (.-Float32 (.-DType c)))
-(def float64  (.-Float32 (.-DType c)))  ;; MLX has no float64; map to float32
-(def int32    (.-Int32 (.-DType c)))
-(def int64    (.-Int32 (.-DType c)))     ;; MLX has no int64; map to int32
-(def bool-dt  (.-Int32 (.-DType c)))     ;; MLX has no bool; map to int32
+(def float32 (.-Float32 (.-DType c)))
+(def float64 (.-Float32 (.-DType c))) ;; MLX has no float64; map to float32
+(def int32 (.-Int32 (.-DType c)))
+(def int64 (.-Int32 (.-DType c))) ;; MLX has no int64; map to int32
+(def bool-dt (.-Int32 (.-DType c))) ;; MLX has no bool; map to int32
 
 ;; ---------------------------------------------------------------------------
 ;; Internal helpers
@@ -103,10 +103,11 @@
 ;; ---------------------------------------------------------------------------
 
 (defn scalar
+  "Create a scalar MLX array. Always float32 by default — JavaScript has no
+   int/float distinction (Number.isInteger(1.0) → true), and MLX autograd
+   requires float inputs. Use (scalar v int32) for explicit integer scalars."
   ([v]
-   (if (integer? v)
-     (.scalarInt M v)
-     (.scalarFloat M v)))
+   (.scalarFloat M v))
   ([v dtype]
    (if (= dtype int32)
      (.scalarInt M (int v))
@@ -124,7 +125,7 @@
 (defn array
   ([v]
    (cond
-     (array? v) v  ;; pass through MxArrays unchanged
+     (array? v) v ;; pass through MxArrays unchanged
      (or (vector? v) (seq? v) (sequential? v))
      (let [[flat-data sh] (infer-shape v)
            f32 (js/Float32Array.from (clj->js flat-data))]
@@ -165,11 +166,11 @@
   (.astype (ensure-mx a) dtype))
 
 (defn zeros
-  ([sh]       (.zeros M (to-big-shape sh)))
+  ([sh] (.zeros M (to-big-shape sh)))
   ([sh dtype] (.zeros M (to-big-shape sh) dtype)))
 
 (defn ones
-  ([sh]       (.ones M (to-big-shape sh)))
+  ([sh] (.ones M (to-big-shape sh)))
   ([sh dtype] (.ones M (to-big-shape sh) dtype)))
 
 (defn full
@@ -177,14 +178,14 @@
   (.full M (to-big-shape sh) val))
 
 (defn eye
-  ([n]       (.eye M n))
+  ([n] (.eye M n))
   ([n dtype] (.eye M n nil nil dtype)))
 
 (defn arange
   ;; mlx-node MxArray.arange requires start AND stop.
   ;; node-mlx had arange(stop), arange(start,stop), arange(start,stop,step).
-  ([stop]            (.arange M 0 stop))
-  ([start stop]      (.arange M start stop))
+  ([stop] (.arange M 0 stop))
+  ([start stop] (.arange M start stop))
   ([start stop step] (.arange M start stop step)))
 
 (defn linspace [start stop num] (.linspace M start stop num))
@@ -393,51 +394,51 @@
 (defn multiply
   ([a b] (.mul (ensure-mx a) (ensure-mx b)))
   ([a b & more] (reduce multiply (multiply a b) more)))
-(defn divide   [a b] (.div (ensure-mx a) (ensure-mx b)))
-(defn negative [a]   (.negative (ensure-mx a)))
-(defn power    [a b] (.power (ensure-mx a) (ensure-mx b)))
-(defn square   [a]   (.square (ensure-mx a)))
-(defn sqrt     [a]   (.sqrt (ensure-mx a)))
-(defn abs      [a]   (.abs (ensure-mx a)))
-(defn maximum  [a b] (.maximum (ensure-mx a) (ensure-mx b)))
-(defn minimum  [a b] (.minimum (ensure-mx a) (ensure-mx b)))
+(defn divide [a b] (.div (ensure-mx a) (ensure-mx b)))
+(defn negative [a] (.negative (ensure-mx a)))
+(defn power [a b] (.power (ensure-mx a) (ensure-mx b)))
+(defn square [a] (.square (ensure-mx a)))
+(defn sqrt [a] (.sqrt (ensure-mx a)))
+(defn abs [a] (.abs (ensure-mx a)))
+(defn maximum [a b] (.maximum (ensure-mx a) (ensure-mx b)))
+(defn minimum [a b] (.minimum (ensure-mx a) (ensure-mx b)))
 (defn clip
   "Clip values to [lo, hi] range. lo/hi are numbers (not MxArray)."
   [a lo hi]
   (.clip (ensure-mx a) lo hi))
-(defn sign     [a]   (.sign (ensure-mx a)))
+(defn sign [a] (.sign (ensure-mx a)))
 (defn reciprocal [a] (.reciprocal (ensure-mx a)))
 (defn floor-divide [a b] (.floorDivide (ensure-mx a) (ensure-mx b)))
-(defn remainder    [a b] (.remainder (ensure-mx a) (ensure-mx b)))
+(defn remainder [a b] (.remainder (ensure-mx a) (ensure-mx b)))
 
 ;; ---------------------------------------------------------------------------
 ;; Math functions
 ;; ---------------------------------------------------------------------------
 
-(defn exp      [a] (.exp (ensure-mx a)))
-(defn expm1    [a] (.expm1 (ensure-mx a)))
-(defn log      [a] (.log (ensure-mx a)))
-(defn log2     [a] (.log2 (ensure-mx a)))
-(defn log10    [a] (.log10 (ensure-mx a)))
-(defn log1p    [a] (.log1p (ensure-mx a)))
+(defn exp [a] (.exp (ensure-mx a)))
+(defn expm1 [a] (.expm1 (ensure-mx a)))
+(defn log [a] (.log (ensure-mx a)))
+(defn log2 [a] (.log2 (ensure-mx a)))
+(defn log10 [a] (.log10 (ensure-mx a)))
+(defn log1p [a] (.log1p (ensure-mx a)))
 (defn logaddexp [a b] (.logaddexp (ensure-mx a) (ensure-mx b)))
 
-(defn sin      [a] (.sin (ensure-mx a)))
-(defn cos      [a] (.cos (ensure-mx a)))
-(defn tan      [a] (.tan (ensure-mx a)))
-(defn arccos   [a] (.arccos (ensure-mx a)))
-(defn tanh     [a] (.tanh (ensure-mx a)))
-(defn sigmoid  [a] (.sigmoid (ensure-mx a)))
-(defn erf      [a] (.erf (ensure-mx a)))
-(defn erfinv   [a] (.erfinv (ensure-mx a)))
-(defn lgamma   [a] (.lgamma (ensure-mx a)))
-(defn digamma  [a] (.digamma (ensure-mx a)))
+(defn sin [a] (.sin (ensure-mx a)))
+(defn cos [a] (.cos (ensure-mx a)))
+(defn tan [a] (.tan (ensure-mx a)))
+(defn arccos [a] (.arccos (ensure-mx a)))
+(defn tanh [a] (.tanh (ensure-mx a)))
+(defn sigmoid [a] (.sigmoid (ensure-mx a)))
+(defn erf [a] (.erf (ensure-mx a)))
+(defn erfinv [a] (.erfinv (ensure-mx a)))
+(defn lgamma [a] (.lgamma (ensure-mx a)))
+(defn digamma [a] (.digamma (ensure-mx a)))
 (defn bessel-i0e [a] (.besselI0e (ensure-mx a)))
 (defn bessel-i1e [a] (.besselI1e (ensure-mx a)))
 
-(defn floor    [a] (.floor (ensure-mx a)))
-(defn ceil     [a] (.ceil (ensure-mx a)))
-(defn round    [a] (.round (ensure-mx a)))
+(defn floor [a] (.floor (ensure-mx a)))
+(defn ceil [a] (.ceil (ensure-mx a)))
+(defn round [a] (.round (ensure-mx a)))
 
 ;; ---------------------------------------------------------------------------
 ;; Reductions
@@ -447,55 +448,55 @@
 ;; Axes can be null for full reduction.
 
 (defn sum
-  ([a]      (.sum (ensure-mx a) nil nil))
+  ([a] (.sum (ensure-mx a) nil nil))
   ([a axes] (.sum (ensure-mx a) (to-int32-axes axes) nil))
   ([a axes keepdims] (.sum (ensure-mx a) (to-int32-axes axes) keepdims)))
 
 (defn prod
-  ([a]      (.prod (ensure-mx a) nil nil))
+  ([a] (.prod (ensure-mx a) nil nil))
   ([a axes] (.prod (ensure-mx a) (to-int32-axes axes) nil)))
 
 (defn mean
-  ([a]      (.mean (ensure-mx a) nil nil))
+  ([a] (.mean (ensure-mx a) nil nil))
   ([a axes] (.mean (ensure-mx a) (to-int32-axes axes) nil)))
 
 (defn variance
-  ([a]      (.var (ensure-mx a) nil nil))
+  ([a] (.var (ensure-mx a) nil nil))
   ([a axes] (.var (ensure-mx a) (to-int32-axes axes) nil)))
 
 (defn std
-  ([a]      (.std (ensure-mx a) nil nil))
+  ([a] (.std (ensure-mx a) nil nil))
   ([a axes] (.std (ensure-mx a) (to-int32-axes axes) nil)))
 
 (defn amax
-  ([a]      (.max (ensure-mx a) nil nil))
+  ([a] (.max (ensure-mx a) nil nil))
   ([a axes] (.max (ensure-mx a) (to-int32-axes axes) nil)))
 
 (defn amin
-  ([a]      (.min (ensure-mx a) nil nil))
+  ([a] (.min (ensure-mx a) nil nil))
   ([a axes] (.min (ensure-mx a) (to-int32-axes axes) nil)))
 
 (defn argmax
-  ([a]      (.argmax (ensure-mx a) 0))
+  ([a] (.argmax (ensure-mx a) 0))
   ([a axis] (.argmax (ensure-mx a) axis)))
 
 (defn argmin
-  ([a]      (.argmin (ensure-mx a) 0))
+  ([a] (.argmin (ensure-mx a) 0))
   ([a axis] (.argmin (ensure-mx a) axis)))
 
 (defn all
   "True if all elements are true (nonzero). Optional axis."
-  ([a]      (.all (ensure-mx a) nil nil))
+  ([a] (.all (ensure-mx a) nil nil))
   ([a axis] (.all (ensure-mx a) (to-int32-axes [axis]) nil)))
 
 (defn any
   "True if any element is true (nonzero). Optional axis."
-  ([a]      (.any (ensure-mx a) nil nil))
+  ([a] (.any (ensure-mx a) nil nil))
   ([a axis] (.any (ensure-mx a) (to-int32-axes [axis]) nil)))
 
 (defn argsort
   "Return indices that sort the array along the given axis (default: last axis)."
-  ([a]      (.argsort (ensure-mx a)))
+  ([a] (.argsort (ensure-mx a)))
   ([a axis] (.argsort (ensure-mx a) axis)))
 
 (defn searchsorted
@@ -509,7 +510,7 @@
 
 (defn sort-arr
   "Sort array along the given axis (default: last axis)."
-  ([a]      (.sort (ensure-mx a)))
+  ([a] (.sort (ensure-mx a)))
   ([a axis] (.sort (ensure-mx a) axis)))
 
 (defn topk
@@ -518,17 +519,17 @@
   (.topk (ensure-mx a) k))
 
 (defn logsumexp
-  ([a]              (.logsumexp (ensure-mx a) nil nil))
-  ([a axes]         (.logsumexp (ensure-mx a) (to-int32-axes axes) nil))
+  ([a] (.logsumexp (ensure-mx a) nil nil))
+  ([a axes] (.logsumexp (ensure-mx a) (to-int32-axes axes) nil))
   ([a axes keepdims] (.logsumexp (ensure-mx a) (to-int32-axes axes) keepdims)))
 
 (defn cumsum
-  ([a]      (.cumsum (ensure-mx a) 0))
+  ([a] (.cumsum (ensure-mx a) 0))
   ([a axis] (.cumsum (ensure-mx a) axis)))
 
 (defn logcumsumexp
   "Cumulative log-sum-exp along axis."
-  ([a]      (.logcumsumexp (ensure-mx a) 0))
+  ([a] (.logcumsumexp (ensure-mx a) 0))
   ([a axis] (.logcumsumexp (ensure-mx a) axis)))
 
 ;; ---------------------------------------------------------------------------
@@ -536,12 +537,12 @@
 ;; ---------------------------------------------------------------------------
 
 ;; mlx-node: comparison ops are instance methods.
-(defn equal        [a b] (.equal (ensure-mx a) (ensure-mx b)))
-(defn not-equal    [a b] (.notEqual (ensure-mx a) (ensure-mx b)))
-(defn greater      [a b] (.greater (ensure-mx a) (ensure-mx b)))
+(defn equal [a b] (.equal (ensure-mx a) (ensure-mx b)))
+(defn not-equal [a b] (.notEqual (ensure-mx a) (ensure-mx b)))
+(defn greater [a b] (.greater (ensure-mx a) (ensure-mx b)))
 (defn greater-equal [a b] (.greaterEqual (ensure-mx a) (ensure-mx b)))
-(defn less         [a b] (.less (ensure-mx a) (ensure-mx b)))
-(defn less-equal   [a b] (.lessEqual (ensure-mx a) (ensure-mx b)))
+(defn less [a b] (.less (ensure-mx a) (ensure-mx b)))
+(defn less-equal [a b] (.lessEqual (ensure-mx a) (ensure-mx b)))
 
 (defn where
   "Select elements from a or b based on condition.
@@ -554,46 +555,46 @@
 ;;   (eq? prize 0)  instead of  (.astype (equal prize (scalar 0 int32)) float32)
 ;;   (and* a b)     instead of  (multiply (.astype a float32) (.astype b float32))
 
-(defn eq?  [a b]
+(defn eq? [a b]
   (.astype (equal (if (number? a) (scalar a int32) a)
                   (if (number? b) (scalar b int32) b)) float32))
 (defn neq? [a b]
   (.astype (not-equal (if (number? a) (scalar a int32) a)
                       (if (number? b) (scalar b int32) b)) float32))
-(defn gt?  [a b]
+(defn gt? [a b]
   (.astype (greater (if (number? a) (scalar a) a)
                     (if (number? b) (scalar b) b)) float32))
-(defn lt?  [a b]
+(defn lt? [a b]
   (.astype (less (if (number? a) (scalar a) a)
                  (if (number? b) (scalar b) b)) float32))
 (defn and* [a b] (multiply a b))
-(defn or*  [a b] (maximum a b))
+(defn or* [a b] (maximum a b))
 
-(defn isnan        [a] (.isnan (ensure-mx a)))
-(defn isinf        [a] (.isinf (ensure-mx a)))
+(defn isnan [a] (.isnan (ensure-mx a)))
+(defn isinf [a] (.isinf (ensure-mx a)))
 (defn nan-to-num
   "Replace NaN/Inf with finite values. Default: NaN->0."
-  ([a]                             (.nanToNum (ensure-mx a) 0.0))
-  ([a nan-val]                     (.nanToNum (ensure-mx a) nan-val))
+  ([a] (.nanToNum (ensure-mx a) 0.0))
+  ([a nan-val] (.nanToNum (ensure-mx a) nan-val))
   ([a nan-val posinf-val neginf-val] (.nanToNum (ensure-mx a) nan-val posinf-val neginf-val)))
 
 ;; ---------------------------------------------------------------------------
 ;; Shape manipulation
 ;; ---------------------------------------------------------------------------
 
-(defn reshape    [a sh] (.reshape (ensure-mx a) (to-big-shape sh)))
-(defn flatten    [a]    (.flatten (ensure-mx a)))
+(defn reshape [a sh] (.reshape (ensure-mx a) (to-big-shape sh)))
+(defn flatten [a] (.flatten (ensure-mx a)))
 (defn squeeze
   "Remove size-1 dimensions. With axes, only squeeze specified positions."
-  ([a]      (.squeeze (ensure-mx a)))
+  ([a] (.squeeze (ensure-mx a)))
   ([a axes] (.squeeze (ensure-mx a) (to-int32-axes (vec axes)))))
 (defn expand-dims [a axis] (.expandDims (ensure-mx a) axis))
 (defn transpose
-  ([a]      (.transpose (ensure-mx a)))
+  ([a] (.transpose (ensure-mx a)))
   ([a axes] (.transpose (ensure-mx a) (to-int32-axes axes))))
 (defn stack
   ;; mlx-node: MxArray.stack(arrays, axis) — static method
-  ([arrs]      (.stack M (to-array arrs)))
+  ([arrs] (.stack M (to-array arrs)))
   ([arrs axis] (.stack M (to-array arrs) axis)))
 (defn concatenate
   ;; mlx-node: MxArray.concatenate for 2, concatenateMany for 3+
@@ -611,7 +612,7 @@
 (defn tile [a reps] (.tile (ensure-mx a) (to-int32-axes reps)))
 (defn repeat-arr [a repeats axis] (.repeat (ensure-mx a) repeats axis))
 (defn split-arr
-  ([a sections]      (vec (.split (ensure-mx a) sections)))
+  ([a sections] (vec (.split (ensure-mx a) sections)))
   ([a sections axis] (vec (.split (ensure-mx a) sections axis))))
 
 ;; ---------------------------------------------------------------------------
@@ -619,7 +620,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn take-idx
-  ([a indices]      (.take (ensure-mx a) (if (number? indices) (scalar indices int32) (ensure-mx indices)) 0))
+  ([a indices] (.take (ensure-mx a) (if (number? indices) (scalar indices int32) (ensure-mx indices)) 0))
   ([a indices axis] (.take (ensure-mx a) (if (number? indices) (scalar indices int32) (ensure-mx indices)) axis)))
 
 (defn idx
@@ -627,7 +628,7 @@
    Auto-promotes integer i to MLX int32 scalar.
 
      (idx probs 2)   ; instead of (take-idx probs (scalar 2 int32) 0)"
-  ([a i]      (take-idx a (if (number? i) (scalar i int32) i) 0))
+  ([a i] (take-idx a (if (number? i) (scalar i int32) i) 0))
   ([a i axis] (take-idx a (if (number? i) (scalar i int32) i) axis)))
 
 (defn take-along-axis [a indices axis]
@@ -644,12 +645,12 @@
    mlx-node uses .slice(starts, stops) with BigInt64Array."
   ([a start stop]
    (.slice a (js/BigInt64Array.from #js [(js/BigInt start)])
-             (js/BigInt64Array.from #js [(js/BigInt stop)])))
+           (js/BigInt64Array.from #js [(js/BigInt stop)])))
   ([a start stop step]
    ;; mlx-node .slice doesn't support step directly.
    ;; Emulate via slice then take with strided indices.
    (let [sliced (.slice a (js/BigInt64Array.from #js [(js/BigInt start)])
-                          (js/BigInt64Array.from #js [(js/BigInt stop)]))]
+                        (js/BigInt64Array.from #js [(js/BigInt stop)]))]
      (if (= step 1)
        sliced
        ;; Build strided index array
@@ -668,15 +669,15 @@
 ;; Matrix operations
 ;; ---------------------------------------------------------------------------
 
-(defn matmul    [a b] (.matmul (ensure-mx a) (ensure-mx b)))
-(defn inner     [a b] (.inner (ensure-mx a) (ensure-mx b)))
-(defn outer     [a b] (.outer (ensure-mx a) (ensure-mx b)))
-(defn diag      [a]   (.diag (ensure-mx a)))
+(defn matmul [a b] (.matmul (ensure-mx a) (ensure-mx b)))
+(defn inner [a b] (.inner (ensure-mx a) (ensure-mx b)))
+(defn outer [a b] (.outer (ensure-mx a) (ensure-mx b)))
+(defn diag [a] (.diag (ensure-mx a)))
 (defn trace-mat
   "Matrix trace (sum of diagonal elements)."
-  ([a]                  (.trace (ensure-mx a) 0 0 1))
-  ([a offset]           (.trace (ensure-mx a) offset 0 1))
-  ([a offset ax1 ax2]   (.trace (ensure-mx a) offset ax1 ax2)))
+  ([a] (.trace (ensure-mx a) 0 0 1))
+  ([a offset] (.trace (ensure-mx a) offset 0 1))
+  ([a offset ax1 ax2] (.trace (ensure-mx a) offset ax1 ax2)))
 (defn einsum
   "Einstein summation. E.g. (einsum \"ij,jk->ik\" a b)"
   [subscripts & arrays]
@@ -689,15 +690,15 @@
 ;; mlx-node: linalg ops are instance methods on MxArray.
 ;; No cpu-stream needed — handled internally in C++.
 
-(defn cholesky [a]   (.cholesky (ensure-mx a) false))
-(defn solve   [a b]  (.linalgSolve (ensure-mx a) (ensure-mx b)))
+(defn cholesky [a] (.cholesky (ensure-mx a) false))
+(defn solve [a b] (.linalgSolve (ensure-mx a) (ensure-mx b)))
 (defn solve-triangular [a b upper]
   (.solveTriangular (ensure-mx a) (ensure-mx b) upper))
-(defn inv     [a]    (.linalgInv (ensure-mx a)))
+(defn inv [a] (.linalgInv (ensure-mx a)))
 (defn tri-inv [a upper] (.triInv (ensure-mx a) upper))
 (defn cholesky-inv
   "Inverse of A from its Cholesky factor L (where A=LL^T)."
-  ([a]       (.choleskyInv (ensure-mx a) false))
+  ([a] (.choleskyInv (ensure-mx a) false))
   ([a upper] (.choleskyInv (ensure-mx a) upper)))
 (defn qr [a]
   (let [result (.qr (ensure-mx a))]
@@ -710,7 +711,7 @@
     [(aget result 0) (aget result 1)]))
 (defn eigvalsh [a] (.eigvalsh (ensure-mx a)))
 (defn norm
-  ([a]     (.linalgNorm (ensure-mx a)))
+  ([a] (.linalgNorm (ensure-mx a)))
   ([a ord] (.linalgNorm (ensure-mx a) ord)))
 
 (defn logdet
@@ -724,7 +725,6 @@
   [a]
   (let [L (cholesky a)]
     (power (prod (diag L)) (scalar 2))))
-
 
 ;; ---------------------------------------------------------------------------
 ;; Autograd
@@ -897,7 +897,7 @@
    Adaptation: mlx-node compileFn applies immediately. We return a wrapper
    that calls the function directly — compile is a no-op optimization hint.
    The handler path is ground truth; compilation is optimization."
-  ([f]    (compile-fn f false))
+  ([f] (compile-fn f false))
   ([f shapeless?]
    ;; In node-mlx, compile() traced and cached the graph for reuse.
    ;; In mlx-node, compileFn applies immediately — no persistent cache.
@@ -924,9 +924,9 @@
    Adaptation: mlx-node MxArray.vmap(fn, inputs, inAxes, outAxes) applies immediately.
    node-mlx .vmap(core, f, inAxes, outAxes) returns a vmapped function.
    We return a wrapper function that calls MxArray.vmap on each invocation."
-  ([f]                     (fn [& args] (let [r (.vmap M f (to-array args))] (aget r 0))))
-  ([f in-axes]             (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes))] (aget r 0))))
-  ([f in-axes out-axes]    (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes) (clj->js out-axes))] (aget r 0)))))
+  ([f] (fn [& args] (let [r (.vmap M f (to-array args))] (aget r 0))))
+  ([f in-axes] (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes))] (aget r 0))))
+  ([f in-axes out-axes] (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes) (clj->js out-axes))] (aget r 0)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Async
@@ -954,17 +954,17 @@
 ;; ---------------------------------------------------------------------------
 
 ;; mlx-node has no pi/e/inf/nan constants — compute them.
-(def pi    (.-PI js/Math))
+(def pi (.-PI js/Math))
 (def e-val (.-E js/Math))
-(def inf   js/Infinity)
-(def nan   js/NaN)
+(def inf js/Infinity)
+(def nan js/NaN)
 
 ;; ---------------------------------------------------------------------------
 ;; Softmax
 ;; ---------------------------------------------------------------------------
 
 (defn softmax
-  ([a]      (.softmax (ensure-mx a) -1))
+  ([a] (.softmax (ensure-mx a) -1))
   ([a axis] (.softmax (ensure-mx a) axis)))
 
 ;; ---------------------------------------------------------------------------
@@ -1013,7 +1013,7 @@
 (def ^:private resource-pressure-threshold
   "When active memory exceeds this (bytes), auto-cleanup triggers.
    mlx-node has no resource counting -- we use memory bytes instead."
-  (* 512 1024 1024))  ;; 512MB
+  (* 512 1024 1024)) ;; 512MB
 
 (def ^:private ^:mutable ops-since-check
   "Counter to amortize the cost of getActiveMemory calls.
@@ -1062,7 +1062,7 @@
   "Only force jsc-cleanup! when active memory exceeds this (bytes).
    Prevents aggressive GC in small inference loops where it can cause
    SIGTRAP crashes."
-  (* 128 1024 1024))  ;; 128MB
+  (* 128 1024 1024)) ;; 128MB
 
 (defn gfi-cleanup!
   "Cleanup at GFI operation boundaries. Every N calls, checks resource
@@ -1085,9 +1085,12 @@
 
 (defn materialize!
   "Evaluate MLX arrays, materializing the computation graph.
-   Use at inference/training loop boundaries to bound graph size."
+   Use at inference/training loop boundaries to bound graph size.
+   Safely ignores non-MxArray values (plain numbers, JS arrays, etc.)."
   [& arrs]
-  (apply eval! arrs))
+  (let [mx-arrs (filterv array? arrs)]
+    (when (seq mx-arrs)
+      (apply eval! mx-arrs))))
 
 (defn realize-clj
   "Evaluate an MLX array and convert to ClojureScript data."
@@ -1116,11 +1119,11 @@
   [f collect-fn]
   (let [result-vol (volatile! nil)]
     (tidy (fn []
-      (let [result (f)
-            arrays (collect-fn result)]
-        (when (seq arrays) (apply eval! arrays))
-        (vreset! result-vol result)
-        (to-array arrays))))
+            (let [result (f)
+                  arrays (collect-fn result)]
+              (when (seq arrays) (apply eval! arrays))
+              (vreset! result-vol result)
+              (to-array arrays))))
     (when (> (get-cache-memory) cache-pressure-threshold)
       (jsc-cleanup!)
       (when gc-fn (gc-fn))
@@ -1137,10 +1140,10 @@
   [f]
   (let [result-vol (volatile! nil)]
     (tidy (fn []
-      (let [arr (f)]
-        (eval! arr)
-        (vreset! result-vol (item arr))
-        (to-array [arr]))))
+            (let [arr (f)]
+              (eval! arr)
+              (vreset! result-vol (item arr))
+              (to-array [arr]))))
     (when (> (get-cache-memory) cache-pressure-threshold)
       (jsc-cleanup!)
       (when gc-fn (gc-fn))
@@ -1173,9 +1176,9 @@
   [f]
   (let [prev-limit (set-cache-limit! 0)]
     (try (f)
-      (finally
-        (clear-cache!)
-        (set-cache-limit! prev-limit)))))
+         (finally
+           (clear-cache!)
+           (set-cache-limit! prev-limit)))))
 
 ;; ---------------------------------------------------------------------------
 ;; NN training step (moved from nn.cljs)

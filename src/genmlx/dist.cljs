@@ -1382,7 +1382,7 @@
               accepted (mx/maximum cond1 cond2)
               ;; theta = sign(u3 - 0.5) * arccos(clamp(f))
               sign-u3 (mx/sign (mx/subtract u3 HALF))
-              safe-f (mx/clip f (mx/scalar -1.0) ONE)
+              safe-f (mx/minimum (mx/maximum f (mx/scalar -1.0)) ONE)
               theta (mx/multiply sign-u3 (mx/arccos safe-f))
               ;; Only fill not-yet-done slots
               not-done (mx/equal done ZERO)

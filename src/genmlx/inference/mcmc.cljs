@@ -1183,9 +1183,10 @@
     (let [init-q (mx/zeros [n-params])
           [init-s init-g] (val-grad-fn init-q)]
       (mx/materialize! init-s init-g)
-      (mx/materialize! (compiled init-q init-s init-g
-                                 (rng/normal (rng/fresh-key) [k-steps n-params])
-                                 (rng/uniform (rng/fresh-key) [k-steps]))))
+      (let [result (compiled init-q init-s init-g
+                             (rng/normal (rng/fresh-key) [k-steps n-params])
+                             (rng/uniform (rng/fresh-key) [k-steps]))]
+        (mx/materialize! (aget result 0) (aget result 1) (aget result 2))))
     compiled))
 
 (defn- run-loop-compiled-mala
