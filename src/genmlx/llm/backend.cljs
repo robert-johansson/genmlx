@@ -4,9 +4,7 @@
 
    This is Layer 0 of the LLM integration — everything above (token-transition
    handler, beam search, grammar constraints) builds on these functions."
-  (:require ["@mlx-node/core" :as mlx-node]
-            ["@mlx-node/lm" :as mlx-lm]
-            ["./bridge.js" :as bridge]
+  (:require ["@mlx-node/lm" :as mlx-lm]
             [genmlx.mlx :as mx]
             [promesa.core :as p]))
 
@@ -71,32 +69,34 @@
   (.tokenToId tokenizer token))
 
 ;; ---------------------------------------------------------------------------
-;; Forward pass and array boundary
+;; Forward pass
 ;; ---------------------------------------------------------------------------
 
 (defn forward-pass
   "Run a forward pass through the model.
 
    Takes a model and token IDs (Uint32Array or cljs vector of ints).
-   Returns logits for the last position as a MLX array of shape [vocab_size].
+   Returns logits for the last position as an MxArray of shape [vocab_size].
 
-   The logits are sliced on the mlx-node side before crossing the boundary,
-   so only [vocab_size] floats are materialized (not [1, T, vocab_size])."
+   All operations stay on the MLX graph — no materialization to typed arrays."
   [model token-ids]
-  (let [ids (if (instance? js/Uint32Array token-ids)
-              token-ids
-              (js/Uint32Array.from (clj->js token-ids)))
-        ;; forwardLastLogits handles MxArray creation, forward pass,
-        ;; slicing, and Float32Array extraction entirely in JS context
-        f32 (.forwardLastLogits bridge model ids)]
-    ;; Cross the boundary: Float32Array → MLX array
-    (mx/array f32)))
+  (let [ids (cond
+              (vector? token-ids) token-ids
+              (instance? js/Uint32Array token-ids) (vec token-ids)
+              :else (vec token-ids))
+        n (count ids)
+        ;; [1, n] int32 input — model accepts any integer dtype
+        input (mx/reshape (mx/array ids mx/int32) [1 n])
+        ;; Forward pass → [1, seq_len, vocab_size]
+        logits (.forward model input)]
+    ;; Batch element 0 → [seq_len, vocab_size], last position → [vocab_size]
+    (-> logits (mx/index 0) (mx/index (dec n)))))
 
 (defn next-token-logprobs
   "Get log-probabilities for the next token given context.
 
    Takes a model and token IDs (Uint32Array or cljs vector).
-   Returns a MLX array of shape [vocab_size] containing log p(token | context)
+   Returns an MxArray of shape [vocab_size] containing log p(token | context)
    for every token in the vocabulary.
 
    Uses numerically stable log-softmax: log_softmax(x) = x - log(sum(exp(x)))
@@ -104,9 +104,8 @@
   [model token-ids]
   (let [logits (forward-pass model token-ids)
         max-val (mx/amax logits)
-        shifted (mx/subtract logits max-val)
-        log-sum-exp (mx/log (mx/sum (mx/exp shifted)))]
-    (mx/subtract shifted log-sum-exp)))
+        shifted (mx/subtract logits max-val)]
+    (mx/subtract shifted (mx/log (mx/sum (mx/exp shifted))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Text generation (smoke test / convenience)

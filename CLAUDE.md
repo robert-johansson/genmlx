@@ -62,13 +62,13 @@ bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 
 No build step, no compilation. nbb interprets ClojureScript directly.
 
-**Requirements:** macOS with Apple Silicon (or Linux/Windows with CUDA — MLX supports both), Bun (or Node.js 18+), `npm install` for `@frost-beta/mlx`. Malli (included as git submodule, temporary until upstream nbb/malli releases align).
+**Requirements:** macOS with Apple Silicon (or Linux/Windows with CUDA — MLX supports both), Bun (or Node.js 18+), `npm install` for `@mlx-node/core` and `@mlx-node/lm`. Malli (included as git submodule, temporary until upstream nbb/malli releases align).
 
 ## Project structure
 
 ```
 src/genmlx/
-  mlx.cljs              Thin wrapper over @frost-beta/mlx (arrays, ops, grad, vmap)
+  mlx.cljs              Thin wrapper over @mlx-node/core (arrays, ops, grad, vmap)
   mlx/random.cljs       Functional PRNG keys (split, sample — no global state)
   choicemap.cljs        Hierarchical address -> value maps (Value/Node protocol)
   trace.cljs            Immutable Trace record {gen-fn, args, choices, retval, score}
