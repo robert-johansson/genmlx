@@ -123,13 +123,17 @@
 
 (defn array
   ([v]
-   (let [js-v (clj->js v)]
-     (if (or (vector? v) (seq? v) (sequential? v))
-       (let [[flat-data sh] (infer-shape v)
-             f32 (js/Float32Array.from (clj->js flat-data))]
-         (.fromFloat32 M f32 (to-big-shape sh)))
-       ;; Scalar value
-       (scalar js-v))))
+   (cond
+     (array? v) v  ;; pass through MxArrays unchanged
+     (or (vector? v) (seq? v) (sequential? v))
+     (let [[flat-data sh] (infer-shape v)
+           f32 (js/Float32Array.from (clj->js flat-data))]
+       (.fromFloat32 M f32 (to-big-shape sh)))
+     ;; JS arrays (created with #js [...])
+     (js/Array.isArray v)
+     (let [f32 (js/Float32Array.from v)]
+       (.fromFloat32 M f32 (to-big-shape [(.-length f32)])))
+     :else (scalar v)))
   ([v shape-or-dtype]
    (if (or (vector? shape-or-dtype) (seq? shape-or-dtype))
      ;; Second arg is a shape — create flat then reshape
@@ -890,41 +894,21 @@
    Tracks compile-depth so mx/grad can skip tidy during tracing.
 
    Adaptation: mlx-node MxArray.compileFn(fn, inputs, shapeless) applies immediately.
-   We return a wrapper that calls compileFn each time with the current inputs.
-   If f returns a JS array of MxArrays, they are stacked into a single tensor
-   (compileFn requires MxArray return) and split back on output."
+   Adaptation: mlx-node compileFn applies immediately. We return a wrapper
+   that calls the function directly — compile is a no-op optimization hint.
+   The handler path is ground truth; compilation is optimization."
   ([f]    (compile-fn f false))
   ([f shapeless?]
-   ;; mlx-node compileFn applies immediately rather than returning a compiled function.
-   ;; We wrap to provide the same curried API. Each call traces and compiles.
-   ;; Probe on first call whether f returns a JS array (multi-output) or single MxArray.
-   (let [multi-output? (atom nil)]
-     (fn [& args]
-       (swap! compile-depth inc)
-       (try
-         ;; Probe the return type on first call
-         (when (nil? @multi-output?)
-           (let [probe-result (apply f args)]
-             (reset! multi-output? (js/Array.isArray probe-result))))
-         (if @multi-output?
-           ;; Multi-output: wrap f to stack results, then split on output
-           (let [n-out (atom nil)
-                 wrapped (fn [& inner-args]
-                           (let [raw (apply f inner-args)
-                                 arr-vec (vec (js->clj raw))]
-                             (reset! n-out (count arr-vec))
-                             (.stack M (to-array arr-vec))))
-                 result (.compileFn M wrapped (to-array args) shapeless?)
-                 stacked (aget result 0)]
-             ;; Split back into JS array
-             (to-array (mapv (fn [i] (.take stacked (scalar i int32) 0))
-                             (range @n-out))))
-           ;; Single-output: pass through directly
-           (let [result (.compileFn M f (to-array args) shapeless?)]
-             (if (= 1 (.-length result))
-               (aget result 0)
-               result)))
-         (finally (swap! compile-depth dec)))))))
+   ;; In node-mlx, compile() traced and cached the graph for reuse.
+   ;; In mlx-node, compileFn applies immediately — no persistent cache.
+   ;; For correctness, we just call f directly. This matches the handler
+   ;; path behavior. Performance optimization via compileFn can be added
+   ;; later once multi-output and nested-callback issues are resolved.
+   (fn [& args]
+     (swap! compile-depth inc)
+     (try
+       (apply f args)
+       (finally (swap! compile-depth dec))))))
 
 (defn compile-clear-cache!
   "Clear all compiled function caches, releasing associated Metal resources.
