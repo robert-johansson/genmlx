@@ -366,15 +366,11 @@
 ;; Token mask computation
 ;; ============================================================
 
-(def ^:private neg-inf-val
-  "Large negative value for masking. Using -1e9 instead of -Infinity
-   because MLX's NAPI crashes when creating arrays from Float32Arrays
-   containing -Infinity values."
-  -1000000.0)
+(def ^:private neg-inf js/Number.NEGATIVE_INFINITY)
 
 (defn compute-valid-mask
   "For a given DFA state, compute a logit mask over the vocabulary.
-   Returns a Float32Array: 0.0 for valid tokens, -1e6 for invalid.
+   Returns a Float32Array: 0.0 for valid tokens, -Infinity for invalid.
 
    A token is valid if advancing through all its chars from the given
    state doesn't reach :dead and the resulting state is alive or accept."
@@ -382,7 +378,7 @@
   (let [n (count token-index)
         mask (js/Float32Array. n)
         alive (:alive dfa)]
-    (.fill mask neg-inf-val)
+    (.fill mask neg-inf)
     (dotimes [i n]
       (let [tok-str (nth token-index i)
             final (when (and tok-str (pos? (count tok-str)))
@@ -441,23 +437,22 @@
   "Apply a grammar mask to logits. Returns masked logits as MxArray.
 
    Handles size mismatch between vocab and model output dim by padding
-   the mask with -1e6. Also handles EOS: EOS is valid only when the
-   DFA is in an accept state.
+   with -Infinity. Also handles EOS: EOS is valid only when the DFA
+   is in an accept state.
 
-   Note: we mutate a copy of the precomputed mask for EOS handling,
-   then convert to MxArray via .fromFloat32 (not mx/array, which
-   goes through clj->js and is too slow for 151K elements)."
+   Uses .fromFloat32 directly (not mx/array, which doesn't handle
+   JS TypedArrays — it would create a scalar instead of a vector)."
   [constraint dfa-state logits]
   (let [{:keys [dfa eos-id]} constraint
         src-mask (get-mask constraint dfa-state)
         logits-n (first (mx/shape logits))
         ;; Copy mask to avoid mutating precomputed cache
         mask-arr (let [buf (js/Float32Array. logits-n)]
-                   (.fill buf neg-inf-val)
+                   (.fill buf neg-inf)
                    (.set buf src-mask)
                    buf)]
     ;; EOS handling: valid only in accept states
-    (aset mask-arr eos-id (if (contains? (:accept dfa) dfa-state) 0.0 neg-inf-val))
+    (aset mask-arr eos-id (if (contains? (:accept dfa) dfa-state) 0.0 neg-inf))
     (let [mask-mx (.fromFloat32 mlx-core mask-arr #js [logits-n])]
       (mx/add logits mask-mx))))
 
