@@ -436,8 +436,6 @@
   (or (get masks state)
       (compute-valid-mask dfa state token-index)))
 
-(def ^:private mlx-core (js/require "@mlx-node/core"))
-
 (defn apply-mask
   "Apply a grammar mask to logits. Returns masked logits as MxArray.
 
@@ -458,7 +456,7 @@
                    buf)]
     ;; EOS handling: valid only in accept states
     (aset mask-arr eos-id (if (contains? (:accept dfa) dfa-state) 0.0 neg-inf))
-    (let [mask-mx (.fromFloat32 mlx-core mask-arr #js [logits-n])]
+    (let [mask-mx (.fromFloat32 mx/core mask-arr #js [logits-n])]
       (mx/add logits mask-mx))))
 
 ;; ============================================================
