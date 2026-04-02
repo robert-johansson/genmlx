@@ -411,14 +411,19 @@
      :masks        — precomputed masks (if DFA is small enough)
 
    If the DFA has <= max-precompute states, masks are precomputed
-   for O(1) lookup. Otherwise computed on demand."
-  ([tokenizer regex-str] (compile-constraint tokenizer regex-str 50))
-  ([tokenizer regex-str max-precompute]
+   for O(1) lookup. Otherwise computed on demand.
+
+   opts map (optional):
+     :token-index    — pre-built token index (from build-token-index)
+     :max-precompute — max DFA states for mask precomputation (default 50)"
+  ([tokenizer regex-str] (compile-constraint tokenizer regex-str {}))
+  ([tokenizer regex-str opts]
    (let [dfa (compile-regex regex-str)
-         token-index (build-token-index tokenizer)
+         token-index (or (:token-index opts) (build-token-index tokenizer))
          eos-id (.getEosTokenId tokenizer)
+         max-pre (get opts :max-precompute 50)
          n-states (count (:alive dfa))
-         masks (when (<= n-states max-precompute)
+         masks (when (<= n-states max-pre)
                  (precompute-masks dfa token-index))]
      {:dfa dfa
       :token-index token-index
