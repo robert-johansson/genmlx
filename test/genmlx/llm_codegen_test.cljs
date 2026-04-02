@@ -7,6 +7,7 @@
    2. Model tests (Qwen3-0.6B) — generate-cljs, synthesize-loop"
   (:require [genmlx.llm.codegen :as cg]
             [genmlx.llm.backend :as llm]
+            [genmlx.llm.core :as llm-core]
             [genmlx.llm.bytes :as bytes]
             [genmlx.protocols :as p]
             [edamame.core :as eda]
@@ -225,6 +226,21 @@
   (assert-equal "invalid fn: accuracy 0.0" 0.0 (:accuracy result))
   (assert-true "invalid fn: has error" (some? (:error result))))
 
+;; -- 1.11 score-structure --
+
+(println "\n== score-structure ==")
+
+(let [good (eda/parse-string "(defn move [{:keys [x y]} action] (case action :up {:x x :y (dec y)} :down {:x x :y (inc y)} :left {:x (dec x) :y y} :right {:x (inc x) :y y}))" {:all true})
+      bad (eda/parse-string "(defn move [{:keys [x y]} action] (case action :up (assoc x y 1) :down (assoc x y -1) :left (assoc x y -1) :right (assoc x y 1)))" {:all true})
+      worse (eda/parse-string "(defn move [{:keys [x y]} action] (cond-> action :up (assoc-in [:y] (dec y)) :down (update-in [:y] inc)))" {:all true})
+      good-score (cg/score-structure good)
+      bad-score (cg/score-structure bad)
+      worse-score (cg/score-structure worse)]
+  (assert-true "good > bad" (> good-score bad-score))
+  (assert-true "bad > worse" (> bad-score worse-score))
+  (assert-true "good score positive" (pos? good-score))
+  (assert-true "worse score <= 0" (<= worse-score 0)))
+
 ;; ============================================================
 ;; Summary of pure tests
 ;; ============================================================
@@ -302,6 +318,45 @@
     (assert-true "revise: code differs from input"
                  (not= bad-code (:code result)))
     (println "  Revised code:" (pr-str (:code result))))
+
+  ;; -- 2.5 generate-and-score --
+  (println "\n== generate-and-score ==")
+
+  (pr/let [gf (llm-core/make-llm-gf model-map)
+           result (cg/generate-and-score model-map gf "Write (defn add [a b] (+ a b))"
+                    {:temperature 0.3})]
+    (assert-true "generate-and-score: has :code" (string? (:code result)))
+    (assert-true "generate-and-score: has :valid?" (contains? result :valid?))
+    (assert-true "generate-and-score: has :weight" (number? (:weight result)))
+    (assert-true "generate-and-score: has :struct-score" (number? (:struct-score result)))
+    (assert-true "generate-and-score: weight is negative" (neg? (:weight result)))
+    (println "  Code:" (pr-str (subs (:code result) 0 (min 60 (count (:code result))))))
+    (println "  Weight:" (:weight result) "Struct:" (:struct-score result)))
+
+  ;; -- 2.6 generate-and-rank --
+  (println "\n== generate-and-rank ==")
+
+  (pr/let [gf (llm-core/make-llm-gf model-map)
+           transitions [{:state {:x 5 :y 5} :action :up    :expected {:x 5 :y 4}}
+                        {:state {:x 5 :y 5} :action :down  :expected {:x 5 :y 6}}]
+           results (cg/generate-and-rank model-map gf
+                     "Write (defn move [{:keys [x y]} action] (case action :up {:x x :y (dec y)} :down {:x x :y (inc y)}))"
+                     3
+                     {:temperature 0.7 :transitions transitions})]
+    (assert-equal "generate-and-rank: 3 candidates" 3 (count results))
+    (assert-true "generate-and-rank: sorted by combined desc"
+                 (let [scores (mapv :combined results)]
+                   (= scores (vec (sort > scores)))))
+    (assert-true "generate-and-rank: all have :weight" (every? :weight results))
+    (assert-true "generate-and-rank: all have :struct-score" (every? :struct-score results))
+    (assert-true "generate-and-rank: all have :combined" (every? :combined results))
+    (assert-true "generate-and-rank: all have :accuracy" (every? #(contains? % :accuracy) results))
+    (println "  Candidates:")
+    (doseq [[i r] (map-indexed vector results)]
+      (println (str "    " i ": combined=" (int (:combined r))
+                    " weight=" (int (:weight r))
+                    " struct=" (:struct-score r)
+                    " acc=" (:accuracy r)))))
 
   ;; Final report
   (println "\n== Final summary (pure + model) ==")

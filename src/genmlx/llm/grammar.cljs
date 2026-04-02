@@ -454,8 +454,9 @@
                    (.fill buf neg-inf)
                    (.set buf src-mask)
                    buf)]
-    ;; EOS handling: valid only in accept states
-    (aset mask-arr eos-id (if (contains? (:accept dfa) dfa-state) 0.0 neg-inf))
+    ;; EOS handling: valid only in accept states (bounds-check for model/vocab mismatch)
+    (when (< eos-id logits-n)
+      (aset mask-arr eos-id (if (contains? (:accept dfa) dfa-state) 0.0 neg-inf)))
     (let [mask-mx (.fromFloat32 mx/core mask-arr #js [logits-n])]
       (mx/add logits mask-mx))))
 
@@ -504,19 +505,3 @@
      (dispatch/with-handler gf (wrap-grammar h/generate-transition constraint))"
   [gf constraint]
   (dispatch/with-handler gf (wrap-grammar h/generate-transition constraint)))
-
-;; ============================================================
-;; Instaparse validation (post-hoc)
-;; ============================================================
-
-(defn validate
-  "Parse text against an Instaparse grammar string.
-   Returns the parse tree on success, or a failure object."
-  [grammar-str text]
-  (let [parser (insta/parser grammar-str)]
-    (parser text)))
-
-(defn valid?
-  "Does text match the given Instaparse grammar?"
-  [grammar-str text]
-  (not (insta/failure? (validate grammar-str text))))
