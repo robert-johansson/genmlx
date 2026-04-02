@@ -3,22 +3,27 @@
    task descriptions using an LLM, then run inference.
 
    Given a natural language task description + observations, generates N
-   candidate gen functions via a template approach (the LLM fills in
-   distribution expressions), scores each against observations via the GFI,
-   and runs importance sampling on the best model to compute a posterior.
+   candidate gen functions via either:
+     - Template mode (fine-tuned model + regex parsing), or
+     - Knowledge mode (base model + Instaparse grammar parsing)
+   Scores each against observations via the GFI, and runs importance
+   sampling on the best model to compute a posterior.
 
    Sections:
      9.1  SCI evaluation context  (msa-sci-opts, eval-model-fn, wrap-model, eval-model)
      9.2  Template prompt building (build-prompt)
      9.3  LLM output parsing       (parse-dist-lines)
-     9.4  Gen function assembly     (assemble-gen-fn)
-     9.5  Generation with no-think  (generate-candidate)
-     9.6  Model scoring             (score-model)
-     9.7  Synthesize and rank       (synthesize-and-rank)
-     9.8  Importance sampling       (importance-sample, infer-answer)
-     9.9  End-to-end pipeline       (msa)"
+     9.3b Grammar-based parsing    (math-spec-grammar, normalize-llm, parse-math)
+     9.4  Gen function assembly    (assemble-gen-fn)
+     9.5  Generation with no-think (generate-candidate)
+     9.5b Knowledge generation     (generate-knowledge-candidate)
+     9.6  Model scoring            (score-model)
+     9.7  Synthesize and rank      (synthesize-and-rank)
+     9.8  Importance sampling      (importance-sample, infer-answer)
+     9.9  End-to-end pipeline      (msa)"
   (:require [sci.core :as sci]
             [clojure.string :as str]
+            [instaparse.core :as insta]
             [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
@@ -35,25 +40,25 @@
   "SCI options exposing GenMLX distributions and MLX ops to eval'd code.
    Code evaluated with these opts can reference dist/gaussian, mx/add, etc."
   {:namespaces
-   {'dist {'gaussian    dist/gaussian
-           'uniform     dist/uniform
-           'bernoulli   dist/bernoulli
-           'beta        dist/beta-dist
-           'gamma       dist/gamma-dist
+   {'dist {'gaussian dist/gaussian
+           'uniform dist/uniform
+           'bernoulli dist/bernoulli
+           'beta dist/beta-dist
+           'gamma dist/gamma-dist
            'exponential dist/exponential
-           'poisson     dist/poisson
+           'poisson dist/poisson
            'categorical dist/categorical
-           'delta       dist/delta}
-    'mx   {'add      mx/add
-           'subtract mx/subtract
-           'multiply mx/multiply
-           'divide   mx/divide
-           'scalar   mx/scalar
-           'item     mx/item
-           'exp      mx/exp
-           'log      mx/log
-           'sqrt     mx/sqrt
-           'abs      mx/abs}}})
+           'delta dist/delta}
+    'mx {'add mx/add
+         'subtract mx/subtract
+         'multiply mx/multiply
+         'divide mx/divide
+         'scalar mx/scalar
+         'item mx/item
+         'exp mx/exp
+         'log mx/log
+         'sqrt mx/sqrt
+         'abs mx/abs}}})
 
 (defn eval-model-fn
   "Evaluate a code string in the MSA SCI context.
@@ -119,19 +124,82 @@
   [text variables]
   (let [lines (str/split-lines (str/trim text))]
     (reduce
-      (fn [acc var-kw]
-        (let [var-name (name var-kw)
-              line (some #(when (str/starts-with? (str/trim %) var-name) %)
-                         lines)]
-          (if-not line
-            acc
-            (let [expr (-> line
-                           (str/replace (re-pattern (str "^\\s*" var-name "\\s*[=:]\\s*")) "")
-                           str/trim
-                           (str/replace #"[,;]\s*$" ""))]
-              (assoc acc var-kw expr)))))
-      {}
-      variables)))
+     (fn [acc var-kw]
+       (let [var-name (name var-kw)
+             line (some #(when (str/starts-with? (str/trim %) var-name) %)
+                        lines)]
+         (if-not line
+           acc
+           (let [expr (-> line
+                          (str/replace (re-pattern (str "^\\s*" var-name "\\s*[=:]\\s*")) "")
+                          str/trim
+                          (str/replace #"[,;]\s*$" ""))]
+             (assoc acc var-kw expr)))))
+     {}
+     variables)))
+
+;; ============================================================
+;; 9.3b Grammar-based parsing (Instaparse)
+;; ============================================================
+
+(def math-spec-grammar
+  "Instaparse grammar for math-notation model specs.
+   Parses lines like: name ~ gaussian(param, param)
+   Supports +, -, *, / arithmetic with variable references."
+  (insta/parser
+   "specs = (line <nl>)* line
+     <nl> = #'\\n'
+     line = <bullet?> name <ws> <sep> <ws> dist-expr
+     <bullet> = #'[-*•]\\s*'
+     <sep> = '~' | '='
+     <ws> = #'\\s*'
+     dist-expr = dist-name <'('> args <')'>
+     dist-name = 'gaussian' | 'uniform' | 'bernoulli' | 'exponential'
+     args = arg (<','> <ws> arg)*
+     <arg> = number | ref | binop
+     binop = <'('> arg <ws> op <ws> arg <')'> | arg <ws> op <ws> arg
+     op = '+' | '-' | '*' | '/'
+     ref = #'[a-zA-Z][a-zA-Z0-9_-]*'
+     name = #'[a-zA-Z][a-zA-Z0-9_-]*'
+     number = #'-?[0-9]+(\\.[0-9]+)?'"))
+
+(def ^:private math->sexpr
+  "Instaparse transform map: math notation parse tree -> S-expression strings."
+  {:number identity
+   :ref identity
+   :name identity
+   :dist-name identity
+   :op identity
+   :binop (fn [a op b]
+            (let [mx-op (case op "+" "mx/add" "-" "mx/subtract"
+                              "*" "mx/multiply" "/" "mx/divide")]
+              (str "(" mx-op " " a " " b ")")))
+   :args (fn [& args] (str/join " " args))
+   :dist-expr (fn [dname args] (str "(dist/" dname " " args ")"))
+   :line (fn [n expr] [(keyword (str/lower-case n)) expr])
+   :specs (fn [& lines] (into {} lines))})
+
+(defn normalize-llm
+  "Normalize LLM math output for parsing.
+   Lowercases distribution names, strips keyword=value prefixes,
+   removes empty lines and trailing periods."
+  [text]
+  (-> (str/trim text)
+      (str/replace #"(?i)(Gaussian|Uniform|Bernoulli|Exponential)"
+                   #(str/lower-case (first %)))
+      (str/replace #"(?:mean|std|loc|scale|p|prob|low|high)\s*=\s*" "")
+      (str/replace #"\n\s*\n" "\n")
+      (str/replace #"\.\s*$" "")))
+
+(defn parse-math
+  "Parse math-notation model specs via Instaparse.
+   Input: 'x ~ gaussian(0, 10)\\ny ~ gaussian(x, 1)'
+   Output: {:x '(dist/gaussian 0 10)' :y '(dist/gaussian x 1)'}
+   Returns nil on parse failure."
+  [text]
+  (let [tree (insta/parse math-spec-grammar (normalize-llm text))]
+    (when-not (insta/failure? tree)
+      (insta/transform math->sexpr tree))))
 
 ;; ============================================================
 ;; 9.4 Gen function assembly
@@ -201,6 +269,55 @@
         :variables variables}))))
 
 ;; ============================================================
+;; 9.5b Knowledge-based generation (base model + Instaparse)
+;; ============================================================
+
+(def ^:private knowledge-system-prompt
+  "Write a probabilistic model. For each variable write:
+name ~ distribution(params)
+
+IMPORTANT: when a variable depends on another, use that variable name as a parameter.
+
+Example - y depends on x:
+x ~ gaussian(0, 10)
+y ~ gaussian(x, 1)
+
+Output ONLY the lines. No explanation.")
+
+(defn- build-knowledge-prompt
+  "Build a prompt for the base model to output math-notation model specs."
+  [{:keys [description]}]
+  description)
+
+(defn generate-knowledge-candidate
+  "Generate a model candidate using the base model + Instaparse grammar.
+   The base model outputs math notation, Instaparse parses it into
+   a dist-map, and assemble-gen-fn builds the code.
+
+   model-map: {:model :tokenizer :type} — base (non-fine-tuned) model
+   task:      {:description :variables :observations ...}
+   opts:      :max-tokens (default 120), :temperature (default 0.5)
+
+   Returns a promise of {:code :dist-map :variables}."
+  ([model-map task] (generate-knowledge-candidate model-map task {}))
+  ([model-map task opts]
+   (let [{:keys [max-tokens temperature]
+          :or {max-tokens 120 temperature 0.5}} opts
+         {:keys [variables]} task
+         messages [{:role "system" :content knowledge-system-prompt}
+                   {:role "user" :content (build-knowledge-prompt task)}]]
+     (pr/let [result (.chat (:model model-map)
+                            (clj->js messages)
+                            (clj->js {:maxNewTokens max-tokens
+                                      :temperature temperature
+                                      :enableThinking false}))
+              text (.-text result)
+              dist-map (or (parse-math text) {})]
+       {:code (assemble-gen-fn variables dist-map)
+        :dist-map dist-map
+        :variables variables}))))
+
+;; ============================================================
 ;; 9.6 Model scoring
 ;; ============================================================
 
@@ -236,21 +353,25 @@
    model-map: {:model :tokenizer :type} from llm/load-model
    task:      {:description :variables :observations ...}
    opts:      :n (default 10), :temperature (default 0.5), :max-tokens (default 150)
+              :mode — :template (default, fine-tuned model + regex parsing)
+                      :knowledge (base model + Instaparse grammar)
 
    Returns a promise of a vector of {:code :gf :weight :dist-map},
    sorted by weight descending. Failed candidates are included with
    :gf nil and :weight ##-Inf."
   ([model-map task] (synthesize-and-rank model-map task {}))
   ([model-map task opts]
-   (let [{:keys [n] :or {n 10}} opts
-         {:keys [observations]} task]
+   (let [{:keys [n mode] :or {n 10 mode :template}} opts
+         {:keys [observations]} task
+         gen-fn (if (= mode :knowledge)
+                  generate-knowledge-candidate
+                  generate-candidate)]
      (pr/loop [i 0, results []]
        (if (>= i n)
          (->> results
               (sort-by :weight >)
               vec)
-         (pr/let [{:keys [code dist-map variables] :as candidate}
-                  (generate-candidate model-map task opts)
+         (pr/let [{:keys [code dist-map]} (gen-fn model-map task opts)
                   gf (eval-model code)
                   weight (if gf
                            (score-model gf observations)
@@ -331,6 +452,7 @@
               :particles   importance sampling particles (default 200)
               :temperature LLM temperature (default 0.5)
               :max-tokens  LLM max tokens (default 150)
+              :mode        :template (fine-tuned model) or :knowledge (base model + Instaparse)
 
    Returns a promise of
      {:model     {:code :gf :weight :dist-map}

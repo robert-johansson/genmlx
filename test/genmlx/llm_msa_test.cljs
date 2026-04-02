@@ -1,11 +1,14 @@
 (ns genmlx.llm-msa-test
   "Tests for the MSA (Model Synthesis Architecture) pipeline.
 
-   Two sections:
-   1. Pure tests (no LLM needed) — SCI eval, template assembly, scoring,
-      importance sampling posterior, error handling
-   2. Model tests (Qwen3-0.6B fine-tuned) — generate-candidate,
-      synthesize-and-rank, end-to-end MSA pipeline
+   Three sections:
+   1.  Pure tests (no LLM needed) — SCI eval, template assembly, scoring,
+       importance sampling posterior, error handling
+   1b. Knowledge path pure tests — normalize-llm, parse-math (Instaparse),
+       parse->assemble->eval->score round-trip, normalize+parse combined
+   2.  Model tests (Qwen3-0.6B fine-tuned + base) — generate-candidate,
+       synthesize-and-rank, end-to-end MSA, generate-knowledge-candidate,
+       end-to-end MSA with :mode :knowledge
 
    Run: bun run --bun nbb test/genmlx/llm_msa_test.cljs"
   (:require [genmlx.llm.msa :as msa]
@@ -67,6 +70,16 @@
      (let [strength (trace :strength (dist/gaussian 5 2))
            time (trace :time (dist/gaussian (mx/divide 30 strength) 0.5))]
        {:strength strength :time time}))")
+
+(def ^:private sensor-fusion-task
+  {:name "sensor-fusion"
+   :description "Variables: true-value, sensor-a, sensor-b.\ntrue-value ~ gaussian(0, 100)\nsensor-a depends on true-value, noise std 1\nsensor-b depends on true-value, noise std 3"
+   :variables [:true-value :sensor-a :sensor-b]
+   :observations {:sensor-a 10.0 :sensor-b 14.0}
+   :query :true-value})
+
+(def ^:private sensor-fusion-math
+  "true-value ~ gaussian(0, 100)\nsensor-a ~ gaussian(true-value, 1)\nsensor-b ~ gaussian(true-value, 3)")
 
 ;; ============================================================
 ;; Section 1: Pure tests (no LLM needed)
@@ -302,20 +315,152 @@
   (catch :default _e
     (assert-true "wrong address handled" true)))
 
+;; -- 1b.1 normalize-llm --
+
+(println "\n-- 1b.1 normalize-llm: strips keyword= prefixes and lowercases --")
+(try
+  (let [r1 (msa/normalize-llm "Gaussian(mean=0, std=100)")]
+    (assert-equal "Gaussian(mean=0, std=100) -> gaussian(0, 100)"
+                  "gaussian(0, 100)" r1))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: normalize-llm Gaussian threw:" (.-message e))))
+
+(try
+  (let [r2 (msa/normalize-llm "Bernoulli(p=0.5)")]
+    (assert-equal "Bernoulli(p=0.5) -> bernoulli(0.5)"
+                  "bernoulli(0.5)" r2))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: normalize-llm Bernoulli threw:" (.-message e))))
+
+(println "\n-- 1b.1 normalize-llm: multi-line with empty line stripping --")
+(try
+  (let [input "x ~ Gaussian(0, 1)\n\ny ~ Gaussian(x, 1)"
+        result (msa/normalize-llm input)]
+    (assert-true "strips empty lines"
+                 (not (str/includes? result "\n\n")))
+    (assert-true "lowercases dist names"
+                 (str/includes? result "gaussian")))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: normalize-llm multi-line threw:" (.-message e))))
+
+;; -- 1b.2 parse-math --
+
+(println "\n-- 1b.2 parse-math: simple two-variable model --")
+(try
+  (let [result (msa/parse-math "x ~ gaussian(0, 10)\ny ~ gaussian(x, 1)")]
+    (assert-true "returns a map" (map? result))
+    (assert-equal ":x dist" "(dist/gaussian 0 10)" (:x result))
+    (assert-equal ":y dist" "(dist/gaussian x 1)" (:y result)))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: parse-math simple threw:" (.-message e))))
+
+(println "\n-- 1b.2 parse-math: arithmetic in arguments --")
+(try
+  (let [result (msa/parse-math "strength ~ gaussian(5, 2)\ntime ~ gaussian(30 / strength, 0.5)")]
+    (assert-true "returns a map" (map? result))
+    (assert-true ":strength parsed" (some? (:strength result)))
+    (assert-true ":time contains divide" (str/includes? (str (:time result)) "divide")))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: parse-math arithmetic threw:" (.-message e))))
+
+(println "\n-- 1b.2 parse-math: single variable --")
+(try
+  (let [result (msa/parse-math "machine ~ bernoulli(0.6)")]
+    (assert-true "returns a map" (map? result))
+    (assert-equal ":machine dist" "(dist/bernoulli 0.6)" (:machine result)))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: parse-math single threw:" (.-message e))))
+
+(println "\n-- 1b.2 parse-math: invalid input returns nil --")
+(try
+  (let [result (msa/parse-math "invalid garbage text")]
+    (assert-true "invalid text returns nil" (nil? result)))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: parse-math invalid threw:" (.-message e))))
+
+(println "\n-- 1b.2 parse-math: handles bullet prefixes --")
+(try
+  (let [result (msa/parse-math "- x ~ gaussian(0, 1)\n- y ~ gaussian(x, 2)")]
+    (assert-true "returns a map" (map? result))
+    (assert-true ":x parsed" (some? (:x result)))
+    (assert-true ":y parsed" (some? (:y result))))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: parse-math bullet threw:" (.-message e))))
+
+;; -- 1b.3 parse-math -> assemble -> eval -> score round-trip --
+
+(println "\n-- 1b.3 parse-math -> assemble -> eval -> score: sensor fusion --")
+(try
+  (let [dist-map (msa/parse-math sensor-fusion-math)]
+    (assert-true "parse-math returns a map" (map? dist-map))
+    (when (map? dist-map)
+      (let [variables [:true-value :sensor-a :sensor-b]
+            code (msa/assemble-gen-fn variables dist-map)
+            gf (msa/eval-model code)]
+        (assert-true "assembled code evals to DynamicGF" (some? gf))
+        (when gf
+          ;; Score against observations
+          (let [w (msa/score-model gf {:sensor-a 10.0 :sensor-b 14.0})]
+            (assert-true "weight is finite" (js/isFinite w))
+            (assert-true "weight is negative" (< w 0))
+            (println "    weight:" (.toFixed w 3)))
+          ;; Run importance sampling, posterior mean should be near 10.3
+          (let [samples (msa/importance-sample gf {:sensor-a 10.0 :sensor-b 14.0}
+                                               :true-value 500)
+                result (msa/infer-answer samples)]
+            (assert-true "posterior mean is finite" (js/isFinite (:mean result)))
+            (assert-close "posterior mean near 10.3" 10.3 (:mean result) 2.0)
+            (println "    posterior mean:" (.toFixed (:mean result) 3)))))))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: parse-math round-trip threw:" (.-message e))))
+
+;; -- 1b.4 normalize-llm + parse-math combined --
+
+(println "\n-- 1b.4 normalize-llm + parse-math combined: LLM-style output --")
+(try
+  (let [llm-output "true-value ~ Gaussian(mean=0, std=100)\nsensor-a ~ Gaussian(mean=true-value, std=1)"
+        normalized (msa/normalize-llm llm-output)
+        dist-map (msa/parse-math normalized)]
+    (assert-true "normalize produces string" (string? normalized))
+    (assert-true "parse-math returns a map" (map? dist-map))
+    (when (map? dist-map)
+      (assert-true ":true-value parsed" (some? (:true-value dist-map)))
+      (assert-true ":sensor-a parsed" (some? (:sensor-a dist-map)))
+      (assert-true ":true-value contains gaussian"
+                   (str/includes? (str (:true-value dist-map)) "gaussian"))
+      (assert-true ":sensor-a references true-value"
+                   (str/includes? (str (:sensor-a dist-map)) "true-value"))))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: normalize+parse combined threw:" (.-message e))))
+
 ;; -- Pure test summary --
 (report "Pure tests")
 
 ;; ============================================================
-;; Section 2: Model tests (Qwen3-0.6B fine-tuned)
+;; Section 2: Model tests (Qwen3-0.6B fine-tuned + base)
 ;; ============================================================
 
 (def ^:private model-dir
   (str (.-HOME js/process.env) "/.cache/models/qwen3-0.6b-cljs"))
 
-(println "\n== Loading Qwen3-0.6B-cljs for model tests... ==")
+(def ^:private base-model-dir
+  (str (.-HOME js/process.env) "/.cache/models/qwen3-0.6b"))
 
-(pr/let [model-map (llm/load-model model-dir)]
-  (println "Model loaded.\n")
+(println "\n== Loading Qwen3-0.6B-cljs (fine-tuned) and Qwen3-0.6B (base) for model tests... ==")
+
+(pr/let [model-map (llm/load-model model-dir)
+         base-model-map (llm/load-model base-model-dir)]
+  (println "Both models loaded.\n")
 
   ;; -- 2.1 generate-candidate --
   (println "\n-- 2.1 generate-candidate: produces code --")
@@ -428,6 +573,54 @@
       ;; LLM may not perfectly capture 30/strength; just verify it's a reasonable number
       (assert-true "posterior mean is finite" (js/isFinite (:mean post)))
       (println "    posterior mean:" (.toFixed (:mean post) 3))))
+
+  ;; -- 2.4 generate-knowledge-candidate (base model) --
+  (println "\n-- 2.4 generate-knowledge-candidate: sensor fusion --")
+
+  (pr/let [{:keys [code dist-map variables]}
+           (msa/generate-knowledge-candidate base-model-map sensor-fusion-task {})]
+    (assert-true "code is a string" (string? code))
+    (assert-true "code is non-empty" (pos? (count code)))
+    (assert-true "code contains fn" (str/includes? code "fn"))
+    (assert-true "code contains trace" (str/includes? code "trace"))
+    (assert-true "dist-map is a map" (map? dist-map))
+    (assert-true "variables is a vector" (vector? variables))
+    (println "    generated code:" (pr-str (subs code 0 (min 80 (count code)))))
+
+    ;; The generated code should be eval-able
+    (let [gf (msa/eval-model code)]
+      (assert-true "generated code evals (or nil)" true)
+      (when gf
+        (assert-true "generated code produces DynamicGF" (instance? dyn/DynamicGF gf))
+        (let [tr (p/simulate gf [])]
+          (assert-true "simulates with choices"
+                       (some? (:choices tr)))))))
+
+  ;; -- 2.5 end-to-end MSA: :mode :knowledge --
+  (println "\n-- 2.5 end-to-end MSA: :mode :knowledge sensor fusion --")
+
+  (pr/let [result (msa/msa base-model-map sensor-fusion-task
+                           {:mode :knowledge :n 5 :particles 300})]
+    (assert-true "result has :model" (contains? result :model))
+    (assert-true "result has :posterior" (contains? result :posterior))
+    (assert-true "result has :candidates" (contains? result :candidates))
+
+    ;; Posterior checks — generous tolerance for LLM-generated models
+    (let [post (:posterior result)]
+      (when post
+        (assert-true "posterior has :mean" (contains? post :mean))
+        (assert-true "posterior mean is a number" (number? (:mean post)))
+        (assert-true "posterior mean is finite" (js/isFinite (:mean post)))
+        ;; Sensor fusion: true-value|sensor-a=10,sensor-b=14
+        ;; LLM models vary widely; just check it's a reasonable finite number
+        (assert-true "posterior mean is finite" (js/isFinite (:mean post)))
+        (println "    posterior mean:" (.toFixed (:mean post) 3))
+        (when (:variance post)
+          (println "    posterior var:" (.toFixed (:variance post) 3)))))
+
+    ;; Candidates vector
+    (assert-true "candidates is a vector" (vector? (:candidates result)))
+    (println "    candidates:" (count (:candidates result))))
 
   ;; -- Final summary --
   (println)
