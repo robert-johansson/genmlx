@@ -156,13 +156,17 @@
    Returns a promise of the generated text string.
 
    opts map:
-     :max-tokens  — maximum new tokens (default 100)
-     :temperature — sampling temperature (default 0.7)"
+     :max-tokens     — maximum new tokens (default 100)
+     :temperature    — sampling temperature (default 0.7)
+     :system-prompt  — optional system message prepended to chat"
   ([model-map prompt] (generate-text model-map prompt {}))
-  ([{:keys [model]} prompt {:keys [max-tokens temperature]
+  ([{:keys [model]} prompt {:keys [max-tokens temperature system-prompt]
                             :or {max-tokens 100 temperature 0.7}}]
-   (p/let [result (.chat model
-                         (clj->js [{:role "user" :content prompt}])
-                         (clj->js {:maxNewTokens max-tokens
-                                   :temperature temperature}))]
-     (.-text result))))
+   (let [messages (cond-> []
+                    system-prompt (conj {:role "system" :content system-prompt})
+                    true (conj {:role "user" :content prompt}))]
+     (p/let [result (.chat model
+                           (clj->js messages)
+                           (clj->js {:maxNewTokens max-tokens
+                                     :temperature temperature}))]
+       (.-text result)))))

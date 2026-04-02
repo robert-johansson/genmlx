@@ -141,7 +141,7 @@
 ;; Byte marginals -> indexed categorical
 ;; ============================================================
 
-(defn- byte-marginals->categorical
+(defn byte-marginals->categorical
   "Convert a byte-marginal map {char -> log-prob} to an indexed categorical.
 
    Returns {:dist  categorical distribution over [0..n-1]
@@ -177,19 +177,19 @@
 ;; Internal helpers
 ;; ============================================================
 
-(defn- logits->logprobs
+(defn logits->logprobs
   "Numerically stable log-softmax: logits - logsumexp(logits).
    Returns MxArray [vocab-size]."
   [logits]
   (mx/subtract logits (mx/logsumexp logits)))
 
-(defn- trie-leaf?
+(defn trie-leaf?
   "A trie node is a leaf when it has no children — the accumulated bytes
    form a complete token that must be committed."
   [node]
   (empty? (:children node)))
 
-(defn- commit-token-id
+(defn commit-token-id
   "Select the token ID to commit at a leaf node. A leaf's token-ids set
    contains exactly the tokens whose byte sequence ends here."
   [node]
