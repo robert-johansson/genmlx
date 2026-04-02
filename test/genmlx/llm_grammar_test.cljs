@@ -229,14 +229,17 @@
 
                     (println "\n== Instaparse validation ==")
 
-                    (assert-true "valid? on matching string"
-                                 (gram/valid? "S = #'[0-9]{3}-[0-9]{4}'" "123-4567"))
-                    (assert-true "valid? rejects non-matching"
-                                 (not (gram/valid? "S = #'[0-9]{3}-[0-9]{4}'" "abc")))
-                    (assert-true "validate returns parse tree"
-                                 (vector? (gram/validate "S = 'hello' <' '> 'world'" "hello world")))
-                    (assert-true "validate returns failure on bad input"
-                                 (insta/failure? (gram/validate "S = 'hello'" "goodbye")))
+                    (let [phone-parser (insta/parser "S = #'[0-9]{3}-[0-9]{4}'")
+                          hello-parser (insta/parser "S = 'hello' <' '> 'world'")
+                          hello-only (insta/parser "S = 'hello'")]
+                      (assert-true "instaparse: matching string"
+                                   (not (insta/failure? (phone-parser "123-4567"))))
+                      (assert-true "instaparse: rejects non-matching"
+                                   (insta/failure? (phone-parser "abc")))
+                      (assert-true "instaparse: returns parse tree"
+                                   (vector? (hello-parser "hello world")))
+                      (assert-true "instaparse: returns failure on bad input"
+                                   (insta/failure? (hello-only "goodbye"))))
 
                     (println "\n== Different pattern: hex color ==")
 
