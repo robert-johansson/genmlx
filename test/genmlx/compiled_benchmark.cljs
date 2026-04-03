@@ -292,7 +292,7 @@
       summary
       (str "# Experiment 6: Loop Compilation Speedup\n\n"
            "**Date:** 2026-03-03\n"
-           "**Platform:** macOS, Apple Silicon, MLX GPU via @frost-beta/mlx, Bun + nbb\n"
+           "**Platform:** macOS, Apple Silicon, MLX GPU via @mlx-node/core, Bun + nbb\n"
            "**Benchmark file:** `test/genmlx/compiled_benchmark.cljs`\n"
            "**Methodology:** performance.now(), warmup + nested loop (min-of-inner, mean+std-of-outer)\n\n"
            "## Results\n\n"

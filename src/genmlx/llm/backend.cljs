@@ -4,9 +4,7 @@
 
    This is Layer 0 of the LLM integration — everything above (token-transition
    handler, beam search, grammar constraints) builds on these functions."
-  (:require ["@mlx-node/core" :as mlx-node]
-            ["@mlx-node/lm" :as mlx-lm]
-            ["./bridge.js" :as bridge]
+  (:require ["@mlx-node/lm" :as mlx-lm]
             [genmlx.mlx :as mx]
             [promesa.core :as p]))
 
@@ -71,32 +69,33 @@
   (.tokenToId tokenizer token))
 
 ;; ---------------------------------------------------------------------------
-;; Forward pass and array boundary
+;; Forward pass
 ;; ---------------------------------------------------------------------------
+
+(defn- ->id-vec
+  "Coerce token IDs to a ClojureScript vector of ints."
+  [token-ids]
+  (if (vector? token-ids) token-ids (vec token-ids)))
 
 (defn forward-pass
   "Run a forward pass through the model.
 
    Takes a model and token IDs (Uint32Array or cljs vector of ints).
-   Returns logits for the last position as a MLX array of shape [vocab_size].
+   Returns logits for the last position as an MxArray of shape [vocab_size].
 
-   The logits are sliced on the mlx-node side before crossing the boundary,
-   so only [vocab_size] floats are materialized (not [1, T, vocab_size])."
+   All operations stay on the MLX graph — no materialization to typed arrays."
   [model token-ids]
-  (let [ids (if (instance? js/Uint32Array token-ids)
-              token-ids
-              (js/Uint32Array.from (clj->js token-ids)))
-        ;; forwardLastLogits handles MxArray creation, forward pass,
-        ;; slicing, and Float32Array extraction entirely in JS context
-        f32 (.forwardLastLogits bridge model ids)]
-    ;; Cross the boundary: Float32Array → MLX array
-    (mx/array f32)))
+  (let [ids (->id-vec token-ids)
+        n (count ids)
+        input (mx/reshape (mx/array ids mx/int32) [1 n])
+        logits (.forward model input)]
+    (-> logits (mx/index 0) (mx/index (dec n)))))
 
 (defn next-token-logprobs
   "Get log-probabilities for the next token given context.
 
    Takes a model and token IDs (Uint32Array or cljs vector).
-   Returns a MLX array of shape [vocab_size] containing log p(token | context)
+   Returns an MxArray of shape [vocab_size] containing log p(token | context)
    for every token in the vocabulary.
 
    Uses numerically stable log-softmax: log_softmax(x) = x - log(sum(exp(x)))
@@ -104,9 +103,49 @@
   [model token-ids]
   (let [logits (forward-pass model token-ids)
         max-val (mx/amax logits)
-        shifted (mx/subtract logits max-val)
-        log-sum-exp (mx/log (mx/sum (mx/exp shifted)))]
-    (mx/subtract shifted log-sum-exp)))
+        shifted (mx/subtract logits max-val)]
+    (mx/subtract shifted (mx/log (mx/sum (mx/exp shifted))))))
+
+;; ---------------------------------------------------------------------------
+;; KV cache management
+;; ---------------------------------------------------------------------------
+
+(defn init-cache!
+  "Initialize KV caches for incremental generation.
+   Must be called before forward-step. Mutates model state."
+  [model]
+  (.initKvCaches model))
+
+(defn reset-cache!
+  "Clear KV caches after generation. Mutates model state."
+  [model]
+  (.resetKvCaches model))
+
+(defn forward-prefill
+  "Run a cached forward pass over the full prompt.
+
+   Processes all tokens at once, populates the KV cache, and returns
+   logits for the last position as an MxArray of shape [vocab_size].
+
+   Must call init-cache! before this."
+  [model token-ids]
+  (let [ids (->id-vec token-ids)
+        n (count ids)
+        input (mx/reshape (mx/array ids mx/int32) [1 n])
+        logits (.forwardWithCache model input true)]
+    (-> logits (mx/index 0) (mx/index (dec n)))))
+
+(defn forward-step
+  "Run a single-token cached forward pass.
+
+   Takes one token ID (integer), uses the KV cache from previous calls,
+   and returns logits for the next position as an MxArray of shape [vocab_size].
+
+   Constant time in sequence length — does not recompute the full context."
+  [model token-id]
+  (let [input (mx/reshape (mx/scalar token-id mx/int32) [1 1])
+        logits (.forwardWithCache model input true)]
+    (-> logits (mx/index 0) (mx/index 0))))
 
 ;; ---------------------------------------------------------------------------
 ;; Text generation (smoke test / convenience)
@@ -117,13 +156,17 @@
    Returns a promise of the generated text string.
 
    opts map:
-     :max-tokens  — maximum new tokens (default 100)
-     :temperature — sampling temperature (default 0.7)"
+     :max-tokens     — maximum new tokens (default 100)
+     :temperature    — sampling temperature (default 0.7)
+     :system-prompt  — optional system message prepended to chat"
   ([model-map prompt] (generate-text model-map prompt {}))
-  ([{:keys [model]} prompt {:keys [max-tokens temperature]
+  ([{:keys [model]} prompt {:keys [max-tokens temperature system-prompt]
                             :or {max-tokens 100 temperature 0.7}}]
-   (p/let [result (.chat model
-                         (clj->js [{:role "user" :content prompt}])
-                         (clj->js {:maxNewTokens max-tokens
-                                   :temperature temperature}))]
-     (.-text result))))
+   (let [messages (cond-> []
+                    system-prompt (conj {:role "system" :content system-prompt})
+                    true (conj {:role "user" :content prompt}))]
+     (p/let [result (.chat model
+                           (clj->js messages)
+                           (clj->js {:maxNewTokens max-tokens
+                                     :temperature temperature}))]
+       (.-text result)))))

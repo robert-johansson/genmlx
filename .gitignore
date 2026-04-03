@@ -34,3 +34,7 @@ notes/
 
 # Private dev directory (not synced)
 dev/
+corpus/adapters/*.safetensors
+corpus/train.jsonl
+corpus/valid.jsonl
+corpus/training_pairs.jsonl

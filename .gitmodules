@@ -19,3 +19,7 @@
 [submodule "mlx-node"]
 	path = mlx-node
 	url = https://github.com/robert-johansson/mlx-node.git
+[submodule "instaparse"]
+	path = instaparse
+	url = https://github.com/robert-johansson/instaparse.git
+	branch = bb-nbb-support

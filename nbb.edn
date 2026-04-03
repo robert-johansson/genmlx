@@ -1,1 +1,1 @@
-{:paths ["src" "test" "test.check" "malli/src"]}
+{:paths ["src" "test" "test.check" "malli/src" "instaparse/src"]}
