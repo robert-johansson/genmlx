@@ -14,10 +14,11 @@
 
 (defn load-model
   "Load an LLM from a directory. Returns a promise of
-   {:model <Qwen3Model|Qwen35Model> :tokenizer <Qwen3Tokenizer> :type keyword}.
+   {:model <Model> :tokenizer <Tokenizer> :type keyword}.
 
-   The model directory must contain config.json and safetensors weights.
-   Model type is auto-detected from config.json."
+   The model directory must contain config.json, safetensors weights,
+   and tokenizer.json. Model type is auto-detected from config.json.
+   Supports Qwen3, Qwen3.5, Gemma4, and other HuggingFace models."
   [model-path]
   (p/let [model (.loadModel mlx-lm model-path)
           model-type (.detectModelType mlx-lm model-path)
@@ -133,7 +134,8 @@
         n (count ids)
         input (mx/reshape (mx/array ids mx/int32) [1 n])
         logits (.forwardWithCache model input true)]
-    (-> logits (mx/index 0) (mx/index (dec n)))))
+    ;; Rust returns [1, 1, vocab_size] — logits for last position only
+    (-> logits (mx/index 0) (mx/index 0))))
 
 (defn forward-step
   "Run a single-token cached forward pass.
