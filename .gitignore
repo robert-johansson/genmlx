@@ -5,6 +5,12 @@ node_modules/
 *.pdf
 pdf/
 
+# Environment / secrets
+.env
+
+# ARC-AGI (feature/arc-agi-3)
+environment_files/
+
 # Claude Code
 .claude/
 .mcp.json
