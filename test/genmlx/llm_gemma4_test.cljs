@@ -114,11 +114,21 @@
      ;; ---------------------------------------------------------------
      (println "\n== 6. Grammar constraints ==")
 
-     (pm/let [gf (llm-core/make-llm-gf m)
-              constrained-gf (grammar/constrain gf "[0-9]+")
-              trace (p/simulate constrained-gf [[2] 8])]
-       (assert-true "grammar constrained simulate returns trace" (some? trace))
-       (println "    constrained:" (pr-str (:retval trace))))
+     (println "    compiling constraint (262K vocab, may take a moment)...")
+     (let [constraint (grammar/compile-constraint (:tokenizer m) "[0-9]+")]
+       (assert-true "constraint compiled" (some? (:dfa constraint)))
+       (assert-true "token-index built" (= 262144 (count (:token-index constraint))))
+       (pm/let [gf (llm-core/make-llm-gf m)
+                constrained-gf (grammar/constrain gf constraint)
+                trace (p/simulate constrained-gf [[2] 4])]
+         (let [tok-ids (:retval trace)
+               ;; Skip BOS token, decode generated tokens only
+               gen-ids (rest tok-ids)
+               tok (:tokenizer m)
+               id-arr (js/Uint32Array. (clj->js gen-ids))]
+           (pm/let [text (.decode tok id-arr)]
+             (assert-true "grammar output is digits" (some? (re-matches #"[0-9]+" text)))
+             (println "    constrained text:" (pr-str text))))))
 
      ;; ---------------------------------------------------------------
      ;; 7. Byte-level generation
