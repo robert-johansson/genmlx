@@ -4,16 +4,19 @@
 
 GenMLX is a probabilistic programming language in ClojureScript on Node.js (nbb),
 using Apple's MLX framework for GPU acceleration. It implements the **Generative
-Function Interface (GFI)** — the same architecture as Gen.jl (Julia) and GenJAX (JAX).
+Function Interface (GFI)** — the mathematical contract for probabilistic computation
+from Cusumano-Towner's 2020 MIT PhD thesis — the same architecture as Gen.jl
+(Julia) and GenJAX (JAX).
 
 The thesis: probabilistic programming and functional programming are the same thing.
 ClojureScript's immutable data, open multimethods, and macro system map perfectly
 onto the GFI's mathematical structure. MLX's lazy graphs, unified memory, and
 broadcasting reinforce this — functional-style array programming without penalty.
 
-~25,000 lines of ClojureScript. Purely functional, data-driven, GPU end-to-end.
+~29,600 lines of ClojureScript across 74 source files. Purely functional,
+data-driven, GPU end-to-end.
 
-## Compilation ladder (VISION.md)
+## Compilation ladder
 
 GenMLX follows a 5-level compilation ladder, progressively moving work from the
 host interpreter into fused MLX computation graphs:
@@ -21,8 +24,16 @@ host interpreter into fused MLX computation graphs:
 ```
 Level 0: Shape-based batching       ← DONE (certified, 68/68)
 Level 1: Compiled gen functions      ← DONE (506+ tests)
+  M1: Schema extraction from source forms
+  M2: Full compilation for static models (noise transforms + mx/compile-fn)
+  M3: Partial prefix compilation (static prefix + interpreted suffix)
+  M4: Branch rewriting (if/if-not with same addr+dist → mx/where)
+  M5: Combinator compilation (fused Map/Unfold/Scan loops)
 Level 2: Compiled inference sweeps   ← DONE (881+ tests)
 Level 3: Auto-analytical elimination ← DONE (426 tests, 33.5x variance reduction)
+  7 conjugate families detected statically
+  Kalman chain detection via affine dependency analysis
+  Rao-Blackwellization for partial conjugacy
 Level 3.5: Extended analytical       ← DONE (150 tests, MVN Kalman, combinator conjugacy)
 Level 4: Single fused graph          ← DONE (260+ tests, 9.2x compiled Adam speedup)
 ```
@@ -62,77 +73,214 @@ bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 
 No build step, no compilation. nbb interprets ClojureScript directly.
 
-**Requirements:** macOS with Apple Silicon (or Linux/Windows with CUDA — MLX supports both), Bun (or Node.js 18+), `npm install` for `@mlx-node/core` and `@mlx-node/lm`. Malli (included as git submodule, temporary until upstream nbb/malli releases align).
+**Requirements:** macOS with Apple Silicon, Bun (or Node.js 18+), `npm install`
+for `@mlx-node/core` and `@mlx-node/lm`. Malli (included as git submodule,
+temporary until upstream nbb/malli releases align).
 
 ## Project structure
 
 ```
 src/genmlx/
-  mlx.cljs              Thin wrapper over @mlx-node/core (arrays, ops, grad, vmap)
+  # Layer 0: MLX + Runtime (1,144 lines — the mutable boundary)
+  mlx.cljs              Thin wrapper over @mlx-node/core (~200 ops, memory management,
+                        auto-cleanup, tidy, grad/vmap/compile-fn). Only file that
+                        touches the native MLX library.
   mlx/random.cljs       Functional PRNG keys (split, sample — no global state)
-  choicemap.cljs        Hierarchical address -> value maps (Value/Node protocol)
-  trace.cljs            Immutable Trace record {gen-fn, args, choices, retval, score}
-  selection.cljs        Composable address selection algebra
-  protocols.cljs        GFI protocols: simulate, generate, update, regenerate, assess
-  handler.cljs          Pure state transitions (simulate, generate, update, regenerate, ...)
+  runtime.cljs          Execution runtime: run-handler wraps a single volatile! cell,
+                        creates trace/splice/param closures as a JS runtime object
   dispatch.cljs         IDispatcher protocol, stack resolution, with-handler, with-dispatch
-  runtime.cljs          Execution runtime: run-handler with volatile! dispatch
-  gen.cljc              gen macro (converts fn bodies into DynamicGF)
-  dynamic.cljs          DynamicGF record (full GFI via dispatcher stack), vsimulate, vgenerate
-  schemas.cljs          Malli schemas for data boundaries (handler state, GFI returns, etc.)
+
+  # Layer 1: Core Data (426 lines — pure immutable structures)
+  choicemap.cljs        Hierarchical address→value maps (Value leaf / Node internal,
+                        stack/unstack for batched execution)
+  trace.cljs            Immutable Trace record [gen-fn args choices retval score]
+  selection.cljs        Composable address selection algebra (all, none, SelectAddrs,
+                        Hierarchical, Complement)
+  diff.cljs             Change tracking for incremental computation (no-change sentinel)
+
+  # Layer 2: GFI & Execution (653 lines — pure protocols and transitions)
+  protocols.cljs        10 GFI protocols: IGenerativeFunction (simulate), IGenerate,
+                        IAssess, IUpdate, IRegenerate, IPropose, IProject,
+                        IUpdateWithDiffs, IHasArgumentGrads, IBatchedSplice
+  handler.cljs          Pure state transitions: 6 scalar (simulate, generate, assess,
+                        update, regenerate, project) + 4 batched variants.
+                        Each is (fn [state addr dist] → [value state']).
+                        merge-sub-result for splice. combinator-batched-fallback.
+  edit.cljs             Parametric edit interface: ConstraintEdit, SelectionEdit,
+                        ProposalEdit (for SMCP3 reversible kernels)
+  tensor_trace.cljs     TensorTrace — flat [K] tensor-backed trace for compiled paths.
+                        TensorChoiceMap provides IChoiceMap over the tensor.
+
+  # Layer 3: DSL + Schema (1,883 lines — gen macro, model construction, introspection)
+  gen.cljc              gen macro: injects ᐩrt runtime parameter, binds trace/splice/param
+                        as local names, captures quoted source form for schema extraction.
+                        Calls dynamic/make-gen-fn with body-fn and source.
+  dynamic.cljs          DynamicGF record [body-fn source schema]. Implements all 10 GFI
+                        protocols via 4-level dispatcher stack:
+                        1. custom-dispatcher (with-handler / with-dispatch metadata)
+                        2. analytical-dispatcher (L3 conjugacy, when obs constrained + not in grad)
+                        3. compiled-dispatcher (L1 compiled or prefix paths from schema)
+                        4. handler-dispatcher (L0 fallback, always resolves)
+                        Execution paths: handler, compiled, prefix, analytical.
+                        vsimulate/vgenerate/vupdate/vregenerate bypass dispatcher.
+                        make-gen-fn: schema extraction → compilation attempts → conjugacy
+                        augmentation → DynamicGF construction.
+  schema.cljs           Schema extraction: walks quoted source form to extract trace sites,
+                        splice sites, param sites, loop structure, branch detection,
+                        dependency tracking via binding environment, topological sort.
+                        Classification: static? (all keyword addrs, no branches/loops/splices)
+  schemas.cljs          Malli schemas for handler state, GFI returns, trace structure
   inspect.cljs          Model introspection: compilation level, dispatch resolution, conjugacy
-  schema.cljs           Schema extraction from gen body source forms (L1-M1)
-  compiled.cljs         Compiled execution paths: noise transforms, compiled simulate (L1-M2),
-                        partial prefix (L1-M3), branch rewriting (L1-M4)
-  compiled_gen.cljs     Compiled generate with middle-tier score function (L1)
-  rewrite.cljs          Source form rewriting for compiled paths (L1-M4)
-  tensor_trace.cljs     TensorTrace — flat tensor-backed trace for compiled paths
-  affine.cljs           Affine dependency analysis for conjugacy detection (L3)
-  conjugacy.cljs        Conjugate prior detection and Rao-Blackwellization (L3)
-  dep_graph.cljs        Dependency graph analysis for auto-analytical (L3)
-  method_selection.cljs Method selection: decision tree from model metadata (L4)
-  fit.cljs              One-call entry point: (fit model args data) (L4)
-  dist/core.cljs        Distribution record + open multimethods (sample, log-prob, sample-n)
-  dist/macros.cljc      defdist macro (zero-boilerplate distribution definition)
-  edit.cljs             Parametric edit interface (constraint, selection, proposal)
-  diff.cljs             Incremental change tracking
-  dist.cljs             27 distributions (gaussian, uniform, bernoulli, beta, gamma, ...)
-  combinators.cljs      Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Contramap/Dimap
-  vmap.cljs             Vmap combinator (vmap-gf / repeat-gf with full GFI)
-  vectorized.cljs       VectorizedTrace, resampling, ESS, log-ML utilities
-  gradients.cljs        Choice gradients, score gradients
-  learning.cljs         Parameter stores, optimizers (SGD, Adam), wake-sleep
-  custom_gradient.cljs  CustomGradientGF — custom gradient generative functions
-  nn.cljs               Neural network generative functions (nn->gen-fn)
-  serialize.cljs        Serialization/deserialization of traces and choicemaps
-  contracts.cljs        GFI contract registry (11 measure-theoretic contracts)
-  verify.cljs           Static validator (validate-gen-fn)
+
+  # Layer 4: Distributions (2,003 lines — 31 types, open for extension)
+  dist/core.cljs        Distribution record [type params]. 6 open multimethods:
+                        dist-sample*, dist-log-prob, dist-reparam, dist-support,
+                        dist-log-prob-support, dist-sample-n*. Mixture and Product
+                        distributions. GFI bridge (dist-simulate, dist-generate, etc.)
+  dist/macros.cljc      defdist macro: generates constructor + sample + log-prob methods
+  dist.cljs             31 distributions:
+                        Continuous (20): gaussian/normal, uniform, beta-dist, gamma-dist,
+                          exponential, laplace, student-t, log-normal, cauchy, inv-gamma,
+                          truncated-normal, multivariate-normal, broadcasted-normal,
+                          gaussian-vec, von-mises, wrapped-cauchy, wrapped-normal,
+                          piecewise-uniform, wishart, inv-wishart
+                        Discrete (7): bernoulli/flip, categorical, poisson, geometric,
+                          neg-binomial, binomial, discrete-uniform
+                        Structural (4): delta, mixture, product, iid/iid-gaussian
+
+  # Layer 5: Combinators (3,022 lines — 10 combinators, full GFI)
+  combinators.cljs      Map, Unfold, Switch, Scan, Mask, Mix, Recurse, Contramap,
+                        MapRetval/Dimap. Three execution tiers for Map/Unfold/Scan:
+                        fused (single Metal dispatch), compiled (per-element), handler.
+                        IBatchedSplice for Unfold/Switch/Scan/Mix.
+  vmap.cljs             VmapCombinator (vmap-gf / repeat-gf): vectorized map via
+                        physical loop or batched handler. [N]-shaped leaf arrays.
+
+  # Layer 6: Inference (8,626 lines — 35+ algorithms across 25 files)
+  inference.cljs        Re-export facade for all inference algorithms
   inference/
-    importance.cljs     IS, importance resampling, vectorized IS
-    mcmc.cljs           MH, MALA, HMC, NUTS, Gibbs, Elliptical Slice, Involutive MCMC, MAP
-    smc.cljs            SMC with rejuvenation, csmc
-    smcp3.cljs          Sequential Monte Carlo with Probabilistic Program Proposals
-    vi.cljs             ADVI, programmable VI (ELBO, IWELBO, wake-sleep)
-    adev.cljs           ADEV gradient estimation (reparam + REINFORCE, vectorized, compiled)
-    amortized.cljs      Amortized inference via trained neural proposals
-    kernel.cljs         Kernel composition (chain, cycle, mix, repeat, seed)
-    util.cljs           Weight materialization, normalization, MH accept
-    diagnostics.cljs    ESS, R-hat, summary statistics
-    analytical.cljs     Analytical handler middleware (wrap-analytical) (L3)
-    conjugate.cljs      Conjugate update rules (5 families) (L3)
-    auto_analytical.cljs  Auto-analytical elimination from model structure (L3)
-    kalman.cljs         Kalman filter middleware for linear-Gaussian SSMs (L3)
-    ekf.cljs            Extended Kalman filter for nonlinear SSMs (L3)
-    ekf_nd.cljs         N-dimensional EKF with full matrix Jacobians (L3.5)
-    hmm_forward.cljs    HMM forward algorithm for discrete latent SSMs (L3)
-    enumerate.cljs      Exact enumeration for discrete latent variables (L3)
-    fisher.cljs         Fisher information and Cramér-Rao bounds (L3)
-    compiled_gradient.cljs  Tensor-native loss-gradient (L4)
-    compiled_optimizer.cljs Compiled Adam optimizer (mx/compile-fn) (L4)
-    compiled_smc.cljs   Compiled SMC with fused particle operations (L2)
-    differentiable.cljs Differentiable inference primitives (L2)
-    differentiable_resample.cljs  Differentiable resampling (L2)
-    pmcmc.cljs          Particle MCMC (L2)
+    importance.cljs     IS, vectorized IS (10-100x faster), importance resampling
+    mcmc.cljs           MH (standard, custom, compiled, fused, vectorized), Gibbs,
+                        Involutive MCMC, MALA (fused, vectorized, dual averaging),
+                        HMC (mass matrix, fused, vectorized), NUTS, Elliptical Slice,
+                        MAP (vectorized multi-restart). ~2,800 lines.
+    smc.cljs            SMC (systematic/residual/stratified resampling, ESS threshold,
+                        MH rejuvenation), CSMC, smc-unfold, batched-smc-unfold, vsmc
+    smcp3.cljs          SMC with Probabilistic Program Proposals (forward/backward kernels)
+    vi.cljs             Mean-field ADVI, compiled VI, programmable VI with 6 objectives
+                        (ELBO, IWELBO, PWake, QWake, REINFORCE, VIMCO)
+    adev.cljs           ADEV gradient estimation (reparam + REINFORCE, vectorized)
+    amortized.cljs      Neural proposal training, neural importance sampling
+    kernel.cljs         Composable kernels: chain, repeat, cycle, mix, seed.
+                        with-reversal for symmetric kernels. DSL: random-walk, prior,
+                        proposal, gibbs. collect-samples for burn/thin loops.
+    util.cljs           Score function construction (3-tier: tensor-native > compiled-generate
+                        > GFI handler), MH acceptance, resampling, weight normalization
+    diagnostics.cljs    ESS (autocorrelation-based), R-hat, summary statistics
+    analytical.cljs     wrap-analytical: ring-style handler middleware
+    conjugate.cljs      Conjugate update rules: normal-normal, beta-bernoulli,
+                        gamma-poisson, gamma-exponential, dirichlet-categorical
+    auto_analytical.cljs  Auto-analytical elimination from model structure: address-dispatch,
+                        7 conjugate families + MVN-normal + normal-iid-normal,
+                        auto-Kalman handlers (cascade predictions, loading/offset),
+                        generate and regenerate modes
+    kalman.cljs         Kalman filter middleware for linear-Gaussian SSMs
+    ekf.cljs            Extended Kalman filter (linearize via mx/grad)
+    ekf_nd.cljs         N-dimensional EKF with scalar-decomposed covariance
+    hmm_forward.cljs    HMM forward algorithm for discrete latent SSMs
+    enumerate.cljs      Exact enumeration for discrete latent variables
+    exact.cljs          Exact tensor enumeration: one model run builds full joint via
+                        broadcasting. ExactGF with full GFI (all discrete latents
+                        marginalized). exact-posterior, exact-joint, thinks, observes, pr.
+    fisher.cljs         Fisher information (finite differences on autodiff gradient),
+                        Laplace approximation, natural gradient, Cramér-Rao bounds
+    compiled_gradient.cljs  Differentiable MH/SMC chains (straight-through via mx/where)
+    compiled_optimizer.cljs Compiled Adam: 3-tier score (tensor-native > compiled-generate
+                        > handler), fused MCMC+optimization
+    compiled_smc.cljs   Compiled bootstrap PF with gumbel-softmax differentiable resampling
+    differentiable.cljs Differentiable IS loss and gradient
+    differentiable_resample.cljs  Gumbel-top-k, gumbel-softmax, soft-resample
+    pmcmc.cljs          Particle MCMC: PMMH and particle Gibbs
+
+  # Layer 7: Compiled Paths (3,941 lines — L1-L4 compilation pipeline)
+  compiled.cljs         Noise transform system (10 distributions: gaussian, uniform,
+                        bernoulli, exponential, log-normal, delta, laplace, cauchy,
+                        iid-gaussian). Expression compiler (resolve ~45 MLX ops).
+                        L1-M2 full compilation: reduce over step-fns + mx/compile-fn.
+                        L1-M3 prefix: extract-prefix-sites + replay transitions.
+                        L1-M4 branch rewriting: analyze-rewritable-branch + mx/where.
+                        L0 compiled unfold/particle filter for temporal models.
+  compiled_ops.cljs     Compiled GFI operations for all tiers (M2/M3/M4):
+                        generate, update, assess, project, regenerate.
+                        Fused loop compilation (unfold, scan, map).
+                        Tensor-native score functions. SMC extend steps.
+  compiled_gen.cljs     Compiled log-ML estimators (IS-based, keyed/unkeyed variants)
+  rewrite.cljs          Algebraic graph rewriting: IRewriteRule protocol,
+                        ConjugacyRule, KalmanRule, RaoBlackwellRule.
+                        build-analytical-plan: progressive rule application.
+  affine.cljs           Affine dependency analysis: determines if expression is
+                        affine in target symbol (conservative, no false positives).
+                        detect-kalman-chains for linear-Gaussian sequences.
+  conjugacy.cljs        Static conjugate pair detection from schema: 7 families
+                        (normal-normal, beta-bernoulli, gamma-poisson, gamma-exponential,
+                        dirichlet-categorical, mvn-normal, normal-iid-normal)
+  dep_graph.cljs        Dependency graph: DAG from schema, d-separation (Bayes-Ball),
+                        Markov blankets, independent blocks for parallel Gibbs
+  method_selection.cljs Automatic method selection: decision tree
+                        (exact > kalman > smc > handler-is > hmc > vi > handler-is)
+
+  # Layer 8: Supporting Systems (2,729 lines)
+  vectorized.cljs       VectorizedTrace [gen-fn args choices score weight n-particles retval],
+                        systematic resampling (GPU O(N) via cumsum+searchsorted),
+                        resample-vtrace, vtrace-log-ml-estimate, merge-by-mask, ESS
+  gradients.cljs        choice-gradients (d(score)/d(choice_i)), score-gradient (flat params)
+  learning.cljs         Parameter stores, SGD (stateless), Adam (with momentum),
+                        train loop, simulate/generate-with-params, wake-sleep learning
+  custom_gradient.cljs  CustomGradientGF: deterministic GF with stop-gradient surrogate
+                        trick for custom backward passes
+  nn.cljs               NeuralNetGF: wraps MLX nn.Module as deterministic GF.
+                        Layer constructors (linear, sequential, relu, gelu, etc.).
+                        nn→gen-fn bridge. value-and-grad and optimizer factory.
+  serialize.cljs        JSON v1 serialization: choices-only and full-trace formats.
+                        Gen-fns NOT serialized — reconstruction via p/generate.
+  contracts.cljs        11 measure-theoretic GFI contracts (deprecated, subsumed by gfi.cljs)
+  verify.cljs           Static source analysis (DML restrictions: no external randomness,
+                        no mutation, no HOF gen-fns) + runtime validation (duplicate
+                        addresses, non-finite scores, halting)
+  gfi.cljs              GFI algebraic theory: 53 laws from the thesis covering all GFI
+                        operations, compositionality, gradients, inference, compiled path
+                        equivalence. verify runs all laws against a model.
+                        strip-compiled forces handler path for equivalence testing.
+  fit.cljs              One-call entry point: method selection → hyperparameter tuning →
+                        inference → optional parameter learning
+  dev.cljs              Dev-mode Malli validation at GFI boundaries (start!/stop!)
+
+  # Layer 9: LLM Integration (2,176 lines — neural networks as generative functions)
+  llm/
+    backend.cljs        Async wrapper over @mlx-node/lm: load-model, encode/decode,
+                        forward-pass, next-token-logprobs, KV cache (init/reset/prefill/step),
+                        generate-text via chat API
+    core.cljs           make-llm-gf: wraps LLM as DynamicGF via gen macro. Each token is
+                        a trace site (:t0, :t1, ...) sampling from dist/categorical(logits).
+                        Uses KV cache for O(1) per-step. All GFI operations work automatically.
+    grammar.cljs        Regex→NFA (Thompson)→DFA (subset construction)→alive states→
+                        token mask precomputation→handler middleware (wrap-grammar).
+                        BPE byte decoder for token-to-text mapping.
+                        constrain: dispatch/with-handler composition.
+    bytes.cljs          TokenByteTrie: prefix trie mapping byte sequences to token IDs.
+                        byte-logprobs: marginalizes token logprobs to byte level via
+                        logsumexp-gather on trie subtrees.
+                        make-byte-llm-gf: trace sites :b0, :b1, ... sampling bytes.
+                        constrain-bytes: DFA-constrained byte-level generation.
+    codegen.cljs        Reader-as-grammar: edamame classifies prefix as complete/incomplete/
+                        invalid. make-reader-constrained-gf: guaranteed valid ClojureScript.
+                        generate-cljs (token-level or byte-level), eval-cljs (SCI sandbox),
+                        synthesize-loop (generate-verify-revise), generate-and-score
+                        (p/generate for principled scoring), generate-and-rank.
+    msa.cljs            Model Synthesis Architecture: template mode (fine-tuned model +
+                        regex parsing) and knowledge mode (base model + Instaparse grammar).
+                        eval-model (SCI eval → DynamicGF), score-model (p/generate → log-ML),
+                        synthesize-and-rank, importance-sample, msa end-to-end pipeline.
 
 test/genmlx/
   *_test.cljs                     Unit tests (custom assert helpers, println output)
@@ -155,26 +303,39 @@ test/genmlx/
 ## Architecture layers
 
 ```
-Layer 0: MLX + Runtime    (mlx.cljs, mlx/random.cljs, runtime.cljs — mutable boundary)
-         Rust: genmlx.rs  (mlx-node module-level NAPI exports — type coercion, shape conversion)
-Layer 1: Core Data        (choicemap, trace, selection — pure)
-Layer 2: GFI & Execution  (protocols, handler, dispatch, edit, diff — pure)
-Layer 3: DSL + Schema     (gen macro, dynamic, schema, schemas — pure)
-Layer 4: Distributions    (dist/core, dist/macros, dist — 27 types, pure)
-Layer 5: Combinators      (Map, Unfold, Switch, etc. — pure)
-Layer 6: Inference        (IS, MCMC, SMC, VI, ADEV, MAP + kernels — pure)
-Layer 7: Vectorized       (batched execution — pure)
-Layer 8: Verification     (contracts, verify — pure)
+Layer 0: MLX + Runtime    (mlx.cljs, mlx/random.cljs, runtime.cljs, dispatch.cljs)
+         Rust: genmlx.rs  (~105 NAPI exports, Either<&MxArray,f64> type coercion)
+Layer 1: Core Data        (choicemap, trace, selection, diff — pure)
+Layer 2: GFI & Execution  (protocols, handler, edit, tensor_trace — pure)
+Layer 3: DSL + Schema     (gen macro, dynamic, schema, schemas, inspect — pure)
+Layer 4: Distributions    (dist/core, dist/macros, dist — 31 types, pure)
+Layer 5: Combinators      (combinators, vmap — 10 combinators, pure)
+Layer 6: Inference         (25 files, 35+ algorithms — pure)
+Layer 7: Compiled Paths   (compiled, compiled_ops, rewrite, affine, conjugacy, dep_graph,
+                           method_selection — pure)
+Layer 8: Supporting       (vectorized, gradients, learning, nn, serialize, gfi, verify,
+                           contracts, fit, dev — pure except dev.cljs atoms)
+Layer 9: LLM Integration  (llm/backend, core, grammar, bytes, codegen, msa — pure except
+                           KV cache mutation in backend.cljs)
 ```
+
+Strict dependency direction: higher layers depend on lower, never the reverse.
+The only circular dependency risk is dynamic↔handler (resolved via the executor
+pattern: runtime.cljs takes an `:executor` function in the state map, avoiding
+direct import of dynamic.cljs).
 
 ## Key design principles
 
-1. **Purely functional.** State lives in persistent data structures. The only
-   mutable boundary is the handler's `volatile!` (isolated within `run-handler`).
+1. **Purely functional.** The only mutable boundaries are:
+   - The handler's `volatile!` in `runtime.cljs` (scoped to a single `run-handler` call)
+   - Two atoms in `mlx.cljs` (`tidy-depth`, `grad-depth` for nesting counters)
+   - The `dispatch-fn` and `validate-fn` atoms (extension points for dev mode)
+   - KV cache mutation in `llm/backend.cljs` (always in try/finally)
 
 2. **Data-driven, open for extension.** Distributions are a single `Distribution`
-   record with open multimethods. New distributions can be added via `defdist`
-   without modifying core code.
+   record with open multimethods. New distributions via `defdist`. New execution
+   strategies via `dispatch/with-handler` or `dispatch/with-dispatch`. Grammar
+   constraints compose via the same handler middleware as analytical inference.
 
 3. **MLX arrays end-to-end.** Values stay as MLX arrays from sampling through
    scoring through gradient computation. Only extract to JS numbers with
@@ -191,6 +352,10 @@ Layer 8: Verification     (contracts, verify — pure)
 6. **Compose, don't duplicate.** Compiled paths compose on existing handlers and
    infrastructure — no parallel implementations. The handler is ground truth.
 
+7. **53 algebraic laws.** The GFI algebraic theory (`gfi.cljs`) encodes 53 laws
+   from the thesis covering all operations, compositionality, gradients, and
+   compiled path equivalence. `strip-compiled` forces handler path for testing.
+
 ## How models work
 
 ```clojure
@@ -204,47 +369,105 @@ Layer 8: Verification     (contracts, verify — pure)
                                       intercept) 1)))
       slope)))
 
-;; GFI operations
+;; GFI operations (10 protocols)
 (p/simulate model args)                  ;; => Trace
 (p/generate model args constraints)      ;; => {:trace Trace :weight scalar}
 (p/update model trace new-constraints)   ;; => {:trace :weight :discard}
 (p/regenerate model trace selection)     ;; => {:trace :weight}
-(p/assess model args choices)            ;; => {:weight scalar}
+(p/assess model args choices)            ;; => {:retval :weight}
 (p/project model trace selection)        ;; => scalar
-(p/edit model trace edit-request)        ;; => {:trace :weight :discard}
+(p/propose model args)                   ;; => {:choices :weight :retval}
+(edit/edit model trace edit-request)     ;; => {:trace :weight :discard :backward-request}
 
 ;; Vectorized (runs model body ONCE for N particles)
 (dyn/vsimulate model args n key)         ;; => VectorizedTrace
 (dyn/vgenerate model args obs n key)     ;; => VectorizedTrace with weights
+(dyn/vupdate model vtrace constraints key) ;; => {:vtrace :weight :discard}
+(dyn/vregenerate model vtrace selection key) ;; => {:vtrace :weight}
 
 ;; Schema introspection (Level 1)
 (:schema model)                          ;; => {:trace-sites [...] :static? true ...}
+(inspect/inspect model)                  ;; => {:compilation :L1-M2 :dispatch {...} ...}
 ```
+
+## How the gen macro works
+
+The `gen` macro (29 lines in `gen.cljc`) transforms user code:
+
+```clojure
+(gen [x] (let [s (trace :slope (dist/gaussian 0 10))] ...))
+```
+
+expands to:
+
+```clojure
+(dynamic/make-gen-fn
+  (fn [ᐩrt x]                         ;; hidden runtime parameter injected
+    (let [trace  (.-trace ᐩrt)         ;; closures from run-handler's volatile!
+          splice (.-splice ᐩrt)
+          param  (.-param ᐩrt)]
+      (let [s (trace :slope (dist/gaussian 0 10))] ...)))
+  '([x] (let [s (trace :slope ...)] ...)))  ;; quoted source for schema extraction
+```
+
+Key properties:
+- `trace`, `splice`, `param` are **local bindings** (not namespace-qualified),
+  so they work naturally with `map`, `for`, HOFs, closures
+- The quoted source form enables static analysis without execution
+- `make-gen-fn` extracts schema → attempts compilation → augments with conjugacy
+  → returns `DynamicGF [body-fn source schema]`
 
 ## How the handler system works
 
 The handler system has two parts:
 
-1. **Pure transitions** in `handler.cljs` — 10 state transition functions
-   (simulate, generate, update, regenerate, assess, project, plus batched
-   variants). Each is `(fn [state addr dist] -> [value state'])`. Zero
-   side effects.
+1. **Pure transitions** in `handler.cljs` — 6 scalar state transition functions
+   (simulate, generate, assess, update, regenerate, project) + 4 batched variants.
+   Each is `(fn [state addr dist] -> [value state'])`. Zero side effects.
 
 2. **Execution runtime** in `runtime.cljs` — `run-handler` wraps a transition
    in a single `volatile!` cell, creating closure-based `trace`/`splice`/`param`
-   operations that the `gen` macro binds as local names. Analogous to
-   re-frame's app-db: one encapsulated mutable cell, everything else pure.
+   operations packaged as a JS object `#js {:trace :splice :param}`. The gen
+   macro destructures this as local bindings. Analogous to re-frame's app-db:
+   one encapsulated mutable cell, everything else pure.
 
-The `gen` macro injects a hidden runtime parameter. Inside gen bodies,
-`trace`, `splice`, and `param` are local bindings (not namespace-qualified
-calls), so they work with all Clojure constructs: `map`, `for`, HOFs, closures.
+**Handler state shape per mode:**
 
-State flows through an immutable map: `{:choices :score :weight :key :constraints ...}`.
-The handler never inspects value shapes — this is what makes batched execution
-(`[N]`-shaped arrays) work transparently.
+| Mode | Keys |
+|------|------|
+| simulate | `:key :choices :score :executor` |
+| generate | + `:weight :constraints` |
+| assess | + `:weight :constraints` |
+| update | + `:weight :constraints :old-choices :discard` |
+| regenerate | + `:weight :old-choices :selection` |
+| project | + `:weight :old-choices :selection :constraints` |
 
-PRNG keys are threaded via metadata on gen-fns (`::key`). The single entropy
-injection point is `rng/fresh-key` in `mlx/random.cljs`.
+Batched variants add `:batch-size` (int) and `:batched?` (true).
+The handler never inspects value shapes — MLX broadcasting handles
+`[N]`-shaped arrays transparently.
+
+**Dispatcher stack (4-level priority, first non-nil wins):**
+
+1. **custom-dispatcher** — `::custom-dispatch` or `::custom-transition` metadata
+2. **analytical-dispatcher** — L3 conjugacy (generate/assess/regenerate only,
+   when conjugate obs constrained and not inside `mx/in-grad?`)
+3. **compiled-dispatcher** — L1 compiled or prefix paths (checks schema keys)
+4. **handler-dispatcher** — L0 fallback, always resolves
+
+PRNG keys are threaded via metadata on gen-fns (`::key`). Every sample splits
+the key: one half for the sample, one half for the next operation. The single
+entropy injection point is `rng/fresh-key` in `mlx/random.cljs`.
+
+## Noise transform system (Level 1 compilation)
+
+The key mechanism enabling compiled execution. For each distribution type:
+1. Pre-generate standardized noise outside `mx/compile-fn` (N(0,1) or U(0,1))
+2. Inside the compiled function, apply a pure deterministic transform
+3. Compute log-probability via a pure function
+
+10 distributions supported: gaussian, uniform, bernoulli, exponential, log-normal,
+delta, laplace, cauchy, iid-gaussian. The expression compiler (`compile-expr`)
+resolves ~45 MLX operations from namespace-qualified symbols in the source form.
 
 ## Schema system (Level 1)
 
@@ -254,13 +477,20 @@ walks this quoted form to extract:
 - **Trace sites:** address, distribution type, dist-args, dependency set, static?
 - **Splice sites:** address, gf reference, dependency set
 - **Param sites:** name, default expression
+- **Loop sites:** type, bindings, homogeneous?, rewritable?, count-arg-idx
 - **Classification:** static?, dynamic-addresses?, has-branches?, has-loops?
 - **Dep-order:** topological sort of static trace addresses
 - **Return form:** the last body expression
 
-The schema lives on the `DynamicGF` record as `:schema`. It enables Level 1
-compilation: static models can be compiled into flat tensor operations because
-all trace addresses, distribution types, and dependencies are known ahead of time.
+A model is **static** when all trace addresses are keyword literals, no branches,
+no loops, no splices. Static models get L1-M2 full compilation.
+
+The schema lives on the `DynamicGF` record as `:schema`. At construction time,
+`make-gen-fn` runs the full pipeline:
+1. `schema/extract-schema` — static analysis of source form
+2. Compilation attempt — M2 (static), M4 (branch rewriting), or M3 (prefix)
+3. `conjugacy/augment-schema-with-conjugacy` — detect conjugate pairs
+4. `rewrite/build-analytical-plan` — Kalman chains, rewrite rules, auto-handlers
 
 ## Vectorized inference
 
@@ -273,7 +503,44 @@ score accumulation, weight computation) just works.
 - `VectorizedTrace`: choices where leaves hold `[N]`-shaped arrays
 
 **Limitations:** No `splice` in shape-based batched mode (`vsimulate`/`vgenerate`).
-`vmap-gf` supports splice via combinator fallback.
+`vmap-gf` supports splice via combinator fallback. No `mx/item` in model bodies
+during batched execution (breaks vectorization).
+
+## LLM integration
+
+LLMs are wrapped as standard DynamicGF via the `gen` macro. Each token becomes a
+trace site (`:t0`, `:t1`, ...) sampling from `dist/categorical(logits)`. All GFI
+operations work automatically — simulate generates text, generate constrains tokens,
+assess scores text, update/regenerate modify traces.
+
+**Grammar constraints** compose via the same `dispatch/with-handler` mechanism used
+for analytical inference. `wrap-grammar` is ring-style middleware that intercepts
+categorical distributions and masks logits per DFA state.
+
+**Three constraint levels:**
+- Token-level (grammar.cljs): regex→DFA→token mask, operates on full vocab (~151K)
+- Byte-level (bytes.cljs): TokenByteTrie + DFA, operates on individual bytes (~256)
+- Reader-level (codegen.cljs): edamame parser as incremental grammar, guaranteed
+  valid ClojureScript
+
+**Code synthesis** (codegen.cljs): generate-verify-revise loop. Reader-as-grammar
+ensures syntactic validity. SCI evaluates in the same runtime. generate-and-score
+uses `p/generate` with full constraints for principled model-weight scoring.
+
+**Model synthesis** (msa.cljs): LLM generates probabilistic programs from task
+descriptions, evaluates with SCI, scores against data via `p/generate`, ranks
+candidates by log-ML. Two modes: template (fine-tuned + regex) and knowledge
+(base model + Instaparse grammar).
+
+## Rust NAPI boundary (genmlx.rs)
+
+~105 NAPI-exported functions in `mlx-node/crates/mlx-core/src/genmlx.rs`.
+The core pattern: `Either<&MxArray, f64>` accepts both MLX arrays and JS numbers
+transparently. `Vec<f64>` for shapes (no BigInt64Array needed). This makes
+`mlx.cljs` extremely thin — most ops are direct property references to Rust exports.
+
+Note: MLX has no float64 or int64. `mlx.cljs` silently aliases float64→float32
+and int64→int32.
 
 ## Test conventions
 
@@ -302,8 +569,10 @@ After any change, verify:
 
 ## Common patterns when editing
 
-- **Adding a distribution:** Use `defdist` in `dist.cljs`. Optionally add
-  `defmethod dc/dist-sample-n` for batch sampling.
+- **Adding a distribution:** Use `defdist` in `dist.cljs`. Implement `dist-sample*`
+  and `dist-log-prob`. Optionally add `defmethod dc/dist-sample-n*` for batch
+  sampling, `dc/dist-reparam` for reparameterized gradients, `dc/dist-support`
+  for enumerable support.
 - **Adding inference:** New file in `inference/`. Follow existing patterns
   (pure functions, MLX arrays for weights, `u/materialize-weights` at boundaries).
 - **Adding an execution strategy:** Write a handler transition `(fn [state addr dist])`
@@ -311,6 +580,8 @@ After any change, verify:
   `dispatch/with-dispatch`. See `inference/exact.cljs` for the canonical example.
 - **Modifying handlers:** Edit transitions in `handler.cljs`. Keep them pure
   (`[state addr dist] -> [value state']`). The volatile! wrapper is separate.
+- **Adding a combinator:** Create a record implementing the GFI protocols.
+  Implement `IBatchedSplice` for vectorized inference support.
 - **Testing:** Create `test/genmlx/<name>_test.cljs`, run with `bun run --bun nbb`.
 
 ## What to avoid
@@ -323,6 +594,7 @@ After any change, verify:
   are performance-critical.
 - Don't introduce mutable state outside the runtime's `volatile!` in `runtime.cljs`.
 - Don't import `genmlx.dynamic` from `genmlx.handler` (circular dependency).
+  Use the executor pattern instead.
 - Don't modify existing GFI protocol signatures — everything downstream depends
   on them.
 - Don't add `ensure-mx` or `to-big-shape` calls — Rust `Either<&MxArray, f64>`
@@ -353,7 +625,37 @@ When working on a milestone (L1-M2, L1-M3, etc.):
    execution must produce identical traces, scores, and weights as the handler
    path. The handler is ground truth; compilation is optimization.
 
+## TODO protocol
+
+Project work is tracked in `dev/TODO.md` (read it at the start of each session).
+Priority levels: P0 (fix now), P1 (build next), P2 (captured ideas), P3 (explorations).
+
+Every P0/P1 entry has a **"done means"** checklist. When working on a task:
+1. Read the full entry including context and "done means"
+2. Implement using agent teams when the task is non-trivial
+3. Review agent checks every "done means" criterion before presenting
+4. Never declare a task complete until every checkbox is confirmed
+5. Update `dev/TODO.md` status when starting and completing work
+
+When the user captures a new idea, add it as a P2 entry with 2-3 sentences of
+context. Promote to P1 when ready to spec (add "done means" criteria at that point).
+
 ## Related documents
 
+- `dev/TODO.md` — Project tracker (P0-P3 priorities, "done means" checklists)
 - `VISION.md` — Compilation ladder levels 0-5, the master development roadmap
 - `README.md` — Quick start, examples, public API overview
+- `dev/docs/` — System specification derived from line-by-line source code review
+  (8,962 lines across 10 files). Read these when you need deep understanding of
+  a specific subsystem — they document every public function, protocol, and record.
+  Covers:
+  - `SPEC_SYSTEM_OVERVIEW.md` — Complete system map, file inventory, design principles
+  - `SPEC_CORE_ARCHITECTURE.md` — Layers 0-3: MLX, runtime, handlers, dispatch, gen macro
+  - `SPEC_DISTRIBUTIONS_AND_COMBINATORS.md` — 31 distributions, 10 combinators
+  - `SPEC_INFERENCE.md` — 35+ algorithms, every public function documented
+  - `SPEC_COMPILED_PATHS.md` — L0-L4 compilation pipeline
+  - `SPEC_LLM_INTEGRATION.md` — 6 LLM modules
+  - `SPEC_SUPPORTING_SYSTEMS.md` — Vectorized, gradients, learning, 53 laws, verify
+  - `SPEC_RUST_NAPI_BOUNDARY.md` — ~105 NAPI exports, type coercion
+  - `INNOVATION_UNIFIED_STACK.md` — Future: LLMs as GFs, GRPO with GFI rewards
+  - `INNOVATION_PROGRAM_SYNTHESIS.md` — Future: program synthesis as inference
