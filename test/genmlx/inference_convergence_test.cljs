@@ -13,6 +13,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.mlx.random :as rng]
+            [genmlx.gfi :as gfi]
             [genmlx.inference.importance :as is]
             [genmlx.inference.mcmc :as mcmc]
             [genmlx.inference.kernel :as kern]
@@ -181,15 +182,23 @@
   (testing "Custom-proposal MH chain mean ~ 1.0"
     ;; MCMC chains have autocorrelation, so N_eff << N_samples.
     ;; Use h/close? with tolerance 0.3 (matches gfi_laws_test MH pattern).
-    (let [traces (mcmc/mh-custom
+    ;; IMPORTANT: use strip-compiled to remove analytical dispatch, so
+    ;; the initial trace is NOT drawn from the posterior (prevents false green).
+    (let [stripped-model (gfi/strip-compiled conjugate-model)
+          traces (mcmc/mh-custom
                   {:samples 1000 :burn 500
                    :proposal-gf rw-proposal
                    :key (rng/fresh-key 99)}
-                  conjugate-model [] conjugate-obs)
+                  stripped-model [] conjugate-obs)
           x-vals (mapv extract-x traces)
-          mean-x (/ (reduce + x-vals) (count x-vals))]
+          mean-x (/ (reduce + x-vals) (count x-vals))
+          ;; Verify chain actually moved (not stuck at initial value)
+          x-var (/ (reduce + (map #(* (- % mean-x) (- % mean-x)) x-vals))
+                   (dec (count x-vals)))]
       (is (h/close? mean-x posterior-mean 0.3)
-          (str "mh-custom posterior mean=" mean-x " expected=" posterior-mean)))))
+          (str "mh-custom posterior mean=" mean-x " expected=" posterior-mean))
+      (is (pos? x-var)
+          (str "Chain variance should be positive (not stuck), got " x-var)))))
 
 ;; ---------------------------------------------------------------------------
 ;; 3. smcp3
