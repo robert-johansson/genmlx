@@ -422,21 +422,26 @@
    log-p-fn log-q-fn sample-fn init-params]
   (with-device device
     (fn []
-      (let [loss-fn (fn [params samples]
-                      (let [log-q-curr (fn [z] (log-q-fn z params))
-                            obj-fn (case objective
-                                     :elbo (elbo-objective log-p-fn log-q-curr)
-                                     :iwelbo (iwelbo-objective log-p-fn log-q-curr)
-                                     :vimco (vimco-objective log-p-fn log-q-curr)
-                                     :pwake (pwake-objective log-p-fn log-q-curr)
-                                     :qwake (qwake-objective log-p-fn log-q-curr)
-                                     (fn [s] (objective log-p-fn log-q-curr s)))
-                            obj-val (if (= estimator :reinforce)
-                                      ((reinforce-estimator obj-fn log-q-curr) samples)
-                                      (obj-fn samples))]
-                        (mx/negative obj-val)))
-            grad-loss (mx/compile-fn (mx/grad loss-fn))
-            loss-compiled (mx/compile-fn loss-fn)]
+      ;; Build loss as a single-arg function of params that includes sampling.
+      ;; This is critical: mx/grad must see the full computation path from
+      ;; params → samples → objective to capture reparameterization gradients.
+      ;; Without this, the gradient only captures ∂loss/∂params through log-q,
+      ;; missing the ∂loss/∂samples · ∂samples/∂params path entirely.
+      (let [make-loss (fn [iter-key n]
+                        (fn [params]
+                          (let [samples (sample-fn params iter-key n)
+                                log-q-curr (fn [z] (log-q-fn z params))
+                                obj-fn (case objective
+                                         :elbo (elbo-objective log-p-fn log-q-curr)
+                                         :iwelbo (iwelbo-objective log-p-fn log-q-curr)
+                                         :vimco (vimco-objective log-p-fn log-q-curr)
+                                         :pwake (pwake-objective log-p-fn log-q-curr)
+                                         :qwake (qwake-objective log-p-fn log-q-curr)
+                                         (fn [s] (objective log-p-fn log-q-curr s)))
+                                obj-val (if (= estimator :reinforce)
+                                          ((reinforce-estimator obj-fn log-q-curr) samples)
+                                          (obj-fn samples))]
+                            (mx/negative obj-val))))]
         (loop [i 0 params init-params
                opt-state (learn/adam-init init-params)
                losses (transient [])
@@ -444,10 +449,10 @@
           (if (>= i iterations)
             {:params params :loss-history (persistent! losses)}
             (let [[iter-key next-key] (rng/split-or-nils rk)
-                  samples (sample-fn params iter-key n-samples)
-                  ;; Tidy-materialize gradient and loss — frees intermediate nodes
-                  grad (mx/tidy-materialize #(grad-loss params samples))
-                  loss (mx/tidy-materialize #(loss-compiled params samples))
+                  loss-fn (make-loss iter-key n-samples)
+                  grad-fn (mx/grad loss-fn)
+                  grad (mx/tidy-materialize #(grad-fn params))
+                  loss (mx/tidy-materialize #(loss-fn params))
                   loss-val (mx/item loss)
                   [params' opt-state'] (learn/adam-step params grad opt-state
                                                         {:lr learning-rate})]
