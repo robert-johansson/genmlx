@@ -3,10 +3,13 @@
    Train an encoder q(z|x; θ) to approximate the posterior p(z|x),
    then use it as a proposal in importance sampling.
 
-   Training uses reparameterized ELBO (VAE-style) via nn.valueAndGrad:
+   Training uses reparameterized ELBO (VAE-style) via nn/value-and-grad:
    encoder(x) → [μ, log σ] → z = μ + σε → ELBO = log p(z,x) - log q(z|x;θ).
 
-   Inference uses the standard GFI: simulate the guide, score under the model."
+   Inference uses the standard GFI: simulate the guide, score under the model.
+
+   Encoders are nn layer maps (or atoms wrapping them). See genmlx.nn for
+   the layer representation."
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.nn :as nn]
@@ -50,8 +53,6 @@
                    eps      (rng/normal key [d])
                    log-z    (mx/add mus (mx/multiply sigs eps))
                    z        (mx/exp log-z)
-                   ;; log q(z) = log N(log z; mu, sigma) - sum(log z)
-                   ;; = sum(-0.5*log(2pi) - log_sig - 0.5*eps^2) - sum(log_z)
                    log-prob (mx/subtract
                               (mx/sum
                                 (mx/negative
@@ -63,13 +64,29 @@
                 :log-prob log-prob}))})
 
 ;; ---------------------------------------------------------------------------
+;; Internal: ensure we have an atom wrapping a layer map
+;; ---------------------------------------------------------------------------
+
+(defn- ensure-ref
+  "Coerce encoder to an atom if it isn't one already."
+  [encoder]
+  (if (instance? Atom encoder) encoder (atom encoder)))
+
+(defn- fwd
+  "Get the current forward function from an encoder (atom or map)."
+  [encoder]
+  (if (instance? Atom encoder)
+    (:forward @encoder)
+    (:forward encoder)))
+
+;; ---------------------------------------------------------------------------
 ;; ELBO loss for training
 ;; ---------------------------------------------------------------------------
 
 (defn make-elbo-loss
   "Create a reparameterized ELBO loss function for training a neural proposal.
 
-   encoder: nn.Module mapping data → [n-params * d] raw parameters
+   encoder: nn layer map or atom — the encoder network
    model: target generative function
    latent-addrs: vector of latent address keywords (length d)
 
@@ -77,31 +94,52 @@
      :model-args-fn    (fn [data] -> model-args-vec), default (fn [x] [x])
      :observations-fn  (fn [data] -> choicemap), default returns EMPTY
      :posterior-family  posterior family spec (default gaussian-posterior)
+     :log-joint-fn     (fn [latent-values data] -> scalar log p(z, x))
+                       Pure MxArray function for computing the model log-joint.
+                       REQUIRED for gradient-based training via nn/value-and-grad.
 
-   Returns (fn [data] -> scalar loss) suitable for nn/value-and-grad."
-  [encoder model latent-addrs & {:keys [model-args-fn observations-fn posterior-family]
+                       Why: MLX autograd (MxArray.valueAndGrad) traces MxArray
+                       operations to build a computation graph. The GFI handler
+                       system uses a volatile! cell for state threading — this is
+                       opaque to MLX's tracer, so gradients through p/generate
+                       are always zero. The log-joint-fn must express the same
+                       math as the model using only mx/* operations.
+
+                       Example for z ~ N(0,1), x|z ~ N(z, 0.5):
+                         (fn [latent-values data]
+                           (let [z (mx/index latent-values 0)
+                                 x (mx/squeeze data)]
+                             (mx/add (gaussian-log-prob z 0 1)
+                                     (gaussian-log-prob x z 0.5))))
+
+                       If omitted, falls back to p/generate (works for evaluation
+                       and scoring, but NOT for gradient computation).
+
+   Returns (fn [forward-fn data] -> scalar loss) for use with nn/value-and-grad."
+  [encoder model latent-addrs & {:keys [model-args-fn observations-fn posterior-family
+                                         log-joint-fn]
                                   :or {model-args-fn (fn [x] [x])
                                        observations-fn (fn [_] cm/EMPTY)
                                        posterior-family gaussian-posterior}}]
   (let [model (dyn/auto-key model)
         d (count latent-addrs)
         sample-fn (:sample posterior-family)]
-    (fn [data]
-      (let [;; Forward through encoder
-            out (.forward encoder data)
-            ;; Sample from posterior family (reparameterized)
+    (fn [forward-fn data]
+      (let [out (forward-fn data)
             {:keys [values log-prob]} (sample-fn out (rng/fresh-key) d)
-            ;; Build constraint choicemap: latent values + observations
-            obs (observations-fn data)
-            constraints (reduce (fn [cm [i addr]]
-                                  (cm/set-choice cm [addr] (mx/index values i)))
-                                obs
-                                (map-indexed vector latent-addrs))
-            ;; Score under model: log p(z, x)
-            model-args (model-args-fn data)
-            {:keys [weight]} (p/generate model model-args constraints)
-            log-joint weight
-            ;; ELBO = log p(z,x) - log q(z|x;θ); loss = -ELBO
+            log-joint
+            (if log-joint-fn
+              ;; Pure MxArray path — gradients flow through
+              (log-joint-fn values data)
+              ;; Handler path — no gradient flow, for evaluation only
+              (let [obs (observations-fn data)
+                    constraints (reduce (fn [cm [i addr]]
+                                          (cm/set-choice cm [addr] (mx/index values i)))
+                                        obs
+                                        (map-indexed vector latent-addrs))
+                    model-args (model-args-fn data)
+                    {:keys [weight]} (p/generate model model-args constraints)]
+                weight))
             elbo (mx/subtract log-joint log-prob)]
         (mx/negative elbo)))))
 
@@ -112,8 +150,8 @@
 (defn train-proposal
   "Train a neural proposal encoder via reparameterized ELBO.
 
-   encoder: nn.Module
-   loss-fn: (fn [data] -> scalar loss), e.g. from make-elbo-loss
+   encoder: nn layer map or atom
+   loss-fn: (fn [forward-fn data] -> scalar loss), e.g. from make-elbo-loss
    dataset: vector of training data points (MLX arrays)
 
    Options:
@@ -127,37 +165,36 @@
   [encoder loss-fn dataset & {:keys [iterations optimizer lr batch-size shuffle]
                                :or {iterations 300 optimizer :adam lr 0.01
                                     batch-size 1}}]
-  (let [shuffle? (if (some? shuffle) shuffle (> batch-size 1))
-        n (count dataset)
-        opt (nn/optimizer optimizer lr)
+  (let [enc-ref  (ensure-ref encoder)
+        shuffle? (if (some? shuffle) shuffle (> batch-size 1))
+        n        (count dataset)
+        opt      (nn/optimizer optimizer lr)
         shuffled-order (fn [] (vec (clojure.core/shuffle (range n))))]
     (if (<= batch-size 1)
-      ;; Single-sample mode: backward compatible
-      (let [vg (nn/value-and-grad encoder loss-fn)]
+      ;; Single-sample mode
+      (let [vg (nn/value-and-grad enc-ref loss-fn)]
         (mapv (fn [i]
                 (let [data (nth dataset (mod i n))]
-                  (mx/training-step! encoder opt vg data)))
+                  (nn/training-step! enc-ref opt vg data)))
               (range iterations)))
-      ;; Minibatch mode: average loss over batch
-      (let [batch-loss-fn (fn [batch]
-                            (mx/divide (reduce mx/add (mapv loss-fn batch))
+      ;; Minibatch mode
+      (let [batch-loss-fn (fn [fwd batch]
+                            (mx/divide (reduce mx/add (mapv #(loss-fn fwd %) batch))
                                        (mx/scalar (count batch))))
-            vg (nn/value-and-grad encoder batch-loss-fn)]
+            vg (nn/value-and-grad enc-ref batch-loss-fn)]
         (loop [i 0
                pos 0
                order (if shuffle? (shuffled-order) (vec (range n)))
                losses (transient [])]
           (if (>= i iterations)
             (persistent! losses)
-            (let [;; Wrap around at epoch boundary
-                  [pos order] (if (>= pos n)
+            (let [[pos order] (if (>= pos n)
                                 [0 (if shuffle? (shuffled-order) order)]
                                 [pos order])
-                  ;; Collect batch indices (may wrap)
                   end (min (+ pos batch-size) n)
                   batch-indices (subvec order pos end)
                   batch (mapv #(nth dataset %) batch-indices)
-                  loss (mx/training-step! encoder opt vg batch)]
+                  loss (nn/training-step! enc-ref opt vg batch)]
               (recur (inc i) (long end) order (conj! losses loss)))))))))
 
 ;; ---------------------------------------------------------------------------
@@ -184,16 +221,11 @@
         results
         (mapv
           (fn [_]
-            (let [;; Propose from guide
-                  {:keys [choices weight]} (p/propose guide guide-args)
+            (let [{:keys [choices weight]} (p/propose guide guide-args)
                   guide-score weight
-                  ;; Merge proposed latents with observations
                   all-constraints (cm/merge-cm choices observations)
-                  ;; Score under model
                   {:keys [trace weight]} (p/generate model model-args all-constraints)
-                  model-weight weight
-                  ;; IS weight = log p(z,x) - log q(z|x)
-                  log-w (mx/subtract model-weight guide-score)]
+                  log-w (mx/subtract weight guide-score)]
               {:trace trace :log-weight log-w}))
           (range samples))
         traces     (mapv :trace results)
@@ -227,22 +259,16 @@
             :log-ml-estimate MLX scalar}"
   [{:keys [samples] :or {samples 100}} guide model guide-args model-args observations]
   (let [guide (dyn/auto-key guide)
-        ;; Step 1: Run guide N times (sequential — cheap NN forward + sample)
         proposals (mapv (fn [_]
                           (let [{:keys [choices weight]} (p/propose guide guide-args)]
                             {:choices choices :guide-score weight}))
                         (range samples))
-        ;; Step 2: Stack N proposed choicemaps → [N]-shaped leaves
         guide-cms (mapv :choices proposals)
         stacked-cm (cm/stack-choicemaps guide-cms mx/stack)
-        ;; Step 3: Merge stacked proposals with scalar observations
         all-constraints (cm/merge-cm stacked-cm observations)
-        ;; Step 4: Run vgenerate on model ONCE → VectorizedTrace
         key (rng/fresh-key)
         vtrace (dyn/vgenerate model model-args all-constraints samples key)
-        ;; Step 5: Stack guide scores → [N]-shaped array
         guide-scores-arr (mx/stack (mapv :guide-score proposals))
-        ;; Step 6: Importance weights = model_weights - guide_scores
         log-weights (mx/subtract (:weight vtrace) guide-scores-arr)]
     (mx/eval! log-weights)
     (let [log-ml (mx/subtract (mx/logsumexp log-weights)

@@ -25,6 +25,20 @@
       (trace :x (dist/gaussian z (mx/scalar 0.5)))
       z))))
 
+;; Pure MxArray log-joint for gradient computation.
+;; log p(z, x) = log N(z; 0, 1) + log N(x; z, 0.5)
+(def ^:private LOG-2PI (js/Math.log (* 2.0 js/Math.PI)))
+(defn- gaussian-log-prob [x mu sigma]
+  (mx/negative (mx/add (mx/scalar (* 0.5 LOG-2PI))
+                       (mx/log sigma)
+                       (mx/divide (mx/square (mx/subtract x mu))
+                                  (mx/multiply (mx/scalar 2.0) (mx/square sigma))))))
+(defn test-log-joint [latent-values data]
+  (let [z (mx/index latent-values 0)
+        x (mx/squeeze data)]
+    (mx/add (gaussian-log-prob z (mx/scalar 0.0) (mx/scalar 1.0))
+            (gaussian-log-prob x z (mx/scalar 0.5)))))
+
 ;; Encoder: 1 input -> 2 outputs (mu, log-sigma)
 (def encoder (nn/sequential [(nn/linear 1 16) (nn/relu) (nn/linear 16 2)]))
 
@@ -34,13 +48,15 @@
 
 (deftest make-elbo-loss-test
   (testing "make-elbo-loss produces finite loss"
-    (let [loss-fn (amort/make-elbo-loss
-                    encoder model [:z]
+    (let [enc (nn/sequential [(nn/linear 1 16) (nn/relu) (nn/linear 16 2)])
+          loss-fn (amort/make-elbo-loss
+                    enc model [:z]
                     :model-args-fn (fn [data] [(mx/squeeze data)])
                     :observations-fn (fn [data]
-                                       (cm/choicemap :x (mx/squeeze data))))]
+                                       (cm/choicemap :x (mx/squeeze data)))
+                    :log-joint-fn test-log-joint)]
       (let [data (mx/array [3.0])
-            loss (loss-fn data)]
+            loss (loss-fn (:forward enc) data)]
         (mx/eval! loss)
         (is (js/isFinite (mx/item loss)) "loss is finite")))))
 
@@ -51,7 +67,8 @@
                     train-encoder model [:z]
                     :model-args-fn (fn [data] [(mx/squeeze data)])
                     :observations-fn (fn [data]
-                                       (cm/choicemap :x (mx/squeeze data))))
+                                       (cm/choicemap :x (mx/squeeze data)))
+                    :log-joint-fn test-log-joint)
           dataset (mapv (fn [_]
                           (let [trace (p/simulate model [(mx/scalar 0.0)])
                                 z-val (mx/realize (cm/get-choice (:choices trace) [:z]))]
@@ -66,17 +83,18 @@
 
 (deftest encoder-learns-posterior-test
   (testing "encoder learns posterior"
-    (let [posterior-encoder (nn/sequential [(nn/linear 1 32) (nn/relu) (nn/linear 32 2)])
+    (let [enc-ref (atom (nn/sequential [(nn/linear 1 32) (nn/relu) (nn/linear 32 2)]))
           loss-fn (amort/make-elbo-loss
-                    posterior-encoder model [:z]
+                    enc-ref model [:z]
                     :model-args-fn (fn [data] [(mx/squeeze data)])
                     :observations-fn (fn [data]
-                                       (cm/choicemap :x (mx/squeeze data))))
+                                       (cm/choicemap :x (mx/squeeze data)))
+                    :log-joint-fn test-log-joint)
           dataset (mapv (fn [_] (mx/array [(+ 2.5 (js/Math.random))])) (range 20))
           _losses (amort/train-proposal
-                    posterior-encoder loss-fn dataset
+                    enc-ref loss-fn dataset
                     :iterations 500 :lr 0.005)]
-      (let [out (.forward posterior-encoder (mx/array [3.0]))
+      (let [out ((:forward @enc-ref) (mx/array [3.0]))
             _ (mx/eval! out)
             mu (mx/item (mx/index out 0))
             log-sig (mx/item (mx/index out 1))]
@@ -85,16 +103,16 @@
 
 (deftest neural-importance-sampling-test
   (testing "neural-importance-sampling"
-    ;; Train a dedicated encoder
-    (let [pe (nn/sequential [(nn/linear 1 32) (nn/relu) (nn/linear 32 2)])
+    (let [enc-ref (atom (nn/sequential [(nn/linear 1 32) (nn/relu) (nn/linear 32 2)]))
           loss-fn (amort/make-elbo-loss
-                    pe model [:z]
+                    enc-ref model [:z]
                     :model-args-fn (fn [data] [(mx/squeeze data)])
                     :observations-fn (fn [data]
-                                       (cm/choicemap :x (mx/squeeze data))))
+                                       (cm/choicemap :x (mx/squeeze data)))
+                    :log-joint-fn test-log-joint)
           dataset (mapv (fn [_] (mx/array [(+ 2.5 (js/Math.random))])) (range 20))
-          _ (amort/train-proposal pe loss-fn dataset :iterations 500 :lr 0.005)
-          net-gf (nn/nn->gen-fn pe)
+          _ (amort/train-proposal enc-ref loss-fn dataset :iterations 500 :lr 0.005)
+          net-gf (nn/nn->gen-fn enc-ref)
           guide (gen [x]
                   (let [out (splice :enc net-gf (mx/reshape x [1]))
                         mu      (mx/index out 0)
@@ -115,15 +133,16 @@
 
 (deftest neural-is-vs-prior-is-test
   (testing "neural IS vs prior IS"
-    (let [pe (nn/sequential [(nn/linear 1 32) (nn/relu) (nn/linear 32 2)])
+    (let [enc-ref (atom (nn/sequential [(nn/linear 1 32) (nn/relu) (nn/linear 32 2)]))
           loss-fn (amort/make-elbo-loss
-                    pe model [:z]
+                    enc-ref model [:z]
                     :model-args-fn (fn [data] [(mx/squeeze data)])
                     :observations-fn (fn [data]
-                                       (cm/choicemap :x (mx/squeeze data))))
+                                       (cm/choicemap :x (mx/squeeze data)))
+                    :log-joint-fn test-log-joint)
           dataset (mapv (fn [_] (mx/array [(+ 2.5 (js/Math.random))])) (range 20))
-          _ (amort/train-proposal pe loss-fn dataset :iterations 500 :lr 0.005)
-          net-gf (nn/nn->gen-fn pe)
+          _ (amort/train-proposal enc-ref loss-fn dataset :iterations 500 :lr 0.005)
+          net-gf (nn/nn->gen-fn enc-ref)
           guide (gen [x]
                   (let [out (splice :enc net-gf (mx/reshape x [1]))
                         mu      (mx/index out 0)
@@ -203,8 +222,8 @@
                              :observations-fn (fn [data] (cm/choicemap :x (mx/squeeze data)))
                              :posterior-family amort/gaussian-posterior)
           data (mx/array [3.0])
-          l1 (loss-fn-default data)
-          l2 (loss-fn-explicit data)]
+          l1 (loss-fn-default (:forward enc-g1) data)
+          l2 (loss-fn-explicit (:forward enc-g2) data)]
       (mx/eval! l1)
       (mx/eval! l2)
       (is (js/isFinite (mx/item l1)) "default loss is finite")
@@ -218,11 +237,21 @@
               (trace :x (dist/gaussian z (mx/scalar 0.5)))
               z)))
           enc-ln (nn/sequential [(nn/linear 1 32) (nn/relu) (nn/linear 32 2)])
+          ;; log p(z,x) = log Gamma(z;2,1) + log N(x;z,0.5)
+          gamma-log-joint (fn [latent-values data]
+                            (let [z (mx/index latent-values 0)
+                                  x (mx/squeeze data)
+                                  ;; log Gamma(z; alpha=2, beta=1) = (alpha-1)*log(z) - z - lgamma(alpha)
+                                  log-pz (mx/subtract (mx/subtract (mx/log z) z)
+                                                      (mx/scalar (js/Math.log 1.0)))
+                                  log-px (gaussian-log-prob x z (mx/scalar 0.5))]
+                              (mx/add log-pz log-px)))
           loss-fn (amort/make-elbo-loss
                     enc-ln positive-model [:z]
                     :model-args-fn (fn [data] [(mx/squeeze data)])
                     :observations-fn (fn [data] (cm/choicemap :x (mx/squeeze data)))
-                    :posterior-family amort/log-normal-posterior)
+                    :posterior-family amort/log-normal-posterior
+                    :log-joint-fn gamma-log-joint)
           dataset (mapv (fn [_] (mx/array [(+ 1.0 (* 2.0 (js/Math.random)))])) (range 20))
           losses (amort/train-proposal
                    enc-ln loss-fn dataset
@@ -234,15 +263,16 @@
 
 (deftest vectorized-nis-test
   (testing "vectorized NIS: basic functionality"
-    (let [pe (nn/sequential [(nn/linear 1 32) (nn/relu) (nn/linear 32 2)])
+    (let [enc-ref (atom (nn/sequential [(nn/linear 1 32) (nn/relu) (nn/linear 32 2)]))
           loss-fn (amort/make-elbo-loss
-                    pe model [:z]
+                    enc-ref model [:z]
                     :model-args-fn (fn [data] [(mx/squeeze data)])
                     :observations-fn (fn [data]
-                                       (cm/choicemap :x (mx/squeeze data))))
+                                       (cm/choicemap :x (mx/squeeze data)))
+                    :log-joint-fn test-log-joint)
           dataset (mapv (fn [_] (mx/array [(+ 2.5 (js/Math.random))])) (range 20))
-          _ (amort/train-proposal pe loss-fn dataset :iterations 500 :lr 0.005)
-          net-gf (nn/nn->gen-fn pe)
+          _ (amort/train-proposal enc-ref loss-fn dataset :iterations 500 :lr 0.005)
+          net-gf (nn/nn->gen-fn enc-ref)
           guide (gen [x]
                   (let [out (splice :enc net-gf (mx/reshape x [1]))
                         mu      (mx/index out 0)
@@ -265,15 +295,16 @@
 
 (deftest vectorized-nis-log-ml-test
   (testing "vectorized NIS: log-ML close to sequential"
-    (let [pe (nn/sequential [(nn/linear 1 32) (nn/relu) (nn/linear 32 2)])
+    (let [enc-ref (atom (nn/sequential [(nn/linear 1 32) (nn/relu) (nn/linear 32 2)]))
           loss-fn (amort/make-elbo-loss
-                    pe model [:z]
+                    enc-ref model [:z]
                     :model-args-fn (fn [data] [(mx/squeeze data)])
                     :observations-fn (fn [data]
-                                       (cm/choicemap :x (mx/squeeze data))))
+                                       (cm/choicemap :x (mx/squeeze data)))
+                    :log-joint-fn test-log-joint)
           dataset (mapv (fn [_] (mx/array [(+ 2.5 (js/Math.random))])) (range 20))
-          _ (amort/train-proposal pe loss-fn dataset :iterations 500 :lr 0.005)
-          net-gf (nn/nn->gen-fn pe)
+          _ (amort/train-proposal enc-ref loss-fn dataset :iterations 500 :lr 0.005)
+          net-gf (nn/nn->gen-fn enc-ref)
           guide (gen [x]
                   (let [out (splice :enc net-gf (mx/reshape x [1]))
                         mu      (mx/index out 0)

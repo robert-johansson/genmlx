@@ -36,12 +36,8 @@
 (def ^:private tidy-depth (atom 0))
 (def ^:private grad-depth (atom 0))
 
-;; Backward-compat aliases (some files reference mx/core, mx/nn-mod, etc.)
+;; Backward-compat alias (some files reference mx/core)
 (def core c)
-(def nn-mod nil)
-(def optim-mod nil)
-(def random nil)
-(def linalg nil)
 
 ;; =========================================================================
 ;; Dtypes

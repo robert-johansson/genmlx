@@ -43,7 +43,6 @@
 (deftest neural-net-gf-protocols
   (testing "NeuralNetGF update/regenerate/project"
     (let [module (nn/linear 2 1)
-          _ (mx/eval! module)
           gf (nn/nn->gen-fn module)
           trace (p/simulate gf [(mx/ones [2])])]
       ;; update
