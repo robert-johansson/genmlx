@@ -10,7 +10,9 @@
             [genmlx.handler :as hdlr]
             [genmlx.runtime :as rt]
             [genmlx.choicemap :as cm]
+            [genmlx.selection :as sel]
             [genmlx.protocols :as p]
+            [genmlx.gfi :as gfi]
             [genmlx.test-helpers :as th])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -247,6 +249,111 @@
           "parent choice :x must exist")
       (is (some? sub-choices)
           "sub-model namespace :sub must exist"))))
+
+;; =========================================================================
+;; Test 8: Remaining handler transitions are pure (update, regenerate,
+;;         assess, project)
+;; =========================================================================
+
+(deftest update-transition-is-pure
+  (testing "update transition with new constraint is deterministic"
+    (let [d (dist/gaussian 0 1)
+          key (rng/fresh-key 800)
+          make-state (fn []
+                       {:key key :choices (cm/choicemap) :score (mx/scalar 0.0)
+                        :weight (mx/scalar 0.0)
+                        :constraints (cm/choicemap :x (mx/scalar 2.0))
+                        :old-choices (cm/choicemap :x (mx/scalar 1.0))
+                        :discard (cm/choicemap)
+                        :executor nil})
+          [v1 s1] (hdlr/update-transition (make-state) :x d)
+          [v2 s2] (hdlr/update-transition (make-state) :x d)]
+      (is (th/close? (th/realize v1) (th/realize v2) 1e-10)
+          "update with constraint must return same value")
+      (is (th/close? (th/realize (:weight s1)) (th/realize (:weight s2)) 1e-10)
+          "update must produce same weight"))))
+
+(deftest assess-transition-is-pure
+  (testing "assess transition is deterministic (no randomness)"
+    (let [d (dist/gaussian 0 1)
+          make-state (fn []
+                       {:choices (cm/choicemap) :score (mx/scalar 0.0)
+                        :weight (mx/scalar 0.0)
+                        :constraints (cm/choicemap :x (mx/scalar 1.5))
+                        :executor nil})
+          [v1 s1] (hdlr/assess-transition (make-state) :x d)
+          [v2 s2] (hdlr/assess-transition (make-state) :x d)]
+      (is (th/close? (th/realize v1) (th/realize v2) 1e-10)
+          "assess must return same constrained value")
+      (is (th/close? (th/realize (:weight s1)) (th/realize (:weight s2)) 1e-10)
+          "assess must produce same weight"))))
+
+(deftest regenerate-transition-is-pure
+  (testing "regenerate transition with selection is deterministic"
+    (let [d (dist/gaussian 0 1)
+          key (rng/fresh-key 802)
+          make-state (fn []
+                       {:key key :choices (cm/choicemap) :score (mx/scalar 0.0)
+                        :weight (mx/scalar 0.0)
+                        :old-choices (cm/choicemap :x (mx/scalar 1.0))
+                        :selection (sel/select :x)
+                        :executor nil})
+          [v1 s1] (hdlr/regenerate-transition (make-state) :x d)
+          [v2 s2] (hdlr/regenerate-transition (make-state) :x d)]
+      (is (th/close? (th/realize v1) (th/realize v2) 1e-10)
+          "regenerate must produce same resampled value")
+      (is (th/close? (th/realize (:weight s1)) (th/realize (:weight s2)) 1e-10)
+          "regenerate must produce same weight"))))
+
+(deftest project-transition-is-pure
+  (testing "project transition replays deterministically"
+    (let [d (dist/gaussian 0 1)
+          make-state (fn []
+                       {:choices (cm/choicemap) :score (mx/scalar 0.0)
+                        :weight (mx/scalar 0.0)
+                        :old-choices (cm/choicemap :x (mx/scalar 1.0))
+                        :selection (sel/select :x)
+                        :executor nil})
+          [v1 s1] (hdlr/project-transition (make-state) :x d)
+          [v2 s2] (hdlr/project-transition (make-state) :x d)]
+      (is (th/close? (th/realize v1) (th/realize v2) 1e-10)
+          "project must replay same value")
+      (is (th/close? (th/realize (:weight s1)) (th/realize (:weight s2)) 1e-10)
+          "project must produce same weight"))))
+
+;; =========================================================================
+;; Test 9: Compiled paths produce identical traces to handler paths
+;; =========================================================================
+
+(def static-model
+  (dyn/make-gen-fn
+    (fn [rt]
+      (let [trace (.-trace rt)
+            x (trace :x (dist/gaussian 0 1))]
+        (trace :y (dist/gaussian x 0.5))))
+    '([]
+      (let [x (trace :x (dist/gaussian 0 1))]
+        (trace :y (dist/gaussian x 0.5))))))
+
+(deftest compiled-path-equals-handler-path
+  (testing "compiled simulate score equals handler assess weight"
+    (let [compiled? (some? (:compiled-simulate (:schema static-model)))]
+      (when compiled?
+        (let [key (rng/fresh-key 900)
+              ;; Simulate via compiled path
+              compiled-trace (p/simulate (dyn/with-key static-model key) [])
+              compiled-score (th/realize (:score compiled-trace))
+              compiled-choices (:choices compiled-trace)
+              ;; Assess same choices via handler path (strip-compiled)
+              handler-model (dyn/with-key (gfi/strip-compiled static-model) (rng/fresh-key 901))
+              {:keys [weight]} (p/assess handler-model [] compiled-choices)
+              handler-score (th/realize weight)]
+          (is (th/finite? compiled-score)
+              "compiled score must be finite")
+          (is (th/finite? handler-score)
+              "handler score must be finite")
+          (is (th/close? compiled-score handler-score 1e-4)
+              "compiled simulate score must equal handler assess weight"))))))
 
 ;; =========================================================================
 ;; Run
