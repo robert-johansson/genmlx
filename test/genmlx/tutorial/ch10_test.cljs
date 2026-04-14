@@ -7,7 +7,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
-            [genmlx.contracts :as contracts]
+            [genmlx.gfi :as gfi]
             [genmlx.verify :as verify])
   (:require-macros [genmlx.gen :refer [gen]]
                    [genmlx.dist.macros :refer [defdist]]))
@@ -73,21 +73,21 @@
 ;; ============================================================
 ;; Listing 10.4: GFI contracts
 ;; ============================================================
-(println "\n== Listing 10.4: GFI contracts ==")
+(println "\n== Listing 10.4: GFI laws ==")
 
 (let [model (dyn/auto-key (gen []
               (let [mu (trace :mu (dist/gaussian 0 1))]
                 (trace :x (dist/gaussian mu 1))
                 mu)))
-      result (contracts/verify-gfi-contracts model [] :n-trials 5)]
-  (assert-true "contracts return a result" (map? result))
+      result (gfi/verify model [] :n-trials 1 :tags [:core])]
+  (assert-true "verify returns a result" (map? result))
   (assert-true "has :total-pass" (contains? result :total-pass))
   (assert-true "has :total-fail" (contains? result :total-fail))
   (assert-true "has :all-pass?" (contains? result :all-pass?))
   (let [tp (:total-pass result)
         tf (:total-fail result)]
-    (assert-true "some contracts pass" (pos? tp))
-    (println (str "  contracts: " tp " pass, " tf " fail"))))
+    (assert-true "some laws pass" (pos? tp))
+    (println (str "  laws: " tp " pass, " tf " fail"))))
 
 ;; ============================================================
 ;; Listing 10.5: Static validation

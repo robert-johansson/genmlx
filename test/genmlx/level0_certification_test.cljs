@@ -24,7 +24,7 @@
             [genmlx.selection :as sel]
             [genmlx.trace :as tr]
             [genmlx.vectorized :as vec]
-            [genmlx.contracts :as contracts]
+            [genmlx.gfi :as gfi]
             [genmlx.combinators :as comb]
             [genmlx.handler :as h]
             [genmlx.compiled :as compiled]
@@ -277,25 +277,35 @@
 ;; G5: GFI Contracts (10 contracts x 3 models x 5 trials)
 ;; ---------------------------------------------------------------------------
 
-(def contract-keys (set (keys contracts/contracts)))
-(def scalar-keys (disj contract-keys :broadcast-equivalence))
+(def all-laws
+  #{:generate-full-weight-equals-score
+    :update-identity
+    :update-density-ratio
+    :update-round-trip
+    :regenerate-empty-identity
+    :project-all-equals-score
+    :project-none-equals-zero
+    :assess-equals-generate-score
+    :propose-weight-equals-generate
+    :score-full-decomposition
+    :vsimulate-shape-correctness})
+(def scalar-laws (disj all-laws :vsimulate-shape-correctness))
 
 (defn run-contracts [model-name model args ks n-trials]
-  (let [results (contracts/verify-gfi-contracts model args
-                  :contract-keys ks :n-trials n-trials)]
-    (doseq [[k {:keys [pass fail]}] results]
-      (when (pos? fail)
-        (println "    contract" k ":" fail "failures")))
-    (let [total-fail (reduce + (map :fail (vals results)))]
-      (is (zero? total-fail) (str model-name ": all contracts pass")))))
+  (let [{:keys [results all-pass? total-fail]}
+        (gfi/verify model args :law-names ks :n-trials n-trials)]
+    (doseq [{:keys [name fails]} results]
+      (when (pos? fails)
+        (println "    law" name ":" fails "failures")))
+    (is all-pass? (str model-name ": all laws pass (" total-fail " failures)"))))
 
 (deftest g5-gfi-contracts
   (testing "coin-model"
-    (run-contracts "coin-model" coin-model [] scalar-keys 5))
+    (run-contracts "coin-model" coin-model [] scalar-laws 5))
   (testing "multi-model"
-    (run-contracts "multi-model" multi-model [] contract-keys 5))
+    (run-contracts "multi-model" multi-model [] all-laws 5))
   (testing "line-model"
-    (run-contracts "line-model" line-model [(mx/array [1 2 3])] scalar-keys 5)))
+    (run-contracts "line-model" line-model [[1 2 3]] scalar-laws 5)))
 
 ;; ---------------------------------------------------------------------------
 ;; G6: Compiled ops

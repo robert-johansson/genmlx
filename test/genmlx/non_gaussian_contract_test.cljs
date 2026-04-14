@@ -1,5 +1,5 @@
 (ns genmlx.non-gaussian-contract-test
-  "GFI contracts on non-Gaussian canonical models.
+  "GFI laws on non-Gaussian canonical models.
    Extends contract_verification_test.cljs to distributions beyond Gaussian:
    Beta-Bernoulli, Gamma-Poisson, Gamma-Exponential, Uniform-Categorical,
    Map-with-Beta, Unfold-with-Poisson, Switch-with-mixed."
@@ -7,28 +7,39 @@
             [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
-            [genmlx.contracts :as contracts]
+            [genmlx.gfi :as gfi]
             [genmlx.combinators :as comb])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; ---------------------------------------------------------------------------
-;; Contract key sets
+;; Law name sets
 ;; ---------------------------------------------------------------------------
 
-(def all-keys (set (keys contracts/contracts)))
+(def all-keys
+  #{:generate-full-weight-equals-score
+    :update-identity
+    :update-density-ratio
+    :update-round-trip
+    :regenerate-empty-identity
+    :project-all-equals-score
+    :project-none-equals-zero
+    :assess-equals-generate-score
+    :propose-weight-equals-generate
+    :score-full-decomposition
+    :vsimulate-shape-correctness})
 
-;; All minus broadcast-equivalence (vsimulate only works on DynamicGF)
-(def scalar-keys (disj all-keys :broadcast-equivalence))
+;; All minus vsimulate-shape-correctness (vsimulate only works on DynamicGF)
+(def scalar-keys (disj all-keys :vsimulate-shape-correctness))
 
 ;; For models with constrained-domain distributions (beta, exponential, etc.),
-;; update-weight-correctness and update-round-trip use hardcoded values (0.0, 42.0)
+;; update-density-ratio and update-round-trip use hardcoded values (0.0, 42.0)
 ;; that may fall outside the support. Exclude those.
 (def constrained-domain-keys
   (disj scalar-keys
-        :update-weight-correctness
+        :update-density-ratio
         :update-round-trip))
 
-;; For combinator models: also exclude addr-dependent contracts
+;; For combinator models: also exclude addr-dependent laws
 ;; (integer-keyed submaps; first-address returns a submap, not a leaf)
 (def combinator-constrained-keys
   (disj constrained-domain-keys
@@ -37,7 +48,7 @@
 ;; For models with score-decomposition issues through splice/combinator boundaries
 (def combinator-no-decomp-keys
   (disj combinator-constrained-keys
-        :score-decomposition))
+        :score-full-decomposition))
 
 ;; ---------------------------------------------------------------------------
 ;; 7 non-Gaussian canonical models
@@ -110,59 +121,59 @@
   (comb/switch-combinator switch-branch-beta switch-branch-exp))
 
 ;; ---------------------------------------------------------------------------
-;; Verification helper (same as contract_verification_test.cljs)
+;; Verification helper
 ;; ---------------------------------------------------------------------------
 
 (defn- verify-contracts
-  "Run GFI contracts on a model and assert all pass.
+  "Run GFI laws on a model and assert all pass.
    Returns the report for further inspection."
-  [model args contract-keys]
+  [model args law-names]
   (let [{:keys [all-pass? results total-pass total-fail] :as report}
-        (contracts/verify-gfi-contracts model args
-          :n-trials 5 :contract-keys contract-keys)]
+        (gfi/verify model args
+          :n-trials 5 :law-names law-names)]
     (is all-pass?
-        (str "expected all contracts to pass but "
+        (str "expected all laws to pass but "
              total-fail "/" (+ total-pass total-fail) " checks failed"
              (when-not all-pass?
                (str ": "
                  (->> results
-                      (filter (fn [[_ {:keys [fail]}]] (pos? fail)))
-                      (map (fn [[k {:keys [theorem fail pass]}]]
-                             (str (name k) " (" fail "/" (+ pass fail) ")")))
+                      (filter (fn [{:keys [fails]}] (pos? fails)))
+                      (map (fn [{:keys [name fails passes]}]
+                             (str (clojure.core/name name) " (" fails "/" (+ passes fails) ")")))
                       (interpose ", ")
                       (apply str))))))
     report))
 
 ;; ---------------------------------------------------------------------------
-;; Contract verification tests -- one per non-Gaussian model
+;; Law verification tests -- one per non-Gaussian model
 ;; ---------------------------------------------------------------------------
 
 (deftest beta-bernoulli-satisfies-contracts
-  (testing "beta-bernoulli passes constrained-domain contracts"
+  (testing "beta-bernoulli passes constrained-domain laws"
     (verify-contracts beta-bernoulli [] constrained-domain-keys)))
 
 (deftest gamma-poisson-satisfies-contracts
-  (testing "gamma-poisson passes constrained-domain contracts"
+  (testing "gamma-poisson passes constrained-domain laws"
     (verify-contracts gamma-poisson [] constrained-domain-keys)))
 
 (deftest gamma-exponential-satisfies-contracts
-  (testing "gamma-exponential passes constrained-domain contracts"
+  (testing "gamma-exponential passes constrained-domain laws"
     (verify-contracts gamma-exponential [] constrained-domain-keys)))
 
 (deftest uniform-categorical-satisfies-contracts
-  (testing "uniform-categorical passes constrained-domain contracts"
+  (testing "uniform-categorical passes constrained-domain laws"
     (verify-contracts uniform-categorical [] constrained-domain-keys)))
 
 (deftest map-beta-satisfies-contracts
-  (testing "map combinator with beta passes combinator-constrained contracts"
+  (testing "map combinator with beta passes combinator-constrained laws"
     (verify-contracts map-beta-model [[3 4 5]] combinator-constrained-keys)))
 
 (deftest unfold-poisson-satisfies-contracts
-  (testing "unfold with poisson passes combinator-constrained contracts"
+  (testing "unfold with poisson passes combinator-constrained laws"
     (verify-contracts unfold-poisson-model [3 0.0] combinator-constrained-keys)))
 
 (deftest switch-mixed-satisfies-contracts
-  (testing "switch with mixed beta/exponential passes constrained-domain contracts"
+  (testing "switch with mixed beta/exponential passes constrained-domain laws"
     (verify-contracts switch-mixed-model [0] constrained-domain-keys)))
 
 ;; ---------------------------------------------------------------------------

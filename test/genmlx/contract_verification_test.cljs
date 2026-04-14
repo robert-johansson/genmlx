@@ -1,45 +1,69 @@
 (ns genmlx.contract-verification-test
-  "GFI contract verification on 13 canonical models covering all features.
-   Each model is verified against its applicable contract subset (5 trials each)."
+  "GFI law verification on 13 canonical models covering all features.
+   Each model is verified against its applicable law subset (5 trials each).
+   Migrated from contracts.cljs to gfi.cljs (2026-04-14)."
   (:require [cljs.test :refer [deftest is testing run-tests]]
             [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
-            [genmlx.contracts :as contracts]
+            [genmlx.gfi :as gfi]
             [genmlx.combinators :as comb])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; ---------------------------------------------------------------------------
-;; Contract key sets
+;; Law key sets (mapped from old contract keys)
+;;
+;; Old contract key                  -> GFI law name
+;; :generate-weight-equals-score     -> :generate-full-weight-equals-score
+;; :update-empty-identity            -> :update-identity
+;; :update-weight-correctness        -> :update-density-ratio
+;; :update-round-trip                -> :update-round-trip
+;; :regenerate-empty-identity        -> :regenerate-empty-identity
+;; :project-all-equals-score         -> :project-all-equals-score
+;; :project-none-equals-zero         -> :project-none-equals-zero
+;; :assess-equals-generate-score     -> :assess-equals-generate-score
+;; :propose-generate-round-trip      -> :propose-weight-equals-generate
+;; :score-decomposition              -> :score-full-decomposition
+;; :broadcast-equivalence            -> :vsimulate-shape-correctness
 ;; ---------------------------------------------------------------------------
 
-(def all-keys (set (keys contracts/contracts)))
+(def all-laws
+  #{:generate-full-weight-equals-score
+    :update-identity
+    :update-density-ratio
+    :update-round-trip
+    :regenerate-empty-identity
+    :project-all-equals-score
+    :project-none-equals-zero
+    :assess-equals-generate-score
+    :propose-weight-equals-generate
+    :score-full-decomposition
+    :vsimulate-shape-correctness})
 
-;; All minus broadcast-equivalence (vsimulate only works on DynamicGF)
-(def scalar-keys (disj all-keys :broadcast-equivalence))
+;; All minus vsimulate (only works on DynamicGF)
+(def scalar-laws (disj all-laws :vsimulate-shape-correctness))
 
-;; Scalar minus 3 addr-dependent contracts that fail on hierarchical int keys
-;; (Map, Unfold, Scan use integer-keyed submaps; first-address returns a submap, not a leaf)
-(def leaf-safe-keys
-  (disj scalar-keys
-        :update-weight-correctness
+;; Scalar minus addr-dependent laws that fail on hierarchical int keys
+(def leaf-safe-laws
+  (disj scalar-laws
+        :update-density-ratio
         :update-round-trip
         :regenerate-empty-identity))
 
-;; Scalar minus score-decomposition (project doesn't decompose through splice boundaries)
-(def splice-keys (disj scalar-keys :score-decomposition))
+;; Scalar minus score-decomposition (project doesn't decompose through splice)
+(def splice-laws (disj scalar-laws :score-full-decomposition))
 
-;; Deep-nesting: first-address returns :inner (non-leaf) + splice decomposition issue
-(def deep-nesting-keys
-  (disj scalar-keys
-        :update-weight-correctness
+;; Deep-nesting: addr-dependent + decomposition issues
+(def deep-nesting-laws
+  (disj scalar-laws
+        :update-density-ratio
         :update-round-trip
         :regenerate-empty-identity
-        :score-decomposition))
+        :score-full-decomposition))
 
-;; Recurse: splice decomposition + regenerate doesn't handle recursive structure
-(def recurse-keys
-  (disj scalar-keys :score-decomposition :regenerate-empty-identity))
+;; Recurse: decomposition + regenerate
+(def recurse-laws
+  (disj scalar-laws :score-full-decomposition :regenerate-empty-identity))
 
 ;; ---------------------------------------------------------------------------
 ;; 13 canonical models
@@ -145,81 +169,80 @@
 ;; Verification helper
 ;; ---------------------------------------------------------------------------
 
-(defn- verify-contracts
-  "Run GFI contracts on a model and assert all pass.
+(defn- verify-laws
+  "Run GFI laws on a model and assert all pass.
    Returns the report for further inspection."
-  [model args contract-keys]
+  [model args law-names]
   (let [{:keys [all-pass? results total-pass total-fail] :as report}
-        (contracts/verify-gfi-contracts model args
-          :n-trials 5 :contract-keys contract-keys)]
+        (gfi/verify model args :n-trials 5 :law-names law-names)]
     (is all-pass?
-        (str "expected all contracts to pass but "
+        (str "expected all laws to pass but "
              total-fail "/" (+ total-pass total-fail) " checks failed"
              (when-not all-pass?
                (str ": "
                  (->> results
-                      (filter (fn [[_ {:keys [fail]}]] (pos? fail)))
-                      (map (fn [[k {:keys [theorem fail pass]}]]
-                             (str (name k) " (" fail "/" (+ pass fail) ")")))
+                      (filter (fn [{:keys [fails]}] (pos? fails)))
+                      (map (fn [{:keys [name fails passes]}]
+                             (str (clojure.core/name name) " (" fails "/" (+ passes fails) ")")))
                       (interpose ", ")
                       (apply str))))))
     report))
 
 ;; ---------------------------------------------------------------------------
-;; Contract verification tests — one per canonical model
+;; Law verification tests — one per canonical model
 ;; ---------------------------------------------------------------------------
 
-(deftest single-site-satisfies-contracts
-  (testing "single-site gaussian passes all scalar contracts"
-    (verify-contracts single-site [] scalar-keys)))
+(deftest single-site-satisfies-laws
+  (testing "single-site gaussian passes all scalar laws"
+    (verify-laws single-site [] scalar-laws)))
 
-(deftest multi-site-satisfies-contracts
-  (testing "multi-site dependent model passes all scalar contracts"
-    (verify-contracts multi-site [] scalar-keys)))
+(deftest multi-site-satisfies-laws
+  (testing "multi-site dependent model passes all scalar laws"
+    (verify-laws multi-site [] scalar-laws)))
 
-(deftest linreg-satisfies-contracts
-  (testing "linear regression passes all scalar contracts"
-    (verify-contracts linreg [[1 2 3]] scalar-keys)))
+(deftest linreg-satisfies-laws
+  (testing "linear regression passes all scalar laws"
+    (verify-laws linreg [[1 2 3]] scalar-laws)))
 
-(deftest splice-satisfies-contracts
-  (testing "splice model passes all contracts except score-decomposition"
-    (verify-contracts splice-model [] splice-keys)))
+(deftest splice-satisfies-laws
+  (testing "splice model passes all laws except score-decomposition"
+    (verify-laws splice-model [] splice-laws)))
 
-(deftest mixed-satisfies-contracts
-  (testing "mixed discrete/continuous passes all scalar contracts"
-    (verify-contracts mixed-model [] scalar-keys)))
+(deftest mixed-satisfies-laws
+  (testing "mixed discrete/continuous passes all scalar laws"
+    (verify-laws mixed-model [] scalar-laws)))
 
-(deftest deep-nesting-satisfies-contracts
-  (testing "deep nesting passes contracts excluding addr-dependent and decomposition"
-    (verify-contracts deep-nesting [] deep-nesting-keys)))
+(deftest deep-nesting-satisfies-laws
+  (testing "deep nesting passes laws excluding addr-dependent and decomposition"
+    (verify-laws deep-nesting [] deep-nesting-laws)))
 
-(deftest two-site-vec-satisfies-all-contracts
-  (testing "two-site vectorizable model passes all contracts including broadcast"
-    (verify-contracts two-site-vec [] all-keys)))
+(deftest two-site-vec-satisfies-all-laws
+  (testing "two-site vectorizable model passes all laws including broadcast"
+    (verify-laws two-site-vec [] all-laws)))
 
-(deftest map-combinator-satisfies-contracts
-  (testing "map combinator passes leaf-safe contracts"
-    (verify-contracts map-model [[1 2 3]] leaf-safe-keys)))
+(deftest map-combinator-satisfies-laws
+  (testing "map combinator passes leaf-safe laws"
+    (verify-laws map-model [[1 2 3]] leaf-safe-laws)))
 
-(deftest unfold-combinator-satisfies-contracts
-  (testing "unfold combinator passes leaf-safe contracts"
-    (verify-contracts unfold-model [3 0.0] leaf-safe-keys)))
+(deftest unfold-combinator-satisfies-laws
+  (testing "unfold combinator passes leaf-safe laws"
+    (verify-laws unfold-model [3 0.0] leaf-safe-laws)))
 
-(deftest switch-combinator-satisfies-contracts
-  (testing "switch combinator passes all scalar contracts"
-    (verify-contracts switch-model [0] scalar-keys)))
+(deftest switch-combinator-satisfies-laws
+  (testing "switch combinator passes all scalar laws"
+    (verify-laws switch-model [0] scalar-laws)))
 
-(deftest scan-combinator-satisfies-contracts
-  (testing "scan combinator passes leaf-safe contracts"
-    (verify-contracts scan-model [0.0 [1 2 3]] leaf-safe-keys)))
+(deftest scan-combinator-satisfies-laws
+  (testing "scan combinator passes leaf-safe laws"
+    (verify-laws scan-model [0.0 [1 2 3]] leaf-safe-laws)))
 
-(deftest mask-combinator-satisfies-contracts
-  (testing "mask combinator passes all scalar contracts"
-    (verify-contracts mask-model [true] scalar-keys)))
+(deftest mask-combinator-satisfies-laws
+  (testing "mask combinator passes all scalar laws"
+    (verify-laws mask-model [true] scalar-laws)))
 
-(deftest recurse-combinator-satisfies-contracts
-  (testing "recurse combinator passes contracts excluding decomposition and regenerate"
-    (verify-contracts recurse-model [2] recurse-keys)))
+(deftest recurse-combinator-satisfies-laws
+  (testing "recurse combinator passes laws excluding decomposition and regenerate"
+    (verify-laws recurse-model [2] recurse-laws)))
 
 ;; ---------------------------------------------------------------------------
 ;; Run
