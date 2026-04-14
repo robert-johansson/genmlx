@@ -31,8 +31,6 @@
 (defmulti dist-sample-n* (fn [d _key _n] (:type d)))
 
 ;; Public API — delegates to multimethod after ensuring key.
-;; Note: rng/seed! is called once per GFI method (in dynamic.cljs),
-;; NOT per sample. This avoids forcing mx/eval! on every trace site.
 (defn dist-sample
   "Sample from distribution d using PRNG key."
   [d key]
@@ -72,7 +70,7 @@
 
 (defn dist-simulate [dist]
   (let [key (or (:genmlx.dynamic/key (meta dist)) (rng/fresh-key))
-        _ (rng/seed! key)
+
         v  (dist-sample dist key)
         lp (dist-log-prob dist v)]
     (tr/make-trace {:gen-fn dist :args [] :choices (cm/->Value v)
@@ -93,7 +91,7 @@
 
 (defn dist-propose [dist]
   (let [key (or (:genmlx.dynamic/key (meta dist)) (rng/fresh-key))
-        _ (rng/seed! key)
+
         v  (dist-sample dist key)
         lp (dist-log-prob dist v)]
     {:choices (cm/->Value v) :weight lp :retval v}))

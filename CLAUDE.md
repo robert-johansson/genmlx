@@ -16,6 +16,31 @@ broadcasting reinforce this — functional-style array programming without penal
 ~29,600 lines of ClojureScript across 74 source files. Purely functional,
 data-driven, GPU end-to-end.
 
+## Three-layer purity architecture
+
+GenMLX has three layers of purity. Understanding this is essential for all work:
+
+```
+Layer A: Pure ClojureScript  — GFI protocols, handlers, inference (values)
+Layer B: Pure MLX Graphs     — lazy computation descriptions (also values!)
+Layer C: GPU Execution       — mx/eval! dispatches the graph to Metal (side effect)
+```
+
+**Layer B is the key insight.** MLX operations like `mx/add` do not compute — they
+build lazy computation graph nodes. The graph is a value, like a Clojure data
+structure. No GPU work occurs until `mx/eval!` is called. This means most of
+`mlx.cljs` is purely functional: graph construction is value manipulation.
+
+**`mx/eval!` is the sole side effect.** All GPU dispatch flows through `eval!`
+(or wrappers like `item`, `->clj`, `materialize!`). Everything else — arithmetic,
+reductions, autograd, vmap, compile — builds lazy graphs.
+
+**mlx-node is at the heart of GenMLX.** The Rust/NAPI layer (328 exports, 5 crates)
+is not "mutable substrate we contain" — it is a functional graph engine that aligns
+naturally with ClojureScript's value semantics. `mlx.cljs` is the thin membrane
+between them; `Either<&MxArray, f64>` in Rust handles type coercion so CLJS
+doesn't need to.
+
 ## Compilation ladder
 
 GenMLX follows a 5-level compilation ladder, progressively moving work from the
@@ -302,21 +327,30 @@ test/genmlx/
 
 ## Architecture layers
 
+The implementation layers map onto the three-layer purity model:
+
 ```
-Layer 0: MLX + Runtime    (mlx.cljs, mlx/random.cljs, runtime.cljs, dispatch.cljs)
-         Rust: genmlx.rs  (~105 NAPI exports, Either<&MxArray,f64> type coercion)
-Layer 1: Core Data        (choicemap, trace, selection, diff — pure)
-Layer 2: GFI & Execution  (protocols, handler, edit, tensor_trace — pure)
-Layer 3: DSL + Schema     (gen macro, dynamic, schema, schemas, inspect — pure)
-Layer 4: Distributions    (dist/core, dist/macros, dist — 31 types, pure)
-Layer 5: Combinators      (combinators, vmap — 10 combinators, pure)
-Layer 6: Inference         (25 files, 35+ algorithms — pure)
-Layer 7: Compiled Paths   (compiled, compiled_ops, rewrite, affine, conjugacy, dep_graph,
-                           method_selection — pure)
-Layer 8: Supporting       (vectorized, gradients, learning, nn, serialize, gfi, verify,
-                           contracts, fit, dev — pure except dev.cljs atoms)
-Layer 9: LLM Integration  (llm/backend, core, grammar, bytes, codegen, msa — pure except
-                           KV cache mutation in backend.cljs)
+── Layer C (GPU execution) ──────────────────────────────────────────────
+  mlx-node Rust/C++   5 crates, 328 NAPI exports. MxArray = Arc<lazy graph node>.
+                      eval! is the only operation that dispatches to Metal.
+
+── Membrane (mlx.cljs) ─────────────────────────────────────────────────
+  Layer 0: MLX + Runtime    (mlx.cljs, mlx/random.cljs, runtime.cljs, dispatch.cljs)
+           mlx.cljs sections: Pure Graph Ops | Queries | Combinators | Effectful | Memory
+
+── Layers A+B (pure ClojureScript + pure MLX graphs) ───────────────────
+  Layer 1: Core Data        (choicemap, trace, selection, diff — pure)
+  Layer 2: GFI & Execution  (protocols, handler, edit, tensor_trace — pure)
+  Layer 3: DSL + Schema     (gen macro, dynamic, schema, schemas, inspect — pure)
+  Layer 4: Distributions    (dist/core, dist/macros, dist — 31 types, pure)
+  Layer 5: Combinators      (combinators, vmap — 10 combinators, pure)
+  Layer 6: Inference         (25 files, 35+ algorithms — pure)
+  Layer 7: Compiled Paths   (compiled, compiled_ops, rewrite, affine, conjugacy, dep_graph,
+                             method_selection — pure)
+  Layer 8: Supporting       (vectorized, gradients, learning, nn, serialize, gfi, verify,
+                             contracts, fit, dev — pure except dev.cljs atoms)
+  Layer 9: LLM Integration  (llm/backend, core, grammar, bytes, codegen, msa — pure except
+                             KV cache mutation in backend.cljs)
 ```
 
 Strict dependency direction: higher layers depend on lower, never the reverse.
@@ -326,10 +360,16 @@ direct import of dynamic.cljs).
 
 ## Key design principles
 
-1. **Purely functional.** The only mutable boundaries are:
-   - The handler's `volatile!` in `runtime.cljs` (scoped to a single `run-handler` call)
+1. **Purely functional.** Layers 1-9 are referentially transparent. Mutation is
+   confined to the membrane (Layer 0) and verified by property tests
+   (`mutation_boundary_test.cljs`). The mutable boundaries are:
+   - The handler's `volatile!` in `runtime.cljs` (scoped to a single `run-handler`
+     call — created fresh, consumed locally, never escapes)
    - Two atoms in `mlx.cljs` (`tidy-depth`, `grad-depth` for nesting counters)
-   - The `dispatch-fn` and `validate-fn` atoms (extension points for dev mode)
+   - Two atoms for dev mode extension (`dispatch-fn`, `validate-fn` — only
+     swapped by `dev.cljs` start!/stop!, no-ops in production)
+   - Auto-cleanup counters in `mlx.cljs` (`ops-since-check`, `gfi-ops-count` —
+     resource management heuristics, do not affect computation results)
    - KV cache mutation in `llm/backend.cljs` (always in try/finally)
 
 2. **Data-driven, open for extension.** Distributions are a single `Distribution`
@@ -341,9 +381,13 @@ direct import of dynamic.cljs).
    scoring through gradient computation. Only extract to JS numbers with
    `mx/item` at inference boundaries.
 
-4. **Lazy graph + explicit eval.** MLX operations build a computation graph.
-   Call `mx/materialize!` at inference boundaries to evaluate. Direct
-   `mx/eval!` and `mx/tidy` are confined to Layer 0 (`mlx.cljs`).
+4. **Lazy graph + explicit eval.** MLX operations build lazy computation graphs
+   (Layer B values). `mx/eval!` is the sole side effect — it dispatches the
+   graph to Metal for execution. Eval happens at three kinds of boundaries:
+   - **API boundaries:** `mx/item`, `mx/->clj`, serialization
+   - **Inference hot loops:** `mx/materialize!` to break graph accumulation
+     (essential — without it, 1000 MCMC iterations build a 1000-node graph)
+   - **Tidy scopes:** `mx/tidy-run`, `mx/tidy-materialize` for memory management
 
 5. **Shape-based batching.** Vectorized inference works by changing array shapes
    (`[N]` instead of `[]`), not by transforming functions with `vmap`. MLX
@@ -600,6 +644,14 @@ After any change, verify:
 - Don't add `ensure-mx` or `to-big-shape` calls — Rust `Either<&MxArray, f64>`
   and `Vec<f64>` handle type coercion and shape conversion at the NAPI boundary.
   Layer 0 ops accept both MxArray and JS number directly.
+- Don't add no-op stubs or backward-compat shims that lie about what they do.
+  If a function does nothing, remove it. If it returns a hardcoded value, document
+  that honestly. The membrane must be transparent.
+- MLX has no float64, int64, or bool dtypes. `mx/float64` silently aliases to
+  `mx/float32`. Code expecting 64-bit precision will get 32-bit with no warning.
+- `mx/compile-fn` is an identity pass-through (returns `f` unchanged). GenMLX's
+  compilation uses noise transforms + the expression compiler, not MLX's
+  graph-caching compile. See mlx.cljs docstring for details.
 
 ## Milestone delivery protocol
 

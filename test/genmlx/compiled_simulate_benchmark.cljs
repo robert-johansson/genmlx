@@ -26,22 +26,22 @@
     (when compiled?
       ;; Warm up handler
       (dotimes [_ 5]
-        (rng/seed! k)
+
         (mx/eval! (:score (p/simulate (dyn/with-key handler-model k) args))))
       ;; Benchmark handler
       (let [h-start (js/Date.now)]
         (dotimes [_ n]
-          (rng/seed! k)
+  
           (mx/eval! (:score (p/simulate (dyn/with-key handler-model k) args))))
         (let [h-ms (- (js/Date.now) h-start)]
           ;; Warm up compiled
           (dotimes [_ 5]
-            (rng/seed! k)
+    
             (mx/eval! (:score (p/simulate (dyn/with-key compiled-model k) args))))
           ;; Benchmark compiled
           (let [c-start (js/Date.now)]
             (dotimes [_ n]
-              (rng/seed! k)
+      
               (mx/eval! (:score (p/simulate (dyn/with-key compiled-model k) args))))
             (let [c-ms (- (js/Date.now) c-start)
                   speedup (/ h-ms (max c-ms 1))]

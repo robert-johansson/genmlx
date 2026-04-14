@@ -64,8 +64,7 @@
 ;; Generate y = 2*x + 0.5 + noise (fixed seed for reproducibility)
 (def rng-key (rng/fresh-key 42))
 (def noise-vals
-  (let [_ (rng/seed! rng-key)
-        noise-arr (rng/normal rng-key [n-obs])]
+  (let [noise-arr (rng/normal rng-key [n-obs])]
     (mx/materialize! noise-arr)
     (mx/->clj noise-arr)))
 

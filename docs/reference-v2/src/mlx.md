@@ -2347,20 +2347,22 @@ Vectorize a function over a batch dimension. Like JAX's `vmap`. Automatically ma
 ### `compile-fn`
 
 ```clojure
-(def fast-f (mx/compile-fn f))
-(def fast-f (mx/compile-fn f true))  ;; shapeless mode
+(def cf (mx/compile-fn f))
+(def cf (mx/compile-fn f true))  ;; shapeless? ignored
 ```
 
-Compile a function into a fused MLX computation graph for faster execution. The compiled function transparently recompiles if `compile-clear-cache!` has been called since compilation.
+**Identity pass-through** — returns `f` unchanged. GenMLX does not use MLX's graph-caching `compile` at the ClojureScript level because it severs the autograd tape when model bodies contain `eval!`, causing gradients to silently return zeros.
 
-Set `shapeless?` to `true` if input shapes may vary between calls.
+GenMLX's actual compilation strategy uses noise transforms and the expression compiler (Level 1). Metal kernel caching happens implicitly when compiled functions are called and their results are evaluated. See `compiled.cljs` and `compiled_gen.cljs` for the real compilation pipeline.
+
+The `shapeless?` parameter is accepted but ignored.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `f` | function | Function to compile |
-| `shapeless?` | boolean (optional) | Allow varying shapes (default: `false`) |
+| `f` | function | Function to return unchanged |
+| `shapeless?` | boolean (optional) | Ignored |
 
-**Returns:** compiled function (same interface as `f`)
+**Returns:** `f` (unchanged)
 
 ---
 

@@ -1065,8 +1065,6 @@
                                                    r))
                                                tests))
                 "inference_quality"    (do
-                                        ;; Fix PRNG seed for reproducible inference results
-                                        (rng/seed! (rng/fresh-key 42))
                                         (mapv (fn [spec]
                                                (let [algo (get spec "algorithm")
                                                      result

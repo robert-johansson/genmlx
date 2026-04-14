@@ -357,10 +357,8 @@
     (let [m (gen [] (trace :x (dist/gaussian 0 1)))
           csim (:compiled-simulate (:schema m))
           k (rng/fresh-key 42)
-          _ (rng/seed! k)
           r1 (csim k [])
           _ (mx/materialize! (:score r1) (get (:values r1) :x))
-          _ (rng/seed! k)
           r2 (csim k [])]
       (is (h/close? (mx/item (:score r1)) (mx/item (:score r2)) 1e-6)
           "DC-3: same key -> same score")
