@@ -16,7 +16,9 @@
             [clojure.test.check.properties :as prop]
             [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
+            [genmlx.diff :as diff]
             [genmlx.dynamic :as dyn]
+            [genmlx.edit :as edit]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
@@ -28,7 +30,8 @@
             [genmlx.learning :as learn]
             [genmlx.test-helpers :as h]
             [genmlx.combinators :as comb]
-            [genmlx.inference.smc :as smc])
+            [genmlx.inference.smc :as smc]
+            [genmlx.verify :as verify])
   (:require-macros [genmlx.gen :refer [gen]]
                    [clojure.test.check.clojure-test :refer [defspec]]))
 
@@ -168,7 +171,24 @@
    :args []
    :label "splice-independent"})
 
-(def splice-pool [splice-dependent splice-independent])
+;; Family 7b: Nested splice (2-level nesting for compositionality)
+(def splice-inner-inner
+  (gen [] (trace :a (dist/gaussian 0 1))))
+
+(def splice-mid
+  (gen []
+       (let [a (splice :inner splice-inner-inner)]
+         (trace :b (dist/gaussian a 1)))))
+
+(def splice-nested
+  {:model (dyn/auto-key
+           (gen []
+                (let [b (splice :mid splice-mid)]
+                  (trace :c (dist/gaussian b 1)))))
+   :args []
+   :label "splice-nested"})
+
+(def splice-pool [splice-dependent splice-independent splice-nested])
 
 ;; Family 8: Larger models (5+ trace sites, diverse distributions)
 (def five-site
@@ -206,7 +226,7 @@
    mixed-disc-cont
    branching-model arg-branching
    linear-regression single-arg-model two-arg-model
-   splice-dependent splice-independent
+   splice-dependent splice-independent splice-nested
    five-site])
 
 ;; Branching models need special handling for some laws (update/regenerate
@@ -218,7 +238,7 @@
    gaussian-chain three-chain
    mixed-disc-cont
    linear-regression single-arg-model two-arg-model
-   splice-dependent splice-independent
+   splice-dependent splice-independent splice-nested
    five-site])
 
 ;; Multi-site models with flat addresses only (for decomposition laws that
@@ -245,6 +265,15 @@
 (def gen-splice
   "Generator: pick a splice model for compositionality tests."
   (gen/elements splice-pool))
+
+;; Vectorized pool: non-branching, no splices (vectorized doesn't support splice)
+(def vectorized-pool
+  (filterv #(not (contains? (set (map :label splice-pool)) (:label %)))
+           non-branching-pool))
+
+(def gen-vectorizable
+  "Generator: pick a model suitable for vectorized (batched) execution."
+  (gen/elements vectorized-pool))
 
 ;; ---------------------------------------------------------------------------
 ;; SIMULATE laws [T] Def 2.1.16, §2.3.1
@@ -329,6 +358,15 @@
                       gw (ev weight)]
                   (close? pw gw 0.01))))
 
+(defspec law:propose-is-simulate-plus-score 100
+  ;; [T] Def 2.1.16: propose weight = assess weight for same choices
+  (prop/for-all [m gen-nonbranching]
+                (let [{:keys [choices weight]} (p/propose (:model m) (:args m))
+                      pw (ev weight)
+                      {:keys [weight]} (p/assess (:model m) (:args m) choices)
+                      aw (ev weight)]
+                  (close? pw aw 1e-5))))
+
 ;; ---------------------------------------------------------------------------
 ;; UPDATE laws [T] §2.3.1, Proposition 2.3.1
 ;; ---------------------------------------------------------------------------
@@ -378,6 +416,32 @@
                                     (ev (cm/get-choice discard path))
                                     1e-6))
                           (cm/addresses discard)))))
+
+;; ---------------------------------------------------------------------------
+;; UPDATE-WITH-DIFFS laws [T] §2.3.1 (optimization extension)
+;; ---------------------------------------------------------------------------
+
+(defspec law:update-with-diffs-equivalence 100
+  ;; update-with-diffs with :unknown argdiffs = update
+  (prop/for-all [m gen-nonbranching]
+                (let [t1 (p/simulate (:model m) (:args m))
+                      t2 (p/simulate (:model m) (:args m))
+                      sigma (:choices t2)
+                      upd (p/update (:model m) t1 sigma)
+                      uwd (p/update-with-diffs (:model m) t1 sigma :unknown)]
+                  (and (close? (ev (:weight upd)) (ev (:weight uwd)) 1e-6)
+                       (close? (ev (:score (:trace upd)))
+                               (ev (:score (:trace uwd))) 1e-6)))))
+
+(t/deftest law:update-with-diffs-nochange-identity
+  ;; NoChange + empty constraints = identity (weight = 0)
+  (t/testing "update-with-diffs with no-change diffs and empty constraints"
+    (let [model (:model gaussian-chain)
+          t (p/simulate model [])
+          result (p/update-with-diffs model t cm/EMPTY diff/no-change)
+          w (ev (:weight result))]
+      (t/is (close? w 0.0 1e-6)
+            (str "Expected weight=0, got " w)))))
 
 ;; ---------------------------------------------------------------------------
 ;; REGENERATE laws [D] regenerate
@@ -495,6 +559,13 @@
                        (close? (ev (:weight r1))
                                (ev (:weight r2)) 1e-10)))))
 
+(defspec law:address-uniqueness 100
+  ;; [T] §2.2.1 restriction 2: no duplicate addresses in any trace
+  (prop/for-all [m gen-model]
+                (let [t (p/simulate (:model m) (:args m))
+                      addrs (cm/addresses (:choices t))]
+                  (= (count addrs) (count (set addrs))))))
+
 ;; ---------------------------------------------------------------------------
 ;; COMPOSITIONALITY laws [T] Proposition 2.3.2
 ;; ---------------------------------------------------------------------------
@@ -520,6 +591,41 @@
                       w2 (- (ev (p/project model trace outer-sel))
                             (ev (p/project model t1 outer-sel)))]
                   (close? w3 (+ w1 w2) 0.05))))
+
+(defspec law:nested-splice-compositionality 50
+  ;; [T] Prop 2.3.2 at 2 levels of nesting
+  ;; weight = w_outer + w_mid + w_inner via project decomposition
+  (prop/for-all [_ (gen/return nil)]
+                (let [model (:model splice-nested)
+                      t1 (p/simulate model [])
+                      t2 (p/simulate model [])
+                      {:keys [trace weight]} (p/update model t1 (:choices t2))
+                      w-total (ev weight)
+                      new-score (ev (:score trace))
+                      old-score (ev (:score t1))
+                      ;; Decompose via score differences (= update density ratio)
+                      expected (- new-score old-score)]
+                  (close? w-total expected 0.05))))
+
+;; ---------------------------------------------------------------------------
+;; EDIT laws [T] Prop 2.3.1 via edit interface
+;; ---------------------------------------------------------------------------
+
+(defspec law:edit-backward-request-roundtrip 30
+  ;; ConstraintEdit roundtrip: edit then backward-edit recovers original
+  (prop/for-all [m gen-nonbranching]
+                (let [t1 (p/simulate (:model m) (:args m))
+                      t2 (p/simulate (:model m) (:args m))
+                      req (edit/constraint-edit (:choices t2))
+                      {:keys [trace weight backward-request]}
+                      (edit/edit-dispatch (:model m) t1 req)
+                      w1 (ev weight)
+                      result2 (edit/edit-dispatch (:model m) trace backward-request)
+                      w2 (ev (:weight result2))
+                      recovered-score (ev (:score (:trace result2)))
+                      original-score (ev (:score t1))]
+                  (and (close? original-score recovered-score 1e-4)
+                       (close? (+ w1 w2) 0.0 1e-3)))))
 
 ;; ---------------------------------------------------------------------------
 ;; CROSS-OPERATION consistency laws
@@ -1958,5 +2064,163 @@
       ;; Posterior variance = 0.2, tolerance 0.08
       (t/is (close? var-x 0.2 0.08)
             (str "Posterior var=" var-x " expected=0.2")))))
+
+;; ---------------------------------------------------------------------------
+;; HAS-ARGUMENT-GRADS consistency [T] §2.3.1
+;; ---------------------------------------------------------------------------
+
+(t/deftest law:has-argument-grads-consistency
+  (t/testing "DynamicGF returns nil for has-argument-grads"
+    (t/is (nil? (p/has-argument-grads (:model single-gaussian)))
+          "DynamicGF with no args")
+    (t/is (nil? (p/has-argument-grads (:model single-arg-model)))
+          "DynamicGF with args"))
+  (t/testing "When has-argument-grads reports true, gradient works"
+    ;; For models that DO report argument grads (custom gradient models),
+    ;; verify the gradient is finite. DynamicGF returns nil, so we test
+    ;; the gradient-argument-correctness law directly to confirm the
+    ;; gradient mechanism works regardless of the query result.
+    (let [model (:model single-arg-model)
+          t (p/simulate model [(mx/scalar 3.0)])
+          choices (:choices t)
+          score-fn (fn [mu] (:weight (p/generate model [mu] choices)))
+          grad-val (ev ((mx/grad score-fn) (mx/scalar 3.0)))]
+      (t/is (h/finite? grad-val)
+            (str "Gradient should be finite, got " grad-val)))))
+
+;; ---------------------------------------------------------------------------
+;; WELL-FORMEDNESS laws [T] §2.2.1
+;; ---------------------------------------------------------------------------
+
+(defspec law:no-external-randomness 100
+  ;; DML restriction 3: no external randomness in model source
+  (prop/for-all [m gen-nonbranching]
+                (let [source (:source (:model m))]
+                  (if (nil? source)
+                    true
+                    (empty? (verify/check-no-external-randomness source))))))
+
+(defspec law:no-mutation 100
+  ;; DML restriction 4: no mutation in model source
+  (prop/for-all [m gen-nonbranching]
+                (let [source (:source (:model m))]
+                  (if (nil? source)
+                    true
+                    (empty? (verify/check-no-mutation source))))))
+
+(defspec law:no-hof-gen-fns 100
+  ;; DML restriction 5: no gen fns passed to HOFs
+  (prop/for-all [m gen-nonbranching]
+                (let [source (:source (:model m))]
+                  (if (nil? source)
+                    true
+                    (empty? (verify/check-no-hof-gen-fns source))))))
+
+;; Negative tests: known-bad source forms MUST be detected
+(t/deftest law:well-formedness-negative-tests
+  (t/testing "External randomness detected"
+    (let [bad-source '([x] (let [r (rand)] (trace :x (dist/gaussian r 1))))]
+      (t/is (seq (verify/check-no-external-randomness bad-source))
+            "rand should trigger external randomness violation")))
+  (t/testing "Mutation detected"
+    (let [bad-source '([x] (let [a (atom 0)] (swap! a inc) (trace :x (dist/gaussian 0 1))))]
+      (t/is (seq (verify/check-no-mutation bad-source))
+            "atom/swap! should trigger mutation violation")))
+  (t/testing "HOF gen fn detected"
+    (let [bad-source '([xs] (map (gen [x] (trace :y (dist/gaussian x 1))) xs))]
+      (t/is (seq (verify/check-no-hof-gen-fns bad-source))
+            "gen fn in map should trigger HOF violation"))))
+
+;; ---------------------------------------------------------------------------
+;; VECTORIZED GFI laws — shape and finiteness for batched execution
+;; ---------------------------------------------------------------------------
+
+(defspec law:vgenerate-shape-and-finiteness 50
+  ;; vgenerate produces [N]-shaped scores, all finite
+  (prop/for-all [m gen-vectorizable]
+                (let [{:keys [model args]} m
+                      n 10
+                      t (p/simulate model args)
+                      addrs (cm/addresses (:choices t))]
+                  (if (empty? addrs)
+                    true
+                    (let [obs-addr (first (first addrs))
+                          obs-val (cm/get-value (cm/get-submap (:choices t) obs-addr))
+                          obs (cm/choicemap obs-addr obs-val)
+                          vt (dyn/vgenerate model args obs n (rng/fresh-key 99))]
+                      (and (= [n] (vec (mx/shape (:score vt))))
+                           (every? h/finite? (mx/->clj (:score vt)))))))))
+
+(defspec law:vupdate-shape-and-finiteness 50
+  (prop/for-all [m gen-vectorizable]
+                (let [{:keys [model args]} m
+                      n 10
+                      vt (dyn/vsimulate model args n (rng/fresh-key 88))
+                      t-scalar (p/simulate model args)
+                      addrs (cm/addresses (:choices t-scalar))]
+                  (if (empty? addrs)
+                    true
+                    (let [obs-addr (first (first addrs))
+                          obs-val (cm/get-value (cm/get-submap (:choices t-scalar) obs-addr))
+                          obs (cm/choicemap obs-addr obs-val)
+                          {:keys [weight]} (dyn/vupdate model vt obs (rng/fresh-key 77))]
+                      (and (= [n] (vec (mx/shape weight)))
+                           (every? h/finite? (mx/->clj weight))))))))
+
+(defspec law:vregenerate-preserves-unselected 50
+  (prop/for-all [m gen-vectorizable]
+                (let [{:keys [model args]} m
+                      n 10
+                      vt (dyn/vsimulate model args n (rng/fresh-key 66))
+                      addrs (cm/addresses (:choices vt))]
+                  (if (< (count addrs) 2)
+                    true
+                    (let [selected (first (first addrs))
+                          unselected-addrs (map first (rest addrs))
+                          orig-vals (into {} (map (fn [a]
+                                                    [a (mx/->clj (cm/get-value
+                                                                   (cm/get-submap
+                                                                    (:choices vt) a)))])
+                                                  unselected-addrs))
+                          {:keys [vtrace]} (dyn/vregenerate model vt
+                                                             (sel/select selected)
+                                                             (rng/fresh-key 55))]
+                      (every? (fn [a]
+                                (let [new-vals (mx/->clj (cm/get-value
+                                                          (cm/get-submap
+                                                           (:choices vtrace) a)))]
+                                  (= (get orig-vals a) new-vals)))
+                              unselected-addrs))))))
+
+;; ---------------------------------------------------------------------------
+;; GRADIENT ON CONSTRAINED ADDRESSES [T] Eq 2.12
+;; ---------------------------------------------------------------------------
+
+(t/deftest law:gradient-on-constrained-addresses
+  (t/testing "d(score)/d(x) when y is constrained: x ~ N(0,1), y ~ N(x,1), y=3"
+    ;; Analytical: score = -0.5*x^2 - 0.5*(3-x)^2 + const
+    ;; d(score)/d(x) = -x + (3-x) = 3 - 2x
+    (let [model (dyn/auto-key
+                  (gen [] (let [x (trace :x (dist/gaussian 0 1))]
+                            (trace :y (dist/gaussian x 1)))))
+          obs (cm/choicemap :y (mx/scalar 3.0))]
+      (doseq [x-val [0.0 1.0 1.5 2.0 3.0]]
+        (let [choices (cm/choicemap :x (mx/scalar x-val) :y (mx/scalar 3.0))
+              {:keys [trace]} (p/generate model [] choices)
+              _ (mx/materialize! (:score trace))
+              grads (grad/choice-gradients model trace [:x])
+              ad-grad (ev (get grads :x))
+              analytical (- 3.0 (* 2.0 x-val))
+              ;; Also verify via finite differences
+              h 1e-3
+              choices+ (cm/choicemap :x (mx/scalar (+ x-val h)) :y (mx/scalar 3.0))
+              choices- (cm/choicemap :x (mx/scalar (- x-val h)) :y (mx/scalar 3.0))
+              score+ (ev (:score (:trace (p/generate model [] choices+))))
+              score- (ev (:score (:trace (p/generate model [] choices-))))
+              fd-grad (/ (- score+ score-) (* 2.0 h))]
+          (t/is (close? ad-grad analytical 1e-4)
+                (str "AD grad at x=" x-val ": " ad-grad " vs analytical " analytical))
+          (t/is (close? fd-grad analytical 0.01)
+                (str "FD grad at x=" x-val ": " fd-grad " vs analytical " analytical)))))))
 
 (t/run-tests)

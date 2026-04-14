@@ -28,6 +28,8 @@
              genmlx.schemas (Malli structural schemas)"
   (:require [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
+            [genmlx.diff :as diff]
+            [genmlx.edit :as edit]
             [genmlx.selection :as sel]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
@@ -566,6 +568,50 @@
                (approx= w3 (+ w1 w2) 0.05)))}
 
    ;; ===================================================================
+   ;; EDIT laws [T] Prop 2.3.1 via edit interface
+   ;; ===================================================================
+
+   {:name :edit-backward-request-roundtrip
+    :from "[T] Prop 2.3.1 via edit"
+    :theorem "edit(P, t, ConstraintEdit(sigma)) -> {t', bwd}.
+              edit(P, t', bwd) recovers original score.
+              w1 + w2 = 0 (weight cancellation)."
+    :tags #{:edit :core}
+    :check (fn [{:keys [model args]}]
+             (let [t1 (p/simulate model args)
+                   t2 (p/simulate model args)
+                   req (edit/constraint-edit (:choices t2))
+                   {:keys [trace weight backward-request]}
+                   (edit/edit-dispatch model t1 req)
+                   w1 (ev weight)
+                   {:keys [trace weight]}
+                   (edit/edit-dispatch model trace backward-request)
+                   w2 (ev weight)
+                   recovered-score (ev (:score trace))
+                   original-score (ev (:score t1))]
+               (and (approx= original-score recovered-score 1e-4)
+                    (approx= (+ w1 w2) 0.0 1e-3))))}
+
+   ;; ===================================================================
+   ;; UPDATE-WITH-DIFFS laws [T] §2.3.1
+   ;; ===================================================================
+
+   {:name :update-with-diffs-equivalence
+    :from "[T] §2.3.1 UPDATE (optimization extension)"
+    :theorem "update-with-diffs(P, t, sigma, :unknown) produces
+              identical weight, score, and discard to update(P, t, sigma)."
+    :tags #{:update :core}
+    :check (fn [{:keys [model args]}]
+             (let [t1 (p/simulate model args)
+                   t2 (p/simulate model args)
+                   sigma (:choices t2)
+                   upd (p/update model t1 sigma)
+                   uwd (p/update-with-diffs model t1 sigma :unknown)]
+               (and (approx= (ev (:weight upd)) (ev (:weight uwd)) 1e-6)
+                    (approx= (ev (:score (:trace upd)))
+                             (ev (:score (:trace uwd))) 1e-6))))}
+
+   ;; ===================================================================
    ;; GRADIENT laws [T] Eq 2.12, §2.3.1
    ;; ===================================================================
 
@@ -889,6 +935,68 @@
                       (every? js/Number.isFinite
                               (mx/->clj (:score vt)))))))}
 
+   {:name :vgenerate-shape-and-finiteness
+    :from "GenMLX broadcast equivalence"
+    :theorem "vgenerate(P, x, sigma, N) produces [N]-shaped scores, all finite"
+    :tags #{:vectorized}
+    :check (fn [{:keys [model args]}]
+             (let [n 10
+                   t (p/simulate model args)
+                   addrs (all-leaf-addrs (:choices t))]
+               (if (empty? addrs)
+                 true
+                 (let [obs-addr (first (first addrs))
+                       obs-val (cm/get-value (cm/get-submap (:choices t) obs-addr))
+                       obs (cm/choicemap obs-addr obs-val)
+                       vt (dyn/vgenerate model args obs n (rng/fresh-key 99))]
+                   (and (= [n] (vec (mx/shape (:score vt))))
+                        (every? js/Number.isFinite (mx/->clj (:score vt))))))))}
+
+   {:name :vupdate-shape-and-finiteness
+    :from "GenMLX broadcast equivalence"
+    :theorem "vupdate(P, vt, sigma) produces [N]-shaped weights, all finite"
+    :tags #{:vectorized}
+    :check (fn [{:keys [model args]}]
+             (let [n 10
+                   vt (dyn/vsimulate model args n (rng/fresh-key 88))
+                   t-scalar (p/simulate model args)
+                   addrs (all-leaf-addrs (:choices t-scalar))]
+               (if (empty? addrs)
+                 true
+                 (let [obs-addr (first (first addrs))
+                       obs-val (cm/get-value (cm/get-submap (:choices t-scalar) obs-addr))
+                       obs (cm/choicemap obs-addr obs-val)
+                       {:keys [weight]} (dyn/vupdate model vt obs (rng/fresh-key 77))]
+                   (and (= [n] (vec (mx/shape weight)))
+                        (every? js/Number.isFinite (mx/->clj weight)))))))}
+
+   {:name :vregenerate-preserves-unselected
+    :from "GenMLX broadcast equivalence"
+    :theorem "vregenerate preserves [N]-shaped values at unselected addresses"
+    :tags #{:vectorized}
+    :check (fn [{:keys [model args]}]
+             (let [n 10
+                   vt (dyn/vsimulate model args n (rng/fresh-key 66))
+                   addrs (all-leaf-addrs (:choices vt))]
+               (if (< (count addrs) 2)
+                 true
+                 (let [selected (first (first addrs))
+                       unselected-addrs (map first (rest addrs))
+                       orig-vals (into {} (map (fn [a]
+                                                 [a (mx/->clj (cm/get-value
+                                                                (cm/get-submap
+                                                                 (:choices vt) a)))])
+                                               unselected-addrs))
+                       {:keys [vtrace]} (dyn/vregenerate model vt
+                                                          (sel/select selected)
+                                                          (rng/fresh-key 55))]
+                   (every? (fn [a]
+                             (let [new-vals (mx/->clj (cm/get-value
+                                                       (cm/get-submap
+                                                        (:choices vtrace) a)))]
+                               (= (get orig-vals a) new-vals)))
+                           unselected-addrs)))))}
+
    ;; ===================================================================
    ;; DENOTATIONAL SEMANTICS laws [T] §2.2.2, Figure 2-1
    ;; ===================================================================
@@ -1141,6 +1249,15 @@
                (if (nil? source)
                  true
                  (empty? (verify/check-no-hof-gen-fns source)))))}
+
+   {:name :address-uniqueness
+    :from "[T] §2.2.1 restriction 2"
+    :theorem "All leaf addresses in a trace are pairwise distinct"
+    :tags #{:core :well-formedness}
+    :check (fn [{:keys [model args]}]
+             (let [t (p/simulate model args)
+                   addrs (all-leaf-addrs (:choices t))]
+               (= (count addrs) (count (set addrs)))))}
 
    ;; ===================================================================
    ;; COMPILED PATH EQUIVALENCE laws [T] Ch 5
