@@ -262,6 +262,39 @@
                                (rng/uniform (rng/fresh-key) [n-burn])))
     compiled))
 
+(def ^:private ^:const fused-step-limit
+  "Maximum steps per fused compiled function. Beyond this, use block-based fusion.
+   Determined empirically: ~11K steps is OOM ceiling for D=3; 5K is safe."
+  5000)
+
+(defn- run-fused-burn-in
+  "Run burn-in using fused compiled functions with pre-generated noise.
+   If burn <= fused-step-limit, compiles entire burn-in as one function.
+   Otherwise, uses block-based fusion with blocks up to fused-step-limit."
+  [burn init-params n-params score-fn proposal-std key]
+  (if (<= burn fused-step-limit)
+    ;; Single fused function for entire burn-in
+    (let [fused (make-fused-burn-in burn score-fn proposal-std n-params)
+          {:keys [noise uniforms]} (pre-generate-chain-noise key burn n-params)
+          result (fused init-params noise uniforms)]
+      (mx/materialize! result)
+      result)
+    ;; Block-based fusion: split into blocks up to fused-step-limit
+    (let [block-size (min burn fused-step-limit)
+          n-blocks (js/Math.ceil (/ burn block-size))
+          actual-steps (* n-blocks block-size)
+          fused (make-fused-burn-in block-size score-fn proposal-std n-params)
+          {:keys [noise uniforms]} (pre-generate-chain-noise key actual-steps n-params)]
+      (loop [p init-params, b 0]
+        (if (>= b n-blocks) p
+          (let [offset (* b block-size)
+                block-noise (mx/slice noise offset (+ offset block-size))
+                block-uniforms (mx/slice uniforms offset (+ offset block-size))
+                p' (fused p block-noise block-uniforms)]
+            (mx/materialize! p')
+            (when (zero? (mod b 5)) (mx/clear-cache!))
+            (recur p' (inc b))))))))
+
 (defn- make-fused-collection
   "Compile a function that runs thin*n-samples MH steps and returns
    [n-samples, n-params] tensor of thinned samples.
@@ -499,7 +532,8 @@
    blocks of :block-size steps. Collection runs thin steps per sample.
 
    opts: {:samples N :burn B :thin T :addresses [addr...]
-          :proposal-std σ :compile? bool :callback fn :key prng-key
+          :proposal-std σ :compile? bool :fuse-burn-in? bool
+          :callback fn :key prng-key
           :device :cpu|:gpu :block-size K :block-size-collect K2}
    model: generative function
    args: model arguments
@@ -507,15 +541,19 @@
 
    :block-size controls burn-in chain length (default 50).
    :block-size-collect controls collection trajectory length when thin=1 (default 500).
+   :fuse-burn-in? when true, compiles entire burn-in into a single
+   Metal dispatch (or block-fused if burn > 5000 steps). Default false.
+   Fused burn-in has ~1-2s compilation overhead but faster execution —
+   use when running multiple chains with the same burn count.
    Collection uses compiled trajectories that return [K,D] tensors — all K samples
    from one Metal dispatch — for ~100x speedup over per-step eager execution.
 
    Returns vector of parameter samples (JS arrays via mx/->clj).
    Default device: :cpu (faster for scalar parameters)."
-  [{:keys [samples burn thin addresses proposal-std compile? callback key device
-           block-size block-size-collect]
-    :or {burn 0 thin 1 proposal-std 0.1 compile? true device :cpu
-         block-size 50 block-size-collect 25}}
+  [{:keys [samples burn thin addresses proposal-std compile? fuse-burn-in?
+           callback key device block-size block-size-collect]
+    :or {burn 0 thin 1 proposal-std 0.1 compile? true fuse-burn-in? false
+         device :cpu block-size 50 block-size-collect 25}}
    model args observations]
   (let [model (dyn/auto-key model)]
     (with-device device
@@ -526,18 +564,29 @@
              score-fn (if compile? (mx/compile-fn raw-score-fn) raw-score-fn)
              std (mx/scalar proposal-std)]
          (if compile?
-         ;; Loop-compiled path: compiled chains for burn-in + optional thin/trajectory
+         ;; Compiled path: fused or block-based burn-in + trajectory collection
          ;; Pass raw-score-fn to chain builders (they compile internally — avoid double compilation)
-           (let [burn-block (min (max burn 1) block-size)
-                 burn-chain (when (> burn 0)
+           (let [;; Burn-in: fused (one dispatch) or block-based
+                 [burn-key collect-key] (rng/split (rng/ensure-key key))
+                 init-after-burn
+                 (if (and fuse-burn-in? (> burn 0))
+                   (run-fused-burn-in burn init-params n-params raw-score-fn std burn-key)
+                   init-params)
+                 ;; Collection chains (same as before)
+                 burn-block (min (max burn 1) block-size)
+                 burn-chain (when (and (not fuse-burn-in?) (> burn 0))
                               (make-compiled-chain burn-block raw-score-fn std n-params))
                  thin-chain (when (> thin 1)
                               (make-compiled-chain thin raw-score-fn std n-params))
                  collect-chain (when (= thin 1)
-                                 (make-compiled-trajectory block-size-collect raw-score-fn std n-params))]
+                                 (make-compiled-trajectory block-size-collect raw-score-fn std n-params))
+                 ;; Adjust burn for collection phase: 0 if already fused
+                 effective-burn (if fuse-burn-in? 0 burn)]
              (run-loop-compiled-mh
-              {:samples samples :burn burn :thin thin :callback callback :key key}
-              init-params n-params score-fn std
+              {:samples samples :burn effective-burn :thin thin
+               :callback callback :key collect-key}
+              (if fuse-burn-in? init-after-burn init-params)
+              n-params score-fn std
               burn-chain burn-block thin-chain
               {:collect-chain collect-chain :block-size-collect block-size-collect}))
          ;; Fallback: per-step eager path

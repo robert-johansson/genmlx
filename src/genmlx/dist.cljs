@@ -1506,26 +1506,42 @@
       samples)))
 
 (defmethod dc/dist-log-prob :iid [d vals]
-  (let [{:keys [base-dist]} (:params d)
+  (let [{:keys [base-dist t]} (:params d)
         vals (mx/ensure-array vals)
-        ;; Delegate to base dist log-prob — it handles element-wise.
-        ;; For gaussian: vals [T] with params scalar → [T] log-probs.
-        ;; For gaussian: vals [N,T] with params [N,T] → [N,T] log-probs.
+        val-shape (mx/shape vals)
+        ndim (count val-shape)
+        ;; Compute element-wise log-probs via base dist.
+        ;; Broadcasting handles all shape combinations:
+        ;;   vals [T], params scalar → lps [T]
+        ;;   vals [T], params [T]   → lps [T]
+        ;;   vals [T], params [N,T] → lps [N,T] (broadcast [T] with [N,T])
+        ;;   vals [N,T], params scalar → lps [N,T]
+        ;;   vals [N,T], params [N,T] → lps [N,T]
         element-lps (dc/dist-log-prob base-dist vals)]
-    ;; Sum over the last axis (T dimension).
+    ;; Sum over the T dimension (last axis) to get per-particle log-prob.
     (mx/sum element-lps -1)))
 
 (defmethod dc/dist-sample-n* :iid [d key n]
   (let [{:keys [base-dist t]} (:params d)
         key (rng/ensure-key key)
-        ;; Probe a single sample to check if base params are already batched
+        ;; Probe a single base sample to detect param shapes
         [k1 k2] (rng/split key)
         probe (dc/dist-sample base-dist k1)
-        probe-shape (mx/shape probe)]
-    (if (seq probe-shape)
-      ;; Base params are batched ([N]-shaped) — sample already returns [N, T]
+        probe-shape (mx/shape probe)
+        probe-ndim (count probe-shape)]
+    (cond
+      ;; Base sample returns [N, T] — params already fully batched.
+      ;; A single sample IS the result. Don't stack.
+      (>= probe-ndim 2)
+      probe
+
+      ;; Base sample returns [N] — params have batch dim but not T.
+      ;; Use sample method which stacks T values and transposes to [N, T].
+      (= probe-ndim 1)
       (dc/dist-sample* d k2)
-      ;; Base params are scalar — sample N*T flat, reshape to [N, T]
+
+      ;; Base sample returns scalar — sample N*T flat, reshape to [N, T].
+      :else
       (let [flat (dc/dist-sample-n base-dist k2 (* n t))]
         (mx/reshape flat [n t])))))
 
