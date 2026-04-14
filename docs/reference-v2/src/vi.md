@@ -78,7 +78,7 @@ Run ADVI on a scalar log-density function. The guide is a diagonal Gaussian: eac
 (vi/compiled-vi opts log-density init-params)
 ```
 
-Same interface and return type as `vi`, but uses `mx/compile-fn` on the gradient and ELBO functions for faster iteration. The compiled graph avoids repeated MLX tracing overhead. Best for pure tensor log-density functions.
+Same interface and return type as `vi`, but wraps the gradient and ELBO functions with `mx/compile-fn`. Note: `compile-fn` is currently an identity pass-through (see [mlx docs](mlx.md#compile-fn)), so this has the same performance as `vi`. The separation exists for API symmetry and future compilation support.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -104,7 +104,7 @@ Same interface and return type as `vi`, but uses `mx/compile-fn` on the gradient
 (vi/compiled-vi-from-model opts model args observations addresses)
 ```
 
-Convenience wrapper that runs compiled VI on a generative model. Internally delegates to `vi-from-model` because `mx/compile-fn` cannot compile GFI score functions (which use `volatile!` in the handler). Provided for API symmetry.
+Convenience wrapper that runs compiled VI on a generative model. Internally delegates to `vi-from-model` because GFI score functions use `volatile!` in the handler, which is incompatible with graph compilation. Provided for API symmetry.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -215,7 +215,7 @@ Fully programmable variational inference. You provide the model density, guide d
 (vi/compiled-programmable-vi opts log-p-fn log-q-fn sample-fn init-params)
 ```
 
-Same as `programmable-vi` but compiles the gradient and loss functions with `mx/compile-fn`. Sampling is separated from gradient computation to enable compilation.
+Same as `programmable-vi` but wraps the gradient and loss functions with `mx/compile-fn` (currently an identity pass-through — see [mlx docs](mlx.md#compile-fn)). Same performance as `programmable-vi`; exists for API symmetry.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
