@@ -91,7 +91,7 @@
   (let [r (conjugate/gp-update posterior obs-value MASK-ON)]
     {:shape (:shape (:posterior r)) :rate (:rate (:posterior r)) :ll (:ll r)}))
 
-(defn ge-update-step
+(defn- ge-update-step
   "Gamma-Exponential conjugate update.
    posterior: {:shape :rate}
    obs-value: positive real (as MLX scalar)
@@ -172,7 +172,7 @@
 ;; Per-family configs
 ;; ---------------------------------------------------------------------------
 
-(defn make-auto-nn-handlers
+(defn- make-auto-nn-handlers
   "Build address-based handlers for a Normal-Normal conjugate pair."
   [prior-addr obs-addrs]
   (make-conjugate-handlers prior-addr obs-addrs
@@ -184,7 +184,7 @@
                                    {:keys [mean var ll]} (nn-update-step posterior obs-value obs-var)]
                                {:posterior {:mean mean :var var} :ll ll}))))
 
-(defn make-auto-nn-iid-handlers
+(defn- make-auto-nn-iid-handlers
   "Build address-based handlers for a Normal prior + iid-gaussian obs pair.
    Processes [T] observations at once via nn-iid-update-step."
   [prior-addr obs-addrs]
@@ -197,7 +197,7 @@
                                    {:keys [mean var ll]} (nn-iid-update-step posterior obs-value obs-var)]
                                {:posterior {:mean mean :var var} :ll ll}))))
 
-(defn make-auto-bb-handlers
+(defn- make-auto-bb-handlers
   "Build address-based handlers for a Beta-Bernoulli conjugate pair."
   [prior-addr obs-addrs]
   (make-conjugate-handlers prior-addr obs-addrs
@@ -208,7 +208,7 @@
                              (let [{:keys [alpha beta ll]} (bb-update-step posterior obs-value)]
                                {:posterior {:alpha alpha :beta beta} :ll ll}))))
 
-(defn make-auto-gp-handlers
+(defn- make-auto-gp-handlers
   "Build address-based handlers for a Gamma-Poisson conjugate pair."
   [prior-addr obs-addrs]
   (make-conjugate-handlers prior-addr obs-addrs
@@ -219,7 +219,7 @@
                              (let [{:keys [shape rate ll]} (gp-update-step posterior obs-value)]
                                {:posterior {:shape shape :rate rate} :ll ll}))))
 
-(defn make-auto-ge-handlers
+(defn- make-auto-ge-handlers
   "Build address-based handlers for a Gamma-Exponential conjugate pair."
   [prior-addr obs-addrs]
   (make-conjugate-handlers prior-addr obs-addrs
@@ -467,7 +467,7 @@
             S1 (mx/subtract cov-matrix (mx/matmul cov-matrix M-inv-S0))]
         {:mean-vec m1 :cov-matrix S1 :ll ll}))))
 
-(defn make-auto-mvn-handlers
+(defn- make-auto-mvn-handlers
   "Build address-based handlers for a MVN-Normal conjugate pair."
   [prior-addr obs-addrs]
   (let [prior-handler
@@ -587,7 +587,7 @@
 
 ;; Per-family regenerate handler factories
 
-(defn make-regenerate-nn-handlers
+(defn- make-regenerate-nn-handlers
   "Build regenerate-specific handlers for Normal-Normal."
   [prior-addr obs-addrs]
   (make-regenerate-conjugate-handlers prior-addr obs-addrs
@@ -599,7 +599,7 @@
                                               {:keys [mean var ll]} (nn-update-step posterior obs-value obs-var)]
                                           {:posterior {:mean mean :var var} :ll ll}))))
 
-(defn make-regenerate-nn-iid-handlers
+(defn- make-regenerate-nn-iid-handlers
   "Build regenerate-specific handlers for Normal prior + iid-gaussian obs."
   [prior-addr obs-addrs]
   (make-regenerate-conjugate-handlers prior-addr obs-addrs
@@ -611,7 +611,7 @@
                                               {:keys [mean var ll]} (nn-iid-update-step posterior obs-value obs-var)]
                                           {:posterior {:mean mean :var var} :ll ll}))))
 
-(defn make-regenerate-bb-handlers
+(defn- make-regenerate-bb-handlers
   "Build regenerate-specific handlers for Beta-Bernoulli."
   [prior-addr obs-addrs]
   (make-regenerate-conjugate-handlers prior-addr obs-addrs
@@ -622,7 +622,7 @@
                                         (let [{:keys [alpha beta ll]} (bb-update-step posterior obs-value)]
                                           {:posterior {:alpha alpha :beta beta} :ll ll}))))
 
-(defn make-regenerate-gp-handlers
+(defn- make-regenerate-gp-handlers
   "Build regenerate-specific handlers for Gamma-Poisson."
   [prior-addr obs-addrs]
   (make-regenerate-conjugate-handlers prior-addr obs-addrs
@@ -633,7 +633,7 @@
                                         (let [{:keys [shape rate ll]} (gp-update-step posterior obs-value)]
                                           {:posterior {:shape shape :rate rate} :ll ll}))))
 
-(defn make-regenerate-ge-handlers
+(defn- make-regenerate-ge-handlers
   "Build regenerate-specific handlers for Gamma-Exponential."
   [prior-addr obs-addrs]
   (make-regenerate-conjugate-handlers prior-addr obs-addrs
@@ -644,7 +644,7 @@
                                         (let [{:keys [shape rate ll]} (ge-update-step posterior obs-value)]
                                           {:posterior {:shape shape :rate rate} :ll ll}))))
 
-(defn make-regenerate-mvn-handlers
+(defn- make-regenerate-mvn-handlers
   "Build regenerate-specific handlers for MVN-Normal."
   [prior-addr obs-addrs]
   (let [prior-handler
@@ -706,12 +706,12 @@
 
 ;; Regenerate-specific Kalman handlers
 
-(defn make-regenerate-kalman-handlers
+(defn- make-regenerate-kalman-handlers
   "Build regenerate-specific Kalman handlers (regenerate mode)."
   [chain]
   (make-kalman-handlers-core chain :regenerate))
 
-(defn build-regenerate-kalman-handlers
+(defn- build-regenerate-kalman-handlers
   "Build regenerate-specific Kalman handlers for all chains."
   [chains]
   (reduce

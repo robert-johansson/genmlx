@@ -1984,6 +1984,9 @@
   p/IUpdate
   (update [this trace constraints]
     (let [old-choices (:choices trace)
+          _ (when-not (cm/has-value? (cm/get-submap old-choices :component-idx))
+              (throw (ex-info "Mix combinator requires :component-idx in choices"
+                              {:operation :update})))
           old-idx (int (mx/item (cm/get-choice old-choices [:component-idx])))
           args (:args trace)
           log-w ((:log-weights-fn this) args)
@@ -2055,6 +2058,9 @@
   p/IRegenerate
   (regenerate [this trace selection]
     (let [old-choices (:choices trace)
+          _ (when-not (cm/has-value? (cm/get-submap old-choices :component-idx))
+              (throw (ex-info "Mix combinator requires :component-idx in choices"
+                              {:operation :regenerate})))
           old-idx (int (mx/item (cm/get-choice old-choices [:component-idx])))
           args (:args trace)
           log-w ((:log-weights-fn this) args)
@@ -2378,6 +2384,9 @@
   p/IProject
   (project [this trace selection]
     (let [old-choices (:choices trace)
+          _ (when-not (cm/has-value? (cm/get-submap old-choices :component-idx))
+              (throw (ex-info "Mix combinator requires :component-idx in choices"
+                              {:operation :project})))
           old-idx (int (mx/item (cm/get-choice old-choices [:component-idx])))
           args (:args trace)
           log-w ((:log-weights-fn this) args)
@@ -2565,6 +2574,9 @@
 (extend-type MixCombinator
   p/IAssess
   (assess [this args choices]
+    (when-not (cm/has-value? (cm/get-submap choices :component-idx))
+      (throw (ex-info "Mix combinator requires :component-idx in choices"
+                      {:operation :assess})))
     (let [log-w ((:log-weights-fn this) args)
           idx-val (cm/get-choice choices [:component-idx])
           idx (int (mx/item idx-val))

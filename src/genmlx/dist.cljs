@@ -93,6 +93,26 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Parameter validation helpers
+;;
+;; These validators only check JS number parameters. MLX array params
+;; intentionally bypass all validation — the (number? v) guard is deliberate.
+;;
+;; Why: During vectorized/batched inference, distribution parameters are
+;; [N]-shaped MLX arrays. Validating them would require mx/eval! to extract
+;; scalar values, which would:
+;;   (a) force GPU evaluation, breaking the lazy computation graph,
+;;   (b) fail outright for [N]-shaped arrays (no single scalar to check),
+;;   (c) add overhead in the inference hot path.
+;;
+;; The Rust NAPI boundary (Either<&MxArray, f64>) handles type coercion
+;; transparently — MLX ops accept both array and number arguments without
+;; conversion on the CLJS side.
+;;
+;; Trade-off: users passing scalar MLX arrays with invalid values (e.g.,
+;; mx/scalar -1 for a scale parameter) will get NaN or incorrect results
+;; silently. This is acceptable because the primary use of MLX array params
+;; is in compiled/vectorized paths where parameters are computed values,
+;; not user literals.
 ;; ---------------------------------------------------------------------------
 
 (defn- check-positive [dist-name param-name v]
@@ -158,6 +178,9 @@
   (sample [key]
           (mx/add lo (mx/multiply (mx/subtract hi lo) (rng/uniform key []))))
   (log-prob [v]
+            ;; Boundary: log(hi - lo) → -Inf when hi ≈ lo (degenerate interval).
+            ;; Guarded by check-less-than for JS number params; MLX array params
+            ;; skip validation (see validation helpers comment above).
             (let [in-bounds (mx/multiply (mx/less-equal lo v) (mx/less-equal v hi))
                   log-density (mx/negative (mx/log (mx/subtract hi lo)))]
               (mx/where in-bounds log-density NEG-INF)))
@@ -187,7 +210,10 @@
           (let [u (rng/uniform key [])]
             (mx/where (mx/less u p) ONE ZERO)))
   (log-prob [v]
-            ;; xlogy pattern: 0 * log(0) = 0, not NaN (IEEE 754: 0 * -Inf = NaN)
+            ;; xlogy pattern: 0 * log(0) = 0, not NaN (IEEE 754: 0 * -Inf = NaN).
+            ;; Boundary: log(p) → -Inf when p=0, log(1-p) → -Inf when p=1.
+            ;; This is mathematically correct: P(x=1|p=0) = 0, log(0) = -Inf.
+            ;; The mx/where guards ensure 0 * -Inf = 0, not NaN.
             (let [log-p (mx/log p)
                   log-1-p (mx/log (mx/subtract ONE p))]
               (mx/add (mx/where (mx/equal v ZERO) ZERO (mx/multiply v log-p))
@@ -239,6 +265,9 @@
                   (let [[k' _] (rng/split k2)]
                     (recur k')))))))
   (log-prob [v]
+            ;; Boundary: log(v) → -Inf at v=0, log(1-v) → -Inf at v=1.
+            ;; Mathematically correct for the beta distribution — the density
+            ;; is 0 at the boundaries when alpha > 1 or beta > 1 respectively.
             (let [log-beta-val (mx/subtract (mx/add (mx/lgamma alpha)
                                                     (mx/lgamma beta-param))
                                             (mx/lgamma (mx/add alpha beta-param)))]
@@ -540,6 +569,9 @@
   (sample [key]
           (laplace-icdf loc scale (mx/subtract (rng/uniform key []) HALF)))
   (log-prob [v]
+            ;; Boundary: division by scale produces Inf when scale=0.
+            ;; Guarded by check-positive for JS number params; MLX array params
+            ;; skip validation (see validation helpers comment above).
             (mx/subtract
              (mx/negative (mx/log (mx/multiply TWO scale)))
              (mx/divide (mx/abs (mx/subtract v loc)) scale)))
@@ -577,6 +609,9 @@
                 t (* z (js/Math.sqrt (/ df-val chi2)))]
             (mx/add loc (mx/multiply scale (mx/scalar t)))))
   (log-prob [v]
+            ;; Potential overflow in (1 + z^2/df)^(-(df+1)/2) for extreme z.
+            ;; Unlikely in practice: float32 range covers z up to ~1.8e19 before
+            ;; z^2 overflows, and the log transform keeps intermediate values finite.
             (let [z (mx/divide (mx/subtract v loc) scale)
                   half-df (mx/multiply HALF df)
                   half-df1 (mx/multiply HALF (mx/add df ONE))
@@ -951,7 +986,10 @@
                   phi-b (mx/multiply HALF
                                      (mx/add ONE
                                              (mx/erf (mx/divide b SQRT-TWO))))
-                  log-norm (mx/log (mx/subtract phi-b phi-a))
+                  ;; Clamp to avoid log(0) = -Inf when bounds are very close
+                  ;; (phi-b ≈ phi-a → difference ≈ 0)
+                  log-norm (mx/log (mx/maximum (mx/subtract phi-b phi-a)
+                                               (mx/array 1e-38)))
           ;; Bounds check
                   in-bounds (mx/multiply (mx/greater-equal v lo) (mx/less-equal v hi))]
               (mx/where in-bounds (mx/subtract log-pdf log-norm) NEG-INF)))

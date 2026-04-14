@@ -141,7 +141,7 @@
                     :retval {:final-state final-state :states states}
                     :score total-score})))
 
-(defn compiled-unfold-generate
+(defn- compiled-unfold-generate
   "Run a compiled unfold with observations and return {:trace Trace :weight scalar}.
    step-fn:    pure MLX step function with obs (see make-compiled-unfold-generate)
    n-steps:    number of timesteps
@@ -181,7 +181,7 @@
 ;; Convenience: compile from a step specification
 ;; ---------------------------------------------------------------------------
 
-(defn make-gaussian-step
+(defn- make-gaussian-step
   "Build a step-fn for a Gaussian transition model.
    transition-fn: (fn [state] -> [mean, std]) — pure MLX ops.
    Returns a step-fn suitable for compiled unfold.
@@ -746,7 +746,7 @@
 ;; Compiled simulate: schema → noise-transform pure function → mx/compile-fn
 ;; ---------------------------------------------------------------------------
 
-(defn build-site-step
+(defn- build-site-step
   "Build the reduce step function for one trace site using noise transforms.
    Noise is pre-generated OUTSIDE mx/compile-fn and passed in via noise-array.
    Returns (fn [{:keys [values score]} site-idx noise-array args-vec] -> state)
