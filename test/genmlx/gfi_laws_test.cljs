@@ -613,6 +613,7 @@
 
 (defspec law:edit-backward-request-roundtrip 30
   ;; ConstraintEdit roundtrip: edit then backward-edit recovers original
+  ;; Verify BOTH score AND choice values recover (skeptic: score-only is insufficient)
   (prop/for-all [m gen-nonbranching]
                 (let [t1 (p/simulate (:model m) (:args m))
                       t2 (p/simulate (:model m) (:args m))
@@ -623,9 +624,19 @@
                       result2 (edit/edit-dispatch (:model m) trace backward-request)
                       w2 (ev (:weight result2))
                       recovered-score (ev (:score (:trace result2)))
-                      original-score (ev (:score t1))]
+                      original-score (ev (:score t1))
+                      ;; Also verify choice values recover at every address
+                      orig-addrs (cm/addresses (:choices t1))
+                      choices-match (every?
+                                     (fn [path]
+                                       (close? (ev (cm/get-choice (:choices t1) path))
+                                               (ev (cm/get-choice
+                                                    (:choices (:trace result2)) path))
+                                               1e-6))
+                                     orig-addrs)]
                   (and (close? original-score recovered-score 1e-4)
-                       (close? (+ w1 w2) 0.0 1e-3)))))
+                       (close? (+ w1 w2) 0.0 1e-3)
+                       choices-match))))
 
 ;; ---------------------------------------------------------------------------
 ;; CROSS-OPERATION consistency laws
@@ -2075,18 +2086,22 @@
           "DynamicGF with no args")
     (t/is (nil? (p/has-argument-grads (:model single-arg-model)))
           "DynamicGF with args"))
-  (t/testing "When has-argument-grads reports true, gradient works"
-    ;; For models that DO report argument grads (custom gradient models),
-    ;; verify the gradient is finite. DynamicGF returns nil, so we test
-    ;; the gradient-argument-correctness law directly to confirm the
-    ;; gradient mechanism works regardless of the query result.
+  (t/testing "Gradient is correct (not just finite) for single-arg model"
+    ;; x ~ N(mu, 1): d(score)/d(mu) = x - mu (analytical)
+    ;; At mu=3, with known x, gradient should match analytical value
     (let [model (:model single-arg-model)
-          t (p/simulate model [(mx/scalar 3.0)])
+          mu-val 3.0
+          t (p/simulate model [(mx/scalar mu-val)])
           choices (:choices t)
+          x-val (ev (cm/get-value (cm/get-submap choices :x)))
           score-fn (fn [mu] (:weight (p/generate model [mu] choices)))
-          grad-val (ev ((mx/grad score-fn) (mx/scalar 3.0)))]
+          grad-val (ev ((mx/grad score-fn) (mx/scalar mu-val)))
+          ;; Analytical: d/d(mu) log N(x; mu, 1) = x - mu
+          analytical (- x-val mu-val)]
       (t/is (h/finite? grad-val)
-            (str "Gradient should be finite, got " grad-val)))))
+            (str "Gradient should be finite, got " grad-val))
+      (t/is (close? grad-val analytical 1e-4)
+            (str "Gradient=" grad-val " vs analytical=" analytical)))))
 
 ;; ---------------------------------------------------------------------------
 ;; WELL-FORMEDNESS laws [T] §2.2.1

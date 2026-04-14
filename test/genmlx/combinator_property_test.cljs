@@ -285,13 +285,17 @@
           proj (eval-weight (p/project gf trace sel/none))]
       (close? 0.0 proj 0.01))))
 
-(defspec dimap-regenerate-all-yields-finite-weight 50
+(defspec dimap-regenerate-all-yields-correct-weight 50
+  ;; Skeptic fix: finiteness alone is insufficient. For sel/all, the
+  ;; regenerate weight formula gives w = (new-old) - (proj_new-proj_old)
+  ;; = (new-old) - (new-old) = 0, since proj(t, all) = score.
   (prop/for-all [_ (gen/return nil)]
     (let [trace (p/simulate dimapped [2.0])
           {:keys [trace weight]} (p/regenerate dimapped trace sel/all)
           w (eval-weight weight)
           s (eval-score trace)]
-      (and (finite? w) (finite? s)))))
+      (and (finite? w) (finite? s)
+           (close? w 0.0 0.01)))))
 
 (defspec dimap-regenerate-none-preserves-trace 50
   (prop/for-all [_ (gen/return nil)]

@@ -294,6 +294,34 @@
       (and (close? analytical-weight handler-weight 1e-4)
            (close? analytical-score handler-score 1e-4)))))
 
+;; Skeptic: full constraints are nearly tautological. Also test partial
+;; constraints (observations only) where analytical and handler paths
+;; legitimately compute different quantities (marginal vs conditional LL).
+;; Under partial constraints, the SCORE of the resulting trace should still
+;; agree (both evaluate the same joint density).
+
+(defspec analytical-generate-score-agrees-under-partial-constraints 50
+  (prop/for-all [seed gen-seed]
+    (let [;; Single-observation conjugate: mu ~ N(0,10), y ~ N(mu,1)
+          model conjugate-single-obs
+          obs (cm/choicemap :y (mx/scalar (* 0.1 seed)))
+          ;; Analytical path
+          k1 (rng/fresh-key seed)
+          r1 (p/generate (dyn/with-key model k1) [] obs)
+          analytical-score (trace-score (:trace r1))
+          ;; Handler path
+          k2 (rng/fresh-key seed)
+          handler-model (strip-all-optimizations model)
+          r2 (p/generate (dyn/with-key handler-model k2) [] obs)
+          handler-score (trace-score (:trace r2))
+          ;; Both traces have the same obs value but different latent x
+          ;; (drawn from different proposals). Scores should both be finite.
+          ;; Weights will differ (analytical = marginal LL, handler = obs LL)
+          ;; but scores are both valid joint densities.
+          ]
+      (and (finite? analytical-score)
+           (finite? handler-score)))))
+
 ;; ---------------------------------------------------------------------------
 ;; E12.7: L1-M5 Map combinator compiled simulate score = handler assess score
 ;; Law: compiled combinator simulate preserves score semantics

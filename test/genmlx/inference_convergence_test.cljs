@@ -149,7 +149,9 @@
 
 ;; Shared tolerance: 0.3 accommodates Monte Carlo noise at ~500 effective samples
 (def ^:private mean-tol 0.3)
-(def ^:private log-ml-tol 0.3)
+;; Skeptic: 0.3 is too loose for 1000 IS particles on a 2D model.
+;; SE of log-ML estimate is typically < 0.05 for this model. Use 0.15.
+(def ^:private log-ml-tol 0.15)
 
 (defn- extract-x
   "Extract the scalar x-value from a conjugate model trace."
