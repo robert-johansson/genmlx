@@ -1,10 +1,24 @@
 (ns genmlx.mlx
-  "Thin Layer 0 wrapper over mlx-node (@mlx-node/core).
-   Most ops are direct references to Rust module-level exports (genmlx.rs).
-   Only ClojureScript-specific logic lives here: array construction from
-   nested vectors, ->clj deserialization, autograd currying, memory management.
+  "The membrane between pure ClojureScript and MLX's GPU compute.
 
-   All operations are lazy by default -- call (eval!) to materialize.")
+   GenMLX has a three-layer purity architecture:
+
+     Layer A: Pure ClojureScript — GFI, handlers, inference (values)
+     Layer B: Pure MLX Graphs    — lazy computation descriptions (also values!)
+     Layer C: GPU Execution      — eval! dispatches the graph to Metal (side effect)
+
+   This namespace is the membrane between Layers A and B. MLX operations build
+   lazy computation graphs — (mx/add a b) returns a graph node, not a computed
+   result. No GPU work occurs until eval! is called. This means most of this
+   namespace is purely functional: graph construction is value manipulation.
+
+   The only effectful operations are in the 'Effectful Operations' section:
+   eval!, materialize!, item, ->clj, realize, async-eval!, training-step!.
+   Everything else builds lazy graph nodes or reads metadata.
+
+   Most ops are direct references to Rust NAPI exports (genmlx.rs).
+   Rust's Either<&MxArray, f64> handles both array and JS number inputs,
+   so no type coercion is needed on the ClojureScript side.")
 
 ;; =========================================================================
 ;; Module loading
@@ -16,6 +30,12 @@
 ;; Forward declarations for functions referenced before definition.
 (declare scalar array shape array? astype)
 
+;; Scope tracking atoms — defined here because functional combinators
+;; (grad, value-and-grad) reference grad-depth before the Memory
+;; Management section where they logically belong.
+(def ^:private tidy-depth (atom 0))
+(def ^:private grad-depth (atom 0))
+
 ;; Backward-compat aliases (some files reference mx/core, mx/nn-mod, etc.)
 (def core c)
 (def nn-mod nil)
@@ -25,13 +45,21 @@
 
 ;; =========================================================================
 ;; Dtypes
+;;
+;; IMPORTANT: MLX on Apple Silicon has no float64, int64, or bool dtypes.
+;; The aliases below silently map to lower-precision types:
+;;   float64 → float32  (loses precision above ~7 decimal digits)
+;;   int64   → int32    (max value 2^31-1 instead of 2^63-1)
+;;   bool    → int32    (0/1 representation)
+;; Code using mx/float64 will get float32 arrays with NO runtime warning.
+;; This matches MLX's hardware constraints — Apple GPUs operate in float32.
 ;; =========================================================================
 
 (def float32 (.-Float32 (.-DType c)))
-(def float64 (.-Float32 (.-DType c)))  ;; MLX has no float64; map to float32
+(def float64 (.-Float32 (.-DType c)))  ;; SILENT ALIAS: MLX has no float64
 (def int32   (.-Int32   (.-DType c)))
-(def int64   (.-Int32   (.-DType c)))  ;; MLX has no int64; map to int32
-(def bool-dt (.-Int32   (.-DType c)))  ;; MLX has no bool; map to int32
+(def int64   (.-Int32   (.-DType c)))  ;; SILENT ALIAS: MLX has no int64
+(def bool-dt (.-Int32   (.-DType c)))  ;; SILENT ALIAS: MLX has no bool
 
 ;; =========================================================================
 ;; Internal helpers
@@ -80,10 +108,14 @@
             (range n)))))
 
 ;; =========================================================================
-;; Unary ops -- direct references to Rust module-level exports.
-;; No wrapper functions. No ensure-mx. Rust Either<&MxArray, f64> handles
-;; both MxArray and JS number inputs.
+;; PURE GRAPH OPERATIONS (Layer B)
+;;
+;; Everything below until the "Effectful Operations" section builds lazy
+;; MLX computation graph nodes. No GPU dispatch, no side effects.
+;; (mx/add a b) returns a graph node describing "a + b" — a value.
 ;; =========================================================================
+
+;; --- Unary ops (direct Rust NAPI references) ---
 
 (def exp        (.-exp c))
 (def expm1      (.-expm1 c))
@@ -116,10 +148,7 @@
 (def isnan      (.-isnan c))
 (def isinf      (.-isinf c))
 
-;; =========================================================================
-;; Binary ops -- direct references (non-variadic).
-;; Rust Either handles number-or-array for both arguments.
-;; =========================================================================
+;; --- Binary ops (direct Rust NAPI references, non-variadic) ---
 
 (def logaddexp    (.-logaddexp c))
 (def divide       (.-div c))
@@ -148,9 +177,7 @@
   ([a b] (mul* a b))
   ([a b & more] (reduce mul* (mul* a b) more)))
 
-;; =========================================================================
-;; Comparison / selection -- direct references.
-;; =========================================================================
+;; --- Comparison / selection ---
 
 (def equal         (.-equal c))
 (def not-equal     (.-notEqual c))
@@ -172,13 +199,7 @@
 (defn and* [a b] (multiply a b))
 (defn or*  [a b] (maximum a b))
 
-(def nan-to-num (.-nanToNum c))
-(def stop-gradient (.-stopGradient c))
-
-;; =========================================================================
-;; Reductions -- thin wrappers for clj->js axes conversion.
-;; Rust accepts number[] for axes (no Int32Array needed).
-;; =========================================================================
+;; --- Reductions (thin wrappers for clj->js axes conversion) ---
 
 (def ^:private sum*       (.-sum c))
 (def ^:private prod*      (.-prod c))
@@ -259,10 +280,7 @@
   ([a] (logcumsumexp* a))
   ([a axis] (logcumsumexp* a axis)))
 
-;; =========================================================================
-;; Shape manipulation -- thin wrappers for clj->js shape/axes conversion.
-;; Rust accepts number[] for shapes (no BigInt64Array needed).
-;; =========================================================================
+;; --- Shape manipulation (thin wrappers for clj->js shape/axes conversion) ---
 
 (defn reshape    [a sh]   (.reshape c a (clj->js sh)))
 (defn squeeze
@@ -285,9 +303,7 @@
   ([a sections]      (vec (.split c a sections)))
   ([a sections axis] (vec (.split c a sections axis))))
 
-;; =========================================================================
-;; Indexing
-;; =========================================================================
+;; --- Indexing ---
 
 (defn take-idx
   ([a indices]
@@ -320,9 +336,7 @@
   (let [row (.take c a (scalar i int32) 0)]
     (.take c row (scalar j int32) 0)))
 
-;; =========================================================================
-;; Array creation
-;; =========================================================================
+;; --- Array construction (creates graph leaf nodes — also pure) ---
 
 (defn scalar
   "Create a scalar MLX array. Always float32 by default."
@@ -389,23 +403,147 @@
         b-row (.broadcastTo c (.reshape c b (clj->js [1 nb])) (clj->js [na nb]))]
     #js [a-col b-row]))
 
+;; --- Neural network ops ---
+
+(defn softmax
+  ([a]      (.softmax c a))
+  ([a axis] (.softmax c a axis)))
+
+(def clip (.-clip c))
+(def nan-to-num (.-nanToNum c))
+(def stop-gradient (.-stopGradient c))
+
 ;; =========================================================================
-;; Data accessors
+;; QUERY OPERATIONS (no side effects, no graph construction)
+;;
+;; These read array metadata without triggering evaluation or building
+;; new graph nodes.
 ;; =========================================================================
 
 (defn shape [a] (vec (.shapeOf c a)))
 (defn ndim  [a] (.ndimOf c a))
 (defn dtype [a] (.dtypeOf c a))
 (defn size  [a] (js/Number (.sizeOf c a)))
+(defn array? [x] (instance? M x))
+
+;; =========================================================================
+;; FUNCTIONAL COMBINATORS (Layer B — graph-to-graph transforms)
+;;
+;; Higher-order functions that transform functions. These are Layer B
+;; operations: they produce new lazy graph builders. The results they
+;; return are lazy graph nodes (not evaluated until eval!).
+;; =========================================================================
+
+(defn compile-fn
+  "Identity pass-through. GenMLX's compilation uses noise transforms +
+   the expression compiler (Level 1), not MLX's graph-caching compile.
+   Direct use of MLX's compile would sever the autograd tape when model
+   bodies contain eval!, returning silent zeros. The real graph caching
+   happens in the Rust layer's compiled model forward passes.
+   See: compiled.cljs, compiled_gen.cljs for the actual compilation strategy."
+  ([f] f)
+  ([f _shapeless?] f))
+
+(defn compile-clear-cache!
+  "Clear MLX's compiler cache (traced computation graphs).
+   Effectful: frees GPU memory used by cached compiled graphs."
+  [] (.compileClearCache c))
+
+(defn vmap
+  "Vectorized map: transforms f into a batched version that operates over
+   an additional batch dimension. Pure graph-to-graph transformation."
+  ([f]
+   (fn [& args] (let [r (.vmap M f (to-array args))] (aget r 0))))
+  ([f in-axes]
+   (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes))] (aget r 0))))
+  ([f in-axes out-axes]
+   (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes) (clj->js out-axes))] (aget r 0)))))
+
+(defn grad
+  "Returns a function that computes gradients of f w.r.t. its arguments.
+   The returned function builds a backward-pass graph lazily — gradient
+   arrays are graph nodes until eval!'d."
+  ([f]
+   (fn [& args]
+     (swap! grad-depth inc)
+     (try
+       (let [grads (.computeGradients M f (to-array args))]
+         (aget grads 0))
+       (finally (swap! grad-depth dec)))))
+  ([f argnums]
+   (fn [& args]
+     (swap! grad-depth inc)
+     (try
+       (let [argnum-vec (if (vector? argnums) argnums [argnums])
+             grads (.computeGradients M f (to-array args))]
+         (if (= 1 (count argnum-vec))
+           (aget grads (first argnum-vec))
+           (mapv #(aget grads %) argnum-vec)))
+       (finally (swap! grad-depth dec))))))
+
+(defn value-and-grad
+  "Returns a function that computes both f's value and its gradients.
+   Results are lazy graph nodes until eval!'d."
+  ([f]
+   (fn [& args]
+     (swap! grad-depth inc)
+     (try
+       (let [result (.valueAndGrad M f (to-array args))]
+         [(aget result 0) (aget result 1)])
+       (finally (swap! grad-depth dec)))))
+  ([f argnums]
+   (fn [& args]
+     (swap! grad-depth inc)
+     (try
+       (let [result (.valueAndGrad M f (to-array args))
+             v (aget result 0)
+             argnum-vec (if (vector? argnums) argnums [argnums])
+             g (if (= 1 (count argnum-vec))
+                 (aget result (inc (first argnum-vec)))
+                 (mapv #(aget result (inc %)) argnum-vec))]
+         [v g])
+       (finally (swap! grad-depth dec))))))
+
+(defn jvp [f primals tangents]
+  (let [result-val (apply f primals)
+        eps 1e-5
+        perturbed (mapv (fn [p t] (add p (multiply (scalar eps) t)))
+                        (vec primals) (vec tangents))
+        result-perturbed (apply f perturbed)]
+    [result-val (divide (subtract result-perturbed result-val) (scalar eps))]))
+
+(defn vjp [f primals cotangents]
+  (let [cotangents-arr (vec cotangents)
+        surrogate (fn [& xs]
+                    (let [result (apply f xs)]
+                      (if (sequential? cotangents-arr)
+                        (sum (multiply result (first cotangents-arr)))
+                        (sum (multiply result cotangents-arr)))))
+        result (.valueAndGrad M surrogate (to-array (vec primals)))
+        fval (apply f (vec primals))
+        grads (let [gs #js []]
+                (dotimes [i (dec (.-length result))]
+                  (.push gs (aget result (inc i))))
+                gs)]
+    [fval grads]))
+
+;; =========================================================================
+;; EFFECTFUL OPERATIONS (Layer C — triggers GPU dispatch)
+;;
+;; These are the ONLY functions that cause side effects: GPU computation,
+;; memory materialization, or data extraction from GPU to CPU.
+;; Everything above this section is pure graph construction or metadata.
+;; =========================================================================
 
 (defn item
   "Extract scalar value from a 0-d or 1-element array.
-   Fused eval + read in one NAPI call — no TypedArray allocation."
+   EFFECTFUL: fused eval + read in one NAPI call."
   [a]
   (.item c a))
 
 (defn ->clj
-  "Evaluate an MLX array and convert to nested ClojureScript data."
+  "Evaluate an MLX array and convert to nested ClojureScript data.
+   EFFECTFUL: triggers eval, then transfers data from GPU to CPU."
   [a]
   (.eval a)
   (let [sh (shape a)
@@ -414,36 +552,42 @@
                (vec (js->clj (.toFloat32 a))))]
     (unflatten flat sh)))
 
-;; =========================================================================
-;; Evaluation / materialization
-;;
-;; LAZINESS NOTE: MLX builds lazy computation graphs. eval! is the only
-;; point that forces materialization. In a purely functional design, eval!
-;; would only appear at extraction boundaries (item, ->clj, toFloat32).
-;; Phase 3 will audit all eval! call sites across Layers 1-8.
-;; =========================================================================
-
 (defn eval!
-  "Evaluate one or more MLX arrays, materializing the computation graph."
+  "Evaluate one or more MLX arrays, materializing the computation graph.
+   EFFECTFUL: this is the primary GPU dispatch point. Traverses the lazy
+   computation DAG and executes all pending operations on Metal."
   [& arrs]
   (let [valid (filterv some? arrs)]
     (when (seq valid)
       (.evalArrays c (to-array valid)))))
 
 (defn materialize!
-  "Evaluate MLX arrays. Safely ignores non-MxArray values."
+  "Evaluate MLX arrays. Safely ignores non-MxArray values.
+   EFFECTFUL: triggers GPU dispatch via eval!."
   [& arrs]
   (let [mx-arrs (filterv array? arrs)]
     (when (seq mx-arrs)
       (apply eval! mx-arrs))))
 
 ;; =========================================================================
-;; Memory management -- the mutable boundary.
-;; tidy-depth/grad-depth atoms are the ONLY mutable state in Layer 0.
+;; MEMORY MANAGEMENT — the mutable boundary
+;;
+;; This is the one part of the membrane that violates pure functional
+;; design. MLX lazy graphs accumulate memory — without periodic cleanup,
+;; long inference loops (MCMC, SMC, optimization) build unbounded graphs
+;; that exhaust Metal memory. There is no Rust-side memory pressure
+;; callback, so ClojureScript-side heuristics are the pragmatic solution.
+;;
+;; Mutable state:
+;;   tidy-depth, grad-depth — atoms tracking scope nesting
+;;   ops-since-check, gfi-ops-count — counters for cleanup heuristics
+;;
+;; Phase 3 eval audit (2026-04-14) found 464 effectful operations across
+;; 73 files: 237 in hot loops (essential), 217 at boundaries (correct),
+;; 0 questionable. The codebase is well-structured for lazy evaluation.
 ;; =========================================================================
 
-(def ^:private tidy-depth (atom 0))
-(def ^:private grad-depth (atom 0))
+;; --- Scope tracking (atoms defined in Module loading, above) ---
 
 (defn in-grad? [] (pos? @grad-depth))
 (defn in-tidy? [] (pos? @tidy-depth))
@@ -474,7 +618,8 @@
 
 (defn dispose! [_a] nil)
 
-;; Memory monitoring
+;; --- Memory queries (read-only, no side effects) ---
+
 (defn get-active-memory  [] (.getActiveMemory c))
 (defn get-cache-memory   [] (.getCacheMemory c))
 (defn get-peak-memory    [] (.getPeakMemory c))
@@ -486,7 +631,8 @@
     (jsc-cleanup!)
     (.clearCache c)))
 
-;; Memory control
+;; --- Memory control ---
+
 (defn set-memory-limit! [n] (.setMemoryLimit c n))
 (defn set-cache-limit!  [n] (.setCacheLimit c n))
 (defn set-wired-limit!  [n] (.setWiredLimit c n))
@@ -514,7 +660,14 @@
    :num-resources  (get-num-resources)
    :resource-limit (get-resource-limit)})
 
-;; Resource-pressure auto-cleanup
+;; --- Cleanup heuristics (global mutable counters) ---
+;;
+;; auto-cleanup! fires every 50 ops when active memory > 512 MB.
+;; gfi-cleanup! fires every 10 GFI ops when active memory > 128 MB.
+;; Together they form a multi-granularity safety net for long inference loops.
+;; Called from: runtime.cljs (every sample), dist/core.cljs (batch sampling),
+;; dynamic.cljs (after every GFI operation).
+
 (def ^:private resource-pressure-threshold (* 512 1024 1024))
 (def ^:private ^:mutable ops-since-check 0)
 (def ^:private check-interval 50)
@@ -598,9 +751,7 @@
     (try (f)
          (finally (clear-cache!) (set-cache-limit! prev-limit)))))
 
-;; =========================================================================
-;; Matrix / linear algebra
-;; =========================================================================
+;; --- Linear algebra ---
 
 (defn diag [a] (.diag c a))
 (defn trace-mat
@@ -636,96 +787,7 @@
   (let [L (cholesky a)]
     (power (prod (diag L)) (scalar 2))))
 
-;; =========================================================================
-;; Autograd
-;; =========================================================================
-
-(defn grad
-  ([f]
-   (fn [& args]
-     (swap! grad-depth inc)
-     (try
-       (let [grads (.computeGradients M f (to-array args))]
-         (aget grads 0))
-       (finally (swap! grad-depth dec)))))
-  ([f argnums]
-   (fn [& args]
-     (swap! grad-depth inc)
-     (try
-       (let [argnum-vec (if (vector? argnums) argnums [argnums])
-             grads (.computeGradients M f (to-array args))]
-         (if (= 1 (count argnum-vec))
-           (aget grads (first argnum-vec))
-           (mapv #(aget grads %) argnum-vec)))
-       (finally (swap! grad-depth dec))))))
-
-(defn value-and-grad
-  ([f]
-   (fn [& args]
-     (swap! grad-depth inc)
-     (try
-       (let [result (.valueAndGrad M f (to-array args))]
-         [(aget result 0) (aget result 1)])
-       (finally (swap! grad-depth dec)))))
-  ([f argnums]
-   (fn [& args]
-     (swap! grad-depth inc)
-     (try
-       (let [result (.valueAndGrad M f (to-array args))
-             v (aget result 0)
-             argnum-vec (if (vector? argnums) argnums [argnums])
-             g (if (= 1 (count argnum-vec))
-                 (aget result (inc (first argnum-vec)))
-                 (mapv #(aget result (inc %)) argnum-vec))]
-         [v g])
-       (finally (swap! grad-depth dec))))))
-
-(defn jvp [f primals tangents]
-  (let [result-val (apply f primals)
-        eps 1e-5
-        perturbed (mapv (fn [p t] (add p (multiply (scalar eps) t)))
-                        (vec primals) (vec tangents))
-        result-perturbed (apply f perturbed)]
-    [result-val (divide (subtract result-perturbed result-val) (scalar eps))]))
-
-(defn vjp [f primals cotangents]
-  (let [cotangents-arr (vec cotangents)
-        surrogate (fn [& xs]
-                    (let [result (apply f xs)]
-                      (if (sequential? cotangents-arr)
-                        (sum (multiply result (first cotangents-arr)))
-                        (sum (multiply result cotangents-arr)))))
-        result (.valueAndGrad M surrogate (to-array (vec primals)))
-        fval (apply f (vec primals))
-        grads (let [gs #js []]
-                (dotimes [i (dec (.-length result))]
-                  (.push gs (aget result (inc i))))
-                gs)]
-    [fval grads]))
-
-;; =========================================================================
-;; Transforms
-;; =========================================================================
-
-(defn compile-fn
-  ([f] f)
-  ([f _shapeless?] f))
-(defn compile-clear-cache! [] (.compileClearCache c))
-
-(defn vmap
-  ([f]
-   (fn [& args] (let [r (.vmap M f (to-array args))] (aget r 0))))
-  ([f in-axes]
-   (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes))] (aget r 0))))
-  ([f in-axes out-axes]
-   (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes) (clj->js out-axes))] (aget r 0)))))
-
-;; =========================================================================
-;; Utilities
-;; =========================================================================
-
-(def ^:private MxArray M)
-(defn array? [x] (instance? M x))
+;; --- Utilities ---
 
 (defn ensure-array
   "Wrap JS numbers as MLX scalars; pass through arrays, fns, keywords, maps."
@@ -746,19 +808,25 @@
      (or (vector? x) (seq? x) (sequential? x)) (array x dtype)
      :else (scalar x dtype))))
 
-(defn softmax
-  ([a]      (.softmax c a))
-  ([a axis] (.softmax c a axis)))
-
-(def clip (.-clip c))
-
-;; =========================================================================
-;; Async / Device / Constants
-;; =========================================================================
-
-(defn async-eval! [& arrays]
+(defn async-eval!
+  "Asynchronously evaluate arrays. EFFECTFUL: dispatches to GPU."
+  [& arrays]
   (let [promises (mapv #(.evalAsync %) (filter some? arrays))]
     (js/Promise.all (to-array promises))))
+
+(defn training-step!
+  "One training step: forward, backward, update, extract loss.
+   EFFECTFUL: triggers eval on module, loss, and extracts scalar."
+  [module optim vg-fn & inputs]
+  (let [[loss grads] (apply vg-fn inputs)]
+    (.update optim module grads)
+    (eval! module)
+    (eval! loss)
+    (item loss)))
+
+;; =========================================================================
+;; CONFIGURATION — device, constants
+;; =========================================================================
 
 (defn default-device [] "gpu")
 (defn set-default-device! [_d] nil)
@@ -769,15 +837,4 @@
 (def e-val (.-E js/Math))
 (def inf   js/Infinity)
 (def nan   js/NaN)
-
-;; =========================================================================
-;; NN training step
-;; =========================================================================
-
-(defn training-step! [module optim vg-fn & inputs]
-  (let [[loss grads] (apply vg-fn inputs)]
-    (.update optim module grads)
-    (eval! module)
-    (eval! loss)
-    (item loss)))
 
