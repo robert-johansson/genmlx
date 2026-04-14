@@ -717,6 +717,24 @@
       (is (every? #(== 3.5 %) samples) "all 100 samples are exactly 3.5"))))
 
 ;; ==========================================================================
+;; Product distribution moments
+;; ==========================================================================
+
+(deftest product-moments
+  (testing "product([gaussian(0,1), uniform(0,1)]) moments"
+    (let [d (dc/product [(dist/gaussian 0 1) (dist/uniform 0 1)])
+          key (h/deterministic-key)
+          samples (dc/dist-sample-n d key N)
+          comp0 (mx/->clj (first samples))
+          comp1 (mx/->clj (second samples))]
+      ;; E[X0] = 0, Var[X0] = 1
+      (is (h/z-test-passes? 0.0 comp0) "Gaussian mean converges to 0")
+      (is (h/close? 1.0 (h/sample-variance comp0) 0.1) "Gaussian variance converges to 1")
+      ;; E[X1] = 0.5, Var[X1] = 1/12 = 0.08333
+      (is (h/z-test-passes? 0.5 comp1) "Uniform mean converges to 0.5")
+      (is (h/close? 0.08333 (h/sample-variance comp1) 0.02) "Uniform variance converges to 1/12"))))
+
+;; ==========================================================================
 ;; Run tests
 ;; ==========================================================================
 

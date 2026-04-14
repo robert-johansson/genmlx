@@ -244,6 +244,60 @@
     (is (js/isFinite (h/realize (dist/log-prob (dist/poisson 3) (mx/scalar 50.0)))))))
 
 ;; ==========================================================================
+;; Neg-Binomial: support {0, 1, 2, ...}
+;; ==========================================================================
+
+(deftest neg-binomial-boundaries
+  (testing "inside support → finite"
+    (is (js/isFinite (h/realize (dist/log-prob (dist/neg-binomial 5 0.5) (mx/scalar 0.0)))))
+    (is (js/isFinite (h/realize (dist/log-prob (dist/neg-binomial 5 0.5) (mx/scalar 3.0)))))
+    (is (js/isFinite (h/realize (dist/log-prob (dist/neg-binomial 5 0.5) (mx/scalar 10.0))))))
+  (testing "negative values → -Infinity"
+    (is (= ##-Inf (h/realize (dist/log-prob (dist/neg-binomial 5 0.5) (mx/scalar -1.0)))))))
+
+;; ==========================================================================
+;; Von Mises: support all reals (circular)
+;; ==========================================================================
+
+(deftest von-mises-boundaries
+  (testing "all real values → finite"
+    (is (js/isFinite (h/realize (dist/log-prob (dist/von-mises 0 2) (mx/scalar 0.0)))))
+    (is (js/isFinite (h/realize (dist/log-prob (dist/von-mises 0 2) (mx/scalar 3.0)))))
+    (is (js/isFinite (h/realize (dist/log-prob (dist/von-mises 0 2) (mx/scalar -3.0)))))))
+
+;; ==========================================================================
+;; Wrapped Cauchy: support all reals (circular)
+;; ==========================================================================
+
+(deftest wrapped-cauchy-boundaries
+  (testing "all real values → finite"
+    (is (js/isFinite (h/realize (dist/log-prob (dist/wrapped-cauchy 0 0.5) (mx/scalar 0.0)))))
+    (is (js/isFinite (h/realize (dist/log-prob (dist/wrapped-cauchy 0 0.5) (mx/scalar 2.0)))))
+    (is (js/isFinite (h/realize (dist/log-prob (dist/wrapped-cauchy 0 0.5) (mx/scalar -2.0)))))))
+
+;; ==========================================================================
+;; Wrapped Normal: support all reals (circular)
+;; ==========================================================================
+
+(deftest wrapped-normal-boundaries
+  (testing "all real values → finite"
+    (is (js/isFinite (h/realize (dist/log-prob (dist/wrapped-normal 0 0.8) (mx/scalar 0.0)))))
+    (is (js/isFinite (h/realize (dist/log-prob (dist/wrapped-normal 0 0.8) (mx/scalar 2.5)))))
+    (is (js/isFinite (h/realize (dist/log-prob (dist/wrapped-normal 0 0.8) (mx/scalar -2.5)))))))
+
+;; ==========================================================================
+;; Piecewise Uniform: support within bins
+;; ==========================================================================
+
+(deftest piecewise-uniform-boundaries
+  (testing "inside bins → finite"
+    (is (js/isFinite (h/realize (dist/log-prob (dist/piecewise-uniform (mx/array [0 1 3]) (mx/array [0.3 0.7])) (mx/scalar 0.5)))))
+    (is (js/isFinite (h/realize (dist/log-prob (dist/piecewise-uniform (mx/array [0 1 3]) (mx/array [0.3 0.7])) (mx/scalar 2.0))))))
+  (testing "outside all bins → -Infinity"
+    (is (= ##-Inf (h/realize (dist/log-prob (dist/piecewise-uniform (mx/array [0 1 3]) (mx/array [0.3 0.7])) (mx/scalar -1.0)))))
+    (is (= ##-Inf (h/realize (dist/log-prob (dist/piecewise-uniform (mx/array [0 1 3]) (mx/array [0.3 0.7])) (mx/scalar 4.0)))))))
+
+;; ==========================================================================
 ;; Run tests
 ;; ==========================================================================
 

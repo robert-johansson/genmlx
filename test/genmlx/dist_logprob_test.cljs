@@ -17,37 +17,37 @@
 (deftest gaussian-log-prob
   (testing "analytically derived log-probabilities"
     (are [mu sigma v expected tol]
-      (h/close? expected (h/realize (dist/log-prob (dist/gaussian mu sigma) (mx/scalar v))) tol)
+         (h/close? expected (h/realize (dist/log-prob (dist/gaussian mu sigma) (mx/scalar v))) tol)
 
       ;; Gaussian(0,1) at v=0:
       ;; log p = -0.5*log(2*pi) - log(1) - 0.5*(0/1)^2
       ;;       = -0.5*1.83788 - 0 - 0 = -0.91894
-      0 1 0.0  -0.91894  1e-4
+      0 1 0.0 -0.91894 1e-4
 
       ;; Gaussian(0,1) at v=1:
       ;; log p = -0.5*log(2*pi) - 0 - 0.5*(1)^2
       ;;       = -0.91894 - 0.5 = -1.41894
-      0 1 1.0  -1.41894  1e-4
+      0 1 1.0 -1.41894 1e-4
 
       ;; Gaussian(0,1) at v=-1 (same as v=1 by symmetry):
-      0 1 -1.0  -1.41894  1e-4
+      0 1 -1.0 -1.41894 1e-4
 
       ;; Gaussian(0,1) at v=2:
       ;; log p = -0.91894 - 0.5*4 = -0.91894 - 2 = -2.91894
-      0 1 2.0  -2.91894  1e-4
+      0 1 2.0 -2.91894 1e-4
 
       ;; Gaussian(3,2) at v=3 (at mean):
       ;; log p = -0.5*log(2*pi) - log(2) - 0 = -0.91894 - 0.69315 = -1.61209
-      3 2 3.0  -1.61209  1e-4
+      3 2 3.0 -1.61209 1e-4
 
       ;; Gaussian(3,2) at v=5:
       ;; log p = -0.5*log(2*pi) - log(2) - 0.5*((5-3)/2)^2
       ;;       = -0.91894 - 0.69315 - 0.5 = -2.11209
-      3 2 5.0  -2.11209  1e-4
+      3 2 5.0 -2.11209 1e-4
 
       ;; Gaussian(-5,0.1) at v=-5 (at mean, small sigma):
       ;; log p = -0.5*log(2*pi) - log(0.1) = -0.91894 + 2.30259 = 1.38364
-      -5 0.1 -5.0  1.38364  1e-4)))
+      -5 0.1 -5.0 1.38364 1e-4)))
 
 ;; ==========================================================================
 ;; Uniform
@@ -57,16 +57,16 @@
 (deftest uniform-log-prob
   (testing "analytically derived log-probabilities"
     (are [lo hi v expected tol]
-      (h/close? expected (h/realize (dist/log-prob (dist/uniform lo hi) (mx/scalar v))) tol)
+         (h/close? expected (h/realize (dist/log-prob (dist/uniform lo hi) (mx/scalar v))) tol)
 
       ;; Uniform(0,1) at v=0.5: -log(1) = 0.0
-      0 1 0.5  0.0  1e-6
+      0 1 0.5 0.0 1e-6
 
       ;; Uniform(2,5) at v=3.0: -log(3) = -1.09861
-      2 5 3.0  -1.09861  1e-4
+      2 5 3.0 -1.09861 1e-4
 
       ;; Uniform(-10,10) at v=0: -log(20) = -2.99573
-      -10 10 0.0  -2.99573  1e-4))
+      -10 10 0.0 -2.99573 1e-4))
 
   (testing "out of bounds returns -Infinity"
     (is (= ##-Inf (h/realize (dist/log-prob (dist/uniform 0 1) (mx/scalar -0.1)))))
@@ -80,22 +80,22 @@
 (deftest bernoulli-log-prob
   (testing "analytically derived log-probabilities"
     (are [prob v expected tol]
-      (h/close? expected (h/realize (dist/log-prob (dist/bernoulli prob) (mx/scalar v))) tol)
+         (h/close? expected (h/realize (dist/log-prob (dist/bernoulli prob) (mx/scalar v))) tol)
 
       ;; Bernoulli(0.7) at v=1: log(0.7) = -0.35667
-      0.7 1.0  -0.35667  1e-4
+      0.7 1.0 -0.35667 1e-4
 
       ;; Bernoulli(0.7) at v=0: log(0.3) = -1.20397
-      0.7 0.0  -1.20397  1e-4
+      0.7 0.0 -1.20397 1e-4
 
       ;; Bernoulli(0.5) at v=1: log(0.5) = -0.69315
-      0.5 1.0  -0.69315  1e-4
+      0.5 1.0 -0.69315 1e-4
 
       ;; Bernoulli(0.5) at v=0: log(0.5) = -0.69315
-      0.5 0.0  -0.69315  1e-4
+      0.5 0.0 -0.69315 1e-4
 
       ;; Bernoulli(0.99) at v=1: log(0.99) = -0.01005
-      0.99 1.0  -0.01005  1e-4)))
+      0.99 1.0 -0.01005 1e-4)))
 
 ;; ==========================================================================
 ;; Exponential
@@ -105,19 +105,19 @@
 (deftest exponential-log-prob
   (testing "analytically derived log-probabilities"
     (are [rate v expected tol]
-      (h/close? expected (h/realize (dist/log-prob (dist/exponential rate) (mx/scalar v))) tol)
+         (h/close? expected (h/realize (dist/log-prob (dist/exponential rate) (mx/scalar v))) tol)
 
       ;; Exponential(2) at v=1: log(2) - 2*1 = 0.69315 - 2 = -1.30685
-      2 1.0  -1.30685  1e-4
+      2 1.0 -1.30685 1e-4
 
       ;; Exponential(1) at v=0: log(1) - 0 = 0.0
-      1 0.0  0.0  1e-4
+      1 0.0 0.0 1e-4
 
       ;; Exponential(1) at v=1: log(1) - 1 = -1.0
-      1 1.0  -1.0  1e-4
+      1 1.0 -1.0 1e-4
 
       ;; Exponential(0.5) at v=2: log(0.5) - 0.5*2 = -0.69315 - 1 = -1.69315
-      0.5 2.0  -1.69315  1e-4))
+      0.5 2.0 -1.69315 1e-4))
 
   (testing "negative values return -Infinity"
     (is (= ##-Inf (h/realize (dist/log-prob (dist/exponential 2) (mx/scalar -1.0)))))))
@@ -131,7 +131,7 @@
 (deftest beta-log-prob
   (testing "analytically derived log-probabilities"
     (are [alpha beta-p v expected tol]
-      (h/close? expected (h/realize (dist/log-prob (dist/beta-dist alpha beta-p) (mx/scalar v))) tol)
+         (h/close? expected (h/realize (dist/log-prob (dist/beta-dist alpha beta-p) (mx/scalar v))) tol)
 
       ;; Beta(2,5) at v=0.3:
       ;; B(2,5) = Gamma(2)*Gamma(5)/Gamma(7) = 1*24/720 = 1/30
@@ -139,25 +139,25 @@
       ;; log p = 1*ln(0.3) + 4*ln(0.7) - (-3.40120)
       ;;       = -1.20397 + (-1.42712) + 3.40120 = 0.77011
       ;; Implementation uses lgamma which gives slightly different:
-      2 5 0.3  0.77052  1e-2
+      2 5 0.3 0.77052 1e-2
 
       ;; Beta(1,1) at v=0.5: uniform on (0,1) → log p = 0.0
       ;; B(1,1) = 1, so lnB = 0, (0)*log(0.5) + (0)*log(0.5) - 0 = 0
-      1 1 0.5  0.0  1e-4
+      1 1 0.5 0.0 1e-4
 
       ;; Beta(2,2) at v=0.5 (symmetric, at mode):
       ;; B(2,2) = Gamma(2)^2/Gamma(4) = 1/6
       ;; lnB(2,2) = -ln(6) = -1.79176
       ;; log p = 1*ln(0.5) + 1*ln(0.5) - (-1.79176)
       ;;       = -0.69315 + (-0.69315) + 1.79176 = 0.40546
-      2 2 0.5  0.40546  1e-3
+      2 2 0.5 0.40546 1e-3
 
       ;; Beta(0.5,0.5) at v=0.5 (arcsine distribution at center):
       ;; B(0.5,0.5) = pi
       ;; lnB(0.5,0.5) = ln(pi) = 1.14473
       ;; log p = (-0.5)*ln(0.5) + (-0.5)*ln(0.5) - 1.14473
       ;;       = 0.34657 + 0.34657 - 1.14473 = -0.45158
-      0.5 0.5 0.5  -0.45158  1e-3)))
+      0.5 0.5 0.5 -0.45158 1e-3)))
 
 ;; ==========================================================================
 ;; Gamma
@@ -167,25 +167,25 @@
 (deftest gamma-log-prob
   (testing "analytically derived log-probabilities"
     (are [shape rate v expected tol]
-      (h/close? expected (h/realize (dist/log-prob (dist/gamma-dist shape rate) (mx/scalar v))) tol)
+         (h/close? expected (h/realize (dist/log-prob (dist/gamma-dist shape rate) (mx/scalar v))) tol)
 
       ;; Gamma(2,1) at v=1:
       ;; = (2-1)*log(1) + 2*log(1) - 1*1 - lgamma(2)
       ;; = 0 + 0 - 1 - 0 = -1.0
-      2 1 1.0  -1.0  1e-4
+      2 1 1.0 -1.0 1e-4
 
       ;; Gamma(1,1) at v=1 (= Exponential(1)):
       ;; = 0*log(1) + 1*log(1) - 1*1 - lgamma(1) = 0 + 0 - 1 - 0 = -1.0
-      1 1 1.0  -1.0  1e-4
+      1 1 1.0 -1.0 1e-4
 
       ;; Gamma(3,2) at v=1:
       ;; = 2*log(1) + 3*log(2) - 2*1 - lgamma(3)
       ;; = 0 + 2.07944 - 2 - 0.69315 = -0.61370
-      3 2 1.0  -0.61370  1e-3
+      3 2 1.0 -0.61370 1e-3
 
       ;; Gamma(1,1) at v=2 (= Exponential(1) at v=2):
       ;; = 0 + 0 - 2 - 0 = -2.0
-      1 1 2.0  -2.0  1e-4)))
+      1 1 2.0 -2.0 1e-4)))
 
 ;; ==========================================================================
 ;; Poisson
@@ -195,21 +195,21 @@
 (deftest poisson-log-prob
   (testing "analytically derived log-probabilities"
     (are [rate k expected tol]
-      (h/close? expected (h/realize (dist/log-prob (dist/poisson rate) (mx/scalar k))) tol)
+         (h/close? expected (h/realize (dist/log-prob (dist/poisson rate) (mx/scalar k))) tol)
 
       ;; Poisson(3) at k=0: 0*log(3) - 3 - lgamma(1) = -3
-      3 0  -3.0  1e-4
+      3 0 -3.0 1e-4
 
       ;; Poisson(3) at k=3:
       ;; = 3*log(3) - 3 - lgamma(4) = 3*1.09861 - 3 - log(6)
       ;; = 3.29583 - 3 - 1.79176 = -1.49592
-      3 3  -1.49592  1e-3
+      3 3 -1.49592 1e-3
 
       ;; Poisson(1) at k=1: 1*log(1) - 1 - lgamma(2) = 0 - 1 - 0 = -1.0
-      1 1  -1.0  1e-4
+      1 1 -1.0 1e-4
 
       ;; Poisson(5) at k=0: -5.0
-      5 0  -5.0  1e-4)))
+      5 0 -5.0 1e-4)))
 
 ;; ==========================================================================
 ;; Categorical
@@ -222,12 +222,12 @@
     ;; Uniform: logits=[0,0,0] → each log p = -log(3)
     (let [d (dist/categorical (mx/array [0.0 0.0 0.0]))]
       (are [k expected tol]
-        (h/close? expected (h/realize (dist/log-prob d (mx/scalar k mx/int32))) tol)
+           (h/close? expected (h/realize (dist/log-prob d (mx/scalar k mx/int32))) tol)
 
         ;; -log(3) = -1.09861
-        0  -1.09861  1e-4
-        1  -1.09861  1e-4
-        2  -1.09861  1e-4))
+        0 -1.09861 1e-4
+        1 -1.09861 1e-4
+        2 -1.09861 1e-4))
 
     ;; logits=[log(2), 0] → probs=[2/3, 1/3]
     ;; logsumexp([log(2), 0]) = log(2 + 1) = log(3)
@@ -251,7 +251,7 @@
     ;; log p = 0 - (-0.69315) = 0.69315 = log(2)
     (is (h/close? 0.69315
                   (h/realize (dist/log-prob (dist/dirichlet (mx/array [1.0 1.0 1.0]))
-                                           (mx/array [(/ 1 3) (/ 1 3) (/ 1 3)])))
+                                            (mx/array [(/ 1 3) (/ 1 3) (/ 1 3)])))
                   1e-3))
 
     ;; Dirichlet([2,2,2]) at [1/3,1/3,1/3]:
@@ -260,7 +260,7 @@
     ;; log p = -3.29583 - (-4.78749) = 1.49166
     (is (h/close? 1.49166
                   (h/realize (dist/log-prob (dist/dirichlet (mx/array [2.0 2.0 2.0]))
-                                           (mx/array [(/ 1 3) (/ 1 3) (/ 1 3)])))
+                                            (mx/array [(/ 1 3) (/ 1 3) (/ 1 3)])))
                   1e-3))))
 
 ;; ==========================================================================
@@ -271,19 +271,19 @@
 (deftest laplace-log-prob
   (testing "analytically derived log-probabilities"
     (are [loc scale v expected tol]
-      (h/close? expected (h/realize (dist/log-prob (dist/laplace loc scale) (mx/scalar v))) tol)
+         (h/close? expected (h/realize (dist/log-prob (dist/laplace loc scale) (mx/scalar v))) tol)
 
       ;; Laplace(0,1) at v=0: -log(2) - 0 = -0.69315
-      0 1 0.0  -0.69315  1e-4
+      0 1 0.0 -0.69315 1e-4
 
       ;; Laplace(0,1) at v=1: -log(2) - 1 = -1.69315
-      0 1 1.0  -1.69315  1e-4
+      0 1 1.0 -1.69315 1e-4
 
       ;; Laplace(0,1) at v=-1: -log(2) - 1 = -1.69315 (symmetric)
-      0 1 -1.0  -1.69315  1e-4
+      0 1 -1.0 -1.69315 1e-4
 
       ;; Laplace(5,2) at v=5: -log(4) - 0 = -1.38629
-      5 2 5.0  -1.38629  1e-4)))
+      5 2 5.0 -1.38629 1e-4)))
 
 ;; ==========================================================================
 ;; Student-t
@@ -321,19 +321,19 @@
 (deftest log-normal-log-prob
   (testing "analytically derived log-probabilities"
     (are [mu sigma v expected tol]
-      (h/close? expected (h/realize (dist/log-prob (dist/log-normal mu sigma) (mx/scalar v))) tol)
+         (h/close? expected (h/realize (dist/log-prob (dist/log-normal mu sigma) (mx/scalar v))) tol)
 
       ;; LogNormal(0,1) at v=1: -log(1) - 0.5*log(2pi) - 0 - 0 = -0.91894
-      0 1 1.0  -0.91894  1e-4
+      0 1 1.0 -0.91894 1e-4
 
       ;; LogNormal(0,1) at v=e: -log(e) - 0.5*log(2pi) - 0.5*(1)^2
       ;; = -1 - 0.91894 - 0.5 = -2.41894
-      0 1 2.71828  -2.41894  1e-3
+      0 1 2.71828 -2.41894 1e-3
 
       ;; LogNormal(1,0.5) at v=e^1=2.71828 (at mode region):
       ;; log(v)=1, z=(1-1)/0.5=0
       ;; = -1 - 0.5*log(2pi) - log(0.5) - 0 = -1 - 0.91894 + 0.69315 = -1.22579
-      1 0.5 2.71828  -1.22579  1e-3)))
+      1 0.5 2.71828 -1.22579 1e-3)))
 
 ;; ==========================================================================
 ;; Cauchy
@@ -343,16 +343,16 @@
 (deftest cauchy-log-prob
   (testing "analytically derived log-probabilities"
     (are [loc scale v expected tol]
-      (h/close? expected (h/realize (dist/log-prob (dist/cauchy loc scale) (mx/scalar v))) tol)
+         (h/close? expected (h/realize (dist/log-prob (dist/cauchy loc scale) (mx/scalar v))) tol)
 
       ;; Cauchy(0,1) at v=0: -log(pi) - 0 - log(1) = -1.14473
-      0 1 0.0  -1.14473  1e-4
+      0 1 0.0 -1.14473 1e-4
 
       ;; Cauchy(0,1) at v=1: -log(pi) - 0 - log(2) = -1.14473 - 0.69315 = -1.83788
-      0 1 1.0  -1.83788  1e-4
+      0 1 1.0 -1.83788 1e-4
 
       ;; Cauchy(5,2) at v=5: -log(pi) - log(2) - log(1) = -1.14473 - 0.69315 = -1.83788
-      5 2 5.0  -1.83788  1e-4)))
+      5 2 5.0 -1.83788 1e-4)))
 
 ;; ==========================================================================
 ;; Geometric
@@ -362,20 +362,20 @@
 (deftest geometric-log-prob
   (testing "analytically derived log-probabilities"
     (are [prob k expected tol]
-      (h/close? expected (h/realize (dist/log-prob (dist/geometric prob) (mx/scalar k))) tol)
+         (h/close? expected (h/realize (dist/log-prob (dist/geometric prob) (mx/scalar k))) tol)
 
       ;; Geometric(0.5) at k=0: 0*log(0.5) + log(0.5) = -0.69315
-      0.5 0  -0.69315  1e-4
+      0.5 0 -0.69315 1e-4
 
       ;; Geometric(0.5) at k=3: 3*log(0.5) + log(0.5) = 4*log(0.5) = -2.77259
-      0.5 3  -2.77259  1e-4
+      0.5 3 -2.77259 1e-4
 
       ;; Geometric(0.3) at k=0: log(0.3) = -1.20397
-      0.3 0  -1.20397  1e-4
+      0.3 0 -1.20397 1e-4
 
       ;; Geometric(0.3) at k=2: 2*log(0.7) + log(0.3)
       ;; = 2*(-0.35667) + (-1.20397) = -1.91731
-      0.3 2  -1.91731  1e-4)))
+      0.3 2 -1.91731 1e-4)))
 
 ;; ==========================================================================
 ;; Negative Binomial
@@ -586,7 +586,7 @@
     ;; = -1 - 1.83788 - 0.23618 = -3.07406
     (is (h/close? -3.07406
                   (h/realize (dist/log-prob (dist/von-mises 0 1)
-                                           (mx/scalar js/Math.PI)))
+                                            (mx/scalar js/Math.PI)))
                   1e-3))))
 
 ;; ==========================================================================
@@ -611,7 +611,7 @@
     ;; = -0.28768 - 1.83788 - 0.81093 = -2.93649
     (is (h/close? -2.93649
                   (h/realize (dist/log-prob (dist/wrapped-cauchy 0 0.5)
-                                           (mx/scalar js/Math.PI)))
+                                            (mx/scalar js/Math.PI)))
                   1e-3))))
 
 ;; ==========================================================================
@@ -683,6 +683,68 @@
           lp (dist/log-prob d [(mx/scalar 0.0) (mx/scalar 1.0)])]
       (mx/eval! lp)
       (is (h/close? -1.91894 (mx/item lp) 1e-3)))))
+
+;; ==========================================================================
+;; Broadcasted Normal: sum of independent gaussian log-probs
+;; ==========================================================================
+
+(deftest broadcasted-normal-log-prob
+  (testing "broadcasted-normal([0,1],[1,2]) at [0.5,0.5]"
+    ;; Component 0: N(0.5;0,1) = -1.04394
+    ;; Component 1: N(0.5;1,2) = -1.64334
+    ;; Total: -2.68727
+    (let [d (dist/broadcasted-normal (mx/array [0 1]) (mx/array [1 2]))
+          lp (h/realize (dist/log-prob d (mx/array [0.5 0.5])))]
+      (is (h/close? -2.6873 lp 1e-3)))))
+
+;; ==========================================================================
+;; Piecewise Uniform: log-prob from bin density
+;; ==========================================================================
+
+(deftest piecewise-uniform-log-prob
+  (testing "piecewise-uniform([0,1,3],[0.3,0.7]) at x=0.5"
+    ;; Bin 0: [0,1), density = 0.3/1 = 0.3, log = -1.20397
+    (let [d (dist/piecewise-uniform (mx/array [0 1 3]) (mx/array [0.3 0.7]))
+          lp (h/realize (dist/log-prob d (mx/scalar 0.5)))]
+      (is (h/close? -1.2040 lp 1e-3))))
+  (testing "piecewise-uniform([0,1,3],[0.3,0.7]) at x=2.0"
+    ;; Bin 1: [1,3), density = 0.7/2 = 0.35, log = -1.04982
+    (let [d (dist/piecewise-uniform (mx/array [0 1 3]) (mx/array [0.3 0.7]))
+          lp (h/realize (dist/log-prob d (mx/scalar 2.0)))]
+      (is (h/close? -1.0498 lp 1e-3)))))
+
+;; ==========================================================================
+;; Wishart: log-prob at identity matrix
+;; ==========================================================================
+
+(deftest wishart-log-prob
+  (testing "Wishart(df=5, V=I_2) at X=I_2"
+    ;; Analytical: -5.32278 (from multivariate gamma + trace + logdet terms)
+    (let [d (dist/wishart 5 (mx/eye 2))
+          lp (h/realize (dist/log-prob d (mx/eye 2)))]
+      (is (h/close? -5.3228 lp 1e-2)))))
+
+;; ==========================================================================
+;; Inv-Wishart: log-prob at identity matrix
+;; ==========================================================================
+
+(deftest inv-wishart-log-prob
+  (testing "Inv-Wishart(df=5, Psi=I_2) at X=I_2"
+    ;; Analytical: -5.32278 (same as Wishart at identity)
+    (let [d (dist/inv-wishart 5 (mx/eye 2))
+          lp (h/realize (dist/log-prob d (mx/eye 2)))]
+      (is (h/close? -5.3228 lp 1e-2)))))
+
+;; ==========================================================================
+;; IID Gaussian: sum of gaussian log-probs
+;; ==========================================================================
+
+(deftest iid-gaussian-log-prob
+  (testing "iid-gaussian(0,1,3) at [0.5,-0.5,1.0]"
+    ;; Sum: -1.04394 + -1.04394 + -1.41894 = -3.50682
+    (let [d (dist/iid-gaussian 0 1 3)
+          lp (h/realize (dist/log-prob d (mx/array [0.5 -0.5 1.0])))]
+      (is (h/close? -3.5068 lp 1e-3)))))
 
 ;; ==========================================================================
 ;; Run tests

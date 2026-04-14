@@ -18,6 +18,19 @@
           ##-Inf
           log-probs))
 
+(defn- quadrature-normalize
+  "Trapezoidal-rule numerical integration of exp(log-prob) over [lo, hi].
+   Returns the integral approximation."
+  [d lo hi n-points]
+  (let [dx (/ (- hi lo) n-points)
+        xs (mapv #(+ lo (* % dx)) (range (inc n-points)))
+        log-probs (mapv #(h/realize (dist/log-prob d (mx/scalar %))) xs)
+        ;; Trapezoidal rule: sum interior points, half-weight endpoints
+        interior-sum (reduce + (map #(js/Math.exp %) (subvec log-probs 1 n-points)))
+        endpoint-sum (* 0.5 (+ (js/Math.exp (first log-probs))
+                               (js/Math.exp (last log-probs))))]
+    (* dx (+ interior-sum endpoint-sum))))
+
 ;; ==========================================================================
 ;; Bernoulli: support {0, 1}
 ;; ==========================================================================
@@ -133,6 +146,55 @@
     (let [d (dist/geometric 0.3)
           lps (mapv #(h/realize (dist/log-prob d (mx/scalar (double %)))) (range 51))]
       (is (h/close? 0.0 (logsumexp lps) 1e-3)))))
+
+;; ==========================================================================
+;; Continuous distribution normalization via numerical quadrature
+;; ==========================================================================
+
+(deftest beta-normalization
+  (testing "Beta(2,5) integrates to 1 over (0,1)"
+    (is (h/close? 1.0 (quadrature-normalize (dist/beta-dist 2 5) 1e-6 (- 1 1e-6) 2000) 1e-3)))
+  (testing "Beta(2,2) integrates to 1"
+    (is (h/close? 1.0 (quadrature-normalize (dist/beta-dist 2 2) 1e-6 (- 1 1e-6) 2000) 1e-3))))
+
+(deftest gamma-normalization
+  (testing "Gamma(3,2) integrates to 1 over (0, ~20)"
+    (is (h/close? 1.0 (quadrature-normalize (dist/gamma-dist 3 2) 1e-6 25 2000) 1e-3)))
+  (testing "Gamma(1,1) = Exponential(1)"
+    (is (h/close? 1.0 (quadrature-normalize (dist/gamma-dist 1 1) 1e-6 20 2000) 1e-3))))
+
+(deftest student-t-normalization
+  (testing "Student-t(5) integrates to 1 over (-50,50)"
+    (is (h/close? 1.0 (quadrature-normalize (dist/student-t 5 0 1) -50 50 2000) 1e-3))))
+
+(deftest inv-gamma-normalization
+  (testing "Inv-Gamma(3,2) integrates to 1 over (0, ~20)"
+    (is (h/close? 1.0 (quadrature-normalize (dist/inv-gamma 3 2) 1e-4 20 2000) 1e-3))))
+
+(deftest truncated-normal-normalization
+  (testing "TruncNormal(0,1,-2,2) integrates to 1 over [-2,2]"
+    (is (h/close? 1.0 (quadrature-normalize (dist/truncated-normal 0 1 -2 2) -2 2 2000) 1e-3))))
+
+(deftest von-mises-normalization
+  (testing "VonMises(0,2) integrates to 1 over [-pi,pi]"
+    (is (h/close? 1.0 (quadrature-normalize (dist/von-mises 0 2)
+                                            (- js/Math.PI) js/Math.PI 2000) 1e-3))))
+
+(deftest wrapped-cauchy-normalization
+  (testing "WrappedCauchy(0,0.5) integrates to 1 over [-pi,pi]"
+    (is (h/close? 1.0 (quadrature-normalize (dist/wrapped-cauchy 0 0.5)
+                                            (- js/Math.PI) js/Math.PI 2000) 1e-3))))
+
+(deftest wrapped-normal-normalization
+  (testing "WrappedNormal(0,0.8) integrates to 1 over [-pi,pi]"
+    (is (h/close? 1.0 (quadrature-normalize (dist/wrapped-normal 0 0.8)
+                                            (- js/Math.PI) js/Math.PI 2000) 1e-3))))
+
+(deftest piecewise-uniform-normalization
+  (testing "PiecewiseUniform([0,1,3],[0.3,0.7]) integrates to 1"
+    (is (h/close? 1.0 (quadrature-normalize
+                       (dist/piecewise-uniform (mx/array [0 1 3]) (mx/array [0.3 0.7]))
+                       -0.1 3.1 2000) 1e-3))))
 
 ;; ==========================================================================
 ;; Run tests
