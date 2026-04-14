@@ -316,7 +316,7 @@
 
 (deftest g6-compiled-ops
   (testing "IS loss"
-    (let [loss-fn (diff/make-is-loss-fn line-model [(mx/array [0 1 2 3 4])]
+    (let [loss-fn (diff/make-is-loss-fn line-model [[0 1 2 3 4]]
                                          obs-data [:slope :intercept] 50 (rng/fresh-key))
           params (mx/array [1.0 0.0])
           loss (loss-fn params)]
@@ -408,7 +408,7 @@
         (is (js/isFinite (mx/item g)) "gradient :a is finite"))))
 
   (testing "IS loss gradient"
-    (let [grad-fn (diff/make-is-loss-grad-fn line-model [(mx/array [0 1 2 3 4])]
+    (let [grad-fn (diff/make-is-loss-grad-fn line-model [[0 1 2 3 4]]
                                               obs-data [:slope :intercept] 50)
           key (rng/fresh-key)
           params (mx/array [1.0 0.0])
