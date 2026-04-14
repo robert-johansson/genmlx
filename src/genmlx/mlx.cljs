@@ -616,7 +616,11 @@
         (jsc-cleanup!)
         (.clearCache c)))))
 
-(defn dispose! [_a] nil)
+(defn dispose!
+  "No-op. GenMLX uses automatic memory management via tidy scopes and
+   lazy graph cleanup — not explicit per-array disposal. MLX arrays are
+   freed when their Arc reference count drops to zero in Rust."
+  [_a] nil)
 
 ;; --- Memory queries (read-only, no side effects) ---
 
@@ -624,7 +628,10 @@
 (defn get-cache-memory   [] (.getCacheMemory c))
 (defn get-peak-memory    [] (.getPeakMemory c))
 (defn reset-peak-memory! [] (.resetPeakMemory c))
-(defn get-wrappers-count [] (.getActiveMemory c))
+(defn get-wrappers-count
+  "Returns active GPU memory in bytes (not a wrapper object count).
+   Named for backward compatibility; use get-active-memory for clarity."
+  [] (.getActiveMemory c))
 
 (defn sweep-dead-arrays! []
   (when-not (in-tidy?)
@@ -638,9 +645,15 @@
 (defn set-wired-limit!  [n] (.setWiredLimit c n))
 (defn clear-cache!      []  (.clearCache c))
 
-;; Metal resource tracking (proxied via memory)
-(defn get-num-resources  [] (.getActiveMemory c))
-(defn get-resource-limit [] 499000)
+;; Metal resource tracking — proxied via memory bytes, not actual resource counts.
+(defn get-num-resources
+  "Returns active GPU memory in bytes (not a Metal resource count).
+   Named for backward compatibility; use get-active-memory for clarity."
+  [] (.getActiveMemory c))
+(defn get-resource-limit
+  "Returns a hardcoded sentinel (499000). Not a real Metal resource limit.
+   Retained for backward compatibility with code that checks resource budgets."
+  [] 499000)
 
 (defn metal-is-available? [] (.metalIsAvailable c))
 (defn metal-device-info []
@@ -652,13 +665,16 @@
      :max-recommended-working-set-size (or (.-max_recommended_working_set_size info) 0)
      :resource-limit 499000}))
 
-(defn memory-report []
+(defn memory-report
+  "Returns memory stats. Note: :wrappers and :num-resources are
+   active memory bytes (not counts) — legacy naming."
+  []
   {:active-bytes   (get-active-memory)
    :cache-bytes    (get-cache-memory)
    :peak-bytes     (get-peak-memory)
-   :wrappers       (get-wrappers-count)
-   :num-resources  (get-num-resources)
-   :resource-limit (get-resource-limit)})
+   :wrappers       (get-wrappers-count)     ;; bytes, not count (legacy name)
+   :num-resources  (get-num-resources)       ;; bytes, not count (legacy name)
+   :resource-limit (get-resource-limit)})    ;; hardcoded sentinel
 
 ;; --- Cleanup heuristics (global mutable counters) ---
 ;;
@@ -828,8 +844,16 @@
 ;; CONFIGURATION — device, constants
 ;; =========================================================================
 
-(defn default-device [] "gpu")
-(defn set-default-device! [_d] nil)
+(defn default-device
+  "Always returns \"gpu\". MLX on Apple Silicon uses Metal GPU for all
+   array operations; there is no CPU array backend. This function does
+   not query actual device state — it returns a hardcoded constant."
+  [] "gpu")
+(defn set-default-device!
+  "No-op. MLX on Apple Silicon has no per-operation device selection —
+   Metal GPU is always used. Retained for API compatibility with code
+   that wraps operations in device-switching blocks."
+  [_d] nil)
 (def cpu "cpu")
 (def gpu "gpu")
 
