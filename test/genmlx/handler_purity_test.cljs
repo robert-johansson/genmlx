@@ -6,7 +6,7 @@
    Note: MLX PRNG keys are mutable arrays. The handler's rng/split mutates the
    key in-place, so raw handler transitions cannot be called twice with the
    'same' key object. Determinism is tested at the protocol level where
-   rng/seed! creates fresh key state for each invocation."
+   fresh keys ensure independent state for each invocation."
   (:require [cljs.test :refer [deftest is testing]]
             [genmlx.handler :as handler]
             [genmlx.dist :as dist]

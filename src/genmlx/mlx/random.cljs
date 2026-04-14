@@ -31,12 +31,6 @@
     (bit-and (bit-xor (int (nth arr 0)) (int (nth arr 1)))
              0x7FFFFFFF)))
 
-(defn seed!
-  "No-op. GenMLX uses functional PRNG keys (fresh-key, split, split-n)
-   instead of global mutable seed state. For reproducible randomness,
-   pass a deterministic key via (fresh-key seed-int)."
-  [_key] nil)
-
 (defn split
   "Split a key into two independent sub-keys. Returns [k1 k2]."
   [key]

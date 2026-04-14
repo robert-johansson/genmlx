@@ -517,7 +517,7 @@
   p/IGenerativeFunction
   (simulate [this args]
     (let [key (ensure-key this)
-          _ (rng/seed! key)
+
           result (@dispatch-fn this :simulate args key {})]
       (mx/gfi-cleanup!)
       result))
@@ -525,7 +525,7 @@
   p/IGenerate
   (generate [this args constraints]
     (let [key (ensure-key this)
-          _ (rng/seed! key)
+
           result (@dispatch-fn this :generate args key {:constraints constraints})]
       (mx/gfi-cleanup!)
       result))
@@ -533,7 +533,7 @@
   p/IUpdate
   (update [this trace constraints]
     (let [key (ensure-key this)
-          _ (rng/seed! key)
+
           result (@dispatch-fn this :update (:args trace) key
                    {:trace trace :constraints constraints})]
       (mx/gfi-cleanup!)
@@ -543,7 +543,7 @@
   p/IRegenerate
   (regenerate [this trace selection]
     (let [key (ensure-key this)
-          _ (rng/seed! key)
+
           result (@dispatch-fn this :regenerate (:args trace) key
                    {:trace trace :selection selection})]
       (mx/gfi-cleanup!)
@@ -552,7 +552,7 @@
   p/IAssess
   (assess [this args choices]
     (let [key (ensure-key this)
-          _ (rng/seed! key)
+
           result (@dispatch-fn this :assess args key {:constraints choices})]
       (mx/gfi-cleanup!)
       result))
@@ -560,7 +560,7 @@
   p/IPropose
   (propose [this args]
     (let [key (ensure-key this)
-          _ (rng/seed! key)
+
           result (@dispatch-fn this :propose args key {})]
       (mx/gfi-cleanup!)
       result))
@@ -568,7 +568,7 @@
   p/IProject
   (project [this trace selection]
     (let [key (ensure-key this)
-          _ (rng/seed! key)
+
           result (@dispatch-fn this :project (:args trace) key
                    {:trace trace :selection selection})]
       (mx/gfi-cleanup!)
@@ -763,7 +763,7 @@
    gf: DynamicGF, args: model args, n: number of particles, key: PRNG key."
   [gf args n key]
   (let [key (rng/ensure-key key)
-        _ (rng/seed! key)
+
         result (rt/run-handler h/batched-simulate-transition
                                {:choices cm/EMPTY :score SCORE-ZERO
                                 :key key :batch-size n :batched? true
@@ -781,7 +781,7 @@
    n: number of particles, key: PRNG key."
   [gf args constraints n key]
   (let [key (rng/ensure-key key)
-        _ (rng/seed! key)
+
         result (rt/run-handler h/batched-generate-transition
                                {:choices cm/EMPTY :score SCORE-ZERO
                                 :weight SCORE-ZERO :key key
@@ -798,7 +798,7 @@
    Returns new VectorizedTrace with updated weights."
   [gf vtrace constraints key]
   (let [key (rng/ensure-key key)
-        _ (rng/seed! key)
+
         n (:n-particles vtrace)
         result (rt/run-handler h/batched-update-transition
                                {:choices cm/EMPTY :score SCORE-ZERO
@@ -822,7 +822,7 @@
    Returns new VectorizedTrace with resampled selected addresses."
   [gf vtrace selection key]
   (let [key (rng/ensure-key key)
-        _ (rng/seed! key)
+
         n (:n-particles vtrace)
         old-score (:score vtrace)
         result (rt/run-handler h/batched-regenerate-transition

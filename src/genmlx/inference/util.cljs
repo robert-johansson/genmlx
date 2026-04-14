@@ -322,9 +322,9 @@
              a (collect-trace-arrays t)]
        (when-not (.has seen a)
          (.add seen a)))
-     (.forEach seen (fn [a]
-                      (when-not (and skip (.has skip a))
-                        (mx/dispose! a)))))))
+     ;; dispose! was a no-op (Arc refcounting handles cleanup).
+     ;; Arrays are freed when their last reference drops.
+     nil)))
 
 (defn tidy-step
   "Run step-fn inside mx/tidy, preserving all arrays in the returned state.

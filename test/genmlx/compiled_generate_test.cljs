@@ -322,7 +322,6 @@
   (testing "direct compiled-generate call with one constraint"
     (let [compiled-gen (:compiled-generate (:schema simple-model))
           key (rng/fresh-key 200)
-          _ (rng/seed! key)
           constraints (cm/choicemap :x (mx/scalar 4.0))
           result (compiled-gen key [(mx/scalar 1.0)] constraints)]
       (is (map? (:values result)) "direct: returns map with :values")
@@ -337,7 +336,6 @@
   (testing "all constrained via direct call"
     (let [compiled-gen (:compiled-generate (:schema simple-model))
           key (rng/fresh-key 201)
-          _ (rng/seed! key)
           constraints (cm/choicemap :x (mx/scalar 1.0) :y (mx/scalar 2.0))
           result (compiled-gen key [(mx/scalar 0.0)] constraints)]
       (is (h/close? (mx/item (:score result)) (mx/item (:weight result)) 1e-6) "direct all-constrained: weight = score")))
@@ -345,7 +343,6 @@
   (testing "no constraints via direct call"
     (let [compiled-gen (:compiled-generate (:schema simple-model))
           key (rng/fresh-key 202)
-          _ (rng/seed! key)
           result (compiled-gen key [(mx/scalar 0.0)] cm/EMPTY)]
       (is (h/close? 0.0 (mx/item (:weight result)) 1e-6) "direct no-constraints: weight = 0"))))
 
