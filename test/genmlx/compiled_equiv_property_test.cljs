@@ -15,7 +15,9 @@
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
-            [genmlx.tensor-trace :as tt])
+            [genmlx.tensor-trace :as tt]
+            [genmlx.gfi :as gfi]
+            [genmlx.combinators :as comb])
   (:require-macros [genmlx.gen :refer [gen]]
                    [clojure.test.check.clojure-test :refer [defspec]]))
 
@@ -214,5 +216,138 @@
            (every? (fn [addr]
                      (some? (choice-val (:choices trace) addr)))
                    addrs)))))
+
+;; ---------------------------------------------------------------------------
+;; E12.6: L3 auto-analytical generate weight = handler generate weight
+;; Law: analytical path (marginal LL) equals handler path when fully constrained
+;; ---------------------------------------------------------------------------
+
+;; Conjugate models: auto-analytical computes marginal log-likelihood by
+;; integrating out the prior analytically. When ALL addresses are constrained,
+;; the analytical and handler paths must produce identical weights and scores
+;; because no marginalization occurs -- both evaluate the full joint.
+
+(def conjugate-single-obs
+  (gen []
+    (let [mu (trace :mu (dist/gaussian 0 10))]
+      (trace :y (dist/gaussian mu 1))
+      mu)))
+
+(def conjugate-multi-obs
+  (gen []
+    (let [mu (trace :mu (dist/gaussian 0 10))]
+      (trace :y1 (dist/gaussian mu 1))
+      (trace :y2 (dist/gaussian mu 1))
+      (trace :y3 (dist/gaussian mu 1))
+      mu)))
+
+(assert (get-in conjugate-single-obs [:schema :has-conjugate?])
+        "conjugate-single-obs must have conjugate pairs")
+(assert (get-in conjugate-multi-obs [:schema :has-conjugate?])
+        "conjugate-multi-obs must have conjugate pairs")
+
+(defn- strip-all-optimizations
+  "Strip both compiled paths and analytical handlers, forcing pure handler path."
+  [gf]
+  (let [schema (:schema gf)]
+    (dyn/->DynamicGF (:body-fn gf) (:source gf)
+                     (dissoc schema
+                             :compiled-simulate :compiled-generate
+                             :compiled-update :compiled-assess
+                             :compiled-project :compiled-regenerate
+                             :auto-handlers :conjugate-pairs
+                             :has-conjugate? :analytical-plan
+                             :auto-regenerate-transition))))
+
+(def conjugate-pool
+  [{:model conjugate-single-obs
+    :full-obs (fn [seed]
+                (cm/choicemap :mu (mx/scalar (* 0.5 seed))
+                              :y  (mx/scalar (* 0.3 seed))))
+    :label "single-obs-conjugate"}
+   {:model conjugate-multi-obs
+    :full-obs (fn [seed]
+                (cm/choicemap :mu (mx/scalar (* 0.5 seed))
+                              :y1 (mx/scalar (* 0.3 seed))
+                              :y2 (mx/scalar (* 0.7 seed))
+                              :y3 (mx/scalar (* 0.1 seed))))
+    :label "multi-obs-conjugate"}])
+
+(def gen-conjugate (gen/elements conjugate-pool))
+
+(defspec analytical-generate-weight-equals-handler-under-full-constraints 50
+  (prop/for-all [m gen-conjugate
+                 seed gen-seed]
+    (let [{:keys [model full-obs]} m
+          constraints (full-obs seed)
+          ;; Analytical path (auto-analytical active)
+          k1 (rng/fresh-key seed)
+          {:keys [trace weight]} (p/generate (dyn/with-key model k1) [] constraints)
+          analytical-score (trace-score trace)
+          analytical-weight (eval-weight weight)
+          ;; Handler path (all optimizations stripped)
+          k2 (rng/fresh-key seed)
+          handler-model (strip-all-optimizations model)
+          {:keys [trace weight]} (p/generate (dyn/with-key handler-model k2) [] constraints)
+          handler-score (trace-score trace)
+          handler-weight (eval-weight weight)]
+      (and (close? analytical-weight handler-weight 1e-4)
+           (close? analytical-score handler-score 1e-4)))))
+
+;; ---------------------------------------------------------------------------
+;; E12.7: L1-M5 Map combinator compiled simulate score = handler assess score
+;; Law: compiled combinator simulate preserves score semantics
+;; ---------------------------------------------------------------------------
+
+;; Map and Unfold combinators dispatch to compiled kernel paths when the
+;; kernel schema has :compiled-simulate. strip-compiled on the kernel forces
+;; the handler path. Simulate compiled -> extract choices -> handler generate
+;; with full constraints must yield identical scores.
+
+(def map-kernel
+  (gen [x]
+    (let [y (trace :y (dist/gaussian x 1.0))]
+      y)))
+
+(def unfold-kernel
+  (gen [t state]
+    (let [next (trace :x (dist/gaussian state 0.1))]
+      next)))
+
+(assert (get-in map-kernel [:schema :compiled-simulate])
+        "map-kernel must have compiled-simulate")
+(assert (get-in unfold-kernel [:schema :compiled-simulate])
+        "unfold-kernel must have compiled-simulate")
+
+(defspec map-combinator-compiled-score-equals-handler-score 30
+  (prop/for-all [seed gen-seed]
+    (let [inputs (mapv #(mx/scalar (+ 1.0 (* 0.5 %))) (range 3))
+          compiled-map (comb/map-combinator (dyn/auto-key map-kernel))
+          ;; Compiled simulate
+          trace-c (p/simulate compiled-map [inputs])
+          score-c (trace-score trace-c)
+          ;; Handler generate with compiled choices as full constraints
+          handler-map (comb/map-combinator (dyn/auto-key (gfi/strip-compiled map-kernel)))
+          {:keys [trace weight]} (p/generate handler-map [inputs] (:choices trace-c))
+          score-h (trace-score trace)
+          weight-h (eval-weight weight)]
+      (and (close? score-c score-h 1e-4)
+           (close? score-c weight-h 1e-4)))))
+
+(defspec unfold-combinator-compiled-score-equals-handler-score 30
+  (prop/for-all [seed gen-seed]
+    (let [steps 5
+          init (mx/scalar (* 0.1 seed))
+          compiled-unfold (comb/unfold-combinator (dyn/auto-key unfold-kernel))
+          ;; Compiled simulate
+          trace-c (p/simulate compiled-unfold [steps init])
+          score-c (trace-score trace-c)
+          ;; Handler generate with compiled choices as full constraints
+          handler-unfold (comb/unfold-combinator (dyn/auto-key (gfi/strip-compiled unfold-kernel)))
+          {:keys [trace weight]} (p/generate handler-unfold [steps init] (:choices trace-c))
+          score-h (trace-score trace)
+          weight-h (eval-weight weight)]
+      (and (close? score-c score-h 1e-4)
+           (close? score-c weight-h 1e-4)))))
 
 (t/run-tests)

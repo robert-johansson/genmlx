@@ -1,6 +1,7 @@
 (ns genmlx.combinator-property-test
   "Property-based combinator invariant tests using test.check.
-   Verifies Map, Unfold, Switch, Scan, Mask structure and score invariants.
+   Verifies Map, Unfold, Switch, Scan, Mask, Contramap, MapRetval, Mix,
+   and Dimap structure and score invariants.
 
    Uses gen/elements with pre-built combinator instances to avoid
    SCI interop crashes during test.check shrink traversal."
@@ -112,6 +113,27 @@
    {:active? false :args [false 3.0] :label "mask(false)"}])
 
 (def gen-mask-spec (gen/elements mask-pool))
+
+(def contramapped
+  (comb/contramap-gf kernel (fn [args] [(+ (first args) 1.0)])))
+
+(def retval-mapped
+  (comb/map-retval kernel (fn [v] (* v 2.0))))
+
+(def kernel-wide
+  (dyn/auto-key
+    (gen [x]
+      (let [y (trace :y (dist/gaussian x 2))]
+        (mx/eval! y)
+        (mx/item y)))))
+
+(def mixed
+  (comb/mix-combinator [kernel kernel-wide] (mx/array [0.0 0.0])))
+
+(def dimapped
+  (comb/dimap kernel
+              (fn [args] [(+ (first args) 1.0)])
+              (fn [v] (* v 2.0))))
 
 ;; ---------------------------------------------------------------------------
 ;; Properties
@@ -231,28 +253,54 @@
         (close? 0.0 s 0.01)))))
 
 (defspec all-combinators-project-all-approx-score 50
-  (prop/for-all [which (gen/elements [:map :unfold :switch :scan :mask-true])]
+  (prop/for-all [which (gen/elements [:map :unfold :switch :scan :mask-true
+                                      :contramap :map-retval :mix])]
     (let [[gf args] (case which
-                      :map       [mapped [[1.0 2.0]]]
-                      :unfold    [unfolded [2 0.0]]
-                      :switch    [switched [0]]
-                      :scan      [scanned [0.0 [1.0 2.0]]]
-                      :mask-true [masked [true 3.0]])
+                      :map        [mapped [[1.0 2.0]]]
+                      :unfold     [unfolded [2 0.0]]
+                      :switch     [switched [0]]
+                      :scan       [scanned [0.0 [1.0 2.0]]]
+                      :mask-true  [masked [true 3.0]]
+                      :contramap  [contramapped [2.0]]
+                      :map-retval [retval-mapped [3.0]]
+                      :mix        [mixed [3.0]])
           trace (p/simulate gf args)
           s (eval-score trace)
           proj (eval-weight (p/project gf trace sel/all))]
       (close? s proj 0.01))))
 
 (defspec all-combinators-project-none-approx-zero 50
-  (prop/for-all [which (gen/elements [:map :unfold :switch :scan :mask-true])]
+  (prop/for-all [which (gen/elements [:map :unfold :switch :scan :mask-true
+                                      :contramap :map-retval :mix])]
     (let [[gf args] (case which
-                      :map       [mapped [[1.0 2.0]]]
-                      :unfold    [unfolded [2 0.0]]
-                      :switch    [switched [0]]
-                      :scan      [scanned [0.0 [1.0 2.0]]]
-                      :mask-true [masked [true 3.0]])
+                      :map        [mapped [[1.0 2.0]]]
+                      :unfold     [unfolded [2 0.0]]
+                      :switch     [switched [0]]
+                      :scan       [scanned [0.0 [1.0 2.0]]]
+                      :mask-true  [masked [true 3.0]]
+                      :contramap  [contramapped [2.0]]
+                      :map-retval [retval-mapped [3.0]]
+                      :mix        [mixed [3.0]])
           trace (p/simulate gf args)
           proj (eval-weight (p/project gf trace sel/none))]
       (close? 0.0 proj 0.01))))
+
+(defspec dimap-regenerate-all-yields-finite-weight 50
+  (prop/for-all [_ (gen/return nil)]
+    (let [trace (p/simulate dimapped [2.0])
+          {:keys [trace weight]} (p/regenerate dimapped trace sel/all)
+          w (eval-weight weight)
+          s (eval-score trace)]
+      (and (finite? w) (finite? s)))))
+
+(defspec dimap-regenerate-none-preserves-trace 50
+  (prop/for-all [_ (gen/return nil)]
+    (let [trace (p/simulate dimapped [2.0])
+          original-score (eval-score trace)
+          {:keys [trace weight]} (p/regenerate dimapped trace sel/none)
+          regen-score (eval-score trace)
+          w (eval-weight weight)]
+      (and (close? original-score regen-score 0.01)
+           (close? 0.0 w 0.01)))))
 
 (t/run-tests)
