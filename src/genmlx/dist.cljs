@@ -1216,11 +1216,14 @@
     (do (mx/materialize! W) W)))
 
 (defmethod dc/dist-log-prob :wishart [d x]
-  (let [{:keys [df V-inv log-det-V k]} (:params d)
+  (let [{:keys [df scale-matrix k]} (:params d)
         x (if (mx/array? x) x (mx/array x))
         x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
-        log-det-X (mx/multiply TWO
-                               (mx/sum (mx/log (mx/diag (mx/cholesky x-2d)))))
+        ;; Recompute V-inv and log-det-V from scale-matrix (not precomputed)
+        ;; so gradient tape is preserved for differentiating w.r.t. V.
+        V-inv (mx/inv scale-matrix)
+        log-det-V (mx/logdet scale-matrix)
+        log-det-X (mx/logdet x-2d)
         ;; log p(X) = ((df-k-1)/2)*log|X| - (1/2)*tr(V^{-1}X) - (df*k/2)*log(2)
         ;;            - (df/2)*log|V| - log_multivariate_gamma(df/2, k)
         half-df (/ df 2.0)
@@ -1228,7 +1231,7 @@
         tr-VinvX (mx/sum (mx/multiply V-inv (mx/transpose x-2d))) ;; tr(A*B) = sum(A .* B^T)
         term2 (mx/multiply (mx/scalar -0.5) tr-VinvX)
         term3 (mx/scalar (- (* half-df k (js/Math.log 2.0))))
-        term4 (mx/scalar (- (* half-df (mx/realize log-det-V))))
+        term4 (mx/multiply (mx/scalar (- half-df)) log-det-V)
         term5 (mx/scalar (- (log-multivariate-gamma half-df k)))]
     (mx/add term1 term2 term3 term4 term5)))
 
@@ -1266,12 +1269,14 @@
     (mx/inv W)))
 
 (defmethod dc/dist-log-prob :inv-wishart [d x]
-  (let [{:keys [df scale-matrix log-det-Psi k]} (:params d)
+  (let [{:keys [df scale-matrix k]} (:params d)
         x (if (mx/array? x) x (mx/array x))
         x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
         X-inv (mx/inv x-2d)
-        log-det-X (mx/multiply TWO
-                               (mx/sum (mx/log (mx/diag (mx/cholesky x-2d)))))
+        ;; Recompute log-det from raw matrices (not precomputed) so gradient
+        ;; tape is preserved for differentiating w.r.t. Psi and X.
+        log-det-Psi (mx/logdet scale-matrix)
+        log-det-X (mx/logdet x-2d)
         ;; log p(X) = (df/2)*log|Psi| - (df*k/2)*log(2) - log_multivariate_gamma(df/2, k)
         ;;            - ((df+k+1)/2)*log|X| - (1/2)*tr(Psi * X^{-1})
         half-df (/ df 2.0)
