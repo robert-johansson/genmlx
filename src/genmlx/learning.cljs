@@ -89,6 +89,7 @@
         update (mx/divide m-hat
                           (mx/add (mx/sqrt v-hat) (mx/scalar epsilon)))
         new-params (mx/subtract params (mx/multiply (mx/scalar lr) update))]
+    ;; Break lazy graph — params and moments carried to next iteration
     (mx/materialize! new-params m v)
     [new-params {:m m :v v :t t}]))
 
@@ -122,6 +123,7 @@
         {:params params :loss-history (persistent! losses)}
         (let [[step-key next-key] (rng/split-or-nils rk)
               {:keys [loss grad]} (loss-grad-fn params step-key)
+              ;; Break lazy graph — prevents accumulation across iterations
               _ (mx/materialize! loss grad)
               loss-val (mx/item loss)
               [new-params new-opt-st]
@@ -306,6 +308,7 @@
                   [p os losses]
                   (let [[wk1 wk2] (rng/split-or-nils wk)
                         {:keys [loss grad]} (wake-loss-fn p wk1)
+                        ;; Break lazy graph per wake step
                         _ (mx/materialize! loss grad)
                         [p' os'] (adam-step p grad os {:lr lr})]
                     (recur (inc j) p' os' (conj losses (mx/item loss)) wk2))))
@@ -316,6 +319,7 @@
                   [p os losses]
                   (let [[sk1 sk2] (rng/split-or-nils sk)
                         {:keys [loss grad]} (sleep-loss-fn p sk1)
+                        ;; Break lazy graph per sleep step
                         _ (mx/materialize! loss grad)
                         [p' os'] (adam-step p grad os {:lr lr})]
                     (recur (inc j) p' os' (conj losses (mx/item loss)) sk2))))]

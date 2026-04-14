@@ -133,7 +133,7 @@
               nv (aget result 2)
               loss-arr (aget result 3)
 
-              ;; Only materialize loss at log boundaries
+              ;; Materialize loss only at log boundaries — avoids per-step eval cost
               log? (or (zero? i) (zero? (mod (inc i) log-every)))
               losses' (if log?
                         (do
@@ -213,6 +213,7 @@
               ;; Finite-difference gradient of loss
               grad (finite-diff-grad neg-score params fd-h)
 
+              ;; Break lazy graph — loss and grad needed for Adam update
               _ (mx/materialize! loss grad)
 
               ;; Adam moment updates (host-side bias correction)
@@ -227,6 +228,7 @@
                                     (mx/add (mx/sqrt v-hat) eps-s))
               new-params (mx/subtract params (mx/multiply lr-s update-vec))
 
+              ;; Break lazy graph — params and moments carried to next iteration
               _ (mx/materialize! new-params new-m new-v)
 
               ;; Log loss at boundaries
@@ -279,6 +281,7 @@
           (mx/materialize! params)
           {:params params :loss-history (persistent! losses)})
         (let [[loss grad] (vg params)
+              ;; Break lazy graph — loss and grad needed for Adam update
               _ (mx/materialize! loss grad)
 
               ;; Adam moment updates (host-side bias correction)
@@ -293,6 +296,7 @@
                                     (mx/add (mx/sqrt v-hat) eps-s))
               new-params (mx/subtract params (mx/multiply lr-s update-vec))
 
+              ;; Break lazy graph — params and moments carried to next iteration
               _ (mx/materialize! new-params new-m new-v)
 
               ;; Log loss at boundaries
@@ -567,6 +571,7 @@
               [nk uk rk'] (rng/split-n rk 3)
               noise (rng/normal nk [T K])
               uniforms (rng/uniform uk [T])
+              ;; Materialize noise before compiled step consumes it
               _ (mx/materialize! noise uniforms)
 
               ;; Compiled step: chain + grad + Adam
@@ -577,7 +582,7 @@
               nv (aget result 2)
               loss-arr (aget result 3)
 
-              ;; Only materialize loss at log boundaries
+              ;; Materialize loss only at log boundaries — avoids per-step eval cost
               log? (or (zero? i) (zero? (mod (inc i) log-every)))
               losses' (if log?
                         (do

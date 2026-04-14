@@ -158,6 +158,7 @@
         proposal (mx/add params (mx/multiply proposal-std noise))
         score-current (score-fn params)
         score-proposal (score-fn proposal)
+        ;; Break lazy graph — scores needed as JS numbers for accept decision
         _ (mx/materialize! score-current score-proposal)
         log-alpha (- (mx/item score-proposal) (mx/item score-current))
         accept? (u/accept-mh? log-alpha accept-key)]
@@ -291,6 +292,7 @@
                 block-noise (mx/slice noise offset (+ offset block-size))
                 block-uniforms (mx/slice uniforms offset (+ offset block-size))
                 p' (fused p block-noise block-uniforms)]
+            ;; Break lazy graph between burn-in blocks
             (mx/materialize! p')
             (when (zero? (mod b 5)) (mx/clear-cache!))
             (recur p' (inc b))))))))
@@ -418,6 +420,7 @@
   (let [proposal (mx/add params (mx/multiply proposal-std noise))
         score-current (score-fn params)
         score-proposal (score-fn proposal)
+        ;; Break lazy graph — scores needed as JS numbers for accept decision
         _ (mx/materialize! score-current score-proposal)
         log-alpha (- (mx/item score-proposal) (mx/item score-current))
         accept? (or (>= log-alpha 0)
@@ -447,6 +450,7 @@
                             noise (rng/normal k1 [burn-block-size n-params])
                             uniforms (rng/uniform k2 [burn-block-size])
                             p' (burn-chain p noise uniforms)]
+                        ;; Break lazy graph between burn-in blocks
                         (mx/materialize! p')
                         (mx/clear-cache!)
                         (recur p' (inc b) rk')))))
@@ -480,6 +484,7 @@
                     (if (>= b n-blocks)
                       (vec (take samples acc))
                       (let [traj (collect-chain p (nth all-noise b) (nth all-uniforms b))]
+                        ;; Break lazy graph — extract trajectory to host per block
                         (mx/materialize! traj)
                         (let [traj-js (mx/->clj traj)
                               remaining (- samples (count acc))
@@ -502,6 +507,7 @@
                             [k1 k2 rk'] (rng/split-n rk 3)
                             noise-batch (rng/normal k1 [batch n-params])
                             uniforms-batch (rng/uniform k2 [batch])
+                            ;; Materialize noise before inner loop consumes it
                             _ (mx/materialize! noise-batch uniforms-batch)
                             uniforms-js (mx/->clj uniforms-batch)
                         ;; Inner loop: iterate through pre-generated randomness
@@ -708,13 +714,16 @@
         proposal (mx/add params (mx/multiply proposal-std noise))
         score-current (score-fn params)
         score-proposal (score-fn proposal)
+        ;; Break lazy graph — prevents accumulation across iterations
         _ (mx/materialize! score-current score-proposal)
         log-alphas (mx/subtract score-proposal score-current)
         u (rng/uniform accept-key [n-chains])
         accept-mask (mx/less (mx/log u) log-alphas)
+        ;; Materialize mask before host-side count extraction
         _ (mx/materialize! accept-mask)
         n-accepted (mx/item (mx/sum accept-mask))
         new-params (mx/where (mx/expand-dims accept-mask 1) proposal params)
+        ;; Materialize final state — next iteration builds on this
         _ (mx/materialize! new-params)]
     {:state new-params :n-accepted (int n-accepted)}))
 
@@ -880,6 +889,7 @@
                               noise (rng/normal k1 [k n-chains n-params])
                               uniforms (rng/uniform k2 [k n-chains])
                               traj (chain p noise uniforms)]
+                          ;; Break lazy graph between burn-in blocks
                           (mx/materialize! traj)
                         ;; Extract last step [N,D] from trajectory [K,N,D]
                           (let [p' (mx/reshape
@@ -901,6 +911,7 @@
                     noise (rng/normal k1 [k n-chains n-params])
                     uniforms (rng/uniform k2 [k n-chains])
                     traj (chain p noise uniforms)]
+                ;; Break lazy graph — extract trajectory to host per block
                 (mx/materialize! traj)
                 (let [traj-js (mx/->clj traj) ;; [K][N][D] nested JS
                       remaining (- samples (count acc))
@@ -1172,9 +1183,11 @@
         [_ g] (val-grad-compiled q)
         noise (rng/normal noise-key q-shape)
         q' (mx/add q (mx/multiply half-eps2 g) (mx/multiply eps noise))
+        ;; Break lazy graph — proposal and gradient needed for correction
         _ (mx/materialize! q' g)
         ;; Compute acceptance ratio with asymmetric proposal correction
         [score-q' g'] (val-grad-compiled q')
+        ;; Break lazy graph — scores needed as JS numbers below
         _ (mx/materialize! score-q' g')
         ;; Forward/backward proposal log-densities
         fwd-mean (mx/add q (mx/multiply half-eps2 g))
@@ -1183,6 +1196,7 @@
         log-bwd (log-proposal-density q bwd-mean two-eps-sq)
         ;; Score at q — reuse val-grad
         [score-q _] (val-grad-compiled q)
+        ;; Break lazy graph — all terms needed as JS numbers for accept
         _ (mx/materialize! log-fwd log-bwd score-q)
         log-accept (+ (- (mx/item score-q') (mx/item score-q))
                       (- (mx/item log-bwd) (mx/item log-fwd)))
@@ -1261,6 +1275,7 @@
                             uniforms (rng/uniform k2 [burn-block-size])
                             r (burn-chain q sq gq noise uniforms)
                             q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
+                        ;; Break lazy graph between burn-in blocks
                         (mx/materialize! q' sq' gq')
                         (mx/clear-cache!)
                         (recur q' sq' gq' (inc b) rk')))))
@@ -1658,9 +1673,11 @@
         ;; MALA proposal: q' = q + eps^2/2 * grad + eps * noise
         noise (rng/normal noise-key param-shape)
         q' (mx/add q (mx/multiply half-eps2 g) (mx/multiply eps noise))
+        ;; Break lazy graph — proposal and gradient needed for correction
         _ (mx/materialize! q' g)
         ;; Gradient at proposal
         g' (grad-fn q')
+        ;; Break lazy graph — proposal gradient needed for backward mean
         _ (mx/materialize! g')
         ;; Forward/backward proposal log-densities [N]
         fwd-mean (mx/add q (mx/multiply half-eps2 g))
@@ -1670,16 +1687,19 @@
         ;; Scores [N]
         score-q (score-fn q)
         score-q' (score-fn q')
+        ;; Break lazy graph — all terms needed for acceptance ratio
         _ (mx/materialize! log-fwd log-bwd score-q score-q')
         ;; Per-chain acceptance ratio [N]
         log-alphas (mx/add (mx/subtract score-q' score-q)
                            (mx/subtract log-bwd log-fwd))
         u (rng/uniform accept-key [n-chains])
         accept-mask (mx/less (mx/log u) log-alphas)
+        ;; Materialize mask before host-side count extraction
         _ (mx/materialize! accept-mask)
         n-accepted (mx/item (mx/sum accept-mask))
         ;; Per-chain select: expand mask [N] -> [N,1] for broadcasting against [N,D]
         new-q (mx/where (mx/expand-dims accept-mask 1) q' q)
+        ;; Materialize final state — next iteration builds on this
         _ (mx/materialize! new-q)]
     {:state new-q :n-accepted (int n-accepted)}))
 
@@ -1785,6 +1805,7 @@
   ([neg-U-fn q p half metric]
    (let [neg-U (neg-U-fn q)
          K (kinetic-energy p metric half)]
+     ;; Break lazy graph — terms needed as JS numbers for accept ratio
      (mx/materialize! neg-U K)
      (+ (mx/item neg-U) (mx/item K)))))
 
@@ -1939,6 +1960,7 @@
                             momentum (rng/normal k1 [burn-block-size n-params])
                             uniforms (rng/uniform k2 [burn-block-size])
                             q' (burn-chain q momentum uniforms)]
+                        ;; Break lazy graph between burn-in blocks
                         (mx/materialize! q')
                         (mx/clear-cache!)
                         (recur q' (inc b) rk')))))
@@ -2323,11 +2345,13 @@
         param-shape (mx/shape q)
         ;; Sample [N,D] momentum
         p0 (rng/normal momentum-key param-shape)
+        ;; Materialize momentum before Hamiltonian computation
         _ (mx/materialize! p0)
         ;; Current Hamiltonian [N] = neg-U(q) + K(p)
         neg-U-q (neg-U-fn q)
         K-current (vectorized-kinetic-energy p0 half)
         current-H (mx/add neg-U-q K-current)
+        ;; Break lazy graph — Hamiltonian needed for accept ratio
         _ (mx/materialize! current-H)
         ;; Fused leapfrog — grad-fn uses sum trick for [N,D] gradients
         ;; Note: grad-fn computes d(score)/d(params), neg-U = -score,
@@ -2335,19 +2359,23 @@
         ;; which is subtracting (-grad-fn) = adding grad-fn. We negate here.
         neg-grad-fn (fn [q] (mx/negative (grad-fn q)))
         [q' p'] (vectorized-leapfrog-fused neg-grad-fn q p0 eps half-eps leapfrog-steps)
+        ;; Break lazy graph — leapfrog builds large graph from L steps
         _ (mx/materialize! q' p')
         ;; Proposed Hamiltonian [N]
         neg-U-q' (neg-U-fn q')
         K-proposed (vectorized-kinetic-energy p' half)
         proposed-H (mx/add neg-U-q' K-proposed)
+        ;; Break lazy graph — proposed H needed for accept ratio
         _ (mx/materialize! proposed-H)
         ;; Per-chain accept/reject [N]
         log-alphas (mx/subtract current-H proposed-H)
         u (rng/uniform accept-key [n-chains])
         accept-mask (mx/less (mx/log u) log-alphas)
+        ;; Materialize mask before host-side count extraction
         _ (mx/materialize! accept-mask)
         n-accepted (mx/item (mx/sum accept-mask))
         new-q (mx/where (mx/expand-dims accept-mask 1) q' q)
+        ;; Materialize final state — next iteration builds on this
         _ (mx/materialize! new-q)]
     {:state new-q :n-accepted (int n-accepted)}))
 
@@ -2409,6 +2437,7 @@
   (let [diff (mx/subtract q-plus q-minus)
         check-fwd (mx/sum (mx/multiply diff p-plus))
         check-bwd (mx/sum (mx/multiply diff p-minus))]
+    ;; Break lazy graph — dot products needed as JS numbers for U-turn check
     (mx/materialize! check-fwd check-bwd)
     (and (>= (mx/item check-fwd) 0)
          (>= (mx/item check-bwd) 0))))
@@ -2655,6 +2684,7 @@
       (let [;; Propose: f' = f*cos(θ) + nu*sin(θ)
             f' (mx/add (mx/multiply f (mx/scalar (js/Math.cos theta)))
                        (mx/multiply nu (mx/scalar (js/Math.sin theta))))
+            ;; Break lazy graph — proposal needed for trace update below
             _ (mx/materialize! f')
             ;; Update trace at selected addresses
             constraints (reduce (fn [cm [i addr]]

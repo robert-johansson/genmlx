@@ -91,6 +91,7 @@
   [model args obs particles]
   (let [results    (mapv (fn [i]
                           (let [r (p/generate model args obs)]
+                            ;; Break lazy graph per particle — prevents N-deep accumulation
                             (mx/materialize! (:weight r) (:score (:trace r)))
                             (when (zero? (mod (inc i) 50)) (mx/sweep-dead-arrays!))
                             r))
@@ -140,6 +141,7 @@
         results       (into [] (map-indexed
                         (fn [i trace]
                           (let [r (p/update (:gen-fn trace) trace obs)]
+                            ;; Break lazy graph per particle — prevents N-deep accumulation
                             (mx/materialize! (:weight r) (:score (:trace r)))
                             (when (zero? (mod (inc i) 50)) (mx/sweep-dead-arrays!))
                             r))
@@ -263,6 +265,7 @@
             ;; Init step: reference trace at index 0, rest from prior
             (let [other-results (mapv (fn [_]
                                         (let [r (p/generate particle-model args obs-t)]
+                                          ;; Break lazy graph per particle
                                           (mx/materialize! (:weight r) (:score (:trace r)))
                                           r))
                                       (range (dec particles)))
@@ -295,6 +298,7 @@
                   ;; Update all particles
                   results (mapv (fn [trace]
                                   (let [r (p/update (:gen-fn trace) trace obs-t)]
+                                    ;; Break lazy graph per particle
                                     (mx/materialize! (:weight r) (:score (:trace r)))
                                     r))
                                 traces')
@@ -371,6 +375,7 @@
                         w-arr (u/materialize-weights step-weights)
                         ml-inc (mx/subtract (mx/logsumexp w-arr)
                                             (mx/scalar (js/Math.log particles)))
+                        ;; Materialize before resampling uses ml-inc as JS number
                         _ (mx/materialize! ml-inc)
                         indices (u/systematic-resample step-weights particles resample-key)
                         resampled (mapv #(nth new-traces %) indices)]
@@ -436,14 +441,17 @@
               step-weights (:weight vtrace)
               new-state (:retval vtrace)
               ;; 2. Log-ML increment
+              ;; Break lazy graph — weights needed for resampling below
               _ (mx/materialize! step-weights)
               ml-inc (mx/subtract (mx/logsumexp step-weights)
                                   (mx/scalar (js/Math.log particles)))
+              ;; Materialize ml-inc before accumulation in next iteration
               _ (mx/materialize! ml-inc)
               ;; 3. Resample (handles array, map, or nil state)
               indices (vec/systematic-resample-indices step-weights
                                                        particles resample-key)
               resampled-state (resample-state new-state indices)
+              ;; Break lazy graph — resampled state carried to next timestep
               _ (materialize-state! resampled-state)
               ;; 4. Periodic cleanup
               _ (when (zero? (mod (inc t) 5)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
@@ -469,9 +477,11 @@
               n (:n-particles vtrace)
               {proposed :vtrace mh-weight :weight}
                 (dyn/vregenerate (:gen-fn vtrace) vtrace selection regen-key)
+              ;; Break lazy graph — weight needed for acceptance comparison
               _ (mx/materialize! mh-weight)
               u (rng/uniform (rng/ensure-key accept-key) [n])
               accept-mask (mx/less (mx/log u) mh-weight)
+              ;; Materialize mask before per-particle merge
               _ (mx/materialize! accept-mask)
               vtrace (vec/merge-vtraces-by-mask vtrace proposed accept-mask)]
           (recur (inc k) vtrace next-key))))))
@@ -518,6 +528,7 @@
                 (dyn/vupdate (:gen-fn vtrace) vtrace (nth obs-vec t) update-key)
               ;; 3. Accumulate weights
               cumul-weights (mx/add prev-weights update-weight)
+              ;; Break lazy graph — weights carried across timesteps
               _ (mx/materialize! cumul-weights)
               vtrace (assoc updated-vtrace :weight cumul-weights)
               ;; 4. Log-ML increment

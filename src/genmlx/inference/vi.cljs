@@ -95,9 +95,11 @@
                             (mapv #(mx/item (mx/index samples %)) (range n))
                             (mx/->clj samples))))})
         (let [[iter-key next-key] (rng/split-or-nils rk)
+              ;; Tidy-materialize gradient — frees intermediate graph nodes
               g (mx/tidy-materialize #(grad-neg-elbo vp))
               [vp' opt-state'] (learn/adam-step vp g opt-state
                                                 {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
+              ;; Tidy-materialize ELBO — prevents graph accumulation at log points
               elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
                          (mx/item (mx/tidy-materialize #(elbo-estimate vp' log-density elbo-samples d vmapped-log-density iter-key))))]
           (when (and callback elbo-val)
@@ -175,9 +177,11 @@
                                 (mapv (fn [idx] (mx/item (mx/index samples idx))) (range n))
                                 (mx/->clj samples))))})
             (let [[iter-key next-key] (rng/split-or-nils rk)
+                  ;; Tidy-materialize gradient — frees intermediate graph nodes
                   g (mx/tidy-materialize #(grad-neg-elbo vp))
                   [vp' opt-state'] (learn/adam-step vp g opt-state
                                                     {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
+                  ;; Tidy-materialize ELBO — prevents graph accumulation at log points
                   elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
                              (mx/item (mx/tidy-materialize #(mx/negative (neg-elbo-compiled vp')))))]
               (when (and callback elbo-val)
@@ -392,6 +396,7 @@
         {:params params :loss-history (persistent! losses)}
         (let [[iter-key next-key] (rng/split-or-nils rk)
               {:keys [loss grad]} (grad-loss params iter-key)
+              ;; Break lazy graph — prevents graph accumulation across iterations
               _ (mx/materialize! loss grad)
               _ (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
               loss-val (mx/item loss)
@@ -440,6 +445,7 @@
             {:params params :loss-history (persistent! losses)}
             (let [[iter-key next-key] (rng/split-or-nils rk)
                   samples (sample-fn params iter-key n-samples)
+                  ;; Tidy-materialize gradient and loss — frees intermediate nodes
                   grad (mx/tidy-materialize #(grad-loss params samples))
                   loss (mx/tidy-materialize #(loss-compiled params samples))
                   loss-val (mx/item loss)
