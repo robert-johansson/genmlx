@@ -1168,13 +1168,9 @@
                V)
         L (mx/cholesky V-2d)
         _ (mx/materialize! L)
-        k (first (mx/shape V-2d))
-        V-inv (mx/inv V-2d)
-        log-det-V (mx/multiply TWO (mx/sum (mx/log (mx/diag L))))
-        _ (mx/materialize! V-inv log-det-V)]
+        k (first (mx/shape V-2d))]
     (dc/->Distribution :wishart
-                       {:df df-val :scale-matrix V-2d :cholesky-L L
-                        :V-inv V-inv :log-det-V log-det-V :k k})))
+                       {:df df-val :scale-matrix V-2d :cholesky-L L :k k})))
 
 (defmethod dc/dist-sample* :wishart [d key]
   (let [{:keys [df cholesky-L k]} (:params d)
@@ -1253,15 +1249,10 @@
         Psi-inv (mx/inv Psi-2d)
         _ (mx/materialize! Psi-inv)
         ;; Build internal Wishart(df, Psi^{-1}) for sampling
-        wish (wishart df-val Psi-inv)
-        ;; Precompute log|Psi| for log-prob
-        L-psi (mx/cholesky Psi-2d)
-        _ (mx/materialize! L-psi)
-        log-det-Psi (mx/multiply TWO (mx/sum (mx/log (mx/diag L-psi))))
-        _ (mx/materialize! log-det-Psi)]
+        wish (wishart df-val Psi-inv)]
     (dc/->Distribution :inv-wishart
                        {:df df-val :scale-matrix Psi-2d :k k
-                        :wish wish :log-det-Psi log-det-Psi})))
+                        :wish wish})))
 
 (defmethod dc/dist-sample* :inv-wishart [d key]
   (let [{:keys [wish]} (:params d)
