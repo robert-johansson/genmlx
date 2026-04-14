@@ -150,12 +150,15 @@
                     sub-selection (when-let [s (:selection state)]
                                     (sel/get-subselection s addr))
                     old-splice-score (get (:old-splice-scores state) addr)
+                    old-sub-meta (get (:old-nested-splice-scores state) addr)
                     sub-result ((:executor state) gf (vec args)
                                                   {:constraints sub-constraints
                                                    :old-choices sub-old-choices
                                                    :selection sub-selection
                                                    :key sk
                                                    :old-splice-score old-splice-score
+                                                   :old-sub-splice-scores (:splice-scores old-sub-meta)
+                                                   :old-sub-nested-splice-scores (:nested-splice-scores old-sub-meta)
                                                    :param-store (:param-store state)})]
                 (@validate-fn :sub-result sub-result
                   (str "executor sub-result at " addr))

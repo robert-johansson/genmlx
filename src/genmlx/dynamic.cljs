@@ -62,11 +62,15 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- attach-splice-scores
-  "Attach splice scores as metadata on a trace, if present."
+  "Attach splice scores (and nested splice scores) as metadata on a trace, if present."
   [trace result]
-  (if-let [ss (:splice-scores result)]
-    (with-meta trace {::splice-scores ss})
-    trace))
+  (let [ss (:splice-scores result)
+        nss (:nested-splice-scores result)]
+    (if (or ss nss)
+      (with-meta trace (cond-> {}
+                         ss (assoc ::splice-scores ss)
+                         nss (assoc ::nested-splice-scores nss)))
+      trace)))
 
 (defn- make-result-trace
   "Build a Trace from a handler/compiled result map."
@@ -149,6 +153,7 @@
                   :key key :constraints constraints
                   :old-choices (:choices trace)
                   :old-splice-scores (::splice-scores (meta trace))
+                  :old-nested-splice-scores (::nested-splice-scores (meta trace))
                   :discard cm/EMPTY
                   :executor execute-sub :param-store (ps gf)}
                  (fn [rt] (run-body gf rt (:args trace))))
@@ -164,6 +169,7 @@
                   :key key :selection selection
                   :old-choices (:choices trace)
                   :old-splice-scores (::splice-scores (meta trace))
+                  :old-nested-splice-scores (::nested-splice-scores (meta trace))
                   :executor execute-sub :param-store (ps gf)}
                  (fn [rt] (run-body gf rt (:args trace))))]
     (make-regen-result gf trace result old-score)))
@@ -273,6 +279,7 @@
                          {:choices cm/EMPTY :score (:score result)
                           :weight SCORE-ZERO :key key :constraints constraints
                           :old-choices (:choices trace) :discard (cm/from-flat-map (:discard result))
+                          :old-nested-splice-scores (::nested-splice-scores (meta trace))
                           :executor execute-sub :param-store (ps gf)}
                          (fn [rt] (run-body gf rt (:args trace))))
         new-trace (make-result-trace gf (:args trace) handler-result)]
@@ -289,6 +296,7 @@
                          {:choices cm/EMPTY :score (:score result)
                           :weight (:weight result) :key key :selection selection
                           :old-choices (:choices trace)
+                          :old-nested-splice-scores (::nested-splice-scores (meta trace))
                           :executor execute-sub :param-store (ps gf)}
                          (fn [rt] (run-body gf rt (:args trace))))]
     (make-regen-result gf trace handler-result old-score)))
@@ -352,6 +360,7 @@
                   :old-choices (:choices trace)
                   :auto-posteriors {} :auto-kalman-beliefs {} :auto-kalman-noise-vars {}
                   :old-splice-scores (::splice-scores (meta trace))
+                  :old-nested-splice-scores (::nested-splice-scores (meta trace))
                   :executor execute-sub :param-store (ps gf)}
                  (fn [rt] (run-body gf rt (:args trace))))
         regen-result (make-regen-result gf trace result old-score)]
@@ -574,47 +583,75 @@
       (mx/gfi-cleanup!)
       result)))
 
+(defn- extract-splice-meta
+  "Extract splice metadata from a trace result into a flat result map."
+  [result trace]
+  (let [m (meta trace)]
+    (cond-> result
+      (::splice-scores m)       (assoc :splice-scores (::splice-scores m))
+      (::nested-splice-scores m) (assoc :nested-splice-scores (::nested-splice-scores m)))))
+
+(defn- attach-old-splice-meta
+  "Attach old splice metadata to a reconstructed trace for regenerate/update."
+  [trace old-splice-scores old-nested-splice-scores]
+  (if (or old-splice-scores old-nested-splice-scores)
+    (with-meta trace (cond-> {}
+                       old-splice-scores (assoc ::splice-scores old-splice-scores)
+                       old-nested-splice-scores (assoc ::nested-splice-scores old-nested-splice-scores)))
+    trace))
+
 (defn- execute-sub
   "Execute a sub-generative-function during handler execution.
    Delegates to the sub-gf's own GFI methods.
    Propagates param-store and key to sub-gfs via metadata."
-  [gf args {:keys [constraints old-choices selection key old-splice-score param-store]}]
+  [gf args {:keys [constraints old-choices selection key old-splice-score
+                    old-sub-splice-scores old-sub-nested-splice-scores param-store]}]
   (let [gf (cond-> gf
              key (vary-meta assoc ::key key)
              param-store (vary-meta assoc ::param-store param-store))]
     (cond
       ;; Regenerate mode
       selection
-      (let [{:keys [trace weight]}
-            (p/regenerate gf
-                          (tr/make-trace {:gen-fn gf :args args
+      (let [old-trace (-> (tr/make-trace {:gen-fn gf :args args
                                           :choices (or old-choices cm/EMPTY)
                                           :retval nil :score (or old-splice-score SCORE-ZERO)})
-                          selection)]
-        {:choices (:choices trace) :retval (:retval trace)
-         :score (:score trace) :weight weight})
+                          (attach-old-splice-meta old-sub-splice-scores
+                                                  old-sub-nested-splice-scores))
+            {:keys [trace weight]} (p/regenerate gf old-trace selection)]
+        (extract-splice-meta
+         {:choices (:choices trace) :retval (:retval trace)
+          :score (:score trace) :weight weight}
+         trace))
 
       ;; Update mode: has old-choices (possibly with new constraints)
       (and old-choices (not= old-choices cm/EMPTY))
-      (let [old-trace (tr/make-trace {:gen-fn gf :args args
-                                      :choices old-choices
-                                      :retval nil :score (or old-splice-score SCORE-ZERO)})
+      (let [old-trace (-> (tr/make-trace {:gen-fn gf :args args
+                                          :choices old-choices
+                                          :retval nil :score (or old-splice-score SCORE-ZERO)})
+                          (attach-old-splice-meta old-sub-splice-scores
+                                                  old-sub-nested-splice-scores))
             {:keys [trace weight discard]} (p/update gf old-trace
                                                      (or constraints cm/EMPTY))]
-        {:choices (:choices trace) :retval (:retval trace)
-         :score (:score trace) :weight weight :discard discard})
+        (extract-splice-meta
+         {:choices (:choices trace) :retval (:retval trace)
+          :score (:score trace) :weight weight :discard discard}
+         trace))
 
       ;; Generate with constraints
       (and constraints (not= constraints cm/EMPTY))
       (let [{:keys [trace weight]} (p/generate gf args constraints)]
-        {:choices (:choices trace) :retval (:retval trace)
-         :score (:score trace) :weight weight})
+        (extract-splice-meta
+         {:choices (:choices trace) :retval (:retval trace)
+          :score (:score trace) :weight weight}
+         trace))
 
       ;; Plain simulate
       :else
       (let [trace (p/simulate gf args)]
-        {:choices (:choices trace) :retval (:retval trace)
-         :score (:score trace)}))))
+        (extract-splice-meta
+         {:choices (:choices trace) :retval (:retval trace)
+          :score (:score trace)}
+         trace)))))
 
 (defn- execute-sub-project
   "Execute sub-GF in project mode: replay via generate, then project.
