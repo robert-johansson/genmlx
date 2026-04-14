@@ -302,7 +302,7 @@
     (check-positive "gamma-dist" "rate" rate)
     (gamma-dist-raw shape-param rate)))
 
-(defn gamma-sample-n
+(defn- gamma-sample-n
   "Vectorized Marsaglia-Tsang: sample [n] gamma values with given shape and rate.
    shape-val: JS number, rate: MLX scalar, key: PRNG key, n: int.
    Exposed for reuse by beta, inv-gamma, and dirichlet batch sampling."

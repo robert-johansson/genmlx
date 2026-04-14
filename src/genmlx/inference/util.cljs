@@ -282,7 +282,7 @@
              u (mx/realize (rng/uniform key []))]
          (< (js/Math.log u) log-accept)))))
 
-(defn collect-choicemap-arrays
+(defn- collect-choicemap-arrays
   "Collect all MLX arrays from a choicemap (e.g., observations).
    Returns a JS Set of arrays (by identity) for fast lookup."
   [choicemap]

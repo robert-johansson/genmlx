@@ -271,13 +271,13 @@
         (:discard sub-result)
         (update :discard cm/set-submap addr (:discard sub-result)))))
 
-(defn mlx-arr-batched?
+(defn- mlx-arr-batched?
   "Check if x is an MLX array with at least 1 dimension."
   [x]
   (and (some? x) (some? (.-shape x)) (some? (.-item x))
        (pos? (count (mx/shape x)))))
 
-(defn scalar-leaf-val?
+(defn- scalar-leaf-val?
   "Check if a value is scalar (0-d or not an MLX array)."
   [v]
   (or (not (and (some? v) (some? (.-shape v)) (some? (.-item v))))

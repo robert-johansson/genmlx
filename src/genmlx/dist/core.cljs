@@ -96,7 +96,7 @@
         lp (dist-log-prob dist v)]
     {:choices (cm/->Value v) :weight lp :retval v}))
 
-(defn dist-assess [dist choices]
+(defn- dist-assess [dist choices]
   (if (cm/has-value? choices)
     (let [v  (cm/get-value choices)
           lp (dist-log-prob dist v)]

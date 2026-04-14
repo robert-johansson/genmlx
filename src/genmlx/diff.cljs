@@ -21,7 +21,7 @@
   [d]
   (= (:diff-type d) :no-change))
 
-(defn changed?
+(defn- changed?
   "Returns true if the diff indicates any change."
   [d]
   (not (no-change? d)))

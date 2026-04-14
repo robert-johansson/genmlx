@@ -396,7 +396,7 @@
         [value (update state :choices cm/set-value addr value)])
       (h/assess-transition state addr dist))))
 
-(defn get-compiled-assess
+(defn- get-compiled-assess
   "Returns the compiled-assess function for a gen-fn, or nil."
   [gf]
   (:compiled-assess (:schema gf)))
@@ -536,7 +536,7 @@
         [value (update state :choices cm/set-value addr value)])
       (h/project-transition state addr dist))))
 
-(defn get-compiled-project
+(defn- get-compiled-project
   "Returns the compiled-project function for a gen-fn, or nil."
   [gf]
   (:compiled-project (:schema gf)))

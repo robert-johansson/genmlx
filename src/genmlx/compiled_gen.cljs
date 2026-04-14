@@ -73,7 +73,7 @@
 ;; Compiled gradient (variable key — for optimization loops)
 ;; ---------------------------------------------------------------------------
 
-(defn compile-log-ml-gradient-keyed
+(defn- compile-log-ml-gradient-keyed
   "Compile the log-ML gradient with key as input.
    Returns (fn [params key] -> [neg-log-ml, grad]).
    Gradient is w.r.t. params only.

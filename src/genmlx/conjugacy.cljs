@@ -95,7 +95,7 @@
   (and (symbol? sym)
        (= (name sym) (name addr))))
 
-(defn classify-dependency
+(defn- classify-dependency
   "Classify how an obs site depends on a prior site's value.
    Returns {:type :direct|:affine|:nonlinear} with metadata.
 

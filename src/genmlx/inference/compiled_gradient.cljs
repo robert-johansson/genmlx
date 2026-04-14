@@ -188,7 +188,7 @@
 ;; Simple gradient helpers
 ;; =========================================================================
 
-(defn score-gradient-through-chain
+(defn- score-gradient-through-chain
   "Simple interface: gradient of final score after running MH chain.
 
    model: generative function with schema

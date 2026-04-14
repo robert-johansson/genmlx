@@ -23,7 +23,7 @@
   ([] (.randomKey c (js/Math.floor (* (js/Math.random) 2147483647))))
   ([seed] (.randomKey c seed)))
 
-(defn key->seed
+(defn- key->seed
   "Derive a non-negative integer seed from a PRNG key array."
   [key]
   (mx/eval! key)
@@ -97,7 +97,7 @@
      (if (mx/array? cov) cov (mx/array cov))
      (clj->js shape))))
 
-(defn permutation
+(defn- permutation
   ([key n]
    (let [rand-vals (uniform key [n])]
      (mx/argsort rand-vals)))
