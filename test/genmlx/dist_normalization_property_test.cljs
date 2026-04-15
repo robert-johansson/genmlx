@@ -83,7 +83,9 @@
     (let [support (dc/dist-support d)
           log-probs (mapv #(dc/dist-log-prob d %) support)
           _ (apply mx/eval! log-probs)
-          total (reduce + (map #(js/Math.exp (mx/item %)) log-probs))]
+          ;; Use logsumexp for numerical stability (avoids underflow/accumulation errors)
+          log-total (mx/logsumexp (mx/stack log-probs))
+          total (mx/item (mx/exp log-total))]
       (close? total 1.0 1e-4))))
 
 ;; ---------------------------------------------------------------------------

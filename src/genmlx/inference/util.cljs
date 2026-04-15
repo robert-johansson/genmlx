@@ -210,16 +210,21 @@
    Uses functional PRNG key (falls back to fresh-key if nil)."
   [log-weights n key]
   (let [{:keys [probs]} (normalize-log-weights log-weights)
+        n-probs (count probs)
         rk (rng/ensure-key key)
         u (/ (mx/realize (rng/uniform rk [])) n)]
     (loop [i 0, cumsum 0.0, j 0, indices (transient [])]
       (if (>= j n)
         (persistent! indices)
-        (let [threshold (+ u (/ j n))
-              cumsum' (+ cumsum (nth probs i))]
-          (if (>= cumsum' threshold)
-            (recur i cumsum (inc j) (conj! indices i))
-            (recur (inc i) cumsum' j indices)))))))
+        (if (>= i n-probs)
+          ;; Floating-point exhaustion: probs sum to <1.0 due to rounding.
+          ;; Fill remaining slots with the last particle.
+          (persistent! (reduce conj! indices (repeat (- n j) (dec n-probs))))
+          (let [threshold (+ u (/ j n))
+                cumsum' (+ cumsum (nth probs i))]
+            (if (>= cumsum' threshold)
+              (recur i cumsum (inc j) (conj! indices i))
+              (recur (inc i) cumsum' j indices))))))))
 
 (defn compute-ess
   "Compute effective sample size from log-weights."

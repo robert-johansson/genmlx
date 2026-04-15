@@ -21,13 +21,13 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- sample-n-values
-  "Sample n values from a distribution, return a seq of JS numbers."
+  "Sample n values from a distribution, return a vec of JS numbers.
+   Uses mx/->clj for bulk extraction (avoids N intermediate mx/index arrays)."
   [d n]
   (let [key (rng/fresh-key)
         samples (dc/dist-sample-n d key n)]
     (mx/eval! samples)
-    (for [i (range n)]
-      (mx/item (mx/index samples i)))))
+    (mx/->clj samples)))
 
 (defn- sample-mean [xs]
   (/ (reduce + xs) (count xs)))

@@ -18,18 +18,25 @@
 ;; Dtype string <-> MLX dtype mapping
 ;; ---------------------------------------------------------------------------
 
-(def ^:private dtype-map
+(def ^:private dtype-code->str
+  "Forward map: numeric NAPI DType enum → string name."
+  {0 "float32"
+   1 "int32"})
+
+(def ^:private str->dtype-map
+  "Reverse map: string name → MLX dtype constant."
   {"float32" mx/float32
    "float64" mx/float64
    "int32"   mx/int32
-   "int64"   (.-int64 mx/core)
+   "int64"   mx/int32
    "bool"    mx/bool-dt})
 
 (defn- dtype->str [dtype]
-  (str dtype))
+  (or (get dtype-code->str dtype)
+      (throw (ex-info (str "Unknown dtype code: " dtype) {:dtype dtype}))))
 
 (defn- str->dtype [s]
-  (or (get dtype-map s)
+  (or (get str->dtype-map s)
       (throw (ex-info (str "Unknown dtype: " s) {:dtype s}))))
 
 ;; ---------------------------------------------------------------------------
