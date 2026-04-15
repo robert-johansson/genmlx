@@ -8,7 +8,7 @@
 	path = internet-psychology
 	url = https://github.com/robert-johansson/internet-psychology.git
 [submodule "test.check"]
-	path = lib/test.check
+	path = test.check
 	url = https://github.com/robert-johansson/test.check.git
 [submodule "paper/MDPI_paper"]
 	path = paper/MDPI_paper
