@@ -169,18 +169,40 @@
 ;; Gap 1: Partial constraint inputs
 ;; ---------------------------------------------------------------------------
 
+(def gen-continuous-model-spec
+  "Model spec using only continuous distributions (no delta/bernoulli).
+   Used for partial-constraint testing where delta sites with resampled
+   keyword-dep parents produce -∞ log-prob (correct but vacuous)."
+  (gen/bind (gen/choose 2 6)
+    (fn [n]
+      (gen/bind (gen/vector gen-continuous-dist-type n)
+        (fn [dist-types]
+          (gen/fmap
+            (fn [{:keys [sites]}]
+              {:sites sites :args [] :return (:addr (peek sites))})
+            (gen-sites dist-types)))))))
+
 (def gen-partial-constraint-input
-  "Model spec (>= 2 sites) paired with a partial subset of addresses to constrain.
-   The subset is non-empty and strictly smaller than all addresses.
-   Always constrains the first k sites (topologically earliest), which
-   exercises both independent and dependent partial constraints."
-  (gen/bind (gen/such-that #(>= (count (:sites %)) 2) gen-model-spec 100)
+  "Model spec (>= 2 continuous sites) paired with a random non-empty strict
+   subset of addresses to constrain. Uses a boolean mask for uniform coverage
+   over all possible subsets (including constraining dependent sites while
+   parents are free). Excludes delta/bernoulli to avoid -∞ log-prob when
+   a delta site's keyword-dep parent is resampled."
+  (gen/bind gen-continuous-model-spec
     (fn [spec]
       (let [addrs (mapv :addr (:sites spec))
             n (count addrs)]
         (gen/fmap
-          (fn [k] {:spec spec :constrained-addrs (set (take k addrs))})
-          (gen/choose 1 (dec n)))))))
+          (fn [mask]
+            {:spec spec
+             :constrained-addrs (set (keep-indexed
+                                       (fn [i b] (when b (nth addrs i)))
+                                       mask))})
+          ;; Boolean mask with at least one true and one false
+          (gen/such-that
+            (fn [mask] (and (some true? mask) (some false? mask)))
+            (gen/vector gen/boolean n)
+            100))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Gap 2: Differentiable models with argument

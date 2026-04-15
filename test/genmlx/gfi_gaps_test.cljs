@@ -39,6 +39,30 @@
   (try (compiler/spec->gf spec)
        (catch :default _ nil)))
 
+(defn- strip-all
+  "Strip both compiled and analytical paths, forcing pure handler execution.
+   Needed for Gap 1: the analytical dispatcher computes marginal likelihoods
+   (integrating over unconstrained parents via conjugacy), which is a valid
+   but different weight than the conditional that project computes."
+  [gf]
+  (let [schema (:schema gf)]
+    (if (nil? schema)
+      gf
+      (dyn/->DynamicGF (:body-fn gf) (:source gf)
+        (dissoc schema
+                :compiled-simulate :compiled-generate
+                :compiled-update :compiled-assess
+                :compiled-project :compiled-regenerate
+                :analytical-plan :auto-handlers :auto-transition
+                :auto-regenerate-transition :auto-regenerate-handlers
+                :conjugate-pairs :has-conjugate?)))))
+
+(defn- spec->handler-gf-safe
+  "Compile spec to DynamicGF with all optimization paths stripped."
+  [spec]
+  (try (-> (compiler/spec->gf spec) strip-all dyn/auto-key)
+       (catch :default _ nil)))
+
 (defn- branching->gf-safe [spec]
   (try (compiler/branching-spec->gf spec)
        (catch :default _ nil)))
@@ -62,9 +86,13 @@
 ;; both compute Σ_{a ∈ S} log p(τ_a | parents_a).
 
 (defspec gap1:partial-constraint-weight 50
+  ;; Uses pure handler path (strip-all) because the analytical dispatcher
+  ;; computes marginal likelihoods (integrating over unconstrained parents),
+  ;; which is correct but differs from project (which is conditional).
+  ;; The handler's default internal proposal gives weight = project.
   (prop/for-all [input model-gen/gen-partial-constraint-input]
     (let [{:keys [spec constrained-addrs]} input
-          gf (spec->gf-safe spec)]
+          gf (spec->handler-gf-safe spec)]
       (if (nil? gf)
         true
         (let [res (laws/check-partial-constraint-weight gf [] constrained-addrs)]
@@ -82,12 +110,11 @@
 (defspec gap1:partial-weight-bounded 50
   (prop/for-all [input model-gen/gen-partial-constraint-input]
     (let [{:keys [spec constrained-addrs]} input
-          gf (spec->gf-safe spec)]
+          gf (spec->handler-gf-safe spec)]
       (if (nil? gf)
         true
         (let [trace (p/simulate gf [])
               choices (:choices trace)
-              score (safe-realize (:score trace))
               ;; Partial constraint from simulated values
               partial-cm (reduce (fn [cm addr]
                                    (cm/set-value cm addr
@@ -214,27 +241,31 @@
     (let [gf (branching->gf-safe spec)]
       (if (nil? gf)
         true
-        (try
-          (let [t1 (p/simulate gf [])
-                coin1 (safe-realize (cm/get-value (cm/get-submap (:choices t1) :coin)))
-                ;; Force the other branch
-                other-coin (if (> coin1 0.5) 0.0 1.0)
-                ;; Get trace from other branch via generate
-                {:keys [trace]} (p/generate gf []
-                                  (cm/choicemap :coin (mx/scalar other-coin)))
-                t2-choices (:choices trace)
-                ;; Update from t1 to t2's choices
-                {:keys [trace weight]} (p/update gf t1 t2-choices)
-                w (safe-realize weight)
-                ;; The result trace should have the other branch's addresses
-                result-addrs (set (map first (cm/addresses (:choices trace))))
-                expected-branch (if (> coin1 0.5)
-                                  (set (map :addr (:false-sites spec)))
-                                  (set (map :addr (:true-sites spec))))]
-            (and (h/finite? w)
-                 (contains? result-addrs :coin)
-                 (every? result-addrs expected-branch)))
-          (catch :default _ true))))))
+        (let [t1 (p/simulate gf [])
+              coin1 (safe-realize (cm/get-value (cm/get-submap (:choices t1) :coin)))
+              ;; Force the other branch
+              other-coin (if (> coin1 0.5) 0.0 1.0)
+              ;; Get trace from other branch via generate
+              {:keys [trace]} (p/generate gf []
+                                (cm/choicemap :coin (mx/scalar other-coin)))
+              t2-choices (:choices trace)
+              ;; Update from t1 to t2's choices
+              {:keys [trace weight]} (p/update gf t1 t2-choices)
+              w (safe-realize weight)
+              ;; The result trace should have the other branch's addresses
+              result-addrs (set (map first (cm/addresses (:choices trace))))
+              expected-branch (if (> coin1 0.5)
+                                (set (map :addr (:false-sites spec)))
+                                (set (map :addr (:true-sites spec))))]
+          (when-not (and (h/finite? w)
+                         (contains? result-addrs :coin)
+                         (every? result-addrs expected-branch))
+            (println "\n  CROSS-BRANCH FAIL:"
+                     "w=" w "result-addrs=" result-addrs
+                     "expected=" expected-branch))
+          (and (h/finite? w)
+               (contains? result-addrs :coin)
+               (every? result-addrs expected-branch)))))))
 
 ;; ===========================================================================
 ;; Gap 4: UPDATE with changed arguments
