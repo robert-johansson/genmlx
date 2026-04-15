@@ -8,7 +8,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 5,
-      "duration-ms": 6269,
+      "duration-ms": 4437,
       "status": "pass"
     },
     {
@@ -18,7 +18,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 11,
-      "duration-ms": 1567,
+      "duration-ms": 969,
       "status": "pass"
     },
     {
@@ -28,7 +28,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 11,
-      "duration-ms": 880,
+      "duration-ms": 686,
       "status": "pass"
     },
     {
@@ -38,7 +38,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 18,
-      "duration-ms": 1860,
+      "duration-ms": 1230,
       "status": "pass"
     },
     {
@@ -48,7 +48,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 17,
-      "duration-ms": 2589,
+      "duration-ms": 1611,
       "status": "pass"
     },
     {
@@ -58,7 +58,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 9,
-      "duration-ms": 1785,
+      "duration-ms": 1114,
       "status": "pass"
     },
     {
@@ -68,7 +68,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 5,
-      "duration-ms": 58337,
+      "duration-ms": 35823,
       "status": "pass"
     },
     {
@@ -78,7 +78,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 20,
-      "duration-ms": 7003,
+      "duration-ms": 3925,
       "status": "pass"
     },
     {
@@ -88,7 +88,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 6,
-      "duration-ms": 1682,
+      "duration-ms": 706,
       "status": "pass"
     },
     {
@@ -98,7 +98,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 22,
-      "duration-ms": 571,
+      "duration-ms": 240,
       "status": "pass"
     },
     {
@@ -108,7 +108,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 16,
-      "duration-ms": 3797,
+      "duration-ms": 1251,
       "status": "pass"
     },
     {
@@ -118,19 +118,18 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 12,
-      "duration-ms": 4029,
+      "duration-ms": 1589,
       "status": "pass"
     },
     {
-      "total-assertions": 0,
       "name": "gradient_mcmc_property_test",
       "file": "test/genmlx/gradient_mcmc_property_test.cljs",
-      "duration-ms": 120717,
+      "pass": 4,
       "fail": 0,
-      "status": "error",
-      "error": 1,
-      "pass": 0,
-      "error-message": "spawnSync /bin/sh ETIMEDOUT"
+      "error": 0,
+      "total-assertions": 4,
+      "duration-ms": 109028,
+      "status": "pass"
     },
     {
       "name": "handler_property_test",
@@ -139,7 +138,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 8,
-      "duration-ms": 108619,
+      "duration-ms": 479,
       "status": "pass"
     },
     {
@@ -149,30 +148,28 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 12,
-      "duration-ms": 8115,
+      "duration-ms": 2602,
       "status": "pass"
     },
     {
-      "total-assertions": 9,
       "name": "location_scale_property_test",
       "file": "test/genmlx/location_scale_property_test.cljs",
-      "duration-ms": 1313,
-      "fail": 1,
-      "status": "error",
-      "error": 1,
-      "pass": 8,
-      "error-message": "Command failed: /Users/robert/.bun/bin/bun run --bun nbb test/genmlx/location_scale_property_test.cljs\nerror: \"nbb\" exited with code 1\n"
+      "pass": 9,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 9,
+      "duration-ms": 537,
+      "status": "pass"
     },
     {
-      "total-assertions": 0,
       "name": "mcmc_property_test",
       "file": "test/genmlx/mcmc_property_test.cljs",
-      "duration-ms": 120196,
+      "pass": 5,
       "fail": 0,
-      "status": "error",
-      "error": 1,
-      "pass": 0,
-      "error-message": "spawnSync /bin/sh ETIMEDOUT"
+      "error": 0,
+      "total-assertions": 5,
+      "duration-ms": 120590,
+      "status": "pass"
     },
     {
       "name": "score_monotonicity_property_test",
@@ -181,7 +178,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 10,
-      "duration-ms": 94173,
+      "duration-ms": 854,
       "status": "pass"
     },
     {
@@ -191,7 +188,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 11,
-      "duration-ms": 880,
+      "duration-ms": 279,
       "status": "pass"
     },
     {
@@ -201,7 +198,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 5,
-      "duration-ms": 1435,
+      "duration-ms": 496,
       "status": "pass"
     },
     {
@@ -211,7 +208,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 7,
-      "duration-ms": 4219,
+      "duration-ms": 1390,
       "status": "pass"
     },
     {
@@ -221,7 +218,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 6,
-      "duration-ms": 2572,
+      "duration-ms": 839,
       "status": "pass"
     },
     {
@@ -231,7 +228,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 4,
-      "duration-ms": 2342,
+      "duration-ms": 843,
       "status": "pass"
     },
     {
@@ -241,7 +238,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 20,
-      "duration-ms": 21713,
+      "duration-ms": 12276,
       "status": "pass"
     },
     {
@@ -251,7 +248,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 9,
-      "duration-ms": 2066,
+      "duration-ms": 1011,
       "status": "pass"
     },
     {
@@ -261,39 +258,37 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 13,
-      "duration-ms": 2269,
+      "duration-ms": 1085,
       "status": "pass"
     },
     {
-      "total-assertions": 0,
       "name": "vi_property_test",
       "file": "test/genmlx/vi_property_test.cljs",
-      "duration-ms": 120006,
+      "pass": 7,
       "fail": 0,
-      "status": "error",
-      "error": 1,
-      "pass": 0,
-      "error-message": "spawnSync /bin/sh ETIMEDOUT"
+      "error": 0,
+      "total-assertions": 7,
+      "duration-ms": 254785,
+      "status": "pass"
     },
     {
-      "total-assertions": 11,
       "name": "vmap_property_test",
       "file": "test/genmlx/vmap_property_test.cljs",
-      "duration-ms": 534,
+      "pass": 11,
       "fail": 0,
-      "status": "error",
-      "error": 11,
-      "pass": 0,
-      "error-message": "Command failed: /Users/robert/.bun/bin/bun run --bun nbb test/genmlx/vmap_property_test.cljs\nerror: \"nbb\" exited with code 1\n"
+      "error": 0,
+      "total-assertions": 11,
+      "duration-ms": 1124,
+      "status": "pass"
     }
   ],
   "totals": {
-    "pass": 265,
-    "fail": 1,
-    "error": 15,
-    "total-assertions": 277,
-    "duration-ms": 703506,
-    "suites-passed": 23,
+    "pass": 293,
+    "fail": 0,
+    "error": 0,
+    "total-assertions": 293,
+    "duration-ms": 561806,
+    "suites-passed": 28,
     "suites-total": 28
   }
 }
