@@ -1,9 +1,12 @@
 (ns bench.compiled-optimizer
   "Compiled Adam vs Handler Loop — optimizer benchmark.
 
-   Compares two optimization paths on the same dynamic linear regression model:
-   1. Compiled Adam (co/learn) — auto-selects compilation level, fused gradient + Adam
+   Compares two optimization paths on the same static linear regression model:
+   1. Compiled Adam (co/learn) — tensor-native compilation, fused gradient + Adam
    2. Handler loop baseline — manual loop with u/make-score-fn + finite-diff Adam
+
+   The model uses explicit keyword trace addresses (no loops/doseq) so it qualifies
+   as fully static, enabling L4 tensor-native compilation.
 
    Reports timing, speedup, final parameters, loss history, and compilation level.
 
@@ -70,22 +73,27 @@
      :raw outer-times}))
 
 ;; ---------------------------------------------------------------------------
-;; Model: Dynamic linear regression (same as compilation-ladder)
+;; Model: Static linear regression (all keyword literal addresses)
 ;; ---------------------------------------------------------------------------
+;; Key: no loops, no doseq, no dynamic address construction.
+;; Every trace address is a keyword literal so the schema marks this as static,
+;; enabling tensor-native (L4) compilation.
 
-(def dynamic-linreg
+(def static-linreg
   (dyn/auto-key
-    (gen [xs]
+    (gen [x0 x1 x2 x3 x4]
       (let [slope     (trace :slope (dist/gaussian 0 10))
             intercept (trace :intercept (dist/gaussian 0 10))]
-        (doseq [[j x] (map-indexed vector xs)]
-          (trace (keyword (str "y" j))
-                 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
-                                         intercept)
-                                 1)))
+        (trace :y0 (dist/gaussian (mx/add (mx/multiply slope x0) intercept) 1))
+        (trace :y1 (dist/gaussian (mx/add (mx/multiply slope x1) intercept) 1))
+        (trace :y2 (dist/gaussian (mx/add (mx/multiply slope x2) intercept) 1))
+        (trace :y3 (dist/gaussian (mx/add (mx/multiply slope x3) intercept) 1))
+        (trace :y4 (dist/gaussian (mx/add (mx/multiply slope x4) intercept) 1))
         slope))))
 
-(def xs-raw [1.0 2.0 3.0 4.0 5.0])
+;; Args: 5 scalar x-values
+(def model-args [(mx/scalar 1.0) (mx/scalar 2.0) (mx/scalar 3.0)
+                 (mx/scalar 4.0) (mx/scalar 5.0)])
 
 (def observations
   (-> cm/EMPTY
@@ -99,12 +107,20 @@
 (def n-iters 200)
 (def learning-rate 0.01)
 
+;; Verify compilation level before running benchmarks
+(let [{:keys [compilation-level]}
+      (co/make-compiled-loss-grad static-linreg model-args observations latent-addresses)]
+  (println (str "\n  Pre-check compilation level: " compilation-level))
+  (assert (= :tensor-native compilation-level)
+          (str "Expected :tensor-native but got " compilation-level
+               ". Model must be static for L4 compilation.")))
+
 ;; ---------------------------------------------------------------------------
 ;; Benchmark
 ;; ---------------------------------------------------------------------------
 
 (println "\n=== Compiled Optimizer Benchmark ===")
-(println (str "Model: dynamic linear regression, 5 observations"))
+(println (str "Model: static linear regression, 5 observations"))
 (println (str "Task: optimize slope + intercept via Adam (" n-iters " iterations, lr=" learning-rate ")"))
 
 ;; --- Path 1: Handler loop baseline ---
@@ -170,13 +186,13 @@
 (def handler-timing
   (benchmark "Handler-Adam-200"
     (fn []
-      (handler-adam-loop dynamic-linreg [xs-raw] observations
+      (handler-adam-loop static-linreg model-args observations
                          latent-addresses n-iters learning-rate))
     :warmup-n 1 :outer-n 3 :inner-n 1))
 
 ;; Verify handler loop result
 (let [{:keys [params final-loss]}
-      (handler-adam-loop dynamic-linreg [xs-raw] observations
+      (handler-adam-loop static-linreg model-args observations
                          latent-addresses n-iters learning-rate)]
   (mx/materialize! params)
   (println (str "  Handler final params: " (mx/->clj params)))
@@ -184,18 +200,18 @@
 
 ;; --- Path 2: Compiled Adam (co/learn) ---
 
-(println "\n--- Compiled Adam (co/learn, fused gradient + update) ---")
+(println "\n--- Compiled Adam (co/learn, tensor-native fused gradient + update) ---")
 
 (mx/clear-cache!)
 (def compiled-timing
   (benchmark "Compiled-Adam-200"
     (fn []
-      (co/learn dynamic-linreg [xs-raw] observations latent-addresses
+      (co/learn static-linreg model-args observations latent-addresses
                 {:iterations n-iters :lr learning-rate :log-every 1000}))
     :warmup-n 1 :outer-n 3 :inner-n 1))
 
 ;; Verify compiled Adam result and report details
-(let [result (co/learn dynamic-linreg [xs-raw] observations latent-addresses
+(let [result (co/learn static-linreg model-args observations latent-addresses
                        {:iterations n-iters :lr learning-rate :log-every 1})]
   (mx/materialize! (:params result))
   (println (str "  Compiled final params: " (mx/->clj (:params result))))
@@ -234,20 +250,20 @@
 
 (let [speedup (/ (:mean-ms handler-timing) (:mean-ms compiled-timing))
       ;; Get detailed results for JSON output
-      compiled-result (co/learn dynamic-linreg [xs-raw] observations latent-addresses
+      compiled-result (co/learn static-linreg model-args observations latent-addresses
                                 {:iterations n-iters :lr learning-rate :log-every 1})
       _ (mx/materialize! (:params compiled-result))
-      handler-result (handler-adam-loop dynamic-linreg [xs-raw] observations
+      handler-result (handler-adam-loop static-linreg model-args observations
                                         latent-addresses n-iters learning-rate)
       _ (mx/materialize! (:params handler-result))]
   (write-json "data.json"
     {:experiment "compiled-optimizer"
-     :description "Compiled Adam vs handler loop (dynamic linear regression)"
+     :description "Compiled Adam (tensor-native L4) vs handler loop (static linear regression)"
      :timestamp (.toISOString (js/Date.))
      :hardware {:platform "macOS" :chip "Apple Silicon" :gpu "Metal"}
 
      :config
-     {:model "dynamic-linreg"
+     {:model "static-linreg"
       :n_observations 5
       :latent_addresses (mapv name latent-addresses)
       :iterations n-iters

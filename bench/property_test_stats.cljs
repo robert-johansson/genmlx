@@ -96,10 +96,17 @@
 ;; Suite runner
 ;; ---------------------------------------------------------------------------
 
+(def slow-suites
+  #{"smc_property_test"
+    "vi_property_test"
+    "gradient_mcmc_property_test"
+    "mcmc_property_test"
+    "vmap_property_test"})
+
 (defn timeout-for-suite
-  "Return timeout in ms for a given suite. SMC property tests get extra time."
+  "Return timeout in ms for a given suite. Slow suites get 5 minutes."
   [name]
-  (if (= name "smc_property_test")
+  (if (slow-suites name)
     300000
     120000))
 

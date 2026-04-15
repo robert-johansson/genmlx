@@ -196,7 +196,10 @@
                                       {:scale1 1.0 :scale2 3.0}])]
     (let [s1 (:scale1 spec)
           s2 (:scale2 spec)
-          n 500
+          ;; Laplace has excess kurtosis 3, so sample variance estimator
+          ;; has much higher variability than Gaussian. Need 2000 samples
+          ;; (was 500) to reliably estimate the variance ratio.
+          n 2000
           d1 (dist/laplace (mx/scalar 0.0) (mx/scalar s1))
           d2 (dist/laplace (mx/scalar 0.0) (mx/scalar s2))
           samples1 (sample-n-values d1 n)

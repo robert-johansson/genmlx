@@ -1,14 +1,14 @@
 {
   "experiment": "compiled-optimizer",
-  "description": "Compiled Adam vs handler loop (dynamic linear regression)",
-  "timestamp": "2026-04-15T18:47:58.689Z",
+  "description": "Compiled Adam (tensor-native L4) vs handler loop (static linear regression)",
+  "timestamp": "2026-04-15T20:13:24.081Z",
   "hardware": {
     "platform": "macOS",
     "chip": "Apple Silicon",
     "gpu": "Metal"
   },
   "config": {
-    "model": "dynamic-linreg",
+    "model": "static-linreg",
     "n_observations": 5,
     "latent_addresses": [
       "slope",
@@ -18,14 +18,14 @@
     "learning_rate": 0.01
   },
   "handler_loop": {
-    "mean_ms": 1177.6150273333335,
-    "std_ms": 9.536341393902498,
-    "min_ms": 1166.6045000000004,
-    "max_ms": 1183.2545410000002,
+    "mean_ms": 1439.0851666666667,
+    "std_ms": 11.441723276664295,
+    "min_ms": 1425.9042090000003,
+    "max_ms": 1446.4565409999998,
     "raw_times": [
-      1183.2545410000002,
-      1182.9860410000001,
-      1166.6045000000004
+      1446.4565409999998,
+      1444.8947500000004,
+      1425.9042090000003
     ],
     "final_params": [
       1.392967939376831,
@@ -34,27 +34,27 @@
     "final_loss": 15.25252914428711
   },
   "compiled_adam": {
-    "mean_ms": 1215.5698749999992,
-    "std_ms": 22.710735631906186,
-    "min_ms": 1191.6251670000001,
-    "max_ms": 1236.8032079999975,
+    "mean_ms": 199.33093033333384,
+    "std_ms": 5.333174412197835,
+    "min_ms": 193.24112500000047,
+    "max_ms": 203.16858300000058,
     "raw_times": [
-      1191.6251670000001,
-      1218.28125,
-      1236.8032079999975
+      201.58308300000044,
+      203.16858300000058,
+      193.24112500000047
     ],
     "final_params": [
-      7.400928020477295,
-      14.004668235778809
+      0.9523250460624695,
+      4.167512893676758
     ],
-    "compilation_level": "handler",
+    "compilation_level": "tensor-native",
     "loss_history_last_5": [
-      2402.9189453125,
-      2397.0390625,
-      2391.170654296875,
-      2385.31201171875,
-      2379.4658203125
+      17.87361717224121,
+      17.840055465698242,
+      17.806644439697266,
+      17.773380279541016,
+      17.740262985229492
     ]
   },
-  "speedup": 0.9687760872926653
+  "speedup": 7.2195778360143965
 }

@@ -16,9 +16,9 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- mlx-arr?
-  "Check if x is an MLX array. More robust than mx/array? in nbb."
+  "Check if x is an MLX array."
   [x]
-  (and (some? x) (some? (.-shape x)) (some? (.-item x))))
+  (mx/array? x))
 
 (defn- axis-size-of
   "Get the leading dimension size of an arg."
