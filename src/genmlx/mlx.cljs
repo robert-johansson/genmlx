@@ -301,11 +301,22 @@
 
 ;; --- Indexing ---
 
+(defn- ensure-int-indices
+  "Ensure indices are integer dtype (int32). MLX take/gather crashes with
+   float32 indices — Metal kernels expect integer index types."
+  [indices]
+  (if (number? indices)
+    (scalar indices int32)
+    ;; int32 is dtype code 1; float32 is code 0. Cast non-int to int32.
+    (if (= (.dtypeOf c indices) 1)
+      indices
+      (.astype indices int32))))
+
 (defn take-idx
   ([a indices]
-   (.take c a (if (number? indices) (scalar indices int32) indices) 0))
+   (.take c a (ensure-int-indices indices) 0))
   ([a indices axis]
-   (.take c a (if (number? indices) (scalar indices int32) indices) axis)))
+   (.take c a (ensure-int-indices indices) axis)))
 
 (defn idx
   ([a i]      (take-idx a (if (number? i) (scalar i int32) i) 0))
