@@ -1,0 +1,75 @@
+{
+  "experiment": "gfi-law-verification",
+  "suites": [
+    {
+      "total-assertions": 0,
+      "name": "GFI Laws",
+      "file": "test/genmlx/gfi_laws_test.cljs",
+      "duration-ms": 23028,
+      "fail": 0,
+      "status": "error",
+      "expected": 195,
+      "pass-rate": 0,
+      "error": 1,
+      "pass": 0,
+      "error-message": "Command failed: /Users/robert/.bun/bin/bun run --bun nbb test/genmlx/gfi_laws_test.cljs\n============================================================\nBun v1.3.12 (700fc117) macOS Silicon\nmacOS v26.3.1\nCPU: fp aes crc32 atomics\nArgs: \"node\" \"/opt/homebrew/bin/nbb\" \"test/genmlx/gfi_laws_test.cljs\"\nFeatures: Bun.stderr(2) Bun.stdin(2) Bun.stdout(2) dotenv jsc transpiler_cache(2) tsconfig(6) process_dlopen \nBuiltins: \"bun:jsc\" \"bun:main\" \"node:assert\" \"node:child_process\" \"node:crypto\" \"node:fs\" \"nod"
+    },
+    {
+      "total-assertions": 14,
+      "name": "GFI Universal",
+      "file": "test/genmlx/gfi_universal_test.cljs",
+      "duration-ms": 6715,
+      "fail": 0,
+      "status": "pass",
+      "expected": null,
+      "pass-rate": 1,
+      "error": 0,
+      "pass": 14
+    },
+    {
+      "total-assertions": 35,
+      "name": "GFI Compositional",
+      "file": "test/genmlx/gfi_compositional_test.cljs",
+      "duration-ms": 8457,
+      "fail": 0,
+      "status": "pass",
+      "expected": null,
+      "pass-rate": 1,
+      "error": 0,
+      "pass": 35
+    },
+    {
+      "total-assertions": 3,
+      "name": "GFI Gradient",
+      "file": "test/genmlx/gfi_gradient_test.cljs",
+      "duration-ms": 1462,
+      "fail": 0,
+      "status": "pass",
+      "expected": null,
+      "pass-rate": 1,
+      "error": 0,
+      "pass": 3
+    },
+    {
+      "total-assertions": 12,
+      "name": "GFI Gaps",
+      "file": "test/genmlx/gfi_gaps_test.cljs",
+      "duration-ms": 3409,
+      "fail": 0,
+      "status": "pass",
+      "expected": null,
+      "pass-rate": 1,
+      "error": 0,
+      "pass": 12
+    }
+  ],
+  "totals": {
+    "pass": 64,
+    "fail": 0,
+    "error": 1,
+    "total-assertions": 64,
+    "duration-ms": 43075,
+    "suites-passed": 4,
+    "suites-total": 5
+  }
+}

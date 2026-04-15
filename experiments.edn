@@ -1,0 +1,237 @@
+;; GenMLX Experiment Registry
+;;
+;; Canonical list of all reproducible experiments.
+;; Each experiment produces JSON results in results/<name>/data.json.
+;;
+;; Run all:      bun run --bun nbb run_experiments.cljs
+;; Run subset:   bun run --bun nbb run_experiments.cljs --only compilation-ladder,conjugacy
+;; Run changed:  bun run --bun nbb run_experiments.cljs --changed
+;;
+;; Structure per experiment:
+;;   :name       — directory name under results/
+;;   :script     — benchmark script to run
+;;   :sources    — source files to hash for change detection
+;;   :category   — grouping for selective runs (--category performance)
+;;   :timeout-ms — max wall-clock time before kill
+;;   :depends-on — experiments that must run first (data dependencies)
+;;   :description — what this experiment measures
+
+{:experiments
+ [;; =========================================================================
+  ;; A. Core Performance
+  ;; =========================================================================
+
+  {:name        "compilation-ladder"
+   :script      "bench/compilation_ladder.cljs"
+   :category    :performance
+   :timeout-ms  600000
+   :description "Same linreg model through L0→L1→L2→L3→L4. The hero result."
+   :sources     ["src/genmlx/dynamic.cljs"
+                 "src/genmlx/handler.cljs"
+                 "src/genmlx/compiled.cljs"
+                 "src/genmlx/inference/mcmc.cljs"
+                 "src/genmlx/inference/importance.cljs"
+                 "src/genmlx/inference/compiled_optimizer.cljs"
+                 "src/genmlx/fit.cljs"
+                 "src/genmlx/method_selection.cljs"]}
+
+  {:name        "vectorization"
+   :script      "bench/vectorization.cljs"
+   :category    :performance
+   :timeout-ms  120000
+   :description "Shape-based batching speedup: sequential vs batched IS/SMC/sampling at N=1000."
+   :sources     ["src/genmlx/dynamic.cljs"
+                 "src/genmlx/vectorized.cljs"
+                 "src/genmlx/inference/importance.cljs"]}
+
+  {:name        "particle-scaling"
+   :script      "bench/particle_scaling.cljs"
+   :category    :performance
+   :timeout-ms  120000
+   :description "Sublinear particle cost on Metal GPU (N=100..10000)."
+   :sources     ["src/genmlx/dynamic.cljs"
+                 "src/genmlx/vectorized.cljs"
+                 "src/genmlx/inference/importance.cljs"]}
+
+  {:name        "ffi-scaling"
+   :script      "bench/ffi_scaling.cljs"
+   :category    :performance
+   :timeout-ms  180000
+   :description "FFI overhead vs dimensionality D=10..200. Per-site vs gaussian-vec."
+   :sources     ["src/genmlx/mlx.cljs"
+                 "src/genmlx/dist.cljs"
+                 "src/genmlx/dynamic.cljs"]}
+
+  {:name        "compiled-inference"
+   :script      "bench/compiled_inference.cljs"
+   :category    :performance
+   :timeout-ms  120000
+   :description "Compiled vs handler: MH chain, score-fn, vectorized MH speedups."
+   :sources     ["src/genmlx/inference/mcmc.cljs"
+                 "src/genmlx/compiled.cljs"
+                 "src/genmlx/compiled_ops.cljs"]}
+
+  {:name        "compiled-optimizer"
+   :script      "bench/compiled_optimizer.cljs"
+   :category    :performance
+   :timeout-ms  120000
+   :description "Compiled Adam vs handler loop (L4 fused graph optimization)."
+   :sources     ["src/genmlx/inference/compiled_optimizer.cljs"
+                 "src/genmlx/inference/compiled_gradient.cljs"]}
+
+  ;; =========================================================================
+  ;; B. Inference Quality Across Model Families
+  ;; =========================================================================
+
+  {:name        "linreg"
+   :script      "bench/linreg.cljs"
+   :category    :inference
+   :timeout-ms  300000
+   :description "7+ algorithms on normal-normal linreg vs analytic ground truth."
+   :sources     ["src/genmlx/inference/mcmc.cljs"
+                 "src/genmlx/inference/importance.cljs"
+                 "src/genmlx/inference/vi.cljs"]}
+
+  {:name        "hmm"
+   :script      "bench/hmm.cljs"
+   :category    :inference
+   :timeout-ms  300000
+   :description "IS vs SMC on HMM (T=50). Demonstrates IS failure on sequential models."
+   :sources     ["src/genmlx/inference/compiled_smc.cljs"
+                 "src/genmlx/combinators.cljs"]}
+
+  {:name        "gmm"
+   :script      "bench/gmm.cljs"
+   :category    :inference
+   :timeout-ms  300000
+   :description "IS vs Gibbs on 3-component GMM. Demonstrates weight collapse."
+   :sources     ["src/genmlx/inference/mcmc.cljs"
+                 "src/genmlx/inference/importance.cljs"]}
+
+  {:name        "funnel"
+   :script      "bench/funnel.cljs"
+   :category    :inference
+   :timeout-ms  600000
+   :description "Neal's funnel (D=11): NUTS vs HMC vs MALA vs MH on pathological geometry."
+   :sources     ["src/genmlx/inference/mcmc.cljs"
+                 "src/genmlx/inference/diagnostics.cljs"]}
+
+  {:name        "changepoint"
+   :script      "bench/changepoint.cljs"
+   :category    :inference
+   :timeout-ms  600000
+   :description "Changepoint detection (T=100): SMC convergence vs IS failure."
+   :sources     ["src/genmlx/inference/compiled_smc.cljs"
+                 "src/genmlx/combinators.cljs"]}
+
+  ;; =========================================================================
+  ;; C. Analytical Inference (L3 / L3.5)
+  ;; =========================================================================
+
+  {:name        "conjugacy"
+   :script      "bench/conjugacy.cljs"
+   :category    :analytical
+   :timeout-ms  120000
+   :description "L3 auto-conjugacy: variance reduction, ESS improvement, observation scaling."
+   :sources     ["src/genmlx/conjugacy.cljs"
+                 "src/genmlx/inference/auto_analytical.cljs"
+                 "src/genmlx/inference/analytical.cljs"]}
+
+  {:name        "rao-blackwell"
+   :script      "bench/rao_blackwell.cljs"
+   :category    :analytical
+   :timeout-ms  120000
+   :description "Partial conjugacy: conjugate + non-conjugate dims, L3 vs L2."
+   :sources     ["src/genmlx/conjugacy.cljs"
+                 "src/genmlx/inference/auto_analytical.cljs"]}
+
+  {:name        "l3.5-mvn-conjugacy"
+   :script      "bench/l3_5_mvn_conjugacy.cljs"
+   :category    :analytical
+   :timeout-ms  120000
+   :description "Multivariate normal-normal conjugacy via mx/solve (no matrix inverse)."
+   :sources     ["src/genmlx/inference/kalman.cljs"
+                 "src/genmlx/conjugacy.cljs"]}
+
+  {:name        "l3.5-combinator-conjugacy"
+   :script      "bench/l3_5_combinator_conjugacy.cljs"
+   :category    :analytical
+   :timeout-ms  120000
+   :description "Conjugacy detection inside Map/Unfold combinators."
+   :sources     ["src/genmlx/combinators.cljs"
+                 "src/genmlx/conjugacy.cljs"]}
+
+  {:name        "l3.5-regenerate-analytical"
+   :script      "bench/l3_5_regenerate_analytical.cljs"
+   :category    :analytical
+   :timeout-ms  120000
+   :description "MCMC with analytical elimination: overhead vs quality gain."
+   :sources     ["src/genmlx/inference/mcmc.cljs"
+                 "src/genmlx/inference/auto_analytical.cljs"]}
+
+  ;; =========================================================================
+  ;; D. Cross-System Comparison
+  ;; =========================================================================
+
+  {:name        "cross-system"
+   :script      "bench/cross_system.cljs"
+   :category    :cross-system
+   :timeout-ms  300000
+   :description "GenMLX vs Gen.jl vs GenJAX: IS, MCMC, SMC on linreg/HMM/GMM."
+   :sources     ["src/genmlx/dynamic.cljs"
+                 "src/genmlx/inference/mcmc.cljs"
+                 "src/genmlx/inference/importance.cljs"]}
+
+  ;; =========================================================================
+  ;; E. Method Selection & Automation
+  ;; =========================================================================
+
+  {:name        "method-selection"
+   :script      "bench/method_selection.cljs"
+   :category    :automation
+   :timeout-ms  300000
+   :description "L4 fit() auto-routing: 6+ model types to optimal algorithm."
+   :sources     ["src/genmlx/method_selection.cljs"
+                 "src/genmlx/fit.cljs"]}
+
+  ;; =========================================================================
+  ;; F. Verification & Correctness
+  ;; =========================================================================
+
+  {:name        "verification-suite"
+   :script      "bench/verification_suite.cljs"
+   :category    :verification
+   :timeout-ms  600000
+   :description "All test suite pass rates: L0, L1-M1..M5, L4, compat suites."
+   :sources     []}  ;; depends on all source files
+
+  {:name        "gfi-law-verification"
+   :script      "bench/gfi_law_verification.cljs"
+   :category    :verification
+   :timeout-ms  300000
+   :description "53 algebraic laws, 64 generated-model properties, pass/fail/time."
+   :sources     ["src/genmlx/gfi.cljs"
+                 "src/genmlx/protocols.cljs"]}
+
+  {:name        "property-test-stats"
+   :script      "bench/property_test_stats.cljs"
+   :category    :verification
+   :timeout-ms  600000
+   :description "Run all property tests, report trial counts, failure rates."
+   :sources     []}  ;; depends on all property test files
+
+  {:name        "distribution-audit"
+   :script      "bench/distribution_audit.cljs"
+   :category    :verification
+   :timeout-ms  300000
+   :description "All 26 distributions: normalization, moments, gradient checks."
+   :sources     ["src/genmlx/dist.cljs"
+                 "src/genmlx/dist/core.cljs"]}
+
+  {:name        "mutation-boundary"
+   :script      "bench/mutation_boundary.cljs"
+   :category    :verification
+   :timeout-ms  120000
+   :description "12 properties verifying three-layer purity."
+   :sources     ["src/genmlx/mlx.cljs"
+                 "src/genmlx/runtime.cljs"]}]}

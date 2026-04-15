@@ -1,0 +1,28 @@
+{
+  "experiment": "mutation-boundary",
+  "description": "12 properties verifying three-layer purity",
+  "suites": [
+    {
+      "total-assertions": 32,
+      "name": "Mutation boundary",
+      "file": "test/genmlx/mutation_boundary_test.cljs",
+      "duration-ms": 603,
+      "fail": 0,
+      "status": "pass",
+      "expected": 32,
+      "pass-rate": 1,
+      "error": 0,
+      "pass": 32
+    }
+  ],
+  "totals": {
+    "pass": 32,
+    "fail": 0,
+    "error": 0,
+    "total-assertions": 32,
+    "expected": 32,
+    "duration-ms": 604,
+    "properties-verified": 12,
+    "purity-status": "verified"
+  }
+}

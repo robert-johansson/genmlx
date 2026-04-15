@@ -1,0 +1,112 @@
+{
+  "experiment": "method-selection",
+  "timestamp": "2026-04-15T18:42:07.448Z",
+  "method_selection": {
+    "description": "Method selection accuracy across 6 model types",
+    "results": [
+      {
+        "label": "Static LinReg (fully conjugate)",
+        "expected": "exact",
+        "actual": "exact",
+        "pass": true,
+        "reason": "All trace sites eliminated by analytical plan",
+        "n_residual": 0,
+        "n_eliminated": 2,
+        "elapsed_ms": 0.3725840000000744
+      },
+      {
+        "label": "Mixed Model (partial conjugate)",
+        "expected": "hmc",
+        "actual": "hmc",
+        "pass": true,
+        "reason": "Static model with 1 residual dims (≤ 10)",
+        "n_residual": 1,
+        "n_eliminated": 2,
+        "elapsed_ms": 0.08312499999999545
+      },
+      {
+        "label": "Dynamic LinReg (dynamic addresses)",
+        "expected": "handler-is",
+        "actual": "handler-is",
+        "pass": true,
+        "reason": "Dynamic addresses — shape-based methods not applicable",
+        "n_residual": 3,
+        "n_eliminated": 0,
+        "elapsed_ms": 0.02387500000008913
+      },
+      {
+        "label": "Empty model (no trace sites)",
+        "expected": "exact",
+        "actual": "exact",
+        "pass": true,
+        "reason": "No trace sites — trivial model",
+        "n_residual": 0,
+        "n_eliminated": 0,
+        "elapsed_ms": 0.01041700000007495
+      },
+      {
+        "label": "Large model (15+ latents)",
+        "expected": "vi",
+        "actual": "vi",
+        "pass": true,
+        "reason": "Static model with 15 residual dims (> 10) — VI preferred",
+        "n_residual": 15,
+        "n_eliminated": 0,
+        "elapsed_ms": 0.053625000000010914
+      },
+      {
+        "label": "Splice model (sub-model call)",
+        "expected": "smc",
+        "actual": "smc",
+        "pass": true,
+        "reason": "Splice sites present — SMC for sub-model structure",
+        "n_residual": 1,
+        "n_eliminated": 0,
+        "elapsed_ms": 0.1941669999999931
+      }
+    ],
+    "total": 6,
+    "correct": 6
+  },
+  "fit_api": {
+    "description": "fit API end-to-end auto-select verification",
+    "results": [
+      {
+        "model": "static-linreg",
+        "method": "exact",
+        "expected_method": "exact",
+        "pass": true,
+        "log_ml": -28.14594841003418,
+        "posterior": {
+          "slope": {
+            "value": 0
+          },
+          "intercept": {
+            "value": 6.427145481109619
+          }
+        },
+        "elapsed_ms": 68.80870900000002
+      },
+      {
+        "model": "dynamic-linreg",
+        "method": "handler-is",
+        "expected_method": "handler-is",
+        "pass": true,
+        "log_ml": -11.876361846923828,
+        "has_posterior": true,
+        "elapsed_ms": 3427.181667
+      },
+      {
+        "model": "mixed-model",
+        "method": "hmc",
+        "expected_method": "hmc",
+        "pass": true,
+        "log_ml": null,
+        "has_posterior": true,
+        "elapsed_ms": 41265.419125
+      }
+    ],
+    "total": 3,
+    "correct": 3
+  }
+}

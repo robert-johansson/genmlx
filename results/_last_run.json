@@ -1,0 +1,116 @@
+{
+  "timestamp": "2026-04-15T13:43:38.097Z",
+  "total_ms": 1383,
+  "experiments": [
+    {
+      "name": "vectorization",
+      "success?": false,
+      "duration-ms": 64
+    },
+    {
+      "name": "particle-scaling",
+      "success?": false,
+      "duration-ms": 63
+    },
+    {
+      "name": "ffi-scaling",
+      "success?": false,
+      "duration-ms": 61
+    },
+    {
+      "name": "compiled-inference",
+      "success?": false,
+      "duration-ms": 62
+    },
+    {
+      "name": "compiled-optimizer",
+      "success?": false,
+      "duration-ms": 63
+    },
+    {
+      "name": "linreg",
+      "success?": false,
+      "duration-ms": 63
+    },
+    {
+      "name": "hmm",
+      "success?": false,
+      "duration-ms": 62
+    },
+    {
+      "name": "gmm",
+      "success?": false,
+      "duration-ms": 63
+    },
+    {
+      "name": "funnel",
+      "success?": false,
+      "duration-ms": 63
+    },
+    {
+      "name": "changepoint",
+      "success?": false,
+      "duration-ms": 62
+    },
+    {
+      "name": "conjugacy",
+      "success?": false,
+      "duration-ms": 62
+    },
+    {
+      "name": "rao-blackwell",
+      "success?": false,
+      "duration-ms": 63
+    },
+    {
+      "name": "l3.5-mvn-conjugacy",
+      "success?": false,
+      "duration-ms": 63
+    },
+    {
+      "name": "l3.5-combinator-conjugacy",
+      "success?": false,
+      "duration-ms": 62
+    },
+    {
+      "name": "l3.5-regenerate-analytical",
+      "success?": false,
+      "duration-ms": 62
+    },
+    {
+      "name": "cross-system",
+      "success?": false,
+      "duration-ms": 63
+    },
+    {
+      "name": "method-selection",
+      "success?": false,
+      "duration-ms": 62
+    },
+    {
+      "name": "verification-suite",
+      "success?": false,
+      "duration-ms": 63
+    },
+    {
+      "name": "gfi-law-verification",
+      "success?": false,
+      "duration-ms": 62
+    },
+    {
+      "name": "property-test-stats",
+      "success?": false,
+      "duration-ms": 62
+    },
+    {
+      "name": "distribution-audit",
+      "success?": false,
+      "duration-ms": 62
+    },
+    {
+      "name": "mutation-boundary",
+      "success?": false,
+      "duration-ms": 63
+    }
+  ]
+}

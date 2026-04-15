@@ -1,0 +1,116 @@
+{
+  "benchmarks": [
+    {
+      "label": "linreg_is_1000",
+      "min_ms": 1.219125,
+      "n_particles": 1000,
+      "mean_ms": 1.2606918,
+      "model": "linreg",
+      "algorithm": "IS",
+      "raw_outer_ms": [
+        1.219125,
+        1.24825,
+        1.287667,
+        1.273083,
+        1.275334
+      ],
+      "std_ms": 0.02728641842932116
+    },
+    {
+      "label": "linreg_mh_5000",
+      "min_ms": 16.170792,
+      "mean_ms": 16.8308584,
+      "model": "linreg",
+      "algorithm": "MH",
+      "raw_outer_ms": [
+        16.861708,
+        16.170792,
+        17.011,
+        16.994375,
+        17.116417
+      ],
+      "std_ms": 0.3799249066556446,
+      "n_steps": 5000
+    },
+    {
+      "label": "hmm_is_1000",
+      "min_ms": 22.935667,
+      "n_particles": 1000,
+      "mean_ms": 23.314041800000002,
+      "model": "hmm",
+      "algorithm": "IS",
+      "raw_outer_ms": [
+        22.935667,
+        23.370917,
+        23.466667,
+        22.980583,
+        23.816375
+      ],
+      "std_ms": 0.36511304566010866
+    },
+    {
+      "label": "hmm_smc_100",
+      "min_ms": 136.348125,
+      "n_particles": 100,
+      "mean_ms": 138.4780414,
+      "model": "hmm",
+      "algorithm": "SMC",
+      "raw_outer_ms": [
+        136.348125,
+        139.214708,
+        138.7515,
+        138.498333,
+        139.577541
+      ],
+      "std_ms": 1.2612803292576502,
+      "n_steps": 50
+    },
+    {
+      "label": "gmm_is_1000",
+      "min_ms": 3.445958,
+      "n_particles": 1000,
+      "mean_ms": 3.5533664000000003,
+      "model": "gmm",
+      "algorithm": "IS",
+      "raw_outer_ms": [
+        3.557833,
+        3.618333,
+        3.550333,
+        3.594375,
+        3.445958
+      ],
+      "std_ms": 0.06608343364868374
+    },
+    {
+      "label": "funnel_mcmc_500",
+      "min_ms": 132.667208,
+      "mean_ms": 133.6376002,
+      "model": "funnel",
+      "algorithm": "HMC",
+      "raw_outer_ms": [
+        132.667208,
+        135.041709,
+        133.619959,
+        133.138791,
+        133.720334
+      ],
+      "std_ms": 0.8901052263163637,
+      "n_steps": 500
+    }
+  ],
+  "julia_version": "1.12.5",
+  "timing_protocol": {
+    "warmup": 10,
+    "method": "min-of-inner per outer round, report mean/std of outer",
+    "inner": 10,
+    "outer": 5
+  },
+  "date": "2026-03-13T08:27:32.174",
+  "system": "genjl",
+  "version": "0.4.8",
+  "hardware": {
+    "backend": "CPU",
+    "cpu": "apple-m4",
+    "platform": "macOS"
+  }
+}

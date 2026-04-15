@@ -1,0 +1,18 @@
+{
+  "experiment": "compilation-ladder",
+  "git_sha": "e16b7ca",
+  "timestamp": "2026-04-15T13:43:23.536Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "44d910b208baa63f6e36fe82c862ec687298b3d114752530a46da263987a3c81",
+  "duration_ms": 101227,
+  "script": "bench/compilation_ladder.cljs"
+}

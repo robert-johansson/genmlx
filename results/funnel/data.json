@@ -1,0 +1,41 @@
+{
+  "experiment": "neals-funnel",
+  "model": {
+    "name": "funnel",
+    "dimensions": 11,
+    "description": "v ~ N(0,3), x_i ~ N(0, exp(v/2)), all x_i observed at 0"
+  },
+  "ground-truth": {
+    "v-mean": 0,
+    "note": "E[v|x=0] ~ 0 by symmetry"
+  },
+  "results": [
+    {
+      "algorithm": "HMC-100",
+      "elapsed-ms": 16799.183417,
+      "error": null,
+      "n-samples": 100,
+      "v-mean": 1.6681015124917031,
+      "v-std": 1.6635869195266926,
+      "acceptance-rate": null
+    },
+    {
+      "algorithm": "NUTS-100",
+      "elapsed-ms": 190854.538042,
+      "error": null,
+      "n-samples": 100,
+      "v-mean": 0.10568348616361618,
+      "v-std": 1.3263434354552366,
+      "acceptance-rate": 0.97
+    },
+    {
+      "algorithm": "compiled-MH-100",
+      "elapsed-ms": 1809.6766659999848,
+      "error": null,
+      "n-samples": 100,
+      "v-mean": -0.8446881526708603,
+      "v-std": 0.3954090950753083,
+      "acceptance-rate": null
+    }
+  ]
+}

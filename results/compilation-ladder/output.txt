@@ -1,0 +1,85 @@
+
+=== Compilation Ladder ===
+Model: static linreg, 5 obs
+Analytic posterior: slope=1.9993 ± 0.3147
+
+--- L0: Handler generate (dynamic model) ---
+
+  [L0-handler-dynamic] warming up...
+  [L0-handler-dynamic] 0.888 ± 0.115 ms
+
+--- L0-static: Handler generate (static model) ---
+
+  [L0-handler-static] warming up...
+  [L0-handler-static] 1.261 ± 0.037 ms
+
+--- L1: Compiled generate (static model) ---
+
+  [L1-compiled-generate] warming up...
+  [L1-compiled-generate] 1.314 ± 0.025 ms
+
+--- L2: Handler MH (200 steps) ---
+
+  [L2-handler-MH-200] warming up...
+  [L2-handler-MH-200] 3881.082 ± 30.524 ms
+
+--- L2: Compiled MH (200 steps) ---
+
+  [L2-compiled-MH-200] warming up...
+  [L2-compiled-MH-200] 514.111 ± 112.843 ms
+
+--- L2: HMC (100 samples) ---
+
+  [L2-HMC-100] warming up...
+  [L2-HMC-100] 3594.865 ± 9.855 ms
+
+--- L2: Vectorized IS (1000 particles) ---
+
+  [L2-VIS-1000] warming up...
+  [L2-VIS-1000] 0.660 ± 0.011 ms
+
+--- L3: Auto-conjugacy (exact posterior) ---
+
+  [L3-conjugate] warming up...
+  [L3-conjugate] 1.226 ± 0.027 ms
+  L3 log-ML (exact): -28.1459
+
+--- L4: fit API (auto-select) ---
+
+  [L4-fit] warming up...
+  [L4-fit] 1.560 ± 0.022 ms
+[fit] Selected method: exact — All trace sites eliminated by analytical plan
+  L4 method: :exact
+  L4 log-ML: -28.14594841003418
+
+--- L4: Compiled Adam (200 iter) ---
+
+  [L4-learn-200iter] warming up...
+  [L4-learn-200iter] 1003.442 ± 2.224 ms
+
+--- L4: Handler loop baseline (200 iter) ---
+
+  [L4-handler-loop-200iter] warming up...
+  [L4-handler-loop-200iter] 234.251 ± 27.740 ms
+
+
+========================================
+         COMPILATION LADDER RESULTS
+========================================
+
+| Level | Description | Time (ms) | vs L0 |
+|-------|-------------|-----------|-------|
+| L0-dynamic | Handler generate (dynamic model) | 0.888 ± 0.115 | 1.0x |
+| L0-static | Handler generate (static model) | 1.261 ± 0.037 | 0.7x |
+| L1 | Compiled generate (schema-driven) | 1.314 ± 0.025 | 0.7x |
+| L2-VIS | Vectorized IS (1000 particles) | 0.660 ± 0.011 | 1.3x |
+| L2-MH-handler | Handler MH loop (200 steps) | 3881.082 ± 30.524 | 0.0x |
+| L2-MH-compiled | Compiled MH chain (200 steps) | 514.111 ± 112.843 | 0.0x |
+| L2-HMC | HMC (100 samples) | 3594.865 ± 9.855 | 0.0x |
+| L3 | Auto-conjugacy (exact posterior) | 1.226 ± 0.027 | 0.7x |
+| L4-fit | fit API (auto-select → exact) | 1.560 ± 0.022 | 0.6x |
+| L4-learn | Compiled Adam (200 iter) | 1003.442 ± 2.224 | 0.0x |
+| L4-handler-loop | Handler loop baseline (200 iter) | 234.251 ± 27.740 | 0.0x |
+  wrote: /Users/robert/code/genmlx/results/compilation-ladder/data.json
+
+Compilation ladder complete.

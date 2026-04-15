@@ -1,0 +1,111 @@
+{
+  "experiment": "verification-suite",
+  "suites": [
+    {
+      "total-assertions": 68,
+      "name": "L0 certification",
+      "file": "test/genmlx/level0_certification_test.cljs",
+      "duration-ms": 2539,
+      "fail": 0,
+      "status": "pass",
+      "expected": 68,
+      "pass-rate": 1,
+      "error": 0,
+      "pass": 68
+    },
+    {
+      "total-assertions": 227,
+      "name": "L1-M1 schema",
+      "file": "test/genmlx/schema_test.cljs",
+      "duration-ms": 504,
+      "fail": 0,
+      "status": "degraded",
+      "expected": 174,
+      "pass-rate": 1,
+      "error": 0,
+      "pass": 227
+    },
+    {
+      "total-assertions": 82,
+      "name": "L1-M2 compiled simulate",
+      "file": "test/genmlx/compiled_simulate_test.cljs",
+      "duration-ms": 421,
+      "fail": 0,
+      "status": "pass",
+      "expected": 82,
+      "pass-rate": 1,
+      "error": 0,
+      "pass": 82
+    },
+    {
+      "total-assertions": 92,
+      "name": "L1-M3 partial compile",
+      "file": "test/genmlx/partial_compile_test.cljs",
+      "duration-ms": 475,
+      "fail": 0,
+      "status": "pass",
+      "expected": 92,
+      "pass-rate": 1,
+      "error": 0,
+      "pass": 92
+    },
+    {
+      "total-assertions": 92,
+      "name": "L1-M5 combinator compile",
+      "file": "test/genmlx/combinator_compile_test.cljs",
+      "duration-ms": 1156,
+      "fail": 0,
+      "status": "degraded",
+      "expected": 90,
+      "pass-rate": 1,
+      "error": 0,
+      "pass": 92
+    },
+    {
+      "total-assertions": 41,
+      "name": "L4 certification",
+      "file": "test/genmlx/l4_certification_test.cljs",
+      "duration-ms": 4448,
+      "fail": 0,
+      "status": "pass",
+      "expected": 41,
+      "pass-rate": 1,
+      "error": 0,
+      "pass": 41
+    },
+    {
+      "total-assertions": 356,
+      "name": "Gen.clj compat",
+      "file": "test/genmlx/gen_clj_compat_test.cljs",
+      "duration-ms": 17176,
+      "fail": 0,
+      "status": "degraded",
+      "expected": 165,
+      "pass-rate": 1,
+      "error": 0,
+      "pass": 356
+    },
+    {
+      "total-assertions": 73,
+      "name": "GenJAX compat",
+      "file": "test/genmlx/genjax_compat_test.cljs",
+      "duration-ms": 80428,
+      "fail": 0,
+      "status": "pass",
+      "expected": 73,
+      "pass-rate": 1,
+      "error": 0,
+      "pass": 73
+    }
+  ],
+  "totals": {
+    "pass": 1031,
+    "fail": 0,
+    "error": 0,
+    "total-assertions": 1031,
+    "expected": 785,
+    "duration-ms": 107149,
+    "suites-passed": 5,
+    "suites-total": 8
+  }
+}

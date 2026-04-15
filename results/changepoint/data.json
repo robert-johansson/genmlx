@@ -1,0 +1,58 @@
+{
+  "experiment": "changepoint-detection",
+  "model": {
+    "name": "changepoint",
+    "T": 50,
+    "p-change": 0.1,
+    "true-changepoints": [
+      12,
+      30
+    ],
+    "true-means": [
+      0,
+      3,
+      -2
+    ],
+    "description": "Sequential changepoint model with Bernoulli switches"
+  },
+  "data": {
+    "n-obs": 50,
+    "data-range": [
+      -3.5723674297332764,
+      5.003217697143555
+    ]
+  },
+  "results": [
+    {
+      "algorithm": "seq-IS-100",
+      "elapsed-ms": 14291.342250000002,
+      "error": null,
+      "ess": 1.0000002492284383,
+      "n-particles": 100,
+      "ess-ratio": 0.010000002492284383,
+      "log-ml": -171.92599487304688
+    },
+    {
+      "algorithm": "seq-IS-500",
+      "elapsed-ms": 155343.51525,
+      "error": null,
+      "ess": 1.000000003968169,
+      "n-particles": 500,
+      "ess-ratio": 0.002000000007936338,
+      "log-ml": -146.2403564453125
+    },
+    {
+      "algorithm": "SMC-100",
+      "elapsed-ms": 290346.064375,
+      "error": null,
+      "ess": 100.00000000000006,
+      "n-particles": 100,
+      "ess-ratio": 1.0000000000000007,
+      "log-ml": -8575.06640625
+    }
+  ],
+  "interpretation": {
+    "is-collapse": "IS ESS near 1: prior proposal misses the posterior in high-dimensional discrete space",
+    "smc-advantage": "SMC resamples incrementally, maintaining particle diversity across timesteps"
+  }
+}

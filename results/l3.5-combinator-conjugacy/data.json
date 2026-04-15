@@ -1,0 +1,110 @@
+{
+  "description": "Conjugacy detection inside Map combinator kernels. Per-element analytical elimination via L3.5.",
+  "combinator": "Map",
+  "config": {
+    "particles_per_K": {
+      "3": 100,
+      "5": 100,
+      "10": 30
+    },
+    "n_trials": 10,
+    "map_sizes": [
+      3,
+      5,
+      10
+    ]
+  },
+  "hardware": {
+    "platform": "macOS",
+    "chip": "Apple Silicon",
+    "gpu": "Metal"
+  },
+  "summary": {
+    "mean_variance_reduction": "Infinity",
+    "mean_ess_improvement": 66.43137992838923,
+    "all_exact?": true
+  },
+  "experiment": "l3.5-combinator-conjugacy",
+  "kernel_info": {
+    "prior": "N(0, 10)",
+    "likelihood": "N(mu, 1)",
+    "family": "normal-normal",
+    "conjugate_pairs": [
+      {
+        "prior": "mu",
+        "obs": "y",
+        "family": "normal-normal"
+      }
+    ]
+  },
+  "results-by-size": [
+    {
+      "K": 3,
+      "L2-standard": {
+        "log-ml-mean": -11.383861316830755,
+        "log-ml-std": 2.467489689354126,
+        "log-ml-var": 6.088505367068921,
+        "ess-mean": 1.237501970816504,
+        "timing-ms": 1.120388666666713,
+        "timing-std-ms": 0.05721605596630969
+      },
+      "L3.5-analytical": {
+        "log-ml-mean": -9.782218933105469,
+        "log-ml-std": 0,
+        "log-ml-var": 0,
+        "ess-mean": 100.00000000000004,
+        "timing-ms": 0.8206666666666251,
+        "timing-std-ms": 0.08441238661673062
+      },
+      "n-particles": 100,
+      "variance-reduction": "Infinity",
+      "ess-improvement": 80.80795211503383
+    },
+    {
+      "K": 5,
+      "L2-standard": {
+        "log-ml-mean": -42.68855598089693,
+        "log-ml-std": 12.149136331798244,
+        "log-ml-var": 147.6015136086201,
+        "ess-mean": 1.1013834116195473,
+        "timing-ms": 2.683999999999893,
+        "timing-std-ms": 0.7955439717930718
+      },
+      "L3.5-analytical": {
+        "log-ml-mean": -16.48521614074707,
+        "log-ml-std": 0,
+        "log-ml-var": 0,
+        "ess-mean": 100.00000000000004,
+        "timing-ms": 1.492958333333263,
+        "timing-std-ms": 0.15436131549827736
+      },
+      "n-particles": 100,
+      "variance-reduction": "Infinity",
+      "ess-improvement": 90.79490297838552
+    },
+    {
+      "K": 10,
+      "L2-standard": {
+        "log-ml-mean": -235.54837957940913,
+        "log-ml-std": 73.19761386749347,
+        "log-ml-var": 5357.890675894673,
+        "ess-mean": 1.083373354972571,
+        "timing-ms": 4.523361333333014,
+        "timing-std-ms": 0.20591115270943658
+      },
+      "L3.5-analytical": {
+        "log-ml-mean": -34.45558166503906,
+        "log-ml-std": 0,
+        "log-ml-var": 0,
+        "ess-mean": 30,
+        "timing-ms": 4.363735999999942,
+        "timing-std-ms": 0.4584191836764054
+      },
+      "n-particles": 30,
+      "variance-reduction": "Infinity",
+      "ess-improvement": 27.691284691748344
+    }
+  ],
+  "kernel": "normal-normal conjugate",
+  "timestamp": "2026-04-15T18:50:22.923Z"
+}

@@ -1,0 +1,39 @@
+{
+  "experiment": "compiled-inference",
+  "model": "5-obs linreg",
+  "comparisons": {
+    "mh-chain": {
+      "handler": {
+        "mean-ms": 1678.9586161999991,
+        "std-ms": 22.733277761845088
+      },
+      "compiled": {
+        "mean-ms": 259.54655819999823,
+        "std-ms": 27.876585760863897
+      },
+      "speedup": 6.468814797020917
+    },
+    "score-fn": {
+      "uncompiled": {
+        "mean-ms": 1.6469402857141435,
+        "std-ms": 0.2296774758446507
+      },
+      "compiled": {
+        "mean-ms": 1.7024584285723645,
+        "std-ms": 0.1094198610444157
+      },
+      "speedup": 0.9673894281784154
+    },
+    "vectorized-mh": {
+      "serial-compiled": {
+        "mean-ms": 323.39579199999815,
+        "std-ms": 21.347327402346107
+      },
+      "vectorized-4chain": {
+        "mean-ms": 363.1849860000002,
+        "std-ms": 110.81528324343115
+      },
+      "speedup": 0.8904437255564247
+    }
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "description": "MVN-MVN conjugacy via Kalman gain form (mx/solve)",
+  "variance-reduction": "Infinity",
+  "config": {
+    "prior-var": 100,
+    "obs-var": 1,
+    "n-particles": 1000,
+    "n-trials": 10
+  },
+  "dimension-scaling": [
+    {
+      "d": 2,
+      "analytical-ms": 2.0744000000006055,
+      "standard-ms": 1.5180749999999534,
+      "auto-detected": true
+    },
+    {
+      "d": 5,
+      "analytical-ms": 2.018566700001247,
+      "standard-ms": 1.6467541499994696,
+      "auto-detected": true
+    },
+    {
+      "d": 10,
+      "analytical-ms": 2.2286229500023182,
+      "standard-ms": 1.877962500002468,
+      "auto-detected": true
+    },
+    {
+      "d": 20,
+      "analytical-ms": 2.029445799998939,
+      "standard-ms": 1.4329521000036038,
+      "auto-detected": true
+    },
+    {
+      "d": 50,
+      "analytical-ms": 5.021485400001984,
+      "standard-ms": 4.804975000000558,
+      "auto-detected": true
+    }
+  ],
+  "hardware": {
+    "platform": "macOS",
+    "chip": "Apple Silicon",
+    "gpu": "Metal"
+  },
+  "dimensions": 5,
+  "experiment": "l3.5-mvn-conjugacy",
+  "conditions": {
+    "L2-standard-IS": {
+      "log-ml-mean": -21.142685539144562,
+      "log-ml-std": 3.5074000405749857,
+      "log-ml-var": 12.30185504462541,
+      "ess-mean": 1.4517217863192546,
+      "posterior-mean-error": 2.161848049700597,
+      "timing-ms": 2.5998168000020088,
+      "timing-std-ms": 0.40479440892499013
+    },
+    "L3.5-analytical": {
+      "log-ml-mean": -16.220117568969727,
+      "log-ml-std": 0,
+      "log-ml-var": 0,
+      "ess-mean": 999.9999999999848,
+      "posterior-mean-error": 2.4313973878697937e-8,
+      "timing-ms": 1.4466000000000008,
+      "timing-std-ms": 0.04209680675537714
+    }
+  },
+  "analytic-posterior": {
+    "mean": [
+      3.1683168316831685,
+      -1.4851485148514851,
+      0.7920792079207921,
+      2.0792079207920793,
+      -0.39603960396039606
+    ],
+    "var": 0.9900990099009901,
+    "log-ml": -16.22011772050275
+  },
+  "ess-improvement": 688.8372203433133,
+  "timestamp": "2026-04-15T19:02:39.263Z"
+}

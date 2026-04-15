@@ -1,0 +1,84 @@
+{
+  "description": "MCMC with analytical elimination: conjugate params marginalized during regenerate",
+  "dimension-reduction": "5D -> 2D",
+  "observations": {
+    "y1": 2.5,
+    "y2": -1,
+    "y3": 0.5,
+    "z0": 3.1,
+    "z1": 5.2,
+    "z2": 6.8,
+    "z3": 9.1,
+    "z4": 10.9
+  },
+  "true_values": {
+    "scale": 2,
+    "offset": 1
+  },
+  "speedup": 1.0539436943649136,
+  "hardware": {
+    "platform": "macOS",
+    "chip": "Apple Silicon",
+    "gpu": "Metal"
+  },
+  "experiment": "l3.5-regenerate-analytical",
+  "conditions": {
+    "full-mh-5d": {
+      "samples": 500,
+      "burn": 100,
+      "timing-ms": 20412.490584,
+      "acceptance-rate": 0.4666666666666667,
+      "ess": {
+        "scale": 170.43335478005258,
+        "offset": 171.52866161214848,
+        "mu1": 182.3607173400045,
+        "mu2": 187.34095203371922,
+        "mu3": 191.89515117771313
+      },
+      "posterior-means": {
+        "scale": 2.1263203520774843,
+        "offset": 0.6990970182418823,
+        "mu1": 2.4724975370168685,
+        "mu2": -0.9536060863817111,
+        "mu3": 0.42261547790654
+      },
+      "posterior-stds": {
+        "scale": 0.27386680304592426,
+        "offset": 0.9027116589874197,
+        "mu1": 0.9880266960937957,
+        "mu2": 0.7843606365489376,
+        "mu3": 0.8855956318168358
+      }
+    },
+    "analytical-mh-2d": {
+      "samples": 500,
+      "burn": 100,
+      "timing-ms": 19367.724,
+      "acceptance-rate": 0.3933333333333333,
+      "ess": {
+        "scale": 171.4574667451499,
+        "offset": 175.27719154214327,
+        "mu1": 399.07771801788857,
+        "mu2": 216.37271796717513,
+        "mu3": 270.2736387328358
+      },
+      "posterior-means": {
+        "scale": 1.883320741891861,
+        "offset": 1.3915992794036864,
+        "mu1": 2.493832891821861,
+        "mu2": -1.0080081595778465,
+        "mu3": 0.5173237920403481
+      },
+      "posterior-stds": {
+        "scale": 0.2800779308973838,
+        "offset": 0.9455479301403726,
+        "mu1": 0.1878688065627133,
+        "mu2": 0.38551350234462245,
+        "mu3": 0.35609130020841057
+      },
+      "eliminated-dims": 3
+    }
+  },
+  "timestamp": "2026-04-15T18:50:52.304Z",
+  "model": "3 conjugate + 2 non-conjugate params"
+}

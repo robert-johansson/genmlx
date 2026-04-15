@@ -1,0 +1,60 @@
+{
+  "experiment": "compiled-optimizer",
+  "description": "Compiled Adam vs handler loop (dynamic linear regression)",
+  "timestamp": "2026-04-15T18:47:58.689Z",
+  "hardware": {
+    "platform": "macOS",
+    "chip": "Apple Silicon",
+    "gpu": "Metal"
+  },
+  "config": {
+    "model": "dynamic-linreg",
+    "n_observations": 5,
+    "latent_addresses": [
+      "slope",
+      "intercept"
+    ],
+    "iterations": 200,
+    "learning_rate": 0.01
+  },
+  "handler_loop": {
+    "mean_ms": 1177.6150273333335,
+    "std_ms": 9.536341393902498,
+    "min_ms": 1166.6045000000004,
+    "max_ms": 1183.2545410000002,
+    "raw_times": [
+      1183.2545410000002,
+      1182.9860410000001,
+      1166.6045000000004
+    ],
+    "final_params": [
+      1.392967939376831,
+      1.358544111251831
+    ],
+    "final_loss": 15.25252914428711
+  },
+  "compiled_adam": {
+    "mean_ms": 1215.5698749999992,
+    "std_ms": 22.710735631906186,
+    "min_ms": 1191.6251670000001,
+    "max_ms": 1236.8032079999975,
+    "raw_times": [
+      1191.6251670000001,
+      1218.28125,
+      1236.8032079999975
+    ],
+    "final_params": [
+      7.400928020477295,
+      14.004668235778809
+    ],
+    "compilation_level": "handler",
+    "loss_history_last_5": [
+      2402.9189453125,
+      2397.0390625,
+      2391.170654296875,
+      2385.31201171875,
+      2379.4658203125
+    ]
+  },
+  "speedup": 0.9687760872926653
+}

@@ -1,0 +1,299 @@
+{
+  "experiment": "property-test-stats",
+  "suites": [
+    {
+      "name": "adev_property_test",
+      "file": "test/genmlx/adev_property_test.cljs",
+      "pass": 5,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 5,
+      "duration-ms": 6269,
+      "status": "pass"
+    },
+    {
+      "name": "branching_property_test",
+      "file": "test/genmlx/branching_property_test.cljs",
+      "pass": 11,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 11,
+      "duration-ms": 1567,
+      "status": "pass"
+    },
+    {
+      "name": "choicemap_property_test",
+      "file": "test/genmlx/choicemap_property_test.cljs",
+      "pass": 11,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 11,
+      "duration-ms": 880,
+      "status": "pass"
+    },
+    {
+      "name": "combinator_extra_property_test",
+      "file": "test/genmlx/combinator_extra_property_test.cljs",
+      "pass": 18,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 18,
+      "duration-ms": 1860,
+      "status": "pass"
+    },
+    {
+      "name": "combinator_property_test",
+      "file": "test/genmlx/combinator_property_test.cljs",
+      "pass": 17,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 17,
+      "duration-ms": 2589,
+      "status": "pass"
+    },
+    {
+      "name": "compiled_equiv_property_test",
+      "file": "test/genmlx/compiled_equiv_property_test.cljs",
+      "pass": 9,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 9,
+      "duration-ms": 1785,
+      "status": "pass"
+    },
+    {
+      "name": "dist_normalization_property_test",
+      "file": "test/genmlx/dist_normalization_property_test.cljs",
+      "pass": 5,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 5,
+      "duration-ms": 58337,
+      "status": "pass"
+    },
+    {
+      "name": "dist_property_test",
+      "file": "test/genmlx/dist_property_test.cljs",
+      "pass": 20,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 20,
+      "duration-ms": 7003,
+      "status": "pass"
+    },
+    {
+      "name": "edit_property_test",
+      "file": "test/genmlx/edit_property_test.cljs",
+      "pass": 6,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 6,
+      "duration-ms": 1682,
+      "status": "pass"
+    },
+    {
+      "name": "entropy_property_test",
+      "file": "test/genmlx/entropy_property_test.cljs",
+      "pass": 22,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 22,
+      "duration-ms": 571,
+      "status": "pass"
+    },
+    {
+      "name": "gfi_property_test",
+      "file": "test/genmlx/gfi_property_test.cljs",
+      "pass": 16,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 16,
+      "duration-ms": 3797,
+      "status": "pass"
+    },
+    {
+      "name": "gradient_learning_property_test",
+      "file": "test/genmlx/gradient_learning_property_test.cljs",
+      "pass": 12,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 12,
+      "duration-ms": 4029,
+      "status": "pass"
+    },
+    {
+      "total-assertions": 0,
+      "name": "gradient_mcmc_property_test",
+      "file": "test/genmlx/gradient_mcmc_property_test.cljs",
+      "duration-ms": 120717,
+      "fail": 0,
+      "status": "error",
+      "error": 1,
+      "pass": 0,
+      "error-message": "spawnSync /bin/sh ETIMEDOUT"
+    },
+    {
+      "name": "handler_property_test",
+      "file": "test/genmlx/handler_property_test.cljs",
+      "pass": 8,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 8,
+      "duration-ms": 108619,
+      "status": "pass"
+    },
+    {
+      "name": "inference_property_test",
+      "file": "test/genmlx/inference_property_test.cljs",
+      "pass": 12,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 12,
+      "duration-ms": 8115,
+      "status": "pass"
+    },
+    {
+      "total-assertions": 9,
+      "name": "location_scale_property_test",
+      "file": "test/genmlx/location_scale_property_test.cljs",
+      "duration-ms": 1313,
+      "fail": 1,
+      "status": "error",
+      "error": 1,
+      "pass": 8,
+      "error-message": "Command failed: /Users/robert/.bun/bin/bun run --bun nbb test/genmlx/location_scale_property_test.cljs\nerror: \"nbb\" exited with code 1\n"
+    },
+    {
+      "total-assertions": 0,
+      "name": "mcmc_property_test",
+      "file": "test/genmlx/mcmc_property_test.cljs",
+      "duration-ms": 120196,
+      "fail": 0,
+      "status": "error",
+      "error": 1,
+      "pass": 0,
+      "error-message": "spawnSync /bin/sh ETIMEDOUT"
+    },
+    {
+      "name": "score_monotonicity_property_test",
+      "file": "test/genmlx/score_monotonicity_property_test.cljs",
+      "pass": 10,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 10,
+      "duration-ms": 94173,
+      "status": "pass"
+    },
+    {
+      "name": "selection_property_test",
+      "file": "test/genmlx/selection_property_test.cljs",
+      "pass": 11,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 11,
+      "duration-ms": 880,
+      "status": "pass"
+    },
+    {
+      "name": "serialize_property_test",
+      "file": "test/genmlx/serialize_property_test.cljs",
+      "pass": 5,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 5,
+      "duration-ms": 1435,
+      "status": "pass"
+    },
+    {
+      "name": "smc_property_test",
+      "file": "test/genmlx/smc_property_test.cljs",
+      "pass": 7,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 7,
+      "duration-ms": 4219,
+      "status": "pass"
+    },
+    {
+      "name": "splice_property_test",
+      "file": "test/genmlx/splice_property_test.cljs",
+      "pass": 6,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 6,
+      "duration-ms": 2572,
+      "status": "pass"
+    },
+    {
+      "name": "stack_unstack_property_test",
+      "file": "test/genmlx/stack_unstack_property_test.cljs",
+      "pass": 4,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 4,
+      "duration-ms": 2342,
+      "status": "pass"
+    },
+    {
+      "name": "support_property_test",
+      "file": "test/genmlx/support_property_test.cljs",
+      "pass": 20,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 20,
+      "duration-ms": 21713,
+      "status": "pass"
+    },
+    {
+      "name": "trace_immutability_property_test",
+      "file": "test/genmlx/trace_immutability_property_test.cljs",
+      "pass": 9,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 9,
+      "duration-ms": 2066,
+      "status": "pass"
+    },
+    {
+      "name": "vectorized_property_test",
+      "file": "test/genmlx/vectorized_property_test.cljs",
+      "pass": 13,
+      "fail": 0,
+      "error": 0,
+      "total-assertions": 13,
+      "duration-ms": 2269,
+      "status": "pass"
+    },
+    {
+      "total-assertions": 0,
+      "name": "vi_property_test",
+      "file": "test/genmlx/vi_property_test.cljs",
+      "duration-ms": 120006,
+      "fail": 0,
+      "status": "error",
+      "error": 1,
+      "pass": 0,
+      "error-message": "spawnSync /bin/sh ETIMEDOUT"
+    },
+    {
+      "total-assertions": 11,
+      "name": "vmap_property_test",
+      "file": "test/genmlx/vmap_property_test.cljs",
+      "duration-ms": 534,
+      "fail": 0,
+      "status": "error",
+      "error": 11,
+      "pass": 0,
+      "error-message": "Command failed: /Users/robert/.bun/bin/bun run --bun nbb test/genmlx/vmap_property_test.cljs\nerror: \"nbb\" exited with code 1\n"
+    }
+  ],
+  "totals": {
+    "pass": 265,
+    "fail": 1,
+    "error": 15,
+    "total-assertions": 277,
+    "duration-ms": 703506,
+    "suites-passed": 23,
+    "suites-total": 28
+  }
+}

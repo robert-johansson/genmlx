@@ -1,0 +1,37 @@
+{
+  "description": "Rao-Blackwellization: partial conjugacy variance reduction",
+  "variance-reduction": "Infinity",
+  "config": {
+    "n_particles": 50,
+    "n_trials": 3
+  },
+  "conjugate-sites": [
+    "mu1",
+    "mu2"
+  ],
+  "experiment": "rao-blackwell",
+  "conditions": {
+    "L2-no-analytical": {
+      "log-ml-mean": -9.760964741124676,
+      "log-ml-std": 2.167964229451776,
+      "log-ml-var": 4.700068900182432,
+      "ess-mean": 1.4472544663638118,
+      "timing-ms": 1.312693999999965,
+      "timing-std-ms": 0.08062227026696102
+    },
+    "L3-with-analytical": {
+      "log-ml-mean": -9.12209415435791,
+      "log-ml-std": 0,
+      "log-ml-var": 0,
+      "ess-mean": 50,
+      "timing-ms": 1.3646946666666697,
+      "timing-std-ms": 0.11367731214420827
+    }
+  },
+  "ess-improvement": 34.54817460375414,
+  "timestamp": "2026-04-15T18:49:49.576Z",
+  "non-conjugate-sites": [
+    "sigma"
+  ],
+  "model": "mixed: 2 NN-conjugate + 1 non-conjugate"
+}
