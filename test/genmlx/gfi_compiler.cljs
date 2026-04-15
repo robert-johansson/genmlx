@@ -2,7 +2,8 @@
   "Compile model specifications (pure Clojure data) into DynamicGF objects.
    Used by the GFI property-based test suite to generate random models."
   (:require [genmlx.dist :as dist]
-            [genmlx.dynamic :as dyn]))
+            [genmlx.dynamic :as dyn]
+            [genmlx.mlx :as mx]))
 
 ;; ---------------------------------------------------------------------------
 ;; Distribution resolution
@@ -95,6 +96,79 @@
   "Compile a spec map into a DynamicGF with auto-generated PRNG keys."
   [spec]
   (-> (dyn/make-gen-fn (spec->body-fn spec) (spec->source spec))
+      dyn/auto-key))
+
+;; ---------------------------------------------------------------------------
+;; Branching model compilation (Gap 3)
+;; ---------------------------------------------------------------------------
+
+(defn- branch-body-source
+  "Generate source form for one branch (true or false)."
+  [sites]
+  (if (= 1 (count sites))
+    (let [{:keys [addr dist args]} (first sites)]
+      (list 'trace addr (apply list (dist-sym dist) (map resolve-arg args))))
+    (let [bindings (mapcat (fn [{:keys [addr dist args]}]
+                             [(symbol (name addr))
+                              (list 'trace addr
+                                    (apply list (dist-sym dist) (map resolve-arg args)))])
+                           sites)]
+      (list 'let (vec bindings) (symbol (name (:addr (last sites))))))))
+
+(defn branching-spec->source
+  "Transform a branching model spec into a quoted source form.
+   Emits (if (> coin 0.5) true-branch false-branch) which schema
+   extraction recognizes as has-branches? true."
+  [{:keys [pre-sites branch true-sites false-sites args]}]
+  (let [params (mapv #(symbol (name %)) args)
+        pre-bindings (mapcat (fn [{:keys [addr dist args]}]
+                               [(symbol (name addr))
+                                (list 'trace addr
+                                      (apply list (dist-sym dist) (map resolve-arg args)))])
+                             pre-sites)
+        coin-sym (symbol (name (:addr branch)))
+        coin-trace (list 'trace (:addr branch)
+                         (apply list (dist-sym (:dist branch)) (:args branch)))
+        true-body (branch-body-source true-sites)
+        false-body (branch-body-source false-sites)
+        if-form (list 'if (list '> coin-sym 0.5) true-body false-body)
+        all-bindings (vec (concat pre-bindings [coin-sym coin-trace]))]
+    (list params (list 'let all-bindings if-form))))
+
+(defn branching-spec->body-fn
+  "Create an executable body function from a branching model spec.
+   Uses mx/item on the coin value to materialize for branching."
+  [{:keys [pre-sites branch true-sites false-sites args]}]
+  (let [execute-sites
+        (fn [trace-fn env arg-env sites]
+          (reduce (fn [_ {:keys [addr dist args]}]
+                    (let [resolved (mapv #(if (keyword? %)
+                                            (or (get env %) (get arg-env %))
+                                            %) args)]
+                      (trace-fn addr (apply (resolve-dist dist) resolved))))
+                  nil
+                  sites))]
+    (fn [rt & model-args]
+      (let [trace-fn (.-trace rt)
+            arg-env (zipmap args model-args)
+            pre-env (reduce (fn [env {:keys [addr dist args]}]
+                              (let [resolved (mapv #(if (keyword? %)
+                                                      (or (get env %) (get arg-env %))
+                                                      %) args)
+                                    v (trace-fn addr (apply (resolve-dist dist) resolved))]
+                                (assoc env addr v)))
+                            {}
+                            pre-sites)
+            coin (trace-fn (:addr branch)
+                           (apply (resolve-dist (:dist branch)) (:args branch)))]
+        (if (> (mx/item coin) 0.5)
+          (execute-sites trace-fn pre-env arg-env true-sites)
+          (execute-sites trace-fn pre-env arg-env false-sites))))))
+
+(defn branching-spec->gf
+  "Compile a branching model spec into a DynamicGF with auto-generated PRNG keys."
+  [spec]
+  (-> (dyn/make-gen-fn (branching-spec->body-fn spec) (branching-spec->source spec))
       dyn/auto-key))
 
 (comment

@@ -164,3 +164,76 @@
             (gen/fmap
               (fn [n] {:combinator :map :kernel spec :n n})
               (gen/choose 2 5))))]]))
+
+;; ---------------------------------------------------------------------------
+;; Gap 1: Partial constraint inputs
+;; ---------------------------------------------------------------------------
+
+(def gen-partial-constraint-input
+  "Model spec (>= 2 sites) paired with a partial subset of addresses to constrain.
+   The subset is non-empty and strictly smaller than all addresses.
+   Always constrains the first k sites (topologically earliest), which
+   exercises both independent and dependent partial constraints."
+  (gen/bind (gen/such-that #(>= (count (:sites %)) 2) gen-model-spec 100)
+    (fn [spec]
+      (let [addrs (mapv :addr (:sites spec))
+            n (count addrs)]
+        (gen/fmap
+          (fn [k] {:spec spec :constrained-addrs (set (take k addrs))})
+          (gen/choose 1 (dec n)))))))
+
+;; ---------------------------------------------------------------------------
+;; Gap 2: Differentiable models with argument
+;; ---------------------------------------------------------------------------
+
+(def gen-differentiable-spec-with-arg
+  "Differentiable model with one argument :x and at least one site using :x.
+   All distributions are gaussian/laplace/cauchy (differentiable with reparameterization).
+   Built by construction via gen-sites-from with :x in the initial available pool,
+   then filtered for at least one site that actually references :x."
+  (gen/such-that
+    (fn [spec] (some (fn [s] (some #{:x} (:args s))) (:sites spec)))
+    (gen/bind (gen/choose 1 4)
+      (fn [n]
+        (gen/bind (gen/vector (gen/elements [:gaussian :laplace :cauchy]) n)
+          (fn [dist-types]
+            (gen/fmap
+              (fn [{:keys [sites]}]
+                {:sites sites :args [:x] :return (:addr (peek sites))})
+              (gen-sites-from dist-types [:x]))))))
+    100))
+
+;; ---------------------------------------------------------------------------
+;; Gap 3: Branching model specs
+;; ---------------------------------------------------------------------------
+
+(def gen-branching-spec
+  "Branching model: bernoulli coin with separate true/false branch sites.
+   Uses fixed address pools (:th/:ti for true branch, :fh/:fi for false branch)
+   to avoid collisions by construction. Branch sites are independent (no
+   inter-site dependencies) with continuous distributions only."
+  (gen/bind (gen/tuple (gen/choose 1 2)
+                       (gen/choose 1 2)
+                       (gen/double* {:min 0.2 :max 0.8 :NaN? false :infinite? false}))
+    (fn [[n-true n-false coin-prob]]
+      (gen/bind
+        (gen/tuple
+          (gen/vector gen-continuous-dist-type n-true)
+          (gen/vector gen-continuous-dist-type n-false))
+        (fn [[true-dists false-dists]]
+          (gen/bind
+            (gen/tuple
+              (apply gen/tuple (map #(gen-site-args % []) true-dists))
+              (apply gen/tuple (map #(gen-site-args % []) false-dists)))
+            (fn [[true-arg-seqs false-arg-seqs]]
+              (gen/return
+                {:type :branching
+                 :pre-sites []
+                 :branch {:addr :coin :dist :bernoulli :args [coin-prob]}
+                 :true-sites (mapv (fn [dt args addr]
+                                     {:addr addr :dist dt :args (vec args) :deps []})
+                                   true-dists true-arg-seqs [:th :ti])
+                 :false-sites (mapv (fn [dt args addr]
+                                      {:addr addr :dist dt :args (vec args) :deps []})
+                                    false-dists false-arg-seqs [:fh :fi])
+                 :args []}))))))))

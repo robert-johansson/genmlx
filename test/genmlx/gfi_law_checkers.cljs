@@ -10,6 +10,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.dynamic :as dyn]
+            [genmlx.diff :as diff]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.test-helpers :as h]))
@@ -24,9 +25,10 @@
   {:pass? pass? :law law :detail detail})
 
 (defn- safe-realize
-  "Realize an MLX scalar, returning ##NaN on error."
+  "Realize an MLX scalar, returning ##NaN on error.
+   Handles plain numbers (e.g., delta distribution values) directly."
   [x]
-  (try (h/realize x) (catch :default _ ##NaN)))
+  (if (number? x) x (try (h/realize x) (catch :default _ ##NaN))))
 
 ;; ---------------------------------------------------------------------------
 ;; Law 1: simulate produces valid trace
@@ -402,3 +404,241 @@
    (check-project-none-equals-zero gf args)
    (check-project-decomposition gf args addrs)
    (check-propose-generate-consistency gf args)])
+
+;; ===========================================================================
+;; Gap checkers — thesis §8.0b gaps
+;; ===========================================================================
+
+;; ---------------------------------------------------------------------------
+;; Gap 1: Partial-constraint GENERATE
+;; [T] §2.3.1 p68, Algorithm 2 (p79)
+;;
+;; generate(P, x, σ_partial) where σ constrains a strict subset of addresses.
+;; Constrained addresses use the constraint value; unconstrained are sampled.
+;; The importance weight equals the sum of log-probs at constrained addresses:
+;;
+;;   weight = Σ_{a ∈ constrained} log p(τ_a | parents_a)
+;;
+;; This equals project(resulting-trace, constrained-selection) because project
+;; computes the same sum of conditional log-densities at selected addresses.
+;;
+;; Tolerance: 1e-3 (generate and project may traverse different code paths
+;; with float32 accumulation).
+;; ---------------------------------------------------------------------------
+
+(defn check-partial-constraint-weight
+  "Law: generate(gf, args, partial-σ).weight = project(result-trace, constrained-sel)"
+  [gf args constrained-addrs]
+  (try
+    (let [;; Simulate to get values for building partial constraints
+          trace (p/simulate gf args)
+          ;; Build partial choicemap with only constrained addresses
+          partial-cm (reduce (fn [cm addr]
+                               (let [sub (cm/get-submap (:choices trace) addr)]
+                                 (if (cm/has-value? sub)
+                                   (cm/set-value cm addr (cm/get-value sub))
+                                   cm)))
+                             cm/EMPTY
+                             constrained-addrs)
+          ;; Generate with partial constraints
+          gen-result (p/generate gf args partial-cm)
+          gen-trace (:trace gen-result)
+          w (safe-realize (:weight gen-result))
+          ;; Project the resulting trace at the constrained selection
+          constrained-sel (sel/from-set constrained-addrs)
+          proj (safe-realize (p/project gf gen-trace constrained-sel))
+          ;; Verify constrained values are preserved
+          values-ok? (every?
+                       (fn [addr]
+                         (let [gen-v (safe-realize (cm/get-value
+                                                    (cm/get-submap (:choices gen-trace) addr)))
+                               orig-v (safe-realize (cm/get-value
+                                                      (cm/get-submap partial-cm addr)))]
+                           (h/close? gen-v orig-v 1e-6)))
+                       constrained-addrs)]
+      (result
+        (and values-ok?
+             (h/finite? w)
+             (h/finite? proj)
+             (h/close? w proj 1e-3))
+        "partial-constraint-weight"
+        (str "weight=" w " project=" proj
+             " diff=" (js/Math.abs (- w proj))
+             " values-preserved=" values-ok?)))
+    (catch :default e
+      (result false "partial-constraint-weight" (str e)))))
+
+;; ---------------------------------------------------------------------------
+;; Gap 2: Argument gradients
+;; [T] §2.3.1 p72, Eq 2.10: ∇_x g(x,τ) = ∇_x log p(τ;x) + J(x,τ)v
+;;
+;; The GRADIENT operation includes gradients w.r.t. model arguments x.
+;; For a model with arg x and choices τ:
+;;
+;;   ∂/∂x log p(τ; x) via AD should match finite-difference approximation.
+;;
+;; AD: (mx/grad (fn [x-arr] (:weight (p/generate model [x-arr] τ))))(x)
+;; FD: [weight(x+h) - weight(x-h)] / (2h)
+;;
+;; Tolerance: Combined absolute (5e-2) and relative (5e-2), same as
+;; choice gradient tests. See gfi_gradient_test.cljs for derivation.
+;; ---------------------------------------------------------------------------
+
+(defn check-argument-gradient
+  "Law: ∂/∂x_i score(τ; x) via AD matches symmetric FD."
+  [gf args]
+  (try
+    (let [trace (p/simulate gf args)
+          choices (:choices trace)
+          args-v (vec args)
+          h 1e-3
+          per-arg
+          (mapv
+            (fn [i]
+              (let [x-val (nth args-v i)
+                    x-num (if (number? x-val) x-val (safe-realize x-val))
+                    x-arr (mx/scalar x-num)
+                    ;; AD gradient
+                    score-fn (fn [x-a]
+                               (:weight (p/generate gf (assoc args-v i x-a) choices)))
+                    ad-g (safe-realize ((mx/grad score-fn) x-arr))
+                    ;; Symmetric FD gradient
+                    sp (safe-realize
+                         (:weight (p/generate gf
+                                    (assoc args-v i (mx/scalar (+ x-num h)))
+                                    choices)))
+                    sm (safe-realize
+                         (:weight (p/generate gf
+                                    (assoc args-v i (mx/scalar (- x-num h)))
+                                    choices)))
+                    fd-g (/ (- sp sm) (* 2.0 h))]
+                {:i i :ad ad-g :fd fd-g}))
+            (range (count args-v)))
+          all-match?
+          (every?
+            (fn [{:keys [ad fd]}]
+              (let [abs-diff (js/Math.abs (- ad fd))
+                    max-mag (js/Math.max (js/Math.abs ad) (js/Math.abs fd))]
+                (or ;; Both near zero
+                    (and (< (js/Math.abs ad) 1e-6)
+                         (< (js/Math.abs fd) 1e-6))
+                    ;; Absolute match
+                    (< abs-diff 5e-2)
+                    ;; Relative match
+                    (and (> max-mag 1e-6)
+                         (< (/ abs-diff max-mag) 5e-2)))))
+            per-arg)]
+      (result all-match?
+              "argument-gradient"
+              (str (mapv (fn [{:keys [i ad fd]}]
+                           (str "arg" i ":ad=" (.toFixed ad 6)
+                                " fd=" (.toFixed fd 6)
+                                " diff=" (.toFixed (js/Math.abs (- ad fd)) 6)))
+                         per-arg))))
+    (catch :default e
+      (result false "argument-gradient" (str e)))))
+
+;; ---------------------------------------------------------------------------
+;; Gap 4: Arg-dependent density via assess
+;; [T] §2.3.1 p71
+;;
+;; For models with arguments, changing x changes the density log p(τ; x).
+;; Verify: assess(model, [x1], τ) and assess(model, [x2], τ) are both
+;; internally consistent, and generate(model, [x2], τ).weight matches.
+;;
+;; This exercises the argument-dependent density computation through
+;; two independent code paths (assess and generate with full constraints).
+;; ---------------------------------------------------------------------------
+
+(defn check-assess-arg-consistency
+  "Law: assess(gf, [x2], τ).weight = generate(gf, [x2], τ).weight for changed args"
+  [gf x1 x2]
+  (try
+    (let [trace (p/simulate gf [x1])
+          choices (:choices trace)
+          ;; Assess at x2
+          w-assess (safe-realize (:weight (p/assess gf [x2] choices)))
+          ;; Generate at x2 with full constraints
+          gen-result (p/generate gf [x2] choices)
+          w-gen (safe-realize (:weight gen-result))
+          s-gen (safe-realize (:score (:trace gen-result)))]
+      (result
+        (and (h/finite? w-assess) (h/finite? w-gen) (h/finite? s-gen)
+             ;; assess and generate agree on log p(τ; x2)
+             (h/close? w-assess w-gen 1e-3)
+             ;; generate(full).weight = generate.score
+             (h/close? w-gen s-gen 1e-3))
+        "assess-arg-consistency"
+        (str "assess=" w-assess " gen-w=" w-gen " gen-s=" s-gen
+             " assess-gen-diff=" (js/Math.abs (- w-assess w-gen)))))
+    (catch :default e
+      (result false "assess-arg-consistency" (str e)))))
+
+;; ---------------------------------------------------------------------------
+;; Gap 5: Argdiffs equivalence
+;; [T] Def 2.3.2 (p70), §2.3.1 p71
+;;
+;; update-with-diffs(P, t, σ, :unknown) must produce identical results
+;; to update(P, t, σ). The :unknown argdiff means "args may have changed"
+;; and should trigger full recomputation (same as regular update).
+;;
+;; For DynamicGF, the implementation delegates to p/update when argdiffs
+;; is not no-change. For combinators, the implementation may use different
+;; internal paths but must produce the same external result.
+;;
+;; Tolerance: 1e-4 (both paths compute the same thing; any difference
+;; is from non-determinism in float32 accumulation order).
+;; ---------------------------------------------------------------------------
+
+(defn check-argdiffs-equivalence
+  "Law: update-with-diffs(gf, t, σ, :unknown) ≡ update(gf, t, σ)"
+  [gf args]
+  (try
+    (let [t1 (p/simulate gf args)
+          t2 (p/simulate gf args)
+          ;; Regular update
+          upd (p/update gf t1 (:choices t2))
+          upd-w (safe-realize (:weight upd))
+          upd-s (safe-realize (:score (:trace upd)))
+          ;; update-with-diffs with :unknown
+          uwd (p/update-with-diffs gf t1 (:choices t2) :unknown)
+          uwd-w (safe-realize (:weight uwd))
+          uwd-s (safe-realize (:score (:trace uwd)))]
+      (result
+        (and (h/finite? upd-w) (h/finite? uwd-w)
+             (h/close? upd-w uwd-w 1e-4)
+             (h/finite? upd-s) (h/finite? uwd-s)
+             (h/close? upd-s uwd-s 1e-4))
+        "argdiffs-equivalence"
+        (str "upd-w=" upd-w " uwd-w=" uwd-w
+             " w-diff=" (js/Math.abs (- upd-w uwd-w))
+             " upd-s=" upd-s " uwd-s=" uwd-s)))
+    (catch :default e
+      (result false "argdiffs-equivalence" (str e)))))
+
+;; ---------------------------------------------------------------------------
+;; Gap 5b: Argdiffs no-change fast path
+;; [T] Def 2.3.2
+;;
+;; update-with-diffs(P, t, EMPTY, no-change) should return:
+;;   {:trace t :weight 0 :discard EMPTY}
+;;
+;; When arguments haven't changed and no new constraints are provided,
+;; the trace is unchanged. This is the fast-path optimization that
+;; DynamicGF and combinators use to skip re-execution.
+;; ---------------------------------------------------------------------------
+
+(defn check-argdiffs-no-change
+  "Law: update-with-diffs(gf, t, EMPTY, no-change) → weight=0, discard=EMPTY"
+  [gf args]
+  (try
+    (let [trace (p/simulate gf args)
+          {:keys [weight discard]} (p/update-with-diffs gf trace cm/EMPTY diff/no-change)
+          w (safe-realize weight)]
+      (result
+        (and (h/close? 0.0 w 1e-6)
+             (= discard cm/EMPTY))
+        "argdiffs-no-change"
+        (str "weight=" w " discard-empty=" (= discard cm/EMPTY))))
+    (catch :default e
+      (result false "argdiffs-no-change" (str e)))))
