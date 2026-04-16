@@ -39,9 +39,36 @@
 ;; ---------------------------------------------------------------------------
 
 (def suites
-  [{:name "GFI Laws"
-    :file "test/genmlx/gfi_laws_test.cljs"
-    :expected 195}
+  [{:name "GFI Laws (1/10)"
+    :file "test/genmlx/gfi_laws_test_p1.cljs"
+    :expected nil}
+   {:name "GFI Laws (2/10)"
+    :file "test/genmlx/gfi_laws_test_p2.cljs"
+    :expected nil}
+   {:name "GFI Laws (3/10)"
+    :file "test/genmlx/gfi_laws_test_p3.cljs"
+    :expected nil}
+   {:name "GFI Laws (4/10)"
+    :file "test/genmlx/gfi_laws_test_p4.cljs"
+    :expected nil}
+   {:name "GFI Laws (5/10)"
+    :file "test/genmlx/gfi_laws_test_p5.cljs"
+    :expected nil}
+   {:name "GFI Laws (6/10)"
+    :file "test/genmlx/gfi_laws_test_p6.cljs"
+    :expected nil}
+   {:name "GFI Laws (7/10)"
+    :file "test/genmlx/gfi_laws_test_p7.cljs"
+    :expected nil}
+   {:name "GFI Laws (8/10)"
+    :file "test/genmlx/gfi_laws_test_p8.cljs"
+    :expected nil}
+   {:name "GFI Laws (9/10)"
+    :file "test/genmlx/gfi_laws_test_p9.cljs"
+    :expected nil}
+   {:name "GFI Laws (10/10)"
+    :file "test/genmlx/gfi_laws_test_p10.cljs"
+    :expected nil}
    {:name "GFI Universal"
     :file "test/genmlx/gfi_universal_test.cljs"
     :expected nil}
