@@ -9,6 +9,7 @@
      bun run --bun nbb run_experiments.cljs --only name1,name2 ;; run subset
      bun run --bun nbb run_experiments.cljs --category perf    ;; run by category
      bun run --bun nbb run_experiments.cljs --changed          ;; only if sources changed
+     bun run --bun nbb run_experiments.cljs --figures          ;; regenerate figures after run
      bun run --bun nbb run_experiments.cljs --list             ;; list experiments
      bun run --bun nbb run_experiments.cljs --dry-run          ;; show what would run"
   (:require [clojure.edn :as edn]
@@ -142,6 +143,38 @@
           {:success? false :duration-ms duration-ms :error (.-message e)})))))
 
 ;; ---------------------------------------------------------------------------
+;; Figure generation
+;; ---------------------------------------------------------------------------
+
+(def ^:private figure-scripts
+  ["paper/viz/fig_performance.py"
+   "paper/viz/fig_inference.py"
+   "paper/viz/fig_analytical.py"
+   "paper/viz/fig_system.py"])
+
+(def ^:private python-bin ".venv-genjax/bin/python")
+
+(defn generate-figures!
+  "Run all 4 figure scripts against current results/. Returns count of successes."
+  []
+  (println "── Regenerating figures ──────────────────────")
+  (if-not (file-exists? python-bin)
+    (do (println (str "   ✗ python venv not found at " python-bin))
+        0)
+    (let [results (atom [])]
+      (doseq [script figure-scripts]
+        (try
+          (.execSync child-process
+            (str python-bin " " script)
+            #js {:cwd (js/process.cwd) :stdio "pipe"})
+          (println (str "   ✓ " script))
+          (swap! results conj true)
+          (catch :default e
+            (println (str "   ✗ " script " — " (.-message e)))
+            (swap! results conj false))))
+      (count (filter identity @results)))))
+
+;; ---------------------------------------------------------------------------
 ;; CLI argument parsing
 ;; ---------------------------------------------------------------------------
 
@@ -155,6 +188,7 @@
             (= arg "--list")     (recur (inc i) (assoc opts :list? true))
             (= arg "--dry-run")  (recur (inc i) (assoc opts :dry-run? true))
             (= arg "--changed")  (recur (inc i) (assoc opts :changed? true))
+            (= arg "--figures")  (recur (inc i) (assoc opts :figures? true))
             (= arg "--only")     (recur (+ i 2)
                                    (assoc opts :only
                                      (set (str/split (nth args (inc i)) #","))))
@@ -193,8 +227,12 @@
                      (:changed? opts) (filter #(:run? (should-run? %))))]
 
       (when (empty? selected)
-        (println "No experiments to run.")
-        (js/process.exit 0))
+        (if (:figures? opts)
+          (do (println "No experiments to run. Regenerating figures only.\n")
+              (generate-figures!)
+              (js/process.exit 0))
+          (do (println "No experiments to run.")
+              (js/process.exit 0))))
 
       (println (str "\n=== GenMLX Experiment Runner ==="))
       (println (str "    " (count selected) " of " (count experiments) " experiments selected\n"))
@@ -240,6 +278,11 @@
                          :total_ms total-ms
                          :experiments (mapv #(select-keys % [:name :success? :duration-ms])
                                             @results)})
-              nil 2)))))))
+              nil 2))
+
+          ;; Regenerate figures if requested
+          (when (:figures? opts)
+            (println)
+            (generate-figures!)))))))
 
 (-main)
