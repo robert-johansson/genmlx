@@ -23,3 +23,6 @@
 	path = instaparse
 	url = https://github.com/robert-johansson/instaparse.git
 	branch = bb-nbb-support
+[submodule "paper/GENMLX_presentation"]
+	path = paper/GENMLX_presentation
+	url = https://git.overleaf.com/69df8461e52a0f304715292d
