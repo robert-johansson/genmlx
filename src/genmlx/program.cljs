@@ -787,6 +787,129 @@
       :elapsed-ms elapsed})))
 
 ;; ============================================================
+;; Decomposed structure discovery (scales to large K)
+;; ============================================================
+
+(defn- score-parent-sets-for-variable
+  "Score all 2^(K-1) parent sets for one target variable.
+   Uses precomputed sufficient statistics."
+  [target candidates n all-dots xty-dots yty known-sigma
+   ar-prior-mean ar-var beta-var]
+  (let [n-cand (count candidates)]
+    (mapv
+     (fn [i]
+       (let [parents (set (keep-indexed (fn [j c] (when (bit-test i j) c)) candidates))
+             preds (into [target] (vec (sort-by name parents)))
+             p (count preds)
+             m0 (into [ar-prior-mean] (repeat (dec p) 0.0))
+             s0 (into [ar-var] (repeat (dec p) beta-var))
+             gram (vec (for [a (range p)]
+                         (vec (for [b (range p)]
+                                (get all-dots [(nth preds a) (nth preds b)])))))
+             Xty (mapv (fn [j] (get xty-dots [(nth preds j) target])) (range p))
+             gram-m0 (mapv (fn [ii]
+                             (reduce + (map (fn [j] (* (get-in gram [ii j]) (nth m0 j)))
+                                            (range p))))
+                           (range p))
+             Xtr (mapv - Xty gram-m0)
+             m0Xty (reduce + (map * m0 Xty))
+             m0Gram-m0 (reduce + (map * m0 gram-m0))
+             rr (+ (get yty target) (* -2.0 m0Xty) m0Gram-m0)
+             sigma-sq (if-let [s (get known-sigma target)]
+                        (* s s)
+                        (if (<= n p) 1.0
+                            (let [bh (mat-lu-solve gram Xty)
+                                  Xby (reduce + (map * bh Xty))
+                                  rss (- (get yty target) Xby)]
+                              (/ (max rss 0.001) n))))
+             M (vec (for [a (range p)]
+                      (vec (for [b (range p)]
+                             (+ (get-in gram [a b])
+                                (if (= a b) (/ sigma-sq (nth s0 a)) 0))))))
+             Minv-Xtr (mat-lu-solve M Xtr)
+             quad-corr (reduce + (map * Xtr Minv-Xtr))
+             A (vec (for [a (range p)]
+                      (vec (for [b (range p)]
+                             (+ (if (= a b) 1.0 0.0)
+                                (/ (* (nth s0 a) (get-in gram [a b])) sigma-sq))))))
+             log-det-A (mat-log-det A)
+             quad (/ (- rr quad-corr) sigma-sq)
+             lml (+ (* -0.5 n (js/Math.log (* 2.0 js/Math.PI sigma-sq)))
+                    (* -0.5 log-det-A)
+                    (* -0.5 quad))]
+         {:parents parents :log-ml lml}))
+     (range (bit-shift-left 1 n-cand)))))
+
+(defn discover-structure-decomposed
+  "Decomposed structure discovery: search parent sets independently per variable.
+
+   The analytical score decomposes as log ML(G) = sum_v log ML_v(parents_v).
+   With independent edge priors, the posterior factorizes: each variable's
+   parent set is independent. So we enumerate 2^(K-1) parent sets per variable
+   instead of 2^(K*(K-1)) full graphs.
+
+   K=6: 192 evaluations instead of 1 billion. Exact, not approximate.
+   K=10: 5120 evaluations in ~1s.
+
+   transitions:  from extract-kvar-transitions
+   var-names:    [:depression :sleep :exercise :rumination :avoidance :social]
+   opts:
+     :sigma          {var -> known-noise-std}
+     :ar-prior-mean  (default 0.5)
+     :ar-prior-std   (default 0.15)
+     :beta-prior-std (default 3.0)
+
+   Returns {:per-variable  {var -> {:parent-sets [...] :best-parents #{...}}}
+            :marginals     {[src tgt] -> probability}
+            :elapsed-ms    scoring time}"
+  ([transitions var-names] (discover-structure-decomposed transitions var-names {}))
+  ([transitions var-names opts]
+   (let [{:keys [ar-prior-mean ar-prior-std beta-prior-std]
+          :or {ar-prior-mean 0.5 ar-prior-std 0.15 beta-prior-std 3.0}} opts
+         ar-var (* ar-prior-std ar-prior-std)
+         beta-var (* beta-prior-std beta-prior-std)
+         n (count transitions)
+         known-sigma (:sigma opts)
+         col-vecs (into {} (map (fn [v] [v (mapv #(get-in % [:prev v]) transitions)]) var-names))
+         obs-vecs (into {} (map (fn [v] [v (mapv #(get-in % [:next v]) transitions)]) var-names))
+         all-dots (into {} (for [a var-names, b var-names]
+                             [[a b] (dot (get col-vecs a) (get col-vecs b))]))
+         xty-dots (into {} (for [pred var-names, tgt var-names]
+                             [[pred tgt] (dot (get col-vecs pred) (get obs-vecs tgt))]))
+         yty (into {} (map (fn [v] [v (dot (get obs-vecs v) (get obs-vecs v))]) var-names))
+         t0 (js/Date.now)
+         per-variable
+         (into {}
+               (map (fn [target]
+                      (let [candidates (vec (filter #(not= % target) var-names))
+                            parent-sets (score-parent-sets-for-variable
+                                         target candidates n all-dots xty-dots yty known-sigma
+                                         ar-prior-mean ar-var beta-var)
+                            log-mls (mapv :log-ml parent-sets)
+                            log-norm (log-sum-exp log-mls)
+                            posteriors (mapv #(assoc % :posterior
+                                                     (js/Math.exp (- (:log-ml %) log-norm)))
+                                             parent-sets)
+                            best (apply max-key :posterior posteriors)]
+                        [target {:parent-sets posteriors
+                                 :best-parents (:parents best)
+                                 :best-posterior (:posterior best)}]))
+                    var-names))
+         elapsed (- (js/Date.now) t0)
+         marginals
+         (into {}
+               (for [src var-names, tgt var-names :when (not= src tgt)]
+                 (let [{:keys [parent-sets]} (get per-variable tgt)]
+                   [[src tgt]
+                    (reduce + (keep (fn [ps]
+                                      (when (contains? (:parents ps) src)
+                                        (:posterior ps)))
+                                    parent-sets))])))]
+     {:per-variable per-variable
+      :marginals marginals
+      :elapsed-ms elapsed})))
+
+;; ============================================================
 ;; FIM scaffold: structure with holes for LLM to fill
 ;; ============================================================
 

@@ -605,6 +605,87 @@
                   (apply max (vals (dissoc marginals [:a :b]))))))
 
 ;; ============================================================
+;; 24. discover-structure-decomposed: 3 variables
+;; ============================================================
+
+(println "\n== decomposed discovery (3 vars) ==")
+
+(let [var-names [:sleep :exercise :mood]
+      data (prog/generate-kvar-data var-names
+             {:ar {:sleep 0.7 :exercise 0.3 :mood 0.5}
+              :cross {[:exercise :mood] 0.5 [:sleep :mood] -0.4}
+              :sigma {:sleep 1.0 :exercise 0.5 :mood 1.0}
+              :n-individuals 60 :n-steps 10})
+      trans (prog/extract-kvar-transitions data)
+      result (prog/discover-structure-decomposed trans var-names)
+      m (:marginals result)]
+  (assert-true "P(exercise->mood) > 0.9" (> (get m [:exercise :mood]) 0.9))
+  (assert-true "P(sleep->mood) > 0.9" (> (get m [:sleep :mood]) 0.9))
+  (assert-true "P(mood->exercise) < 0.1" (< (get m [:mood :exercise]) 0.1))
+  (assert-true "P(mood->sleep) < 0.1" (< (get m [:mood :sleep]) 0.1))
+  (assert-true "per-variable has all 3 vars" (= 3 (count (:per-variable result))))
+  (assert-true "elapsed under 100ms" (< (:elapsed-ms result) 100))
+  (println (str "    elapsed: " (:elapsed-ms result) "ms")))
+
+;; ============================================================
+;; 25. decomposed matches enumeration for 3 variables
+;; ============================================================
+
+(println "\n== decomposed vs enumeration agreement ==")
+
+(let [var-names [:a :b :c]
+      data (prog/generate-kvar-data var-names
+             {:cross {[:a :b] 0.5 [:c :a] -0.3}
+              :n-individuals 50 :n-steps 10})
+      trans (prog/extract-kvar-transitions data)
+      enum-result (prog/discover-structure var-names trans)
+      decomp-result (prog/discover-structure-decomposed trans var-names)
+      enum-m (:marginals enum-result)
+      decomp-m (:marginals decomp-result)]
+  (doseq [edge (prog/enumerate-edges var-names)]
+    (let [e-val (get enum-m edge 0)
+          d-val (get decomp-m edge 0)
+          diff (js/Math.abs (- e-val d-val))]
+      (assert-true (str "edge " (name (first edge)) "->" (name (second edge))
+                        " agrees within 0.02 (enum=" (.toFixed e-val 4)
+                        " decomp=" (.toFixed d-val 4) ")")
+                   (< diff 0.02)))))
+
+;; ============================================================
+;; 26. decomposed discovery: 6 variables (clinical scale)
+;; ============================================================
+
+(println "\n== decomposed discovery (6 vars, clinical) ==")
+
+(let [var-names [:depression :sleep :exercise :rumination :avoidance :social]
+      data (prog/generate-kvar-data var-names
+             {:cross {[:rumination :depression] 0.3
+                      [:avoidance :depression] 0.2
+                      [:sleep :depression] -0.25
+                      [:exercise :depression] -0.2
+                      [:social :depression] -0.15
+                      [:rumination :avoidance] 0.2}
+              :sigma {:depression 1.5 :sleep 1.0 :exercise 0.8
+                      :rumination 1.2 :avoidance 1.0 :social 0.8}
+              :n-individuals 350 :n-steps 15})
+      trans (prog/extract-kvar-transitions data)
+      result (prog/discover-structure-decomposed trans var-names)
+      m (:marginals result)]
+  (assert-true "finds rumination->depression"
+               (> (get m [:rumination :depression]) 0.9))
+  (assert-true "finds avoidance->depression"
+               (> (get m [:avoidance :depression]) 0.9))
+  (assert-true "finds sleep->depression"
+               (> (get m [:sleep :depression]) 0.9))
+  (assert-true "finds rumination->avoidance"
+               (> (get m [:rumination :avoidance]) 0.9))
+  (assert-true "no false edge depression->social"
+               (< (get m [:depression :social]) 0.1))
+  (assert-true "elapsed under 200ms" (< (:elapsed-ms result) 200))
+  (println (str "    elapsed: " (:elapsed-ms result) "ms, "
+                (count trans) " transitions")))
+
+;; ============================================================
 ;; Summary
 ;; ============================================================
 
