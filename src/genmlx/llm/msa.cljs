@@ -24,6 +24,7 @@
   (:require [sci.core :as sci]
             [clojure.string :as str]
             [instaparse.core :as insta]
+            ["@mlx-node/lm" :refer [ChatSession]]
             [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
@@ -256,11 +257,11 @@
          prompt (build-prompt task)
          messages [{:role "system" :content msa-system-prompt}
                    {:role "user" :content prompt}]]
-     (pr/let [result (.chat (:model model-map)
-                            (clj->js messages)
-                            (clj->js {:maxNewTokens max-tokens
-                                      :temperature temperature
-                                      :enableThinking false}))
+     (pr/let [sess (ChatSession. (:model model-map)
+                                (clj->js {:system msa-system-prompt
+                                          :maxNewTokens max-tokens
+                                          :temperature temperature}))
+              result (.send sess prompt)
               text (normalize-defn->fn (.-text result))
               dist-map (parse-dist-lines text variables)
               code (assemble-gen-fn variables dist-map)]
@@ -306,11 +307,11 @@ Output ONLY the lines. No explanation.")
          {:keys [variables]} task
          messages [{:role "system" :content knowledge-system-prompt}
                    {:role "user" :content (build-knowledge-prompt task)}]]
-     (pr/let [result (.chat (:model model-map)
-                            (clj->js messages)
-                            (clj->js {:maxNewTokens max-tokens
-                                      :temperature temperature
-                                      :enableThinking false}))
+     (pr/let [sess (ChatSession. (:model model-map)
+                                (clj->js {:system knowledge-system-prompt
+                                          :maxNewTokens max-tokens
+                                          :temperature temperature}))
+              result (.send sess (build-knowledge-prompt task))
               text (.-text result)
               dist-map (or (parse-math text) {})]
        {:code (assemble-gen-fn variables dist-map)

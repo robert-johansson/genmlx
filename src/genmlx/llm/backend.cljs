@@ -5,6 +5,7 @@
    This is Layer 0 of the LLM integration — everything above (token-transition
    handler, beam search, grammar constraints) builds on these functions."
   (:require ["@mlx-node/lm" :as mlx-lm]
+            ["@mlx-node/lm" :refer [ChatSession]]
             [genmlx.mlx :as mx]
             [promesa.core :as p]))
 
@@ -154,7 +155,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn generate-text
-  "Generate text from a prompt using the chat API.
+  "Generate text from a prompt using the ChatSession API.
    Returns a promise of the generated text string.
 
    opts map:
@@ -164,11 +165,9 @@
   ([model-map prompt] (generate-text model-map prompt {}))
   ([{:keys [model]} prompt {:keys [max-tokens temperature system-prompt]
                             :or {max-tokens 100 temperature 0.7}}]
-   (let [messages (cond-> []
-                    system-prompt (conj {:role "system" :content system-prompt})
-                    true (conj {:role "user" :content prompt}))]
-     (p/let [result (.chat model
-                           (clj->js messages)
-                           (clj->js {:maxNewTokens max-tokens
-                                     :temperature temperature}))]
+   (let [session (ChatSession. model
+                               (clj->js (cond-> {:maxNewTokens max-tokens
+                                                 :temperature temperature}
+                                          system-prompt (assoc :system system-prompt))))]
+     (p/let [result (.send session prompt)]
        (.-text result)))))
