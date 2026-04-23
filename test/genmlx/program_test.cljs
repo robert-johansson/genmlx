@@ -520,6 +520,91 @@
                 " P=" (.toFixed (:posterior (first results)) 4))))
 
 ;; ============================================================
+;; 20. K-variable data generation and transition extraction
+;; ============================================================
+
+(println "\n== K-variable infrastructure ==")
+
+(let [data (prog/generate-kvar-data [:a :b :c]
+             {:cross {[:a :b] 0.5}
+              :n-individuals 10 :n-steps 5})]
+  (assert-true "generates correct number of individuals" (= 10 (count data)))
+  (assert-true "correct steps per individual" (= 5 (count (first data))))
+  (assert-true "each step has all variables" (every? #(and (contains? % :a)
+                                                           (contains? % :b)
+                                                           (contains? % :c))
+                                                     (first data))))
+
+(let [data (prog/generate-kvar-data [:a :b] {:n-individuals 3 :n-steps 4})
+      trans (prog/extract-kvar-transitions data)]
+  (assert-true "correct transition count" (= (* 3 3) (count trans)))
+  (assert-true "transitions have :prev and :next" (and (:prev (first trans))
+                                                        (:next (first trans)))))
+
+;; ============================================================
+;; 21. enumerate-all-structures
+;; ============================================================
+
+(println "\n== enumerate-all-structures ==")
+
+(let [s2 (prog/enumerate-all-structures [:a :b])
+      s3 (prog/enumerate-all-structures [:a :b :c])]
+  (assert-equal "2 vars: 4 structures" 4 (count s2))
+  (assert-equal "3 vars: 64 structures" 64 (count s3))
+  (assert-true "includes independent" (some #(= "independent" (:name %)) s2))
+  (assert-true "all have :edges" (every? :edges s3)))
+
+;; ============================================================
+;; 22. 3-variable structure discovery
+;; ============================================================
+
+(println "\n== 3-variable structure discovery ==")
+
+(let [var-names [:sleep :exercise :mood]
+      data (prog/generate-kvar-data var-names
+             {:ar {:sleep 0.7 :exercise 0.3 :mood 0.5}
+              :cross {[:exercise :mood] 0.5 [:sleep :mood] -0.4}
+              :sigma {:sleep 1.0 :exercise 0.5 :mood 1.0}
+              :n-individuals 60 :n-steps 10})
+      trans (prog/extract-kvar-transitions data)
+      result (prog/discover-structure var-names trans)
+      best (:best result)
+      marginals (:marginals result)]
+  (assert-true "best structure contains exercise->mood"
+               (contains? (:edges best) [:exercise :mood]))
+  (assert-true "best structure contains sleep->mood"
+               (contains? (:edges best) [:sleep :mood]))
+  (assert-true "P(exercise->mood) > 0.9"
+               (> (get marginals [:exercise :mood]) 0.9))
+  (assert-true "P(sleep->mood) > 0.9"
+               (> (get marginals [:sleep :mood]) 0.9))
+  (assert-true "P(mood->exercise) < 0.1"
+               (< (get marginals [:mood :exercise]) 0.1))
+  (assert-true "64 structures scored"
+               (= 64 (count (:ranked result))))
+  (println (str "    best: " (:name best) " P=" (.toFixed (:posterior best) 4)
+                " in " (:elapsed-ms result) "ms")))
+
+;; ============================================================
+;; 23. edge-marginals sum correctly
+;; ============================================================
+
+(println "\n== edge-marginals ==")
+
+(let [var-names [:a :b :c]
+      data (prog/generate-kvar-data var-names
+             {:cross {[:a :b] 0.5} :n-individuals 30 :n-steps 10})
+      trans (prog/extract-kvar-transitions data)
+      scored (prog/score-all-structures trans var-names)
+      marginals (prog/edge-marginals var-names scored)]
+  (assert-equal "6 edges for 3 variables" 6 (count marginals))
+  (assert-true "all marginals in [0,1+eps]"
+               (every? #(and (>= % -0.001) (<= % 1.001)) (vals marginals)))
+  (assert-true "P(a->b) is highest"
+               (> (get marginals [:a :b])
+                  (apply max (vals (dissoc marginals [:a :b]))))))
+
+;; ============================================================
 ;; Summary
 ;; ============================================================
 

@@ -255,8 +255,119 @@
 ;; Analytical scoring (Bayesian linear regression)
 ;; ============================================================
 
-(defn- dot [a b] (reduce + (map * a b)))
+(defn- dot [a b]
+  (let [n (count a)]
+    (loop [i 0, acc 0.0]
+      (if (>= i n) acc
+          (recur (inc i) (+ acc (* (nth a i) (nth b i))))))))
+
 (defn- vsub [a b] (mapv - a b))
+
+(defn- mat-lu-solve
+  "Solve Ax = b via Gaussian elimination with partial pivoting. A is p*p, b is p-vector."
+  [A b]
+  (let [p (count b)
+        aug (vec (for [i (range p)]
+                   (conj (vec (nth A i)) (nth b i))))
+        aug (loop [k 0, aug aug]
+              (if (>= k p) aug
+                  (let [pivot-row (apply max-key
+                                         (fn [i] (js/Math.abs (get-in aug [i k])))
+                                         (range k p))
+                        aug (if (= pivot-row k) aug
+                                (let [tmp (nth aug k)]
+                                  (-> aug (assoc k (nth aug pivot-row))
+                                      (assoc pivot-row tmp))))
+                        pivot-val (get-in aug [k k])]
+                    (if (< (js/Math.abs pivot-val) 1e-15)
+                      aug
+                      (recur (inc k)
+                             (reduce (fn [aug i]
+                                       (let [factor (/ (get-in aug [i k]) pivot-val)]
+                                         (reduce (fn [aug j]
+                                                   (assoc-in aug [i j]
+                                                             (- (get-in aug [i j])
+                                                                (* factor (get-in aug [k j])))))
+                                                 aug
+                                                 (range k (inc p)))))
+                                     aug
+                                     (range (inc k) p)))))))]
+    (loop [k (dec p), x (vec (repeat p 0.0))]
+      (if (< k 0) x
+          (let [sum (reduce + (map (fn [j] (* (get-in aug [k j]) (nth x j)))
+                                   (range (inc k) p)))
+                val (/ (- (get-in aug [k p]) sum) (get-in aug [k k]))]
+            (recur (dec k) (assoc x k val)))))))
+
+(defn- mat-log-det
+  "Log absolute determinant of a p*p matrix via Gaussian elimination."
+  [A]
+  (let [p (count A)]
+    (loop [k 0, aug (mapv vec A), log-det 0.0, sign 1]
+      (if (>= k p)
+        (+ log-det (js/Math.log (js/Math.abs sign)))
+        (let [pivot-row (apply max-key
+                               (fn [i] (js/Math.abs (get-in aug [i k])))
+                               (range k p))
+              swapped? (not= pivot-row k)
+              aug (if swapped?
+                    (let [tmp (nth aug k)]
+                      (-> aug (assoc k (nth aug pivot-row)) (assoc pivot-row tmp)))
+                    aug)
+              sign (if swapped? (- sign) sign)
+              pivot-val (get-in aug [k k])]
+          (if (< (js/Math.abs pivot-val) 1e-15)
+            ##-Inf
+            (recur (inc k)
+                   (reduce (fn [aug i]
+                             (let [factor (/ (get-in aug [i k]) pivot-val)]
+                               (reduce (fn [aug j]
+                                         (assoc-in aug [i j]
+                                                   (- (get-in aug [i j])
+                                                      (* factor (get-in aug [k j])))))
+                                       aug
+                                       (range (inc k) p))))
+                           aug
+                           (range (inc k) p))
+                   (+ log-det (js/Math.log (js/Math.abs pivot-val)))
+                   (if (neg? pivot-val) (- sign) sign))))))))
+
+(defn- log-ml-general
+  "Analytical log-ML for one variable's regression with p predictors.
+   Uses Gaussian elimination for general p*p matrices."
+  [y X-cols sigma-sq]
+  (let [n (count y)
+        p (count X-cols)
+        m0 (mapv :prior-mean X-cols)
+        s0-diag (mapv :prior-var X-cols)
+        Xm0 (reduce (fn [acc j]
+                      (let [xj (:values (nth X-cols j))
+                            mj (nth m0 j)]
+                        (mapv + acc (mapv #(* mj %) xj))))
+                    (vec (repeat n 0.0))
+                    (range p))
+        r (vsub y Xm0)
+        rr (dot r r)
+        gram (vec (for [i (range p)]
+                    (vec (for [j (range p)]
+                           (dot (:values (nth X-cols i))
+                                (:values (nth X-cols j)))))))
+        Xtr (mapv (fn [j] (dot (:values (nth X-cols j)) r)) (range p))
+        M (vec (for [i (range p)]
+                 (vec (for [j (range p)]
+                        (+ (get-in gram [i j])
+                           (if (= i j) (/ sigma-sq (nth s0-diag i)) 0))))))
+        Minv-Xtr (mat-lu-solve M Xtr)
+        quad-correction (reduce + (map * Xtr Minv-Xtr))
+        A (vec (for [i (range p)]
+                 (vec (for [j (range p)]
+                        (+ (if (= i j) 1.0 0.0)
+                           (/ (* (nth s0-diag i) (get-in gram [i j])) sigma-sq))))))
+        log-det-A (mat-log-det A)
+        quad (/ (- rr quad-correction) sigma-sq)]
+    (+ (* -0.5 n (js/Math.log (* 2.0 js/Math.PI sigma-sq)))
+       (* -0.5 log-det-A)
+       (* -0.5 quad))))
 
 (defn- extract-regression-data
   "Build regression components for one variable's transition equation.
@@ -467,6 +578,213 @@
      (->> (compute-posterior scored)
           (sort-by :posterior >)
           vec))))
+
+;; ============================================================
+;; K-variable structure discovery
+;; ============================================================
+
+(defn generate-kvar-data
+  "Generate K-variable panel data with known causal structure.
+
+   var-names:  [:sleep :exercise :mood]
+   dgp:
+     :n-individuals  (default 50)
+     :n-steps        (default 10)
+     :ar             {var -> coefficient}  (default 0.5 for all)
+     :cross          {[src tgt] -> coefficient}  e.g. {[:exercise :mood] 0.4}
+     :sigma          {var -> noise-std}  (default 1.0 for all)
+     :init-mean      {var -> mean}  (default 0 for all)
+     :init-std       {var -> std}   (default 2 for all)
+
+   Returns a vector of individuals, each a vector of {var -> value} maps."
+  [var-names dgp]
+  (let [{:keys [n-individuals n-steps ar cross sigma init-mean init-std]
+         :or {n-individuals 50 n-steps 10}} dgp
+        ar (merge (zipmap var-names (repeat 0.5)) ar)
+        cross (or cross {})
+        sigma (merge (zipmap var-names (repeat 1.0)) sigma)
+        init-mean (merge (zipmap var-names (repeat 0.0)) init-mean)
+        init-std (merge (zipmap var-names (repeat 2.0)) init-std)]
+    (vec
+     (for [_ (range n-individuals)]
+       (let [init (zipmap var-names
+                          (map #(+ (get init-mean %) (* (get init-std %) (randn))) var-names))]
+         (loop [t 0, prev init, series [init]]
+           (if (>= t (dec n-steps))
+             series
+             (let [nxt (zipmap var-names
+                               (map (fn [v]
+                                      (+ (* (get ar v) (get prev v))
+                                         (reduce + (map (fn [[[src tgt] coeff]]
+                                                          (if (= tgt v) (* coeff (get prev src)) 0))
+                                                        cross))
+                                         (* (get sigma v) (randn))))
+                                    var-names))]
+               (recur (inc t) nxt (conj series nxt))))))))))
+
+(defn extract-kvar-transitions
+  "Extract transition pairs from K-variable panel data.
+   Returns [{:prev {:sleep 1.2 ...} :next {:sleep 0.8 ...}} ...]"
+  [data]
+  (vec (for [individual data
+             [prev nxt] (partition 2 1 individual)]
+         {:prev prev :next nxt})))
+
+(defn enumerate-edges
+  "All possible directed edges between K variables (excluding self-loops)."
+  [var-names]
+  (vec (for [src var-names, tgt var-names :when (not= src tgt)]
+         [src tgt])))
+
+(defn enumerate-all-structures
+  "Enumerate all 2^(K*(K-1)) directed graphs for K variables.
+   Returns [{:edges #{[:a :b] ...} :name \"a->b, c->a\"} ...]"
+  [var-names]
+  (let [all-edges (enumerate-edges var-names)
+        n-edges (count all-edges)]
+    (mapv (fn [i]
+            (let [active (set (keep-indexed
+                               (fn [j edge]
+                                 (when (bit-test i j) edge))
+                               all-edges))
+                  nm (if (empty? active)
+                       "independent"
+                       (str/join ", "
+                                 (map (fn [[s t]] (str (name s) "->" (name t)))
+                                      (sort-by str active))))]
+              {:edges active :name nm :index i}))
+          (range (bit-shift-left 1 n-edges)))))
+
+(defn score-all-structures
+  "Score all 2^(K*(K-1)) directed graphs with precomputed sufficient statistics.
+
+   Precomputes all pairwise dot products once, then assembles the Gram submatrix
+   for each (variable, structure) pair. For K=3 (64 structures): ~18ms.
+   For K=4 (4096 structures): ~1s.
+
+   transitions:  from extract-kvar-transitions
+   var-names:    [:sleep :exercise :mood]
+   opts:
+     :sigma          {var -> known-noise-std}
+     :ar-prior-mean  (default 0.5)
+     :ar-prior-std   (default 0.15)
+     :beta-prior-std (default 3.0)
+
+   Returns the structures augmented with :log-ml."
+  ([transitions var-names] (score-all-structures transitions var-names {}))
+  ([transitions var-names opts]
+   (let [{:keys [ar-prior-mean ar-prior-std beta-prior-std]
+          :or {ar-prior-mean 0.5 ar-prior-std 0.15 beta-prior-std 3.0}} opts
+         ar-var (* ar-prior-std ar-prior-std)
+         beta-var (* beta-prior-std beta-prior-std)
+         n (count transitions)
+         known-sigma (:sigma opts)
+         col-vecs (into {}
+                        (map (fn [v] [v (mapv #(get-in % [:prev v]) transitions)])
+                             var-names))
+         obs-vecs (into {}
+                        (map (fn [v] [v (mapv #(get-in % [:next v]) transitions)])
+                             var-names))
+         all-dots (into {}
+                        (for [a var-names, b var-names]
+                          [[a b] (dot (get col-vecs a) (get col-vecs b))]))
+         xty-dots (into {}
+                        (for [pred var-names, tgt var-names]
+                          [[pred tgt] (dot (get col-vecs pred) (get obs-vecs tgt))]))
+         yty (into {} (map (fn [v] [v (dot (get obs-vecs v) (get obs-vecs v))])
+                           var-names))
+         all-structs (enumerate-all-structures var-names)]
+     (mapv
+      (fn [structure]
+        (let [edges (:edges structure)
+              lml (reduce
+                   (fn [total target]
+                     (let [sources (vec (filter #(contains? edges [% target]) var-names))
+                           preds (into [target] sources)
+                           p (count preds)
+                           m0 (into [ar-prior-mean] (repeat (count sources) 0.0))
+                           s0 (into [ar-var] (repeat (count sources) beta-var))
+                           gram (vec (for [i (range p)]
+                                       (vec (for [j (range p)]
+                                              (get all-dots [(nth preds i) (nth preds j)])))))
+                           Xty (mapv (fn [j] (get xty-dots [(nth preds j) target])) (range p))
+                           gram-m0 (mapv (fn [i]
+                                           (reduce + (map (fn [j] (* (get-in gram [i j]) (nth m0 j)))
+                                                          (range p))))
+                                         (range p))
+                           Xtr (mapv - Xty gram-m0)
+                           m0Xty (reduce + (map * m0 Xty))
+                           m0Gram-m0 (reduce + (map * m0 gram-m0))
+                           rr (+ (get yty target) (* -2.0 m0Xty) m0Gram-m0)
+                           sigma-sq (if-let [s (get known-sigma target)]
+                                      (* s s)
+                                      (if (<= n p)
+                                        1.0
+                                        (let [beta-hat (mat-lu-solve gram Xty)
+                                              Xbeta-y (reduce + (map * beta-hat Xty))
+                                              rss (- (get yty target) Xbeta-y)]
+                                          (/ (max rss 0.001) n))))
+                           M (vec (for [i (range p)]
+                                    (vec (for [j (range p)]
+                                           (+ (get-in gram [i j])
+                                              (if (= i j) (/ sigma-sq (nth s0 i)) 0))))))
+                           Minv-Xtr (mat-lu-solve M Xtr)
+                           quad-corr (reduce + (map * Xtr Minv-Xtr))
+                           A (vec (for [i (range p)]
+                                    (vec (for [j (range p)]
+                                           (+ (if (= i j) 1.0 0.0)
+                                              (/ (* (nth s0 i) (get-in gram [i j])) sigma-sq))))))
+                           log-det-A (mat-log-det A)
+                           quad (/ (- rr quad-corr) sigma-sq)]
+                       (+ total
+                          (* -0.5 n (js/Math.log (* 2.0 js/Math.PI sigma-sq)))
+                          (* -0.5 log-det-A)
+                          (* -0.5 quad))))
+                   0.0
+                   var-names)]
+          (assoc structure :log-ml lml)))
+      all-structs))))
+
+(defn edge-marginals
+  "Compute marginal posterior probability for each possible directed edge.
+   Takes scored structures (with :log-ml) and returns {[src tgt] -> probability}."
+  [var-names scored]
+  (let [log-mls (mapv :log-ml scored)
+        log-norm (log-sum-exp log-mls)]
+    (into {}
+          (map (fn [edge]
+                 [edge (reduce + (keep (fn [s]
+                                         (when (contains? (:edges s) edge)
+                                           (js/Math.exp (- (:log-ml s) log-norm))))
+                                       scored))])
+               (enumerate-edges var-names)))))
+
+(defn discover-structure
+  "End-to-end K-variable structure discovery.
+
+   var-names:    [:sleep :exercise :mood]
+   transitions:  from extract-kvar-transitions
+   opts:         passed to score-all-structures
+
+   Returns {:ranked     [{:name :edges :log-ml :posterior} ...] (sorted)
+            :marginals  {[:exercise :mood] 0.99 ...}
+            :best       the top-ranked structure
+            :elapsed-ms scoring time}"
+  ([var-names transitions] (discover-structure var-names transitions {}))
+  ([var-names transitions opts]
+   (let [t0 (js/Date.now)
+         scored (score-all-structures transitions var-names opts)
+         elapsed (- (js/Date.now) t0)
+         log-mls (mapv :log-ml scored)
+         log-norm (log-sum-exp log-mls)
+         ranked (->> scored
+                     (map #(assoc % :posterior (js/Math.exp (- (:log-ml %) log-norm))))
+                     (sort-by :posterior >)
+                     vec)]
+     {:ranked ranked
+      :marginals (edge-marginals var-names scored)
+      :best (first ranked)
+      :elapsed-ms elapsed})))
 
 ;; ============================================================
 ;; FIM scaffold: structure with holes for LLM to fill
