@@ -910,6 +910,100 @@
       :elapsed-ms elapsed})))
 
 ;; ============================================================
+;; CSV data loading
+;; ============================================================
+
+(defn- parse-csv-line
+  "Parse a CSV line, handling quoted fields."
+  [line]
+  (loop [chars (seq line), field [], fields [], in-quote false]
+    (if (empty? chars)
+      (conj fields (str/trim (apply str field)))
+      (let [c (first chars)]
+        (cond
+          (and (= c \") (not in-quote))
+          (recur (rest chars) field fields true)
+          (and (= c \") in-quote)
+          (recur (rest chars) field fields false)
+          (and (= c \,) (not in-quote))
+          (recur (rest chars) [] (conj fields (str/trim (apply str field))) false)
+          :else
+          (recur (rest chars) (conj field c) fields in-quote))))))
+
+(defn load-panel-csv
+  "Load panel data from a long-format CSV into kvar transition format.
+
+   The CSV must have columns for: participant id, time index, and one column
+   per measured variable. Rows with any missing values are excluded.
+   Transitions are extracted between consecutive time points within each
+   participant.
+
+   csv-path:  path to CSV file
+   col-map:   {variable-keyword column-name-string}
+              e.g. {:madrs \"MADRS_S\" :atq \"ATQ_3\"}
+   opts:
+     :id-col    column name for participant id (default \"id\")
+     :time-col  column name for time index (default \"week\")
+
+   Returns {:transitions [...] :var-names [...] :n-patients N :n-transitions N}"
+  ([csv-path col-map] (load-panel-csv csv-path col-map {}))
+  ([csv-path col-map opts]
+   (let [{:keys [id-col time-col] :or {id-col "id" time-col "week"}} opts
+         fs (js/require "fs")
+         content (.toString (.readFileSync fs csv-path "utf8"))
+         lines (str/split-lines content)
+         header (parse-csv-line (first lines))
+         header-lower (mapv str/lower-case header)
+         find-idx (fn [col-name]
+                    (let [lc (str/lower-case col-name)]
+                      (first (keep-indexed (fn [i h] (when (= h lc) i)) header-lower))))
+         id-idx (find-idx id-col)
+         time-idx (find-idx time-col)
+         var-names (vec (keys col-map))
+         measure-idxs (into {} (map (fn [[k col-name]] [k (find-idx col-name)]) col-map))
+         rows (keep (fn [line]
+                      (when (seq (str/trim line))
+                        (let [fields (parse-csv-line line)
+                              id (nth fields id-idx nil)
+                              t (js/parseInt (nth fields time-idx "0") 10)]
+                          (when (and id (not (js/isNaN t)))
+                            (let [values (reduce-kv
+                                          (fn [m var-key col-i]
+                                            (if col-i
+                                              (let [raw (nth fields col-i "")
+                                                    val (when (and (seq raw) (not= raw "NA"))
+                                                          (js/parseFloat raw))]
+                                                (if (and val (not (js/isNaN val)))
+                                                  (assoc m var-key val)
+                                                  m))
+                                              m))
+                                          {}
+                                          measure-idxs)]
+                              (when (= (count values) (count col-map))
+                                {:id id :time t :values values}))))))
+                    (rest lines))
+         by-patient (group-by :id rows)
+         transitions
+         (vec (for [[_ patient-rows] by-patient
+                    :let [sorted (sort-by :time patient-rows)]
+                    [prev nxt] (partition 2 1 sorted)
+                    :when (= (:time nxt) (inc (:time prev)))]
+                {:prev (:values prev) :next (:values nxt)}))]
+     {:transitions transitions
+      :var-names var-names
+      :n-patients (count by-patient)
+      :n-transitions (count transitions)})))
+
+(def depression-col-map
+  "Column mapping for the depression ICBT long-format CSV."
+  {:madrs "madrs_s"
+   :activation "bads_ac3"
+   :avoidance "bads_avr6"
+   :atq "atq3"
+   :reward "rpi_rp3"
+   :suppressors "rpi_es3"})
+
+;; ============================================================
 ;; FIM scaffold: structure with holes for LLM to fill
 ;; ============================================================
 
