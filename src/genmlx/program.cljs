@@ -994,15 +994,6 @@
       :n-patients (count by-patient)
       :n-transitions (count transitions)})))
 
-(def depression-col-map
-  "Column mapping for the depression ICBT long-format CSV."
-  {:madrs "madrs_s"
-   :activation "bads_ac3"
-   :avoidance "bads_avr6"
-   :atq "atq3"
-   :reward "rpi_rp3"
-   :suppressors "rpi_es3"})
-
 ;; ============================================================
 ;; FIM scaffold: structure with holes for LLM to fill
 ;; ============================================================
