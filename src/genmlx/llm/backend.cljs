@@ -192,12 +192,15 @@
      :max-tokens     — maximum new tokens (default 100)
      :system-prompt  — optional system message (default 'You are a helpful assistant.')"
   ([model-map prompt] (generate-text-raw model-map prompt {}))
-  ([{:keys [model tokenizer]} prompt {:keys [max-tokens system-prompt]
-                                       :or {max-tokens 100
-                                            system-prompt "You are a helpful assistant."}}]
-   (let [chat-str (str "<|im_start|>system\n" system-prompt "<|im_end|>\n"
+  ([{:keys [model tokenizer type]} prompt {:keys [max-tokens system-prompt]
+                                          :or {max-tokens 100
+                                               system-prompt "You are a helpful assistant."}}]
+   (let [think-skip (if (#{:qwen3 :qwen3_5 :qwen3_5_moe} type)
+                      "<think>\n\n</think>\n\n"
+                      "")
+         chat-str (str "<|im_start|>system\n" system-prompt "<|im_end|>\n"
                        "<|im_start|>user\n" prompt "<|im_end|>\n"
-                       "<|im_start|>assistant\n")
+                       "<|im_start|>assistant\n" think-skip)
          eos-id (eos-token-id tokenizer)]
      (p/let [ids-raw (encode tokenizer chat-str true)
              prompt-ids (vec ids-raw)]
