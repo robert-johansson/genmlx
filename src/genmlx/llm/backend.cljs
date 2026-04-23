@@ -114,14 +114,27 @@
 
 (defn init-cache!
   "Initialize KV caches for incremental generation.
-   Must be called before forward-step. Mutates model state."
+   Must be called before forward-step. Mutates model state.
+   Handles both Qwen3 (.initKvCaches) and Qwen3.5/MoE (.initCaches) APIs."
   [model]
-  (.initKvCaches model))
+  (if (.-initKvCaches model)
+    (.initKvCaches model)
+    (.initCaches model)))
 
 (defn reset-cache!
-  "Clear KV caches after generation. Mutates model state."
+  "Clear KV caches after generation. Mutates model state.
+   Handles both Qwen3 (.resetKvCaches) and Qwen3.5/MoE (.resetCaches) APIs."
   [model]
-  (.resetKvCaches model))
+  (if (.-resetKvCaches model)
+    (.resetKvCaches model)
+    (.resetCaches model)))
+
+(defn- forward-with-cache
+  "Dispatch forwardWithCache for both Qwen3 (2-arg) and Qwen3.5/MoE (1-arg) APIs."
+  [model input]
+  (if (.-initKvCaches model)
+    (.forwardWithCache model input true)
+    (.forwardWithCache model input)))
 
 (defn forward-prefill
   "Run a cached forward pass over the full prompt.
@@ -134,8 +147,7 @@
   (let [ids (->id-vec token-ids)
         n (count ids)
         input (mx/reshape (mx/array ids mx/int32) [1 n])
-        logits (.forwardWithCache model input true)]
-    ;; Rust returns [1, 1, vocab_size] — logits for last position only
+        logits (forward-with-cache model input)]
     (-> logits (mx/index 0) (mx/index 0))))
 
 (defn forward-step
@@ -147,7 +159,7 @@
    Constant time in sequence length — does not recompute the full context."
   [model token-id]
   (let [input (mx/reshape (mx/scalar token-id mx/int32) [1 1])
-        logits (.forwardWithCache model input true)]
+        logits (forward-with-cache model input)]
     (-> logits (mx/index 0) (mx/index 0))))
 
 ;; ---------------------------------------------------------------------------
@@ -171,3 +183,36 @@
                                           system-prompt (assoc :system system-prompt))))]
      (p/let [result (.send session prompt)]
        (.-text result)))))
+
+(defn generate-text-raw
+  "Generate text by building a ChatML prompt manually and decoding token-by-token.
+   Bypasses ChatSession — works for models where ChatSession has issues (e.g. Qwen2).
+
+   opts map:
+     :max-tokens     — maximum new tokens (default 100)
+     :system-prompt  — optional system message (default 'You are a helpful assistant.')"
+  ([model-map prompt] (generate-text-raw model-map prompt {}))
+  ([{:keys [model tokenizer]} prompt {:keys [max-tokens system-prompt]
+                                       :or {max-tokens 100
+                                            system-prompt "You are a helpful assistant."}}]
+   (let [chat-str (str "<|im_start|>system\n" system-prompt "<|im_end|>\n"
+                       "<|im_start|>user\n" prompt "<|im_end|>\n"
+                       "<|im_start|>assistant\n")
+         eos-id (eos-token-id tokenizer)]
+     (p/let [ids-raw (encode tokenizer chat-str true)
+             prompt-ids (vec ids-raw)]
+       (init-cache! model)
+       (try
+         (let [logits (forward-prefill model prompt-ids)]
+           (loop [i 0, acc [], logits logits]
+             (if (>= i max-tokens)
+               (p/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
+                 text)
+               (let [tok-id (mx/item (mx/argmax logits))]
+                 (if (= tok-id eos-id)
+                   (p/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
+                     text)
+                   (let [next-logits (forward-step model tok-id)]
+                     (recur (inc i) (conj acc tok-id) next-logits)))))))
+         (finally
+           (reset-cache! model)))))))

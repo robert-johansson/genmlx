@@ -79,7 +79,7 @@
                   (when (not= :invalid s) [b s]))))
         candidate-bytes))
 
-(defn- suppress-complete
+(defn suppress-complete
   "Before min-bytes, treat :complete as :incomplete to prevent
    premature stopping on single-char atoms like '<'."
   [constraint]
