@@ -369,6 +369,157 @@
   (assert-true "log-ML is negative" (neg? lml)))
 
 ;; ============================================================
+;; 15. score-model-analytical: basic properties
+;; ============================================================
+
+(println "\n== score-model-analytical (basic) ==")
+
+(let [transitions [{:x-prev 1.0 :y-prev 2.0 :x-next 1.5 :y-next 2.5}
+                   {:x-prev 1.5 :y-prev 2.5 :x-next 1.8 :y-next 2.2}
+                   {:x-prev 1.8 :y-prev 2.2 :x-next 2.0 :y-next 2.0}]
+      xy-edges  {["x" "y"] true  ["y" "x"] false}
+      no-edges  {["x" "y"] false ["y" "x"] false}]
+  ;; Returns a finite negative number
+  (let [lml (prog/score-model-analytical transitions [:x :y] xy-edges {})]
+    (assert-true "analytical log-ML is a number" (number? lml))
+    (assert-true "analytical log-ML is finite" (js/isFinite lml))
+    (assert-true "analytical log-ML is negative" (neg? lml)))
+  ;; Deterministic: same inputs → same output
+  (let [lml1 (prog/score-model-analytical transitions [:x :y] xy-edges {})
+        lml2 (prog/score-model-analytical transitions [:x :y] xy-edges {})]
+    (assert-true "analytical scoring is deterministic" (= lml1 lml2)))
+  ;; Known sigma variant works
+  (let [lml (prog/score-model-analytical transitions [:x :y] xy-edges
+              {:sigma-x 1.0 :sigma-y 2.0})]
+    (assert-true "known-sigma log-ML is finite" (js/isFinite lml)))
+  ;; Different structures give different scores
+  (let [lml-xy (prog/score-model-analytical transitions [:x :y] xy-edges {})
+        lml-no (prog/score-model-analytical transitions [:x :y] no-edges {})]
+    (assert-true "different structures give different scores" (not= lml-xy lml-no))))
+
+;; ============================================================
+;; 16. score-model-analytical: structure recovery with synthetic data
+;; ============================================================
+
+(println "\n== score-model-analytical (structure recovery) ==")
+
+(let [var-names [:x :y]
+      xy-edges  {["x" "y"] true  ["y" "x"] false}
+      yx-edges  {["x" "y"] false ["y" "x"] true}
+      both-edges {["x" "y"] true  ["y" "x"] true}
+      no-edges  {["x" "y"] false ["y" "x"] false}
+      all-edges [xy-edges yx-edges both-edges no-edges]
+      names ["x->y" "y->x" "both" "neither"]
+      score-all (fn [trans]
+                  (mapv #(prog/score-model-analytical trans var-names % {}) all-edges))
+      best-idx (fn [scores] (first (apply max-key second (map-indexed vector scores))))]
+
+  ;; X->Y data: beta-xy = -0.3
+  (let [data (prog/generate-synthetic-data {:beta-xy -0.3 :beta-yx 0
+                                             :n-individuals 50 :n-steps 10})
+        trans (prog/extract-transitions data)
+        scores (score-all trans)]
+    (assert-true "X->Y: correct structure ranked first"
+                 (= 0 (best-idx scores)))
+    (println (str "    scores: " (mapv #(.toFixed % 1) scores))))
+
+  ;; Y->X data: beta-yx = 0.5
+  (let [data (prog/generate-synthetic-data {:beta-xy 0 :beta-yx 0.5
+                                             :n-individuals 50 :n-steps 10})
+        trans (prog/extract-transitions data)
+        scores (score-all trans)]
+    (assert-true "Y->X: correct structure ranked first"
+                 (= 1 (best-idx scores)))
+    (println (str "    scores: " (mapv #(.toFixed % 1) scores))))
+
+  ;; Both directions: beta-xy = -0.3, beta-yx = 0.5
+  (let [data (prog/generate-synthetic-data {:beta-xy -0.3 :beta-yx 0.5
+                                             :n-individuals 50 :n-steps 10})
+        trans (prog/extract-transitions data)
+        scores (score-all trans)]
+    (assert-true "Both: correct structure ranked first"
+                 (= 2 (best-idx scores)))
+    (println (str "    scores: " (mapv #(.toFixed % 1) scores))))
+
+  ;; Neither direction: independent AR(1) — use more data for reliable null detection
+  (let [data (prog/generate-synthetic-data {:beta-xy 0 :beta-yx 0
+                                             :n-individuals 100 :n-steps 10})
+        trans (prog/extract-transitions data)
+        scores (score-all trans)]
+    (assert-true "Neither: correct structure ranked first"
+                 (= 3 (best-idx scores)))
+    (println (str "    scores: " (mapv #(.toFixed % 1) scores)))))
+
+;; ============================================================
+;; 17. score-model-analytical: known vs estimated sigma
+;; ============================================================
+
+(println "\n== score-model-analytical (known vs estimated sigma) ==")
+
+(let [data (prog/generate-synthetic-data {:beta-xy -0.3 :beta-yx 0
+                                           :sigma-x 1.0 :sigma-y 2.0
+                                           :n-individuals 50 :n-steps 10})
+      trans (prog/extract-transitions data)
+      edges {["x" "y"] true ["y" "x"] false}
+      lml-known (prog/score-model-analytical trans [:x :y] edges
+                  {:sigma-x 1.0 :sigma-y 2.0})
+      lml-est (prog/score-model-analytical trans [:x :y] edges {})]
+  (assert-true "known-sigma score is finite" (js/isFinite lml-known))
+  (assert-true "estimated-sigma score is finite" (js/isFinite lml-est))
+  ;; Both should be similar (MLE ≈ true sigma with enough data)
+  (assert-true "known vs estimated within 50 nats"
+               (< (js/Math.abs (- lml-known lml-est)) 50))
+  (println (str "    known: " (.toFixed lml-known 2)
+                " estimated: " (.toFixed lml-est 2))))
+
+;; ============================================================
+;; 18. score-model-analytical: repeated runs always agree on winner
+;; ============================================================
+
+(println "\n== score-model-analytical (stability over 10 datasets) ==")
+
+(let [var-names [:x :y]
+      xy-edges  {["x" "y"] true  ["y" "x"] false}
+      yx-edges  {["x" "y"] false ["y" "x"] true}
+      both-edges {["x" "y"] true  ["y" "x"] true}
+      no-edges  {["x" "y"] false ["y" "x"] false}
+      all-edges [xy-edges yx-edges both-edges no-edges]
+      best-idx (fn [scores] (first (apply max-key second (map-indexed vector scores))))
+      correct-count
+      (reduce
+        (fn [n _]
+          (let [data (prog/generate-synthetic-data {:beta-xy -0.3 :beta-yx 0
+                                                     :n-individuals 50 :n-steps 10})
+                trans (prog/extract-transitions data)
+                scores (mapv #(prog/score-model-analytical trans var-names % {}) all-edges)]
+            (if (= 0 (best-idx scores)) (inc n) n)))
+        0
+        (range 10))]
+  (assert-true (str "X->Y correct in " correct-count "/10 runs")
+               (= correct-count 10)))
+
+;; ============================================================
+;; 19. compare-structures with analytical scoring
+;; ============================================================
+
+(println "\n== compare-structures (analytical) ==")
+
+(let [data (prog/generate-synthetic-data {:beta-xy -0.3 :beta-yx 0
+                                           :n-individuals 50 :n-steps 10})
+      trans (prog/extract-transitions data)
+      results (prog/compare-structures [:x :y] trans)]
+  (assert-true "compare-structures returns 4 results" (= 4 (count results)))
+  (assert-true "results sorted by posterior" (>= (:posterior (first results))
+                                                  (:posterior (second results))))
+  (assert-true "best structure is x->y" (= "x->y" (:name (first results))))
+  (assert-true "posteriors sum to ~1.0"
+               (< (js/Math.abs (- 1.0 (reduce + (map :posterior results)))) 0.01))
+  (assert-true "all have :log-ml" (every? :log-ml results))
+  (assert-true "all have :source" (every? :source results))
+  (println (str "    best: " (:name (first results))
+                " P=" (.toFixed (:posterior (first results)) 4))))
+
+;; ============================================================
 ;; Summary
 ;; ============================================================
 

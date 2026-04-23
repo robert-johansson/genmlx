@@ -78,17 +78,17 @@
               sigma-x 1.0 sigma-y 2.0
               x0-mean 5 x0-std 2 y0-mean 20 y0-std 5}} dgp]
     (vec
-      (for [_ (range n-individuals)]
-        (loop [t 0
-               x (+ x0-mean (* x0-std (randn)))
-               y (+ y0-mean (* y0-std (randn)))
-               series [{:x x :y y}]]
-          (if (>= t (dec n-steps))
-            series
-            (let [x-next (+ (* ar-x x) (* beta-yx y) (* sigma-x (randn)))
-                  y-next (+ (* ar-y y) (* beta-xy x) (* sigma-y (randn)))]
-              (recur (inc t) x-next y-next
-                     (conj series {:x x-next :y y-next})))))))))
+     (for [_ (range n-individuals)]
+       (loop [t 0
+              x (+ x0-mean (* x0-std (randn)))
+              y (+ y0-mean (* y0-std (randn)))
+              series [{:x x :y y}]]
+         (if (>= t (dec n-steps))
+           series
+           (let [x-next (+ (* ar-x x) (* beta-yx y) (* sigma-x (randn)))
+                 y-next (+ (* ar-y y) (* beta-xy x) (* sigma-y (randn)))]
+             (recur (inc t) x-next y-next
+                    (conj series {:x x-next :y y-next})))))))))
 
 (defn extract-transitions
   "Extract transition pairs from time series data.
@@ -96,10 +96,10 @@
    across all individuals."
   [data]
   (vec
-    (for [individual data
-          [prev nxt] (partition 2 1 individual)]
-      {:x-prev (:x prev) :y-prev (:y prev)
-       :x-next (:x nxt)  :y-next (:y nxt)})))
+   (for [individual data
+         [prev nxt] (partition 2 1 individual)]
+     {:x-prev (:x prev) :y-prev (:y prev)
+      :x-next (:x nxt) :y-next (:y nxt)})))
 
 ;; ============================================================
 ;; Model source construction
@@ -130,13 +130,13 @@
                                  " (dist/gaussian 0.5 0.15))"))
                           var-names)
         cross-bindings (vec
-                         (for [target var-names
-                               source var-names
-                               :when (and (not= source target)
-                                          (get edges [(name source) (name target)]))]
-                           (str "beta-" (name source) "->" (name target)
-                                " (trace :beta-" (name source) "->" (name target)
-                                " (dist/gaussian 0 0.3))")))
+                        (for [target var-names
+                              source var-names
+                              :when (and (not= source target)
+                                         (get edges [(name source) (name target)]))]
+                          (str "beta-" (name source) "->" (name target)
+                               " (trace :beta-" (name source) "->" (name target)
+                               " (dist/gaussian 0 0.3))")))
         sigma-bindings (mapv (fn [v]
                                (str "sigma-" (name v)
                                     " (trace :sigma-" (name v)
@@ -160,9 +160,9 @@
         body-lines
         (mapv (fn [v]
                 (let [sources (set (for [src var-names
-                                        :when (and (not= src v)
-                                                   (get edges [(name src) (name v)]))]
-                                    src))
+                                         :when (and (not= src v)
+                                                    (get edges [(name src) (name v)]))]
+                                     src))
                       mexpr (mean-expr v sources)]
                   (str "(trace (keyword (str \"" (name v) "\" i))\n"
                        "             (dist/gaussian " mexpr " sigma-" (name v) "))")))
@@ -214,7 +214,7 @@
       ##-Inf
       (+ max-x
          (js/Math.log
-           (reduce + (map #(js/Math.exp (- % max-x)) xs)))))))
+          (reduce + (map #(js/Math.exp (- % max-x)) xs)))))))
 
 (defn log-mean-exp
   "Numerically stable log(mean(exp(xs))) = log-sum-exp(xs) - log(n)."
@@ -252,6 +252,140 @@
      (log-mean-exp weights))))
 
 ;; ============================================================
+;; Analytical scoring (Bayesian linear regression)
+;; ============================================================
+
+(defn- dot [a b] (reduce + (map * a b)))
+(defn- vsub [a b] (mapv - a b))
+
+(defn- extract-regression-data
+  "Build regression components for one variable's transition equation.
+   Returns {:y [observations] :cols [{:values :prior-mean :prior-var} ...]}"
+  [transitions target var-names edges
+   {:keys [ar-prior-mean ar-prior-std beta-prior-mean beta-prior-std]
+    :or {ar-prior-mean 0.5 ar-prior-std 0.15
+         beta-prior-mean 0.0 beta-prior-std 3.0}}]
+  (let [y (mapv #(get % (keyword (str (name target) "-next"))) transitions)
+        ar-col {:values (mapv #(get % (keyword (str (name target) "-prev"))) transitions)
+                :prior-mean ar-prior-mean
+                :prior-var (* ar-prior-std ar-prior-std)}
+        cross-cols (vec
+                    (for [src var-names
+                          :when (and (not= src target)
+                                     (get edges [(name src) (name target)]))]
+                      {:values (mapv #(get % (keyword (str (name src) "-prev"))) transitions)
+                       :prior-mean beta-prior-mean
+                       :prior-var (* beta-prior-std beta-prior-std)}))]
+    {:y y :cols (into [ar-col] cross-cols)}))
+
+(defn- estimate-sigma-sq
+  "Estimate noise variance via OLS residuals for one variable."
+  [{:keys [y cols]}]
+  (let [n (count y)
+        p (count cols)]
+    (if (<= n p)
+      1.0
+      (if (= p 1)
+        (let [x (:values (first cols))
+              xx (dot x x)
+              xy (dot x y)
+              beta-hat (/ xy xx)
+              residuals (mapv (fn [yi xi] (- yi (* beta-hat xi))) y x)]
+          (/ (dot residuals residuals) n))
+        (let [x1 (:values (first cols))
+              x2 (:values (second cols))
+              g00 (dot x1 x1) g01 (dot x1 x2) g11 (dot x2 x2)
+              det-g (- (* g00 g11) (* g01 g01))
+              xy1 (dot x1 y) xy2 (dot x2 y)
+              b1 (/ (- (* g11 xy1) (* g01 xy2)) det-g)
+              b2 (/ (- (* g00 xy2) (* g01 xy1)) det-g)
+              residuals (mapv (fn [yi x1i x2i] (- yi (* b1 x1i) (* b2 x2i)))
+                              y x1 x2)]
+          (/ (dot residuals residuals) n))))))
+
+(defn- log-ml-variable
+  "Analytical log marginal likelihood for one variable's transition.
+   Integrates out beta: y ~ N(X*beta, sigma^2*I), beta ~ N(m0, S0)."
+  [{:keys [y cols]} sigma-sq]
+  (let [n (count y)
+        p (count cols)
+        m0 (mapv :prior-mean cols)
+        s0 (mapv :prior-var cols)
+        Xm0 (reduce (fn [acc j]
+                      (let [xj (:values (nth cols j))
+                            mj (nth m0 j)]
+                        (mapv + acc (mapv #(* mj %) xj))))
+                    (vec (repeat n 0.0))
+                    (range p))
+        r (vsub y Xm0)
+        rr (dot r r)
+        gram (vec (for [i (range p)]
+                    (vec (for [j (range p)]
+                           (dot (:values (nth cols i))
+                                (:values (nth cols j)))))))
+        Xtr (mapv (fn [j] (dot (:values (nth cols j)) r)) (range p))]
+    (if (= p 1)
+      (let [xx (get-in gram [0 0])
+            xr (nth Xtr 0)
+            tau-sq (nth s0 0)
+            m-val (+ xx (/ sigma-sq tau-sq))
+            log-det (js/Math.log (+ 1.0 (/ (* tau-sq xx) sigma-sq)))
+            quad (/ (- rr (/ (* xr xr) m-val)) sigma-sq)]
+        (+ (* -0.5 n (js/Math.log (* 2.0 js/Math.PI sigma-sq)))
+           (* -0.5 log-det)
+           (* -0.5 quad)))
+      (let [m00 (+ (get-in gram [0 0]) (/ sigma-sq (nth s0 0)))
+            m01 (get-in gram [0 1])
+            m11 (+ (get-in gram [1 1]) (/ sigma-sq (nth s0 1)))
+            det-M (- (* m00 m11) (* m01 m01))
+            xr0 (nth Xtr 0) xr1 (nth Xtr 1)
+            Minv-xr-0 (/ (- (* m11 xr0) (* m01 xr1)) det-M)
+            Minv-xr-1 (/ (- (* m00 xr1) (* m01 xr0)) det-M)
+            quad-correction (+ (* xr0 Minv-xr-0) (* xr1 Minv-xr-1))
+            a00 (+ 1.0 (/ (* (nth s0 0) (get-in gram [0 0])) sigma-sq))
+            a01 (/ (* (nth s0 0) (get-in gram [0 1])) sigma-sq)
+            a10 (/ (* (nth s0 1) (get-in gram [1 0])) sigma-sq)
+            a11 (+ 1.0 (/ (* (nth s0 1) (get-in gram [1 1])) sigma-sq))
+            det-A (- (* a00 a11) (* a01 a10))
+            log-det (js/Math.log det-A)
+            quad (/ (- rr quad-correction) sigma-sq)]
+        (+ (* -0.5 n (js/Math.log (* 2.0 js/Math.PI sigma-sq)))
+           (* -0.5 log-det)
+           (* -0.5 quad))))))
+
+(defn score-model-analytical
+  "Exact log marginal likelihood for Gaussian linear transition models.
+
+   Integrates out regression coefficients analytically using conjugate
+   Gaussian prior. Sigma is either provided or estimated via OLS.
+   Deterministic — no sampling, exact answer given data.
+
+   transitions:  from extract-transitions
+   var-names:    [:x :y]
+   edges:        {[\"x\" \"y\"] true, [\"y\" \"x\"] false}
+   opts:
+     :sigma-x          known noise std for x (estimated from OLS if omitted)
+     :sigma-y          known noise std for y (estimated from OLS if omitted)
+     :ar-prior-mean    prior mean for AR coefficients (default 0.5)
+     :ar-prior-std     prior std for AR coefficients (default 0.15)
+     :beta-prior-mean  prior mean for cross-effects (default 0.0)
+     :beta-prior-std   prior std for cross-effects (default 3.0)"
+  ([transitions var-names edges]
+   (score-model-analytical transitions var-names edges {}))
+  ([transitions var-names edges opts]
+   (reduce
+    (fn [total v]
+      (let [reg (extract-regression-data transitions v var-names edges opts)
+            sigma-key (keyword (str "sigma-" (name v)))
+            known-sigma (get opts sigma-key)
+            sigma-sq (if known-sigma
+                       (* known-sigma known-sigma)
+                       (estimate-sigma-sq reg))]
+        (+ total (log-ml-variable reg sigma-sq))))
+    0.0
+    var-names)))
+
+;; ============================================================
 ;; Structure enumeration
 ;; ============================================================
 
@@ -261,13 +395,13 @@
   [var-a var-b]
   (let [a (name var-a) b (name var-b)]
     [{:name (str a "->" b)
-      :edges {[a b] true  [b a] false}
+      :edges {[a b] true [b a] false}
       :description (str a "(t) causes " b "(t+1)")}
      {:name (str b "->" a)
       :edges {[a b] false [b a] true}
       :description (str b "(t) causes " a "(t+1)")}
      {:name "both"
-      :edges {[a b] true  [b a] true}
+      :edges {[a b] true [b a] true}
       :description "bidirectional"}
      {:name "neither"
       :edges {[a b] false [b a] false}
@@ -301,28 +435,35 @@
    var-names:    [:x :y]
    transitions:  from extract-transitions
    opts:
-     :n-particles  importance samples per model (default 200)
+     :scoring     :analytical (default) or :importance
+     :n-particles  importance samples per model (default 200, only for :importance)
      :structures   custom structures (default: enumerate-2var-structures)
+     + all score-model-analytical opts (sigma, prior widths)
 
    Returns a vector of {:name :edges :description :log-ml :posterior :source},
    sorted by posterior probability descending."
   ([var-names transitions] (compare-structures var-names transitions {}))
   ([var-names transitions opts]
-   (let [structures (or (:structures opts)
+   (let [scoring (or (:scoring opts) :analytical)
+         structures (or (:structures opts)
                         (enumerate-2var-structures (first var-names) (second var-names)))
          scored (vec
-                  (for [s structures]
-                    (let [source (build-transition-source var-names (:edges s))
-                          gf (compile-model source)]
-                      (println (str "  scoring: " (:name s) "..."))
-                      (if gf
-                        (let [lml (score-model gf transitions var-names opts)]
-                          (println (str "    log-ML: " (.toFixed lml 2)))
-                          (mx/force-gc!)
-                          (assoc s :log-ml lml :source source))
-                        (do
-                          (println "    FAILED to compile")
-                          (assoc s :log-ml ##-Inf :source source))))))]
+                 (for [s structures]
+                   (let [source (build-transition-source var-names (:edges s))]
+                     (println (str "  scoring: " (:name s) "..."))
+                     (if (= scoring :analytical)
+                       (let [lml (score-model-analytical transitions var-names (:edges s) opts)]
+                         (println (str "    log-ML: " (.toFixed lml 2)))
+                         (assoc s :log-ml lml :source source))
+                       (let [gf (compile-model source)]
+                         (if gf
+                           (let [lml (score-model gf transitions var-names opts)]
+                             (println (str "    log-ML: " (.toFixed lml 2)))
+                             (mx/force-gc!)
+                             (assoc s :log-ml lml :source source))
+                           (do
+                             (println "    FAILED to compile")
+                             (assoc s :log-ml ##-Inf :source source))))))))]
      (->> (compute-posterior scored)
           (sort-by :posterior >)
           vec))))
@@ -349,11 +490,11 @@
                                  " (dist/gaussian 0.5 0.3))"))
                           var-names)
         cross-bindings (vec
-                         (for [src var-names, tgt var-names
-                               :when (not= src tgt)]
-                           (str "beta-" (name src) "->" (name tgt)
-                                " (trace :beta-" (name src) "->" (name tgt)
-                                " (dist/gaussian 0 0.3))")))
+                        (for [src var-names, tgt var-names
+                              :when (not= src tgt)]
+                          (str "beta-" (name src) "->" (name tgt)
+                               " (trace :beta-" (name src) "->" (name tgt)
+                               " (dist/gaussian 0 0.3))")))
         sigma-bindings (mapv (fn [v]
                                (str "sigma-" (name v)
                                     " (trace :sigma-" (name v)
@@ -422,10 +563,10 @@
        "with optional cross-effects like `(mx/multiply beta-x->y x-prev)`. "
        "Available bindings: "
        (str/join ", " (concat
-                        (map #(str "ar-" (name %)) var-names)
-                        (map #(str (name %) "-prev") var-names)
-                        (for [s var-names, t var-names :when (not= s t)]
-                          (str "beta-" (name s) "->" (name t)))))
+                       (map #(str "ar-" (name %)) var-names)
+                       (map #(str (name %) "-prev") var-names)
+                       (for [s var-names, t var-names :when (not= s t)]
+                         (str "beta-" (name s) "->" (name t)))))
        ". Example: (mx/add (mx/multiply ar-y y-prev) (mx/multiply beta-x->y x-prev))"))
 
 (defn fill-hole-chat
@@ -445,8 +586,8 @@
    (let [{:keys [temperature max-tokens] :or {temperature 0.3 max-tokens 80}} opts
          prompt (fill-prompt var-name var-names)]
      (pr/let [text (llm/generate-text-raw model-map prompt
-                     {:max-tokens max-tokens
-                      :system-prompt fill-system-prompt})
+                                          {:max-tokens max-tokens
+                                           :system-prompt fill-system-prompt})
               extracted (codegen/extract-code text)
               expr (str/trim extracted)]
        (when (and (seq expr) (= :complete (codegen/prefix-status expr)))
