@@ -115,27 +115,19 @@
 
 (defn init-cache!
   "Initialize KV caches for incremental generation.
-   Must be called before forward-step. Mutates model state.
-   Handles both Qwen3 (.initKvCaches) and Qwen3.5/MoE (.initCaches) APIs."
+   Must be called before forward-step. Mutates model state."
   [model]
-  (if (.-initKvCaches model)
-    (.initKvCaches model)
-    (.initCaches model)))
+  (.initCaches model))
 
 (defn reset-cache!
-  "Clear KV caches after generation. Mutates model state.
-   Handles both Qwen3 (.resetKvCaches) and Qwen3.5/MoE (.resetCaches) APIs."
+  "Clear KV caches after generation. Mutates model state."
   [model]
-  (if (.-resetKvCaches model)
-    (.resetKvCaches model)
-    (.resetCaches model)))
+  (.resetCaches model))
 
 (defn- forward-with-cache
-  "Dispatch forwardWithCache for both Qwen3 (2-arg) and Qwen3.5/MoE (1-arg) APIs."
+  "Dispatch forwardWithCache — always pass use_cache=true."
   [model input]
-  (if (.-initKvCaches model)
-    (.forwardWithCache model input true)
-    (.forwardWithCache model input)))
+  (.forwardWithCache model input true))
 
 (defn forward-prefill
   "Run a cached forward pass over the full prompt.
