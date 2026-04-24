@@ -7,6 +7,7 @@
   (:require ["@mlx-node/lm" :as mlx-lm]
             ["@mlx-node/lm" :refer [ChatSession]]
             [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             [promesa.core :as p]))
 
 ;; ---------------------------------------------------------------------------
@@ -190,10 +191,13 @@
 
    opts map:
      :max-tokens     — maximum new tokens (default 100)
+     :temperature    — sampling temperature (default 0, greedy argmax)
+     :seed           — PRNG seed for reproducible sampling (optional)
      :system-prompt  — optional system message (default 'You are a helpful assistant.')"
   ([model-map prompt] (generate-text-raw model-map prompt {}))
-  ([{:keys [model tokenizer type]} prompt {:keys [max-tokens system-prompt]
+  ([{:keys [model tokenizer type]} prompt {:keys [max-tokens temperature seed system-prompt]
                                           :or {max-tokens 100
+                                               temperature 0
                                                system-prompt "You are a helpful assistant."}}]
    (let [think-skip (if (#{:qwen3 :qwen3_5 :qwen3_5_moe} type)
                       "<think>\n\n</think>\n\n"
@@ -201,21 +205,36 @@
          chat-str (str "<|im_start|>system\n" system-prompt "<|im_end|>\n"
                        "<|im_start|>user\n" prompt "<|im_end|>\n"
                        "<|im_start|>assistant\n" think-skip)
-         eos-id (eos-token-id tokenizer)]
+         eos-id (eos-token-id tokenizer)
+         greedy? (or (nil? temperature) (<= temperature 0))
+         inv-temp (when-not greedy? (mx/scalar (/ 1.0 temperature)))]
      (p/let [ids-raw (encode tokenizer chat-str true)
              prompt-ids (vec ids-raw)]
        (init-cache! model)
        (try
          (let [logits (forward-prefill model prompt-ids)]
-           (loop [i 0, acc [], logits logits]
-             (if (>= i max-tokens)
-               (p/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
-                 text)
-               (let [tok-id (mx/item (mx/argmax logits))]
-                 (if (= tok-id eos-id)
+           (if greedy?
+             (loop [i 0, acc [], logits logits]
+               (if (>= i max-tokens)
+                 (p/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
+                   text)
+                 (let [tok-id (mx/item (mx/argmax logits))]
+                   (if (= tok-id eos-id)
+                     (p/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
+                       text)
+                     (let [next-logits (forward-step model tok-id)]
+                       (recur (inc i) (conj acc tok-id) next-logits))))))
+             (let [rk (rng/ensure-key (when seed (rng/fresh-key seed)))]
+               (loop [i 0, acc [], logits logits, rk rk]
+                 (if (>= i max-tokens)
                    (p/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
                      text)
-                   (let [next-logits (forward-step model tok-id)]
-                     (recur (inc i) (conj acc tok-id) next-logits)))))))
+                   (let [[sample-key next-key] (rng/split rk)
+                         tok-id (mx/item (rng/categorical sample-key (mx/multiply logits inv-temp)))]
+                     (if (= tok-id eos-id)
+                       (p/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
+                         text)
+                       (let [next-logits (forward-step model tok-id)]
+                         (recur (inc i) (conj acc tok-id) next-logits next-key)))))))))
          (finally
            (reset-cache! model)))))))

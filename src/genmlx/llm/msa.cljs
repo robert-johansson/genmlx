@@ -329,19 +329,42 @@ Output ONLY the lines. No explanation.")
   (apply cm/choicemap
          (mapcat (fn [[k v]] [k (mx/scalar v)]) observations)))
 
+(defn- log-sum-exp
+  "Numerically stable log(sum(exp(xs)))."
+  [xs]
+  (let [max-x (apply max xs)]
+    (if (= max-x ##-Inf)
+      ##-Inf
+      (+ max-x
+         (js/Math.log
+          (reduce + (map #(js/Math.exp (- % max-x)) xs)))))))
+
 (defn score-model
-  "Score a gen function against observations via p/generate.
-   Returns the log marginal likelihood (weight) as a JS number.
-   Returns ##-Inf on any error (eval failure, generate failure, etc.).
+  "Score a gen function against observations via importance sampling.
+   Returns log-mean-exp of N importance weights as log-ML estimate.
+   Returns ##-Inf on any error.
 
    gf:           a DynamicGF (from eval-model or wrap-model)
-   observations: {:addr value ...} map"
-  [gf observations]
-  (try
-    (let [obs-cm (observations->choicemap observations)
-          {:keys [weight]} (p/generate gf [] obs-cm)]
-      (mx/item weight))
-    (catch :default _ ##-Inf)))
+   observations: {:addr value ...} map
+   opts:
+     :n-particles  number of importance samples (default 50)"
+  ([gf observations] (score-model gf observations {}))
+  ([gf observations opts]
+   (let [{:keys [n-particles] :or {n-particles 50}} opts]
+     (try
+       (let [obs-cm (observations->choicemap observations)
+             weights (loop [i 0, ws []]
+                       (if (>= i n-particles)
+                         ws
+                         (let [w (try
+                                   (mx/item (:weight (p/generate gf [] obs-cm)))
+                                   (catch :default _ ##-Inf))]
+                           (when (zero? (mod (inc i) 10))
+                             (mx/force-gc!))
+                           (recur (inc i) (conj ws w)))))]
+         (mx/force-gc!)
+         (- (log-sum-exp weights) (js/Math.log (count weights))))
+       (catch :default _ ##-Inf)))))
 
 ;; ============================================================
 ;; 9.7 Synthesize and rank

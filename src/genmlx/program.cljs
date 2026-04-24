@@ -15,6 +15,7 @@
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
+            [genmlx.selection :as sel]
             [genmlx.llm.backend :as llm]
             [genmlx.llm.codegen :as codegen]
             [promesa.core :as pr])
@@ -250,6 +251,39 @@
                        (recur (inc i) (conj ws w)))))]
      (mx/force-gc!)
      (log-mean-exp weights))))
+
+;; ============================================================
+;; Infrastructure for future sequential scoring
+;; ============================================================
+
+(defn build-sequential-constraints
+  "Build cumulative per-timestep ChoiceMaps.
+   Step t constrains observations 0..t. For future use with proper
+   sequential models (unfold-based)."
+  [transitions var-names]
+  (first
+    (reduce
+      (fn [[cms pairs] [i t]]
+        (let [new-pairs (mapcat (fn [v]
+                                  [(keyword (str (name v) i))
+                                   (mx/scalar (get t (keyword (str (name v) "-next"))))])
+                                var-names)
+              all-pairs (into pairs new-pairs)]
+          [(conj cms (apply cm/choicemap all-pairs)) all-pairs]))
+      [[] []]
+      (map-indexed vector transitions))))
+
+(defn param-selection
+  "Build a selection over parameter addresses only.
+   Excludes observation addresses so MH rejuvenation targets parameters."
+  [var-names edges]
+  (let [ar-addrs (map #(keyword (str "ar-" (name %))) var-names)
+        beta-addrs (for [src var-names, tgt var-names
+                         :when (and (not= src tgt)
+                                    (get edges [(name src) (name tgt)]))]
+                     (keyword (str "beta-" (name src) "->" (name tgt))))
+        sigma-addrs (map #(keyword (str "sigma-" (name %))) var-names)]
+    (apply sel/select (concat ar-addrs beta-addrs sigma-addrs))))
 
 ;; ============================================================
 ;; Analytical scoring (Bayesian linear regression)
