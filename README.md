@@ -11,7 +11,7 @@ GenMLX implements Gen's **Generative Function Interface (GFI)** — the same arc
 Gen implementations exist for Julia and JAX — but nothing for MLX. MLX's unified memory model is a natural fit for probabilistic programming: MCMC control flow runs on CPU while all numerics stay on GPU, with zero data transfer cost. ClojureScript on Node.js gives direct access to MLX through a native addon with no FFI overhead, and nbb provides a fast REPL for interactive model development.
 
 - **MLX-native** — unified memory, lazy evaluation, dynamic shapes, `mx/grad` through entire models (Apple Silicon and CUDA)
-- **~25,000 lines of ClojureScript** — protocols, records, persistent data structures, the whole thing is readable in an afternoon
+- **~32,000 lines of ClojureScript** — protocols, records, persistent data structures, the whole thing is readable in an afternoon
 - **GPU end-to-end** — scores and choice values are MLX arrays throughout, extracted with `mx/item` only at inference boundaries
 - **5-level compilation ladder** — progressively moves work from the host interpreter into fused MLX computation graphs, from shape-based batching (L0) through auto-analytical elimination (L3) to single fused graphs (L4)
 
@@ -166,8 +166,17 @@ Layer 7: Vectorized
   genmlx.vectorized   — VectorizedTrace, batched execution, dispatch amortization
 
 Layer 8: Verification
-  genmlx.contracts    — GFI contract registry (11 measure-theoretic contracts)
+  genmlx.gfi          — 53 algebraic laws from Cusumano-Towner 2020 thesis
   genmlx.verify       — Static validator (validate-gen-fn)
+
+Layer 9: LLM Integration
+  genmlx.llm.core     — make-llm-gf: wrap LLM as DynamicGF (each token = trace site)
+  genmlx.llm.backend  — mlx-node loader, forward pass, KV cache
+  genmlx.llm.grammar  — DFA-constrained generation (regex → token mask)
+  genmlx.llm.bytes    — byte-level marginalization via TokenByteTrie
+  genmlx.llm.codegen  — reader-as-grammar for syntactically-valid ClojureScript
+  genmlx.llm.msa      — Model Synthesis Architecture (LLM proposes prob programs)
+  genmlx.llm.vision   — VLM input adaptation
 ```
 
 ## Distributions

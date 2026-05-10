@@ -13,7 +13,7 @@ ClojureScript's immutable data, open multimethods, and macro system map perfectl
 onto the GFI's mathematical structure. MLX's lazy graphs, unified memory, and
 broadcasting reinforce this — functional-style array programming without penalty.
 
-~29,600 lines of ClojureScript across 74 source files. Purely functional,
+~31,900 lines of ClojureScript across 76 source files. Purely functional,
 data-driven, GPU end-to-end.
 
 ## Three-layer purity architecture
@@ -124,7 +124,7 @@ src/genmlx/
   # Layer 5: Combinators (Map, Unfold, Switch, Scan, Mask, Mix, Recurse, etc.)
   combinators.cljs, vmap.cljs
 
-  # Layer 6: Inference (35+ algorithms across 25 files)
+  # Layer 6: Inference (35+ algorithms across 26 files)
   inference/ — importance, mcmc, smc, smcp3, vi, adev, amortized, kernel,
   util, diagnostics, analytical, conjugate, auto_analytical, kalman, ekf,
   ekf_nd, hmm_forward, enumerate, exact, fisher, compiled_gradient,
@@ -136,10 +136,12 @@ src/genmlx/
 
   # Layer 8: Supporting Systems
   vectorized.cljs, gradients.cljs, learning.cljs, custom_gradient.cljs,
-  nn.cljs, serialize.cljs, contracts.cljs, verify.cljs, gfi.cljs, fit.cljs, dev.cljs
+  nn.cljs, serialize.cljs, verify.cljs, gfi.cljs, fit.cljs, dev.cljs,
+  schemas.cljs, inspect.cljs, sensorimotor.cljs, program.cljs
 
   # Layer 9: LLM Integration
-  llm/ — backend.cljs, core.cljs, grammar.cljs, bytes.cljs, codegen.cljs, msa.cljs
+  llm/ — backend.cljs, core.cljs, grammar.cljs, bytes.cljs, codegen.cljs,
+         msa.cljs, vision.cljs
 
 test/genmlx/  — see dev/docs/SPEC_*.md for detailed file descriptions
 ```
@@ -163,13 +165,13 @@ The implementation layers map onto the three-layer purity model:
   Layer 3: DSL + Schema     (gen macro, dynamic, schema, schemas, inspect — pure)
   Layer 4: Distributions    (dist/core, dist/macros, dist — 31 types, pure)
   Layer 5: Combinators      (combinators, vmap — 10 combinators, pure)
-  Layer 6: Inference         (25 files, 35+ algorithms — pure)
+  Layer 6: Inference         (26 files, 35+ algorithms — pure)
   Layer 7: Compiled Paths   (compiled, compiled_ops, rewrite, affine, conjugacy, dep_graph,
                              method_selection — pure)
   Layer 8: Supporting       (vectorized, gradients, learning, nn, serialize, gfi, verify,
-                             contracts, fit, dev — pure except dev.cljs atoms)
-  Layer 9: LLM Integration  (llm/backend, core, grammar, bytes, codegen, msa — pure except
-                             KV cache mutation in backend.cljs)
+                             fit, dev — pure except dev.cljs atoms)
+  Layer 9: LLM Integration  (llm/backend, core, grammar, bytes, codegen, msa, vision —
+                             pure except KV cache mutation in backend.cljs)
 ```
 
 Strict dependency direction: higher layers depend on lower, never the reverse.
