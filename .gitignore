@@ -40,6 +40,9 @@ notes/
 
 # Private dev directory (not synced)
 dev/
+
+# Cfunc — independent private repo (github.com/robert-johansson/cfunc), hidden here
+cfunc/
 corpus/adapters/*.safetensors
 corpus/train.jsonl
 corpus/valid.jsonl
