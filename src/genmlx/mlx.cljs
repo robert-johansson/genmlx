@@ -790,8 +790,25 @@
 
 ;; --- Utilities ---
 
+(defn- array-conversion-error
+  "Helpful error for values that can't become MLX arrays. The usual culprit is
+   bare ClojureScript arithmetic (+,-,*,/) on MLX arrays, which yields a string
+   or NaN instead of a tensor — the handler path executes real cljs ops."
+  [x]
+  (ex-info
+   (str "Cannot convert " (pr-str x) " to an MLX array — expected an MLX array "
+        "or a number. A common cause is bare ClojureScript arithmetic "
+        "(+, -, *, /) on MLX arrays in a model body; use mx/add, mx/subtract, "
+        "mx/multiply, or mx/divide instead — e.g. (mx/multiply slope x), not "
+        "(* slope x).")
+   {:error ::not-array-convertible
+    :value x
+    :hint "replace bare +,-,*,/ with mx/add,mx/subtract,mx/multiply,mx/divide"}))
+
 (defn ensure-array
-  "Wrap JS numbers as MLX scalars; pass through arrays, fns, keywords, maps."
+  "Wrap JS numbers as MLX scalars; pass through arrays, fns, keywords, maps.
+   Throws a helpful error on strings/nil/NaN — usually a sign that bare
+   ClojureScript arithmetic was used on an MLX array instead of an mx/ op."
   ([x]
    (cond
      (array? x) x
@@ -799,6 +816,9 @@
      (keyword? x) x
      (map? x) x
      (or (vector? x) (seq? x) (sequential? x)) (array x)
+     (string? x) (throw (array-conversion-error x))
+     (nil? x) (throw (array-conversion-error x))
+     (and (number? x) (js/isNaN x)) (throw (array-conversion-error x))
      :else (scalar x)))
   ([x dtype]
    (cond
@@ -807,6 +827,9 @@
      (keyword? x) x
      (map? x) x
      (or (vector? x) (seq? x) (sequential? x)) (array x dtype)
+     (string? x) (throw (array-conversion-error x))
+     (nil? x) (throw (array-conversion-error x))
+     (and (number? x) (js/isNaN x)) (throw (array-conversion-error x))
      :else (scalar x dtype))))
 
 (defn async-eval!
