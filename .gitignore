@@ -41,7 +41,7 @@ notes/
 # Private dev directory (not synced)
 dev/
 
-# Cfunc — independent private repo (github.com/robert-johansson/cfunc), hidden here
+# Nested private directory (not part of GenMLX)
 cfunc/
 corpus/adapters/*.safetensors
 corpus/train.jsonl

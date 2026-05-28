@@ -226,11 +226,11 @@ direct import of dynamic.cljs).
    only at genuine I/O boundaries (model loading, tokenizer encode/decode,
    `.chat`, streaming, external APIs). Runtime housekeeping (GC, Metal cleanup)
    stays internal via `mx/force-gc!` and never propagates to user API. The
-   async event loop lives one layer up in Cfunc (the cognitive architecture
-   that embeds GenMLX). The sync/async choice follows semantic lines — math
+   async event loop lives one layer up in the cognitive-architecture layer
+   that embeds GenMLX. The sync/async choice follows semantic lines — math
    vs events — not runtime convenience. See `dev/docs/DESIGN_ASYNC_BOUNDARY.md`
-   for the full principle, including the GenMLX/Cfunc split and the role of
-   Bun APIs as first-class perception/action surface.
+   for the full principle, including the sync/async boundary split and the role
+   of Bun APIs as first-class perception/action surface.
 
 ## How models work
 

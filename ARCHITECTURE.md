@@ -740,7 +740,7 @@ Meta-generative models over model structure. The outer model samples which mecha
 
 `Switch` selects between sub-models. Exact enumeration marginalizes discrete structure variables. SMC handles sequential data. The compilation ladder makes the inner loop tractable by fusing each candidate theory's evaluation into Metal.
 
-This connects to the cfunc cognitive architecture: habituation to theory-based RL as probabilistic program induction.
+This connects to the cognitive-architecture layer: habituation to theory-based RL as probabilistic program induction.
 
 
 ## 6.3 Cross-Modal Inference
