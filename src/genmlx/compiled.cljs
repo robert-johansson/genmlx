@@ -392,7 +392,11 @@
 (def ^:private mx-fns
   "MLX function name → actual function."
   {"add" mx/add "subtract" mx/subtract "multiply" mx/multiply
-   "divide" mx/divide "negative" mx/negative "scalar" mx/scalar
+   "divide" mx/divide "negative" mx/negative
+   ;; scalar→ensure-array: compiled args are pre-arrayified (ensure-mlx-args),
+   ;; so (mx/scalar arg) would feed an MxArray to a number-only ctor and crash.
+   ;; ensure-array passes arrays through and still scalar-wraps raw numbers.
+   "scalar" mx/ensure-array
    "log" mx/log "exp" mx/exp "sqrt" mx/sqrt "abs" mx/abs
    "power" mx/power "square" mx/square "sum" mx/sum "mean" mx/mean
    "maximum" mx/maximum "minimum" mx/minimum "where" mx/where
