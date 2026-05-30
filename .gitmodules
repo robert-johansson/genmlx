@@ -7,6 +7,7 @@
 [submodule "internet-psychology"]
 	path = internet-psychology
 	url = https://github.com/robert-johansson/internet-psychology.git
+	ignore = dirty
 [submodule "test.check"]
 	path = test.check
 	url = https://github.com/robert-johansson/test.check.git
@@ -26,3 +27,4 @@
 [submodule "paper/GENMLX_presentation"]
 	path = paper/GENMLX_presentation
 	url = https://git.overleaf.com/69df8461e52a0f304715292d
+	ignore = dirty
