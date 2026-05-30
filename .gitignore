@@ -53,3 +53,7 @@ paper/DeHouwer_paper/
 paper/GenMLX_Griffiths/
 paper/GenMLX_WASP_presentation/
 paper/TOPML_reboot/
+
+# [epiq]: local hydrated state is never committed
+.epiq/events/
+.epiq/log/
