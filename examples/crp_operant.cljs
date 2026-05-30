@@ -55,6 +55,7 @@
 
 (ns crp-operant
   (:require [clojure.string :as str]
+            ["fs" :as fs]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
@@ -727,7 +728,18 @@
                   (pad (fmt (nth errors-per-period p) 1) 5))))
   (println "\n  → Errors collapse after period 2 — once the agent has")
   (println "    discovered 'this experiment has two contexts', each reversal")
-  (println "    triggers a fast context-switch rather than re-learning"))
+  (println "    triggers a fast context-switch rather than re-learning")
+  ;; CSV dump for paper figure
+  (let [csv-path "paper/DeHouwer_paper/figs/data/crp_serial_reversal.csv"
+        rows (mapv (fn [p]
+                     (str (inc p) ","
+                          (if (even? p) "L" "R") ","
+                          (fmt (nth errors-per-period p) 4)))
+                   (range n-periods))
+        content (str "period,correct_arm,mean_errors\n"
+                     (str/join "\n" rows) "\n")]
+    (.writeFileSync fs csv-path content)
+    (println (str "    Wrote: " csv-path))))
 
 ;; ============================================================================
 ;; Tracking-baseline kernel — single-context Beta-Bernoulli (no CRP)

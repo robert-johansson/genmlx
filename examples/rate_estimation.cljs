@@ -240,7 +240,16 @@
     (println (str "\n  True rates:  [0.5  1.5]"))
     (println (str "  Final λ̂:    [" (fmt (nth final-lam 0)) "  "
                   (fmt (nth final-lam 1)) "]"))
-    (println "  → Estimates approach the true rates.")))
+    (println "  → Estimates approach the true rates."))
+  ;; CSV dump for paper figure
+  (let [csv-path "paper/DeHouwer_paper/figs/data/rate_estimation_learning_curve.csv"
+        rows (mapv (fn [[t lam]]
+                     (str t "," (fmt (nth lam 0) 6) "," (fmt (nth lam 1) 6)))
+                   lam-hist)
+        content (str "step,lambda_B,lambda_CS\n"
+                     (str/join "\n" rows) "\n")]
+    (.writeFileSync fs csv-path content)
+    (println (str "  Wrote: " csv-path))))
 
 ;; ============================================================================
 ;; Demo 2 — Decision variable over training (cell 3)

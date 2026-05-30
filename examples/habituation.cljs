@@ -71,6 +71,7 @@
 
 (ns habituation
   (:require [clojure.string :as str]
+            ["fs" :as fs]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
@@ -436,15 +437,30 @@
 (let [conditions [["Intensity: Low,  Frequency: Low"  0.3 2]
                   ["Intensity: High, Frequency: Low"  0.7 2]
                   ["Intensity: Low,  Frequency: High" 0.3 10]
-                  ["Intensity: High, Frequency: High" 0.7 10]]]
-  (doseq [[label intensity frequency] conditions]
+                  ["Intensity: High, Frequency: High" 0.7 10]]
+      per-condition (mapv (fn [[label intensity frequency]]
+                            [label intensity frequency
+                             (fig3-condition intensity frequency)])
+                          conditions)]
+  (doseq [[label _ _ r] per-condition]
     (println (str "\n  " label))
     (println "  Rep   Norm-Resp   Bar")
-    (let [r (fig3-condition intensity frequency)]
-      (doseq [[i v] (map vector (range) r)]
-        (println (str "  " (pad (inc i) 3) "   "
-                      (pad (fmt v 1) 7) "   "
-                      (print-bar v)))))))
+    (doseq [[i v] (map vector (range) r)]
+      (println (str "  " (pad (inc i) 3) "   "
+                    (pad (fmt v 1) 7) "   "
+                    (print-bar v)))))
+  ;; CSV dump for paper figure
+  (let [csv-path "paper/DeHouwer_paper/figs/data/habituation_fig3.csv"
+        rows (mapcat (fn [[label intensity frequency r]]
+                       (mapv (fn [i v]
+                               (str "\"" label "\"," intensity "," frequency ","
+                                    (inc i) "," (fmt v 4)))
+                             (range) r))
+                     per-condition)
+        content (str "condition,intensity,frequency,rep,norm_resp\n"
+                     (str/join "\n" rows) "\n")]
+    (.writeFileSync fs csv-path content)
+    (println (str "\n  Wrote: " csv-path))))
 
 ;; ============================================================================
 ;; Demo 2 — Potentiation (paper Fig 6)
