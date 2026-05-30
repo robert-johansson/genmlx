@@ -47,3 +47,9 @@ corpus/adapters/*.safetensors
 corpus/train.jsonl
 corpus/valid.jsonl
 corpus/training_pairs.jsonl
+
+# Local-only paper working repos (each its own git repo, managed separately)
+paper/DeHouwer_paper/
+paper/GenMLX_Griffiths/
+paper/GenMLX_WASP_presentation/
+paper/TOPML_reboot/
