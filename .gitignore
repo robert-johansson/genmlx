@@ -34,8 +34,7 @@ bench/
 __pycache__/
 cross_system_tests/results/
 
-# Nested private directory (not part of GenMLX)
-cfunc/
+# Corpus training artifacts (local-only)
 corpus/adapters/*.safetensors
 corpus/train.jsonl
 corpus/valid.jsonl
