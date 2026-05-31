@@ -23,26 +23,55 @@ Gen implementations exist for Julia and JAX — but nothing for MLX. MLX's unifi
 - **macOS:** Metal Toolchain — `xcodebuild -downloadComponent MetalToolchain` (required on macOS 26+)
 - [Bun](https://bun.sh/) — `curl -fsSL https://bun.sh/install | bash` (recommended — 3-4x faster than Node.js)
 - [nbb](https://github.com/babashka/nbb) — `npm install -g nbb`
+- [Yarn 4](https://yarnpkg.com/) — to build the `mlx-node` submodule; it pins `yarn@4.x` via `packageManager`, so `corepack enable` (bundled with Node.js) activates the right version automatically
+- `git` with submodule support — GenMLX vendors its dependencies as nested submodules (see below)
 
 ## Quick Start
 
 ```bash
-# Clone with the mlx-node submodule (includes MLX C++ source + Rust NAPI bindings)
-git clone https://github.com/robert-johansson/genmlx
+# Clone with ALL submodules (forks of mlx-node, mlx, malli, instaparse, test.check).
+# --recurse-submodules is required: it also pulls the MLX C++ fork nested one
+# level deeper inside mlx-node (crates/mlx-sys/mlx).
+git clone --recurse-submodules https://github.com/robert-johansson/genmlx
 cd genmlx
-git submodule update --init --recursive mlx-node
 
-# Build mlx-node (compiles MLX C++, Rust NAPI addon, ~3-4 min first build)
-cd mlx-node && npm install && npm run build:native && cd ..
+# Already cloned without --recurse-submodules? Initialize them now:
+#   git submodule update --init --recursive
 
-# Install GenMLX dependencies
+# Build mlx-node (compiles the vendored MLX C++ + Rust NAPI addon, ~3-4 min first
+# build). mlx-node pins yarn@4 via packageManager — run `corepack enable` first if
+# the `yarn` command isn't already available.
+cd mlx-node
+yarn install
+yarn build:native
+cd ..
+
+# Install GenMLX's native dependency. @mlx-node/core and @mlx-node/lm resolve from
+# the local mlx-node submodule via file: paths in package.json, so the build above
+# must have completed first.
 bun install
+
+# Verify the install — should print "0 failures, 0 errors"
+bun run --bun nbb test/genmlx/choicemap_test.cljs
 ```
 
-> **Note:** GenMLX uses a [fork of mlx-node](https://github.com/robert-johansson/mlx-node)
-> with a custom `genmlx.rs` Rust module that provides 138 module-level NAPI exports
-> optimized for ClojureScript: `Either<MxArray, number>` inputs, `number[]` shapes,
-> CPU-stream PRNG, and fused scalar extraction.
+> **Note — the forks.** GenMLX vendors five git submodules, all forks maintained
+> alongside this repo:
+>
+> - [`mlx-node`](https://github.com/robert-johansson/mlx-node) — adds a custom
+>   `genmlx.rs` Rust module with 138 module-level NAPI exports tuned for
+>   ClojureScript (`Either<MxArray, number>` inputs, `number[]` shapes, CPU-stream
+>   PRNG, fused scalar extraction). It vendors the MLX C++ source as a further
+>   *nested* submodule ([`mlx`](https://github.com/robert-johansson/mlx) at
+>   `crates/mlx-sys/mlx`), which `--recurse-submodules` pulls automatically and
+>   `yarn build:native` compiles statically.
+> - [`malli`](https://github.com/robert-johansson/malli),
+>   [`instaparse`](https://github.com/robert-johansson/instaparse), and
+>   [`test.check`](https://github.com/robert-johansson/test.check) — patched for
+>   nbb/Babashka compatibility. Their source sits directly on the nbb classpath
+>   (see `nbb.edn`), so no build step is needed. malli backs schema validation
+>   (`genmlx.schemas`), instaparse the LLM grammar layer (`genmlx.llm.grammar`),
+>   and test.check the property-based tests.
 
 Run the included examples:
 
@@ -353,11 +382,11 @@ Save and load traces and choicemaps to JSON:
 ```bash
 # Individual test files
 bun run --bun nbb test/genmlx/dist_test.cljs
-bun run --bun nbb test/genmlx/gen_test.cljs
+bun run --bun nbb test/genmlx/schema_test.cljs
 bun run --bun nbb test/genmlx/inference_test.cljs
 
 # All core tests
-for f in choicemap_test trace_test selection_test handler_test dist_test gen_test combinators_test inference_test; do
+for f in choicemap_test trace_test selection_test handler_test dist_test combinators_test inference_test; do
   bun run --bun nbb "test/genmlx/${f}.cljs"
 done
 
