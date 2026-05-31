@@ -8,8 +8,8 @@
    choice and the score reflects the prior probability of those observations.
 
    Prereqs (from earlier in the investigation):
-     python3 dev/render_gridworld.py     # writes dev/gridworld_clean.png
-     python3 dev/crop_gridworld.py       # writes dev/grid_cells/cell_r{r}_c{c}.png
+     python3 ../genmlx-lab/dev/render_gridworld.py     # writes ../genmlx-lab/dev/gridworld_clean.png
+     python3 ../genmlx-lab/dev/crop_gridworld.py       # writes ../genmlx-lab/dev/grid_cells/cell_r{r}_c{c}.png
 
    Run:
      bun run --bun nbb examples/vlm_grid_gf.cljs"
@@ -25,7 +25,7 @@
   (str (.-HOME js/process.env) "/.cache/models/Qwen3.6-35B-A3B-4bit"))
 
 (def cells-dir
-  (str (.-HOME js/process.env) "/code/genmlx/dev/grid_cells"))
+  (str (.-HOME js/process.env) "/code/genmlx-lab/dev/grid_cells"))
 
 (def cell-types
   [{:label "empty" :description "a blank white cell with thin gray borders"}

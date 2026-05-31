@@ -18,8 +18,8 @@ ROOT="$(pwd)"
 if [ ! -d "$ROOT/examples/genmlx-tui/node_modules/ink" ]; then
   echo "ink not found. Install once with: (cd examples/genmlx-tui && npm install)"; exit 1
 fi
-if [ ! -f "$ROOT/dev/arc_frames/sk48_deck.png" ]; then
-  echo "ARC scene PNGs missing. Generate them with the prep step in dev/ (see README)."; exit 1
+if [ ! -f "$ROOT/../genmlx-lab/dev/arc_frames/sk48_deck.png" ]; then
+  echo "ARC scene PNGs missing. Generate them with the prep step in ../genmlx-lab/dev/ (see README)."; exit 1
 fi
 
 # OS_ACTIVITY_MODE=disable silences macOS CoreAnalytics "Context leak" noise.

@@ -7,8 +7,8 @@
 ;;   examples/rate_estimation.cljs — Gershman (2025) online Bayesian rate estimation
 ;;   examples/crp_operant.cljs    — Lloyd-Leslie (2013) CRP-based operant decision
 ;;
-;; Architectural design: dev/docs/DESIGN_MULTI_MODEL_AGENT.md
-;; Paper plan:           dev/docs/PAPER_THREE_LEARNING_PHENOMENA.md  (§5)
+;; Architectural design: ../genmlx-lab/dev/docs/DESIGN_MULTI_MODEL_AGENT.md
+;; Paper plan:           ../genmlx-lab/dev/docs/PAPER_THREE_LEARNING_PHENOMENA.md  (§5)
 ;;
 ;; What this demonstrates:
 ;; ------------------------
@@ -634,12 +634,12 @@
 ;; CSV dump for paper figure generation
 ;; ============================================================================
 ;;
-;; Writes per-cycle data to paper/DeHouwer_paper/data/multi_model_agent.csv
+;; Writes per-cycle data to ../genmlx-papers/DeHouwer_paper/data/multi_model_agent.csv
 ;; for plotting with external tools (matplotlib / R / etc.). Schema:
 ;;
 ;;   cycle, regime, reward, hab_logL, rate_logL, crp_logL, p_hab, p_rate, p_crp
 
-(def CSV-OUT "paper/DeHouwer_paper/figs/data/multi_model_agent.csv")
+(def CSV-OUT "../genmlx-papers/DeHouwer_paper/figs/data/multi_model_agent.csv")
 
 (let [header "cycle,regime,reward,hab_logL,rate_logL,crp_logL,p_hab,p_rate,p_crp"
       regime (fn [t] (cond (< t 50) 1 (< t 100) 2 :else 3))
@@ -681,5 +681,5 @@
 (println "  as-gen-function form and the algebraic laws (cumulative :score")
 (println "  = log marginal likelihood, posterior = one logsumexp away).")
 (println "")
-(println "  Companion: dev/docs/DESIGN_MULTI_MODEL_AGENT.md")
-(println "             dev/docs/PAPER_THREE_LEARNING_PHENOMENA.md  (§5)")
+(println "  Companion: ../genmlx-lab/dev/docs/DESIGN_MULTI_MODEL_AGENT.md")
+(println "             ../genmlx-lab/dev/docs/PAPER_THREE_LEARNING_PHENOMENA.md  (§5)")

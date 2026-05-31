@@ -7,7 +7,7 @@
 ;;
 ;;   describe (VLM, live)  →  free-form scene description  →  parse → {facts}
 ;;
-;; The VLM is given the rendered PNG (dev/arc_frames/<game>_deck.png); the
+;; The VLM is given the rendered PNG (../genmlx-lab/dev/arc_frames/<game>_deck.png); the
 ;; terminal render is drawn from the same frame JSON with the same palette, so
 ;; what you see is what the model saw.
 ;;
@@ -31,7 +31,7 @@
             ["ink-spinner$default" :as Spinner]))
 
 (def fs (js/require "fs"))
-(def FRAMES "dev/arc_frames")
+(def FRAMES "../genmlx-lab/dev/arc_frames")
 (def VLM-NAME "qwen3.5-4b-mlx-bf16")
 (def VLM-PATH (str (.-HOME js/process.env) "/.cache/models/" VLM-NAME))
 
@@ -222,7 +222,7 @@
              "just text we can parse into whatever structure we need next —"
              "the first step of an ARC-AGI-3 agent built on the GFI."
              ""
-             "frames: dev/arc_frames/   ·   deck: examples/genmlx-vlm-deck/run.sh"]}])))
+             "frames: ../genmlx-lab/dev/arc_frames/   ·   deck: examples/genmlx-vlm-deck/run.sh"]}])))
 
 ;; ----------------------------------------------------------------------------
 ;; ACTIONS

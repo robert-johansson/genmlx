@@ -20,7 +20,7 @@
      solved:        did value iteration converge to a finite V*(start)?
      policy-sane:   does the greedy rollout end on the highest-reward goal?
 
-   Prereq:  python3 dev/render_gridworld_battery.py
+   Prereq:  python3 ../genmlx-lab/dev/render_gridworld_battery.py
 
    Run: bun run --bun nbb examples/vlm_grid_battery.cljs"
   (:require [genmlx.llm.vision :as vision]
@@ -35,7 +35,7 @@
   (str (.-HOME js/process.env) "/.cache/models/Qwen3.6-35B-A3B-4bit"))
 
 (def battery-base
-  (str (.-HOME js/process.env) "/code/genmlx/dev/grid_battery"))
+  (str (.-HOME js/process.env) "/code/genmlx-lab/dev/grid_battery"))
 
 (def variants
   ["A_rotated_hiking"

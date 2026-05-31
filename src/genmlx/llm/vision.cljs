@@ -19,7 +19,7 @@
    that, conversation history accumulates across independent classifications and
    per-call latency grows monotonically with N (verified empirically — 0.6s rises
    to 116s by the 18th call). With reset, latency is flat. See
-   `dev/docs/INVESTIGATION_VLM_PER_CELL_PROBE.md`."
+   `../genmlx-lab/dev/docs/INVESTIGATION_VLM_PER_CELL_PROBE.md`."
   (:require ["@mlx-node/lm" :as mlx-lm]
             [genmlx.gen :refer [gen]]
             [genmlx.dynamic :as dyn]

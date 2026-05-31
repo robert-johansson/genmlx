@@ -39,7 +39,7 @@
 ;;   3. All linalg (`cholesky`, `solve-triangular`) dispatches to Metal
 ;;      via mlx-node — already GPU-batched.
 ;;
-;; Compare to the original notebook (`dev/habituation/habituation.ipynb`):
+;; Compare to the original notebook (`../genmlx-lab/dev/habituation/habituation.ipynb`):
 ;;   - sklearn `GaussianProcessRegressor` instantiated per call inside
 ;;     nested Python `for` loops
 ;;     → one Scan call per protocol; carry threaded as a value.
@@ -450,7 +450,7 @@
                     (pad (fmt v 1) 7) "   "
                     (print-bar v)))))
   ;; CSV dump for paper figure
-  (let [csv-path "paper/DeHouwer_paper/figs/data/habituation_fig3.csv"
+  (let [csv-path "../genmlx-papers/DeHouwer_paper/figs/data/habituation_fig3.csv"
         rows (mapcat (fn [[label intensity frequency r]]
                        (mapv (fn [i v]
                                (str "\"" label "\"," intensity "," frequency ","
@@ -787,6 +787,6 @@
 (println "  Inference: closed-form GP regression per cycle (Cholesky on GPU)")
 (println "  Architecture: kernel + Scan / Unfold combinator, GFI-complete")
 (println "")
-(println "  Companion notes: dev/docs/EXAMPLE_HABITUATION_NOTES.md")
-(println "  Spec:            dev/docs/SPEC_HABITUATION.md")
-(println "  Paper:           dev/habituation/Gershman 2024 - Habituation.pdf")
+(println "  Companion notes: ../genmlx-lab/dev/docs/EXAMPLE_HABITUATION_NOTES.md")
+(println "  Spec:            ../genmlx-lab/dev/docs/SPEC_HABITUATION.md")
+(println "  Paper:           ../genmlx-lab/dev/habituation/Gershman 2024 - Habituation.pdf")

@@ -5,9 +5,7 @@
    Gap 2: Argument gradients (§2.3.1 p72, Eq 2.10-2.11)
    Gap 3: Stochastic structure / branching models (§2.1.1-2.1.5)
    Gap 4: UPDATE with changed arguments (§2.3.1 p71)
-   Gap 5: Change hints / argdiffs (Def 2.3.2 p70)
-
-   See dev/docs/RESEARCH_GFI_PROPERTY_TESTING.md §8.0b for full context."
+   Gap 5: Change hints / argdiffs (Def 2.3.2 p70)"
   (:require [cljs.test :as t]
             [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]

@@ -565,7 +565,7 @@
 ;; α is less concentrated. Result: extinction onset is EARLIER under
 ;; partial reinforcement here — the opposite of canonical PREE, and an
 ;; honest signature of the Beta-Bernoulli simplification noted in the
-;; spec. See `dev/docs/EXAMPLE_CRP_OPERANT_NOTES.md` for full discussion.
+;; spec. See `../genmlx-lab/dev/docs/EXAMPLE_CRP_OPERANT_NOTES.md` for full discussion.
 
 (println "\n============================================================")
 (println "Demo 3 — Extinction onset under different acquisition")
@@ -730,7 +730,7 @@
   (println "    discovered 'this experiment has two contexts', each reversal")
   (println "    triggers a fast context-switch rather than re-learning")
   ;; CSV dump for paper figure
-  (let [csv-path "paper/DeHouwer_paper/figs/data/crp_serial_reversal.csv"
+  (let [csv-path "../genmlx-papers/DeHouwer_paper/figs/data/crp_serial_reversal.csv"
         rows (mapv (fn [p]
                      (str (inc p) ","
                           (if (even? p) "L" "R") ","

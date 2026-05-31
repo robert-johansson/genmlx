@@ -1,6 +1,5 @@
 (ns genmlx.audit-gaps-test
   "Tests for remaining GFI compliance audit gaps (items 2-9).
-   See dev/docs/AUDIT_GFI_REMAINING_GAPS.md for context.
 
    Item 2: Dimap assess/propose/project
    Item 3: MCMC variant convergence (fused-vectorized-mh, vectorized-compiled-trajectory-mh)

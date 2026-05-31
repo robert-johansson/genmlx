@@ -143,7 +143,7 @@ src/genmlx/
   llm/ — backend.cljs, core.cljs, grammar.cljs, bytes.cljs, codegen.cljs,
          msa.cljs, vision.cljs
 
-test/genmlx/  — see dev/docs/SPEC_*.md for detailed file descriptions
+test/genmlx/  — one self-contained, executable test file per module
 ```
 
 ## Architecture layers
@@ -228,9 +228,7 @@ direct import of dynamic.cljs).
    stays internal via `mx/force-gc!` and never propagates to user API. The
    async event loop lives one layer up in the cognitive-architecture layer
    that embeds GenMLX. The sync/async choice follows semantic lines — math
-   vs events — not runtime convenience. See `dev/docs/DESIGN_ASYNC_BOUNDARY.md`
-   for the full principle, including the sync/async boundary split and the role
-   of Bun APIs as first-class perception/action surface.
+   vs events — not runtime convenience.
 
 ## How models work
 
@@ -484,6 +482,11 @@ After any change, verify:
 - `mx/compile-fn` is an identity pass-through (returns `f` unchanged). GenMLX's
   compilation uses noise transforms + the expression compiler, not MLX's
   graph-caching compile. See mlx.cljs docstring for details.
+- Don't create scratch, experiment, or temp files inside this repo. It
+  intentionally has no catch-all gitignored directories, so any stray file
+  surfaces in `git status` by design — that visibility is the point (it's what
+  kept a junk drawer from silently accumulating). Keep ephemeral work in an
+  external scratch location; promote only deliberate keepers back into the tree.
 
 ## Milestone delivery protocol
 
@@ -509,37 +512,31 @@ When working on a milestone (L1-M2, L1-M3, etc.):
    execution must produce identical traces, scores, and weights as the handler
    path. The handler is ground truth; compilation is optimization.
 
-## TODO protocol
+## Task protocol
 
-Project work is tracked in `dev/TODO.md` (read it at the start of each session).
-Priority levels: P0 (fix now), P1 (build next), P2 (captured ideas), P3 (explorations).
+Project work is tracked with **beans** (a flat-file issue tracker; tasks live in
+`.beans/`). A `SessionStart` hook runs `beans prime`, which injects the beans
+usage guide — current types, statuses, and priorities — into context every
+session, so you don't read a TODO file. The local guide `beans.md` documents the
+workflow and the fixed type/status/priority boundary in depth.
 
-Every P0/P1 entry has a **"done means"** checklist. When working on a task:
-1. Read the full entry including context and "done means"
+Priorities map the old P-levels: `critical` ≈ P0 (fix now), `high` ≈ P1 (build
+next); the `draft` status holds captured ideas and explorations (old P2/P3).
+
+Every actionable bean should carry a **"done means"** checklist in its body.
+When working on a task:
+1. Read the full bean including context and "done means" (`beans show <id>`)
 2. Implement using agent teams when the task is non-trivial
 3. Review agent checks every "done means" criterion before presenting
 4. Never declare a task complete until every checkbox is confirmed
-5. Update `dev/TODO.md` status when starting and completing work
+5. Update bean status as you go (`beans update <id> -s in-progress` →
+   `-s completed`), adding a `## Summary of Changes` section on completion
 
-When the user captures a new idea, add it as a P2 entry with 2-3 sentences of
-context. Promote to P1 when ready to spec (add "done means" criteria at that point).
+When the user captures a new idea, create a `draft` bean with 2-3 sentences of
+context. Promote to `todo` (and add "done means" criteria) when ready to spec.
 
 ## Related documents
 
-- `dev/TODO.md` — Project tracker (P0-P3 priorities, "done means" checklists)
+- `beans.md` — Task tracking guide (beans workflow, the fixed type/status/priority boundary)
 - `VISION.md` — Compilation ladder levels 0-5, the master development roadmap
 - `README.md` — Quick start, examples, public API overview
-- `dev/docs/` — System specification derived from line-by-line source code review
-  (8,962 lines across 10 files). Read these when you need deep understanding of
-  a specific subsystem — they document every public function, protocol, and record.
-  Covers:
-  - `SPEC_SYSTEM_OVERVIEW.md` — Complete system map, file inventory, design principles
-  - `SPEC_CORE_ARCHITECTURE.md` — Layers 0-3: MLX, runtime, handlers, dispatch, gen macro
-  - `SPEC_DISTRIBUTIONS_AND_COMBINATORS.md` — 31 distributions, 10 combinators
-  - `SPEC_INFERENCE.md` — 35+ algorithms, every public function documented
-  - `SPEC_COMPILED_PATHS.md` — L0-L4 compilation pipeline
-  - `SPEC_LLM_INTEGRATION.md` — 6 LLM modules
-  - `SPEC_SUPPORTING_SYSTEMS.md` — Vectorized, gradients, learning, 53 laws, verify
-  - `SPEC_RUST_NAPI_BOUNDARY.md` — ~105 NAPI exports, type coercion
-  - `INNOVATION_UNIFIED_STACK.md` — Future: LLMs as GFs, GRPO with GFI rewards
-  - `INNOVATION_PROGRAM_SYNTHESIS.md` — Future: program synthesis as inference

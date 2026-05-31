@@ -15,7 +15,7 @@ bun run --bun nbb examples/distinctive/01_model_is_a_value.cljs
 ```
 
 A harmless Bun/JSC `SIGTRAP` may print *after* a demo's output on teardown
-(dev/TODO.md INFRA-3) — it is not a failure; the `=== done ===` line precedes it.
+(../genmlx-lab/dev/TODO.md INFRA-3) — it is not a failure; the `=== done ===` line precedes it.
 
 ## The demos
 

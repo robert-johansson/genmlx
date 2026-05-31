@@ -17,7 +17,7 @@
    the orchestration: which goal is active, whether outcomes depend on
    actions.
 
-   See dev/docs/PLAN_SENSORIMOTOR_NARS_GENMLX.md."
+   See ../genmlx-lab/dev/docs/PLAN_SENSORIMOTOR_NARS_GENMLX.md."
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]

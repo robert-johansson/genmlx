@@ -18,7 +18,7 @@ feeds it as constraints (`labels->constraints` → `cm/from-map`) to `p/generate
 shows that the perceived scene — now a scored **trace** — is far more probable than a
 random grid under a structured prior. Perception becomes GFI evidence.
 
-The VLM is handed the rendered PNG (`dev/arc_frames/<game>_deck.png`); the terminal
+The VLM is handed the rendered PNG (`../genmlx-lab/dev/arc_frames/<game>_deck.png`); the terminal
 grid is drawn from the same frame JSON with the same palette — so what you see is
 what the model saw.
 
@@ -48,7 +48,7 @@ DECK_SELFTEST=full ./run.sh   # also load the VLM and describe+parse every scene
 
 ## Scenes
 
-Four ARC-AGI-3 games captured in `dev/arc_frames/` (`*.json` = 31 steps of 64×64
+Four ARC-AGI-3 games captured in `../genmlx-lab/dev/arc_frames/` (`*.json` = 31 steps of 64×64
 grids; `_deck.png` = the rendered frame fed to the VLM). The deck shows each game's
 most colourful frame: `sk48` (frame 0), `g50t` (18), `re86` (1), `bp35` (1).
 

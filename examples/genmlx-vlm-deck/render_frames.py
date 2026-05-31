@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render ARC-AGI-3 frame PNGs for the VLM deck from dev/arc_frames/*.json.
+"""Render ARC-AGI-3 frame PNGs for the VLM deck from ../genmlx-lab/dev/arc_frames/*.json.
 
 The VLM needs an image per scene. This recovers the exact 16-colour palette from
 the existing sk48_frame0.png (a grid+PNG pair), then renders the most colourful
@@ -12,7 +12,7 @@ Requires Pillow (PIL).
 import json
 from PIL import Image
 
-FR = "dev/arc_frames"
+FR = "../genmlx-lab/dev/arc_frames"
 # fallback for colour indices not present in sk48 (kept distinct from the bg/white)
 DEFAULT = {0:(0,0,0),1:(0,116,217),2:(255,65,54),3:(46,204,64),4:(255,220,0),
            5:(170,170,170),6:(240,18,190),7:(255,133,27),8:(127,219,255),9:(135,12,37),

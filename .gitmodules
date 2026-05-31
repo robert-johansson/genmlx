@@ -1,19 +1,6 @@
-[submodule "paper/TOPML_system"]
-	path = paper/TOPML_system
-	url = https://git.overleaf.com/69a845ea638fc59bb0f9839a
-[submodule "paper/DEP_paper"]
-	path = paper/DEP_paper
-	url = https://git.overleaf.com/68b351823cf5409cb65ef827
-[submodule "internet-psychology"]
-	path = internet-psychology
-	url = https://github.com/robert-johansson/internet-psychology.git
-	ignore = dirty
 [submodule "test.check"]
 	path = test.check
 	url = https://github.com/robert-johansson/test.check.git
-[submodule "paper/MDPI_paper"]
-	path = paper/MDPI_paper
-	url = https://git.overleaf.com/69c61e3d0d3f822ca2c85da4
 [submodule "malli"]
 	path = malli
 	url = https://github.com/robert-johansson/malli.git
@@ -24,7 +11,3 @@
 	path = instaparse
 	url = https://github.com/robert-johansson/instaparse.git
 	branch = bb-nbb-support
-[submodule "paper/GENMLX_presentation"]
-	path = paper/GENMLX_presentation
-	url = https://git.overleaf.com/69df8461e52a0f304715292d
-	ignore = dirty

@@ -22,7 +22,7 @@
 ;;     - p/regenerate can resample selected timesteps (counterfactuals).
 ;;     - p/assess scores any candidate trajectory.
 ;;
-;;   Compare to the original (`dev/rate_estimation/rate_estimation.ipynb`):
+;;   Compare to the original (`../genmlx-lab/dev/rate_estimation/rate_estimation.ipynb`):
 ;;     - `class model_constructor` with mutable lambda_hat / N attributes
 ;;       → pure carry threaded through Scan.
 ;;     - `events(t)` closure with hidden np.random state
@@ -242,7 +242,7 @@
                   (fmt (nth final-lam 1)) "]"))
     (println "  → Estimates approach the true rates."))
   ;; CSV dump for paper figure
-  (let [csv-path "paper/DeHouwer_paper/figs/data/rate_estimation_learning_curve.csv"
+  (let [csv-path "../genmlx-papers/DeHouwer_paper/figs/data/rate_estimation_learning_curve.csv"
         rows (mapv (fn [[t lam]]
                      (str t "," (fmt (nth lam 0) 6) "," (fmt (nth lam 1) 6)))
                    lam-hist)
@@ -501,9 +501,9 @@
 
 (let [acq1     (fn [I] (/ 1.0 (- I 1)))
       acq2     (fn [I] (/ 1.0 I))
-      datasets [["Gibbon & Balsam (1981)"    "dev/rate_estimation/GibbonBalsam81.csv"]
-                ["Balsam et al. (2024)"      "dev/rate_estimation/Balsam24.csv"]
-                ["Harris & Gallistel (2024)" "dev/rate_estimation/HarrisGallistel24.csv"]]]
+      datasets [["Gibbon & Balsam (1981)"    "../genmlx-lab/dev/rate_estimation/GibbonBalsam81.csv"]
+                ["Balsam et al. (2024)"      "../genmlx-lab/dev/rate_estimation/Balsam24.csv"]
+                ["Harris & Gallistel (2024)" "../genmlx-lab/dev/rate_estimation/HarrisGallistel24.csv"]]]
   (doseq [[name path] datasets]
     (println (str "\n  " name))
     (let [data   (parse-csv path)

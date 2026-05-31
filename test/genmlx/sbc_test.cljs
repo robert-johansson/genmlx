@@ -416,7 +416,7 @@
 
 (def all-results (atom []))
 (def summary (atom {:pass 0 :fail 0}))
-(def results-path "dev/sbc_results.json")
+(def results-path "results/sbc_results.json")
 
 (defn write-results!
   "Write current results to JSON incrementally."

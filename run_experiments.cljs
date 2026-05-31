@@ -147,10 +147,10 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private figure-scripts
-  ["paper/viz/fig_performance.py"
-   "paper/viz/fig_inference.py"
-   "paper/viz/fig_analytical.py"
-   "paper/viz/fig_system.py"])
+  ["../genmlx-papers/viz/fig_performance.py"
+   "../genmlx-papers/viz/fig_inference.py"
+   "../genmlx-papers/viz/fig_analytical.py"
+   "../genmlx-papers/viz/fig_system.py"])
 
 (def ^:private python-bin ".venv-genjax/bin/python")
 

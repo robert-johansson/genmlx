@@ -4,7 +4,7 @@
 
 set -e
 
-PAPER_DIR="paper/TOPML_system"
+PAPER_DIR="../genmlx-papers/TOPML_system"
 RESULTS_DIR="results"
 MSG="${1:-Update figures and tables from latest results}"
 

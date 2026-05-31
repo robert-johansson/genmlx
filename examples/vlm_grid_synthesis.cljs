@@ -8,7 +8,7 @@
      Stage 5 (solver):     MDP → policy + value       [HERE]
 
    This is the structural-recognizer pattern from the linear-regression case
-   (`dev/docs/INVESTIGATION_STRUCTURAL_RECOGNIZER.md`) applied to MDPs:
+   (`../genmlx-lab/dev/docs/INVESTIGATION_STRUCTURAL_RECOGNIZER.md`) applied to MDPs:
 
      - probe the LLM-synthesized `move` function over every (state, action)
        pair to materialize the deterministic transition tensor T;
