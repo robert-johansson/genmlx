@@ -20,35 +20,36 @@
   [model trace addresses]
   (let [model (dyn/auto-key model)
         args (:args trace)
-        choices (:choices trace)
-        _ (doseq [addr addresses]
+        choices (:choices trace)]
+    (run! (fn [addr]
             (when-not (cm/has-value? (cm/get-submap choices addr))
               (throw (ex-info (str "choice-gradients: address " (pr-str addr)
                                    " not found in trace choices")
                               {:address addr}))))
-        ;; Build a score function parameterized by the target choices
-        indexed-addrs (mapv vector (range) addresses)
-        ;; Extract current values
-        current-vals (mapv #(mx/realize (cm/get-choice choices [%])) addresses)
-        params (mx/array current-vals)
-        ;; Score function: reconstruct choicemap with params, run generate
-        score-fn (fn [params-arr]
-                   (let [cm (reduce
-                              (fn [cm [i addr]]
-                                (cm/set-choice cm [addr] (mx/index params-arr i)))
-                              choices
-                              indexed-addrs)]
-                     (:weight (p/generate model args cm))))
-        ;; Compute gradient (uncompiled — compile-fn severs backward
-        ;; pass when model body uses mx/eval!, returning silent zeros)
-        grad-fn (mx/grad score-fn)
-        grad-arr (grad-fn params)]
-    (mx/materialize! grad-arr)
-    ;; Split gradient array into per-address map
-    (into {}
-      (map (fn [[i addr]]
-             [addr (mx/index grad-arr i)])
-           indexed-addrs))))
+          addresses)
+    (let [;; Build a score function parameterized by the target choices
+          indexed-addrs (mapv vector (range) addresses)
+          ;; Extract current values
+          current-vals (mapv #(mx/realize (cm/get-choice choices [%])) addresses)
+          params (mx/array current-vals)
+          ;; Score function: reconstruct choicemap with params, run generate
+          score-fn (fn [params-arr]
+                     (let [cm (reduce
+                                (fn [cm [i addr]]
+                                  (cm/set-choice cm [addr] (mx/index params-arr i)))
+                                choices
+                                indexed-addrs)]
+                       (:weight (p/generate model args cm))))
+          ;; Compute gradient (uncompiled — compile-fn severs backward
+          ;; pass when model body uses mx/eval!, returning silent zeros)
+          grad-fn (mx/grad score-fn)
+          grad-arr (grad-fn params)]
+      (mx/materialize! grad-arr)
+      ;; Split gradient array into per-address map
+      (into {}
+        (map (fn [[i addr]]
+               [addr (mx/index grad-arr i)])
+             indexed-addrs)))))
 
 (defn score-gradient
   "Compute gradient of the model score w.r.t. a flat parameter array.
@@ -63,22 +64,22 @@
    Returns {:score MLX-scalar :grad MLX-array}."
   [model args observations addresses params]
   (let [model (dyn/auto-key model)
-        _ (let [n-addr (count addresses)
-                n-param (first (mx/shape params))]
-            (when-not (= n-addr n-param)
-              (throw (ex-info (str "score-gradient: addresses count (" n-addr
-                                   ") != params dimension (" n-param ")")
-                              {:addresses-count n-addr
-                               :params-shape (mx/shape params)}))))
-        indexed-addrs (mapv vector (range) addresses)
-        score-fn (fn [p]
-                   (let [cm (reduce
-                              (fn [cm [i addr]]
-                                (cm/set-choice cm [addr] (mx/index p i)))
-                              observations
-                              indexed-addrs)]
-                     (:weight (p/generate model args cm))))
-        vag (mx/value-and-grad score-fn)
-        [score grad] (vag params)]
-    (mx/materialize! score grad)
-    {:score score :grad grad}))
+        n-addr (count addresses)
+        n-param (first (mx/shape params))]
+    (when-not (= n-addr n-param)
+      (throw (ex-info (str "score-gradient: addresses count (" n-addr
+                           ") != params dimension (" n-param ")")
+                      {:addresses-count n-addr
+                       :params-shape (mx/shape params)})))
+    (let [indexed-addrs (mapv vector (range) addresses)
+          score-fn (fn [p]
+                     (let [cm (reduce
+                                (fn [cm [i addr]]
+                                  (cm/set-choice cm [addr] (mx/index p i)))
+                                observations
+                                indexed-addrs)]
+                       (:weight (p/generate model args cm))))
+          vag (mx/value-and-grad score-fn)
+          [score grad] (vag params)]
+      (mx/materialize! score grad)
+      {:score score :grad grad})))

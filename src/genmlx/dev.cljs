@@ -73,12 +73,11 @@
         validating
         (fn [gf op args key opts]
           (let [result (dyn/run-dispatched* gf op args key opts)]
-            (when (:output scope)
-              (when-let [entry (op->validator op)]
-                (when-not ((:validate entry) result)
-                  (report ::invalid-output
-                    {:op op :entry entry :value result
-                     :fn-name (str "DynamicGF/" (name op))}))))
+            (when-let [entry (and (:output scope) (op->validator op))]
+              (when-not ((:validate entry) result)
+                (report ::invalid-output
+                  {:op op :entry entry :value result
+                   :fn-name (str "DynamicGF/" (name op))})))
             result))]
 
     (reset! dyn/dispatch-fn validating)

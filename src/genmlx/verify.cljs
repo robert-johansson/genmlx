@@ -132,9 +132,9 @@
     [value (-> state
                (assoc :key k1)
                (update :choices cm/set-value addr value)
-               (update :score #(mx/add % lp))
-               (assoc :seen-addrs (conj seen addr))
-               (assoc :violations violations'))]))
+               (update :score mx/add lp)
+               (assoc :seen-addrs (conj seen addr)
+                      :violations violations'))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Single-trial validation

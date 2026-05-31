@@ -242,9 +242,7 @@
                    (if (>= i n-particles)
                      ws
                      (let [w (try
-                               (let [{:keys [weight]} (p/generate gf [transitions] constraints)
-                                     v (mx/item weight)]
-                                 v)
+                               (mx/item (:weight (p/generate gf [transitions] constraints)))
                                (catch :default _ ##-Inf))]
                        (when (zero? (mod (inc i) 10))
                          (mx/force-gc!))

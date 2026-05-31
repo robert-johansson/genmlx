@@ -96,15 +96,15 @@
    Returns a new VectorizedTrace with reindexed choices, uniform weights."
   [vtrace key]
   (let [{:keys [weight n-particles choices score]} vtrace
-        indices (systematic-resample-indices weight n-particles key)]
-    (let [new-choices (reindex-choicemap choices indices)
-          new-score (mx/take-idx score indices)
-          new-weight (mx/zeros [n-particles])]
-      (mx/materialize! new-score new-weight)
-      (assoc vtrace
-             :choices new-choices
-             :score   new-score
-             :weight  new-weight))))
+        indices (systematic-resample-indices weight n-particles key)
+        new-choices (reindex-choicemap choices indices)
+        new-score (mx/take-idx score indices)
+        new-weight (mx/zeros [n-particles])]
+    (mx/materialize! new-score new-weight)
+    (assoc vtrace
+           :choices new-choices
+           :score   new-score
+           :weight  new-weight)))
 
 ;; ---------------------------------------------------------------------------
 ;; Diagnostics

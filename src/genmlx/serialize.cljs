@@ -117,7 +117,6 @@
   [v]
   (cond
     (mx/array? v)   (mlx-value->data v)
-    (vector? v)     (mapv serialize-value v)
     (sequential? v) (mapv serialize-value v)
     (map? v)        (into {} (map (fn [[k val]] [(name k) (serialize-value val)]) v))
     (keyword? v)    {:type "keyword" :value (name v)}
@@ -134,7 +133,6 @@
     (and (map? v) (= "keyword" (:type v)))
     (keyword (:value v))
 
-    (vector? v)     (mapv deserialize-value v)
     (sequential? v) (mapv deserialize-value v)
     (map? v)        (into {} (map (fn [[k val]] [(keyword k) (deserialize-value val)]) v))
     :else           v))
@@ -148,10 +146,10 @@
    Options:
      :gen-fn-id - optional string identifier for the gen-fn"
   [trace & {:keys [gen-fn-id]}]
-  (let [data {:version 1
-              :format "genmlx-choices-v1"
-              :choices (choicemap->data (:choices trace))}
-        data (if gen-fn-id (assoc data :gen-fn-id gen-fn-id) data)]
+  (let [data (cond-> {:version 1
+                      :format "genmlx-choices-v1"
+                      :choices (choicemap->data (:choices trace))}
+               gen-fn-id (assoc :gen-fn-id gen-fn-id))]
     (js/JSON.stringify (clj->js data) nil 2)))
 
 (defn load-choices
@@ -191,7 +189,8 @@
                (assoc data :retval (serialize-value (:retval trace)))
                (catch :default _
                  data))
-        data (if gen-fn-id (assoc data :gen-fn-id gen-fn-id) data)]
+        data (cond-> data
+               gen-fn-id (assoc :gen-fn-id gen-fn-id))]
     (js/JSON.stringify (clj->js data) nil 2)))
 
 (defn load-trace
