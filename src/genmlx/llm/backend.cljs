@@ -4,8 +4,7 @@
 
    This is Layer 0 of the LLM integration — everything above (token-transition
    handler, beam search, grammar constraints) builds on these functions."
-  (:require ["@mlx-node/lm" :as mlx-lm]
-            ["@mlx-node/lm" :refer [ChatSession]]
+  (:require ["@mlx-node/lm" :as mlx-lm :refer [ChatSession]]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [promesa.core :as p]))

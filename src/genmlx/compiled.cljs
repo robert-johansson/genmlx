@@ -15,10 +15,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
             [genmlx.vectorized :as vec]
-            [genmlx.dist :as dist]
-            [genmlx.dist.core :as dc]
-            [genmlx.handler :as h]
-            [genmlx.selection :as sel]))
+            [genmlx.handler :as h]))
 
 ;; ---------------------------------------------------------------------------
 ;; Core: compiled unfold step loop

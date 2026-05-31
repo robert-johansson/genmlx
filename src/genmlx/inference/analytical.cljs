@@ -14,8 +14,7 @@
 
    Middleware state lives in namespaced keys (e.g. :kalman-belief, :hmm-belief)
    and does NOT touch :score/:weight. The caller decides how to aggregate
-   the analytical log-likelihoods."
-  (:require [genmlx.handler :as h]))
+   the analytical log-likelihoods.")
 
 (defn wrap-analytical
   "Wrap a handler transition with analytical dispatch.
