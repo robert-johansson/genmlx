@@ -282,25 +282,24 @@
   "Infer which gen-fn parameter determines the loop count.
    Returns index into params vector, or -1."
   [count-form params]
-  (cond
-    (integer? count-form)
-    -1
+  (let [pv (vec params)]
+    (cond
+      (integer? count-form)
+      -1
 
-    ;; (count sym) where sym is a param
-    (and (seq? count-form)
-         (= 2 (count count-form))
-         (symbol? (first count-form))
-         (= "count" (name (first count-form)))
-         (symbol? (second count-form)))
-    (let [idx (.indexOf (vec params) (second count-form))]
-      (if (>= idx 0) idx -1))
+      ;; (count sym) where sym is a param
+      (and (seq? count-form)
+           (= 2 (count count-form))
+           (symbol? (first count-form))
+           (= "count" (name (first count-form)))
+           (symbol? (second count-form)))
+      (.indexOf pv (second count-form))
 
-    ;; Plain symbol that is a param
-    (symbol? count-form)
-    (let [idx (.indexOf (vec params) count-form)]
-      (if (>= idx 0) idx -1))
+      ;; Plain symbol that is a param
+      (symbol? count-form)
+      (.indexOf pv count-form)
 
-    :else -1))
+      :else -1)))
 
 (defn- find-all-calls
   "Recursively find all calls matching pred in forms."
@@ -449,14 +448,9 @@
                         :for (analyze-for-bindings bindings-form)
                         nil)
             ;; Collect loop binding symbols for dep classification
-            loop-syms (cond-> #{}
-                        (:element-sym bind-info)
-                        (conj (if (symbol? (:element-sym bind-info))
-                                (:element-sym bind-info)
-                                nil))
-                        (:index-sym bind-info)
-                        (conj (:index-sym bind-info)))
-            loop-syms (disj loop-syms nil)
+            loop-syms (into #{}
+                            (filter symbol?)
+                            [(:element-sym bind-info) (:index-sym bind-info)])
             ;; Extract loop-specific trace/splice/param sites
             loop-body-info (extract-loop-trace-sites body loop-syms env)
             loop-traces (:trace-sites loop-body-info)
