@@ -82,13 +82,13 @@ done
 bun run --bun nbb test/genmlx/level0_certification_test.cljs
 
 # Level 1 compilation tests
-bun run --bun nbb test/genmlx/schema_test.cljs                # 174/174 (L1-M1)
+bun run --bun nbb test/genmlx/schema_test.cljs                # 227/227 (L1-M1)
 bun run --bun nbb test/genmlx/compiled_simulate_test.cljs      # 82/82  (L1-M2)
 bun run --bun nbb test/genmlx/partial_compile_test.cljs        # 92/92  (L1-M3)
-bun run --bun nbb test/genmlx/combinator_compile_test.cljs     # 90/90  (L1-M5)
+bun run --bun nbb test/genmlx/combinator_compile_test.cljs     # 92/92  (L1-M5)
 
 # Compatibility suites
-bun run --bun nbb test/genmlx/gen_clj_compat_test.cljs    # 165/165
+bun run --bun nbb test/genmlx/gen_clj_compat_test.cljs    # 356/356
 bun run --bun nbb test/genmlx/genjax_compat_test.cljs      # 73/73
 
 # Vectorized inference tests + benchmarks
@@ -433,12 +433,12 @@ Pattern:
 After any change, verify:
 - All core tests pass (no FAIL lines in output)
 - `level0_certification_test.cljs`: 68/68 (L0)
-- `schema_test.cljs`: 174/174 (L1-M1)
+- `schema_test.cljs`: 227/227 (L1-M1)
 - `compiled_simulate_test.cljs`: 82/82 (L1-M2)
 - `partial_compile_test.cljs`: 92/92 (L1-M3)
-- `combinator_compile_test.cljs`: 90/90 (L1-M5)
+- `combinator_compile_test.cljs`: 92/92 (L1-M5)
 - `l4_certification_test.cljs`: 41/41 (L4)
-- `gen_clj_compat_test.cljs`: 165/165
+- `gen_clj_compat_test.cljs`: 356/356
 - `genjax_compat_test.cljs`: 73/73
 
 ## Common patterns when editing

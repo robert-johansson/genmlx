@@ -391,8 +391,8 @@ for f in choicemap_test trace_test selection_test handler_test dist_test combina
 done
 
 # Compatibility suites
-bun run --bun nbb test/genmlx/gen_clj_compat_test.cljs     # 165/165 tests (from Gen.clj)
-bun run --bun nbb test/genmlx/genjax_compat_test.cljs       # 73/73 tests (GenJAX compat)
+bun run --bun nbb test/genmlx/gen_clj_compat_test.cljs     # 356 assertions (from Gen.clj)
+bun run --bun nbb test/genmlx/genjax_compat_test.cljs       # 73 assertions (GenJAX compat)
 
 # Vectorized tests + benchmarks
 bun run --bun nbb test/genmlx/vectorized_test.cljs
@@ -401,7 +401,7 @@ bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 
 ### Gen.clj Compatibility
 
-165 tests adapted from [Gen.clj](https://github.com/probcomp/Gen.clj)'s test suite verify that GenMLX produces matching results:
+356 assertions (across 17 grouped tests) adapted from [Gen.clj](https://github.com/probcomp/Gen.clj)'s test suite verify that GenMLX produces matching results:
 
 - **Distribution logpdf spot checks** — values verified against scipy.stats and Gen.jl (within float32 tolerance)
 - **Mathematical properties** — symmetry, normalization, shift invariance
@@ -412,7 +412,7 @@ bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 
 ### GenJAX Compatibility
 
-73 tests verify parity with GenJAX's design:
+73 assertions (across 9 grouped tests) verify parity with GenJAX's design:
 
 - **Edit interface** — constraint, selection, and proposal edits
 - **Diff tracking** — incremental update with change hints
