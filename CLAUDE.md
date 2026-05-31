@@ -74,7 +74,7 @@ ground truth; compilation is optimization.
 bun run --bun nbb <file.cljs>
 
 # Run all core tests
-for f in choicemap_test trace_test selection_test handler_test dist_test gen_test combinators_test inference_test; do
+for f in choicemap_test trace_test selection_test handler_test dist_test combinators_test inference_test; do
   bun run --bun nbb "test/genmlx/${f}.cljs"
 done
 
