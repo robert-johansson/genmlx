@@ -152,7 +152,6 @@
           (let [init-n (mx/broadcast-to params [particles])
                 result
                 (loop [t 0
-                       current-particles nil
                        current-state init-n
                        log-ml (mx/scalar 0.0)]
                   (if (>= t T)
@@ -162,21 +161,16 @@
                           kernel-args [(mx/ensure-array t) current-state]
                           {:keys [obs-log-prob values-map retval]}
                           (extend-fn noise-t kernel-args obs-t)
-                          new-particles (mx/stack (mapv #(get values-map %) all-addrs) 1)
                           new-state (or retval (get values-map (first all-addrs)))
                           ;; Log-ML increment
                           ml-inc (mx/subtract (mx/logsumexp obs-log-prob)
                                               (mx/scalar (js/Math.log particles)))
-                          ;; Gumbel-softmax resampling (differentiable)
+                          ;; Soft-resample state (differentiable)
                           gumbel-t (mx/index gumbel-noise t)
-                          {:keys [particles]} (dr/gumbel-softmax
-                                                new-particles obs-log-prob
-                                                gumbel-t tau-arr)
-                          ;; Soft-resample state
                           resampled-state (dr/gumbel-softmax-1d
                                             new-state obs-log-prob
                                             gumbel-t tau-arr)]
-                      (recur (inc t) particles resampled-state
+                      (recur (inc t) resampled-state
                              (mx/add log-ml ml-inc)))))]
             result))
         vag (mx/value-and-grad objective)

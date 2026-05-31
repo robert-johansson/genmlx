@@ -287,49 +287,15 @@
              u (mx/realize (rng/uniform key []))]
          (< (js/Math.log u) log-accept)))))
 
-(defn- collect-choicemap-arrays
-  "Collect all MLX arrays from a choicemap (e.g., observations).
-   Returns a JS Set of arrays (by identity) for fast lookup."
-  [choicemap]
-  (let [seen (js/Set.)]
-    (letfn [(walk [cm]
-              (cond
-                (nil? cm) nil
-                (cm/has-value? cm)
-                (let [v (cm/get-value cm)]
-                  (when (mx/array? v) (.add seen v)))
-                (instance? cm/Node cm)
-                (doseq [[_ sub] (cm/-submaps cm)]
-                  (walk sub))
-                :else nil))]
-      (walk choicemap))
-    seen))
-
 (defn dispose-trace
-  "Dispose all MLX arrays in a trace (or collection of traces), freeing Metal
-   buffers immediately. Handles shared arrays safely by deduplicating first.
+  "No-op retained for API compatibility. Explicit disposal is unnecessary:
+   MxArray uses Arc refcounting, so a trace's MLX arrays are freed
+   automatically when their last reference drops. Accepts an optional
+   `preserve` arg (a choicemap or JS Set) that is likewise ignored.
 
-   Optional second arg `preserve` can be:
-   - a choicemap (e.g., the observation choicemap) — arrays in it are skipped
-   - a JS Set of arrays to skip
-   - nil (dispose everything, original behavior)"
-  ([trace-or-traces]
-   (dispose-trace trace-or-traces nil))
-  ([trace-or-traces preserve]
-   (let [traces (if (sequential? trace-or-traces) trace-or-traces [trace-or-traces])
-         skip (cond
-                (nil? preserve) nil
-                (instance? js/Set preserve) preserve
-                ;; Assume it's a choicemap
-                :else (collect-choicemap-arrays preserve))
-         seen (js/Set.)]
-     (doseq [t traces
-             a (collect-trace-arrays t)]
-       (when-not (.has seen a)
-         (.add seen a)))
-     ;; dispose! was a no-op (Arc refcounting handles cleanup).
-     ;; Arrays are freed when their last reference drops.
-     nil)))
+   Always returns nil."
+  ([_trace-or-traces] nil)
+  ([_trace-or-traces _preserve] nil))
 
 (defn tidy-step
   "Run step-fn inside mx/tidy, preserving all arrays in the returned state.
