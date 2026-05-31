@@ -83,12 +83,8 @@
   ;; log-alpha: [P,K] -> expand to [P,K,1]
   ;; log-trans: [K,K] -> broadcast [1,K,K]
   ;; sum:       [P,K,K] -> logsumexp over axis -2 -> [P,K]
-  (let [ndim (count (mx/shape log-alpha))
-        expanded (if (= ndim 1)
-                   ;; [K] -> [K,1]
-                   (mx/expand-dims log-alpha -1)
-                   ;; [P,K] -> [P,K,1]
-                   (mx/expand-dims log-alpha -1))
+  (let [;; [K] -> [K,1], [P,K] -> [P,K,1]
+        expanded (mx/expand-dims log-alpha -1)
         ;; expanded: [...,K,1] + log-trans: [K,K] -> [...,K,K]
         joint (mx/add expanded log-trans)]
     ;; logsumexp over the "from" axis (second-to-last)
@@ -109,9 +105,8 @@
         norm-alpha (mx/subtract unnorm (mx/expand-dims ll-raw -1))
         ;; Masked: if mask=0, keep old belief, ll=0
         ndim-mask (count (mx/shape mask))
-        mask-expanded (if (zero? ndim-mask)
-                        mask
-                        (mx/expand-dims mask -1))
+        mask-expanded (cond-> mask
+                        (pos? ndim-mask) (mx/expand-dims -1))
         new-alpha (mx/add (mx/multiply mask-expanded norm-alpha)
                           (mx/multiply (mx/subtract (mx/scalar 1.0) mask-expanded)
                                        log-alpha))
@@ -173,16 +168,16 @@
      (let [{:keys [log-emission-probs mask]} (:params dist)
            log-alpha (:hmm-belief state)
            n (:hmm-n state)
-           {:keys [log-alpha ll]} (hmm-update log-alpha log-emission-probs mask)]
-       ;; Store constrained observation in choices
-       (let [constraint (cm/get-submap (:constraints state) addr)
-             obs (when (cm/has-value? constraint) (cm/get-value constraint))]
-         [(or obs (mx/scalar 0.0))
-          (-> state
-              (assoc :hmm-belief log-alpha)
-              (cond-> obs (update :choices cm/set-value addr obs))
-              (update :hmm-ll
-                #(mx/add (or % (mx/zeros (if n [n] []))) ll)))])))})
+           {:keys [log-alpha ll]} (hmm-update log-alpha log-emission-probs mask)
+           ;; Store constrained observation in choices
+           constraint (cm/get-submap (:constraints state) addr)
+           obs (when (cm/has-value? constraint) (cm/get-value constraint))]
+       [(or obs (mx/scalar 0.0))
+        (-> state
+            (assoc :hmm-belief log-alpha)
+            (cond-> obs (update :choices cm/set-value addr obs))
+            (update :hmm-ll
+              #(mx/add (or % (mx/zeros (if n [n] []))) ll)))]))})
 
 (defn make-hmm-transition
   "Handler middleware: wraps generate-transition for HMM forward algorithm.

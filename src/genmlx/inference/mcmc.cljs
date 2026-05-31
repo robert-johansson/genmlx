@@ -918,12 +918,9 @@
                       block-k (min k (js/Math.ceil (/ remaining n-chains)))
                       ;; Pool: for each step k, take all N chains
                       block-samples
-                      (loop [ki 0, s []]
-                        (if (>= ki block-k) s
-                            (let [step-k (nth traj-js ki)]
-                              (recur (inc ki)
-                                     (into s (map (fn [n] (nth step-k n))
-                                                  (range n-chains)))))))
+                      (vec (mapcat (fn [step-k]
+                                     (map (fn [n] (nth step-k n)) (range n-chains)))
+                                   (take block-k traj-js)))
                       ;; Last params for next block
                       p' (mx/array (nth traj-js (dec k)))]
                   (when (zero? (mod b 10)) (mx/clear-cache!))
@@ -1057,9 +1054,7 @@
   (let [gf (:gen-fn current-trace)
         ;; For each candidate value, compute model score
         log-scores (mapv (fn [val]
-                           (let [constraint (cm/choicemap addr val)
-                                 {:keys [trace]} (p/update gf current-trace constraint)]
-                             (:score trace)))
+                           (:score (:trace (p/update gf current-trace (cm/choicemap addr val)))))
                          support-values)
         ;; Normalize via log-softmax
         log-scores-arr (mx/array (mapv mx/realize log-scores))
@@ -1395,8 +1390,7 @@
     (loop [eps 1.0, i 0]
       (if (>= i 100) eps
           (let [a (test-accept eps)]
-            (if (or (and (pos? dir) (< a 0.5))
-                    (and (neg? dir) (> a 0.5)))
+            (if (neg? (* dir (- a 0.5)))
               eps
               (recur (* eps (js/Math.pow 2.0 dir)) (inc i))))))))
 
@@ -2010,8 +2004,7 @@
     (loop [eps 1.0, i 0]
       (if (>= i 100) eps
           (let [a (test-accept eps)]
-            (if (or (and (pos? dir) (< a 0.5))
-                    (and (neg? dir) (> a 0.5)))
+            (if (neg? (* dir (- a 0.5)))
               eps
               (recur (* eps (js/Math.pow 2.0 dir)) (inc i))))))))
 
