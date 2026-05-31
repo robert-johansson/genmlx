@@ -438,6 +438,11 @@
 ;; Conditioning and joint marginals (Phase 2)
 ;; ---------------------------------------------------------------------------
 
+(defn- ->num
+  "Coerce an MLX scalar to a JS number, leaving plain numbers untouched."
+  [v]
+  (if (mx/array? v) (mx/item v) v))
+
 (defn condition-on
   "Condition the joint on addr = value. Removes that axis and renormalizes.
 
@@ -459,7 +464,7 @@
         ndim (count axes)
         tensor-pos (dim->pos ndim (:dim target))
         ;; Find support index matching value
-        value-num (if (mx/array? value) (mx/item value) value)
+        value-num (->num value)
         idx (first (keep-indexed
                     (fn [i sv] (when (= (mx/item sv) value-num) i))
                     (:support target)))
