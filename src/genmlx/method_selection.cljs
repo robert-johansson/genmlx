@@ -3,7 +3,7 @@
    Pure decision tree — no MLX ops, no inference execution.
    Reads L3/3.5 analytical plan and schema fields to pick the
    optimal method and tune its hyperparameters."
-  (:require [clojure.set]
+  (:require [clojure.set :as set]
             [clojure.string :as str]
             [genmlx.inference.util :as u]))
 
@@ -58,7 +58,7 @@
         all (all-trace-addrs schema)
         elim (eliminated-addrs model)
         obs (observation-addrs observations)]
-    (clojure.set/difference all elim obs)))
+    (set/difference all elim obs)))
 
 (defn- n-residual
   "Number of residual (non-eliminated, non-observed) trace sites."
@@ -87,7 +87,7 @@
   [schema observations]
   (let [all-addrs (all-trace-addrs schema)
         obs (observation-addrs observations)]
-    (clojure.set/difference all-addrs obs)))
+    (set/difference all-addrs obs)))
 
 (defn- n-latent
   "Number of latent (unobserved) trace sites."

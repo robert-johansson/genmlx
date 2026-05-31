@@ -21,7 +21,7 @@
             [genmlx.rewrite :as rewrite]
             [genmlx.inference.auto-analytical :as auto-analytical]
             [genmlx.dispatch :as dispatch]
-            [clojure.set]))
+            [clojure.set :as set]))
 
 ;; Cached zero constant for init states (MLX scalars are immutable)
 (def ^:private SCORE-ZERO (mx/scalar 0.0))
@@ -54,7 +54,7 @@
     (let [constraint-keys (set (keys (:m constraints)))
           trace-keys (when (instance? cm/Node result-choices)
                        (set (keys (:m result-choices))))
-          unused (clojure.set/difference constraint-keys (or trace-keys #{}))]
+          unused (set/difference constraint-keys (or trace-keys #{}))]
       (when (seq unused) unused))))
 
 ;; ---------------------------------------------------------------------------
@@ -377,7 +377,7 @@
            (instance? cm/Node new-choices))
     (let [old-keys (set (keys (:m old-choices)))
           new-keys (set (keys (:m new-choices)))
-          deleted (clojure.set/difference old-keys new-keys)]
+          deleted (set/difference old-keys new-keys)]
       (reduce (fn [d addr]
                 (let [old-sub (get (:m old-choices) addr)]
                   (if (cm/has-value? old-sub)

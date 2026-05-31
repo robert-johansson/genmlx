@@ -9,7 +9,7 @@
    The walker threads a binding environment (env) that maps local symbols to
    the set of trace addresses their values depend on. This enables accurate
    dependency tracking between trace sites."
-  (:require [clojure.set]))
+  (:require [clojure.set :as set]))
 
 ;; =========================================================================
 ;; Helpers
@@ -375,8 +375,8 @@
                    dist-args (when (and (seq? dist-form) (seq dist-form))
                                (vec (rest dist-form)))
                    all-syms (find-symbols dist-form)
-                   element-deps (clojure.set/intersection all-syms loop-syms)
-                   outer-dep-syms (clojure.set/difference all-syms loop-syms)
+                   element-deps (set/intersection all-syms loop-syms)
+                   outer-dep-syms (set/difference all-syms loop-syms)
                    outer-deps (reduce (fn [deps sym]
                                         (if-let [addrs (get env sym)]
                                           (into deps addrs)
@@ -617,14 +617,14 @@
         ;; Only keep deps that are within our static trace set
         dep-map (into {} (map (fn [ts]
                                 [(:addr ts)
-                                 (clojure.set/intersection (:deps ts) addr-set)])
+                                 (set/intersection (:deps ts) addr-set)])
                               static-sites))]
     (loop [remaining (set (keys dep-map))
            result []]
       (if (empty? remaining)
         result
         (let [ready (first (filter (fn [a]
-                                     (empty? (clojure.set/intersection
+                                     (empty? (set/intersection
                                               (get dep-map a #{})
                                               remaining)))
                                    remaining))]
