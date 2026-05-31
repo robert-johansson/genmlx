@@ -8,7 +8,6 @@
    acceptance weights for reversible kernels — the foundation of SMCP3."
   (:require [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
-            [genmlx.selection :as sel]
             [genmlx.mlx :as mx]))
 
 ;; ---------------------------------------------------------------------------

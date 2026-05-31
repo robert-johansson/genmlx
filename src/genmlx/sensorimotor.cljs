@@ -23,8 +23,8 @@
             [genmlx.dynamic :as dyn]
             [genmlx.choicemap :as cm]
             [genmlx.protocols :as p]
-            [genmlx.mlx.random :as rng]
-            [genmlx.gen :refer-macros [gen]]))
+            [genmlx.mlx.random :as rng])
+  (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; =============================================================================
 ;; Implication: a procedural hypothesis ((pkey, op-key) ⇒ K) with Beta posterior
