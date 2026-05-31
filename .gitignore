@@ -41,9 +41,6 @@ corpus/train.jsonl
 corpus/valid.jsonl
 corpus/training_pairs.jsonl
 
-# [epiq]: local hydrated state is never committed
-.epiq/events/
-.epiq/log/
 .beans/
 .beans.yml
 beans.md
