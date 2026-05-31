@@ -7,7 +7,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.inference.util :as u]
             [genmlx.dynamic :as dyn]
-            [genmlx.vectorized :as vec]
+            [genmlx.vectorized :as vz]
             [genmlx.combinators :as comb]))
 
 
@@ -448,7 +448,7 @@
               ;; Materialize ml-inc before accumulation in next iteration
               _ (mx/materialize! ml-inc)
               ;; 3. Resample (handles array, map, or nil state)
-              indices (vec/systematic-resample-indices step-weights
+              indices (vz/systematic-resample-indices step-weights
                                                        particles resample-key)
               resampled-state (resample-state new-state indices)
               ;; Break lazy graph — resampled state carried to next timestep
@@ -483,7 +483,7 @@
               accept-mask (mx/less (mx/log u) mh-weight)
               ;; Materialize mask before per-particle merge
               _ (mx/materialize! accept-mask)
-              vtrace (vec/merge-vtraces-by-mask vtrace proposed accept-mask)]
+              vtrace (vz/merge-vtraces-by-mask vtrace proposed accept-mask)]
           (recur (inc k) vtrace next-key))))))
 
 (defn vsmc
@@ -509,18 +509,18 @@
         ;; Step 0: batched init
         vtrace (dyn/vgenerate model args (first obs-vec) particles
                               (rng/ensure-key init-key))
-        log-ml (vec/vtrace-log-ml-estimate vtrace)]
-    (when callback (callback {:step 0 :ess (vec/vtrace-ess vtrace)}))
+        log-ml (vz/vtrace-log-ml-estimate vtrace)]
+    (when callback (callback {:step 0 :ess (vz/vtrace-ess vtrace)}))
     (loop [t 1, vtrace vtrace, log-ml log-ml, rk next-key]
       (if (>= t n-steps)
         {:vtrace vtrace :log-ml-estimate log-ml}
         (let [[step-key next-key] (rng/split-or-nils rk)
               [resample-key update-key rejuv-key] (rng/split-n-or-nils step-key 3)
               ;; 1. ESS check + conditional resample
-              ess (vec/vtrace-ess vtrace)
+              ess (vz/vtrace-ess vtrace)
               resample? (< ess (* ess-threshold particles))
               vtrace (if resample?
-                       (vec/resample-vtrace vtrace resample-key)
+                       (vz/resample-vtrace vtrace resample-key)
                        vtrace)
               prev-weights (:weight vtrace)
               ;; 2. Batched update
@@ -532,7 +532,7 @@
               _ (mx/materialize! cumul-weights)
               vtrace (assoc updated-vtrace :weight cumul-weights)
               ;; 4. Log-ML increment
-              log-ml-inc (vec/vtrace-log-ml-estimate vtrace)
+              log-ml-inc (vz/vtrace-log-ml-estimate vtrace)
               ;; 5. Rejuvenation
               vtrace (vsmc-rejuvenate vtrace rejuvenation-steps
                                        rejuvenation-selection rejuv-key)]
@@ -560,5 +560,5 @@
   (let [model (dyn/auto-key model)
         key (rng/ensure-key key)
         vtrace (dyn/vgenerate model args observations particles key)
-        log-ml (vec/vtrace-log-ml-estimate vtrace)]
+        log-ml (vz/vtrace-log-ml-estimate vtrace)]
     {:vtrace vtrace :log-ml-estimate log-ml}))

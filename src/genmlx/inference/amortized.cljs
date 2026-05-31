@@ -16,7 +16,6 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
-            [genmlx.vectorized :as vec]
             [genmlx.inference.util :as u]))
 
 ;; ---------------------------------------------------------------------------
