@@ -181,26 +181,6 @@
 ;; Convenience: compile from a step specification
 ;; ---------------------------------------------------------------------------
 
-(defn- make-gaussian-step
-  "Build a step-fn for a Gaussian transition model.
-   transition-fn: (fn [state] -> [mean, std]) — pure MLX ops.
-   Returns a step-fn suitable for compiled unfold.
-   noise-dim = state-dim (one noise per state dimension)."
-  [transition-fn state-dim]
-  (fn [state noise-row]
-    (let [[mean std] (transition-fn state)
-          new-state (mx/add mean (mx/multiply std noise-row))
-          ;; Log-prob: -0.5 * sum((new - mean)^2 / std^2) - sum(log(std)) - D/2*log(2π)
-          diff (mx/subtract new-state mean)
-          log-prob (mx/subtract
-                    (mx/subtract
-                     (mx/multiply (mx/scalar -0.5)
-                                  (mx/sum (mx/divide (mx/multiply diff diff)
-                                                     (mx/multiply std std))))
-                     (mx/sum (mx/log std)))
-                    (mx/scalar (* 0.5 state-dim (js/Math.log (* 2 js/Math.PI)))))]
-      [new-state log-prob])))
-
 (defn make-gaussian-step-with-obs
   "Build a step-fn with Gaussian observations for compiled unfold generate.
    transition-fn: (fn [state] -> [mean, std]) for latent state transition.
