@@ -42,6 +42,10 @@
 ;; Regex parsing (Instaparse → AST)
 ;; ============================================================
 
+;; Open-ended repeats `{n,}` have no upper bound in regex, but the NFA/DFA
+;; construction needs a finite one. We truncate them to this many repetitions.
+(def ^:private max-unbounded-repeat 999)
+
 (def ^:private regex-grammar
   (insta/parser
     "regex = alt
@@ -112,7 +116,7 @@
        :plus       (fn [] :plus)
        :opt        (fn [] :opt)
        :repeat-exact (fn [n] [:repeat n n])
-       :repeat-range (fn [n & [m]] [:repeat n (or m 999)])
+       :repeat-range (fn [n & [m]] [:repeat n (or m max-unbounded-repeat)])
        :quant      (fn [atom & [q]]
                      (cond
                        (nil? q)     atom
