@@ -10,21 +10,26 @@ GenMLX implements Gen's **Generative Function Interface (GFI)** — the same arc
 
 Gen implementations exist for Julia and JAX — but nothing for MLX. MLX's unified memory model is a natural fit for probabilistic programming: MCMC control flow runs on CPU while all numerics stay on GPU, with zero data transfer cost. ClojureScript on Node.js gives direct access to MLX through a native addon with no FFI overhead, and nbb provides a fast REPL for interactive model development.
 
-- **MLX-native** — unified memory, lazy evaluation, dynamic shapes, `mx/grad` through entire models (Apple Silicon and CUDA)
+- **MLX-native** — unified memory, lazy evaluation, dynamic shapes, `mx/grad` through entire models (Apple Silicon)
 - **~32,000 lines of ClojureScript** — protocols, records, persistent data structures, the whole thing is readable in an afternoon
 - **GPU end-to-end** — scores and choice values are MLX arrays throughout, extracted with `mx/item` only at inference boundaries
 - **5-level compilation ladder** — progressively moves work from the host interpreter into fused MLX computation graphs, from shape-based batching (L0) through auto-analytical elimination (L3) to single fused graphs (L4)
 
 ## Requirements
 
-- macOS with Apple Silicon (M1/M2/M3/M4), or Linux with CUDA (MLX supports both)
-- **macOS:** Xcode Command Line Tools — `xcode-select --install` (provides CMake, clang++)
-- **macOS:** First launch setup — `sudo xcodebuild -runFirstLaunch`
-- **macOS:** Metal Toolchain — `xcodebuild -downloadComponent MetalToolchain` (required on macOS 26+)
-- [Bun](https://bun.sh/) — `curl -fsSL https://bun.sh/install | bash` (recommended — 3-4x faster than Node.js)
-- [nbb](https://github.com/babashka/nbb) — `npm install -g nbb`
-- [Yarn 4](https://yarnpkg.com/) — to build the `mlx-node` submodule; it pins `yarn@4.x` via `packageManager`, so `corepack enable` (bundled with Node.js) activates the right version automatically
-- `git` with submodule support — GenMLX vendors its dependencies as nested submodules (see below)
+- **macOS with Apple Silicon (M1/M2/M3/M4).** macOS-only for now — `mlx-node` does not support Linux/CUDA yet.
+- **C++ toolchain**
+  - Xcode Command Line Tools — `xcode-select --install` (provides `clang++`, `make`, and the macOS SDK). Note: the CLT do **not** include CMake — install it separately (below).
+  - First launch setup — `sudo xcodebuild -runFirstLaunch`
+  - Metal Toolchain — `xcodebuild -downloadComponent MetalToolchain` (required on macOS 26+; the build hard-fails without it)
+- **[CMake](https://cmake.org/) ≥ 3.25** — drives the vendored MLX C++ build (it is **not** bundled with the Xcode CLT, despite the CLT providing the C++ compiler). `brew install cmake`.
+- **[Rust](https://www.rust-lang.org/) toolchain** — `mlx-node` is a Rust NAPI addon, so `cargo`/`rustc` must be on `PATH` to build it.
+  - `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` (then restart your shell, or `source "$HOME/.cargo/env"`)
+- **[Node.js](https://nodejs.org/) ≥ 18** — provides `npm` (for installing nbb and yarn). `brew install node` on macOS, or [nodejs.org](https://nodejs.org/).
+- **[Bun](https://bun.sh/)** — `curl -fsSL https://bun.sh/install | bash`. The `bun run --bun nbb …` commands throughout this README use it (recommended — 3-4x faster than Node.js for iterative inference). The installer only updates `~/.bashrc`/`~/.zshrc`; **fish** users must add it to `PATH` themselves: `fish_add_path ~/.bun/bin`. To run on Node.js instead, replace `bun run --bun nbb` with `nbb` and `bun install` with `npm install`.
+- **[nbb](https://github.com/babashka/nbb) — pin to `1.4.206`** — `npm install -g nbb@1.4.206`. ⚠️ Do **not** use the latest `1.4.207`: it ships an SCI regression that fails to resolve record types across namespaces (`Unable to resolve symbol: cm/Node`), which breaks the handler loop and therefore all inference. `1.4.206` is the last known-good release.
+- **[Yarn](https://yarnpkg.com/)** — needed only to build the `mlx-node` submodule. You don't need a specific version: mlx-node vendors the exact release it wants (`.yarn/releases/yarn-4.13.0.cjs`) and any `yarn` launcher on `PATH` auto-delegates to it via the `yarnPath` setting in `.yarnrc.yml`. Install one with `npm install -g yarn` or `brew install yarn`. (If you prefer Corepack, note it is **no longer bundled** with current Node.js — `npm install -g corepack && corepack enable` — but it's unnecessary here.)
+- **`git`** with submodule support — GenMLX vendors its dependencies as nested submodules (see below).
 
 ## Quick Start
 
@@ -38,12 +43,12 @@ cd genmlx
 # Already cloned without --recurse-submodules? Initialize them now:
 #   git submodule update --init --recursive
 
-# Build mlx-node (compiles the vendored MLX C++ + Rust NAPI addon, ~3-4 min first
-# build). mlx-node pins yarn@4 via packageManager — run `corepack enable` first if
-# the `yarn` command isn't already available.
+# Build mlx-node (compiles the vendored MLX C++ via CMake + the Rust NAPI addon
+# via cargo, ~3-4 min first build). `yarn` auto-delegates to the pinned 4.13.0
+# release vendored in .yarn/releases — any yarn launcher on PATH works.
 cd mlx-node
 yarn install
-yarn build:native
+yarn build:native      # needs cmake, cargo, and (macOS 26+) the Metal Toolchain on PATH
 cd ..
 
 # Install GenMLX's native dependency. @mlx-node/core and @mlx-node/lm resolve from
@@ -51,8 +56,10 @@ cd ..
 # must have completed first.
 bun install
 
-# Verify the install — should print "0 failures, 0 errors"
-bun run --bun nbb test/genmlx/choicemap_test.cljs
+# Verify the install — this test runs real inference through the handler loop AND
+# the freshly-built native MLX addon, so it confirms both the build and your nbb
+# version are good. Should print "0 failures, 0 errors".
+bun run --bun nbb test/genmlx/inference_test.cljs
 ```
 
 > **Note — the forks.** GenMLX vendors five git submodules, all forks maintained
