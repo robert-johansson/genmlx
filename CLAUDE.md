@@ -538,5 +538,5 @@ context. Promote to `todo` (and add "done means" criteria) when ready to spec.
 ## Related documents
 
 - `beans.md` — Task tracking guide (beans workflow, the fixed type/status/priority boundary)
-- `VISION.md` — Compilation ladder levels 0-5, the master development roadmap
+- `ARCHITECTURE.md` — The GFI as external contract, the pure-handler mechanism, the compilation ladder, and the data-driven dispatch stack (as built)
 - `README.md` — Quick start, examples, public API overview

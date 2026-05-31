@@ -1,12 +1,14 @@
 # GenMLX Architecture: The Generative Function Interface as Universal Integration Boundary
 
-*This document is a blueprint for GenMLX's architecture, its refactoring toward clean separation of concerns, and its integration with domain-specific systems including language models, vision, audio, and databases. It defines the abstractions precisely enough to guide both implementation and future research.*
+*This document describes GenMLX's architecture as built: the Generative Function Interface as an external contract, the pure-handler mechanism that implements it, the compilation ladder layered on top, and the data-driven dispatch that keeps these separate. It defines the abstractions precisely enough to guide implementation and extension.*
+
+*Speculative material — the domain-integration pattern (LLMs, vision, audio, databases) and forward-looking research directions — has been moved out of the repo to keep this document an accurate record of the implemented system.*
 
 ---
 
 # Part I -- The Protocol
 
-> **Status: IMPLEMENTED** -- Parts I-III and V describe the current GenMLX architecture as built.
+> **Status: IMPLEMENTED** -- Every part of this document describes the current GenMLX architecture as built.
 
 A probabilistic programming system needs a contract. Not a set of library functions, not an API surface area, but a *mathematical contract* that specifies exactly what operations are available on probabilistic computations, what guarantees they provide, and what callers may assume. The Generative Function Interface (GFI) is that contract.
 
@@ -437,152 +439,18 @@ The score encoding should be explicit metadata on the transition result, not an 
 
 ---
 
-# Part IV -- Domain Integration Pattern
-
-> **Status: PLANNED** -- The architectural patterns below are defined but not yet implemented. They show how the GFI extends to new computational domains.
-
-*Parts IV and VI describe planned integration patterns and research directions. The architectural foundations (Parts I--III, V) are implemented; the domain-specific integrations below show how they extend to new computational domains.*
-
-## 4.1 The Universal Recipe
-
-The GFI boundary is domain-agnostic. Any domain integrates through the same four-step recipe:
-
-1. **Define what the generative function represents.** What is the sample space? What does `trace` name? What does `score` measure?
-2. **Implement a transition function.** Either a standard `(fn [state addr dist] -> [value state'])` for domains that fit the distribution-per-site pattern, or a full `IGenerativeFunction` record for domains with specialized structure.
-3. **Optionally provide middleware.** Domain-specific constraints, analytical solvers, or custom proposals compose as middleware layers on the base transition.
-4. **All inference algorithms work automatically.** IS, MCMC, SMC, VI, ADEV, MAP -- they operate through the GFI boundary. A new domain gets the entire inference library for free.
-
-
-## 4.2 Language Models
-
-The most detailed integration. GenMLX subsumes the entire GenLM ecosystem (genlm-backend, genlm-bytes, genlm-grammar, genlm-control) by making LLMs first-class generative functions in the GFI.
-
-**Token-level LLM generative function.** Each trace site is a token position. The transition samples a token from the next-token logit distribution, scores it as log *p*(token | context), and advances the KV cache in the handler state:
-
-```clojure
-(defn token-transition [state addr dist]
-  (let [logits (forward-pass (:kv-cache state) (:context state))
-        [k1 k2] (rng/split (:key state))
-        token (categorical-sample logits k2)
-        lp (log-softmax-at logits token)]
-    [token (-> state
-               (assoc :key k1)
-               (update :choices cm/set-value addr token)
-               (update :score #(mx/add % lp))
-               (update :kv-cache advance-cache token)
-               (update :context conj token))]))
-```
-
-This is a transition function. It plugs into `run-handler`. All GFI operations work: `generate` constrains token positions, `update` changes constraints, `regenerate` resamples selected positions.
-
-**Byte-level combinator.** Handler substitution marginalizes over tokenizations:
-
-```clojure
-(def byte-llm (with-handler token-llm beam-transition))
-```
-
-The `beam-transition` maintains K tokenization hypotheses via a TokenByteTrie. At each byte position, it extends all K hypotheses, scores them under the LLM's token distribution, and prunes to the top K. The score is the log of the sum of probabilities across surviving hypotheses -- a beam-approximated marginal likelihood over tokenizations.
-
-**Grammar constraints.** Middleware on the transition:
-
-```clojure
-(def grammar-llm
-  (with-handler byte-llm
-    (wrap-grammar byte-transition (compile-wfsa #"[A-Z][a-z]+"))))
-```
-
-WFSAs from regular expressions and WCFGs from Lark grammars implement the same interface: given a prefix, return the set of valid next bytes and their weights. Earley parsing provides incremental prefix weight computation for context-free grammars.
-
-**AWRS sampler.** An inference algorithm in `inference/awrs.cljs`, alongside `mcmc.cljs` and `smc.cljs`. It proposes from the LLM, accepts/rejects based on a boolean constraint, and produces properly weighted samples for SMC.
-
-**What GenMLX adds beyond GenLM:**
-
-- **Full GFI interface.** `update` and `regenerate` enable MCMC on text. GenLM has only SMC.
-- **The edit interface.** `ProposalEdit` with forward/backward generative functions enables reversible-jump MCMC on text structure -- insert a paragraph, delete a clause, restructure an argument -- with correct acceptance probabilities. GenLM has no equivalent.
-- **Heterogeneous composition via splice.** LLM + continuous + discrete in one model.
-- **Exact enumeration composition.** Small discrete latent spaces controlling LLM generation, enumerated exactly.
-- **Vectorized inference.** `[N]`-shaped batched particles through shape polymorphism.
-- **The compilation ladder.** Eventually fusing LLM + constraint + inference into compiled graphs.
-
-
-## 4.3 Vision
-
-The renderer is a deterministic computation inside the `gen` body, not a generative function:
-
-```clojure
-(gen [observed-image]
-  (let [n-objects (trace :n-objects (dist/poisson 3))
-        poses (for [i (range n-objects)]
-                (trace (keyword (str "pose-" i))
-                       (dist/mvn-gaussian prior-mean prior-cov)))
-        shapes (for [i (range n-objects)]
-                 (trace (keyword (str "shape-" i))
-                        (dist/categorical shape-logits)))
-        rendered (render-scene poses shapes)]  ;; deterministic
-    (trace :image (dist/gaussian rendered noise-std))))
-```
-
-Latent variables: object count, poses, shapes. The renderer maps latents to a predicted image. The likelihood scores rendered vs. observed. Inference: SMC with coarse-to-fine proposals, HMC on continuous pose parameters. The renderer's Jacobian flows through `mx/grad`.
-
-
-## 4.4 Audio
-
-The synthesizer is a deterministic function inside the `gen` body. Latent variables: pitch, timbre, duration, onset, envelope. The likelihood compares synthesized and observed spectrograms. Inference: HMC on continuous parameters, Gibbs on discrete parameters.
-
-The real-time case uses `update`. As new audio frames arrive, `update` incorporates new observations without re-running inference from scratch. The `Unfold` combinator models temporal structure; `update` adds each new step's constraints. This is online inference -- each `update` is a state transition on the immutable trace.
-
-
-## 4.5 Databases
-
-A table model is a generative function over rows. Each column is a trace site. Row clustering is a latent discrete variable. GFI operations map directly to SQL semantics:
-
-- `SELECT` = `simulate` (generate a synthetic row)
-- `WHERE` = `generate` with constraints (condition on column values)
-- `PROBABILITY OF` = `assess` (score a specific row)
-- SQL `UPDATE` = GFI `update` (incorporate new rows)
-
-Small categorical columns use exact enumeration. Conjugate continuous columns use L3 analytical elimination. The combination yields exact inference for a significant class of tabular models. GenSQL, written in Clojure, is the most natural integration target.
-
-
-## 4.6 Cross-Domain Composition
-
-The payoff: splice heterogeneous generative functions into one model.
-
-```clojure
-(gen [image audio transcript]
-  (let [scene   (splice :scene scene-model)
-        sounds  (splice :audio audio-model)
-        text    (splice :language llm-model)]
-    (trace :coherent (dist/bernoulli (coherence scene sounds text)))))
-```
-
-Each domain has its own transition. The dispatcher stack selects the right one per splice. Inference composes domain-specific proposals through the kernel algebra:
-
-```clojure
-(def cross-domain-kernel
-  (kernel/cycle
-    [(kernel/repeat (mcmc/hmc :scene 10) 5)   ;; HMC on scene poses
-     (kernel/repeat (mcmc/gibbs :audio) 3)     ;; Gibbs on audio params
-     (mcmc/mh :language)                       ;; MH on language tokens
-     (mcmc/mh :coherent)]))                    ;; MH on coherence
-```
-
-The compilation ladder applies per-domain. The vision sub-model might run at L0. The audio sub-model at L3. The LLM at L2. There is no requirement that all sub-models operate at the same level -- the GFI boundary abstracts over the implementation.
-
----
-
 # Part V -- Separation of Concerns
 
-The previous sections argued that GenMLX's architecture already embodies the right abstractions: pure transitions, immutable traces, composable protocols. The problem is not the architecture -- it is where the dispatch logic lives. Six GFI methods in `dynamic.cljs` each contain a `cond` ladder that checks schema flags to select between handler, compiled, analytical, and prefix paths. These ladders are structurally identical. They encode the same priority order with operation-specific wiring. When a new execution strategy is added, every ladder must be updated in lockstep.
+The previous sections argued that GenMLX's architecture embodies the right abstractions: pure transitions, immutable traces, composable protocols. The remaining concern is where the dispatch logic lives. The naive design puts a `cond` ladder in every GFI method of `dynamic.cljs` — each checking schema flags to select between handler, compiled, analytical, and prefix paths. Those ladders are structurally identical: same priority order, operation-specific wiring. Adding an execution strategy would mean updating every ladder in lockstep.
 
-This part describes the concrete refactoring that eliminates the ladders without changing any external behavior.
+This part describes how GenMLX avoids that: a data-driven dispatcher stack (`dispatch.cljs` + the dispatchers in `dynamic.cljs`) that replaces the ladders without changing any external behavior. It is implemented, not aspirational.
 
 
-## 5.1 What Changes
+## 5.1 The Design
 
-Three additions, one modification.
+Three pieces: a dispatcher protocol, a stack of dispatchers, and thin GFI methods that delegate to the stack.
 
-**The dispatcher protocol** (`dispatch.cljs`, 63 lines):
+**The dispatcher protocol** (`dispatch.cljs`):
 
 ```clojure
 (defprotocol IDispatcher
@@ -612,7 +480,7 @@ Resolution walks the stack, returns the first non-nil dispatch-spec. The `:run` 
 
 **Score encoding**: Each dispatch-spec carries `:score-type` (`:joint`, `:marginal`, `:collapsed`, `:beam-marginal`).
 
-**DynamicGF protocol methods** (modified): The six `cond` ladders collapse. Each method becomes:
+**DynamicGF protocol methods**: There are no `cond` ladders. Each method delegates to the stack:
 
 ```clojure
 (simulate [this args]
@@ -625,9 +493,9 @@ Resolution walks the stack, returns the first non-nil dispatch-spec. The `:run` 
 ```
 
 
-## 5.2 What Stays
+## 5.2 What the Dispatch Layer Leaves Untouched
 
-The refactoring is internal. Every external surface is unchanged.
+The dispatch layer is internal. Every external surface below is independent of it.
 
 - **`handler.cljs`**: All 10 transitions remain as-is. They are already pure functions with the right signature.
 - **`runtime.cljs`**: The `volatile!` boundary stays. `run-handler` stays.
@@ -653,14 +521,14 @@ src/genmlx/
   selection.cljs              ;; Composable address selection algebra
 
   ;; Layer 2: GFI Protocols + Dispatch
-  protocols.cljs              ;; 7 GFI protocols (unchanged)
-  handler.cljs                ;; 10 pure transitions (unchanged)
-  dispatch.cljs               ;; NEW: IDispatcher protocol, stack, with-handler
+  protocols.cljs              ;; GFI protocols
+  handler.cljs                ;; 10 pure transitions
+  dispatch.cljs               ;; IDispatcher protocol, stack walk, with-handler
 
-  ;; Layer 3: DSL + Schema (simplified)
-  gen.cljc                    ;; gen macro (unchanged)
-  schema.cljs                 ;; Schema extraction (unchanged)
-  dynamic.cljs                ;; DynamicGF: cond ladders → dispatch/resolve
+  ;; Layer 3: DSL + Schema
+  gen.cljc                    ;; gen macro
+  schema.cljs                 ;; Schema extraction
+  dynamic.cljs                ;; DynamicGF + the four dispatchers (dispatch/resolve)
 
   ;; Layer 4: Distributions (unchanged)
   dist/core.cljs, dist/macros.cljc, dist.cljs
@@ -672,46 +540,44 @@ src/genmlx/
   compiled.cljs, compiled_ops.cljs, compiled_gen.cljs
   tensor_trace.cljs, rewrite.cljs
 
-  ;; Layer 7: Inference (unchanged + new algorithms)
+  ;; Layer 7: Inference
   inference/
     importance.cljs, mcmc.cljs, smc.cljs, vi.cljs, adev.cljs
     kernel.cljs, smcp3.cljs, pmcmc.cljs
-    exact.cljs                 ;; enumerate-transition stays here
+    exact.cljs                 ;; enumerate-transition
     analytical.cljs            ;; wrap-analytical middleware
     auto_analytical.cljs       ;; Address-dispatch analytical handlers
-    conjugate.cljs, kalman.cljs, ekf.cljs, hmm_forward.cljs
+    conjugate.cljs, kalman.cljs, ekf.cljs, ekf_nd.cljs, hmm_forward.cljs
     compiled_smc.cljs, compiled_optimizer.cljs, compiled_gradient.cljs
-    awrs.cljs                  ;; PLANNED: AWRS sampler for constrained LLMs
+    differentiable.cljs, differentiable_resample.cljs, amortized.cljs
 
-  ;; Layer 8: Domain Integrations (PLANNED — not yet implemented)
-  ;; These namespaces will be created when LLM/grammar work begins.
-  ;; llm/
-  ;;   backend.cljs             ;; MLX model loading, forward pass, KV cache
-  ;;   tokenizer.cljs           ;; byte_vocab extraction
-  ;;   trie.cljs                ;; TokenByteTrie, sparse weight propagation
-  ;;   bytes.cljs               ;; ByteBeamState, beam-transition
-  ;; grammar/
-  ;;   semiring.cljs            ;; Boolean, Float, Log, MaxPlus, Entropy
-  ;;   wfsa.cljs                ;; Weighted FSA
-  ;;   wcfg.cljs                ;; Weighted CFG + Earley parser
-  ;;   fst.cljs                 ;; Weighted FST + Mohri composition
+  ;; Layer 8: LLM Integration
+  llm/
+    core.cljs                  ;; make-llm-gf: wrap LLM as DynamicGF (token = trace site)
+    backend.cljs               ;; mlx-node loader, forward pass, KV cache
+    grammar.cljs               ;; DFA-constrained generation (regex → token mask)
+    bytes.cljs                 ;; byte-level marginalization via TokenByteTrie
+    codegen.cljs               ;; reader-as-grammar for valid ClojureScript
+    msa.cljs                   ;; Model Synthesis Architecture (LLM proposes programs)
+    vision.cljs                ;; VLM input adaptation
 
-  ;; Layer 9: Analysis (unchanged)
-  affine.cljs, conjugacy.cljs, dep_graph.cljs
+  ;; Layer 9: Analysis
+  affine.cljs, conjugacy.cljs, dep_graph.cljs, rewrite.cljs
   method_selection.cljs, fit.cljs
 
-  ;; Layer 10: Verification (unchanged)
-  contracts.cljs, verify.cljs
+  ;; Layer 10: Verification
+  gfi.cljs                     ;; 53 algebraic laws from the Cusumano-Towner thesis
+  verify.cljs                  ;; static validator (validate-gen-fn)
 
-  ;; Support (unchanged)
+  ;; Support
   edit.cljs, diff.cljs, gradients.cljs, learning.cljs
   custom_gradient.cljs, nn.cljs, vectorized.cljs, serialize.cljs
 ```
 
 
-## 5.4 Migration Path
+## 5.4 How Execution Strategies Map Onto the Stack
 
-Each existing pattern maps cleanly:
+Each execution strategy maps onto the dispatch design cleanly:
 
 - **ExactGF record** → `(enumerate model)` via `with-dispatch`. The record's manual protocol reimplementations are deleted. The `enumerate-transition` function, the post-processing algebra (`marginal`, `condition-on`, `joint-marginal`, `extract-table`, `expectation`, `entropy`, `variance`, `mutual-info`), the high-level API (`exact-posterior`, `exact-joint`, `pr`, `observes`), and the utilities (`categorical-argmax`, `with-cache`) all stay in `inference/exact.cljs` -- they operate on the raw handler output, not on a separate record.
 - **`exact/Exact` annotation** → `(enumerate model)`. Same metadata mechanism, cleaner name.
@@ -719,69 +585,5 @@ Each existing pattern maps cleanly:
 - **Compiled path selection** → moves into `CompiledDispatcher/resolve-transition`.
 - **The `cond` ladder in each GFI method** → single call to `(dispatch/resolve stack op schema opts)`.
 
-Existing tests pass unchanged because the GFI protocol surface is identical. The refactoring is internal -- callers never see the dispatch mechanism.
+The GFI protocol surface is identical regardless of which dispatcher resolves an operation. The dispatch mechanism is internal -- callers never see it.
 
----
-
-# Part VI -- Research Directions
-
-> **Status: RESEARCH DIRECTIONS** -- Not yet implemented.
-
-## 6.1 L5 -- LLMs in the Fused Graph
-
-An LLM forward pass is a sequence of matrix multiplications and attention operations -- already an MLX computation graph. The target: constrained text generation where the host never orchestrates individual tokens. `mx/compile-fn` receives a function that takes `(params, kv-cache, grammar-state, particle-weights)` and returns `(new-kv-cache, new-grammar-state, new-particle-weights, selected-tokens)`. One Metal dispatch per token.
-
-The dispatcher protocol makes this possible without modifying the model. The model still says `(trace :next-token (constrained-lm grammar))`, and the compiled dispatcher sees a pattern it can fuse.
-
-
-## 6.2 Theory Search
-
-Meta-generative models over model structure. The outer model samples which mechanisms to include (discrete choices). The inner model implements each mechanism. The data provides the likelihood signal. The posterior over mechanism configurations is the posterior over theories.
-
-`Switch` selects between sub-models. Exact enumeration marginalizes discrete structure variables. SMC handles sequential data. The compilation ladder makes the inner loop tractable by fusing each candidate theory's evaluation into Metal.
-
-This connects to the cognitive-architecture layer: habituation to theory-based RL as probabilistic program induction.
-
-
-## 6.3 Cross-Modal Inference
-
-Vision, language, and physics composed in one model, with joint inference across modalities:
-
-```clojure
-(def scene-model
-  (gen [image utterance]
-    (let [objects (splice :scene  (physics-prior))
-          pixels  (splice :render (renderer objects))
-          caption (splice :lang   (language-model objects))]
-      (trace :image (dist/gaussian pixels noise))
-      (trace :text  (constrained-lm grammar caption utterance)))))
-```
-
-Each splice site brings its own transition. SMC with domain-specific proposals handles the heterogeneous latent space. The kernel algebra composes HMC (continuous), MH (discrete), and AWRS (constrained text).
-
-
-## 6.4 Formal Verification
-
-GenMLX's 11 contracts verify GFI correctness via property-based testing. A stronger guarantee: mechanized proofs (Lean) that handler transitions satisfy the GFI axioms. The pure-handler architecture makes this tractable -- transitions are pure functions with algebraic specifications.
-
-The dispatcher stack adds a proof obligation: composition of dispatchers must preserve the GFI contract. Score-type declarations make this obligation explicit and checkable.
-
-
-## 6.5 Real-Time Online Inference
-
-GenMLX's natural mode is online inference. `update` modifies existing traces incrementally as new data arrives. For robotics, audio, and interactive systems: real-time posterior updates without re-running inference from scratch. The `IUpdateWithDiffs` protocol tells combinators which sub-computations to skip. Combined with compiled update transitions, this gives microsecond-level latency for incremental updates.
-
-
-## 6.6 The Functional-Probabilistic Correspondence, Extended
-
-The GenMLX paper identifies 14 correspondences between functional and probabilistic programming. The domain integration pattern adds more:
-
-| Functional concept | Probabilistic concept | Domain instance |
-|---|---|---|
-| Pure function in gen body | Deterministic subroutine | Renderer, synthesizer, simulator |
-| Middleware on transition | Domain constraint | Grammar, physics, schema validation |
-| Address/value space | Domain vocabulary | Tokens, pixels, frequencies, rows |
-| Likelihood connecting splices | Cross-domain coherence | Image matches described scene |
-| Dispatcher stack | Execution strategy selection | Handler, AWRS, enumerate, beam |
-
-The thesis extends: probabilistic programming, functional programming, and domain-specific computation are aspects of a single framework for compositional computation under uncertainty. A generative function is a function. A trace is a value. A transition is a state machine. A constraint is middleware. A score is a number. The mathematical structure is the same at every level. The compilation ladder, the dispatcher, the domain integrations, and the inference algorithms all compose because they all respect the same algebraic interface.
