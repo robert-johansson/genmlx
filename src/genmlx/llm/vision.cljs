@@ -85,7 +85,6 @@
         str/trim
         (str/split #"\s+")
         first
-        (or "")
         str/lower-case
         (str/replace #"[^a-z]" ""))))
 

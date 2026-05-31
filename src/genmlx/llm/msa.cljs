@@ -126,16 +126,15 @@
   (let [lines (str/split-lines (str/trim text))]
     (reduce
      (fn [acc var-kw]
-       (let [var-name (name var-kw)
-             line (some #(when (str/starts-with? (str/trim %) var-name) %)
-                        lines)]
-         (if-not line
-           acc
+       (let [var-name (name var-kw)]
+         (if-let [line (some #(when (str/starts-with? (str/trim %) var-name) %)
+                             lines)]
            (let [expr (-> line
                           (str/replace (re-pattern (str "^\\s*" var-name "\\s*[=:]\\s*")) "")
                           str/trim
                           (str/replace #"[,;]\s*$" ""))]
-             (assoc acc var-kw expr)))))
+             (assoc acc var-kw expr))
+           acc)))
      {}
      variables)))
 

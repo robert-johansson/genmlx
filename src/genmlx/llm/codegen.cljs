@@ -137,22 +137,24 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
 (defn extract-code
   "Extract ClojureScript code from LLM output text."
   [text]
-  (if-not (seq text)
+  (cond
+    ;; Empty text
+    (not (seq text))
     ""
-    (cond
-      ;; Fenced code block
-      (re-find #"```(?:clojure|cljs|clojurescript|clj)?\s*\n" text)
-      (let [m (re-find #"```(?:clojure|cljs|clojurescript|clj)?\s*\n([\s\S]*?)```" text)]
-        (if m (str/trim (nth m 1)) ""))
 
-      ;; Starts with paren -- raw code
-      (str/starts-with? (str/trim text) "(")
-      (str/trim text)
+    ;; Fenced code block
+    (re-find #"```(?:clojure|cljs|clojurescript|clj)?\s*\n" text)
+    (let [m (re-find #"```(?:clojure|cljs|clojurescript|clj)?\s*\n([\s\S]*?)```" text)]
+      (if m (str/trim (nth m 1)) ""))
 
-      ;; Strip prefix to first paren
-      :else
-      (let [idx (str/index-of text "(")]
-        (if idx (subs text idx) "")))))
+    ;; Starts with paren -- raw code
+    (str/starts-with? (str/trim text) "(")
+    (str/trim text)
+
+    ;; Strip prefix to first paren
+    :else
+    (let [idx (str/index-of text "(")]
+      (if idx (subs text idx) ""))))
 
 ;; ============================================================
 ;; 7.5 Reader-constrained byte GF
@@ -211,16 +213,20 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
                                new-prefix (str prefix chosen-byte)
                                next-node (get-in trie-pos [:children chosen-byte])
                                new-acc (conj bytes-acc chosen-byte)]
-                           (if (= :complete status)
+                           (cond
+                             (= :complete status)
                              new-acc
-                             (if (bytes/trie-leaf? next-node)
-                               (recur (inc i) trie new-prefix
-                                      (bytes/logits->logprobs
-                                       (llm/forward-step model
-                                                         (bytes/commit-token-id next-node)))
-                                      new-acc)
-                               (recur (inc i) next-node new-prefix logprobs
-                                      new-acc))))))))
+
+                             (bytes/trie-leaf? next-node)
+                             (recur (inc i) trie new-prefix
+                                    (bytes/logits->logprobs
+                                     (llm/forward-step model
+                                                       (bytes/commit-token-id next-node)))
+                                    new-acc)
+
+                             :else
+                             (recur (inc i) next-node new-prefix logprobs
+                                    new-acc)))))))
                  (finally
                    (llm/reset-cache! model))))))))))
 
