@@ -20,7 +20,6 @@
    Belief representation: {:log-alpha [P,K]-shaped log-probability vector}
    where P = batch dimension (e.g. units), K = number of discrete states."
   (:require [genmlx.mlx :as mx]
-            [genmlx.dist :as dist]
             [genmlx.dist.core :as dc]
             [genmlx.choicemap :as cm]
             [genmlx.handler :as h]

@@ -20,10 +20,7 @@
    See ../genmlx-lab/dev/docs/PLAN_SENSORIMOTOR_NARS_GENMLX.md."
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
-            [genmlx.dynamic :as dyn]
-            [genmlx.choicemap :as cm]
-            [genmlx.protocols :as p]
-            [genmlx.mlx.random :as rng])
+            [genmlx.dynamic :as dyn])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; =============================================================================

@@ -17,9 +17,7 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.compiled-ops :as cops]
-            [genmlx.choicemap :as cm]
             [genmlx.tensor-trace :as tt]
-            [genmlx.inference.util :as u]
             [genmlx.inference.differentiable-resample :as dr]))
 
 ;; =========================================================================

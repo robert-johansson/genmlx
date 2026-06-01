@@ -8,7 +8,6 @@
    problem-specific sequential inference strategies."
   (:require [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
-            [genmlx.selection :as sel]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.edit :as edit]

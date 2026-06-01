@@ -9,7 +9,6 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.choicemap :as cm]
             [genmlx.protocols :as p]
-            [genmlx.trace :as tr]
             [cljs.reader :as reader]))
 
 (def ^:private fs (js/require "fs"))

@@ -14,7 +14,6 @@
    Level 3 — WP-5: Algebraic Graph Rewriting."
   (:require [genmlx.dep-graph :as dep-graph]
             [genmlx.affine :as affine]
-            [genmlx.conjugacy :as conj]
             [genmlx.inference.auto-analytical :as auto]
             [genmlx.handler :as h]))
 

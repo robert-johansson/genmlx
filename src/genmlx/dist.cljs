@@ -8,9 +8,9 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist.core :as dc]
-            [genmlx.mlx.constants :refer [LOG-2PI ZERO ONE TWO THREE HALF
-                                          NEG-INF LOG-2PI-HALF LOG-PI MLX-PI
-                                          SQRT-TWO TINY]])
+            [genmlx.mlx.constants :refer [LOG-2PI ZERO ONE TWO HALF
+                                          NEG-INF LOG-2PI-HALF MLX-PI
+                                          SQRT-TWO]])
   (:require-macros [genmlx.dist.macros :refer [defdist]]))
 
 ;; ---------------------------------------------------------------------------

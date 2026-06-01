@@ -15,10 +15,8 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.inference.util :as u]
-            [genmlx.inference.compiled-smc :as csmc]
             [genmlx.inference.differentiable-resample :as dr]
             [genmlx.compiled-ops :as cops]
-            [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]))
 

@@ -706,7 +706,6 @@
 (defn set-wired-limit!  [n] (.setWiredLimit c n))
 (defn clear-cache!      []  (.clearCache c))
 
-
 (defn metal-is-available? [] (.metalIsAvailable c))
 (defn metal-device-info []
   (let [info (js/JSON.parse (.metalDeviceInfo c))]

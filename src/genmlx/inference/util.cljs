@@ -7,8 +7,7 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
-            [genmlx.compiled-ops :as cops]
-            [genmlx.tensor-trace :as tt]))
+            [genmlx.compiled-ops :as cops]))
 
 (defn materialize-weights
   "Evaluate a vector of MLX log-weight scalars and return them as a single

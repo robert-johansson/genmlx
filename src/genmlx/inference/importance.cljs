@@ -1,7 +1,6 @@
 (ns genmlx.inference.importance
   "Importance sampling inference."
   (:require [genmlx.protocols :as p]
-            [genmlx.trace :as tr]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.inference.util :as u]

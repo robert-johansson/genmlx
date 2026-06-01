@@ -1,6 +1,8 @@
 (ns genmlx.protocols
   "GFI (Generative Function Interface) protocol definitions.
-   Layered design: simulate is required, everything else has defaults.")
+   Ten single-operation protocols. There are no protocol-level defaults: each
+   generative function implements the operations it supports (simulate is the
+   conceptual primitive; the generic run-* dispatch logic lives in the handler).")
 
 (defprotocol IGenerativeFunction
   (simulate [gf args]
@@ -32,7 +34,7 @@
 (defprotocol IProject
   (project [gf trace selection]
     "Compute log-probability of selected choices in trace.
-     Returns MLX scalar log-weight."))
+     Returns MLX-scalar log-weight."))
 
 (defprotocol IUpdateWithDiffs
   (update-with-diffs [gf trace constraints argdiffs]

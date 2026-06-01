@@ -13,7 +13,6 @@
             [genmlx.mlx.random :as rng]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
-            [genmlx.choicemap :as cm]
             [genmlx.inference.util :as u]
             [genmlx.inference.compiled-gradient :as cg]
             [genmlx.inference.vi :as vi]))
