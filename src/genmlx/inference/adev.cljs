@@ -267,9 +267,7 @@
                   (let [store {:params (learn/array->params p param-names)}
                         gf' (vary-meta gf assoc :genmlx.dynamic/param-store store)]
                     (vadev-surrogate gf' args cost-fn n-samples key bl)))
-        grad-fn (fn [p key bl]
-                  (let [[loss grad] ((mx/value-and-grad loss-fn) p key bl)]
-                    [loss grad]))
+        vg (mx/value-and-grad loss-fn)
         opt-state (learn/adam-init init-params)]
     (loop [i 0
            params init-params
@@ -286,7 +284,7 @@
               ;; equivalent to "no baseline" on the first iteration.
               bl (mx/scalar (or baseline 0.0))
               [loss grad] (mx/tidy-run
-                            #(grad-fn params key bl)
+                            #(vg params key bl)
                             (fn [[l g]] [l g]))
               loss-val (mx/item loss)
               new-baseline (ema-update baseline-decay baseline loss-val)

@@ -121,6 +121,16 @@
   (mx/subtract (mx/logsumexp (:weight vtrace))
                (mx/scalar (js/Math.log (:n-particles vtrace)))))
 
+(defn vtrace-ess
+  "Effective sample size from a VectorizedTrace's [N] weights."
+  [vtrace]
+  (let [w (:weight vtrace)
+        log-probs (mx/subtract w (mx/logsumexp w))
+        probs     (mx/exp log-probs)
+        _         (mx/materialize! probs)
+        probs-clj (mx/->clj probs)]
+    (/ 1.0 (transduce (map #(* % %)) + probs-clj))))
+
 ;; ---------------------------------------------------------------------------
 ;; Merge two VectorizedTraces by boolean mask (for per-particle MH accept/reject)
 ;; ---------------------------------------------------------------------------
@@ -144,17 +154,3 @@
   (assoc current
     :choices (merge-choicemap-by-mask (:choices current) (:choices proposed) mask)
     :score   (mx/where mask (:score proposed) (:score current))))
-
-;; ---------------------------------------------------------------------------
-;; Diagnostics
-;; ---------------------------------------------------------------------------
-
-(defn vtrace-ess
-  "Effective sample size from a VectorizedTrace's [N] weights."
-  [vtrace]
-  (let [w (:weight vtrace)
-        log-probs (mx/subtract w (mx/logsumexp w))
-        probs     (mx/exp log-probs)
-        _         (mx/materialize! probs)
-        probs-clj (mx/->clj probs)]
-    (/ 1.0 (transduce (map #(* % %)) + probs-clj))))

@@ -370,6 +370,15 @@
     (rt/run-handler transition init-state
       (fn [rt] (apply (:body-fn gf) rt args)))))
 
+(defn- add-ll
+  "Nil-safe marginal-LL accumulation: nil is the additive identity, so a
+   missing accumulator or step contribution is treated as the other operand
+   (and two nils stay nil)."
+  [acc-ll step-ll]
+  (if (and acc-ll step-ll)
+    (mx/add acc-ll step-ll)
+    (or acc-ll step-ll)))
+
 (defn conjugate-fold
   "Fold a per-step gen function over T timesteps under conjugate handler(s).
 
@@ -395,6 +404,4 @@
             step-ll (:conjugate-ll result)]
         (recur (inc t)
                (:conjugate-posteriors result)
-               (if (and acc-ll step-ll)
-                 (mx/add acc-ll step-ll)
-                 (or step-ll acc-ll)))))))
+               (add-ll acc-ll step-ll))))))

@@ -74,6 +74,12 @@
 ;; Method dispatcher
 ;; ---------------------------------------------------------------------------
 
+(defn- opt
+  "Coalesce an option across alias keys, falling back to default.
+   (opt opts 100 :samples :n-samples) => first truthy of those keys, else 100."
+  [opts default & ks]
+  (or (some opts ks) default))
+
 (defn- run-method
   "Execute the selected inference method. Returns a partial result map
    (without :method and :elapsed-ms — those are added by `fit`)."
@@ -92,10 +98,10 @@
     :hmc
     (let [residual (or (:residual-addrs opts) [])
           addrs (vec residual)
-          hmc-opts {:samples (or (:samples opts) (:n-samples opts) 100)
-                    :step-size (or (:step-size opts) 0.01)
-                    :leapfrog-steps (or (:n-leapfrog opts) 10)
-                    :burn (or (:burn opts) (:n-warmup opts) 50)
+          hmc-opts {:samples (opt opts 100 :samples :n-samples)
+                    :step-size (opt opts 0.01 :step-size)
+                    :leapfrog-steps (opt opts 10 :n-leapfrog)
+                    :burn (opt opts 50 :burn :n-warmup)
                     :addresses addrs
                     :key (:key opts)}
           samples (mcmc/hmc hmc-opts model args data)]
@@ -106,8 +112,8 @@
 
     ;; --- MH (generic MCMC) ---
     :mcmc
-    (let [mh-opts {:samples (or (:samples opts) 200)
-                   :burn (or (:burn opts) 100)
+    (let [mh-opts {:samples (opt opts 200 :samples)
+                   :burn (opt opts 100 :burn)
                    :key (:key opts)}
           traces (mcmc/mh mh-opts model args data)]
       {:trace (last traces)
@@ -119,8 +125,8 @@
     :vi
     (let [residual (or (:residual-addrs opts) [])
           addrs (vec residual)
-          vi-opts (merge {:iterations (or (:iterations opts) (:n-iters opts) 500)
-                          :lr (or (:lr opts) (:learning-rate opts) 0.01)}
+          vi-opts (merge {:iterations (opt opts 500 :iterations :n-iters)
+                          :lr (opt opts 0.01 :lr :learning-rate)}
                          (select-keys opts [:key]))
           result (co/learn model args data addrs vi-opts)]
       {:trace nil
@@ -133,7 +139,7 @@
     ;; --- SMC (no temporal structure → fall back to IS) and handler-based
     ;;     importance sampling (safest fallback): identical IS path ---
     (:smc :handler-is)
-    (let [is-opts {:samples (or (:particles opts) (:n-particles opts) 200)
+    (let [is-opts {:samples (opt opts 200 :particles :n-particles)
                    :key (:key opts)}
           {:keys [traces log-ml-estimate]} (importance/importance-sampling
                                              is-opts model args data)
@@ -156,9 +162,9 @@
    param-names: vector of param keywords to optimize.
    inference-result: initial inference result from run-method."
   [model args data inference-result param-names method-opts user-opts]
-  (let [learn-opts {:iterations (or (:iterations user-opts) 200)
-                    :lr (or (:lr user-opts) 0.01)
-                    :log-every (or (:log-every user-opts) 50)
+  (let [learn-opts {:iterations (opt user-opts 200 :iterations)
+                    :lr (opt user-opts 0.01 :lr)
+                    :log-every (opt user-opts 50 :log-every)
                     :callback (:callback user-opts)}
         result (co/learn model args data param-names learn-opts)]
     (merge inference-result

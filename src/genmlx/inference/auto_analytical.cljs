@@ -308,13 +308,12 @@
 (defn- kalman-init-belief
   "Initialize or predict Kalman belief for step i."
   [i steps state params]
-  (let [prev-latent (when (> i 0) (:latent (nth steps (dec i))))
-        prev-belief (when prev-latent
-                      (get-in state [:auto-kalman-beliefs prev-latent]))]
-    (if (nil? prev-belief)
-      {:mean (:mu params) :var (mx/multiply (:sigma params) (:sigma params))}
-      (kalman-predict-belief prev-belief (:transition (nth steps (dec i)))
-                             (mx/multiply (:sigma params) (:sigma params))))))
+  (let [prev-step (when (pos? i) (nth steps (dec i)))
+        noise-var (mx/multiply (:sigma params) (:sigma params))]
+    (if-some [prev-belief (some->> (:latent prev-step)
+                                   (get (:auto-kalman-beliefs state)))]
+      (kalman-predict-belief prev-belief (:transition prev-step) noise-var)
+      {:mean (:mu params) :var noise-var})))
 
 (defn- kalman-obs-update
   "Pure Kalman observation update math.

@@ -49,7 +49,7 @@
    vector of CLJS doubles; otherwise the [n,d] sample array as nested CLJS."
   [mu sigma d rk]
   (fn [n]
-    (let [sample-key (if rk rk (rng/fresh-key))
+    (let [sample-key (or rk (rng/fresh-key))
           eps (rng/normal sample-key [n d])
           samples (mx/add mu (mx/multiply sigma eps))]
       (mx/materialize! samples)

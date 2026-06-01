@@ -20,7 +20,8 @@
   [forward-fn gradient-fn]
   (fn [& args]
     (let [fwd (apply forward-fn args)
-          grads (gradient-fn (vec args) fwd (mx/scalar 1.0))
+          cotangent (mx/scalar 1.0)            ; seed cotangent for the backward pass
+          grads (gradient-fn (vec args) fwd cotangent)
           surrogate (reduce mx/add ZERO
                       (map (fn [g a] (mx/multiply (mx/stop-gradient g) a))
                            grads args))]

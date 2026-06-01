@@ -228,7 +228,7 @@
                             :weight (mx/scalar 0.0)
                             :key key
                             :constraints constraints
-                            :hmm-n (if (pos? n) n nil)
+                            :hmm-n (when (pos? n) n)
                             :hmm-belief (or init-belief uniform-prior)}
                      param-store (assoc :param-store param-store))]
     (rt/run-handler transition init-state

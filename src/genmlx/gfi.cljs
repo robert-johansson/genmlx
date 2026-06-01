@@ -20,7 +20,7 @@
 
    Usage:
      (gfi/verify model args)              ;; run all laws
-     (gfi/verify model args {:laws [:update-density-ratio]})
+     (gfi/verify model args :law-names [:update-density-ratio])
      (gfi/check-law :score-decomposition model args)
 
    See also: genmlx.contracts (DEPRECATED — all 11 contracts subsumed here)
@@ -1690,9 +1690,9 @@
   "Run GFI laws against a model. Returns structured report.
 
    Options:
-     :laws     — subset of law keywords to run (default: all)
-     :tags     — subset of tag keywords; runs laws matching ANY tag
-     :n-trials — number of independent trials per law (default: 10)"
+     :law-names — subset of law keywords to run (default: all)
+     :tags      — subset of tag keywords; runs laws matching ANY tag
+     :n-trials  — number of independent trials per law (default: 10)"
   [model args & {:keys [law-names tags n-trials]
                  :or {n-trials 10}}]
   (let [model (dyn/auto-key model)

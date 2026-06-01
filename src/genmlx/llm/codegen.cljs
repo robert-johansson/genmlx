@@ -479,6 +479,10 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
     (sequential? form) (some returns-map-literals? form)
     :else false))
 
+(def ^:private occurrence-weights
+  "Per-occurrence penalty weights for commonly misused patterns."
+  {'assoc -2 'assoc-in -3 'update-in -3 'cond-> -4})
+
 (defn score-structure
   "Score the structural quality of a ClojureScript form.
    Higher = more idiomatic for transition functions.
@@ -491,10 +495,8 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
      (if (form-contains? form 'dec) 3 0)
      (if (form-contains? form 'inc) 3 0)
      (if (form-contains? form :keys) 2 0)
-     (* -2 (count-occurrences form 'assoc))
-     (* -3 (count-occurrences form 'assoc-in))
-     (* -3 (count-occurrences form 'update-in))
-     (* -4 (count-occurrences form 'cond->))))
+     (reduce-kv (fn [acc sym w] (+ acc (* w (count-occurrences form sym))))
+                0 occurrence-weights)))
 
 ;; ============================================================
 ;; 7.12 Scored generation

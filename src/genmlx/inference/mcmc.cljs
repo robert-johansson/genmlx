@@ -237,6 +237,28 @@
                    total-steps " total steps). " (.-message e)
                    ". Use the block-compiled version instead."))))))
 
+(defn- run-blocks
+  "Drive a block-compiled chain phase: run `n-blocks` iterations of `step`,
+   breaking the lazy graph after each block and clearing the Metal cache on
+   the configured cadence. Centralizes the loop/materialize!/clear-cache!
+   control flow shared by the compiled burn-in phases.
+
+   `init` is the starting threaded state. `step` is (fn [state b] -> [state'
+   to-materialize]) where `to-materialize` is a seq of MLX arrays whose graph
+   is broken before the next block. `:clear-cache` controls the clear-cache!
+   cadence: true = every block, integer N = every Nth block, falsey = never.
+   Returns the final state."
+  [n-blocks init step {:keys [clear-cache] :or {clear-cache true}}]
+  (loop [state init, b 0]
+    (if (>= b n-blocks)
+      state
+      (let [[state' to-materialize] (step state b)]
+        ;; Break lazy graph between blocks
+        (apply mx/materialize! to-materialize)
+        (when (if (number? clear-cache) (zero? (mod b clear-cache)) clear-cache)
+          (mx/clear-cache!))
+        (recur state' (inc b))))))
+
 (defn- make-fused-burn-in
   "Compile a function that runs n-burn MH steps in one Metal dispatch.
    Returns compiled fn: (params [D], noise [B,D], uniforms [B]) → params [D].
@@ -444,16 +466,14 @@
             [params rk]
             (if (and burn-chain (> burn 0))
               (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
-                (loop [p init-params, b 0, rk rk]
-                  (if (>= b n-blocks) [p rk]
-                      (let [[k1 k2 rk'] (rng/split-n rk 3)
-                            noise (rng/normal k1 [burn-block-size n-params])
-                            uniforms (rng/uniform k2 [burn-block-size])
-                            p' (burn-chain p noise uniforms)]
-                        ;; Break lazy graph between burn-in blocks
-                        (mx/materialize! p')
-                        (mx/clear-cache!)
-                        (recur p' (inc b) rk')))))
+                (run-blocks n-blocks [init-params rk]
+                  (fn [[p rk] _]
+                    (let [[k1 k2 rk'] (rng/split-n rk 3)
+                          noise (rng/normal k1 [burn-block-size n-params])
+                          uniforms (rng/uniform k2 [burn-block-size])
+                          p' (burn-chain p noise uniforms)]
+                      [[p' rk'] [p']]))
+                  {}))
               [init-params rk])
         ;; Phase 2: Collect samples
             result
@@ -883,19 +903,18 @@
               [params rk]
               (if (> burn 0)
                 (let [n-burn-blocks (js/Math.ceil (/ burn k))]
-                  (loop [p init-params, b 0, rk rk]
-                    (if (>= b n-burn-blocks) [p rk]
-                        (let [[k1 k2 rk'] (rng/split-n rk 3)
-                              noise (rng/normal k1 [k n-chains n-params])
-                              uniforms (rng/uniform k2 [k n-chains])
-                              traj (chain p noise uniforms)]
-                          ;; Break lazy graph between burn-in blocks
-                          (mx/materialize! traj)
-                        ;; Extract last step [N,D] from trajectory [K,N,D]
-                          (let [p' (mx/reshape
-                                    (mx/take-idx traj (mx/array [(dec k)] mx/int32) 0)
-                                    [n-chains n-params])]
-                            (recur p' (inc b) rk'))))))
+                  (run-blocks n-burn-blocks [init-params rk]
+                    (fn [[p rk] _]
+                      (let [[k1 k2 rk'] (rng/split-n rk 3)
+                            noise (rng/normal k1 [k n-chains n-params])
+                            uniforms (rng/uniform k2 [k n-chains])
+                            traj (chain p noise uniforms)
+                            ;; Extract last step [N,D] from trajectory [K,N,D]
+                            p' (mx/reshape
+                                (mx/take-idx traj (mx/array [(dec k)] mx/int32) 0)
+                                [n-chains n-params])]
+                        [[p' rk'] [traj]]))
+                    {:clear-cache false}))
                 [init-params rk])
 
               ;; Phase 2: Collect via trajectory blocks, pool across chains
@@ -1263,17 +1282,15 @@
             [params score grad rk]
             (if (and burn-chain (> burn 0))
               (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
-                (loop [q init-q, sq init-score, gq init-grad, b 0, rk rk]
-                  (if (>= b n-blocks) [q sq gq rk]
-                      (let [[k1 k2 rk'] (rng/split-n rk 3)
-                            noise (rng/normal k1 [burn-block-size n-params])
-                            uniforms (rng/uniform k2 [burn-block-size])
-                            r (burn-chain q sq gq noise uniforms)
-                            q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
-                        ;; Break lazy graph between burn-in blocks
-                        (mx/materialize! q' sq' gq')
-                        (mx/clear-cache!)
-                        (recur q' sq' gq' (inc b) rk')))))
+                (run-blocks n-blocks [init-q init-score init-grad rk]
+                  (fn [[q sq gq rk] _]
+                    (let [[k1 k2 rk'] (rng/split-n rk 3)
+                          noise (rng/normal k1 [burn-block-size n-params])
+                          uniforms (rng/uniform k2 [burn-block-size])
+                          r (burn-chain q sq gq noise uniforms)
+                          q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
+                      [[q' sq' gq' rk'] [q' sq' gq']]))
+                  {}))
               [init-q init-score init-grad rk])
         ;; Phase 2: Collect samples (tidy-run prevents Metal resource leak)
             result (loop [q params, sq score, gq grad, acc (transient []), i 0, rk rk]
@@ -1948,16 +1965,14 @@
             [params rk]
             (if (and burn-chain (> burn 0))
               (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
-                (loop [q init-q, b 0, rk rk]
-                  (if (>= b n-blocks) [q rk]
-                      (let [[k1 k2 rk'] (rng/split-n rk 3)
-                            momentum (rng/normal k1 [burn-block-size n-params])
-                            uniforms (rng/uniform k2 [burn-block-size])
-                            q' (burn-chain q momentum uniforms)]
-                        ;; Break lazy graph between burn-in blocks
-                        (mx/materialize! q')
-                        (mx/clear-cache!)
-                        (recur q' (inc b) rk')))))
+                (run-blocks n-blocks [init-q rk]
+                  (fn [[q rk] _]
+                    (let [[k1 k2 rk'] (rng/split-n rk 3)
+                          momentum (rng/normal k1 [burn-block-size n-params])
+                          uniforms (rng/uniform k2 [burn-block-size])
+                          q' (burn-chain q momentum uniforms)]
+                      [[q' rk'] [q']]))
+                  {}))
               [init-q rk])
         ;; Phase 2: Collect samples (tidy-materialize prevents Metal resource leak)
             result (loop [q params, acc (transient []), i 0, rk rk]

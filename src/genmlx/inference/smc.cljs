@@ -139,9 +139,13 @@
 
 (defn- smc-step
   "Subsequent timestep: resample (if ESS low), update particles, rejuvenate.
+   cfg holds the fixed per-filter config (:model :particles :ess-threshold
+   :rejuvenation-steps :rejuvenation-selection :resample-method); the remaining
+   positional args are the per-step loop state.
    Returns {:traces :log-weights :log-ml-increment}."
-  [traces log-weights model obs particles ess-threshold
-   rejuvenation-steps rejuvenation-selection resample-method key]
+  [{:keys [model particles ess-threshold rejuvenation-steps
+           rejuvenation-selection resample-method]}
+   traces log-weights obs key]
   (let [;; Check ESS and resample if needed
         ess        (u/compute-ess log-weights)
         resample?  (< ess (* ess-threshold particles))
@@ -219,9 +223,12 @@
               (recur (inc t) traces log-weights
                      (mx/add log-ml log-ml-increment) next-key))
             (let [{:keys [traces log-weights log-ml-increment ess resampled?]}
-                  (smc-step traces log-weights model obs-t particles ess-threshold
-                            rejuvenation-steps rejuvenation-selection
-                            resample-method step-key)]
+                  (smc-step {:model model :particles particles
+                             :ess-threshold ess-threshold
+                             :rejuvenation-steps rejuvenation-steps
+                             :rejuvenation-selection rejuvenation-selection
+                             :resample-method resample-method}
+                            traces log-weights obs-t step-key)]
               (when callback
                 (callback {:step t :ess ess :resampled? resampled?}))
               (recur (inc t) traces log-weights
