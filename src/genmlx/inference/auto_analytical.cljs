@@ -23,6 +23,7 @@
    - :gamma-poisson    {:shape MLX-scalar, :rate MLX-scalar}
    - :gamma-exponential {:shape MLX-scalar, :rate MLX-scalar}"
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.constants :refer [LOG-2PI]]
             [genmlx.choicemap :as cm]
             [genmlx.conjugacy :as conj]
             [genmlx.affine :as affine]
@@ -33,7 +34,6 @@
 ;; Pure update functions — thin wrappers over conjugate.cljs
 ;; ---------------------------------------------------------------------------
 
-(def ^:private LOG-2PI 1.8378770664093453)
 (def ^:private MASK-ON (mx/scalar 1.0))
 
 (defn nn-update-step

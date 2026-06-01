@@ -30,6 +30,7 @@
    - :conjugate-posteriors  {addr -> posterior-map}
    - :conjugate-ll          accumulated marginal LL"
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.constants :refer [LOG-2PI]]
             [genmlx.dist :as dist]
             [genmlx.dist.core :as dc]
             [genmlx.choicemap :as cm]
@@ -42,8 +43,6 @@
 ;; ---------------------------------------------------------------------------
 ;; Pure conjugate update functions (Level 1)
 ;; ---------------------------------------------------------------------------
-
-(def ^:private LOG-2PI 1.8378770664093453)
 
 (defn nn-update
   "Normal-Normal conjugate update.

@@ -11,6 +11,7 @@
    Encoders are nn layer maps (or atoms wrapping them). See genmlx.nn for
    the layer representation."
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.constants :refer [LOG-2PI]]
             [genmlx.mlx.random :as rng]
             [genmlx.nn :as nn]
             [genmlx.protocols :as p]
@@ -21,8 +22,6 @@
 ;; ---------------------------------------------------------------------------
 ;; Posterior families (20.2)
 ;; ---------------------------------------------------------------------------
-
-(def ^:private LOG-2PI (js/Math.log (* 2.0 js/Math.PI)))
 
 (defn- std-normal-logprob
   "Per-dimension log-density of a reparameterized normal sample with
