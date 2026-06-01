@@ -277,14 +277,14 @@
   [fwd-gf backward]
   (fn [trace key]
     (let [gf (dyn/auto-key (:gen-fn trace))
-          [_k1 _k2 k3] (rng/split-n (rng/ensure-key key) 3)
-          fwd-result    (p/propose fwd-gf [(:choices trace)])
+          [k1 k2 k3]   (rng/split-n (rng/ensure-key key) 3)
+          fwd-result    (p/propose (dyn/with-key fwd-gf k1) [(:choices trace)])
           fwd-choices   (:choices fwd-result)
           fwd-score     (:weight fwd-result)
           update-result (p/update gf trace fwd-choices)
           trace'        (:trace update-result)
           update-weight (:weight update-result)
-          bwd-result    (p/assess backward [(:choices trace')] (:discard update-result))
+          bwd-result    (p/assess (dyn/with-key backward k2) [(:choices trace')] (:discard update-result))
           bwd-score     (:weight bwd-result)
           _             (mx/materialize! update-weight fwd-score bwd-score)
           log-alpha     (mx/item (mx/subtract (mx/add update-weight bwd-score)
@@ -307,8 +307,8 @@
     (symmetric-kernel
       (fn [trace key]
         (let [gf (dyn/auto-key (:gen-fn trace))
-              [_k1 k2]     (rng/split (rng/ensure-key key))
-              fwd-result    (p/propose fwd-gf [(:choices trace)])
+              [k1 k2]      (rng/split (rng/ensure-key key))
+              fwd-result    (p/propose (dyn/with-key fwd-gf k1) [(:choices trace)])
               fwd-choices   (:choices fwd-result)
               update-result (p/update gf trace fwd-choices)
               w             (mx/realize (:weight update-result))]
