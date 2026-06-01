@@ -149,30 +149,28 @@
         objective
         (fn [params]
           ;; params affects init-state (simple case: params IS init-state)
-          (let [init-n (mx/broadcast-to params [particles])
-                result
-                (loop [t 0
-                       current-state init-n
-                       log-ml (mx/scalar 0.0)]
-                  (if (>= t T)
-                    log-ml
-                    (let [obs-t (nth obs-vec t)
-                          noise-t (mx/index extend-noise t)
-                          kernel-args [(mx/ensure-array t) current-state]
-                          {:keys [obs-log-prob values-map retval]}
-                          (extend-fn noise-t kernel-args obs-t)
-                          new-state (or retval (get values-map (first all-addrs)))
-                          ;; Log-ML increment
-                          ml-inc (mx/subtract (mx/logsumexp obs-log-prob)
-                                              (mx/scalar (js/Math.log particles)))
-                          ;; Soft-resample state (differentiable)
-                          gumbel-t (mx/index gumbel-noise t)
-                          resampled-state (dr/gumbel-softmax-1d
-                                            new-state obs-log-prob
-                                            gumbel-t tau-arr)]
-                      (recur (inc t) resampled-state
-                             (mx/add log-ml ml-inc)))))]
-            result))
+          (let [init-n (mx/broadcast-to params [particles])]
+            (loop [t 0
+                   current-state init-n
+                   log-ml (mx/scalar 0.0)]
+              (if (>= t T)
+                log-ml
+                (let [obs-t (nth obs-vec t)
+                      noise-t (mx/index extend-noise t)
+                      kernel-args [(mx/ensure-array t) current-state]
+                      {:keys [obs-log-prob values-map retval]}
+                      (extend-fn noise-t kernel-args obs-t)
+                      new-state (or retval (get values-map (first all-addrs)))
+                      ;; Log-ML increment
+                      ml-inc (mx/subtract (mx/logsumexp obs-log-prob)
+                                          (mx/scalar (js/Math.log particles)))
+                      ;; Soft-resample state (differentiable)
+                      gumbel-t (mx/index gumbel-noise t)
+                      resampled-state (dr/gumbel-softmax-1d
+                                        new-state obs-log-prob
+                                        gumbel-t tau-arr)]
+                  (recur (inc t) resampled-state
+                         (mx/add log-ml ml-inc)))))))
         vag (mx/value-and-grad objective)
         [value grad] (vag model-params)]
     (mx/materialize! value grad)

@@ -59,7 +59,7 @@
     [value (-> state
                (assoc :key k1)
                (update :choices cm/set-value addr value)
-               (update :score #(mx/add % lp)))]))
+               (update :score mx/add lp))]))
 
 (defn generate-transition
   "Pure: if constrained at addr, use constraint; otherwise simulate."
@@ -70,8 +70,8 @@
             lp (dc/dist-log-prob dist value)]
         [value (-> state
                    (update :choices cm/set-value addr value)
-                   (update :score #(mx/add % lp))
-                   (update :weight #(mx/add % lp)))])
+                   (update :score mx/add lp)
+                   (update :weight mx/add lp))])
       (simulate-transition state addr dist))))
 
 (defn assess-transition
@@ -83,8 +83,8 @@
             lp (dc/dist-log-prob dist value)]
         [value (-> state
                    (update :choices cm/set-value addr value)
-                   (update :score #(mx/add % lp))
-                   (update :weight #(mx/add % lp)))])
+                   (update :score mx/add lp)
+                   (update :weight mx/add lp))])
       (throw (ex-info (str "assess: address " addr " not found in provided choices. "
                            "All addresses must be constrained for assess.")
                       {:addr addr})))))
@@ -103,8 +103,8 @@
             old-lp (if old-val (dc/dist-log-prob dist old-val) ZERO)]
         [new-val (-> state
                      (update :choices cm/set-value addr new-val)
-                     (update :score #(mx/add % new-lp))
-                     (update :weight #(mx/add % (mx/subtract new-lp old-lp)))
+                     (update :score mx/add new-lp)
+                     (update :weight mx/add (mx/subtract new-lp old-lp))
                      (cond->
                       old-val (update :discard cm/set-value addr old-val)))])
 
@@ -114,7 +114,7 @@
             lp (dc/dist-log-prob dist val)]
         [val (-> state
                  (update :choices cm/set-value addr val)
-                 (update :score #(mx/add % lp)))])
+                 (update :score mx/add lp))])
 
       ;; New address: sample fresh
       :else (simulate-transition state addr dist))))
@@ -134,8 +134,8 @@
         [new-val (-> state
                      (assoc :key k1)
                      (update :choices cm/set-value addr new-val)
-                     (update :score #(mx/add % new-lp))
-                     (update :weight #(mx/add % (mx/subtract new-lp old-lp))))])
+                     (update :score mx/add new-lp)
+                     (update :weight mx/add (mx/subtract new-lp old-lp)))])
       ;; Not selected: keep old
       (let [val (when (cm/has-value? old-choice)
                   (cm/get-value old-choice))]
@@ -146,25 +146,25 @@
         (let [lp (dc/dist-log-prob dist val)]
           [val (-> state
                    (update :choices cm/set-value addr val)
-                   (update :score #(mx/add % lp)))])))))
+                   (update :score mx/add lp))])))))
 
 (defn project-transition
   "Pure: replay old value, accumulate log-prob for selected addresses."
   [state addr dist]
   (let [old-choice (cm/get-submap (:old-choices state) addr)
         val (when (cm/has-value? old-choice)
-              (cm/get-value old-choice))
-        _ (when (nil? val)
-            (throw (ex-info (str "project: address not found in previous trace choices. "
-                                 "Cannot replay a value for an address that was never sampled.")
-                            {})))
-        lp (dc/dist-log-prob dist val)
-        sel (:selection state)]
-    [val (-> state
-             (update :choices cm/set-value addr val)
-             (update :score #(mx/add % lp))
-             (cond-> (and sel (sel/selected? sel addr))
-               (update :weight #(mx/add % lp))))]))
+              (cm/get-value old-choice))]
+    (when (nil? val)
+      (throw (ex-info (str "project: address not found in previous trace choices. "
+                           "Cannot replay a value for an address that was never sampled.")
+                      {})))
+    (let [lp (dc/dist-log-prob dist val)
+          sel (:selection state)]
+      [val (-> state
+               (update :choices cm/set-value addr val)
+               (update :score mx/add lp)
+               (cond-> (and sel (sel/selected? sel addr))
+                 (update :weight mx/add lp)))])))
 
 ;; ---------------------------------------------------------------------------
 ;; Batched state transitions (vectorized: [N]-shaped values)
@@ -180,7 +180,7 @@
     [value (-> state
                (assoc :key k1)
                (update :choices cm/set-value addr value)
-               (update :score #(mx/add % lp)))]))
+               (update :score mx/add lp))]))
 
 (defn batched-generate-transition
   "Pure: constrained sites use scalar observation (broadcasts into [N] score),
@@ -193,8 +193,8 @@
             lp (dc/dist-log-prob dist value)]
         [value (-> state
                    (update :choices cm/set-value addr value)
-                   (update :score #(mx/add % lp))
-                   (update :weight #(mx/add % lp)))])
+                   (update :score mx/add lp)
+                   (update :weight mx/add lp))])
       (batched-simulate-transition state addr dist))))
 
 (defn batched-update-transition
@@ -212,8 +212,8 @@
             old-lp (if old-val (dc/dist-log-prob dist old-val) ZERO)]
         [new-val (-> state
                      (update :choices cm/set-value addr new-val)
-                     (update :score #(mx/add % new-lp))
-                     (update :weight #(mx/add % (mx/subtract new-lp old-lp)))
+                     (update :score mx/add new-lp)
+                     (update :weight mx/add (mx/subtract new-lp old-lp))
                      (cond->
                       old-val (update :discard cm/set-value addr old-val)))])
 
@@ -223,7 +223,7 @@
             lp (dc/dist-log-prob dist val)]
         [val (-> state
                  (update :choices cm/set-value addr val)
-                 (update :score #(mx/add % lp)))])
+                 (update :score mx/add lp))])
 
       ;; New address: sample [N] fresh values
       :else (batched-simulate-transition state addr dist))))
@@ -244,14 +244,14 @@
         [new-val (-> state
                      (assoc :key k1)
                      (update :choices cm/set-value addr new-val)
-                     (update :score #(mx/add % new-lp))
-                     (update :weight #(mx/add % (mx/subtract new-lp old-lp))))])
+                     (update :score mx/add new-lp)
+                     (update :weight mx/add (mx/subtract new-lp old-lp)))])
       ;; Not selected: keep old [N]-shaped values
       (let [val (cm/get-value old-choice)
             lp (dc/dist-log-prob dist val)]
         [val (-> state
                  (update :choices cm/set-value addr val)
-                 (update :score #(mx/add % lp)))]))))
+                 (update :score mx/add lp))]))))
 
 ;; ---------------------------------------------------------------------------
 ;; Pure helpers used by runtime.cljs
@@ -262,11 +262,11 @@
   [state addr sub-result]
   (-> state
       (update :choices cm/set-submap addr (:choices sub-result))
-      (update :score (fn [sc] (mx/add sc (:score sub-result))))
+      (update :score mx/add (:score sub-result))
       (update :splice-scores (fn [ss] (assoc (or ss {}) addr (:score sub-result))))
       (cond->
        (and (contains? state :weight) (:weight sub-result))
-        (update :weight (fn [w] (mx/add w (:weight sub-result))))
+        (update :weight mx/add (:weight sub-result))
 
         (:discard sub-result)
         (update :discard cm/set-submap addr (:discard sub-result))

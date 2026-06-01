@@ -129,17 +129,17 @@
         (importance-sampling {:samples particles :key key} model args observations)
         ;; Normalize weights via log-softmax
         {:keys [probs]} (u/normalize-log-weights log-weights)
-        key (or key (rng/fresh-key))]
+        key (or key (rng/fresh-key))
+        keys (rng/split-n key samples)]
     ;; Resample
-    (let [keys (rng/split-n key samples)]
-      (mapv (fn [ki]
-              (let [u (mx/realize (rng/uniform ki []))
-                    result (reduce (fn [cumsum [i p]]
-                                     (let [cumsum' (+ cumsum p)]
-                                       (if (>= cumsum' u)
-                                         (reduced (nth traces i))
-                                         cumsum')))
-                                   0.0
-                                   (map-indexed vector probs))]
-                (if (number? result) (last traces) result)))
-            keys))))
+    (mapv (fn [ki]
+            (let [u (mx/realize (rng/uniform ki []))
+                  result (reduce (fn [cumsum [i p]]
+                                   (let [cumsum' (+ cumsum p)]
+                                     (if (>= cumsum' u)
+                                       (reduced (nth traces i))
+                                       cumsum')))
+                                 0.0
+                                 (map-indexed vector probs))]
+              (if (number? result) (last traces) result)))
+          keys)))

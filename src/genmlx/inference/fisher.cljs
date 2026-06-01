@@ -65,12 +65,11 @@
   "Cholesky decomposition with increasing damping fallback.
    Returns {:L cholesky-factor, :added-damping scalar} or nil."
   [a D schedule]
-  (reduce (fn [_ tau]
-            (let [a-damped (if (zero? tau) a (mx/add a (mx/multiply (mx/scalar tau) (mx/eye D))))
-                  L (try-cholesky a-damped)]
-              (when L (reduced {:L L :added-damping tau}))))
-          nil
-          schedule))
+  (some (fn [tau]
+          (let [a-damped (if (zero? tau) a (mx/add a (mx/multiply (mx/scalar tau) (mx/eye D))))]
+            (when-let [L (try-cholesky a-damped)]
+              {:L L :added-damping tau})))
+        schedule))
 
 (defn- try-solve
   "Attempt solve, return solution or nil on failure."
@@ -85,12 +84,10 @@
   "Solve F·d = b with increasing damping fallback.
    Falls back to b (steepest descent) if all attempts fail, with a warning."
   [F b D schedule]
-  (or (reduce (fn [_ tau]
-                (let [F-damped (if (zero? tau) F (mx/add F (mx/multiply (mx/scalar tau) (mx/eye D))))
-                      d (try-solve F-damped b)]
-                  (when d (reduced d))))
-              nil
-              schedule)
+  (or (some (fn [tau]
+              (let [F-damped (if (zero? tau) F (mx/add F (mx/multiply (mx/scalar tau) (mx/eye D))))]
+                (try-solve F-damped b)))
+            schedule)
       (do (js/console.warn "Fisher: robust-solve failed, falling back to steepest descent")
           b)))
 

@@ -142,10 +142,11 @@
                    (fn [cs other]
                      (let [k (cov-key addrs addr other)
                            p (get cs k)]
-                       (if (= addr other)
-                         (assoc cs k (mx/add (mx/multiply A (mx/multiply A p))
-                                             (mx/multiply q q)))
-                         (assoc cs k (mx/multiply A p)))))
+                       (assoc cs k
+                              (if (= addr other)
+                                (mx/add (mx/multiply A (mx/multiply A p))
+                                        (mx/multiply q q))
+                                (mx/multiply A p)))))
                    covs addrs)]
     [f-z0 new-means new-covs]))
 

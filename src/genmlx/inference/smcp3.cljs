@@ -33,9 +33,8 @@
   [model args observations proposal-gf particles key]
   (let [model (dyn/auto-key model)
         proposal-gf (when proposal-gf (dyn/auto-key proposal-gf))
-        keys (rng/split-n (rng/ensure-key key) particles)
         results (mapv
-                  (fn [ki]
+                  (fn [_]
                     (if proposal-gf
                       ;; Use proposal to generate initial choices
                       (let [proposal-result (p/propose proposal-gf [])
@@ -53,7 +52,7 @@
                       (let [r (p/generate model args observations)]
                         (mx/materialize! (:weight r) (:score (:trace r)))
                         r)))
-                  keys)
+                  (range particles))
         traces (mapv :trace results)
         log-weights (mapv :weight results)
         w-arr (u/materialize-weights log-weights)
@@ -99,9 +98,8 @@
                                 (vec (repeat particles (mx/scalar 0.0)))])
                              [traces log-weights])
         ;; Apply forward kernel to each particle via edit
-        step-keys (rng/split-n-or-nils step-key particles)
         results (mapv
-                  (fn [trace ki]
+                  (fn [trace]
                     (if forward-kernel
                       ;; Use proposal edit
                       (let [edit-req (if backward-kernel
@@ -117,7 +115,7 @@
                       (let [result (p/update (:gen-fn trace) trace observations)]
                         (mx/materialize! (:weight result))
                         {:trace (:trace result) :weight (:weight result)})))
-                  traces' step-keys)
+                  traces')
         new-traces (mapv :trace results)
         update-weights (mapv :weight results)
         new-weights (mapv mx/add weights' update-weights)
@@ -176,21 +174,17 @@
          :log-ml-estimate log-ml}
         (let [obs-t (nth obs-vec t)
               [step-key next-key] (rng/split-or-nils rk)
-              _ (when (and (pos? t) (zero? (mod t 10))) (mx/sweep-dead-arrays!) (mx/clear-cache!))]
-          (if (zero? t)
-            ;; Init step
-            (let [{:keys [traces log-weights log-ml-increment]}
-                  (smcp3-init model args obs-t init-proposal particles step-key)]
-              (when callback
-                (callback {:step t :ess (u/compute-ess log-weights)}))
-              (recur (inc t) traces log-weights
-                     (mx/add log-ml log-ml-increment) next-key))
-            ;; Subsequent steps
-            (let [{:keys [traces log-weights log-ml-increment ess resampled?]}
-                  (smcp3-step traces log-weights model obs-t
-                              forward-kernel backward-kernel
-                              particles ess-threshold rejuvenation-fn step-key)]
-              (when callback
-                (callback {:step t :ess ess :resampled? resampled?}))
-              (recur (inc t) traces log-weights
-                     (mx/add log-ml log-ml-increment) next-key))))))))
+              _ (when (and (pos? t) (zero? (mod t 10))) (mx/sweep-dead-arrays!) (mx/clear-cache!))
+              {new-traces :traces new-weights :log-weights :keys [log-ml-increment]
+               :as result}
+              (if (zero? t)
+                (smcp3-init model args obs-t init-proposal particles step-key)
+                (smcp3-step traces log-weights model obs-t
+                            forward-kernel backward-kernel
+                            particles ess-threshold rejuvenation-fn step-key))]
+          (when callback
+            (callback (if (zero? t)
+                        {:step t :ess (u/compute-ess new-weights)}
+                        {:step t :ess (:ess result) :resampled? (:resampled? result)})))
+          (recur (inc t) new-traces new-weights
+                 (mx/add log-ml log-ml-increment) next-key))))))

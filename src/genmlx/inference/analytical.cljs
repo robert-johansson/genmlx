@@ -26,11 +26,10 @@
    the dispatch map before falling through to base-transition."
   [base-transition dispatch-map]
   (fn [state addr dist]
-    (if-let [handler-fn (get dispatch-map (:type dist))]
-      ;; Handler can return nil to signal "not my address" — fall through
-      (or (handler-fn state addr dist)
-          (base-transition state addr dist))
-      (base-transition state addr dist))))
+    ;; Handler can return nil to signal "not my address" — fall through
+    (or (when-let [handler-fn (get dispatch-map (:type dist))]
+          (handler-fn state addr dist))
+        (base-transition state addr dist))))
 
 (defn compose-middleware
   "Compose multiple dispatch maps into a single transition.

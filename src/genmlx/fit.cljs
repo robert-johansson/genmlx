@@ -235,30 +235,30 @@
                                          (select-keys opts [:particles :samples :iterations
                                                             :step-size :n-leapfrog])))
                      auto-selection)
-         {:keys [method reason]} selection
-         _ (when (:verbose? opts)
-             (println (str "[fit] Selected method: " (name method) " — " reason)))
-         ;; 2. Tune options (safe — user may override with methods the tuner
-         ;;    doesn't know, e.g. :mcmc. Fall back to user opts in that case.)
-         tuned (try (ms/tune-method-opts selection)
-                    (catch :default _e (:opts selection)))
-         method-opts (merge tuned
-                            (select-keys opts [:lr :iterations :particles :samples
-                                               :key :step-size :n-leapfrog :burn])
-                            ;; Pass residual-addrs through for HMC/VI
-                            {:residual-addrs (:residual-addrs selection)})
-         ;; 3. Run inference
-         result (run-method model args data method method-opts)
-         ;; 4. Optional: parameter learning loop
-         result (if (:learn opts)
-                  (run-learning-loop model args data result
-                                     (:learn opts) method-opts opts)
-                  result)
-         elapsed (- (js/Date.now) start-time)]
-     (assoc result
-            :method method
-            :elapsed-ms elapsed
-            :diagnostics (merge (:diagnostics result)
+         {:keys [method reason]} selection]
+     (when (:verbose? opts)
+       (println (str "[fit] Selected method: " (name method) " — " reason)))
+     (let [;; 2. Tune options (safe — user may override with methods the tuner
+           ;;    doesn't know, e.g. :mcmc. Fall back to user opts in that case.)
+           tuned (try (ms/tune-method-opts selection)
+                      (catch :default _e (:opts selection)))
+           method-opts (merge tuned
+                              (select-keys opts [:lr :iterations :particles :samples
+                                                 :key :step-size :n-leapfrog :burn])
+                              ;; Pass residual-addrs through for HMC/VI
+                              {:residual-addrs (:residual-addrs selection)})
+           ;; 3. Run inference
+           result (run-method model args data method method-opts)
+           ;; 4. Optional: parameter learning loop
+           result (if (:learn opts)
+                    (run-learning-loop model args data result
+                                       (:learn opts) method-opts opts)
+                    result)
+           elapsed (- (js/Date.now) start-time)]
+       (assoc result
+              :method method
+              :elapsed-ms elapsed
+              :diagnostics (merge (:diagnostics result)
                                 {:reason reason
                                  :n-residual (:n-residual selection)
-                                 :n-latent (:n-latent selection)})))))
+                                 :n-latent (:n-latent selection)}))))))

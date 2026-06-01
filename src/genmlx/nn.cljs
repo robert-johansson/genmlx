@@ -24,6 +24,11 @@
 (declare make-linear-rebuild make-layer-norm-rebuild make-embedding-rebuild
          make-sequential-rebuild rebuild-with-params)
 
+(defn- apply-layers
+  "Run x through each layer's :forward in order."
+  [x layers]
+  (reduce (fn [acc layer] ((:forward layer) acc)) x layers))
+
 ;; ---------------------------------------------------------------------------
 ;; Layer constructors
 ;; ---------------------------------------------------------------------------
@@ -59,7 +64,7 @@
                                     (:params layer)))
                              (map-indexed vector layers)))]
     {:params all-params
-     :forward (fn [x] (reduce (fn [acc layer] ((:forward layer) acc)) x layers))
+     :forward (fn [x] (apply-layers x layers))
      :type :sequential
      :layers (vec layers)
      :rebuild (make-sequential-rebuild (vec layers))}))
@@ -184,26 +189,26 @@
 
 (defn- make-sequential-rebuild [child-layers]
   (fn rebuild [new-params]
-    (let [rebuilt (vec (map-indexed
-                         (fn [i child]
-                           (let [prefix (str i "/")
-                                 ;; Look up each child's param keys via the parent's
-                                 ;; prefixed keys. Uses direct `get` on new-params
-                                 ;; to preserve traced array identity for autograd.
-                                 child-param-keys (keys (:params child))
-                                 child-params (reduce
-                                                (fn [acc ck]
-                                                  (let [pk (keyword (str prefix (name ck)))]
-                                                    (if-let [v (get new-params pk)]
-                                                      (assoc acc ck v)
-                                                      acc)))
-                                                {} child-param-keys)]
-                             (if (empty? child-params)
-                               child
-                               (rebuild-with-params child child-params))))
-                         child-layers))]
+    (let [rebuilt (mapv
+                    (fn [i child]
+                      (let [prefix (str i "/")
+                            ;; Look up each child's param keys via the parent's
+                            ;; prefixed keys. Uses direct `get` on new-params
+                            ;; to preserve traced array identity for autograd.
+                            child-param-keys (keys (:params child))
+                            child-params (reduce
+                                           (fn [acc ck]
+                                             (let [pk (keyword (str prefix (name ck)))]
+                                               (if-let [v (get new-params pk)]
+                                                 (assoc acc ck v)
+                                                 acc)))
+                                           {} child-param-keys)]
+                        (if (empty? child-params)
+                          child
+                          (rebuild-with-params child child-params))))
+                    (range) child-layers)]
       {:params new-params
-       :forward (fn [x] (reduce (fn [acc l] ((:forward l) acc)) x rebuilt))
+       :forward (fn [x] (apply-layers x rebuilt))
        :type :sequential
        :layers rebuilt
        :rebuild (make-sequential-rebuild rebuilt)})))
@@ -318,20 +323,24 @@
             b2cs (mx/scalar (- 1.0 beta2))
             lrs  (mx/scalar lr)
             epss (mx/scalar eps)]
-        (reduce (fn [acc [k p]]
-                  (let [g  (get grads k)
-                        mk (mx/add (mx/multiply b1s (get m k (mx/zeros (mx/shape p))))
-                                   (mx/multiply b1cs g))
-                        vk (mx/add (mx/multiply b2s (get v k (mx/zeros (mx/shape p))))
-                                   (mx/multiply b2cs (mx/square g)))
-                        mh (mx/divide mk (mx/scalar (- 1.0 (js/Math.pow beta1 t))))
-                        vh (mx/divide vk (mx/scalar (- 1.0 (js/Math.pow beta2 t))))
-                        np (mx/subtract p (mx/divide (mx/multiply lrs mh)
-                                                     (mx/add (mx/sqrt vh) epss)))]
-                    (swap! state assoc-in [:m k] mk)
-                    (swap! state assoc-in [:v k] vk)
-                    (assoc acc k np)))
-                {} params)))))
+        (let [{:keys [params m' v']}
+              (reduce (fn [acc [k p]]
+                        (let [g  (get grads k)
+                              mk (mx/add (mx/multiply b1s (get m k (mx/zeros (mx/shape p))))
+                                         (mx/multiply b1cs g))
+                              vk (mx/add (mx/multiply b2s (get v k (mx/zeros (mx/shape p))))
+                                         (mx/multiply b2cs (mx/square g)))
+                              mh (mx/divide mk (mx/scalar (- 1.0 (js/Math.pow beta1 t))))
+                              vh (mx/divide vk (mx/scalar (- 1.0 (js/Math.pow beta2 t))))
+                              np (mx/subtract p (mx/divide (mx/multiply lrs mh)
+                                                           (mx/add (mx/sqrt vh) epss)))]
+                          (-> acc
+                              (assoc-in [:params k] np)
+                              (assoc-in [:m' k] mk)
+                              (assoc-in [:v' k] vk))))
+                      {:params {} :m' m :v' v} params)]
+          (swap! state assoc :m m' :v v')
+          params)))))
 
 (defn optimizer
   "Create an optimizer function: (fn [params grads] -> new-params).

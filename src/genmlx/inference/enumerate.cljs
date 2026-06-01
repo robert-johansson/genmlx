@@ -107,14 +107,12 @@
     (into {}
       (map (fn [addr]
              [addr
-              (let [marginal-map
-                    (reduce (fn [acc {:keys [choices prob]}]
-                              (let [v (cm/get-choice choices [addr])
-                                    v-key (mx/item v)]
-                                (update acc v-key (fnil + 0.0) prob)))
-                            {}
-                            joint)]
-                marginal-map)])
+              (reduce (fn [acc {:keys [choices prob]}]
+                        (let [v (cm/get-choice choices [addr])
+                              v-key (mx/item v)]
+                          (update acc v-key (fnil + 0.0) prob)))
+                      {}
+                      joint)])
            addrs)))))
 
 (defn enumerate-marginal-likelihood
