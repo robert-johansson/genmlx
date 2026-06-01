@@ -243,23 +243,21 @@
   "Gaussian random-walk MH kernel. Symmetric by default.
    Single address: (random-walk :x 0.5) — proposes x' = x + N(0, 0.5).
    Multi-address:  (random-walk {:x 0.5 :y 0.1}) — chains per-address walks."
-  ([addr-or-map std]
-   (if (map? addr-or-map)
-     (apply chain (map (fn [[a s]] (random-walk a s)) addr-or-map))
-     (symmetric-kernel
-       (fn [trace key]
-         (let [gf (dyn/auto-key (:gen-fn trace))
-               [k1 k2] (rng/split (rng/ensure-key key))
-               cur-val (cm/get-choice (:choices trace) [addr-or-map])
-               noise   (mx/multiply (rng/normal k1 (mx/shape cur-val))
-                                    (mx/scalar std))
-               proposed (mx/add cur-val noise)
-               constraints (cm/choicemap addr-or-map proposed)
-               result (p/update gf trace constraints)
-               w (mx/realize (:weight result))]
-           (if (u/accept-mh? w k2)
-             (:trace result)
-             trace))))))
+  ([addr std]
+   (symmetric-kernel
+     (fn [trace key]
+       (let [gf (dyn/auto-key (:gen-fn trace))
+             [k1 k2] (rng/split (rng/ensure-key key))
+             cur-val (cm/get-choice (:choices trace) [addr])
+             noise   (mx/multiply (rng/normal k1 (mx/shape cur-val))
+                                  (mx/scalar std))
+             proposed (mx/add cur-val noise)
+             constraints (cm/choicemap addr proposed)
+             result (p/update gf trace constraints)
+             w (mx/realize (:weight result))]
+         (if (u/accept-mh? w k2)
+           (:trace result)
+           trace)))))
   ([addr-map]
    (if (map? addr-map)
      (apply chain (map (fn [[a s]] (random-walk a s)) addr-map))

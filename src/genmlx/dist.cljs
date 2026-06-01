@@ -7,28 +7,17 @@
    Reparameterized sampling enables gradient flow."
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.dist.core :as dc])
+            [genmlx.dist.core :as dc]
+            [genmlx.mlx.constants :refer [LOG-2PI ZERO ONE TWO THREE HALF
+                                          NEG-INF LOG-2PI-HALF LOG-PI MLX-PI
+                                          SQRT-TWO TINY]])
   (:require-macros [genmlx.dist.macros :refer [defdist]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Constants
 ;; ---------------------------------------------------------------------------
 
-(def ^:private LOG-2PI (js/Math.log (* 2.0 js/Math.PI)))
-
-;; Cached MLX scalar constants — avoid per-call allocation.
-;; MLX arrays are immutable; mx/add etc. always create new arrays.
-(def ^:private ZERO (mx/scalar 0.0))
-(def ^:private ONE (mx/scalar 1.0))
-(def ^:private TWO (mx/scalar 2.0))
-(def ^:private THREE (mx/scalar 3.0))
-(def ^:private HALF (mx/scalar 0.5))
-(def ^:private NEG-INF (mx/scalar ##-Inf))
-(def ^:private LOG-2PI-HALF (mx/scalar (* 0.5 LOG-2PI)))
-(def ^:private LOG-PI (mx/scalar (js/Math.log js/Math.PI)))
-(def ^:private MLX-PI (mx/scalar js/Math.PI))
-(def ^:private SQRT-TWO (mx/scalar (js/Math.sqrt 2.0)))
-(def ^:private TINY (mx/scalar 1e-30))
+;; Scalar/log constants live in genmlx.mlx.constants (centralized, cached).
 (def ^:private BERNOULLI-SUPPORT [ZERO ONE])
 
 ;; ---------------------------------------------------------------------------
@@ -454,22 +443,27 @@
 ;; Categorical
 ;; ---------------------------------------------------------------------------
 
+(defn- logits->logprobs
+  "Log-softmax: normalize logits along the last axis. Shape-preserving."
+  [logits]
+  (if (> (count (mx/shape logits)) 1)
+    (mx/subtract logits (mx/expand-dims (mx/logsumexp logits [-1]) -1))
+    (mx/subtract logits (mx/logsumexp logits))))
+
 (defdist categorical
   "Categorical distribution from log-probabilities (logits)."
   [logits]
   (sample [key]
           (rng/categorical key logits))
   (log-prob [v]
-            (let [v (mx/ensure-array v mx/int32)]
+            (let [v (mx/ensure-array v mx/int32)
+                  log-probs (logits->logprobs logits)]
+        ;; Multi-dim logits [... K]: index along last axis (handles scalar v
+        ;; when constrained and multi-dim v when batched/enumerate).
+        ;; 1D logits [K]: v is scalar or [N].
               (if (> (count (mx/shape logits)) 1)
-        ;; Multi-dim logits [... K]: normalize along last axis, index along last axis.
-        ;; Handles both scalar v (constrained) and multi-dim v (batched/enumerate).
-                (let [lse (mx/expand-dims (mx/logsumexp logits [-1]) -1)
-                      log-probs (mx/subtract logits lse)]
-                  (mx/take-idx log-probs v -1))
-        ;; 1D logits [K]: v is scalar or [N]
-                (let [log-probs (mx/subtract logits (mx/logsumexp logits))]
-                  (mx/take-idx log-probs v)))))
+                (mx/take-idx log-probs v -1)
+                (mx/take-idx log-probs v))))
   (support []
            (mx/materialize! logits)
            (let [n (last (mx/shape logits))]
@@ -478,14 +472,13 @@
 (defmethod dc/dist-log-prob-support :categorical [d]
   ;; log_softmax(logits) — all K log-probs in one op.
   ;; For multi-dim logits [..., K]: transpose to put K first → [K, ...]
-  (let [{:keys [logits]} (:params d)]
+  (let [{:keys [logits]} (:params d)
+        log-probs (logits->logprobs logits)]
     (if (> (count (mx/shape logits)) 1)
-      (let [lse (mx/expand-dims (mx/logsumexp logits [-1]) -1)
-            log-probs (mx/subtract logits lse)
-            nd (count (mx/shape log-probs))
+      (let [nd (count (mx/shape log-probs))
             perm (into [(dec nd)] (range (dec nd)))]
         (mx/transpose log-probs perm))
-      (mx/subtract logits (mx/logsumexp logits)))))
+      log-probs)))
 
 (defmethod dc/dist-sample-n* :categorical [d key n]
   (let [{:keys [logits]} (:params d)

@@ -195,6 +195,29 @@
   [node]
   (first (:token-ids node)))
 
+(defn with-byte-cache
+  "Run thunk under the model's KV-cache lifecycle: initialize the cache,
+   run the body, and reset the cache in a finally block. Returns the body's
+   value. The thunk closes over the gen body's trace/state."
+  [model thunk]
+  (llm/init-cache! model)
+  (try
+    (thunk)
+    (finally
+      (llm/reset-cache! model))))
+
+(defn trie-advance
+  "Advance trie position after choosing chosen-byte at trie-pos. Returns
+   [next-trie-pos next-logprobs]. At a leaf the accumulated bytes form a
+   complete token: reset to the trie root and commit the token via a cached
+   forward step, yielding fresh logprobs. Otherwise descend and keep the
+   current logprobs."
+  [model trie trie-pos logprobs chosen-byte]
+  (let [next-node (get-in trie-pos [:children chosen-byte])]
+    (if (trie-leaf? next-node)
+      [trie (logits->logprobs (llm/forward-step model (commit-token-id next-node)))]
+      [next-node logprobs])))
+
 ;; ============================================================
 ;; Public API: unconstrained byte-level generation
 ;; ============================================================
@@ -233,9 +256,8 @@
       (gen [prompt-ids max-bytes]
            (if (zero? max-bytes)
              []
-             (do
-               (llm/init-cache! model)
-               (try
+             (with-byte-cache model
+               (fn []
                  (loop [i 0
                         trie-pos trie
                         logprobs (logits->logprobs
@@ -249,18 +271,11 @@
 
                            idx (trace (keyword (str "b" i)) dist)
                            chosen-byte (nth chars (mx/item idx))
-                           next-node (get-in trie-pos [:children chosen-byte])]
+                           [next-pos next-logprobs]
+                           (trie-advance model trie trie-pos logprobs chosen-byte)]
 
-                       (if (trie-leaf? next-node)
-                         (recur (inc i) trie
-                                (logits->logprobs
-                                 (llm/forward-step model
-                                                   (commit-token-id next-node)))
-                                (conj bytes-acc chosen-byte))
-                         (recur (inc i) next-node logprobs
-                                (conj bytes-acc chosen-byte))))))
-                 (finally
-                   (llm/reset-cache! model))))))))))
+                       (recur (inc i) next-pos next-logprobs
+                              (conj bytes-acc chosen-byte)))))))))))))
 
 ;; ============================================================
 ;; Byte trace decoding
@@ -316,9 +331,8 @@
       (gen [prompt-ids max-bytes]
            (if (zero? max-bytes)
              []
-             (do
-               (llm/init-cache! model)
-               (try
+             (with-byte-cache model
+               (fn []
                  (loop [i 0
                         trie-pos trie
                         dfa-state (:start dfa)
@@ -342,18 +356,11 @@
                                idx (trace (keyword (str "b" i)) dist)
                                chosen-byte (nth chars (mx/item idx))
                                next-dfa (grammar/dfa-advance dfa dfa-state chosen-byte)
-                               next-node (get-in trie-pos [:children chosen-byte])]
+                               [next-pos next-logprobs]
+                               (trie-advance model trie trie-pos logprobs chosen-byte)]
 
-                           (if (trie-leaf? next-node)
-                             (recur (inc i) trie next-dfa
-                                    (logits->logprobs
-                                     (llm/forward-step model
-                                                       (commit-token-id next-node)))
-                                    (conj bytes-acc chosen-byte))
-                             (recur (inc i) next-node next-dfa logprobs
-                                    (conj bytes-acc chosen-byte))))))))
-                 (finally
-                   (llm/reset-cache! model))))))))))
+                           (recur (inc i) next-pos next-dfa next-logprobs
+                                  (conj bytes-acc chosen-byte)))))))))))))))
 
 
 

@@ -60,13 +60,18 @@
 ;; Default implementation that delegates to existing GFI operations
 ;; ---------------------------------------------------------------------------
 
+(defn- discard-of
+  "The :discard choicemap from a GFI result, defaulting to the empty map."
+  [result]
+  (or (:discard result) cm/EMPTY))
+
 (defn edit-dispatch
   "Generic edit implementation that dispatches based on EditRequest type."
   [gf trace edit-request]
   (cond
     (instance? ConstraintEdit edit-request)
     (let [result (p/update gf trace (:constraints edit-request))
-          discard (or (:discard result) cm/EMPTY)]
+          discard (discard-of result)]
       (assoc result
              :backward-request (->ConstraintEdit discard)))
 
@@ -93,13 +98,13 @@
           ;; 3. Score backward proposal
           bwd-args (or backward-args [(:choices new-trace)])
           bwd-result (p/assess backward-gf bwd-args
-                               (or (:discard update-result) cm/EMPTY))
+                               (discard-of update-result))
           bwd-score (:weight bwd-result)
           ;; 4. Combined weight
           weight (mx/add update-weight (mx/subtract bwd-score fwd-score))]
       {:trace new-trace
        :weight weight
-       :discard (or (:discard update-result) cm/EMPTY)
+       :discard (discard-of update-result)
        :backward-request (->ProposalEdit backward-gf backward-args
                                           forward-gf forward-args)})
 

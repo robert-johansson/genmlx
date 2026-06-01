@@ -6,6 +6,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
+            [genmlx.mlx.constants :refer [ZERO]]
             [genmlx.selection :as sel]
             [genmlx.handler :as h]
             [genmlx.runtime :as rt]
@@ -642,8 +643,6 @@
 ;; When spliced inside a batched handler (vsimulate/vgenerate), loops T times
 ;; running the kernel body-fn ONCE per step with all N particles via the
 ;; batched handler. O(T) kernel executions instead of O(N*T).
-
-(def ^:private ZERO (mx/scalar 0.0))
 
 (extend-type UnfoldCombinator
   p/IBatchedSplice

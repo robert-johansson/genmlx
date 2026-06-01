@@ -217,43 +217,50 @@
 ;; NeuralNetGF — wraps a layer as a deterministic generative function
 ;; ---------------------------------------------------------------------------
 
+;; Deterministic GF: score and all weights/projections are zero.
+(def ^:private ZERO (mx/scalar 0.0))
+
+(defn- run-forward
+  "Run the wrapped layer's forward pass on the first arg."
+  [layer-ref args]
+  ((:forward @layer-ref) (first args)))
+
 (defrecord NeuralNetGF [layer-ref]
   ;; layer-ref is an atom containing a layer map.
   p/IGenerativeFunction
   (simulate [this args]
-    (let [layer @layer-ref
-          retval ((:forward layer) (first args))]
+    (let [retval (run-forward layer-ref args)]
       (tr/make-trace {:gen-fn this :args args
                       :choices cm/EMPTY :retval retval
-                      :score (mx/scalar 0.0)})))
+                      :score ZERO})))
 
   p/IGenerate
   (generate [this args constraints]
-    {:trace (p/simulate this args) :weight (mx/scalar 0.0)})
+    {:trace (p/simulate this args) :weight ZERO})
 
   p/IAssess
   (assess [this args choices]
-    {:retval ((:forward @layer-ref) (first args)) :weight (mx/scalar 0.0)})
+    {:retval (run-forward layer-ref args) :weight ZERO})
 
   p/IPropose
   (propose [this args]
-    {:choices cm/EMPTY :weight (mx/scalar 0.0)
-     :retval ((:forward @layer-ref) (first args))})
+    {:choices cm/EMPTY :weight ZERO
+     :retval (run-forward layer-ref args)})
 
   p/IUpdate
   (update [this trace constraints]
     {:trace (p/simulate this (:args trace))
-     :weight (mx/scalar 0.0)
+     :weight ZERO
      :discard cm/EMPTY})
 
   p/IRegenerate
   (regenerate [this trace selection]
     {:trace (p/simulate this (:args trace))
-     :weight (mx/scalar 0.0)})
+     :weight ZERO})
 
   p/IProject
   (project [this trace selection]
-    (mx/scalar 0.0))
+    ZERO)
 
   p/IHasArgumentGrads
   (has-argument-grads [_] [true]))

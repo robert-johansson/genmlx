@@ -203,34 +203,31 @@
                        "<|im_start|>assistant\n" think-skip)
          eos-id (eos-token-id tokenizer)
          greedy? (or (nil? temperature) (<= temperature 0))
-         inv-temp (when-not greedy? (mx/scalar (/ 1.0 temperature)))]
+         inv-temp (when-not greedy? (mx/scalar (/ 1.0 temperature)))
+         decode-acc (fn [acc]
+                      (decode tokenizer (js/Uint32Array.from (clj->js acc))))
+         ;; Pick the next token id and advance the PRNG key. Greedy ignores
+         ;; the key and takes the argmax; sampled splits the key and draws.
+         pick (if greedy?
+                (fn [logits rk] [(mx/item (mx/argmax logits)) rk])
+                (fn [logits rk]
+                  (let [[sample-key next-key] (rng/split rk)]
+                    [(mx/item (rng/categorical sample-key (mx/multiply logits inv-temp)))
+                     next-key])))]
      (p/let [ids-raw (encode tokenizer chat-str true)
              prompt-ids (vec ids-raw)]
        (init-cache! model)
        (try
-         (let [logits (forward-prefill model prompt-ids)]
-           (if greedy?
-             (loop [i 0, acc [], logits logits]
-               (if (>= i max-tokens)
-                 (p/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
-                   text)
-                 (let [tok-id (mx/item (mx/argmax logits))]
-                   (if (= tok-id eos-id)
-                     (p/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
-                       text)
-                     (let [next-logits (forward-step model tok-id)]
-                       (recur (inc i) (conj acc tok-id) next-logits))))))
-             (let [rk (rng/ensure-key (when seed (rng/fresh-key seed)))]
-               (loop [i 0, acc [], logits logits, rk rk]
-                 (if (>= i max-tokens)
-                   (p/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
-                     text)
-                   (let [[sample-key next-key] (rng/split rk)
-                         tok-id (mx/item (rng/categorical sample-key (mx/multiply logits inv-temp)))]
-                     (if (= tok-id eos-id)
-                       (p/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
-                         text)
-                       (let [next-logits (forward-step model tok-id)]
-                         (recur (inc i) (conj acc tok-id) next-logits next-key)))))))))
+         (loop [i 0
+                acc []
+                logits (forward-prefill model prompt-ids)
+                rk (rng/ensure-key (when seed (rng/fresh-key seed)))]
+           (if (>= i max-tokens)
+             (decode-acc acc)
+             (let [[tok-id next-rk] (pick logits rk)]
+               (if (= tok-id eos-id)
+                 (decode-acc acc)
+                 (recur (inc i) (conj acc tok-id)
+                        (forward-step model tok-id) next-rk)))))
          (finally
            (reset-cache! model)))))))

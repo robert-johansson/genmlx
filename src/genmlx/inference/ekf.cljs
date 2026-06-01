@@ -143,8 +143,7 @@
      (if (= addr latent-addr)
        (let [{:keys [transition-fn process-noise]} (:params dist)
              belief (or (:ekf-belief state)
-                        {:mean (mx/zeros [(:ekf-n state)])
-                         :var  (mx/zeros [(:ekf-n state)])})
+                        (kal/zero-belief (:ekf-n state)))
              new-belief (ekf-predict belief transition-fn process-noise)]
          [(:mean new-belief)
           (-> state
@@ -199,9 +198,7 @@
                             :key key
                             :constraints constraints
                             :ekf-n n
-                            :ekf-belief (or init-belief
-                                            {:mean (mx/zeros [n])
-                                             :var  (mx/zeros [n])})}
+                            :ekf-belief (or init-belief (kal/zero-belief n))}
                      param-store (assoc :param-store param-store))]
     (rt/run-handler transition init-state
       (fn [rt] (apply (:body-fn gf) rt args)))))
@@ -221,7 +218,7 @@
    Returns {:ll [P]-shaped total marginal LL, :belief final belief}."
   [step-fn latent-addr n T context-fn]
   (loop [t 0
-         belief {:mean (mx/zeros [n]) :var (mx/zeros [n])}
+         belief (kal/zero-belief n)
          acc-ll (mx/zeros [n])]
     (if (>= t T)
       {:ll acc-ll :belief belief}

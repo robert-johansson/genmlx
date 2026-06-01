@@ -120,16 +120,11 @@
     (clj->js shape)))
 
 (defn multivariate-normal
-  ([key mean cov]
-   (.keyMultivariateNormal c key
-     (if (mx/array? mean) mean (mx/array mean))
-     (if (mx/array? cov) cov (mx/array cov))
-     #js []))
+  ;; mx/array passes MLX arrays through unchanged, so no array?-guard is needed.
+  ([key mean cov] (multivariate-normal key mean cov []))
   ([key mean cov shape]
    (.keyMultivariateNormal c key
-     (if (mx/array? mean) mean (mx/array mean))
-     (if (mx/array? cov) cov (mx/array cov))
-     (clj->js shape))))
+     (mx/array mean) (mx/array cov) (clj->js shape))))
 
 (defn- permutation
   ([key n]

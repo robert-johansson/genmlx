@@ -179,8 +179,7 @@
         obs-seq (if (vector? observations) observations [observations])
         extract (or extract-fn
                     (fn [trace]
-                      (mapv #(mx/item (cm/get-choice (:choices trace) [%]))
-                            param-addrs)))
+                      (mapv mx/item (extract-param-vals trace param-addrs))))
         ;; Build param MH kernel from kern/random-walk
         stds-map (if (number? proposal-std)
                    (zipmap param-addrs (repeat proposal-std))

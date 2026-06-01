@@ -35,6 +35,13 @@
     ;; Gumbel(0,1) = -log(-log(clamped))
     (-> clamped mx/log mx/negative mx/log mx/negative)))
 
+(defn- perturb
+  "Broadcast [N] log-weights to [1,N] and add the [N,N] Gumbel noise, giving a
+   [N,N] perturbation matrix — one independent perturbed row per output particle."
+  [log-weights gumbel-noise]
+  (let [N (first (mx/shape log-weights))]
+    (mx/add (mx/reshape log-weights [1 N]) gumbel-noise)))
+
 ;; =========================================================================
 ;; Mode 1: Gumbel-top-k (hard, exact, non-differentiable)
 ;; =========================================================================
@@ -56,9 +63,7 @@
    NOTE: argmax returns integer indices — no gradient flows through this op.
    Use gumbel-softmax for differentiable resampling."
   [particles log-weights gumbel-noise]
-  (let [N (first (mx/shape log-weights))
-        ;; Broadcast log-weights [N] → [1,N], add [N,N] noise → [N,N]
-        perturbed (mx/add (mx/reshape log-weights [1 N]) gumbel-noise)
+  (let [perturbed (perturb log-weights gumbel-noise)
         ;; argmax per row → [N] indices WITH replacement
         ancestors (mx/astype (mx/argmax perturbed 1) mx/int32)
         ;; Gather particles by ancestor indices
@@ -92,10 +97,8 @@
 
    Fully differentiable through mx/grad — gradient flows through softmax and matmul."
   [particles log-weights gumbel-noise tau]
-  (let [N (first (mx/shape log-weights))
-        ;; Broadcast log-weights [N] → [1,N], add [N,N] noise → [N,N]
-        ;; Each row i: log_w + gumbel[i,:] — independent perturbation per output particle
-        perturbed (mx/add (mx/reshape log-weights [1 N]) gumbel-noise)
+  (let [;; Each row i: log_w + gumbel[i,:] — independent perturbation per output particle
+        perturbed (perturb log-weights gumbel-noise)
         ;; Soft weights per output particle: softmax along axis 1 → [N,N]
         ;; Each row sums to 1
         weight-matrix (mx/softmax (mx/divide perturbed tau) 1)

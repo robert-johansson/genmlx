@@ -187,14 +187,16 @@
 (def where         (.-where c))
 
 ;; Model-level helpers -- auto-promote integers, return float32.
-(defn eq?  [a b] (.astype (equal (if (number? a) (scalar a int32) a)
-                                 (if (number? b) (scalar b int32) b)) float32))
-(defn neq? [a b] (.astype (not-equal (if (number? a) (scalar a int32) a)
-                                     (if (number? b) (scalar b int32) b)) float32))
-(defn gt?  [a b] (.astype (greater (if (number? a) (scalar a) a)
-                                   (if (number? b) (scalar b) b)) float32))
-(defn lt?  [a b] (.astype (less (if (number? a) (scalar a) a)
-                                (if (number? b) (scalar b) b)) float32))
+(defn- ->cmp
+  "Coerce a number to a comparison operand; pass MLX arrays through.
+   eq?/neq? promote integers (dt int32); gt?/lt? use the float32 default."
+  ([x] (if (number? x) (scalar x) x))
+  ([x dt] (if (number? x) (scalar x dt) x)))
+
+(defn eq?  [a b] (.astype (equal (->cmp a int32) (->cmp b int32)) float32))
+(defn neq? [a b] (.astype (not-equal (->cmp a int32) (->cmp b int32)) float32))
+(defn gt?  [a b] (.astype (greater (->cmp a) (->cmp b)) float32))
+(defn lt?  [a b] (.astype (less (->cmp a) (->cmp b)) float32))
 (defn and* [a b] (multiply a b))
 (defn or*  [a b] (maximum a b))
 
@@ -499,6 +501,11 @@
            a)
          args))))
 
+(defn- ->argnum-vec
+  "Normalize an argnums spec (int or vector) to a vector of arg indices."
+  [argnums]
+  (if (vector? argnums) argnums [argnums]))
+
 (defn grad
   "Returns a function that computes gradients of f w.r.t. its arguments.
    The returned function builds a backward-pass graph lazily — gradient
@@ -514,7 +521,7 @@
    (fn [& args]
      (swap! grad-depth inc)
      (try
-       (let [argnum-vec (if (vector? argnums) argnums [argnums])
+       (let [argnum-vec (->argnum-vec argnums)
              grads (.computeGradients M f (grad-args args))]
          (if (= 1 (count argnum-vec))
            (aget grads (first argnum-vec))
@@ -537,7 +544,7 @@
      (try
        (let [result (.valueAndGrad M f (grad-args args))
              v (aget result 0)
-             argnum-vec (if (vector? argnums) argnums [argnums])
+             argnum-vec (->argnum-vec argnums)
              g (if (= 1 (count argnum-vec))
                  (aget result (inc (first argnum-vec)))
                  (mapv #(aget result (inc %)) argnum-vec))]
@@ -741,6 +748,15 @@
 
 (def ^:private cache-pressure-threshold (* 512 1024 1024))
 
+(defn- cleanup-if-cache-pressure!
+  "Run a GC/cache sweep when the Metal cache exceeds the pressure threshold."
+  []
+  (when (> (get-cache-memory) cache-pressure-threshold)
+    (jsc-cleanup!)
+    (when gc-fn (gc-fn))
+    (sweep-dead-arrays!)
+    (clear-cache!)))
+
 (defn tidy-materialize [f]
   (let [r (tidy f)] (eval! r) r))
 
@@ -752,11 +768,7 @@
               (when (seq arrays) (apply eval! arrays))
               (vreset! result-vol result)
               (to-array arrays))))
-    (when (> (get-cache-memory) cache-pressure-threshold)
-      (jsc-cleanup!)
-      (when gc-fn (gc-fn))
-      (sweep-dead-arrays!)
-      (clear-cache!))
+    (cleanup-if-cache-pressure!)
     @result-vol))
 
 (defn tidy-scalar [f]
@@ -766,11 +778,7 @@
               (eval! arr)
               (vreset! result-vol (item arr))
               (to-array [arr]))))
-    (when (> (get-cache-memory) cache-pressure-threshold)
-      (jsc-cleanup!)
-      (when gc-fn (gc-fn))
-      (sweep-dead-arrays!)
-      (clear-cache!))
+    (cleanup-if-cache-pressure!)
     @result-vol))
 
 (defn force-gc! []

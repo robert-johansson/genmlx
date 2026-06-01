@@ -5,6 +5,7 @@
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.inference.util :as u]
+            [genmlx.inference.smc :as smc]
             [genmlx.dynamic :as dyn]
             [genmlx.vectorized :as vec]))
 
@@ -17,6 +18,14 @@
   (if-let [schema (:schema model)]
     (assoc model :schema (dissoc schema :auto-handlers :conjugate-pairs))
     model))
+
+(defn- log-ml-from-weights
+  "Marginal-likelihood estimate from JS-number log-weights:
+   logsumexp(ws) - log(n), via the numerically stable max-shift."
+  [ws n]
+  (let [max-w (apply max ws)
+        lse (+ max-w (js/Math.log (reduce + (map #(js/Math.exp (- % max-w)) ws))))]
+    (- lse (js/Math.log n))))
 
 (defn importance-sampling
   "Importance sampling. Generate traces constrained by observations,
@@ -44,8 +53,7 @@
         log-weights (mapv :weight results)
         ;; log marginal likelihood estimate = logsumexp(weights) - log(N)
         weights-arr (u/materialize-weights log-weights)
-        log-ml (mx/subtract (mx/logsumexp weights-arr)
-                             (mx/scalar (js/Math.log samples)))]
+        log-ml (smc/log-ml-increment weights-arr samples)]
     {:traces traces
      :log-weights log-weights
      :log-ml-estimate log-ml}))
@@ -73,9 +81,7 @@
                          (mx/item weight)))
                      (fn [_] [])))  ;; nothing to preserve — weight extracted as JS number
                  keys)
-        max-w (apply max ws)
-        lse (+ max-w (js/Math.log (reduce + (map #(js/Math.exp (- % max-w)) ws))))
-        log-ml (- lse (js/Math.log samples))]
+        log-ml (log-ml-from-weights ws samples)]
     {:log-weights ws
      :log-ml-estimate log-ml}))
 

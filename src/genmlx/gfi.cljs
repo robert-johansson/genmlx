@@ -46,10 +46,8 @@
 ;; Helpers
 ;; ---------------------------------------------------------------------------
 
-(defn- ev
-  "Evaluate an MLX array and extract its scalar value."
-  [x]
-  (mx/realize x))
+;; Evaluate an MLX array and extract its scalar value.
+(def ^:private ev mx/realize)
 
 (defn- approx=
   "True if |a - b| <= tol. Both must be finite."
@@ -59,15 +57,15 @@
         (js/Number.isFinite b)
         (<= (js/Math.abs (- a b)) tol))))
 
-(defn- pos-infinite?
-  "True if x is +Infinity."
-  [x]
-  (and (number? x) (not (js/Number.isFinite x)) (pos? x)))
+(defn- choice-val
+  "The raw leaf value at a single-keyword address in a choicemap."
+  [cm addr]
+  (cm/get-value (cm/get-submap cm addr)))
 
-(defn- first-leaf-path
-  "Return the first leaf address path from a choicemap, or nil."
-  [choices]
-  (first (cm/addresses choices)))
+(defn- choice-num
+  "The realized numeric leaf value at a single-keyword address."
+  [cm addr]
+  (ev (choice-val cm addr)))
 
 (defn path->selection
   "Convert an address path like [:x] or [:inner :z] to a selection."
@@ -79,10 +77,8 @@
             (sel/select (last path))
             (reverse (butlast path)))))
 
-(defn- all-leaf-addrs
-  "Return all leaf address paths from a choicemap."
-  [choices]
-  (cm/addresses choices))
+;; Return all leaf address paths from a choicemap.
+(def ^:private all-leaf-addrs cm/addresses)
 
 (defn strip-compiled
   "Return a copy of model with all compiled execution paths removed from
@@ -291,15 +287,12 @@
                  (let [selected (first (first addrs))
                        unselected (map first (rest addrs))
                        orig-vals (into {} (map (fn [a]
-                                                 [a (ev (cm/get-value
-                                                         (cm/get-submap
-                                                          (:choices t) a)))])
+                                                 [a (choice-num (:choices t) a)])
                                                unselected))
                        {:keys [trace]} (p/regenerate model t
                                                      (sel/select selected))]
                    (every? (fn [a]
-                             (let [v (ev (cm/get-value
-                                          (cm/get-submap (:choices trace) a)))]
+                             (let [v (choice-num (:choices trace) a)]
                                (approx= (get orig-vals a) v 1e-6)))
                            unselected)))))}
 
@@ -367,8 +360,7 @@
                                    w (ev weight)
                                    accept? (u/accept-mh? w k1)
                                    next-t (if accept? trace t)
-                                   x-val (ev (cm/get-value
-                                              (cm/get-submap (:choices next-t) :x)))]
+                                   x-val (choice-num (:choices next-t) :x)]
                                (recur next-t (inc i)
                                       (if (>= i 500) (conj acc x-val) acc)
                                       k2))))
@@ -489,7 +481,7 @@
                (if (< (count addrs) 2)
                  true
                  (let [first-addr (first (first addrs))
-                       val (cm/get-value (cm/get-submap (:choices t) first-addr))
+                       val (choice-val (:choices t) first-addr)
                        partial (cm/choicemap first-addr val)
                        {:keys [trace weight]} (p/generate model args partial)]
                    (and (js/Number.isFinite (ev (:score trace)))
@@ -627,7 +619,7 @@
                    h 1e-3]
                (every?
                 (fn [addr]
-                  (let [v (ev (cm/get-value (cm/get-submap (:choices t) addr)))
+                  (let [v (choice-num (:choices t) addr)
                         choices-plus (cm/set-choice (:choices t) [addr]
                                                     (mx/scalar (+ v h)))
                         choices-minus (cm/set-choice (:choices t) [addr]
@@ -690,7 +682,7 @@
                (if (< (count addrs) 2)
                  true
                  (let [obs-addr (first (first addrs))
-                       obs-val (cm/get-value (cm/get-submap (:choices t) obs-addr))
+                       obs-val (choice-val (:choices t) obs-addr)
                        obs (cm/choicemap obs-addr obs-val)
                        {:keys [trace weight]} (p/generate model args obs)
                        w (ev weight)
@@ -709,7 +701,7 @@
                (if (< (count addrs) 2)
                  true
                  (let [obs-addr (first (first addrs))
-                       obs-val (cm/get-value (cm/get-submap (:choices t) obs-addr))
+                       obs-val (choice-val (:choices t) obs-addr)
                        obs (cm/choicemap obs-addr obs-val)
                        weights (repeatedly 20
                                            #(ev (:weight (p/generate model args obs))))]
@@ -728,7 +720,7 @@
                (if (< (count addrs) 2)
                  true
                  (let [obs-addr (first (first addrs))
-                       obs-val (cm/get-value (cm/get-submap (:choices t) obs-addr))
+                       obs-val (choice-val (:choices t) obs-addr)
                        obs (cm/choicemap obs-addr obs-val)
                        weights (repeatedly 100
                                            #(ev (:weight (p/generate model args obs))))
@@ -890,8 +882,8 @@
                                                                         (cm/choicemap :c (mx/scalar 3.0)))
                                      w (ev weight)
                                      s (ev (:score trace))
-                                     a (ev (cm/get-value (cm/get-submap (:choices trace) :a)))
-                                     b (ev (cm/get-value (cm/get-submap (:choices trace) :b)))
+                                     a (choice-num (:choices trace) :a)
+                                     b (choice-num (:choices trace) :b)
                                ;; log q(a,b) = lp(a) + lp(b|a)
                                      lp-a (ev (dist/log-prob (dist/uniform 0 1) (mx/scalar a)))
                                      lp-b (ev (dist/log-prob (dist/laplace (mx/scalar a) 1)
@@ -909,7 +901,7 @@
                                      {:keys [trace weight]} (p/generate m [] constraints)
                                      w (ev weight)
                                      s (ev (:score trace))
-                                     b (ev (cm/get-value (cm/get-submap (:choices trace) :b)))
+                                     b (choice-num (:choices trace) :b)
                                ;; log q(b) = lp(b|a=0.7)
                                      log-q (ev (dist/log-prob (dist/laplace (mx/scalar 0.7) 1)
                                                               (mx/scalar b)))]
@@ -946,7 +938,7 @@
                (if (empty? addrs)
                  true
                  (let [obs-addr (first (first addrs))
-                       obs-val (cm/get-value (cm/get-submap (:choices t) obs-addr))
+                       obs-val (choice-val (:choices t) obs-addr)
                        obs (cm/choicemap obs-addr obs-val)
                        vt (dyn/vgenerate model args obs n (rng/fresh-key 99))]
                    (and (= [n] (vec (mx/shape (:score vt))))
@@ -964,7 +956,7 @@
                (if (empty? addrs)
                  true
                  (let [obs-addr (first (first addrs))
-                       obs-val (cm/get-value (cm/get-submap (:choices t-scalar) obs-addr))
+                       obs-val (choice-val (:choices t-scalar) obs-addr)
                        obs (cm/choicemap obs-addr obs-val)
                        {:keys [weight]} (dyn/vupdate model vt obs (rng/fresh-key 77))]
                    (and (= [n] (vec (mx/shape weight)))
@@ -983,17 +975,13 @@
                  (let [selected (first (first addrs))
                        unselected-addrs (map first (rest addrs))
                        orig-vals (into {} (map (fn [a]
-                                                 [a (mx/->clj (cm/get-value
-                                                                (cm/get-submap
-                                                                 (:choices vt) a)))])
+                                                 [a (mx/->clj (choice-val (:choices vt) a))])
                                                unselected-addrs))
                        {:keys [vtrace]} (dyn/vregenerate model vt
                                                           (sel/select selected)
                                                           (rng/fresh-key 55))]
                    (every? (fn [a]
-                             (let [new-vals (mx/->clj (cm/get-value
-                                                       (cm/get-submap
-                                                        (:choices vtrace) a)))]
+                             (let [new-vals (mx/->clj (choice-val (:choices vtrace) a))]
                                (= (get orig-vals a) new-vals)))
                            unselected-addrs)))))}
 
@@ -1045,8 +1033,8 @@
                                       (trace :y (dist/gaussian x 0.5))))))
                    n 2000
                    samples (repeatedly n #(let [t (p/simulate ref-model [])]
-                                            [(ev (cm/get-value (cm/get-submap (:choices t) :x)))
-                                             (ev (cm/get-value (cm/get-submap (:choices t) :y)))]))
+                                            [(choice-num (:choices t) :x)
+                                             (choice-num (:choices t) :y)]))
                    xs (map first samples)
                    ys (map second samples)
                    mean-y (/ (reduce + ys) n)
@@ -1188,10 +1176,8 @@
                                w (ev weight)
                                accept? (u/accept-mh? w k1)
                                next-t (if accept? trace t)
-                               x-val (ev (cm/get-value
-                                          (cm/get-submap (:choices next-t) :x)))
-                               y-val (ev (cm/get-value
-                                          (cm/get-submap (:choices next-t) :y)))]
+                               x-val (choice-num (:choices next-t) :x)
+                               y-val (choice-num (:choices next-t) :y)]
                            (recur next-t (inc i)
                                   (if (>= i burn)
                                     (conj acc (+ x-val y-val))
@@ -1371,10 +1357,8 @@
                        preserved? (every?
                                    (fn [a]
                                      (approx=
-                                      (ev (cm/get-value
-                                           (cm/get-submap (:choices t) a)))
-                                      (ev (cm/get-value
-                                           (cm/get-submap (:choices trace) a)))
+                                      (choice-num (:choices t) a)
+                                      (choice-num (:choices trace) a)
                                       1e-6))
                                    unselected)]
                    (and (approx= compiled-score handler-score 1e-4)
@@ -1502,7 +1486,7 @@
                          {:keys [trace weight]} (comb/unfold-extend tr (nth obs-seq t) k1)
                          _ (mx/materialize! weight)
                          step-cm (cm/get-submap (:choices trace) t)
-                         x-val (cm/get-value (cm/get-submap step-cm :x))
+                         x-val (choice-val step-cm :x)
                          _ (mx/materialize! x-val)
                          w (ev weight)
                          x (ev x-val)
@@ -1568,8 +1552,8 @@
     :tags #{:mcmc :involutive}
     :check (fn [_]
              (let [inv-fn (fn [tcm acm]
-                            (let [x (cm/get-value (cm/get-submap tcm :x))
-                                  eps (cm/get-value (cm/get-submap acm :eps))
+                            (let [x (choice-val tcm :x)
+                                  eps (choice-val acm :eps)
                                   _ (mx/materialize! x eps)]
                               [(cm/set-value tcm :x (mx/add x eps))
                                (cm/set-value acm :eps (mx/negative eps))]))]
@@ -1583,8 +1567,8 @@
                          acm (cm/choicemap :eps (mx/scalar eps-val))
                          [tcm1 acm1] (inv-fn tcm acm)
                          [tcm2 acm2] (inv-fn tcm1 acm1)
-                         x-rt (ev (cm/get-value (cm/get-submap tcm2 :x)))
-                         eps-rt (ev (cm/get-value (cm/get-submap acm2 :eps)))]
+                         x-rt (choice-num tcm2 :x)
+                         eps-rt (choice-num acm2 :eps)]
                      (and (approx= x-val x-rt 1e-6)
                           (approx= eps-val eps-rt 1e-6)))))))}
 
@@ -1656,8 +1640,8 @@
                                   (trace :eps (dist/gaussian 0 0.5))))
                               '([_tcm] (trace :eps (dist/gaussian 0 0.5)))))
                    involution (fn [tcm acm]
-                                (let [x (cm/get-value (cm/get-submap tcm :x))
-                                      eps (cm/get-value (cm/get-submap acm :eps))
+                                (let [x (choice-val tcm :x)
+                                      eps (choice-val acm :eps)
                                       _ (mx/materialize! x eps)]
                                   [(cm/set-value tcm :x (mx/add x eps))
                                    (cm/set-value acm :eps (mx/negative eps))]))
@@ -1670,8 +1654,7 @@
                                (let [[k1 k2] (rng/split k)
                                      next-t (mcmc/involutive-mh-step
                                               t model proposal involution k1)
-                                     x-val (ev (cm/get-value
-                                                (cm/get-submap (:choices next-t) :x)))]
+                                     x-val (choice-num (:choices next-t) :x)]
                                  (recur next-t (inc i)
                                         (if (>= i 500) (conj acc x-val) acc)
                                         k2))))

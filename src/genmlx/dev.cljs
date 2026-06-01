@@ -24,24 +24,28 @@
 ;; Precompiled validators — compiled once at load time, not per call.
 ;; ---------------------------------------------------------------------------
 
-(def ^:private op->validator
-  (into {} (map (fn [[op schema]] [op {:validate (m/validator schema)
-                                       :explain  (m/explainer schema)
-                                       :schema   schema}]))
-        {:simulate   schemas/SimulateReturn
-         :generate   schemas/GenerateReturn
-         :update     schemas/UpdateReturn
-         :regenerate schemas/RegenerateReturn
-         :assess     schemas/AssessReturn
-         :propose    schemas/ProposeReturn
-         :project    schemas/ProjectReturn}))
-
-(def ^:private key->validator
+(defn- compile-validators
+  "Precompile a {key -> schema} map into {key -> {:validate :explain :schema}}."
+  [schema-map]
   (into {} (map (fn [[k schema]] [k {:validate (m/validator schema)
                                      :explain  (m/explainer schema)
                                      :schema   schema}]))
-        {:base-state schemas/BaseState
-         :sub-result schemas/SubResult}))
+        schema-map))
+
+(def ^:private op->validator
+  (compile-validators
+   {:simulate   schemas/SimulateReturn
+    :generate   schemas/GenerateReturn
+    :update     schemas/UpdateReturn
+    :regenerate schemas/RegenerateReturn
+    :assess     schemas/AssessReturn
+    :propose    schemas/ProposeReturn
+    :project    schemas/ProjectReturn}))
+
+(def ^:private key->validator
+  (compile-validators
+   {:base-state schemas/BaseState
+    :sub-result schemas/SubResult}))
 
 ;; ---------------------------------------------------------------------------
 ;; Default reporter

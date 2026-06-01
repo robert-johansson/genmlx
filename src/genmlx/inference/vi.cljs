@@ -43,6 +43,82 @@
 ;; VI main
 ;; ---------------------------------------------------------------------------
 
+(defn- advi-sample-fn
+  "Build the posterior sampler returned by ADVI: draws n reparameterized
+   samples from the mean-field Gaussian q(mu, sigma). For d==1 returns a
+   vector of CLJS doubles; otherwise the [n,d] sample array as nested CLJS."
+  [mu sigma d rk]
+  (fn [n]
+    (let [sample-key (if rk rk (rng/fresh-key))
+          eps (rng/normal sample-key [n d])
+          samples (mx/add mu (mx/multiply sigma eps))]
+      (mx/materialize! samples)
+      (if (= d 1)
+        (mapv #(mx/item (mx/index samples %)) (range n))
+        (mx/->clj samples)))))
+
+(defn- run-advi
+  "Shared ADVI driver for `vi` and `compiled-vi`. Builds the mean-field
+   Gaussian guide, optimizes the negative ELBO via Adam, and returns
+   {:mu :sigma :elbo-history :sample-fn}.
+
+   When `compile?` is true the gradient and ELBO functions are wrapped in
+   mx/compile-fn, and ELBO logging uses the compiled forward pass (fresh
+   key, like the original compiled-vi); otherwise ELBO logging re-estimates
+   with the iteration key (like the original vi). The tidy/materialize
+   boundaries are identical to the original per-function loops."
+  [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback key
+           vectorized-log-density compile?]
+    :or {iterations 1000 learning-rate 0.01 elbo-samples 10
+         beta1 0.9 beta2 0.999 epsilon 1e-8}}
+   log-density init-params]
+  (let [d (or (first (mx/shape init-params)) 1)
+        init-mu (if (zero? (mx/ndim init-params))
+                  (mx/reshape init-params [1])
+                  init-params)
+        init-log-sigma (mx/zeros [d])
+        init-vp (mx/tidy-materialize
+                 #(mx/concatenate [init-mu init-log-sigma]))
+        vmapped-log-density (or vectorized-log-density (mx/vmap log-density))
+        neg-elbo-fn (fn [vp]
+                      (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
+        grad-neg-elbo (cond-> (mx/grad neg-elbo-fn) compile? mx/compile-fn)
+        neg-elbo-compiled (when compile? (mx/compile-fn neg-elbo-fn))
+        ;; ELBO value at the new params, recomputed at log points only.
+        elbo-at (if compile?
+                  (fn [vp' _iter-key] (mx/negative (neg-elbo-compiled vp')))
+                  (fn [vp' iter-key]
+                    (elbo-estimate vp' log-density elbo-samples d vmapped-log-density iter-key)))]
+    (loop [i 0, vp init-vp
+           opt-state (learn/adam-init init-vp)
+           elbo-history (transient [])
+           rk key]
+      (if (>= i iterations)
+        (let [final-mu (mx/slice vp 0 d)
+              final-log-sigma (mx/slice vp d (* 2 d))
+              final-sigma (mx/exp final-log-sigma)]
+          (mx/materialize! final-mu final-sigma)
+          {:mu final-mu
+           :sigma final-sigma
+           :elbo-history (persistent! elbo-history)
+           :sample-fn (advi-sample-fn final-mu final-sigma d rk)})
+        (let [[iter-key next-key] (rng/split-or-nils rk)
+              ;; Tidy-materialize gradient — frees intermediate graph nodes
+              g (mx/tidy-materialize #(grad-neg-elbo vp))
+              [vp' opt-state'] (learn/adam-step vp g opt-state
+                                                {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
+              ;; Tidy-materialize ELBO — prevents graph accumulation at log points
+              elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
+                         (mx/item (mx/tidy-materialize #(elbo-at vp' iter-key))))]
+          (when (and callback elbo-val)
+            (callback {:iter i :elbo elbo-val :params (mx/->clj vp')}))
+          (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
+          (recur (inc i) vp' opt-state'
+                 (if elbo-val
+                   (conj! elbo-history elbo-val)
+                   elbo-history)
+                 next-key))))))
+
 (defn vi
   "Variational Inference via ADVI.
    Uses a mean-field Gaussian guide and optimizes ELBO via Adam.
@@ -57,58 +133,8 @@
             :sample-fn (fn [n] -> samples)}
 
    For compiled (faster) VI with pure tensor log-density, use compiled-vi."
-  [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback key
-           vectorized-log-density]
-    :or {iterations 1000 learning-rate 0.01 elbo-samples 10
-         beta1 0.9 beta2 0.999 epsilon 1e-8}}
-   log-density init-params]
-  (let [d (or (first (mx/shape init-params)) 1)
-        init-mu (if (zero? (mx/ndim init-params))
-                  (mx/reshape init-params [1])
-                  init-params)
-        init-log-sigma (mx/zeros [d])
-        init-vp (mx/tidy-materialize
-                 #(mx/concatenate [init-mu init-log-sigma]))
-        vmapped-log-density (or vectorized-log-density (mx/vmap log-density))
-        neg-elbo-fn (fn [vp]
-                      (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
-        grad-neg-elbo (mx/grad neg-elbo-fn)]
-    (loop [i 0, vp init-vp
-           opt-state (learn/adam-init init-vp)
-           elbo-history (transient [])
-           rk key]
-      (if (>= i iterations)
-        (let [final-mu (mx/slice vp 0 d)
-              final-log-sigma (mx/slice vp d (* 2 d))
-              final-sigma (mx/exp final-log-sigma)]
-          (mx/materialize! final-mu final-sigma)
-          {:mu final-mu
-           :sigma final-sigma
-           :elbo-history (persistent! elbo-history)
-           :sample-fn (fn [n]
-                        (let [sample-key (if rk rk (rng/fresh-key))
-                              eps (rng/normal sample-key [n d])
-                              samples (mx/add final-mu (mx/multiply final-sigma eps))]
-                          (mx/materialize! samples)
-                          (if (= d 1)
-                            (mapv #(mx/item (mx/index samples %)) (range n))
-                            (mx/->clj samples))))})
-        (let [[iter-key next-key] (rng/split-or-nils rk)
-              ;; Tidy-materialize gradient — frees intermediate graph nodes
-              g (mx/tidy-materialize #(grad-neg-elbo vp))
-              [vp' opt-state'] (learn/adam-step vp g opt-state
-                                                {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
-              ;; Tidy-materialize ELBO — prevents graph accumulation at log points
-              elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
-                         (mx/item (mx/tidy-materialize #(elbo-estimate vp' log-density elbo-samples d vmapped-log-density iter-key))))]
-          (when (and callback elbo-val)
-            (callback {:iter i :elbo elbo-val :params (mx/->clj vp')}))
-          (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
-          (recur (inc i) vp' opt-state'
-                 (if elbo-val
-                   (conj! elbo-history elbo-val)
-                   elbo-history)
-                 next-key))))))
+  [opts log-density init-params]
+  (run-advi (assoc opts :compile? false) log-density init-params))
 
 ;; ---------------------------------------------------------------------------
 ;; Compiled VI (ADVI with mx/compile-fn)
@@ -136,61 +162,10 @@
    Returns {:mu MLX-array :sigma MLX-array :elbo-history [numbers]
             :sample-fn (fn [n] -> samples)}
    Default device: :cpu (faster for scalar parameters)."
-  [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback key device
-           vectorized-log-density]
-    :or {iterations 1000 learning-rate 0.01 elbo-samples 10
-         beta1 0.9 beta2 0.999 epsilon 1e-8 device :cpu}}
-   log-density init-params]
+  [{:keys [device] :or {device :cpu} :as opts} log-density init-params]
   (with-device device
     (fn []
-      (let [d (or (first (mx/shape init-params)) 1)
-            init-mu (if (zero? (mx/ndim init-params))
-                      (mx/reshape init-params [1])
-                      init-params)
-            init-log-sigma (mx/zeros [d])
-            init-vp (mx/tidy-materialize
-                     #(mx/concatenate [init-mu init-log-sigma]))
-            vmapped-log-density (or vectorized-log-density (mx/vmap log-density))
-            neg-elbo-fn (fn [vp]
-                          (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
-            grad-neg-elbo (mx/compile-fn (mx/grad neg-elbo-fn))
-            neg-elbo-compiled (mx/compile-fn neg-elbo-fn)]
-        (loop [i 0, vp init-vp
-               opt-state (learn/adam-init init-vp)
-               elbo-history (transient [])
-               rk key]
-          (if (>= i iterations)
-            (let [final-mu (mx/slice vp 0 d)
-                  final-log-sigma (mx/slice vp d (* 2 d))
-                  final-sigma (mx/exp final-log-sigma)]
-              (mx/materialize! final-mu final-sigma)
-              {:mu final-mu
-               :sigma final-sigma
-               :elbo-history (persistent! elbo-history)
-               :sample-fn (fn [n]
-                            (let [sample-key (if rk rk (rng/fresh-key))
-                                  eps (rng/normal sample-key [n d])
-                                  samples (mx/add final-mu (mx/multiply final-sigma eps))]
-                              (mx/materialize! samples)
-                              (if (= d 1)
-                                (mapv (fn [idx] (mx/item (mx/index samples idx))) (range n))
-                                (mx/->clj samples))))})
-            (let [[iter-key next-key] (rng/split-or-nils rk)
-                  ;; Tidy-materialize gradient — frees intermediate graph nodes
-                  g (mx/tidy-materialize #(grad-neg-elbo vp))
-                  [vp' opt-state'] (learn/adam-step vp g opt-state
-                                                    {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
-                  ;; Tidy-materialize ELBO — prevents graph accumulation at log points
-                  elbo-val (when (zero? (mod i (max 1 (quot iterations 100))))
-                             (mx/item (mx/tidy-materialize #(mx/negative (neg-elbo-compiled vp')))))]
-              (when (and callback elbo-val)
-                (callback {:iter i :elbo elbo-val :params (mx/->clj vp')}))
-              (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
-              (recur (inc i) vp' opt-state'
-                     (if elbo-val
-                       (conj! elbo-history elbo-val)
-                       elbo-history)
-                     next-key))))))))
+      (run-advi (assoc opts :compile? true) log-density init-params))))
 
 ;; ---------------------------------------------------------------------------
 ;; VI from model (convenience)
@@ -344,6 +319,27 @@
       ;; Surrogate loss: gradient equals VIMCO estimator
       (mx/add L-hat reinforce-term))))
 
+(defn- estimate-objective
+  "Compute the (negated) programmable-VI objective for one batch of `samples`.
+   Rebuilds the guide log-density at the current `params`, dispatches the
+   objective (:elbo/:iwelbo/:vimco/:pwake/:qwake or a custom fn), applies the
+   estimator (:reparam or :reinforce), and returns the negated objective
+   (the quantity to minimize)."
+  [objective estimator log-p-fn log-q-fn params samples]
+  (let [log-q-curr (fn [z] (log-q-fn z params))
+        obj-fn (case objective
+                 :elbo (elbo-objective log-p-fn log-q-curr)
+                 :iwelbo (iwelbo-objective log-p-fn log-q-curr)
+                 :vimco (vimco-objective log-p-fn log-q-curr)
+                 :pwake (pwake-objective log-p-fn log-q-curr)
+                 :qwake (qwake-objective log-p-fn log-q-curr)
+                 (fn [s] (objective log-p-fn log-q-curr s)))
+        obj-val (if (= estimator :reinforce)
+                  ((reinforce-estimator obj-fn log-q-curr) samples)
+                  (obj-fn samples))]
+    ;; We minimize negative objective
+    (mx/negative obj-val)))
+
 (defn programmable-vi
   "Programmable variational inference with pluggable objectives and estimators.
 
@@ -368,21 +364,9 @@
    log-p-fn log-q-fn sample-fn init-params]
   (let [;; Build loss function (parameterized)
         loss-fn (fn [params iter-key]
-                  (let [samples (sample-fn params iter-key n-samples)
-                        ;; Rebuild objective with current params
-                        log-q-curr (fn [z] (log-q-fn z params))
-                        obj-fn (case objective
-                                 :elbo (elbo-objective log-p-fn log-q-curr)
-                                 :iwelbo (iwelbo-objective log-p-fn log-q-curr)
-                                 :vimco (vimco-objective log-p-fn log-q-curr)
-                                 :pwake (pwake-objective log-p-fn log-q-curr)
-                                 :qwake (qwake-objective log-p-fn log-q-curr)
-                                 (fn [s] (objective log-p-fn log-q-curr s)))
-                        obj-val (if (= estimator :reinforce)
-                                  ((reinforce-estimator obj-fn log-q-curr) samples)
-                                  (obj-fn samples))]
-                    ;; We minimize negative objective
-                    (mx/negative obj-val)))
+                  (let [samples (sample-fn params iter-key n-samples)]
+                    (estimate-objective objective estimator log-p-fn log-q-fn
+                                        params samples)))
         grad-loss (fn [params iter-key]
                     (let [g (mx/grad (fn [p] (loss-fn p iter-key)))]
                       {:loss (loss-fn params iter-key) :grad (g params)}))]
@@ -428,19 +412,9 @@
       ;; missing the ∂loss/∂samples · ∂samples/∂params path entirely.
       (let [make-loss (fn [iter-key n]
                         (fn [params]
-                          (let [samples (sample-fn params iter-key n)
-                                log-q-curr (fn [z] (log-q-fn z params))
-                                obj-fn (case objective
-                                         :elbo (elbo-objective log-p-fn log-q-curr)
-                                         :iwelbo (iwelbo-objective log-p-fn log-q-curr)
-                                         :vimco (vimco-objective log-p-fn log-q-curr)
-                                         :pwake (pwake-objective log-p-fn log-q-curr)
-                                         :qwake (qwake-objective log-p-fn log-q-curr)
-                                         (fn [s] (objective log-p-fn log-q-curr s)))
-                                obj-val (if (= estimator :reinforce)
-                                          ((reinforce-estimator obj-fn log-q-curr) samples)
-                                          (obj-fn samples))]
-                            (mx/negative obj-val))))]
+                          (let [samples (sample-fn params iter-key n)]
+                            (estimate-objective objective estimator log-p-fn log-q-fn
+                                                params samples))))]
         (loop [i 0 params init-params
                opt-state (learn/adam-init init-params)
                losses (transient [])

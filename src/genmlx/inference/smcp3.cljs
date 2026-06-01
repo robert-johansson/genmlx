@@ -13,6 +13,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.edit :as edit]
             [genmlx.dynamic :as dyn]
+            [genmlx.inference.smc :as smc]
             [genmlx.inference.util :as u]))
 
 
@@ -56,8 +57,7 @@
         traces (mapv :trace results)
         log-weights (mapv :weight results)
         w-arr (u/materialize-weights log-weights)
-        ml-inc (mx/subtract (mx/logsumexp w-arr)
-                             (mx/scalar (js/Math.log particles)))]
+        ml-inc (smc/log-ml-increment w-arr particles)]
     {:traces traces :log-weights log-weights :log-ml-increment ml-inc}))
 
 ;; ---------------------------------------------------------------------------
@@ -126,8 +126,7 @@
                        new-traces)
         ;; log-ML increment
         w-arr (u/materialize-weights new-weights)
-        ml-inc (mx/subtract (mx/logsumexp w-arr)
-                             (mx/scalar (js/Math.log particles)))]
+        ml-inc (smc/log-ml-increment w-arr particles)]
     {:traces final-traces :log-weights new-weights :log-ml-increment ml-inc
      :ess ess :resampled? resample?}))
 

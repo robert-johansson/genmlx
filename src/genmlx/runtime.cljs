@@ -24,15 +24,19 @@
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
+            [genmlx.mlx.constants :refer [ZERO]]
             [genmlx.selection :as sel]
             [genmlx.protocols :as p]
             [genmlx.dist.core :as dc]))
 
-(def ^:private ZERO (mx/scalar 0.0))
-
 ;; Validation hook atom. No-op by default.
 ;; genmlx.dev/start! swaps this with a real validator.
 (defonce validate-fn (atom (fn [_schema-key _value _context])))
+
+(defn- non-empty-cm?
+  "Is cm a present, non-empty choicemap?"
+  [cm]
+  (and cm (not= cm cm/EMPTY)))
 
 (defn run-handler
   "Execute body-fn under a transition-based handler, returning final state map.
@@ -79,37 +83,35 @@
                       sub-selection (when-let [s (:selection state)]
                                       (sel/get-subselection s addr))
                       sub-body-fn (:body-fn gf)
+                      ;; Common init-state keys for every batched sub-execution.
+                      base-init {:choices cm/EMPTY :score ZERO :key k2
+                                 :batch-size n :batched? true}
                       ;; Choose transition + build init-state based on mode
                       [sub-transition sub-init-state]
                       (cond
                         sub-selection
                         [h/batched-regenerate-transition
-                         {:choices cm/EMPTY :score ZERO
-                          :weight ZERO :key k2
-                          :selection sub-selection
-                          :old-choices (or sub-old-choices cm/EMPTY)
-                          :batch-size n :batched? true}]
+                         (merge base-init
+                                {:weight ZERO
+                                 :selection sub-selection
+                                 :old-choices (or sub-old-choices cm/EMPTY)})]
 
-                        (and sub-old-choices (not= sub-old-choices cm/EMPTY))
+                        (non-empty-cm? sub-old-choices)
                         [h/batched-update-transition
-                         {:choices cm/EMPTY :score ZERO
-                          :weight ZERO :key k2
-                          :constraints (or sub-constraints cm/EMPTY)
-                          :old-choices sub-old-choices
-                          :discard cm/EMPTY
-                          :batch-size n :batched? true}]
+                         (merge base-init
+                                {:weight ZERO
+                                 :constraints (or sub-constraints cm/EMPTY)
+                                 :old-choices sub-old-choices
+                                 :discard cm/EMPTY})]
 
-                        (and sub-constraints (not= sub-constraints cm/EMPTY))
+                        (non-empty-cm? sub-constraints)
                         [h/batched-generate-transition
-                         {:choices cm/EMPTY :score ZERO
-                          :weight ZERO :key k2
-                          :constraints sub-constraints
-                          :batch-size n :batched? true}]
+                         (merge base-init
+                                {:weight ZERO
+                                 :constraints sub-constraints})]
 
                         :else
-                        [h/batched-simulate-transition
-                         {:choices cm/EMPTY :score ZERO
-                          :key k2 :batch-size n :batched? true}])
+                        [h/batched-simulate-transition base-init])
                       ;; Propagate param-store to sub-execution
                       sub-init-state (if-let [ps (:param-store state)]
                                        (assoc sub-init-state :param-store ps)

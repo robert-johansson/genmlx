@@ -43,12 +43,11 @@
    Accepts either a ChoiceMap Node (with :m internal map) or nil.
    Returns a set of keyword addresses."
   [observations]
-  (cond
-    (nil? observations) #{}
-    ;; ChoiceMap Node — record field :m holds the internal map
-    (map? (:m observations))
-    (set (keys (:m observations)))
-    :else #{}))
+  ;; ChoiceMap Node — record field :m holds the internal map; nil and non-map
+  ;; inputs (including a nil :m) fall through to #{}.
+  (if-let [m (:m observations)]
+    (if (map? m) (set (keys m)) #{})
+    #{}))
 
 (defn- residual-addrs
   "Trace-site addresses NOT eliminated by analytical plan.

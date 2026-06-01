@@ -12,6 +12,8 @@
    enabling fusion into a single Metal kernel. No mutable state, no handler."
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
+            [genmlx.mlx.constants :refer [ZERO ONE TWO HALF NEG-INF
+                                          LOG-2PI-HALF LOG-2 LOG-PI MLX-PI]]
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
             [genmlx.vectorized :as vec]
@@ -552,15 +554,7 @@
 ;;
 ;; Distributions NOT in this map fall back to dc/dist-sample (no compilation).
 
-(def ^:private LOG-2PI-HALF (mx/scalar (* 0.5 (js/Math.log (* 2.0 js/Math.PI)))))
-(def ^:private HALF (mx/scalar 0.5))
-(def ^:private ONE (mx/scalar 1.0))
-(def ^:private ZERO (mx/scalar 0.0))
-(def ^:private NEG-INF (mx/scalar ##-Inf))
-(def ^:private TWO (mx/scalar 2.0))
-(def ^:private LOG-2 (mx/scalar (js/Math.log 2.0)))
-(def ^:private LOG-PI (mx/scalar (js/Math.log js/Math.PI)))
-(def ^:private MLX-PI (mx/scalar js/Math.PI))
+;; Scalar/log constants live in genmlx.mlx.constants (centralized, cached).
 
 ;; ---------------------------------------------------------------------------
 ;; Arg coercion helpers

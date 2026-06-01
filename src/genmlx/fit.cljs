@@ -79,18 +79,9 @@
    (without :method and :elapsed-ms — those are added by `fit`)."
   [model args data method opts]
   (case method
-    ;; --- Exact (all-conjugate or trivial) ---
-    :exact
-    (let [result (p/generate model args data)
-          trace (:trace result)
-          weight (:weight result)]
-      (mx/materialize! weight)
-      {:trace trace
-       :log-ml (mx/item weight)
-       :posterior (extract-posterior trace data)})
-
-    ;; --- Kalman (auto-handlers in p/generate) ---
-    :kalman
+    ;; --- Exact (all-conjugate / trivial) and Kalman (auto-handlers): both
+    ;;     get the answer directly from p/generate's weight ---
+    (:exact :kalman)
     (let [result (p/generate model args data)
           trace (:trace result)
           weight (:weight result)]
@@ -141,20 +132,9 @@
                  (- (last (:loss-history result))))
        :loss-history (:loss-history result)})
 
-    ;; --- SMC ---
-    :smc
-    ;; SMC requires temporal structure; fall back to IS for non-temporal
-    (let [is-opts {:samples (or (:particles opts) (:n-particles opts) 200)
-                   :key (:key opts)}
-          result (importance/importance-sampling is-opts model args data)
-          best-trace (first (:traces result))]
-      (mx/materialize! (:log-ml-estimate result))
-      {:trace best-trace
-       :posterior (when best-trace (extract-posterior best-trace data))
-       :log-ml (mx/item (:log-ml-estimate result))})
-
-    ;; --- Handler-based importance sampling (safest fallback) ---
-    :handler-is
+    ;; --- SMC (no temporal structure → fall back to IS) and handler-based
+    ;;     importance sampling (safest fallback): identical IS path ---
+    (:smc :handler-is)
     (let [is-opts {:samples (or (:particles opts) (:n-particles opts) 200)
                    :key (:key opts)}
           result (importance/importance-sampling is-opts model args data)

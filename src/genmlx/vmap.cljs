@@ -41,18 +41,16 @@
 
     ;; No in-axes: all args batched, N from first arg
     (nil? in-axes)
-    (let [a (first args)
-          n (axis-size-of a)]
-      (if n n
+    (let [a (first args)]
+      (or (axis-size-of a)
           (throw (ex-info "vmap: cannot determine axis-size from arg" {:arg a}))))
 
     ;; in-axes provided: find first non-nil axis
     :else
     (let [idx (first (keep-indexed (fn [i ax] (when ax i)) in-axes))]
       (if idx
-        (let [a (nth args idx)
-              n (axis-size-of a)]
-          (if n n
+        (let [a (nth args idx)]
+          (or (axis-size-of a)
               (throw (ex-info "vmap: cannot determine axis-size" {:arg a}))))
         (throw (ex-info "vmap: all in-axes are nil and no axis-size provided" {}))))))
 

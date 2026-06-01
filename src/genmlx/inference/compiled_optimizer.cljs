@@ -19,6 +19,56 @@
             [genmlx.inference.vi :as vi]))
 
 ;; ---------------------------------------------------------------------------
+;; Shared Adam recurrence + loop policies
+;; ---------------------------------------------------------------------------
+
+(defn adam-scalars
+  "Pre-build the MLX scalar constants used by the Adam recurrence.
+   Returns a map consumed by `adam-update`."
+  [{:keys [lr beta1 beta2 epsilon]
+    :or {lr 0.001 beta1 0.9 beta2 0.999 epsilon 1e-8}}]
+  {:lr-s (mx/scalar lr)
+   :beta1-s (mx/scalar beta1)
+   :beta2-s (mx/scalar beta2)
+   :eps-s (mx/scalar epsilon)
+   :one-minus-b1 (mx/scalar (- 1.0 beta1))
+   :one-minus-b2 (mx/scalar (- 1.0 beta2))})
+
+(defn adam-update
+  "One Adam parameter update. Given current `params`, first/second moments
+   `m`/`v`, the `grad`, the scalar constants from `adam-scalars`, and the
+   bias-correction denominators `bias1` = 1 - beta1^t and `bias2` = 1 - beta2^t,
+   returns [new-params new-m new-v].
+
+   The bias denominators are passed in so callers may compute them either in
+   the graph (mx/power on a t-scalar) or host-side (js/Math.pow) — the rest of
+   the moment recurrence is identical."
+  [params m v grad {:keys [lr-s beta1-s beta2-s eps-s one-minus-b1 one-minus-b2]}
+   bias1 bias2]
+  (let [new-m (mx/add (mx/multiply beta1-s m)
+                      (mx/multiply one-minus-b1 grad))
+        new-v (mx/add (mx/multiply beta2-s v)
+                      (mx/multiply one-minus-b2 (mx/square grad)))
+        m-hat (mx/divide new-m bias1)
+        v-hat (mx/divide new-v bias2)
+        update-vec (mx/divide m-hat (mx/add (mx/sqrt v-hat) eps-s))
+        new-params (mx/subtract params (mx/multiply lr-s update-vec))]
+    [new-params new-m new-v]))
+
+(defn log-iter?
+  "True on the first iteration and every `log-every` iterations thereafter."
+  [i log-every]
+  (or (zero? i) (zero? (mod (inc i) log-every))))
+
+(defn maybe-cleanup!
+  "Periodic Metal cleanup: clear the cache and sweep dead arrays every 50
+   iterations (skipping iteration 0)."
+  [i]
+  (when (and (pos? i) (zero? (mod i 50)))
+    (mx/clear-cache!)
+    (mx/sweep-dead-arrays!)))
+
+;; ---------------------------------------------------------------------------
 ;; Compiled optimization step (WP-0)
 ;; ---------------------------------------------------------------------------
 
@@ -43,42 +93,25 @@
    Note: This handles deterministic score functions. WP-2 extends this
    pattern for stochastic score functions (MCMC/SMC) where noise must
    be passed as additional arguments."
-  [score-fn {:keys [lr beta1 beta2 epsilon]
-             :or {lr 0.001 beta1 0.9 beta2 0.999 epsilon 1e-8}}]
+  [score-fn opts]
   (let [;; We minimize negative score (= maximize score)
         neg-score-fn (fn [params] (mx/negative (score-fn params)))
         vg (mx/value-and-grad neg-score-fn)
 
         ;; Pre-create scalar constants for Adam hyperparams
-        lr-s (mx/scalar lr)
-        beta1-s (mx/scalar beta1)
-        beta2-s (mx/scalar beta2)
-        eps-s (mx/scalar epsilon)
+        scalars (adam-scalars opts)
+        {:keys [beta1-s beta2-s]} scalars
         one-s (mx/scalar 1.0)
-        one-minus-b1 (mx/scalar (- 1.0 beta1))
-        one-minus-b2 (mx/scalar (- 1.0 beta2))
 
         step-fn
         (fn [params m v t-scalar]
           (let [;; Forward + backward in one call
                 [loss grad] (vg params)
-
-                ;; Moment updates (exponential moving averages)
-                new-m (mx/add (mx/multiply beta1-s m)
-                              (mx/multiply one-minus-b1 grad))
-                new-v (mx/add (mx/multiply beta2-s v)
-                              (mx/multiply one-minus-b2 (mx/square grad)))
-
                 ;; Bias correction — mx/power keeps this inside the graph
-                m-hat (mx/divide new-m
-                                 (mx/subtract one-s (mx/power beta1-s t-scalar)))
-                v-hat (mx/divide new-v
-                                 (mx/subtract one-s (mx/power beta2-s t-scalar)))
-
-                ;; Parameter update
-                update (mx/divide m-hat
-                                  (mx/add (mx/sqrt v-hat) eps-s))
-                new-params (mx/subtract params (mx/multiply lr-s update))]
+                bias1 (mx/subtract one-s (mx/power beta1-s t-scalar))
+                bias2 (mx/subtract one-s (mx/power beta2-s t-scalar))
+                [new-params new-m new-v]
+                (adam-update params m v grad scalars bias1 bias2)]
             #js [new-params new-m new-v loss]))]
 
     (mx/compile-fn step-fn)))
@@ -134,8 +167,7 @@
               loss-arr (aget result 3)
 
               ;; Materialize loss only at log boundaries — avoids per-step eval cost
-              log? (or (zero? i) (zero? (mod (inc i) log-every)))
-              losses' (if log?
+              losses' (if (log-iter? i log-every)
                         (do
                           (mx/materialize! loss-arr)
                           (let [loss-val (mx/item loss-arr)]
@@ -144,10 +176,7 @@
                             (conj! losses loss-val)))
                         losses)]
 
-          ;; Periodic cleanup every 50 iterations
-          (when (and (pos? i) (zero? (mod i 50)))
-            (mx/clear-cache!)
-            (mx/sweep-dead-arrays!))
+          (maybe-cleanup! i)
 
           (recur (inc i) np nm nv losses'))))))
 
@@ -176,6 +205,61 @@
                (mx/divide (mx/subtract f-plus f-minus) two-h)))
            (range d)))))
 
+(defn- adam-train-loop
+  "Host-side Adam training loop over a pluggable loss-gradient function.
+   Used by both the handler (finite-difference) and compiled-generate (exact AD)
+   paths — they differ only in how `loss-grad-fn` produces [loss grad].
+
+   loss-grad-fn: (fn [params] -> [loss grad]) where loss is -score (minimize).
+   init-params: [D] MLX array.
+   opts: same as compiled-train.
+
+   Bias correction is computed host-side via js/Math.pow. Returns
+   {:params final-params :loss-history [numbers...]}."
+  [loss-grad-fn init-params
+   {:keys [iterations callback log-every]
+    :or {iterations 1000 log-every 50}
+    :as opts}]
+  (let [d (mx/shape init-params)
+        scalars (adam-scalars opts)
+        {:keys [beta1 beta2]
+         :or {beta1 0.9 beta2 0.999}} opts]
+    (loop [i 0
+           params init-params
+           m (mx/zeros d)
+           v (mx/zeros d)
+           losses (transient [])]
+      (if (>= i iterations)
+        (do
+          (mx/materialize! params)
+          {:params params :loss-history (persistent! losses)})
+        (let [[loss grad] (loss-grad-fn params)
+              ;; Break lazy graph — loss and grad needed for Adam update
+              _ (mx/materialize! loss grad)
+
+              ;; Adam moment updates (host-side bias correction)
+              t (double (inc i))
+              bias1 (mx/scalar (- 1.0 (js/Math.pow beta1 t)))
+              bias2 (mx/scalar (- 1.0 (js/Math.pow beta2 t)))
+              [new-params new-m new-v]
+              (adam-update params m v grad scalars bias1 bias2)
+
+              ;; Break lazy graph — params and moments carried to next iteration
+              _ (mx/materialize! new-params new-m new-v)
+
+              ;; Log loss at boundaries
+              loss-val (mx/item loss)
+              losses' (if (log-iter? i log-every)
+                        (do
+                          (when callback
+                            (callback {:iter i :loss loss-val :params new-params}))
+                          (conj! losses loss-val))
+                        losses)]
+
+          (maybe-cleanup! i)
+
+          (recur (inc i) new-params new-m new-v losses'))))))
+
 (defn- handler-train
   "Training loop for handler-based (non-differentiable) score functions.
    Uses finite-difference gradients with Adam optimization.
@@ -186,67 +270,12 @@
    opts: same as compiled-train plus :fd-h (finite diff step, default 1e-4).
 
    Returns {:params final-params :loss-history [numbers...]}."
-  [score-fn init-params
-   {:keys [iterations lr beta1 beta2 epsilon callback log-every fd-h]
-    :or {iterations 1000 lr 0.001 beta1 0.9 beta2 0.999
-         epsilon 1e-8 log-every 50 fd-h 1e-4}}]
-  (let [d (mx/shape init-params)
-        ;; Hoist closure and scalar constants outside the loop
-        neg-score (fn [p] (mx/negative (score-fn p)))
-        beta1-s (mx/scalar beta1)
-        beta2-s (mx/scalar beta2)
-        one-minus-b1-s (mx/scalar (- 1.0 beta1))
-        one-minus-b2-s (mx/scalar (- 1.0 beta2))
-        lr-s (mx/scalar lr)
-        eps-s (mx/scalar epsilon)]
-    (loop [i 0
-           params init-params
-           m (mx/zeros d)
-           v (mx/zeros d)
-           losses (transient [])]
-      (if (>= i iterations)
-        (do
-          (mx/materialize! params)
-          {:params params :loss-history (persistent! losses)})
-        (let [;; Compute loss = -score (minimize)
-              loss (neg-score params)
-              ;; Finite-difference gradient of loss
-              grad (finite-diff-grad neg-score params fd-h)
-
-              ;; Break lazy graph — loss and grad needed for Adam update
-              _ (mx/materialize! loss grad)
-
-              ;; Adam moment updates (host-side bias correction)
-              t (double (inc i))
-              new-m (mx/add (mx/multiply beta1-s m)
-                            (mx/multiply one-minus-b1-s grad))
-              new-v (mx/add (mx/multiply beta2-s v)
-                            (mx/multiply one-minus-b2-s (mx/square grad)))
-              m-hat (mx/divide new-m (mx/scalar (- 1.0 (js/Math.pow beta1 t))))
-              v-hat (mx/divide new-v (mx/scalar (- 1.0 (js/Math.pow beta2 t))))
-              update-vec (mx/divide m-hat
-                                    (mx/add (mx/sqrt v-hat) eps-s))
-              new-params (mx/subtract params (mx/multiply lr-s update-vec))
-
-              ;; Break lazy graph — params and moments carried to next iteration
-              _ (mx/materialize! new-params new-m new-v)
-
-              ;; Log loss at boundaries
-              log? (or (zero? i) (zero? (mod (inc i) log-every)))
-              loss-val (mx/item loss)
-              losses' (if log?
-                        (do
-                          (when callback
-                            (callback {:iter i :loss loss-val :params new-params}))
-                          (conj! losses loss-val))
-                        losses)]
-
-          ;; Periodic cleanup
-          (when (and (pos? i) (zero? (mod i 50)))
-            (mx/clear-cache!)
-            (mx/sweep-dead-arrays!))
-
-          (recur (inc i) new-params new-m new-v losses'))))))
+  [score-fn init-params {:keys [fd-h] :or {fd-h 1e-4} :as opts}]
+  (let [neg-score (fn [p] (mx/negative (score-fn p)))
+        loss-grad-fn (fn [params]
+                       [(neg-score params)
+                        (finite-diff-grad neg-score params fd-h)])]
+    (adam-train-loop loss-grad-fn init-params opts)))
 
 (defn- ad-train
   "Training loop for compiled-generate score functions.
@@ -258,63 +287,9 @@
    opts: same as compiled-train.
 
    Returns {:params final-params :loss-history [numbers...]}."
-  [score-fn init-params
-   {:keys [iterations lr beta1 beta2 epsilon callback log-every]
-    :or {iterations 1000 lr 0.001 beta1 0.9 beta2 0.999
-         epsilon 1e-8 log-every 50}}]
-  (let [d (mx/shape init-params)
-        neg-score (fn [p] (mx/negative (score-fn p)))
-        vg (mx/value-and-grad neg-score)
-        beta1-s (mx/scalar beta1)
-        beta2-s (mx/scalar beta2)
-        one-minus-b1-s (mx/scalar (- 1.0 beta1))
-        one-minus-b2-s (mx/scalar (- 1.0 beta2))
-        lr-s (mx/scalar lr)
-        eps-s (mx/scalar epsilon)]
-    (loop [i 0
-           params init-params
-           m (mx/zeros d)
-           v (mx/zeros d)
-           losses (transient [])]
-      (if (>= i iterations)
-        (do
-          (mx/materialize! params)
-          {:params params :loss-history (persistent! losses)})
-        (let [[loss grad] (vg params)
-              ;; Break lazy graph — loss and grad needed for Adam update
-              _ (mx/materialize! loss grad)
-
-              ;; Adam moment updates (host-side bias correction)
-              t (double (inc i))
-              new-m (mx/add (mx/multiply beta1-s m)
-                            (mx/multiply one-minus-b1-s grad))
-              new-v (mx/add (mx/multiply beta2-s v)
-                            (mx/multiply one-minus-b2-s (mx/square grad)))
-              m-hat (mx/divide new-m (mx/scalar (- 1.0 (js/Math.pow beta1 t))))
-              v-hat (mx/divide new-v (mx/scalar (- 1.0 (js/Math.pow beta2 t))))
-              update-vec (mx/divide m-hat
-                                    (mx/add (mx/sqrt v-hat) eps-s))
-              new-params (mx/subtract params (mx/multiply lr-s update-vec))
-
-              ;; Break lazy graph — params and moments carried to next iteration
-              _ (mx/materialize! new-params new-m new-v)
-
-              ;; Log loss at boundaries
-              log? (or (zero? i) (zero? (mod (inc i) log-every)))
-              loss-val (mx/item loss)
-              losses' (if log?
-                        (do
-                          (when callback
-                            (callback {:iter i :loss loss-val :params new-params}))
-                          (conj! losses loss-val))
-                        losses)]
-
-          ;; Periodic cleanup
-          (when (and (pos? i) (zero? (mod i 50)))
-            (mx/clear-cache!)
-            (mx/sweep-dead-arrays!))
-
-          (recur (inc i) new-params new-m new-v losses'))))))
+  [score-fn init-params opts]
+  (let [neg-score (fn [p] (mx/negative (score-fn p)))]
+    (adam-train-loop (mx/value-and-grad neg-score) init-params opts)))
 
 (defn make-compiled-loss-grad
   "Build a compiled loss+gradient function for parameter learning.
@@ -453,35 +428,24 @@
    Noise [T,K] and uniforms [T] are generated host-side each iteration.
    The compiled function fuses: chain -> score -> grad -> Adam into one
    Metal dispatch."
-  [score-fn chain-fn {:keys [lr beta1 beta2 epsilon]
-                      :or {lr 0.01 beta1 0.9 beta2 0.999 epsilon 1e-8}}]
+  [score-fn chain-fn opts]
   (let [;; Objective: run chain, return negative final score (minimize)
         neg-obj (fn [params noise uniforms]
                   (mx/negative (score-fn (chain-fn params noise uniforms))))
         vg (mx/value-and-grad neg-obj)
 
         ;; Pre-create scalar constants
-        lr-s (mx/scalar lr)
-        beta1-s (mx/scalar beta1)
-        beta2-s (mx/scalar beta2)
-        eps-s (mx/scalar epsilon)
+        scalars (adam-scalars (merge {:lr 0.01} opts))
+        {:keys [beta1-s beta2-s]} scalars
         one-s (mx/scalar 1.0)
-        one-minus-b1 (mx/scalar (- 1.0 beta1))
-        one-minus-b2 (mx/scalar (- 1.0 beta2))
 
         step-fn
         (fn [params m v t-scalar noise uniforms]
           (let [[loss grad] (vg params noise uniforms)
-                new-m (mx/add (mx/multiply beta1-s m)
-                              (mx/multiply one-minus-b1 grad))
-                new-v (mx/add (mx/multiply beta2-s v)
-                              (mx/multiply one-minus-b2 (mx/square grad)))
-                m-hat (mx/divide new-m
-                                 (mx/subtract one-s (mx/power beta1-s t-scalar)))
-                v-hat (mx/divide new-v
-                                 (mx/subtract one-s (mx/power beta2-s t-scalar)))
-                update-vec (mx/divide m-hat (mx/add (mx/sqrt v-hat) eps-s))
-                new-params (mx/subtract params (mx/multiply lr-s update-vec))]
+                bias1 (mx/subtract one-s (mx/power beta1-s t-scalar))
+                bias2 (mx/subtract one-s (mx/power beta2-s t-scalar))
+                [new-params new-m new-v]
+                (adam-update params m v grad scalars bias1 bias2)]
             #js [new-params new-m new-v loss]))]
 
     (mx/compile-fn step-fn)))
@@ -583,8 +547,7 @@
               loss-arr (aget result 3)
 
               ;; Materialize loss only at log boundaries — avoids per-step eval cost
-              log? (or (zero? i) (zero? (mod (inc i) log-every)))
-              losses' (if log?
+              losses' (if (log-iter? i log-every)
                         (do
                           (mx/materialize! loss-arr)
                           (let [loss-val (mx/item loss-arr)]
@@ -593,10 +556,7 @@
                             (conj! losses loss-val)))
                         losses)]
 
-          ;; Periodic cleanup every 50 iterations
-          (when (and (pos? i) (zero? (mod i 50)))
-            (mx/clear-cache!)
-            (mx/sweep-dead-arrays!))
+          (maybe-cleanup! i)
 
           (recur (inc i) np nm nv losses' rk'))))))
 

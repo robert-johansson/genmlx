@@ -3,6 +3,20 @@
   (:require [genmlx.mlx :as mx]))
 
 ;; ---------------------------------------------------------------------------
+;; Shared helpers
+;; ---------------------------------------------------------------------------
+
+(defn- flatten-samples
+  "Stack, materialize, and flatten a vector of parameter samples (MLX arrays)
+   to a CLJS seq of doubles. Scalar params pass through; array-valued params
+   contribute their first element."
+  [samples]
+  (let [stacked (mx/stack samples)]
+    (mx/materialize! stacked)
+    (let [raw-vals (mx/->clj stacked)]
+      (if (number? (first raw-vals)) raw-vals (map first raw-vals)))))
+
+;; ---------------------------------------------------------------------------
 ;; Effective Sample Size (ESS)
 ;; ---------------------------------------------------------------------------
 
@@ -12,11 +26,7 @@
    Returns a number."
   [samples]
   (let [n (count samples)
-        stacked (mx/stack samples)
-        _ (mx/materialize! stacked)
-        raw-vals (mx/->clj stacked)
-        ;; For scalar params
-        flat-vals (vec (if (number? (first raw-vals)) raw-vals (map first raw-vals)))
+        flat-vals (vec (flatten-samples samples))
         mu (/ (reduce + flat-vals) n)
         ;; Compute autocovariance
         centered (mapv #(- % mu) flat-vals)
@@ -59,16 +69,17 @@
                                    (if (mx/array? s) (mx/item s) s))
                                  chain))
                          chains)
+        ;; Sum of squared deviations of xs from their mean mu
+        ss (fn [xs mu] (reduce + (map #(let [d (- % mu)] (* d d)) xs)))
         ;; Chain means
         chain-means (mapv (fn [vals] (/ (reduce + vals) n)) chain-vals)
         overall-mean (/ (reduce + chain-means) m)
         ;; Between-chain variance
         B (* (/ n (dec m))
-             (reduce + (map #(let [d (- % overall-mean)] (* d d)) chain-means)))
+             (ss chain-means overall-mean))
         ;; Within-chain variance
         W (/ (reduce + (map (fn [vals mu]
-                              (/ (reduce + (map #(let [d (- % mu)] (* d d)) vals))
-                                 (dec n)))
+                              (/ (ss vals mu) (dec n)))
                             chain-vals chain-means))
              m)
         ;; R-hat
@@ -95,18 +106,14 @@
   "Compute quantiles of samples.
    Returns {:median :q025 :q975}."
   [samples]
-  (let [stacked (mx/stack samples)
-        n (first (mx/shape stacked))]
-    (mx/materialize! stacked)
-    (let [raw-vals (mx/->clj stacked)
-          flat-vals (if (number? (first raw-vals)) raw-vals (map first raw-vals))
-          sorted-vals (sort flat-vals)
-          idx-025 (int (* 0.025 n))
-          idx-50  (int (* 0.5 n))
-          idx-975 (int (* 0.975 n))]
-      {:median (nth sorted-vals idx-50)
-       :q025 (nth sorted-vals idx-025)
-       :q975 (nth sorted-vals idx-975)})))
+  (let [n (count samples)
+        sorted-vals (sort (flatten-samples samples))
+        idx-025 (int (* 0.025 n))
+        idx-50  (int (* 0.5 n))
+        idx-975 (int (* 0.975 n))]
+    {:median (nth sorted-vals idx-50)
+     :q025 (nth sorted-vals idx-025)
+     :q975 (nth sorted-vals idx-975)}))
 
 (defn summarize
   "Print summary statistics for MCMC samples."

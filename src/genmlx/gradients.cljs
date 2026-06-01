@@ -7,6 +7,18 @@
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]))
 
+(defn- params->weight
+  "Set each indexed address on base-cm to the corresponding entry of params-arr,
+   then return the generate weight under model/args. indexed-addrs is a vector
+   of [i addr] pairs (index into params-arr)."
+  [model args base-cm indexed-addrs params-arr]
+  (let [cm (reduce
+             (fn [cm [i addr]]
+               (cm/set-choice cm [addr] (mx/index params-arr i)))
+             base-cm
+             indexed-addrs)]
+    (:weight (p/generate model args cm))))
+
 (defn choice-gradients
   "Compute gradients of the model's log-probability w.r.t. specified choices.
    model: generative function
@@ -34,12 +46,7 @@
           params (mx/array current-vals)
           ;; Score function: reconstruct choicemap with params, run generate
           score-fn (fn [params-arr]
-                     (let [cm (reduce
-                                (fn [cm [i addr]]
-                                  (cm/set-choice cm [addr] (mx/index params-arr i)))
-                                choices
-                                indexed-addrs)]
-                       (:weight (p/generate model args cm))))
+                     (params->weight model args choices indexed-addrs params-arr))
           ;; Compute gradient (uncompiled — compile-fn severs backward
           ;; pass when model body uses mx/eval!, returning silent zeros)
           grad-fn (mx/grad score-fn)
@@ -73,12 +80,7 @@
                        :params-shape (mx/shape params)})))
     (let [indexed-addrs (mapv vector (range) addresses)
           score-fn (fn [p]
-                     (let [cm (reduce
-                                (fn [cm [i addr]]
-                                  (cm/set-choice cm [addr] (mx/index p i)))
-                                observations
-                                indexed-addrs)]
-                       (:weight (p/generate model args cm))))
+                     (params->weight model args observations indexed-addrs p))
           vag (mx/value-and-grad score-fn)
           [score grad] (vag params)]
       (mx/materialize! score grad)

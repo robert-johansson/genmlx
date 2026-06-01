@@ -54,6 +54,15 @@
               {:choices combo-cm :log-weight weight}))
           combos)))
 
+(defn- realize-log-weights
+  "Materialize each entry's :log-weight and extract it as a JS number.
+   Returns a vector of doubles, one per entry."
+  [entries]
+  (mapv (fn [{:keys [log-weight]}]
+          (mx/materialize! log-weight)
+          (mx/item log-weight))
+        entries))
+
 ;; ---------------------------------------------------------------------------
 ;; Public API
 ;; ---------------------------------------------------------------------------
@@ -73,10 +82,7 @@
   ([model args observations addr-supports opts]
   (let [entries (enumerate-all model args observations addr-supports opts)
         ;; Realize all weights and extract as JS numbers
-        lw-vals (mapv (fn [{:keys [log-weight]}]
-                        (mx/materialize! log-weight)
-                        (mx/item log-weight))
-                      entries)
+        lw-vals (realize-log-weights entries)
         w-arr (mx/array (into-array lw-vals))
         log-z-val (mx/item (mx/logsumexp w-arr))]
     (->> (map-indexed
@@ -128,9 +134,6 @@
    (enumerate-marginal-likelihood model args observations addr-supports nil))
   ([model args observations addr-supports opts]
   (let [entries (enumerate-all model args observations addr-supports opts)
-        lw-vals (mapv (fn [{:keys [log-weight]}]
-                        (mx/materialize! log-weight)
-                        (mx/item log-weight))
-                      entries)
+        lw-vals (realize-log-weights entries)
         w-arr (mx/array (into-array lw-vals))]
     (mx/logsumexp w-arr))))

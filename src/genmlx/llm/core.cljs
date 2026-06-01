@@ -18,6 +18,11 @@
             [genmlx.choicemap :as cm])
   (:require-macros [genmlx.gen :refer [gen]]))
 
+(defn- t-addr
+  "Trace address for the i-th generated token: :t0, :t1, ..."
+  [i]
+  (keyword (str "t" i)))
+
 (defn make-llm-gf
   "Create a generative function from a loaded LLM.
 
@@ -52,7 +57,7 @@
                   (loop [i 0, context prompt-ids, logits logits]
                     (if (>= i max-tokens)
                       context
-                      (let [tok (trace (keyword (str "t" i)) (dist/categorical logits))
+                      (let [tok (trace (t-addr i) (dist/categorical logits))
                             tok-id (mx/item tok)]
                         (if (= tok-id eos)
                           (conj context tok-id)
@@ -74,7 +79,7 @@
             (if (>= i max-tokens)
               context
               (let [logits (llm/forward-pass model context)
-                    tok (trace (keyword (str "t" i)) (dist/categorical logits))
+                    tok (trace (t-addr i) (dist/categorical logits))
                     tok-id (mx/item tok)]
                 (if (= tok-id eos)
                   (conj context tok-id)
@@ -91,7 +96,7 @@
   [tokenizer trace]
   (let [choices (:choices trace)
         tokens (->> (range)
-                    (map #(cm/get-submap choices (keyword (str "t" %))))
+                    (map #(cm/get-submap choices (t-addr %)))
                     (take-while cm/has-value?)
                     (mapv #(mx/item (cm/get-value %))))]
     (llm/decode tokenizer (js/Uint32Array.from (clj->js tokens)))))

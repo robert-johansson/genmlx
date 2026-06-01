@@ -33,16 +33,27 @@
 ;; Source analysis (no execution needed)
 ;; ---------------------------------------------------------------------------
 
+(defn- tree-violations
+  "Walk the source form tree, keeping nodes matching node-pred and mapping
+   each to a violation map via ->violation. nil source yields nil."
+  [source node-pred ->violation]
+  (when source
+    (->> (tree-seq coll? seq source)
+         (filter node-pred)
+         (mapv ->violation))))
+
+(defn- symbol-violations
+  "tree-violations restricted to symbols whose name matches sym-pred."
+  [source sym-pred ->violation]
+  (tree-violations source (every-pred symbol? sym-pred) ->violation))
+
 (defn- check-source-materialization
   "Walk the source form tree looking for eval! or item symbols."
   [source]
-  (when source
-    (->> (tree-seq coll? seq source)
-         (filter symbol?)
-         (filter #(#{"eval!" "item"} (name %)))
-         (mapv (fn [s] {:type :materialization-in-body
-                        :severity :warning
-                        :message (str "Found " s " in model body — breaks vectorized execution")})))))
+  (symbol-violations source #(#{"eval!" "item"} (name %))
+    (fn [s] {:type :materialization-in-body
+             :severity :warning
+             :message (str "Found " s " in model body — breaks vectorized execution")})))
 
 (defn- external-random?
   "True if sym refers to an untraced source of randomness."
@@ -58,14 +69,11 @@
   "Walk the source form tree for untraced randomness symbols.
    DML restriction 3: no external randomness affecting control flow."
   [source]
-  (when source
-    (->> (tree-seq coll? seq source)
-         (filter symbol?)
-         (filter external-random?)
-         (mapv (fn [s]
-                 {:type :external-randomness
-                  :severity :warning
-                  :message (str "Found " s " in model body — untraced randomness violates DML restriction 3")})))))
+  (symbol-violations source external-random?
+    (fn [s]
+      {:type :external-randomness
+       :severity :warning
+       :message (str "Found " s " in model body — untraced randomness violates DML restriction 3")})))
 
 (def ^:private mutation-syms
   "Symbols that indicate mutation in model body."
@@ -75,14 +83,11 @@
   "Walk the source form tree for mutation symbols.
    DML restriction 4: no mutation in model body."
   [source]
-  (when source
-    (->> (tree-seq coll? seq source)
-         (filter symbol?)
-         (filter #(mutation-syms (name %)))
-         (mapv (fn [s]
-                 {:type :mutation
-                  :severity :warning
-                  :message (str "Found " s " in model body — mutation violates DML restriction 4")})))))
+  (symbol-violations source #(mutation-syms (name %))
+    (fn [s]
+      {:type :mutation
+       :severity :warning
+       :message (str "Found " s " in model body — mutation violates DML restriction 4")})))
 
 (def ^:private hof-syms
   "Higher-order function symbols that should not receive gen fns."
@@ -97,18 +102,17 @@
   "Walk the source form tree for gen fns passed to higher-order functions.
    DML restriction 5: use combinators (Map, Unfold, etc.) instead."
   [source]
-  (when source
-    (->> (tree-seq coll? seq source)
-         (filter seq?)
-         (filter (fn [form]
-                   (and (symbol? (first form))
-                        (hof-syms (name (first form)))
-                        (some gen-form? (rest form)))))
-         (mapv (fn [form]
-                 {:type :hof-gen-fn
-                  :severity :warning
-                  :message (str "Found gen fn passed to " (first form)
-                                " — use combinators (Map, Unfold, etc.) instead")})))))
+  (tree-violations source
+    (fn [form]
+      (and (seq? form)
+           (symbol? (first form))
+           (hof-syms (name (first form)))
+           (some gen-form? (rest form))))
+    (fn [form]
+      {:type :hof-gen-fn
+       :severity :warning
+       :message (str "Found gen fn passed to " (first form)
+                     " — use combinators (Map, Unfold, etc.) instead")})))
 
 ;; ---------------------------------------------------------------------------
 ;; Pure validation transition (replaces validate-handler)

@@ -129,8 +129,9 @@
 ;; Generic handler builder (shared across all conjugate families)
 ;; ---------------------------------------------------------------------------
 
-(defn- make-conjugate-handlers
-  "Build address-based prior + obs handlers for a conjugate family.
+(defn- make-conjugate-handlers-core
+  "Build address-based prior + obs handlers for a conjugate family, parameterized
+   by `mode` (:generate or :regenerate) — mirroring make-kalman-handlers-core.
 
    prior-addr:     keyword address of the prior trace site
    obs-addrs:      vector of observation site addresses
@@ -138,33 +139,54 @@
    posterior-mean: (fn [posterior-map] -> MLX-scalar) — point estimate from posterior
    update-step:    (fn [posterior obs-value dist-params] -> {:posterior map :ll scalar})
 
+   :generate — prior returns posterior mean (always runs); obs reads
+     :constraints, ll → :score + :weight.
+   :regenerate — prior returns the old value and falls through (nil) when the
+     site is selected; obs reads :old-choices, requires an initialized posterior,
+     skips selected obs, ll → :score only.
+
    Returns {addr handler-fn} for prior + all obs addresses."
-  [prior-addr obs-addrs init-posterior posterior-mean update-step]
-  (let [prior-handler
+  [prior-addr obs-addrs init-posterior posterior-mean update-step mode]
+  (let [regenerate? (= mode :regenerate)
+        prior-handler
         (fn [state addr dist]
-          (let [posterior (init-posterior (:params dist))
-                post-mean (posterior-mean posterior)]
-            ;; Return prior mean; don't add to score (marginalized out)
-            [post-mean (-> state
-                           (assoc-in [:auto-posteriors prior-addr] posterior)
-                           (update :choices cm/set-value addr post-mean))]))
+          (when-not (and regenerate? (:selection state)
+                         (sel/selected? (:selection state) addr))
+            (let [posterior (init-posterior (:params dist))
+                  value (if regenerate?
+                          (cm/get-value (cm/get-submap (:old-choices state) addr))
+                          (posterior-mean posterior))]
+              ;; Return point estimate / old value; don't add to score (marginalized out)
+              [value (-> state
+                         (assoc-in [:auto-posteriors prior-addr] posterior)
+                         (update :choices cm/set-value addr value))])))
 
         obs-handler
         (fn [state addr dist]
-          (let [constraint (cm/get-submap (:constraints state) addr)]
-            (when (cm/has-value? constraint)
-              ;; Only handle constrained obs analytically
-              (let [obs-value (cm/get-value constraint)
-                    current-posterior (get-in state [:auto-posteriors prior-addr])
-                    {:keys [posterior ll]} (update-step current-posterior obs-value (:params dist))
-                    post-mean (posterior-mean posterior)]
-                [obs-value (-> state
-                               (assoc-in [:auto-posteriors prior-addr] posterior)
-                               (update :choices cm/set-value addr obs-value)
-                               (update :score #(mx/add % ll))
-                               (update :weight #(mx/add % ll))
-                             ;; Update prior's value to posterior mean
-                               (update :choices cm/set-value prior-addr post-mean))]))))]
+          ;; Regenerate: fall through if the prior was selected (no posterior).
+          (when-let [current-posterior (if regenerate?
+                                         (get-in state [:auto-posteriors prior-addr])
+                                         ::generate)]
+            ;; Regenerate: skip obs that are themselves being resampled.
+            (when-not (and regenerate? (:selection state)
+                           (sel/selected? (:selection state) addr))
+              (let [constraint (if regenerate?
+                                 (cm/get-submap (:old-choices state) addr)
+                                 (cm/get-submap (:constraints state) addr))]
+                (when (cm/has-value? constraint)
+                  (let [obs-value (cm/get-value constraint)
+                        cur-post (if regenerate?
+                                   current-posterior
+                                   (get-in state [:auto-posteriors prior-addr]))
+                        {:keys [posterior ll]} (update-step cur-post obs-value (:params dist))
+                        post-mean (posterior-mean posterior)]
+                    [obs-value (cond-> state
+                                 true (assoc-in [:auto-posteriors prior-addr] posterior)
+                                 true (update :choices cm/set-value addr obs-value)
+                                 true (update :score #(mx/add % ll))
+                                 (not regenerate?) (update :weight #(mx/add % ll))
+                                 ;; Update prior's value to posterior mean
+                                 true (update :choices cm/set-value prior-addr post-mean))]))))))]
     (merge {prior-addr prior-handler}
            (into {} (map (fn [oa] [oa obs-handler]) obs-addrs)))))
 
@@ -172,63 +194,51 @@
 ;; Per-family configs
 ;; ---------------------------------------------------------------------------
 
-(defn- make-auto-nn-handlers
-  "Build address-based handlers for a Normal-Normal conjugate pair."
-  [prior-addr obs-addrs]
-  (make-conjugate-handlers prior-addr obs-addrs
-                           (fn [{:keys [mu sigma]}]
-                             {:mean mu :var (mx/multiply sigma sigma)})
-                           :mean
-                           (fn [posterior obs-value {:keys [sigma]}]
-                             (let [obs-var (mx/multiply sigma sigma)
-                                   {:keys [mean var ll]} (nn-update-step posterior obs-value obs-var)]
-                               {:posterior {:mean mean :var var} :ll ll}))))
+;; Each family contributes the three closures that differ between conjugate
+;; pairs: how to seed the posterior from the prior dist params, the posterior
+;; point estimate, and the per-observation update. The handler control flow
+;; (generate vs regenerate, score/weight accounting) is shared in
+;; make-conjugate-handlers-core.
+(def ^:private conjugate-family-specs
+  {:normal-normal
+   {:init-posterior (fn [{:keys [mu sigma]}] {:mean mu :var (mx/multiply sigma sigma)})
+    :posterior-mean :mean
+    :update-step (fn [posterior obs-value {:keys [sigma]}]
+                   (let [obs-var (mx/multiply sigma sigma)
+                         {:keys [mean var ll]} (nn-update-step posterior obs-value obs-var)]
+                     {:posterior {:mean mean :var var} :ll ll}))}
+   :normal-iid-normal
+   {:init-posterior (fn [{:keys [mu sigma]}] {:mean mu :var (mx/multiply sigma sigma)})
+    :posterior-mean :mean
+    :update-step (fn [posterior obs-value {:keys [sigma]}]
+                   (let [obs-var (mx/multiply sigma sigma)
+                         {:keys [mean var ll]} (nn-iid-update-step posterior obs-value obs-var)]
+                     {:posterior {:mean mean :var var} :ll ll}))}
+   :beta-bernoulli
+   {:init-posterior (fn [{:keys [alpha beta-param]}] {:alpha alpha :beta beta-param})
+    :posterior-mean (fn [{:keys [alpha beta]}] (mx/divide alpha (mx/add alpha beta)))
+    :update-step (fn [posterior obs-value _params]
+                   (let [{:keys [alpha beta ll]} (bb-update-step posterior obs-value)]
+                     {:posterior {:alpha alpha :beta beta} :ll ll}))}
+   :gamma-poisson
+   {:init-posterior (fn [{:keys [shape-param rate]}] {:shape shape-param :rate rate})
+    :posterior-mean (fn [{:keys [shape rate]}] (mx/divide shape rate))
+    :update-step (fn [posterior obs-value _params]
+                   (let [{:keys [shape rate ll]} (gp-update-step posterior obs-value)]
+                     {:posterior {:shape shape :rate rate} :ll ll}))}
+   :gamma-exponential
+   {:init-posterior (fn [{:keys [shape-param rate]}] {:shape shape-param :rate rate})
+    :posterior-mean (fn [{:keys [shape rate]}] (mx/divide shape rate))
+    :update-step (fn [posterior obs-value _params]
+                   (let [{:keys [shape rate ll]} (ge-update-step posterior obs-value)]
+                     {:posterior {:shape shape :rate rate} :ll ll}))}})
 
-(defn- make-auto-nn-iid-handlers
-  "Build address-based handlers for a Normal prior + iid-gaussian obs pair.
-   Processes [T] observations at once via nn-iid-update-step."
-  [prior-addr obs-addrs]
-  (make-conjugate-handlers prior-addr obs-addrs
-                           (fn [{:keys [mu sigma]}]
-                             {:mean mu :var (mx/multiply sigma sigma)})
-                           :mean
-                           (fn [posterior obs-value {:keys [sigma]}]
-                             (let [obs-var (mx/multiply sigma sigma)
-                                   {:keys [mean var ll]} (nn-iid-update-step posterior obs-value obs-var)]
-                               {:posterior {:mean mean :var var} :ll ll}))))
-
-(defn- make-auto-bb-handlers
-  "Build address-based handlers for a Beta-Bernoulli conjugate pair."
-  [prior-addr obs-addrs]
-  (make-conjugate-handlers prior-addr obs-addrs
-                           (fn [{:keys [alpha beta-param]}]
-                             {:alpha alpha :beta beta-param})
-                           (fn [{:keys [alpha beta]}] (mx/divide alpha (mx/add alpha beta)))
-                           (fn [posterior obs-value _params]
-                             (let [{:keys [alpha beta ll]} (bb-update-step posterior obs-value)]
-                               {:posterior {:alpha alpha :beta beta} :ll ll}))))
-
-(defn- make-auto-gp-handlers
-  "Build address-based handlers for a Gamma-Poisson conjugate pair."
-  [prior-addr obs-addrs]
-  (make-conjugate-handlers prior-addr obs-addrs
-                           (fn [{:keys [shape-param rate]}]
-                             {:shape shape-param :rate rate})
-                           (fn [{:keys [shape rate]}] (mx/divide shape rate))
-                           (fn [posterior obs-value _params]
-                             (let [{:keys [shape rate ll]} (gp-update-step posterior obs-value)]
-                               {:posterior {:shape shape :rate rate} :ll ll}))))
-
-(defn- make-auto-ge-handlers
-  "Build address-based handlers for a Gamma-Exponential conjugate pair."
-  [prior-addr obs-addrs]
-  (make-conjugate-handlers prior-addr obs-addrs
-                           (fn [{:keys [shape-param rate]}]
-                             {:shape shape-param :rate rate})
-                           (fn [{:keys [shape rate]}] (mx/divide shape rate))
-                           (fn [posterior obs-value _params]
-                             (let [{:keys [shape rate ll]} (ge-update-step posterior obs-value)]
-                               {:posterior {:shape shape :rate rate} :ll ll}))))
+(defn- make-family-handlers
+  "Build conjugate handlers for `family` from conjugate-family-specs, in `mode`."
+  [family mode prior-addr obs-addrs]
+  (let [{:keys [init-posterior posterior-mean update-step]} (conjugate-family-specs family)]
+    (make-conjugate-handlers-core prior-addr obs-addrs
+                                  init-posterior posterior-mean update-step mode)))
 
 ;; ---------------------------------------------------------------------------
 ;; Auto-Kalman handlers (for detected linear-Gaussian chains)
@@ -467,38 +477,55 @@
             S1 (mx/subtract cov-matrix (mx/matmul cov-matrix M-inv-S0))]
         {:mean-vec m1 :cov-matrix S1 :ll ll}))))
 
-(defn- make-auto-mvn-handlers
-  "Build address-based handlers for a MVN-Normal conjugate pair."
-  [prior-addr obs-addrs]
-  (let [prior-handler
+(defn- make-mvn-handlers-core
+  "Build address-based handlers for a MVN-Normal conjugate pair, parameterized
+   by `mode` (:generate or :regenerate) — mirroring make-conjugate-handlers-core.
+   The MVN update keeps its ill-conditioned fallthrough (nil from mvn-update-step)."
+  [prior-addr obs-addrs mode]
+  (let [regenerate? (= mode :regenerate)
+        prior-handler
         (fn [state addr dist]
-          (let [params (:params dist)
-                mean-vec (:mean-vec params)
-                cov-matrix (:cov-matrix params)
-                posterior {:mean-vec mean-vec :cov-matrix cov-matrix}]
-            ;; Return prior mean; don't add to score (marginalized out)
-            [mean-vec (-> state
-                          (assoc-in [:auto-posteriors prior-addr] posterior)
-                          (update :choices cm/set-value addr mean-vec))]))
+          (when-not (and regenerate? (:selection state)
+                         (sel/selected? (:selection state) addr))
+            (let [params (:params dist)
+                  mean-vec (:mean-vec params)
+                  cov-matrix (:cov-matrix params)
+                  posterior {:mean-vec mean-vec :cov-matrix cov-matrix}
+                  value (if regenerate?
+                          (cm/get-value (cm/get-submap (:old-choices state) addr))
+                          mean-vec)]
+              ;; Return prior mean / old value; don't add to score (marginalized out)
+              [value (-> state
+                         (assoc-in [:auto-posteriors prior-addr] posterior)
+                         (update :choices cm/set-value addr value))])))
 
         obs-handler
         (fn [state addr dist]
-          (let [constraint (cm/get-submap (:constraints state) addr)]
-            (when (cm/has-value? constraint)
-              (let [obs-value (cm/get-value constraint)
-                    posterior (get-in state [:auto-posteriors prior-addr])
-                    obs-cov (:cov-matrix (:params dist))
-                    result (mvn-update-step posterior obs-value obs-cov)]
-                ;; Fallthrough if ill-conditioned
-                (when result
-                  (let [{:keys [mean-vec cov-matrix ll]} result]
-                    [obs-value (-> state
-                                   (assoc-in [:auto-posteriors prior-addr]
-                                             {:mean-vec mean-vec :cov-matrix cov-matrix})
-                                   (update :choices cm/set-value addr obs-value)
-                                   (update :score #(mx/add % ll))
-                                   (update :weight #(mx/add % ll))
-                                   (update :choices cm/set-value prior-addr mean-vec))]))))))]
+          (when-let [posterior (if regenerate?
+                                 (get-in state [:auto-posteriors prior-addr])
+                                 ::generate)]
+            (when-not (and regenerate? (:selection state)
+                           (sel/selected? (:selection state) addr))
+              (let [constraint (if regenerate?
+                                 (cm/get-submap (:old-choices state) addr)
+                                 (cm/get-submap (:constraints state) addr))]
+                (when (cm/has-value? constraint)
+                  (let [obs-value (cm/get-value constraint)
+                        cur-post (if regenerate?
+                                   posterior
+                                   (get-in state [:auto-posteriors prior-addr]))
+                        obs-cov (:cov-matrix (:params dist))
+                        result (mvn-update-step cur-post obs-value obs-cov)]
+                    ;; Fallthrough if ill-conditioned
+                    (when result
+                      (let [{:keys [mean-vec cov-matrix ll]} result]
+                        [obs-value (cond-> state
+                                     true (assoc-in [:auto-posteriors prior-addr]
+                                                    {:mean-vec mean-vec :cov-matrix cov-matrix})
+                                     true (update :choices cm/set-value addr obs-value)
+                                     true (update :score #(mx/add % ll))
+                                     (not regenerate?) (update :weight #(mx/add % ll))
+                                     true (update :choices cm/set-value prior-addr mean-vec))]))))))))]
     (merge {prior-addr prior-handler}
            (into {} (map (fn [oa] [oa obs-handler]) obs-addrs)))))
 
@@ -506,14 +533,21 @@
 ;; Factory dispatch
 ;; ---------------------------------------------------------------------------
 
+(defn- make-auto-handlers-for
+  "Generate-mode handler factory for `family`: a (fn [prior-addr obs-addrs])."
+  [family]
+  (if (= family :mvn-normal)
+    (fn [prior-addr obs-addrs] (make-mvn-handlers-core prior-addr obs-addrs :generate))
+    (fn [prior-addr obs-addrs] (make-family-handlers family :generate prior-addr obs-addrs))))
+
 (def family->handler-factory
   "Map from conjugate family keyword to handler factory function."
-  {:normal-normal make-auto-nn-handlers
-   :normal-iid-normal make-auto-nn-iid-handlers
-   :beta-bernoulli make-auto-bb-handlers
-   :gamma-poisson make-auto-gp-handlers
-   :gamma-exponential make-auto-ge-handlers
-   :mvn-normal make-auto-mvn-handlers})
+  {:normal-normal (make-auto-handlers-for :normal-normal)
+   :normal-iid-normal (make-auto-handlers-for :normal-iid-normal)
+   :beta-bernoulli (make-auto-handlers-for :beta-bernoulli)
+   :gamma-poisson (make-auto-handlers-for :gamma-poisson)
+   :gamma-exponential (make-auto-handlers-for :gamma-exponential)
+   :mvn-normal (make-auto-handlers-for :mvn-normal)})
 
 (defn build-auto-handlers
   "Build address-based handlers from detected conjugate pairs.
@@ -542,151 +576,25 @@
 ;;   If prior was selected (no posterior) → returns nil (fallthrough).
 ;; ---------------------------------------------------------------------------
 
-(defn- make-regenerate-conjugate-handlers
-  "Build regenerate-specific address-based handlers for a conjugate family.
+;; Regenerate handlers reuse the same per-family specs and mode-parameterized
+;; cores as generate (see make-conjugate-handlers-core / make-mvn-handlers-core);
+;; only the :regenerate mode flag differs.
 
-   Same structure as make-conjugate-handlers but with regenerate weight semantics:
-   - Prior: 0 score (marginalized), init posterior from old value. Nil if selected.
-   - Obs: marginal LL → :score ONLY (not :weight). Nil if prior was selected."
-  [prior-addr obs-addrs init-posterior posterior-mean update-step]
-  (let [prior-handler
-        (fn [state addr dist]
-          ;; Case A: prior is selected → fall through entirely
-          (when-not (and (:selection state)
-                         (sel/selected? (:selection state) addr))
-            ;; Case B: prior NOT selected → use old value, init posterior, 0 score
-            (let [old-val (cm/get-value (cm/get-submap (:old-choices state) addr))
-                  posterior (init-posterior (:params dist))]
-              [old-val (-> state
-                           (assoc-in [:auto-posteriors prior-addr] posterior)
-                           (update :choices cm/set-value addr old-val))])))
-
-        obs-handler
-        (fn [state addr dist]
-          ;; If prior was selected (no posterior initialized) → fall through
-          (when-let [current-posterior (get-in state [:auto-posteriors prior-addr])]
-            ;; Check old-choices directly (no regen-constraints needed)
-            ;; Skip if this obs is in the selection (being resampled)
-            (when-not (and (:selection state)
-                           (sel/selected? (:selection state) addr))
-              (let [old-sub (cm/get-submap (:old-choices state) addr)]
-                (when (cm/has-value? old-sub)
-                  ;; Obs is constrained → compute marginal LL
-                  ;; Add to :score ONLY, not :weight (weight tracks proposal ratio)
-                  (let [obs-value (cm/get-value old-sub)
-                        {:keys [posterior ll]} (update-step current-posterior obs-value (:params dist))
-                        post-mean (posterior-mean posterior)]
-                    [obs-value (-> state
-                                   (assoc-in [:auto-posteriors prior-addr] posterior)
-                                   (update :choices cm/set-value addr obs-value)
-                                   (update :score #(mx/add % ll))
-                                 ;; Update prior's value to posterior mean
-                                   (update :choices cm/set-value prior-addr post-mean))]))))))]
-    (merge {prior-addr prior-handler}
-           (into {} (map (fn [oa] [oa obs-handler]) obs-addrs)))))
-
-;; Per-family regenerate handler factories
-
-(defn- make-regenerate-nn-handlers
-  "Build regenerate-specific handlers for Normal-Normal."
-  [prior-addr obs-addrs]
-  (make-regenerate-conjugate-handlers prior-addr obs-addrs
-                                      (fn [{:keys [mu sigma]}]
-                                        {:mean mu :var (mx/multiply sigma sigma)})
-                                      :mean
-                                      (fn [posterior obs-value {:keys [sigma]}]
-                                        (let [obs-var (mx/multiply sigma sigma)
-                                              {:keys [mean var ll]} (nn-update-step posterior obs-value obs-var)]
-                                          {:posterior {:mean mean :var var} :ll ll}))))
-
-(defn- make-regenerate-nn-iid-handlers
-  "Build regenerate-specific handlers for Normal prior + iid-gaussian obs."
-  [prior-addr obs-addrs]
-  (make-regenerate-conjugate-handlers prior-addr obs-addrs
-                                      (fn [{:keys [mu sigma]}]
-                                        {:mean mu :var (mx/multiply sigma sigma)})
-                                      :mean
-                                      (fn [posterior obs-value {:keys [sigma]}]
-                                        (let [obs-var (mx/multiply sigma sigma)
-                                              {:keys [mean var ll]} (nn-iid-update-step posterior obs-value obs-var)]
-                                          {:posterior {:mean mean :var var} :ll ll}))))
-
-(defn- make-regenerate-bb-handlers
-  "Build regenerate-specific handlers for Beta-Bernoulli."
-  [prior-addr obs-addrs]
-  (make-regenerate-conjugate-handlers prior-addr obs-addrs
-                                      (fn [{:keys [alpha beta-param]}]
-                                        {:alpha alpha :beta beta-param})
-                                      (fn [{:keys [alpha beta]}] (mx/divide alpha (mx/add alpha beta)))
-                                      (fn [posterior obs-value _params]
-                                        (let [{:keys [alpha beta ll]} (bb-update-step posterior obs-value)]
-                                          {:posterior {:alpha alpha :beta beta} :ll ll}))))
-
-(defn- make-regenerate-gp-handlers
-  "Build regenerate-specific handlers for Gamma-Poisson."
-  [prior-addr obs-addrs]
-  (make-regenerate-conjugate-handlers prior-addr obs-addrs
-                                      (fn [{:keys [shape-param rate]}]
-                                        {:shape shape-param :rate rate})
-                                      (fn [{:keys [shape rate]}] (mx/divide shape rate))
-                                      (fn [posterior obs-value _params]
-                                        (let [{:keys [shape rate ll]} (gp-update-step posterior obs-value)]
-                                          {:posterior {:shape shape :rate rate} :ll ll}))))
-
-(defn- make-regenerate-ge-handlers
-  "Build regenerate-specific handlers for Gamma-Exponential."
-  [prior-addr obs-addrs]
-  (make-regenerate-conjugate-handlers prior-addr obs-addrs
-                                      (fn [{:keys [shape-param rate]}]
-                                        {:shape shape-param :rate rate})
-                                      (fn [{:keys [shape rate]}] (mx/divide shape rate))
-                                      (fn [posterior obs-value _params]
-                                        (let [{:keys [shape rate ll]} (ge-update-step posterior obs-value)]
-                                          {:posterior {:shape shape :rate rate} :ll ll}))))
-
-(defn- make-regenerate-mvn-handlers
-  "Build regenerate-specific handlers for MVN-Normal."
-  [prior-addr obs-addrs]
-  (let [prior-handler
-        (fn [state addr dist]
-          (when-not (and (:selection state)
-                         (sel/selected? (:selection state) addr))
-            (let [old-val (cm/get-value (cm/get-submap (:old-choices state) addr))
-                  params (:params dist)
-                  posterior {:mean-vec (:mean-vec params) :cov-matrix (:cov-matrix params)}]
-              [old-val (-> state
-                           (assoc-in [:auto-posteriors prior-addr] posterior)
-                           (update :choices cm/set-value addr old-val))])))
-
-        obs-handler
-        (fn [state addr dist]
-          (when-let [posterior (get-in state [:auto-posteriors prior-addr])]
-            (when-not (and (:selection state)
-                           (sel/selected? (:selection state) addr))
-              (let [old-sub (cm/get-submap (:old-choices state) addr)]
-                (when (cm/has-value? old-sub)
-                  (let [obs-value (cm/get-value old-sub)
-                        obs-cov (:cov-matrix (:params dist))
-                        result (mvn-update-step posterior obs-value obs-cov)]
-                    (when result
-                      (let [{:keys [mean-vec cov-matrix ll]} result]
-                        [obs-value (-> state
-                                       (assoc-in [:auto-posteriors prior-addr]
-                                                 {:mean-vec mean-vec :cov-matrix cov-matrix})
-                                       (update :choices cm/set-value addr obs-value)
-                                       (update :score #(mx/add % ll))
-                                       (update :choices cm/set-value prior-addr mean-vec))]))))))))]
-    (merge {prior-addr prior-handler}
-           (into {} (map (fn [oa] [oa obs-handler]) obs-addrs)))))
+(defn- make-regenerate-handlers-for
+  "Regenerate-mode handler factory for `family`: a (fn [prior-addr obs-addrs])."
+  [family]
+  (if (= family :mvn-normal)
+    (fn [prior-addr obs-addrs] (make-mvn-handlers-core prior-addr obs-addrs :regenerate))
+    (fn [prior-addr obs-addrs] (make-family-handlers family :regenerate prior-addr obs-addrs))))
 
 (def regenerate-family->handler-factory
   "Map from conjugate family keyword to regenerate-specific handler factory."
-  {:normal-normal make-regenerate-nn-handlers
-   :normal-iid-normal make-regenerate-nn-iid-handlers
-   :beta-bernoulli make-regenerate-bb-handlers
-   :gamma-poisson make-regenerate-gp-handlers
-   :gamma-exponential make-regenerate-ge-handlers
-   :mvn-normal make-regenerate-mvn-handlers})
+  {:normal-normal (make-regenerate-handlers-for :normal-normal)
+   :normal-iid-normal (make-regenerate-handlers-for :normal-iid-normal)
+   :beta-bernoulli (make-regenerate-handlers-for :beta-bernoulli)
+   :gamma-poisson (make-regenerate-handlers-for :gamma-poisson)
+   :gamma-exponential (make-regenerate-handlers-for :gamma-exponential)
+   :mvn-normal (make-regenerate-handlers-for :mvn-normal)})
 
 (defn build-regenerate-handlers
   "Build regenerate-specific address-based handlers from detected conjugate pairs.

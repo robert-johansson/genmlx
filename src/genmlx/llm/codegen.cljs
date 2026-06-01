@@ -56,18 +56,16 @@
            :incomplete
            :invalid))))
 
+(defn parse-form
+  "Parse a string into a ClojureScript form via edamame, returning nil if it
+   does not parse. Used to recover a form from generated code best-effort."
+  [s]
+  (try (eda/parse-string s eda-opts) (catch :default _ nil)))
+
 (def ^:private candidate-bytes
   "Printable ASCII + whitespace bytes as single-char strings."
   (into (mapv #(js/String.fromCharCode %) (range 32 127))
         ["\n" "\t"]))
-
-(defn valid-next-bytes
-  "Return the set of bytes that maintain a valid prefix."
-  [prefix]
-  (into #{}
-        (filter (fn [b]
-                  (#{:incomplete :complete} (prefix-status (str prefix b)))))
-        candidate-bytes))
 
 (defn reader-constraint
   "Return a map of {char -> :incomplete|:complete} for valid next bytes.
@@ -78,6 +76,11 @@
                 (let [s (prefix-status (str prefix b))]
                   (when (not= :invalid s) [b s]))))
         candidate-bytes))
+
+(defn valid-next-bytes
+  "Return the set of bytes that maintain a valid prefix."
+  [prefix]
+  (set (keys (reader-constraint prefix))))
 
 (defn suppress-complete
   "Before min-bytes, treat :complete as :incomplete to prevent
@@ -268,8 +271,7 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
                                            :system-prompt system-prompt})
                   code (extract-code text)
                   valid (valid-cljs? code)
-                  form (when valid
-                         (try (eda/parse-string code eda-opts) (catch :default _ nil)))]
+                  form (when valid (parse-form code))]
            {:code code
             :valid? valid
             :form form
@@ -285,8 +287,7 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
                   text (apply str (:retval trace))
                   code (extract-code text)
                   valid (valid-cljs? code)
-                  form (when valid
-                         (try (eda/parse-string code eda-opts) (catch :default _ nil)))]
+                  form (when valid (parse-form code))]
            {:code code
             :valid? valid
             :form form
@@ -516,8 +517,7 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
                       :system-prompt system-prompt})
               code (extract-code text)
               valid (valid-cljs? code)
-              form (when valid
-                     (try (eda/parse-string code eda-opts) (catch :default _ nil)))
+              form (when valid (parse-form code))
               ;; Score via GFI: encode generated tokens, constrain all
               gen-ids (llm/encode tokenizer text false)
               gen-vec (vec gen-ids)

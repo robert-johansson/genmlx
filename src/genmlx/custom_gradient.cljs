@@ -10,6 +10,9 @@
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]))
 
+;; Deterministic GF: score and all weights/projections are zero.
+(def ^:private ZERO (mx/scalar 0.0))
+
 (defn- wrap-with-custom-grad
   "Wrap forward-fn so MLX autograd uses gradient-fn for backward pass.
    Uses stop-gradient trick: output = sg(f(x)) + surrogate - sg(surrogate)
@@ -18,7 +21,7 @@
   (fn [& args]
     (let [fwd (apply forward-fn args)
           grads (gradient-fn (vec args) fwd (mx/scalar 1.0))
-          surrogate (reduce mx/add (mx/scalar 0.0)
+          surrogate (reduce mx/add ZERO
                       (map (fn [g a] (mx/multiply (mx/stop-gradient g) a))
                            grads args))]
       (mx/add (mx/stop-gradient fwd)
@@ -31,39 +34,39 @@
       (tr/make-trace {:gen-fn this :args args
                       :choices cm/EMPTY
                       :retval retval
-                      :score (mx/scalar 0.0)})))
+                      :score ZERO})))
 
   p/IGenerate
   (generate [this args constraints]
     ;; Deterministic: no stochastic choices to constrain
     {:trace (p/simulate this args)
-     :weight (mx/scalar 0.0)})
+     :weight ZERO})
 
   p/IAssess
   (assess [this args choices]
     {:retval (apply forward-fn args)
-     :weight (mx/scalar 0.0)})
+     :weight ZERO})
 
   p/IPropose
   (propose [this args]
     {:choices cm/EMPTY
-     :weight (mx/scalar 0.0)
+     :weight ZERO
      :retval (apply forward-fn args)})
 
   p/IUpdate
   (update [this trace constraints]
     {:trace (p/simulate this (:args trace))
-     :weight (mx/scalar 0.0)
+     :weight ZERO
      :discard cm/EMPTY})
 
   p/IRegenerate
   (regenerate [this trace selection]
     {:trace (p/simulate this (:args trace))
-     :weight (mx/scalar 0.0)})
+     :weight ZERO})
 
   p/IProject
   (project [this trace selection]
-    (mx/scalar 0.0))
+    ZERO)
 
   p/IHasArgumentGrads
   (has-argument-grads [_] arg-grads))

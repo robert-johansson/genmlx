@@ -6,13 +6,8 @@
             [genmlx.trace :as tr]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
+            [genmlx.mlx.constants :refer [ZERO]]
             [genmlx.selection :as sel]))
-
-;; ---------------------------------------------------------------------------
-;; Cached zero constant
-;; ---------------------------------------------------------------------------
-
-(def ^:private ZERO (mx/scalar 0.0))
 
 ;; ---------------------------------------------------------------------------
 ;; Open multimethods — dispatch on (:type dist)

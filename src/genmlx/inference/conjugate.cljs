@@ -236,6 +236,86 @@
   [v]
   (mx/shape v))
 
+(defn- accumulate-ll
+  "Add marginal log-likelihood `ll` into the state's :conjugate-ll accumulator,
+   initializing it to zeros shaped like `ref-val` (a posterior parameter) on
+   the first contribution."
+  [state ref-val ll]
+  (update state :conjugate-ll
+          #(mx/add (or % (mx/zeros (ll-shape ref-val))) ll)))
+
+;; Per-family specs driving make-conjugate-dispatch. Each spec captures only the
+;; parts that differ between the three conjugate families; the dispatch logic
+;; (self-initializing prior, posterior-mean substitution, masked obs update,
+;; marginal-LL accumulation) is shared.
+(def ^:private conjugate-specs
+  {:nn {:prior-key :nn-prior
+        :obs-key :nn-obs
+        :init-posterior (fn [dist]
+                          (let [{:keys [prior-mean prior-std]} (:params dist)]
+                            {:mean prior-mean :var (mx/multiply prior-std prior-std)}))
+        :prior-mean :mean
+        :ll-ref :mean
+        ;; Normal-Normal carries a known observation std on the obs dist.
+        :update (fn [posterior obs dist]
+                  (nn-update posterior obs
+                             (let [obs-std (:obs-std (:params dist))]
+                               (mx/multiply obs-std obs-std))
+                             (:mask (:params dist))))}
+   :bb {:prior-key :bb-prior
+        :obs-key :bb-obs
+        :init-posterior (fn [dist]
+                          (let [{:keys [alpha beta-param]} (:params dist)]
+                            {:alpha alpha :beta beta-param}))
+        ;; Posterior mean: α/(α+β)
+        :prior-mean (fn [{:keys [alpha beta]}] (mx/divide alpha (mx/add alpha beta)))
+        :ll-ref :alpha
+        :update (fn [posterior obs dist] (bb-update posterior obs (:mask (:params dist))))}
+   :gp {:prior-key :gp-prior
+        :obs-key :gp-obs
+        :init-posterior (fn [dist]
+                          (let [{:keys [shape-param rate-param]} (:params dist)]
+                            {:shape shape-param :rate rate-param}))
+        ;; Posterior mean: α/β
+        :prior-mean (fn [{:keys [shape rate]}] (mx/divide shape rate))
+        :ll-ref :shape
+        :update (fn [posterior obs dist] (gp-update posterior obs (:mask (:params dist))))}})
+
+(defn make-conjugate-dispatch
+  "Create a conjugate dispatch map from a family `spec` (see `conjugate-specs`)
+   and the prior site's `target-addr`.
+
+   Returns {prior-key prior-handler, obs-key obs-handler}.
+   The prior handler is self-initializing: the first encounter seeds the
+   posterior from the prior's hyperparams via :init-posterior, substitutes the
+   posterior mean for the site value, and stores the posterior. The obs handler
+   applies the family :update, stores the new posterior, and accumulates the
+   marginal LL."
+  [{:keys [prior-key obs-key init-posterior prior-mean ll-ref]
+    update-fn :update} target-addr]
+  {prior-key
+   (fn [state addr dist]
+     (when (= addr target-addr)
+       (let [posterior (or (get-in state [:conjugate-posteriors addr])
+                           (init-posterior dist))
+             post-mean (prior-mean posterior)]
+         [post-mean
+          (-> state
+              (assoc-in [:conjugate-posteriors addr] posterior)
+              (update :choices cm/set-value addr post-mean))])))
+
+   obs-key
+   (fn [state addr dist]
+     (when (= (:prior-addr (:params dist)) target-addr)
+       (let [posterior (get-in state [:conjugate-posteriors target-addr])
+             constraint (cm/get-submap (:constraints state) addr)
+             obs (cm/get-value constraint)
+             {new-posterior :posterior :keys [ll]} (update-fn posterior obs dist)]
+         [obs (-> state
+                  (assoc-in [:conjugate-posteriors target-addr] new-posterior)
+                  (update :choices cm/set-value addr obs)
+                  (accumulate-ll (ll-ref new-posterior) ll))])))})
+
 (defn make-nn-dispatch
   "Create Normal-Normal conjugate dispatch map.
 
@@ -244,32 +324,7 @@
    Returns dispatch map: {:nn-prior handler, :nn-obs handler}.
    Self-initializing: first encounter uses the prior's hyperparams."
   [target-addr]
-  {:nn-prior
-   (fn [state addr dist]
-     (when (= addr target-addr)
-       (let [{:keys [prior-mean prior-std]} (:params dist)
-             posterior (or (get-in state [:conjugate-posteriors addr])
-                          {:mean prior-mean
-                           :var (mx/multiply prior-std prior-std)})]
-         [(:mean posterior)
-          (-> state
-              (assoc-in [:conjugate-posteriors addr] posterior)
-              (update :choices cm/set-value addr (:mean posterior)))])))
-
-   :nn-obs
-   (fn [state addr dist]
-     (let [{:keys [prior-addr obs-std mask]} (:params dist)]
-       (when (= prior-addr target-addr)
-         (let [posterior (get-in state [:conjugate-posteriors target-addr])
-               constraint (cm/get-submap (:constraints state) addr)
-               obs (cm/get-value constraint)
-               obs-var (mx/multiply obs-std obs-std)
-               {:keys [posterior ll]} (nn-update posterior obs obs-var mask)]
-           [obs (-> state
-                    (assoc-in [:conjugate-posteriors target-addr] posterior)
-                    (update :choices cm/set-value addr obs)
-                    (update :conjugate-ll
-                      #(mx/add (or % (mx/zeros (ll-shape (:mean posterior)))) ll)))]))))})
+  (make-conjugate-dispatch (:nn conjugate-specs) target-addr))
 
 (defn make-bb-dispatch
   "Create Beta-Binomial conjugate dispatch map.
@@ -278,33 +333,7 @@
 
    Returns dispatch map: {:bb-prior handler, :bb-obs handler}."
   [target-addr]
-  {:bb-prior
-   (fn [state addr dist]
-     (when (= addr target-addr)
-       (let [{:keys [alpha beta-param]} (:params dist)
-             posterior (or (get-in state [:conjugate-posteriors addr])
-                          {:alpha alpha :beta beta-param})
-             ;; Posterior mean: α/(α+β)
-             post-mean (mx/divide (:alpha posterior)
-                                  (mx/add (:alpha posterior) (:beta posterior)))]
-         [post-mean
-          (-> state
-              (assoc-in [:conjugate-posteriors addr] posterior)
-              (update :choices cm/set-value addr post-mean))])))
-
-   :bb-obs
-   (fn [state addr dist]
-     (let [{:keys [prior-addr mask]} (:params dist)]
-       (when (= prior-addr target-addr)
-         (let [posterior (get-in state [:conjugate-posteriors target-addr])
-               constraint (cm/get-submap (:constraints state) addr)
-               obs (cm/get-value constraint)
-               {:keys [posterior ll]} (bb-update posterior obs mask)]
-           [obs (-> state
-                    (assoc-in [:conjugate-posteriors target-addr] posterior)
-                    (update :choices cm/set-value addr obs)
-                    (update :conjugate-ll
-                      #(mx/add (or % (mx/zeros (ll-shape (:alpha posterior)))) ll)))]))))})
+  (make-conjugate-dispatch (:bb conjugate-specs) target-addr))
 
 (defn make-gp-dispatch
   "Create Gamma-Poisson conjugate dispatch map.
@@ -313,32 +342,7 @@
 
    Returns dispatch map: {:gp-prior handler, :gp-obs handler}."
   [target-addr]
-  {:gp-prior
-   (fn [state addr dist]
-     (when (= addr target-addr)
-       (let [{:keys [shape-param rate-param]} (:params dist)
-             posterior (or (get-in state [:conjugate-posteriors addr])
-                          {:shape shape-param :rate rate-param})
-             ;; Posterior mean: α/β
-             post-mean (mx/divide (:shape posterior) (:rate posterior))]
-         [post-mean
-          (-> state
-              (assoc-in [:conjugate-posteriors addr] posterior)
-              (update :choices cm/set-value addr post-mean))])))
-
-   :gp-obs
-   (fn [state addr dist]
-     (let [{:keys [prior-addr mask]} (:params dist)]
-       (when (= prior-addr target-addr)
-         (let [posterior (get-in state [:conjugate-posteriors target-addr])
-               constraint (cm/get-submap (:constraints state) addr)
-               obs (cm/get-value constraint)
-               {:keys [posterior ll]} (gp-update posterior obs mask)]
-           [obs (-> state
-                    (assoc-in [:conjugate-posteriors target-addr] posterior)
-                    (update :choices cm/set-value addr obs)
-                    (update :conjugate-ll
-                      #(mx/add (or % (mx/zeros (ll-shape (:shape posterior)))) ll)))]))))})
+  (make-conjugate-dispatch (:gp conjugate-specs) target-addr))
 
 ;; ---------------------------------------------------------------------------
 ;; High-level API

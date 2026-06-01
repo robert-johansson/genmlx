@@ -253,9 +253,7 @@
    (let [{:keys [max-tokens temperature]
           :or {max-tokens 150 temperature 0.5}} opts
          {:keys [variables]} task
-         prompt (build-prompt task)
-         messages [{:role "system" :content msa-system-prompt}
-                   {:role "user" :content prompt}]]
+         prompt (build-prompt task)]
      (pr/let [sess (ChatSession. (:model model-map)
                                 (clj->js {:system msa-system-prompt
                                           :maxNewTokens max-tokens
@@ -303,9 +301,7 @@ Output ONLY the lines. No explanation.")
   ([model-map task opts]
    (let [{:keys [max-tokens temperature]
           :or {max-tokens 120 temperature 0.5}} opts
-         {:keys [variables]} task
-         messages [{:role "system" :content knowledge-system-prompt}
-                   {:role "user" :content (build-knowledge-prompt task)}]]
+         {:keys [variables]} task]
      (pr/let [sess (ChatSession. (:model model-map)
                                 (clj->js {:system knowledge-system-prompt
                                           :maxNewTokens max-tokens
@@ -430,6 +426,13 @@ Output ONLY the lines. No explanation.")
      :log-weights (mapv (fn [{:keys [weight]}] (mx/item weight)) particles)
      :query query}))
 
+(defn- exp-normalize
+  "Exponentiate log-weights after subtracting their max, for numerically
+   stable normalization. Returns the vector of unnormalized weights."
+  [log-weights]
+  (let [max-w (apply max log-weights)]
+    (mapv #(js/Math.exp (- % max-w)) log-weights)))
+
 (defn infer-answer
   "Compute posterior mean and variance from importance sampling results.
    Normalizes log-weights via log-sum-exp for numerical stability.
@@ -439,8 +442,7 @@ Output ONLY the lines. No explanation.")
 
    Returns {:mean number, :variance number, :ess number, :query keyword}."
   [{:keys [values log-weights query]}]
-  (let [max-w (apply max log-weights)
-        unnorm (mapv #(js/Math.exp (- % max-w)) log-weights)
+  (let [unnorm (exp-normalize log-weights)
         total (reduce + unnorm)
         probs (mapv #(/ % total) unnorm)
         mean (reduce + (map * values probs))

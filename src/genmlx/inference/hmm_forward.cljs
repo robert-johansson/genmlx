@@ -124,6 +124,15 @@
   (let [predicted (hmm-predict log-alpha log-trans)]
     (hmm-update predicted log-emission-probs mask)))
 
+(defn uniform-log-alpha
+  "Uniform prior belief over K HMM states: log(1/K) = -log(K) for every state.
+   Shaped [n K] when `n` is a positive batch size, else [K]. Accepts nil or 0
+   for the unbatched case (unifying the dispatch nil-guard and the
+   hmm-generate pos?-guard)."
+  [K n]
+  (mx/multiply (mx/scalar (- (js/Math.log K)))
+               (mx/ones (if (and n (pos? n)) [n K] [K]))))
+
 ;; ---------------------------------------------------------------------------
 ;; Handler middleware (Level 2)
 ;; ---------------------------------------------------------------------------
@@ -151,8 +160,7 @@
              n (:hmm-n state)
              log-alpha (or (:hmm-belief state)
                            ;; Uniform prior: log(1/K) = -log(K)
-                           (mx/multiply (mx/scalar (- (js/Math.log K)))
-                                        (mx/ones (if n [n K] [K]))))
+                           (uniform-log-alpha K n))
              new-alpha (hmm-predict log-alpha log-trans)
              ;; Return MAP state as the "sampled" value (for choices)
              map-state (mx/argmax new-alpha -1)]
@@ -214,8 +222,7 @@
   [gf args constraints latent-addr log-trans n K key & [opts]]
   (let [{:keys [param-store init-belief]} opts
         transition (make-hmm-transition latent-addr log-trans)
-        uniform-prior (mx/multiply (mx/scalar (- (js/Math.log K)))
-                                   (mx/ones (if (pos? n) [n K] [K])))
+        uniform-prior (uniform-log-alpha K n)
         init-state (cond-> {:choices cm/EMPTY
                             :score (mx/scalar 0.0)
                             :weight (mx/scalar 0.0)

@@ -16,21 +16,27 @@
 ;; Systematic resampling (returns indices as MLX int32 array)
 ;; ---------------------------------------------------------------------------
 
-(defn systematic-resample-indices
-  "Systematic resampling from [N]-shaped log-weights.
-   Returns [N] int32 MLX array of ancestor indices.
+(defn- resample-from-u0
+  "Systematic resampling core: [N] log-weights + pre-scaled u0 ([1] MLX array
+   already divided by n) → [N] int32 ancestor indices.
    GPU-accelerated: uses cumsum + searchsorted (O(N) memory and compute)."
-  [log-weights n key]
+  [log-weights n u0-scaled]
   (let [log-probs (mx/subtract log-weights (mx/logsumexp log-weights))
         probs     (mx/exp log-probs)
         cdf       (mx/cumsum probs)
-        u0        (mx/divide (rng/uniform (rng/ensure-key key) [1])
-                             (mx/scalar n))
-        thresholds (mx/add u0 (mx/divide (mx/arange 0 n 1)
-                                          (mx/scalar (float n))))
+        thresholds (mx/add u0-scaled (mx/divide (mx/arange 0 n 1)
+                                                (mx/scalar (float n))))
         indices   (mx/searchsorted cdf thresholds)
         indices   (mx/minimum indices (mx/scalar (dec n)))]
     (.astype indices mx/int32)))
+
+(defn systematic-resample-indices
+  "Systematic resampling from [N]-shaped log-weights.
+   Returns [N] int32 MLX array of ancestor indices."
+  [log-weights n key]
+  (resample-from-u0 log-weights n
+                    (mx/divide (rng/uniform (rng/ensure-key key) [1])
+                               (mx/scalar n))))
 
 (defn systematic-resample-indices-deterministic
   "Systematic resampling with pre-generated uniform u0.
@@ -38,40 +44,39 @@
    instead of a PRNG key. Suitable for use inside mx/compile-fn where
    random generation must happen outside the compiled function."
   [log-weights n u0]
-  (let [log-probs (mx/subtract log-weights (mx/logsumexp log-weights))
-        probs     (mx/exp log-probs)
-        cdf       (mx/cumsum probs)
-        u0-scaled (mx/divide u0 (mx/scalar n))
-        thresholds (mx/add u0-scaled (mx/divide (mx/arange 0 n 1)
-                                                  (mx/scalar (float n))))
-        indices   (mx/searchsorted cdf thresholds)
-        indices   (mx/minimum indices (mx/scalar (dec n)))]
-    (.astype indices mx/int32)))
+  (resample-from-u0 log-weights n (mx/divide u0 (mx/scalar n))))
 
 ;; ---------------------------------------------------------------------------
 ;; Reindex choicemap leaves
 ;; ---------------------------------------------------------------------------
 
-(defn- reindex-value
-  "Reindex a single [N]-shaped array by ancestor indices."
-  [arr indices]
-  (mx/take-idx arr indices))
+(defn- walk-choicemap
+  "Recursively walk a choicemap, dispatching on has-value?/Node/else.
+   leaf-fn is called on a [N]-shaped array leaf value and returns its
+   replacement; scalar leaves (failing the array+shape guard) pass through.
+   child-fn is called with [k sub] for each Node entry to produce the
+   recursed child."
+  [choice-map leaf-fn child-fn]
+  (cond
+    (cm/has-value? choice-map)
+    (let [v (cm/get-value choice-map)]
+      (if (and (mx/array? v) (pos? (count (mx/shape v))))
+        (cm/->Value (leaf-fn v))
+        choice-map))  ;; scalar constraints stay unchanged
+
+    (instance? cm/Node choice-map)
+    (cm/->Node (into {} (map (fn [[k sub]] [k (child-fn k sub)])
+                             (cm/-submaps choice-map))))
+
+    :else choice-map))
 
 (defn- reindex-choicemap
   "Recursively reindex all leaves of a choicemap using ancestor indices."
   [choice-map indices]
-  (cond
-    (nil? choice-map) choice-map
-    (cm/has-value? choice-map)
-    (let [v (cm/get-value choice-map)]
-      (if (and (mx/array? v) (pos? (count (mx/shape v))))
-        (cm/->Value (reindex-value v indices))
-        choice-map))  ;; scalar constraints stay unchanged
-    (instance? cm/Node choice-map)
-    (cm/->Node (into {} (map (fn [[k sub]]
-                               [k (reindex-choicemap sub indices)])
-                             (cm/-submaps choice-map))))
-    :else choice-map))
+  (when (some? choice-map)
+    (walk-choicemap choice-map
+                    (fn [v] (mx/take-idx v indices))
+                    (fn [_ sub] (reindex-choicemap sub indices)))))
 
 (defn reindex-state
   "Reindex a structured state (plain ClojureScript map or MLX array) by ancestor indices.
@@ -124,19 +129,10 @@
   "Recursively merge two identically-structured choicemaps using an [N] boolean mask.
    Where mask=true takes from proposed, where false keeps current."
   [current proposed mask]
-  (cond
-    (cm/has-value? current)
-    (let [cv (cm/get-value current)]
-      (if (and (mx/array? cv) (pos? (count (mx/shape cv))))
-        (cm/->Value (mx/where mask (cm/get-value proposed) cv))
-        current))  ;; scalar constraints stay unchanged
-
-    (instance? cm/Node current)
-    (cm/->Node (into {} (map (fn [[k sub]]
-                               [k (merge-choicemap-by-mask
-                                    sub (cm/-get-submap proposed k) mask)])
-                             (cm/-submaps current))))
-    :else current))
+  (walk-choicemap current
+                  (fn [cv] (mx/where mask (cm/get-value proposed) cv))
+                  (fn [k sub] (merge-choicemap-by-mask
+                                sub (cm/-get-submap proposed k) mask))))
 
 (defn merge-vtraces-by-mask
   "Merge two VectorizedTraces per-particle using an [N] boolean mask.

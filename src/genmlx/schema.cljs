@@ -41,29 +41,45 @@
     (vector? form) (into #{} (mapcat find-symbols) form)
     :else #{}))
 
+(defn- deps-of-syms
+  "Resolve a set of symbols to the union of trace addresses they depend on,
+   given the current binding environment (env maps symbols to #{trace-addrs})."
+  [env syms]
+  (reduce (fn [deps sym]
+            (if-let [trace-addrs (get env sym)]
+              (into deps trace-addrs)
+              deps))
+          #{}
+          syms))
+
 (defn- compute-deps
   "Compute the set of trace addresses that a form depends on,
    given the current binding environment.
    env maps symbols to #{trace-addrs} they depend on."
   [env form]
-  (let [syms (find-symbols form)]
-    (reduce (fn [deps sym]
-              (if-let [trace-addrs (get env sym)]
-                (into deps trace-addrs)
-                deps))
-            #{}
-            syms)))
+  (deps-of-syms env (find-symbols form)))
+
+(defn- head-sym
+  "The head symbol of a non-empty list form, or nil."
+  [form]
+  (when (and (seq? form) (seq form) (symbol? (first form)))
+    (first form)))
+
+(defn- call-named?
+  "True when form is a call whose head symbol's name is n
+   (e.g. (call-named? form \"trace\"))."
+  [form n]
+  (when-let [h (head-sym form)]
+    (= n (name h))))
 
 (defn- contains-gen-call?
   "Does this form recursively contain any trace, splice, or param calls?"
   [form]
   (cond
     (and (seq? form) (seq form))
-    (let [head (first form)]
-      (or (and (symbol? head)
-               (let [n (name head)]
-                 (or (= n "trace") (= n "splice") (= n "param"))))
-          (some contains-gen-call? form)))
+    (or (when-let [h (head-sym form)]
+          (contains? #{"trace" "splice" "param"} (name h)))
+        (some contains-gen-call? form))
 
     (and (vector? form) (seq form))
     (some contains-gen-call? form)
@@ -140,10 +156,7 @@
                               ;; Simple symbol binding — track deps in env
                              (let [val-deps (compute-deps env val-form)
                                     ;; If val-form is a trace call, include the trace addr
-                                   is-trace? (and (seq? val-form)
-                                                  (seq val-form)
-                                                  (symbol? (first val-form))
-                                                  (= "trace" (name (first val-form))))
+                                   is-trace? (call-named? val-form "trace")
                                    trace-addr (when (and is-trace?
                                                          (keyword? (second val-form)))
                                                 (second val-form))
@@ -330,14 +343,11 @@
 (defn- contains-branch-with-trace?
   "Check if forms contain a branch (if/when/cond) that has trace calls."
   [forms]
-  (let [trace-call? (fn [f]
-                      (and (seq? f) (seq f)
-                           (symbol? (first f))
-                           (= "trace" (name (first f)))))]
+  (let [trace-call? #(call-named? % "trace")]
     (some (fn check [form]
             (cond
-              (and (seq? form) (seq form) (symbol? (first form)))
-              (let [n (name (first form))]
+              (head-sym form)
+              (let [n (name (head-sym form))]
                 (if (#{"if" "when" "when-not" "cond" "case" "if-let" "when-let" "if-not"} n)
                   (seq (find-all-calls (rest form) trace-call?))
                   (some check (rest form))))
@@ -351,18 +361,9 @@
    loop-syms: set of symbols bound by the loop (element + index).
    env: outer binding environment."
   [body loop-syms env]
-  (let [trace-call? (fn [f]
-                      (and (seq? f) (seq f)
-                           (symbol? (first f))
-                           (= "trace" (name (first f)))))
-        splice-call? (fn [f]
-                       (and (seq? f) (seq f)
-                            (symbol? (first f))
-                            (= "splice" (name (first f)))))
-        param-call? (fn [f]
-                      (and (seq? f) (seq f)
-                           (symbol? (first f))
-                           (= "param" (name (first f)))))
+  (let [trace-call? #(call-named? % "trace")
+        splice-call? #(call-named? % "splice")
+        param-call? #(call-named? % "param")
         traces (find-all-calls body trace-call?)
         splices (find-all-calls body splice-call?)
         params (find-all-calls body param-call?)]
@@ -376,12 +377,7 @@
                    all-syms (find-symbols dist-form)
                    element-deps (set/intersection all-syms loop-syms)
                    outer-dep-syms (set/difference all-syms loop-syms)
-                   outer-deps (reduce (fn [deps sym]
-                                        (if-let [addrs (get env sym)]
-                                          (into deps addrs)
-                                          deps))
-                                      #{}
-                                      outer-dep-syms)]
+                   outer-deps (deps-of-syms env outer-dep-syms)]
                {:addr :dynamic
                 :addr-form addr-form
                 :addr-pattern (detect-addr-pattern addr-form)

@@ -70,10 +70,11 @@
   [graph]
   (set (filter #(empty? (get (:children graph) %)) (:nodes graph))))
 
-(defn find-ancestors
-  "Find all ancestors of a node (transitive parents)."
-  [graph node]
-  (loop [frontier (get (:parents graph) node #{})
+(defn- transitive-closure
+  "Transitively follow adjacency (a {node -> #{neighbors}} map) from a node,
+   returning the set of all reachable nodes (excluding node itself)."
+  [adjacency node]
+  (loop [frontier (get adjacency node #{})
          visited #{}]
     (if (empty? frontier)
       visited
@@ -81,22 +82,18 @@
             frontier' (disj frontier next-node)]
         (if (contains? visited next-node)
           (recur frontier' visited)
-          (recur (into frontier' (get (:parents graph) next-node #{}))
+          (recur (into frontier' (get adjacency next-node #{}))
                  (conj visited next-node)))))))
+
+(defn find-ancestors
+  "Find all ancestors of a node (transitive parents)."
+  [graph node]
+  (transitive-closure (:parents graph) node))
 
 (defn find-descendants
   "Find all descendants of a node (transitive children)."
   [graph node]
-  (loop [frontier (get (:children graph) node #{})
-         visited #{}]
-    (if (empty? frontier)
-      visited
-      (let [next-node (first frontier)
-            frontier' (disj frontier next-node)]
-        (if (contains? visited next-node)
-          (recur frontier' visited)
-          (recur (into frontier' (get (:children graph) next-node #{}))
-                 (conj visited next-node)))))))
+  (transitive-closure (:children graph) node))
 
 ;; =========================================================================
 ;; D-separation (Bayes-Ball algorithm)

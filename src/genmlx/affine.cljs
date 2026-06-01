@@ -191,13 +191,13 @@
   "Analyze a function call for affine structure."
   [expr target-sym env]
   (let [op-name (name (first expr))
-        args (rest expr)]
+        args (vec (rest expr))]
     (case op-name
-      ("add" "+")       (analyze-affine-add (vec args) target-sym env)
-      ("subtract" "-")  (analyze-affine-subtract (vec args) target-sym env)
-      ("multiply" "*")  (analyze-affine-multiply (vec args) target-sym env)
-      ("divide" "/")    (analyze-affine-divide (vec args) target-sym env)
-      ("negate")        (analyze-affine-negate (vec args) target-sym env)
+      ("add" "+")       (analyze-affine-add args target-sym env)
+      ("subtract" "-")  (analyze-affine-subtract args target-sym env)
+      ("multiply" "*")  (analyze-affine-multiply args target-sym env)
+      ("divide" "/")    (analyze-affine-divide args target-sym env)
+      ("negate")        (analyze-affine-negate args target-sym env)
       ("scalar")        (analyze-affine (first args) target-sym env)
       ;; Everything else is nonlinear (conservative)
       (not-affine))))

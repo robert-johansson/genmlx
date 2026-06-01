@@ -80,26 +80,30 @@
                   :retval (:retval result)
                   :score (:score result)}))
 
+(defn- attach-unused
+  "Assoc :unused-constraints onto a result map when the trace left some
+   top-level constraint keys unconsumed."
+  [result-map constraints result-choices]
+  (if-let [unused (find-unused-constraints constraints result-choices)]
+    (assoc result-map :unused-constraints unused)
+    result-map))
+
 (defn- make-generate-result
   "Build the generate return map: {:trace :weight}, with unused-constraint
    detection and splice-score attachment."
   [trace weight constraints result-choices result]
-  (let [result-map {:trace (attach-splice-scores trace result)
-                    :weight weight}]
-    (if-let [unused (find-unused-constraints constraints result-choices)]
-      (assoc result-map :unused-constraints unused)
-      result-map)))
+  (-> {:trace (attach-splice-scores trace result)
+       :weight weight}
+      (attach-unused constraints result-choices)))
 
 (defn- make-update-result
   "Build the update return map: {:trace :weight :discard}, with unused-constraint
    detection and splice-score attachment."
   [trace weight discard constraints result-choices result]
-  (let [result-map {:trace (attach-splice-scores trace result)
-                    :weight weight
-                    :discard discard}]
-    (if-let [unused (find-unused-constraints constraints result-choices)]
-      (assoc result-map :unused-constraints unused)
-      result-map)))
+  (-> {:trace (attach-splice-scores trace result)
+       :weight weight
+       :discard discard}
+      (attach-unused constraints result-choices)))
 
 (defn- make-regen-result
   "Build the regenerate return map from handler result, computing the MH weight."
@@ -583,6 +587,13 @@
       (mx/gfi-cleanup!)
       result)))
 
+(defn- propagate-meta
+  "Propagate the PRNG key and param-store to a sub-gf via metadata, when present."
+  [gf key param-store]
+  (cond-> gf
+    key (vary-meta assoc ::key key)
+    param-store (vary-meta assoc ::param-store param-store)))
+
 (defn- extract-splice-meta
   "Extract splice metadata from a trace result into a flat result map."
   [result trace]
@@ -606,60 +617,49 @@
    Propagates param-store and key to sub-gfs via metadata."
   [gf args {:keys [constraints old-choices selection key old-splice-score
                     old-sub-splice-scores old-sub-nested-splice-scores param-store]}]
-  (let [gf (cond-> gf
-             key (vary-meta assoc ::key key)
-             param-store (vary-meta assoc ::param-store param-store))]
-    (cond
-      ;; Regenerate mode
-      selection
-      (let [old-trace (-> (tr/make-trace {:gen-fn gf :args args
-                                          :choices (or old-choices cm/EMPTY)
-                                          :retval nil :score (or old-splice-score SCORE-ZERO)})
-                          (attach-old-splice-meta old-sub-splice-scores
-                                                  old-sub-nested-splice-scores))
-            {:keys [trace weight]} (p/regenerate gf old-trace selection)]
-        (extract-splice-meta
-         {:choices (:choices trace) :retval (:retval trace)
-          :score (:score trace) :weight weight}
-         trace))
+  (let [gf (propagate-meta gf key param-store)
+        [trace result] (cond
+                         ;; Regenerate mode
+                         selection
+                         (let [old-trace (-> (tr/make-trace {:gen-fn gf :args args
+                                                             :choices (or old-choices cm/EMPTY)
+                                                             :retval nil :score (or old-splice-score SCORE-ZERO)})
+                                             (attach-old-splice-meta old-sub-splice-scores
+                                                                     old-sub-nested-splice-scores))
+                               {:keys [trace weight]} (p/regenerate gf old-trace selection)]
+                           [trace {:choices (:choices trace) :retval (:retval trace)
+                                   :score (:score trace) :weight weight}])
 
-      ;; Update mode: has old-choices (possibly with new constraints)
-      (and old-choices (not= old-choices cm/EMPTY))
-      (let [old-trace (-> (tr/make-trace {:gen-fn gf :args args
-                                          :choices old-choices
-                                          :retval nil :score (or old-splice-score SCORE-ZERO)})
-                          (attach-old-splice-meta old-sub-splice-scores
-                                                  old-sub-nested-splice-scores))
-            {:keys [trace weight discard]} (p/update gf old-trace
-                                                     (or constraints cm/EMPTY))]
-        (extract-splice-meta
-         {:choices (:choices trace) :retval (:retval trace)
-          :score (:score trace) :weight weight :discard discard}
-         trace))
+                         ;; Update mode: has old-choices (possibly with new constraints)
+                         (and old-choices (not= old-choices cm/EMPTY))
+                         (let [old-trace (-> (tr/make-trace {:gen-fn gf :args args
+                                                             :choices old-choices
+                                                             :retval nil :score (or old-splice-score SCORE-ZERO)})
+                                             (attach-old-splice-meta old-sub-splice-scores
+                                                                     old-sub-nested-splice-scores))
+                               {:keys [trace weight discard]} (p/update gf old-trace
+                                                                        (or constraints cm/EMPTY))]
+                           [trace {:choices (:choices trace) :retval (:retval trace)
+                                   :score (:score trace) :weight weight :discard discard}])
 
-      ;; Generate with constraints
-      (and constraints (not= constraints cm/EMPTY))
-      (let [{:keys [trace weight]} (p/generate gf args constraints)]
-        (extract-splice-meta
-         {:choices (:choices trace) :retval (:retval trace)
-          :score (:score trace) :weight weight}
-         trace))
+                         ;; Generate with constraints
+                         (and constraints (not= constraints cm/EMPTY))
+                         (let [{:keys [trace weight]} (p/generate gf args constraints)]
+                           [trace {:choices (:choices trace) :retval (:retval trace)
+                                   :score (:score trace) :weight weight}])
 
-      ;; Plain simulate
-      :else
-      (let [trace (p/simulate gf args)]
-        (extract-splice-meta
-         {:choices (:choices trace) :retval (:retval trace)
-          :score (:score trace)}
-         trace)))))
+                         ;; Plain simulate
+                         :else
+                         (let [trace (p/simulate gf args)]
+                           [trace {:choices (:choices trace) :retval (:retval trace)
+                                   :score (:score trace)}]))]
+    (extract-splice-meta result trace)))
 
 (defn- execute-sub-project
   "Execute sub-GF in project mode: replay via generate, then project.
    Propagates param-store and key via metadata."
   [gf args {:keys [old-choices selection key param-store]}]
-  (let [gf (cond-> gf
-             key (vary-meta assoc ::key key)
-             param-store (vary-meta assoc ::param-store param-store))
+  (let [gf (propagate-meta gf key param-store)
         {:keys [trace]} (p/generate gf args (or old-choices cm/EMPTY))
         weight (p/project gf trace (or selection sel/none))]
     {:choices (:choices trace)
@@ -671,9 +671,7 @@
   "Execute a sub-GF in assess mode: all choices must be provided.
    Propagates param-store and key via metadata."
   [gf args {:keys [constraints key param-store]}]
-  (let [gf (cond-> gf
-             key (vary-meta assoc ::key key)
-             param-store (vary-meta assoc ::param-store param-store))
+  (let [gf (propagate-meta gf key param-store)
         {:keys [retval weight]} (p/assess gf args (or constraints cm/EMPTY))]
     {:choices (or constraints cm/EMPTY) :retval retval
      :score weight :weight weight}))
