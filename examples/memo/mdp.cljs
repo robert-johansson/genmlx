@@ -102,7 +102,7 @@
 
 ;; Helper: extract Q[s, :, g] as JS list
 (defn q-row [s g]
-  (.tolist (mx/idx (mx/idx Q s) g 1)))
+  (clj->js (mx/->clj (mx/idx (mx/idx Q s) g 1))))
 
 ;; ---------------------------------------------------------------------------
 ;; Display Q-values
