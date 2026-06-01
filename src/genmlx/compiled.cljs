@@ -52,9 +52,9 @@
         compiled (mx/compile-fn unfold-fn)]
     ;; Warm up: trace with dummy data to cache Metal program
     (let [dummy-state (mx/zeros [state-dim])
-          dummy-noise (mx/zeros [n-steps noise-dim])]
-      (let [[s states sc] (compiled dummy-state dummy-noise)]
-        (mx/materialize! s states sc)))
+          dummy-noise (mx/zeros [n-steps noise-dim])
+          [s states sc] (compiled dummy-state dummy-noise)]
+      (mx/materialize! s states sc))
     compiled))
 
 (defn make-compiled-unfold-generate
@@ -96,9 +96,9 @@
     ;; Warm up
     (let [dummy-state (mx/zeros [state-dim])
           dummy-noise (mx/zeros [n-steps noise-dim])
-          dummy-obs (mx/zeros [n-steps obs-dim])]
-      (let [[s states sc w] (compiled dummy-state dummy-noise dummy-obs)]
-        (mx/materialize! s states sc w)))
+          dummy-obs (mx/zeros [n-steps obs-dim])
+          [s states sc w] (compiled dummy-state dummy-noise dummy-obs)]
+      (mx/materialize! s states sc w))
     compiled))
 
 ;; ---------------------------------------------------------------------------
@@ -281,9 +281,9 @@
     (let [dummy-states (mx/zeros [n-particles state-dim])
           dummy-noise (mx/zeros [n-steps n-particles noise-dim])
           dummy-obs (mx/zeros [n-steps obs-dim])
-          dummy-u (mx/ones [n-steps 1])]
-      (let [[s ml] (compiled dummy-states dummy-noise dummy-obs dummy-u)]
-        (mx/materialize! s ml)))
+          dummy-u (mx/ones [n-steps 1])
+          [s ml] (compiled dummy-states dummy-noise dummy-obs dummy-u)]
+      (mx/materialize! s ml))
     compiled))
 
 (defn compiled-particle-filter
@@ -1140,10 +1140,14 @@
     (if (contains? compiled-values addr)
       ;; Replay prefix site: set value, advance key per constraint status
       (let [value (get compiled-values addr)
-            constrained? (cm/has-value? (cm/get-submap (:constraints state) addr))]
+            constrained? (cm/has-value? (cm/get-submap (:constraints state) addr))
+            advance-key (fn [s]
+                          (let [[k1 _k2] (rng/split (:key s))]
+                            (assoc s :key k1)))]
+        ;; Unconstrained prefix sites split the key (matches simulate-transition);
+        ;; constrained sites leave it (matches generate-transition).
         [value (cond-> (update state :choices cm/set-value addr value)
-                 (not constrained?) (#(let [[k1 _k2] (rng/split (:key %))]
-                                        (assoc % :key k1))))])
+                 (not constrained?) advance-key)])
       ;; Dynamic site: standard generate
       (h/generate-transition state addr dist))))
 

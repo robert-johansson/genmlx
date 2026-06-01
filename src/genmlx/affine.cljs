@@ -48,13 +48,10 @@
     (if (every? :affine? results)
       (let [target-results (filter :has-target? results)
             const-results (filter (complement :has-target?) results)]
-        (cond
+        (if (empty? target-results)
           ;; No target dependency — pure constant addition
-          (empty? target-results)
           (affine-constant (cons 'mx/add (map :offset results)))
-
           ;; One or more target-dependent terms: sum coefficients and offsets
-          :else
           (let [coeff (if (= 1 (count target-results))
                         (:coefficient (first target-results))
                         (cons 'mx/add (map :coefficient target-results)))
@@ -193,8 +190,7 @@
 (defn- analyze-affine-call
   "Analyze a function call for affine structure."
   [expr target-sym env]
-  (let [op (first expr)
-        op-name (name op)
+  (let [op-name (name (first expr))
         args (rest expr)]
     (case op-name
       ("add" "+")       (analyze-affine-add (vec args) target-sym env)
@@ -292,14 +288,10 @@
         result (when natural-arg
                  (analyze-affine natural-arg target-sym env))]
     (cond
-      (nil? result)
+      (or (nil? result)
+          (not (:affine? result))
+          (not (:has-target? result)))  ;; nonlinear, unknown, or no prior dependency
       {:type :nonlinear}
-
-      (not (:affine? result))
-      {:type :nonlinear}
-
-      (not (:has-target? result))
-      {:type :nonlinear}  ;; doesn't actually depend on prior
 
       ;; Direct: coefficient=1, offset=0
       (and (= 1 (:coefficient result)) (= 0 (:offset result)))

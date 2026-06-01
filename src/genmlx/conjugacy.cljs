@@ -107,8 +107,7 @@
   [prior-addr obs-site family-info]
   (let [natural-idx (:natural-param-idx family-info)
         dist-args (:dist-args obs-site)
-        natural-arg (when (and dist-args (< natural-idx (count dist-args)))
-                      (nth dist-args natural-idx))]
+        natural-arg (nth dist-args natural-idx nil)]
     (cond
       ;; Direct: the natural parameter arg IS the prior symbol
       (symbol-resolves-to-addr? natural-arg prior-addr)

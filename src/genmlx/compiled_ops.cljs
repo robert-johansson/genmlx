@@ -131,8 +131,8 @@
             {:values (:values result)
              :score (:score result)
              :weight (:weight result)
-             :retval (when retval-fn
-                       (retval-fn (:values result) mlx-args))}))))))
+             ;; retval-fn proven truthy by the outer guard (every? some? + retval-fn)
+             :retval (retval-fn (:values result) mlx-args)}))))))
 
 (defn make-branch-rewritten-generate
   "Build a compiled generate for models with rewritable branches (L1-M4).
@@ -241,8 +241,8 @@
             {:values (:values result)
              :score (:score result)
              :discard (:discard result)
-             :retval (when retval-fn
-                       (retval-fn (:values result) mlx-args))}))))))
+             ;; retval-fn proven truthy by the outer guard (every? some? + retval-fn)
+             :retval (retval-fn (:values result) mlx-args)}))))))
 
 (defn get-compiled-update
   "Returns the compiled-update function for a gen-fn, or nil."
@@ -729,10 +729,14 @@
   (fn [state addr dist]
     (if (contains? compiled-values addr)
       (let [value (get compiled-values addr)
-            selected? (sel/selected? (:selection state) addr)]
-        [value (cond-> (update state :choices cm/set-value addr value)
-                 selected? (#(let [[k1 _] (rng/split (:key %))]
-                               (assoc % :key k1))))])
+            selected? (sel/selected? (:selection state) addr)
+            state' (update state :choices cm/set-value addr value)]
+        ;; Selected sites split the key (matching handler's regenerate-transition);
+        ;; unselected sites replay the value with the key untouched.
+        [value (if selected?
+                 (let [[k1 _] (rng/split (:key state'))]
+                   (assoc state' :key k1))
+                 state')])
       (h/regenerate-transition state addr dist))))
 
 (defn get-compiled-regenerate

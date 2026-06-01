@@ -24,7 +24,7 @@
 (defn- has-splice?
   "Does the model have any splice sites (sub-model calls)?"
   [schema]
-  (pos? (count-splice-sites schema)))
+  (boolean (seq (:splice-sites schema))))
 
 (defn- all-trace-addrs
   "Set of all trace-site addresses."

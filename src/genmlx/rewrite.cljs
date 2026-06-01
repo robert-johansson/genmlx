@@ -144,10 +144,8 @@
               (let [family (:family (first pairs))
                     obs-addrs (mapv :obs-addr pairs)
                     non-conj (find-non-conjugate-children schema prior-addr obs-addrs)]
-                (if (seq non-conj)
-                  ;; Shared prior — use RaoBlackwell instead
-                  nil
-                  ;; Pure conjugate — can eliminate
+                (when-not (seq non-conj)
+                  ;; Pure conjugate — can eliminate (shared priors become RaoBlackwell below)
                   (->ConjugacyRule family prior-addr obs-addrs))))
             grouped))
 
