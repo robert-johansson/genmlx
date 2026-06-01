@@ -139,27 +139,27 @@
                                   in-z? (contains? z-set node)
                                   ;; Determine next visits based on direction and evidence
                                   next-visits
-                                  (cond
+                                  (case [dir in-z?]
                                     ;; Arrived from child (:up), node NOT in Z:
                                     ;; Can pass to parents (up) and children (down)
-                                    (and (= dir :up) (not in-z?))
+                                    [:up false]
                                     (concat
                                       (map (fn [p] [:up p]) (get (:parents graph) node #{}))
                                       (map (fn [c] [:down c]) (get (:children graph) node #{})))
 
                                     ;; Arrived from child (:up), node IN Z:
                                     ;; Blocked — explaining away only works from parent direction
-                                    (and (= dir :up) in-z?)
+                                    [:up true]
                                     []
 
                                     ;; Arrived from parent (:down), node NOT in Z:
                                     ;; Can pass to children (down)
-                                    (and (= dir :down) (not in-z?))
+                                    [:down false]
                                     (map (fn [c] [:down c]) (get (:children graph) node #{}))
 
                                     ;; Arrived from parent (:down), node IN Z:
                                     ;; Collider is activated! Can go to parents (up) — explaining away
-                                    (and (= dir :down) in-z?)
+                                    [:down true]
                                     (map (fn [p] [:up p]) (get (:parents graph) node #{})))]
                               (recur (reduce conj queue' next-visits)
                                      visited'
