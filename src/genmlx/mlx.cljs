@@ -289,7 +289,14 @@
 (defn transpose
   ([a]      (.transpose c a))
   ([a axes] (.transpose c a (->js axes))))
-(defn broadcast-to [a sh] (.broadcastTo c a (clj->js sh)))
+(defn broadcast-to
+  "Broadcast a to shape sh, preserving a's dtype.
+   Reconstructed via the (correct) add-broadcasting onto a zeros of the target
+   shape: the v0.31.2 native broadcast_to mis-fills a size-1 source dim,
+   producing [v 0 0 …] instead of [v v v …]."
+  [a sh]
+  (let [a (if (instance? M a) a (.scalar c a))]
+    (add (.zeros c (clj->js sh) (.dtypeOf c a)) a)))
 (defn tile       [a reps] (.tile c a (clj->js reps)))
 (defn repeat-arr [a repeats axis] (.repeat c a repeats axis))
 (defn stack
