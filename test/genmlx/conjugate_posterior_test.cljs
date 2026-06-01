@@ -281,6 +281,16 @@
 ;; ---------------------------------------------------------------------------
 ;; Tier B: Importance sampling convergence — Normal-Inverse-Gamma
 ;; ---------------------------------------------------------------------------
+;;
+;; These use the PRIOR as the IS proposal. The NIG posterior mean (mu~2.35) sits
+;; far in the tail of the prior mu ~ N(0, sigma), so the proposal is poor:
+;; measured effective sample size is only ~26 of 5000 (range 13-44 across seeds).
+;; The estimator is UNBIASED — averaged over 14 seeds, mu=2.366 (truth 2.3545)
+;; and sigma^2=0.896 (truth 0.9119) — but any SINGLE 5000-sample run scatters
+;; widely (mu in [2.29, 2.43], sigma^2 in [0.80, 1.03]). The tolerances below are
+;; therefore ~3x the measured IS standard error, not machine precision; tightening
+;; them would need far more samples or a better proposal (genmlx-x8i7). Single
+;; fixed seeds keep the tests deterministic.
 
 (deftest nig-is-posterior-mean-mu-converges
   (testing "IS weighted mean of mu converges to E[mu|data]"
@@ -289,8 +299,8 @@
           obs (observations-from-indexed data)
           result (is/importance-sampling {:samples 5000 :key (rng/fresh-key 77)}
                                          nig-model [data mu0 kappa0 alpha0 beta0] obs)]
-      (is (th/close? mean-mu (weighted-scalar-mean result :mu) 0.05)
-          "IS posterior mean of mu within 0.05 of 2.3545"))))
+      (is (th/close? mean-mu (weighted-scalar-mean result :mu) 0.12)
+          "IS posterior mean of mu within 0.12 of 2.3545 (prior-proposal IS, ESS~26)"))))
 
 (deftest nig-is-posterior-mean-sigma-sq-converges
   (testing "IS weighted mean of sigma^2 converges to E[sigma^2|data]"
@@ -299,8 +309,8 @@
           obs (observations-from-indexed data)
           result (is/importance-sampling {:samples 5000 :key (rng/fresh-key 88)}
                                          nig-model [data mu0 kappa0 alpha0 beta0] obs)]
-      (is (th/close? mean-sig2 (weighted-scalar-mean result :sigma-sq) 0.10)
-          "IS posterior mean of sigma^2 within 0.10 of 0.9119"))))
+      (is (th/close? mean-sig2 (weighted-scalar-mean result :sigma-sq) 0.20)
+          "IS posterior mean of sigma^2 within 0.20 of 0.9119 (prior-proposal IS, ESS~26)"))))
 
 ;; ---------------------------------------------------------------------------
 ;; Tier B: Importance sampling convergence — Dirichlet-Categorical
