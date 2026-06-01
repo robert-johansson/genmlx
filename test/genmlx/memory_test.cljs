@@ -16,7 +16,9 @@
       (is (number? peak) "get-peak-memory returns number")
       (is (>= peak 0) "get-peak-memory >= 0")
       (is (number? wraps) "get-wrappers-count returns number")
-      (is (> wraps 0) "get-wrappers-count > 0"))))
+      ;; get-wrappers-count is now a backward-compat alias for active memory
+      ;; (v0.31.2 dropped the wrapper-count API): >= 0, can be 0 at a fresh start.
+      (is (>= wraps 0) "get-wrappers-count (active-memory alias) >= 0"))))
 
 (deftest metal-availability
   (testing "metal device"
@@ -26,8 +28,7 @@
   (testing "metal-device-info returns expected fields"
     (let [info (mx/metal-device-info)]
       (is (map? info) "device-info is a map")
-      (is (contains? info :resource-limit) "has :resource-limit")
-      (is (= 499000 (:resource-limit info)) "resource-limit is 499000")
+      ;; :resource-limit removed — v0.31.2's metalDeviceInfo no longer reports it.
       (is (contains? info :device-name) "has :device-name")
       (is (string? (:device-name info)) "device-name is string")
       (is (contains? info :memory-size) "has :memory-size")
@@ -64,10 +65,9 @@
       (is (map? report) "memory-report is a map")
       (is (contains? report :active-bytes) "has :active-bytes")
       (is (contains? report :cache-bytes) "has :cache-bytes")
-      (is (contains? report :peak-bytes) "has :peak-bytes")
-      (is (contains? report :wrappers) "has :wrappers")
-      (is (contains? report :resource-limit) "has :resource-limit")
-      (is (= 499000 (:resource-limit report)) "resource-limit matches"))))
+      ;; :wrappers and :resource-limit removed — memory-report tracks active/cache/
+      ;; peak bytes only after the v0.31.2 memory_napi.rs adaptation.
+      (is (contains? report :peak-bytes) "has :peak-bytes"))))
 
 (deftest allocation-tracking
   (testing "allocating arrays increases active memory"

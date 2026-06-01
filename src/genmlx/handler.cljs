@@ -188,8 +188,10 @@
   [state addr dist]
   (let [constraint (cm/get-submap (:constraints state) addr)]
     (if (cm/has-value? constraint)
-      ;; Constrained: scalar observation, scalar log-prob → broadcasts into [N] score/weight
-      (let [value (cm/get-value constraint)
+      ;; Constrained: scalar observation, scalar log-prob → broadcasts into [N] score/weight.
+      ;; ensure-array so the stored choice is an MxArray (a raw JS number is rejected by
+      ;; the v0.31.2 binary on downstream array ops like mx/shape / value_and_grad).
+      (let [value (mx/ensure-array (cm/get-value constraint))
             lp (dc/dist-log-prob dist value)]
         [value (-> state
                    (update :choices cm/set-value addr value)

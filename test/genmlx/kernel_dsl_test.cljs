@@ -148,7 +148,9 @@
                       cm/EMPTY (map-indexed vector xs))
           {:keys [trace]} (p/generate model2 [xs] obs)
           k (kern/gibbs {:slope 0.3 :intercept 0.3})
-          traces (kern/run-kernel {:samples 200 :burn 100} k trace)
+          ;; more samples/burn: 200/100 gave a posterior-slope estimate that
+          ;; occasionally fell outside tol 1.0 (MCMC estimate noise).
+          traces (kern/run-kernel {:samples 600 :burn 300} k trace)
           slope-vals (mapv (fn [t] (mx/realize (cm/get-value (cm/get-submap (:choices t) :slope)))) traces)
           slope-mean (/ (reduce + slope-vals) (count slope-vals))]
       (is (h/close? 2.0 slope-mean 1.0) "gibbs(map): slope near 2"))))
