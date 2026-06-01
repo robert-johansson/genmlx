@@ -5,6 +5,11 @@
    This is Layer 0 of the LLM integration — everything above (token-transition
    handler, beam search, grammar constraints) builds on these functions."
   (:require ["@mlx-node/lm" :as mlx-lm :refer [ChatSession]]
+            ;; Qwen3Tokenizer is sourced from @mlx-node/core directly (it is a
+            ;; first-class core export). @mlx-node/lm's re-export of it was
+            ;; removed upstream (mlx-node #57); relying on it broke on a clean
+            ;; `tsc -b`. See bean genmlx-mwm4.
+            ["@mlx-node/core" :as mlx-core]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [promesa.core :as p]))
@@ -23,7 +28,7 @@
   [model-path]
   (p/let [model (.loadModel mlx-lm model-path)
           model-type (.detectModelType mlx-lm model-path)
-          tokenizer (.fromPretrained (.-Qwen3Tokenizer mlx-lm)
+          tokenizer (.fromPretrained (.-Qwen3Tokenizer mlx-core)
                                      (str model-path "/tokenizer.json"))]
     {:model model
      :tokenizer tokenizer
