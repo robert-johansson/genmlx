@@ -323,12 +323,12 @@
                     accept? (mx/greater log-alpha log-u)
                     new-p (mx/where accept? proposal p)
                     ;; Record every thin steps (host-side decision)
-                    is-record (zero? (mod i thin))
-                    new-samples (if is-record
+                    record? (zero? (mod i thin))
+                    new-samples (if record?
                                   (write-sample-row samples new-p sample-count
                                                     n-samples n-params)
                                   samples)
-                    new-count (if is-record
+                    new-count (if record?
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
                 (recur new-p (inc i) new-count new-samples)))))
@@ -367,12 +367,12 @@
                     new-accept-count (mx/add accept-count (mx/astype accept? mx/float32))
                     ;; After burn-in, record every thin steps
                     past-burn? (>= i n-burn)
-                    is-record (and past-burn? (zero? (mod (- i n-burn) thin)))
-                    new-samples (if is-record
+                    record? (and past-burn? (zero? (mod (- i n-burn) thin)))
+                    new-samples (if record?
                                   (write-sample-row samples new-p sample-count
                                                     n-samples n-params)
                                   samples)
-                    new-count (if is-record
+                    new-count (if record?
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
                 (recur new-p (inc i) new-count new-samples new-accept-count)))))
@@ -970,13 +970,13 @@
                     new-accept-count (mx/add accept-count (mx/astype accept? mx/float32))
                     ;; Record logic (host-side decision)
                     past-burn? (>= i n-burn)
-                    is-record (and past-burn? (zero? (mod (- i n-burn) thin)))
-                    new-samples (if is-record
+                    record? (and past-burn? (zero? (mod (- i n-burn) thin)))
+                    new-samples (if record?
                                   (write-vectorized-sample-row
                                    samples new-p sample-count
                                    n-samples n-chains n-params)
                                   samples)
-                    new-count (if is-record
+                    new-count (if record?
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
                 (recur new-p (inc i) new-count new-samples new-accept-count)))))
@@ -1530,12 +1530,12 @@
                     new-accept-count (mx/add accept-count (mx/astype accept? mx/float32))
                     ;; After burn-in, record every thin steps
                     past-burn? (>= i n-burn)
-                    is-record (and past-burn? (zero? (mod (- i n-burn) thin)))
-                    new-samples (if is-record
+                    record? (and past-burn? (zero? (mod (- i n-burn) thin)))
+                    new-samples (if record?
                                   (write-sample-row samples new-q sample-count
                                                     n-samples n-params)
                                   samples)
-                    new-count (if is-record
+                    new-count (if record?
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
                 (recur new-q new-sq new-gq (inc i)
@@ -2170,12 +2170,12 @@
                     new-accept-count (mx/add accept-count (mx/astype accept? mx/float32))
                     ;; After burn-in, record every thin steps
                     past-burn? (>= i n-burn)
-                    is-record (and past-burn? (zero? (mod (- i n-burn) thin)))
-                    new-samples (if is-record
+                    record? (and past-burn? (zero? (mod (- i n-burn) thin)))
+                    new-samples (if record?
                                   (write-sample-row samples new-q sample-count
                                                     n-samples n-params)
                                   samples)
-                    new-count (if is-record
+                    new-count (if record?
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
                 (recur new-q (inc i) new-count new-samples new-accept-count)))))

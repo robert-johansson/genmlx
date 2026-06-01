@@ -22,10 +22,10 @@
   "Break the lazy graph for a per-particle generate/update result, preventing
    N-deep accumulation. Materializes the result's weight and score, then sweeps
    dead arrays every 50 particles. Returns the result unchanged."
-  [r i]
-  (mx/materialize! (:weight r) (:score (:trace r)))
+  [result i]
+  (mx/materialize! (:weight result) (:score (:trace result)))
   (when (zero? (mod (inc i) 50)) (mx/sweep-dead-arrays!))
-  r)
+  result)
 
 (defn rejuvenate-trace
   "Apply `steps` MH rejuvenation moves to a single trace over `selection`.

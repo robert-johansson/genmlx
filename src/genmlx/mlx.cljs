@@ -193,10 +193,22 @@
   ([x] (if (number? x) (scalar x) x))
   ([x dt] (if (number? x) (scalar x dt) x)))
 
-(defn eq?  [a b] (.astype (equal (->cmp a int32) (->cmp b int32)) float32))
-(defn neq? [a b] (.astype (not-equal (->cmp a int32) (->cmp b int32)) float32))
-(defn gt?  [a b] (.astype (greater (->cmp a) (->cmp b)) float32))
-(defn lt?  [a b] (.astype (less (->cmp a) (->cmp b)) float32))
+(defn eq?
+  "Element-wise a == b. Promotes integer operands (int32) and returns a
+   float32 mask (1.0/0.0), so it composes with float arithmetic."
+  [a b] (.astype (equal (->cmp a int32) (->cmp b int32)) float32))
+(defn neq?
+  "Element-wise a != b. Promotes integer operands (int32) and returns a
+   float32 mask (1.0/0.0)."
+  [a b] (.astype (not-equal (->cmp a int32) (->cmp b int32)) float32))
+(defn gt?
+  "Element-wise a > b. Promotes scalars at the float32 default and returns a
+   float32 mask (1.0/0.0)."
+  [a b] (.astype (greater (->cmp a) (->cmp b)) float32))
+(defn lt?
+  "Element-wise a < b. Promotes scalars at the float32 default and returns a
+   float32 mask (1.0/0.0)."
+  [a b] (.astype (less (->cmp a) (->cmp b)) float32))
 (defn and* [a b] (multiply a b))
 (defn or*  [a b] (maximum a b))
 
@@ -261,6 +273,9 @@
   ([a axis] (argsort* a axis)))
 
 (defn searchsorted
+  "Insertion indices for values into the sorted sorted-arr. side defaults to
+   :left (index of the first element >= value); :right gives the index past
+   the last element <= value. side maps to the native right? boolean."
   ([sorted-arr values] (.searchsorted c sorted-arr values))
   ([sorted-arr values side] (.searchsorted c sorted-arr values (= side :right))))
 
@@ -269,7 +284,10 @@
   ([a] (sort* a))
   ([a axis] (sort* a axis)))
 
-(defn topk [a k] (.topk c a k))
+(defn topk
+  "Return the k largest *values* of a (not indices, not a value/index pair),
+   along the last axis. The result is partition-ordered, not sorted."
+  [a k] (.topk c a k))
 
 (def ^:private cumsum* (.-cumsum c))
 (defn cumsum
@@ -324,6 +342,8 @@
     :else                        (.astype indices int32)))
 
 (defn take-idx
+  "Gather elements of a at indices along axis (0-indexed; defaults to axis 0).
+   indices are coerced to int32 — MLX gather crashes on float index dtypes."
   ([a indices]
    (.take c a (ensure-int-indices indices) 0))
   ([a indices axis]

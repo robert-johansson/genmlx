@@ -117,15 +117,15 @@
        :opt        (fn [] :opt)
        :repeat-exact (fn [n] [:repeat n n])
        :repeat-range (fn [n & [m]] [:repeat n (or m max-unbounded-repeat)])
-       :quant      (fn [atom & [q]]
+       :quant      (fn [node & [q]]
                      (cond
-                       (nil? q)     atom
-                       (= q :star)  [:star atom]
-                       (= q :plus)  [:cat atom [:star atom]]
-                       (= q :opt)   [:alt atom [:empty]]
+                       (nil? q)     node
+                       (= q :star)  [:star node]
+                       (= q :plus)  [:cat node [:star node]]
+                       (= q :opt)   [:alt node [:empty]]
                        (vector? q)  (let [[_ lo hi] q
-                                          required (repeat lo atom)
-                                          optional (repeat (- hi lo) [:alt atom [:empty]])]
+                                          required (repeat lo node)
+                                          optional (repeat (- hi lo) [:alt node [:empty]])]
                                       (reduce (fn [a b] [:cat a b])
                                               (concat required optional)))))
        :cat        (fn [& items]

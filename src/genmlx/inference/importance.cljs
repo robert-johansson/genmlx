@@ -108,7 +108,7 @@
    then resamples on GPU. ~10-100x faster than importance-resampling for
    models without splice or data-dependent branching.
 
-   opts: {:samples N :particles M :key prng-key}
+   opts: {:particles M :key prng-key}
    Returns {:vtrace VectorizedTrace (resampled, uniform weights)
             :log-ml-estimate MLX-scalar}"
   [{:keys [particles key] :or {particles 1000}} model args observations]

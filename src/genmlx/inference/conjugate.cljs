@@ -231,18 +231,13 @@
 ;; against the target-addr captured in the dispatch closure.
 ;; Returns nil for non-matching addrs (falls through via wrap-analytical).
 
-(defn- ll-shape
-  "Infer the shape for LL initialization from a posterior value."
-  [v]
-  (mx/shape v))
-
 (defn- accumulate-ll
   "Add marginal log-likelihood `ll` into the state's :conjugate-ll accumulator,
    initializing it to zeros shaped like `ref-val` (a posterior parameter) on
    the first contribution."
   [state ref-val ll]
   (update state :conjugate-ll
-          #(mx/add (or % (mx/zeros (ll-shape ref-val))) ll)))
+          #(mx/add (or % (mx/zeros (mx/shape ref-val))) ll)))
 
 ;; Per-family specs driving make-conjugate-dispatch. Each spec captures only the
 ;; parts that differ between the three conjugate families; the dispatch logic

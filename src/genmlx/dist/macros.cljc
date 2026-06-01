@@ -38,6 +38,16 @@
                                      [p (list (keyword (name p))
                                               (list :params 'd))])
                                    params))]
+       (letfn [;; Emit a single-arg defmethod (sample/log-prob/reparam): bind the
+               ;; params from (:params d), coerce the raw arg, then run the body.
+               (emit-arg-method [clause-key method-sym coerce-sym raw-sym]
+                 (when-let [clause (get clause-map clause-key)]
+                   (let [[clause-args & clause-body] clause
+                         arg-sym (first clause-args)]
+                     `(defmethod ~method-sym ~type-kw [~'d ~raw-sym]
+                        (let [~@params-let
+                              ~arg-sym (~coerce-sym ~raw-sym)]
+                          ~@clause-body)))))]
        `(do
           ;; Constructor function
           ~(let [ctor-body `(genmlx.dist.core/->Distribution
@@ -45,48 +55,28 @@
                               ~(into {} (map (fn [p]
                                                [(keyword (name p)) p])
                                              params)))]
-             (if docstr
-               `(defn ~dist-name ~docstr ~params
-                  (let [~@(mapcat (fn [p] [p (list 'genmlx.mlx/ensure-array p)])
-                                  params)]
-                    ~ctor-body))
-               `(defn ~dist-name ~params
-                  (let [~@(mapcat (fn [p] [p (list 'genmlx.mlx/ensure-array p)])
-                                  params)]
-                    ~ctor-body))))
+             `(defn ~dist-name ~@(when docstr [docstr]) ~params
+                (let [~@(mapcat (fn [p] [p (list 'genmlx.mlx/ensure-array p)])
+                                params)]
+                  ~ctor-body)))
 
           ;; dist-sample method
-          ~(when-let [sample-clause (get clause-map 'sample)]
-             (let [[sample-args & sample-body] sample-clause
-                   key-sym (first sample-args)]
-               `(defmethod genmlx.dist.core/dist-sample* ~type-kw [~'d ~'raw-key#]
-                  (let [~@params-let
-                        ~key-sym (genmlx.mlx.random/ensure-key ~'raw-key#)]
-                    ~@sample-body))))
+          ~(emit-arg-method 'sample 'genmlx.dist.core/dist-sample*
+                            'genmlx.mlx.random/ensure-key 'raw-key#)
 
           ;; dist-log-prob method
-          ~(when-let [lp-clause (get clause-map 'log-prob)]
-             (let [[lp-args & lp-body] lp-clause
-                   val-sym (first lp-args)]
-               `(defmethod genmlx.dist.core/dist-log-prob ~type-kw [~'d ~'raw-val#]
-                  (let [~@params-let
-                        ~val-sym (genmlx.mlx/ensure-array ~'raw-val#)]
-                    ~@lp-body))))
+          ~(emit-arg-method 'log-prob 'genmlx.dist.core/dist-log-prob
+                            'genmlx.mlx/ensure-array 'raw-val#)
 
           ;; dist-reparam method (optional)
-          ~(when-let [reparam-clause (get clause-map 'reparam)]
-             (let [[reparam-args & reparam-body] reparam-clause
-                   key-sym (first reparam-args)]
-               `(defmethod genmlx.dist.core/dist-reparam ~type-kw [~'d ~'raw-key#]
-                  (let [~@params-let
-                        ~key-sym (genmlx.mlx.random/ensure-key ~'raw-key#)]
-                    ~@reparam-body))))
+          ~(emit-arg-method 'reparam 'genmlx.dist.core/dist-reparam
+                            'genmlx.mlx.random/ensure-key 'raw-key#)
 
           ;; dist-support method (optional)
           ~(when-let [support-clause (get clause-map 'support)]
              (let [[_support-args & support-body] support-clause]
                `(defmethod genmlx.dist.core/dist-support ~type-kw [~'d]
                   (let [~@params-let]
-                    ~@support-body)))))))
+                    ~@support-body))))))))
 
 )

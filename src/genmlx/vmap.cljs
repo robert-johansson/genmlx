@@ -126,61 +126,22 @@
     ;; Non-hierarchical (SelectAddrs, all, none, etc.) → shared
     selection))
 
+(defn- scalar-value-leaf?
+  "Check if a single leaf value is scalar (not [N]-shaped)."
+  [v]
+  (or (not (mlx-arr? v)) (= [] (mx/shape v))))
+
 (defn- stack-choices
   "Stack N choicemaps into one with [N]-shaped leaves.
    All N choicemaps must have the same address structure."
   [cms]
-  (cond
-    ;; All empty
-    (every? #(= % cm/EMPTY) cms)
-    cm/EMPTY
-
-    ;; Value leaves: stack the values
-    (cm/has-value? (first cms))
-    (cm/->Value (mx/stack (mapv cm/get-value cms)))
-
-    ;; Node: recurse per sub-address
-    (instance? cm/Node (first cms))
-    (let [addrs (keys (:m (first cms)))]
-      (cm/->Node
-       (into {}
-             (map (fn [addr]
-                    [addr (stack-choices (mapv #(cm/get-submap % addr) cms))])
-                  addrs))))
-
-    :else cm/EMPTY))
+  (cm/stack-choicemaps cms mx/stack))
 
 (defn- unstack-choices
   "Split a choicemap with [N]-shaped leaves into N scalar choicemaps.
    Scalar leaves are replicated to all N elements."
   [cm n]
-  (cond
-    (= cm cm/EMPTY)
-    (vec (repeat n cm/EMPTY))
-
-    (cm/has-value? cm)
-    (let [v (cm/get-value cm)]
-      (if (or (not (mlx-arr? v)) (= [] (mx/shape v)))
-        ;; Scalar leaf: replicate to all N
-        (vec (repeat n cm))
-        ;; [N,...]-shaped: index per element
-        (mapv #(cm/->Value (mx/index v %)) (range n))))
-
-    (instance? cm/Node cm)
-    (let [addrs (keys (:m cm))
-          ;; Recurse for each sub-address, getting vectors of N sub-cms
-          addr-vecs (map (fn [addr]
-                           [addr (unstack-choices (cm/get-submap cm addr) n)])
-                         addrs)]
-      ;; Zip: for each i, build a node with all sub-addresses
-      (mapv (fn [i]
-              (cm/->Node
-               (into {}
-                     (map (fn [[addr v]] [addr (nth v i)])
-                          addr-vecs))))
-            (range n)))
-
-    :else (vec (repeat n cm/EMPTY))))
+  (cm/unstack-choicemap cm n mx/index scalar-value-leaf?))
 
 (defn- stack-retvals
   "Stack N return values into a single value."
@@ -189,6 +150,20 @@
     (every? mx/array? retvals) (mx/stack retvals)
     (every? number? retvals) (mx/array retvals)
     :else (vec retvals)))
+
+(defn- mx-sum-by
+  "Sum (f r) over results, starting from a scalar-0.0 accumulator."
+  [f results]
+  (reduce (fn [acc r] (mx/add acc (f r))) (mx/scalar 0.0) results))
+
+(defn- element-trace
+  "Reconstruct the kernel trace for element i from stored per-element state.
+   Score falls back to scalar 0.0 when no element-scores were recorded."
+  [kernel args choices element-scores i]
+  (tr/make-trace
+   {:gen-fn kernel :args args
+    :choices choices :retval nil
+    :score (if element-scores (nth element-scores i) (mx/scalar 0.0))}))
 
 (defn- kernel-update
   "Update a kernel trace. Falls back to generate if IUpdate not implemented."
@@ -240,8 +215,7 @@
                             (range n))
               choices (stack-choices (mapv :choices results))
               retvals (stack-retvals (mapv :retval results))
-              score (reduce (fn [acc r] (mx/add acc (:score r)))
-                            (mx/scalar 0.0) results)
+              score (mx-sum-by :score results)
               element-scores (mapv :score results)]
           (with-meta
             (tr/make-trace {:gen-fn this :args args
@@ -280,10 +254,8 @@
                             (range n))
               choices (stack-choices (mapv (comp :choices :trace) results))
               retvals (stack-retvals (mapv (comp :retval :trace) results))
-              score (reduce (fn [acc r] (mx/add acc (:score (:trace r))))
-                            (mx/scalar 0.0) results)
-              weight (reduce (fn [acc r] (mx/add acc (:weight r)))
-                             (mx/scalar 0.0) results)
+              score (mx-sum-by (comp :score :trace) results)
+              weight (mx-sum-by :weight results)
               element-scores (mapv (comp :score :trace) results)]
           {:trace (with-meta
                     (tr/make-trace {:gen-fn this :args args
@@ -302,20 +274,15 @@
           old-element-scores (::element-scores (meta trace))
           results (mapv (fn [i]
                           (let [elem-args (extract-element-args (:args trace) in-axes i)
-                                old-trace (tr/make-trace
-                                           {:gen-fn kernel :args elem-args
-                                            :choices (nth old-per-choices i)
-                                            :retval nil
-                                            :score (if old-element-scores
-                                                     (nth old-element-scores i)
-                                                     (mx/scalar 0.0))})]
+                                old-trace (element-trace kernel elem-args
+                                                         (nth old-per-choices i)
+                                                         old-element-scores i)]
                             (kernel-update kernel old-trace
                                            (if scalar-c? constraints (nth new-per-constraints i)))))
                         (range n))
           choices (stack-choices (mapv (comp :choices :trace) results))
           retvals (stack-retvals (mapv (comp :retval :trace) results))
-          score (reduce (fn [acc r] (mx/add acc (:score (:trace r))))
-                        (mx/scalar 0.0) results)
+          score (mx-sum-by (comp :score :trace) results)
           weight (mx/subtract score (:score trace))
           discard (let [discards (mapv :discard results)]
                     (if (every? #(= % cm/EMPTY) discards)
@@ -338,20 +305,15 @@
           old-element-scores (::element-scores (meta trace))
           results (mapv (fn [i]
                           (let [elem-args (extract-element-args (:args trace) in-axes i)
-                                old-trace (tr/make-trace
-                                           {:gen-fn kernel :args elem-args
-                                            :choices (nth old-per-choices i)
-                                            :retval nil
-                                            :score (if old-element-scores
-                                                     (nth old-element-scores i)
-                                                     (mx/scalar 0.0))})]
+                                old-trace (element-trace kernel elem-args
+                                                         (nth old-per-choices i)
+                                                         old-element-scores i)]
                             (kernel-regenerate kernel old-trace
                                                (extract-element-selection selection i))))
                         (range n))
           choices (stack-choices (mapv (comp :choices :trace) results))
           retvals (stack-retvals (mapv (comp :retval :trace) results))
-          score (reduce (fn [acc r] (mx/add acc (:score (:trace r))))
-                        (mx/scalar 0.0) results)
+          score (mx-sum-by (comp :score :trace) results)
           weight (mx/subtract score (:score trace))
           element-scores (mapv (comp :score :trace) results)]
       {:trace (with-meta
@@ -371,8 +333,7 @@
                                     (extract-element-args args in-axes i)
                                     (if scalar? choices (nth per-choices i))))
                         (range n))
-          weight (reduce (fn [acc r] (mx/add acc (:weight r)))
-                         (mx/scalar 0.0) results)]
+          weight (mx-sum-by :weight results)]
       {:retval (stack-retvals (mapv :retval results))
        :weight weight}))
 
@@ -383,8 +344,7 @@
                           (p/propose kernel (extract-element-args args in-axes i)))
                         (range n))
           choices (stack-choices (mapv :choices results))
-          weight (reduce (fn [acc r] (mx/add acc (:weight r)))
-                         (mx/scalar 0.0) results)]
+          weight (mx-sum-by :weight results)]
       {:choices choices
        :weight weight
        :retval (stack-retvals (mapv :retval results))})))
@@ -403,13 +363,9 @@
       (reduce
        (fn [acc i]
          (let [elem-args (extract-element-args (:args trace) (:in-axes this) i)
-               elem-trace (tr/make-trace
-                           {:gen-fn (:kernel this) :args elem-args
-                            :choices (nth old-per-choices i)
-                            :retval nil
-                            :score (if old-element-scores
-                                     (nth old-element-scores i)
-                                     (mx/scalar 0.0))})]
+               elem-trace (element-trace (:kernel this) elem-args
+                                         (nth old-per-choices i)
+                                         old-element-scores i)]
            (mx/add acc (p/project (:kernel this) elem-trace
                                   (extract-element-selection selection i)))))
        (mx/scalar 0.0)

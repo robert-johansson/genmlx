@@ -5,7 +5,7 @@
    noise transforms over N particles simultaneously.
 
    Supports three resampling methods:
-   - :systematic     — O(N²) broadcasting (default, non-differentiable)
+   - :systematic     — O(N) via searchsorted (default, non-differentiable)
    - :gumbel-top-k   — Gumbel-top-k trick (all-GPU, non-differentiable)
    - :gumbel-softmax — Gumbel-softmax relaxation (differentiable, for mx/grad)
 
@@ -104,7 +104,7 @@
    opts:
      :particles        — number of particles N (default 100)
      :key              — PRNG key
-     :callback         — (fn [{:step :ess :resampled?}]) called each step
+     :callback         — (fn [{:step :resampled?}]) called each step
      :resample-method  — :systematic (default), :gumbel-top-k, or :gumbel-softmax
      :tau              — temperature for :gumbel-softmax (default 1.0)
 

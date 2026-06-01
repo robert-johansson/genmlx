@@ -438,15 +438,17 @@
             ;; (handle-call passes the form type via the acc's :current-loop-type)
             loop-type (or (:current-loop-type acc) :doseq)
             ;; Analyze bindings based on type
-            bind-info (case loop-type
-                        :doseq (analyze-doseq-bindings bindings-form)
-                        :dotimes (analyze-dotimes-bindings bindings-form)
-                        :for (analyze-for-bindings bindings-form)
-                        nil)
+            {:keys [element-sym index-sym collection-form]
+             count-form* :count-form}
+            (case loop-type
+              :doseq (analyze-doseq-bindings bindings-form)
+              :dotimes (analyze-dotimes-bindings bindings-form)
+              :for (analyze-for-bindings bindings-form)
+              nil)
             ;; Collect loop binding symbols for dep classification
             loop-syms (into #{}
                             (filter symbol?)
-                            [(:element-sym bind-info) (:index-sym bind-info)])
+                            [element-sym index-sym])
             ;; Extract loop-specific trace/splice/param sites
             loop-body-info (extract-loop-trace-sites body loop-syms env)
             loop-traces (:trace-sites loop-body-info)
@@ -457,18 +459,18 @@
             ;; Infer count expression
             count-form (cond
                          (= loop-type :dotimes)
-                         (:count-form bind-info)
+                         count-form*
                          ;; For doseq/for, count is (count collection)
-                         (:collection-form bind-info)
-                         (list 'count (:collection-form bind-info))
+                         collection-form
+                         (list 'count collection-form)
                          :else nil)
             ;; Build loop-site entry
             loop-site (merge
                        {:type loop-type
                         :bindings-form bindings-form
-                        :element-sym (:element-sym bind-info)
-                        :index-sym (:index-sym bind-info)
-                        :collection-form (:collection-form bind-info)
+                        :element-sym element-sym
+                        :index-sym index-sym
+                        :collection-form collection-form
                         :count-form count-form
                         :trace-sites loop-traces
                         :splice-sites loop-splices

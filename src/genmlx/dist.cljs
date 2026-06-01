@@ -385,9 +385,8 @@
   (let [{:keys [alpha beta-param]} (:params d)
         key (rng/ensure-key key)
         [k1 k2] (rng/split key)
-        one ONE
-        g1 (gamma-sample-n (mx/realize alpha) one k1 n)
-        g2 (gamma-sample-n (mx/realize beta-param) one k2 n)]
+        g1 (gamma-sample-n (mx/realize alpha) ONE k1 n)
+        g2 (gamma-sample-n (mx/realize beta-param) ONE k2 n)]
     ;; Clamp into the open support (0,1): for alpha/beta < 1 a float32 sample can
     ;; round to exactly 0.0/1.0, where the beta density (and log-prob) is +inf.
     (mx/clip (mx/divide g1 (mx/add g1 g2)) 1e-7 (- 1.0 1e-7))))
@@ -399,9 +398,8 @@
         alpha-vals (mx/->clj alpha)
         k (count alpha-vals)
         keys (rng/split-n key k)
-        one ONE
         ;; Sample k gamma arrays, each [n], then stack to [k n]
-        gammas (mx/stack (mapv (fn [a ki] (gamma-sample-n a one ki n))
+        gammas (mx/stack (mapv (fn [a ki] (gamma-sample-n a ONE ki n))
                                alpha-vals keys))
         ;; gammas is [k n], sum along axis 0 -> [n], then transpose and divide
         totals (mx/sum gammas [0])]
@@ -692,7 +690,7 @@
                 normalized (mapv #(/ % total) gammas)]
             (mx/array normalized)))
   (log-prob [v]
-            (let [v (if (mx/array? v) v (mx/array v))
+            (let [v (mx/ensure-array v)
                   log-beta (mx/subtract (mx/sum (mx/lgamma alpha))
                                         (mx/lgamma (mx/sum alpha)))
                   log-terms (mx/sum
@@ -1013,6 +1011,18 @@
     (raw mu sigma lo hi)))
 
 ;; ---------------------------------------------------------------------------
+;; Matrix-distribution helper
+;; ---------------------------------------------------------------------------
+
+(defn- as-square
+  "Reshape a flat [k*k] array into [k k]; pass 2-d arrays through unchanged."
+  [a]
+  (if (= 1 (mx/ndim a))
+    (let [k (int (js/Math.sqrt (mx/size a)))]
+      (mx/reshape a [k k]))
+    a))
+
+;; ---------------------------------------------------------------------------
 ;; Multivariate Normal (via Cholesky) — manual definition
 ;; ---------------------------------------------------------------------------
 
@@ -1021,12 +1031,8 @@
    mean-vec: [k] array, cov-matrix: [k k] positive definite array.
    Cholesky decomposition and L-inverse are computed once at construction."
   [mean-vec cov-matrix]
-  (let [mu (if (mx/array? mean-vec) mean-vec (mx/array mean-vec))
-        cov (if (mx/array? cov-matrix) cov-matrix (mx/array cov-matrix))
-        cov-2d (if (= 1 (mx/ndim cov))
-                 (let [k (first (mx/shape mu))]
-                   (mx/reshape cov [k k]))
-                 cov)
+  (let [mu (mx/ensure-array mean-vec)
+        cov-2d (as-square (mx/ensure-array cov-matrix))
         L (mx/cholesky cov-2d)
         _ (mx/materialize! L)
         Li (mx/tri-inv L false)
@@ -1050,7 +1056,7 @@
 
 (defmethod dc/dist-log-prob :multivariate-normal [d v]
   (let [{:keys [mean-vec L-inv k norm-const neg-half]} (:params d)
-        v (if (mx/array? v) v (mx/array v))
+        v (mx/ensure-array v)
         diff (mx/subtract v mean-vec)
         y (mx/flatten (mx/matmul L-inv (mx/reshape diff [k 1])))
         mahal (mx/sum (mx/square y))]
@@ -1194,12 +1200,8 @@
   "Wishart distribution with df degrees of freedom and [k x k] scale matrix V.
    Uses Bartlett decomposition for sampling."
   [df scale-matrix]
-  (let [V (if (mx/array? scale-matrix) scale-matrix (mx/array scale-matrix))
+  (let [V-2d (as-square (mx/ensure-array scale-matrix))
         df-val (if (mx/array? df) (mx/realize df) df)
-        V-2d (if (= 1 (mx/ndim V))
-               (let [k (int (js/Math.sqrt (first (mx/shape V))))]
-                 (mx/reshape V [k k]))
-               V)
         L (mx/cholesky V-2d)
         _ (mx/materialize! L)
         k (first (mx/shape V-2d))]
@@ -1248,7 +1250,7 @@
 
 (defmethod dc/dist-log-prob :wishart [d x]
   (let [{:keys [df scale-matrix k]} (:params d)
-        x (if (mx/array? x) x (mx/array x))
+        x (mx/ensure-array x)
         x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
         ;; Recompute V-inv and log-det-V from scale-matrix (not precomputed)
         ;; so gradient tape is preserved for differentiating w.r.t. V.
@@ -1274,12 +1276,8 @@
   "Inverse Wishart distribution with df degrees of freedom and [k x k] scale matrix Psi.
    Sample: W ~ Wishart(df, Psi^{-1}), return W^{-1}."
   [df scale-matrix]
-  (let [Psi (if (mx/array? scale-matrix) scale-matrix (mx/array scale-matrix))
+  (let [Psi-2d (as-square (mx/ensure-array scale-matrix))
         df-val (if (mx/array? df) (mx/realize df) df)
-        Psi-2d (if (= 1 (mx/ndim Psi))
-                 (let [k (int (js/Math.sqrt (first (mx/shape Psi))))]
-                   (mx/reshape Psi [k k]))
-                 Psi)
         k (first (mx/shape Psi-2d))
         Psi-inv (mx/inv Psi-2d)
         _ (mx/materialize! Psi-inv)
@@ -1296,7 +1294,7 @@
 
 (defmethod dc/dist-log-prob :inv-wishart [d x]
   (let [{:keys [df scale-matrix k]} (:params d)
-        x (if (mx/array? x) x (mx/array x))
+        x (mx/ensure-array x)
         x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
         X-inv (mx/inv x-2d)
         ;; Recompute log-det from raw matrices (not precomputed) so gradient

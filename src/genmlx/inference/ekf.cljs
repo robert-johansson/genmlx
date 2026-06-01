@@ -149,6 +149,7 @@
           (-> state
               (assoc :ekf-belief new-belief)
               (update :choices cm/set-value addr (:mean new-belief)))])
+       ;; Not our latent addr — return nil to fall through via wrap-analytical
        nil))
 
    :ekf-obs

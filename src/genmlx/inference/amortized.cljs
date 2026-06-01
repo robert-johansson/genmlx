@@ -197,7 +197,7 @@
                   batch-indices (subvec order pos end)
                   batch (mapv #(nth dataset %) batch-indices)
                   loss (nn/training-step! enc-ref opt vg batch)]
-              (recur (inc i) (long end) order (conj! losses loss)))))))))
+              (recur (inc i) end order (conj! losses loss)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Neural importance sampling

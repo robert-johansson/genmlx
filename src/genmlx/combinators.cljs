@@ -39,6 +39,33 @@
   [values]
   (cm/from-flat-map values))
 
+(defn- without-component-idx
+  "Drop the Mix combinator's :component-idx entry from a choicemap, leaving the
+   inner component's choices. Non-Node inputs (e.g. EMPTY) pass through unchanged."
+  [cm-choices]
+  (if (instance? cm/Node cm-choices)
+    (cm/->Node (dissoc (:m cm-choices) :component-idx))
+    cm-choices))
+
+(defn- batched-sub
+  "Build [transition init-sub] for one batched sub-execution.
+   Selects the generate transition (carrying weight) when constraints are
+   present, else the simulate transition, and merges the parent param-store.
+   zero is the [N]-shaped (or scalar) accumulator seed for score/weight."
+  [state constraints key batch-size zero]
+  (let [has-constraints? (and constraints (not= constraints cm/EMPTY))
+        init-sub (if has-constraints?
+                   {:choices cm/EMPTY :score zero :weight zero
+                    :key key :constraints constraints
+                    :batch-size batch-size :batched? true}
+                   {:choices cm/EMPTY :score zero
+                    :key key :batch-size batch-size :batched? true})
+        init-sub (if-let [ps (:param-store state)]
+                   (assoc init-sub :param-store ps)
+                   init-sub)]
+    [(if has-constraints? h/batched-generate-transition h/batched-simulate-transition)
+     init-sub]))
+
 ;; ---------------------------------------------------------------------------
 ;; Map Combinator
 ;; ---------------------------------------------------------------------------
@@ -675,20 +702,8 @@
               ;; Run one kernel step with batched handler
               (let [[sk nk] (rng/split key)
                     step-constraints (cm/get-submap sub-constraints t)
-                    has-constraints? (and step-constraints
-                                          (not= step-constraints cm/EMPTY))
                     [transition init-sub]
-                    (if has-constraints?
-                      [h/batched-generate-transition
-                       {:choices cm/EMPTY :score ZERO :weight ZERO
-                        :key sk :constraints step-constraints
-                        :batch-size batch-size :batched? true}]
-                      [h/batched-simulate-transition
-                       {:choices cm/EMPTY :score ZERO
-                        :key sk :batch-size batch-size :batched? true}])
-                    init-sub (if-let [ps (:param-store state)]
-                               (assoc init-sub :param-store ps)
-                               init-sub)
+                    (batched-sub state step-constraints sk batch-size ZERO)
                     step-result (rt/run-handler transition init-sub
                                                 (fn [rt] (apply (:body-fn kern) rt
                                                                 (into [t carry] extra))))
@@ -920,6 +935,21 @@
          (cm/set-choice acc addr-path (mx/where mask v-t v-f))))
      cm/EMPTY addrs)))
 
+(defn- idx-mask
+  "Boolean mask selecting particles whose [N]-shaped index equals branch i."
+  [index i]
+  (mx/equal index (mx/scalar i mx/int32)))
+
+(defn- where-combine
+  "Mask-select per-branch values into one [N]-shaped result.
+   value-fn extracts the value contributed by branch i's result; where the
+   [N]-shaped index equals i, that value wins over the running accumulator."
+  [index init results value-fn]
+  (reduce-kv
+   (fn [acc i r]
+     (mx/where (idx-mask index i) (value-fn r) acc))
+   init results))
+
 (extend-type SwitchCombinator
   p/IBatchedSplice
   (batched-splice [this state addr args]
@@ -940,54 +970,30 @@
                 (if (>= i (count brs))
                   results
                   (let [[bk nk] (rng/split key)
-                        has-constraints? (and sub-constraints
-                                              (not= sub-constraints cm/EMPTY))
                         [transition init-sub]
-                        (if has-constraints?
-                          [h/batched-generate-transition
-                           {:choices cm/EMPTY :score batch-zero :weight batch-zero
-                            :key bk :constraints sub-constraints
-                            :batch-size batch-size :batched? true}]
-                          [h/batched-simulate-transition
-                           {:choices cm/EMPTY :score batch-zero
-                            :key bk :batch-size batch-size :batched? true}])
-                        init-sub (if-let [ps (:param-store state)]
-                                   (assoc init-sub :param-store ps)
-                                   init-sub)
+                        (batched-sub state sub-constraints bk batch-size batch-zero)
                         result (rt/run-handler transition init-sub
                                                (fn [rt] (apply (:body-fn (nth brs i)) rt
                                                                (vec branch-args))))]
                     (recur (inc i) (conj results result) nk))))
               ;; Combine results using mx/where based on [N]-shaped index
               combined-score
-              (reduce-kv
-               (fn [acc i br]
-                 (let [mask (mx/equal index (mx/scalar i mx/int32))]
-                   (mx/where mask (:score br) acc)))
-               batch-zero branch-results)
+              (where-combine index batch-zero branch-results :score)
               combined-weight
               (when (contains? state :weight)
-                (reduce-kv
-                 (fn [acc i br]
-                   (let [mask (mx/equal index (mx/scalar i mx/int32))]
-                     (mx/where mask (or (:weight br) batch-zero) acc)))
-                 batch-zero branch-results))
+                (where-combine index batch-zero branch-results
+                               #(or (:weight %) batch-zero)))
               combined-choices
               (reduce-kv
                (fn [acc i br]
-                 (let [mask (mx/equal index (mx/scalar i mx/int32))]
-                   (if (zero? i)
-                     (:choices br)
-                     (where-select-choicemap mask (:choices br) acc))))
+                 (if (zero? i)
+                   (:choices br)
+                   (where-select-choicemap (idx-mask index i) (:choices br) acc)))
                cm/EMPTY branch-results)
               combined-retval
               (let [rvs (mapv :retval branch-results)]
                 (when (mx/array? (first rvs))
-                  (reduce-kv
-                   (fn [acc i rv]
-                     (let [mask (mx/equal index (mx/scalar i mx/int32))]
-                       (mx/where mask rv acc)))
-                   (first rvs) rvs)))
+                  (where-combine index (first rvs) rvs identity)))
               ;; Merge into parent state
               sub-result {:choices combined-choices
                           :score combined-score
@@ -1216,7 +1222,7 @@
                 combined (reduce-kv
                           (fn [acc i v]
                             (if (zero? i) acc
-                                (mx/where (mx/equal index (mx/scalar i mx/int32)) v acc)))
+                                (mx/where (idx-mask index i) v acc)))
                           (first vals) vals)]
             (cm/->Value combined))
           ;; GF branches: combine per-address
@@ -1230,7 +1236,7 @@
                      combined (reduce-kv
                                (fn [acc i v]
                                  (if (or (zero? i) (nil? v)) acc
-                                     (mx/where (mx/equal index (mx/scalar i mx/int32)) v acc)))
+                                     (mx/where (idx-mask index i) v acc)))
                                (or (first vals) (mx/zeros [n-val]))
                                vals)]
                  (cm/set-choice cm addr-path combined)))
@@ -1240,8 +1246,7 @@
                         (fn [acc i bd]
                           (if (zero? i)
                             (:score bd)
-                            (mx/where (mx/equal index (mx/scalar i mx/int32))
-                                      (:score bd) acc)))
+                            (mx/where (idx-mask index i) (:score bd) acc)))
                         (mx/scalar 0.0)
                         (vec branch-data))
         ;; Combine retvals
@@ -1250,7 +1255,7 @@
                             (reduce-kv
                              (fn [acc i rv]
                                (if (or (zero? i) (nil? rv)) acc
-                                   (mx/where (mx/equal index (mx/scalar i mx/int32)) rv acc)))
+                                   (mx/where (idx-mask index i) rv acc)))
                              (first rvs) rvs)
                             (first rvs)))]
     {:choices combined-choices
@@ -1639,20 +1644,8 @@
                 [state' carry])
               (let [[sk nk] (rng/split key)
                     step-constraints (cm/get-submap sub-constraints t)
-                    has-constraints? (and step-constraints
-                                          (not= step-constraints cm/EMPTY))
                     [transition init-sub]
-                    (if has-constraints?
-                      [h/batched-generate-transition
-                       {:choices cm/EMPTY :score batch-zero :weight batch-zero
-                        :key sk :constraints step-constraints
-                        :batch-size batch-size :batched? true}]
-                      [h/batched-simulate-transition
-                       {:choices cm/EMPTY :score batch-zero
-                        :key sk :batch-size batch-size :batched? true}])
-                    init-sub (if-let [ps (:param-store state)]
-                               (assoc init-sub :param-store ps)
-                               init-sub)
+                    (batched-sub state step-constraints sk batch-size batch-zero)
                     step-result (rt/run-handler transition init-sub
                                                 (fn [rt] ((:body-fn kern) rt carry (nth inputs t))))
                     [new-carry _output] (:retval step-result)]
@@ -1828,9 +1821,7 @@
                          {:trace (dc/dist-simulate d) :weight (mx/scalar 0.0)}))
           idx (mx/item (cm/get-value (:choices (:trace idx-result))))
           component (nth components (int idx))
-          comp-constraints (if (instance? cm/Node constraints)
-                             (cm/->Node (dissoc (:m constraints) :component-idx))
-                             constraints)]
+          comp-constraints (without-component-idx constraints)]
       (if-let [cgen (cops/get-compiled-generate component)]
         ;; Compiled path — only the component generate is compiled
         (let [key (rng/fresh-key)
@@ -1917,54 +1908,30 @@
                 (if (>= i (count comps))
                   results
                   (let [[ck nk] (rng/split key)
-                        has-inner? (and inner-constraints
-                                        (not= inner-constraints cm/EMPTY))
                         [transition init-sub]
-                        (if has-inner?
-                          [h/batched-generate-transition
-                           {:choices cm/EMPTY :score batch-zero :weight batch-zero
-                            :key ck :constraints inner-constraints
-                            :batch-size batch-size :batched? true}]
-                          [h/batched-simulate-transition
-                           {:choices cm/EMPTY :score batch-zero
-                            :key ck :batch-size batch-size :batched? true}])
-                        init-sub (if-let [ps (:param-store state)]
-                                   (assoc init-sub :param-store ps)
-                                   init-sub)
+                        (batched-sub state inner-constraints ck batch-size batch-zero)
                         result (rt/run-handler transition init-sub
                                                (fn [rt] (apply (:body-fn (nth comps i)) rt
                                                                (vec args))))]
                     (recur (inc i) (conj results result) nk))))
               ;; Combine per-particle results using mx/where on idx-vals
               combined-score
-              (reduce-kv
-               (fn [acc i cr]
-                 (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
-                   (mx/where mask (:score cr) acc)))
-               batch-zero comp-results)
+              (where-combine idx-vals batch-zero comp-results :score)
               combined-weight
               (when (contains? state :weight)
-                (reduce-kv
-                 (fn [acc i cr]
-                   (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
-                     (mx/where mask (or (:weight cr) batch-zero) acc)))
-                 batch-zero comp-results))
+                (where-combine idx-vals batch-zero comp-results
+                               #(or (:weight %) batch-zero)))
               combined-choices
               (reduce-kv
                (fn [acc i cr]
-                 (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
-                   (if (zero? i)
-                     (:choices cr)
-                     (where-select-choicemap mask (:choices cr) acc))))
+                 (if (zero? i)
+                   (:choices cr)
+                   (where-select-choicemap (idx-mask idx-vals i) (:choices cr) acc)))
                cm/EMPTY comp-results)
               combined-retval
               (let [rvs (mapv :retval comp-results)]
                 (when (mx/array? (first rvs))
-                  (reduce-kv
-                   (fn [acc i rv]
-                     (let [mask (mx/equal idx-vals (mx/scalar i mx/int32))]
-                       (mx/where mask rv acc)))
-                   (first rvs) rvs)))
+                  (where-combine idx-vals (first rvs) rvs identity)))
               ;; Add component-idx to choices + add idx-score to combined score
               final-choices (cm/set-value combined-choices :component-idx idx-vals)
               final-score (mx/add combined-score idx-score)
@@ -1997,10 +1964,8 @@
                     (int (mx/item (cm/get-value idx-constraint)))
                     old-idx)
           ;; Inner choices = everything except component-idx
-          inner-old-choices (cm/->Node (dissoc (:m old-choices) :component-idx))
-          inner-constraints (if (= constraints cm/EMPTY)
-                              cm/EMPTY
-                              (cm/->Node (dissoc (:m constraints) :component-idx)))]
+          inner-old-choices (without-component-idx old-choices)
+          inner-constraints (without-component-idx constraints)]
       (if (= new-idx old-idx)
         ;; Same component: update inner only
         (let [component (nth (:components this) old-idx)
@@ -2084,7 +2049,7 @@
         ;; Same component: regenerate within the component
         (let [component (nth (:components this) old-idx)
               inner-old-score (mx/subtract (:score trace) old-idx-score)
-              inner-old-choices (cm/->Node (dissoc (:m old-choices) :component-idx))]
+              inner-old-choices (without-component-idx old-choices)]
           (if-let [cregen (cops/get-compiled-regenerate component)]
             ;; WP-9A: compiled regenerate path
             (let [key (rng/fresh-key)
@@ -2397,7 +2362,7 @@
           ;; Project the inner component
           component (nth (:components this) old-idx)
           old-idx-score (dc/dist-log-prob idx-dist (mx/scalar old-idx mx/int32))
-          inner-old-choices (cm/->Node (dissoc (:m old-choices) :component-idx))
+          inner-old-choices (without-component-idx old-choices)
           inner-old-score (mx/subtract (:score trace) old-idx-score)
           inner-trace (tr/make-trace {:gen-fn component :args args
                                       :choices inner-old-choices
@@ -2582,9 +2547,7 @@
           idx-dist (dc/->Distribution :categorical {:logits log-w})
           idx-weight (dc/dist-log-prob idx-dist (mx/scalar idx mx/int32))
           component (nth (:components this) idx)
-          inner-choices (if (instance? cm/Node choices)
-                          (cm/->Node (dissoc (:m choices) :component-idx))
-                          choices)
+          inner-choices (without-component-idx choices)
           inner-result (p/assess component args inner-choices)]
       {:retval (:retval inner-result)
        :weight (mx/add idx-weight (:weight inner-result))}))

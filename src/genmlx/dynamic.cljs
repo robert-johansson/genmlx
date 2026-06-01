@@ -17,9 +17,9 @@
             [genmlx.schema :as schema]
             [genmlx.compiled :as compiled]
             [genmlx.compiled-ops :as cops]
-            [genmlx.conjugacy :as conjugacy]
+            [genmlx.conjugacy :as conj]
             [genmlx.rewrite :as rewrite]
-            [genmlx.inference.auto-analytical :as auto-analytical]
+            [genmlx.inference.auto-analytical :as auto]
             [genmlx.dispatch :as dispatch]
             [clojure.set :as set]))
 
@@ -125,9 +125,8 @@
 
 ;; -- Common: param-store and body-fn extraction --
 
-(defn- ps  [gf] (::param-store (meta gf)))
-(defn- bfn [gf] (:body-fn gf))
-(defn- run-body [gf rt args] (apply (bfn gf) rt args))
+(defn- param-store [gf] (::param-store (meta gf)))
+(defn- run-body [gf rt args] (apply (:body-fn gf) rt args))
 
 ;; -- Transition-parameterized handler execution --
 ;;
@@ -138,7 +137,7 @@
 (defn- run-simulate [transition gf args key _opts]
   (let [result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :key key
-                  :executor execute-sub :param-store (ps gf)}
+                  :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt args)))]
     (attach-splice-scores (make-result-trace gf args result) result)))
 
@@ -146,7 +145,7 @@
   (let [result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
                   :key key :constraints constraints
-                  :executor execute-sub :param-store (ps gf)}
+                  :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt args)))
         trace (make-result-trace gf args result)]
     (make-generate-result trace (:weight result) constraints (:choices result) result)))
@@ -159,7 +158,7 @@
                   :old-splice-scores (::splice-scores (meta trace))
                   :old-nested-splice-scores (::nested-splice-scores (meta trace))
                   :discard cm/EMPTY
-                  :executor execute-sub :param-store (ps gf)}
+                  :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt (:args trace))))
         new-trace (make-result-trace gf (:args trace) result)]
     (make-update-result new-trace
@@ -174,7 +173,7 @@
                   :old-choices (:choices trace)
                   :old-splice-scores (::splice-scores (meta trace))
                   :old-nested-splice-scores (::nested-splice-scores (meta trace))
-                  :executor execute-sub :param-store (ps gf)}
+                  :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt (:args trace))))]
     (make-regen-result gf trace result old-score)))
 
@@ -182,7 +181,7 @@
   (let [result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
                   :key key :constraints constraints
-                  :executor execute-sub-assess :param-store (ps gf)}
+                  :executor execute-sub-assess :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt args)))]
     {:retval (:retval result) :weight (:score result)}))
 
@@ -192,14 +191,14 @@
                   :key key :selection selection
                   :old-choices (:choices trace)
                   :constraints cm/EMPTY
-                  :executor execute-sub-project :param-store (ps gf)}
+                  :executor execute-sub-project :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt (:args trace))))]
     (:weight result)))
 
 (defn- run-propose [transition gf args key _opts]
   (let [result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :key key
-                  :executor execute-sub :param-store (ps gf)}
+                  :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt args)))]
     {:choices (:choices result)
      :weight (:score result)
@@ -258,7 +257,7 @@
         replay (compiled/make-replay-simulate-transition (:values result))
         handler-result (rt/run-handler replay
                          {:choices cm/EMPTY :score (:score result) :key key
-                          :executor execute-sub :param-store (ps gf)}
+                          :executor execute-sub :param-store (param-store gf)}
                          (fn [rt] (run-body gf rt args)))]
     (attach-splice-scores (make-result-trace gf args handler-result) handler-result)))
 
@@ -269,7 +268,7 @@
         handler-result (rt/run-handler replay
                          {:choices cm/EMPTY :score (:score result)
                           :weight (:weight result) :key key :constraints constraints
-                          :executor execute-sub :param-store (ps gf)}
+                          :executor execute-sub :param-store (param-store gf)}
                          (fn [rt] (run-body gf rt args)))
         trace (make-result-trace gf args handler-result)]
     (make-generate-result trace (:weight handler-result) constraints
@@ -284,7 +283,7 @@
                           :weight SCORE-ZERO :key key :constraints constraints
                           :old-choices (:choices trace) :discard (cm/from-flat-map (:discard result))
                           :old-nested-splice-scores (::nested-splice-scores (meta trace))
-                          :executor execute-sub :param-store (ps gf)}
+                          :executor execute-sub :param-store (param-store gf)}
                          (fn [rt] (run-body gf rt (:args trace))))
         new-trace (make-result-trace gf (:args trace) handler-result)]
     (make-update-result new-trace
@@ -301,7 +300,7 @@
                           :weight (:weight result) :key key :selection selection
                           :old-choices (:choices trace)
                           :old-nested-splice-scores (::nested-splice-scores (meta trace))
-                          :executor execute-sub :param-store (ps gf)}
+                          :executor execute-sub :param-store (param-store gf)}
                          (fn [rt] (run-body gf rt (:args trace))))]
     (make-regen-result gf trace handler-result old-score)))
 
@@ -312,7 +311,7 @@
         handler-result (rt/run-handler replay
                          {:choices cm/EMPTY :score (:score result)
                           :weight (:score result) :key key :constraints constraints
-                          :executor execute-sub-assess :param-store (ps gf)}
+                          :executor execute-sub-assess :param-store (param-store gf)}
                          (fn [rt] (run-body gf rt args)))]
     {:retval (:retval handler-result) :weight (:score handler-result)}))
 
@@ -324,7 +323,7 @@
                          {:choices cm/EMPTY :score SCORE-ZERO
                           :weight (:weight result) :key key :selection selection
                           :old-choices (:choices trace) :constraints cm/EMPTY
-                          :executor execute-sub-project :param-store (ps gf)}
+                          :executor execute-sub-project :param-store (param-store gf)}
                          (fn [rt] (run-body gf rt (:args trace))))]
     (:weight handler-result)))
 
@@ -332,26 +331,26 @@
 
 (defn- run-generate-analytical [gf args key {:keys [constraints]}]
   (let [schema (:schema gf)
-        transition (auto-analytical/make-address-dispatch
+        transition (auto/make-address-dispatch
                      h/generate-transition (:auto-handlers schema))
         result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
                   :key key :constraints constraints
                   :auto-posteriors {} :auto-kalman-beliefs {} :auto-kalman-noise-vars {}
-                  :executor execute-sub :param-store (ps gf)}
+                  :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt args)))
         trace (vary-meta (make-result-trace gf args result) assoc ::score-type :marginal)]
     (make-generate-result trace (:weight result) constraints (:choices result) result)))
 
 (defn- run-assess-analytical [gf args key {:keys [constraints]}]
   (let [schema (:schema gf)
-        transition (auto-analytical/make-address-dispatch
+        transition (auto/make-address-dispatch
                      h/assess-transition (:auto-handlers schema))
         result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
                   :key key :constraints constraints
                   :auto-posteriors {} :auto-kalman-beliefs {} :auto-kalman-noise-vars {}
-                  :executor execute-sub-assess :param-store (ps gf)}
+                  :executor execute-sub-assess :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt args)))]
     {:retval (:retval result) :weight (:score result)}))
 
@@ -365,7 +364,7 @@
                   :auto-posteriors {} :auto-kalman-beliefs {} :auto-kalman-noise-vars {}
                   :old-splice-scores (::splice-scores (meta trace))
                   :old-nested-splice-scores (::nested-splice-scores (meta trace))
-                  :executor execute-sub :param-store (ps gf)}
+                  :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt (:args trace))))
         regen-result (make-regen-result gf trace result old-score)]
     (clojure.core/update regen-result :trace vary-meta assoc ::score-type :marginal)))
@@ -471,7 +470,7 @@
           (:generate :assess)
           (when (and (not (mx/in-grad?))
                      (:auto-handlers schema)
-                     (auto-analytical/some-conjugate-obs-constrained?
+                     (auto/some-conjugate-obs-constrained?
                        (:conjugate-pairs schema) (:constraints opts)))
             {:run run-fn :score-type :marginal :label :analytical})
 
@@ -746,15 +745,15 @@
                  :else schema)
         ;; L3: full rewrite engine (Kalman > Conjugacy > RaoBlackwell)
         schema (if schema
-                 (let [augmented (conjugacy/augment-schema-with-conjugacy schema)]
+                 (let [augmented (conj/augment-schema-with-conjugacy schema)]
                    (if (:has-conjugate? augmented)
                      (let [plan (rewrite/build-analytical-plan augmented)
-                           regen-handlers (auto-analytical/build-all-regenerate-handlers
+                           regen-handlers (auto/build-all-regenerate-handlers
                                            (:conjugate-pairs augmented)
                                            :chains (:kalman-chains plan))
                            ;; Opt 1: precompute dispatch transition once at construction
                            regen-transition (when (seq regen-handlers)
-                                              (auto-analytical/make-address-dispatch
+                                              (auto/make-address-dispatch
                                                h/regenerate-transition regen-handlers))]
                        (-> augmented
                            (assoc :auto-handlers (get-in plan [:rewrite-result :handlers]))
@@ -803,7 +802,7 @@
                                {:choices cm/EMPTY :score SCORE-ZERO
                                 :key key :batch-size n :batched? true
                                 :executor execute-sub
-                                :param-store (ps gf)}
+                                :param-store (param-store gf)}
                                (fn [rt] (run-body gf rt args)))]
     (vec/->VectorizedTrace gf args (:choices result) (:score result)
                            (mx/zeros [n]) n (:retval result))))
@@ -822,7 +821,7 @@
                                 :weight SCORE-ZERO :key key
                                 :constraints constraints :batch-size n :batched? true
                                 :executor execute-sub
-                                :param-store (ps gf)}
+                                :param-store (param-store gf)}
                                (fn [rt] (run-body gf rt args)))]
     (vec/->VectorizedTrace gf args (:choices result) (:score result)
                            (:weight result) n (:retval result))))
@@ -843,8 +842,8 @@
                                 :discard cm/EMPTY
                                 :batch-size n :batched? true
                                 :executor execute-sub
-                                :param-store (ps gf)}
-                               (fn [rt] (apply (bfn gf) rt (:args vtrace))))]
+                                :param-store (param-store gf)}
+                               (fn [rt] (run-body gf rt (:args vtrace))))]
     {:vtrace (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
                                     (:score result) (:weight result)
                                     n (:retval result))
@@ -867,8 +866,8 @@
                                 :old-choices (:choices vtrace)
                                 :batch-size n :batched? true
                                 :executor execute-sub
-                                :param-store (ps gf)}
-                               (fn [rt] (apply (bfn gf) rt (:args vtrace))))
+                                :param-store (param-store gf)}
+                               (fn [rt] (run-body gf rt (:args vtrace))))
         new-score (:score result)
         proposal-ratio (:weight result)
         weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)]

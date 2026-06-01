@@ -46,7 +46,7 @@
       (if (>= t T)
         p
         (let [;; Extract noise for this step
-              row (mx/reshape (mx/take-idx noise-2d (mx/array [t] mx/int32) 0) [K])
+              row (mx/index noise-2d t)
               ;; Propose
               proposal (mx/add p (mx/multiply proposal-std row))
               ;; Score current and proposed

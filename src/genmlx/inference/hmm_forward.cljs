@@ -174,9 +174,9 @@
    :hmm-obs
    (fn [state addr dist]
      (let [{:keys [log-emission-probs mask]} (:params dist)
-           log-alpha (:hmm-belief state)
            n (:hmm-n state)
-           {:keys [log-alpha ll]} (hmm-update log-alpha log-emission-probs mask)
+           {:keys [log-alpha ll]} (hmm-update (:hmm-belief state)
+                                              log-emission-probs mask)
            ;; Store constrained observation in choices
            constraint (cm/get-submap (:constraints state) addr)
            obs (when (cm/has-value? constraint) (cm/get-value constraint))]

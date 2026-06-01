@@ -353,15 +353,16 @@
   "Create an optimizer function: (fn [params grads] -> new-params).
    type: :sgd, :adam, or :adamw."
   [type lr & {:as opts}]
-  (case type
-    :sgd   (sgd-step lr)
-    :adam  (adam-step lr (or opts {}))
-    :adamw (let [wd  (or (:weight-decay opts) 0.01)
-                 wds (mx/scalar (- 1.0 (* lr wd)))
-                 inner (adam-step lr (or opts {}))]
-             (fn [params grads]
-               (inner (into {} (map (fn [[k v]] [k (mx/multiply v wds)]) params))
-                      grads)))))
+  (let [opts (or opts {})]
+    (case type
+      :sgd   (sgd-step lr)
+      :adam  (adam-step lr opts)
+      :adamw (let [wd  (:weight-decay opts 0.01)
+                   wds (mx/scalar (- 1.0 (* lr wd)))
+                   inner (adam-step lr opts)]
+               (fn [params grads]
+                 (inner (into {} (map (fn [[k v]] [k (mx/multiply v wds)]) params))
+                        grads))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Training

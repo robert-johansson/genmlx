@@ -298,26 +298,26 @@
           log-p (vmapped-p samples)
           log-q (vmapped-q samples)
           log-w (mx/subtract log-p log-q)
-          K (first (mx/shape samples))
-          log-K (mx/scalar (js/Math.log K))
+          k (first (mx/shape samples))
+          log-k (mx/scalar (js/Math.log k))
           ;; IWELBO estimate: L̂ = logsumexp(log_w) - log(K)
-          L-hat (mx/subtract (mx/logsumexp log-w) log-K)
+          l-hat (mx/subtract (mx/logsumexp log-w) log-k)
           ;; Leave-one-out geometric means:
           ;; loo_mean_k = (sum(log_w) - log_w_k) / (K-1)
           loo-mean (mx/divide (mx/subtract (mx/sum log-w) log-w)
-                              (mx/scalar (dec K)))
+                              (mx/scalar (dec k)))
           ;; Build [K,K] matrix: row k has all log_w values,
           ;; with diagonal (k,k) replaced by loo_mean_k
-          off-diag (mx/broadcast-to (mx/reshape log-w [1 K]) [K K])
-          loo-bcast (mx/broadcast-to (mx/reshape loo-mean [K 1]) [K K])
-          loo-matrix (mx/where (mx/eye K) loo-bcast off-diag)
+          off-diag (mx/broadcast-to (mx/reshape log-w [1 k]) [k k])
+          loo-bcast (mx/broadcast-to (mx/reshape loo-mean [k 1]) [k k])
+          loo-matrix (mx/where (mx/eye k) loo-bcast off-diag)
           ;; Baselines: L̂_{-k} = logsumexp(loo_matrix[k,:]) - log(K)
-          baselines (mx/subtract (mx/logsumexp loo-matrix [1]) log-K)
+          baselines (mx/subtract (mx/logsumexp loo-matrix [1]) log-k)
           ;; REINFORCE signal with leave-one-out baseline
-          signal (mx/stop-gradient (mx/subtract L-hat baselines))
+          signal (mx/stop-gradient (mx/subtract l-hat baselines))
           reinforce-term (mx/mean (mx/multiply signal log-q))]
       ;; Surrogate loss: gradient equals VIMCO estimator
-      (mx/add L-hat reinforce-term))))
+      (mx/add l-hat reinforce-term))))
 
 (defn- estimate-objective
   "Compute the (negated) programmable-VI objective for one batch of `samples`.

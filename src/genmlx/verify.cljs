@@ -189,7 +189,7 @@
    Returns violations vector (empty if all trials succeed)."
   [gf args n-trials key]
   (try
-    (let [keys (rng/split-n (rng/ensure-key key) n-trials)]
+    (let [keys (rng/split-n key n-trials)]
       (doseq [k keys]
         (p/simulate (dyn/with-key gf k) args))
       [])
@@ -231,7 +231,7 @@
                                          (check-no-hof-gen-fns source)))
          ;; Runtime trials — execution-based checks
          base-key (or key (rng/fresh-key))
-         trial-keys (rng/split-n (rng/ensure-key base-key) n-trials)
+         trial-keys (rng/split-n base-key n-trials)
          trial-results (mapv #(run-validation-trial gf args %) trial-keys)
          trial-violations (->> (mapcat :violations trial-results)
                                (into [] (distinct)))

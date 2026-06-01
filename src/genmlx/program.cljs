@@ -328,8 +328,8 @@
       (if (< k 0) x
           (let [sum (reduce + (map (fn [j] (* (get-in aug [k j]) (nth x j)))
                                    (range (inc k) p)))
-                val (/ (- (get-in aug [k p]) sum) (get-in aug [k k]))]
-            (recur (dec k) (assoc x k val)))))))
+                x-k (/ (- (get-in aug [k p]) sum) (get-in aug [k k]))]
+            (recur (dec k) (assoc x k x-k)))))))
 
 (defn- mat-log-det
   "Log absolute determinant of a p*p matrix via Gaussian elimination."
@@ -471,9 +471,9 @@
       (let [xx (get-in gram [0 0])
             xr (nth Xtr 0)
             tau-sq (nth s0 0)
-            m-val (+ xx (/ sigma-sq tau-sq))
+            m-diag (+ xx (/ sigma-sq tau-sq))
             log-det (js/Math.log (+ 1.0 (/ (* tau-sq xx) sigma-sq)))
-            quad (/ (- rr (/ (* xr xr) m-val)) sigma-sq)]
+            quad (/ (- rr (/ (* xr xr) m-diag)) sigma-sq)]
         (+ (* -0.5 n (js/Math.log (* 2.0 js/Math.PI sigma-sq)))
            (* -0.5 log-det)
            (* -0.5 quad)))
@@ -1003,10 +1003,10 @@
                                           (fn [m var-key col-i]
                                             (if col-i
                                               (let [raw (nth fields col-i "")
-                                                    val (when (and (seq raw) (not= raw "NA"))
-                                                          (js/parseFloat raw))]
-                                                (if (and val (not (js/isNaN val)))
-                                                  (assoc m var-key val)
+                                                    x-val (when (and (seq raw) (not= raw "NA"))
+                                                            (js/parseFloat raw))]
+                                                (if (and x-val (not (js/isNaN x-val)))
+                                                  (assoc m var-key x-val)
                                                   m))
                                               m))
                                           {}

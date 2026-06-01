@@ -12,12 +12,12 @@
    then return the generate weight under model/args. indexed-addrs is a vector
    of [i addr] pairs (index into params-arr)."
   [model args base-cm indexed-addrs params-arr]
-  (let [cm (reduce
-             (fn [cm [i addr]]
-               (cm/set-choice cm [addr] (mx/index params-arr i)))
-             base-cm
-             indexed-addrs)]
-    (:weight (p/generate model args cm))))
+  (let [acc (reduce
+              (fn [acc [i addr]]
+                (cm/set-choice acc [addr] (mx/index params-arr i)))
+              base-cm
+              indexed-addrs)]
+    (:weight (p/generate model args acc))))
 
 (defn choice-gradients
   "Compute gradients of the model's log-probability w.r.t. specified choices.

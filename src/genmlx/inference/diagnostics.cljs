@@ -117,13 +117,13 @@
 
 (defn summarize
   "Print summary statistics for MCMC samples."
-  [samples & {:keys [name] :or {name "param"}}]
+  [samples & {label :name :or {label "param"}}]
   (let [mu (sample-mean samples)
         sd (sample-std samples)
         {:keys [median q025 q975]} (sample-quantiles samples)
         effective (ess samples)]
     (mx/materialize! mu sd)
-    {:name name
+    {:name label
      :mean (mx/item mu)
      :std (mx/item sd)
      :median median

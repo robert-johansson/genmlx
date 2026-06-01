@@ -61,11 +61,8 @@
         ;; param closure: read a trainable parameter
         param-fn
         (fn [name default-value]
-          (let [default (if (mx/array? default-value) default-value (mx/scalar default-value))
-                ps (:param-store @vol)]
-            (if ps
-              (or (get-in ps [:params name]) default)
-              default)))
+          (let [default (if (mx/array? default-value) default-value (mx/scalar default-value))]
+            (or (get-in @vol [:param-store :params name]) default)))
 
         ;; splice closure: call a sub-generative-function
         splice-fn

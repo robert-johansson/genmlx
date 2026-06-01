@@ -224,7 +224,7 @@
                 result))))
       {::cache cache})))
 
-(defn clear-cache
+(defn clear-cache!
   "Clear the cache on a with-cache wrapped function."
   [f]
   (when-let [cache (::cache (meta f))] (reset! cache {})))

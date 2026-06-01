@@ -107,15 +107,15 @@
 (defn set-choice
   "Set a value at the given path, returning a new choice map."
   [cm path value]
-  (let [node-m (if (instance? Node cm) (:m cm) {})]
-    (if (= 1 (count path))
+  (let [node-m (if (instance? Node cm) (:m cm) {})
+        [addr & more] path]
+    (if (seq more)
+      (let [child (get-submap cm addr)
+            updated (set-choice child more value)]
+        (->Node (assoc node-m addr updated)))
       (->Node (assoc node-m
-                     (first path)
-                     (if (satisfies? IChoiceMap value) value (->Value value))))
-      (let [addr (first path)
-            child (get-submap cm addr)
-            updated (set-choice child (rest path) value)]
-        (->Node (assoc node-m addr updated))))))
+                     addr
+                     (if (satisfies? IChoiceMap value) value (->Value value)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Merge: values in b override values in a

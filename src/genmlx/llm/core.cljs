@@ -98,5 +98,5 @@
         tokens (->> (range)
                     (map #(cm/get-submap choices (t-addr %)))
                     (take-while cm/has-value?)
-                    (mapv #(mx/item (cm/get-value %))))]
+                    (mapv (comp mx/item cm/get-value)))]
     (llm/decode tokenizer (js/Uint32Array.from (clj->js tokens)))))
