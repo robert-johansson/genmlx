@@ -797,12 +797,8 @@
   "Unpack a flat [v0 ... vN score] JS array (from run-site-steps) into
    {:values {addr->val} :score}."
   [result addrs n-sites]
-  (let [values (loop [i 0 m {}]
-                 (if (= i n-sites)
-                   m
-                   (recur (inc i)
-                          (assoc m (nth addrs i) (aget result i)))))]
-    {:values values :score (aget result n-sites)}))
+  ;; zipmap stops at the shorter seq (addrs), so the trailing score slot is excluded
+  {:values (zipmap addrs result) :score (aget result n-sites)})
 
 (defn make-compiled-simulate
   "Build a compiled simulate function from a gen schema and source.

@@ -160,11 +160,7 @@
           {:params params :loss-history (persistent! losses)})
         (let [;; Fresh MLX scalar each iteration — negligible vs Metal dispatch cost
               t-scalar (mx/scalar (double (inc i)))
-              result (opt-step params m v t-scalar)
-              np (aget result 0)
-              nm (aget result 1)
-              nv (aget result 2)
-              loss-arr (aget result 3)
+              [np nm nv loss-arr] (opt-step params m v t-scalar)
 
               ;; Materialize loss only at log boundaries — avoids per-step eval cost
               losses' (if (log-iter? i log-every)
@@ -540,11 +536,7 @@
 
               ;; Compiled step: chain + grad + Adam
               t-scalar (mx/scalar (double (inc i)))
-              result (opt-step params m v t-scalar noise uniforms)
-              np (aget result 0)
-              nm (aget result 1)
-              nv (aget result 2)
-              loss-arr (aget result 3)
+              [np nm nv loss-arr] (opt-step params m v t-scalar noise uniforms)
 
               ;; Materialize loss only at log boundaries — avoids per-step eval cost
               losses' (if (log-iter? i log-every)

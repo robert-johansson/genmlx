@@ -140,12 +140,8 @@
     ;; Resample
     (mapv (fn [ki]
             (let [u (mx/realize (rng/uniform ki []))
-                  result (reduce (fn [cumsum [i p]]
-                                   (let [cumsum' (+ cumsum p)]
-                                     (if (>= cumsum' u)
-                                       (reduced (nth traces i))
-                                       cumsum')))
-                                 0.0
-                                 (map-indexed vector probs))]
-              (if (number? result) (last traces) result)))
+                  idx (->> (reductions + probs)
+                           (keep-indexed (fn [i c] (when (>= c u) i)))
+                           first)]
+              (nth traces (or idx (dec (count traces))))))
           keys)))

@@ -1141,9 +1141,8 @@
                               :choices (:choices new-trace)
                               :retval (:retval new-trace)
                               :score (:score new-trace)})
-       :weight (:weight result)})))
+       :weight (:weight result)}))
 
-(extend-type RecurseCombinator
   p/IProject
   (project [this trace selection]
     (let [gf ((:maker this) this)
@@ -1151,16 +1150,14 @@
                        {:gen-fn gf :args (:args trace)
                         :choices (:choices trace)
                         :retval (:retval trace) :score (:score trace)})]
-      (p/project gf inner-trace selection))))
+      (p/project gf inner-trace selection)))
 
-(extend-type RecurseCombinator
   p/IUpdateWithDiffs
   (update-with-diffs [this trace constraints argdiffs]
     (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
       {:trace trace :weight (mx/scalar 0.0) :discard cm/EMPTY}
-      (p/update this trace constraints))))
+      (p/update this trace constraints)))
 
-(extend-type RecurseCombinator
   edit/IEdit
   (edit [gf trace edit-request]
     (edit/edit-dispatch gf trace edit-request)))

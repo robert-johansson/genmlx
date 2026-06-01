@@ -183,12 +183,11 @@
                     [obs-value (cond-> state
                                  true (assoc-in [:auto-posteriors prior-addr] posterior)
                                  true (update :choices cm/set-value addr obs-value)
-                                 true (update :score #(mx/add % ll))
-                                 (not regenerate?) (update :weight #(mx/add % ll))
+                                 true (update :score mx/add ll)
+                                 (not regenerate?) (update :weight mx/add ll)
                                  ;; Update prior's value to posterior mean
                                  true (update :choices cm/set-value prior-addr post-mean))]))))))]
-    (merge {prior-addr prior-handler}
-           (into {} (map (fn [oa] [oa obs-handler]) obs-addrs)))))
+    (assoc (zipmap obs-addrs (repeat obs-handler)) prior-addr prior-handler)))
 
 ;; ---------------------------------------------------------------------------
 ;; Per-family configs
@@ -393,10 +392,10 @@
                                       state' (cond-> (-> state
                                                          (assoc-in [:auto-kalman-beliefs latent] new-belief)
                                                          (update :choices cm/set-value addr obs-value)
-                                                         (update :score #(mx/add % ll))
+                                                         (update :score mx/add ll)
                                                          (update :choices cm/set-value latent (:mean new-belief)))
                                                (not regenerate?)
-                                               (update :weight #(mx/add % ll)))
+                                               (update :weight mx/add ll))
                                       noise-vars (:auto-kalman-noise-vars state')
                                       state'' (if (and noise-vars (< (inc step-idx) n-steps))
                                                 (cascade-predictions steps step-idx state' noise-vars)
@@ -521,11 +520,10 @@
                                      true (assoc-in [:auto-posteriors prior-addr]
                                                     {:mean-vec mean-vec :cov-matrix cov-matrix})
                                      true (update :choices cm/set-value addr obs-value)
-                                     true (update :score #(mx/add % ll))
-                                     (not regenerate?) (update :weight #(mx/add % ll))
+                                     true (update :score mx/add ll)
+                                     (not regenerate?) (update :weight mx/add ll)
                                      true (update :choices cm/set-value prior-addr mean-vec))]))))))))]
-    (merge {prior-addr prior-handler}
-           (into {} (map (fn [oa] [oa obs-handler]) obs-addrs)))))
+    (assoc (zipmap obs-addrs (repeat obs-handler)) prior-addr prior-handler)))
 
 ;; ---------------------------------------------------------------------------
 ;; Factory dispatch

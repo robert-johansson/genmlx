@@ -147,8 +147,9 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
 
     ;; Fenced code block
     (re-find #"```(?:clojure|cljs|clojurescript|clj)?\s*\n" text)
-    (let [m (re-find #"```(?:clojure|cljs|clojurescript|clj)?\s*\n([\s\S]*?)```" text)]
-      (if m (str/trim (nth m 1)) ""))
+    (if-let [m (re-find #"```(?:clojure|cljs|clojurescript|clj)?\s*\n([\s\S]*?)```" text)]
+      (str/trim (nth m 1))
+      "")
 
     ;; Starts with paren -- raw code
     (str/starts-with? (str/trim text) "(")
@@ -156,8 +157,9 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
 
     ;; Strip prefix to first paren
     :else
-    (let [idx (str/index-of text "(")]
-      (if idx (subs text idx) ""))))
+    (if-let [idx (str/index-of text "(")]
+      (subs text idx)
+      "")))
 
 ;; ============================================================
 ;; 7.5 Reader-constrained byte GF

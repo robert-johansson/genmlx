@@ -65,7 +65,7 @@
             lp (dc/dist-log-prob dist value)]
         [value (-> state
                    (update :choices cm/set-value addr value)
-                   (update :score #(mx/add % lp)))])
+                   (update :score mx/add lp))])
       ;; Free: enumerate all support values as new leftmost axis
       (let [support (dc/dist-support dist)
             k (count support)]
@@ -75,7 +75,7 @@
                 lp (dc/dist-log-prob dist value)]
             [value (-> state
                        (update :choices cm/set-value addr value)
-                       (update :score #(mx/add % lp)))])
+                       (update :score mx/add lp))])
           ;; Multiple values: create new tensor axis
           (let [ndim (:ndim state)
                 ;; Values: [k, 1, 1, ...] with ndim trailing 1s
@@ -98,7 +98,7 @@
                         lp-all)]
             [values-nd (-> state
                            (update :choices cm/set-value addr values-nd)
-                           (update :score #(mx/add % lp-nd))
+                           (update :score mx/add lp-nd)
                            (update :axes conj {:addr addr :size k :dim ndim
                                                :support support})
                            (update :ndim inc))]))))))

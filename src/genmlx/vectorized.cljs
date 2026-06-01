@@ -130,7 +130,9 @@
    Where mask=true takes from proposed, where false keeps current."
   [current proposed mask]
   (walk-choicemap current
-                  (fn [cv] (mx/where mask (cm/get-value proposed) cv))
+                  (fn [cv]
+                    (let [pv (cm/get-value proposed)]
+                      (mx/where mask pv cv)))
                   (fn [k sub] (merge-choicemap-by-mask
                                 sub (cm/-get-submap proposed k) mask))))
 

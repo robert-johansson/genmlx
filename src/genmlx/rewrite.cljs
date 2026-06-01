@@ -110,11 +110,11 @@
   [schema prior-addr conjugate-obs-addrs]
   (let [conj-set (set conjugate-obs-addrs)
         all-sites (:trace-sites schema)]
-    (vec (keep (fn [site]
-                 (when (and (contains? (:deps site) prior-addr)
-                            (not (contains? conj-set (:addr site))))
-                   (:addr site)))
-               all-sites))))
+    (into [] (keep (fn [site]
+                     (when (and (contains? (:deps site) prior-addr)
+                                (not (contains? conj-set (:addr site))))
+                       (:addr site))))
+          all-sites)))
 
 (defn generate-rewrite-rules
   "Generate rewrite rules from schema conjugacy metadata.

@@ -57,8 +57,8 @@
                         (cons 'mx/add (map :coefficient target-results)))
                 ;; Collect all offsets
                 all-offsets (keep (fn [r]
-                                   (when (and (:offset r) (not= 0 (:offset r)))
-                                     (:offset r)))
+                                    (let [o (:offset r)]
+                                      (when (and o (not= 0 o)) o)))
                                   results)
                 offset (cond
                          (empty? all-offsets) 0

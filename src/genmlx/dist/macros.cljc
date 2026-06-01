@@ -30,9 +30,7 @@
            params (first args)
            clauses (rest args)
            type-kw (keyword (name dist-name))
-           clause-map (into {} (map (fn [clause]
-                                      [(first clause) (rest clause)])
-                                    clauses))
+           clause-map (into {} (map (juxt first rest)) clauses)
            ;; Build the destructuring let for params from (:params d)
            params-let (vec (mapcat (fn [p]
                                      [p (list (keyword (name p))
@@ -52,9 +50,7 @@
           ;; Constructor function
           ~(let [ctor-body `(genmlx.dist.core/->Distribution
                               ~type-kw
-                              ~(into {} (map (fn [p]
-                                               [(keyword (name p)) p])
-                                             params)))]
+                              ~(into {} (map (juxt (comp keyword name) identity)) params))]
              `(defn ~dist-name ~@(when docstr [docstr]) ~params
                 (let [~@(mapcat (fn [p] [p (list 'genmlx.mlx/ensure-array p)])
                                 params)]

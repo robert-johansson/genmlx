@@ -68,20 +68,21 @@
 
 (defmethod edit-dispatch ConstraintEdit
   [gf trace edit-request]
-  (let [result (p/update gf trace (:constraints edit-request))
+  (let [{:keys [constraints]} edit-request
+        result (p/update gf trace constraints)
         discard (discard-of result)]
     (assoc result
            :backward-request (->ConstraintEdit discard))))
 
 (defmethod edit-dispatch SelectionEdit
   [gf trace edit-request]
-  (let [result (p/regenerate gf trace (:selection edit-request))
-        ;; Backward request: regenerate the same selection
-        ;; (since regenerate is its own inverse in terms of the proposal)
-        ]
+  (let [{:keys [selection]} edit-request
+        result (p/regenerate gf trace selection)]
     (assoc result
            :discard cm/EMPTY
-           :backward-request (->SelectionEdit (:selection edit-request)))))
+           ;; Backward request: regenerate the same selection
+           ;; (since regenerate is its own inverse in terms of the proposal)
+           :backward-request (->SelectionEdit selection))))
 
 (defmethod edit-dispatch ProposalEdit
   [gf trace edit-request]

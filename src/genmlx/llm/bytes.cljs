@@ -251,11 +251,11 @@
    Not safe for concurrent execution on the same model instance."
   ([model-map] (make-byte-llm-gf model-map {}))
   ([model-map opts]
-   (let [{:keys [model]} model-map
+   (let [{:keys [model tokenizer]} model-map
          {:keys [token-index trie]}
          (if (and (:token-index opts) (:trie opts))
            opts
-           (prepare (:tokenizer model-map)))]
+           (prepare tokenizer))]
      (dyn/auto-key
       (gen [prompt-ids max-bytes]
            (if (zero? max-bytes)
@@ -322,14 +322,14 @@
    Generation stops when the DFA has no valid continuations."
   ([model-map constraint] (constrain-bytes model-map constraint {}))
   ([model-map constraint opts]
-   (let [{:keys [model]} model-map
+   (let [{:keys [model tokenizer]} model-map
          dfa (if (string? constraint)
                (grammar/compile-regex constraint)
                constraint)
          {:keys [trie]}
          (if (:trie opts)
            opts
-           (prepare (:tokenizer model-map)))
+           (prepare tokenizer))
          alive (:alive dfa)]
      (dyn/auto-key
       (gen [prompt-ids max-bytes]

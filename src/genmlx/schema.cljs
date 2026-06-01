@@ -174,28 +174,13 @@
                        (or pairs []))]
       (walk-forms acc' env' body))))
 
-(defn- handle-branch [acc env args]
-  ;; For if/when/when-not/if-let/when-let/if-not
-  (let [has-trace? (some contains-gen-call? args)]
-    (cond-> (walk-forms acc env args)
-      has-trace? (assoc :has-branches? true))))
-
-(defn- handle-cond [acc env args]
-  (let [has-trace? (some contains-gen-call? args)]
-    (cond-> (walk-forms acc env args)
-      has-trace? (assoc :has-branches? true))))
-
-(defn- handle-case [acc env args]
-  ;; case: (case expr val1 result1 val2 result2 ... default?)
-  (let [has-trace? (some contains-gen-call? (rest args))]
-    (cond-> (walk-forms acc env args)
-      has-trace? (assoc :has-branches? true))))
-
-(defn- handle-and-or [acc env args]
-  ;; and/or with traces → branches (short-circuit = conditional execution)
-  (let [has-trace? (some contains-gen-call? args)]
-    (cond-> (walk-forms acc env args)
-      has-trace? (assoc :has-branches? true))))
+(defn- handle-branching
+  ;; if/when/cond/and/or/case — walk every arg, but a trace anywhere in `scan`
+  ;; means execution is conditional, so flag :has-branches?. `scan` is the full
+  ;; arg list for everything except case, where the dispatch expr is skipped.
+  [acc env args scan]
+  (cond-> (walk-forms acc env args)
+    (some contains-gen-call? scan) (assoc :has-branches? true)))
 
 ;; =========================================================================
 ;; Loop analysis helpers (VIS-M3)
@@ -556,16 +541,16 @@
       "splice" (handle-splice acc env args)
       "param" (handle-param acc env args)
       "let" (handle-let acc env args)
-      "if" (handle-branch acc env args)
-      "when" (handle-branch acc env args)
-      "when-not" (handle-branch acc env args)
-      "when-let" (handle-branch acc env args)
-      "if-let" (handle-branch acc env args)
-      "if-not" (handle-branch acc env args)
-      "cond" (handle-cond acc env args)
-      "case" (handle-case acc env args)
-      "and" (handle-and-or acc env args)
-      "or" (handle-and-or acc env args)
+      "if" (handle-branching acc env args args)
+      "when" (handle-branching acc env args args)
+      "when-not" (handle-branching acc env args args)
+      "when-let" (handle-branching acc env args args)
+      "if-let" (handle-branching acc env args args)
+      "if-not" (handle-branching acc env args args)
+      "cond" (handle-branching acc env args args)
+      "case" (handle-branching acc env args (rest args))
+      "and" (handle-branching acc env args args)
+      "or" (handle-branching acc env args args)
       "do" (walk-forms acc env args)
       "doseq" (handle-loop-form (assoc acc :current-loop-type :doseq) env args)
       "dotimes" (handle-loop-form (assoc acc :current-loop-type :dotimes) env args)

@@ -124,7 +124,7 @@
         T (count obs-vec)
         static-sites (filterv :static? (:trace-sites schema))
         all-addrs (mapv :addr static-sites)
-        addr-index (into {} (map-indexed (fn [i a] [a i]) all-addrs))
+        addr-index (zipmap all-addrs (range))
         K (count all-addrs)
         N particles]
     (when-not extend-fn

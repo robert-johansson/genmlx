@@ -808,8 +808,7 @@
           state-keys (when map-state? (vec (sort (keys return-expr))))
           n-state (if map-state? (count state-keys) 1)
           retval-fn (compiled/compile-expr return-expr binding-env #{})
-          addr-order (mapv :addr static-sites)
-          n-sites (count static-sites)]
+          addr-order (mapv :addr static-sites)]
       (when (and (every? some? site-specs)
                  (every? some? fused-steps)
                  retval-fn
@@ -897,8 +896,7 @@
                      (compiled/compile-expr (first return-expr) binding-env #{}))
           output-fn (when (vector? return-expr)
                       (compiled/compile-expr (second return-expr) binding-env #{}))
-          addr-order (mapv :addr static-sites)
-          n-sites (count static-sites)]
+          addr-order (mapv :addr static-sites)]
       (when (and (every? some? site-specs)
                  (every? some? fused-steps)
                  carry-fn output-fn

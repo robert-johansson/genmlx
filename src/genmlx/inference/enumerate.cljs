@@ -33,7 +33,7 @@
   [model args observations addr-supports opts]
   (let [model (dyn/auto-key model)
         addrs (vec (keys addr-supports))
-        supports (mapv #(get addr-supports %) addrs)
+        supports (mapv addr-supports addrs)
         combos (cartesian-product supports)
         n-combos (count combos)
         max-combos (or (:max-combinations opts) 10000)]
@@ -45,10 +45,7 @@
                        :max-combinations max-combos
                        :addr-supports (into {} (map (fn [[a s]] [a (count s)]) addr-supports))})))
     (mapv (fn [combo]
-            (let [combo-cm (reduce (fn [acc [addr val]]
-                                    (cm/merge-cm acc (cm/choicemap addr val)))
-                                  (cm/choicemap)
-                                  (map vector addrs combo))
+            (let [combo-cm (cm/from-flat-map (zipmap addrs combo))
                   full-cm (if observations (cm/merge-cm observations combo-cm) combo-cm)
                   {:keys [weight]} (p/generate model args full-cm)]
               {:choices combo-cm :log-weight weight}))
@@ -92,7 +89,6 @@
                 :log-prob (mx/scalar lp)
                 :prob (js/Math.exp lp)}))
            entries)
-         vec
          (sort-by :prob >)))))
 
 (defn enumerate-marginals

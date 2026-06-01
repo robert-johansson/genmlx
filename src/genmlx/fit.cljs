@@ -82,9 +82,7 @@
     ;; --- Exact (all-conjugate / trivial) and Kalman (auto-handlers): both
     ;;     get the answer directly from p/generate's weight ---
     (:exact :kalman)
-    (let [result (p/generate model args data)
-          trace (:trace result)
-          weight (:weight result)]
+    (let [{:keys [trace weight]} (p/generate model args data)]
       (mx/materialize! weight)
       {:trace trace
        :log-ml (mx/item weight)
@@ -137,12 +135,13 @@
     (:smc :handler-is)
     (let [is-opts {:samples (or (:particles opts) (:n-particles opts) 200)
                    :key (:key opts)}
-          result (importance/importance-sampling is-opts model args data)
-          best-trace (first (:traces result))]
-      (mx/materialize! (:log-ml-estimate result))
+          {:keys [traces log-ml-estimate]} (importance/importance-sampling
+                                             is-opts model args data)
+          best-trace (first traces)]
+      (mx/materialize! log-ml-estimate)
       {:trace best-trace
        :posterior (when best-trace (extract-posterior best-trace data))
-       :log-ml (mx/item (:log-ml-estimate result))})
+       :log-ml (mx/item log-ml-estimate)})
 
     ;; --- Unknown method ---
     (throw (ex-info (str "Unknown inference method: " method)

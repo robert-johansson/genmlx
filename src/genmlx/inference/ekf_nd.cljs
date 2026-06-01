@@ -106,19 +106,15 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- make-zero-means [addrs n]
-  (reduce (fn [m addr] (assoc m addr (mx/zeros [n]))) {} addrs))
+  (into {} (map (fn [addr] [addr (mx/zeros [n])])) addrs))
 
 (defn- make-zero-covs
   "Initialize N*(N+1)/2 covariance entries to zeros.
    Keys are [addr-i addr-j] ordered by position in addrs."
   [addrs n]
   (let [N (count addrs)]
-    (reduce
-      (fn [m i]
-        (reduce (fn [m j]
-                  (assoc m [(nth addrs i) (nth addrs j)] (mx/zeros [n])))
-                m (range i N)))
-      {} (range N))))
+    (into {} (for [i (range N) j (range i N)]
+               [[(nth addrs i) (nth addrs j)] (mx/zeros [n])]))))
 
 (defn- cov-key
   "Canonical covariance key for a pair of latent addresses.

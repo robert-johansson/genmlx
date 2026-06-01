@@ -154,10 +154,9 @@
                                 (vec (repeat particles (mx/scalar 0.0)))])
                              [traces log-weights])
         ;; Update each particle with new observations
-        results       (into [] (map-indexed
-                        (fn [i trace]
-                          (break-particle-graph! (p/update (:gen-fn trace) trace obs) i))
-                        traces'))
+        results       (mapv (fn [i trace]
+                               (break-particle-graph! (p/update (:gen-fn trace) trace obs) i))
+                             (range) traces')
         new-traces    (mapv :trace results)
         update-weights (mapv :weight results)
         new-weights   (mapv mx/add weights' update-weights)
