@@ -399,7 +399,9 @@
         one ONE
         g1 (gamma-sample-n (mx/realize alpha) one k1 n)
         g2 (gamma-sample-n (mx/realize beta-param) one k2 n)]
-    (mx/divide g1 (mx/add g1 g2))))
+    ;; Clamp into the open support (0,1): for alpha/beta < 1 a float32 sample can
+    ;; round to exactly 0.0/1.0, where the beta density (and log-prob) is +inf.
+    (mx/clip (mx/divide g1 (mx/add g1 g2)) 1e-7 (- 1.0 1e-7))))
 
 ;; Dirichlet batch sampling via k independent gamma samples, then normalize
 (defmethod dc/dist-sample-n* :dirichlet [d key n]
