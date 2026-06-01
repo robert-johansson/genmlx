@@ -85,7 +85,7 @@
           pairs (conj/detect-conjugate-pairs s)
           chains (aff/detect-kalman-chains pairs)
           graph (dep-graph/build-dep-graph s)
-          rules (rw/generate-rewrite-rules s pairs)]
+          rules (rw/generate-rewrite-rules s pairs chains)]
       (is (some #(instance? rw/KalmanRule %) rules) "has kalman rule")
       (let [k-rule (first (filter #(instance? rw/KalmanRule %) rules))]
         (is (rw/-applicable? k-rule graph s) "kalman rule applicable")
@@ -205,7 +205,8 @@
                 (trace :y1 (dist/gaussian z1 0.3))
                 z1)))
           pairs (conj/detect-conjugate-pairs s)
-          rules (rw/generate-rewrite-rules s pairs)]
+          chains (aff/detect-kalman-chains pairs)
+          rules (rw/generate-rewrite-rules s pairs chains)]
       (is (some #(instance? rw/KalmanRule %) rules)
           "kalman: KalmanRule generated")))
 
@@ -227,7 +228,8 @@
                 (trace :obs (dist/gaussian mu 1))
                 z1)))
           pairs (conj/detect-conjugate-pairs s)
-          rules (rw/generate-rewrite-rules s pairs)]
+          chains (aff/detect-kalman-chains pairs)
+          rules (rw/generate-rewrite-rules s pairs chains)]
       (is (instance? rw/KalmanRule (first rules))
           "priority: first rule is Kalman"))))
 
