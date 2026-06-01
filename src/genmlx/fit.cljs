@@ -9,11 +9,9 @@
    Returns {:method :trace :posterior :log-ml :loss-history :params
             :diagnostics :elapsed-ms}"
   (:require [genmlx.mlx :as mx]
-            [genmlx.mlx.random :as rng]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
             [genmlx.choicemap :as cm]
-            [genmlx.inference.util :as u]
             [genmlx.inference.importance :as importance]
             [genmlx.inference.mcmc :as mcmc]
             [genmlx.inference.compiled-optimizer :as co]

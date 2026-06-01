@@ -9,8 +9,7 @@
    [D] gen.dev/docs/stable/ref/core/gfi.
 
    See MALLI_INTEGRATION.md for the design rationale."
-  (:require [malli.core :as m]
-            [malli.util :as mu]
+  (:require [malli.util :as mu]
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]))
 

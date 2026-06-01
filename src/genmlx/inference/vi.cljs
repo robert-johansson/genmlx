@@ -3,8 +3,6 @@
    plus programmable VI objectives (ELBO, IWELBO, PWake, QWake)
    and gradient estimators (reparameterization, REINFORCE)."
   (:require [genmlx.protocols :as p]
-            [genmlx.trace :as tr]
-            [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dynamic :as dyn]

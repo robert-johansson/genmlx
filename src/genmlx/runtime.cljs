@@ -26,8 +26,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.mlx.constants :refer [ZERO]]
             [genmlx.selection :as sel]
-            [genmlx.protocols :as p]
-            [genmlx.dist.core :as dc]))
+            [genmlx.protocols :as p]))
 
 ;; Validation hook atom. No-op by default.
 ;; genmlx.dev/start! swaps this with a real validator.

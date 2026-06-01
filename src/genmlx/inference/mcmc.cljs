@@ -8,7 +8,6 @@
             [genmlx.selection :as sel]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.dist.core :as dc]
             [genmlx.dynamic :as dyn]
             [genmlx.inference.util :as u]
             [genmlx.inference.kernel :as kern]

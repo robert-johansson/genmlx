@@ -1,7 +1,6 @@
 (ns genmlx.inference.smc
   "Sequential Monte Carlo (particle filtering) inference."
   (:require [genmlx.protocols :as p]
-            [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]

@@ -28,7 +28,6 @@
              genmlx.schemas (Malli structural schemas)"
   (:require [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
-            [genmlx.diff :as diff]
             [genmlx.edit :as edit]
             [genmlx.selection :as sel]
             [genmlx.mlx :as mx]
