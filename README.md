@@ -44,11 +44,15 @@ cd genmlx
 #   git submodule update --init --recursive
 
 # Build mlx-node (compiles the vendored MLX C++ via CMake + the Rust NAPI addon
-# via cargo, ~3-4 min first build). `yarn` auto-delegates to the pinned 4.13.0
-# release vendored in .yarn/releases — any yarn launcher on PATH works.
+# via cargo + the TypeScript wrapper via tsc, ~3-4 min first build). `yarn`
+# auto-delegates to the pinned 4.13.0 release vendored in .yarn/releases —
+# any yarn launcher on PATH works.
 cd mlx-node
 yarn install
-yarn build:native      # needs cmake, cargo, and (macOS 26+) the Metal Toolchain on PATH
+yarn build             # runs build:native (cmake + cargo) AND build:ts (tsc -b).
+                       # Do NOT use `yarn build:native` alone — without build:ts,
+                       # @mlx-node/lm has no dist/ and the LLM API won't import.
+                       # Needs cmake, cargo, and (macOS 26+) the Metal Toolchain on PATH.
 cd ..
 
 # Install GenMLX's native dependency. @mlx-node/core and @mlx-node/lm resolve from
@@ -71,7 +75,7 @@ bun run --bun nbb test/genmlx/inference_test.cljs
 >   PRNG, fused scalar extraction). It vendors the MLX C++ source as a further
 >   *nested* submodule ([`mlx`](https://github.com/robert-johansson/mlx) at
 >   `crates/mlx-sys/mlx`), which `--recurse-submodules` pulls automatically and
->   `yarn build:native` compiles statically.
+>   `yarn build` compiles statically (the `build:native` part of the script).
 > - [`malli`](https://github.com/robert-johansson/malli),
 >   [`instaparse`](https://github.com/robert-johansson/instaparse), and
 >   [`test.check`](https://github.com/robert-johansson/test.check) — patched for
