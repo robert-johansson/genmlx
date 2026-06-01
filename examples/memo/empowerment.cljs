@@ -113,7 +113,7 @@
 
 (let [states (blahut-arimoto symmetric-channel 5)]
   (doseq [{:keys [q capacity]} (rest states)]
-    (let [qs (.tolist q)]
+    (let [qs (clj->js (mx/->clj q))]
       (println (str "  C = " (.toFixed capacity 4) " bits"
                     "  q = [" (.toFixed (aget qs 0) 4) ", "
                     (.toFixed (aget qs 1) 4) ", "
@@ -136,7 +136,7 @@
 
 (let [states (blahut-arimoto asymmetric-channel 10)]
   (doseq [[i {:keys [q capacity]}] (map-indexed vector (rest states))]
-    (let [qs (.tolist q)]
+    (let [qs (clj->js (mx/->clj q))]
       (println (str "  t=" i
                     "  C = " (.toFixed capacity 4) " bits"
                     "  q = [" (.toFixed (aget qs 0) 4) ", "

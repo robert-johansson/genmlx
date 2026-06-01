@@ -139,8 +139,8 @@
    observations: [{:obs :base-mean :loading :noise-std :mask} ...]
    Returns {:belief updated, :ll per-element total LL for this step}."
   [belief {:keys [transition-coeff process-noise]} observations]
-  (let [pred (kalman-predict belief transition-coeff process-noise)]
-    (kalman-sequential-update pred observations)))
+  (-> (kalman-predict belief transition-coeff process-noise)
+      (kalman-sequential-update observations)))
 
 ;; ---------------------------------------------------------------------------
 ;; Handler middleware (Level 2)

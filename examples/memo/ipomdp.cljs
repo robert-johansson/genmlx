@@ -271,7 +271,7 @@
                   (mx/item (payout-investor 0 1))) 2)
       q0-hi (/ (+ (mx/item (payout-investor 1 0))
                   (mx/item (payout-investor 1 1))) 2)
-      q1-g0 (.tolist (mx/idx iq1 0))]
+      q1-g0 (clj->js (mx/->clj (mx/idx iq1 0)))]
   (println (str "   Level-0 Q(low)=" (.toFixed q0-lo 2) " Q(high)=" (.toFixed q0-hi 2)
                " -> prefers " (if (> q0-hi q0-lo) "HIGH" "LOW")))
   (println (str "   Level-1 Q(low)=" (.toFixed (aget q1-g0 0) 2) " Q(high)=" (.toFixed (aget q1-g0 1) 2)

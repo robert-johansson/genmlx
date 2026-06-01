@@ -79,11 +79,14 @@
     [coll]))
 
 (defn- infer-shape
-  "Infer shape from nested collection. Returns [flat-data shape-vec]."
+  "Infer shape from nested collection. Returns [flat-data shape-vec].
+   Handles JS arrays (#js [...]) as well as Clojure collections — mirrors
+   flatten-nested's predicates so the dtype/shape arities of `array` shape
+   JS-array inputs correctly (not as 0-dim scalars)."
   [coll]
-  (if (or (vector? coll) (seq? coll) (sequential? coll))
+  (if (or (vector? coll) (seq? coll) (sequential? coll) (js/Array.isArray coll))
     (let [first-el (first coll)]
-      (if (or (vector? first-el) (seq? first-el) (sequential? first-el))
+      (if (or (vector? first-el) (seq? first-el) (sequential? first-el) (js/Array.isArray first-el))
         (let [[_ inner-shape] (infer-shape first-el)]
           [(flatten-nested coll) (into [(count coll)] inner-shape)])
         [(vec coll) [(count coll)]]))
@@ -305,12 +308,11 @@
   "Ensure indices are integer dtype (int32). MLX take/gather crashes with
    float32 indices — Metal kernels expect integer index types."
   [indices]
-  (if (number? indices)
-    (scalar indices int32)
+  (cond
+    (number? indices)            (scalar indices int32)
     ;; int32 is dtype code 1; float32 is code 0. Cast non-int to int32.
-    (if (= (.dtypeOf c indices) 1)
-      indices
-      (.astype indices int32))))
+    (= (.dtypeOf c indices) 1)   indices
+    :else                        (.astype indices int32)))
 
 (defn take-idx
   ([a indices]
@@ -358,13 +360,13 @@
   ([v]
    (cond
      (array? v) v
-     (or (vector? v) (seq? v) (sequential? v))
+     ;; JS arrays (#js [...]) included so NESTED JS arrays shape correctly via
+     ;; infer-shape, not just flat ones. The old flat-only (js/Array.isArray v)
+     ;; branch coerced #js [#js [..] #js [..]] to NaN — see infer-shape.
+     (or (vector? v) (seq? v) (sequential? v) (js/Array.isArray v))
      (let [[flat-data sh] (infer-shape v)
            f32 (js/Float32Array.from (clj->js flat-data))]
        (.fromFloat32 c f32 (clj->js sh)))
-     (js/Array.isArray v)
-     (let [f32 (js/Float32Array.from v)]
-       (.fromFloat32 c f32 #js [(.-length f32)]))
      :else (scalar v)))
   ([v shape-or-dtype]
    (if (or (vector? shape-or-dtype) (seq? shape-or-dtype))
@@ -615,8 +617,7 @@
 (defn tidy [f]
   (swap! tidy-depth inc)
   (try
-    (let [result (f)]
-      result)
+    (f)
     (finally
       (swap! tidy-depth dec)
       (when (zero? @tidy-depth)

@@ -273,7 +273,12 @@
       (if (>= i iterations)
         {:params params :loss-history (persistent! losses)}
         (let [key (rng/fresh-key)
-              bl (when baseline (mx/scalar baseline))
+              ;; Always pass a concrete scalar (never nil): bl is forwarded as a
+              ;; value-and-grad input arg, and a nil/null there fails NAPI MxArray
+              ;; recovery. baseline=0.0 is identity in vadev-surrogate
+              ;; (stop_gradient(costs - 0) = stop_gradient(costs)), so this is
+              ;; equivalent to "no baseline" on the first iteration.
+              bl (mx/scalar (or baseline 0.0))
               [loss grad] (mx/tidy-run
                             #(grad-fn params key bl)
                             (fn [[l g]] [l g]))

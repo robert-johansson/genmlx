@@ -129,7 +129,8 @@
               [new-params new-opt-st]
               (case optimizer
                 :sgd [(sgd-step params grad lr) nil]
-                :adam (adam-step params grad opt-st {:lr lr}))]
+                :adam (adam-step params grad opt-st {:lr lr})
+                (throw (ex-info "Unknown optimizer" {:optimizer optimizer})))]
           (when callback
             (callback {:iter i :loss loss-val :params new-params}))
           ;; Periodic resource cleanup — critical for models with large

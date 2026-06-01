@@ -35,10 +35,9 @@
                                            (mx/square diff-norm)))
         log-q (mx/sum log-q-per-dim [1])
         ;; log p for each sample via vmap
-        log-p-vals (vmapped-log-density samples)
-        ;; ELBO = mean(log_p - log_q)
-        elbo (mx/mean (mx/subtract log-p-vals log-q))]
-    elbo))
+        log-p-vals (vmapped-log-density samples)]
+    ;; ELBO = mean(log_p - log_q)
+    (mx/mean (mx/subtract log-p-vals log-q))))
 
 ;; ---------------------------------------------------------------------------
 ;; VI main

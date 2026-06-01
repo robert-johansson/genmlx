@@ -332,8 +332,7 @@
                                            (filter (fn [[ch _]]
                                                      (let [s (grammar/dfa-advance
                                                               dfa dfa-state ch)]
-                                                       (and (not= s :dead)
-                                                            (contains? alive s)))))
+                                                       (contains? alive s))))
                                            raw-lps)]
                        (if (empty? valid-lps)
                          bytes-acc

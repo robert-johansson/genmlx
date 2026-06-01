@@ -246,7 +246,7 @@
   [target-addr]
   {:nn-prior
    (fn [state addr dist]
-     (if (= addr target-addr)
+     (when (= addr target-addr)
        (let [{:keys [prior-mean prior-std]} (:params dist)
              posterior (or (get-in state [:conjugate-posteriors addr])
                           {:mean prior-mean
@@ -254,13 +254,12 @@
          [(:mean posterior)
           (-> state
               (assoc-in [:conjugate-posteriors addr] posterior)
-              (update :choices cm/set-value addr (:mean posterior)))])
-       nil))
+              (update :choices cm/set-value addr (:mean posterior)))])))
 
    :nn-obs
    (fn [state addr dist]
      (let [{:keys [prior-addr obs-std mask]} (:params dist)]
-       (if (= prior-addr target-addr)
+       (when (= prior-addr target-addr)
          (let [posterior (get-in state [:conjugate-posteriors target-addr])
                constraint (cm/get-submap (:constraints state) addr)
                obs (cm/get-value constraint)
@@ -270,8 +269,7 @@
                     (assoc-in [:conjugate-posteriors target-addr] posterior)
                     (update :choices cm/set-value addr obs)
                     (update :conjugate-ll
-                      #(mx/add (or % (mx/zeros (ll-shape (:mean posterior)))) ll)))])
-         nil)))})
+                      #(mx/add (or % (mx/zeros (ll-shape (:mean posterior)))) ll)))]))))})
 
 (defn make-bb-dispatch
   "Create Beta-Binomial conjugate dispatch map.
@@ -282,7 +280,7 @@
   [target-addr]
   {:bb-prior
    (fn [state addr dist]
-     (if (= addr target-addr)
+     (when (= addr target-addr)
        (let [{:keys [alpha beta-param]} (:params dist)
              posterior (or (get-in state [:conjugate-posteriors addr])
                           {:alpha alpha :beta beta-param})
@@ -292,13 +290,12 @@
          [post-mean
           (-> state
               (assoc-in [:conjugate-posteriors addr] posterior)
-              (update :choices cm/set-value addr post-mean))])
-       nil))
+              (update :choices cm/set-value addr post-mean))])))
 
    :bb-obs
    (fn [state addr dist]
      (let [{:keys [prior-addr mask]} (:params dist)]
-       (if (= prior-addr target-addr)
+       (when (= prior-addr target-addr)
          (let [posterior (get-in state [:conjugate-posteriors target-addr])
                constraint (cm/get-submap (:constraints state) addr)
                obs (cm/get-value constraint)
@@ -307,8 +304,7 @@
                     (assoc-in [:conjugate-posteriors target-addr] posterior)
                     (update :choices cm/set-value addr obs)
                     (update :conjugate-ll
-                      #(mx/add (or % (mx/zeros (ll-shape (:alpha posterior)))) ll)))])
-         nil)))})
+                      #(mx/add (or % (mx/zeros (ll-shape (:alpha posterior)))) ll)))]))))})
 
 (defn make-gp-dispatch
   "Create Gamma-Poisson conjugate dispatch map.
@@ -319,7 +315,7 @@
   [target-addr]
   {:gp-prior
    (fn [state addr dist]
-     (if (= addr target-addr)
+     (when (= addr target-addr)
        (let [{:keys [shape-param rate-param]} (:params dist)
              posterior (or (get-in state [:conjugate-posteriors addr])
                           {:shape shape-param :rate rate-param})
@@ -328,13 +324,12 @@
          [post-mean
           (-> state
               (assoc-in [:conjugate-posteriors addr] posterior)
-              (update :choices cm/set-value addr post-mean))])
-       nil))
+              (update :choices cm/set-value addr post-mean))])))
 
    :gp-obs
    (fn [state addr dist]
      (let [{:keys [prior-addr mask]} (:params dist)]
-       (if (= prior-addr target-addr)
+       (when (= prior-addr target-addr)
          (let [posterior (get-in state [:conjugate-posteriors target-addr])
                constraint (cm/get-submap (:constraints state) addr)
                obs (cm/get-value constraint)
@@ -343,8 +338,7 @@
                     (assoc-in [:conjugate-posteriors target-addr] posterior)
                     (update :choices cm/set-value addr obs)
                     (update :conjugate-ll
-                      #(mx/add (or % (mx/zeros (ll-shape (:shape posterior)))) ll)))])
-         nil)))})
+                      #(mx/add (or % (mx/zeros (ll-shape (:shape posterior)))) ll)))]))))})
 
 ;; ---------------------------------------------------------------------------
 ;; High-level API

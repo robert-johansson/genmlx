@@ -469,7 +469,8 @@
                 (let [log-probs (mx/subtract logits (mx/logsumexp logits))]
                   (mx/take-idx log-probs v)))))
   (support []
-           (let [n (do (mx/materialize! logits) (last (mx/shape logits)))]
+           (mx/materialize! logits)
+           (let [n (last (mx/shape logits))]
              (mapv #(mx/scalar (int %) mx/int32) (range n)))))
 
 (defmethod dc/dist-log-prob-support :categorical [d]
@@ -1247,7 +1248,8 @@
         ;; W = L * A * A^T * L^T
         LA (mx/matmul cholesky-L A)
         W (mx/matmul LA (mx/transpose LA))]
-    (do (mx/materialize! W) W)))
+    (mx/materialize! W)
+    W))
 
 (defmethod dc/dist-log-prob :wishart [d x]
   (let [{:keys [df scale-matrix k]} (:params d)

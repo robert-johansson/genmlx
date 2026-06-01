@@ -32,7 +32,8 @@
         ;; Clamp to (eps, 1-eps) for numerical stability
         eps (mx/scalar 1e-7)
         clamped (mx/clip uniforms eps (mx/scalar (- 1.0 1e-7)))]
-    (mx/negative (mx/log (mx/negative (mx/log clamped))))))
+    ;; Gumbel(0,1) = -log(-log(clamped))
+    (-> clamped mx/log mx/negative mx/log mx/negative)))
 
 ;; =========================================================================
 ;; Mode 1: Gumbel-top-k (hard, exact, non-differentiable)

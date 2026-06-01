@@ -48,7 +48,7 @@
 
     ;; in-axes provided: find first non-nil axis
     :else
-    (let [idx (some (fn [i] (when (nth in-axes i) i)) (range (count in-axes)))]
+    (let [idx (first (keep-indexed (fn [i ax] (when ax i)) in-axes))]
       (if idx
         (let [a (nth args idx)
               n (axis-size-of a)]
@@ -70,23 +70,31 @@
    axis=nil: pass through unchanged.
    Empty args are returned as-is."
   [args in-axes i]
-  (if (empty? args)
+  (cond
+    (empty? args)
     args
-    (if (nil? in-axes)
-      (mapv #(index-arg % i) args)
-      (mapv (fn [a ax] (if (nil? ax) a (index-arg a i)))
-            args in-axes))))
+
+    (nil? in-axes)
+    (mapv #(index-arg % i) args)
+
+    :else
+    (mapv (fn [a ax] (if (nil? ax) a (index-arg a i)))
+          args in-axes)))
 
 (defn- batched-args?
   "Check if args are suitable for batched fast path.
    All axis=0 args must be MLX arrays (not sequences)."
   [args in-axes]
-  (if (empty? args)
+  (cond
+    (empty? args)
     true
-    (if (nil? in-axes)
-      (every? mlx-arr? args)
-      (every? (fn [[a ax]] (or (nil? ax) (mlx-arr? a)))
-              (map vector args in-axes)))))
+
+    (nil? in-axes)
+    (every? mlx-arr? args)
+
+    :else
+    (every? (fn [[a ax]] (or (nil? ax) (mlx-arr? a)))
+            (map vector args in-axes))))
 
 (defn- scalar-leaf?
   "Check if all leaves in a choicemap are scalar (not [N]-shaped)."

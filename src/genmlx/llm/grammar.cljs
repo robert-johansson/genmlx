@@ -267,12 +267,11 @@
                       (let [known? (contains? (:state-map dfa) target)
                             id (or (get-in dfa [:state-map target])
                                    (:next-id dfa))
-                            dfa (cond-> dfa
-                                  (not known?)
-                                  (-> (assoc-in [:state-map target] id)
-                                      (update :next-id inc))
-                                  true
-                                  (assoc-in [:transitions [current ch]] target))]
+                            dfa (-> (cond-> dfa
+                                       (not known?)
+                                       (-> (assoc-in [:state-map target] id)
+                                           (update :next-id inc)))
+                                     (assoc-in [:transitions [current ch]] target))]
                         [dfa (if known? wl (conj wl target))]))))
                 [dfa worklist]
                 chars)]

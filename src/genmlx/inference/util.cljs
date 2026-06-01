@@ -238,8 +238,7 @@
   (cond
     (mx/array? v) (vswap! arrays conj! v)
     (map? v) (doseq [[_ val] v] (walk-value-arrays val arrays))
-    (sequential? v) (doseq [item v] (walk-value-arrays item arrays))
-    :else nil))
+    (sequential? v) (doseq [item v] (walk-value-arrays item arrays))))
 
 (defn collect-trace-arrays
   "Collect all MLX arrays from a trace for bulk evaluation.
@@ -254,8 +253,7 @@
                   (when (mx/array? v) (vswap! arrays conj! v)))
                 (instance? cm/Node cm)
                 (doseq [[_ sub] (cm/-submaps cm)]
-                  (walk sub))
-                :else nil))]
+                  (walk sub))))]
       (when-let [choices (:choices trace)]
         (walk choices)))
     (when-let [s (:score trace)]
