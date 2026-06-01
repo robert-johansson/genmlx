@@ -57,7 +57,10 @@
 (deftest gamma-alpha-0-5-rate-1
   (testing "gamma alpha=0.5, rate=1.0 (Ahrens-Dieter path)"
     (let [d (dist/gamma-dist (mx/scalar 0.5) (mx/scalar 1.0))
-          n 2000
+          ;; gamma(0.5) is heavily right-skewed (high kurtosis), so the sample
+          ;; variance is noisy — needs more draws than lighter-tailed cases for a
+          ;; reliable estimate (the sampler converges to var=0.5 exactly at large n).
+          n 20000
           samples (dc/dist-sample-n d (rng/fresh-key 99) n)
           _ (mx/eval! samples)
           vals (mx/->clj samples)
