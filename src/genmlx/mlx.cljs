@@ -468,6 +468,15 @@
   ([f in-axes out-axes]
    (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes) (clj->js out-axes))] (aget r 0)))))
 
+(defn- grad-args
+  "Marshal an arg vector for the autograd NAPI boundary. A nil placeholder arg
+   (e.g. the ignored key of an auto-keyed model passed through value-and-grad)
+   becomes a 0-scalar: the v0.31.2 binary rejects nil args (\"Failed to recover
+   MxArray type from napi value\"), and a nil arg is never differentiated, so
+   the substitution is inert. Restores the old binary's nil tolerance."
+  [args]
+  (to-array (mapv (fn [a] (if (nil? a) (scalar 0.0) a)) args)))
+
 (defn grad
   "Returns a function that computes gradients of f w.r.t. its arguments.
    The returned function builds a backward-pass graph lazily — gradient
@@ -476,7 +485,7 @@
    (fn [& args]
      (swap! grad-depth inc)
      (try
-       (let [grads (.computeGradients M f (to-array args))]
+       (let [grads (.computeGradients M f (grad-args args))]
          (aget grads 0))
        (finally (swap! grad-depth dec)))))
   ([f argnums]
@@ -484,7 +493,7 @@
      (swap! grad-depth inc)
      (try
        (let [argnum-vec (if (vector? argnums) argnums [argnums])
-             grads (.computeGradients M f (to-array args))]
+             grads (.computeGradients M f (grad-args args))]
          (if (= 1 (count argnum-vec))
            (aget grads (first argnum-vec))
            (mapv #(aget grads %) argnum-vec)))
@@ -497,14 +506,14 @@
    (fn [& args]
      (swap! grad-depth inc)
      (try
-       (let [result (.valueAndGrad M f (to-array args))]
+       (let [result (.valueAndGrad M f (grad-args args))]
          [(aget result 0) (aget result 1)])
        (finally (swap! grad-depth dec)))))
   ([f argnums]
    (fn [& args]
      (swap! grad-depth inc)
      (try
-       (let [result (.valueAndGrad M f (to-array args))
+       (let [result (.valueAndGrad M f (grad-args args))
              v (aget result 0)
              argnum-vec (if (vector? argnums) argnums [argnums])
              g (if (= 1 (count argnum-vec))
@@ -566,7 +575,11 @@
    EFFECTFUL: this is the primary GPU dispatch point. Traverses the lazy
    computation DAG and executes all pending operations on Metal."
   [& arrs]
-  (let [valid (filterv some? arrs)]
+  ;; Keep only MxArrays (not just non-nil): a non-array value (a JS number,
+  ;; a collection) reaching .evalArrays is rejected by the v0.31.2 binary
+  ;; ("Failed to recover MxArray type from napi value"). The old binary
+  ;; silently ignored them; this restores that, matching materialize!.
+  (let [valid (filterv array? arrs)]
     (when (seq valid)
       (.evalArrays c (to-array valid)))))
 
