@@ -31,22 +31,56 @@
     (bit-and (bit-xor (int (nth arr 0)) (int (nth arr 1)))
              0x7FFFFFFF)))
 
+(defn valid-key?
+  "True if k is a well-formed MLX PRNG key: an MLX array of shape [2] whose
+   dtype is not float32. A fresh key is uint32[2]; the float 0-scalar that an
+   autograd boundary can produce (shape [], float32) is rejected. Shape/dtype
+   are lazy-graph metadata, so this is a cheap check (no GPU eval)."
+  [k]
+  (and (mx/array? k)
+       (= [2] (mx/shape k))
+       (not= mx/float32 (mx/dtype k))))
+
+(defn- check-key
+  "Raise a clear error if k is non-nil but not a valid PRNG key. Catches a
+   mis-typed key (e.g. a float scalar from a coerced-nil autograd arg) at the
+   rng boundary with an actionable message, instead of letting it reach NAPI
+   and crash Metal with a C++ exception (SIGTRAP)."
+  [k where]
+  (when (and (some? k) (not (valid-key? k)))
+    (throw (ex-info (str "rng/" where ": malformed PRNG key — expected a uint32 "
+                         "array of shape [2], got "
+                         (if (mx/array? k)
+                           (str "shape " (mx/shape k) " dtype " (mx/dtype k))
+                           (pr-str k))
+                         ". A float scalar here usually means a nil key was "
+                         "coerced at an autograd boundary; thread a real key.")
+                    {:key-shape (when (mx/array? k) (mx/shape k))
+                     :key-dtype (when (mx/array? k) (mx/dtype k))}))))
+
 (defn split
   "Split a key into two independent sub-keys. Returns [k1 k2]."
   [key]
+  (check-key key "split")
   (let [ks (.randomSplit c key)]
     [(aget ks 0) (aget ks 1)]))
 
 (defn split-n
   "Split a key into n independent sub-keys. Returns vector of n keys."
   [key n]
+  (check-key key "split-n")
   (let [ks (.randomSplitN c key n)]
     (mapv #(mx/index ks %) (range n))))
 
 (defn ensure-key
-  "Return key if non-nil, otherwise a fresh random key."
+  "Return key if it is a valid PRNG key, or a fresh key if nil. A non-nil but
+   malformed key (e.g. a float scalar from a coerced-nil autograd arg) is a
+   caller bug and raises here rather than silently producing garbage samples
+   (the (or key (fresh-key)) shorthand let a truthy float scalar slip through)."
   [key]
-  (or key (fresh-key)))
+  (if (nil? key)
+    (fresh-key)
+    (do (check-key key "ensure-key") key)))
 
 (defn split-or-nils [key]
   (if key (split key) [nil nil]))

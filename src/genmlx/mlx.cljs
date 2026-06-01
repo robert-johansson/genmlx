@@ -476,13 +476,28 @@
    (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes) (clj->js out-axes))] (aget r 0)))))
 
 (defn- grad-args
-  "Marshal an arg vector for the autograd NAPI boundary. A nil placeholder arg
-   (e.g. the ignored key of an auto-keyed model passed through value-and-grad)
-   becomes a 0-scalar: the v0.31.2 binary rejects nil args (\"Failed to recover
-   MxArray type from napi value\"), and a nil arg is never differentiated, so
-   the substitution is inert. Restores the old binary's nil tolerance."
+  "Marshal an arg vector for the autograd NAPI boundary. Every arg must be a
+   concrete MLX value. The v0.31.2 binary rejects a nil arg (\"Failed to recover
+   MxArray type from napi value\"), but silently substituting a 0-scalar is NOT
+   safe: an arg that is not differentiated can still be consumed as DATA inside
+   the function (e.g. a PRNG key threaded into value-and-grad), and a float
+   0-scalar passed where a uint32 key is expected crashes Metal with a C++
+   exception (SIGTRAP). So a nil arg is a caller bug — surface it loudly here,
+   naming the offending index, rather than corrupting the computation downstream.
+   (This intentionally retracts an earlier nil->0-scalar coercion whose \"inert\"
+   premise was false: the nil was being consumed as a PRNG key. See genmlx-yo6y.)"
   [args]
-  (to-array (mapv (fn [a] (if (nil? a) (scalar 0.0) a)) args)))
+  (to-array
+   (vec (map-indexed
+         (fn [i a]
+           (when (nil? a)
+             (throw (ex-info (str "value-and-grad/grad: argument " i " is nil. "
+                                  "Pass a concrete MLX value — a nil PRNG key or "
+                                  "placeholder is not supported (thread a real key "
+                                  "via rng/ensure-key before the autograd boundary).")
+                             {:arg-index i :args-count (count args)})))
+           a)
+         args))))
 
 (defn grad
   "Returns a function that computes gradients of f w.r.t. its arguments.
