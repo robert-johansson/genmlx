@@ -84,6 +84,20 @@
   [token-ids]
   (if (vector? token-ids) token-ids (vec token-ids)))
 
+(defn- ids->input
+  "Build a [1 N] int32 model-input MxArray from token ids.
+
+   Constructs the [1 N] array directly (fromInt32 with the shape baked in)
+   rather than building [N] and reshaping to [1 N]. A reshaped array can be
+   bound to a non-default GPU stream in some mlx-node/MLX builds; feeding it to
+   the model then crashes the attention kernel with
+   'no Stream(gpu, 1) in current thread' on certain GPUs (reproduced on M2 Max,
+   not on M4). Baking the shape into construction keeps the input on the default
+   GPU stream. See bean genmlx-7siy."
+  [ids]
+  (let [v (->id-vec ids)]
+    (mx/array v [1 (count v)] mx/int32)))
+
 (defn forward-pass
   "Run a forward pass through the model.
 
@@ -94,7 +108,7 @@
   [model token-ids]
   (let [ids (->id-vec token-ids)
         n (count ids)
-        input (mx/reshape (mx/array ids mx/int32) [1 n])
+        input (ids->input ids)
         logits (.forward model input)]
     (-> logits (mx/index 0) (mx/index (dec n)))))
 
@@ -141,9 +155,7 @@
 
    Must call init-cache! before this."
   [model token-ids]
-  (let [ids (->id-vec token-ids)
-        n (count ids)
-        input (mx/reshape (mx/array ids mx/int32) [1 n])
+  (let [input (ids->input token-ids)
         logits (forward-with-cache model input)]
     (-> logits (mx/index 0) (mx/index 0))))
 
@@ -155,7 +167,7 @@
 
    Constant time in sequence length — does not recompute the full context."
   [model token-id]
-  (let [input (mx/reshape (mx/scalar token-id mx/int32) [1 1])
+  (let [input (ids->input [token-id])
         logits (forward-with-cache model input)]
     (-> logits (mx/index 0) (mx/index 0))))
 
