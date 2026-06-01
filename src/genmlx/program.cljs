@@ -103,6 +103,20 @@
       :x-next (:x nxt) :y-next (:y nxt)})))
 
 ;; ============================================================
+;; Runtime address builders
+;; ============================================================
+;; These construct keyword addresses / data-map keys at RUNTIME. They are
+;; deliberately NOT used by the SCI source-string builders below (mean-expr,
+;; param-bindings, build-transition-source, build-scaffold), which emit the same
+;; "ar-"/"-prev"/"-next" fragments into generated code — unifying the two would
+;; risk a one-character change silently altering compiled models.
+
+(defn- obs-addr  [v i] (keyword (str (name v) i)))
+(defn- prev-key  [v]   (keyword (str (name v) "-prev")))
+(defn- next-key  [v]   (keyword (str (name v) "-next")))
+(defn- sigma-key [v]   (keyword (str "sigma-" (name v))))
+
+;; ============================================================
 ;; Model source construction
 ;; ============================================================
 
@@ -203,8 +217,8 @@
   [transitions var-names]
   (let [pairs (for [[i t] (map-indexed vector transitions)
                     v var-names]
-                [(keyword (str (name v) i))
-                 (mx/scalar (get t (keyword (str (name v) "-next"))))])]
+                [(obs-addr v i)
+                 (mx/scalar (get t (next-key v)))])]
     (apply cm/choicemap (apply concat pairs))))
 
 (defn- log-sum-exp
@@ -263,8 +277,8 @@
     (reduce
       (fn [[cms pairs] [i t]]
         (let [new-pairs (mapcat (fn [v]
-                                  [(keyword (str (name v) i))
-                                   (mx/scalar (get t (keyword (str (name v) "-next"))))])
+                                  [(obs-addr v i)
+                                   (mx/scalar (get t (next-key v)))])
                                 var-names)
               all-pairs (into pairs new-pairs)]
           [(conj cms (apply cm/choicemap all-pairs)) all-pairs]))
@@ -280,7 +294,7 @@
                          :when (and (not= src tgt)
                                     (get edges [(name src) (name tgt)]))]
                      (keyword (str "beta-" (name src) "->" (name tgt))))
-        sigma-addrs (map #(keyword (str "sigma-" (name %))) var-names)]
+        sigma-addrs (map sigma-key var-names)]
     (apply sel/select (concat ar-addrs beta-addrs sigma-addrs))))
 
 ;; ============================================================
@@ -361,42 +375,66 @@
                    (+ log-det (js/Math.log (js/Math.abs pivot-val)))
                    (if (neg? pivot-val) (- sign) sign))))))))
 
-(defn- log-ml-general
-  "Analytical log-ML for one variable's regression with p predictors.
-   Uses Gaussian elimination for general p*p matrices."
-  [y X-cols sigma-sq]
-  (let [n (count y)
-        p (count X-cols)
-        m0 (mapv :prior-mean X-cols)
-        s0-diag (mapv :prior-var X-cols)
-        Xm0 (reduce (fn [acc j]
-                      (let [xj (:values (nth X-cols j))
-                            mj (nth m0 j)]
-                        (mapv + acc (mapv #(* mj %) xj))))
-                    (vec (repeat n 0.0))
-                    (range p))
-        r (vsub y Xm0)
-        rr (dot r r)
+(defn- log-ml-suffstat-terms
+  "The three additive terms of the analytical log marginal likelihood for one
+   target variable, computed from precomputed sufficient statistics rather than
+   raw residual vectors: returns [const-term log-det-term quad-term].
+
+   Returning the terms (rather than their sum) lets each caller fold them in its
+   own accumulation order, preserving the pre-refactor floating-point association
+   bit-for-bit: score-all-structures sums them into a running per-graph total
+   via (+ total t1 t2 t3); score-parent-sets-for-variable sums them standalone
+   via (+ t1 t2 t3). Pre-summing here would re-associate the addition and shift
+   least-significant bits in score-all-structures' totals.
+
+   Shared kernel for score-all-structures and score-parent-sets-for-variable
+   (their inner per-target bodies were byte-identical). `preds` is
+   [target & parents] in the caller's chosen order; the result is invariant to
+   predictor ordering up to floating point. all-dots/xty-dots/yty hold the
+   Gram dot products, X^T y dots, and y^T y respectively, keyed by variable.
+
+   The closed-form 2-var path (log-ml-variable) deliberately does NOT route
+   through here: it inlines the p<=2 determinant/solve as an optimization, and
+   folding it in would shift least-significant bits and remove that fast path."
+  [target preds n all-dots xty-dots yty known-sigma ar-prior-mean ar-var beta-var]
+  (let [p (count preds)
+        m0 (into [ar-prior-mean] (repeat (dec p) 0.0))
+        s0 (into [ar-var] (repeat (dec p) beta-var))
         gram (vec (for [i (range p)]
                     (vec (for [j (range p)]
-                           (dot (:values (nth X-cols i))
-                                (:values (nth X-cols j)))))))
-        Xtr (mapv (fn [j] (dot (:values (nth X-cols j)) r)) (range p))
+                           (get all-dots [(nth preds i) (nth preds j)])))))
+        Xty (mapv (fn [j] (get xty-dots [(nth preds j) target])) (range p))
+        gram-m0 (mapv (fn [i]
+                        (reduce + (map (fn [j] (* (get-in gram [i j]) (nth m0 j)))
+                                       (range p))))
+                      (range p))
+        Xtr (mapv - Xty gram-m0)
+        m0Xty (reduce + (map * m0 Xty))
+        m0Gram-m0 (reduce + (map * m0 gram-m0))
+        rr (+ (get yty target) (* -2.0 m0Xty) m0Gram-m0)
+        sigma-sq (if-let [s (get known-sigma target)]
+                   (* s s)
+                   (if (<= n p)
+                     1.0
+                     (let [beta-hat (mat-lu-solve gram Xty)
+                           Xbeta-y (reduce + (map * beta-hat Xty))
+                           rss (- (get yty target) Xbeta-y)]
+                       (/ (max rss 0.001) n))))
         M (vec (for [i (range p)]
                  (vec (for [j (range p)]
                         (+ (get-in gram [i j])
-                           (if (= i j) (/ sigma-sq (nth s0-diag i)) 0))))))
+                           (if (= i j) (/ sigma-sq (nth s0 i)) 0))))))
         Minv-Xtr (mat-lu-solve M Xtr)
-        quad-correction (reduce + (map * Xtr Minv-Xtr))
+        quad-corr (reduce + (map * Xtr Minv-Xtr))
         A (vec (for [i (range p)]
                  (vec (for [j (range p)]
                         (+ (if (= i j) 1.0 0.0)
-                           (/ (* (nth s0-diag i) (get-in gram [i j])) sigma-sq))))))
+                           (/ (* (nth s0 i) (get-in gram [i j])) sigma-sq))))))
         log-det-A (mat-log-det A)
-        quad (/ (- rr quad-correction) sigma-sq)]
-    (+ (* -0.5 n (js/Math.log (* 2.0 js/Math.PI sigma-sq)))
-       (* -0.5 log-det-A)
-       (* -0.5 quad))))
+        quad (/ (- rr quad-corr) sigma-sq)]
+    [(* -0.5 n (js/Math.log (* 2.0 js/Math.PI sigma-sq)))
+     (* -0.5 log-det-A)
+     (* -0.5 quad)]))
 
 (defn- extract-regression-data
   "Build regression components for one variable's transition equation.
@@ -405,15 +443,15 @@
    {:keys [ar-prior-mean ar-prior-std beta-prior-mean beta-prior-std]
     :or {ar-prior-mean 0.5 ar-prior-std 0.15
          beta-prior-mean 0.0 beta-prior-std 3.0}}]
-  (let [y (mapv #(get % (keyword (str (name target) "-next"))) transitions)
-        ar-col {:values (mapv #(get % (keyword (str (name target) "-prev"))) transitions)
+  (let [y (mapv #(get % (next-key target)) transitions)
+        ar-col {:values (mapv #(get % (prev-key target)) transitions)
                 :prior-mean ar-prior-mean
                 :prior-var (* ar-prior-std ar-prior-std)}
         cross-cols (vec
                     (for [src var-names
                           :when (and (not= src target)
                                      (get edges [(name src) (name target)]))]
-                      {:values (mapv #(get % (keyword (str (name src) "-prev"))) transitions)
+                      {:values (mapv #(get % (prev-key src)) transitions)
                        :prior-mean beta-prior-mean
                        :prior-var (* beta-prior-std beta-prior-std)}))]
     {:y y :cols (into [ar-col] cross-cols)}))
@@ -516,8 +554,7 @@
    (reduce
     (fn [total v]
       (let [reg (extract-regression-data transitions v var-names edges opts)
-            sigma-key (keyword (str "sigma-" (name v)))
-            known-sigma (get opts sigma-key)
+            known-sigma (get opts (sigma-key v))
             sigma-sq (if known-sigma
                        (* known-sigma known-sigma)
                        (estimate-sigma-sq reg))]
@@ -665,24 +702,28 @@
   (vec (for [src var-names, tgt var-names :when (not= src tgt)]
          [src tgt])))
 
+(defn- subsets
+  "All 2^(count coll) subsets of coll, as a vector of sets ordered by bit-mask
+   index i (bit j set => coll's j-th element present)."
+  [coll]
+  (mapv (fn [i]
+          (set (keep-indexed (fn [j x] (when (bit-test i j) x)) coll)))
+        (range (bit-shift-left 1 (count coll)))))
+
 (defn enumerate-all-structures
   "Enumerate all 2^(K*(K-1)) directed graphs for K variables.
    Returns [{:edges #{[:a :b] ...} :name \"a->b, c->a\"} ...]"
   [var-names]
-  (let [all-edges (enumerate-edges var-names)
-        n-edges (count all-edges)]
-    (mapv (fn [i]
-            (let [active (set (keep-indexed
-                               (fn [j edge]
-                                 (when (bit-test i j) edge))
-                               all-edges))
-                  nm (if (empty? active)
-                       "independent"
-                       (str/join ", "
-                                 (map (fn [[s t]] (str (name s) "->" (name t)))
-                                      (sort-by str active))))]
-              {:edges active :name nm :index i}))
-          (range (bit-shift-left 1 n-edges)))))
+  (vec
+   (map-indexed
+    (fn [i active]
+      (let [nm (if (empty? active)
+                 "independent"
+                 (str/join ", "
+                           (map (fn [[s t]] (str (name s) "->" (name t)))
+                                (sort-by str active))))]
+        {:edges active :name nm :index i}))
+    (subsets (enumerate-edges var-names)))))
 
 (defn score-all-structures
   "Score all 2^(K*(K-1)) directed graphs with precomputed sufficient statistics.
@@ -730,45 +771,10 @@
                    (fn [total target]
                      (let [sources (vec (filter #(contains? edges [% target]) var-names))
                            preds (into [target] sources)
-                           p (count preds)
-                           m0 (into [ar-prior-mean] (repeat (count sources) 0.0))
-                           s0 (into [ar-var] (repeat (count sources) beta-var))
-                           gram (vec (for [i (range p)]
-                                       (vec (for [j (range p)]
-                                              (get all-dots [(nth preds i) (nth preds j)])))))
-                           Xty (mapv (fn [j] (get xty-dots [(nth preds j) target])) (range p))
-                           gram-m0 (mapv (fn [i]
-                                           (reduce + (map (fn [j] (* (get-in gram [i j]) (nth m0 j)))
-                                                          (range p))))
-                                         (range p))
-                           Xtr (mapv - Xty gram-m0)
-                           m0Xty (reduce + (map * m0 Xty))
-                           m0Gram-m0 (reduce + (map * m0 gram-m0))
-                           rr (+ (get yty target) (* -2.0 m0Xty) m0Gram-m0)
-                           sigma-sq (if-let [s (get known-sigma target)]
-                                      (* s s)
-                                      (if (<= n p)
-                                        1.0
-                                        (let [beta-hat (mat-lu-solve gram Xty)
-                                              Xbeta-y (reduce + (map * beta-hat Xty))
-                                              rss (- (get yty target) Xbeta-y)]
-                                          (/ (max rss 0.001) n))))
-                           M (vec (for [i (range p)]
-                                    (vec (for [j (range p)]
-                                           (+ (get-in gram [i j])
-                                              (if (= i j) (/ sigma-sq (nth s0 i)) 0))))))
-                           Minv-Xtr (mat-lu-solve M Xtr)
-                           quad-corr (reduce + (map * Xtr Minv-Xtr))
-                           A (vec (for [i (range p)]
-                                    (vec (for [j (range p)]
-                                           (+ (if (= i j) 1.0 0.0)
-                                              (/ (* (nth s0 i) (get-in gram [i j])) sigma-sq))))))
-                           log-det-A (mat-log-det A)
-                           quad (/ (- rr quad-corr) sigma-sq)]
-                       (+ total
-                          (* -0.5 n (js/Math.log (* 2.0 js/Math.PI sigma-sq)))
-                          (* -0.5 log-det-A)
-                          (* -0.5 quad))))
+                           [t1 t2 t3] (log-ml-suffstat-terms
+                                       target preds n all-dots xty-dots yty
+                                       known-sigma ar-prior-mean ar-var beta-var)]
+                       (+ total t1 t2 t3)))
                    0.0
                    var-names)]
           (assoc structure :log-ml lml)))
@@ -778,14 +784,13 @@
   "Compute marginal posterior probability for each possible directed edge.
    Takes scored structures (with :log-ml) and returns {[src tgt] -> probability}."
   [var-names scored]
-  (let [log-mls (mapv :log-ml scored)
-        log-norm (log-sum-exp log-mls)]
+  (let [posts (compute-posterior scored)]
     (into {}
           (map (fn [edge]
                  [edge (reduce + (keep (fn [s]
                                          (when (contains? (:edges s) edge)
-                                           (js/Math.exp (- (:log-ml s) log-norm))))
-                                       scored))])
+                                           (:posterior s)))
+                                       posts))])
                (enumerate-edges var-names)))))
 
 (defn discover-structure
@@ -804,10 +809,7 @@
    (let [t0 (js/Date.now)
          scored (score-all-structures transitions var-names opts)
          elapsed (- (js/Date.now) t0)
-         log-mls (mapv :log-ml scored)
-         log-norm (log-sum-exp log-mls)
-         ranked (->> scored
-                     (map #(assoc % :posterior (js/Math.exp (- (:log-ml %) log-norm))))
+         ranked (->> (compute-posterior scored)
                      (sort-by :posterior >)
                      vec)]
      {:ranked ranked
@@ -824,50 +826,14 @@
    Uses precomputed sufficient statistics."
   [target candidates n all-dots xty-dots yty known-sigma
    ar-prior-mean ar-var beta-var]
-  (let [n-cand (count candidates)]
-    (mapv
-     (fn [i]
-       (let [parents (set (keep-indexed (fn [j c] (when (bit-test i j) c)) candidates))
-             preds (into [target] (vec (sort-by name parents)))
-             p (count preds)
-             m0 (into [ar-prior-mean] (repeat (dec p) 0.0))
-             s0 (into [ar-var] (repeat (dec p) beta-var))
-             gram (vec (for [a (range p)]
-                         (vec (for [b (range p)]
-                                (get all-dots [(nth preds a) (nth preds b)])))))
-             Xty (mapv (fn [j] (get xty-dots [(nth preds j) target])) (range p))
-             gram-m0 (mapv (fn [ii]
-                             (reduce + (map (fn [j] (* (get-in gram [ii j]) (nth m0 j)))
-                                            (range p))))
-                           (range p))
-             Xtr (mapv - Xty gram-m0)
-             m0Xty (reduce + (map * m0 Xty))
-             m0Gram-m0 (reduce + (map * m0 gram-m0))
-             rr (+ (get yty target) (* -2.0 m0Xty) m0Gram-m0)
-             sigma-sq (if-let [s (get known-sigma target)]
-                        (* s s)
-                        (if (<= n p) 1.0
-                            (let [bh (mat-lu-solve gram Xty)
-                                  Xby (reduce + (map * bh Xty))
-                                  rss (- (get yty target) Xby)]
-                              (/ (max rss 0.001) n))))
-             M (vec (for [a (range p)]
-                      (vec (for [b (range p)]
-                             (+ (get-in gram [a b])
-                                (if (= a b) (/ sigma-sq (nth s0 a)) 0))))))
-             Minv-Xtr (mat-lu-solve M Xtr)
-             quad-corr (reduce + (map * Xtr Minv-Xtr))
-             A (vec (for [a (range p)]
-                      (vec (for [b (range p)]
-                             (+ (if (= a b) 1.0 0.0)
-                                (/ (* (nth s0 a) (get-in gram [a b])) sigma-sq))))))
-             log-det-A (mat-log-det A)
-             quad (/ (- rr quad-corr) sigma-sq)
-             lml (+ (* -0.5 n (js/Math.log (* 2.0 js/Math.PI sigma-sq)))
-                    (* -0.5 log-det-A)
-                    (* -0.5 quad))]
-         {:parents parents :log-ml lml}))
-     (range (bit-shift-left 1 n-cand)))))
+  (mapv
+   (fn [parents]
+     (let [preds (into [target] (vec (sort-by name parents)))
+           [t1 t2 t3] (log-ml-suffstat-terms
+                       target preds n all-dots xty-dots yty
+                       known-sigma ar-prior-mean ar-var beta-var)]
+       {:parents parents :log-ml (+ t1 t2 t3)}))
+   (subsets candidates)))
 
 (defn discover-structure-decomposed
   "Decomposed structure discovery: search parent sets independently per variable.
@@ -914,11 +880,7 @@
                             parent-sets (score-parent-sets-for-variable
                                          target candidates n all-dots xty-dots yty known-sigma
                                          ar-prior-mean ar-var beta-var)
-                            log-mls (mapv :log-ml parent-sets)
-                            log-norm (log-sum-exp log-mls)
-                            posteriors (mapv #(assoc % :posterior
-                                                     (js/Math.exp (- (:log-ml %) log-norm)))
-                                             parent-sets)
+                            posteriors (compute-posterior parent-sets)
                             best (apply max-key :posterior posteriors)]
                         [target {:parent-sets posteriors
                                  :best-parents (:parents best)

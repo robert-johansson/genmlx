@@ -19,6 +19,7 @@
 
    Both levels produce identical results."
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.constants :refer [LOG-2PI]]
             [genmlx.dist :as dist]
             [genmlx.dist.core :as dc]
             [genmlx.choicemap :as cm]
@@ -67,8 +68,6 @@
 ;; ---------------------------------------------------------------------------
 ;; Pure Kalman operations (Level 1)
 ;; ---------------------------------------------------------------------------
-
-(def ^:private LOG-2PI 1.8378770664093453)
 
 (defn kalman-init
   "Initial belief state: N(0, 1) prior.
