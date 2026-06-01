@@ -11,7 +11,7 @@
    invalid ones to -inf. The LLM can only produce syntactically valid code.
 
    Layers:
-     7.1  Reader constraint (prefix-status, valid-next-bytes, reader-constraint)
+     7.1  Reader constraint (prefix-status, next-valid-bytes, reader-constraint)
      7.2  Post-hoc validation (valid-cljs?, fn-form?, transition-fn-form?)
      7.3  Chat template (format-chat, code-system-prompt)
      7.4  Code extraction (extract-code)
@@ -77,7 +77,7 @@
                   (when (not= :invalid s) [b s]))))
         candidate-bytes))
 
-(defn valid-next-bytes
+(defn next-valid-bytes
   "Return the set of bytes that maintain a valid prefix."
   [prefix]
   (set (keys (reader-constraint prefix))))
