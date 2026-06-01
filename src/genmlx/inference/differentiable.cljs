@@ -45,7 +45,11 @@
                    (mx/negative (vec/vtrace-log-ml-estimate vtrace))))
         vg (mx/value-and-grad raw-fn [0])]
     (fn [params key]
-      (let [[loss grad] (vg params key)]
+      ;; ensure-key guarantees a real uint32 PRNG key fills value-and-grad's
+      ;; arg slot. A nil key would be coerced to a float 0-scalar at the autograd
+      ;; NAPI boundary and then consumed as a PRNG key by vgenerate's sampling —
+      ;; splitting a float scalar crashes Metal (SIGTRAP). See A4 / genmlx-yo6y.
+      (let [[loss grad] (vg params (rng/ensure-key key))]
         {:loss loss :grad grad}))))
 
 ;; ---------------------------------------------------------------------------
@@ -87,7 +91,11 @@
    model args observations param-names init-params]
   (let [loss-grad-fn (make-is-loss-grad-fn model args observations param-names n-particles)
         result (learn/train
-                 {:iterations iterations :lr lr :key key
+                 ;; ensure-key (never nil): learn/train threads sub-keys via
+                 ;; split-or-nils, and a nil key would propagate as [nil nil]
+                 ;; every iteration, becoming a float 0-scalar through the
+                 ;; autograd boundary and crashing on the first latent sample.
+                 {:iterations iterations :lr lr :key (rng/ensure-key key)
                   :callback (when callback
                               (fn [{:keys [iter loss params]}]
                                 (callback {:iter iter :log-ml (- loss) :params params})))}
