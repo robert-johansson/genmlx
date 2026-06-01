@@ -808,8 +808,10 @@
 
 (defn ensure-array
   "Wrap JS numbers as MLX scalars; pass through arrays, fns, keywords, maps.
-   Throws a helpful error on strings/nil/NaN — usually a sign that bare
-   ClojureScript arithmetic was used on an MLX array instead of an mx/ op."
+   Booleans coerce to 0/1 floats — MLX has no bool dtype, and this matches how
+   compiled branch conditions (mx/where) read a boolean model arg. Throws a
+   helpful error on strings/nil/NaN — usually a sign that bare ClojureScript
+   arithmetic was used on an MLX array instead of an mx/ op."
   ([x]
    (cond
      (array? x) x
@@ -820,6 +822,7 @@
      (string? x) (throw (array-conversion-error x))
      (nil? x) (throw (array-conversion-error x))
      (and (number? x) (js/isNaN x)) (throw (array-conversion-error x))
+     (boolean? x) (scalar (if x 1.0 0.0))
      :else (scalar x)))
   ([x dtype]
    (cond
@@ -831,6 +834,7 @@
      (string? x) (throw (array-conversion-error x))
      (nil? x) (throw (array-conversion-error x))
      (and (number? x) (js/isNaN x)) (throw (array-conversion-error x))
+     (boolean? x) (scalar (if x 1.0 0.0) dtype)
      :else (scalar x dtype))))
 
 (defn async-eval!
