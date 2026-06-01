@@ -28,10 +28,14 @@
   [x]
   (instance? tr/Trace x))
 
-(defn mlx-array?
-  "True if x is an MLX array (has .shape property)."
-  [x]
-  (and (some? x) (some? (.-shape x))))
+;; Named leaf schemas — reference these instead of repeating the [:fn ...] form.
+(def ChoiceMap
+  "A GenMLX choice map (Node or Value)."
+  [:fn {:error/message "should be a ChoiceMap"} choicemap?])
+
+(def Trace
+  "A GenMLX Trace record."
+  [:fn {:error/message "should be a Trace"} trace?])
 
 ;; ---------------------------------------------------------------------------
 ;; Handler state schemas
@@ -41,7 +45,7 @@
   "[T] section 2.3.1 trace ADT internal state. Keys common to all handler modes."
   [:map
    [:key some?]
-   [:choices [:fn {:error/message "should be a ChoiceMap"} choicemap?]]
+   [:choices ChoiceMap]
    [:score some?]
    [:executor {:optional true} fn?]])
 
@@ -54,7 +58,7 @@
   (mu/merge BaseState
     [:map
      [:weight some?]
-     [:constraints [:fn {:error/message "should be a ChoiceMap"} choicemap?]]]))
+     [:constraints ChoiceMap]]))
 
 (def AssessState
   "Handler state for assess mode. Same shape as generate."
@@ -64,15 +68,15 @@
   "[T] section 2.3.1, Def 2.3.1 h_update. Adds :old-choices and :discard."
   (mu/merge GenerateState
     [:map
-     [:old-choices [:fn {:error/message "should be a ChoiceMap"} choicemap?]]
-     [:discard [:fn {:error/message "should be a ChoiceMap"} choicemap?]]]))
+     [:old-choices ChoiceMap]
+     [:discard ChoiceMap]]))
 
 (def RegenerateState
   "[T] section 4.1.2 regenerate with internal proposal. Adds :old-choices and :selection."
   (mu/merge BaseState
     [:map
      [:weight some?]
-     [:old-choices [:fn {:error/message "should be a ChoiceMap"} choicemap?]]
+     [:old-choices ChoiceMap]
      [:selection some?]]))
 
 (def ProjectState
@@ -80,9 +84,9 @@
   (mu/merge BaseState
     [:map
      [:weight some?]
-     [:old-choices [:fn {:error/message "should be a ChoiceMap"} choicemap?]]
+     [:old-choices ChoiceMap]
      [:selection some?]
-     [:constraints [:fn {:error/message "should be a ChoiceMap"} choicemap?]]]))
+     [:constraints ChoiceMap]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Sub-result schema (merge-sub-result input)
@@ -94,11 +98,11 @@
    (present only in generate/update modes). :weight may be nil in
    simulate mode (combinators set it explicitly to nil)."
   [:map
-   [:choices [:fn {:error/message "should be a ChoiceMap"} choicemap?]]
+   [:choices ChoiceMap]
    [:score some?]
    [:retval {:optional true} any?]
    [:weight {:optional true} any?]
-   [:discard {:optional true} [:or nil? [:fn {:error/message "should be a ChoiceMap"} choicemap?]]]
+   [:discard {:optional true} [:or nil? ChoiceMap]]
    [:splice-scores {:optional true} map?]])
 
 ;; ---------------------------------------------------------------------------
@@ -107,27 +111,27 @@
 
 (def SimulateReturn
   "[T] Def 2.1.16, section 2.3.1 SIMULATE. Return value of p/simulate: a Trace."
-  [:fn {:error/message "should be a Trace"} trace?])
+  Trace)
 
 (def GenerateReturn
   "[T] section 2.3.1 GENERATE. Return value: {:trace Trace :weight MLX-scalar}."
   [:map
-   [:trace [:fn {:error/message "should be a Trace"} trace?]]
+   [:trace Trace]
    [:weight some?]
    [:unused-constraints {:optional true} set?]])
 
 (def UpdateReturn
   "[T] section 2.3.1 UPDATE. Return value: {:trace Trace :weight MLX-scalar :discard ChoiceMap}."
   [:map
-   [:trace [:fn {:error/message "should be a Trace"} trace?]]
+   [:trace Trace]
    [:weight some?]
-   [:discard [:fn {:error/message "should be a ChoiceMap"} choicemap?]]
+   [:discard ChoiceMap]
    [:unused-constraints {:optional true} set?]])
 
 (def RegenerateReturn
   "[T] section 4.1.2, Eq 4.1. Return value: {:trace Trace :weight MLX-scalar}."
   [:map
-   [:trace [:fn {:error/message "should be a Trace"} trace?]]
+   [:trace Trace]
    [:weight some?]])
 
 (def AssessReturn
@@ -139,7 +143,7 @@
 (def ProposeReturn
   "[D] propose. Return value: {:choices ChoiceMap :weight MLX-scalar :retval any}."
   [:map
-   [:choices [:fn {:error/message "should be a ChoiceMap"} choicemap?]]
+   [:choices ChoiceMap]
    [:weight some?]
    [:retval some?]])
 

@@ -82,10 +82,17 @@
     (fresh-key)
     (do (check-key key "ensure-key") key)))
 
-(defn split-or-nils [key]
+(defn split-or-nils
+  "Split key like split, but return [nil nil] when key is nil (no-key mode).
+   Lets callers thread sub-keys unconditionally while preserving nil-as-no-
+   entropy."
+  [key]
   (if key (split key) [nil nil]))
 
-(defn split-n-or-nils [key n]
+(defn split-n-or-nils
+  "Split key into n sub-keys like split-n, but return n nils when key is nil
+   (no-key mode), preserving nil-as-no-entropy for unconditional threading."
+  [key n]
   (if key (split-n key n) (vec (repeat n nil))))
 
 ;; =========================================================================
@@ -93,43 +100,59 @@
 ;; Shapes are plain clj->js number[] -- no to-big-shape conversion.
 ;; =========================================================================
 
-(defn normal [key shape]
+(defn normal
+  "Standard-normal N(0,1) samples of the given shape (a clj shape vector)."
+  [key shape]
   (.keyNormal c key (clj->js shape)))
 
-(defn uniform [key shape]
+(defn uniform
+  "Uniform [0,1) samples of the given shape (a clj shape vector)."
+  [key shape]
   (.keyUniform c key (clj->js shape)))
 
-(defn bernoulli [key p shape]
+(defn bernoulli
+  "Bernoulli(p) 0/1 samples of the given shape (a clj shape vector)."
+  [key p shape]
   (.keyBernoulli c key p (clj->js shape)))
 
-(defn categorical [key logits]
+(defn categorical
+  "Sample category indices from unnormalized logits along its last axis;
+   returns one index per leading-batch row."
+  [key logits]
   (.keyCategorical c key logits))
 
-(defn randint [key lo hi shape]
+(defn randint
+  "Uniform integers in [lo, hi) of the given shape (a clj shape vector)."
+  [key lo hi shape]
   (.keyRandint c key lo hi (clj->js shape)))
 
-(defn gumbel [key shape]
+(defn gumbel
+  "Standard Gumbel samples of the given shape (a clj shape vector)."
+  [key shape]
   (.keyGumbel c key (clj->js shape)))
 
-(defn laplace [key shape]
+(defn laplace
+  "Standard Laplace samples of the given shape (a clj shape vector)."
+  [key shape]
   (.keyLaplace c key (clj->js shape)))
 
-(defn truncated-normal [key lower upper shape]
+(defn truncated-normal
+  "Standard-normal samples truncated to [lower, upper], of the given shape
+   (a clj shape vector). Bounds are coerced to MLX arrays."
+  [key lower upper shape]
   (.keyTruncatedNormal c key
     (mx/ensure-array lower) (mx/ensure-array upper)
     (clj->js shape)))
 
 (defn multivariate-normal
-  ([key mean cov]
-   (.keyMultivariateNormal c key
-     (if (mx/array? mean) mean (mx/array mean))
-     (if (mx/array? cov) cov (mx/array cov))
-     #js []))
+  "Multivariate-normal samples with the given mean vector and covariance
+   matrix; shape (a clj shape vector, default []) gives extra leading batch
+   dims. mean/cov are coerced to MLX arrays."
+  ;; mx/array passes MLX arrays through unchanged, so no array?-guard is needed.
+  ([key mean cov] (multivariate-normal key mean cov []))
   ([key mean cov shape]
    (.keyMultivariateNormal c key
-     (if (mx/array? mean) mean (mx/array mean))
-     (if (mx/array? cov) cov (mx/array cov))
-     (clj->js shape))))
+     (mx/array mean) (mx/array cov) (clj->js shape))))
 
 (defn- permutation
   ([key n]

@@ -71,9 +71,9 @@
 (defn- flatten-nested
   "Recursively flatten a nested collection to a flat vector of numbers."
   [coll]
-  (if (or (vector? coll) (seq? coll) (sequential? coll) (js/Array.isArray coll))
+  (if (or (sequential? coll) (js/Array.isArray coll))
     (let [first-el (first coll)]
-      (if (or (vector? first-el) (seq? first-el) (sequential? first-el) (js/Array.isArray first-el))
+      (if (or (sequential? first-el) (js/Array.isArray first-el))
         (into [] (mapcat flatten-nested coll))
         (vec coll)))
     [coll]))
@@ -84,9 +84,9 @@
    flatten-nested's predicates so the dtype/shape arities of `array` shape
    JS-array inputs correctly (not as 0-dim scalars)."
   [coll]
-  (if (or (vector? coll) (seq? coll) (sequential? coll) (js/Array.isArray coll))
+  (if (or (sequential? coll) (js/Array.isArray coll))
     (let [first-el (first coll)]
-      (if (or (vector? first-el) (seq? first-el) (sequential? first-el) (js/Array.isArray first-el))
+      (if (or (sequential? first-el) (js/Array.isArray first-el))
         (let [[_ inner-shape] (infer-shape first-el)]
           [(flatten-nested coll) (into [(count coll)] inner-shape)])
         [(vec coll) [(count coll)]]))
@@ -187,14 +187,28 @@
 (def where         (.-where c))
 
 ;; Model-level helpers -- auto-promote integers, return float32.
-(defn eq?  [a b] (.astype (equal (if (number? a) (scalar a int32) a)
-                                 (if (number? b) (scalar b int32) b)) float32))
-(defn neq? [a b] (.astype (not-equal (if (number? a) (scalar a int32) a)
-                                     (if (number? b) (scalar b int32) b)) float32))
-(defn gt?  [a b] (.astype (greater (if (number? a) (scalar a) a)
-                                   (if (number? b) (scalar b) b)) float32))
-(defn lt?  [a b] (.astype (less (if (number? a) (scalar a) a)
-                                (if (number? b) (scalar b) b)) float32))
+(defn- ->cmp
+  "Coerce a number to a comparison operand; pass MLX arrays through.
+   eq?/neq? promote integers (dt int32); gt?/lt? use the float32 default."
+  ([x] (if (number? x) (scalar x) x))
+  ([x dt] (if (number? x) (scalar x dt) x)))
+
+(defn eq?
+  "Element-wise a == b. Promotes integer operands (int32) and returns a
+   float32 mask (1.0/0.0), so it composes with float arithmetic."
+  [a b] (.astype (equal (->cmp a int32) (->cmp b int32)) float32))
+(defn neq?
+  "Element-wise a != b. Promotes integer operands (int32) and returns a
+   float32 mask (1.0/0.0)."
+  [a b] (.astype (not-equal (->cmp a int32) (->cmp b int32)) float32))
+(defn gt?
+  "Element-wise a > b. Promotes scalars at the float32 default and returns a
+   float32 mask (1.0/0.0)."
+  [a b] (.astype (greater (->cmp a) (->cmp b)) float32))
+(defn lt?
+  "Element-wise a < b. Promotes scalars at the float32 default and returns a
+   float32 mask (1.0/0.0)."
+  [a b] (.astype (less (->cmp a) (->cmp b)) float32))
 (defn and* [a b] (multiply a b))
 (defn or*  [a b] (maximum a b))
 
@@ -259,6 +273,9 @@
   ([a axis] (argsort* a axis)))
 
 (defn searchsorted
+  "Insertion indices for values into the sorted sorted-arr. side defaults to
+   :left (index of the first element >= value); :right gives the index past
+   the last element <= value. side maps to the native right? boolean."
   ([sorted-arr values] (.searchsorted c sorted-arr values))
   ([sorted-arr values side] (.searchsorted c sorted-arr values (= side :right))))
 
@@ -267,7 +284,10 @@
   ([a] (sort* a))
   ([a axis] (sort* a axis)))
 
-(defn topk [a k] (.topk c a k))
+(defn topk
+  "Return the k largest *values* of a (not indices, not a value/index pair),
+   along the last axis. The result is partition-ordered, not sorted."
+  [a k] (.topk c a k))
 
 (def ^:private cumsum* (.-cumsum c))
 (defn cumsum
@@ -322,6 +342,8 @@
     :else                        (.astype indices int32)))
 
 (defn take-idx
+  "Gather elements of a at indices along axis (0-indexed; defaults to axis 0).
+   indices are coerced to int32 — MLX gather crashes on float index dtypes."
   ([a indices]
    (.take c a (ensure-int-indices indices) 0))
   ([a indices axis]
@@ -499,6 +521,11 @@
            a)
          args))))
 
+(defn- ->argnum-vec
+  "Normalize an argnums spec (int or vector) to a vector of arg indices."
+  [argnums]
+  (if (vector? argnums) argnums [argnums]))
+
 (defn grad
   "Returns a function that computes gradients of f w.r.t. its arguments.
    The returned function builds a backward-pass graph lazily — gradient
@@ -514,7 +541,7 @@
    (fn [& args]
      (swap! grad-depth inc)
      (try
-       (let [argnum-vec (if (vector? argnums) argnums [argnums])
+       (let [argnum-vec (->argnum-vec argnums)
              grads (.computeGradients M f (grad-args args))]
          (if (= 1 (count argnum-vec))
            (aget grads (first argnum-vec))
@@ -537,7 +564,7 @@
      (try
        (let [result (.valueAndGrad M f (grad-args args))
              v (aget result 0)
-             argnum-vec (if (vector? argnums) argnums [argnums])
+             argnum-vec (->argnum-vec argnums)
              g (if (= 1 (count argnum-vec))
                  (aget result (inc (first argnum-vec)))
                  (mapv #(aget result (inc %)) argnum-vec))]
@@ -561,10 +588,7 @@
                         (sum (multiply result cotangents-arr)))))
         result (.valueAndGrad M surrogate (to-array (vec primals)))
         fval (apply f (vec primals))
-        grads (let [gs #js []]
-                (dotimes [i (dec (.-length result))]
-                  (.push gs (aget result (inc i))))
-                gs)]
+        grads (into-array (map #(aget result (inc %)) (range (dec (.-length result)))))]
     [fval grads]))
 
 ;; =========================================================================
@@ -741,6 +765,15 @@
 
 (def ^:private cache-pressure-threshold (* 512 1024 1024))
 
+(defn- cleanup-if-cache-pressure!
+  "Run a GC/cache sweep when the Metal cache exceeds the pressure threshold."
+  []
+  (when (> (get-cache-memory) cache-pressure-threshold)
+    (jsc-cleanup!)
+    (when gc-fn (gc-fn))
+    (sweep-dead-arrays!)
+    (clear-cache!)))
+
 (defn tidy-materialize [f]
   (let [r (tidy f)] (eval! r) r))
 
@@ -752,11 +785,7 @@
               (when (seq arrays) (apply eval! arrays))
               (vreset! result-vol result)
               (to-array arrays))))
-    (when (> (get-cache-memory) cache-pressure-threshold)
-      (jsc-cleanup!)
-      (when gc-fn (gc-fn))
-      (sweep-dead-arrays!)
-      (clear-cache!))
+    (cleanup-if-cache-pressure!)
     @result-vol))
 
 (defn tidy-scalar [f]
@@ -766,11 +795,7 @@
               (eval! arr)
               (vreset! result-vol (item arr))
               (to-array [arr]))))
-    (when (> (get-cache-memory) cache-pressure-threshold)
-      (jsc-cleanup!)
-      (when gc-fn (gc-fn))
-      (sweep-dead-arrays!)
-      (clear-cache!))
+    (cleanup-if-cache-pressure!)
     @result-vol))
 
 (defn force-gc! []

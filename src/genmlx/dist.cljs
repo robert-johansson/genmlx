@@ -7,28 +7,17 @@
    Reparameterized sampling enables gradient flow."
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.dist.core :as dc])
+            [genmlx.dist.core :as dc]
+            [genmlx.mlx.constants :refer [LOG-2PI ZERO ONE TWO THREE HALF
+                                          NEG-INF LOG-2PI-HALF LOG-PI MLX-PI
+                                          SQRT-TWO TINY]])
   (:require-macros [genmlx.dist.macros :refer [defdist]]))
 
 ;; ---------------------------------------------------------------------------
 ;; Constants
 ;; ---------------------------------------------------------------------------
 
-(def ^:private LOG-2PI (js/Math.log (* 2.0 js/Math.PI)))
-
-;; Cached MLX scalar constants — avoid per-call allocation.
-;; MLX arrays are immutable; mx/add etc. always create new arrays.
-(def ^:private ZERO (mx/scalar 0.0))
-(def ^:private ONE (mx/scalar 1.0))
-(def ^:private TWO (mx/scalar 2.0))
-(def ^:private THREE (mx/scalar 3.0))
-(def ^:private HALF (mx/scalar 0.5))
-(def ^:private NEG-INF (mx/scalar ##-Inf))
-(def ^:private LOG-2PI-HALF (mx/scalar (* 0.5 LOG-2PI)))
-(def ^:private LOG-PI (mx/scalar (js/Math.log js/Math.PI)))
-(def ^:private MLX-PI (mx/scalar js/Math.PI))
-(def ^:private SQRT-TWO (mx/scalar (js/Math.sqrt 2.0)))
-(def ^:private TINY (mx/scalar 1e-30))
+;; Scalar/log constants live in genmlx.mlx.constants (centralized, cached).
 (def ^:private BERNOULLI-SUPPORT [ZERO ONE])
 
 ;; ---------------------------------------------------------------------------
@@ -66,6 +55,18 @@
        (mx/multiply (mx/sign u))
        (mx/multiply scale)
        (mx/subtract loc)))
+
+;; ---------------------------------------------------------------------------
+;; Log binomial-coefficient helper
+;; ---------------------------------------------------------------------------
+
+(defn- log-choose
+  "Log binomial coefficient log C(n, k) = lgamma(n+1) - lgamma(k+1) - lgamma(n-k+1).
+   n and k are MLX arrays (stays on GPU for autograd)."
+  [n k]
+  (mx/subtract (mx/lgamma (mx/add n ONE))
+               (mx/add (mx/lgamma (mx/add k ONE))
+                       (mx/lgamma (mx/add (mx/subtract n k) ONE)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Public API wrappers (backward compatible)
@@ -154,12 +155,12 @@
   (reparam [key]
            (mx/add mu (mx/multiply sigma (rng/normal key [])))))
 
-(let [gaussian-raw gaussian]
+(let [raw gaussian]
   (defn gaussian
     "Gaussian (normal) distribution with mean mu and std sigma."
     [mu sigma]
     (check-positive "gaussian" "sigma" sigma)
-    (gaussian-raw mu sigma)))
+    (raw mu sigma)))
 
 (defmethod dc/dist-sample-n* :gaussian [d key n]
   (let [{:keys [mu sigma]} (:params d)
@@ -187,12 +188,12 @@
   (reparam [key]
            (mx/add lo (mx/multiply (mx/subtract hi lo) (rng/uniform key [])))))
 
-(let [uniform-raw uniform]
+(let [raw uniform]
   (defn uniform
     "Continuous uniform distribution on [lo, hi]."
     [lo hi]
     (check-less-than "uniform" "lo" lo "hi" hi)
-    (uniform-raw lo hi)))
+    (raw lo hi)))
 
 (defmethod dc/dist-sample-n* :uniform [d key n]
   (let [{:keys [lo hi]} (:params d)
@@ -276,13 +277,13 @@
                                        (mx/log (mx/subtract ONE v))))
                   (mx/subtract log-beta-val)))))
 
-(let [beta-dist-raw beta-dist]
+(let [raw beta-dist]
   (defn beta-dist
     "Beta distribution with parameters alpha and beta."
     [alpha beta-param]
     (check-positive "beta-dist" "alpha" alpha)
     (check-positive "beta-dist" "beta" beta-param)
-    (beta-dist-raw alpha beta-param)))
+    (raw alpha beta-param)))
 
 ;; ---------------------------------------------------------------------------
 ;; Gamma
@@ -323,13 +324,13 @@
                   (mx/subtract (mx/multiply rate v))
                   (mx/subtract (mx/lgamma k))))))
 
-(let [gamma-dist-raw gamma-dist]
+(let [raw gamma-dist]
   (defn gamma-dist
     "Gamma distribution with shape and rate parameters."
     [shape-param rate]
     (check-positive "gamma-dist" "shape" shape-param)
     (check-positive "gamma-dist" "rate" rate)
-    (gamma-dist-raw shape-param rate)))
+    (raw shape-param rate)))
 
 (defn- gamma-sample-n
   "Vectorized Marsaglia-Tsang: sample [n] gamma values with given shape and rate.
@@ -396,9 +397,8 @@
   (let [{:keys [alpha beta-param]} (:params d)
         key (rng/ensure-key key)
         [k1 k2] (rng/split key)
-        one ONE
-        g1 (gamma-sample-n (mx/realize alpha) one k1 n)
-        g2 (gamma-sample-n (mx/realize beta-param) one k2 n)]
+        g1 (gamma-sample-n (mx/realize alpha) ONE k1 n)
+        g2 (gamma-sample-n (mx/realize beta-param) ONE k2 n)]
     ;; Clamp into the open support (0,1): for alpha/beta < 1 a float32 sample can
     ;; round to exactly 0.0/1.0, where the beta density (and log-prob) is +inf.
     (mx/clip (mx/divide g1 (mx/add g1 g2)) 1e-7 (- 1.0 1e-7))))
@@ -410,9 +410,8 @@
         alpha-vals (mx/->clj alpha)
         k (count alpha-vals)
         keys (rng/split-n key k)
-        one ONE
         ;; Sample k gamma arrays, each [n], then stack to [k n]
-        gammas (mx/stack (mapv (fn [a ki] (gamma-sample-n a one ki n))
+        gammas (mx/stack (mapv (fn [a ki] (gamma-sample-n a ONE ki n))
                                alpha-vals keys))
         ;; gammas is [k n], sum along axis 0 -> [n], then transpose and divide
         totals (mx/sum gammas [0])]
@@ -437,12 +436,12 @@
            (let [u (rng/uniform key [])]
              (mx/divide (mx/negative (mx/log (mx/subtract ONE u))) rate))))
 
-(let [exponential-raw exponential]
+(let [raw exponential]
   (defn exponential
     "Exponential distribution with the given rate."
     [rate]
     (check-positive "exponential" "rate" rate)
-    (exponential-raw rate)))
+    (raw rate)))
 
 (defmethod dc/dist-sample-n* :exponential [d key n]
   (let [{:keys [rate]} (:params d)
@@ -454,22 +453,27 @@
 ;; Categorical
 ;; ---------------------------------------------------------------------------
 
+(defn- logits->logprobs
+  "Log-softmax: normalize logits along the last axis. Shape-preserving."
+  [logits]
+  (if (> (count (mx/shape logits)) 1)
+    (mx/subtract logits (mx/expand-dims (mx/logsumexp logits [-1]) -1))
+    (mx/subtract logits (mx/logsumexp logits))))
+
 (defdist categorical
   "Categorical distribution from log-probabilities (logits)."
   [logits]
   (sample [key]
           (rng/categorical key logits))
   (log-prob [v]
-            (let [v (mx/ensure-array v mx/int32)]
+            (let [v (mx/ensure-array v mx/int32)
+                  log-probs (logits->logprobs logits)]
+        ;; Multi-dim logits [... K]: index along last axis (handles scalar v
+        ;; when constrained and multi-dim v when batched/enumerate).
+        ;; 1D logits [K]: v is scalar or [N].
               (if (> (count (mx/shape logits)) 1)
-        ;; Multi-dim logits [... K]: normalize along last axis, index along last axis.
-        ;; Handles both scalar v (constrained) and multi-dim v (batched/enumerate).
-                (let [lse (mx/expand-dims (mx/logsumexp logits [-1]) -1)
-                      log-probs (mx/subtract logits lse)]
-                  (mx/take-idx log-probs v -1))
-        ;; 1D logits [K]: v is scalar or [N]
-                (let [log-probs (mx/subtract logits (mx/logsumexp logits))]
-                  (mx/take-idx log-probs v)))))
+                (mx/take-idx log-probs v -1)
+                (mx/take-idx log-probs v))))
   (support []
            (mx/materialize! logits)
            (let [n (last (mx/shape logits))]
@@ -478,14 +482,13 @@
 (defmethod dc/dist-log-prob-support :categorical [d]
   ;; log_softmax(logits) — all K log-probs in one op.
   ;; For multi-dim logits [..., K]: transpose to put K first → [K, ...]
-  (let [{:keys [logits]} (:params d)]
+  (let [{:keys [logits]} (:params d)
+        log-probs (logits->logprobs logits)]
     (if (> (count (mx/shape logits)) 1)
-      (let [lse (mx/expand-dims (mx/logsumexp logits [-1]) -1)
-            log-probs (mx/subtract logits lse)
-            nd (count (mx/shape log-probs))
+      (let [nd (count (mx/shape log-probs))
             perm (into [(dec nd)] (range (dec nd)))]
         (mx/transpose log-probs perm))
-      (mx/subtract logits (mx/logsumexp logits)))))
+      log-probs)))
 
 (defmethod dc/dist-sample-n* :categorical [d key n]
   (let [{:keys [logits]} (:params d)
@@ -699,7 +702,7 @@
                 normalized (mapv #(/ % total) gammas)]
             (mx/array normalized)))
   (log-prob [v]
-            (let [v (if (mx/array? v) v (mx/array v))
+            (let [v (mx/ensure-array v)
                   log-beta (mx/subtract (mx/sum (mx/lgamma alpha))
                                         (mx/lgamma (mx/sum alpha)))
                   log-terms (mx/sum
@@ -861,9 +864,7 @@
                   (mx/scalar k))))))
   (log-prob [v]
     ;; log C(v + r - 1, v) + r*log(p) + v*log(1-p)
-            (let [log-coeff (mx/subtract (mx/lgamma (mx/add v r))
-                                         (mx/add (mx/lgamma (mx/add v ONE))
-                                                 (mx/lgamma r)))]
+            (let [log-coeff (log-choose (mx/subtract (mx/add v r) ONE) v)]
               (-> log-coeff
                   (mx/add (mx/multiply r (mx/log p)))
                   (mx/add (mx/multiply v (mx/log (mx/subtract ONE p))))))))
@@ -894,10 +895,7 @@
             (mx/scalar successes)))
   (log-prob [v]
     ;; log C(n, k) + k*log(p) + (n-k)*log(1-p)
-            (let [log-coeff (mx/subtract (mx/lgamma (mx/add n-trials ONE))
-                                         (mx/add (mx/lgamma (mx/add v ONE))
-                                                 (mx/lgamma (mx/add (mx/subtract n-trials v)
-                                                                    ONE))))]
+            (let [log-coeff (log-choose n-trials v)]
               (-> log-coeff
                   (mx/add (mx/multiply v (mx/log p)))
                   (mx/add (mx/multiply (mx/subtract n-trials v)
@@ -1020,6 +1018,18 @@
     (raw mu sigma lo hi)))
 
 ;; ---------------------------------------------------------------------------
+;; Matrix-distribution helper
+;; ---------------------------------------------------------------------------
+
+(defn- as-square
+  "Reshape a flat [k*k] array into [k k]; pass 2-d arrays through unchanged."
+  [a]
+  (if (= 1 (mx/ndim a))
+    (let [k (int (js/Math.sqrt (mx/size a)))]
+      (mx/reshape a [k k]))
+    a))
+
+;; ---------------------------------------------------------------------------
 ;; Multivariate Normal (via Cholesky) — manual definition
 ;; ---------------------------------------------------------------------------
 
@@ -1028,12 +1038,8 @@
    mean-vec: [k] array, cov-matrix: [k k] positive definite array.
    Cholesky decomposition and L-inverse are computed once at construction."
   [mean-vec cov-matrix]
-  (let [mu (if (mx/array? mean-vec) mean-vec (mx/array mean-vec))
-        cov (if (mx/array? cov-matrix) cov-matrix (mx/array cov-matrix))
-        cov-2d (if (= 1 (mx/ndim cov))
-                 (let [k (first (mx/shape mu))]
-                   (mx/reshape cov [k k]))
-                 cov)
+  (let [mu (mx/ensure-array mean-vec)
+        cov-2d (as-square (mx/ensure-array cov-matrix))
         L (mx/cholesky cov-2d)
         _ (mx/materialize! L)
         Li (mx/tri-inv L false)
@@ -1057,7 +1063,7 @@
 
 (defmethod dc/dist-log-prob :multivariate-normal [d v]
   (let [{:keys [mean-vec L-inv k norm-const neg-half]} (:params d)
-        v (if (mx/array? v) v (mx/array v))
+        v (mx/ensure-array v)
         diff (mx/subtract v mean-vec)
         y (mx/flatten (mx/matmul L-inv (mx/reshape diff [k 1])))
         mahal (mx/sum (mx/square y))]
@@ -1201,12 +1207,8 @@
   "Wishart distribution with df degrees of freedom and [k x k] scale matrix V.
    Uses Bartlett decomposition for sampling."
   [df scale-matrix]
-  (let [V (if (mx/array? scale-matrix) scale-matrix (mx/array scale-matrix))
+  (let [V-2d (as-square (mx/ensure-array scale-matrix))
         df-val (if (mx/array? df) (mx/realize df) df)
-        V-2d (if (= 1 (mx/ndim V))
-               (let [k (int (js/Math.sqrt (first (mx/shape V))))]
-                 (mx/reshape V [k k]))
-               V)
         L (mx/cholesky V-2d)
         _ (mx/materialize! L)
         k (first (mx/shape V-2d))]
@@ -1255,7 +1257,7 @@
 
 (defmethod dc/dist-log-prob :wishart [d x]
   (let [{:keys [df scale-matrix k]} (:params d)
-        x (if (mx/array? x) x (mx/array x))
+        x (mx/ensure-array x)
         x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
         ;; Recompute V-inv and log-det-V from scale-matrix (not precomputed)
         ;; so gradient tape is preserved for differentiating w.r.t. V.
@@ -1281,12 +1283,8 @@
   "Inverse Wishart distribution with df degrees of freedom and [k x k] scale matrix Psi.
    Sample: W ~ Wishart(df, Psi^{-1}), return W^{-1}."
   [df scale-matrix]
-  (let [Psi (if (mx/array? scale-matrix) scale-matrix (mx/array scale-matrix))
+  (let [Psi-2d (as-square (mx/ensure-array scale-matrix))
         df-val (if (mx/array? df) (mx/realize df) df)
-        Psi-2d (if (= 1 (mx/ndim Psi))
-                 (let [k (int (js/Math.sqrt (first (mx/shape Psi))))]
-                   (mx/reshape Psi [k k]))
-                 Psi)
         k (first (mx/shape Psi-2d))
         Psi-inv (mx/inv Psi-2d)
         _ (mx/materialize! Psi-inv)
@@ -1303,7 +1301,7 @@
 
 (defmethod dc/dist-log-prob :inv-wishart [d x]
   (let [{:keys [df scale-matrix k]} (:params d)
-        x (if (mx/array? x) x (mx/array x))
+        x (mx/ensure-array x)
         x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
         X-inv (mx/inv x-2d)
         ;; Recompute log-det from raw matrices (not precomputed) so gradient
@@ -1376,12 +1374,12 @@
               (mx/subtract (mx/multiply kappa (mx/cos (mx/subtract v mu)))
                            log-norm))))
 
-(let [von-mises-raw von-mises]
+(let [raw von-mises]
   (defn von-mises
     "Von Mises distribution on [-π, π) with mean direction mu and concentration kappa."
     [mu kappa]
     (check-positive "von-mises" "kappa" kappa)
-    (von-mises-raw mu kappa)))
+    (raw mu kappa)))
 
 (defmethod dc/dist-sample-n* :von-mises [d key n]
   (let [{:keys [mu kappa]} (:params d)
@@ -1456,12 +1454,12 @@
                                                          (mx/cos (mx/subtract v mu))))
                                rho-sq))))))
 
-(let [wrapped-cauchy-raw wrapped-cauchy]
+(let [raw wrapped-cauchy]
   (defn wrapped-cauchy
     "Wrapped Cauchy distribution on [-π, π) with mean mu and concentration rho (0 < ρ < 1)."
     [mu rho]
     (check-open-probability "wrapped-cauchy" "rho" rho)
-    (wrapped-cauchy-raw mu rho)))
+    (raw mu rho)))
 
 (defmethod dc/dist-sample-n* :wrapped-cauchy [d key n]
   (let [key (rng/ensure-key key)
@@ -1494,12 +1492,12 @@
       ;; logsumexp over the 7 terms
               (reduce mx/logaddexp terms))))
 
-(let [wrapped-normal-raw wrapped-normal]
+(let [raw wrapped-normal]
   (defn wrapped-normal
     "Wrapped normal distribution on [-π, π) with mean mu and std sigma."
     [mu sigma]
     (check-positive "wrapped-normal" "sigma" sigma)
-    (wrapped-normal-raw mu sigma)))
+    (raw mu sigma)))
 
 (defmethod dc/dist-sample-n* :wrapped-normal [d key n]
   (let [{:keys [mu sigma]} (:params d)

@@ -12,10 +12,36 @@
    enabling fusion into a single Metal kernel. No mutable state, no handler."
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
+            [genmlx.mlx.constants :refer [ZERO ONE TWO HALF NEG-INF
+                                          LOG-2PI-HALF LOG-2 LOG-PI MLX-PI]]
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
             [genmlx.vectorized :as vec]
             [genmlx.handler :as h]))
+
+;; ---------------------------------------------------------------------------
+;; Shared compiled-loop helpers
+;; ---------------------------------------------------------------------------
+
+(defn- slice-row
+  "Extract row `idx` from the leading axis of `tensor` and reshape to `shape`.
+   The take-idx + reshape idiom used throughout the compiled unfold/PF loops."
+  [tensor idx shape]
+  (mx/reshape (mx/take-idx tensor (mx/array [idx] mx/int32) 0) shape))
+
+(defn- diag-gaussian-logprob
+  "Log-density of a diagonal Gaussian. `diff` = value - mean, `std` = per-dim
+   std, `dim` = dimensionality. With `sum-axis` the quadratic term is reduced
+   along that axis (per-row [N] log-probs); without it the result is a scalar
+   full reduction."
+  ([diff std dim] (diag-gaussian-logprob diff std dim nil))
+  ([diff std dim sum-axis]
+   (let [quad (mx/divide (mx/multiply diff diff) (mx/multiply std std))
+         quad-sum (if sum-axis (mx/sum quad sum-axis) (mx/sum quad))]
+     (mx/subtract
+      (mx/subtract (mx/multiply (mx/scalar -0.5) quad-sum)
+                   (mx/sum (mx/log std)))
+      (mx/scalar (* 0.5 dim (js/Math.log (* 2 js/Math.PI))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Core: compiled unfold step loop
@@ -41,9 +67,7 @@
           (loop [t 0, state init-state, score (mx/scalar 0.0), states []]
             (if (>= t n-steps)
               [state (mx/stack states) score]
-              (let [noise-row (mx/reshape
-                               (mx/take-idx noise-2d (mx/array [t] mx/int32) 0)
-                               [noise-dim])
+              (let [noise-row (slice-row noise-2d t [noise-dim])
                     [new-state step-score] (step-fn state noise-row)]
                 (recur (inc t)
                        new-state
@@ -80,12 +104,8 @@
                  states []]
             (if (>= t n-steps)
               [state (mx/stack states) score weight]
-              (let [noise-row (mx/reshape
-                               (mx/take-idx noise-2d (mx/array [t] mx/int32) 0)
-                               [noise-dim])
-                    obs-row (mx/reshape
-                             (mx/take-idx obs-2d (mx/array [t] mx/int32) 0)
-                             [obs-dim])
+              (let [noise-row (slice-row noise-2d t [noise-dim])
+                    obs-row (slice-row obs-2d t [obs-dim])
                     [new-state step-score step-weight] (step-fn state noise-row obs-row)]
                 (recur (inc t)
                        new-state
@@ -127,10 +147,7 @@
         ;; Build choicemap from states tensor
         choices (reduce
                  (fn [cm t]
-                   (let [state-t (mx/reshape
-                                  (mx/take-idx states (mx/array [t] mx/int32) 0)
-                                  [state-dim])]
-                     (cm/set-value cm (addr-fn t) state-t)))
+                   (cm/set-value cm (addr-fn t) (slice-row states t [state-dim])))
                  cm/EMPTY
                  (range n-steps))]
     (tr/make-trace {:gen-fn nil :args [n-steps init-state]
@@ -162,10 +179,7 @@
         ;; Build choicemap from states tensor
         choices (reduce
                  (fn [cm t]
-                   (let [state-t (mx/reshape
-                                  (mx/take-idx states (mx/array [t] mx/int32) 0)
-                                  [state-dim])]
-                     (cm/set-value cm (addr-fn t) state-t)))
+                   (cm/set-value cm (addr-fn t) (slice-row states t [state-dim])))
                  cm/EMPTY
                  (range n-steps))]
     {:trace (tr/make-trace {:gen-fn nil :args [n-steps init-state]
@@ -190,23 +204,11 @@
           new-state (mx/add t-mean (mx/multiply t-std noise-row))
           ;; Transition log-prob
           t-diff (mx/subtract new-state t-mean)
-          t-lp (mx/subtract
-                (mx/subtract
-                 (mx/multiply (mx/scalar -0.5)
-                              (mx/sum (mx/divide (mx/multiply t-diff t-diff)
-                                                 (mx/multiply t-std t-std))))
-                 (mx/sum (mx/log t-std)))
-                (mx/scalar (* 0.5 state-dim (js/Math.log (* 2 js/Math.PI)))))
+          t-lp (diag-gaussian-logprob t-diff t-std state-dim)
           ;; Observation log-prob
           [o-mean o-std] (observation-fn new-state)
           o-diff (mx/subtract obs-row o-mean)
-          o-lp (mx/subtract
-                (mx/subtract
-                 (mx/multiply (mx/scalar -0.5)
-                              (mx/sum (mx/divide (mx/multiply o-diff o-diff)
-                                                 (mx/multiply o-std o-std))))
-                 (mx/sum (mx/log o-std)))
-                (mx/scalar (* 0.5 obs-dim (js/Math.log (* 2 js/Math.PI)))))
+          o-lp (diag-gaussian-logprob o-diff o-std obs-dim)
           ;; score = transition + observation, weight = observation
           score (mx/add t-lp o-lp)]
       [new-state score o-lp])))
@@ -253,17 +255,11 @@
             (if (>= t n-steps)
               [states log-ml]
               (let [;; Extract noise for this step: [N, noise-dim]
-                    noise-t (mx/reshape
-                             (mx/take-idx noise-3d (mx/array [t] mx/int32) 0)
-                             [n-particles noise-dim])
+                    noise-t (slice-row noise-3d t [n-particles noise-dim])
                     ;; Extract observation: [obs-dim]
-                    obs-t (mx/reshape
-                           (mx/take-idx obs-2d (mx/array [t] mx/int32) 0)
-                           [obs-dim])
+                    obs-t (slice-row obs-2d t [obs-dim])
                     ;; Extract uniform for resampling: [1]
-                    u0 (mx/reshape
-                        (mx/take-idx uniforms-2d (mx/array [t] mx/int32) 0)
-                        [1])
+                    u0 (slice-row uniforms-2d t [1])
                     ;; 1. Extend particles
                     [new-states log-weights] (particle-step-fn states noise-t obs-t)
                     ;; 2. Log-ML increment: logsumexp(w) - log(N)
@@ -332,15 +328,8 @@
           [o-mean o-std] (observation-fn new-states)
           ;; obs-row is [M], o-mean is [N,M] — broadcast subtraction
           o-diff (mx/subtract obs-row o-mean)
-          ;; Per-particle log-prob: sum over obs dimensions
-          log-weights (mx/subtract
-                       (mx/subtract
-                        (mx/multiply (mx/scalar -0.5)
-                                     (mx/sum (mx/divide (mx/multiply o-diff o-diff)
-                                                        (mx/multiply o-std o-std))
-                                             1)) ;; sum along obs dim (axis=1)
-                        (mx/sum (mx/log o-std))) ;; this is scalar, broadcasts
-                       (mx/scalar (* 0.5 obs-dim (js/Math.log (* 2 js/Math.PI)))))]
+          ;; Per-particle log-prob: sum over obs dimensions (axis=1)
+          log-weights (diag-gaussian-logprob o-diff o-std obs-dim 1)]
       [new-states log-weights])))
 
 ;; ===========================================================================
@@ -552,15 +541,7 @@
 ;;
 ;; Distributions NOT in this map fall back to dc/dist-sample (no compilation).
 
-(def ^:private LOG-2PI-HALF (mx/scalar (* 0.5 (js/Math.log (* 2.0 js/Math.PI)))))
-(def ^:private HALF (mx/scalar 0.5))
-(def ^:private ONE (mx/scalar 1.0))
-(def ^:private ZERO (mx/scalar 0.0))
-(def ^:private NEG-INF (mx/scalar ##-Inf))
-(def ^:private TWO (mx/scalar 2.0))
-(def ^:private LOG-2 (mx/scalar (js/Math.log 2.0)))
-(def ^:private LOG-PI (mx/scalar (js/Math.log js/Math.PI)))
-(def ^:private MLX-PI (mx/scalar js/Math.PI))
+;; Scalar/log constants live in genmlx.mlx.constants (centralized, cached).
 
 ;; ---------------------------------------------------------------------------
 ;; Arg coercion helpers
@@ -737,20 +718,10 @@
         nt (get noise-transforms-full dist-type)]
     (when nt
       (cond
-        (:noise-fn nt)
-        ;; Standard distribution: noise pre-generated, transform + score inside compiled fn
-        (let [transform-fn (:transform nt)
-              log-prob-fn (:log-prob nt)]
-          (fn [{:keys [values score]} site-idx noise-array args-vec]
-            (let [eval-args (mapv #(% values args-vec) compiled-args)
-                  noise (mx/index noise-array site-idx)
-                  value (apply transform-fn noise eval-args)
-                  lp (apply log-prob-fn value eval-args)]
-              {:values (assoc values addr value)
-               :score (mx/add score lp)})))
-
-        (:args-noise-fn nt)
-        ;; Dynamic-shape noise: noise pre-generated outside, passed in
+        ;; Noise-driven sites: :noise-fn pre-generates standard noise,
+        ;; :args-noise-fn pre-generates dynamic-shape noise. Both transform the
+        ;; pre-generated noise and score it identically inside the compiled fn.
+        (or (:noise-fn nt) (:args-noise-fn nt))
         (let [transform-fn (:transform nt)
               log-prob-fn (:log-prob nt)]
           (fn [{:keys [values score]} site-idx noise-array args-vec]
@@ -809,6 +780,26 @@
               v (if nfn (nfn k2) (mx/scalar 0.0))]
           (recur (inc i) k1 (conj! noise-vals v)))))))
 
+(defn- run-site-steps
+  "Run the noise-transform step-fns and return a flat JS array
+   [v0 v1 ... vN score], values ordered by `addrs`. Shared inner-fn body for
+   the M2/M3/M4 compiled simulate paths."
+  [step-fns addrs noise-array args-vec]
+  (let [result (reduce-kv
+                (fn [state idx step-fn]
+                  (step-fn state idx noise-array args-vec))
+                {:values {} :score (mx/scalar 0.0)}
+                step-fns)
+        vals (mapv #(get (:values result) %) addrs)]
+    (to-array (conj vals (:score result)))))
+
+(defn- unpack-result
+  "Unpack a flat [v0 ... vN score] JS array (from run-site-steps) into
+   {:values {addr->val} :score}."
+  [result addrs n-sites]
+  ;; zipmap stops at the shorter seq (addrs), so the trailing score slot is excluded
+  {:values (zipmap addrs result) :score (aget result n-sites)})
+
 (defn make-compiled-simulate
   "Build a compiled simulate function from a gen schema and source.
 
@@ -833,15 +824,7 @@
         ;; Build the inner pure function: takes pre-generated noise array
         (let [inner-fn
               (fn [noise-array args-vec]
-                (let [result
-                      (reduce-kv
-                       (fn [state idx step-fn]
-                         (step-fn state idx noise-array args-vec))
-                       {:values {} :score (mx/scalar 0.0)}
-                       step-fns)
-                      vals (mapv #(get (:values result) %) addrs)]
-                  ;; Return flat JS array: [v0 v1 ... vN score]
-                  (to-array (conj vals (:score result)))))
+                (run-site-steps step-fns addrs noise-array args-vec))
               ;; Build arity-specific wrapper for mx/compile-fn.
               ;; Skip mx/compile-fn when any site uses :args-noise-fn
               ;; (dynamic noise shape breaks Metal graph caching).
@@ -879,13 +862,7 @@
                   result (if (not= (count mlx-args) n-params)
                            (inner-fn noise mlx-args)
                            (compiled-inner noise mlx-args))
-                  ;; Unpack flat JS array → values map
-                  values (loop [i 0 m {}]
-                           (if (= i n-sites)
-                             m
-                             (recur (inc i)
-                                    (assoc m (nth addrs i) (aget result i)))))
-                  score (aget result n-sites)]
+                  {:keys [values score]} (unpack-result result addrs n-sites)]
               {:values values
                :score score
                :retval (when retval-fn
@@ -1077,14 +1054,7 @@
       (when (every? some? step-fns)
         (let [inner-fn
               (fn [noise-array args-vec]
-                (let [result
-                      (reduce-kv
-                       (fn [state idx step-fn]
-                         (step-fn state idx noise-array args-vec))
-                       {:values {} :score (mx/scalar 0.0)}
-                       step-fns)
-                      vals (mapv #(get (:values result) %) addrs)]
-                  (to-array (conj vals (:score result)))))
+                (run-site-steps step-fns addrs noise-array args-vec))
               n-params (count (first source))
               ;; mx/compile-fn for 0-param models (no risk of complex args).
               ;; Noise generated outside to avoid compile-fn caching.
@@ -1097,14 +1067,8 @@
           {:fn (fn compiled-prefix [key args-vec]
                  (let [mlx-args (ensure-numeric-mlx-args args-vec)
                        noise (generate-site-noise compiled-sites key)
-                       result (compiled-inner noise mlx-args)
-                       values (loop [i 0 m {}]
-                                (if (= i n-sites)
-                                  m
-                                  (recur (inc i)
-                                         (assoc m (nth addrs i) (aget result i)))))
-                       score (aget result n-sites)]
-                   {:values values :score score}))
+                       result (compiled-inner noise mlx-args)]
+                   (unpack-result result addrs n-sites)))
            :addrs addrs})))))
 
 ;; ---------------------------------------------------------------------------
@@ -1392,14 +1356,7 @@
         (let [n-sites (count site-specs)
               inner-fn
               (fn [noise-array args-vec]
-                (let [result
-                      (reduce-kv
-                       (fn [state idx step-fn]
-                         (step-fn state idx noise-array args-vec))
-                       {:values {} :score (mx/scalar 0.0)}
-                       step-fns)
-                      vals (mapv #(get (:values result) %) addrs)]
-                  (to-array (conj vals (:score result)))))
+                (run-site-steps step-fns addrs noise-array args-vec))
               ;; Skip mx/compile-fn for M4 — mx/where args vary per call.
               ;; Noise generated outside for consistency with M2/M3.
               compiled-inner
@@ -1408,12 +1365,7 @@
             (let [mlx-args (ensure-mlx-args args-vec)
                   noise (generate-site-noise site-specs key)
                   result (compiled-inner noise mlx-args)
-                  values (loop [i 0 m {}]
-                           (if (= i n-sites)
-                             m
-                             (recur (inc i)
-                                    (assoc m (nth addrs i) (aget result i)))))
-                  score (aget result n-sites)]
+                  {:keys [values score]} (unpack-result result addrs n-sites)]
               {:values values
                :score score
                :retval (when retval-fn

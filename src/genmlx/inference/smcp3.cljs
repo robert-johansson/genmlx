@@ -13,6 +13,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.edit :as edit]
             [genmlx.dynamic :as dyn]
+            [genmlx.inference.smc :as smc]
             [genmlx.inference.util :as u]))
 
 
@@ -37,9 +38,8 @@
                   (fn [_]
                     (if proposal-gf
                       ;; Use proposal to generate initial choices
-                      (let [proposal-result (p/propose proposal-gf [])
-                            proposal-choices (:choices proposal-result)
-                            proposal-score (:weight proposal-result)
+                      (let [{proposal-choices :choices proposal-score :weight}
+                            (p/propose proposal-gf [])
                             ;; Merge proposal choices with observations
                             merged (cm/merge-cm proposal-choices observations)
                             ;; Generate model trace with merged constraints
@@ -56,8 +56,7 @@
         traces (mapv :trace results)
         log-weights (mapv :weight results)
         w-arr (u/materialize-weights log-weights)
-        ml-inc (mx/subtract (mx/logsumexp w-arr)
-                             (mx/scalar (js/Math.log particles)))]
+        ml-inc (smc/log-ml-increment w-arr particles)]
     {:traces traces :log-weights log-weights :log-ml-increment ml-inc}))
 
 ;; ---------------------------------------------------------------------------
@@ -108,13 +107,13 @@
                                       ;; This changes weight semantics: no backward/forward proposal
                                       ;; correction is applied — weight is pure update weight only.
                                       (edit/constraint-edit observations))
-                            result (edit/edit (:gen-fn trace) trace edit-req)]
-                        (mx/materialize! (:weight result))
-                        {:trace (:trace result) :weight (:weight result)})
+                            {:keys [trace weight]} (edit/edit (:gen-fn trace) trace edit-req)]
+                        (mx/materialize! weight)
+                        {:trace trace :weight weight})
                       ;; Standard update
-                      (let [result (p/update (:gen-fn trace) trace observations)]
-                        (mx/materialize! (:weight result))
-                        {:trace (:trace result) :weight (:weight result)})))
+                      (let [{:keys [trace weight]} (p/update (:gen-fn trace) trace observations)]
+                        (mx/materialize! weight)
+                        {:trace trace :weight weight})))
                   traces')
         new-traces (mapv :trace results)
         update-weights (mapv :weight results)
@@ -126,8 +125,7 @@
                        new-traces)
         ;; log-ML increment
         w-arr (u/materialize-weights new-weights)
-        ml-inc (mx/subtract (mx/logsumexp w-arr)
-                             (mx/scalar (js/Math.log particles)))]
+        ml-inc (smc/log-ml-increment w-arr particles)]
     {:traces final-traces :log-weights new-weights :log-ml-increment ml-inc
      :ess ess :resampled? resample?}))
 

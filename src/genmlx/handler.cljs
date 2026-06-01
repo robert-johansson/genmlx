@@ -38,13 +38,11 @@
   (:require [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
+            [genmlx.mlx.constants :refer [ZERO]]
             [genmlx.selection :as sel]
             [genmlx.dist.core :as dc]
             [genmlx.protocols :as p]
             [genmlx.trace :as tr]))
-
-;; Cached zero constant for init states and fallback log-probs
-(def ^:private ZERO (mx/scalar 0.0))
 
 ;; ---------------------------------------------------------------------------
 ;; Pure state transitions
@@ -283,17 +281,77 @@
                                   (assoc :nested-splice-scores (:nested-splice-scores sub-result)))]
                     (assoc (or nss {}) addr sub-meta)))))))
 
+(defn- mlx-array-like?
+  "Duck-typing probe: does x look like an MLX array (has .shape and .item)?"
+  [x]
+  (and (some? x) (some? (.-shape x)) (some? (.-item x))))
+
 (defn- mlx-arr-batched?
   "Check if x is an MLX array with at least 1 dimension."
   [x]
-  (and (some? x) (some? (.-shape x)) (some? (.-item x))
-       (pos? (count (mx/shape x)))))
+  (and (mlx-array-like? x) (pos? (count (mx/shape x)))))
 
 (defn- scalar-leaf-val?
   "Check if a value is scalar (0-d or not an MLX array)."
   [v]
-  (or (not (and (some? v) (some? (.-shape v)) (some? (.-item v))))
+  (or (not (mlx-array-like? v))
       (= [] (mx/shape v))))
+
+(defn- run-batched-particle
+  "Run one particle's GFI op against `gf`, dispatching on which scoped state
+   is present: selection => regenerate, old-choices => update, constraints =>
+   generate, else simulate. Returns {:choices :score :weight :discard :retval}."
+  [gf elem-args sub-selection old-i cons-i]
+  (cond
+    ;; Regenerate mode
+    sub-selection
+    (let [old-choices (or old-i cm/EMPTY)
+          elem-trace (tr/make-trace
+                      {:gen-fn gf :args elem-args
+                       :choices old-choices :retval nil
+                       :score (mx/scalar 0.0)})
+          {:keys [trace weight]} (p/regenerate gf elem-trace sub-selection)]
+      {:choices (:choices trace) :score (:score trace)
+       :weight weight :retval (:retval trace)})
+
+    ;; Update mode
+    (and old-i (not= old-i cm/EMPTY))
+    (let [c (or cons-i cm/EMPTY)
+          elem-trace (tr/make-trace
+                      {:gen-fn gf :args elem-args
+                       :choices old-i :retval nil
+                       :score (mx/scalar 0.0)})
+          {:keys [trace weight discard]} (p/update gf elem-trace c)]
+      {:choices (:choices trace) :score (:score trace)
+       :weight weight :discard discard :retval (:retval trace)})
+
+    ;; Generate with constraints
+    (and cons-i (not= cons-i cm/EMPTY))
+    (let [{:keys [trace weight]} (p/generate gf elem-args cons-i)]
+      {:choices (:choices trace) :score (:score trace)
+       :weight weight :retval (:retval trace)})
+
+    ;; Simulate
+    :else
+    (let [trace (p/simulate gf elem-args)]
+      {:choices (:choices trace) :score (:score trace)
+       :retval (:retval trace)})))
+
+(defn- stack-particle-results
+  "Stack a vector of per-particle result maps back into a single [N]-batched
+   sub-result {:choices :score :weight :discard :retval}."
+  [results]
+  {:choices (cm/stack-choicemaps (mapv :choices results) mx/stack)
+   :score (mx/stack (mapv :score results))
+   :weight (when (some :weight results)
+             (mx/stack (mapv #(or (:weight %) (mx/scalar 0.0)) results)))
+   :discard (when (some :discard results)
+              (let [discards (mapv #(or (:discard %) cm/EMPTY) results)]
+                (if (every? #(= % cm/EMPTY) discards)
+                  cm/EMPTY
+                  (cm/stack-choicemaps discards mx/stack))))
+   :retval (let [rvs (mapv :retval results)]
+             (if (every? mx/array? rvs) (mx/stack rvs) (vec rvs)))})
 
 (defn combinator-batched-fallback
   "Fallback for splicing a non-DynamicGF (e.g. VmapCombinator) in batched mode.
@@ -326,64 +384,18 @@
                             (vec (repeat n sub-constraints))
                             (cm/unstack-choicemap sub-constraints n mx/index scalar-leaf-val?)))
         ;; Run per-particle
-        results
-        (mapv
-         (fn [i]
-           (let [elem-args (mapv #(extract-scalar-arg % i) args)]
-             (cond
-                ;; Regenerate mode
-               sub-selection
-               (let [old-choices (or (and per-old-choices (nth per-old-choices i)) cm/EMPTY)
-                     elem-trace (tr/make-trace
-                                 {:gen-fn gf :args elem-args
-                                  :choices old-choices :retval nil
-                                  :score (mx/scalar 0.0)})
-                     {:keys [trace weight]} (p/regenerate gf elem-trace sub-selection)]
-                 {:choices (:choices trace) :score (:score trace)
-                  :weight weight :retval (:retval trace)})
-
-                ;; Update mode
-               (and per-old-choices (nth per-old-choices i)
-                    (not= (nth per-old-choices i) cm/EMPTY))
-               (let [c (or (and per-constraints (nth per-constraints i)) cm/EMPTY)
-                     elem-trace (tr/make-trace
-                                 {:gen-fn gf :args elem-args
-                                  :choices (nth per-old-choices i) :retval nil
-                                  :score (mx/scalar 0.0)})
-                     {:keys [trace weight discard]} (p/update gf elem-trace c)]
-                 {:choices (:choices trace) :score (:score trace)
-                  :weight weight :discard discard :retval (:retval trace)})
-
-                ;; Generate with constraints
-               (and per-constraints (nth per-constraints i)
-                    (not= (nth per-constraints i) cm/EMPTY))
-               (let [{:keys [trace weight]} (p/generate gf elem-args (nth per-constraints i))]
-                 {:choices (:choices trace) :score (:score trace)
-                  :weight weight :retval (:retval trace)})
-
-                ;; Simulate
-               :else
-               (let [trace (p/simulate gf elem-args)]
-                 {:choices (:choices trace) :score (:score trace)
-                  :retval (:retval trace)}))))
-         (range n))
-        ;; Stack results
-        stacked-choices (cm/stack-choicemaps (mapv :choices results) mx/stack)
-        stacked-scores (mx/stack (mapv :score results))
-        stacked-weights (when (some :weight results)
-                          (mx/stack (mapv #(or (:weight %) (mx/scalar 0.0)) results)))
-        stacked-retval (let [rvs (mapv :retval results)]
-                         (if (every? mx/array? rvs) (mx/stack rvs) (vec rvs)))
-        stacked-discard (when (some :discard results)
-                          (let [discards (mapv #(or (:discard %) cm/EMPTY) results)]
-                            (if (every? #(= % cm/EMPTY) discards)
-                              cm/EMPTY
-                              (cm/stack-choicemaps discards mx/stack))))
-        ;; Merge into parent state
-        sub-result {:choices stacked-choices :score stacked-scores
-                    :weight stacked-weights :discard stacked-discard
-                    :retval stacked-retval}
+        results (mapv
+                 (fn [i]
+                   (run-batched-particle
+                    gf
+                    (mapv #(extract-scalar-arg % i) args)
+                    sub-selection
+                    (when per-old-choices (nth per-old-choices i))
+                    (when per-constraints (nth per-constraints i))))
+                 (range n))
+        ;; Stack results and merge into parent state
+        sub-result (stack-particle-results results)
         state' (-> state
                    (assoc :key k1)
                    (merge-sub-result addr sub-result))]
-    [state' stacked-retval]))
+    [state' (:retval sub-result)]))

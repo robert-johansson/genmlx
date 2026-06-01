@@ -76,6 +76,13 @@
   [n]
   {:mean (mx/zeros [n]) :var (mx/ones [n])})
 
+(defn zero-belief
+  "Zero-variance initial belief {:mean zeros, :var zeros} of size n.
+   The handler always predicts on kalman-latent, so at t=0 this yields the
+   N(0, q²) prior — no skip-predict flag needed."
+  [n]
+  {:mean (mx/zeros [n]) :var (mx/zeros [n])})
+
 (defn kalman-predict
   "Kalman predict step: z_{t|t-1} from z_{t-1|t-1}.
    belief:           {:mean array, :var array}
@@ -87,7 +94,7 @@
     {:mean (mx/multiply transition-coeff mean)
      :var  (mx/add (mx/multiply transition-coeff
                      (mx/multiply transition-coeff var))
-                   (mx/multiply process-noise process-noise))}))
+                   (mx/square process-noise))}))
 
 (defn kalman-update
   "Kalman update step: incorporate one observation.
@@ -100,7 +107,7 @@
    Returns {:belief updated-belief, :ll per-element marginal LL}."
   [belief obs base-mean loading noise-std mask]
   (let [{:keys [mean var]} belief
-        r2       (mx/multiply noise-std noise-std)
+        r2       (mx/square noise-std)
         pred-obs (mx/add base-mean (mx/multiply loading mean))
         innov    (mx/subtract obs pred-obs)
         S        (mx/add (mx/multiply loading (mx/multiply loading var)) r2)
@@ -109,7 +116,7 @@
         ll       (mx/multiply (mx/scalar -0.5)
                    (mx/add (mx/scalar LOG-2PI)
                      (mx/add (mx/log S)
-                       (mx/divide (mx/multiply innov innov) S))))
+                       (mx/divide (mx/square innov) S))))
         ;; Masked update: if mask=0, belief unchanged, ll=0
         new-mean (mx/add mean (mx/multiply mask (mx/multiply K innov)))
         new-var  (mx/subtract var
@@ -167,8 +174,7 @@
      (if (= addr latent-addr)
        (let [{:keys [transition-coeff process-noise]} (:params dist)
              belief (or (:kalman-belief state)
-                        {:mean (mx/zeros [(:kalman-n state)])
-                         :var  (mx/zeros [(:kalman-n state)])})
+                        (zero-belief (:kalman-n state)))
              new-belief (kalman-predict belief transition-coeff process-noise)]
          [(:mean new-belief)
           (-> state
@@ -235,9 +241,7 @@
                             :key key
                             :constraints constraints
                             :kalman-n n
-                            :kalman-belief (or init-belief
-                                              {:mean (mx/zeros [n])
-                                               :var  (mx/zeros [n])})}
+                            :kalman-belief (or init-belief (zero-belief n))}
                      param-store (assoc :param-store param-store))]
     (rt/run-handler transition init-state
       (fn [rt] (apply (:body-fn gf) rt args)))))
@@ -258,7 +262,7 @@
    Returns [P]-shaped total marginal LL (not summed — caller aggregates)."
   [step-fn latent-addr n T context-fn]
   (loop [t 0
-         belief {:mean (mx/zeros [n]) :var (mx/zeros [n])}
+         belief (zero-belief n)
          acc-ll (mx/zeros [n])]
     (if (>= t T)
       acc-ll

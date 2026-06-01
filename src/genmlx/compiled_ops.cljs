@@ -438,15 +438,7 @@
              (empty? (:param-sites schema)))
     (let [binding-env (compiled/build-binding-env source)
           static-sites (filterv :static? (:trace-sites schema))
-          site-specs
-          (mapv (fn [ts]
-                  (let [cargs (mapv #(compiled/compile-expr % binding-env #{})
-                                    (:dist-args ts))]
-                    (when (every? some? cargs)
-                      {:addr (:addr ts)
-                       :compiled-args cargs
-                       :dist-type (:dist-type ts)})))
-                static-sites)
+          site-specs (compiled/build-fused-site-specs static-sites binding-env)
           step-fns (when (every? some? site-specs)
                      (mapv build-project-site-step site-specs))]
       (when (and step-fns (every? some? step-fns))
@@ -490,39 +482,20 @@
    Returns {:fn (fn [args-vec old-choices selection] -> {:values :weight})
             :addrs [keyword...]} or nil."
   [schema source]
-  (when (and (not (:static? schema))
-             (seq (:trace-sites schema))
-             (empty? (:splice-sites schema))
-             (empty? (:param-sites schema)))
-    (let [raw-prefix (compiled/extract-prefix-sites source)]
-      (when (seq raw-prefix)
-        (let [binding-env (compiled/build-binding-env source)
-              compiled-sites
-              (reduce
-               (fn [acc site]
-                 (let [cargs (mapv #(compiled/compile-expr % binding-env #{})
-                                   (:dist-args site))
-                       nt (get compiled/noise-transforms-full (:dist-type site))]
-                   (if (and nt (every? some? cargs))
-                     (conj acc (assoc site :compiled-args cargs))
-                     (reduced acc))))
-               []
-               raw-prefix)]
-          (when (seq compiled-sites)
-            (let [step-fns (mapv build-project-site-step compiled-sites)
-                  addrs (mapv :addr compiled-sites)]
-              (when (every? some? step-fns)
-                {:fn (fn compiled-prefix-project [args-vec old-choices selection]
-                       (let [mlx-args (compiled/ensure-numeric-mlx-args args-vec)
-                             result
-                             (reduce
-                              (fn [state step-fn]
-                                (step-fn state mlx-args old-choices selection))
-                              {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0)}
-                              step-fns)]
-                         {:values (:values result)
-                          :weight (:weight result)}))
-                 :addrs addrs}))))))))
+  (when-let [{:keys [compiled-sites addrs]} (compiled/prepare-prefix-sites schema source)]
+    (let [step-fns (mapv build-project-site-step compiled-sites)]
+      (when (every? some? step-fns)
+        {:fn (fn compiled-prefix-project [args-vec old-choices selection]
+               (let [mlx-args (compiled/ensure-numeric-mlx-args args-vec)
+                     result
+                     (reduce
+                      (fn [state step-fn]
+                        (step-fn state mlx-args old-choices selection))
+                      {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0)}
+                      step-fns)]
+                 {:values (:values result)
+                  :weight (:weight result)}))
+         :addrs addrs}))))
 
 (defn make-replay-project-transition
   "Build a replay transition for partial project compilation.
@@ -619,15 +592,7 @@
              (empty? (:param-sites schema)))
     (let [binding-env (compiled/build-binding-env source)
           static-sites (filterv :static? (:trace-sites schema))
-          site-specs
-          (mapv (fn [ts]
-                  (let [cargs (mapv #(compiled/compile-expr % binding-env #{})
-                                    (:dist-args ts))]
-                    (when (every? some? cargs)
-                      {:addr (:addr ts)
-                       :compiled-args cargs
-                       :dist-type (:dist-type ts)})))
-                static-sites)
+          site-specs (compiled/build-fused-site-specs static-sites binding-env)
           step-fns (when (every? some? site-specs)
                      (mapv build-regenerate-site-step site-specs))
           return-expr (compiled/extract-return-expr (:return-form schema))
@@ -684,40 +649,21 @@
             :addrs [keyword...]}
    or nil if partial compilation isn't applicable."
   [schema source]
-  (when (and (not (:static? schema))
-             (seq (:trace-sites schema))
-             (empty? (:splice-sites schema))
-             (empty? (:param-sites schema)))
-    (let [raw-prefix (compiled/extract-prefix-sites source)]
-      (when (seq raw-prefix)
-        (let [binding-env (compiled/build-binding-env source)
-              compiled-sites
-              (reduce
-               (fn [acc site]
-                 (let [cargs (mapv #(compiled/compile-expr % binding-env #{})
-                                   (:dist-args site))
-                       nt (get compiled/noise-transforms-full (:dist-type site))]
-                   (if (and nt (every? some? cargs))
-                     (conj acc (assoc site :compiled-args cargs))
-                     (reduced acc))))
-               []
-               raw-prefix)]
-          (when (seq compiled-sites)
-            (let [step-fns (mapv build-regenerate-site-step compiled-sites)
-                  addrs (mapv :addr compiled-sites)]
-              (when (every? some? step-fns)
-                {:fn (fn compiled-prefix-regenerate [key args-vec old-choices selection]
-                       (let [mlx-args (compiled/ensure-numeric-mlx-args args-vec)
-                             result
-                             (reduce
-                              (fn [state step-fn]
-                                (step-fn state mlx-args old-choices selection))
-                              {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
-                              step-fns)]
-                         {:values (:values result)
-                          :score (:score result)
-                          :weight (:weight result)}))
-                 :addrs addrs}))))))))
+  (when-let [{:keys [compiled-sites addrs]} (compiled/prepare-prefix-sites schema source)]
+    (let [step-fns (mapv build-regenerate-site-step compiled-sites)]
+      (when (every? some? step-fns)
+        {:fn (fn compiled-prefix-regenerate [key args-vec old-choices selection]
+               (let [mlx-args (compiled/ensure-numeric-mlx-args args-vec)
+                     result
+                     (reduce
+                      (fn [state step-fn]
+                        (step-fn state mlx-args old-choices selection))
+                      {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
+                      step-fns)]
+                 {:values (:values result)
+                  :score (:score result)
+                  :weight (:weight result)}))
+         :addrs addrs}))))
 
 (defn make-replay-regenerate-transition
   "Build a replay transition for partial regenerate compilation.
@@ -862,8 +808,7 @@
           state-keys (when map-state? (vec (sort (keys return-expr))))
           n-state (if map-state? (count state-keys) 1)
           retval-fn (compiled/compile-expr return-expr binding-env #{})
-          addr-order (mapv :addr static-sites)
-          n-sites (count static-sites)]
+          addr-order (mapv :addr static-sites)]
       (when (and (every? some? site-specs)
                  (every? some? fused-steps)
                  retval-fn
@@ -951,8 +896,7 @@
                      (compiled/compile-expr (first return-expr) binding-env #{}))
           output-fn (when (vector? return-expr)
                       (compiled/compile-expr (second return-expr) binding-env #{}))
-          addr-order (mapv :addr static-sites)
-          n-sites (count static-sites)]
+          addr-order (mapv :addr static-sites)]
       (when (and (every? some? site-specs)
                  (every? some? fused-steps)
                  carry-fn output-fn

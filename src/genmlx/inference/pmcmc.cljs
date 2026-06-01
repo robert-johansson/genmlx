@@ -113,9 +113,9 @@
               [propose-key est-key accept-key] (rng/split-n step-key 3)
               ;; Propose θ' via random walk (inline — no helper needed)
               propose-keys (rng/split-n propose-key (count param-addrs))
-              proposed (mapv (fn [val std ki]
-                               (mx/add val (mx/multiply (rng/normal ki [])
-                                                        (mx/scalar std))))
+              proposed (mapv (fn [pval std ki]
+                               (mx/add pval (mx/multiply (rng/normal ki [])
+                                                         (mx/scalar std))))
                              params stds propose-keys)
               _ (doseq [v proposed] (mx/materialize! v))
               ;; IS estimate of log p(θ', y)
@@ -179,8 +179,7 @@
         obs-seq (if (vector? observations) observations [observations])
         extract (or extract-fn
                     (fn [trace]
-                      (mapv #(mx/item (cm/get-choice (:choices trace) [%]))
-                            param-addrs)))
+                      (mapv mx/item (extract-param-vals trace param-addrs))))
         ;; Build param MH kernel from kern/random-walk
         stds-map (if (number? proposal-std)
                    (zipmap param-addrs (repeat proposal-std))

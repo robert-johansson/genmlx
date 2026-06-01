@@ -20,6 +20,16 @@
 ;; Core: IS-based loss functions for parameter learning
 ;; ---------------------------------------------------------------------------
 
+(defn- neg-log-ml
+  "Negated vectorized-IS log-ML estimate for parameter vector `p` under
+   `model` (already auto-keyed). Installs `p` as the param store and runs
+   vgenerate with the given particle count and PRNG key."
+  [model args observations param-names n-particles p key]
+  (let [store {:params (learn/array->params p param-names)}
+        gf (vary-meta model assoc :genmlx.dynamic/param-store store)
+        vtrace (dyn/vgenerate gf args observations n-particles key)]
+    (mx/negative (vec/vtrace-log-ml-estimate vtrace))))
+
 (defn make-is-loss-fn
   "Build a differentiable loss function: params → neg-log-ML via IS.
    Key is frozen in closure (same particles every call).
@@ -27,10 +37,7 @@
   [model args observations param-names n-particles key]
   (let [model (dyn/auto-key model)]
     (fn [p]
-      (let [store {:params (learn/array->params p param-names)}
-            gf (vary-meta model assoc :genmlx.dynamic/param-store store)
-            vtrace (dyn/vgenerate gf args observations n-particles key)]
-        (mx/negative (vec/vtrace-log-ml-estimate vtrace))))))
+      (neg-log-ml model args observations param-names n-particles p key))))
 
 (defn make-is-loss-grad-fn
   "Build (fn [params key] -> {:loss :grad}) for IS-based log-ML gradient.
@@ -39,10 +46,7 @@
   [model args observations param-names n-particles]
   (let [model (dyn/auto-key model)
         raw-fn (fn [p key]
-                 (let [store {:params (learn/array->params p param-names)}
-                       gf (vary-meta model assoc :genmlx.dynamic/param-store store)
-                       vtrace (dyn/vgenerate gf args observations n-particles key)]
-                   (mx/negative (vec/vtrace-log-ml-estimate vtrace))))
+                 (neg-log-ml model args observations param-names n-particles p key))
         vg (mx/value-and-grad raw-fn [0])]
     (fn [params key]
       ;; ensure-key guarantees a real uint32 PRNG key fills value-and-grad's

@@ -8,18 +8,16 @@
   [:simulate :generate :update :regenerate :assess :project :propose])
 
 (def ^:private compiled-schema-keys
-  {:simulate :compiled-simulate,   :generate :compiled-generate
-   :update :compiled-update,       :regenerate :compiled-regenerate
-   :assess :compiled-assess,       :project :compiled-project})
+  [:compiled-simulate :compiled-generate :compiled-update
+   :compiled-regenerate :compiled-assess :compiled-project])
 
 (def ^:private prefix-schema-keys
-  {:simulate :compiled-prefix,     :generate :compiled-prefix-generate
-   :update :compiled-prefix-update, :regenerate :compiled-prefix-regenerate
-   :assess :compiled-prefix-assess, :project :compiled-prefix-project})
+  [:compiled-prefix :compiled-prefix-generate :compiled-prefix-update
+   :compiled-prefix-regenerate :compiled-prefix-assess :compiled-prefix-project])
 
 (defn- compilation-level [schema]
-  (let [has-compiled? (some #(get schema (val %)) compiled-schema-keys)
-        has-prefix?   (some #(get schema (val %)) prefix-schema-keys)]
+  (let [has-compiled? (some #(get schema %) compiled-schema-keys)
+        has-prefix?   (some #(get schema %) prefix-schema-keys)]
     (cond
       (and has-compiled? (:static? schema))       :L1-M2
       (and has-compiled? (:has-branches? schema))  :L1-M4

@@ -117,11 +117,8 @@
                     (conj acc [r c label])))
                 (pr/resolved [])
                 coords)]
-       (let [lookup (into {} (map (fn [[r c lbl]] [[r c] lbl]) results))]
-         {:rows rows :cols cols
-          :labels (vec (for [r (range rows)]
-                         (vec (for [c (range cols)]
-                                (get lookup [r c] "?")))))})))))
+       {:rows rows :cols cols
+        :labels (mapv vec (partition cols (map peek results)))}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Sync GFI layer
@@ -134,26 +131,25 @@
 
 (defn label->index
   "Look up a label in `cell-types` (case-insensitive). Accepts string or map
-   options. Returns -1 if not found."
+   options. Returns nil if not found."
   [cell-types label]
   (let [target (str/lower-case (or label ""))]
-    (or (first (keep-indexed
-                 (fn [i v]
-                   (when (= (str/lower-case (option->label v)) target) i))
-                 cell-types))
-        -1)))
+    (first (keep-indexed
+             (fn [i v]
+               (when (= (str/lower-case (option->label v)) target) i))
+             cell-types))))
 
 (defn labels->constraints
   "Build a choicemap-friendly map from a 2D label grid plus `cell-types`,
    suitable for passing to `p/generate`. Cells whose label is unrecognized
-   (label->index returns -1) are simply omitted."
+   (label->index returns nil) are simply omitted."
   [labels cell-types]
   (into {}
         (for [r (range (count labels))
               c (range (count (first labels)))
               :let [lbl (get-in labels [r c])
                     idx (label->index cell-types lbl)]
-              :when (>= idx 0)]
+              :when idx]
           [(cell-addr r c) (mx/scalar idx mx/int32)])))
 
 (defn make-grid-gf

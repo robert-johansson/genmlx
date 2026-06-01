@@ -230,7 +230,7 @@
   "Compute effective sample size from log-weights."
   [log-weights]
   (let [{:keys [probs]} (normalize-log-weights log-weights)]
-    (/ 1.0 (reduce + (map #(* % %) probs)))))
+    (/ 1.0 (transduce (map #(* % %)) + probs))))
 
 (defn- walk-value-arrays
   "Recursively find all MLX arrays in a value that may be a scalar, vector, or map."
@@ -252,8 +252,7 @@
                 (let [v (cm/get-value cm)]
                   (when (mx/array? v) (vswap! arrays conj! v)))
                 (instance? cm/Node cm)
-                (doseq [[_ sub] (cm/-submaps cm)]
-                  (walk sub))))]
+                (run! (fn [[_ sub]] (walk sub)) (cm/-submaps cm))))]
       (when-let [choices (:choices trace)]
         (walk choices)))
     (when-let [s (:score trace)]
@@ -407,7 +406,7 @@
   [trace latent-index]
   (let [choices (:choices trace)
         pairs (sort-by val latent-index)]
-    (mx/stack (mapv (fn [[addr _]]
+    (mx/stack (mapv (fn [[addr]]
                       (cm/get-value (cm/get-submap choices addr)))
                     pairs))))
 

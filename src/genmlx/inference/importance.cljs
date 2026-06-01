@@ -5,6 +5,7 @@
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.inference.util :as u]
+            [genmlx.inference.smc :as smc]
             [genmlx.dynamic :as dyn]
             [genmlx.vectorized :as vec]))
 
@@ -17,6 +18,14 @@
   (if-let [schema (:schema model)]
     (assoc model :schema (dissoc schema :auto-handlers :conjugate-pairs))
     model))
+
+(defn- log-ml-from-weights
+  "Marginal-likelihood estimate from JS-number log-weights:
+   logsumexp(ws) - log(n), via the numerically stable max-shift."
+  [ws n]
+  (let [max-w (apply max ws)
+        lse (+ max-w (js/Math.log (reduce + (map #(js/Math.exp (- % max-w)) ws))))]
+    (- lse (js/Math.log n))))
 
 (defn importance-sampling
   "Importance sampling. Generate traces constrained by observations,
@@ -44,8 +53,7 @@
         log-weights (mapv :weight results)
         ;; log marginal likelihood estimate = logsumexp(weights) - log(N)
         weights-arr (u/materialize-weights log-weights)
-        log-ml (mx/subtract (mx/logsumexp weights-arr)
-                             (mx/scalar (js/Math.log samples)))]
+        log-ml (smc/log-ml-increment weights-arr samples)]
     {:traces traces
      :log-weights log-weights
      :log-ml-estimate log-ml}))
@@ -73,9 +81,7 @@
                          (mx/item weight)))
                      (fn [_] [])))  ;; nothing to preserve — weight extracted as JS number
                  keys)
-        max-w (apply max ws)
-        lse (+ max-w (js/Math.log (reduce + (map #(js/Math.exp (- % max-w)) ws))))
-        log-ml (- lse (js/Math.log samples))]
+        log-ml (log-ml-from-weights ws samples)]
     {:log-weights ws
      :log-ml-estimate log-ml}))
 
@@ -102,7 +108,7 @@
    then resamples on GPU. ~10-100x faster than importance-resampling for
    models without splice or data-dependent branching.
 
-   opts: {:samples N :particles M :key prng-key}
+   opts: {:particles M :key prng-key}
    Returns {:vtrace VectorizedTrace (resampled, uniform weights)
             :log-ml-estimate MLX-scalar}"
   [{:keys [particles key] :or {particles 1000}} model args observations]
@@ -134,12 +140,8 @@
     ;; Resample
     (mapv (fn [ki]
             (let [u (mx/realize (rng/uniform ki []))
-                  result (reduce (fn [cumsum [i p]]
-                                   (let [cumsum' (+ cumsum p)]
-                                     (if (>= cumsum' u)
-                                       (reduced (nth traces i))
-                                       cumsum')))
-                                 0.0
-                                 (map-indexed vector probs))]
-              (if (number? result) (last traces) result)))
+                  idx (->> (reductions + probs)
+                           (keep-indexed (fn [i c] (when (>= c u) i)))
+                           first)]
+              (nth traces (or idx (dec (count traces))))))
           keys)))

@@ -78,20 +78,23 @@
         {:type "clj" :value (pr-str v)}))
 
     (instance? cm/Node cm-node)
-    (into {}
-      (map (fn [[k sub]]
-             [(name k) (choicemap->data sub)])
-           (cm/-submaps cm-node)))
+    (-> (update-keys (:m cm-node) name)
+        (update-vals choicemap->data))
 
     :else {}))
+
+(defn- mlx-data?
+  "Is data a serialized MLX leaf (a map tagged :type \"scalar\" or \"array\")?"
+  [data]
+  (and (map? data) (contains? data :type)
+       (or (= "scalar" (:type data)) (= "array" (:type data)))))
 
 (defn- data->choicemap
   "Recursively convert serializable data back to a ChoiceMap."
   [data]
   (cond
     ;; Leaf: MLX scalar or array
-    (and (map? data) (contains? data :type)
-         (or (= "scalar" (:type data)) (= "array" (:type data))))
+    (mlx-data? data)
     (cm/->Value (data->mlx-value data))
 
     ;; Leaf: CLJ value (pr-str'd)
@@ -100,11 +103,8 @@
 
     ;; Node: map of string -> sub
     (map? data)
-    (cm/->Node
-      (into {}
-        (map (fn [[k v]]
-               [(keyword k) (data->choicemap v)])
-             data)))
+    (cm/->Node (-> (update-keys data keyword)
+                   (update-vals data->choicemap)))
 
     :else cm/EMPTY))
 
@@ -118,7 +118,7 @@
   (cond
     (mx/array? v)   (mlx-value->data v)
     (sequential? v) (mapv serialize-value v)
-    (map? v)        (into {} (map (fn [[k val]] [(name k) (serialize-value val)]) v))
+    (map? v)        (-> (update-keys v name) (update-vals serialize-value))
     (keyword? v)    {:type "keyword" :value (name v)}
     :else           v))
 
@@ -126,15 +126,14 @@
   "Deserialize a value that may contain MLX arrays."
   [v]
   (cond
-    (and (map? v) (contains? v :type)
-         (or (= "scalar" (:type v)) (= "array" (:type v))))
+    (mlx-data? v)
     (data->mlx-value v)
 
     (and (map? v) (= "keyword" (:type v)))
     (keyword (:value v))
 
     (sequential? v) (mapv deserialize-value v)
-    (map? v)        (into {} (map (fn [[k val]] [(keyword k) (deserialize-value val)]) v))
+    (map? v)        (-> (update-keys v keyword) (update-vals deserialize-value))
     :else           v))
 
 ;; ---------------------------------------------------------------------------
@@ -152,14 +151,19 @@
                gen-fn-id (assoc :gen-fn-id gen-fn-id))]
     (js/JSON.stringify (clj->js data) nil 2)))
 
-(defn load-choices
-  "Deserialize a JSON string to a ChoiceMap."
+(defn- parse-versioned
+  "Parse a JSON string and assert it is serialization version 1."
   [json-str]
   (let [data (js->clj (js/JSON.parse json-str) :keywordize-keys true)]
     (when (not= 1 (:version data))
       (throw (ex-info "Unsupported serialization version"
                       {:expected 1 :got (:version data)})))
-    (data->choicemap (:choices data))))
+    data))
+
+(defn load-choices
+  "Deserialize a JSON string to a ChoiceMap."
+  [json-str]
+  (data->choicemap (:choices (parse-versioned json-str))))
 
 (defn reconstruct-trace
   "Reconstruct a full trace from a gen-fn, args, and serialized choices JSON.
@@ -197,14 +201,11 @@
   "Deserialize a full trace JSON string. Requires the gen-fn.
    Reconstructs the trace via generate with the saved choices and args."
   [gen-fn json-str]
-  (let [data (js->clj (js/JSON.parse json-str) :keywordize-keys true)]
-    (when (not= 1 (:version data))
-      (throw (ex-info "Unsupported serialization version"
-                      {:expected 1 :got (:version data)})))
-    (let [choices (data->choicemap (:choices data))
-          args (mapv deserialize-value (:args data))
-          {:keys [trace]} (p/generate gen-fn args choices)]
-      trace)))
+  (let [data (parse-versioned json-str)
+        choices (data->choicemap (:choices data))
+        args (mapv deserialize-value (:args data))
+        {:keys [trace]} (p/generate gen-fn args choices)]
+    trace))
 
 ;; ---------------------------------------------------------------------------
 ;; File I/O convenience

@@ -31,6 +31,8 @@
 
 (def EMPTY (->Node {}))
 
+(declare from-map)
+
 ;; ---------------------------------------------------------------------------
 ;; Smart constructor from flat key-value pairs
 ;; ---------------------------------------------------------------------------
@@ -46,7 +48,7 @@
       (map (fn [[k v]]
              [k (cond
                   (satisfies? IChoiceMap v) v
-                  (map? v) (apply choicemap (mapcat identity v))
+                  (map? v) (from-map v)
                   :else (->Value v))])
            (partition 2 kvs)))))
 
@@ -54,21 +56,26 @@
 ;; Access
 ;; ---------------------------------------------------------------------------
 
+(defn choicemap?
+  "Is x a non-nil value satisfying the IChoiceMap protocol?"
+  [x]
+  (and (some? x) (satisfies? IChoiceMap x)))
+
 (defn has-value?
   "Does this choice map node hold a leaf value?"
   [cm]
-  (and (some? cm) (satisfies? IChoiceMap cm) (-has-value? cm)))
+  (and (choicemap? cm) (-has-value? cm)))
 
 (defn get-value
   "Get the leaf value from a choice map node."
   [cm]
-  (when (and cm (satisfies? IChoiceMap cm) (-has-value? cm))
+  (when (and (choicemap? cm) (-has-value? cm))
     (-get-value cm)))
 
 (defn get-submap
   "Get the sub-choice-map at the given address."
   [cm addr]
-  (or (when (and cm (satisfies? IChoiceMap cm))
+  (or (when (choicemap? cm)
         (-get-submap cm addr))
       EMPTY))
 
@@ -102,15 +109,15 @@
 (defn set-choice
   "Set a value at the given path, returning a new choice map."
   [cm path value]
-  (if (= 1 (count path))
-    (->Node (assoc (if (instance? Node cm) (:m cm) {})
-                   (first path)
-                   (if (satisfies? IChoiceMap value) value (->Value value))))
-    (let [addr (first path)
-          child (get-submap cm addr)
-          updated (set-choice child (rest path) value)]
-      (->Node (assoc (if (instance? Node cm) (:m cm) {})
-                     addr updated)))))
+  (let [node-m (if (instance? Node cm) (:m cm) {})
+        [addr & more] path]
+    (if (seq more)
+      (let [child (get-submap cm addr)
+            updated (set-choice child more value)]
+        (->Node (assoc node-m addr updated)))
+      (->Node (assoc node-m
+                     addr
+                     (if (satisfies? IChoiceMap value) value (->Value value)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Merge: values in b override values in a
@@ -122,8 +129,8 @@
   (cond
     (nil? b) a
     (nil? a) b
-    (not (satisfies? IChoiceMap b)) b
-    (not (satisfies? IChoiceMap a)) a
+    (not (choicemap? b)) b
+    (not (choicemap? a)) a
     (has-value? b) b
     (has-value? a) a
     :else
@@ -141,14 +148,13 @@
   [cm]
   (cond
     (nil? cm) []
-    (not (satisfies? IChoiceMap cm)) []
+    (not (choicemap? cm)) []
     (has-value? cm) [[]]
-    (instance? Node cm)
+    :else
     (into []
       (mapcat (fn [[addr sub]]
                 (mapv #(into [addr] %) (addresses sub)))
-              (-submaps cm)))
-    :else []))
+              (-submaps cm)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Conversion to/from plain maps
@@ -159,7 +165,7 @@
   [cm]
   (cond
     (nil? cm) {}
-    (not (satisfies? IChoiceMap cm)) {}
+    (not (choicemap? cm)) {}
     (has-value? cm) (-get-value cm)
     :else (into {} (map (fn [[k v]] [k (to-map v)])) (-submaps cm))))
 

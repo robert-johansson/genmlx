@@ -187,6 +187,16 @@
 ;; Optimization loop (uses vectorized path by default)
 ;; ---------------------------------------------------------------------------
 
+(defn- ema-update
+  "Exponential-moving-average baseline update. Returns nil when `decay` is
+   falsy (baseline off), `value` when there is no prior baseline, otherwise
+   decay*baseline + (1-decay)*value."
+  [decay baseline value]
+  (when decay
+    (if baseline
+      (+ (* decay baseline) (* (- 1.0 decay) value))
+      value)))
+
 (defn adev-optimize
   "Optimize E[cost] via ADEV gradient estimation with Adam.
    Uses vectorized (batched) execution by default — runs model body ONCE
@@ -229,11 +239,7 @@
               _ (mx/materialize! loss grad)
               _ (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
               loss-val (mx/item loss)
-              new-baseline (when baseline-decay
-                             (if baseline
-                               (+ (* baseline-decay baseline)
-                                  (* (- 1.0 baseline-decay) loss-val))
-                               loss-val))
+              new-baseline (ema-update baseline-decay baseline loss-val)
               [new-params new-opt-st] (learn/adam-step params grad opt-st {:lr lr})]
           (when callback
             (callback {:iter i :loss loss-val :params new-params}))
@@ -261,9 +267,7 @@
                   (let [store {:params (learn/array->params p param-names)}
                         gf' (vary-meta gf assoc :genmlx.dynamic/param-store store)]
                     (vadev-surrogate gf' args cost-fn n-samples key bl)))
-        grad-fn (fn [p key bl]
-                  (let [[loss grad] ((mx/value-and-grad loss-fn) p key bl)]
-                    [loss grad]))
+        vg (mx/value-and-grad loss-fn)
         opt-state (learn/adam-init init-params)]
     (loop [i 0
            params init-params
@@ -280,14 +284,10 @@
               ;; equivalent to "no baseline" on the first iteration.
               bl (mx/scalar (or baseline 0.0))
               [loss grad] (mx/tidy-run
-                            #(grad-fn params key bl)
+                            #(vg params key bl)
                             (fn [[l g]] [l g]))
               loss-val (mx/item loss)
-              new-baseline (when baseline-decay
-                             (if baseline
-                               (+ (* baseline-decay baseline)
-                                  (* (- 1.0 baseline-decay) loss-val))
-                               loss-val))
+              new-baseline (ema-update baseline-decay baseline loss-val)
               [new-params new-opt-st] (learn/adam-step params grad opt-st {:lr lr})]
           (when callback
             (callback {:iter i :loss loss-val :params new-params}))

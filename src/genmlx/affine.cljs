@@ -57,8 +57,8 @@
                         (cons 'mx/add (map :coefficient target-results)))
                 ;; Collect all offsets
                 all-offsets (keep (fn [r]
-                                   (when (and (:offset r) (not= 0 (:offset r)))
-                                     (:offset r)))
+                                    (let [o (:offset r)]
+                                      (when (and o (not= 0 o)) o)))
                                   results)
                 offset (cond
                          (empty? all-offsets) 0
@@ -73,38 +73,40 @@
   [args target-sym env]
   (if (= 2 (count args))
     (let [a (analyze-affine (first args) target-sym env)
-          b (analyze-affine (second args) target-sym env)]
+          b (analyze-affine (second args) target-sym env)
+          {a-tgt? :has-target? a-coeff :coefficient a-off :offset} a
+          {b-tgt? :has-target? b-coeff :coefficient b-off :offset} b]
       (if (and (:affine? a) (:affine? b))
         (cond
           ;; Neither depends on target
-          (and (not (:has-target? a)) (not (:has-target? b)))
-          (affine-constant (list 'mx/subtract (:offset a) (:offset b)))
+          (and (not a-tgt?) (not b-tgt?))
+          (affine-constant (list 'mx/subtract a-off b-off))
 
           ;; Only a depends on target: a*x + a_off - b_off
-          (and (:has-target? a) (not (:has-target? b)))
-          (let [offset (if (and (= 0 (:offset a)) (= 0 (:offset b)))
+          (and a-tgt? (not b-tgt?))
+          (let [offset (if (and (= 0 a-off) (= 0 b-off))
                          0
                          (list 'mx/subtract
-                               (if (= 0 (:offset a)) 0 (:offset a))
-                               (if (= 0 (:offset b)) 0 (:offset b))))]
-            (affine-linear (:coefficient a) offset))
+                               (if (= 0 a-off) 0 a-off)
+                               (if (= 0 b-off) 0 b-off)))]
+            (affine-linear a-coeff offset))
 
           ;; Only b depends on target: -b*x + a_off - b_off
-          (and (not (:has-target? a)) (:has-target? b))
-          (let [neg-coeff (if (= 1 (:coefficient b))
+          (and (not a-tgt?) b-tgt?)
+          (let [neg-coeff (if (= 1 b-coeff)
                             -1
-                            (list 'mx/negate (:coefficient b)))
-                offset (if (= 0 (:offset b))
-                         (:offset a)
-                         (list 'mx/subtract (:offset a) (:offset b)))]
+                            (list 'mx/negate b-coeff))
+                offset (if (= 0 b-off)
+                         a-off
+                         (list 'mx/subtract a-off b-off))]
             (affine-linear neg-coeff offset))
 
           ;; Both depend on target: (a-b)*x + (a_off - b_off)
           :else
-          (let [coeff (list 'mx/subtract (:coefficient a) (:coefficient b))
-                offset (if (and (= 0 (:offset a)) (= 0 (:offset b)))
+          (let [coeff (list 'mx/subtract a-coeff b-coeff)
+                offset (if (and (= 0 a-off) (= 0 b-off))
                          0
-                         (list 'mx/subtract (:offset a) (:offset b)))]
+                         (list 'mx/subtract a-off b-off))]
             (affine-linear coeff offset)))
         (not-affine)))
     (not-affine)))
@@ -116,20 +118,22 @@
   [args target-sym env]
   (if (= 2 (count args))
     (let [a (analyze-affine (first args) target-sym env)
-          b (analyze-affine (second args) target-sym env)]
+          b (analyze-affine (second args) target-sym env)
+          {a-tgt? :has-target?} a
+          {b-tgt? :has-target?} b]
       (if (and (:affine? a) (:affine? b))
         (cond
           ;; Neither depends on target — constant * constant
-          (and (not (:has-target? a)) (not (:has-target? b)))
+          (and (not a-tgt?) (not b-tgt?))
           (affine-constant (list 'mx/multiply (:offset a) (:offset b)))
 
           ;; Both depend on target — quadratic, not affine
-          (and (:has-target? a) (:has-target? b))
+          (and a-tgt? b-tgt?)
           (not-affine)
 
           ;; One constant, one target-dependent
           :else
-          (let [[const-r target-r] (if (:has-target? a) [b a] [a b])
+          (let [[const-r target-r] (if a-tgt? [b a] [a b])
                 c (:offset const-r)
                 coeff (if (= 1 (:coefficient target-r))
                         c
@@ -148,26 +152,28 @@
   [args target-sym env]
   (if (= 2 (count args))
     (let [a (analyze-affine (first args) target-sym env)
-          b (analyze-affine (second args) target-sym env)]
+          b (analyze-affine (second args) target-sym env)
+          {a-tgt? :has-target? a-coeff :coefficient a-off :offset} a
+          {b-tgt? :has-target? b-off :offset} b]
       (if (and (:affine? a) (:affine? b))
         (cond
           ;; Dividing by target-dependent expression — nonlinear
-          (:has-target? b)
+          b-tgt?
           (not-affine)
 
           ;; Neither depends on target
-          (not (:has-target? a))
-          (affine-constant (list 'mx/divide (:offset a) (:offset b)))
+          (not a-tgt?)
+          (affine-constant (list 'mx/divide a-off b-off))
 
           ;; Numerator depends on target, denominator constant
           :else
-          (let [c (:offset b)
-                coeff (if (= 1 (:coefficient a))
+          (let [c b-off
+                coeff (if (= 1 a-coeff)
                         (list 'mx/divide 1 c)
-                        (list 'mx/divide (:coefficient a) c))
-                offset (if (= 0 (:offset a))
+                        (list 'mx/divide a-coeff c))
+                offset (if (= 0 a-off)
                          0
-                         (list 'mx/divide (:offset a) c))]
+                         (list 'mx/divide a-off c))]
             (affine-linear coeff offset)))
         (not-affine)))
     (not-affine)))
@@ -191,13 +197,13 @@
   "Analyze a function call for affine structure."
   [expr target-sym env]
   (let [op-name (name (first expr))
-        args (rest expr)]
+        args (vec (rest expr))]
     (case op-name
-      ("add" "+")       (analyze-affine-add (vec args) target-sym env)
-      ("subtract" "-")  (analyze-affine-subtract (vec args) target-sym env)
-      ("multiply" "*")  (analyze-affine-multiply (vec args) target-sym env)
-      ("divide" "/")    (analyze-affine-divide (vec args) target-sym env)
-      ("negate")        (analyze-affine-negate (vec args) target-sym env)
+      ("add" "+")       (analyze-affine-add args target-sym env)
+      ("subtract" "-")  (analyze-affine-subtract args target-sym env)
+      ("multiply" "*")  (analyze-affine-multiply args target-sym env)
+      ("divide" "/")    (analyze-affine-divide args target-sym env)
+      ("negate")        (analyze-affine-negate args target-sym env)
       ("scalar")        (analyze-affine (first args) target-sym env)
       ;; Everything else is nonlinear (conservative)
       (not-affine))))

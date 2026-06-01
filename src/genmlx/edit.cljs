@@ -14,18 +14,15 @@
 ;; EditRequest types
 ;; ---------------------------------------------------------------------------
 
-(defrecord ConstraintEdit [constraints]
-  ;; Equivalent to current update: change observed values
-  )
+;; Equivalent to current update: change observed values
+(defrecord ConstraintEdit [constraints])
 
-(defrecord SelectionEdit [selection]
-  ;; Equivalent to current regenerate: resample selected addresses
-  )
+;; Equivalent to current regenerate: resample selected addresses
+(defrecord SelectionEdit [selection])
 
-(defrecord ProposalEdit [forward-gf forward-args backward-gf backward-args]
-  ;; Forward proposal GF + backward proposal GF (for SMCP3)
-  ;; forward-gf proposes new choices, backward-gf scores the reverse move
-  )
+;; Forward proposal GF + backward proposal GF (for SMCP3):
+;; forward-gf proposes new choices, backward-gf scores the reverse move
+(defrecord ProposalEdit [forward-gf forward-args backward-gf backward-args])
 
 ;; Constructors
 (defn constraint-edit
@@ -60,48 +57,58 @@
 ;; Default implementation that delegates to existing GFI operations
 ;; ---------------------------------------------------------------------------
 
-(defn edit-dispatch
+(defn- discard-of
+  "The :discard choicemap from a GFI result, defaulting to the empty map."
+  [result]
+  (or (:discard result) cm/EMPTY))
+
+(defmulti edit-dispatch
   "Generic edit implementation that dispatches based on EditRequest type."
+  (fn [_gf _trace edit-request] (type edit-request)))
+
+(defmethod edit-dispatch ConstraintEdit
   [gf trace edit-request]
-  (cond
-    (instance? ConstraintEdit edit-request)
-    (let [result (p/update gf trace (:constraints edit-request))
-          discard (or (:discard result) cm/EMPTY)]
-      (assoc result
-             :backward-request (->ConstraintEdit discard)))
+  (let [{:keys [constraints]} edit-request
+        result (p/update gf trace constraints)
+        discard (discard-of result)]
+    (assoc result
+           :backward-request (->ConstraintEdit discard))))
 
-    (instance? SelectionEdit edit-request)
-    (let [result (p/regenerate gf trace (:selection edit-request))
-          ;; Backward request: regenerate the same selection
-          ;; (since regenerate is its own inverse in terms of the proposal)
-          ]
-      (assoc result
-             :discard cm/EMPTY
-             :backward-request (->SelectionEdit (:selection edit-request))))
+(defmethod edit-dispatch SelectionEdit
+  [gf trace edit-request]
+  (let [{:keys [selection]} edit-request
+        result (p/regenerate gf trace selection)]
+    (assoc result
+           :discard cm/EMPTY
+           ;; Backward request: regenerate the same selection
+           ;; (since regenerate is its own inverse in terms of the proposal)
+           :backward-request (->SelectionEdit selection))))
 
-    (instance? ProposalEdit edit-request)
-    (let [{:keys [forward-gf forward-args backward-gf backward-args]} edit-request
-          ;; 1. Run propose on forward GF
-          fwd-args (or forward-args [(:choices trace)])
-          fwd-result (p/propose forward-gf fwd-args)
-          fwd-choices (:choices fwd-result)
-          fwd-score (:weight fwd-result)
-          ;; 2. Apply proposed choices to model via update
-          update-result (p/update gf trace fwd-choices)
-          new-trace (:trace update-result)
-          update-weight (:weight update-result)
-          ;; 3. Score backward proposal
-          bwd-args (or backward-args [(:choices new-trace)])
-          bwd-result (p/assess backward-gf bwd-args
-                               (or (:discard update-result) cm/EMPTY))
-          bwd-score (:weight bwd-result)
-          ;; 4. Combined weight
-          weight (mx/add update-weight (mx/subtract bwd-score fwd-score))]
-      {:trace new-trace
-       :weight weight
-       :discard (or (:discard update-result) cm/EMPTY)
-       :backward-request (->ProposalEdit backward-gf backward-args
-                                          forward-gf forward-args)})
+(defmethod edit-dispatch ProposalEdit
+  [gf trace edit-request]
+  (let [{:keys [forward-gf forward-args backward-gf backward-args]} edit-request
+        ;; 1. Run propose on forward GF
+        fwd-args (or forward-args [(:choices trace)])
+        fwd-result (p/propose forward-gf fwd-args)
+        fwd-choices (:choices fwd-result)
+        fwd-score (:weight fwd-result)
+        ;; 2. Apply proposed choices to model via update
+        update-result (p/update gf trace fwd-choices)
+        new-trace (:trace update-result)
+        update-weight (:weight update-result)
+        ;; 3. Score backward proposal
+        bwd-args (or backward-args [(:choices new-trace)])
+        bwd-result (p/assess backward-gf bwd-args
+                             (discard-of update-result))
+        bwd-score (:weight bwd-result)
+        ;; 4. Combined weight
+        weight (mx/add update-weight (mx/subtract bwd-score fwd-score))]
+    {:trace new-trace
+     :weight weight
+     :discard (discard-of update-result)
+     :backward-request (->ProposalEdit backward-gf backward-args
+                                        forward-gf forward-args)}))
 
-    :else
-    (throw (ex-info "Unknown EditRequest type" {:request edit-request}))))
+(defmethod edit-dispatch :default
+  [_gf _trace edit-request]
+  (throw (ex-info "Unknown EditRequest type" {:request edit-request})))

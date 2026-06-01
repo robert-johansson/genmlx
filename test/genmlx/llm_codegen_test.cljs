@@ -69,11 +69,11 @@
 (assert-equal "#{1 2 3} complete" :complete (cg/prefix-status "#{1 2 3}"))
 (assert-equal "(let [a 1] a) complete" :complete (cg/prefix-status "(let [a 1] a)"))
 
-;; -- 1.2 valid-next-bytes --
+;; -- 1.2 next-valid-bytes --
 
-(println "\n== valid-next-bytes ==")
+(println "\n== next-valid-bytes ==")
 
-(let [valid (cg/valid-next-bytes "(fn [x")]
+(let [valid (cg/next-valid-bytes "(fn [x")]
   (assert-true "']' valid after '(fn [x'" (contains? valid "]"))
   (assert-true "' ' valid after '(fn [x'" (contains? valid " "))
   (assert-true "'a' valid after '(fn [x'" (contains? valid "a"))

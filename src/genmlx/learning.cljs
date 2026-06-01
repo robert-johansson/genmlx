@@ -169,10 +169,7 @@
   (let [model (dyn/auto-key model)]
     (fn [params-array key]
     (let [loss-fn (fn [p]
-                    (let [store {:params (into {}
-                                          (map-indexed
-                                            (fn [i nm] [nm (mx/index p i)])
-                                            param-names-vec))}
+                    (let [store {:params (array->params p param-names-vec)}
                           model' (vary-meta model assoc :genmlx.dynamic/param-store store)
                           {:keys [weight]} (p/generate model' args observations)]
                       ;; Negative log-joint (minimize)
@@ -186,6 +183,14 @@
 ;; Wake-Sleep Learning
 ;; ---------------------------------------------------------------------------
 
+(defn- params->guide-cm
+  "Build a guide choicemap by setting each address from params, where the
+   address's position in the addresses vector is its index into params."
+  [params addresses]
+  (reduce-kv (fn [cm i addr]
+               (cm/set-choice cm [addr] (mx/index params i)))
+             cm/EMPTY addresses))
+
 (defn wake-phase-loss
   "Wake phase: minimize KL(q||p) by optimizing guide parameters.
    Uses reparameterized samples from the guide.
@@ -198,14 +203,10 @@
   [model guide args observations guide-addresses]
   (let [model (dyn/auto-key model)]
     (fn [guide-params key]
-      (let [indexed-addrs (mapv vector (range) guide-addresses)
-            [k1 k2] (rng/split (rng/ensure-key key))
+      (let [[k1 k2] (rng/split (rng/ensure-key key))
             loss-fn (fn [params]
                       (let [;; Build guide choicemap from params
-                            guide-cm (reduce
-                                       (fn [cm [i addr]]
-                                         (cm/set-choice cm [addr] (mx/index params i)))
-                                       cm/EMPTY indexed-addrs)
+                            guide-cm (params->guide-cm params guide-addresses)
                             ;; Sample from guide
                             {:keys [trace weight]}
                             (p/generate (vary-meta guide assoc :genmlx.dynamic/key k1) args guide-cm)
@@ -232,17 +233,13 @@
   [model guide args guide-addresses]
   (let [model (dyn/auto-key model)]
     (fn [guide-params key]
-      (let [indexed-addrs (mapv vector (range) guide-addresses)
-            [k1 k2] (rng/split (rng/ensure-key key))
+      (let [[k1 k2] (rng/split (rng/ensure-key key))
             ;; Sample from model prior (simulate)
             model-trace (p/simulate (vary-meta model assoc :genmlx.dynamic/key k1) args)
           model-choices (:choices model-trace)
           ;; Score guide on model's choices
           loss-fn (fn [params]
-                    (let [guide-cm (reduce
-                                     (fn [cm [i addr]]
-                                       (cm/set-choice cm [addr] (mx/index params i)))
-                                     cm/EMPTY indexed-addrs)
+                    (let [guide-cm (params->guide-cm params guide-addresses)
                           {:keys [weight]}
                           (p/generate (vary-meta guide assoc :genmlx.dynamic/key k2) args
                                       (cm/merge-cm guide-cm model-choices))]

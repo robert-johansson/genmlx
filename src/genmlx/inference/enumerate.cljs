@@ -33,7 +33,7 @@
   [model args observations addr-supports opts]
   (let [model (dyn/auto-key model)
         addrs (vec (keys addr-supports))
-        supports (mapv #(get addr-supports %) addrs)
+        supports (mapv addr-supports addrs)
         combos (cartesian-product supports)
         n-combos (count combos)
         max-combos (or (:max-combinations opts) 10000)]
@@ -45,14 +45,20 @@
                        :max-combinations max-combos
                        :addr-supports (into {} (map (fn [[a s]] [a (count s)]) addr-supports))})))
     (mapv (fn [combo]
-            (let [combo-cm (reduce (fn [acc [addr val]]
-                                    (cm/merge-cm acc (cm/choicemap addr val)))
-                                  (cm/choicemap)
-                                  (map vector addrs combo))
+            (let [combo-cm (cm/from-flat-map (zipmap addrs combo))
                   full-cm (if observations (cm/merge-cm observations combo-cm) combo-cm)
                   {:keys [weight]} (p/generate model args full-cm)]
               {:choices combo-cm :log-weight weight}))
           combos)))
+
+(defn- realize-log-weights
+  "Materialize each entry's :log-weight and extract it as a JS number.
+   Returns a vector of doubles, one per entry."
+  [entries]
+  (mapv (fn [{:keys [log-weight]}]
+          (mx/materialize! log-weight)
+          (mx/item log-weight))
+        entries))
 
 ;; ---------------------------------------------------------------------------
 ;; Public API
@@ -73,10 +79,7 @@
   ([model args observations addr-supports opts]
   (let [entries (enumerate-all model args observations addr-supports opts)
         ;; Realize all weights and extract as JS numbers
-        lw-vals (mapv (fn [{:keys [log-weight]}]
-                        (mx/materialize! log-weight)
-                        (mx/item log-weight))
-                      entries)
+        lw-vals (realize-log-weights entries)
         w-arr (mx/array (into-array lw-vals))
         log-z-val (mx/item (mx/logsumexp w-arr))]
     (->> (map-indexed
@@ -86,7 +89,6 @@
                 :log-prob (mx/scalar lp)
                 :prob (js/Math.exp lp)}))
            entries)
-         vec
          (sort-by :prob >)))))
 
 (defn enumerate-marginals
@@ -128,9 +130,6 @@
    (enumerate-marginal-likelihood model args observations addr-supports nil))
   ([model args observations addr-supports opts]
   (let [entries (enumerate-all model args observations addr-supports opts)
-        lw-vals (mapv (fn [{:keys [log-weight]}]
-                        (mx/materialize! log-weight)
-                        (mx/item log-weight))
-                      entries)
+        lw-vals (realize-log-weights entries)
         w-arr (mx/array (into-array lw-vals))]
     (mx/logsumexp w-arr))))

@@ -106,27 +106,22 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- make-zero-means [addrs n]
-  (reduce (fn [m addr] (assoc m addr (mx/zeros [n]))) {} addrs))
+  (into {} (map (fn [addr] [addr (mx/zeros [n])])) addrs))
 
 (defn- make-zero-covs
   "Initialize N*(N+1)/2 covariance entries to zeros.
    Keys are [addr-i addr-j] ordered by position in addrs."
   [addrs n]
   (let [N (count addrs)]
-    (reduce
-      (fn [m i]
-        (reduce (fn [m j]
-                  (assoc m [(nth addrs i) (nth addrs j)] (mx/zeros [n])))
-                m (range i N)))
-      {} (range N))))
+    (into {} (for [i (range N) j (range i N)]
+               [[(nth addrs i) (nth addrs j)] (mx/zeros [n])]))))
 
 (defn- cov-key
   "Canonical covariance key for a pair of latent addresses.
-   Uses position in addrs for consistent ordering."
-  [addrs a b]
-  (let [ia (.indexOf addrs a)
-        ib (.indexOf addrs b)]
-    (if (<= ia ib) [a b] [b a])))
+   idx is an {addr -> position} index map (e.g. (zipmap addrs (range)))
+   used as a function for consistent ordering."
+  [idx a b]
+  (if (<= (idx a) (idx b)) [a b] [b a]))
 
 ;; ---------------------------------------------------------------------------
 ;; Pure ND EKF operations
@@ -137,10 +132,11 @@
 (defn- predict-one-core
   "Shared predict logic given pre-computed f(z0) and Jacobian A."
   [addrs addr means covs f-z0 A q]
-  (let [new-means (assoc means addr f-z0)
+  (let [idx (zipmap addrs (range))
+        new-means (assoc means addr f-z0)
         new-covs (reduce
                    (fn [cs other]
-                     (let [k (cov-key addrs addr other)
+                     (let [k (cov-key idx addr other)
                            p (get cs k)]
                        (assoc cs k
                               (if (= addr other)
@@ -180,12 +176,13 @@
    Uses scalar-decomposed Joseph form: P_ij -= mask * PH_i * PH_j / S."
   [addrs means covs obs pred H noise-std mask]
   (let [N (count addrs)
+        idx (zipmap addrs (range))
         innov (mx/subtract obs pred)
         ;; PH_i = sum_j P_ij * H_j
         PH (mapv (fn [i]
                    (reduce
                      (fn [acc j]
-                       (let [k (cov-key addrs (nth addrs i) (nth addrs j))]
+                       (let [k (cov-key idx (nth addrs i) (nth addrs j))]
                          (mx/add acc (mx/multiply (get covs k) (nth H j)))))
                      (mx/scalar 0.0)
                      (range N)))

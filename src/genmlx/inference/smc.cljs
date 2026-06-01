@@ -11,6 +11,32 @@
             [genmlx.combinators :as comb]))
 
 
+(defn log-ml-increment
+  "Marginal-likelihood increment for one SMC step: logsumexp(weights) - log N.
+   `w-arr` is a materialized [N]-shaped MLX weight array; `n` is the particle count."
+  [w-arr n]
+  (mx/subtract (mx/logsumexp w-arr)
+               (mx/scalar (js/Math.log n))))
+
+(defn break-particle-graph!
+  "Break the lazy graph for a per-particle generate/update result, preventing
+   N-deep accumulation. Materializes the result's weight and score, then sweeps
+   dead arrays every 50 particles. Returns the result unchanged."
+  [result i]
+  (mx/materialize! (:weight result) (:score (:trace result)))
+  (when (zero? (mod (inc i) 50)) (mx/sweep-dead-arrays!))
+  result)
+
+(defn rejuvenate-trace
+  "Apply `steps` MH rejuvenation moves to a single trace over `selection`.
+   Each step regenerates the selection and accepts via the MH ratio.
+   `step-keys` is a per-step sequence of PRNG keys (or nils)."
+  [trace selection step-keys]
+  (reduce (fn [t rk]
+            (let [{:keys [trace weight]} (p/regenerate (:gen-fn t) t selection)]
+              (if (u/accept-mh? (mx/realize weight) rk) trace t)))
+          trace step-keys))
+
 (defn- strip-analytical
   "Strip analytical handlers from a model for particle-based inference.
    The analytical path returns deterministic posterior means, eliminating
@@ -90,17 +116,12 @@
    Returns {:traces :log-weights :log-ml-increment}."
   [model args obs particles]
   (let [results    (mapv (fn [i]
-                          (let [r (p/generate model args obs)]
-                            ;; Break lazy graph per particle — prevents N-deep accumulation
-                            (mx/materialize! (:weight r) (:score (:trace r)))
-                            (when (zero? (mod (inc i) 50)) (mx/sweep-dead-arrays!))
-                            r))
+                          (break-particle-graph! (p/generate model args obs) i))
                         (range particles))
         traces     (mapv :trace results)
         log-weights (mapv :weight results)
         w-arr      (u/materialize-weights log-weights)
-        ml-inc     (mx/subtract (mx/logsumexp w-arr)
-                                (mx/scalar (js/Math.log particles)))]
+        ml-inc     (log-ml-increment w-arr particles)]
     {:traces traces :log-weights log-weights :log-ml-increment ml-inc}))
 
 (defn- smc-rejuvenate
@@ -112,20 +133,19 @@
       (mapv (fn [trace ki]
               (let [trace-keys (if ki (rng/split-n ki rejuvenation-steps)
                                       (repeat rejuvenation-steps nil))]
-                (reduce (fn [t rk]
-                          (let [gf     (:gen-fn t)
-                                result (p/regenerate gf t rejuvenation-selection)
-                                w      (mx/realize (:weight result))]
-                            (if (u/accept-mh? w rk) (:trace result) t)))
-                        trace trace-keys)))
+                (rejuvenate-trace trace rejuvenation-selection trace-keys)))
             traces keys))
     traces))
 
 (defn- smc-step
   "Subsequent timestep: resample (if ESS low), update particles, rejuvenate.
+   cfg holds the fixed per-filter config (:model :particles :ess-threshold
+   :rejuvenation-steps :rejuvenation-selection :resample-method); the remaining
+   positional args are the per-step loop state.
    Returns {:traces :log-weights :log-ml-increment}."
-  [traces log-weights model obs particles ess-threshold
-   rejuvenation-steps rejuvenation-selection resample-method key]
+  [{:keys [model particles ess-threshold rejuvenation-steps
+           rejuvenation-selection resample-method]}
+   traces log-weights obs key]
   (let [;; Check ESS and resample if needed
         ess        (u/compute-ess log-weights)
         resample?  (< ess (* ess-threshold particles))
@@ -138,14 +158,9 @@
                                 (vec (repeat particles (mx/scalar 0.0)))])
                              [traces log-weights])
         ;; Update each particle with new observations
-        results       (into [] (map-indexed
-                        (fn [i trace]
-                          (let [r (p/update (:gen-fn trace) trace obs)]
-                            ;; Break lazy graph per particle — prevents N-deep accumulation
-                            (mx/materialize! (:weight r) (:score (:trace r)))
-                            (when (zero? (mod (inc i) 50)) (mx/sweep-dead-arrays!))
-                            r))
-                        traces'))
+        results       (mapv (fn [i trace]
+                               (break-particle-graph! (p/update (:gen-fn trace) trace obs) i))
+                             (range) traces')
         new-traces    (mapv :trace results)
         update-weights (mapv :weight results)
         new-weights   (mapv mx/add weights' update-weights)
@@ -154,8 +169,7 @@
                                        rejuvenation-selection rejuv-key)
         ;; log ml increment
         w-arr         (u/materialize-weights new-weights)
-        ml-inc        (mx/subtract (mx/logsumexp w-arr)
-                                    (mx/scalar (js/Math.log particles)))]
+        ml-inc        (log-ml-increment w-arr particles)]
     {:traces final-traces :log-weights new-weights :log-ml-increment ml-inc
      :ess ess :resampled? resample?}))
 
@@ -209,9 +223,12 @@
               (recur (inc t) traces log-weights
                      (mx/add log-ml log-ml-increment) next-key))
             (let [{:keys [traces log-weights log-ml-increment ess resampled?]}
-                  (smc-step traces log-weights model obs-t particles ess-threshold
-                            rejuvenation-steps rejuvenation-selection
-                            resample-method step-key)]
+                  (smc-step {:model model :particles particles
+                             :ess-threshold ess-threshold
+                             :rejuvenation-steps rejuvenation-steps
+                             :rejuvenation-selection rejuvenation-selection
+                             :resample-method resample-method}
+                            traces log-weights obs-t step-key)]
               (when callback
                 (callback {:step t :ess ess :resampled? resampled?}))
               (recur (inc t) traces log-weights
@@ -263,21 +280,17 @@
               _ (when (and (pos? t) (zero? (mod t 5))) (mx/clear-cache!))]
           (if (zero? t)
             ;; Init step: reference trace at index 0, rest from prior
-            (let [other-results (mapv (fn [_]
-                                        (let [r (p/generate particle-model args obs-t)]
-                                          ;; Break lazy graph per particle
-                                          (mx/materialize! (:weight r) (:score (:trace r)))
-                                          r))
+            (let [other-results (mapv (fn [i]
+                                        (break-particle-graph!
+                                         (p/generate particle-model args obs-t) i))
                                       (range (dec particles)))
                   ;; Use reference trace at index 0 (the core of cSMC)
-                  ref-result (let [r (p/generate model args (:choices reference-trace))]
-                               (mx/materialize! (:weight r) (:score (:trace r)))
-                               r)
+                  ref-result (break-particle-graph!
+                              (p/generate model args (:choices reference-trace)) 0)
                   traces (into [(:trace ref-result)] (mapv :trace other-results))
                   log-weights (into [(:weight ref-result)] (mapv :weight other-results))
                   w-arr (u/materialize-weights log-weights)
-                  ml-inc (mx/subtract (mx/logsumexp w-arr)
-                                       (mx/scalar (js/Math.log particles)))]
+                  ml-inc (log-ml-increment w-arr particles)]
               (when callback
                 (callback {:step t :ess (u/compute-ess log-weights)}))
               (recur (inc t) traces log-weights
@@ -296,12 +309,10 @@
                                           (vec (repeat particles (mx/scalar 0.0)))])
                                        [traces log-weights])
                   ;; Update all particles
-                  results (mapv (fn [trace]
-                                  (let [r (p/update (:gen-fn trace) trace obs-t)]
-                                    ;; Break lazy graph per particle
-                                    (mx/materialize! (:weight r) (:score (:trace r)))
-                                    r))
-                                traces')
+                  results (mapv (fn [i trace]
+                                  (break-particle-graph!
+                                   (p/update (:gen-fn trace) trace obs-t) i))
+                                (range particles) traces')
                   new-traces (mapv :trace results)
                   update-weights (mapv :weight results)
                   new-weights (mapv mx/add weights' update-weights)
@@ -313,19 +324,14 @@
                                    (mapv (fn [i trace ki]
                                            (if (= i ref-idx)
                                              trace  ;; Don't rejuvenate reference
-                                             (reduce (fn [t rk]
-                                                       (let [gf (:gen-fn t)
-                                                             result (p/regenerate gf t rejuvenation-selection)
-                                                             w (mx/realize (:weight result))]
-                                                         (if (u/accept-mh? w rk) (:trace result) t)))
-                                                     trace
-                                                     (if ki (rng/split-n ki rejuvenation-steps)
-                                                            (repeat rejuvenation-steps nil)))))
+                                             (rejuvenate-trace
+                                              trace rejuvenation-selection
+                                              (if ki (rng/split-n ki rejuvenation-steps)
+                                                     (repeat rejuvenation-steps nil)))))
                                          (range particles) new-traces keys))
                                  new-traces)
                   w-arr (u/materialize-weights new-weights)
-                  ml-inc (mx/subtract (mx/logsumexp w-arr)
-                                       (mx/scalar (js/Math.log particles)))]
+                  ml-inc (log-ml-increment w-arr particles)]
               (when callback
                 (callback {:step t :ess ess :resampled? resample?}))
               (recur (inc t) final-traces new-weights
@@ -373,8 +379,7 @@
                         step-weights (mapv :weight results)
                         new-traces (mapv :trace results)
                         w-arr (u/materialize-weights step-weights)
-                        ml-inc (mx/subtract (mx/logsumexp w-arr)
-                                            (mx/scalar (js/Math.log particles)))
+                        ml-inc (log-ml-increment w-arr particles)
                         ;; Materialize before resampling uses ml-inc as JS number
                         _ (mx/materialize! ml-inc)
                         indices (u/systematic-resample step-weights particles resample-key)
@@ -443,8 +448,7 @@
               ;; 2. Log-ML increment
               ;; Break lazy graph — weights needed for resampling below
               _ (mx/materialize! step-weights)
-              ml-inc (mx/subtract (mx/logsumexp step-weights)
-                                  (mx/scalar (js/Math.log particles)))
+              ml-inc (log-ml-increment step-weights particles)
               ;; Materialize ml-inc before accumulation in next iteration
               _ (mx/materialize! ml-inc)
               ;; 3. Resample (handles array, map, or nil state)

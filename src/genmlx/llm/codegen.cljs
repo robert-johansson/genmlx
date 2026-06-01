@@ -11,7 +11,7 @@
    invalid ones to -inf. The LLM can only produce syntactically valid code.
 
    Layers:
-     7.1  Reader constraint (prefix-status, valid-next-bytes, reader-constraint)
+     7.1  Reader constraint (prefix-status, next-valid-bytes, reader-constraint)
      7.2  Post-hoc validation (valid-cljs?, fn-form?, transition-fn-form?)
      7.3  Chat template (format-chat, code-system-prompt)
      7.4  Code extraction (extract-code)
@@ -56,18 +56,16 @@
            :incomplete
            :invalid))))
 
+(defn parse-form
+  "Parse a string into a ClojureScript form via edamame, returning nil if it
+   does not parse. Used to recover a form from generated code best-effort."
+  [s]
+  (try (eda/parse-string s eda-opts) (catch :default _ nil)))
+
 (def ^:private candidate-bytes
   "Printable ASCII + whitespace bytes as single-char strings."
   (into (mapv #(js/String.fromCharCode %) (range 32 127))
         ["\n" "\t"]))
-
-(defn valid-next-bytes
-  "Return the set of bytes that maintain a valid prefix."
-  [prefix]
-  (into #{}
-        (filter (fn [b]
-                  (#{:incomplete :complete} (prefix-status (str prefix b)))))
-        candidate-bytes))
 
 (defn reader-constraint
   "Return a map of {char -> :incomplete|:complete} for valid next bytes.
@@ -78,6 +76,11 @@
                 (let [s (prefix-status (str prefix b))]
                   (when (not= :invalid s) [b s]))))
         candidate-bytes))
+
+(defn next-valid-bytes
+  "Return the set of bytes that maintain a valid prefix."
+  [prefix]
+  (set (keys (reader-constraint prefix))))
 
 (defn suppress-complete
   "Before min-bytes, treat :complete as :incomplete to prevent
@@ -144,8 +147,9 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
 
     ;; Fenced code block
     (re-find #"```(?:clojure|cljs|clojurescript|clj)?\s*\n" text)
-    (let [m (re-find #"```(?:clojure|cljs|clojurescript|clj)?\s*\n([\s\S]*?)```" text)]
-      (if m (str/trim (nth m 1)) ""))
+    (if-let [m (re-find #"```(?:clojure|cljs|clojurescript|clj)?\s*\n([\s\S]*?)```" text)]
+      (str/trim (nth m 1))
+      "")
 
     ;; Starts with paren -- raw code
     (str/starts-with? (str/trim text) "(")
@@ -153,8 +157,9 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
 
     ;; Strip prefix to first paren
     :else
-    (let [idx (str/index-of text "(")]
-      (if idx (subs text idx) ""))))
+    (if-let [idx (str/index-of text "(")]
+      (subs text idx)
+      "")))
 
 ;; ============================================================
 ;; 7.5 Reader-constrained byte GF
@@ -200,8 +205,7 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
                                        (suppress-complete constraint)
                                        constraint)
                            valid-lps (into {}
-                                           (filter (fn [[ch _]]
-                                                     (contains? effective ch)))
+                                           (filter (fn [[ch _]] (effective ch)))
                                            raw-lps)]
                        (if (empty? valid-lps)
                          bytes-acc
@@ -268,8 +272,7 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
                                            :system-prompt system-prompt})
                   code (extract-code text)
                   valid (valid-cljs? code)
-                  form (when valid
-                         (try (eda/parse-string code eda-opts) (catch :default _ nil)))]
+                  form (when valid (parse-form code))]
            {:code code
             :valid? valid
             :form form
@@ -285,8 +288,7 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
                   text (apply str (:retval trace))
                   code (extract-code text)
                   valid (valid-cljs? code)
-                  form (when valid
-                         (try (eda/parse-string code eda-opts) (catch :default _ nil)))]
+                  form (when valid (parse-form code))]
            {:code code
             :valid? valid
             :form form
@@ -462,7 +464,7 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
   [form sym]
   (cond
     (= form sym) 1
-    (sequential? form) (reduce + 0 (map #(count-occurrences % sym) form))
+    (sequential? form) (transduce (map #(count-occurrences % sym)) + 0 form)
     :else 0))
 
 (defn- returns-map-literals?
@@ -477,6 +479,10 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
     (sequential? form) (some returns-map-literals? form)
     :else false))
 
+(def ^:private occurrence-weights
+  "Per-occurrence penalty weights for commonly misused patterns."
+  {'assoc -2 'assoc-in -3 'update-in -3 'cond-> -4})
+
 (defn score-structure
   "Score the structural quality of a ClojureScript form.
    Higher = more idiomatic for transition functions.
@@ -489,10 +495,8 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
      (if (form-contains? form 'dec) 3 0)
      (if (form-contains? form 'inc) 3 0)
      (if (form-contains? form :keys) 2 0)
-     (* -2 (count-occurrences form 'assoc))
-     (* -3 (count-occurrences form 'assoc-in))
-     (* -3 (count-occurrences form 'update-in))
-     (* -4 (count-occurrences form 'cond->))))
+     (reduce-kv (fn [acc sym w] (+ acc (* w (count-occurrences form sym))))
+                0 occurrence-weights)))
 
 ;; ============================================================
 ;; 7.12 Scored generation
@@ -516,8 +520,7 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
                       :system-prompt system-prompt})
               code (extract-code text)
               valid (valid-cljs? code)
-              form (when valid
-                     (try (eda/parse-string code eda-opts) (catch :default _ nil)))
+              form (when valid (parse-form code))
               ;; Score via GFI: encode generated tokens, constrain all
               gen-ids (llm/encode tokenizer text false)
               gen-vec (vec gen-ids)

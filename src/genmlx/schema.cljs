@@ -41,29 +41,45 @@
     (vector? form) (into #{} (mapcat find-symbols) form)
     :else #{}))
 
+(defn- deps-of-syms
+  "Resolve a set of symbols to the union of trace addresses they depend on,
+   given the current binding environment (env maps symbols to #{trace-addrs})."
+  [env syms]
+  (reduce (fn [deps sym]
+            (if-let [trace-addrs (get env sym)]
+              (into deps trace-addrs)
+              deps))
+          #{}
+          syms))
+
 (defn- compute-deps
   "Compute the set of trace addresses that a form depends on,
    given the current binding environment.
    env maps symbols to #{trace-addrs} they depend on."
   [env form]
-  (let [syms (find-symbols form)]
-    (reduce (fn [deps sym]
-              (if-let [trace-addrs (get env sym)]
-                (into deps trace-addrs)
-                deps))
-            #{}
-            syms)))
+  (deps-of-syms env (find-symbols form)))
+
+(defn- head-sym
+  "The head symbol of a non-empty list form, or nil."
+  [form]
+  (when (and (seq? form) (seq form) (symbol? (first form)))
+    (first form)))
+
+(defn- call-named?
+  "True when form is a call whose head symbol's name is n
+   (e.g. (call-named? form \"trace\"))."
+  [form n]
+  (when-let [h (head-sym form)]
+    (= n (name h))))
 
 (defn- contains-gen-call?
   "Does this form recursively contain any trace, splice, or param calls?"
   [form]
   (cond
     (and (seq? form) (seq form))
-    (let [head (first form)]
-      (or (and (symbol? head)
-               (let [n (name head)]
-                 (or (= n "trace") (= n "splice") (= n "param"))))
-          (some contains-gen-call? form)))
+    (or (when-let [h (head-sym form)]
+          (contains? #{"trace" "splice" "param"} (name h)))
+        (some contains-gen-call? form))
 
     (and (vector? form) (seq form))
     (some contains-gen-call? form)
@@ -120,10 +136,11 @@
         (cond-> (not static?) (assoc :dynamic-addresses? true)))))
 
 (defn- handle-param [acc env args]
-  (let [acc' (when (second args)
-               (walk-form acc env (second args)))]
-    (update (or acc' acc) :param-sites conj {:name (first args)
-                                             :default-form (second args)})))
+  (let [acc' (if-let [default (second args)]
+               (walk-form acc env default)
+               acc)]
+    (update acc' :param-sites conj {:name (first args)
+                                    :default-form (second args)})))
 
 (defn- handle-let [acc env args]
   (if (empty? args)
@@ -140,10 +157,7 @@
                               ;; Simple symbol binding — track deps in env
                              (let [val-deps (compute-deps env val-form)
                                     ;; If val-form is a trace call, include the trace addr
-                                   is-trace? (and (seq? val-form)
-                                                  (seq val-form)
-                                                  (symbol? (first val-form))
-                                                  (= "trace" (name (first val-form))))
+                                   is-trace? (call-named? val-form "trace")
                                    trace-addr (when (and is-trace?
                                                          (keyword? (second val-form)))
                                                 (second val-form))
@@ -160,28 +174,13 @@
                        (or pairs []))]
       (walk-forms acc' env' body))))
 
-(defn- handle-branch [acc env args]
-  ;; For if/when/when-not/if-let/when-let/if-not
-  (let [has-trace? (some contains-gen-call? args)]
-    (cond-> (walk-forms acc env args)
-      has-trace? (assoc :has-branches? true))))
-
-(defn- handle-cond [acc env args]
-  (let [has-trace? (some contains-gen-call? args)]
-    (cond-> (walk-forms acc env args)
-      has-trace? (assoc :has-branches? true))))
-
-(defn- handle-case [acc env args]
-  ;; case: (case expr val1 result1 val2 result2 ... default?)
-  (let [has-trace? (some contains-gen-call? (rest args))]
-    (cond-> (walk-forms acc env args)
-      has-trace? (assoc :has-branches? true))))
-
-(defn- handle-and-or [acc env args]
-  ;; and/or with traces → branches (short-circuit = conditional execution)
-  (let [has-trace? (some contains-gen-call? args)]
-    (cond-> (walk-forms acc env args)
-      has-trace? (assoc :has-branches? true))))
+(defn- handle-branching
+  ;; if/when/cond/and/or/case — walk every arg, but a trace anywhere in `scan`
+  ;; means execution is conditional, so flag :has-branches?. `scan` is the full
+  ;; arg list for everything except case, where the dispatch expr is skipped.
+  [acc env args scan]
+  (cond-> (walk-forms acc env args)
+    (some contains-gen-call? scan) (assoc :has-branches? true)))
 
 ;; =========================================================================
 ;; Loop analysis helpers (VIS-M3)
@@ -330,14 +329,11 @@
 (defn- contains-branch-with-trace?
   "Check if forms contain a branch (if/when/cond) that has trace calls."
   [forms]
-  (let [trace-call? (fn [f]
-                      (and (seq? f) (seq f)
-                           (symbol? (first f))
-                           (= "trace" (name (first f)))))]
+  (let [trace-call? #(call-named? % "trace")]
     (some (fn check [form]
             (cond
-              (and (seq? form) (seq form) (symbol? (first form)))
-              (let [n (name (first form))]
+              (head-sym form)
+              (let [n (name (head-sym form))]
                 (if (#{"if" "when" "when-not" "cond" "case" "if-let" "when-let" "if-not"} n)
                   (seq (find-all-calls (rest form) trace-call?))
                   (some check (rest form))))
@@ -351,18 +347,9 @@
    loop-syms: set of symbols bound by the loop (element + index).
    env: outer binding environment."
   [body loop-syms env]
-  (let [trace-call? (fn [f]
-                      (and (seq? f) (seq f)
-                           (symbol? (first f))
-                           (= "trace" (name (first f)))))
-        splice-call? (fn [f]
-                       (and (seq? f) (seq f)
-                            (symbol? (first f))
-                            (= "splice" (name (first f)))))
-        param-call? (fn [f]
-                      (and (seq? f) (seq f)
-                           (symbol? (first f))
-                           (= "param" (name (first f)))))
+  (let [trace-call? #(call-named? % "trace")
+        splice-call? #(call-named? % "splice")
+        param-call? #(call-named? % "param")
         traces (find-all-calls body trace-call?)
         splices (find-all-calls body splice-call?)
         params (find-all-calls body param-call?)]
@@ -376,12 +363,7 @@
                    all-syms (find-symbols dist-form)
                    element-deps (set/intersection all-syms loop-syms)
                    outer-dep-syms (set/difference all-syms loop-syms)
-                   outer-deps (reduce (fn [deps sym]
-                                        (if-let [addrs (get env sym)]
-                                          (into deps addrs)
-                                          deps))
-                                      #{}
-                                      outer-dep-syms)]
+                   outer-deps (deps-of-syms env outer-dep-syms)]
                {:addr :dynamic
                 :addr-form addr-form
                 :addr-pattern (detect-addr-pattern addr-form)
@@ -442,15 +424,17 @@
             ;; (handle-call passes the form type via the acc's :current-loop-type)
             loop-type (or (:current-loop-type acc) :doseq)
             ;; Analyze bindings based on type
-            bind-info (case loop-type
-                        :doseq (analyze-doseq-bindings bindings-form)
-                        :dotimes (analyze-dotimes-bindings bindings-form)
-                        :for (analyze-for-bindings bindings-form)
-                        nil)
+            {:keys [element-sym index-sym collection-form]
+             count-form* :count-form}
+            (case loop-type
+              :doseq (analyze-doseq-bindings bindings-form)
+              :dotimes (analyze-dotimes-bindings bindings-form)
+              :for (analyze-for-bindings bindings-form)
+              nil)
             ;; Collect loop binding symbols for dep classification
             loop-syms (into #{}
                             (filter symbol?)
-                            [(:element-sym bind-info) (:index-sym bind-info)])
+                            [element-sym index-sym])
             ;; Extract loop-specific trace/splice/param sites
             loop-body-info (extract-loop-trace-sites body loop-syms env)
             loop-traces (:trace-sites loop-body-info)
@@ -461,18 +445,18 @@
             ;; Infer count expression
             count-form (cond
                          (= loop-type :dotimes)
-                         (:count-form bind-info)
+                         count-form*
                          ;; For doseq/for, count is (count collection)
-                         (:collection-form bind-info)
-                         (list 'count (:collection-form bind-info))
+                         collection-form
+                         (list 'count collection-form)
                          :else nil)
             ;; Build loop-site entry
             loop-site (merge
                        {:type loop-type
                         :bindings-form bindings-form
-                        :element-sym (:element-sym bind-info)
-                        :index-sym (:index-sym bind-info)
-                        :collection-form (:collection-form bind-info)
+                        :element-sym element-sym
+                        :index-sym index-sym
+                        :collection-form collection-form
                         :count-form count-form
                         :trace-sites loop-traces
                         :splice-sites loop-splices
@@ -557,16 +541,16 @@
       "splice" (handle-splice acc env args)
       "param" (handle-param acc env args)
       "let" (handle-let acc env args)
-      "if" (handle-branch acc env args)
-      "when" (handle-branch acc env args)
-      "when-not" (handle-branch acc env args)
-      "when-let" (handle-branch acc env args)
-      "if-let" (handle-branch acc env args)
-      "if-not" (handle-branch acc env args)
-      "cond" (handle-cond acc env args)
-      "case" (handle-case acc env args)
-      "and" (handle-and-or acc env args)
-      "or" (handle-and-or acc env args)
+      "if" (handle-branching acc env args args)
+      "when" (handle-branching acc env args args)
+      "when-not" (handle-branching acc env args args)
+      "when-let" (handle-branching acc env args args)
+      "if-let" (handle-branching acc env args args)
+      "if-not" (handle-branching acc env args args)
+      "cond" (handle-branching acc env args args)
+      "case" (handle-branching acc env args (rest args))
+      "and" (handle-branching acc env args args)
+      "or" (handle-branching acc env args args)
       "do" (walk-forms acc env args)
       "doseq" (handle-loop-form (assoc acc :current-loop-type :doseq) env args)
       "dotimes" (handle-loop-form (assoc acc :current-loop-type :dotimes) env args)

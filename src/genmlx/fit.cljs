@@ -53,10 +53,10 @@
       (into {}
             (map-indexed
              (fn [i addr]
-               (let [vals (mapv (fn [s] (nth s i)) samples)
+               (let [vals (mapv #(nth % i) samples)
                      mean (/ (reduce + vals) n)
                      variance (if (> n 1)
-                                (/ (reduce + (map #(* (- % mean) (- % mean)) vals))
+                                (/ (transduce (map #(let [d (- % mean)] (* d d))) + vals)
                                    (dec n))
                                 0.0)
                      std (js/Math.sqrt variance)]
@@ -74,26 +74,21 @@
 ;; Method dispatcher
 ;; ---------------------------------------------------------------------------
 
+(defn- opt
+  "Coalesce an option across alias keys, falling back to default.
+   (opt opts 100 :samples :n-samples) => first truthy of those keys, else 100."
+  [opts default & ks]
+  (or (some opts ks) default))
+
 (defn- run-method
   "Execute the selected inference method. Returns a partial result map
    (without :method and :elapsed-ms — those are added by `fit`)."
   [model args data method opts]
   (case method
-    ;; --- Exact (all-conjugate or trivial) ---
-    :exact
-    (let [result (p/generate model args data)
-          trace (:trace result)
-          weight (:weight result)]
-      (mx/materialize! weight)
-      {:trace trace
-       :log-ml (mx/item weight)
-       :posterior (extract-posterior trace data)})
-
-    ;; --- Kalman (auto-handlers in p/generate) ---
-    :kalman
-    (let [result (p/generate model args data)
-          trace (:trace result)
-          weight (:weight result)]
+    ;; --- Exact (all-conjugate / trivial) and Kalman (auto-handlers): both
+    ;;     get the answer directly from p/generate's weight ---
+    (:exact :kalman)
+    (let [{:keys [trace weight]} (p/generate model args data)]
       (mx/materialize! weight)
       {:trace trace
        :log-ml (mx/item weight)
@@ -103,10 +98,10 @@
     :hmc
     (let [residual (or (:residual-addrs opts) [])
           addrs (vec residual)
-          hmc-opts {:samples (or (:samples opts) (:n-samples opts) 100)
-                    :step-size (or (:step-size opts) 0.01)
-                    :leapfrog-steps (or (:n-leapfrog opts) 10)
-                    :burn (or (:burn opts) (:n-warmup opts) 50)
+          hmc-opts {:samples (opt opts 100 :samples :n-samples)
+                    :step-size (opt opts 0.01 :step-size)
+                    :leapfrog-steps (opt opts 10 :n-leapfrog)
+                    :burn (opt opts 50 :burn :n-warmup)
                     :addresses addrs
                     :key (:key opts)}
           samples (mcmc/hmc hmc-opts model args data)]
@@ -117,8 +112,8 @@
 
     ;; --- MH (generic MCMC) ---
     :mcmc
-    (let [mh-opts {:samples (or (:samples opts) 200)
-                   :burn (or (:burn opts) 100)
+    (let [mh-opts {:samples (opt opts 200 :samples)
+                   :burn (opt opts 100 :burn)
                    :key (:key opts)}
           traces (mcmc/mh mh-opts model args data)]
       {:trace (last traces)
@@ -130,8 +125,8 @@
     :vi
     (let [residual (or (:residual-addrs opts) [])
           addrs (vec residual)
-          vi-opts (merge {:iterations (or (:iterations opts) (:n-iters opts) 500)
-                          :lr (or (:lr opts) (:learning-rate opts) 0.01)}
+          vi-opts (merge {:iterations (opt opts 500 :iterations :n-iters)
+                          :lr (opt opts 0.01 :lr :learning-rate)}
                          (select-keys opts [:key]))
           result (co/learn model args data addrs vi-opts)]
       {:trace nil
@@ -141,28 +136,18 @@
                  (- (last (:loss-history result))))
        :loss-history (:loss-history result)})
 
-    ;; --- SMC ---
-    :smc
-    ;; SMC requires temporal structure; fall back to IS for non-temporal
-    (let [is-opts {:samples (or (:particles opts) (:n-particles opts) 200)
+    ;; --- SMC (no temporal structure → fall back to IS) and handler-based
+    ;;     importance sampling (safest fallback): identical IS path ---
+    (:smc :handler-is)
+    (let [is-opts {:samples (opt opts 200 :particles :n-particles)
                    :key (:key opts)}
-          result (importance/importance-sampling is-opts model args data)
-          best-trace (first (:traces result))]
-      (mx/materialize! (:log-ml-estimate result))
+          {:keys [traces log-ml-estimate]} (importance/importance-sampling
+                                             is-opts model args data)
+          best-trace (first traces)]
+      (mx/materialize! log-ml-estimate)
       {:trace best-trace
        :posterior (when best-trace (extract-posterior best-trace data))
-       :log-ml (mx/item (:log-ml-estimate result))})
-
-    ;; --- Handler-based importance sampling (safest fallback) ---
-    :handler-is
-    (let [is-opts {:samples (or (:particles opts) (:n-particles opts) 200)
-                   :key (:key opts)}
-          result (importance/importance-sampling is-opts model args data)
-          best-trace (first (:traces result))]
-      (mx/materialize! (:log-ml-estimate result))
-      {:trace best-trace
-       :posterior (when best-trace (extract-posterior best-trace data))
-       :log-ml (mx/item (:log-ml-estimate result))})
+       :log-ml (mx/item log-ml-estimate)})
 
     ;; --- Unknown method ---
     (throw (ex-info (str "Unknown inference method: " method)
@@ -177,9 +162,9 @@
    param-names: vector of param keywords to optimize.
    inference-result: initial inference result from run-method."
   [model args data inference-result param-names method-opts user-opts]
-  (let [learn-opts {:iterations (or (:iterations user-opts) 200)
-                    :lr (or (:lr user-opts) 0.01)
-                    :log-every (or (:log-every user-opts) 50)
+  (let [learn-opts {:iterations (opt user-opts 200 :iterations)
+                    :lr (opt user-opts 0.01 :lr)
+                    :log-every (opt user-opts 50 :log-every)
                     :callback (:callback user-opts)}
         result (co/learn model args data param-names learn-opts)]
     (merge inference-result

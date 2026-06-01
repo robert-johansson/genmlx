@@ -117,15 +117,15 @@
        :opt        (fn [] :opt)
        :repeat-exact (fn [n] [:repeat n n])
        :repeat-range (fn [n & [m]] [:repeat n (or m max-unbounded-repeat)])
-       :quant      (fn [atom & [q]]
+       :quant      (fn [node & [q]]
                      (cond
-                       (nil? q)     atom
-                       (= q :star)  [:star atom]
-                       (= q :plus)  [:cat atom [:star atom]]
-                       (= q :opt)   [:alt atom [:empty]]
+                       (nil? q)     node
+                       (= q :star)  [:star node]
+                       (= q :plus)  [:cat node [:star node]]
+                       (= q :opt)   [:alt node [:empty]]
                        (vector? q)  (let [[_ lo hi] q
-                                          required (repeat lo atom)
-                                          optional (repeat (- hi lo) [:alt atom [:empty]])]
+                                          required (repeat lo node)
+                                          optional (repeat (- hi lo) [:alt node [:empty]])]
                                       (reduce (fn [a b] [:cat a b])
                                               (concat required optional)))))
        :cat        (fn [& items]
@@ -167,33 +167,31 @@
          nfa (ast->nfa nfa ast start accept)]
      (assoc nfa :start start :accept accept)))
   ([nfa ast start accept]
-   (case (first ast)
-     :lit   (add-transition nfa start (second ast) accept)
-     :class (add-transition nfa start (second ast) accept)
-     :empty (add-epsilon nfa start accept)
-     :cat   (let [[_ a b] ast
-                   [mid nfa] (fresh-state nfa)
-                   nfa (ast->nfa nfa a start mid)]
-              (ast->nfa nfa b mid accept))
-     :alt   (let [[_ a b] ast
-                   [[s1 f1 s2 f2] nfa] (fresh-states nfa 4)
-                   nfa (-> nfa
-                           (add-epsilon start s1)
-                           (add-epsilon start s2)
-                           (ast->nfa a s1 f1)
-                           (ast->nfa b s2 f2)
-                           (add-epsilon f1 accept)
-                           (add-epsilon f2 accept))]
-              nfa)
-     :star  (let [[_ a] ast
-                   [[s1 f1] nfa] (fresh-states nfa 2)
-                   nfa (-> nfa
-                           (add-epsilon start s1)
-                           (ast->nfa a s1 f1)
-                           (add-epsilon f1 s1)
-                           (add-epsilon start accept)
-                           (add-epsilon f1 accept))]
-              nfa))))
+   (let [[tag a b] ast]
+     (case tag
+       :lit   (add-transition nfa start a accept)
+       :class (add-transition nfa start a accept)
+       :empty (add-epsilon nfa start accept)
+       :cat   (let [[mid nfa] (fresh-state nfa)
+                    nfa (ast->nfa nfa a start mid)]
+                (ast->nfa nfa b mid accept))
+       :alt   (let [[[s1 f1 s2 f2] nfa] (fresh-states nfa 4)
+                    nfa (-> nfa
+                            (add-epsilon start s1)
+                            (add-epsilon start s2)
+                            (ast->nfa a s1 f1)
+                            (ast->nfa b s2 f2)
+                            (add-epsilon f1 accept)
+                            (add-epsilon f2 accept))]
+                nfa)
+       :star  (let [[[s1 f1] nfa] (fresh-states nfa 2)
+                    nfa (-> nfa
+                            (add-epsilon start s1)
+                            (ast->nfa a s1 f1)
+                            (add-epsilon f1 s1)
+                            (add-epsilon start accept)
+                            (add-epsilon f1 accept))]
+                nfa)))))
 
 ;; ============================================================
 ;; Subset construction (NFA → DFA)

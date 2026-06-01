@@ -24,6 +24,17 @@
 
 (def ^:private LOG-2PI (js/Math.log (* 2.0 js/Math.PI)))
 
+(defn- std-normal-logprob
+  "Per-dimension log-density of a reparameterized normal sample with
+   standardized noise `eps` and `log-sigs` = log standard deviations:
+   -(0.5*log(2π) + log-sigma + 0.5*eps²). Returns a [d]-shaped array;
+   callers sum over the latent dimension."
+  [log-sigs eps]
+  (mx/negative
+    (mx/add (mx/scalar (* 0.5 LOG-2PI))
+            log-sigs
+            (mx/multiply (mx/scalar 0.5) (mx/square eps)))))
+
 (def gaussian-posterior
   "Gaussian posterior family: encoder outputs [mu, log-sigma] per latent.
    Reparameterized sample: z = mu + sigma * eps."
@@ -34,11 +45,7 @@
                    sigs     (mx/exp log-sigs)
                    eps      (rng/normal key [d])]
                {:values (mx/add mus (mx/multiply sigs eps))
-                :log-prob (mx/sum
-                            (mx/negative
-                              (mx/add (mx/scalar (* 0.5 LOG-2PI))
-                                      log-sigs
-                                      (mx/multiply (mx/scalar 0.5) (mx/square eps)))))}))})
+                :log-prob (mx/sum (std-normal-logprob log-sigs eps))}))})
 
 (def log-normal-posterior
   "Log-normal posterior family: encoder outputs [mu, log-sigma] per latent.
@@ -53,11 +60,7 @@
                    log-z    (mx/add mus (mx/multiply sigs eps))
                    z        (mx/exp log-z)
                    log-prob (mx/subtract
-                              (mx/sum
-                                (mx/negative
-                                  (mx/add (mx/scalar (* 0.5 LOG-2PI))
-                                          log-sigs
-                                          (mx/multiply (mx/scalar 0.5) (mx/square eps)))))
+                              (mx/sum (std-normal-logprob log-sigs eps))
                               (mx/sum log-z))]
                {:values z
                 :log-prob log-prob}))})
@@ -194,7 +197,7 @@
                   batch-indices (subvec order pos end)
                   batch (mapv #(nth dataset %) batch-indices)
                   loss (nn/training-step! enc-ref opt vg batch)]
-              (recur (inc i) (long end) order (conj! losses loss)))))))))
+              (recur (inc i) end order (conj! losses loss)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Neural importance sampling
@@ -220,8 +223,7 @@
         results
         (mapv
           (fn [_]
-            (let [{:keys [choices weight]} (p/propose guide guide-args)
-                  guide-score weight
+            (let [{choices :choices guide-score :weight} (p/propose guide guide-args)
                   all-constraints (cm/merge-cm choices observations)
                   {:keys [trace weight]} (p/generate model model-args all-constraints)
                   log-w (mx/subtract weight guide-score)]
