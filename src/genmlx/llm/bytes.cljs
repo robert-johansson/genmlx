@@ -150,10 +150,14 @@
    After sampling index i from the categorical, the chosen byte character
    is (nth chars i)."
   [byte-lps]
-  (let [entries (vec byte-lps)
-        chars (mapv first entries)
-        logits (mx/array (mapv second entries))]
-    {:dist (dist/categorical logits)
+  (let [{:keys [chars values]}
+        (reduce-kv (fn [acc ch lp]
+                     (-> acc
+                         (update :chars conj ch)
+                         (update :values conj lp)))
+                   {:chars [] :values []}
+                   byte-lps)]
+    {:dist (dist/categorical (mx/array values))
      :chars chars}))
 
 ;; ============================================================

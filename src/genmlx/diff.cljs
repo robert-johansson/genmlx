@@ -20,8 +20,3 @@
   "Returns true if the diff indicates no change."
   [d]
   (= (:diff-type d) :no-change))
-
-(defn- changed?
-  "Returns true if the diff indicates any change."
-  [d]
-  (not (no-change? d)))

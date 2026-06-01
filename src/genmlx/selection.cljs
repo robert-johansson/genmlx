@@ -7,26 +7,25 @@
   (selected?        [s addr] "Is this address selected?")
   (get-subselection [s addr] "Get the selection for addresses under this one."))
 
-;; Select all addresses
 (def all
+  "Selection that selects every address; its subselection is itself."
   (reify ISelection
     (selected? [_ _] true)
     (get-subselection [_ _] all)))
 
-;; Select no addresses
 (def none
+  "Selection that selects no address; its subselection is itself."
   (reify ISelection
     (selected? [_ _] false)
     (get-subselection [_ _] none)))
 
-;; Select specific addresses (flat)
 (defrecord SelectAddrs [addrs]
   ISelection
   (selected? [_ addr] (contains? addrs addr))
   (get-subselection [_ _] all))
 
 (defn select
-  "Create a selection of specific addresses.
+  "Create a flat selection of specific addresses.
    (select :x :y :z)"
   [& addrs]
   (->SelectAddrs (set addrs)))

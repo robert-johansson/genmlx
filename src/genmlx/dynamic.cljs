@@ -890,26 +890,27 @@
   (reduce cm/merge-cm cm/EMPTY cms))
 
 ;; ---------------------------------------------------------------------------
-;; IEdit implementation on DynamicGF
+;; Protocol extensions on DynamicGF
+;;   IEdit             — edit requests dispatch through edit/edit-dispatch
+;;   IUpdateWithDiffs  — short-circuit when args and constraints are unchanged
+;;   IHasArgumentGrads — DynamicGF does not declare argument differentiability
 ;; ---------------------------------------------------------------------------
 
 (extend-type DynamicGF
   edit/IEdit
   (edit [gf trace edit-request]
-    (edit/edit-dispatch gf trace edit-request)))
+    (edit/edit-dispatch gf trace edit-request))
 
-;; ---------------------------------------------------------------------------
-;; IUpdateWithDiffs implementation on DynamicGF
-;; ---------------------------------------------------------------------------
-
-(extend-type DynamicGF
   p/IUpdateWithDiffs
   (update-with-diffs [gf trace constraints argdiffs]
     (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
       ;; No arg changes and no constraints: trace is unchanged
       {:trace trace :weight SCORE-ZERO :discard cm/EMPTY}
       ;; Otherwise delegate to regular update (body must be re-executed)
-      (p/update gf trace constraints))))
+      (p/update gf trace constraints)))
+
+  p/IHasArgumentGrads
+  (has-argument-grads [_] nil))
 
 (defn param
   "Read a trainable parameter outside a gen body.
@@ -918,11 +919,3 @@
    binding from the gen macro instead."
   [name default-value]
   (if (mx/array? default-value) default-value (mx/scalar default-value)))
-
-;; ---------------------------------------------------------------------------
-;; IHasArgumentGrads — DynamicGF does not declare argument differentiability
-;; ---------------------------------------------------------------------------
-
-(extend-type DynamicGF
-  p/IHasArgumentGrads
-  (has-argument-grads [_] nil))

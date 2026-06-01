@@ -1182,8 +1182,8 @@
   "Given N traces from the same GF, stack their values into [N]-shaped arrays."
   [traces]
   (let [first-choices (:choices (first traces))
-        is-leaf (cm/has-value? first-choices)]
-    {:choices (if is-leaf
+        leaf? (cm/has-value? first-choices)]
+    {:choices (if leaf?
                 (cm/->Value (mx/stack (mapv #(cm/get-value (:choices %)) traces)))
                 (let [addrs (cm/addresses first-choices)]
                   (reduce (fn [cm addr-path]
@@ -1212,11 +1212,11 @@
                           branches)
         ;; Combine branches using mx/where based on index
         first-choices (:choices (first branch-data))
-        is-leaf (cm/has-value? first-choices)
+        leaf? (cm/has-value? first-choices)
         ;; Build combined choices
         ;; Note: reduce-kv over full vector (not rest) so indices match branch indices
         combined-choices
-        (if is-leaf
+        (if leaf?
           ;; Distribution branches: combine leaf values
           (let [vals (mapv #(cm/get-value (:choices %)) branch-data)
                 combined (reduce-kv

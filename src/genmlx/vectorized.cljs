@@ -65,8 +65,8 @@
         choice-map))  ;; scalar constraints stay unchanged
 
     (instance? cm/Node choice-map)
-    (cm/->Node (into {} (map (fn [[k sub]] [k (child-fn k sub)])
-                             (cm/-submaps choice-map))))
+    (cm/->Node (reduce-kv (fn [acc k sub] (assoc acc k (child-fn k sub)))
+                          {} (:m choice-map)))
 
     :else choice-map))
 
@@ -89,7 +89,7 @@
     (mx/take-idx state indices)
 
     (map? state)
-    (into {} (map (fn [[k v]] [k (reindex-state v indices)]) state))
+    (update-vals state #(reindex-state % indices))
 
     (vector? state)
     (mapv #(reindex-state % indices) state)
@@ -155,4 +155,4 @@
         probs     (mx/exp log-probs)
         _         (mx/materialize! probs)
         probs-clj (mx/->clj probs)]
-    (/ 1.0 (reduce + (map #(* % %) probs-clj)))))
+    (/ 1.0 (transduce (map #(* % %)) + probs-clj))))

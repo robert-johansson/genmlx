@@ -419,12 +419,16 @@ Output ONLY the lines. No explanation.")
    Returns {:values [numbers] :log-weights [numbers] :query keyword}."
   [gf observations query n]
   (let [obs-cm (observations->choicemap observations)
-        particles (repeatedly n #(p/generate gf [] obs-cm))]
-    {:values (mapv (fn [{:keys [trace]}]
-                     (mx/item (cm/get-value (cm/get-submap (:choices trace) query))))
-                   particles)
-     :log-weights (mapv (fn [{:keys [weight]}] (mx/item weight)) particles)
-     :query query}))
+        {:keys [values log-weights]}
+        (reduce (fn [acc _]
+                  (let [{:keys [trace weight]} (p/generate gf [] obs-cm)]
+                    (-> acc
+                        (update :values conj
+                                (mx/item (cm/get-value (cm/get-submap (:choices trace) query))))
+                        (update :log-weights conj (mx/item weight)))))
+                {:values [] :log-weights []}
+                (range n))]
+    {:values values :log-weights log-weights :query query}))
 
 (defn- exp-normalize
   "Exponentiate log-weights after subtracting their max, for numerically

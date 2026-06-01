@@ -28,11 +28,6 @@
   [x]
   (instance? tr/Trace x))
 
-(defn mlx-array?
-  "True if x is an MLX array (has .shape property)."
-  [x]
-  (and (some? x) (some? (.-shape x))))
-
 ;; Named leaf schemas — reference these instead of repeating the [:fn ...] form.
 (def ChoiceMap
   "A GenMLX choice map (Node or Value)."

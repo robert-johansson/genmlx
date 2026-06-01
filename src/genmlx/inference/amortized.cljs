@@ -223,8 +223,7 @@
         results
         (mapv
           (fn [_]
-            (let [{:keys [choices weight]} (p/propose guide guide-args)
-                  guide-score weight
+            (let [{choices :choices guide-score :weight} (p/propose guide guide-args)
                   all-constraints (cm/merge-cm choices observations)
                   {:keys [trace weight]} (p/generate model model-args all-constraints)
                   log-w (mx/subtract weight guide-score)]

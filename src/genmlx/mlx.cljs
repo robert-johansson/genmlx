@@ -71,9 +71,9 @@
 (defn- flatten-nested
   "Recursively flatten a nested collection to a flat vector of numbers."
   [coll]
-  (if (or (vector? coll) (seq? coll) (sequential? coll) (js/Array.isArray coll))
+  (if (or (sequential? coll) (js/Array.isArray coll))
     (let [first-el (first coll)]
-      (if (or (vector? first-el) (seq? first-el) (sequential? first-el) (js/Array.isArray first-el))
+      (if (or (sequential? first-el) (js/Array.isArray first-el))
         (into [] (mapcat flatten-nested coll))
         (vec coll)))
     [coll]))
@@ -84,9 +84,9 @@
    flatten-nested's predicates so the dtype/shape arities of `array` shape
    JS-array inputs correctly (not as 0-dim scalars)."
   [coll]
-  (if (or (vector? coll) (seq? coll) (sequential? coll) (js/Array.isArray coll))
+  (if (or (sequential? coll) (js/Array.isArray coll))
     (let [first-el (first coll)]
-      (if (or (vector? first-el) (seq? first-el) (sequential? first-el) (js/Array.isArray first-el))
+      (if (or (sequential? first-el) (js/Array.isArray first-el))
         (let [[_ inner-shape] (infer-shape first-el)]
           [(flatten-nested coll) (into [(count coll)] inner-shape)])
         [(vec coll) [(count coll)]]))
@@ -588,10 +588,7 @@
                         (sum (multiply result cotangents-arr)))))
         result (.valueAndGrad M surrogate (to-array (vec primals)))
         fval (apply f (vec primals))
-        grads (let [gs #js []]
-                (dotimes [i (dec (.-length result))]
-                  (.push gs (aget result (inc i))))
-                gs)]
+        grads (into-array (map #(aget result (inc %)) (range (dec (.-length result)))))]
     [fval grads]))
 
 ;; =========================================================================

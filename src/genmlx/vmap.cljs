@@ -15,10 +15,9 @@
 ;; Helpers
 ;; ---------------------------------------------------------------------------
 
-(defn- mlx-arr?
+(def ^:private mlx-arr?
   "Check if x is an MLX array."
-  [x]
-  (mx/array? x))
+  mx/array?)
 
 (defn- axis-size-of
   "Get the leading dimension size of an arg."

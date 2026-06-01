@@ -203,8 +203,7 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
                                        (suppress-complete constraint)
                                        constraint)
                            valid-lps (into {}
-                                           (filter (fn [[ch _]]
-                                                     (contains? effective ch)))
+                                           (filter (fn [[ch _]] (effective ch)))
                                            raw-lps)]
                        (if (empty? valid-lps)
                          bytes-acc
@@ -463,7 +462,7 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
   [form sym]
   (cond
     (= form sym) 1
-    (sequential? form) (reduce + 0 (map #(count-occurrences % sym) form))
+    (sequential? form) (transduce (map #(count-occurrences % sym)) + 0 form)
     :else 0))
 
 (defn- returns-map-literals?

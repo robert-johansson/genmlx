@@ -78,10 +78,8 @@
         {:type "clj" :value (pr-str v)}))
 
     (instance? cm/Node cm-node)
-    (into {}
-      (map (fn [[k sub]]
-             [(name k) (choicemap->data sub)])
-           (cm/-submaps cm-node)))
+    (-> (update-keys (:m cm-node) name)
+        (update-vals choicemap->data))
 
     :else {}))
 
@@ -105,11 +103,8 @@
 
     ;; Node: map of string -> sub
     (map? data)
-    (cm/->Node
-      (into {}
-        (map (fn [[k v]]
-               [(keyword k) (data->choicemap v)])
-             data)))
+    (cm/->Node (-> (update-keys data keyword)
+                   (update-vals data->choicemap)))
 
     :else cm/EMPTY))
 
@@ -123,7 +118,7 @@
   (cond
     (mx/array? v)   (mlx-value->data v)
     (sequential? v) (mapv serialize-value v)
-    (map? v)        (into {} (map (fn [[k val]] [(name k) (serialize-value val)]) v))
+    (map? v)        (-> (update-keys v name) (update-vals serialize-value))
     (keyword? v)    {:type "keyword" :value (name v)}
     :else           v))
 
@@ -138,7 +133,7 @@
     (keyword (:value v))
 
     (sequential? v) (mapv deserialize-value v)
-    (map? v)        (into {} (map (fn [[k val]] [(keyword k) (deserialize-value val)]) v))
+    (map? v)        (-> (update-keys v keyword) (update-vals deserialize-value))
     :else           v))
 
 ;; ---------------------------------------------------------------------------

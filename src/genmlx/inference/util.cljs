@@ -407,7 +407,7 @@
   [trace latent-index]
   (let [choices (:choices trace)
         pairs (sort-by val latent-index)]
-    (mx/stack (mapv (fn [[addr _]]
+    (mx/stack (mapv (fn [[addr]]
                       (cm/get-value (cm/get-submap choices addr)))
                     pairs))))
 

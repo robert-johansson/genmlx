@@ -13,9 +13,6 @@
    on top of the standard vgenerate pipeline."
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.dynamic :as dyn]
-            [genmlx.vectorized :as vec]
-            [genmlx.learning :as learn]
             [genmlx.inference.differentiable :as diff]))
 
 ;; ---------------------------------------------------------------------------
@@ -26,10 +23,9 @@
   "Trigger Metal kernel compilation with dummy inputs."
   [compiled-fn d & extra-args]
   (let [dummy (mx/zeros [d])
-        r1 (apply compiled-fn dummy extra-args)]
-    (mx/materialize! (if (sequential? r1) (first r1) r1))
-    (let [r2 (apply compiled-fn dummy extra-args)]
-      (mx/materialize! (if (sequential? r2) (first r2) r2)))))
+        materialize-result (fn [r] (mx/materialize! (if (sequential? r) (first r) r)))]
+    (dotimes [_ 2]
+      (materialize-result (apply compiled-fn dummy extra-args)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Compiled log-ML (fixed key — deterministic IS)
@@ -82,12 +78,10 @@
      :n-particles  - IS particles (default 1000)"
   [{:keys [n-particles] :or {n-particles 1000}}
    model args observations param-names]
-  (let [model (dyn/auto-key model)
-        loss-fn (fn [p key]
-                  (let [store {:params (learn/array->params p param-names)}
-                        gf (vary-meta model assoc :genmlx.dynamic/param-store store)
-                        vtrace (dyn/vgenerate gf args observations n-particles key)]
-                    (mx/negative (vec/vtrace-log-ml-estimate vtrace))))
-        compiled (mx/compile-fn (mx/value-and-grad loss-fn [0]))]
+  (let [loss-grad-fn (diff/make-is-loss-grad-fn model args observations param-names n-particles)
+        compiled (mx/compile-fn
+                   (fn [p key]
+                     (let [{:keys [loss grad]} (loss-grad-fn p key)]
+                       [loss grad])))]
     (warm-up compiled (count param-names) (rng/fresh-key 0))
     compiled))

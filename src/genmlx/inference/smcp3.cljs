@@ -38,9 +38,8 @@
                   (fn [_]
                     (if proposal-gf
                       ;; Use proposal to generate initial choices
-                      (let [proposal-result (p/propose proposal-gf [])
-                            proposal-choices (:choices proposal-result)
-                            proposal-score (:weight proposal-result)
+                      (let [{proposal-choices :choices proposal-score :weight}
+                            (p/propose proposal-gf [])
                             ;; Merge proposal choices with observations
                             merged (cm/merge-cm proposal-choices observations)
                             ;; Generate model trace with merged constraints
@@ -108,13 +107,13 @@
                                       ;; This changes weight semantics: no backward/forward proposal
                                       ;; correction is applied — weight is pure update weight only.
                                       (edit/constraint-edit observations))
-                            result (edit/edit (:gen-fn trace) trace edit-req)]
-                        (mx/materialize! (:weight result))
-                        {:trace (:trace result) :weight (:weight result)})
+                            {:keys [trace weight]} (edit/edit (:gen-fn trace) trace edit-req)]
+                        (mx/materialize! weight)
+                        {:trace trace :weight weight})
                       ;; Standard update
-                      (let [result (p/update (:gen-fn trace) trace observations)]
-                        (mx/materialize! (:weight result))
-                        {:trace (:trace result) :weight (:weight result)})))
+                      (let [{:keys [trace weight]} (p/update (:gen-fn trace) trace observations)]
+                        (mx/materialize! weight)
+                        {:trace trace :weight weight})))
                   traces')
         new-traces (mapv :trace results)
         update-weights (mapv :weight results)

@@ -205,7 +205,7 @@
                     v var-names]
                 [(keyword (str (name v) i))
                  (mx/scalar (get t (keyword (str (name v) "-next"))))])]
-    (apply cm/choicemap (mapcat identity pairs))))
+    (apply cm/choicemap (apply concat pairs))))
 
 (defn- log-sum-exp
   "Numerically stable log(sum(exp(xs)))."
@@ -288,10 +288,7 @@
 ;; ============================================================
 
 (defn- dot [a b]
-  (let [n (count a)]
-    (loop [i 0, acc 0.0]
-      (if (>= i n) acc
-          (recur (inc i) (+ acc (* (nth a i) (nth b i))))))))
+  (reduce + 0.0 (map * a b)))
 
 (defn- vsub [a b] (mapv - a b))
 

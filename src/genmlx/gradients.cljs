@@ -53,10 +53,8 @@
           grad-arr (grad-fn params)]
       (mx/materialize! grad-arr)
       ;; Split gradient array into per-address map
-      (into {}
-        (map (fn [[i addr]]
-               [addr (mx/index grad-arr i)])
-             indexed-addrs)))))
+      (zipmap addresses
+              (map #(mx/index grad-arr %) (range (count addresses)))))))
 
 (defn score-gradient
   "Compute gradient of the model score w.r.t. a flat parameter array.

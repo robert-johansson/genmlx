@@ -117,11 +117,8 @@
                     (conj acc [r c label])))
                 (pr/resolved [])
                 coords)]
-       (let [lookup (into {} (map (fn [[r c lbl]] [[r c] lbl]) results))]
-         {:rows rows :cols cols
-          :labels (vec (for [r (range rows)]
-                         (vec (for [c (range cols)]
-                                (get lookup [r c] "?")))))})))))
+       {:rows rows :cols cols
+        :labels (mapv vec (partition cols (map peek results)))}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Sync GFI layer

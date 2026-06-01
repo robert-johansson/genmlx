@@ -136,10 +136,11 @@
         (cond-> (not static?) (assoc :dynamic-addresses? true)))))
 
 (defn- handle-param [acc env args]
-  (let [acc' (when (second args)
-               (walk-form acc env (second args)))]
-    (update (or acc' acc) :param-sites conj {:name (first args)
-                                             :default-form (second args)})))
+  (let [acc' (if-let [default (second args)]
+               (walk-form acc env default)
+               acc)]
+    (update acc' :param-sites conj {:name (first args)
+                                    :default-form (second args)})))
 
 (defn- handle-let [acc env args]
   (if (empty? args)

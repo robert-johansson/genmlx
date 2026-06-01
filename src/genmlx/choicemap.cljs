@@ -31,6 +31,8 @@
 
 (def EMPTY (->Node {}))
 
+(declare from-map)
+
 ;; ---------------------------------------------------------------------------
 ;; Smart constructor from flat key-value pairs
 ;; ---------------------------------------------------------------------------
@@ -46,7 +48,7 @@
       (map (fn [[k v]]
              [k (cond
                   (satisfies? IChoiceMap v) v
-                  (map? v) (apply choicemap (mapcat identity v))
+                  (map? v) (from-map v)
                   :else (->Value v))])
            (partition 2 kvs)))))
 
@@ -148,12 +150,11 @@
     (nil? cm) []
     (not (choicemap? cm)) []
     (has-value? cm) [[]]
-    (instance? Node cm)
+    :else
     (into []
       (mapcat (fn [[addr sub]]
                 (mapv #(into [addr] %) (addresses sub)))
-              (-submaps cm)))
-    :else []))
+              (-submaps cm)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Conversion to/from plain maps

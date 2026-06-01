@@ -130,10 +130,10 @@
                           (if (contains? visited [dir node])
                             (recur queue' visited reached)
                             (let [visited' (conj visited [dir node])
-                                  reached' (if (not (contains? z-set node))
-                                             (conj reached node)
-                                             reached)
                                   in-z? (contains? z-set node)
+                                  reached' (if in-z?
+                                             reached
+                                             (conj reached node))
                                   ;; Determine next visits based on direction and evidence
                                   next-visits
                                   (case [dir in-z?]

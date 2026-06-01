@@ -57,6 +57,18 @@
        (mx/subtract loc)))
 
 ;; ---------------------------------------------------------------------------
+;; Log binomial-coefficient helper
+;; ---------------------------------------------------------------------------
+
+(defn- log-choose
+  "Log binomial coefficient log C(n, k) = lgamma(n+1) - lgamma(k+1) - lgamma(n-k+1).
+   n and k are MLX arrays (stays on GPU for autograd)."
+  [n k]
+  (mx/subtract (mx/lgamma (mx/add n ONE))
+               (mx/add (mx/lgamma (mx/add k ONE))
+                       (mx/lgamma (mx/add (mx/subtract n k) ONE)))))
+
+;; ---------------------------------------------------------------------------
 ;; Public API wrappers (backward compatible)
 ;; ---------------------------------------------------------------------------
 
@@ -143,12 +155,12 @@
   (reparam [key]
            (mx/add mu (mx/multiply sigma (rng/normal key [])))))
 
-(let [gaussian-raw gaussian]
+(let [raw gaussian]
   (defn gaussian
     "Gaussian (normal) distribution with mean mu and std sigma."
     [mu sigma]
     (check-positive "gaussian" "sigma" sigma)
-    (gaussian-raw mu sigma)))
+    (raw mu sigma)))
 
 (defmethod dc/dist-sample-n* :gaussian [d key n]
   (let [{:keys [mu sigma]} (:params d)
@@ -176,12 +188,12 @@
   (reparam [key]
            (mx/add lo (mx/multiply (mx/subtract hi lo) (rng/uniform key [])))))
 
-(let [uniform-raw uniform]
+(let [raw uniform]
   (defn uniform
     "Continuous uniform distribution on [lo, hi]."
     [lo hi]
     (check-less-than "uniform" "lo" lo "hi" hi)
-    (uniform-raw lo hi)))
+    (raw lo hi)))
 
 (defmethod dc/dist-sample-n* :uniform [d key n]
   (let [{:keys [lo hi]} (:params d)
@@ -265,13 +277,13 @@
                                        (mx/log (mx/subtract ONE v))))
                   (mx/subtract log-beta-val)))))
 
-(let [beta-dist-raw beta-dist]
+(let [raw beta-dist]
   (defn beta-dist
     "Beta distribution with parameters alpha and beta."
     [alpha beta-param]
     (check-positive "beta-dist" "alpha" alpha)
     (check-positive "beta-dist" "beta" beta-param)
-    (beta-dist-raw alpha beta-param)))
+    (raw alpha beta-param)))
 
 ;; ---------------------------------------------------------------------------
 ;; Gamma
@@ -312,13 +324,13 @@
                   (mx/subtract (mx/multiply rate v))
                   (mx/subtract (mx/lgamma k))))))
 
-(let [gamma-dist-raw gamma-dist]
+(let [raw gamma-dist]
   (defn gamma-dist
     "Gamma distribution with shape and rate parameters."
     [shape-param rate]
     (check-positive "gamma-dist" "shape" shape-param)
     (check-positive "gamma-dist" "rate" rate)
-    (gamma-dist-raw shape-param rate)))
+    (raw shape-param rate)))
 
 (defn- gamma-sample-n
   "Vectorized Marsaglia-Tsang: sample [n] gamma values with given shape and rate.
@@ -424,12 +436,12 @@
            (let [u (rng/uniform key [])]
              (mx/divide (mx/negative (mx/log (mx/subtract ONE u))) rate))))
 
-(let [exponential-raw exponential]
+(let [raw exponential]
   (defn exponential
     "Exponential distribution with the given rate."
     [rate]
     (check-positive "exponential" "rate" rate)
-    (exponential-raw rate)))
+    (raw rate)))
 
 (defmethod dc/dist-sample-n* :exponential [d key n]
   (let [{:keys [rate]} (:params d)
@@ -852,9 +864,7 @@
                   (mx/scalar k))))))
   (log-prob [v]
     ;; log C(v + r - 1, v) + r*log(p) + v*log(1-p)
-            (let [log-coeff (mx/subtract (mx/lgamma (mx/add v r))
-                                         (mx/add (mx/lgamma (mx/add v ONE))
-                                                 (mx/lgamma r)))]
+            (let [log-coeff (log-choose (mx/subtract (mx/add v r) ONE) v)]
               (-> log-coeff
                   (mx/add (mx/multiply r (mx/log p)))
                   (mx/add (mx/multiply v (mx/log (mx/subtract ONE p))))))))
@@ -885,10 +895,7 @@
             (mx/scalar successes)))
   (log-prob [v]
     ;; log C(n, k) + k*log(p) + (n-k)*log(1-p)
-            (let [log-coeff (mx/subtract (mx/lgamma (mx/add n-trials ONE))
-                                         (mx/add (mx/lgamma (mx/add v ONE))
-                                                 (mx/lgamma (mx/add (mx/subtract n-trials v)
-                                                                    ONE))))]
+            (let [log-coeff (log-choose n-trials v)]
               (-> log-coeff
                   (mx/add (mx/multiply v (mx/log p)))
                   (mx/add (mx/multiply (mx/subtract n-trials v)
@@ -1367,12 +1374,12 @@
               (mx/subtract (mx/multiply kappa (mx/cos (mx/subtract v mu)))
                            log-norm))))
 
-(let [von-mises-raw von-mises]
+(let [raw von-mises]
   (defn von-mises
     "Von Mises distribution on [-π, π) with mean direction mu and concentration kappa."
     [mu kappa]
     (check-positive "von-mises" "kappa" kappa)
-    (von-mises-raw mu kappa)))
+    (raw mu kappa)))
 
 (defmethod dc/dist-sample-n* :von-mises [d key n]
   (let [{:keys [mu kappa]} (:params d)
@@ -1447,12 +1454,12 @@
                                                          (mx/cos (mx/subtract v mu))))
                                rho-sq))))))
 
-(let [wrapped-cauchy-raw wrapped-cauchy]
+(let [raw wrapped-cauchy]
   (defn wrapped-cauchy
     "Wrapped Cauchy distribution on [-π, π) with mean mu and concentration rho (0 < ρ < 1)."
     [mu rho]
     (check-open-probability "wrapped-cauchy" "rho" rho)
-    (wrapped-cauchy-raw mu rho)))
+    (raw mu rho)))
 
 (defmethod dc/dist-sample-n* :wrapped-cauchy [d key n]
   (let [key (rng/ensure-key key)
@@ -1485,12 +1492,12 @@
       ;; logsumexp over the 7 terms
               (reduce mx/logaddexp terms))))
 
-(let [wrapped-normal-raw wrapped-normal]
+(let [raw wrapped-normal]
   (defn wrapped-normal
     "Wrapped normal distribution on [-π, π) with mean mu and std sigma."
     [mu sigma]
     (check-positive "wrapped-normal" "sigma" sigma)
-    (wrapped-normal-raw mu sigma)))
+    (raw mu sigma)))
 
 (defmethod dc/dist-sample-n* :wrapped-normal [d key n]
   (let [{:keys [mu sigma]} (:params d)

@@ -33,10 +33,8 @@
    `step-keys` is a per-step sequence of PRNG keys (or nils)."
   [trace selection step-keys]
   (reduce (fn [t rk]
-            (let [gf     (:gen-fn t)
-                  result (p/regenerate gf t selection)
-                  w      (mx/realize (:weight result))]
-              (if (u/accept-mh? w rk) (:trace result) t)))
+            (let [{:keys [trace weight]} (p/regenerate (:gen-fn t) t selection)]
+              (if (u/accept-mh? (mx/realize weight) rk) trace t)))
           trace step-keys))
 
 (defn- strip-analytical

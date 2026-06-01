@@ -14,18 +14,15 @@
 ;; EditRequest types
 ;; ---------------------------------------------------------------------------
 
-(defrecord ConstraintEdit [constraints]
-  ;; Equivalent to current update: change observed values
-  )
+;; Equivalent to current update: change observed values
+(defrecord ConstraintEdit [constraints])
 
-(defrecord SelectionEdit [selection]
-  ;; Equivalent to current regenerate: resample selected addresses
-  )
+;; Equivalent to current regenerate: resample selected addresses
+(defrecord SelectionEdit [selection])
 
-(defrecord ProposalEdit [forward-gf forward-args backward-gf backward-args]
-  ;; Forward proposal GF + backward proposal GF (for SMCP3)
-  ;; forward-gf proposes new choices, backward-gf scores the reverse move
-  )
+;; Forward proposal GF + backward proposal GF (for SMCP3):
+;; forward-gf proposes new choices, backward-gf scores the reverse move
+(defrecord ProposalEdit [forward-gf forward-args backward-gf backward-args])
 
 ;; Constructors
 (defn constraint-edit

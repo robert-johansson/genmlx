@@ -80,14 +80,12 @@
   "Pack {addr → MLX-scalar} map into [K] tensor using addr-index ordering."
   [values-map addr-index]
   (let [pairs (sort-by val addr-index)]
-    (mx/stack (mapv (fn [[addr _]] (get values-map addr)) pairs))))
+    (mx/stack (mapv (fn [[addr]] (values-map addr)) pairs))))
 
 (defn unpack-values
   "Unpack [K] tensor into {addr → MLX-scalar} map."
   [values-tensor addr-index]
-  (into {} (map (fn [[addr idx]]
-                  [addr (mx/index values-tensor idx)])
-                addr-index)))
+  (update-vals addr-index #(mx/index values-tensor %)))
 
 (defn tensor-trace->trace
   "Convert TensorTrace to standard Trace (for interop)."
@@ -105,9 +103,9 @@
    Extracts values at each address from the trace's choicemap."
   [trace addr-index]
   (let [choices (:choices trace)
-        values-map (into {} (map (fn [[addr _]]
-                                   [addr (cm/get-value (cm/get-submap choices addr))])
-                                 addr-index))
+        values-map (into {} (map (fn [addr]
+                                   [addr (cm/get-value (cm/get-submap choices addr))]))
+                         (keys addr-index))
         values-tensor (pack-values values-map addr-index)]
     (make-tensor-trace {:gen-fn (:gen-fn trace)
                         :args (:args trace)

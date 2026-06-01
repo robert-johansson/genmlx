@@ -53,10 +53,10 @@
       (into {}
             (map-indexed
              (fn [i addr]
-               (let [vals (mapv (fn [s] (nth s i)) samples)
+               (let [vals (mapv #(nth % i) samples)
                      mean (/ (reduce + vals) n)
                      variance (if (> n 1)
-                                (/ (reduce + (map #(* (- % mean) (- % mean)) vals))
+                                (/ (transduce (map #(let [d (- % mean)] (* d d))) + vals)
                                    (dec n))
                                 0.0)
                      std (js/Math.sqrt variance)]

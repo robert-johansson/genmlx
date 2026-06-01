@@ -127,7 +127,7 @@
 (defn parameters
   "Parameter arrays in deterministic sorted order."
   [layer]
-  (mapv #(get (:params layer) %) (param-keys layer)))
+  (mapv (:params layer) (param-keys layer)))
 
 ;; ---------------------------------------------------------------------------
 ;; Rebuild layer with new parameter values
@@ -196,13 +196,11 @@
                             ;; prefixed keys. Uses direct `get` on new-params
                             ;; to preserve traced array identity for autograd.
                             child-param-keys (keys (:params child))
-                            child-params (reduce
-                                           (fn [acc ck]
-                                             (let [pk (keyword (str prefix (name ck)))]
-                                               (if-let [v (get new-params pk)]
-                                                 (assoc acc ck v)
-                                                 acc)))
-                                           {} child-param-keys)]
+                            child-params (into {}
+                                               (keep (fn [ck]
+                                                       (when-let [v (get new-params (keyword (str prefix (name ck))))]
+                                                         [ck v])))
+                                               child-param-keys)]
                         (if (empty? child-params)
                           child
                           (rebuild-with-params child child-params))))
@@ -301,7 +299,7 @@
                         (let [new-params (zipmap keys-sorted (vec param-args))
                               new-layer  (rebuild-with-params layer new-params)]
                           (apply loss-fn (:forward new-layer) inputs)))
-          param-arrays (mapv #(get (:params layer) %) keys-sorted)
+          param-arrays (mapv (:params layer) keys-sorted)
           argnums     (vec (range n-params))
           vg-fn       (mx/value-and-grad flat-fn argnums)
           [loss grads] (apply vg-fn param-arrays)
@@ -316,9 +314,9 @@
 (defn- sgd-step [lr]
   (let [lr-s (mx/scalar lr)]
     (fn [params grads]
-      (into {} (map (fn [[k v]]
-                      [k (mx/subtract v (mx/multiply lr-s (get grads k)))])
-                    params)))))
+      (reduce-kv (fn [acc k v]
+                   (assoc acc k (mx/subtract v (mx/multiply lr-s (get grads k)))))
+                 {} params))))
 
 (defn- adam-step [lr {:keys [beta1 beta2 eps] :or {beta1 0.9 beta2 0.999 eps 1e-8}}]
   (let [state (atom {:m {} :v {} :t 0})]
@@ -361,7 +359,9 @@
                    wds (mx/scalar (- 1.0 (* lr wd)))
                    inner (adam-step lr opts)]
                (fn [params grads]
-                 (inner (into {} (map (fn [[k v]] [k (mx/multiply v wds)]) params))
+                 (inner (reduce-kv (fn [acc k v]
+                                     (assoc acc k (mx/multiply v wds)))
+                                   {} params)
                         grads))))))
 
 ;; ---------------------------------------------------------------------------

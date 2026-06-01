@@ -238,7 +238,7 @@
          ;; Halting check — DML restriction 1
          halts-violations (check-halts gf args n-trials base-key)
          ;; Merge all violations
-         all-violations (-> (vec source-violations)
+         all-violations (-> source-violations
                             (into trial-violations)
                             (into halts-violations))
          last-trace (:trace (peek trial-results))

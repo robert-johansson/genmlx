@@ -42,10 +42,7 @@
    The stack must have a fallback dispatcher at the bottom that always
    returns non-nil (HandlerDispatcher)."
   [stack op schema opts]
-  (loop [dispatchers stack]
-    (when (seq dispatchers)
-      (or (resolve-transition (first dispatchers) op schema opts)
-          (recur (rest dispatchers))))))
+  (some #(resolve-transition % op schema opts) stack))
 
 ;; ---------------------------------------------------------------------------
 ;; Handler substitution

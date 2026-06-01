@@ -579,7 +579,7 @@
 
    Returns {:params :loss-history :compilation-level ...}"
   [model args observations addresses method
-   {:keys [] :as opts}]
+   opts]
   (case method
     :direct
     (learn model args observations addresses opts)

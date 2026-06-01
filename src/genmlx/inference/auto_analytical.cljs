@@ -487,9 +487,7 @@
         (fn [state addr dist]
           (when-not (and regenerate? (:selection state)
                          (sel/selected? (:selection state) addr))
-            (let [params (:params dist)
-                  mean-vec (:mean-vec params)
-                  cov-matrix (:cov-matrix params)
+            (let [{{:keys [mean-vec cov-matrix]} :params} dist
                   posterior {:mean-vec mean-vec :cov-matrix cov-matrix}
                   value (if regenerate?
                           (cm/get-value (cm/get-submap (:old-choices state) addr))
@@ -514,7 +512,7 @@
                         cur-post (if regenerate?
                                    posterior
                                    (get-in state [:auto-posteriors prior-addr]))
-                        obs-cov (:cov-matrix (:params dist))
+                        {{obs-cov :cov-matrix} :params} dist
                         result (mvn-update-step cur-post obs-value obs-cov)]
                     ;; Fallthrough if ill-conditioned
                     (when result

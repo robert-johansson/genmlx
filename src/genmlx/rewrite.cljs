@@ -29,6 +29,15 @@
   (-apply [this graph schema constraints]
     "Apply the rule. Returns {:graph' :handlers :eliminated :description}"))
 
+(defn- prune-eliminated
+  "Remove the `eliminated` address set from the graph's nodes and drop any
+   edge originating at an eliminated node."
+  [graph eliminated]
+  (-> graph
+      (update :nodes #(reduce disj % eliminated))
+      (update :edges (fn [edges]
+                       (into #{} (remove (fn [[a _]] (contains? eliminated a))) edges)))))
+
 ;; ---------------------------------------------------------------------------
 ;; ConjugacyRule — eliminates conjugate prior via marginalization
 ;; ---------------------------------------------------------------------------
@@ -41,10 +50,7 @@
   (-apply [this graph schema constraints]
     (let [factory (get auto/family->handler-factory family)
           handlers (when factory (factory prior-addr obs-addrs))
-          graph' (-> graph
-                   (update :nodes disj prior-addr)
-                   (update :edges (fn [edges]
-                                    (into #{} (remove (fn [[a _]] (= a prior-addr))) edges))))]
+          graph' (prune-eliminated graph #{prior-addr})]
       {:graph' graph'
        :handlers (or handlers {})
        :eliminated #{prior-addr}
@@ -63,10 +69,7 @@
   (-apply [this graph schema constraints]
     (let [handlers (auto/make-auto-kalman-handlers chain)
           latents (set (:latent-addrs chain))
-          graph' (-> graph
-                   (update :nodes #(reduce disj % latents))
-                   (update :edges (fn [edges]
-                                    (into #{} (remove (fn [[a _]] (contains? latents a))) edges))))]
+          graph' (prune-eliminated graph latents)]
       {:graph' graph'
        :handlers handlers
        :eliminated latents
@@ -136,33 +139,24 @@
                                 conjugate-pairs)
         grouped (group-by :prior-addr remaining-pairs)
 
-        ;; For each grouped prior, check if it has non-conjugate children
-        conjugacy-rules
-        (vec
-          (keep
-            (fn [[prior-addr pairs]]
-              (let [family (:family (first pairs))
-                    obs-addrs (mapv :obs-addr pairs)
-                    non-conj (find-non-conjugate-children schema prior-addr obs-addrs)]
-                (when-not (seq non-conj)
-                  ;; Pure conjugate — can eliminate (shared priors become RaoBlackwell below)
-                  (->ConjugacyRule family prior-addr obs-addrs))))
-            grouped))
-
-        ;; RaoBlackwell rules for shared priors
-        rb-rules
-        (vec
-          (keep
-            (fn [[prior-addr pairs]]
-              (let [family (:family (first pairs))
-                    obs-addrs (mapv :obs-addr pairs)
-                    non-conj (find-non-conjugate-children schema prior-addr obs-addrs)]
-                (when (seq non-conj)
-                  (->RaoBlackwellRule prior-addr obs-addrs non-conj family))))
-            grouped))]
+        ;; One pass over grouped priors: compute non-conjugate children once and
+        ;; classify each prior as a pure-conjugate elimination (no non-conjugate
+        ;; children) or a Rao-Blackwell (shared prior with non-conjugate children).
+        classified
+        (mapv
+          (fn [[prior-addr pairs]]
+            (let [family (:family (first pairs))
+                  obs-addrs (mapv :obs-addr pairs)
+                  non-conj (find-non-conjugate-children schema prior-addr obs-addrs)]
+              (if (seq non-conj)
+                {:rb (->RaoBlackwellRule prior-addr obs-addrs non-conj family)}
+                {:conjugacy (->ConjugacyRule family prior-addr obs-addrs)})))
+          grouped)]
 
     ;; Priority ordering: Kalman first, then conjugacy, then RB
-    (vec (concat kalman-rules conjugacy-rules rb-rules))))
+    (vec (concat kalman-rules
+                 (keep :conjugacy classified)
+                 (keep :rb classified)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Rewrite engine

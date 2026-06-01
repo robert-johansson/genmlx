@@ -86,10 +86,6 @@
        :weight lp})
     {:trace (dist-simulate dist) :weight ZERO}))
 
-;; ---------------------------------------------------------------------------
-;; THE single record for all distributions
-;; ---------------------------------------------------------------------------
-
 (defn dist-propose [dist]
   (let [[v lp] (sample-and-score dist)]
     {:choices (cm/->Value v) :weight lp :retval v}))
@@ -100,6 +96,10 @@
           lp (dist-log-prob dist v)]
       {:retval v :weight lp})
     (throw (ex-info "assess requires fully-specified choices" {:dist (:type dist)}))))
+
+;; ---------------------------------------------------------------------------
+;; THE single record for all distributions
+;; ---------------------------------------------------------------------------
 
 (defrecord Distribution [type params]
   p/IGenerativeFunction
