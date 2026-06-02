@@ -130,6 +130,18 @@
   (update-in belief [:arms i]
              (fn [[a b]] (if (== reward 1) [(inc a) b] [a (inc b)]))))
 
+(defn- beta-sample
+  "Exact Beta(a,b) draw via the gamma ratio G_a/(G_a+G_b), with G ~ Gamma(shape,1)
+   from the STABLE Marsaglia-Tsang sampler (dist/gamma-dist). We route through
+   gamma rather than dist/beta-dist because the latter's Johnk's-algorithm sampler
+   SIGTRAPs at moderate+ concentration (bean genmlx-gcw4) — exactly where a
+   converging bandit lives. This is EXACT (not an approximation) and O(1)."
+  [a b key]
+  (let [[k1 k2] (rng/split key)
+        ga (mx/item (dist/sample (dist/gamma-dist a 1.0) k1))
+        gb (mx/item (dist/sample (dist/gamma-dist b 1.0) k2))]
+    (/ ga (+ ga gb))))
+
 (defn make-bandit-agent
   "Bandit POMDP agent. Belief = {:arms [[alpha beta] ...]} (per-arm Beta).
      :strategy :thompson (default) | :softmax ;  :alpha inverse-temp for :softmax.
@@ -150,22 +162,11 @@
               :thompson
               ;; posterior sampling: draw theta_i ~ Beta(alpha_i,beta_i) per arm and
               ;; pull the argmax. The action is the argmax of K draws (not one random
-              ;; choice), so we sample directly rather than as a GFI trace.
-              ;; NOTE: dist/beta-dist's sampler SIGTRAPs at moderate+ concentration
-              ;; (bean genmlx-gcw4) — which a converging bandit always reaches — so
-              ;; until that's fixed we draw from a GAUSSIAN MOMENT-MATCHED
-              ;; approximation N(mu,var) clamped to [0,1] (mu=a/(a+b),
-              ;; var=ab/((a+b)^2 (a+b+1))) via the stable dist/gaussian sampler.
-              ;; Standard "Gaussian Thompson": exact in the high-count limit, a touch
-              ;; wide early; the explore->exploit behaviour is preserved.
+              ;; choice), so we sample directly rather than as a GFI trace. beta-sample
+              ;; does an EXACT gamma-ratio Beta draw (stable at all concentrations),
+              ;; sidestepping dist/beta-dist's broken Johnk's sampler (bean genmlx-gcw4).
               (let [ks (rng/split-n key (count arms))
-                    ss (mapv (fn [k [a b]]
-                               (let [s   (+ a b)
-                                     mu  (/ a s)
-                                     sd  (Math/sqrt (/ (* a b) (* s s (+ s 1.0))))
-                                     x   (mx/item (dist/sample (dist/gaussian mu sd) k))]
-                                 (min (max x 0.0) 1.0)))
-                             ks arms)]
+                    ss (mapv (fn [k [a b]] (beta-sample a b k)) ks arms)]
                 (int (apply max-key #(nth ss %) (range (count ss)))))
               :softmax
               (let [eu  (mx/array (clj->js (arm-values {:arms arms})))
