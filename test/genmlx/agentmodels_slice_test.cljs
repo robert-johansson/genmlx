@@ -10,6 +10,7 @@
   (:require [agentmodels.gridworld :as gw]
             [agentmodels.agent :as agent]
             [agentmodels.presentation :as pres]
+            [agentmodels.inverse :as inv]
             [genmlx.mlx :as mx]
             [clojure.string :as str]))
 
@@ -134,6 +135,30 @@
       {:keys [states]} (agent/simulate-mdp ag (:start-idx nm) 30)]
   (assert-true "noisy rollout stays in-bounds and off walls"
                (every? (fn [s] (and (<= 0 s) (< s 30) (not ((:walls nm) s)))) states)))
+
+(println "\n== Section 6: inverse goal inference (assess-based) ==")
+;;   . . . . .
+;;   . . . . .
+;;   A . . . B     start top-centre (idx 2); A/B are mirror-symmetric about col 2
+(def inv-grid [[:empty :empty :empty :empty :empty]
+               [:empty :empty :empty :empty :empty]
+               [:A     :empty :empty :empty :B]])
+(def goal-ags (inv/goal-agents {:grid inv-grid :goals [:A :B] :alpha 2.0}))
+;; hand-specified observations from idx 2: DOWN, DOWN (on the symmetry axis, so
+;; uninformative), then RIGHT, RIGHT toward B (idx 14). down = 3, right = 1.
+(def obs [[2 3] [7 3] [12 1] [13 1]])
+(def posts (inv/posterior-sequence goal-ags {:A 0.5 :B 0.5} obs))
+(assert-equal "one posterior per prefix (prior + 4 obs)" 5 (count posts))
+(assert-true  "every posterior sums to 1"
+              (every? (fn [m] (< (Math/abs (- 1.0 (reduce + (vals m)))) 1e-6)) posts))
+(assert-true  "prior is uniform"  (< (Math/abs (- 0.5 (:B (nth posts 0)))) 1e-6))
+(assert-true  "two DOWN moves are symmetric -> still ~0.5"
+              (< (Math/abs (- 0.5 (:B (nth posts 2)))) 0.02))
+(assert-true  "after turning RIGHT toward B, P(B) jumps above 0.8"
+              (> (:B (nth posts 4)) 0.8))
+(assert-true  "evidence accumulates: P(B) after rights > after downs"
+              (> (:B (nth posts 4)) (:B (nth posts 2))))
+(println "  P(goal=B) over time:" (mapv #(.toFixed (:B %) 3) posts))
 
 (println (str "\n" @passed " passed, " @failed " failed"))
 (when (pos? @failed) (js/process.exit 1))

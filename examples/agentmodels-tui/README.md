@@ -12,10 +12,15 @@ headless test; everything here above the seam is just reagent + Ink turning that
 same data into colored cells.
 
 ```
-gridworld.cljs ─► agent.cljs ─► presentation.cljs ─►║ Frame ║─► views.cljs ─► gallery/ch3_demo
-   (env tensors)   (VI + GFI      (pure producers +  ║ SEAM  ║   (Ink views)    (this sub-app)
-                    policy)        ASCII renderers)   ╚═══════╝
+gridworld.cljs ─► agent.cljs ─► presentation.cljs ─►║ Frame  ║─► views.cljs ─► gallery / demos
+   (env tensors)   (VI + GFI      (pure producers +  ║ Bars   ║   (Ink views)    (this sub-app)
+   inverse.cljs    policy)        ASCII renderers)    ║ SEAM   ║
+   (assess-based goal inference)                      ╚════════╝
 ```
+
+Two demos: **Ch 3** (an MDP agent walking a maze) and **Ch 5** (inverse goal
+inference — infer what the agent wants from how it moves, watching the posterior
+sharpen live).
 
 ## Run it
 
@@ -42,8 +47,17 @@ reagent/nbb/@mlx-node from the repo root via `NODE_PATH`) and adds an explicit
 | Ch 3 demo | `+` / `-` | raise / lower the rationality alpha (`+` toward optimal) |
 | Ch 3 demo | `n` | cycle the transition noise (0 → 0.1 → 0.2 → 0.4) |
 | Ch 3 demo | `q` / `esc` | back to the menu |
+| Ch 5 demo | `space` | reveal the next observed action |
+| Ch 5 demo | `r` | resample a fresh walk |
+| Ch 5 demo | `t` | toggle the agent's true goal (A / B) |
+| Ch 5 demo | `q` / `esc` | back to the menu |
 
-The agent auto-walks a maze where a wall belt forces a detour. Two separable
+**Ch 5** plays the true agent's walk on the left and the observer's `P(goal)`
+bars on the right; the bars stay flat while the agent heads down the symmetry
+axis, then snap to the true goal the instant it turns. The likelihood is
+`p/assess` on each goal's policy — the forward agent model, inverted.
+
+The Ch 3 agent auto-walks a maze where a wall belt forces a detour. Two separable
 sources of randomness: **alpha** is *decision* noise (low alpha → worse actions;
 `INF` → optimal), while **n** sets *environment* noise — the agentmodels
 orthogonal slip, where the intended move slips to a perpendicular one. Raise
@@ -55,7 +69,7 @@ the high-utility goal `B`; add noise and the same policy visibly skids off cours
 The whole pipeline below the seam is verified without a terminal:
 
 ```bash
-bun run --bun nbb test/genmlx/agentmodels_slice_test.cljs   # 39/39
+bun run --bun nbb test/genmlx/agentmodels_slice_test.cljs   # 45/45
 ```
 
 Because the views are pure functions of the data that test validates, a passing

@@ -10,12 +10,15 @@
    new demo is one entry, no nav code to touch. View primitives live in views.cljs."
   (:require ["ink" :refer [render Text Box Newline]]
             [reagent.core :as r]
-            [ch3-demo :as ch3]))
+            [ch3-demo :as ch3]
+            [ch5-demo :as ch5]))
 
 ;; -- Demo registry ----------------------------------------------------------
 (def demos
   [{:id :ch3 :title "Ch 3: Gridworld MDP"
-    :view ch3/view :on-key ch3/on-key :enter ch3/enter! :leave ch3/leave!}])
+    :view ch3/view :on-key ch3/on-key :enter ch3/enter! :leave ch3/leave!}
+   {:id :ch5 :title "Ch 5: Inverse goal inference"
+    :view ch5/view :on-key ch5/on-key :enter ch5/enter! :leave ch5/leave!}])
 
 (defonce app-state (r/atom {:screen :menu :sel 0}))
 
@@ -39,6 +42,7 @@
     "q"  :quit    "Q"  :quit
     "r"  :replay  "R"  :replay
     "n"  :noise   "N"  :noise
+    "t"  :toggle  "T"  :toggle
     "+"  :plus    "="  :plus
     "-"  :minus   "_"  :minus
     :other))

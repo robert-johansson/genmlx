@@ -80,6 +80,15 @@
                (sort-by :label)
                vec)})
 
+(defn dist->bars
+  "PosteriorBars from a plain {value -> probability} map (e.g. a goal posterior)."
+  [title m]
+  {:title title
+   :bars  (->> m
+               (map (fn [[v p]] {:label (if (keyword? v) (name v) (str v)) :weight p}))
+               (sort-by :label)
+               vec)})
+
 ;; ---------------------------------------------------------------------------
 ;; text renderers (consume the data shapes above)
 ;; ---------------------------------------------------------------------------

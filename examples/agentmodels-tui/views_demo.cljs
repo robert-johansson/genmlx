@@ -24,9 +24,10 @@
   [:> Box {:flexDirection "column" :padding 1}
    [views/status-bar {:title "views_demo" :status "hand-written sample data"}]
    [:> Newline]
-   [views/grid-view sample-frame]
-   [:> Newline]
-   [views/bars-view sample-bars 20]])
+   ;; the Ch 5 side-by-side layout: grid left, posterior bars right
+   [:> Box {:flexDirection "row"}
+    [:> Box {:marginRight 4} [views/grid-view sample-frame]]
+    [:> Box {} [views/bars-view sample-bars 18]]]])
 
 (render (r/as-element [app]))
 ;; render one frame, then exit cleanly in a non-TTY shell
