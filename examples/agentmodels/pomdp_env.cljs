@@ -4,11 +4,10 @@
    themselves are produced inside make-pomdp-agent via inverse/goal-agents ->
    gridworld/build-mdp, so the env stays pure geometry/config.
 
-   Shipped here: the hidden-goal RESTAURANT GRIDWORLD (the slice). The multi-armed
-   BANDIT (conjugate Beta/Normal belief filtering) is the planned second env and
-   a follow-up — noted at the bottom — kept out of the slice to avoid coupling it
-   to the conjugate-update API before that demo is built."
-  (:require [genmlx.mlx :as mx]))
+   Shipped here: the hidden-goal RESTAURANT GRIDWORLD (latent = which goal pays)
+   and the multi-armed BANDIT (latent = per-arm payoff parameters)."
+  (:require [genmlx.mlx :as mx]
+            [genmlx.dist :as dist]))
 
 (defn restaurant-gridworld
   "Hidden-goal POMDP: a grid with candidate goals, exactly one of which is the
@@ -34,10 +33,29 @@
      ;; world identity; everywhere else there is no information (obs = nil).
      :observe    (fn [world loc] (when (= loc signpost) world))}))
 
-;; ---------------------------------------------------------------------------
-;; FOLLOW-UP (genmlx-m9m9): multi-armed bandit POMDP — latent = each arm's payoff
-;; parameter; belief = independent conjugate posteriors per arm (Beta-Bernoulli /
-;; Normal-Normal via genmlx.inference.conjugate). Pulling an arm reveals its prize
-;; and updates only that arm's posterior. A separate visual idiom (arm bars rather
-;; than a grid), so it ships after the gridworld slice rather than gating it.
-;; ---------------------------------------------------------------------------
+(defn bandit-pomdp
+  "Multi-armed bandit POMDP (agentmodels Ch 3c/3d). The hidden state is the
+   per-arm payoff parameter theta_i (FIXED for the episode); pulling arm i is the
+   action AND the only observation channel for theta_i; the reward r ~
+   Bernoulli(theta_i) IS the observation; belief factorizes into one independent
+   Beta(alpha_i, beta_i) per arm (Beta-Bernoulli conjugacy, filtered host-side in
+   agentmodels.pomdp). Returns the bundle make-bandit-agent / simulate-bandit
+   consume — pure config plus a reward sampler; no MDP tensors (no spatial latent).
+
+   Options: :thetas [p ...] true Bernoulli params (latent, fixed);
+            :prior [[a b] ...] per-arm Beta priors (default Beta(1,1) each);
+            :horizon H."
+  [{:keys [thetas prior horizon] :or {horizon 30}}]
+  (let [k     (count thetas)
+        thv   (vec thetas)
+        prior (or prior (vec (repeat k [1.0 1.0])))]
+    {:kind      :bandit
+     :arms      k
+     :thetas    thv
+     :true-best (apply max-key thv (range k))      ; index of the highest-theta arm
+     :theta*    (apply max thetas)
+     :prior     {:arms prior}
+     :horizon   horizon
+     ;; reward = observation: pulling arm i samples r ~ Bernoulli(theta_i).
+     :pull      (fn [i key]
+                  (int (mx/item (dist/sample (dist/bernoulli (nth thv i)) key))))}))

@@ -24,6 +24,8 @@
    lookahead pick the same path. Full finite-horizon belief-space planning is a
    future increment. No exact/expectation in any recursion (project ethos)."
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
+            [genmlx.dist :as dist]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
             [agentmodels.inverse :as inv]
@@ -103,3 +105,92 @@
           (recur s' b' (inc step)
                  (conj states s') (conj actions a)
                  (conj obss o) (conj beliefs b')))))))
+
+;; ---------------------------------------------------------------------------
+;; Multi-armed bandit POMDP (agentmodels Ch 3c/3d)
+;; ---------------------------------------------------------------------------
+;;
+;; A bandit is a POMDP whose latent never changes: the hidden state is the
+;; per-arm payoff parameter (fixed for the episode); pulling an arm is both the
+;; action and the only observation of that arm; the reward is the observation;
+;; belief factorizes into one independent Beta(alpha,beta) per arm.
+;;
+;; The Beta-Bernoulli update is the trivial conjugate increment kept HOST-SIDE on
+;; a plain per-arm map. This is the same identity as
+;; genmlx.inference.conjugate/bb-update, but that namespace is analytical-inference
+;; *marginalization* middleware (array in/out, co-computes a marginal LL a filter
+;; discards) — not an acting agent's online belief store. Keeping it host-side
+;; matches how the gridworld POMDP filter above stays host-side via
+;; inverse/normalize-logs rather than forcing the inference engine.
+
+(defn update-arm
+  "Conjugate Beta-Bernoulli posterior update on arm `i`: a success (reward 1)
+   bumps alpha, a failure bumps beta; every other arm is untouched (independence)."
+  [belief i reward]
+  (update-in belief [:arms i]
+             (fn [[a b]] (if (== reward 1) [(inc a) b] [a (inc b)]))))
+
+(defn make-bandit-agent
+  "Bandit POMDP agent. Belief = {:arms [[alpha beta] ...]} (per-arm Beta).
+     :strategy :thompson (default) | :softmax ;  :alpha inverse-temp for :softmax.
+   Returns {:act (fn [belief key] -> arm-int) :update-belief (fn [belief arm reward])
+            :arm-values (fn [belief] -> [mean ...]) :params}.
+
+   Thompson sampling is POSTERIOR SAMPLING: each step draws one theta_i ~
+   Beta(alpha_i,beta_i) per arm and pulls the argmax. The explore->exploit
+   behaviour is emergent — the posterior draw is wide while the belief is
+   uncertain and collapses as the Beta sharpens — NOT the optimal Bayes-adaptive
+   (information-valuing) policy."
+  [{:keys [strategy alpha] :or {strategy :thompson alpha 4.0}}]
+  (let [arm-values (fn [{:keys [arms]}] (mapv (fn [[a b]] (/ a (+ a b))) arms))]
+    {:arm-values    arm-values
+     :update-belief update-arm
+     :act (fn [{:keys [arms]} key]
+            (case strategy
+              :thompson
+              ;; posterior sampling: draw theta_i ~ Beta(alpha_i,beta_i) per arm and
+              ;; pull the argmax. The action is the argmax of K draws (not one random
+              ;; choice), so we sample directly rather than as a GFI trace.
+              ;; NOTE: dist/beta-dist's sampler SIGTRAPs at moderate+ concentration
+              ;; (bean genmlx-gcw4) — which a converging bandit always reaches — so
+              ;; until that's fixed we draw from a GAUSSIAN MOMENT-MATCHED
+              ;; approximation N(mu,var) clamped to [0,1] (mu=a/(a+b),
+              ;; var=ab/((a+b)^2 (a+b+1))) via the stable dist/gaussian sampler.
+              ;; Standard "Gaussian Thompson": exact in the high-count limit, a touch
+              ;; wide early; the explore->exploit behaviour is preserved.
+              (let [ks (rng/split-n key (count arms))
+                    ss (mapv (fn [k [a b]]
+                               (let [s   (+ a b)
+                                     mu  (/ a s)
+                                     sd  (Math/sqrt (/ (* a b) (* s s (+ s 1.0))))
+                                     x   (mx/item (dist/sample (dist/gaussian mu sd) k))]
+                                 (min (max x 0.0) 1.0)))
+                             ks arms)]
+                (int (apply max-key #(nth ss %) (range (count ss)))))
+              :softmax
+              (let [eu  (mx/array (clj->js (arm-values {:arms arms})))
+                    pol (gen [] (trace :action (h/softmax-action alpha eu)))]
+                (int (mx/item (:retval (p/simulate (dyn/with-key pol key) [])))))))
+     :params {:strategy strategy :alpha alpha}}))
+
+(defn simulate-bandit
+  "Roll the bandit agent over the horizon, threading (belief, arm, reward). Each
+   step: ACT from belief -> arm; PULL -> reward (the observation); FILTER ->
+   belief'. Returns {:arms [...] :rewards [...] :beliefs [b0 b1 ...] :cum-reward
+   [...] :regret [...]}; :beliefs index k is the belief held when choosing pull k.
+   Pass `key0` (e.g. (rng/fresh-key 42)) for a reproducible rollout."
+  [{:keys [act update-belief]} {:keys [pull prior theta* thetas horizon]} & [key0]]
+  (loop [b prior, step 0, key (or key0 (rng/fresh-key))
+         arms [], rewards [], beliefs [prior], cum 0.0, reg 0.0, cum-reward [], regret []]
+    (if (>= step horizon)
+      {:arms arms :rewards rewards :beliefs beliefs :cum-reward cum-reward :regret regret}
+      (let [[k1 krest] (rng/split key)
+            [k2 k3]    (rng/split krest)
+            i  (act b k1)
+            r  (pull i k2)
+            b' (update-belief b i r)
+            cum' (+ cum r)
+            reg' (+ reg (- theta* (nth thetas i)))]   ; instantaneous regret theta* - theta_i
+        (recur b' (inc step) k3
+               (conj arms i) (conj rewards r) (conj beliefs b')
+               cum' reg' (conj cum-reward cum') (conj regret reg'))))))

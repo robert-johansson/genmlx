@@ -12,6 +12,7 @@
             [reagent.core :as r]
             [ch3-demo :as ch3]
             [ch3c-demo :as ch3c]
+            [ch3d-demo :as ch3d]
             [ch5-demo :as ch5]))
 
 ;; -- Demo registry ----------------------------------------------------------
@@ -20,6 +21,8 @@
     :view ch3/view :on-key ch3/on-key :enter ch3/enter! :leave ch3/leave!}
    {:id :ch3c :title "Ch 3c: POMDP belief filtering"
     :view ch3c/view :on-key ch3c/on-key :enter ch3c/enter! :leave ch3c/leave!}
+   {:id :ch3d :title "Ch 3d: Bandits (posterior sampling)"
+    :view ch3d/view :on-key ch3d/on-key :enter ch3d/enter! :leave ch3d/leave!}
    {:id :ch5 :title "Ch 5: Inverse goal inference"
     :view ch5/view :on-key ch5/on-key :enter ch5/enter! :leave ch5/leave!}])
 

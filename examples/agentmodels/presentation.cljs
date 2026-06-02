@@ -81,6 +81,19 @@
                (sort-by :label)
                vec)})
 
+(defn bandit-bars
+  "PosteriorBars from a bandit belief {:arms [[a b] ...]}: one bar per arm whose
+   weight is the posterior mean alpha/(alpha+beta) — an independent value in
+   [0,1], NOT a normalized category probability, so this builds PosteriorBars
+   directly rather than via dist->bars. The true-best arm gets :highlight."
+  [{:keys [arms]} true-best]
+  {:title "arm posterior means"
+   :bars  (vec (map-indexed
+                 (fn [i [a b]]
+                   (cond-> {:label (str "arm" i) :weight (/ a (+ a b))}
+                     (= i true-best) (assoc :highlight true)))
+                 arms))})
+
 (defn dist->bars
   "PosteriorBars from a plain {value -> probability} map (e.g. a goal posterior).
    Optional `highlight` marks the bar for that value with :highlight true (e.g.
