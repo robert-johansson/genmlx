@@ -165,5 +165,25 @@
   (assert-true "dist->bars highlights the true goal (B)"      (:highlight (bar "B")))
   (assert-true "dist->bars leaves the other goal (A) unmarked" (not (:highlight (bar "A")))))
 
+(println "\n== Section 7: recursive expectedUtility == tensor value iteration ==")
+;; A tiny grid; both paths must compute identical Q-values and first action, for
+;; a finite (soft) alpha AND the alpha = Inf (hard max) limit.
+(def eq-mdp (gw/build-mdp {:grid [[:empty :G]
+                                  [:empty :empty]]
+                           :utilities {:G 2.0 :timeCost -0.1} :start [0 1] :gamma 1.0}))
+(defn- argmax-idx [xs] (first (apply max-key second (map-indexed vector xs))))
+(doseq [[label alpha n] [["soft (alpha=1.0)" 1.0 4] ["hard (alpha=Inf)" ##Inf 6]]]
+  (let [ag   (agent/make-mdp-agent {:mdp eq-mdp :alpha alpha :gamma 1.0 :n-iters n})
+        Qh   (mx/->clj (:Q ag))               ; tensor Q [S][A]
+        eu   (:expected-utility ag)            ; recursive EU(s,a,horizon)
+        errs (for [s (range (:S eq-mdp)) a (range (:A eq-mdp))]
+               (Math/abs (- (get-in Qh [s a]) (eu s a))))
+        s0   (:start-idx eq-mdp)]
+    (assert-true (str "  " label ": recursive EU matches tensor Q (max err < 1e-4)")
+                 (< (apply max errs) 1e-4))
+    (assert-equal (str "  " label ": first action agrees at start")
+                  (argmax-idx (get Qh s0))
+                  (argmax-idx (mapv #(eu s0 %) (range (:A eq-mdp)))))))
+
 (println (str "\n" @passed " passed, " @failed " failed"))
 (when (pos? @failed) (js/process.exit 1))
