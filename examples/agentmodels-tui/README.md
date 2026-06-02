@@ -40,18 +40,22 @@ reagent/nbb/@mlx-node from the repo root via `NODE_PATH`) and adds an explicit
 | Ch 3 demo | `space` | step the agent one frame |
 | Ch 3 demo | `r` | resample the rollout at the current alpha |
 | Ch 3 demo | `+` / `-` | raise / lower the rationality alpha (`+` toward optimal) |
+| Ch 3 demo | `n` | cycle the transition noise (0 → 0.1 → 0.2 → 0.4) |
 | Ch 3 demo | `q` / `esc` | back to the menu |
 
-The agent also auto-walks on a timer. Raise alpha toward `INF` and the path
-snaps to the sharp optimal route around the wall to the high-utility goal `B`;
-lower it and the path wanders.
+The agent auto-walks a maze where a wall belt forces a detour. Two separable
+sources of randomness: **alpha** is *decision* noise (low alpha → worse actions;
+`INF` → optimal), while **n** sets *environment* noise — the agentmodels
+orthogonal slip, where the intended move slips to a perpendicular one. Raise
+alpha toward `INF` at noise 0 and the path snaps to the sharp optimal route to
+the high-utility goal `B`; add noise and the same policy visibly skids off course.
 
 ## What proves it works
 
 The whole pipeline below the seam is verified without a terminal:
 
 ```bash
-bun run --bun nbb test/genmlx/agentmodels_slice_test.cljs   # 27/27
+bun run --bun nbb test/genmlx/agentmodels_slice_test.cljs   # 39/39
 ```
 
 Because the views are pure functions of the data that test validates, a passing

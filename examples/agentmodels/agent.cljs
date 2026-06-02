@@ -22,6 +22,7 @@
    exact/with-cache recursive path and the recursive≡tensor equivalence test are
    the next increment (bean genmlx-m4pr)."
   (:require [genmlx.mlx :as mx]
+            [genmlx.dist :as dist]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
             [agentmodels.helpers :as h])
@@ -64,15 +65,26 @@
      :act (fn [s] (int (mx/item (:retval (p/simulate (dyn/auto-key policy) [s])))))
      :params {:alpha alpha :gamma gamma}}))
 
+;; The environment transition is itself a generative function: given the T-row
+;; probabilities for (s,a), sample the next state. With a deterministic (noise=0)
+;; MDP the row is one-hot, so this reduces to the obvious deterministic step.
+(def ^:private env-step
+  (gen [probs] (trace :s (dist/weighted probs))))
+
+(defn- sample-next [T s a]
+  (let [probs (vec (mx/->clj (mx/idx (mx/idx T s) a)))]      ; T[s,a,:] -> [S'] probs
+    (int (mx/item (:retval (p/simulate (dyn/auto-key env-step) [probs]))))))
+
 (defn simulate-mdp
   "Roll the agent's policy out from `start` for at most `horizon` steps, stopping
-   at a terminal. Returns {:states [s0 s1 ...] :actions [a0 a1 ...]} (JS ints).
-   One action per transition, so (count actions) == (dec (count states))."
+   at a terminal. The action comes from the softmax policy (decision noise) and
+   the next state is sampled from T (environment / transition noise). Returns
+   {:states [s0 s1 ...] :actions [a0 a1 ...]} (JS ints); one action per transition."
   [{:keys [mdp act]} start horizon]
-  (let [{:keys [ns-fn terminals]} mdp]
+  (let [{:keys [T terminals]} mdp]
     (loop [s start, step 0, states [start], actions []]
       (if (or (>= step horizon) (contains? terminals s))
         {:states states :actions actions}
         (let [a  (act s)
-              s' (ns-fn s a)]
+              s' (sample-next T s a)]
           (recur s' (inc step) (conj states s') (conj actions a)))))))

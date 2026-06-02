@@ -83,5 +83,57 @@
   (assert-equal "trajectory length == #states" (count (:states roll)) (count frames))
   (assert-true  "final frame's agent sits on B" (= :agent (:role (nth (:cells (last frames)) 8)))))
 
+(println "\n== Section 4: transition noise (orthogonal slip) ==")
+;; A wall-free 3x3 so the slip lands on three distinct cells. Center state 4 =
+;; (1,1); action right(1): intended -> 5, slips up -> 1, slips down -> 7.
+(def open-mdp (gw/build-mdp {:grid [[:empty :empty :empty]
+                                    [:empty :empty :empty]
+                                    [:empty :empty :B]]
+                             :utilities {:B 5.0 :timeCost -0.1}
+                             :start [0 0] :noise 0.2}))
+(let [row (vec (mx/->clj (mx/idx (mx/idx (:T open-mdp) 4) 1)))]   ; T[4, right, :]
+  (assert-true "row T[4,right,:] sums to 1"            (< (Math/abs (- 1.0 (reduce + row))) 1e-5))
+  (assert-true "intended (->5) gets 1-noise = 0.8"     (< (Math/abs (- 0.8 (nth row 5))) 1e-5))
+  (assert-true "slip up   (->1) gets noise/2 = 0.1"    (< (Math/abs (- 0.1 (nth row 1))) 1e-5))
+  (assert-true "slip down (->7) gets noise/2 = 0.1"    (< (Math/abs (- 0.1 (nth row 7))) 1e-5))
+  (assert-true "all mass is on intended + the two slips"
+               (< (Math/abs (- 1.0 (+ (nth row 5) (nth row 1) (nth row 7)))) 1e-5)))
+(assert-true "noisy T rows each still sum to 1 (total 36)"
+             (< (Math/abs (- 36.0 (mx/item (mx/sum (:T open-mdp))))) 1e-4))
+
+(println "\n== Section 5: richer maze grid (wall forces a detour) ==")
+;;   . . . . . .
+;;   . # # # # .
+;;   . . . . # .
+;;   # # # . # .
+;;   A . . . . B     start top-left; the only route to B hugs the right edge
+(def maze [[:empty :empty :empty :empty :empty :empty]
+           [:empty :wall  :wall  :wall  :wall  :empty]
+           [:empty :empty :empty :empty :wall  :empty]
+           [:wall  :wall  :wall  :empty :wall  :empty]
+           [:A     :empty :empty :empty :empty :B]])
+(def maze-mdp (gw/build-mdp {:grid maze :utilities {:A 1.0 :B 5.0 :timeCost -0.1}
+                             :start [0 0] :gamma 1.0}))   ; noise 0 -> deterministic assert
+(def maze-opt (agent/make-mdp-agent {:mdp maze-mdp :alpha ##Inf :gamma 1.0 :n-iters 40}))
+(assert-equal "maze S = 30"     30 (:S maze-mdp))
+(assert-equal "B at idx 29"     {29 :B} (select-keys (:terminals maze-mdp) [29]))
+(let [vs (vec (mx/->clj (:V maze-opt)))]
+  (assert-true "V maximal at B (idx 29)" (= 29 (apply max-key #(nth vs %) (range 30)))))
+(let [{:keys [states]} (agent/simulate-mdp maze-opt (:start-idx maze-mdp) 30)
+      frames (pres/env->trajectory maze-mdp {:states states :actions []} (:V maze-opt))]
+  (println "  optimal maze path:" states)
+  (println "\n " (str/replace (pres/render-frame-text (last frames)) "\n" "\n  "))
+  (assert-equal "optimal maze rollout ends at B (idx 29)" 29 (last states))
+  (assert-true  "optimal path avoids every wall" (not-any? (:walls maze-mdp) states)))
+
+;; a noisy rollout (the path the live demo walks) must still produce a valid
+;; trajectory: every visited cell is in-bounds and never a wall.
+(let [nm (gw/build-mdp {:grid maze :utilities {:A 1.0 :B 5.0 :timeCost -0.1}
+                        :start [0 0] :gamma 1.0 :noise 0.3})
+      ag (agent/make-mdp-agent {:mdp nm :alpha 5.0 :gamma 1.0 :n-iters 40})
+      {:keys [states]} (agent/simulate-mdp ag (:start-idx nm) 30)]
+  (assert-true "noisy rollout stays in-bounds and off walls"
+               (every? (fn [s] (and (<= 0 s) (< s 30) (not ((:walls nm) s)))) states)))
+
 (println (str "\n" @passed " passed, " @failed " failed"))
 (when (pos? @failed) (js/process.exit 1))

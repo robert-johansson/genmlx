@@ -38,6 +38,30 @@
         n  (+ nx (* W ny))]
     (if (contains? walls n) idx n)))
 
+;; Orthogonal slip: a horizontal action (left/right) slips to a vertical one
+;; (up/down), and vice-versa — agentmodels' transitionNoiseProbability. NOT a
+;; uniform random action; the reverse direction is never part of the slip.
+(def ^:private perpendicular {0 [2 3] 1 [2 3] 2 [0 1] 3 [0 1]})
+
+(defn transition-tensor
+  "Build the [S,A,S'] float32 transition tensor from the host-side next-state
+   table `ns-rows`. With probability `noise` the intended action slips to one of
+   its two perpendicular actions (half each); slipping into a wall or edge keeps
+   the agent put, since ns-rows already encodes stay-on-block. Every row is a
+   proper distribution (sums to 1) by construction."
+  [S A ns-rows noise]
+  (mx/array
+    (clj->js
+      (vec (for [s (range S)]
+             (vec (for [a (range A)]
+                    (let [[p q] (perpendicular a)
+                          mass  (merge-with +
+                                  {(get-in ns-rows [s a]) (- 1.0 noise)}
+                                  {(get-in ns-rows [s p]) (* 0.5 noise)}
+                                  {(get-in ns-rows [s q]) (* 0.5 noise)})]
+                      (mapv #(get mass % 0.0) (range S))))))))
+    mx/float32))
+
 (defn parse-grid
   "Parse a grid literal into geometry:
    {:W :H :S :walls #{idx} :terminals {idx -> kw}}."
@@ -64,18 +88,15 @@
       :term [S]    float32 (1.0 at terminal cells)
       :terminals {idx->kw} :walls #{idx} :start-idx int
       :ns-fn (fn [s a] -> s') :action-kw [...] :gamma}"
-  [{:keys [grid utilities start gamma] :or {utilities {} gamma 1.0}}]
+  [{:keys [grid utilities start gamma noise] :or {utilities {} gamma 1.0 noise 0.0}}]
   (let [{:keys [W H S walls terminals]} (parse-grid grid)
         A          (count action-deltas)
         time-cost  (get utilities :timeCost 0.0)
         ns-fn      (fn [s a] (next-state W H walls s a))
         ;; geometry (host-side, pure CLJS) -> [S,A] table of next-state indices
         ns-rows    (vec (for [s (range S)] (vec (for [a (range A)] (ns-fn s a)))))
-        ns-table   (mx/array (clj->js ns-rows) mx/int32)               ; [S,A]
-        ;; T[s,a,s'] = 1 iff s' == ns-table[s,a]  (one-hot via broadcasting)
-        sp         (mx/reshape (mx/astype (mx/arange S) mx/int32) #js [1 1 S])
-        nsx        (mx/reshape ns-table #js [S A 1])
-        T          (mx/astype (mx/eq? sp nsx) mx/float32)              ; [S,A,S']
+        ;; transition tensor: deterministic when noise = 0, orthogonal slip otherwise
+        T          (transition-tensor S A ns-rows noise)              ; [S,A,S']
         util       (fn [s] (+ (get utilities (get terminals s) 0.0) time-cost))
         R          (mx/array (clj->js (vec (for [s (range S)] (vec (repeat A (util s))))))
                              mx/float32)                              ; [S,A]
@@ -88,4 +109,4 @@
     {:W W :H H :S S :A A
      :T T :R R :term term
      :terminals terminals :walls walls :start-idx start-idx
-     :ns-fn ns-fn :action-kw action-kw :gamma gamma}))
+     :ns-fn ns-fn :action-kw action-kw :gamma gamma :noise noise}))

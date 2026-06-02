@@ -38,6 +38,7 @@
     "\r" :enter   "\n" :enter   " " :space
     "q"  :quit    "Q"  :quit
     "r"  :replay  "R"  :replay
+    "n"  :noise   "N"  :noise
     "+"  :plus    "="  :plus
     "-"  :minus   "_"  :minus
     :other))
