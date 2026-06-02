@@ -42,8 +42,9 @@
   [agent s a]
   (mx/item (:weight (p/assess (dyn/auto-key (:policy agent)) [s] (cm/choicemap :action a)))))
 
-(defn- normalize-logs
-  "{goal -> log-weight} -> {goal -> probability} (stable softmax)."
+(defn normalize-logs
+  "{goal -> log-weight} -> {goal -> probability} (stable softmax). Public so the
+   POMDP belief filter (agentmodels.pomdp) reuses the same normalization."
   [logm]
   (let [hi (apply max (vals logm))
         ex (into {} (map (fn [[g l]] [g (Math/exp (- l hi))]) logm))

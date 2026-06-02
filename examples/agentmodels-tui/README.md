@@ -15,12 +15,13 @@ same data into colored cells.
 gridworld.cljs ─► agent.cljs ─► presentation.cljs ─►║ Frame  ║─► views.cljs ─► gallery / demos
    (env tensors)   (VI + GFI      (pure producers +  ║ Bars   ║   (Ink views)    (this sub-app)
    inverse.cljs    policy)        ASCII renderers)    ║ SEAM   ║
-   (assess-based goal inference)                      ╚════════╝
+   pomdp{,_env}.cljs (QMDP belief filtering)          ╚════════╝
 ```
 
-Two demos: **Ch 3** (an MDP agent walking a maze) and **Ch 5** (inverse goal
-inference — infer what the agent wants from how it moves, watching the posterior
-sharpen live).
+Three demos: **Ch 3** (an MDP agent walking a maze), **Ch 3c** (a POMDP agent
+acting under uncertainty about which goal pays, its belief snapping to the truth
+when it reaches a signpost), and **Ch 5** (inverse goal inference — infer what an
+agent wants from how it moves, watching the posterior sharpen live).
 
 ## Run it
 
@@ -47,6 +48,10 @@ reagent/nbb/@mlx-node from the repo root via `NODE_PATH`) and adds an explicit
 | Ch 3 demo | `+` / `-` | raise / lower the rationality alpha (`+` toward optimal) |
 | Ch 3 demo | `n` | cycle the transition noise (0 → 0.1 → 0.2 → 0.4) |
 | Ch 3 demo | `q` / `esc` | back to the menu |
+| Ch 3c demo | `space` | step the agent one frame |
+| Ch 3c demo | `r` | resample a fresh belief-filtered rollout |
+| Ch 3c demo | `t` | toggle which goal is actually rewarding |
+| Ch 3c demo | `q` / `esc` | back to the menu |
 | Ch 5 demo | `space` | reveal the next observed action |
 | Ch 5 demo | `r` | resample a fresh walk |
 | Ch 5 demo | `t` | toggle the agent's true goal (A / B) |
@@ -69,7 +74,8 @@ the high-utility goal `B`; add noise and the same policy visibly skids off cours
 The whole pipeline below the seam is verified without a terminal:
 
 ```bash
-bun run --bun nbb test/genmlx/agentmodels_slice_test.cljs   # 45/45
+bun run --bun nbb test/genmlx/agentmodels_slice_test.cljs   # 51/51  (Ch3/Ch5 + recursive==tensor)
+bun run --bun nbb test/genmlx/agentmodels_pomdp_test.cljs   # 22/22  (Ch3c belief filtering + QMDP)
 ```
 
 Because the views are pure functions of the data that test validates, a passing
