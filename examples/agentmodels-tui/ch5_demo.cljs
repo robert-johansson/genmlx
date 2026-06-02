@@ -75,7 +75,7 @@
                                      "    observed " i "/" (dec n) " actions")}]
      [:> Box {:flexDirection "row"}
       (when f [:> Box {:marginRight 4} [views/grid-view f]])
-      (when post [:> Box {} [views/bars-view (pres/dist->bars "P(goal)" post) 18]])]
+      (when post [:> Box {} [views/bars-view (pres/dist->bars "P(goal)" post true-goal) 18]])]
      [:> Text {:dimColor true}
       " [space] step   [r] resample walk   [t] toggle true goal   [q/esc] menu"]
      [:> Text {:color "gray"}

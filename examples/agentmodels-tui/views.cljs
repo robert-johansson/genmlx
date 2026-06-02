@@ -52,17 +52,22 @@
            (when-let [a (:action (:meta f))] (str "   →" (name a))))]]))
 
 (defn bars-view
-  "PosteriorBars -> labeled horizontal bars; widths normalized to `width` cells."
+  "PosteriorBars -> labeled horizontal bars; widths normalized to `width` cells.
+   A bar carrying :highlight true (e.g. the known true goal) is drawn in green,
+   bold, with a trailing marker — so the eye can check the posterior against truth."
   [{:keys [title bars]} & [width]]
   (let [w (or width 20)]
     [:> Box {:flexDirection "column"}
      [:> Text {:bold true} title]
-     (for [{:keys [label weight]} bars]
+     (for [{:keys [label weight highlight]} bars]
        ^{:key label}
        [:> Box {}
-        [:> Text {:color "gray"} (str label " ")]
-        [:> Text {:color "cyanBright"} (apply str (repeat (Math/round (* weight w)) "█"))]
-        [:> Text {:dimColor true} (str " " (.toFixed weight 3))]])]))
+        [:> Text {:color (if highlight "greenBright" "gray") :bold (boolean highlight)}
+         (str label " ")]
+        [:> Text {:color (if highlight "greenBright" "cyanBright")}
+         (apply str (repeat (Math/round (* weight w)) "█"))]
+        [:> Text (if highlight {:color "green" :bold true} {:dimColor true})
+         (str " " (.toFixed weight 3) (when highlight "  ◄ true"))]])]))
 
 (defn status-bar
   "A bordered one-line status strip: a title plus arbitrary right-hand status."

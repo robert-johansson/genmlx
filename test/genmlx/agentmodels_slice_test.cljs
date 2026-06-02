@@ -159,6 +159,11 @@
 (assert-true  "evidence accumulates: P(B) after rights > after downs"
               (> (:B (nth posts 4)) (:B (nth posts 2))))
 (println "  P(goal=B) over time:" (mapv #(.toFixed (:B %) 3) posts))
+;; dist->bars marks only the highlighted (true) goal
+(let [pb   (pres/dist->bars "P(goal)" {:A 0.3 :B 0.7} :B)
+      bar  (fn [lbl] (first (filter #(= lbl (:label %)) (:bars pb))))]
+  (assert-true "dist->bars highlights the true goal (B)"      (:highlight (bar "B")))
+  (assert-true "dist->bars leaves the other goal (A) unmarked" (not (:highlight (bar "A")))))
 
 (println (str "\n" @passed " passed, " @failed " failed"))
 (when (pos? @failed) (js/process.exit 1))

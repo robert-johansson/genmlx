@@ -18,7 +18,8 @@
            {:glyph "·" :role :empty :value 0.1}     {:glyph "·" :role :empty :value 0.4} {:glyph "B" :role :goal}]})
 
 (def sample-bars
-  {:title "P(goal)" :bars [{:label "A" :weight 0.27} {:label "B" :weight 0.73}]})
+  {:title "P(goal)" :bars [{:label "A" :weight 0.27}
+                           {:label "B" :weight 0.73 :highlight true}]})
 
 (defn app []
   [:> Box {:flexDirection "column" :padding 1}

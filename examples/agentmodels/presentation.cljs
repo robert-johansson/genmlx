@@ -16,7 +16,8 @@
                 ;; role ∈ #{:agent :wall :goal :path :empty}
       :meta  {:step int :action (kw|nil)}}
    Trajectory — [Frame], one per rollout step.
-   PosteriorBars — {:title str :bars [ {:label str :weight float} ... ]}  (weights sum to 1)."
+   PosteriorBars — {:title str :bars [ {:label str :weight float
+                                        :highlight (optional bool)} ... ]}  (weights sum to 1)."
   (:require [genmlx.mlx :as mx]
             [clojure.string :as str]))
 
@@ -81,11 +82,15 @@
                vec)})
 
 (defn dist->bars
-  "PosteriorBars from a plain {value -> probability} map (e.g. a goal posterior)."
-  [title m]
+  "PosteriorBars from a plain {value -> probability} map (e.g. a goal posterior).
+   Optional `highlight` marks the bar for that value with :highlight true (e.g.
+   the known true goal), which the view renders distinctly."
+  [title m & [highlight]]
   {:title title
    :bars  (->> m
-               (map (fn [[v p]] {:label (if (keyword? v) (name v) (str v)) :weight p}))
+               (map (fn [[v p]]
+                      (cond-> {:label (if (keyword? v) (name v) (str v)) :weight p}
+                        (= v highlight) (assoc :highlight true))))
                (sort-by :label)
                vec)})
 
