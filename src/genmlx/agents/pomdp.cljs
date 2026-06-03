@@ -232,3 +232,52 @@
         (recur b' (inc step) k3
                (conj arms i) (conj rewards r) (conj beliefs b')
                cum' reg' (conj cum-reward cum') (conj regret reg'))))))
+
+(defn simulate-bandit-batched
+  "Run N independent Thompson bandit episodes at once via shape-based batching
+   (bean genmlx-tl6p). Belief is [N,K] alpha/beta tensors; each step is ONE [N,K]
+   Beta draw + [N] argmax pull + [N] Bernoulli reward + a one-hot-masked [N,K]
+   conjugate increment — the N×K particle dimension is fully tensorized, so the
+   only host loop is over the (small) horizon and there is no per-step mx/item.
+
+   Equivalence to N independent simulate-bandit calls is DISTRIBUTIONAL (aggregate
+   means over N), not per-episode: the batched path draws all N×K Beta values in
+   one op rather than the host's per-arm split tree, so individual trajectories
+   differ but the N-distribution matches. Reward at the pulled arm uses the TRUE
+   thetas (the observation channel), exactly like the host `pull`. Returns
+     {:arms [N,H] :rewards [N,H] :regret [N,H] (cumulative) :final-means [N,K]
+      :cum-reward [N] :n N}  — every non-:n leaf has a leading [N] axis."
+  [{:keys [thetas theta* horizon prior]} n master-key]
+  (let [K        (count thetas)
+        true-th  (mx/array (clj->js (vec thetas)) mx/float32)            ; [K] true payoffs
+        thstar   (mx/scalar (double (or theta* (apply max thetas))))
+        prior-ab (or (:arms prior) (vec (repeat K [1.0 1.0])))           ; per-arm Beta prior
+        a0       (mx/array (clj->js (vec (repeat n (mapv first prior-ab)))) mx/float32)  ; [N,K]
+        b0       (mx/array (clj->js (vec (repeat n (mapv second prior-ab)))) mx/float32)
+        arange-K (mx/arange K)]
+    (loop [t 0, alpha a0, beta b0
+           cum-reward (mx/zeros [n]), cum-regret (mx/zeros [n])
+           key (rng/ensure-key master-key)
+           arms [], rewards [], regrets []]
+      (if (>= t horizon)
+        {:arms (mx/stack arms 1) :rewards (mx/stack rewards 1) :regret (mx/stack regrets 1)
+         :final-means (mx/divide alpha (mx/add alpha beta)) :cum-reward cum-reward :n n}
+        (let [[k-th k-rest] (rng/split key)
+              [k-rew k-next] (rng/split k-rest)
+              theta   (dist/beta-sample-vec alpha beta k-th)             ; [N,K] posterior draw
+              arm     (mx/argmax theta 1)                               ; [N] pulled arm
+              p-chos  (mx/take-idx true-th arm 0)                        ; [N] true theta of pull
+              r       (mx/where (mx/less (rng/uniform k-rew [n]) p-chos)
+                                (mx/scalar 1.0) (mx/scalar 0.0))         ; [N] Bernoulli reward
+              mask    (mx/where (mx/equal arange-K (mx/reshape arm [n 1]))
+                                (mx/scalar 1.0) (mx/scalar 0.0))         ; [N,K] one-hot of pull
+              r-col   (mx/reshape r [n 1])
+              alpha'  (mx/add alpha (mx/multiply mask r-col))            ; conjugate increment
+              beta'   (mx/add beta  (mx/multiply mask (mx/subtract (mx/scalar 1.0) r-col)))
+              cum-reward' (mx/add cum-reward r)
+              cum-regret' (mx/add cum-regret (mx/subtract thstar p-chos))]  ; theta* - theta_pull
+          ;; break the lazy graph each step (carries + recorded outputs) so horizon×N
+          ;; does not accumulate one giant graph; matches value-iteration's cadence.
+          (mx/materialize! alpha' beta' cum-reward' cum-regret' arm r)
+          (recur (inc t) alpha' beta' cum-reward' cum-regret' k-next
+                 (conj arms arm) (conj rewards r) (conj regrets cum-regret')))))))
