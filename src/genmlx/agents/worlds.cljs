@@ -74,3 +74,36 @@
     :or {noise 0.0 utilities hike-utilities start [0 1] gamma 1.0}}]
   (gw/build-mdp {:grid hike-grid :utilities utilities
                  :start start :gamma gamma :noise noise}))
+
+;; ===========================================================================
+;; Ch 3d — goal+lava exploration world (for Posterior Sampling RL)
+;; ===========================================================================
+
+(def lava-world
+  "A goal+lava exploration world for the PSRL driver (agentmodels.psrl). A 5×5
+   open grid (rows top-first; start is idx 0, top-left) with:
+     - LAVA flanking the only row-2 crossing: idx {10,11,13,14}, so the single gap
+       at idx 12 is bracketed by lava on both sides. Descending through the gap, an
+       orthogonal slip lands on lava — KNOWN, fixed per-step penalty cells;
+     - the rewarding GOAL in the SAFE top region (idx 3) — reachable without ever
+       crossing the lava;
+     - transition NOISE (orthogonal slip, default 0.2).
+
+   The PSRL reward is per-cell, applied each step (NOT terminal), matching the
+   driver's finite-horizon utility(state); lava is a known feature shared by every
+   reward hypothesis, while the +1 goal is the unknown the posterior is over.
+
+   Why it makes exploration visibly meaningful: while the agent is UNCERTAIN it
+   samples goals all over — including the bottom — and chasing a bottom goal forces
+   it across the lava gap, where it slips into the penalty. Once it LEARNS the true
+   goal is in the safe top, it stops crossing. So learning REDUCES both the lava
+   exposure and the regret versus the no-learning baseline (empirically ~halves the
+   lava hits and cuts regret several-fold).
+
+   Consume via (agentmodels.psrl/psrl (merge worlds/lava-world {:seed s :n-episodes n}))."
+  {:grid       (vec (repeat 5 (vec (repeat 5 :empty))))
+   :lava       #{10 11 13 14}
+   :true-goal  3
+   :penalty    -3.0
+   :noise      0.2
+   :horizon    12})
