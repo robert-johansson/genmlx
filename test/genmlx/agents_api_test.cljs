@@ -84,5 +84,47 @@
   (assert-true "inverse/goal-agents builds one agent per goal" (= #{:A :B} (set (keys gas))))
   (assert-close "inverse/posterior-sequence prior sums to 1" 1.0 (reduce + (vals (first seq))) 1e-9))
 
+;; ---- inverse: BATCHED [G,S,A] posterior == per-cell host action-loglik (bean genmlx-y2hh) ----
+;; Ground truth = the original per-cell algorithm, re-implemented here from the
+;; UNCHANGED inv/action-loglik + inv/normalize-logs. The shape-batched
+;; posterior-sequence must reproduce it to float32 tolerance on every prefix.
+(defn host-posterior-sequence
+  [goal-agents prior observations]
+  (let [goals (keys goal-agents)]
+    (loop [obs observations
+           logp (into {} (map (fn [g] [g (Math/log (prior g))]) goals))
+           acc  [(inv/normalize-logs logp)]]
+      (if (empty? obs)
+        acc
+        (let [[s a] (first obs)
+              logp' (into {} (map (fn [g] [g (+ (logp g) (inv/action-loglik (goal-agents g) s a))]) goals))]
+          (recur (rest obs) logp' (conj acc (inv/normalize-logs logp'))))))))
+(defn max-posterior-err [a b]
+  (apply max 0.0 (for [[ma mb] (map vector a b), g (keys ma)]
+                   (Math/abs (- (double (ma g)) (double (mb g)))))))
+;; (a) 2-goal slice fixture
+(let [grid [[:empty :empty :empty :empty :empty]
+            [:empty :empty :empty :empty :empty]
+            [:A     :empty :empty :empty :B]]
+      gas  (inv/goal-agents {:grid grid :goals [:A :B] :alpha 2.0})
+      obs  [[2 3] [7 3] [12 1] [13 1]]
+      bat  (inv/posterior-sequence gas {:A 0.5 :B 0.5} obs)
+      hos  (host-posterior-sequence gas {:A 0.5 :B 0.5} obs)]
+  (assert-true  "batched: one posterior per prefix (2-goal)" (= (count hos) (count bat) 5))
+  (assert-true  "batched == host action-loglik to 1e-4 (2-goal)" (< (max-posterior-err bat hos) 1e-4)))
+;; (b) 4-goal corner fixture
+(let [grid [[:A :empty :B]
+            [:empty :empty :empty]
+            [:C :empty :D]]
+      gas  (inv/goal-agents {:grid grid :goals [:A :B :C :D] :alpha 2.0})
+      obs  [[4 0] [4 1] [1 3] [2 2]]
+      pri  {:A 0.25 :B 0.25 :C 0.25 :D 0.25}
+      bat  (inv/posterior-sequence gas pri obs)
+      hos  (host-posterior-sequence gas pri obs)]
+  (assert-true  "batched: one posterior per prefix (4-goal)" (= (count hos) (count bat) 5))
+  (assert-true  "every batched posterior sums to 1 (4-goal)"
+                (every? (fn [m] (< (Math/abs (- 1.0 (reduce + (vals m)))) 1e-6)) bat))
+  (assert-true  "batched == host action-loglik to 1e-4 (4-goal)" (< (max-posterior-err bat hos) 1e-4)))
+
 (println (str "\n" @passed " passed, " @failed " failed"))
 (when (pos? @failed) (js/process.exit 1))
