@@ -31,6 +31,7 @@
             [genmlx.agents.inverse :as inv]
             [genmlx.agents.gridworld :as gw]
             [genmlx.agents.agent :as agent]
+            [genmlx.agents.belief :as belief]
             [genmlx.agents.helpers :as h])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -88,6 +89,11 @@
                 (int (mx/item (:retval (p/simulate (dyn/auto-key policy) []))))))]
     {:worlds (vec worlds) :world-agents world-agents :prior prior :observe observe
      :belief-Q belief-Q :update-belief update-belief :act act
+     ;; tensor belief kernel (bean genmlx-kpuo): same map-in/map-out contract as
+     ;; :update-belief but the filter runs as pure MLX [W] ops (no per-step host
+     ;; map arithmetic, no mx/item). Opt-in via simulate-pomdp :belief-mode :tensor.
+     :update-belief-tensor (fn [belief loc obs]
+                             (belief/update-belief-map observe (vec worlds) belief loc obs))
      :expected-utility (fn [belief s a]
                          (reduce + (map (fn [[w b]]
                                           (* b ((:expected-utility (world-agents w)) s a)))
@@ -101,12 +107,19 @@
    OBSERVES at the new location; (4) it FILTERS its belief. Returns
      {:states [...] :actions [...] :observations [...] :beliefs [b0 b1 ...]}
    where :beliefs index k is the belief held at state k (when choosing action k) —
-   so :states and :beliefs align and both feed the seam (env->trajectory / dist->bars)."
-  [{:keys [act update-belief observe world-agents prior]} env start horizon]
+   so :states and :beliefs align and both feed the seam (env->trajectory / dist->bars).
+
+   `:belief-mode` (optional trailing opts) selects the belief filter: :host
+   (default — the original Clojure-map normalize-logs filter, byte-identical seam)
+   or :tensor (the pure-MLX kernel genmlx.agents.belief; bean genmlx-kpuo). Both
+   produce {world -> prob} beliefs, so the seam is unchanged either way."
+  [{:keys [act update-belief update-belief-tensor observe world-agents prior]} env start horizon
+   & [{:keys [belief-mode] :or {belief-mode :host}}]]
   (let [true-world (:true-world env)
         true-mdp   (:mdp (world-agents true-world))
         T          (:T true-mdp)
-        terminals  (:terminals true-mdp)]
+        terminals  (:terminals true-mdp)
+        update-belief (if (= belief-mode :tensor) update-belief-tensor update-belief)]
     (loop [s start, b prior, step 0
            states [start], actions [], obss [], beliefs [prior]]
       (if (or (>= step horizon) (contains? terminals s))
