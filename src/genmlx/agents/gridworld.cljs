@@ -76,6 +76,30 @@
                                 :when (and (keyword? c) (not (#{:empty :wall} c)))]
                             [idx c]))}))
 
+(defn goal-onehot
+  "Host-side [S,G] float32 one-hot incidence of terminal goals: goal-onehot[s,g] = 1
+   iff terminal cell s is `goals-vec`[g], else 0 (non-terminal rows all zero). Lets
+   a learnable [G] utility tensor flow into the reward as a single matmul (bean
+   genmlx-j5um)."
+  [grid goals-vec]
+  (let [{:keys [S terminals]} (parse-grid grid)
+        g->idx (zipmap goals-vec (range))]
+    (mx/array
+      (clj->js (vec (for [s (range S)]
+                      (let [gi (get g->idx (get terminals s))]
+                        (vec (for [g (range (count goals-vec))] (if (= g gi) 1.0 0.0)))))))
+      mx/float32)))
+
+(defn diff-reward
+  "Differentiable reward [S,A] from a [G] utility tensor `theta-u` and scalar time
+   cost `tc`: R[s,a] = (goal-onehot @ theta-u)[s] + tc, broadcast over actions.
+   d R / d theta-u = goal-onehot (exact), so utilities flow as gradients. Equals
+   build-mdp's R when theta-u = the planted utilities (bean genmlx-j5um)."
+  [goal-onehot theta-u tc S A G]
+  (let [u-col (mx/matmul goal-onehot (mx/reshape theta-u #js [G 1]))   ; [S,G]@[G,1] -> [S,1]
+        r-col (mx/add u-col (mx/scalar (double tc)))]                  ; [S,1]
+    (mx/broadcast-to r-col #js [S A])))                               ; [S,A]
+
 (defn build-mdp
   "Compile {:grid :utilities :start :gamma} into the MDP tensors.
 

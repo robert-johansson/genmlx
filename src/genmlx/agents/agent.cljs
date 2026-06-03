@@ -76,6 +76,30 @@
           (mx/materialize! V')
           (recur V' (inc i) Q'))))))
 
+(defn- soft-value-tensor
+  "soft-value where `alpha` may be a TENSOR (for differentiation) as well as a
+   number — uses mx/multiply directly (Either<MxArray,f64>) instead of mx/scalar,
+   which only accepts numbers. Identical to soft-value for a numeric alpha."
+  [alpha Q]
+  (let [pi (mx/softmax (mx/multiply alpha Q) 1)]
+    (mx/sum (mx/multiply pi Q) [1])))
+
+(defn value-iteration-lazy
+  "value-iteration WITHOUT the per-sweep mx/materialize! — the whole N-sweep unroll
+   stays one lazy graph, so autograd can backprop Q -> R -> utilities and Q -> alpha
+   (bean genmlx-j5um). `alpha` may be a finite number OR a scalar MLX tensor;
+   alpha = ##Inf (hard argmax) is rejected as non-differentiable. Finite-horizon
+   (N sweeps), so it matches value-iteration's Q at the same n for a numeric alpha."
+  [{:keys [S gamma] :as mdp} alpha n]
+  (when (and (number? alpha) (= alpha ##Inf))
+    (throw (ex-info "value-iteration-lazy: alpha must be finite (argmax is non-differentiable)"
+                    {:alpha alpha})))
+  (loop [V (mx/zeros #js [S]), i 0, Q nil]
+    (if (>= i n)
+      {:Q Q :V V}
+      (let [[Q' V'] (bellman-step mdp gamma alpha soft-value-tensor V)]
+        (recur V' (inc i) Q')))))
+
 ;; ---------------------------------------------------------------------------
 ;; Path 2: faithful recursive expectedUtility (exact/with-cache + soft policy)
 ;; ---------------------------------------------------------------------------
