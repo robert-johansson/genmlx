@@ -1,7 +1,7 @@
 (ns views
   "Reusable Ink view primitives for the agentmodels gallery. ABOVE THE SEAM:
    every component is a pure function of the render-agnostic data shapes defined
-   in agentmodels.presentation (Frame, PosteriorBars) plus reagent atoms. They
+   in genmlx.agents.presentation (Frame, PosteriorBars) plus reagent atoms. They
    know nothing about MDPs, MLX, or inference — only how to turn data into
    colored cells. Re-rendering is the proven genmlx-tui model: an r/atom changes,
    reagent re-renders these plain components.

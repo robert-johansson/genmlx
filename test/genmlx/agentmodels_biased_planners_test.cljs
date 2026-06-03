@@ -2,9 +2,9 @@
 ;; Run: bun run --bun nbb test/genmlx/agentmodels_biased_planners_test.cljs
 
 (ns genmlx.agentmodels-biased-planners-test
-  (:require [agentmodels.gridworld :as gw]
-            [agentmodels.agent :as agent]
-            [agentmodels.biased-planners :as bp]
+  (:require [genmlx.agents.gridworld :as gw]
+            [genmlx.agents.agent :as agent]
+            [genmlx.agents.biased-planners :as bp]
             [genmlx.mlx :as mx]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]

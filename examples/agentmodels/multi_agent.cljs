@@ -22,7 +22,7 @@
 
    Source: agentmodels.org Chapter 7 (canonical). Ground truth is ANALYTIC (derived
    from the model math), not copied from examples/memo (a separate memo-conversion
-   corpus). No engine change — composes genmlx.inference.exact, agentmodels.helpers,
+   corpus). No engine change — composes genmlx.inference.exact, genmlx.agents.helpers,
    and exact/with-cache only."
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
@@ -30,7 +30,7 @@
             [genmlx.dynamic :as dyn]
             [genmlx.choicemap :as cm]
             [genmlx.inference.exact :as exact]
-            [agentmodels.helpers :as h])
+            [genmlx.agents.helpers :as h])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; ===========================================================================
@@ -168,7 +168,7 @@
   "The pragmatic speaker S1: [n-states × n-utts], row s = P_S1(utterance | state s).
    S1(u|s) = softmax_u(α · log L0(s|u)) — Boltzmann/softmax-action over utterances
    with utility = the literal listener's log-score. (This is agentmodels' factor(α·EU)
-   realized as a policy; see agentmodels.helpers/softmax-action.)"
+   realized as a policy; see genmlx.agents.helpers/softmax-action.)"
   [L0 alpha]
   (mx/softmax (mx/multiply (mx/scalar alpha) (mx/log (mx/transpose L0))) 1))
 

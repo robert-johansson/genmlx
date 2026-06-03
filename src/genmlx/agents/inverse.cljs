@@ -1,4 +1,4 @@
-(ns agentmodels.inverse
+(ns genmlx.agents.inverse
   "Inverse goal inference (agentmodels Ch 4/5): observe an agent's actions and
    infer which goal it values — by INVERTING the forward agent model through the
    GFI.
@@ -18,8 +18,8 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
-            [agentmodels.gridworld :as gw]
-            [agentmodels.agent :as agent]))
+            [genmlx.agents.gridworld :as gw]
+            [genmlx.agents.agent :as agent]))
 
 (defn goal-agents
   "Build one agent per candidate goal: the agent that VALUES that goal gives it
@@ -44,7 +44,7 @@
 
 (defn normalize-logs
   "{goal -> log-weight} -> {goal -> probability} (stable softmax). Public so the
-   POMDP belief filter (agentmodels.pomdp) reuses the same normalization."
+   POMDP belief filter (genmlx.agents.pomdp) reuses the same normalization."
   [logm]
   (let [hi (apply max (vals logm))
         ex (into {} (map (fn [[g l]] [g (Math/exp (- l hi))]) logm))

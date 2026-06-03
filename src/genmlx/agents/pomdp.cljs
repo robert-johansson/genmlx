@@ -1,4 +1,4 @@
-(ns agentmodels.pomdp
+(ns genmlx.agents.pomdp
   "POMDP agent (agentmodels Ch 3c) — belief filtering + belief-space action,
    GenMLX-native by reuse.
 
@@ -7,7 +7,7 @@
    and Bayesian-updates the belief (filtering). The pieces all compose on what is
    already built:
 
-   - one MDP planner PER world via agentmodels.inverse/goal-agents (each carries
+   - one MDP planner PER world via genmlx.agents.inverse/goal-agents (each carries
      its solved :Q [S,A]);
    - the belief-space value is QMDP: Q_QMDP(b,s) = Σ_w b(w) · Q_w[s] — a plain MLX
      reduction over the per-world :Q rows;
@@ -28,9 +28,9 @@
             [genmlx.dist :as dist]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
-            [agentmodels.inverse :as inv]
-            [agentmodels.agent :as agent]
-            [agentmodels.helpers :as h])
+            [genmlx.agents.inverse :as inv]
+            [genmlx.agents.agent :as agent]
+            [genmlx.agents.helpers :as h])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 (defn make-pomdp-agent

@@ -32,9 +32,9 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
-            [agentmodels.biased-planners :as bp]
-            [agentmodels.helpers :as h]
-            [agentmodels.inverse :as inv]
+            [genmlx.agents.biased-planners :as bp]
+            [genmlx.agents.helpers :as h]
+            [genmlx.agents.inverse :as inv]
             [agentmodels.biased-inverse :as bi])
   (:require-macros [genmlx.gen :refer [gen]]))
 

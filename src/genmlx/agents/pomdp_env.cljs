@@ -1,4 +1,4 @@
-(ns agentmodels.pomdp-env
+(ns genmlx.agents.pomdp-env
   "POMDP environments (bean genmlx-m9m9). Each constructor returns the data
    bundle make-pomdp-agent / simulate-pomdp consume. The per-world MDP tensors
    themselves are produced inside make-pomdp-agent via inverse/goal-agents ->
@@ -39,7 +39,7 @@
    action AND the only observation channel for theta_i; the reward r ~
    Bernoulli(theta_i) IS the observation; belief factorizes into one independent
    Beta(alpha_i, beta_i) per arm (Beta-Bernoulli conjugacy, filtered host-side in
-   agentmodels.pomdp). Returns the bundle make-bandit-agent / simulate-bandit
+   genmlx.agents.pomdp). Returns the bundle make-bandit-agent / simulate-bandit
    consume — pure config plus a reward sampler; no MDP tensors (no spatial latent).
 
    Options: :thetas [p ...] true Bernoulli params (latent, fixed);

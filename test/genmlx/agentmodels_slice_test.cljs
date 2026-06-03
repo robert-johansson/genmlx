@@ -7,10 +7,10 @@
 ;; Run: bun run --bun nbb test/genmlx/agentmodels_slice_test.cljs
 
 (ns genmlx.agentmodels-slice-test
-  (:require [agentmodels.gridworld :as gw]
-            [agentmodels.agent :as agent]
-            [agentmodels.presentation :as pres]
-            [agentmodels.inverse :as inv]
+  (:require [genmlx.agents.gridworld :as gw]
+            [genmlx.agents.agent :as agent]
+            [genmlx.agents.presentation :as pres]
+            [genmlx.agents.inverse :as inv]
             [genmlx.mlx :as mx]
             [clojure.string :as str]))
 

@@ -10,9 +10,9 @@
    Ch5 viewer. Pure data crosses the seam; this file only wires + renders."
   (:require ["ink" :refer [Text Box]]
             [reagent.core :as r]
-            [agentmodels.pomdp :as pomdp]
-            [agentmodels.pomdp-env :as env]
-            [agentmodels.presentation :as pres]
+            [genmlx.agents.pomdp :as pomdp]
+            [genmlx.agents.pomdp-env :as env]
+            [genmlx.agents.presentation :as pres]
             [views]))
 
 ;;   A . B

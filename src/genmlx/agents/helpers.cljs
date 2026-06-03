@@ -1,4 +1,4 @@
-(ns agentmodels.helpers
+(ns genmlx.agents.helpers
   "Ergonomic helpers for the agentmodels examples library.
 
    Closes the 'partial' PPL-ergonomics gaps with a tiny shared namespace —

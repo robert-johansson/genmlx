@@ -6,11 +6,11 @@
 ;; Run: bun run --bun nbb test/genmlx/agentmodels_pomdp_test.cljs
 
 (ns genmlx.agentmodels-pomdp-test
-  (:require [agentmodels.gridworld :as gw]
-            [agentmodels.agent :as agent]
-            [agentmodels.pomdp :as pomdp]
-            [agentmodels.pomdp-env :as env]
-            [agentmodels.presentation :as pres]
+  (:require [genmlx.agents.gridworld :as gw]
+            [genmlx.agents.agent :as agent]
+            [genmlx.agents.pomdp :as pomdp]
+            [genmlx.agents.pomdp-env :as env]
+            [genmlx.agents.presentation :as pres]
             [genmlx.mlx :as mx]))
 
 (def passed (volatile! 0))
