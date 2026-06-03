@@ -75,6 +75,32 @@
   (gw/build-mdp {:grid hike-grid :utilities utilities
                  :start start :gamma gamma :noise noise}))
 
+(def big-hike-grid
+  "agentmodels' makeBigHikeMDP — a 6×6 grid (rows top-first; screen coords). West
+   (idx 21) and East (idx 23) peaks sit in row 3 as walled pockets (walls at idx
+   14, 20, 22); the whole bottom row (idx 30–35) is the Hill cliff. Start [1,1] = idx 7."
+  [[:empty :empty :empty :empty :empty :empty]
+   [:empty :empty :empty :empty :empty :empty]
+   [:empty :empty :wall  :empty :empty :empty]
+   [:empty :empty :wall  :west  :wall  :east]
+   [:empty :empty :empty :empty :empty :empty]
+   [:hill  :hill  :hill  :hill  :hill  :hill]])
+
+(def big-hike-utilities
+  "Big-hike payoffs: East 10, West 7 (a closer-valued peak than the 5×5's West=1,
+   so the choice is genuinely contestable), a steep Hill cliff (-40), and a larger
+   -0.4 per-step timeCost."
+  {:east 10.0 :west 7.0 :hill -40.0 :timeCost -0.4})
+
+(defn big-hike-mdp
+  "Build the Big-Hiking MDP (agentmodels makeBigHikeMDP, totalTime 12). `:noise`
+   defaults to 0.03 (the agentmodels value). Options: :noise :utilities
+   (default big-hike-utilities) :start (default [1 1]) :gamma (default 1.0)."
+  [{:keys [noise utilities start gamma]
+    :or {noise 0.03 utilities big-hike-utilities start [1 1] gamma 1.0}}]
+  (gw/build-mdp {:grid big-hike-grid :utilities utilities
+                 :start start :gamma gamma :noise noise}))
+
 ;; ===========================================================================
 ;; Ch 3d — goal+lava exploration world (for Posterior Sampling RL)
 ;; ===========================================================================
