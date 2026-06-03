@@ -13,9 +13,9 @@
    keys here via on-key and starts/stops the autoplay timer via enter!/leave!."
   (:require ["ink" :refer [Text Box]]
             [reagent.core :as r]
-            [agentmodels.gridworld :as gw]
-            [agentmodels.agent :as agent]
-            [agentmodels.presentation :as pres]
+            [genmlx.agents.gridworld :as gw]
+            [genmlx.agents.agent :as agent]
+            [genmlx.agents.presentation :as pres]
             [views]))
 
 ;; A maze where the wall belt forces a detour (top row first; screen coords).

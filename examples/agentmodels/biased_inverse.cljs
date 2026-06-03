@@ -35,9 +35,9 @@
             [genmlx.dynamic :as dyn]
             [genmlx.inference.importance :as is]
             [genmlx.inference.util :as iu]
-            [agentmodels.biased-planners :as bp]
-            [agentmodels.helpers :as h]
-            [agentmodels.inverse :as inv])
+            [genmlx.agents.biased-planners :as bp]
+            [genmlx.agents.helpers :as h]
+            [genmlx.agents.inverse :as inv])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 (def bias-values

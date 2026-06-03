@@ -1,4 +1,4 @@
-(ns agentmodels.agent
+(ns genmlx.agents.agent
   "MDP agent for the agentmodels port — GenMLX-native, with TWO paths that agree.
 
    agentmodels.org defines an agent by the mutual recursion act / expectedUtility
@@ -28,7 +28,7 @@
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
             [genmlx.inference.exact :as exact]
-            [agentmodels.helpers :as h])
+            [genmlx.agents.helpers :as h])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@
 (defn sample-next
   "Sample the next state from T[s,a,:] (the env-step generative function).
    Deterministic when the row is one-hot (noise = 0). Public so the POMDP rollout
-   (agentmodels.pomdp/simulate-pomdp) threads the world transition the same way."
+   (genmlx.agents.pomdp/simulate-pomdp) threads the world transition the same way."
   [T s a]
   (let [probs (vec (mx/->clj (mx/idx (mx/idx T s) a)))]      ; T[s,a,:] -> [S'] probs
     (int (mx/item (:retval (p/simulate (dyn/auto-key env-step) [probs]))))))

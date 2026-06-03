@@ -4,7 +4,7 @@
    Watch GenMLX infer what an agent WANTS from how it moves. A 'true' agent
    (valuing A or B) walks the grid; the observer maintains a posterior over the
    agent's goal and updates it after every observed action by inverting the
-   forward model through the GFI (agentmodels.inverse uses p/assess as the
+   forward model through the GFI (genmlx.agents.inverse uses p/assess as the
    likelihood). As the walk plays, the grid (left) and the P(goal) bars (right)
    advance in lockstep — the bars are uninformative while the agent heads down
    the symmetry axis, then snap to the true goal the moment it commits.
@@ -12,10 +12,10 @@
    space steps, r resamples a fresh walk, t toggles the true goal."
   (:require ["ink" :refer [Text Box]]
             [reagent.core :as r]
-            [agentmodels.gridworld :as gw]
-            [agentmodels.agent :as agent]
-            [agentmodels.inverse :as inv]
-            [agentmodels.presentation :as pres]
+            [genmlx.agents.gridworld :as gw]
+            [genmlx.agents.agent :as agent]
+            [genmlx.agents.inverse :as inv]
+            [genmlx.agents.presentation :as pres]
             [views]))
 
 ;; Open grid, A and B mirror-symmetric about the centre column; start top-centre.

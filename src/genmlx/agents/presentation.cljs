@@ -1,4 +1,4 @@
-(ns agentmodels.presentation
+(ns genmlx.agents.presentation
   "THE RENDER-AGNOSTIC SEAM.
 
    Pure CLJS data producers + plain-text renderers. NO Ink, NO React, NO reagent

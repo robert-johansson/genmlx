@@ -12,9 +12,9 @@
    stable gamma-ratio sampler — genmlx-gcw4.)"
   (:require ["ink" :refer [Text Box]]
             [reagent.core :as r]
-            [agentmodels.pomdp :as pomdp]
-            [agentmodels.pomdp-env :as env]
-            [agentmodels.presentation :as pres]
+            [genmlx.agents.pomdp :as pomdp]
+            [genmlx.agents.pomdp-env :as env]
+            [genmlx.agents.presentation :as pres]
             [views]))
 
 (def thetas [0.25 0.50 0.80])         ; true arm payoff probs; arm 2 is best

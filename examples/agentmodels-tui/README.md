@@ -6,7 +6,7 @@ This is the **demo gallery** (distinct from the Studio TUI, bean `genmlx-tw52`).
 
 ## The architecture in one line
 
-Everything below the **render-agnostic data seam** (`agentmodels.presentation`:
+Everything below the **render-agnostic data seam** (`genmlx.agents.presentation`:
 `Frame` / `Trajectory` / `PosteriorBars`) is pure CLJS + MLX and is proven by a
 headless test; everything here above the seam is just reagent + Ink turning that
 same data into colored cells.
@@ -93,4 +93,4 @@ test means the live TUI renders correct pictures by construction.
 Append one entry to `demos` in `gallery.cljs`:
 `{:id … :title … :view … :on-key … :enter … :leave …}`. No nav code to touch.
 View primitives (`grid-view`, `bars-view`, `frames-view`, `status-bar`) live in
-`views.cljs` and consume only `agentmodels.presentation` data shapes.
+`views.cljs` and consume only `genmlx.agents.presentation` data shapes.

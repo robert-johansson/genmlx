@@ -6,9 +6,9 @@
 ;; Run: bun run --bun nbb test/genmlx/bandit_test.cljs
 
 (ns genmlx.bandit-test
-  (:require [agentmodels.pomdp :as pomdp]
-            [agentmodels.pomdp-env :as env]
-            [agentmodels.presentation :as pres]
+  (:require [genmlx.agents.pomdp :as pomdp]
+            [genmlx.agents.pomdp-env :as env]
+            [genmlx.agents.presentation :as pres]
             [genmlx.mlx.random :as rng]))
 
 (def passed (volatile! 0))

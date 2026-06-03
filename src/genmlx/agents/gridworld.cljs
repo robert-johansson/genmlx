@@ -1,4 +1,4 @@
-(ns agentmodels.gridworld
+(ns genmlx.agents.gridworld
   "Gridworld MDP environment — a human-readable grid literal compiled to the MLX
    tensors an MDP planner needs: the transition tensor T:[S,A,S'], the reward
    tensor R:[S,A], and the terminal mask term:[S].

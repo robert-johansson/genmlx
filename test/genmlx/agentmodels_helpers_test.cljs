@@ -1,4 +1,4 @@
-;; Unit tests for agentmodels.helpers — the ergonomic PPL helpers used across
+;; Unit tests for genmlx.agents.helpers — the ergonomic PPL helpers used across
 ;; the agentmodels examples library (factor-dist, softmax-action, value-carrying
 ;; draws, boxed-choice). Self-contained; no test framework.
 ;;
@@ -8,7 +8,7 @@
 ;; Run: bun run --bun nbb test/genmlx/agentmodels_helpers_test.cljs
 
 (ns genmlx.agentmodels-helpers-test
-  (:require [agentmodels.helpers :as h]
+  (:require [genmlx.agents.helpers :as h]
             [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]

@@ -1,4 +1,4 @@
-(ns agentmodels.biased-planners
+(ns genmlx.agents.biased-planners
   "Biased / bounded planners (agentmodels Ch 5) — GenMLX-native, zero engine change.
 
    agentmodels Ch 5 turns the rational MDP/POMDP agent into a family of HUMANLY
@@ -53,9 +53,9 @@
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
             [genmlx.inference.exact :as exact]
-            [agentmodels.gridworld :as gw]
-            [agentmodels.agent :as agent]
-            [agentmodels.helpers :as h])
+            [genmlx.agents.gridworld :as gw]
+            [genmlx.agents.agent :as agent]
+            [genmlx.agents.helpers :as h])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; ===========================================================================

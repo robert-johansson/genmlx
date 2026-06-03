@@ -4,7 +4,7 @@
 
 (ns genmlx.agentmodels-biased-inverse-test
   (:require [agentmodels.biased-inverse :as bi]
-            [agentmodels.inverse :as inv]
+            [genmlx.agents.inverse :as inv]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.protocols :as p]
