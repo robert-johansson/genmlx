@@ -1,13 +1,17 @@
 (ns genmlx.agents.pomdp-env
   "POMDP environments (bean genmlx-m9m9). Each constructor returns the data
    bundle make-pomdp-agent / simulate-pomdp consume. The per-world MDP tensors
-   themselves are produced inside make-pomdp-agent via inverse/goal-agents ->
-   gridworld/build-mdp, so the env stays pure geometry/config.
+   themselves are produced inside make-pomdp-agent via gridworld/build-mdp (from
+   inverse/goal-agents, or per-world :world-utils), so the env stays pure
+   geometry/config.
 
-   Shipped here: the hidden-goal RESTAURANT GRIDWORLD (latent = which goal pays)
-   and the multi-armed BANDIT (latent = per-arm payoff parameters)."
+   Shipped here: the hidden-goal RESTAURANT GRIDWORLD (latent = which goal pays;
+   single-signpost reveal), the ADJACENCY-REVEAL restaurant POMDP (latent = a
+   per-restaurant open/closed vector; agentmodels' makeGridWorldPOMDP), and the
+   multi-armed BANDIT (latent = per-arm payoff parameters)."
   (:require [genmlx.mlx :as mx]
-            [genmlx.dist :as dist]))
+            [genmlx.dist :as dist]
+            [genmlx.agents.gridworld :as gw]))
 
 (defn restaurant-gridworld
   "Hidden-goal POMDP: a grid with candidate goals, exactly one of which is the
@@ -32,6 +36,70 @@
      ;; deterministic location-gated reveal: standing on the signpost reveals the
      ;; world identity; everywhere else there is no information (obs = nil).
      :observe    (fn [world loc] (when (= loc signpost) world))}))
+
+(defn- neighbors-4
+  "In-bounds 4-neighbour cell indices of `idx` on a W×H grid."
+  [W H idx]
+  (let [x (mod idx W), y (quot idx W)]
+    (set (for [[dx dy] [[-1 0] [1 0] [0 -1] [0 1]]
+               :let [nx (+ x dx), ny (+ y dy)]
+               :when (and (<= 0 nx (dec W)) (<= 0 ny (dec H)))]
+           (+ nx (* W ny))))))
+
+(defn- open-closed-configs
+  "All {restaurant -> open?} maps over `restaurants` (2^k configs)."
+  [restaurants]
+  (reduce (fn [acc r] (mapcat (fn [m] [(assoc m r true) (assoc m r false)]) acc))
+          [{}] restaurants))
+
+(defn restaurant-pomdp
+  "Adjacency-reveal restaurant POMDP (agentmodels Ch 3c makeGridWorldPOMDP). Unlike
+   the single-signpost restaurant-gridworld above, EACH restaurant is independently
+   OPEN or CLOSED — the latent is a per-restaurant vector — and the agent learns a
+   restaurant's status only when ADJACENT to it (a 4-neighbour of its cell). The
+   belief is over the 2^k open/closed configs; an OPEN restaurant pays its utility,
+   a CLOSED one pays 0 (a dead terminal the agent avoids). So the agent heads to the
+   preferred restaurant and, on observing it CLOSED when adjacent, re-plans toward
+   the backup — the canonical local-observation POMDP behaviour.
+
+   Options:
+     :grid       — restaurant cells are terminal keywords (e.g. :a :b);
+     :utilities  — {restaurant -> open-utility} (default {:a 5.0 :b 3.0});
+     :open-prob  — {restaurant -> P(open)} independent prior (default {:a 0.6 :b 0.9});
+     :true-world — {restaurant -> open?} the actual config;
+     :time-cost  — per-step cost (default -0.1);  :start — [x y].
+
+   Returns the make-pomdp-agent/simulate-pomdp bundle, carrying :world-utils (so
+   make-pomdp-agent builds one MDP per open/closed config) and an adjacency :observe."
+  [{:keys [grid utilities open-prob true-world time-cost start]
+    :or   {utilities {:a 5.0 :b 3.0} open-prob {:a 0.6 :b 0.9} time-cost -0.1 start [0 0]}}]
+  (let [{:keys [W H terminals]} (gw/parse-grid grid)
+        restaurants (vec (keys utilities))
+        cell-of     (into {} (map (fn [[idx kw]] [kw idx])) terminals)   ; restaurant -> cell idx
+        adj         (into {} (map (fn [r] [r (neighbors-4 W H (cell-of r))])) restaurants)
+        worlds      (open-closed-configs restaurants)
+        world-utils (into {} (map (fn [w]
+                                    [w (assoc (into {} (map (fn [r] [r (if (w r) (utilities r) 0.0)])) restaurants)
+                                              :timeCost time-cost)]))
+                          worlds)
+        prior       (into {} (map (fn [w]
+                                    [w (reduce * (map (fn [r] (if (w r) (open-prob r) (- 1.0 (open-prob r)))) restaurants))]))
+                          worlds)
+        [sx sy]     start]
+    {:kind        :restaurant-pomdp
+     :grid        grid
+     :restaurants restaurants
+     :worlds      worlds
+     :world-utils world-utils
+     :true-world  true-world
+     :prior       prior
+     :start       start
+     :start-idx   (+ sx (* W sy))
+     ;; adjacency-gated local reveal: observe the open/closed status of every
+     ;; restaurant the agent is currently adjacent to (nil if none).
+     :observe     (fn [world loc]
+                    (let [o (vec (for [r restaurants :when (contains? (adj r) loc)] [r (world r)]))]
+                      (when (seq o) o)))}))
 
 (defn bandit-pomdp
   "Multi-armed bandit POMDP (agentmodels Ch 3c/3d). The hidden state is the

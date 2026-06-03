@@ -29,6 +29,7 @@
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
             [genmlx.agents.inverse :as inv]
+            [genmlx.agents.gridworld :as gw]
             [genmlx.agents.agent :as agent]
             [genmlx.agents.helpers :as h])
   (:require-macros [genmlx.gen :refer [gen]]))
@@ -46,12 +47,24 @@
       :act (fn [belief s] -> action-int)            ; softmax over belief-Q
       :expected-utility (fn [belief s a] -> float)  ; belief-weighted EU
       :params {...}}."
-  [{:keys [grid goals alpha noise gamma prior observe n-iters]
-    :or   {alpha 2.0 noise 0.0 gamma 1.0 n-iters 40}}]
-  (let [world-agents (inv/goal-agents {:grid grid :goals goals :alpha alpha
-                                       :noise noise :gamma gamma})
+  [{:keys [grid goals alpha noise gamma prior observe n-iters world-utils start]
+    :or   {alpha 2.0 noise 0.0 gamma 1.0 n-iters 40 start [0 0]}}]
+  (let [;; Per-world MDP planners. Two ways to specify the worlds:
+        ;;   :world-utils {world -> utilities-map} — general (e.g. open/closed
+        ;;     restaurant configs, where each world has different cell utilities), or
+        ;;   :goals [...] — the single-rewarding-goal shorthand via goal-agents.
+        world-agents (if world-utils
+                       (into {} (map (fn [[w utils]]
+                                       [w (agent/make-mdp-agent
+                                            {:mdp (gw/build-mdp {:grid grid :utilities utils
+                                                                 :start start :gamma gamma :noise noise})
+                                             :alpha alpha :gamma gamma :n-iters n-iters})])
+                                     world-utils))
+                       (inv/goal-agents {:grid grid :goals goals :alpha alpha
+                                         :noise noise :gamma gamma}))
+        worlds    (if world-utils (vec (keys world-utils)) goals)
         A         (:A (:mdp (val (first world-agents))))
-        prior     (or prior (zipmap goals (repeat (/ 1.0 (count goals)))))
+        prior     (or prior (zipmap worlds (repeat (/ 1.0 (count worlds)))))
         ;; QMDP belief-space Q at state s: Σ_w b(w) · Q_w[s]  (plain mx reduction)
         belief-Q  (fn [belief s]
                     (reduce (fn [acc [w b]]
@@ -73,7 +86,7 @@
               (let [q      (belief-Q belief s)
                     policy (gen [] (trace :action (h/softmax-action alpha q)))]
                 (int (mx/item (:retval (p/simulate (dyn/auto-key policy) []))))))]
-    {:worlds (vec goals) :world-agents world-agents :prior prior :observe observe
+    {:worlds (vec worlds) :world-agents world-agents :prior prior :observe observe
      :belief-Q belief-Q :update-belief update-belief :act act
      :expected-utility (fn [belief s a]
                          (reduce + (map (fn [[w b]]
