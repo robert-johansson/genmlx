@@ -28,6 +28,7 @@
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
             [genmlx.inference.exact :as exact]
+            [genmlx.agents.rollout :as rollout]
             [genmlx.agents.helpers :as h])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -204,12 +205,19 @@
   "Roll the agent's policy out from `start` for at most `horizon` steps, stopping
    at a terminal. The action comes from the softmax policy (decision noise) and
    the next state is sampled from T (environment / transition noise). Returns
-   {:states [s0 s1 ...] :actions [a0 a1 ...]} (JS ints); one action per transition."
-  [{:keys [mdp act]} start horizon]
-  (let [{:keys [T terminals]} mdp]
-    (loop [s start, step 0, states [start], actions []]
-      (if (or (>= step horizon) (contains? terminals s))
-        {:states states :actions actions}
-        (let [a  (act s)
-              s' (sample-next T s a)]
-          (recur s' (inc step) (conj states s') (conj actions a)))))))
+   {:states [s0 s1 ...] :actions [a0 a1 ...]} (JS ints); one action per transition.
+
+   `:rollout-mode` (optional trailing opts) selects the loop: :host (default — the
+   per-step act/sample-next loop) or :fused (the single-graph tensor rollout in
+   genmlx.agents.rollout; bean genmlx-5zdd). At alpha=##Inf/noise=0 both produce
+   identical :states/:actions; the seam is unchanged either way."
+  [{:keys [mdp act] :as agent} start horizon & [{:keys [rollout-mode key]}]]
+  (if (= rollout-mode :fused)
+    (rollout/rollout-mdp agent start horizon {:key key})
+    (let [{:keys [T terminals]} mdp]
+      (loop [s start, step 0, states [start], actions []]
+        (if (or (>= step horizon) (contains? terminals s))
+          {:states states :actions actions}
+          (let [a  (act s)
+                s' (sample-next T s a)]
+            (recur s' (inc step) (conj states s') (conj actions a))))))))
