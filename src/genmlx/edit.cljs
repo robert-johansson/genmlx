@@ -7,8 +7,7 @@
    instance of edit. The backward request enables automatic computation of
    acceptance weights for reversible kernels — the foundation of SMCP3."
   (:require [genmlx.protocols :as p]
-            [genmlx.choicemap :as cm]
-            [genmlx.mlx :as mx]))
+            [genmlx.choicemap :as cm]))
 
 ;; ---------------------------------------------------------------------------
 ;; EditRequest types
@@ -62,6 +61,33 @@
   [result]
   (or (:discard result) cm/EMPTY))
 
+;; ---------------------------------------------------------------------------
+;; ProposalEdit weight arithmetic — backend-free until an MLX weight appears
+;; ---------------------------------------------------------------------------
+;;
+;; Only ProposalEdit combines scores numerically. Deterministic / degenerate GFs
+;; have plain-number weights and need no MLX; MLX-backed GFs have MxArray weights
+;; and need the native scalar ops. We resolve genmlx.mlx LAZILY (through the
+;; membrane, not @mlx-node directly) so that merely requiring genmlx.edit never
+;; forces the GPU backend — ConstraintEdit, SelectionEdit, and every constructor
+;; stay genuinely Layer-A pure and loadable without @mlx-node/core present. The
+;; native mx/add and mx/subtract accept both MxArray and JS-number args, so they
+;; also cover mixed weights once realized. See genmlx-5413.
+(defonce ^:private mx-scalar
+  (delay (require '[genmlx.mlx])
+         {:add (resolve 'genmlx.mlx/add)
+          :subtract (resolve 'genmlx.mlx/subtract)}))
+
+(defn- w-add
+  "Add two scores: numeric (+) for pure GFs, native mx/add for MxArray weights."
+  [a b]
+  (if (and (number? a) (number? b)) (+ a b) ((:add @mx-scalar) a b)))
+
+(defn- w-sub
+  "Subtract scores: numeric (-) for pure GFs, native mx/subtract for MxArrays."
+  [a b]
+  (if (and (number? a) (number? b)) (- a b) ((:subtract @mx-scalar) a b)))
+
 (defmulti edit-dispatch
   "Generic edit implementation that dispatches based on EditRequest type."
   (fn [_gf _trace edit-request] (type edit-request)))
@@ -101,8 +127,8 @@
         bwd-result (p/assess backward-gf bwd-args
                              (discard-of update-result))
         bwd-score (:weight bwd-result)
-        ;; 4. Combined weight
-        weight (mx/add update-weight (mx/subtract bwd-score fwd-score))]
+        ;; 4. Combined weight (backend-free for pure GFs; see w-add/w-sub)
+        weight (w-add update-weight (w-sub bwd-score fwd-score))]
     {:trace new-trace
      :weight weight
      :discard (discard-of update-result)
