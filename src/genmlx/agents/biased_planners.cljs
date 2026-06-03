@@ -325,6 +325,118 @@
     (get (:terminals mdp) (last states))))
 
 ;; ===========================================================================
+;; Section 5b — World B′: the FULL [immediate,delayed] Restaurant geometry (5b/5e)
+;; ===========================================================================
+;;
+;; The scalar `restaurant-mdp` above is enough to show plan↔do divergence at α=∞,
+;; but it CANNOT produce graded temptation at finite α: with a single scalar reward
+;; per terminal there is no immediate-vs-delayed asymmetry, so naive/sophisticated
+;; only differ as an argmax tie-break (which washes out for any finite α). The
+;; faithful agentmodels Restaurant-Choice (chapters 5b/5e) instead gives each
+;; restaurant a PAIRED [immediate, delayed] utility and makes the agent occupy the
+;; restaurant for TWO timesteps (maxTimeAtRestaurant = 2): the immediate component
+;; is collected on arrival and the delayed component one step later — so the delayed
+;; part is discounted by δ(d+1) relative to δ(d). Donut = [10,-10] is a temptation
+;; (great now, net 0); Veg = [-10,20] is net +10 but bad now.
+;;
+;; We realise the 2-step stay on the existing flat tensor recursion by STATE
+;; AUGMENTATION: each restaurant cell L expands to two states — L@0 (arrival, the
+;; grid index L itself, reward = immediate) and L@1 (a fresh twin state, reward =
+;; delayed, terminal). Entering L from a neighbour lands on L@0; ANY action at L@0
+;; advances to L@1; L@1 is terminal. Then with the unchanged `build-biased-eu`
+;; recursion and γ = 1,
+;;
+;;     EU(L@0, a, d) = δ(d)·imm + δ(d+1)·del
+;;
+;; which is EXACTLY agentmodels' library `disU(d) = dis(d)·u[0] + dis(d+1)·u[1]`.
+;; No engine/recursion change — only the geometry the scalar builder lacks.
+;;
+;; Grid (6 wide × 8 tall, agentmodels 5b/5e verbatim, top row first — GenMLX's
+;; top-first y-down convention is geometrically identical to agentmodels' y-up after
+;; its library row-reverse). Short route: straight up column 3 from the start, which
+;; passes adjacent to Donut-North (left of [3,5]≡idx 15). Long route: branch right at
+;; row 4 (idx 27) and climb column 5, reaching Veg from the right without ever being
+;; adjacent to a donut. Donut-South (net-equal decoy) sits bottom-left; Noodle ([0,0])
+;; on the long-route column. start = [3 6] (= agentmodels start [3,1] in y-up).
+
+(def restaurant-temptation-grid
+  "agentmodels 5b/5e Restaurant-Choice grid (6 wide × 8 tall, top-first), verbatim.
+   Veg top (idx 4); Donut-North pocket (idx 14) adjacent to the short route up
+   column 3; Noodle (idx 35) and Donut-South (idx 42) are decoys."
+  [[:wall    :wall  :wall     :wall  :veg   :wall]
+   [:wall    :wall  :wall     :empty :empty :empty]
+   [:wall    :wall  :donut-n  :empty :wall  :empty]
+   [:wall    :wall  :wall     :empty :wall  :empty]
+   [:wall    :wall  :wall     :empty :empty :empty]
+   [:wall    :wall  :wall     :empty :wall  :noodle]
+   [:empty   :empty :empty    :empty :wall  :wall]
+   [:donut-s :wall  :wall     :empty :wall  :wall]])
+
+(defn restaurant-temptation-mdp
+  "Build the FULL [immediate,delayed] Restaurant-Choice MDP (agentmodels 5b/5e) as
+   a state-augmented flat [S,A,S'] tensor MDP feeding `make-biased-mdp-agent`
+   directly. Each restaurant cell L → two states: L@0 (= grid index L, reward =
+   immediate component) and L@1 (twin state S_grid+i, reward = delayed component,
+   terminal). Any action at L@0 advances to L@1; L@1 is absorbing & terminal. So the
+   unchanged biased-EU recursion yields EU(L@0,a,d)=δ(d)·imm+δ(d+1)·del — agentmodels'
+   2-step `disU(d)`. Non-restaurant cells pay :timeCost (restaurants pay only the
+   table value, matching agentmodels' restaurantUtility).
+
+   Options (agentmodels defaults):
+     :utilities {:donut-n [10 -10] :donut-s [10 -10] :veg [-10 20] :noodle [0 0]
+                 :timeCost -0.01}     ; restaurant values are [immediate delayed] pairs
+     :start [3 6]                     ; = agentmodels [3,1] (y-up) in top-first coords
+     :gamma 1.0
+   Returns an MDP map with the usual keys plus:
+     :grid-S    number of grid states (the augmented twins are S_grid..S-1)
+     :twin      {grid-idx -> L@1 state}     :restaurants {grid-idx -> kw}
+   Note :terminals maps ONLY the L@1 twin states to their restaurant keyword, so the
+   recursion continues through L@0 and `restaurant-endpoint` reports the right cell."
+  [{:keys [utilities start gamma]
+    :or   {utilities {:donut-n [10 -10] :donut-s [10 -10] :veg [-10 20]
+                      :noodle [0 0] :timeCost -0.01}
+           start [3 6] gamma 1.0}}]
+  (let [{:keys [W H walls terminals]} (gw/parse-grid restaurant-temptation-grid)
+        S-grid    (* W H)
+        rest-idxs (vec (sort (keys terminals)))               ; restaurant grid cells = L@0
+        n-rest    (count rest-idxs)
+        twin      (zipmap rest-idxs (range S-grid (+ S-grid n-rest)))   ; L -> L@1 idx
+        twin-kw   (into {} (for [L rest-idxs] [(twin L) (terminals L)])); L@1 idx -> kw
+        rest-set  (set rest-idxs)
+        S         (+ S-grid n-rest)
+        A         (count gw/action-deltas)
+        time-cost (double (get utilities :timeCost 0.0))
+        comp-of   (fn [kw i] (let [u (get utilities kw)]
+                               (double (if (sequential? u) (nth u i) u))))
+        ;; next-state on the augmented space (deterministic):
+        ;;  L@1 twin  -> absorbing;  L@0 (= L) -> L@1 for every action;
+        ;;  ordinary  -> grid geometry (entering L lands on L@0 = idx L)
+        ns-fn     (fn [s a]
+                    (cond
+                      (>= s S-grid) s
+                      (rest-set s)  (twin s)
+                      :else         (gw/next-state W H walls s a)))
+        ns-rows   (vec (for [s (range S)] (vec (for [a (range A)] (ns-fn s a)))))
+        T         (gw/transition-tensor S A ns-rows 0.0)
+        reward-of (fn [s]
+                    (cond
+                      (contains? twin-kw s) (comp-of (twin-kw s) 1)   ; L@1: delayed
+                      (rest-set s)          (comp-of (terminals s) 0) ; L@0: immediate
+                      :else                 time-cost))               ; ordinary: timeCost
+        R         (mx/array (clj->js (vec (for [s (range S)] (vec (repeat A (reward-of s))))))
+                            mx/float32)
+        term      (mx/array (clj->js (vec (for [s (range S)] (if (contains? twin-kw s) 1.0 0.0))))
+                            mx/float32)
+        [sx sy]   start
+        start-idx (+ sx (* W sy))]
+    (mx/eval! T R term)
+    {:W W :H H :S S :A A :grid-S S-grid
+     :T T :R R :term term
+     :terminals twin-kw :walls walls :start-idx start-idx
+     :twin twin :restaurants (into {} (for [L rest-idxs] [L (terminals L)]))
+     :ns-fn ns-fn :action-kw gw/action-kw :gamma gamma :noise 0.0}))
+
+;; ===========================================================================
 ;; Section 6 — World C: a reward-myopia line MDP (agentmodels 5c)
 ;; ===========================================================================
 ;;
