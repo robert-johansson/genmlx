@@ -8,8 +8,8 @@
    and cumulative regret flattens. `t` toggles Thompson <-> softmax-greedy.
 
    Pure data crosses the seam (bandit-bars -> bars-view); this file only wires +
-   renders. (Thompson draws are EXACT Beta via the gamma ratio, sidestepping the
-   broken scalar beta sampler — bean genmlx-gcw4.)"
+   renders. (Thompson draws are exact Beta via dist/beta-dist, now backed by the
+   stable gamma-ratio sampler — genmlx-gcw4.)"
   (:require ["ink" :refer [Text Box]]
             [reagent.core :as r]
             [agentmodels.pomdp :as pomdp]
