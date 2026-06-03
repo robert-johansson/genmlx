@@ -31,6 +31,7 @@
             [genmlx.agents.inverse :as inv]
             [genmlx.agents.gridworld :as gw]
             [genmlx.agents.agent :as agent]
+            [genmlx.agents.belief :as belief]
             [genmlx.agents.helpers :as h])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -65,12 +66,17 @@
         worlds    (if world-utils (vec (keys world-utils)) goals)
         A         (:A (:mdp (val (first world-agents))))
         prior     (or prior (zipmap worlds (repeat (/ 1.0 (count worlds)))))
-        ;; QMDP belief-space Q at state s: Σ_w b(w) · Q_w[s]  (plain mx reduction)
+        worlds-vec (vec worlds)
+        W         (count worlds-vec)
+        ;; QMDP belief-space Q at state s: Σ_w b(w) · Q_w[s]. Tensorized (bean
+        ;; genmlx-4ifp): stack the per-world solved Q into [W,S,A] ONCE, then
+        ;; contract the [W] belief vector against the [W,A] Q-rows at s as a single
+        ;; fused reduction, instead of a host reduce over the belief map. Agrees
+        ;; with the old reduce to float32 (1e-5) — only the summation reassociates.
+        Qstack    (mx/stack (mapv #(:Q (world-agents %)) worlds-vec))    ; [W,S,A]
         belief-Q  (fn [belief s]
-                    (reduce (fn [acc [w b]]
-                              (mx/add acc (mx/multiply (mx/scalar b)
-                                                       (mx/idx (:Q (world-agents w)) s))))
-                            (mx/zeros #js [A]) belief))
+                    (let [bvec (mx/array (clj->js (mapv #(double (get belief % 0.0)) worlds-vec)) mx/float32)]
+                      (mx/sum (mx/multiply (mx/reshape bvec [W 1]) (mx/idx Qstack s 1)) [0])))
         ;; one Bayes filtering step: b'(w) ∝ b(w) · P(obs | w, loc).
         ;; obs = nil (uninformative location) => belief unchanged (flat-then-snap).
         update-belief (fn [belief loc obs]
@@ -88,6 +94,11 @@
                 (int (mx/item (:retval (p/simulate (dyn/auto-key policy) []))))))]
     {:worlds (vec worlds) :world-agents world-agents :prior prior :observe observe
      :belief-Q belief-Q :update-belief update-belief :act act
+     ;; tensor belief kernel (bean genmlx-kpuo): same map-in/map-out contract as
+     ;; :update-belief but the filter runs as pure MLX [W] ops (no per-step host
+     ;; map arithmetic, no mx/item). Opt-in via simulate-pomdp :belief-mode :tensor.
+     :update-belief-tensor (fn [belief loc obs]
+                             (belief/update-belief-map observe (vec worlds) belief loc obs))
      :expected-utility (fn [belief s a]
                          (reduce + (map (fn [[w b]]
                                           (* b ((:expected-utility (world-agents w)) s a)))
@@ -101,12 +112,19 @@
    OBSERVES at the new location; (4) it FILTERS its belief. Returns
      {:states [...] :actions [...] :observations [...] :beliefs [b0 b1 ...]}
    where :beliefs index k is the belief held at state k (when choosing action k) —
-   so :states and :beliefs align and both feed the seam (env->trajectory / dist->bars)."
-  [{:keys [act update-belief observe world-agents prior]} env start horizon]
+   so :states and :beliefs align and both feed the seam (env->trajectory / dist->bars).
+
+   `:belief-mode` (optional trailing opts) selects the belief filter: :host
+   (default — the original Clojure-map normalize-logs filter, byte-identical seam)
+   or :tensor (the pure-MLX kernel genmlx.agents.belief; bean genmlx-kpuo). Both
+   produce {world -> prob} beliefs, so the seam is unchanged either way."
+  [{:keys [act update-belief update-belief-tensor observe world-agents prior]} env start horizon
+   & [{:keys [belief-mode] :or {belief-mode :host}}]]
   (let [true-world (:true-world env)
         true-mdp   (:mdp (world-agents true-world))
         T          (:T true-mdp)
-        terminals  (:terminals true-mdp)]
+        terminals  (:terminals true-mdp)
+        update-belief (if (= belief-mode :tensor) update-belief-tensor update-belief)]
     (loop [s start, b prior, step 0
            states [start], actions [], obss [], beliefs [prior]]
       (if (or (>= step horizon) (contains? terminals s))
@@ -143,6 +161,20 @@
   (update-in belief [:arms i]
              (fn [[a b]] (if (== reward 1) [(inc a) b] [a (inc b)]))))
 
+(defn tensor-bb-increment
+  "One-hot-masked Beta-Bernoulli conjugate increment on [K] alpha/beta MLX tensors
+   (bean genmlx-4ifp) — the pure-tensor form of update-arm, same algebra as
+   genmlx.inference.conjugate/bb-update. For chosen arm `i` with reward r∈{0,1}:
+     alpha' = alpha + onehot_i · r ,  beta' = beta + onehot_i · (1 - r).
+   Returns [alpha' beta']. Element-wise and differentiable; produces the same
+   numbers as update-arm. (The live :thompson path keeps the {:arms [[a b]…]} map
+   for seam compatibility; the [N,K] batched form drives genmlx-tl6p.)"
+  [alpha beta i reward k]
+  (let [mask (mx/where (mx/equal (mx/arange k) (mx/scalar (int i))) (mx/scalar 1.0) (mx/scalar 0.0))
+        r    (mx/scalar (double reward))]
+    [(mx/add alpha (mx/multiply mask r))
+     (mx/add beta  (mx/multiply mask (mx/subtract (mx/scalar 1.0) r)))]))
+
 
 (defn make-bandit-agent
   "Bandit POMDP agent. Belief = {:arms [[alpha beta] ...]} (per-arm Beta).
@@ -163,13 +195,16 @@
             (case strategy
               :thompson
               ;; posterior sampling: draw theta_i ~ Beta(alpha_i,beta_i) per arm and
-              ;; pull the argmax. The action is the argmax of K draws (not one random
-              ;; choice), so we sample directly. dist/beta-dist now uses the stable
-              ;; gamma-ratio sampler (genmlx-gcw4 fixed), so this is exact + crash-free
-              ;; at the high concentration a converging bandit reaches.
-              (let [ks (rng/split-n key (count arms))
-                    ss (mapv (fn [k [a b]] (mx/item (dist/sample (dist/beta-dist a b) k))) ks arms)]
-                (int (apply max-key #(nth ss %) (range (count ss)))))
+              ;; pull the argmax. Tensorized (bean genmlx-4ifp): one [K] Beta draw via
+              ;; the per-element gamma-ratio sampler (genmlx-gcw4-stable, crash-free at
+              ;; high concentration) + a single mx/argmax — replacing the K per-arm
+              ;; mx/item draws with ONE extraction. Belief stays {:arms [[a b]…]} for
+              ;; seam compatibility (RNG path now draws all arms in one op — the seeded
+              ;; convergence/regret tests assert invariants, not the exact pull order).
+              (let [av    (mx/array (clj->js (mapv first arms)) mx/float32)    ; [K] alpha
+                    bv    (mx/array (clj->js (mapv second arms)) mx/float32)   ; [K] beta
+                    theta (dist/beta-sample-vec av bv key)]                    ; [K] posterior draw
+                (int (mx/item (mx/argmax theta))))
               :softmax
               (let [eu  (mx/array (clj->js (arm-values {:arms arms})))
                     pol (gen [] (trace :action (h/softmax-action alpha eu)))]
@@ -197,3 +232,52 @@
         (recur b' (inc step) k3
                (conj arms i) (conj rewards r) (conj beliefs b')
                cum' reg' (conj cum-reward cum') (conj regret reg'))))))
+
+(defn simulate-bandit-batched
+  "Run N independent Thompson bandit episodes at once via shape-based batching
+   (bean genmlx-tl6p). Belief is [N,K] alpha/beta tensors; each step is ONE [N,K]
+   Beta draw + [N] argmax pull + [N] Bernoulli reward + a one-hot-masked [N,K]
+   conjugate increment — the N×K particle dimension is fully tensorized, so the
+   only host loop is over the (small) horizon and there is no per-step mx/item.
+
+   Equivalence to N independent simulate-bandit calls is DISTRIBUTIONAL (aggregate
+   means over N), not per-episode: the batched path draws all N×K Beta values in
+   one op rather than the host's per-arm split tree, so individual trajectories
+   differ but the N-distribution matches. Reward at the pulled arm uses the TRUE
+   thetas (the observation channel), exactly like the host `pull`. Returns
+     {:arms [N,H] :rewards [N,H] :regret [N,H] (cumulative) :final-means [N,K]
+      :cum-reward [N] :n N}  — every non-:n leaf has a leading [N] axis."
+  [{:keys [thetas theta* horizon prior]} n master-key]
+  (let [K        (count thetas)
+        true-th  (mx/array (clj->js (vec thetas)) mx/float32)            ; [K] true payoffs
+        thstar   (mx/scalar (double (or theta* (apply max thetas))))
+        prior-ab (or (:arms prior) (vec (repeat K [1.0 1.0])))           ; per-arm Beta prior
+        a0       (mx/array (clj->js (vec (repeat n (mapv first prior-ab)))) mx/float32)  ; [N,K]
+        b0       (mx/array (clj->js (vec (repeat n (mapv second prior-ab)))) mx/float32)
+        arange-K (mx/arange K)]
+    (loop [t 0, alpha a0, beta b0
+           cum-reward (mx/zeros [n]), cum-regret (mx/zeros [n])
+           key (rng/ensure-key master-key)
+           arms [], rewards [], regrets []]
+      (if (>= t horizon)
+        {:arms (mx/stack arms 1) :rewards (mx/stack rewards 1) :regret (mx/stack regrets 1)
+         :final-means (mx/divide alpha (mx/add alpha beta)) :cum-reward cum-reward :n n}
+        (let [[k-th k-rest] (rng/split key)
+              [k-rew k-next] (rng/split k-rest)
+              theta   (dist/beta-sample-vec alpha beta k-th)             ; [N,K] posterior draw
+              arm     (mx/argmax theta 1)                               ; [N] pulled arm
+              p-chos  (mx/take-idx true-th arm 0)                        ; [N] true theta of pull
+              r       (mx/where (mx/less (rng/uniform k-rew [n]) p-chos)
+                                (mx/scalar 1.0) (mx/scalar 0.0))         ; [N] Bernoulli reward
+              mask    (mx/where (mx/equal arange-K (mx/reshape arm [n 1]))
+                                (mx/scalar 1.0) (mx/scalar 0.0))         ; [N,K] one-hot of pull
+              r-col   (mx/reshape r [n 1])
+              alpha'  (mx/add alpha (mx/multiply mask r-col))            ; conjugate increment
+              beta'   (mx/add beta  (mx/multiply mask (mx/subtract (mx/scalar 1.0) r-col)))
+              cum-reward' (mx/add cum-reward r)
+              cum-regret' (mx/add cum-regret (mx/subtract thstar p-chos))]  ; theta* - theta_pull
+          ;; break the lazy graph each step (carries + recorded outputs) so horizon×N
+          ;; does not accumulate one giant graph; matches value-iteration's cadence.
+          (mx/materialize! alpha' beta' cum-reward' cum-regret' arm r)
+          (recur (inc t) alpha' beta' cum-reward' cum-regret' k-next
+                 (conj arms arm) (conj rewards r) (conj regrets cum-regret')))))))

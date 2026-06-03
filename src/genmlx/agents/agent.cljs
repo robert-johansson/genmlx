@@ -28,6 +28,7 @@
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
             [genmlx.inference.exact :as exact]
+            [genmlx.agents.rollout :as rollout]
             [genmlx.agents.helpers :as h])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -75,6 +76,30 @@
         (let [[Q' V'] (bellman-step mdp gamma alpha value-of V)]
           (mx/materialize! V')
           (recur V' (inc i) Q'))))))
+
+(defn- soft-value-tensor
+  "soft-value where `alpha` may be a TENSOR (for differentiation) as well as a
+   number — uses mx/multiply directly (Either<MxArray,f64>) instead of mx/scalar,
+   which only accepts numbers. Identical to soft-value for a numeric alpha."
+  [alpha Q]
+  (let [pi (mx/softmax (mx/multiply alpha Q) 1)]
+    (mx/sum (mx/multiply pi Q) [1])))
+
+(defn value-iteration-lazy
+  "value-iteration WITHOUT the per-sweep mx/materialize! — the whole N-sweep unroll
+   stays one lazy graph, so autograd can backprop Q -> R -> utilities and Q -> alpha
+   (bean genmlx-j5um). `alpha` may be a finite number OR a scalar MLX tensor;
+   alpha = ##Inf (hard argmax) is rejected as non-differentiable. Finite-horizon
+   (N sweeps), so it matches value-iteration's Q at the same n for a numeric alpha."
+  [{:keys [S gamma] :as mdp} alpha n]
+  (when (and (number? alpha) (= alpha ##Inf))
+    (throw (ex-info "value-iteration-lazy: alpha must be finite (argmax is non-differentiable)"
+                    {:alpha alpha})))
+  (loop [V (mx/zeros #js [S]), i 0, Q nil]
+    (if (>= i n)
+      {:Q Q :V V}
+      (let [[Q' V'] (bellman-step mdp gamma alpha soft-value-tensor V)]
+        (recur V' (inc i) Q')))))
 
 ;; ---------------------------------------------------------------------------
 ;; Path 2: faithful recursive expectedUtility (exact/with-cache + soft policy)
@@ -180,12 +205,19 @@
   "Roll the agent's policy out from `start` for at most `horizon` steps, stopping
    at a terminal. The action comes from the softmax policy (decision noise) and
    the next state is sampled from T (environment / transition noise). Returns
-   {:states [s0 s1 ...] :actions [a0 a1 ...]} (JS ints); one action per transition."
-  [{:keys [mdp act]} start horizon]
-  (let [{:keys [T terminals]} mdp]
-    (loop [s start, step 0, states [start], actions []]
-      (if (or (>= step horizon) (contains? terminals s))
-        {:states states :actions actions}
-        (let [a  (act s)
-              s' (sample-next T s a)]
-          (recur s' (inc step) (conj states s') (conj actions a)))))))
+   {:states [s0 s1 ...] :actions [a0 a1 ...]} (JS ints); one action per transition.
+
+   `:rollout-mode` (optional trailing opts) selects the loop: :host (default — the
+   per-step act/sample-next loop) or :fused (the single-graph tensor rollout in
+   genmlx.agents.rollout; bean genmlx-5zdd). At alpha=##Inf/noise=0 both produce
+   identical :states/:actions; the seam is unchanged either way."
+  [{:keys [mdp act] :as agent} start horizon & [{:keys [rollout-mode key]}]]
+  (if (= rollout-mode :fused)
+    (rollout/rollout-mdp agent start horizon {:key key})
+    (let [{:keys [T terminals]} mdp]
+      (loop [s start, step 0, states [start], actions []]
+        (if (or (>= step horizon) (contains? terminals s))
+          {:states states :actions actions}
+          (let [a  (act s)
+                s' (sample-next T s a)]
+            (recur s' (inc step) (conj states s') (conj actions a))))))))

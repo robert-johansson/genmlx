@@ -55,6 +55,7 @@
             [genmlx.inference.exact :as exact]
             [genmlx.agents.gridworld :as gw]
             [genmlx.agents.agent :as agent]
+            [genmlx.agents.belief :as belief]
             [genmlx.agents.helpers :as h])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -593,6 +594,11 @@
      :eu eu :act act :policy policy
      ;; the ACTUAL belief filter (ungated): the agent really does keep learning.
      :update-belief (fn [bvec s' o] (bayes-update worlds observe bvec s' o))
+     ;; tensor belief kernel (bean genmlx-kpuo): vector-in/vector-out drop-in for
+     ;; the rollout filter only. The PLANNER-side gated bayes-update stays host —
+     ;; the belief vec is part of the build-biased-eu-belief with-cache key and an
+     ;; MLX array is not a stable hash key. Opt-in via simulate-biased-pomdp.
+     :update-belief-tensor (fn [bvec s' o] (belief/update-belief-vec observe worlds bvec s' o))
      :params {:alpha alpha :gamma gamma :horizon H :discount discount :bias bias
               :reward-myopic-bound reward-myopic-bound :update-myopic-bound update-myopic-bound}}))
 
@@ -600,16 +606,22 @@
   "Roll the belief-space biased POMDP agent out from `start` (state idx) under the
    TRUE world. Each step: ACT from belief; transition via the world geometry;
    OBSERVE at the new cell; FILTER (real, ungated). Returns
-   {:states :actions :observations :beliefs} (beliefs as prob vectors)."
-  [{:keys [act update-belief observe T terminals]} true-world start horizon prior-vec]
-  (loop [s start, b prior-vec, step 0, states [start], actions [], obss [], beliefs [prior-vec]]
-    (if (or (>= step horizon) (contains? terminals s))
-      {:states states :actions actions :observations obss :beliefs beliefs}
-      (let [a  (act b s)
-            s' (agent/sample-next T s a)
-            o  (observe true-world s')
-            b' (update-belief b s' o)]
-        (recur s' b' (inc step) (conj states s') (conj actions a) (conj obss o) (conj beliefs b'))))))
+   {:states :actions :observations :beliefs} (beliefs as prob vectors).
+
+   `:belief-mode` (optional trailing opts) selects the rollout filter: :host
+   (default) or :tensor (the pure-MLX kernel genmlx.agents.belief; bean
+   genmlx-kpuo). Both produce prob vectors aligned to :worlds — seam unchanged."
+  [{:keys [act update-belief update-belief-tensor observe T terminals]} true-world start horizon prior-vec
+   & [{:keys [belief-mode] :or {belief-mode :host}}]]
+  (let [update-belief (if (= belief-mode :tensor) update-belief-tensor update-belief)]
+    (loop [s start, b prior-vec, step 0, states [start], actions [], obss [], beliefs [prior-vec]]
+      (if (or (>= step horizon) (contains? terminals s))
+        {:states states :actions actions :observations obss :beliefs beliefs}
+        (let [a  (act b s)
+              s' (agent/sample-next T s a)
+              o  (observe true-world s')
+              b' (update-belief b s' o)]
+          (recur s' b' (inc step) (conj states s') (conj actions a) (conj obss o) (conj beliefs b')))))))
 
 (defn voi-world
   "A small 'walk-and-check' POMDP where information is a deliberate DETOUR. Two

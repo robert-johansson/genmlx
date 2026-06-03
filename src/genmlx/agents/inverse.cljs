@@ -56,20 +56,61 @@
         z  (reduce + (vals ex))]
     (into {} (map (fn [[g e]] [g (/ e z)]) ex))))
 
+(defn- stack-log-policies
+  "Stack the goal policies into one [G,S,A] log-action-probability tensor (bean
+   genmlx-y2hh). LOGP[g,s,a] = log_softmax(alpha · Q_g[s,:])[a] — which is EXACTLY
+   action-loglik(agent_g,s,a): the agent's policy is Categorical(alpha·Q_g[s,:])
+   (agent.cljs make-mdp-agent), and the categorical assess weight is dist's
+   logits->logprobs = logits - logsumexp(logits, last-axis). Computing it for all
+   goals/states at once lets each observed [s,a] be scored against EVERY goal in
+   one gather, with no per-cell mx/item. Requires a finite, shared alpha (a hard
+   argmax would give -inf likelihoods for sub-optimal actions and collapse the
+   posterior — the soft-rationality invariant of inverse inference)."
+  [goals goal-agents]
+  (let [alpha (:alpha (:params (goal-agents (first goals))))]
+    (assert (and (number? alpha) (js/isFinite alpha))
+            "posterior-sequence: batched inverse inference needs a finite alpha (hard argmax is degenerate)")
+    (doseq [g (rest goals)]
+      (assert (== alpha (:alpha (:params (goal-agents g))))
+              "posterior-sequence: all goal agents must share one alpha to batch the policy stack"))
+    (let [qstack (mx/stack (mapv #(:Q (goal-agents %)) goals))          ; [G,S,A]
+          logits (mx/multiply (mx/scalar alpha) qstack)                 ; [G,S,A]
+          logp   (mx/subtract logits (mx/expand-dims (mx/logsumexp logits [-1]) -1))]
+      (mx/materialize! logp)                                            ; eval the stack once
+      logp)))
+
+(defn- softmax->map
+  "Stable tensor softmax of a [G] log-weight vector -> {goal -> prob} map. Same
+   max-shift recipe as normalize-logs, in tensor space (exp(-inf)=0 for zero-prior
+   goals); the single host extraction per prefix posterior."
+  [goals logp]
+  (let [e (mx/exp (mx/subtract logp (mx/amax logp)))]
+    (zipmap goals (mx/->clj (mx/divide e (mx/sum e))))))
+
 (defn posterior-sequence
   "Incremental Bayesian update. `observations` is a seq of [state action] pairs.
    Returns a vector of posterior maps {goal -> prob}, one per prefix length:
-   index 0 is the prior, index k is the posterior after k observed actions."
+   index 0 is the prior, index k is the posterior after k observed actions.
+
+   Shape-batched over the goal axis (bean genmlx-y2hh): the goal policies are
+   stacked into one [G,S,A] log-prob tensor and each observation is scored against
+   ALL goals at once, accumulating into a single [G] log-weight tensor. Extraction
+   is one [G] readout per prefix posterior (T+1 total), not G·T per-cell mx/item.
+   Numerically identical (to float32) to the per-cell action-loglik path, which is
+   retained above as the ground truth."
   [goal-agents prior observations]
-  (let [goals (keys goal-agents)]
+  (let [goals (vec (keys goal-agents))                 ; pin order: same axis for stack + readout
+        logp-policies (stack-log-policies goals goal-agents)
+        logp0 (mx/log (mx/array (clj->js (mapv #(double (prior %)) goals)) mx/float32))]
     (loop [obs  observations
-           logp (into {} (map (fn [g] [g (Math/log (prior g))]) goals))
-           acc  [(normalize-logs logp)]]
+           logp logp0
+           acc  [(softmax->map goals logp0)]]
       (if (empty? obs)
         acc
         (let [[s a] (first obs)
-              logp' (into {} (map (fn [g] [g (+ (logp g) (action-loglik (goal-agents g) s a))]) goals))]
-          (recur (rest obs) logp' (conj acc (normalize-logs logp'))))))))
+              cell  (mx/idx (mx/idx logp-policies s 1) a 1)   ; [G,S,A] -> [G,A] -> [G]
+              logp' (mx/add logp cell)]
+          (recur (rest obs) logp' (conj acc (softmax->map goals logp'))))))))
 
 (defn observe-rollout
   "Turn an agent rollout {:states :actions} into [state action] observation pairs."
