@@ -24,13 +24,18 @@
 (defn goal-agents
   "Build one agent per candidate goal: the agent that VALUES that goal gives it
    `high` utility and every other goal `low`. Same grid/noise for all. Returns an
-   ordered map {goal -> agent} (agents carry :policy and :Q)."
-  [{:keys [grid goals high low time-cost alpha noise gamma]
-    :or   {high 5.0 low 0.0 time-cost -0.1 alpha 2.0 noise 0.0 gamma 1.0}}]
+   ordered map {goal -> agent} (agents carry :policy and :Q).
+
+   `:fixed` is a map of utilities merged into EVERY hypothesis (terrain that is
+   known and shared, not part of the inferred preference) — e.g. a hiking Hill
+   cliff {:hill -40} so all peak-preference hypotheses still avoid the cliff.
+   `:start` only affects rollout, not the policy/Q used for action-loglik."
+  [{:keys [grid goals high low time-cost alpha noise gamma fixed start]
+    :or   {high 5.0 low 0.0 time-cost -0.1 alpha 2.0 noise 0.0 gamma 1.0 fixed {} start [0 0]}}]
   (reduce
     (fn [m g]
-      (let [utils (assoc (zipmap goals (repeat low)) g high :timeCost time-cost)
-            mdp   (gw/build-mdp {:grid grid :utilities utils :start [0 0]
+      (let [utils (merge (assoc (zipmap goals (repeat low)) g high :timeCost time-cost) fixed)
+            mdp   (gw/build-mdp {:grid grid :utilities utils :start start
                                  :gamma gamma :noise noise})]
         (assoc m g (agent/make-mdp-agent {:mdp mdp :alpha alpha :gamma gamma :n-iters 40}))))
     {} goals))
