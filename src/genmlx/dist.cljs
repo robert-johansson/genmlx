@@ -245,6 +245,37 @@
   (bernoulli prob))
 
 ;; ---------------------------------------------------------------------------
+;; Shared scalar Gamma sampler (used by both Beta and Gamma below)
+;; ---------------------------------------------------------------------------
+
+(defn- gamma-sample-scalar
+  "One Gamma(shape, rate) draw (JS number) via Marsaglia and Tsang's method, with
+   the Ahrens-Dieter boost for shape < 1. `shape-param`/`rate` are MLX scalars.
+   Stable at all shapes (~95% first-try acceptance) — the basis for the
+   gamma-ratio Beta sampler that replaces Johnk's algorithm (bean genmlx-gcw4)."
+  [shape-param rate key]
+  (let [a (mx/realize shape-param)
+        r (mx/realize rate)
+        alpha<1? (< a 1.0)
+        a' (if alpha<1? (inc a) a)
+        d (- a' (/ 1.0 3.0))
+        c (/ 1.0 (js/Math.sqrt (* 9.0 d)))
+        [key-sample key-boost] (rng/split key)
+        raw (loop [k key-sample]
+              (let [[k1 k2] (rng/split k)
+                    x (mx/realize (rng/normal k1 []))
+                    v (js/Math.pow (+ 1.0 (* c x)) 3)
+                    u (mx/realize (rng/uniform k2 []))]
+                (if (and (> v 0)
+                         (< (js/Math.log u) (+ (* 0.5 x x) (* d (+ 1 (- v) (js/Math.log v))))))
+                  (/ (* d v) r)
+                  (let [[k' _] (rng/split k2)]
+                    (recur k')))))]
+    (if alpha<1?
+      (* raw (js/Math.pow (mx/realize (rng/uniform key-boost [])) (/ 1.0 a)))
+      raw)))
+
+;; ---------------------------------------------------------------------------
 ;; Beta
 ;; ---------------------------------------------------------------------------
 
@@ -252,19 +283,16 @@
   "Beta distribution with parameters alpha and beta."
   [alpha beta-param]
   (sample [key]
-    ;; Johnk's algorithm for beta sampling
-          (let [a (mx/realize alpha)
-                b (mx/realize beta-param)]
-            (loop [k key]
-              (let [[k1 k2] (rng/split k)
-                    u1 (mx/realize (rng/uniform k1 []))
-                    u2 (mx/realize (rng/uniform k2 []))
-                    x (js/Math.pow u1 (/ 1.0 a))
-                    y (js/Math.pow u2 (/ 1.0 b))]
-                (if (<= (+ x y) 1.0)
-                  (mx/scalar (/ x (+ x y)))
-                  (let [[k' _] (rng/split k2)]
-                    (recur k')))))))
+    ;; Beta(a,b) = G_a / (G_a + G_b), with G ~ Gamma(shape, 1) from the stable
+    ;; Marsaglia-Tsang sampler. Replaces Johnk's algorithm, which diverges (and
+    ;; SIGTRAPs the native layer) at moderate+ concentration — genmlx-gcw4. This
+    ;; matches the batch path (dist-sample-n* :beta-dist), which already does it.
+          (let [[k1 k2] (rng/split key)
+                ga (gamma-sample-scalar alpha ONE k1)
+                gb (gamma-sample-scalar beta-param ONE k2)
+                v  (/ ga (+ ga gb))]
+            ;; clamp into the open support (0,1) — log-prob is +inf at the edges
+            (mx/scalar (min (- 1.0 1e-7) (max 1e-7 v)))))
   (log-prob [v]
             ;; Boundary: log(v) → -Inf at v=0, log(1-v) → -Inf at v=1.
             ;; Mathematically correct for the beta distribution — the density
@@ -293,30 +321,9 @@
   "Gamma distribution with shape and rate parameters."
   [shape-param rate]
   (sample [key]
-    ;; Marsaglia and Tsang's method (requires shape >= 1/3).
-    ;; For shape < 1: Ahrens-Dieter boost — sample Gamma(shape+1, rate),
-    ;; then scale by U^(1/shape). Matches gamma-sample-n logic.
-          (let [a (mx/realize shape-param)
-                r (mx/realize rate)
-                alpha<1? (< a 1.0)
-                a' (if alpha<1? (inc a) a)
-                d (- a' (/ 1.0 3.0))
-                c (/ 1.0 (js/Math.sqrt (* 9.0 d)))
-                [key-sample key-boost] (rng/split key)
-                raw (loop [k key-sample]
-                      (let [[k1 k2] (rng/split k)
-                            x (mx/realize (rng/normal k1 []))
-                            v (js/Math.pow (+ 1.0 (* c x)) 3)
-                            u (mx/realize (rng/uniform k2 []))]
-                        (if (and (> v 0)
-                                 (< (js/Math.log u) (+ (* 0.5 x x) (* d (+ 1 (- v) (js/Math.log v))))))
-                          (/ (* d v) r)
-                          (let [[k' _] (rng/split k2)]
-                            (recur k')))))]
-            (if alpha<1?
-              (let [u (mx/realize (rng/uniform key-boost []))]
-                (mx/scalar (* raw (js/Math.pow u (/ 1.0 a)))))
-              (mx/scalar raw))))
+    ;; Marsaglia and Tsang's method (Ahrens-Dieter boost for shape < 1),
+    ;; shared with the gamma-ratio Beta sampler above.
+          (mx/scalar (gamma-sample-scalar shape-param rate key)))
   (log-prob [v]
             (let [k shape-param]
               (-> (mx/add (mx/multiply (mx/subtract k ONE) (mx/log v))

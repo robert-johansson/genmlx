@@ -1,0 +1,9 @@
+{
+  "name": "agentmodels-tui",
+  "private": true,
+  "description": "Terminal gallery for the GenMLX agentmodels.org port — gridworld MDP demos rendered with Ink",
+  "dependencies": {
+    "ink": "^4.4.1",
+    "react": "^18.3.1"
+  }
+}

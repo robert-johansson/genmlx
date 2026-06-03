@@ -208,4 +208,18 @@
       (is (h/close? 5.0 mean 0.3) "Gaussian mean ~ 5")
       (is (h/close? 4.0 variance 1.0) "Gaussian variance ~ 4"))))
 
+(deftest beta-high-concentration-regression-test
+  ;; genmlx-gcw4: the old Johnk's beta sampler diverged and SIGTRAPped the native
+  ;; layer at moderate+ concentration. The gamma-ratio sampler is stable + correct
+  ;; at all concentrations (this is exactly where a converging bandit lives).
+  (testing "Beta sampling at high concentration is stable + correct (no SIGTRAP)"
+    (doseq [[a b] [[40 10] [100 20]]]
+      (let [d    (dist/beta-dist a b)
+            xs   (mapv (fn [_] (let [v (dist/sample d)] (mx/eval! v) (mx/item v))) (range 50))
+            mean (/ (reduce + xs) (count xs))]
+        (is (every? #(and (> % 0.0) (< % 1.0)) xs)
+            (str "Beta(" a "," b ") samples all in open (0,1)"))
+        (is (h/close? (/ a (+ a b)) mean 0.06)
+            (str "Beta(" a "," b ") sample mean ~ " (/ a (+ a b))))))))
+
 (cljs.test/run-tests)
