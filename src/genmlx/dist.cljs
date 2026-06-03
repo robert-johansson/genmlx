@@ -410,6 +410,61 @@
     ;; round to exactly 0.0/1.0, where the beta density (and log-prob) is +inf.
     (mx/clip (mx/divide g1 (mx/add g1 g2)) 1e-7 (- 1.0 1e-7))))
 
+(defn gamma-sample-vec
+  "Marsaglia-Tsang gamma sampling with a per-ELEMENT shape TENSOR (rate 1). `shape`
+   is an MLX array of any shape (e.g. [K] arms or [N,K] particles×arms); returns
+   gamma draws of the SAME shape. Generalizes gamma-sample-n (whose shape is a JS
+   scalar): the constants a/d/c become element-wise tensors and the alpha<1
+   Ahrens-Dieter boost becomes an mx/where mask, so a single tensor mixing shapes
+   <1 and >=1 is sampled in one call. Used by beta-sample-vec for the tensor bandit
+   (bean genmlx-4ifp / genmlx-tl6p). The scalar gamma-sample-n is left untouched."
+  [shape key]
+  (let [key (rng/ensure-key key)
+        sh  (mx/shape shape)                                 ; output element shape
+        a<1 (mx/less shape ONE)                              ; per-element mask
+        a   (mx/where a<1 (mx/add shape ONE) shape)          ; boost shape where <1
+        d   (mx/subtract a (mx/scalar (/ 1.0 3.0)))
+        c   (mx/divide ONE (mx/sqrt (mx/multiply (mx/scalar 9.0) d)))
+        max-iter 20]
+    (loop [iter 0, result (mx/zeros sh), done (mx/zeros sh), k key]
+      (if (>= iter max-iter)
+        ;; Ahrens-Dieter boost only where shape<1: multiply by U^(1/shape)
+        (let [[ku _] (rng/split k)
+              u (rng/uniform ku sh)
+              boosted (mx/multiply result (mx/power u (mx/divide ONE shape)))]
+          (mx/where a<1 boosted result))
+        (let [[k1 k2 k3] (rng/split-n k 3)
+              x  (rng/normal k1 sh)
+              u  (rng/uniform k2 sh)
+              v  (mx/power (mx/add ONE (mx/multiply c x)) (mx/scalar 3.0))   ; (1+c*x)^3
+              v-pos  (mx/greater v ZERO)
+              safe-v (mx/maximum v (mx/scalar 1e-30))
+              ;; log(u) < 0.5*x^2 + d*(1 - v + log v)
+              log-accept (mx/add (mx/multiply HALF (mx/square x))
+                                 (mx/multiply d (mx/add (mx/subtract ONE safe-v) (mx/log safe-v))))
+              accepted   (mx/multiply v-pos (mx/less (mx/log u) log-accept))
+              not-done   (mx/equal done ZERO)
+              newly-done (mx/multiply accepted not-done)
+              result (mx/where newly-done (mx/multiply d safe-v) result)
+              done   (mx/where newly-done ONE done)]
+          ;; Cut the lazy chain so 20 iterations don't accumulate one giant graph,
+          ;; and periodically release dead Metal buffers (matches gamma-sample-n).
+          (mx/eval! result done)
+          (when (zero? (mod iter 5)) (mx/sweep-dead-arrays!))
+          (recur (inc iter) result done k3))))))
+
+(defn beta-sample-vec
+  "Per-element Beta sampling: given `alpha` and `beta` MLX tensors of the SAME
+   shape, return Beta(alpha,beta) draws of that shape. Beta(a,b)=G1/(G1+G2),
+   G1~Gamma(a,1), G2~Gamma(b,1); clipped into (1e-7,1-1e-7) like dist-sample-n*
+   :beta-dist. One call draws a whole [K] (or [N,K]) posterior — the tensor bandit
+   Thompson draw (bean genmlx-4ifp / genmlx-tl6p)."
+  [alpha beta key]
+  (let [[k1 k2] (rng/split (rng/ensure-key key))
+        g1 (gamma-sample-vec alpha k1)
+        g2 (gamma-sample-vec beta k2)]
+    (mx/clip (mx/divide g1 (mx/add g1 g2)) 1e-7 (- 1.0 1e-7))))
+
 ;; Dirichlet batch sampling via k independent gamma samples, then normalize
 (defmethod dc/dist-sample-n* :dirichlet [d key n]
   (let [{:keys [alpha]} (:params d)

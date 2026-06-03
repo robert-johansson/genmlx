@@ -99,6 +99,24 @@
   (assert-equal "POMDP act under certain belief == the MDP agent's action"
                 ((:act (wa :A)) s) ((:act pa) {:A 1.0 :B 0.0} s)))
 
+(println "\n== Section 4b: tensorized belief-Q == host reduce over a belief sweep (genmlx-4ifp) ==")
+;; belief-Q is now a [W,S,A] Qstack contraction; assert it agrees with the old
+;; host reduce (Σ_w b(w)·Q_w[s]) to 1e-5 across a sweep of beliefs and states.
+(let [[_ pa] (build :A 2.0)
+      wa     (:world-agents pa)
+      bq     (:belief-Q pa)
+      A      (:A (:mdp (val (first wa))))
+      host-bq (fn [belief s]
+                (reduce (fn [acc [w b]]
+                          (mx/add acc (mx/multiply (mx/scalar b) (mx/idx (:Q (wa w)) s))))
+                        (mx/zeros #js [A]) belief))
+      beliefs [{:A 1.0 :B 0.0} {:A 0.0 :B 1.0} {:A 0.5 :B 0.5} {:A 0.7 :B 0.3} {:A 0.1 :B 0.9}]]
+  (assert-true "tensor belief-Q == host reduce to 1e-5 over beliefs×states"
+               (every? identity
+                 (for [b beliefs, s [0 1 4 7 10]]
+                   (every? (fn [[t h]] (< (Math/abs (- t h)) 1e-5))
+                           (map vector (mx/->clj (bq b s)) (mx/->clj (host-bq b s))))))))
+
 (println "\n== Section 5: the seam — belief -> PosteriorBars ==")
 (let [bars (pres/dist->bars "P(world)" {:A 1.0 :B 0.0} :A)]
   (assert-close "bars sum to 1" 1.0 (reduce + (map :weight (:bars bars))) 1e-9)

@@ -66,12 +66,17 @@
         worlds    (if world-utils (vec (keys world-utils)) goals)
         A         (:A (:mdp (val (first world-agents))))
         prior     (or prior (zipmap worlds (repeat (/ 1.0 (count worlds)))))
-        ;; QMDP belief-space Q at state s: Σ_w b(w) · Q_w[s]  (plain mx reduction)
+        worlds-vec (vec worlds)
+        W         (count worlds-vec)
+        ;; QMDP belief-space Q at state s: Σ_w b(w) · Q_w[s]. Tensorized (bean
+        ;; genmlx-4ifp): stack the per-world solved Q into [W,S,A] ONCE, then
+        ;; contract the [W] belief vector against the [W,A] Q-rows at s as a single
+        ;; fused reduction, instead of a host reduce over the belief map. Agrees
+        ;; with the old reduce to float32 (1e-5) — only the summation reassociates.
+        Qstack    (mx/stack (mapv #(:Q (world-agents %)) worlds-vec))    ; [W,S,A]
         belief-Q  (fn [belief s]
-                    (reduce (fn [acc [w b]]
-                              (mx/add acc (mx/multiply (mx/scalar b)
-                                                       (mx/idx (:Q (world-agents w)) s))))
-                            (mx/zeros #js [A]) belief))
+                    (let [bvec (mx/array (clj->js (mapv #(double (get belief % 0.0)) worlds-vec)) mx/float32)]
+                      (mx/sum (mx/multiply (mx/reshape bvec [W 1]) (mx/idx Qstack s 1)) [0])))
         ;; one Bayes filtering step: b'(w) ∝ b(w) · P(obs | w, loc).
         ;; obs = nil (uninformative location) => belief unchanged (flat-then-snap).
         update-belief (fn [belief loc obs]
@@ -156,6 +161,20 @@
   (update-in belief [:arms i]
              (fn [[a b]] (if (== reward 1) [(inc a) b] [a (inc b)]))))
 
+(defn tensor-bb-increment
+  "One-hot-masked Beta-Bernoulli conjugate increment on [K] alpha/beta MLX tensors
+   (bean genmlx-4ifp) — the pure-tensor form of update-arm, same algebra as
+   genmlx.inference.conjugate/bb-update. For chosen arm `i` with reward r∈{0,1}:
+     alpha' = alpha + onehot_i · r ,  beta' = beta + onehot_i · (1 - r).
+   Returns [alpha' beta']. Element-wise and differentiable; produces the same
+   numbers as update-arm. (The live :thompson path keeps the {:arms [[a b]…]} map
+   for seam compatibility; the [N,K] batched form drives genmlx-tl6p.)"
+  [alpha beta i reward k]
+  (let [mask (mx/where (mx/equal (mx/arange k) (mx/scalar (int i))) (mx/scalar 1.0) (mx/scalar 0.0))
+        r    (mx/scalar (double reward))]
+    [(mx/add alpha (mx/multiply mask r))
+     (mx/add beta  (mx/multiply mask (mx/subtract (mx/scalar 1.0) r)))]))
+
 
 (defn make-bandit-agent
   "Bandit POMDP agent. Belief = {:arms [[alpha beta] ...]} (per-arm Beta).
@@ -176,13 +195,16 @@
             (case strategy
               :thompson
               ;; posterior sampling: draw theta_i ~ Beta(alpha_i,beta_i) per arm and
-              ;; pull the argmax. The action is the argmax of K draws (not one random
-              ;; choice), so we sample directly. dist/beta-dist now uses the stable
-              ;; gamma-ratio sampler (genmlx-gcw4 fixed), so this is exact + crash-free
-              ;; at the high concentration a converging bandit reaches.
-              (let [ks (rng/split-n key (count arms))
-                    ss (mapv (fn [k [a b]] (mx/item (dist/sample (dist/beta-dist a b) k))) ks arms)]
-                (int (apply max-key #(nth ss %) (range (count ss)))))
+              ;; pull the argmax. Tensorized (bean genmlx-4ifp): one [K] Beta draw via
+              ;; the per-element gamma-ratio sampler (genmlx-gcw4-stable, crash-free at
+              ;; high concentration) + a single mx/argmax — replacing the K per-arm
+              ;; mx/item draws with ONE extraction. Belief stays {:arms [[a b]…]} for
+              ;; seam compatibility (RNG path now draws all arms in one op — the seeded
+              ;; convergence/regret tests assert invariants, not the exact pull order).
+              (let [av    (mx/array (clj->js (mapv first arms)) mx/float32)    ; [K] alpha
+                    bv    (mx/array (clj->js (mapv second arms)) mx/float32)   ; [K] beta
+                    theta (dist/beta-sample-vec av bv key)]                    ; [K] posterior draw
+                (int (mx/item (mx/argmax theta))))
               :softmax
               (let [eu  (mx/array (clj->js (arm-values {:arms arms})))
                     pol (gen [] (trace :action (h/softmax-action alpha eu)))]
