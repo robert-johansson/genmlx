@@ -730,6 +730,11 @@
   [body-fn source]
   (let [schema (schema/extract-schema source)
         schema (cond
+                 ;; Hidden trace sites (trace/splice handed to opaque code):
+                 ;; not statically analyzable — handler path only, no compilation.
+                 (and schema (:opaque-gen-escape? schema))
+                 schema
+
                  (and schema (:static? schema))
                  (attach-compiled-ops schema source static-ops)
 
@@ -743,8 +748,10 @@
                  (attach-prefix-ops schema source)
 
                  :else schema)
-        ;; L3: full rewrite engine (Kalman > Conjugacy > RaoBlackwell)
-        schema (if schema
+        ;; L3: full rewrite engine (Kalman > Conjugacy > RaoBlackwell).
+        ;; Skip for opaque-escape bodies: conjugacy detection over only the
+        ;; visible sites could mis-fire while real obs sites are hidden.
+        schema (if (and schema (not (:opaque-gen-escape? schema)))
                  (let [augmented (conj/augment-schema-with-conjugacy schema)]
                    (if (:has-conjugate? augmented)
                      (let [plan (rewrite/build-analytical-plan augmented)

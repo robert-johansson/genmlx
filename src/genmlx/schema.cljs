@@ -86,6 +86,113 @@
 
     :else false))
 
+;; The gen macro binds these local symbols to runtime closures that PRODUCE
+;; trace sites. The walker can only see them in head position — `(trace ...)`,
+;; `(splice ...)`. A tracing capability "escapes" — becomes invisible to the
+;; walker — in three ways:
+;;
+;;   1. The bare binding is referenced as a VALUE (anywhere other than the head
+;;      of its own call form): `(run-sessions trace ...)`,
+;;      `(cl/run-controlled-loop trace {...})`. The callee loops internally and
+;;      traces hidden sites.
+;;
+;;   2. An fn/fn* literal that itself contains a trace/splice call is referenced
+;;      as a VALUE — passed to an opaque higher-order function or stored in a
+;;      let — rather than invoked immediately: `(run! step xs)`,
+;;      `(mapv (fn [i] (trace ...)) is)`. The HOF decides how many times (0/1/N)
+;;      it runs, which the walker cannot know, so the single-shot compiled path
+;;      diverges from the handler.
+;;
+;;   3. A `letfn`-bound local function whose body traces: `(letfn [(step [x]
+;;      (trace :y ...))] (run! step xs))`. The name `step` is neither the bare
+;;      binding nor an fn-literal, so it slips past #1 and #2, but it is the same
+;;      indirectly-invoked tracing capability as #2.
+;;
+;; Any of these makes the body NOT statically analyzable: treating it as static
+;; makes the L1-M2 compiled path drop/under-count those sites (silently, e.g.
+;; when the opaque call is a non-final statement, or when an HOF invokes the
+;; capability N times), so observation constraints are never scored correctly.
+;; `param` is excluded throughout — it only READS a parameter and produces no
+;; trace site, so handing it off hides nothing.
+(def ^:private gen-binding-names #{"trace" "splice"})
+
+(defn- contains-trace-call?
+  "Does this form recursively contain a trace or splice call? Unlike
+   contains-gen-call?, `param` does NOT count — it produces no trace site, so an
+   fn that only reads params is not a tracing capability."
+  [form]
+  (cond
+    (and (seq? form) (seq form))
+    (or (when-let [h (head-sym form)]
+          (contains? gen-binding-names (name h)))
+        (some contains-trace-call? form))
+
+    (and (vector? form) (seq form))
+    (some contains-trace-call? form)
+
+    :else false))
+
+(defn- gen-binding-sym?
+  "True for an unqualified symbol that is one of the gen-macro runtime bindings
+   (trace/splice) — i.e. a tracing capability that must stay in head position."
+  [x]
+  (and (symbol? x) (nil? (namespace x)) (contains? gen-binding-names (name x))))
+
+(defn- fn-literal?
+  "True for an (fn ...) or (fn* ...) form (reader #(...) expands to fn*)."
+  [form]
+  (and (seq? form) (seq form) (symbol? (first form))
+       (contains? #{"fn" "fn*"} (name (first form)))))
+
+(defn- tracing-fn-literal?
+  "True for an fn/fn* literal whose body contains a trace/splice call — a
+   first-class tracing capability. As a VALUE this is an escape (see ns note);
+   as the operator of its own immediate call it runs exactly once and is fine."
+  [form]
+  (and (fn-literal? form) (contains-trace-call? form)))
+
+(defn- letfn-binds-tracer?
+  "True for a `(letfn [(name [args] body...) ...] ...)` form where any local fn
+   body contains a trace/splice call. Such a named tracer can be invoked
+   indirectly or repeatedly (handed to a HOF, called in a loop), hiding sites
+   from the walker — mechanism #3 in the ns note."
+  [form]
+  (and (seq? form) (seq form) (symbol? (first form)) (= "letfn" (name (first form)))
+       (vector? (second form))
+       (some (fn [spec] (and (seq? spec) (contains-trace-call? spec)))
+             (second form))))
+
+(defn- escapes-gen-binding?
+  "True when a tracing capability escapes into code the walker cannot analyze: a
+   bare trace/splice binding used as a value, a tracing fn-literal used as a
+   value (not immediately invoked), or a letfn-bound tracing function. Quoted
+   forms are data, not bindings, so they are not inspected."
+  [form]
+  (cond
+    (and (seq? form) (seq form))
+    (let [h (first form)]
+      (if (and (symbol? h) (= "quote" (name h)))
+        false
+        (boolean
+         (or
+          ;; A letfn that binds a tracing local function escapes (mechanism #3).
+          (letfn-binds-tracer? form)
+          ;; Head: a symbol head is a call name (fine). A non-symbol head is a
+          ;; sub-form — including `((fn ...) args)` immediate invocation, where
+          ;; the fn runs once: scan its body for nested escapes but do NOT treat
+          ;; the fn itself as an escaping value.
+          (when-not (symbol? h) (escapes-gen-binding? h))
+          ;; Arguments: a bare gen-op symbol or a tracing fn-literal escapes here.
+          (some (fn [a] (or (tracing-fn-literal? a) (escapes-gen-binding? a)))
+                (rest form))))))
+
+    (vector? form) (boolean (some #(or (tracing-fn-literal? %) (escapes-gen-binding? %)) form))
+    (set? form)    (boolean (some #(or (tracing-fn-literal? %) (escapes-gen-binding? %)) form))
+    (map? form)    (boolean (some #(or (tracing-fn-literal? %) (escapes-gen-binding? %))
+                                  (mapcat identity form)))
+    (gen-binding-sym? form) true
+    :else false))
+
 ;; =========================================================================
 ;; Walker — threads acc (accumulator) and env (binding environment)
 ;; =========================================================================
@@ -639,12 +746,18 @@
                                    (assoc ls :count-arg-idx
                                           (infer-count-arg-idx
                                            (:count-form ls) params)))
-                                 (or loops []))))]
+                                 (or loops []))))
+          ;; A body that hands `trace`/`splice` to opaque code has hidden trace
+          ;; sites the walker cannot see — it is not statically analyzable and
+          ;; must take the handler path (no compilation). See escapes-gen-binding?.
+          opaque-escape? (boolean (some escapes-gen-binding? body))]
       (-> result
           (dissoc :current-loop-type)
           (assoc :params (vec params)
                  :return-form (last body)
                  :dep-order (topo-sort (:trace-sites result))
+                 :opaque-gen-escape? opaque-escape?
                  :static? (and (not (:dynamic-addresses? result))
                                (not (:has-branches? result))
-                               (not (:has-loops? result))))))))
+                               (not (:has-loops? result))
+                               (not opaque-escape?)))))))
