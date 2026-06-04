@@ -9,6 +9,8 @@
    grid-view        Frame        -> column of colored rows
    bars-view        PosteriorBars-> labeled horizontal bars
    frames-view      [Frame] + idx-atom -> grid-view of the current frame
+   trajectory-player [Frame] thunk -> a stateful player that OWNS frame
+                    stepping (space), replay (r), and autoplay
    status-bar       map          -> a one-line title/status strip"
   (:require ["ink" :refer [Text Box]]
             [reagent.core :as r]))
@@ -41,15 +43,53 @@
 
 (defn frames-view
   "[Frame] + an index r/atom -> the current frame + a step line. Derefing the
-   atom makes this re-render as the index advances (proven reagent reactivity)."
-  [frames idx]
-  (let [i (min @idx (dec (count frames)))
-        f (nth frames i)]
+   atom makes this re-render as the index advances (proven reagent reactivity).
+   An optional `status-fn` (fn [i n] -> string) appends extra text to the step
+   line. Robust to an empty/shrunk frame list (clamps the index)."
+  [frames idx & [status-fn]]
+  (let [n (max 1 (count frames))
+        i (min @idx (dec n))
+        f (when (seq frames) (nth frames i))]
     [:> Box {:flexDirection "column"}
-     [grid-view f]
+     (when f [grid-view f])
      [:> Text {:dimColor true}
-      (str "step " i "/" (dec (count frames))
-           (when-let [a (:action (:meta f))] (str "   →" (name a))))]]))
+      (str "step " i "/" (dec n)
+           (when-let [a (:action (:meta f))] (str "   →" (name a)))
+           (when status-fn (str "   " (status-fn i n))))]]))
+
+(defn make-trajectory-player
+  "Construct a stateful trajectory player that OWNS frame stepping. Returns a map
+   {:view :on-key :start! :stop! :replay! :step! :index} closing over a private
+   frame-index r/atom; rendering delegates to frames-view, so this stays above
+   the seam — it knows nothing of how frames are produced. `frames-fn` is a thunk
+   returning the current [Frame], which makes upstream resampling transparent
+   (call :replay! after a resample to rewind to frame 0).
+
+     :on-key  :space advances one frame, :replay (r) rewinds to frame 0
+     :start!  begin autoplay (no-op if already running or :interval-ms is nil)
+     :stop!   halt autoplay
+     :view    a reagent component rendering the current frame + step line
+
+   opts:
+     :frames-fn   thunk -> current [Frame]                       (required)
+     :interval-ms autoplay period in ms, default 450; nil disables autoplay
+     :status-fn   (fn [i n] -> string) extra step-line text       (optional)"
+  [{:keys [frames-fn interval-ms status-fn] :or {interval-ms 450}}]
+  (let [idx     (r/atom 0)
+        timer   (atom nil)
+        n-now   #(max 1 (count (frames-fn)))
+        step!   (fn [] (swap! idx #(min (dec (n-now)) (inc %))))
+        replay! (fn [] (reset! idx 0))]
+    {:index   idx
+     :step!   step!
+     :replay! replay!
+     :view    (fn [] [frames-view (frames-fn) idx status-fn])
+     :on-key  (fn [k] (case k :space (step!) :replay (replay!) nil))
+     :start!  (fn [] (when (and interval-ms (nil? @timer))
+                       (reset! timer (js/setInterval step! interval-ms))))
+     :stop!   (fn [] (when-let [t @timer]
+                       (js/clearInterval t)
+                       (reset! timer nil)))}))
 
 (defn bars-view
   "PosteriorBars -> labeled horizontal bars; widths normalized to `width` cells.
