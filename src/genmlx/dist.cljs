@@ -529,13 +529,29 @@
           (rng/categorical key logits))
   (log-prob [v]
             (let [v (mx/ensure-array v mx/int32)
-                  log-probs (logits->logprobs logits)]
-        ;; Multi-dim logits [... K]: index along last axis (handles scalar v
-        ;; when constrained and multi-dim v when batched/enumerate).
-        ;; 1D logits [K]: v is scalar or [N].
-              (if (> (count (mx/shape logits)) 1)
-                (mx/take-idx log-probs v -1)
-                (mx/take-idx log-probs v))))
+                  log-probs (logits->logprobs logits)
+                  lp-shape (mx/shape log-probs)
+                  nd (count lp-shape)]
+        ;; 1-D logits [K]: v is scalar or [N] — gather along the only axis.
+        ;; Multi-dim logits [B..., K]:
+        ;;  - per-particle index v whose shape matches the batch dims [B...]:
+        ;;    diagonal gather via take-along-axis. A plain (take log-probs v -1)
+        ;;    returns [B..., B...] (the full cross-product), silently corrupting
+        ;;    the [N] score into [N,N] -> NaN ESS for vectorized models with
+        ;;    per-particle logits, e.g. HMM transitions (genmlx-ql6a).
+        ;;  - scalar / broadcastable v (constrained shared obs): plain gather.
+              (cond
+                (= nd 1)
+                (mx/take-idx log-probs v)
+
+                (= (vec (mx/shape v)) (vec (butlast lp-shape)))
+                (mx/squeeze (mx/take-along-axis log-probs
+                                                (mx/expand-dims v (dec nd))
+                                                (dec nd))
+                            [(dec nd)])
+
+                :else
+                (mx/take-idx log-probs v -1))))
   (support []
            (mx/materialize! logits)
            (let [n (last (mx/shape logits))]
