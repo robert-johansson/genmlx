@@ -37,6 +37,10 @@
 
 (defn file-exists? [path] (.existsSync fs path))
 
+(defn delete-file [path]
+  (when (.existsSync fs path)
+    (.unlinkSync fs path)))
+
 ;; ---------------------------------------------------------------------------
 ;; Hashing for change detection
 ;; ---------------------------------------------------------------------------
@@ -108,6 +112,9 @@
         out-dir (results-dir (:name experiment))
         _ (when-not (.existsSync fs out-dir)
             (.mkdirSync fs out-dir #js {:recursive true}))
+        ;; Clear any stale error.txt from a prior run so it only ever reflects
+        ;; the latest attempt (a success must not leave a failure record behind).
+        _ (delete-file (str out-dir "/error.txt"))
         t0 (js/Date.now)
         env (js/Object.assign
               #js {}
