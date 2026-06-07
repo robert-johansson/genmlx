@@ -69,6 +69,40 @@
   (synth [:a :b] {:a "(dist/gaussian 0 1)" :b "(dist/gaussian (mx/multiply a a) 1)"}))
 (def ^:private nonconj-obs {:b 2.0})
 
+;; lgamma via the membrane (test boundary only).
+(defn- lgamma [x] (mx/item (mx/lgamma (mx/scalar x))))
+
+;; Gamma-Poisson: lam ~ Gamma(shape 2, rate 1), x ~ Poisson(lam), count x=3.
+;; Marginal NegBin: lgamma(a+k)-lgamma(a)-lgamma(k+1) + a*log(b/(b+1)) + k*log(1/(b+1))
+(def ^:private gp-gf
+  (synth [:lam :x] {:lam "(dist/gamma-dist 2 1)" :x "(dist/poisson lam)"}))
+(def ^:private gp-obs {:x 3.0})
+(def ^:private gp-exact-truth
+  (let [a 2.0 b 1.0 k 3.0]
+    (+ (- (lgamma (+ a k)) (lgamma a) (lgamma (+ k 1.0)))
+       (* a (js/Math.log (/ b (+ b 1.0))))
+       (* k (js/Math.log (/ 1.0 (+ b 1.0)))))))
+
+;; Gamma-Exponential: lam ~ Gamma(2,1), x ~ Exponential(lam), x=1.5.
+;; Marginal Lomax: log(a) + a*log(b) - (a+1)*log(b+x)
+(def ^:private ge-gf
+  (synth [:lam :x] {:lam "(dist/gamma-dist 2 1)" :x "(dist/exponential lam)"}))
+(def ^:private ge-obs {:x 1.5})
+(def ^:private ge-exact-truth
+  (let [a 2.0 b 1.0 x 1.5]
+    (- (+ (js/Math.log a) (* a (js/Math.log b)))
+       (* (+ a 1.0) (js/Math.log (+ b x))))))
+
+;; MVN-Normal (single obs): mu ~ N([0,0], 2I), y ~ N(mu, I), y=[1,1].
+;; Marginal y ~ N([0,0], 2I + I = 3I): log N(y; 0, 3I).
+(def ^:private mvn-gf
+  (synth [:mu :y] {:mu "(dist/multivariate-normal [0 0] [[2 0] [0 2]])"
+                   :y  "(dist/multivariate-normal mu [[1 0] [0 1]])"}))
+(def ^:private mvn-obs {:y [1.0 1.0]})
+(def ^:private mvn-exact-truth
+  (let [d 2.0 log-det (* 2.0 (js/Math.log 3.0)) mahal (/ 2.0 3.0)]
+    (* -0.5 (+ (* d (js/Math.log (* 2.0 js/Math.PI))) log-det mahal))))
+
 (defn- strip-analytical
   "Return a copy of gf with the L3 analytical plan removed from its schema, so
    p/generate uses the handler/compiled path (genuine importance sampling)
@@ -103,6 +137,21 @@
   (assert-true "Normal-Normal: family is :normal-normal"
                (boolean (some #(= :normal-normal (:family %)) pairs))))
 
+(let [pairs (:conjugate-pairs (:schema gp-gf))]
+  (assert-true "Gamma-Poisson: :conjugate-pairs non-empty" (boolean (seq pairs)))
+  (assert-true "Gamma-Poisson: family is :gamma-poisson"
+               (boolean (some #(= :gamma-poisson (:family %)) pairs))))
+
+(let [pairs (:conjugate-pairs (:schema ge-gf))]
+  (assert-true "Gamma-Exponential: :conjugate-pairs non-empty" (boolean (seq pairs)))
+  (assert-true "Gamma-Exponential: family is :gamma-exponential"
+               (boolean (some #(= :gamma-exponential (:family %)) pairs))))
+
+(let [pairs (:conjugate-pairs (:schema mvn-gf))]
+  (assert-true "MVN-Normal: :conjugate-pairs non-empty" (boolean (seq pairs)))
+  (assert-true "MVN-Normal: family is :mvn-normal"
+               (boolean (some #(= :mvn-normal (:family %)) pairs))))
+
 (let [pairs (:conjugate-pairs (:schema nonconj-gf))]
   (assert-true "Non-conjugate (a^2 dep): no conjugate pairs" (empty? pairs)))
 
@@ -119,6 +168,18 @@
 (let [{:keys [method log-ml]} (msa/score-model* nn-gf nn-obs)]
   (assert-true "Normal-Normal routed to :exact" (= :exact method))
   (assert-true "Normal-Normal exact log-ml finite" (js/isFinite log-ml)))
+
+(let [{:keys [method log-ml]} (msa/score-model* gp-gf gp-obs)]
+  (assert-true "Gamma-Poisson routed to :exact" (= :exact method))
+  (assert-true "Gamma-Poisson exact log-ml finite" (js/isFinite log-ml)))
+
+(let [{:keys [method log-ml]} (msa/score-model* ge-gf ge-obs)]
+  (assert-true "Gamma-Exponential routed to :exact" (= :exact method))
+  (assert-true "Gamma-Exponential exact log-ml finite" (js/isFinite log-ml)))
+
+(let [{:keys [method log-ml]} (msa/score-model* mvn-gf mvn-obs)]
+  (assert-true "MVN-Normal routed to :exact" (= :exact method))
+  (assert-true "MVN-Normal exact log-ml finite" (js/isFinite log-ml)))
 
 (let [{:keys [method log-ml]} (msa/score-model* nonconj-gf nonconj-obs {:n-particles 100})]
   (assert-true "Non-conjugate NOT routed to exact"
@@ -149,6 +210,24 @@
       is    (msa/score-model (strip-analytical nn-gf) nn-obs {:n-particles 6000})]
   (assert-close "Normal-Normal exact == closed-form" nn-exact-truth exact 0.05)
   (assert-close "Normal-Normal exact == IS estimate" exact is 0.5))
+
+;; Gamma-Poisson: exact, closed-form (NegBin), and IS agree.
+(let [exact (msa/score-model gp-gf gp-obs)
+      is    (msa/score-model (strip-analytical gp-gf) gp-obs {:n-particles 4000})]
+  (assert-close "Gamma-Poisson exact == closed-form (NegBin)" gp-exact-truth exact 0.05)
+  (assert-close "Gamma-Poisson exact == IS estimate" exact is 0.2))
+
+;; Gamma-Exponential: exact, closed-form (Lomax), and IS agree.
+(let [exact (msa/score-model ge-gf ge-obs)
+      is    (msa/score-model (strip-analytical ge-gf) ge-obs {:n-particles 4000})]
+  (assert-close "Gamma-Exponential exact == closed-form (Lomax)" ge-exact-truth exact 0.05)
+  (assert-close "Gamma-Exponential exact == IS estimate" exact is 0.2))
+
+;; MVN-Normal (single obs): exact, closed-form, and IS agree (looser IS tol).
+(let [exact (msa/score-model mvn-gf mvn-obs)
+      is    (msa/score-model (strip-analytical mvn-gf) mvn-obs {:n-particles 6000})]
+  (assert-close "MVN-Normal exact == closed-form" mvn-exact-truth exact 0.05)
+  (assert-close "MVN-Normal exact == IS estimate" exact is 0.5))
 
 ;; ===========================================================================
 ;; Regression — synthesized GFs still simulate; score-model number contract
