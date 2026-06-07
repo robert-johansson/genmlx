@@ -1,0 +1,18 @@
+{
+  "experiment": "synthesis",
+  "git_sha": "3d0b8a8",
+  "timestamp": "2026-06-07T21:53:57.923Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v25.9.0"
+  },
+  "source_hash": "2e64e6a60f574433ec932c2943733617947c693683c66b632e03102dbd61d803",
+  "duration_ms": 9574,
+  "script": "bench/synthesis_occam.cljs"
+}

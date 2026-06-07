@@ -169,6 +169,17 @@
    :sources     ["src/genmlx/inference/mcmc.cljs"
                  "src/genmlx/inference/auto_analytical.cljs"]}
 
+  {:name        "synthesis"
+   :script      "bench/synthesis_occam.cljs"
+   :category    :analytical
+   :timeout-ms  300000
+   :description "Measured synthesis Occam: analytical-elimination fire-rate over LLM-synthesized models, |IS - analytic| convergence on the firing subset, and a Bayesian-evidence vs max-likelihood Occam curve. Scores frozen LLM-authored programs (no model load)."
+   :sources     ["bench/fixtures/synthesis_occam_programs.edn"
+                 "src/genmlx/llm/msa.cljs"
+                 "src/genmlx/conjugacy.cljs"
+                 "src/genmlx/method_selection.cljs"
+                 "src/genmlx/inference/auto_analytical.cljs"]}
+
   ;; =========================================================================
   ;; D. Cross-System Comparison
   ;; =========================================================================
