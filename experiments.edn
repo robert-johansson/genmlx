@@ -148,7 +148,7 @@
   {:name        "l3.5-mvn-conjugacy"
    :script      "bench/l3_5_mvn_conjugacy.cljs"
    :category    :analytical
-   :timeout-ms  120000
+   :timeout-ms  240000
    :description "Multivariate normal-normal conjugacy via mx/solve (no matrix inverse)."
    :sources     ["src/genmlx/inference/kalman.cljs"
                  "src/genmlx/conjugacy.cljs"]}

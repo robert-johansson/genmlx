@@ -99,6 +99,21 @@
 ;; Vectorized model (no mx/item) — shapes flow through for VIS.
 (def mix-log-weights (mx/log (mx/array [0.3 0.5 0.2])))
 
+(defn pick-component
+  "Per-particle component selection for the vectorized path.
+   means-arr is [K, N] (component means stacked over the particle axis),
+   idx is [N] (per-particle component index). Returns [N]: for each particle n,
+   means-arr[idx[n], n].
+
+   A plain (mx/take-idx means-arr idx) is WRONG here: take-idx gathers whole
+   rows along axis 0, yielding [N, N] (every particle's mean under every
+   particle's index). That both blows memory up quadratically (N=10000 ->
+   [10000,10000] = 400MB per observation site -> SIGKILL) and corrupts the [N]
+   importance weight into [N, N] (-> NaN ESS). take-along-axis with the index
+   broadcast over the component axis performs the diagonal per-particle gather."
+  [means-arr idx]
+  (mx/squeeze (mx/take-along-axis means-arr (mx/expand-dims idx 0) 0) [0]))
+
 (def gmm-vec
   (dyn/auto-key
     (gen [data]
@@ -109,7 +124,7 @@
         (doseq [[i y] (map-indexed vector data)]
           (let [z (trace (keyword (str "z" i))
                          (dist/categorical mix-log-weights))
-                mu (mx/take-idx means-arr z)]
+                mu (pick-component means-arr z)]
             (trace (keyword (str "y" i))
                    (dist/gaussian mu 1))))
         [mu0 mu1 mu2]))))
@@ -137,17 +152,30 @@
   (u/compute-ess log-weights))
 
 (defn ess-from-vtrace
-  "ESS from a VectorizedTrace's [N]-shaped weight array."
+  "ESS from a VectorizedTrace's [N]-shaped weight array.
+
+   Guards against the broken-weight failure mode (genmlx-qukt): if the weight is
+   not rank-1, or contains NaN/+Inf, the importance weights are numerically
+   invalid — surface that as an error rather than silently returning a NaN ESS."
   [vtrace]
-  (let [w (:weight vtrace)
-        _ (mx/materialize! w)
-        log-w (mx/->clj w)]
-    ;; normalize in JS for stability
-    (let [max-w (apply max log-w)
-          exp-w (mapv #(js/Math.exp (- % max-w)) log-w)
-          sum-w (reduce + exp-w)
-          norm  (mapv #(/ % sum-w) exp-w)]
-      (/ 1.0 (reduce + (map #(* % %) norm))))))
+  (let [w   (:weight vtrace)
+        shp (mx/shape w)]
+    (when (not= 1 (count shp))
+      (throw (ex-info (str "VectorizedTrace weight must be [N]-shaped, got " (vec shp)
+                           " — a trace site broadcast its log-prob across particles "
+                           "(mis-shaped per-particle gather).")
+                      {:weight-shape (vec shp)})))
+    (mx/materialize! w)
+    (let [log-w (mx/->clj w)]
+      (when (some #(or (js/Number.isNaN %) (= % js/Infinity)) log-w)
+        (throw (ex-info "VectorizedTrace weight contains NaN/+Inf — broken importance weights."
+                        {:n-particles (count log-w)})))
+      ;; normalize in JS for stability
+      (let [max-w (apply max log-w)
+            exp-w (mapv #(js/Math.exp (- % max-w)) log-w)
+            sum-w (reduce + exp-w)
+            norm  (mapv #(/ % sum-w) exp-w)]
+        (/ 1.0 (reduce + (map #(* % %) norm)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Run experiments
@@ -177,7 +205,7 @@
               " (" (.toFixed (* 100 (/ seq-is-ess 200)) 1) "%)"))
 (println (str "  log-ML: " (.toFixed (mx/item (:log-ml-estimate @seq-is-result)) 4)))
 
-(mx/clear-cache!)
+(mx/force-gc!)
 
 ;; --- 2. Vectorized IS (N=1000) ---
 
@@ -199,14 +227,16 @@
               " (" (.toFixed (* 100 (/ vis-1k-ess 1000)) 1) "%)"))
 (println (str "  log-ML: " (.toFixed (mx/item (:log-ml-estimate @vis-1k-result)) 4)))
 
-(mx/clear-cache!)
+(mx/force-gc!)
 
 ;; --- 3. Vectorized IS (N=10000) ---
 
 (println "\n--- 3. Vectorized IS (N=10000) ---")
 
 (def vis-10k-result (atom nil))
-(mx/clear-cache!)
+;; force-gc! (sweep dead arrays + clear caches) before the largest batch so the
+;; previous phases' [N] arrays are reclaimed, not just the Metal buffer cache.
+(mx/force-gc!)
 (def vis-10k-timing
   (benchmark "VIS-10000"
     (fn []

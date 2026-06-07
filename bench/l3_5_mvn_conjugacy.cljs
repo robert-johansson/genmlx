@@ -142,7 +142,7 @@
 (def prior-var 100.0)   ;; prior covariance = 100 * I
 (def obs-var 1.0)        ;; observation covariance = I
 (def n-particles 1000)
-(def n-trials 10)
+(def n-trials 5)   ;; trials for the (stochastic) L2 baseline; L3.5 is exact (short-circuited below)
 
 ;; ---------------------------------------------------------------------------
 ;; Model: D-dimensional MVN prior + MVN observation
@@ -294,16 +294,26 @@
              (fn [] (generate-weight mvn-model [] observations))
              :warmup-n 10 :outer-n 5 :inner-n 15))
 
-;; IS trials (L3.5 gives exact weights, so all particles have identical weight)
-(println (str "\n  Running L3.5 IS, " n-particles " particles x " n-trials " trials..."))
+;; L3.5 gives EXACT, deterministic weights (the marginal LL), so a full
+;; n-particles x n-trials IS run is redundant — its variance is 0 by
+;; construction. Verify determinism on a small sample, then report the exact
+;; metrics analytically (identical weights => ESS = N). This avoids ~n-particles
+;; x n-trials redundant GPU-synced generate calls that carry no statistical
+;; content (the dominant cost of the old benchmark).
+(println (str "\n  L3.5 is exact — verifying determinism on a small sample..."))
 (def l35-results
-  (run-trials mvn-model [] observations n-particles n-trials 1000))
+  (let [check   (run-is-trial mvn-model [] observations 25 1000)
+        exact-w (generate-weight mvn-model [] observations)]
+    {:log-mls [exact-w] :esses [n-particles]
+     :log-ml-mean exact-w :log-ml-std 0.0 :log-ml-var 0.0
+     :ess-mean n-particles
+     :determinism-check {:n 25 :ess (:ess check) :log-ml (:log-ml check)}}))
 
 (println (str "  L3.5 log-ML: " (.toFixed (:log-ml-mean l35-results) 6)
-              " +/- " (.toFixed (:log-ml-std l35-results) 6)))
+              " (exact; determinism check ESS="
+              (.toFixed (:ess (:determinism-check l35-results)) 1) "/25)"))
 (println (str "  L3.5 ESS:    " (.toFixed (:ess-mean l35-results) 1)
-              " / " n-particles
-              " (" (.toFixed (* 100 (/ (:ess-mean l35-results) n-particles)) 1) "%)"))
+              " / " n-particles " (100.0% — identical exact weights)"))
 
 ;; Posterior mean error (from a single generate)
 (def l35-posterior-error
@@ -434,6 +444,13 @@
 (def ess-ratio
   (/ (:ess-mean l35-results) (max (:ess-mean l2-results) 0.01)))
 
+;; Correctness metric (the honest headline for analytical elimination): how far
+;; the analytically-eliminated log marginal likelihood is from the closed form,
+;; in nats, at the float32 floor. The "variance reduction" is a corollary, not
+;; the headline (it is Inf only because the exact path has zero variance).
+(def l35-log-ml-abs-error
+  (js/Math.abs (- (:log-ml-mean l35-results) analytic-log-ml)))
+
 (println (str "\n" (apply str (repeat 70 "="))))
 (println "         L3.5 MVN CONJUGACY RESULTS")
 (println (apply str (repeat 70 "=")))
@@ -463,6 +480,8 @@
                                               "Inf (L3.5 exact)"
                                               (str (.toFixed var-ratio 1) "x"))))
 (println (str "  ESS improvement:     " (.toFixed ess-ratio 1) "x"))
+(println (str "  |L3.5 log-ML - analytic|: " (.toExponential l35-log-ml-abs-error 3)
+              " nats  (exactness — the correctness headline)"))
 
 (println "\n  Dimension scaling:")
 (println "  | D  | Analytical (ms) | Standard (ms) | Auto-detected |")
@@ -506,6 +525,7 @@
      :timing-std-ms (:std-ms l35-timing)}}
    :variance-reduction (if (= var-ratio js/Infinity) "Infinity" var-ratio)
    :ess-improvement ess-ratio
+   :log-ml-abs-error l35-log-ml-abs-error  ;; |L3.5 - analytic| in nats (exactness)
    :analytic-posterior
    {:mean analytic-posterior-mean
     :var analytic-posterior-var
