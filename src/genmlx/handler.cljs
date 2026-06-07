@@ -168,6 +168,28 @@
 ;; Batched state transitions (vectorized: [N]-shaped values)
 ;; ---------------------------------------------------------------------------
 
+(defn- check-batched-lp!
+  "Batched-execution invariant: every trace site's log-prob is a per-particle
+   scalar — shape [] or [batch-size]. A higher-rank (or wrong-sized) log-prob
+   means the model broadcast this site's distribution parameters across the
+   particle axis (e.g. a mis-shaped per-particle gather producing an [N,N]
+   array instead of [N]). Unguarded, that silently corrupts the [N] score and
+   weight into [N,N], surfacing only downstream as a NaN ESS / wrong log-ML.
+   Fail loudly at the offending site instead. Shape is lazy-graph metadata, so
+   this is a no-eval, O(1) check — safe to run per site in the batched hot path."
+  [addr n lp]
+  (let [sh   (mx/shape lp)
+        rank (count sh)]
+    (when (or (> rank 1)
+              (and (= rank 1)
+                   (not (or (== (first sh) 1) (== (first sh) n)))))
+      (throw (ex-info (str "Batched log-prob at " (pr-str addr) " has shape "
+                           (vec sh) " — expected [] or [" n "]. The model "
+                           "broadcast this trace site's distribution parameters "
+                           "across the particle axis (likely a mis-shaped "
+                           "per-particle index/gather producing an [N,N] array).")
+                      {:address addr :lp-shape (vec sh) :batch-size n})))))
+
 (defn batched-simulate-transition
   "Pure: sample [N] values, accumulate [N]-shaped score."
   [state addr dist]
@@ -175,6 +197,7 @@
         [k1 k2] (rng/split (:key state))
         value (dc/dist-sample-n dist k2 n)
         lp (dc/dist-log-prob dist value)]
+    (check-batched-lp! addr n lp)
     [value (-> state
                (assoc :key k1)
                (update :choices cm/set-value addr value)
@@ -191,6 +214,7 @@
       ;; the v0.31.2 binary on downstream array ops like mx/shape / value_and_grad).
       (let [value (mx/ensure-array (cm/get-value constraint))
             lp (dc/dist-log-prob dist value)]
+        (check-batched-lp! addr (:batch-size state) lp)
         [value (-> state
                    (update :choices cm/set-value addr value)
                    (update :score mx/add lp)
@@ -210,6 +234,7 @@
             new-lp (dc/dist-log-prob dist new-val)
             old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
             old-lp (if old-val (dc/dist-log-prob dist old-val) ZERO)]
+        (check-batched-lp! addr n new-lp)
         [new-val (-> state
                      (update :choices cm/set-value addr new-val)
                      (update :score mx/add new-lp)
@@ -221,6 +246,7 @@
       (cm/has-value? old-choice)
       (let [val (cm/get-value old-choice)
             lp (dc/dist-log-prob dist val)]
+        (check-batched-lp! addr n lp)
         [val (-> state
                  (update :choices cm/set-value addr val)
                  (update :score mx/add lp))])
@@ -241,6 +267,7 @@
             new-lp (dc/dist-log-prob dist new-val)
             old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
             old-lp (if old-val (dc/dist-log-prob dist old-val) ZERO)]
+        (check-batched-lp! addr n new-lp)
         [new-val (-> state
                      (assoc :key k1)
                      (update :choices cm/set-value addr new-val)
@@ -249,6 +276,7 @@
       ;; Not selected: keep old [N]-shaped values
       (let [val (cm/get-value old-choice)
             lp (dc/dist-log-prob dist val)]
+        (check-batched-lp! addr n lp)
         [val (-> state
                  (update :choices cm/set-value addr val)
                  (update :score mx/add lp))]))))
