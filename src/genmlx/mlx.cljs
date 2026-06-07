@@ -807,10 +807,30 @@
 (def ^:private DEFAULT-CACHE-LIMIT (* 256 1024 1024))
 (set-cache-limit! DEFAULT-CACHE-LIMIT)
 
-(defn with-resource-guard [f]
+(defn with-resource-guard
+  "Caps the cache limit to 0 for the scope (aggressive buffer eviction), then
+   clears the buffer cache and restores the limit on exit. Light cleanup — for
+   eager/kernel inference drivers that do not accumulate buffers across calls."
+  [f]
   (let [prev-limit (set-cache-limit! 0)]
     (try (f)
          (finally (clear-cache!) (set-cache-limit! prev-limit)))))
+
+(defn with-resource-guard-gc
+  "Like with-resource-guard but does a full force-gc! on exit (sweep-dead-arrays!
+   + jsc-cleanup! + clear-cache! + compile-clear-cache!). The compiled-inference
+   drivers (compiled-mh/mala/hmc) build many short-lived MLX arrays per call;
+   plain clear-cache! frees the buffer *cache* but not buffers still held by
+   dead-but-unswept arrays, so the Metal live-buffer COUNT (~499000, independent
+   of memory) climbs across calls until a native C++ exception / SIGTRAP fires
+   (see genmlx-5ucd). Sweeping dead arrays on each exit bounds the count. Reserved
+   for the compiled paths so the eager/kernel paths (which provably do not
+   accumulate this way) avoid the per-call GC cost. Degrades gracefully where
+   gc-fn is nil (bunx nbb): the sweep + native clears still run."
+  [f]
+  (let [prev-limit (set-cache-limit! 0)]
+    (try (f)
+         (finally (force-gc!) (set-cache-limit! prev-limit)))))
 
 ;; --- Linear algebra ---
 

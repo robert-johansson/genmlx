@@ -457,7 +457,7 @@
   [{:keys [samples burn thin callback key]} init-params n-params
    score-fn proposal-std burn-chain burn-block-size thin-chain
    {:keys [collect-chain block-size-collect]}]
-  (mx/with-resource-guard
+  (mx/with-resource-guard-gc
     (fn []
       (let [param-shape [n-params]
             rk (rng/ensure-key key)
@@ -1271,7 +1271,7 @@
    val-grad calls. Uses compiled chains for both burn-in and thinning."
   [{:keys [samples burn thin callback key]} init-q n-params
    val-grad-compiled burn-chain burn-block-size thin-chain thin-steps]
-  (mx/with-resource-guard
+  (mx/with-resource-guard-gc
     (fn []
       (let [rk (rng/ensure-key key)
         ;; Compute initial score and gradient
@@ -1957,7 +1957,7 @@
   [{:keys [samples burn thin callback key]} init-q n-params
    neg-U-compiled grad-neg-U eps half-eps half q-shape
    leapfrog-steps metric burn-chain burn-block-size thin-chain]
-  (mx/with-resource-guard
+  (mx/with-resource-guard-gc
     (fn []
       (let [rk (rng/ensure-key key)
         ;; Phase 1: Burn-in via compiled chain blocks
