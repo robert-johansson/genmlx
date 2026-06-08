@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.linear-gaussian-elim-test
   "L3 joint linear-Gaussian elimination (genmlx-lwhw).
 
