@@ -70,6 +70,39 @@ manifest_files_for_tier() {
 manifest_all_files()      { awk '!/^#/ && NF>=2 {print $2}' "$MANIFEST"; }
 disk_all_files()          { find test -name '*.cljs' -type f | sort; }
 
+# ---- process-tree teardown (bean genmlx-tkbs) -------------------------------
+# A test is `timeout -> bun -> bunx -> nbb -> node`. Killing the bash parent
+# orphans the grandchildren (they reparent to init), so a Ctrl-C / kill / harness
+# stop used to leave GPU procs running until a manual pkill. macOS has no setsid,
+# so we get a killable process GROUP per file via bash job control (`set -m`) in
+# do_one, and reap everything here on interrupt by walking the descendant tree.
+kill_tree() {               # SIGKILL $1 and all its descendants, children-first
+  local p="$1" c
+  for c in $(pgrep -P "$p" 2>/dev/null); do kill_tree "$c"; done
+  kill -KILL "$p" 2>/dev/null
+}
+reap_children() {           # kill every descendant of THIS script (not the script)
+  local c
+  for c in $(pgrep -P $$ 2>/dev/null); do kill_tree "$c"; done
+}
+cleanup() {                 # reap the whole run, then the tmpdir (idempotent)
+  trap - INT TERM EXIT
+  reap_children
+  [ -n "${rdir:-}" ] && rm -rf "$rdir"
+}
+on_signal() { cleanup; exit 143; }   # INT/TERM: reap and stop the run now
+
+# `run.sh clean` — manual escape hatch for orphans from an older, hard-killed run.
+do_clean() {
+  local n; n="$(pgrep -lf 'bun run --bun nbb|bunx nbb@|nbb_main\.js' 2>/dev/null \
+                | grep -v "^$$ " | grep -c . )"
+  pkill -KILL -f 'bun run --bun nbb' 2>/dev/null
+  pkill -KILL -f 'bunx nbb@'         2>/dev/null
+  pkill -KILL -f 'nbb_main\.js'      2>/dev/null
+  find "${TMPDIR:-/tmp}" -maxdepth 1 -type d -name 'genmlx_tests.*' -exec rm -rf {} + 2>/dev/null
+  echo "clean: SIGKILLed orphaned genmlx test procs (~$n) and removed runner temp dirs."
+}
+
 # ---- classification gate (test:check) --------------------------------------
 do_check() {
   local fail=0
@@ -121,8 +154,21 @@ do_one() {
   local to; to="$(tier_timeout "$tier")"
   local key; key="$(echo "$file" | tr '/.' '__')"
   local log="$rdir/$key.log"
-  local start=$SECONDS status code dur
-  if timeout "$to" $NBB_CMD "$file" > "$log" 2>&1; then code=0; else code=$?; fi
+  local start=$SECONDS status code dur pid
+  # Run in its OWN process group so the whole bun->bunx->nbb->node tree is reaped
+  # atomically (bean genmlx-tkbs). `set -m` makes the backgrounded job a group
+  # leader (PGID == pid); `kill -KILL -$pid` then kills the entire group, so a
+  # timeout or an interrupt can never orphan the GPU child procs. `-k 10` bounds
+  # the worker itself: if the test ignores SIGTERM, timeout SIGKILLs it after 10s
+  # rather than hanging the worker forever.
+  set -m
+  timeout -k 10 "$to" $NBB_CMD "$file" > "$log" 2>&1 &
+  pid=$!
+  trap 'kill -KILL -'"$pid"' 2>/dev/null' TERM INT
+  wait "$pid"; code=$?
+  trap - TERM INT
+  kill -KILL -"$pid" 2>/dev/null   # sweep any stragglers left alive in the group
+  set +m
   dur=$((SECONDS - start))
   if   [ "$code" -eq 124 ]; then status="TIMEOUT"
   elif [ "$code" -ge 128 ]; then status="CRASH($code)"
@@ -143,7 +189,10 @@ rdir=""   # global so the EXIT trap can see it under `set -u`
 run_tiers() {
   local tiers=("$@") overall=0
   rdir="$(mktemp -d "${TMPDIR:-/tmp}/genmlx_tests.XXXXXX")"
-  trap 'rm -rf "${rdir:-}"' EXIT
+  # reap the whole process tree on interrupt. INT/TERM go through on_signal (which
+  # exits); a clean finish goes through the EXIT trap. Both call reap_children.
+  trap on_signal INT TERM
+  trap cleanup EXIT
   export -f do_one tier_timeout
 
   echo "nbb: '$NBB_CMD'  jobs(fast/medium): $JOBS"
@@ -154,9 +203,13 @@ run_tiers() {
     [ "$n" -eq 0 ] && { echo "── $tier: (no files)"; continue; }
     local j; j="$(tier_jobs "$tier")"
     echo "── $tier: $n files, ${j}-way, $(tier_timeout "$tier")s cap ──"
-    # dispatch (xargs -P preserves isolation: one process per file)
+    # dispatch (xargs -P preserves isolation: one process per file). Run it
+    # BACKGROUNDED and `wait` on it: bash defers a trap while blocked in a
+    # FOREGROUND child, but the `wait` builtin returns immediately on a trapped
+    # signal — so on_signal fires at once and reaps the tree (bean genmlx-tkbs).
     printf '%s\n' "$files" | grep . | \
-      xargs -P "$j" -I {} bash -c 'do_one "$0" "$1" "$2"' "$tier" "$rdir" {} 2>/dev/null
+      xargs -P "$j" -I {} bash -c 'do_one "$0" "$1" "$2"' "$tier" "$rdir" {} 2>/dev/null &
+    wait $!
     # aggregate this tier
     local r st dur fn tpass=0 tfail=0
     while IFS=$'\t' read -r st dur fn; do
@@ -182,7 +235,7 @@ run_tiers() {
 }
 
 # ---- main -------------------------------------------------------------------
-[ $# -ge 1 ] || { echo "usage: test/run.sh {core|fast|medium|slow|bench|all|check} [tier...]"; exit 2; }
+[ $# -ge 1 ] || { echo "usage: test/run.sh {core|fast|medium|slow|bench|all|check|clean} [tier...]"; exit 2; }
 
 # internal worker dispatch
 if [ "$1" = "__one" ]; then shift; do_one "$@"; exit $?; fi
@@ -191,6 +244,7 @@ declare -a TIERS=()
 for arg in "$@"; do
   case "$arg" in
     check) do_check; exit $? ;;
+    clean) do_clean; exit $? ;;
     all)   TIERS+=(fast medium slow) ;;
     core|fast|medium|slow|bench) TIERS+=("$arg") ;;
     *) echo "unknown tier: $arg"; exit 2 ;;
