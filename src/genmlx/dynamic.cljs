@@ -335,7 +335,7 @@
                      h/generate-transition (:auto-handlers schema))
         result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
-                  :key key :constraints constraints
+                  :key key :constraints constraints :model-args args
                   :auto-posteriors {} :auto-kalman-beliefs {} :auto-kalman-noise-vars {}
                   :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt args)))
@@ -348,7 +348,7 @@
                      h/assess-transition (:auto-handlers schema))
         result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
-                  :key key :constraints constraints
+                  :key key :constraints constraints :model-args args
                   :auto-posteriors {} :auto-kalman-beliefs {} :auto-kalman-noise-vars {}
                   :executor execute-sub-assess :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt args)))]
@@ -754,9 +754,20 @@
         schema (if (and schema (not (:opaque-gen-escape? schema)))
                  (let [augmented (conj/augment-schema-with-conjugacy schema)]
                    (if (:has-conjugate? augmented)
-                     (let [plan (rewrite/build-analytical-plan augmented)
+                     (let [plan (rewrite/build-analytical-plan augmented source)
+                           ;; v1: regenerate DECLINES linear-Gaussian blocks (and
+                           ;; declined concern-components) — exclude their addrs so
+                           ;; the latents fall through to base regenerate (sampled).
+                           lg-excluded (into (set (:declined-addrs plan))
+                                             (mapcat :all-addrs (:lg-blocks plan)))
+                           regen-pairs (if (seq lg-excluded)
+                                         (remove (fn [p]
+                                                   (or (contains? lg-excluded (:prior-addr p))
+                                                       (contains? lg-excluded (:obs-addr p))))
+                                                 (:conjugate-pairs augmented))
+                                         (:conjugate-pairs augmented))
                            regen-handlers (auto/build-all-regenerate-handlers
-                                           (:conjugate-pairs augmented)
+                                           regen-pairs
                                            :chains (:kalman-chains plan))
                            ;; Opt 1: precompute dispatch transition once at construction
                            regen-transition (when (seq regen-handlers)
@@ -766,6 +777,7 @@
                            (assoc :auto-handlers (get-in plan [:rewrite-result :handlers]))
                            (assoc :auto-regenerate-handlers regen-handlers)
                            (assoc :auto-regenerate-transition regen-transition)
+                           (assoc :linear-gaussian-blocks (:lg-blocks plan))
                            (assoc :analytical-plan plan)))
                      augmented))
                  schema)]
