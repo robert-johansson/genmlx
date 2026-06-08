@@ -2,17 +2,15 @@
   "Neal's Funnel -- challenging posterior geometry for gradient-based samplers.
 
    Model: v ~ N(0, 3), x_i ~ N(0, exp(v/2)) for i=1..10. D=11 total dimensions.
-   Observe all x_i = 0 (funnel center).
+   No observations -- the target IS the joint funnel distribution (the classic
+   Neal funnel benchmark; the narrow neck at small v stresses HMC/NUTS/MH).
 
-   The funnel's correlated geometry (narrow neck at large v, wide base at
-   small v) makes it a standard stress test for HMC, NUTS, and MH.
+   Ground truth: v ~ N(0, 3) marginally -- mean=0, std=3.
 
-   Ground truth: E[v | x=0] = 0 (by symmetry).
-
-   Algorithms:
-   1. HMC (200 samples, burn 100, 10 leapfrog steps)
-   2. NUTS (100 samples, burn 50)
-   3. Compiled MH (500 samples, burn 200)
+   Algorithms (4 chains each -> multi-chain R-hat + bulk/tail-ESS):
+   1. HMC  (600 samples, burn 300, 25 leapfrog, adapt step+metric)
+   2. NUTS (600 samples, burn 300, max-depth 8, adapt step+metric)
+   3. Compiled MH (2000 samples, burn 1000)
 
    Output: results/funnel/data.json
 
@@ -98,13 +96,8 @@
                  (dist/gaussian 0 (mx/exp (mx/divide v (mx/scalar 2))))))
         v))))
 
-;; Observations: all x_i = 0
-(def funnel-obs
-  (reduce (fn [cm i]
-            (cm/set-choice cm [(keyword (str "x" i))] (mx/scalar 0.0)))
-          cm/EMPTY
-          (range 10)))
-
+;; No observations: the target is the joint funnel (v + 10 x_i). We sample the
+;; joint and report diagnostics on the v marginal (ground truth v ~ N(0,3)).
 (def all-addresses [:v :x0 :x1 :x2 :x3 :x4 :x5 :x6 :x7 :x8 :x9])
 
 ;; ---------------------------------------------------------------------------
@@ -130,155 +123,135 @@
         traces))
 
 ;; ---------------------------------------------------------------------------
+;; Multi-chain runner: 4 chains -> R-hat + ESS + bulk/tail-ESS on the v marginal
+;; ---------------------------------------------------------------------------
+;; All three kernels return flat parameter arrays (v is index 0). We run 4
+;; chains per kernel (seeds 42-45) and report honest multi-chain diagnostics:
+;;   - R-hat  (Gelman-Rubin, multi-chain; target <= 1.01, Vehtari et al. 2021)
+;;   - ESS    (sum of per-chain Geyer ESS)
+;;   - bulk-ESS / tail-ESS  (rank-normalized, Vehtari et al. 2021)
+;; Aggressive cache/GC clearing between chains keeps NUTS within the Metal
+;; buffer budget (same approach as paper_bench_funnel).
+
+(defn run-chain
+  "Run one chain with a given seed; return {:v-samples [...] :meta {...}}."
+  [algo-fn opts seed]
+  (let [full-opts (assoc opts :addresses all-addresses :key (rng/fresh-key seed))
+        samples (algo-fn full-opts funnel-model [] cm/EMPTY)
+        v-samples (extract-v-from-params samples)]
+    (mx/clear-cache!) (mx/force-gc!) (mx/clear-cache!)
+    {:v-samples v-samples :meta (meta samples)}))
+
+(defn run-kernel
+  "Run 4 chains and compute multi-chain diagnostics on v. Returns a result map
+   (or an :error map on failure). Timing is chain-1 wall time."
+  [label algo-fn opts]
+  (println (str "\n-- " label " (4 chains) --"))
+  (try
+    (let [t0 (perf-now)
+          r1 (run-chain algo-fn opts 42)
+          t1 (- (perf-now) t0)
+          _  (do (mx/clear-cache!) (mx/force-gc!) (println "  chain 2..."))
+          r2 (run-chain algo-fn opts 43)
+          _  (do (mx/clear-cache!) (mx/force-gc!) (println "  chain 3..."))
+          r3 (run-chain algo-fn opts 44)
+          _  (do (mx/clear-cache!) (mx/force-gc!) (println "  chain 4..."))
+          r4 (run-chain algo-fn opts 45)
+          chains    [(:v-samples r1) (:v-samples r2) (:v-samples r3) (:v-samples r4)]
+          mx-chains (mapv (fn [c] (mapv #(mx/scalar %) c)) chains)
+          all       (vec (apply concat chains))
+          rhat (diag/r-hat mx-chains)
+          ess  (reduce + (map diag/ess mx-chains))
+          be   (diag/bulk-ess chains)
+          te   (diag/tail-ess chains)]
+      (mx/clear-cache!) (mx/force-gc!)
+      (let [res {:algorithm label
+                 :n-chains 4
+                 :n-samples-per-chain (count (:v-samples r1))
+                 :elapsed-ms t1
+                 :v-mean (mean all)
+                 :v-std (std all)
+                 :acceptance-rate (:acceptance-rate (:meta r1))
+                 :r-hat rhat
+                 :ess ess
+                 :bulk-ess be
+                 :tail-ess te}]
+        (println (str "  v: mean=" (.toFixed (:v-mean res) 4)
+                      " std=" (.toFixed (:v-std res) 4) " (truth: 0)"))
+        (println (str "  R-hat=" (.toFixed rhat 3)
+                      "  ESS=" (.toFixed ess 1)
+                      "  bulk-ESS=" (.toFixed be 1)
+                      "  tail-ESS=" (.toFixed te 1)
+                      "  time=" (.toFixed t1 0) "ms"))
+        res))
+    (catch :default e
+      (println (str "  FAILED: " (.-message e)))
+      {:algorithm label :error (str (.-message e))})))
+
+;; ---------------------------------------------------------------------------
 ;; Run experiments
 ;; ---------------------------------------------------------------------------
 
-(println "\n=== Neal's Funnel ===")
+(println "\n=== Neal's Funnel (joint, no observations) ===")
 (println "Model: v ~ N(0,3), x_i ~ N(0, exp(v/2)) for i=1..10")
-(println "Observations: all x_i = 0")
-(println "Ground truth: E[v | x=0] ~ 0 (by symmetry)")
-
-;; --- 1. HMC (100 samples, burn 50) ---
-
-(println "\n--- 1. HMC (100 samples, burn 50, 10 leapfrog steps) ---")
+(println "Ground truth: v ~ N(0,3) marginally  ->  mean=0, std=3")
 (mx/clear-cache!)
 
-(def hmc-result
-  (safe-benchmark "HMC-100"
-    (fn []
-      (mx/clear-cache!)
-      (mcmc/hmc {:samples 100 :burn 50
-                 :leapfrog-steps 10
-                 :step-size 0.01
-                 :addresses all-addresses
-                 :adapt-step-size true
-                 :target-accept 0.65}
-                funnel-model [] funnel-obs))))
+(def hmc-summary
+  (run-kernel "HMC"
+    mcmc/hmc {:samples 600 :burn 300 :leapfrog-steps 25
+              :adapt-step-size true :adapt-metric true :target-accept 0.65}))
 
-(def hmc-v-samples
-  (when-let [samples (:result hmc-result)]
-    (extract-v-from-params samples)))
+(mx/clear-cache!) (mx/force-gc!)
 
-(when hmc-v-samples
-  (let [m (mean hmc-v-samples)
-        s (std hmc-v-samples)]
-    (println (str "  posterior v: mean=" (.toFixed m 4) " std=" (.toFixed s 4)))
-    (println (str "  n-samples: " (count hmc-v-samples)))
-    (when-let [ar (:acceptance-rate (meta (:result hmc-result)))]
-      (println (str "  acceptance rate: " (.toFixed (* 100 ar) 1) "%")))))
+(def nuts-summary
+  (run-kernel "NUTS"
+    mcmc/nuts {:samples 600 :burn 300 :max-depth 8
+               :adapt-step-size true :adapt-metric true :target-accept 0.8}))
 
-(mx/clear-cache!)
+(mx/clear-cache!) (mx/force-gc!)
 
-;; --- 2. NUTS (100 samples, burn 50) ---
-
-(println "\n--- 2. NUTS (100 samples, burn 50) ---")
-(mx/clear-cache!)
-
-(def nuts-result
-  (safe-benchmark "NUTS-100"
-    (fn []
-      (mx/clear-cache!)
-      (mcmc/nuts {:samples 100 :burn 50
-                  :step-size 0.01
-                  :max-depth 8
-                  :addresses all-addresses
-                  :adapt-step-size true
-                  :target-accept 0.8}
-                 funnel-model [] funnel-obs))))
-
-(def nuts-v-samples
-  (when-let [samples (:result nuts-result)]
-    (extract-v-from-params samples)))
-
-(when nuts-v-samples
-  (let [m (mean nuts-v-samples)
-        s (std nuts-v-samples)]
-    (println (str "  posterior v: mean=" (.toFixed m 4) " std=" (.toFixed s 4)))
-    (println (str "  n-samples: " (count nuts-v-samples)))
-    (when-let [ar (:acceptance-rate (meta (:result nuts-result)))]
-      (println (str "  acceptance rate: " (.toFixed (* 100 ar) 1) "%")))))
-
-(mx/clear-cache!)
-
-;; --- 3. Compiled MH (100 samples, burn 50) ---
-
-(println "\n--- 3. Compiled MH (100 samples, burn 50) ---")
-(mx/clear-cache!)
-
-(def cmh-result
-  (safe-benchmark "compiled-MH-100"
-    (fn []
-      (mx/clear-cache!)
-      (mcmc/compiled-mh {:samples 100 :burn 50
-                         :addresses all-addresses
-                         :proposal-std 0.3}
-                        funnel-model [] funnel-obs))))
-
-(def cmh-v-samples
-  (when-let [samples (:result cmh-result)]
-    (extract-v-from-params samples)))
-
-(when cmh-v-samples
-  (let [m (mean cmh-v-samples)
-        s (std cmh-v-samples)]
-    (println (str "  posterior v: mean=" (.toFixed m 4) " std=" (.toFixed s 4)))
-    (println (str "  n-samples: " (count cmh-v-samples)))
-    (when-let [ar (:acceptance-rate (meta (:result cmh-result)))]
-      (println (str "  acceptance rate: " (.toFixed (* 100 ar) 1) "%")))))
+(def cmh-summary
+  (run-kernel "compiled-MH"
+    mcmc/compiled-mh {:samples 2000 :burn 1000 :proposal-std 0.1}))
 
 ;; ---------------------------------------------------------------------------
-;; Summary table
+;; Summary table + write data.json
 ;; ---------------------------------------------------------------------------
+
+(def all-summaries [hmc-summary nuts-summary cmh-summary])
 
 (println "\n\n========================================")
-(println "         FUNNEL RESULTS")
+(println "            FUNNEL RESULTS")
 (println "========================================\n")
+(println "| Algorithm    | v mean  | v std   | R-hat | ESS    | bulk | tail | Time(ms) |")
+(println "|--------------|---------|---------|-------|--------|------|------|----------|")
+(doseq [{:keys [algorithm v-mean v-std r-hat ess bulk-ess tail-ess elapsed-ms error]}
+        all-summaries]
+  (if error
+    (println (str "| " (.padEnd algorithm 12 " ") " | ERROR: " error))
+    (println (str "| " (.padEnd algorithm 12 " ")
+                  " | " (.padStart (.toFixed v-mean 4) 7 " ")
+                  " | " (.padStart (.toFixed v-std 4) 7 " ")
+                  " | " (.padStart (.toFixed r-hat 3) 5 " ")
+                  " | " (.padStart (.toFixed ess 1) 6 " ")
+                  " | " (.padStart (.toFixed bulk-ess 0) 4 " ")
+                  " | " (.padStart (.toFixed tail-ess 0) 4 " ")
+                  " | " (.padStart (.toFixed (or elapsed-ms 0) 0) 8 " ") " |"))))
 
-(println "| Algorithm     | v mean  | v std   | Time (ms) | Samples |")
-(println "|---------------|---------|---------|-----------|---------|")
-
-(doseq [[label v-samples result]
-        [["HMC-100"        hmc-v-samples  hmc-result]
-         ["NUTS-100"       nuts-v-samples nuts-result]
-         ["compiled-MH"   cmh-v-samples  cmh-result]]]
-  (if v-samples
-    (let [m (mean v-samples)
-          s (std v-samples)]
-      (println (str "| " (.padEnd label 13 " ")
-                    " | " (.padStart (.toFixed m 4) 7 " ")
-                    " | " (.padStart (.toFixed s 4) 7 " ")
-                    " | " (.padStart (.toFixed (or (:elapsed-ms result) 0) 1) 9 " ")
-                    " | " (.padStart (str (count v-samples)) 7 " ") " |")))
-    (println (str "| " (.padEnd label 13 " ")
-                  " |    N/A  |    N/A  |       N/A |     N/A |"
-                  (when-let [e (:error result)] (str "  " e))))))
-
-(println "\nGround truth: E[v | x=0] ~ 0")
-
-;; ---------------------------------------------------------------------------
-;; Write data.json
-;; ---------------------------------------------------------------------------
-
-(defn summarize [label v-samples result]
-  (let [base {:algorithm label
-              :elapsed-ms (:elapsed-ms result)
-              :error (:error result)}]
-    (if v-samples
-      (merge base {:n-samples (count v-samples)
-                   :v-mean (mean v-samples)
-                   :v-std (std v-samples)
-                   :acceptance-rate (:acceptance-rate (meta (:result result)))})
-      base)))
+(println "\nGround truth: v ~ N(0,3) (mean=0, std=3). R-hat target <= 1.01 (Vehtari et al. 2021).")
+(println "bulk/tail-ESS are rank-normalized (Vehtari); R-hat + ESS are multi-chain on v.")
 
 (write-json "data.json"
   {:experiment "neals-funnel"
    :model {:name "funnel" :dimensions 11
-           :description "v ~ N(0,3), x_i ~ N(0, exp(v/2)), all x_i observed at 0"}
-   :ground-truth {:v-mean 0.0
-                  :note "E[v|x=0] ~ 0 by symmetry"}
-   :results
-   [(summarize "HMC-100" hmc-v-samples hmc-result)
-    (summarize "NUTS-100" nuts-v-samples nuts-result)
-    (summarize "compiled-MH-100" cmh-v-samples cmh-result)]})
+           :description "joint funnel: v ~ N(0,3), x_i ~ N(0, exp(v/2)), no observations"}
+   :diagnostics {:r-hat-target 1.01
+                 :n-chains 4
+                 :ess-note (str "ess = sum of per-chain Geyer ESS; "
+                                "bulk/tail-ESS rank-normalized (Vehtari et al. 2021)")}
+   :ground-truth {:v-mean 0.0 :v-std 3.0
+                  :note "joint funnel: v ~ N(0,3) marginally (no observations)"}
+   :results all-summaries})
 
 (println "\nFunnel benchmark complete.")

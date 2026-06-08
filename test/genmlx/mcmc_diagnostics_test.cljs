@@ -264,6 +264,72 @@
           "x0 mean near posterior mean 2.475"))))
 
 ;; ---------------------------------------------------------------------------
+;; 5.3.5 Rank-normalized bulk-ESS and tail-ESS (Vehtari et al. 2021)
+;; ---------------------------------------------------------------------------
+;; Independent oracle: a stationary AR(1) x_t = phi*x_{t-1} + sqrt(1-phi^2)*eps_t
+;; has integrated autocorrelation time tau = (1+phi)/(1-phi), so the analytic
+;; ESS of N draws is N*(1-phi)/(1+phi). We validate bulk-ESS against this closed
+;; form (NOT against the function under test) and i.i.d. draws against ESS ~ N.
+
+(defn- gen-normal-vec [seed n]
+  (let [a (rng/normal (rng/fresh-key seed) [n])]
+    (mx/materialize! a)
+    (vec (mx/->clj a))))
+
+(defn- ar1-chain [phi noise]
+  (let [s (js/Math.sqrt (- 1.0 (* phi phi)))]
+    (vec (reductions (fn [prev e] (+ (* phi prev) (* s e)))
+                     (first noise) (rest noise)))))
+
+(deftest bulk-ess-iid-matches-nominal
+  (testing "bulk-ESS of i.i.d. draws ~ total sample count"
+    (let [n 500
+          chains (mapv #(gen-normal-vec % n) [11 22 33 44])
+          total (* 4 n)
+          be (diag/bulk-ess chains)]
+      (is (js/isFinite be) "bulk-ESS finite")
+      ;; i.i.d. -> ESS ~ N; estimator spread tolerated, but clearly high.
+      (is (and (> be (* 0.7 total)) (< be (* 1.15 total)))
+          (str "bulk-ESS=" be " near total=" total " for i.i.d.")))))
+
+(deftest bulk-ess-ar1-matches-analytic
+  (testing "bulk-ESS of AR(1) matches analytic N*(1-phi)/(1+phi)"
+    (let [phi 0.7
+          n 1000
+          chains (mapv (fn [seed] (ar1-chain phi (gen-normal-vec seed n)))
+                       [101 202 303 404])
+          total (* 4 n)
+          analytic (* total (/ (- 1.0 phi) (+ 1.0 phi)))  ; 4000*0.3/1.7 = 705.9
+          be (diag/bulk-ess chains)]
+      (is (js/isFinite be) "bulk-ESS finite")
+      ;; ESS estimator variance ~ +/-30% on 4000 autocorrelated draws.
+      (is (and (> be (* 0.7 analytic)) (< be (* 1.35 analytic)))
+          (str "bulk-ESS=" be " near analytic=" analytic " (phi=" phi ")"))
+      ;; bulk-ESS must DETECT the autocorrelation: well below i.i.d. nominal.
+      (is (< be (* 0.5 total))
+          (str "bulk-ESS=" be " well below nominal " total " (autocorrelated)")))))
+
+(deftest tail-ess-sane
+  (testing "tail-ESS is finite, positive, bounded, and tracks autocorrelation"
+    (let [n 500
+          iid (mapv #(gen-normal-vec % n) [5 6 7 8])
+          arc (mapv (fn [seed] (ar1-chain 0.7 (gen-normal-vec seed n))) [9 10 12 13])
+          total (* 4 n)
+          te-iid (diag/tail-ess iid)
+          te-arc (diag/tail-ess arc)]
+      (is (and (js/isFinite te-iid) (pos? te-iid)) "tail-ESS(iid) finite positive")
+      (is (< te-iid (* 1.15 total)) (str "tail-ESS(iid)=" te-iid " <= total"))
+      (is (and (js/isFinite te-arc) (pos? te-arc)) "tail-ESS(ar1) finite positive")
+      ;; autocorrelated tails mix slower than i.i.d.
+      (is (< te-arc (* 0.7 total))
+          (str "tail-ESS(ar1)=" te-arc " below nominal for autocorrelated tails")))))
+
+(deftest bulk-tail-ess-degenerate-guard
+  (testing "ragged / empty chains return 0.0"
+    (is (= 0.0 (diag/bulk-ess [[1.0 2.0 3.0] [1.0 2.0]])) "ragged -> 0")
+    (is (= 0.0 (diag/tail-ess [[] []])) "empty -> 0")))
+
+;; ---------------------------------------------------------------------------
 ;; Run
 ;; ---------------------------------------------------------------------------
 
