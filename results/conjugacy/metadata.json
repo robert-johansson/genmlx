@@ -1,0 +1,18 @@
+{
+  "experiment": "conjugacy",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:38:06.539Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "b2993607d29caad025791d347651fc52e00e8e0a4a23dea15ff125d1226d7524",
+  "duration_ms": 3375,
+  "script": "bench/conjugacy.cljs"
+}

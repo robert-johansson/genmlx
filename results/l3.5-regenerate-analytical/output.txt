@@ -1,0 +1,53 @@
+
+ ======================================================================
+  L3.5 REGENERATE ANALYTICAL ELIMINATION BENCHMARK
+======================================================================
+
+  Model: 3 conjugate (mu1,mu2,mu3) + 2 non-conjugate (scale,offset)
+  Without analytical: Gibbs MH on all 5 params (prior proposals)
+  With analytical:    Gibbs MH, conjugate params eliminated analytically
+                      (mu1,mu2,mu3 sampled from posterior, scale+offset under MH)
+
+  Analytical regenerate available: true
+  Conjugate pairs detected: 3
+    :mu1 -> :y1 [:normal-normal]
+    :mu2 -> :y2 [:normal-normal]
+    :mu3 -> :y3 [:normal-normal]
+
+ ------------------------------------------------------------
+  Condition 1: Full Gibbs MH (5D, no analytical elimination)
+------------------------------------------------------------
+
+  [full-mh-5d] Running Gibbs MH: 500 samples, 100 burn-in...
+  [full-mh-5d] Time:       13880.3 ms
+  [full-mh-5d] Acceptance: 47.5%
+  [full-mh-5d] ESS scale:  169.6, offset: 169.6
+  [full-mh-5d] ESS mu1:    184.0, mu2: 186.8, mu3: 196.4
+  [full-mh-5d] Mean scale: 1.833 (true: 2)
+  [full-mh-5d] Mean offset:1.581 (true: 1)
+
+ ------------------------------------------------------------
+  Condition 2: Analytical Gibbs MH (2D effective, 3 params eliminated)
+------------------------------------------------------------
+
+  [analytical-mh-2d] Running Gibbs MH: 500 samples, 100 burn-in...
+  [analytical-mh-2d] Time:       13609.0 ms
+  [analytical-mh-2d] Acceptance: 32.8%
+  [analytical-mh-2d] ESS scale:  170.7, offset: 174.1
+  [analytical-mh-2d] ESS mu1:    266.2, mu2: 304.4, mu3: 238.8
+  [analytical-mh-2d] Mean scale: 1.857 (true: 2)
+  [analytical-mh-2d] Mean offset:1.507 (true: 1)
+
+ ======================================================================
+  COMPARISON
+======================================================================
+
+  Timing:      full=13880.3 ms, analytical=13609.0 ms (speedup: 1.02x)
+  Acceptance:  full=47.5%, analytical=32.8%
+  ESS scale:   full=169.6, analytical=170.7 (1.0x)
+  ESS offset:  full=169.6, analytical=174.1 (1.0x)
+  ESS mu1:     full=184.0, analytical=266.2 (1.4x)
+  Dimension:   5D -> 2D (3 conjugate params eliminated)
+  Wrote: /Users/robert/code/genmlx/results/l3.5-regenerate-analytical/data.json
+
+Benchmark complete.

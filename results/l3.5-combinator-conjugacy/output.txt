@@ -1,0 +1,111 @@
+
+ ======================================================================
+  L3.5 COMBINATOR CONJUGACY BENCHMARK
+======================================================================
+
+  Kernel conjugate pairs: 1
+    :mu -> :y [:normal-normal]
+  Kernel has-conjugate?: true
+  Kernel auto-handlers: true
+  Kernel compiled-generate: false
+  L2 kernel has-conjugate?: 
+  L2 kernel compiled-generate: false
+
+  Config: particles per K={3 100, 5 100, 10 30}, 10 trials per condition
+  Kernel: mu ~ N(0,10), y ~ N(mu,1)  [normal-normal conjugate]
+  Map sizes: [3 5 10]
+
+------------------------------------------------------------
+  Map K=3 (normal-normal conjugate kernel)
+------------------------------------------------------------
+  Inputs: 3 elements, 100 particles
+  Observations: :y constrained in all 3 elements
+
+  [K=3-L3.5] warming up...
+  [K=3-L3.5] 0.688 +/- 0.018 ms
+
+  Running L3.5 (analytical), 100 particles x 10 trials...
+  L3.5 log-ML: -9.782219 +/- 0.000000
+  L3.5 ESS:    100.0 / 100 (100.0%)
+
+  [K=3-L2] warming up...
+  [K=3-L2] 0.886 +/- 0.019 ms
+
+  Running L2 (prior-proposal IS), 100 particles x 10 trials...
+  L2 log-ML: -11.875738 +/- 2.457333
+  L2 ESS:    1.3 / 100 (1.3%)
+
+  --- Summary K=3 ---
+  Variance reduction:  Inf (L3.5 exact)
+  ESS improvement:     76.1x
+  L3.5 time: 0.688 ms, L2 time: 0.886 ms
+
+------------------------------------------------------------
+  Map K=5 (normal-normal conjugate kernel)
+------------------------------------------------------------
+  Inputs: 5 elements, 100 particles
+  Observations: :y constrained in all 5 elements
+
+  [K=5-L3.5] warming up...
+  [K=5-L3.5] 1.398 +/- 0.043 ms
+
+  Running L3.5 (analytical), 100 particles x 10 trials...
+  L3.5 log-ML: -16.485216 +/- 0.000000
+  L3.5 ESS:    100.0 / 100 (100.0%)
+
+  [K=5-L2] warming up...
+  [K=5-L2] 1.583 +/- 0.073 ms
+
+  Running L2 (prior-proposal IS), 100 particles x 10 trials...
+  L2 log-ML: -33.937187 +/- 12.714828
+  L2 ESS:    1.1 / 100 (1.1%)
+
+  --- Summary K=5 ---
+  Variance reduction:  Inf (L3.5 exact)
+  ESS improvement:     88.9x
+  L3.5 time: 1.398 ms, L2 time: 1.583 ms
+
+------------------------------------------------------------
+  Map K=10 (normal-normal conjugate kernel)
+------------------------------------------------------------
+  Inputs: 10 elements, 30 particles
+  Observations: :y constrained in all 10 elements
+
+  [K=10-L3.5] warming up...
+  [K=10-L3.5] 3.823 +/- 0.234 ms
+
+  Running L3.5 (analytical), 30 particles x 10 trials...
+  L3.5 log-ML: -34.455582 +/- 0.000000
+  L3.5 ESS:    30.0 / 30 (100.0%)
+
+  [K=10-L2] warming up...
+  [K=10-L2] 3.789 +/- 0.067 ms
+
+  Running L2 (prior-proposal IS), 30 particles x 10 trials...
+  L2 log-ML: -264.802052 +/- 65.103103
+  L2 ESS:    1.0 / 30 (3.5%)
+
+  --- Summary K=10 ---
+  Variance reduction:  Inf (L3.5 exact)
+  ESS improvement:     28.9x
+  L3.5 time: 3.823 ms, L2 time: 3.789 ms
+
+
+ ======================================================================
+         L3.5 COMBINATOR CONJUGACY RESULTS
+======================================================================
+
+| K  | L2 var(log-ML) | L3.5 var(log-ML) | Var Reduction | ESS L2 | ESS L3.5 | ESS Ratio |
+|----|----------------|------------------|---------------|--------|----------|-----------|
+|  3 |       6.038484 |        0 (exact) |           Inf |      1 |      100 |      76.1 |
+|  5 |     161.666853 |        0 (exact) |           Inf |      1 |      100 |      88.9 |
+| 10 |    4238.414012 |        0 (exact) |           Inf |      1 |       30 |      28.9 |
+
+| K  | L3.5 time (ms) | L2 time (ms) |
+|----|----------------|--------------|
+|  3 |          0.688 |        0.886 |
+|  5 |          1.398 |        1.583 |
+| 10 |          3.823 |        3.789 |
+  wrote: /Users/robert/code/genmlx/results/l3.5-combinator-conjugacy/data.json
+
+L3.5 combinator conjugacy benchmark complete.

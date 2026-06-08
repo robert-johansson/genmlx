@@ -1,0 +1,18 @@
+{
+  "experiment": "method-selection",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:41:41.296Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "2908175d5b6ac32e395115c2186efc987d0d829e1c8d1e6551ff3bbe2fe544c3",
+  "duration_ms": 38510,
+  "script": "bench/method_selection.cljs"
+}

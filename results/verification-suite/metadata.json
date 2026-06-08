@@ -1,0 +1,18 @@
+{
+  "experiment": "verification-suite",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:43:26.477Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "0e2563d996ccf50350aba48d4ca0c37db2c3655d9466f23f0a8b40b202a45b3f",
+  "duration_ms": 105167,
+  "script": "bench/verification_suite.cljs"
+}

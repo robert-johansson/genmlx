@@ -1,0 +1,215 @@
+
+ ======================================================================
+  EXPERIMENT 5: L3 Auto-Conjugacy Showcase
+======================================================================
+
+  Measures variance reduction from automatic analytical elimination.
+  5 conjugate families tested, 1000 IS particles per trial, 10 trials.
+
+
+ ======================================================================
+  5A: Normal-Normal (mean estimation)
+======================================================================
+  Ground truth posterior: N(1.1178, 0.4468^2)
+
+------------------------------------------------------------
+  5A-Normal-Normal
+------------------------------------------------------------
+  Method: :exact (All trace sites eliminated by analytical plan)
+  Eliminated: [:mu] (1 addrs)
+  Residual: [] (0 addrs)
+    Pair: :mu -> :y1 [:normal-normal]
+    Pair: :mu -> :y2 [:normal-normal]
+    Pair: :mu -> :y3 [:normal-normal]
+    Pair: :mu -> :y4 [:normal-normal]
+    Pair: :mu -> :y5 [:normal-normal]
+
+  Running L3 (auto-conjugacy), 50 particles x 3 trials...
+
+  [5A-Normal-Normal-L3] warming up...
+  [5A-Normal-Normal-L3] 0.825 +/- 0.055 ms
+  L3 log-ML: -7.843255 +/- 0.000000
+  L3 ESS:    50.0 / 50 (100.0%)
+
+  Running L2 (prior-proposal IS), 50 particles x 3 trials...
+
+  [5A-Normal-Normal-L2] warming up...
+  [5A-Normal-Normal-L2] 0.679 +/- 0.045 ms
+  L2 log-ML: -8.107790 +/- 0.366827
+  L2 ESS:    3.6 / 50 (7.2%)
+
+  --- Summary ---
+  Variance reduction:  Inf (L3 exact)
+  ESS improvement:     13.9x
+  L3 time: 0.825 ms, L2 time: 0.679 ms
+
+ ======================================================================
+  5B: Beta-Bernoulli (coin flip)
+======================================================================
+  Ground truth posterior: Beta(5, 4), E[theta]=0.5556
+
+------------------------------------------------------------
+  5B-Beta-Bernoulli
+------------------------------------------------------------
+  Method: :exact (All trace sites eliminated by analytical plan)
+  Eliminated: [:theta] (1 addrs)
+  Residual: [] (0 addrs)
+    Pair: :theta -> :y1 [:beta-bernoulli]
+    Pair: :theta -> :y2 [:beta-bernoulli]
+    Pair: :theta -> :y3 [:beta-bernoulli]
+    Pair: :theta -> :y4 [:beta-bernoulli]
+    Pair: :theta -> :y5 [:beta-bernoulli]
+
+  Running L3 (auto-conjugacy), 50 particles x 3 trials...
+
+  [5B-Beta-Bernoulli-L3] warming up...
+  [5B-Beta-Bernoulli-L3] 0.877 +/- 0.025 ms
+  L3 log-ML: -3.843030 +/- 0.000000
+  L3 ESS:    50.0 / 50 (100.0%)
+
+  Running L2 (prior-proposal IS), 50 particles x 3 trials...
+
+  [5B-Beta-Bernoulli-L2] warming up...
+  [5B-Beta-Bernoulli-L2] 1.802 +/- 0.016 ms
+  L2 log-ML: -3.831841 +/- 0.028713
+  L2 ESS:    40.4 / 50 (80.8%)
+
+  --- Summary ---
+  Variance reduction:  Inf (L3 exact)
+  ESS improvement:     1.2x
+  L3 time: 0.877 ms, L2 time: 1.802 ms
+
+ ======================================================================
+  5C: Gamma-Poisson (count data)
+======================================================================
+  Ground truth posterior: Gamma(16, 5), E[rate]=3.2000
+
+------------------------------------------------------------
+  5C-Gamma-Poisson
+------------------------------------------------------------
+  Method: :exact (All trace sites eliminated by analytical plan)
+  Eliminated: [:rate] (1 addrs)
+  Residual: [] (0 addrs)
+    Pair: :rate -> :y1 [:gamma-poisson]
+    Pair: :rate -> :y2 [:gamma-poisson]
+    Pair: :rate -> :y3 [:gamma-poisson]
+    Pair: :rate -> :y4 [:gamma-poisson]
+
+  Running L3 (auto-conjugacy), 50 particles x 3 trials...
+
+  [5C-Gamma-Poisson-L3] warming up...
+  [5C-Gamma-Poisson-L3] 0.942 +/- 0.022 ms
+  L3 log-ML: -8.302189 +/- 0.000000
+  L3 ESS:    50.0 / 50 (100.0%)
+
+  Running L2 (prior-proposal IS), 50 particles x 3 trials...
+
+  [5C-Gamma-Poisson-L2] warming up...
+  [5C-Gamma-Poisson-L2] 1.080 +/- 0.007 ms
+  L2 log-ML: -8.241341 +/- 0.053504
+  L2 ESS:    18.2 / 50 (36.5%)
+
+  --- Summary ---
+  Variance reduction:  Inf (L3 exact)
+  ESS improvement:     2.7x
+  L3 time: 0.942 ms, L2 time: 1.080 ms
+
+ ======================================================================
+  5D: Mixed Model (partial conjugacy)
+======================================================================
+  mu-a, mu-b: Normal-Normal conjugate (should be eliminated)
+  sigma: Gamma prior with Gaussian likelihood (NOT conjugate)
+
+------------------------------------------------------------
+  5D-Mixed
+------------------------------------------------------------
+  Method: :hmc (Static model with 1 residual dims (≤ 10))
+  Eliminated: [:mu-a :mu-b] (2 addrs)
+  Residual: [:sigma] (1 addrs)
+    Pair: :mu-a -> :y1 [:normal-normal]
+    Pair: :mu-a -> :y2 [:normal-normal]
+    Pair: :mu-b -> :y3 [:normal-normal]
+    Pair: :mu-b -> :y4 [:normal-normal]
+
+  Running L3 (auto-conjugacy), 50 particles x 3 trials...
+
+  [5D-Mixed-L3] warming up...
+  [5D-Mixed-L3] 1.765 +/- 0.036 ms
+  L3 log-ML: -9.410499 +/- 0.123335
+  L3 ESS:    21.4 / 50 (42.8%)
+
+  Running L2 (prior-proposal IS), 50 particles x 3 trials...
+
+  [5D-Mixed-L2] warming up...
+  [5D-Mixed-L2] 1.346 +/- 0.044 ms
+  L2 log-ML: -11.337304 +/- 1.241643
+  L2 ESS:    3.0 / 50 (6.0%)
+
+  --- Summary ---
+  Variance reduction:  101.3x
+  ESS improvement:     7.2x
+  L3 time: 1.765 ms, L2 time: 1.346 ms
+
+ ======================================================================
+  5E: Static Linear Regression (full elimination)
+======================================================================
+  Ground truth: slope=1.9993 +/- 0.3147, intercept=0.4411 +/- 1.0427
+
+------------------------------------------------------------
+  5E-LinReg
+------------------------------------------------------------
+  Method: :exact (All trace sites eliminated by analytical plan)
+  Eliminated: [:slope :intercept] (2 addrs)
+  Residual: [] (0 addrs)
+    Pair: :slope -> :y1 [:normal-normal]
+    Pair: :intercept -> :y1 [:normal-normal]
+    Pair: :slope -> :y2 [:normal-normal]
+    Pair: :intercept -> :y2 [:normal-normal]
+    Pair: :slope -> :y3 [:normal-normal]
+    Pair: :intercept -> :y3 [:normal-normal]
+    Pair: :slope -> :y4 [:normal-normal]
+    Pair: :intercept -> :y4 [:normal-normal]
+    Pair: :slope -> :y5 [:normal-normal]
+    Pair: :intercept -> :y5 [:normal-normal]
+
+  [5E-LinReg-L3] warming up...
+  [5E-LinReg-L3] 1.608 +/- 0.007 ms
+
+  Running L3, 50 particles x 3 trials...
+  L3 log-ML: -28.145948 +/- 0.000000
+  L3 ESS:    50.0 / 50
+
+  [5E-LinReg-L2] warming up...
+  [5E-LinReg-L2] 1.099 +/- 0.161 ms
+
+  Running L2, 50 particles x 3 trials...
+  L2 log-ML: -20.715904 +/- 8.341735
+  L2 ESS:    1.0 / 50
+
+  --- Summary ---
+  Variance reduction:  Inf (L3 exact)
+  ESS improvement:     50.0x
+
+
+ ======================================================================
+         CONJUGACY RESULTS SUMMARY
+======================================================================
+
+| Experiment | Family | Eliminated | L2 var(log-ML) | L3 var(log-ML) | Var Reduction | ESS Ratio |
+|------------|--------|------------|----------------|----------------|---------------|-----------|
+| 5A-Normal-Normal | normal-normal |          1 |       0.134562 |      0 (exact) |           Inf |      13.9 |
+| 5B-Beta-Bernoulli | beta-bernoulli |          1 |       0.000824 |      0 (exact) |           Inf |       1.2 |
+| 5C-Gamma-Poisson | gamma-poisson |          1 |       0.002863 |      0 (exact) |           Inf |       2.7 |
+| 5D-Mixed   | normal-normal |          2 |       1.541678 |       0.015211 |         101.3 |       7.2 |
+| 5E-LinReg  | normal-normal |          2 |      69.584545 |      0 (exact) |           Inf |      50.0 |
+
+| Experiment | L3 time (ms) | L2 time (ms) |
+|------------|--------------|--------------|
+| 5A-Normal-Normal |        0.825 |        0.679 |
+| 5B-Beta-Bernoulli |        0.877 |        1.802 |
+| 5C-Gamma-Poisson |        0.942 |        1.080 |
+| 5D-Mixed   |        1.765 |        1.346 |
+| 5E-LinReg  |        1.608 |        1.099 |
+  Wrote: /Users/robert/code/genmlx/results/conjugacy/data.json
+
+Experiment 5 complete.

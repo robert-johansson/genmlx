@@ -3,39 +3,57 @@
   "model": {
     "name": "funnel",
     "dimensions": 11,
-    "description": "v ~ N(0,3), x_i ~ N(0, exp(v/2)), all x_i observed at 0"
+    "description": "joint funnel: v ~ N(0,3), x_i ~ N(0, exp(v/2)), no observations"
+  },
+  "diagnostics": {
+    "r-hat-target": 1.01,
+    "n-chains": 4,
+    "ess-note": "ess = sum of per-chain Geyer ESS; bulk/tail-ESS rank-normalized (Vehtari et al. 2021)"
   },
   "ground-truth": {
     "v-mean": 0,
-    "note": "E[v|x=0] ~ 0 by symmetry"
+    "v-std": 3,
+    "note": "joint funnel: v ~ N(0,3) marginally (no observations)"
   },
   "results": [
     {
-      "algorithm": "HMC-100",
-      "elapsed-ms": 16799.183417,
-      "error": null,
-      "n-samples": 100,
-      "v-mean": 1.6681015124917031,
-      "v-std": 1.6635869195266926,
-      "acceptance-rate": null
+      "algorithm": "HMC",
+      "v-std": 2.164252142257859,
+      "bulk-ess": 4.006677796327212,
+      "r-hat": 1,
+      "ess": 2400,
+      "elapsed-ms": 53667.912334,
+      "acceptance-rate": 0,
+      "n-chains": 4,
+      "v-mean": -0.04085588455200195,
+      "tail-ess": 4.006677796327212,
+      "n-samples-per-chain": 600
     },
     {
-      "algorithm": "NUTS-100",
-      "elapsed-ms": 190854.538042,
-      "error": null,
-      "n-samples": 100,
-      "v-mean": 0.10568348616361618,
-      "v-std": 1.3263434354552366,
-      "acceptance-rate": 0.97
+      "algorithm": "NUTS",
+      "v-std": 2.7553882254221094,
+      "bulk-ess": 5.828972930699178,
+      "r-hat": 2.2240202957926836,
+      "ess": 636.2803760579632,
+      "elapsed-ms": 74119.50062499999,
+      "acceptance-rate": 0.6633333333333333,
+      "n-chains": 4,
+      "v-mean": 0.6155503645384063,
+      "tail-ess": 4.006677796327212,
+      "n-samples-per-chain": 600
     },
     {
-      "algorithm": "compiled-MH-100",
-      "elapsed-ms": 1809.6766659999848,
-      "error": null,
-      "n-samples": 100,
-      "v-mean": -0.8446881526708603,
-      "v-std": 0.3954090950753083,
-      "acceptance-rate": null
+      "algorithm": "compiled-MH",
+      "v-std": 1.425863483358333,
+      "bulk-ess": 6.28102883382263,
+      "r-hat": 1.5823138178545715,
+      "ess": 32.1395256128679,
+      "elapsed-ms": 11529.449416999996,
+      "acceptance-rate": null,
+      "n-chains": 4,
+      "v-mean": -2.015601490432717,
+      "tail-ess": 28.22937100703892,
+      "n-samples-per-chain": 2000
     }
   ]
 }

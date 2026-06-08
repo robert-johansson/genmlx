@@ -1,0 +1,18 @@
+{
+  "experiment": "distribution-audit",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:55:24.081Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "cf7fa48dff8c1a09a7f6ca3f70334369a0e5f6b7bf35d95a5a25d63ef3c84eb3",
+  "duration_ms": 36127,
+  "script": "bench/distribution_audit.cljs"
+}

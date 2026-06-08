@@ -1,41 +1,40 @@
 {
   "description": "MVN-MVN conjugacy via Kalman gain form (mx/solve)",
-  "variance-reduction": "Infinity",
   "config": {
     "prior-var": 100,
     "obs-var": 1,
     "n-particles": 1000,
-    "n-trials": 10
+    "n-trials": 5
   },
   "dimension-scaling": [
     {
       "d": 2,
-      "analytical-ms": 2.0744000000006055,
-      "standard-ms": 1.5180749999999534,
+      "analytical-ms": 1.3412958000000799,
+      "standard-ms": 1.0610249999997905,
       "auto-detected": true
     },
     {
       "d": 5,
-      "analytical-ms": 2.018566700001247,
-      "standard-ms": 1.6467541499994696,
+      "analytical-ms": 1.428033349999896,
+      "standard-ms": 1.0693937500000175,
       "auto-detected": true
     },
     {
       "d": 10,
-      "analytical-ms": 2.2286229500023182,
-      "standard-ms": 1.877962500002468,
+      "analytical-ms": 1.5021083499996166,
+      "standard-ms": 1.1539375000000291,
       "auto-detected": true
     },
     {
       "d": 20,
-      "analytical-ms": 2.029445799998939,
-      "standard-ms": 1.4329521000036038,
+      "analytical-ms": 1.626835449999635,
+      "standard-ms": 1.3123146000005363,
       "auto-detected": true
     },
     {
       "d": 50,
-      "analytical-ms": 5.021485400001984,
-      "standard-ms": 4.804975000000558,
+      "analytical-ms": 3.104558299999917,
+      "standard-ms": 2.579956249999668,
       "auto-detected": true
     }
   ],
@@ -48,22 +47,22 @@
   "experiment": "l3.5-mvn-conjugacy",
   "conditions": {
     "L2-standard-IS": {
-      "log-ml-mean": -21.142685539144562,
-      "log-ml-std": 3.5074000405749857,
-      "log-ml-var": 12.30185504462541,
-      "ess-mean": 1.4517217863192546,
+      "log-ml-mean": -21.51735748437243,
+      "log-ml-std": 3.208169276651435,
+      "log-ml-var": 10.29235010765019,
+      "ess-mean": 1.5156339849877238,
       "posterior-mean-error": 2.161848049700597,
-      "timing-ms": 2.5998168000020088,
-      "timing-std-ms": 0.40479440892499013
+      "timing-ms": 0.9929331999999704,
+      "timing-std-ms": 0.02393841821630533
     },
     "L3.5-analytical": {
       "log-ml-mean": -16.220117568969727,
       "log-ml-std": 0,
       "log-ml-var": 0,
-      "ess-mean": 999.9999999999848,
+      "ess-mean": 1000,
       "posterior-mean-error": 2.4313973878697937e-8,
-      "timing-ms": 1.4466000000000008,
-      "timing-std-ms": 0.04209680675537714
+      "timing-ms": 1.4696832000000086,
+      "timing-std-ms": 0.01992760505431571
     }
   },
   "analytic-posterior": {
@@ -77,6 +76,7 @@
     "var": 0.9900990099009901,
     "log-ml": -16.22011772050275
   },
-  "ess-improvement": 688.8372203433133,
-  "timestamp": "2026-04-15T19:02:39.263Z"
+  "ess-improvement": 659.7899030405416,
+  "timestamp": "2026-06-08T16:33:10.708Z",
+  "log-ml-abs-error": 1.5153302257431278e-7
 }

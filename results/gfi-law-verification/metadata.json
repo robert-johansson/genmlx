@@ -1,0 +1,18 @@
+{
+  "experiment": "gfi-law-verification",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:45:26.578Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "621419eb2f6464b8b8490cc854b2ccd4399ddaf24bf77b4ae52b838f3224f9e1",
+  "duration_ms": 120085,
+  "script": "bench/gfi_law_verification.cljs"
+}

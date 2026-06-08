@@ -1,0 +1,18 @@
+{
+  "experiment": "linreg",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:35:17.365Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "592cfa7c33cb1774606a357146a91bb6f4edc9601fcb1fdc7d334760f3669027",
+  "duration_ms": 206561,
+  "script": "bench/linreg.cljs"
+}

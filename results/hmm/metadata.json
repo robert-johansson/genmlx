@@ -1,0 +1,18 @@
+{
+  "experiment": "hmm",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:35:22.883Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "5c257731733eeb147433a37c61d4f727ee15caf2f5a054fc80f2355b83bfa247",
+  "duration_ms": 5504,
+  "script": "bench/hmm.cljs"
+}

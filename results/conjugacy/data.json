@@ -1,7 +1,7 @@
 {
   "experiment": "conjugacy",
   "description": "L3 Auto-Conjugacy Showcase: variance reduction from analytical elimination",
-  "timestamp": "2026-04-15T18:45:55.392Z",
+  "timestamp": "2026-06-08T16:30:59.002Z",
   "hardware": {
     "platform": "macOS",
     "chip": "Apple Silicon",
@@ -29,27 +29,30 @@
         "distribution": "Normal",
         "mean": 1.1177644710578842,
         "std": 0.4467670516087703,
-        "var": 0.1996007984031936
+        "var": 0.1996007984031936,
+        "log-ml": -7.843255197603719
       },
+      "closed_form_log_ml": -7.843255197603719,
       "n_trials": 3,
       "label": "5A-Normal-Normal",
       "l2": {
         "log_ml_mean": -8.107790467211588,
         "log_ml_std": 0.36682666789896273,
         "log_ml_var": 0.1345618042818559,
+        "log_ml_abs_error_nats": 0.2645352696078689,
         "ess_mean": 3.585579369771292,
-        "time_ms": 0.6008890000000141,
-        "time_std_ms": 0.011419050442118729
+        "time_ms": 0.5774580000000166,
+        "time_std_ms": 0.010754238187810199
       },
       "l3": {
         "log_ml_mean": -7.843255043029785,
         "log_ml_std": 0,
         "log_ml_var": 0,
+        "log_ml_abs_error_nats": 1.5457393409690212e-7,
         "ess_mean": 50,
-        "time_ms": 0.7667640000000043,
-        "time_std_ms": 0.051152272588807335
+        "time_ms": 0.7772359999999784,
+        "time_std_ms": 0.05897811109215536
       },
-      "variance_reduction": null,
       "conjugate_pairs": [
         {
           "prior": "mu",
@@ -90,32 +93,35 @@
         "n_residual": 0
       },
       "n_particles": 50,
-      "ess_improvement": 1.2702657766918188,
+      "ess_improvement": 1.238020170986699,
       "ground_truth": {
         "distribution": "Beta",
         "alpha": 5,
         "beta": 4,
-        "mean": 0.5555555555555556
+        "mean": 0.5555555555555556,
+        "log-ml": -3.8430301339411987
       },
+      "closed_form_log_ml": -3.8430301339411987,
       "n_trials": 3,
       "label": "5B-Beta-Bernoulli",
       "l2": {
-        "log_ml_mean": -3.845504963989125,
-        "log_ml_std": 0.0341651743358717,
-        "log_ml_var": 0.0011672591374005063,
-        "ess_mean": 39.36184137009194,
-        "time_ms": 1.1469726666666702,
-        "time_std_ms": 0.056663683663777886
+        "log_ml_mean": -3.8318412188738904,
+        "log_ml_std": 0.028713315873042086,
+        "log_ml_var": 0.0008244545084250906,
+        "log_ml_abs_error_nats": 0.011188915067308347,
+        "ess_mean": 40.38706409779263,
+        "time_ms": 1.7683750000000298,
+        "time_std_ms": 0.11659913968384705
       },
       "l3": {
         "log_ml_mean": -3.8430299758911133,
         "log_ml_std": 0,
         "log_ml_var": 0,
+        "log_ml_abs_error_nats": 1.5805008546365684e-7,
         "ess_mean": 50,
-        "time_ms": 0.8082640000000462,
-        "time_std_ms": 0.008281590487353774
+        "time_ms": 0.7633886666666664,
+        "time_std_ms": 0.007963099229165587
       },
-      "variance_reduction": null,
       "conjugate_pairs": [
         {
           "prior": "theta",
@@ -161,27 +167,30 @@
         "distribution": "Gamma",
         "shape": 16,
         "rate": 5,
-        "mean": 3.2
+        "mean": 3.2,
+        "log-ml": -8.30218743802271
       },
+      "closed_form_log_ml": -8.30218743802271,
       "n_trials": 3,
       "label": "5C-Gamma-Poisson",
       "l2": {
         "log_ml_mean": -8.24134135714174,
         "log_ml_std": 0.05350396740156749,
         "log_ml_var": 0.002862674527707996,
+        "log_ml_abs_error_nats": 0.06084608088096921,
         "ess_mean": 18.23640949344674,
-        "time_ms": 1.1499723333333804,
-        "time_std_ms": 0.011378243332422567
+        "time_ms": 1.0618056666666387,
+        "time_std_ms": 0.07989727504940199
       },
       "l3": {
         "log_ml_mean": -8.302188873291016,
         "log_ml_std": 0,
         "log_ml_var": 0,
+        "log_ml_abs_error_nats": 0.0000014352683059826177,
         "ess_mean": 50,
-        "time_ms": 0.8472359999999904,
-        "time_std_ms": 0.019474591471901666
+        "time_ms": 0.8454029999999572,
+        "time_std_ms": 0.014666819287100499
       },
-      "variance_reduction": null,
       "conjugate_pairs": [
         {
           "prior": "rate",
@@ -231,23 +240,26 @@
         ],
         "note": "mu-a, mu-b eliminated analytically; sigma must be sampled"
       },
+      "closed_form_log_ml": null,
       "n_trials": 3,
       "label": "5D-Mixed",
       "l2": {
         "log_ml_mean": -11.33730405195359,
         "log_ml_std": 1.241643272258632,
         "log_ml_var": 1.5416780155451233,
+        "log_ml_abs_error_nats": null,
         "ess_mean": 2.990547980226953,
-        "time_ms": 1.1984723333333325,
-        "time_std_ms": 0.02844251740494092
+        "time_ms": 1.2757503333333868,
+        "time_std_ms": 0.01695799140005526
       },
       "l3": {
         "log_ml_mean": -9.410499319500436,
         "log_ml_std": 0.12333490741678853,
         "log_ml_var": 0.015211499387507798,
+        "log_ml_abs_error_nats": null,
         "ess_mean": 21.405670601914817,
-        "time_ms": 1.5894306666665823,
-        "time_std_ms": 0.01807224903909592
+        "time_ms": 1.6053889999999835,
+        "time_std_ms": 0.010638614383328977
       },
       "variance_reduction": 101.34951041126175,
       "conjugate_pairs": [
@@ -293,25 +305,27 @@
         "intercept-mean": 0.44114537323049063,
         "intercept-std": 1.0426658149550536
       },
+      "closed_form_log_ml": -11.41880338924077,
       "n_trials": 3,
       "label": "5E-LinReg",
       "l2": {
         "log_ml_mean": -20.715903828070065,
         "log_ml_std": 8.341735142332718,
         "log_ml_var": 69.58454518482866,
+        "log_ml_abs_error_nats": 9.297100438829295,
         "ess_mean": 1.000028348593306,
-        "time_ms": 0.9208613333333536,
-        "time_std_ms": 0.02196140217131683
+        "time_ms": 0.9401663333331575,
+        "time_std_ms": 0.017621910291785704
       },
       "l3": {
-        "log_ml_mean": -28.14594841003418,
+        "log_ml_mean": -11.418802261352539,
         "log_ml_std": 0,
         "log_ml_var": 0,
+        "log_ml_abs_error_nats": 0.000001127888230811891,
         "ess_mean": 50,
-        "time_ms": 1.444791999999931,
-        "time_std_ms": 0.0348358097222595
+        "time_ms": 1.792347333333358,
+        "time_std_ms": 0.009636600040109284
       },
-      "variance_reduction": null,
       "conjugate_pairs": [
         {
           "prior": "slope",
@@ -374,26 +388,38 @@
       "mixed",
       "linreg"
     ],
-    "variance_reductions": [
+    "log_ml_abs_error_nats": [
       {
         "label": "5A-Normal-Normal",
-        "ratio": "Infinity"
+        "l3": 1.5457393409690212e-7,
+        "l2": 0.2645352696078689
       },
       {
         "label": "5B-Beta-Bernoulli",
-        "ratio": "Infinity"
+        "l3": 1.5805008546365684e-7,
+        "l2": 0.011188915067308347
       },
       {
         "label": "5C-Gamma-Poisson",
-        "ratio": "Infinity"
+        "l3": 0.0000014352683059826177,
+        "l2": 0.06084608088096921
       },
       {
         "label": "5D-Mixed",
-        "ratio": 101.34951041126175
+        "l3": null,
+        "l2": null
       },
       {
         "label": "5E-LinReg",
-        "ratio": "Infinity"
+        "l3": 0.000001127888230811891,
+        "l2": 9.297100438829295
+      }
+    ],
+    "max_l3_abs_error_nats": 0.0000014352683059826177,
+    "variance_reductions": [
+      {
+        "label": "5D-Mixed",
+        "ratio": 101.34951041126175
       }
     ],
     "ess_improvements": [
@@ -403,7 +429,7 @@
       },
       {
         "label": "5B-Beta-Bernoulli",
-        "ratio": 1.2702657766918188
+        "ratio": 1.238020170986699
       },
       {
         "label": "5C-Gamma-Poisson",
@@ -418,7 +444,6 @@
         "ratio": 49.998582610515705
       }
     ],
-    "mean_variance_reduction": 101.34951041126175,
-    "mean_ess_improvement": 15.022627861234735
+    "mean_ess_improvement": 15.01617874009371
   }
 }

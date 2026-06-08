@@ -1,6 +1,5 @@
 {
-  "description": "Rao-Blackwellization: partial conjugacy variance reduction",
-  "variance-reduction": "Infinity",
+  "description": "Analytical elimination exactness: mu1, mu2 marginalized (sigma sampled but irrelevant to the marginal). |L3 log-ML − closed form|.",
   "config": {
     "n_particles": 50,
     "n_trials": 3
@@ -10,26 +9,29 @@
     "mu2"
   ],
   "experiment": "rao-blackwell",
+  "closed-form-log-ml": -9.122093866748413,
   "conditions": {
     "L2-no-analytical": {
       "log-ml-mean": -9.760964741124676,
       "log-ml-std": 2.167964229451776,
       "log-ml-var": 4.700068900182432,
+      "log-ml-abs-error-nats": 0.6388708743762628,
       "ess-mean": 1.4472544663638118,
-      "timing-ms": 1.312693999999965,
-      "timing-std-ms": 0.08062227026696102
+      "timing-ms": 1.3161249999999807,
+      "timing-std-ms": 0.00592285125593261
     },
     "L3-with-analytical": {
       "log-ml-mean": -9.12209415435791,
       "log-ml-std": 0,
       "log-ml-var": 0,
+      "log-ml-abs-error-nats": 2.876094971071552e-7,
       "ess-mean": 50,
-      "timing-ms": 1.3646946666666697,
-      "timing-std-ms": 0.11367731214420827
+      "timing-ms": 1.361347333333356,
+      "timing-std-ms": 0.04041306038069318
     }
   },
   "ess-improvement": 34.54817460375414,
-  "timestamp": "2026-04-15T18:49:49.576Z",
+  "timestamp": "2026-06-08T16:31:13.732Z",
   "non-conjugate-sites": [
     "sigma"
   ],

@@ -8,7 +8,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 5,
-      "duration-ms": 4437,
+      "duration-ms": 4758,
       "status": "pass"
     },
     {
@@ -18,7 +18,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 11,
-      "duration-ms": 969,
+      "duration-ms": 1162,
       "status": "pass"
     },
     {
@@ -28,7 +28,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 11,
-      "duration-ms": 686,
+      "duration-ms": 901,
       "status": "pass"
     },
     {
@@ -38,7 +38,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 18,
-      "duration-ms": 1230,
+      "duration-ms": 1421,
       "status": "pass"
     },
     {
@@ -48,7 +48,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 17,
-      "duration-ms": 1611,
+      "duration-ms": 1763,
       "status": "pass"
     },
     {
@@ -58,7 +58,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 9,
-      "duration-ms": 1114,
+      "duration-ms": 1310,
       "status": "pass"
     },
     {
@@ -68,7 +68,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 5,
-      "duration-ms": 35823,
+      "duration-ms": 29412,
       "status": "pass"
     },
     {
@@ -78,7 +78,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 20,
-      "duration-ms": 3925,
+      "duration-ms": 3158,
       "status": "pass"
     },
     {
@@ -88,7 +88,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 6,
-      "duration-ms": 706,
+      "duration-ms": 846,
       "status": "pass"
     },
     {
@@ -98,7 +98,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 22,
-      "duration-ms": 240,
+      "duration-ms": 395,
       "status": "pass"
     },
     {
@@ -108,7 +108,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 16,
-      "duration-ms": 1251,
+      "duration-ms": 1427,
       "status": "pass"
     },
     {
@@ -118,7 +118,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 12,
-      "duration-ms": 1589,
+      "duration-ms": 1722,
       "status": "pass"
     },
     {
@@ -128,7 +128,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 4,
-      "duration-ms": 109028,
+      "duration-ms": 108313,
       "status": "pass"
     },
     {
@@ -138,7 +138,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 8,
-      "duration-ms": 479,
+      "duration-ms": 796,
       "status": "pass"
     },
     {
@@ -148,7 +148,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 12,
-      "duration-ms": 2602,
+      "duration-ms": 2841,
       "status": "pass"
     },
     {
@@ -158,7 +158,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 9,
-      "duration-ms": 537,
+      "duration-ms": 688,
       "status": "pass"
     },
     {
@@ -168,7 +168,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 5,
-      "duration-ms": 120590,
+      "duration-ms": 121783,
       "status": "pass"
     },
     {
@@ -178,7 +178,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 10,
-      "duration-ms": 854,
+      "duration-ms": 1071,
       "status": "pass"
     },
     {
@@ -188,7 +188,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 11,
-      "duration-ms": 279,
+      "duration-ms": 426,
       "status": "pass"
     },
     {
@@ -198,7 +198,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 5,
-      "duration-ms": 496,
+      "duration-ms": 669,
       "status": "pass"
     },
     {
@@ -208,7 +208,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 7,
-      "duration-ms": 1390,
+      "duration-ms": 1642,
       "status": "pass"
     },
     {
@@ -218,7 +218,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 6,
-      "duration-ms": 839,
+      "duration-ms": 991,
       "status": "pass"
     },
     {
@@ -228,7 +228,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 4,
-      "duration-ms": 843,
+      "duration-ms": 1045,
       "status": "pass"
     },
     {
@@ -238,7 +238,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 20,
-      "duration-ms": 12276,
+      "duration-ms": 13411,
       "status": "pass"
     },
     {
@@ -248,7 +248,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 9,
-      "duration-ms": 1011,
+      "duration-ms": 1182,
       "status": "pass"
     },
     {
@@ -258,7 +258,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 13,
-      "duration-ms": 1085,
+      "duration-ms": 1265,
       "status": "pass"
     },
     {
@@ -268,7 +268,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 7,
-      "duration-ms": 254785,
+      "duration-ms": 255269,
       "status": "pass"
     },
     {
@@ -278,7 +278,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 11,
-      "duration-ms": 1124,
+      "duration-ms": 1416,
       "status": "pass"
     }
   ],
@@ -287,7 +287,7 @@
     "fail": 0,
     "error": 0,
     "total-assertions": 293,
-    "duration-ms": 561806,
+    "duration-ms": 561089,
     "suites-passed": 28,
     "suites-total": 28
   }

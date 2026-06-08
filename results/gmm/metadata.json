@@ -1,0 +1,18 @@
+{
+  "experiment": "gmm",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:35:27.616Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "5eaa139d6513000dbeeef999fae91caffd5b093b05d70c0054fa04d08380b026",
+  "duration_ms": 4720,
+  "script": "bench/gmm.cljs"
+}

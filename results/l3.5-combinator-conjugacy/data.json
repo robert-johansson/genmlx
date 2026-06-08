@@ -1,5 +1,5 @@
 {
-  "description": "Conjugacy detection inside Map combinator kernels. Per-element analytical elimination via L3.5.",
+  "description": "Conjugacy detection inside Map combinator kernels. Per-element analytical elimination via L3.5; exactness = |L3.5 log-ML − closed form| in nats.",
   "combinator": "Map",
   "config": {
     "particles_per_K": {
@@ -20,8 +20,25 @@
     "gpu": "Metal"
   },
   "summary": {
-    "mean_variance_reduction": "Infinity",
-    "mean_ess_improvement": 66.43137992838923,
+    "log_ml_abs_error_nats": [
+      {
+        "K": 3,
+        "l35": 2.1404766670229947e-7,
+        "l2": 1.5372104917568024
+      },
+      {
+        "K": 5,
+        "l35": 5.896566683816218e-7,
+        "l2": 19.79602481664403
+      },
+      {
+        "K": 10,
+        "l35": 3.1061989602676476e-7,
+        "l2": 213.40059909876024
+      }
+    ],
+    "max_l35_abs_error_nats": 5.896566683816218e-7,
+    "mean_ess_improvement": 66.13776741414307,
     "all_exact?": true
   },
   "experiment": "l3.5-combinator-conjugacy",
@@ -40,71 +57,77 @@
   "results-by-size": [
     {
       "K": 3,
+      "closed-form-log-ml": -9.782219147153135,
       "L2-standard": {
-        "log-ml-mean": -11.383861316830755,
-        "log-ml-std": 2.467489689354126,
-        "log-ml-var": 6.088505367068921,
-        "ess-mean": 1.237501970816504,
-        "timing-ms": 1.120388666666713,
-        "timing-std-ms": 0.05721605596630969
+        "log-ml-mean": -11.319429638909938,
+        "log-ml-std": 3.286786460645186,
+        "log-ml-var": 10.80296523788051,
+        "log-ml-abs-error-nats": 1.5372104917568024,
+        "ess-mean": 1.358626682838121,
+        "timing-ms": 0.8321943333333669,
+        "timing-std-ms": 0.028156013111423673
       },
       "L3.5-analytical": {
         "log-ml-mean": -9.782218933105469,
         "log-ml-std": 0,
         "log-ml-var": 0,
+        "log-ml-abs-error-nats": 2.1404766670229947e-7,
         "ess-mean": 100.00000000000004,
-        "timing-ms": 0.8206666666666251,
-        "timing-std-ms": 0.08441238661673062
+        "timing-ms": 0.7170693333333702,
+        "timing-std-ms": 0.0304105976484732
       },
       "n-particles": 100,
-      "variance-reduction": "Infinity",
-      "ess-improvement": 80.80795211503383
+      "ess-improvement": 73.60373623098859
     },
     {
       "K": 5,
+      "closed-form-log-ml": -16.48521673040374,
       "L2-standard": {
-        "log-ml-mean": -42.68855598089693,
-        "log-ml-std": 12.149136331798244,
-        "log-ml-var": 147.6015136086201,
-        "ess-mean": 1.1013834116195473,
-        "timing-ms": 2.683999999999893,
-        "timing-std-ms": 0.7955439717930718
+        "log-ml-mean": -36.28124154704777,
+        "log-ml-std": 10.806612893104852,
+        "log-ml-var": 116.78288222142001,
+        "log-ml-abs-error-nats": 19.79602481664403,
+        "ess-mean": 1.0547449855813444,
+        "timing-ms": 1.504722333333272,
+        "timing-std-ms": 0.08582607010872748
       },
       "L3.5-analytical": {
         "log-ml-mean": -16.48521614074707,
         "log-ml-std": 0,
         "log-ml-var": 0,
+        "log-ml-abs-error-nats": 5.896566683816218e-7,
         "ess-mean": 100.00000000000004,
-        "timing-ms": 1.492958333333263,
-        "timing-std-ms": 0.15436131549827736
+        "timing-ms": 1.3132916666666763,
+        "timing-std-ms": 0.033978945279693556
       },
       "n-particles": 100,
-      "variance-reduction": "Infinity",
-      "ess-improvement": 90.79490297838552
+      "ess-improvement": 94.80964722945137
     },
     {
       "K": 10,
+      "closed-form-log-ml": -34.45558197565896,
       "L2-standard": {
-        "log-ml-mean": -235.54837957940913,
-        "log-ml-std": 73.19761386749347,
-        "log-ml-var": 5357.890675894673,
-        "ess-mean": 1.083373354972571,
-        "timing-ms": 4.523361333333014,
-        "timing-std-ms": 0.20591115270943658
+        "log-ml-mean": -247.8561810744192,
+        "log-ml-std": 78.79365041847923,
+        "log-ml-var": 6208.439346269512,
+        "log-ml-abs-error-nats": 213.40059909876024,
+        "ess-mean": 1.0000027072743543,
+        "timing-ms": 2.141194333332957,
+        "timing-std-ms": 0.015690389106917557
       },
       "L3.5-analytical": {
         "log-ml-mean": -34.45558166503906,
         "log-ml-std": 0,
         "log-ml-var": 0,
+        "log-ml-abs-error-nats": 3.1061989602676476e-7,
         "ess-mean": 30,
-        "timing-ms": 4.363735999999942,
-        "timing-std-ms": 0.4584191836764054
+        "timing-ms": 3.0598196666666504,
+        "timing-std-ms": 0.06506534069906449
       },
       "n-particles": 30,
-      "variance-reduction": "Infinity",
-      "ess-improvement": 27.691284691748344
+      "ess-improvement": 29.99991878198925
     }
   ],
   "kernel": "normal-normal conjugate",
-  "timestamp": "2026-04-15T18:50:22.923Z"
+  "timestamp": "2026-06-08T16:31:33.439Z"
 }
