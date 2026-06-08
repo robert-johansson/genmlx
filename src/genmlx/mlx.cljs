@@ -28,7 +28,7 @@
 (defonce ^:private M (.-MxArray c))
 
 ;; Forward declarations for functions referenced before definition.
-(declare scalar array shape array? astype force-gc! clear-cache!)
+(declare scalar array shape array? astype force-gc! clear-cache! maybe-count-sweep!)
 
 ;; Scope tracking atoms — defined here because functional combinators
 ;; (grad, value-and-grad) reference grad-depth before the Memory
@@ -390,15 +390,26 @@
                  (re-find #"metal::malloc" msg)
                  (re-find #"out of memory" msg)))))
 
+;; Layer 2 instrumentation (bean genmlx-x7cl). alloc-retry-count = times the
+;; REACTIVE catch below fired (the ~499000 buffer wall WAS hit and we recovered).
+;; proactive-sweep-count = times the COUNT-aware sweep pre-empted the wall (see
+;; maybe-count-sweep! / auto-cleanup! / gfi-cleanup!). In a healthy hot loop the
+;; proactive sweep keeps the live count under the limit, so the reactive path
+;; should never trigger: alloc-retry-count stays 0 while proactive-sweep-count
+;; goes positive. Public so regression tests can observe both.
+(def alloc-retry-count (atom 0))
+(def proactive-sweep-count (atom 0))
+
 (defn- with-alloc-retry
-  "Run thunk; on an MLX resource-exhaustion error, reclaim dead GPU buffers and
-   retry ONCE. Any other error (or a second failure) propagates."
+  "Run thunk; opportunistically run the proactive count-aware sweep on success.
+   On an MLX resource-exhaustion error, reclaim dead GPU buffers and retry ONCE.
+   Any other error (or a second failure) propagates."
   [thunk]
   (try
-    (thunk)
+    (let [r (thunk)] (maybe-count-sweep!) r)
     (catch :default e
       (if (mlx-resource-error? e)
-        (do (force-gc!) (clear-cache!) (thunk))
+        (do (swap! alloc-retry-count inc) (force-gc!) (clear-cache!) (thunk))
         (throw e)))))
 
 (defn scalar
@@ -716,6 +727,29 @@
 (defn get-cache-memory   [] (.getCacheMemory c))
 (defn get-peak-memory    [] (.getPeakMemory c))
 (defn reset-peak-memory! [] (.resetPeakMemory c))
+
+(defn get-num-resources
+  "Live Metal buffer allocation count (active + cached). Each counts toward the
+   macOS resource limit (~499000). Read by the Layer-2 proactive sweep."
+  [] (.getNumResources c))
+(defn get-resource-limit
+  "The Metal buffer resource limit — the count at which allocations fail."
+  [] (.getResourceLimit c))
+(defn get-buffer-count
+  "Alias of get-num-resources (the bean-named API, genmlx-x7cl)."
+  [] (.getNumResources c))
+
+;; Proactive buffer-count sweep policy (bean genmlx-x7cl). The ~499000 count
+;; limit is hit on tiny-array loops while MEMORY is trivially low, so the
+;; memory-pressure heuristics below never fire for that class. We sweep when the
+;; live count crosses ~80% of the limit, well before the wall. buffer-count-
+;; threshold is a public atom so it can be tuned at runtime (and so regression
+;; tests can lower/raise it deterministically). buffer-count-limit is resolved
+;; once at load; a degraded-Metal host (query returns 0) falls back to 499000.
+(def ^:private buffer-count-limit
+  (let [l (try (get-resource-limit) (catch :default _ 0))]
+    (if (pos? l) l 499000)))
+(def buffer-count-threshold (atom (long (* 0.8 buffer-count-limit))))
 (defn get-wrappers-count
   "Returns active GPU memory in bytes (not a wrapper object count).
    Named for backward compatibility; use get-active-memory for clarity."
@@ -759,19 +793,71 @@
 (def ^:private ^:mutable ops-since-check 0)
 (def ^:private check-interval 50)
 
+;; --- Layer 2 proactive count-aware sweep (bean genmlx-x7cl) ---
+(def ^:private ^:mutable allocs-since-count-check 0)
+(def ^:private count-check-interval 4096)
+(def ^:private ^:mutable proactive-armed? true)
+
+(defn- buffer-count-pressure?
+  "Hysteretic buffer-count pressure check. Returns true (and DISARMS) when the
+   live Metal buffer count first crosses the HIGH watermark @buffer-count-
+   threshold. Stays false until the count later falls below the LOW watermark
+   (0.75 * high), then RE-ARMS. The hysteresis stops force-gc! from firing every
+   interval when a high count is due to LIVE buffers a sweep cannot reclaim (it
+   would drop little, stay above LOW, and stay disarmed) — while still firing
+   once per genuine dead-buffer climb (a sweep frees them, count drops below LOW,
+   re-arm). Shared by all three sweep sites; they cooperate via this one state."
+  []
+  (let [n  (get-num-resources)
+        hi @buffer-count-threshold
+        lo (* 0.75 hi)]
+    (cond
+      (and proactive-armed? (> n hi))       (do (set! proactive-armed? false) true)
+      (and (not proactive-armed?) (< n lo)) (do (set! proactive-armed? true) false)
+      :else false)))
+
+(defn- count-sweep!
+  "Reclaim dead Metal buffers (proactive Layer-2 sweep). force-gc! finalizes
+   dead MxArray wrappers — freeing their pinned buffers — then clear-cache! drops
+   the Metal free-buffer cache."
+  []
+  (swap! proactive-sweep-count inc)
+  (force-gc!)
+  (clear-cache!))
+
+(defn- maybe-count-sweep!
+  "Called from the allocation/read boundary (with-alloc-retry). Every
+   count-check-interval guarded ops, if the live Metal buffer count crosses the
+   threshold (hysteretic), reclaim dead buffers BEFORE the ~499000 wall is hit.
+   Gated on (not in-tidy?): a tidy scope does its own cleanup on exit, and a
+   force-gc! mid-scope would call jsc-cleanup! out of turn."
+  []
+  (set! allocs-since-count-check (inc allocs-since-count-check))
+  (when (>= allocs-since-count-check count-check-interval)
+    (set! allocs-since-count-check 0)
+    (when (and (not (in-tidy?)) (buffer-count-pressure?))
+      (count-sweep!))))
+
 (defn auto-cleanup!
   ([] (auto-cleanup! false))
   ([aggressive?]
    (set! ops-since-check (inc ops-since-check))
    (when (>= ops-since-check check-interval)
      (set! ops-since-check 0)
-     (when (and (not (in-tidy?))
-                (> (get-active-memory) resource-pressure-threshold))
-       (when aggressive?
-         (jsc-cleanup!)
-         (when gc-fn (gc-fn)))
-       (sweep-dead-arrays!)
-       (clear-cache!)))))
+     (when-not (in-tidy?)
+       (cond
+         ;; Count pressure: tiny-array loops hit the ~499000 buffer wall while
+         ;; memory stays trivially low, so this branch fires where the memory
+         ;; branch below never would. Hysteretic — see buffer-count-pressure?.
+         (buffer-count-pressure?)
+         (count-sweep!)
+
+         (> (get-active-memory) resource-pressure-threshold)
+         (do (when aggressive?
+               (jsc-cleanup!)
+               (when gc-fn (gc-fn)))
+             (sweep-dead-arrays!)
+             (clear-cache!)))))))
 
 (def ^:private ^:mutable gfi-ops-count 0)
 (def ^:private gfi-cleanup-interval 10)
@@ -781,10 +867,16 @@
   (set! gfi-ops-count (inc gfi-ops-count))
   (when (>= gfi-ops-count gfi-cleanup-interval)
     (set! gfi-ops-count 0)
-    (when (> (get-active-memory) gfi-pressure-threshold)
-      (jsc-cleanup!)
-      (sweep-dead-arrays!)
-      (clear-cache!))))
+    (cond
+      ;; Count pressure first — covers GFI inference loops that churn tiny
+      ;; arrays (the ex-crashers) at low memory. Hysteretic; see auto-cleanup!.
+      (and (not (in-tidy?)) (buffer-count-pressure?))
+      (count-sweep!)
+
+      (> (get-active-memory) gfi-pressure-threshold)
+      (do (jsc-cleanup!)
+          (sweep-dead-arrays!)
+          (clear-cache!)))))
 
 (defn realize [x] (eval! x) (item x))
 (defn realize-clj [x] (eval! x) (->clj x))

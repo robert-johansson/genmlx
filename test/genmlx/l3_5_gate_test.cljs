@@ -156,7 +156,17 @@
           _ (run-chain model-with)
           _ (run-chain model-without)
 
+          ;; This gate measures analytical-vs-handler DISPATCH cost. The membrane's
+          ;; Layer-2 proactive buffer-count sweep (genmlx-x7cl) is a GLOBAL force-gc!
+          ;; that, due to dead buffers accumulated across the prior tests in this file,
+          ;; can fire once during a timed run and land asymmetrically (it freed ~300k
+          ;; dead wrappers in measurement, ~880ms — unrelated to dispatch). Reset the
+          ;; global buffer state before EACH timed run so neither chain crosses the
+          ;; sweep threshold mid-timing; this isolates dispatch cost (the gate's intent)
+          ;; from global-GC landing. Cost is paid equally outside both timed regions.
+          _ (mx/force-gc!)
           time-with (time-ms #(run-chain model-with))
+          _ (mx/force-gc!)
           time-without (time-ms #(run-chain model-without))
 
           slowdown (if (pos? time-without) (/ (- time-with time-without) time-without) 0)]
