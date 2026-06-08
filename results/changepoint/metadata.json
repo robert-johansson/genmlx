@@ -1,0 +1,18 @@
+{
+  "experiment": "changepoint",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:38:03.148Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "5829164af2bf17a24b5356e07ebb5c4c58577dcc72f4fbb8068a8e1b6acce326",
+  "duration_ms": 92850,
+  "script": "bench/changepoint.cljs"
+}

@@ -1,0 +1,18 @@
+{
+  "experiment": "particle-scaling",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:31:21.603Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "f1c4f3b7f09f74523a21eb966ea667bd3f02ff4534b6558abc370027becf153f",
+  "duration_ms": 698,
+  "script": "bench/particle_scaling.cljs"
+}

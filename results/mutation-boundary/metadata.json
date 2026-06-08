@@ -1,0 +1,18 @@
+{
+  "experiment": "mutation-boundary",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:55:25.029Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "1318b37a5f72d65b64941cf034dad5b1d7043137342edf2035d4b6840ef6c91b",
+  "duration_ms": 933,
+  "script": "bench/mutation_boundary.cljs"
+}

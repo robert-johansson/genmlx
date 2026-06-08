@@ -1,0 +1,58 @@
+
+=== Particle Scaling on Metal GPU ===
+Model: dynamic-linreg, 5 observations
+Particle counts: [100 250 500 1000 2500 5000 10000]
+
+  [VIS-N=100] warming up...
+  [VIS-N=100] 1.161 +/- 0.183 ms
+    log-ML: -12.9584  ESS: 1.0/100
+
+  [VIS-N=250] warming up...
+  [VIS-N=250] 0.810 +/- 0.048 ms
+    log-ML: -15.7542  ESS: 1.1/250
+
+  [VIS-N=500] warming up...
+  [VIS-N=500] 0.768 +/- 0.037 ms
+    log-ML: -12.9885  ESS: 2.3/500
+
+  [VIS-N=1000] warming up...
+  [VIS-N=1000] 0.760 +/- 0.014 ms
+    log-ML: -10.6715  ESS: 4.4/1000
+
+  [VIS-N=2500] warming up...
+  [VIS-N=2500] 0.787 +/- 0.014 ms
+    log-ML: -11.2042  ESS: 7.0/2500
+
+  [VIS-N=5000] warming up...
+  [VIS-N=5000] 0.907 +/- 0.007 ms
+    log-ML: -11.2997  ESS: 13.7/5000
+
+  [VIS-N=10000] warming up...
+  [VIS-N=10000] 0.926 +/- 0.028 ms
+    log-ML: -11.6823  ESS: 24.0/10000
+
+
+========================================
+      PARTICLE SCALING RESULTS
+========================================
+
+| Particles | Time (ms)         | log-ML  | ESS     |
+|-----------|-------------------|---------|---------|
+|       100 |    1.161 +/-  0.183 |  -12.96 |     1.0 |
+|       250 |    0.810 +/-  0.048 |  -15.75 |     1.1 |
+|       500 |    0.768 +/-  0.037 |  -12.99 |     2.3 |
+|      1000 |    0.760 +/-  0.014 |  -10.67 |     4.4 |
+|      2500 |    0.787 +/-  0.014 |  -11.20 |     7.0 |
+|      5000 |    0.907 +/-  0.007 |  -11.30 |    13.7 |
+|     10000 |    0.926 +/-  0.028 |  -11.68 |    24.0 |
+
+Scaling ratios (time_N / time_100):
+  1000  vs 100:   0.65x  (10x more particles)
+  10000 vs 100:   0.80x  (100x more particles)
+  10000 vs 1000:  1.22x  (10x more particles)
+
+Sublinear = ratio << particle increase factor.
+GPU absorbs parallelism: 100x more particles costs far less than 100x time.
+  wrote: /Users/robert/code/genmlx/results/particle-scaling/data.json
+
+Particle scaling benchmark complete.

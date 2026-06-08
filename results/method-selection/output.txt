@@ -1,0 +1,58 @@
+
+=== Method Selection ===
+
+--- A: Method Selection Accuracy (6 models) ---
+  [PASS] Static LinReg (fully conjugate): expected=exact, actual=exact (All trace sites eliminated by analytical plan), residual=0, eliminated=2
+  [PASS] Mixed Model (partial conjugate): expected=hmc, actual=hmc (Static model with 1 residual dims (≤ 10)), residual=1, eliminated=2
+  [PASS] Dynamic LinReg (dynamic addresses): expected=handler-is, actual=handler-is (Dynamic addresses — shape-based methods not applicable), residual=3, eliminated=0
+  [PASS] Empty model (no trace sites): expected=exact, actual=exact (No trace sites — trivial model), residual=0, eliminated=0
+  [PASS] Large model (15+ latents): expected=vi, actual=vi (Static model with 15 residual dims (> 10) — VI preferred), residual=15, eliminated=0
+  [PASS] Splice model (sub-model call): expected=smc, actual=smc (Splice sites present — SMC for sub-model structure), residual=1, eliminated=0
+
+  Method selection: 6/6 correct
+
+--- B: fit API End-to-End (3 models) ---
+
+-- B-1: fit(static-linreg) --
+[fit] Selected method: exact — All trace sites eliminated by analytical plan
+  Method: :exact
+  Log-ML: -28.14594841003418
+  Posterior: {:slope {:value 0}, :intercept {:value 6.427145481109619}}
+  Elapsed: 4.4 ms
+  [PASS] Expected :exact, got exact
+
+-- B-2: fit(dynamic-linreg) --
+[fit] Selected method: handler-is — Dynamic addresses — shape-based methods not applicable
+  Method: :handler-is
+  Log-ML: -12.182157516479492
+  Has posterior: true
+  Elapsed: 1726.6 ms
+  [PASS] Expected :handler-is, got handler-is
+
+-- B-3: fit(mixed-model) --
+[fit] Selected method: hmc — Static model with 1 residual dims (≤ 10)
+  Method: :hmc
+  Has posterior: true
+  Elapsed: 36055.9 ms
+  [PASS] Expected :hmc, got hmc
+
+
+========================================
+       METHOD SELECTION RESULTS
+========================================
+
+-- A: Method Selection: 6/6 correct --
+  PASS  Static LinReg (fully conjugate)  (expected=exact, actual=exact)
+  PASS  Mixed Model (partial conjugate)  (expected=hmc, actual=hmc)
+  PASS  Dynamic LinReg (dynamic addresses)  (expected=handler-is, actual=handler-is)
+  PASS  Empty model (no trace sites)  (expected=exact, actual=exact)
+  PASS  Large model (15+ latents)  (expected=vi, actual=vi)
+  PASS  Splice model (sub-model call)  (expected=smc, actual=smc)
+
+-- B: fit API: 3/3 correct --
+  PASS  static-linreg  (expected=exact, actual=exact)
+  PASS  dynamic-linreg  (expected=handler-is, actual=handler-is)
+  PASS  mixed-model  (expected=hmc, actual=hmc)
+  wrote: /Users/robert/code/genmlx/results/method-selection/data.json
+
+Method selection benchmark complete.

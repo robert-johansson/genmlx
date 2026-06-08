@@ -1,0 +1,18 @@
+{
+  "experiment": "ffi-scaling",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:31:25.074Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "6bd48a6d6f0796eecbcccda2cf386d8cd968f4029b3b1b04d9892d7170ab75ae",
+  "duration_ms": 3456,
+  "script": "bench/ffi_scaling.cljs"
+}

@@ -1,0 +1,95 @@
+
+=== FFI Scaling: Per-site vs gaussian-vec ===
+Dimensions: [10 25 50 100 200]
+IS particles: 1000
+
+
+--- D = 10 ---
+
+  [per-site-simulate-D10] warming up...
+  [per-site-simulate-D10] 0.809 +/- 0.031 ms
+
+  [vec-simulate-D10] warming up...
+  [vec-simulate-D10] 0.114 +/- 0.008 ms
+
+  [per-site-IS-D10] warming up...
+  [per-site-IS-D10] 1.171 +/- 0.056 ms
+
+  [vec-IS-D10] warming up...
+  [vec-IS-D10] 0.364 +/- 0.012 ms
+
+
+--- D = 25 ---
+
+  [per-site-simulate-D25] warming up...
+  [per-site-simulate-D25] 2.355 +/- 0.094 ms
+
+  [vec-simulate-D25] warming up...
+  [vec-simulate-D25] 0.130 +/- 0.006 ms
+
+  [per-site-IS-D25] warming up...
+  [per-site-IS-D25] 2.961 +/- 0.090 ms
+
+  [vec-IS-D25] warming up...
+  [vec-IS-D25] 0.365 +/- 0.006 ms
+
+
+--- D = 50 ---
+
+  [per-site-simulate-D50] warming up...
+  [per-site-simulate-D50] 4.686 +/- 0.089 ms
+
+  [vec-simulate-D50] warming up...
+  [vec-simulate-D50] 0.125 +/- 0.004 ms
+
+  [per-site-IS-D50] warming up...
+  [per-site-IS-D50] 5.512 +/- 0.051 ms
+
+  [vec-IS-D50] warming up...
+  [vec-IS-D50] 0.409 +/- 0.103 ms
+
+
+--- D = 100 ---
+
+  [per-site-simulate-D100] warming up...
+  [per-site-simulate-D100] 9.726 +/- 0.131 ms
+
+  [vec-simulate-D100] warming up...
+  [vec-simulate-D100] 0.127 +/- 0.006 ms
+
+  [per-site-IS-D100] warming up...
+  [per-site-IS-D100] 10.903 +/- 0.065 ms
+
+  [vec-IS-D100] warming up...
+  [vec-IS-D100] 0.531 +/- 0.166 ms
+
+
+--- D = 200 ---
+
+  [per-site-simulate-D200] warming up...
+  [per-site-simulate-D200] 20.543 +/- 0.254 ms
+
+  [vec-simulate-D200] warming up...
+  [vec-simulate-D200] 0.134 +/- 0.007 ms
+
+  [per-site-IS-D200] warming up...
+  [per-site-IS-D200] 23.411 +/- 0.293 ms
+
+  [vec-IS-D200] warming up...
+  [vec-IS-D200] 0.680 +/- 0.023 ms
+
+
+========================================
+       FFI SCALING RESULTS
+========================================
+
+| D | Per-site sim (ms) | Vec sim (ms) | Sim speedup | Per-site IS (ms) | Vec IS (ms) | IS speedup |
+|---|-------------------|--------------|-------------|------------------|-------------|------------|
+| 10 | 0.81 +/- 0.03 | 0.11 +/- 0.01 | 7.1x | 1.17 +/- 0.06 | 0.36 +/- 0.01 | 3.2x |
+| 25 | 2.36 +/- 0.09 | 0.13 +/- 0.01 | 18.2x | 2.96 +/- 0.09 | 0.36 +/- 0.01 | 8.1x |
+| 50 | 4.69 +/- 0.09 | 0.12 +/- 0.00 | 37.5x | 5.51 +/- 0.05 | 0.41 +/- 0.10 | 13.5x |
+| 100 | 9.73 +/- 0.13 | 0.13 +/- 0.01 | 76.8x | 10.90 +/- 0.06 | 0.53 +/- 0.17 | 20.5x |
+| 200 | 20.54 +/- 0.25 | 0.13 +/- 0.01 | 153.5x | 23.41 +/- 0.29 | 0.68 +/- 0.02 | 34.4x |
+  wrote: /Users/robert/code/genmlx/results/ffi-scaling/data.json
+
+FFI scaling benchmark complete.

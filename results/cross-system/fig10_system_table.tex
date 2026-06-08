@@ -1,0 +1,16 @@
+\begin{table}[t]
+\centering
+\caption{System comparison on Apple M-series: GenMLX (Metal GPU), Gen.jl (CPU), GenJAX (JIT, CPU), and the out-of-family NumPyro (effect-handler, JIT CPU). LinReg IS uses the shared 20-point $\mathcal{N}(0,2)$ spec; GenMLX MH/IS timings are on its native bench and indicative, not matched-spec.}
+\label{tab:system-comparison}
+\begin{tabular}{l l r r r r l}
+\toprule
+Model & Algorithm & GenMLX & Gen.jl & GenJAX & NumPyro & Notes \\
+\midrule
+LinReg & IS (1K) & 0.76 & 6.5 & 0.10 & 0.05 & Vec IS (Metal) vs JIT vs effect-handler \\
+LinReg & MH & 24 & 64 & --- & --- & Compiled MH vs Gen.jl MH \\
+HMM & IS (1K) & --- & 34 & --- & --- & Vec IS (Metal) vs Gen.jl (CPU) \\
+HMM & SMC (100) & --- & 190 & --- & --- & Unfold PF vs Gen.jl PF \\
+GMM & IS (1K) & 1.6 & 5.8 & 1.1 & --- & Vec IS (Metal) vs JIT (CPU) \\
+\bottomrule
+\end{tabular}
+\end{table}

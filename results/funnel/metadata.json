@@ -1,0 +1,18 @@
+{
+  "experiment": "funnel",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:36:30.275Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "28ec8793629c915c7fd63a545a02420a6e5f69cbf483eb455208a4db5f2e7922",
+  "duration_ms": 62635,
+  "script": "bench/funnel.cljs"
+}

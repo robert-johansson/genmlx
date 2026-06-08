@@ -1,0 +1,48 @@
+
+=== Vectorization Benchmarks ===
+
+--- Benchmark 1: dist-sample vs dist-sample-n (gaussian, N=1000) ---
+
+  [sequential-sample] warming up...
+  [sequential-sample] 253.288 +/- 3.560 ms
+
+  [batched-sample-n] warming up...
+  [batched-sample-n] 0.250 +/- 0.005 ms
+
+  Speedup (dist-sample-n): 1013.0x
+
+--- Benchmark 2: Sequential IS vs Vectorized IS (N=1000) ---
+
+  [sequential-IS] warming up...
+  [sequential-IS] 1789.423 +/- 138.959 ms
+
+  [vectorized-IS] warming up...
+  [vectorized-IS] 0.760 +/- 0.010 ms
+
+  Speedup (vectorized IS): 2353.6x
+  Sequential log-ml: -11.57
+  Vectorized log-ml: -11.94
+
+--- Benchmark 3: Sequential SMC init vs batched SMC init (N=100) ---
+
+  [sequential-SMC-init] warming up...
+  [sequential-SMC-init] 101.300 +/- 3.427 ms
+
+  [batched-SMC-init] warming up...
+  [batched-SMC-init] 0.829 +/- 0.056 ms
+
+  Speedup (batched SMC init): 122.1x
+
+
+========================================
+      VECTORIZATION BENCHMARK RESULTS
+========================================
+
+| Benchmark | Sequential (ms) | Batched (ms) | Speedup |
+|-----------|-----------------|--------------|---------|
+| dist-sample-n (N=1000) | 253.3 +/- 3.6 | 0.3 +/- 0.0 | 1013.0x |
+| Vectorized IS (N=1000) | 1789.4 +/- 139.0 | 0.8 +/- 0.0 | 2353.6x |
+| Batched SMC init (N=1000) | 101.3 +/- 3.4 | 0.8 +/- 0.1 | 122.1x |
+  wrote: /Users/robert/code/genmlx/results/vectorization/data.json
+
+Vectorization benchmark complete.

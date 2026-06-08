@@ -1,0 +1,62 @@
+
+ ======================================================================
+  Rao-Blackwellization Benchmark
+======================================================================
+
+  Model: 2 NN-conjugate groups (mu1, mu2) + 1 non-conjugate (sigma)
+  Config: 50 IS particles, 3 trials
+
+  Conjugate pairs detected: 4
+    :mu1 -> :y1 [:normal-normal]
+    :mu1 -> :y2 [:normal-normal]
+    :mu2 -> :y3 [:normal-normal]
+    :mu2 -> :y4 [:normal-normal]
+
+ ------------------------------------------------------------
+  L3: With analytical elimination (Rao-Blackwellized)
+------------------------------------------------------------
+
+  [L3-analytical] warming up...
+  [L3-analytical] 1.527 +/- 0.089 ms
+
+  Running L3 trials: 50 particles x 3 trials...
+  L3 log-ML: -9.122094 +/- 0.000000
+  L3 ESS:    50.0 / 50 (100.0%)
+
+ ------------------------------------------------------------
+  L2: No analytical elimination (prior-proposal IS)
+------------------------------------------------------------
+
+  [L2-no-analytical] warming up...
+  [L2-no-analytical] 1.336 +/- 0.055 ms
+
+  Running L2 trials: 50 particles x 3 trials...
+  L2 log-ML: -9.760965 +/- 2.167964
+  L2 ESS:    1.4 / 50 (2.9%)
+
+ ------------------------------------------------------------
+  Comparison
+------------------------------------------------------------
+  Variance reduction (L2/L3): Inf (L3 exact)
+  ESS improvement (L3/L2):    34.5x
+  L2 log-ML std: 2.167964
+  L3 log-ML std: 0.000000
+  L2 time: 1.336 ms
+  L3 time: 1.527 ms
+
+
+ ======================================================================
+         RAO-BLACKWELLIZATION RESULTS
+======================================================================
+
+| Condition            | log-ML mean | log-ML std | ESS mean  | Time (ms) |
+|----------------------|-------------|------------|-----------|-----------|
+| L2 (no analytical)   |     -9.7610 |   2.167964 |       1.4 |     1.336 |
+| L3 (with analytical) |     -9.1221 |   0.000000 |      50.0 |     1.527 |
+
+  Variance reduction ratio: Inf (L3 exact)
+  Conjugate sites eliminated: mu1, mu2
+  Non-conjugate sites sampled: sigma
+  Wrote: /Users/robert/code/genmlx/results/rao-blackwell/data.json
+
+Rao-Blackwellization benchmark complete.

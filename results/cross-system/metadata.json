@@ -1,0 +1,18 @@
+{
+  "experiment": "cross-system",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:41:02.772Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "5b9417dda3f0bef0c7a65a15f5f5e06b961bcdb8c774f3e501986134ef66caca",
+  "duration_ms": 50528,
+  "script": "bench/cross_system.cljs"
+}

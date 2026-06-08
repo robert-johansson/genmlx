@@ -1,0 +1,18 @@
+{
+  "experiment": "compiled-optimizer",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:31:50.788Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "4a49a8fb0489fcbd4e15dddc43692cfbcb6160c348707d9d11b8bb616b581e51",
+  "duration_ms": 6625,
+  "script": "bench/compiled_optimizer.cljs"
+}

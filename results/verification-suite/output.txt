@@ -1,0 +1,36 @@
+
+=== GenMLX Verification Suite ===
+  output: /Users/robert/code/genmlx/results/verification-suite
+
+  running: L0 certification (test/genmlx/level0_certification_test.cljs)
+    68/68 assertions passed (2157ms) [OK]
+
+  running: L1-M1 schema (test/genmlx/schema_test.cljs)
+    227/227 assertions passed (647ms) [EXPECTED 174]
+
+  running: L1-M2 compiled simulate (test/genmlx/compiled_simulate_test.cljs)
+    82/82 assertions passed (567ms) [OK]
+
+  running: L1-M3 partial compile (test/genmlx/partial_compile_test.cljs)
+    92/92 assertions passed (616ms) [OK]
+
+  running: L1-M5 combinator compile (test/genmlx/combinator_compile_test.cljs)
+    92/92 assertions passed (943ms) [EXPECTED 90]
+
+  running: L4 certification (test/genmlx/l4_certification_test.cljs)
+    41/41 assertions passed (4926ms) [OK]
+
+  running: Gen.clj compat (test/genmlx/gen_clj_compat_test.cljs)
+    356/356 assertions passed (17938ms) [EXPECTED 165]
+
+  running: GenJAX compat (test/genmlx/genjax_compat_test.cljs)
+    73/73 assertions passed (77117ms) [OK]
+
+=== Summary ===
+  suites: 5/8 passed
+  assertions: 1031/1031 passed, 0 failures, 0 errors
+  expected total: 785
+  duration: 104.9s
+  wrote: /Users/robert/code/genmlx/results/verification-suite/data.json
+
+=== Done ===

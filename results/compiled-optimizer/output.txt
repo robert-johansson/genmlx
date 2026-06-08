@@ -1,0 +1,35 @@
+
+  Pre-check compilation level: :tensor-native
+
+=== Compiled Optimizer Benchmark ===
+Model: static linear regression, 5 observations
+Task: optimize slope + intercept via Adam (200 iterations, lr=0.01)
+
+--- Handler loop baseline (manual Adam, finite-diff gradient) ---
+
+  [Handler-Adam-200] warming up...
+  [Handler-Adam-200] 834.749 +/- 8.668 ms
+  Handler final params: [1.392967939376831 1.358544111251831]
+  Handler final loss: 15.2525
+
+--- Compiled Adam (co/learn, tensor-native fused gradient + update) ---
+
+  [Compiled-Adam-200] warming up...
+  [Compiled-Adam-200] 134.776 +/- 0.717 ms
+  Compiled final params: [0.9523250460624695 4.167512893676758]
+  Compiled compilation level: :tensor-native
+  Compiled loss history (last 5): [17.87361717224121 17.840055465698242 17.806644439697266 17.773380279541016 17.740262985229492]
+
+  >>> SPEEDUP: Compiled Adam is 6.2x faster than handler loop <<<
+
+
+========================================
+    COMPILED OPTIMIZER RESULTS
+========================================
+
+  Handler Adam (200 iter):  834.75 +/- 8.67 ms
+  Compiled Adam (200 iter): 134.78 +/- 0.72 ms
+  Speedup: 6.2x
+  wrote: /Users/robert/code/genmlx/results/compiled-optimizer/data.json
+
+Compiled optimizer benchmark complete.

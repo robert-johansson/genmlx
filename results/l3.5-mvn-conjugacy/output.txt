@@ -1,0 +1,84 @@
+
+ ======================================================================
+  L3.5 MVN Conjugacy Benchmark
+======================================================================
+
+  D=5 dimensions, prior_var=100, obs_var=1
+  1000 IS particles x 5 trials
+
+  Schema: static=true, conjugate-pairs=1, has-auto-handlers=true
+    Pair: :mu -> :y [:mvn-normal]
+
+  Analytic posterior mean: ["3.1683" "-1.4851" "0.7921" "2.0792" "-0.3960"]
+  Analytic posterior var (each dim): 0.990099
+  Analytic log-ML: -16.220118
+
+------------------------------------------------------------
+  Condition 1: L3.5 Analytical (MVN conjugacy via mx/solve)
+------------------------------------------------------------
+  Single generate weight: -16.220118 (analytic: -16.220118)
+  Posterior mean from trace:
+    dim 0: 3.1683 (analytic: 3.1683)
+    dim 1: -1.4851 (analytic: -1.4851)
+    dim 2: 0.7921 (analytic: 0.7921)
+    dim 3: 2.0792 (analytic: 2.0792)
+    dim 4: -0.3960 (analytic: -0.3960)
+
+  [L3.5-analytical] warming up...
+  [L3.5-analytical] 1.469 +/- 0.024 ms
+
+  L3.5 is exact — verifying determinism on a small sample...
+  L3.5 log-ML: -16.220118 (exact; determinism check ESS=25.0/25)
+  L3.5 ESS:    1000.0 / 1000 (100.0% — identical exact weights)
+  L3.5 mean posterior error: 0.000000
+
+------------------------------------------------------------
+  Condition 2: L2 Standard IS (prior proposal)
+------------------------------------------------------------
+
+  [L2-standard-IS] warming up...
+  [L2-standard-IS] 1.036 +/- 0.013 ms
+
+  Running L2 IS, 1000 particles x 5 trials...
+  L2 log-ML: -21.517357 +/- 3.208169
+  L2 ESS:    1.5 / 1000 (0.2%)
+  L2 mean posterior error: 2.161848
+
+------------------------------------------------------------
+  Dimension Scaling
+------------------------------------------------------------
+  d=2: analytical=1.418ms, standard=1.056ms, has-auto=true
+  d=5: analytical=1.384ms, standard=1.020ms, has-auto=true
+  d=10: analytical=1.467ms, standard=1.181ms, has-auto=true
+  d=20: analytical=1.678ms, standard=1.349ms, has-auto=true
+  d=50: analytical=3.307ms, standard=2.822ms, has-auto=true
+
+======================================================================
+         L3.5 MVN CONJUGACY RESULTS
+======================================================================
+
+  Dimensions:            5
+  Prior covariance:      100 * I
+  Observation covariance: 1 * I
+  Analytic log-ML:       -16.220118
+
+| Condition | log-ML mean | log-ML std | ESS | Time (ms) | Post. Error |
+|-----------|-------------|------------|-----|-----------|-------------|
+| L3.5-analytical | -16.220118 | 0.000000 | 1000.0 | 1.469 | 0.000000 |
+| L2-standard-IS  | -21.517357 | 3.208169 | 1.5 | 1.036 | 2.161848 |
+
+  Variance reduction:  Inf (L3.5 exact)
+  ESS improvement:     659.8x
+  |L3.5 log-ML - analytic|: 1.515e-7 nats  (exactness — the correctness headline)
+
+  Dimension scaling:
+  | D  | Analytical (ms) | Standard (ms) | Auto-detected |
+  |----|-----------------|---------------|---------------|
+  |  2 |           1.418 |         1.056 |          true |
+  |  5 |           1.384 |         1.020 |          true |
+  | 10 |           1.467 |         1.181 |          true |
+  | 20 |           1.678 |         1.349 |          true |
+  | 50 |           3.307 |         2.822 |          true |
+  wrote: /Users/robert/code/genmlx/results/l3.5-mvn-conjugacy/data.json
+
+L3.5 MVN conjugacy benchmark complete.

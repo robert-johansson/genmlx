@@ -1,0 +1,43 @@
+
+=== Neal's Funnel ===
+Model: v ~ N(0,3), x_i ~ N(0, exp(v/2)) for i=1..10
+Observations: all x_i = 0
+Ground truth: E[v | x=0] ~ 0 (by symmetry)
+
+--- 1. HMC (100 samples, burn 50, 10 leapfrog steps) ---
+
+  [HMC-100] running...
+  [HMC-100] 5199.5 ms
+  posterior v: mean=1.8931 std=2.5081
+  n-samples: 100
+
+--- 2. NUTS (100 samples, burn 50) ---
+
+  [NUTS-100] running...
+  [NUTS-100] 55931.0 ms
+  posterior v: mean=2.3977 std=2.0477
+  n-samples: 100
+  acceptance rate: 100.0%
+
+--- 3. Compiled MH (100 samples, burn 50) ---
+
+  [compiled-MH-100] running...
+  [compiled-MH-100] 856.6 ms
+  posterior v: mean=-2.0981 std=0.3001
+  n-samples: 100
+
+
+========================================
+         FUNNEL RESULTS
+========================================
+
+| Algorithm     | v mean  | v std   | Time (ms) | Samples |
+|---------------|---------|---------|-----------|---------|
+| HMC-100       |  1.8931 |  2.5081 |    5199.5 |     100 |
+| NUTS-100      |  2.3977 |  2.0477 |   55931.0 |     100 |
+| compiled-MH   | -2.0981 |  0.3001 |     856.6 |     100 |
+
+Ground truth: E[v | x=0] ~ 0
+  wrote: /Users/robert/code/genmlx/results/funnel/data.json
+
+Funnel benchmark complete.

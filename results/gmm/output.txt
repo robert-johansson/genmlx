@@ -1,0 +1,39 @@
+
+=== GMM Inference: IS Weight Collapse ===
+Model: 3-component GMM, 8 observations
+Latent space: 3^8 = 6561 configurations
+
+--- 1. Sequential IS (N=200) ---
+
+  [seq-IS-200] warming up...
+  [seq-IS-200] 978.597 ± 5.224 ms
+  ESS: 1.0 / 200 (0.5%)
+  log-ML: -42.8393
+
+--- 2. Vectorized IS (N=1000) ---
+
+  [VIS-1000] warming up...
+  [VIS-1000] 1.971 ± 0.059 ms
+  ESS: 1.6 / 1000 (0.2%)
+  log-ML: -39.5213
+
+--- 3. Vectorized IS (N=10000) ---
+
+  [VIS-10000] warming up...
+  [VIS-10000] 3.534 ± 0.152 ms
+  ESS: 3.0 / 10000 (0.0%)
+  log-ML: -28.3306
+
+
+========================================
+    GMM IS WEIGHT COLLAPSE RESULTS
+========================================
+
+| Algorithm | N | ESS | ESS% | Time (ms) | log-ML |
+|-----------|---|-----|------|-----------|--------|
+| seq-IS | 200 | 1.0 | 0.5% | 978.6 ± 5.2 | -42.84 |
+| VIS | 1000 | 1.6 | 0.2% | 2.0 ± 0.1 | -39.52 |
+| VIS | 10000 | 3.0 | 0.0% | 3.5 ± 0.2 | -28.33 |
+  wrote: /Users/robert/code/genmlx/results/gmm/data.json
+
+GMM benchmark complete.

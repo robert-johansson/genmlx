@@ -6,7 +6,7 @@
       "total-assertions": 20,
       "name": "Distribution properties",
       "file": "test/genmlx/dist_property_test.cljs",
-      "duration-ms": 3252,
+      "duration-ms": 4021,
       "fail": 0,
       "status": "pass",
       "expected": null,
@@ -18,7 +18,7 @@
       "total-assertions": 5,
       "name": "Distribution normalization",
       "file": "test/genmlx/dist_normalization_property_test.cljs",
-      "duration-ms": 41995,
+      "duration-ms": 30653,
       "fail": 0,
       "status": "pass",
       "expected": null,
@@ -27,22 +27,22 @@
       "pass": 5
     },
     {
-      "total-assertions": 44,
+      "total-assertions": 48,
       "name": "Distribution unit tests",
       "file": "test/genmlx/dist_test.cljs",
-      "duration-ms": 665,
+      "duration-ms": 822,
       "fail": 0,
       "status": "pass",
       "expected": null,
       "pass-rate": 1,
       "error": 0,
-      "pass": 44
+      "pass": 48
     },
     {
       "total-assertions": 20,
       "name": "Wishart gradient verification",
       "file": "test/genmlx/wishart_gradient_test.cljs",
-      "duration-ms": 438,
+      "duration-ms": 412,
       "fail": 0,
       "status": "pass",
       "expected": null,
@@ -52,11 +52,11 @@
     }
   ],
   "totals": {
-    "pass": 89,
+    "pass": 93,
     "fail": 0,
     "error": 0,
-    "total-assertions": 89,
-    "duration-ms": 46352,
+    "total-assertions": 93,
+    "duration-ms": 35910,
     "suites-passed": 4,
     "suites-total": 4
   },

@@ -1,0 +1,18 @@
+{
+  "experiment": "compiled-inference",
+  "git_sha": "5f29f7a",
+  "timestamp": "2026-06-07T19:31:44.148Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "a2ca39152f0ac5d49f5a04ef4017699e9ed07ebdd5b86ca27c6a117073c1bb6a",
+  "duration_ms": 19060,
+  "script": "bench/compiled_inference.cljs"
+}
