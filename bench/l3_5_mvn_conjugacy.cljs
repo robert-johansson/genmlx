@@ -436,10 +436,12 @@
 ;; Summary
 ;; =========================================================================
 
+;; Variance reduction is a corollary, OMITTED when L3.5 is exact (var=0 → the ratio
+;; is undefined; reporting it as Infinity was a divide-by-~0 artifact).
+(def l35-exact? (< (:log-ml-var l35-results) 1e-20))
 (def var-ratio
-  (if (> (:log-ml-var l35-results) 1e-20)
-    (/ (:log-ml-var l2-results) (:log-ml-var l35-results))
-    js/Infinity))
+  (when-not l35-exact?
+    (/ (:log-ml-var l2-results) (:log-ml-var l35-results))))
 
 (def ess-ratio
   (/ (:ess-mean l35-results) (max (:ess-mean l2-results) 0.01)))
@@ -476,8 +478,7 @@
               (.toFixed (:mean-ms l2-timing) 3) " | "
               (.toFixed l2-posterior-error 6) " |"))
 
-(println (str "\n  Variance reduction:  " (if (= var-ratio js/Infinity)
-                                              "Inf (L3.5 exact)"
+(println (str "\n  Variance reduction:  " (if l35-exact? "n/a (L3.5 exact, var=0)"
                                               (str (.toFixed var-ratio 1) "x"))))
 (println (str "  ESS improvement:     " (.toFixed ess-ratio 1) "x"))
 (println (str "  |L3.5 log-ML - analytic|: " (.toExponential l35-log-ml-abs-error 3)
@@ -523,7 +524,6 @@
      :posterior-mean-error l35-posterior-error
      :timing-ms (:mean-ms l35-timing)
      :timing-std-ms (:std-ms l35-timing)}}
-   :variance-reduction (if (= var-ratio js/Infinity) "Infinity" var-ratio)
    :ess-improvement ess-ratio
    :log-ml-abs-error l35-log-ml-abs-error  ;; |L3.5 - analytic| in nats (exactness)
    :analytic-posterior

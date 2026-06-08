@@ -108,6 +108,28 @@
         lse (+ max-w (js/Math.log (reduce + (map #(js/Math.exp (- % max-w)) log-ws))))]
     (- lse (js/Math.log n))))
 
+;; Independent closed-form marginal log-ML (exactness ground truth).
+(def ^:private LOG-2PI 1.8378770664093453)
+
+(defn nn-shared-marginal
+  "Joint marginal log p(y) for shared-mean Normal-Normal:
+   mu ~ N(m0, prior-var); y_i ~ N(mu, obs-var)."
+  [ys m0 prior-var obs-var]
+  (let [n (count ys)
+        ds (map #(- % m0) ys)
+        sum-d (reduce + ds)
+        sum-d2 (reduce + (map #(* % %) ds))
+        denom (+ obs-var (* n prior-var))
+        logdet (+ (* (dec n) (js/Math.log obs-var)) (js/Math.log denom))
+        quad (/ (- sum-d2 (* (/ prior-var denom) sum-d sum-d)) obs-var)]
+    (* -0.5 (+ (* n LOG-2PI) logdet quad))))
+
+;; sigma ~ Gamma(2,1) is sampled but never enters the likelihood, so the marginal
+;; is purely the two independent Normal-Normal groups (mu1: y1,y2; mu2: y3,y4).
+(def closed-form-log-ml
+  (+ (nn-shared-marginal [1.5 2.0] 0.0 100.0 1.0)
+     (nn-shared-marginal [-0.5 -1.0] 0.0 100.0 1.0)))
+
 ;; ---------------------------------------------------------------------------
 ;; Strip analytical plan (forces L2 / prior-proposal IS)
 ;; ---------------------------------------------------------------------------
@@ -263,21 +285,26 @@
 (println "  Comparison")
 (println (apply str (repeat 60 "-")))
 
+;; Exactness (headline): |L3 log-ML − closed form|. Variance reduction is a
+;; corollary, omitted when L3 is exact (var=0 → undefined ratio, the old Inf artifact).
+(def l3-abs-error (js/Math.abs (- (:log-ml-mean l3-results) closed-form-log-ml)))
+(def l2-abs-error (js/Math.abs (- (:log-ml-mean l2-results) closed-form-log-ml)))
+(def l3-exact? (< (:log-ml-var l3-results) 1e-20))
 (def var-ratio
-  (if (> (:log-ml-var l3-results) 1e-20)
-    (/ (:log-ml-var l2-results) (:log-ml-var l3-results))
-    js/Infinity))
+  (when-not l3-exact?
+    (/ (:log-ml-var l2-results) (:log-ml-var l3-results))))
 
 (def ess-ratio
   (/ (:ess-mean l3-results) (max (:ess-mean l2-results) 0.01)))
 
+(println (str "  Closed-form marginal log-ML: " (.toFixed closed-form-log-ml 6)))
+(println (str "  |L3 log-ML − closed form|: " (.toExponential l3-abs-error 3)
+              " nats  (exactness — the headline)"))
+(println (str "  |L2 log-ML − closed form|: " (.toFixed l2-abs-error 4) " nats"))
 (println (str "  Variance reduction (L2/L3): "
-              (if (= var-ratio js/Infinity)
-                "Inf (L3 exact)"
-                (str (.toFixed var-ratio 1) "x"))))
+              (if l3-exact? "n/a (L3 exact, var=0)"
+                  (str (.toFixed var-ratio 1) "x"))))
 (println (str "  ESS improvement (L3/L2):    " (.toFixed ess-ratio 1) "x"))
-(println (str "  L2 log-ML std: " (.toFixed (:log-ml-std l2-results) 6)))
-(println (str "  L3 log-ML std: " (.toFixed (:log-ml-std l3-results) 6)))
 (println (str "  L2 time: " (.toFixed (:mean-ms l2-timing) 3) " ms"))
 (println (str "  L3 time: " (.toFixed (:mean-ms l3-timing) 3) " ms"))
 
@@ -303,10 +330,10 @@
               " | " (.padStart (.toFixed (:ess-mean l3-results) 1) 9)
               " | " (.padStart (.toFixed (:mean-ms l3-timing) 3) 9)
               " |"))
-(println (str "\n  Variance reduction ratio: "
-              (if (= var-ratio js/Infinity)
-                "Inf (L3 exact)"
-                (str (.toFixed var-ratio 1) "x"))))
+(println (str "\n  |L3 log-ML − closed form|: " (.toExponential l3-abs-error 3) " nats"))
+(println (str "  Variance reduction ratio: "
+              (if l3-exact? "n/a (L3 exact, var=0)"
+                  (str (.toFixed var-ratio 1) "x"))))
 (println (str "  Conjugate sites eliminated: mu1, mu2"))
 (println (str "  Non-conjugate sites sampled: sigma"))
 
@@ -315,29 +342,34 @@
 ;; ---------------------------------------------------------------------------
 
 (write-json "data.json"
-  {:experiment "rao-blackwell"
-   :description "Rao-Blackwellization: partial conjugacy variance reduction"
-   :timestamp (.toISOString (js/Date.))
-   :model "mixed: 2 NN-conjugate + 1 non-conjugate"
-   :config {:n_particles n-particles :n_trials n-trials}
-   :conditions
-   {:L2-no-analytical
-    {:log-ml-mean (:log-ml-mean l2-results)
-     :log-ml-std (:log-ml-std l2-results)
-     :log-ml-var (:log-ml-var l2-results)
-     :ess-mean (:ess-mean l2-results)
-     :timing-ms (:mean-ms l2-timing)
-     :timing-std-ms (:std-ms l2-timing)}
-    :L3-with-analytical
-    {:log-ml-mean (:log-ml-mean l3-results)
-     :log-ml-std (:log-ml-std l3-results)
-     :log-ml-var (:log-ml-var l3-results)
-     :ess-mean (:ess-mean l3-results)
-     :timing-ms (:mean-ms l3-timing)
-     :timing-std-ms (:std-ms l3-timing)}}
-   :variance-reduction (if (= var-ratio js/Infinity) "Infinity" var-ratio)
-   :ess-improvement ess-ratio
-   :conjugate-sites ["mu1" "mu2"]
-   :non-conjugate-sites ["sigma"]})
+  (cond->
+   {:experiment "rao-blackwell"
+    :description (str "Analytical elimination exactness: mu1, mu2 marginalized (sigma "
+                      "sampled but irrelevant to the marginal). |L3 log-ML − closed form|.")
+    :timestamp (.toISOString (js/Date.))
+    :model "mixed: 2 NN-conjugate + 1 non-conjugate"
+    :config {:n_particles n-particles :n_trials n-trials}
+    :closed-form-log-ml closed-form-log-ml
+    :conditions
+    {:L2-no-analytical
+     {:log-ml-mean (:log-ml-mean l2-results)
+      :log-ml-std (:log-ml-std l2-results)
+      :log-ml-var (:log-ml-var l2-results)
+      :log-ml-abs-error-nats l2-abs-error
+      :ess-mean (:ess-mean l2-results)
+      :timing-ms (:mean-ms l2-timing)
+      :timing-std-ms (:std-ms l2-timing)}
+     :L3-with-analytical
+     {:log-ml-mean (:log-ml-mean l3-results)
+      :log-ml-std (:log-ml-std l3-results)
+      :log-ml-var (:log-ml-var l3-results)
+      :log-ml-abs-error-nats l3-abs-error
+      :ess-mean (:ess-mean l3-results)
+      :timing-ms (:mean-ms l3-timing)
+      :timing-std-ms (:std-ms l3-timing)}}
+    :ess-improvement ess-ratio
+    :conjugate-sites ["mu1" "mu2"]
+    :non-conjugate-sites ["sigma"]}
+    (some? var-ratio) (assoc :variance-reduction var-ratio)))
 
 (println "\nRao-Blackwellization benchmark complete.")
