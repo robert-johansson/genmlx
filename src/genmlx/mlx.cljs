@@ -28,7 +28,7 @@
 (defonce ^:private M (.-MxArray c))
 
 ;; Forward declarations for functions referenced before definition.
-(declare scalar array shape array? astype)
+(declare scalar array shape array? astype force-gc! clear-cache!)
 
 ;; Scope tracking atoms — defined here because functional combinators
 ;; (grad, value-and-grad) reference grad-depth before the Memory
@@ -376,14 +376,40 @@
 
 ;; --- Array construction (creates graph leaf nodes — also pure) ---
 
+;; Catchable MLX resource exhaustion (bean genmlx-5ucd). The mlx-node shim now
+;; catches a Metal allocation throw (e.g. "[metal::malloc] Resource limit (499000)
+;; exceeded") and returns it as a thrown napi error instead of aborting the whole
+;; process. Such an error is almost always dead-but-unfinalized MxArray wrappers
+;; pinning their Metal buffers: force-gc! finalizes them (frees the buffers) and
+;; clear-cache! drops the Metal cache, so a retry typically succeeds. Genuine
+;; exhaustion rethrows for the caller to handle.
+(defn- mlx-resource-error?
+  [e]
+  (let [msg (str (or (.-message e) e))]
+    (boolean (or (re-find #"Resource limit" msg)
+                 (re-find #"metal::malloc" msg)
+                 (re-find #"out of memory" msg)))))
+
+(defn- with-alloc-retry
+  "Run thunk; on an MLX resource-exhaustion error, reclaim dead GPU buffers and
+   retry ONCE. Any other error (or a second failure) propagates."
+  [thunk]
+  (try
+    (thunk)
+    (catch :default e
+      (if (mlx-resource-error? e)
+        (do (force-gc!) (clear-cache!) (thunk))
+        (throw e)))))
+
 (defn scalar
   "Create a scalar MLX array. Always float32 by default."
-  ([v]   (.scalar c v))
+  ([v]   (with-alloc-retry #(.scalar c v)))
   ([v dtype]
-   (if (= dtype int32)
-     (.scalarInt c (int v))
-     (let [arr (.scalar c v)]
-       (if (= dtype float32) arr (.astype c arr dtype))))))
+   (with-alloc-retry
+     #(if (= dtype int32)
+        (.scalarInt c (int v))
+        (let [arr (.scalar c v)]
+          (if (= dtype float32) arr (.astype c arr dtype)))))))
 
 (defn array
   ([v]
@@ -393,9 +419,10 @@
      ;; infer-shape, not just flat ones. The old flat-only (js/Array.isArray v)
      ;; branch coerced #js [#js [..] #js [..]] to NaN — see infer-shape.
      (or (vector? v) (seq? v) (sequential? v) (js/Array.isArray v))
-     (let [[flat-data sh] (infer-shape v)
-           f32 (js/Float32Array.from (clj->js flat-data))]
-       (.fromFloat32 c f32 (clj->js sh)))
+     (with-alloc-retry
+       #(let [[flat-data sh] (infer-shape v)
+              f32 (js/Float32Array.from (clj->js flat-data))]
+          (.fromFloat32 c f32 (clj->js sh))))
      :else (scalar v)))
   ([v shape-or-dtype]
    (if (or (vector? shape-or-dtype) (seq? shape-or-dtype))
@@ -603,7 +630,7 @@
   "Extract scalar value from a 0-d or 1-element array.
    EFFECTFUL: fused eval + read in one NAPI call."
   [a]
-  (.item c a))
+  (with-alloc-retry #(.item c a)))
 
 (defn ->clj
   "Evaluate an MLX array and convert to nested ClojureScript data.
