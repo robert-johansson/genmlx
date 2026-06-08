@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.iid-conjugacy-test
   "M2 Step 4: Conjugacy + auto-analytical for iid-gaussian."
   (:require [cljs.test :refer [deftest is testing]]
@@ -14,6 +15,56 @@
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p])
   (:require-macros [genmlx.gen :refer [gen]]))
+
+;; ---------------------------------------------------------------------------
+;; 0. INDEPENDENT oracles for the marginal log-evidence (genmlx-ke9i)
+;;
+;; The marginal evidence of T iid observations with a SHARED mu is the joint
+;; multivariate normal  N(ys; m0*1, sigma^2 I + tau^2 11^T)  — NOT a product of
+;; independent per-point marginals. These two oracles are derived/computed here
+;; by DIFFERENT methods and are independent of auto-analytical/nn-iid-update-step
+;; (the function under test). Asserting the handler against the function under
+;; test was the original circularity that let the wrong-math bug pass.
+;; ---------------------------------------------------------------------------
+
+(defn oracle-marginal-closed
+  "Closed-form (matrix-determinant lemma) shared-mu joint marginal log-evidence."
+  [ys m0 tau2 s2]
+  (let [T (count ys)
+        d (map #(- % m0) ys)
+        sum-d (reduce + d)
+        sum-d2 (reduce + (map #(* % %) d))
+        denom (+ s2 (* T tau2))
+        logdet (+ (* (dec T) (js/Math.log s2)) (js/Math.log denom))
+        quad (/ (- sum-d2 (* (/ tau2 denom) (* sum-d sum-d))) s2)]
+    (* -0.5 (+ (* T (js/Math.log (* 2 js/Math.PI))) logdet quad))))
+
+(defn oracle-marginal-quad
+  "Independent METHOD: marginalise mu by numerical integration over a fine grid.
+   p(ys) = ∫ N(mu; m0, tau2) * prod_i N(y_i; mu, s2) dmu."
+  [ys m0 tau2 s2]
+  (let [tau (js/Math.sqrt tau2)
+        lo (- m0 (* 8 tau)) hi (+ m0 (* 8 tau))
+        n 40000
+        dx (/ (- hi lo) n)
+        l2ps2 (js/Math.log (* 2 js/Math.PI s2))
+        lpn (js/Math.log (js/Math.sqrt (* 2 js/Math.PI tau2)))]
+    (loop [k 0 acc 0.0]
+      (if (> k n)
+        (js/Math.log (* dx acc))
+        (let [mu (+ lo (* k dx))
+              lp (- (- (/ (* (- mu m0) (- mu m0)) (* 2 tau2))) lpn)
+              ll (reduce (fn [a y] (+ a (* -0.5 (+ l2ps2 (/ (* (- y mu) (- y mu)) s2))))) 0.0 ys)]
+          (recur (inc k) (+ acc (js/Math.exp (+ lp ll)))))))))
+
+(deftest oracle-self-consistency
+  (testing "the two independent oracles agree (so they are trustworthy ground truth)"
+    (let [ys [1.0 2.0 3.0 4.0 5.0]]
+      (is (h/close? (oracle-marginal-closed ys 0 100 1)
+                    (oracle-marginal-quad ys 0 100 1) 1e-3)
+          "closed-form == numerical quadrature")
+      (is (h/close? -12.748 (oracle-marginal-closed ys 0 100 1) 1e-2)
+          "anchor: shared-mu joint marginal ~ -12.748 (NOT -16.40 sum-of-independent)"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 1. Conjugacy table entry
@@ -68,8 +119,16 @@
       (mx/eval!)
       (is (h/close? 2.994 (mx/item (:mean result)) 0.01) "posterior mean ~ 2.994")
       (is (h/close? 0.1996 (mx/item (:var result)) 0.01) "posterior var ~ 0.1996")
-      (is (js/isFinite (mx/item (:ll result))) "ll is finite")
-      (is (neg? (mx/item (:ll result))) "ll is negative")))
+      ;; :ll is the SHARED-MU joint marginal — pinned against INDEPENDENT oracles
+      ;; (never against nn-iid-update-step itself — that was the ke9i circularity).
+      (is (h/close? -12.748 (mx/item (:ll result)) 1e-2)
+          ":ll ~ -12.748 (shared-mu joint; NOT -16.40 sum-of-independent)")
+      (is (h/close? (oracle-marginal-closed [1.0 2.0 3.0 4.0 5.0] 0 100 1)
+                    (mx/item (:ll result)) 1e-2)
+          ":ll == closed-form oracle")
+      (is (h/close? (oracle-marginal-quad [1.0 2.0 3.0 4.0 5.0] 0 100 1)
+                    (mx/item (:ll result)) 1e-2)
+          ":ll == numerical-quadrature oracle")))
 
   (testing "T=1 matches nn-update-step"
     (let [prior {:mean (mx/scalar 0.0) :var (mx/scalar 100.0)}
@@ -133,12 +192,11 @@
       (is (some? (cm/get-submap (:choices result) :mu)) "choices has :mu")
       (is (some? (cm/get-submap (:choices result) :ys)) "choices has :ys")
       (let [mu-val (mx/item (cm/get-value (cm/get-submap (:choices result) :mu)))
-            ref (aa/nn-iid-update-step {:mean (mx/scalar 0.0) :var (mx/scalar 100.0)}
-                                        obs-data (mx/scalar 1.0))]
+            oracle-ll (oracle-marginal-closed [1.0 2.0 3.0 4.0 5.0] 0 100 1)]
         (mx/eval!)
-        (is (h/close? (mx/item (:mean ref)) mu-val 1e-6) "mu = posterior mean")
-        (is (h/close? (mx/item (:ll ref)) (mx/item (:weight result)) 1e-6) "weight = marginal LL")
-        (is (h/close? (mx/item (:ll ref)) (mx/item (:score result)) 1e-6) "score = marginal LL")))))
+        (is (h/close? 2.994 mu-val 1e-2) "mu = posterior mean ~ 2.994")
+        (is (h/close? oracle-ll (mx/item (:weight result)) 1e-2) "weight = marginal LL (independent oracle)")
+        (is (h/close? oracle-ll (mx/item (:score result)) 1e-2) "score = marginal LL (independent oracle)")))))
 
 ;; ---------------------------------------------------------------------------
 ;; 6. End-to-end: p/generate with auto-analytical elimination
@@ -158,12 +216,9 @@
       (mx/eval!)
       (is (js/isFinite (mx/item (:weight result))) "e2e: weight is finite")
       (is (neg? (mx/item (:weight result))) "e2e: weight is negative")
-      (let [ref (aa/nn-iid-update-step {:mean (mx/scalar 0.0) :var (mx/scalar 100.0)}
-                                        (mx/array [1.0 2.0 3.0 4.0 5.0])
-                                        (mx/scalar 1.0))]
-        (mx/eval!)
-        (is (h/close? (mx/item (:ll ref)) (mx/item (:weight result)) 1e-4)
-            "e2e: weight = marginal LL")))))
+      (let [oracle-ll (oracle-marginal-closed [1.0 2.0 3.0 4.0 5.0] 0 100 1)]
+        (is (h/close? oracle-ll (mx/item (:weight result)) 1e-2)
+            "e2e: weight = marginal LL (independent oracle, NOT the fn under test)")))))
 
 ;; ---------------------------------------------------------------------------
 ;; 7. Multi-obs: iid-gaussian + scalar gaussian on same prior
