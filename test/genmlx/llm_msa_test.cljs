@@ -6,7 +6,7 @@
        importance sampling posterior, error handling
    1b. Knowledge path pure tests — normalize-llm, parse-math (Instaparse),
        parse->assemble->eval->score round-trip, normalize+parse combined
-   2.  Model tests (Qwen3-0.6B fine-tuned + base) — generate-candidate,
+   2.  Model tests (Qwen3.5-0.8B) — generate-candidate,
        synthesize-and-rank, end-to-end MSA, generate-knowledge-candidate,
        end-to-end MSA with :mode :knowledge
 
@@ -447,20 +447,19 @@
 (report "Pure tests")
 
 ;; ============================================================
-;; Section 2: Model tests (Qwen3-0.6B fine-tuned + base)
+;; Section 2: Model tests (Qwen3.5-0.8B for both template + knowledge mode)
 ;; ============================================================
 
 (def ^:private model-dir
-  (str (.-HOME js/process.env) "/.cache/models/qwen3-0.6b-cljs"))
+  (str (.-HOME js/process.env) "/.cache/models/qwen3.5-0.8b"))
 
-(def ^:private base-model-dir
-  (str (.-HOME js/process.env) "/.cache/models/qwen3-0.6b"))
-
-(println "\n== Loading Qwen3-0.6B-cljs (fine-tuned) and Qwen3-0.6B (base) for model tests... ==")
+(println "\n== Loading Qwen3.5-0.8B for model tests... ==")
 
 (pr/let [model-map (llm/load-model model-dir)
-         base-model-map (llm/load-model base-model-dir)]
-  (println "Both models loaded.\n")
+         ;; No fine-tuned model in the roster — qwen3.5-0.8b drives both the
+         ;; template-mode (2.1-2.3) and knowledge-mode (2.4-2.5) tests.
+         base-model-map model-map]
+  (println "Model loaded.\n")
 
   ;; -- 2.1 generate-candidate --
   (println "\n-- 2.1 generate-candidate: produces code --")
