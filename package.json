@@ -1,6 +1,13 @@
 {
   "scripts": {
-    "nbb": "bunx nbb@1.4.206"
+    "nbb": "bunx nbb@1.4.206",
+    "test:fast": "bash test/run.sh core",
+    "test:fast-all": "bash test/run.sh fast",
+    "test:medium": "bash test/run.sh medium",
+    "test:slow": "bash test/run.sh slow",
+    "test:bench": "bash test/run.sh bench",
+    "test:all": "bash test/run.sh all",
+    "test:check": "bash test/run.sh check"
   },
   "dependencies": {
     "@mlx-node/core": "file:./mlx-node/packages/core",
