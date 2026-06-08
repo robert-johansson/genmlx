@@ -84,6 +84,19 @@
     (- (+ max-w (js/Math.log (reduce + (map #(js/Math.exp (- % max-w)) log-ws))))
        (js/Math.log n))))
 
+;; Independent closed-form marginal log-ML (exactness ground truth). Each Map
+;; element is an independent normal-normal pair mu~N(0,10), y~N(mu,1), so the
+;; per-element marginal is N(y_i; 0, prior-var + obs-var) = N(y_i; 0, 101), and
+;; the block marginal is their sum. obs_i = i + 1.5 (see make-obs).
+(def ^:private LOG-2PI 1.8378770664093453)
+
+(defn nn-single-marginal [y prior-var obs-var]
+  (let [v (+ prior-var obs-var)]
+    (* -0.5 (+ LOG-2PI (js/Math.log v) (/ (* y y) v)))))
+
+(defn combinator-closed-form-log-ml [K]
+  (reduce + (map (fn [i] (nn-single-marginal (+ i 1.5) 100.0 1.0)) (range K))))
+
 ;; ---------------------------------------------------------------------------
 ;; Schema stripping helpers
 ;; ---------------------------------------------------------------------------
@@ -297,38 +310,48 @@
                         " / " n-particles
                         " (" (.toFixed (* 100 (/ (:ess-mean l2-results) n-particles)) 1) "%)"))
 
-        ;; Variance reduction ratio
-        var-ratio (if (> (:log-ml-var l35-results) 1e-20)
-                    (/ (:log-ml-var l2-results) (:log-ml-var l35-results))
-                    js/Infinity)
+        ;; Exactness (headline) vs independent closed form + variance reduction
+        ;; (corollary, omitted when L3.5 exact — the old Inf artifact).
+        cf (combinator-closed-form-log-ml K)
+        l35-err (js/Math.abs (- (:log-ml-mean l35-results) cf))
+        l2-err (js/Math.abs (- (:log-ml-mean l2-results) cf))
+        l35-exact? (< (:log-ml-var l35-results) 1e-20)
+        var-ratio (when-not l35-exact?
+                    (/ (:log-ml-var l2-results) (:log-ml-var l35-results)))
         ess-ratio (/ (:ess-mean l35-results) (max (:ess-mean l2-results) 0.01))]
 
     (println (str "\n  --- Summary K=" K " ---"))
+    (println (str "  closed-form log-ML:  " (.toFixed cf 4)))
+    (println (str "  |L3.5 − closed form|: " (.toExponential l35-err 3)
+                  " nats  (exactness — the headline)"))
+    (println (str "  |L2   − closed form|: " (.toFixed l2-err 4) " nats"))
     (println (str "  Variance reduction:  "
-                  (if (= var-ratio js/Infinity)
-                    "Inf (L3.5 exact)"
-                    (str (.toFixed var-ratio 1) "x"))))
+                  (if l35-exact? "n/a (L3.5 exact, var=0)"
+                      (str (.toFixed var-ratio 1) "x"))))
     (println (str "  ESS improvement:     " (.toFixed ess-ratio 1) "x"))
     (println (str "  L3.5 time: " (.toFixed (:mean-ms l35-timing) 3) " ms"
                   ", L2 time: " (.toFixed (:mean-ms l2-timing) 3) " ms"))
 
-    ;; Return result map
-    {:K K
-     :L2-standard {:log-ml-mean (:log-ml-mean l2-results)
-                   :log-ml-std (:log-ml-std l2-results)
-                   :log-ml-var (:log-ml-var l2-results)
-                   :ess-mean (:ess-mean l2-results)
-                   :timing-ms (:mean-ms l2-timing)
-                   :timing-std-ms (:std-ms l2-timing)}
-     :L3.5-analytical {:log-ml-mean (:log-ml-mean l35-results)
-                       :log-ml-std (:log-ml-std l35-results)
-                       :log-ml-var (:log-ml-var l35-results)
-                       :ess-mean (:ess-mean l35-results)
-                       :timing-ms (:mean-ms l35-timing)
-                       :timing-std-ms (:std-ms l35-timing)}
-     :n-particles n-particles
-     :variance-reduction var-ratio
-     :ess-improvement ess-ratio}))
+    ;; Return result map. :variance-reduction omitted when L3.5 is exact.
+    (cond-> {:K K
+             :closed-form-log-ml cf
+             :L2-standard {:log-ml-mean (:log-ml-mean l2-results)
+                           :log-ml-std (:log-ml-std l2-results)
+                           :log-ml-var (:log-ml-var l2-results)
+                           :log-ml-abs-error-nats l2-err
+                           :ess-mean (:ess-mean l2-results)
+                           :timing-ms (:mean-ms l2-timing)
+                           :timing-std-ms (:std-ms l2-timing)}
+             :L3.5-analytical {:log-ml-mean (:log-ml-mean l35-results)
+                               :log-ml-std (:log-ml-std l35-results)
+                               :log-ml-var (:log-ml-var l35-results)
+                               :log-ml-abs-error-nats l35-err
+                               :ess-mean (:ess-mean l35-results)
+                               :timing-ms (:mean-ms l35-timing)
+                               :timing-std-ms (:std-ms l35-timing)}
+             :n-particles n-particles
+             :ess-improvement ess-ratio}
+      (some? var-ratio) (assoc :variance-reduction var-ratio))))
 
 ;; ---------------------------------------------------------------------------
 ;; Run experiments across Map sizes
@@ -349,16 +372,14 @@
 (println "         L3.5 COMBINATOR CONJUGACY RESULTS")
 (println (apply str (repeat 70 "=")))
 
-(println "\n| K  | L2 var(log-ML) | L3.5 var(log-ML) | Var Reduction | ESS L2 | ESS L3.5 | ESS Ratio |")
-(println "|----|----------------|------------------|---------------|--------|----------|-----------|")
+(println "\n| K  | |L3.5−cf| (nats) | |L2−cf| (nats) | ESS L2 | ESS L3.5 | ESS Ratio |")
+(println "|----|------------------|----------------|--------|----------|-----------|")
 (doseq [r results-by-size]
-  (let [l2-var (get-in r [:L2-standard :log-ml-var])
-        l35-var (get-in r [:L3.5-analytical :log-ml-var])
-        vr (:variance-reduction r)]
+  (let [l35e (get-in r [:L3.5-analytical :log-ml-abs-error-nats])
+        l2e (get-in r [:L2-standard :log-ml-abs-error-nats])]
     (println (str "| " (.padStart (str (:K r)) 2)
-                  " | " (.padStart (if (> l2-var 0) (.toFixed l2-var 6) "N/A") 14)
-                  " | " (.padStart (if (> l35-var 0) (.toFixed l35-var 6) "0 (exact)") 16)
-                  " | " (.padStart (if (= vr js/Infinity) "Inf" (.toFixed vr 1)) 13)
+                  " | " (.padStart (.toExponential l35e 2) 16)
+                  " | " (.padStart (.toFixed l2e 4) 14)
                   " | " (.padStart (.toFixed (get-in r [:L2-standard :ess-mean]) 0) 6)
                   " | " (.padStart (.toFixed (get-in r [:L3.5-analytical :ess-mean]) 0) 8)
                   " | " (.padStart (.toFixed (:ess-improvement r) 1) 9)
@@ -381,7 +402,7 @@
   {:experiment "l3.5-combinator-conjugacy"
    :combinator "Map"
    :kernel "normal-normal conjugate"
-   :description "Conjugacy detection inside Map combinator kernels. Per-element analytical elimination via L3.5."
+   :description "Conjugacy detection inside Map combinator kernels. Per-element analytical elimination via L3.5; exactness = |L3.5 log-ML − closed form| in nats."
    :timestamp (.toISOString (js/Date.))
    :hardware {:platform "macOS" :chip "Apple Silicon" :gpu "Metal"}
    :config {:particles_per_K particles-for-K :n_trials n-trials :map_sizes map-sizes}
@@ -390,16 +411,17 @@
                                                   :obs (name (:obs-addr p))
                                                   :family (name (:family p))})
                                         (get-in kernel-l35 [:schema :conjugate-pairs]))}
-   :results-by-size (mapv (fn [r]
-                           (update r :variance-reduction
-                                   #(if (= % js/Infinity) "Infinity" %)))
-                         results-by-size)
+   :results-by-size results-by-size
    :summary
-   {:mean_variance_reduction
-    (let [finite (filter #(and (number? %) (js/isFinite %))
-                         (map :variance-reduction results-by-size))]
-      (if (seq finite) (mean finite) "Infinity"))
+   {;; Exactness is the headline: |L3.5 log-ML − closed form| in nats, at each K.
+    :log_ml_abs_error_nats
+    (mapv (fn [r] {:K (:K r) :l35 (get-in r [:L3.5-analytical :log-ml-abs-error-nats])
+                   :l2 (get-in r [:L2-standard :log-ml-abs-error-nats])})
+          results-by-size)
+    :max_l35_abs_error_nats
+    (apply max (map #(get-in % [:L3.5-analytical :log-ml-abs-error-nats]) results-by-size))
     :mean_ess_improvement (mean (map :ess-improvement results-by-size))
-    :all_exact? (every? #(= js/Infinity (:variance-reduction %)) results-by-size)}})
+    :all_exact? (every? #(< (get-in % [:L3.5-analytical :log-ml-abs-error-nats]) 1e-3)
+                        results-by-size)}})
 
 (println "\nL3.5 combinator conjugacy benchmark complete.")

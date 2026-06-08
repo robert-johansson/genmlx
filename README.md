@@ -284,7 +284,7 @@ Aliases: `normal` → `gaussian`, `flip` → `bernoulli`
 - **Variational Inference** — `vi` (ADVI with mean-field Gaussian guide), `programmable-vi` with pluggable objectives (`elbo`, `iwelbo`, `wake-sleep`) and gradient estimators (`reinforce`, reparameterization); compiled variants via `compiled-vi`, `compiled-programmable-vi`
 - **ADEV** — automatic differentiation of expected values with reparameterization and REINFORCE strategies, vectorized GPU execution, compiled optimization loops, baseline variance reduction
 - **Amortized Inference** — `neural-importance-sampling` (learned neural proposals)
-- **Analytical Elimination** — auto-conjugacy detection (5 families), Rao-Blackwellization, 33.5x variance reduction
+- **Analytical Elimination** — auto-conjugacy detection (5 families), joint linear-Gaussian regression, Rao-Blackwellization; exact marginal likelihood (matches the closed form to the float32 floor, ~1e-6 nats), ESS gains up to ~50×
 - **Kalman Filter** — handler middleware for linear-Gaussian SSMs, sequential updates, exact marginal LL
 - **Extended Kalman Filter** — nonlinear SSMs via auto-diff linearization (1D and N-dimensional)
 - **HMM Forward Algorithm** — discrete latent state-space models, exact marginal likelihood

@@ -1,0 +1,98 @@
+{
+  "system": "numpyro",
+  "family": "out-of-family (Pyro effect-handler paradigm; not GFI/trace-based)",
+  "version": "0.21.0",
+  "jax_version": "0.7.2",
+  "hardware": "Apple M4",
+  "backend": "JAX CPU (cpu)",
+  "timing_protocol": "5 warmup, 20 runs, time.perf_counter (IS); 3 runs, JIT excluded (NUTS)",
+  "comparisons": [
+    {
+      "model": "linreg",
+      "algorithm": "IS",
+      "n_particles": 1000,
+      "time_ms": 0.045056300223222934,
+      "time_ms_std": 0.0037199864191696077,
+      "time_ms_min": 0.03991699850303121,
+      "times_ms": [
+        0.043542000639718026,
+        0.048207999498117715,
+        0.04470800195122138,
+        0.04149999949731864,
+        0.03991699850303121,
+        0.05216699719312601,
+        0.0470000013592653,
+        0.049958998715737835,
+        0.0468340003862977,
+        0.044916003389516845,
+        0.04016700040665455,
+        0.04254100349498913,
+        0.04183299824944697,
+        0.04337499922257848,
+        0.04158400042797439,
+        0.050499998906161636,
+        0.05037500159232877,
+        0.047917001211317256,
+        0.040625000110594556,
+        0.04345799970906228
+      ],
+      "log_ml_estimate": -31.831884384155273,
+      "log_ml_exact": -31.699429613021042,
+      "log_ml_abs_err": 0.1324547711342312,
+      "weight_faithfulness_max_disc": 0.0001220703125
+    },
+    {
+      "model": "linreg",
+      "algorithm": "NUTS",
+      "num_warmup": 500,
+      "num_samples": 1000,
+      "time_ms": 265.6248056676607,
+      "time_ms_std": 1.6883322620363566,
+      "time_ms_min": 264.2274999998335,
+      "times_ms": [
+        264.64675000170246,
+        268.00016700144624,
+        264.2274999998335
+      ],
+      "post_mean_slope": 2.0910866260528564,
+      "post_mean_intercept": 0.5568988919258118,
+      "post_mean_slope_exact": 2.0900464076197363,
+      "post_mean_intercept_exact": 0.5587543775270014,
+      "timing_note": "single MCMC run; one-time JIT compile excluded via a warmup run; mean of 3"
+    }
+  ],
+  "accuracy": {
+    "metric": "log marginal likelihood (linreg, shared spec)",
+    "log_ml_exact_closed_form": -31.699429613021042,
+    "log_ml_genmlx_l3_exact": -31.699430465698242,
+    "log_ml_is_estimate": -31.831884384155273,
+    "log_ml_is_abs_err": 0.1324547711342312,
+    "note": "NumPyro IS reaches GenMLX's exact L3 log-ML within 0.132 nats; NUTS recovers the exact linear-Gaussian posterior mean. Closed-form == GenMLX L3 to float32 floor.",
+    "post_mean_exact": {
+      "slope": 2.0900464076197363,
+      "intercept": 0.5587543775270014
+    },
+    "post_mean_nuts": {
+      "slope": 2.0910866260528564,
+      "intercept": 0.5568988919258118
+    }
+  },
+  "reproducibility": {
+    "env": ".venv-genjax (gitignored)",
+    "install": "~/code/genmlx/.venv-genjax/bin/pip install numpyro",
+    "command": "~/code/genmlx/.venv-genjax/bin/python scripts/exp4_numpyro_baseline.py",
+    "versions": {
+      "numpyro": "0.21.0",
+      "jax": "0.7.2",
+      "numpy": "2.4.3"
+    },
+    "shared_spec": {
+      "model": "linreg",
+      "n_obs": 20,
+      "sigma_prior": 2.0,
+      "sigma_obs": 1.0,
+      "note": "byte-identical xs/ys to scripts/exp4_genjax_benchmarks.py"
+    },
+    "caveats": "Accuracy comparison is apples-to-apples NumPyro-IS vs GenJAX-IS vs closed-form (same 20-point N(0,2) spec). GenMLX's bench/cross_system.cljs + bench/linreg.cljs use N(0,10) on a different 5-point dataset, so the GenMLX timing column is NOT on this shared spec; treat the GenMLX-vs-others IS timing as indicative, not matched."
+  }
+}

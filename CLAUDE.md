@@ -55,9 +55,10 @@ Level 1: Compiled gen functions      ← DONE (506+ tests)
   M4: Branch rewriting (if/if-not with same addr+dist → mx/where)
   M5: Combinator compilation (fused Map/Unfold/Scan loops)
 Level 2: Compiled inference sweeps   ← DONE (881+ tests)
-Level 3: Auto-analytical elimination ← DONE (426 tests, 33.5x variance reduction)
+Level 3: Auto-analytical elimination ← DONE (426 tests, exact marginal LL to float32 floor)
   7 conjugate families detected statically
   Kalman chain detection via affine dependency analysis
+  Joint linear-Gaussian regression (coupled/affine multi-latent) elimination
   Rao-Blackwellization for partial conjugacy
 Level 3.5: Extended analytical       ← DONE (150 tests, MVN Kalman, combinator conjugacy)
 Level 4: Single fused graph          ← DONE (260+ tests, 9.2x compiled Adam speedup)

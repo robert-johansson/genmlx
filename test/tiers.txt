@@ -204,6 +204,7 @@ fast test/genmlx/lanczos_test.cljs
 medium test/genmlx/lazy_mcmc_test.cljs
 medium test/genmlx/level0_certification_test.cljs
 medium test/genmlx/limitations_fixes_test.cljs
+medium test/genmlx/linear_gaussian_elim_test.cljs
 slow test/genmlx/llm_backend_test.cljs
 slow test/genmlx/llm_bytes_test.cljs
 bench test/genmlx/llm_cache_benchmark.cljs

@@ -12,9 +12,11 @@
    3. Rao-Blackwellization → sample from posterior (not prior) for shared priors
 
    Level 3 — WP-5: Algebraic Graph Rewriting."
-  (:require [genmlx.dep-graph :as dep-graph]
+  (:require [clojure.set :as set]
+            [genmlx.dep-graph :as dep-graph]
             [genmlx.affine :as affine]
             [genmlx.inference.auto-analytical :as auto]
+            [genmlx.linear-gaussian :as lg]
             [genmlx.handler :as h]))
 
 ;; ---------------------------------------------------------------------------
@@ -76,6 +78,23 @@
                          (pr-str (:latent-addrs chain)))})))
 
 ;; ---------------------------------------------------------------------------
+;; RegressionRule — eliminates a coupled/affine linear-Gaussian block jointly
+;; ---------------------------------------------------------------------------
+
+(defrecord RegressionRule [block]
+  IRewriteRule
+  (-applicable? [this graph schema]
+    (every? #(contains? (:nodes graph) %) (:latent-addrs block)))
+  (-apply [this graph schema constraints]
+    (let [handlers (lg/make-lg-handlers block)
+          latents (set (:latent-addrs block))
+          graph' (prune-eliminated graph latents)]
+      {:graph' graph'
+       :handlers handlers
+       :eliminated latents
+       :description (str "Linear-Gaussian block: " (pr-str (:latent-addrs block)))})))
+
+;; ---------------------------------------------------------------------------
 ;; RaoBlackwellRule — sample from posterior instead of prior
 ;; ---------------------------------------------------------------------------
 
@@ -119,22 +138,36 @@
   "Generate rewrite rules from schema conjugacy metadata.
    Each detected conjugate pair becomes a ConjugacyRule.
    Detected Kalman chains become KalmanRules.
+   Coupled/affine linear-Gaussian blocks become RegressionRules.
    Shared priors with non-conjugate children become RaoBlackwellRules.
 
-   Priority: Kalman > Conjugacy > RaoBlackwell
-   (more structure eliminated first)"
-  [schema conjugate-pairs chains]
-  (let [kalman-rules (mapv ->KalmanRule chains)
+   Priority: Kalman > Regression > Conjugacy > RaoBlackwell
+   (more structure eliminated first).
 
-        ;; Addresses already claimed by Kalman chains
+   lg-blocks: linear-Gaussian block descriptors (jointly eliminated).
+   declined-addrs: concern-component addresses that cannot be exactly eliminated
+   — excluded so no per-prior ConjugacyRule claims a wrong exact.
+
+   Backward-compatible arities: [schema pairs] and [schema pairs chains] omit
+   linear-Gaussian blocks (no RegressionRules)."
+  ([schema conjugate-pairs] (generate-rewrite-rules schema conjugate-pairs nil nil nil))
+  ([schema conjugate-pairs chains] (generate-rewrite-rules schema conjugate-pairs chains nil nil))
+  ([schema conjugate-pairs chains lg-blocks declined-addrs]
+  (let [kalman-rules (mapv ->KalmanRule chains)
+        regression-rules (mapv ->RegressionRule lg-blocks)
+
+        ;; Addresses already claimed by Kalman chains / regression blocks, plus
+        ;; declined concern-components (kept off the scalar conjugacy path).
         kalman-latents (set (mapcat :latent-addrs chains))
         kalman-obs (set (mapcat :obs-addrs chains))
-        kalman-addrs (into kalman-latents kalman-obs)
+        claimed (set/union (into kalman-latents kalman-obs)
+                           (into #{} (mapcat :all-addrs lg-blocks))
+                           (or declined-addrs #{}))
 
-        ;; Group remaining conjugate pairs by prior (excluding Kalman-claimed)
+        ;; Group remaining conjugate pairs by prior (excluding claimed addrs)
         remaining-pairs (remove (fn [p]
-                                  (or (contains? kalman-addrs (:prior-addr p))
-                                      (contains? kalman-addrs (:obs-addr p))))
+                                  (or (contains? claimed (:prior-addr p))
+                                      (contains? claimed (:obs-addr p))))
                                 conjugate-pairs)
         grouped (group-by :prior-addr remaining-pairs)
 
@@ -152,10 +185,11 @@
                 {:conjugacy (->ConjugacyRule family prior-addr obs-addrs)})))
           grouped)]
 
-    ;; Priority ordering: Kalman first, then conjugacy, then RB
+    ;; Priority ordering: Kalman, then Regression, then conjugacy, then RB
     (vec (concat kalman-rules
+                 regression-rules
                  (keep :conjugacy classified)
-                 (keep :rb classified)))))
+                 (keep :rb classified))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Rewrite engine
@@ -194,22 +228,35 @@
 (defn build-analytical-plan
   "Analyze model and build the optimal analytical execution plan.
    schema must already have :conjugate-pairs (from augment-schema-with-conjugacy).
+   source (optional) is the gen source form — required to detect linear-Gaussian
+   regression blocks (their design matrix is recovered from the obs mean forms).
 
-   Returns {:rewrite-result :auto-transition :kalman-chains :stats}"
-  [schema]
-  (let [pairs (or (:conjugate-pairs schema) [])
-        graph (dep-graph/build-dep-graph schema)
-        chains (affine/detect-kalman-chains pairs)
-        rules (generate-rewrite-rules schema pairs chains)
-        result (apply-rewrites graph schema nil rules)
-        auto-transition (when (seq (:handlers result))
-                          (auto/make-address-dispatch
-                            h/generate-transition
-                            (:handlers result)))]
-    {:rewrite-result result
-     :auto-transition auto-transition
-     :kalman-chains chains
-     :stats {:total-sites (count (:nodes graph))
-             :eliminated (count (:eliminated result))
-             :residual (count (:nodes (:residual-graph result)))
-             :rewrites-applied (count (:rewrite-log result))}}))
+   Returns {:rewrite-result :auto-transition :kalman-chains :lg-blocks
+            :declined-addrs :stats}"
+  ([schema] (build-analytical-plan schema nil))
+  ([schema source]
+   (let [pairs (or (:conjugate-pairs schema) [])
+         graph (dep-graph/build-dep-graph schema)
+         chains (affine/detect-kalman-chains pairs)
+         kalman-addrs (into (set (mapcat :latent-addrs chains))
+                            (mapcat :obs-addrs chains))
+         lg-result (if source
+                     (lg/detect-lg-blocks schema source :exclude-addrs kalman-addrs)
+                     {:blocks [] :declined-addrs #{}})
+         lg-blocks (:blocks lg-result)
+         declined (:declined-addrs lg-result)
+         rules (generate-rewrite-rules schema pairs chains lg-blocks declined)
+         result (apply-rewrites graph schema nil rules)
+         auto-transition (when (seq (:handlers result))
+                           (auto/make-address-dispatch
+                             h/generate-transition
+                             (:handlers result)))]
+     {:rewrite-result result
+      :auto-transition auto-transition
+      :kalman-chains chains
+      :lg-blocks lg-blocks
+      :declined-addrs declined
+      :stats {:total-sites (count (:nodes graph))
+              :eliminated (count (:eliminated result))
+              :residual (count (:nodes (:residual-graph result)))
+              :rewrites-applied (count (:rewrite-log result))}})))

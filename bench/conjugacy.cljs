@@ -108,6 +108,90 @@
     (- lse (js/Math.log n))))
 
 ;; ---------------------------------------------------------------------------
+;; Independent closed-form marginal log-ML (the exactness ground truth)
+;; ---------------------------------------------------------------------------
+;; These are derived INDEPENDENTLY of conjugate.cljs / the L3 path, so |L3 - cf|
+;; is a genuine cross-check of analytical elimination, not a circular comparison.
+
+(def ^:private LOG-2PI 1.8378770664093453)
+
+(def ^:private lanczos-c
+  [0.99999999999980993 676.5203681218851 -1259.1392167224028
+   771.32342877765313 -176.61502916214059 12.507343278686905
+   -0.13857109526572012 9.9843695780195716e-6 1.5056327351493116e-7])
+
+(defn lgamma
+  "Log-gamma via the Lanczos approximation (g=7)."
+  [x]
+  (if (< x 0.5)
+    (- (js/Math.log (/ js/Math.PI (js/Math.sin (* js/Math.PI x)))) (lgamma (- 1.0 x)))
+    (let [x (- x 1.0)
+          t (+ x 7.5)
+          a (reduce (fn [a i] (+ a (/ (nth lanczos-c i) (+ x i))))
+                    (nth lanczos-c 0) (range 1 (count lanczos-c)))]
+      (+ (* 0.5 (js/Math.log (* 2.0 js/Math.PI)))
+         (* (+ x 0.5) (js/Math.log t)) (- t) (js/Math.log a)))))
+
+(defn log-beta [a b] (- (+ (lgamma a) (lgamma b)) (lgamma (+ a b))))
+
+(defn nn-shared-marginal
+  "Joint marginal log p(y) for shared-mean Normal-Normal:
+   mu ~ N(m0, prior-var); y_i ~ N(mu, obs-var). y ~ N(m0·1, obs-var·I + prior-var·11ᵀ)."
+  [ys m0 prior-var obs-var]
+  (let [n (count ys)
+        ds (map #(- % m0) ys)
+        sum-d (reduce + ds)
+        sum-d2 (reduce + (map #(* % %) ds))
+        denom (+ obs-var (* n prior-var))
+        logdet (+ (* (dec n) (js/Math.log obs-var)) (js/Math.log denom))
+        quad (/ (- sum-d2 (* (/ prior-var denom) sum-d sum-d)) obs-var)]
+    (* -0.5 (+ (* n LOG-2PI) logdet quad))))
+
+(defn bb-marginal
+  "Beta-Bernoulli marginal: logB(a+s, b+n-s) − logB(a,b). s = #successes."
+  [s n a b]
+  (- (log-beta (+ a s) (+ b (- n s))) (log-beta a b)))
+
+(defn gp-marginal
+  "Gamma-Poisson marginal (Gamma shape al, rate be): rate ~ Gamma(al,be); y_i ~ Poisson(rate)."
+  [ys al be]
+  (let [n (count ys) S (reduce + ys)]
+    (+ (* al (js/Math.log be))
+       (- (lgamma al))
+       (- (reduce + (map #(lgamma (+ % 1.0)) ys)))
+       (lgamma (+ al S))
+       (- (* (+ al S) (js/Math.log (+ be n)))))))
+
+(defn linreg-marginal
+  "Joint marginal for 2-parameter Bayesian linear regression:
+   slope,intercept ~ N(0, prior-var); y_j ~ N(slope·x_j + intercept, obs-var).
+   y ~ N(0, obs-var·I + prior-var·X Xᵀ), X row = [x_j, 1]. Computed via the rank-2
+   Woodbury / matrix-determinant lemma (independent of the eliminator)."
+  [xs ys prior-var obs-var]
+  (let [n (count xs)
+        sx (reduce + xs)
+        sx2 (reduce + (map #(* % %) xs))
+        sxy (reduce + (map * xs ys))
+        sy (reduce + ys)
+        syy (reduce + (map #(* % %) ys))
+        ratio (/ prior-var obs-var)
+        ;; det(I2 + ratio·XᵀX), XᵀX = [[sx2 sx][sx n]]
+        b00 (+ 1.0 (* ratio sx2)) b01 (* ratio sx)
+        b10 (* ratio sx)         b11 (+ 1.0 (* ratio n))
+        det-b (- (* b00 b11) (* b01 b10))
+        logdet (+ (* n (js/Math.log obs-var)) (js/Math.log det-b))
+        ;; quad = (1/obs-var)[yᵀy − vᵀ A⁻¹ v], A = (obs/prior)I2 + XᵀX, v = Xᵀy
+        k (/ obs-var prior-var)
+        a00 (+ k sx2) a01 sx a11 (+ k n)
+        det-a (- (* a00 a11) (* a01 a01))
+        v0 sxy v1 sy
+        ;; A⁻¹ v
+        ai0 (/ (- (* a11 v0) (* a01 v1)) det-a)
+        ai1 (/ (- (* a00 v1) (* a01 v0)) det-a)
+        quad (/ (- syy (+ (* v0 ai0) (* v1 ai1))) obs-var)]
+    (* -0.5 (+ (* n LOG-2PI) logdet quad))))
+
+;; ---------------------------------------------------------------------------
 ;; Strip analytical plan (forces L2 / prior-proposal IS)
 ;; ---------------------------------------------------------------------------
 
@@ -210,48 +294,62 @@
                         " / " n-particles
                         " (" (.toFixed (* 100 (/ (:ess-mean l2-results) n-particles)) 1) "%)"))
 
-        ;; 4. Variance reduction ratio
-        var-ratio (if (> (:log-ml-var l3-results) 1e-20)
-                    (/ (:log-ml-var l2-results) (:log-ml-var l3-results))
-                    js/Infinity)
+        ;; 4. Exactness (the headline) + variance reduction (corollary).
+        ;; The honest headline for analytical elimination is |L3 log-ML − closed
+        ;; form| in nats: ~0 when L3 is exact. Variance reduction is a corollary
+        ;; and is OMITTED when L3 is exact (its var is 0, so the ratio is a
+        ;; divide-by-~0 against a different model — the old >1000x/Inf artifact).
+        cf (:log-ml ground-truth)
+        l3-err (when cf (js/Math.abs (- (:log-ml-mean l3-results) cf)))
+        l2-err (when cf (js/Math.abs (- (:log-ml-mean l2-results) cf)))
+        l3-exact? (< (:log-ml-var l3-results) 1e-20)
+        var-ratio (when-not l3-exact?
+                    (/ (:log-ml-var l2-results) (:log-ml-var l3-results)))
         ess-ratio (/ (:ess-mean l3-results) (max (:ess-mean l2-results) 0.01))
         _ (println (str "\n  --- Summary ---"))
-        _ (println (str "  Variance reduction:  " (if (= var-ratio js/Infinity)
-                                                     "Inf (L3 exact)"
-                                                     (str (.toFixed var-ratio 1) "x"))))
+        _ (when cf
+            (println (str "  |L3 log-ML − closed form|: " (.toExponential l3-err 3)
+                          " nats  (exactness — the headline)"))
+            (println (str "  |L2 log-ML − closed form|: " (.toFixed l2-err 4) " nats")))
+        _ (println (str "  Variance reduction:  "
+                        (if l3-exact? "n/a (L3 exact, var=0)"
+                            (str (.toFixed var-ratio 1) "x"))))
         _ (println (str "  ESS improvement:     " (.toFixed ess-ratio 1) "x"))
         _ (println (str "  L3 time: " (.toFixed (:mean-ms l3-timing) 3) " ms"
                         ", L2 time: " (.toFixed (:mean-ms l2-timing) 3) " ms"))]
 
-    ;; Return result map
-    {:label label
-     :method_selection {:method (name (:method sel))
-                        :reason (:reason sel)
-                        :eliminated (vec (map name (:eliminated sel)))
-                        :residual (vec (map name (:residual-addrs sel)))
-                        :n_eliminated (count (:eliminated sel))
-                        :n_residual (:n-residual sel)}
-     :conjugate_pairs (mapv (fn [p] {:prior (name (:prior-addr p))
-                                      :obs (name (:obs-addr p))
-                                      :family (name (:family p))})
-                            conj-pairs)
-     :l3 {:log_ml_mean (:log-ml-mean l3-results)
-          :log_ml_std (:log-ml-std l3-results)
-          :log_ml_var (:log-ml-var l3-results)
-          :ess_mean (:ess-mean l3-results)
-          :time_ms (:mean-ms l3-timing)
-          :time_std_ms (:std-ms l3-timing)}
-     :l2 {:log_ml_mean (:log-ml-mean l2-results)
-          :log_ml_std (:log-ml-std l2-results)
-          :log_ml_var (:log-ml-var l2-results)
-          :ess_mean (:ess-mean l2-results)
-          :time_ms (:mean-ms l2-timing)
-          :time_std_ms (:std-ms l2-timing)}
-     :variance_reduction var-ratio
-     :ess_improvement ess-ratio
-     :ground_truth ground-truth
-     :n_particles n-particles
-     :n_trials n-trials}))
+    ;; Return result map. :variance_reduction is OMITTED when L3 is exact.
+    (cond-> {:label label
+             :method_selection {:method (name (:method sel))
+                                :reason (:reason sel)
+                                :eliminated (vec (map name (:eliminated sel)))
+                                :residual (vec (map name (:residual-addrs sel)))
+                                :n_eliminated (count (:eliminated sel))
+                                :n_residual (:n-residual sel)}
+             :conjugate_pairs (mapv (fn [p] {:prior (name (:prior-addr p))
+                                              :obs (name (:obs-addr p))
+                                              :family (name (:family p))})
+                                    conj-pairs)
+             :closed_form_log_ml cf
+             :l3 {:log_ml_mean (:log-ml-mean l3-results)
+                  :log_ml_std (:log-ml-std l3-results)
+                  :log_ml_var (:log-ml-var l3-results)
+                  :log_ml_abs_error_nats l3-err
+                  :ess_mean (:ess-mean l3-results)
+                  :time_ms (:mean-ms l3-timing)
+                  :time_std_ms (:std-ms l3-timing)}
+             :l2 {:log_ml_mean (:log-ml-mean l2-results)
+                  :log_ml_std (:log-ml-std l2-results)
+                  :log_ml_var (:log-ml-var l2-results)
+                  :log_ml_abs_error_nats l2-err
+                  :ess_mean (:ess-mean l2-results)
+                  :time_ms (:mean-ms l2-timing)
+                  :time_std_ms (:std-ms l2-timing)}
+             :ess_improvement ess-ratio
+             :ground_truth ground-truth
+             :n_particles n-particles
+             :n_trials n-trials}
+      (some? var-ratio) (assoc :variance_reduction var-ratio))))
 
 ;; =========================================================================
 ;; 5A: Normal-Normal (mean estimation)
@@ -470,7 +568,8 @@
                       :ground-truth {:distribution "Normal"
                                      :mean (:posterior-mean nn-ground-truth)
                                      :std (:posterior-std nn-ground-truth)
-                                     :var (:posterior-var nn-ground-truth)}))
+                                     :var (:posterior-var nn-ground-truth)
+                                     :log-ml (nn-shared-marginal [1.0 1.5 0.8 1.2 1.1] 0.0 100.0 1.0)}))
 
 ;; ---------------------------------------------------------------------------
 ;; 5B: Beta-Bernoulli
@@ -490,7 +589,8 @@
                       :ground-truth {:distribution "Beta"
                                      :alpha (:posterior-alpha bb-ground-truth)
                                      :beta (:posterior-beta bb-ground-truth)
-                                     :mean (:posterior-mean bb-ground-truth)}))
+                                     :mean (:posterior-mean bb-ground-truth)
+                                     :log-ml (bb-marginal 3 5 2.0 2.0)}))
 
 ;; ---------------------------------------------------------------------------
 ;; 5C: Gamma-Poisson
@@ -510,7 +610,8 @@
                       :ground-truth {:distribution "Gamma"
                                      :shape (:posterior-shape gp-ground-truth)
                                      :rate (:posterior-rate gp-ground-truth)
-                                     :mean (:posterior-mean gp-ground-truth)}))
+                                     :mean (:posterior-mean gp-ground-truth)
+                                     :log-ml (gp-marginal [3.0 5.0 2.0 4.0] 2.0 1.0)}))
 
 ;; ---------------------------------------------------------------------------
 ;; 5D: Mixed model (partial conjugacy)
@@ -605,50 +706,60 @@
 (println (str "  L2 ESS:    " (.toFixed (:ess-mean l2-linreg-results) 1)
               " / " n-particles))
 
-;; Variance reduction
+;; Exactness (headline) + variance reduction (corollary, omitted when exact)
+(def linreg-cf (linreg-marginal [1.0 2.0 3.0 4.0 5.0] linreg-ys
+                                (* sigma-prior sigma-prior) (* sigma-obs sigma-obs)))
+(def linreg-l3-err (js/Math.abs (- (:log-ml-mean l3-linreg-results) linreg-cf)))
+(def linreg-l2-err (js/Math.abs (- (:log-ml-mean l2-linreg-results) linreg-cf)))
+(def linreg-l3-exact? (< (:log-ml-var l3-linreg-results) 1e-20))
 (def linreg-var-ratio
-  (if (> (:log-ml-var l3-linreg-results) 1e-20)
-    (/ (:log-ml-var l2-linreg-results) (:log-ml-var l3-linreg-results))
-    js/Infinity))
+  (when-not linreg-l3-exact?
+    (/ (:log-ml-var l2-linreg-results) (:log-ml-var l3-linreg-results))))
 (def linreg-ess-ratio
   (/ (:ess-mean l3-linreg-results) (max (:ess-mean l2-linreg-results) 0.01)))
 
 (println (str "\n  --- Summary ---"))
-(println (str "  Variance reduction:  " (if (= linreg-var-ratio js/Infinity)
-                                            "Inf (L3 exact)"
+(println (str "  |L3 log-ML − closed form|: " (.toExponential linreg-l3-err 3)
+              " nats  (exactness — the headline; closed form = "
+              (.toFixed linreg-cf 4) ")"))
+(println (str "  |L2 log-ML − closed form|: " (.toFixed linreg-l2-err 4) " nats"))
+(println (str "  Variance reduction:  " (if linreg-l3-exact? "n/a (L3 exact, var=0)"
                                             (str (.toFixed linreg-var-ratio 1) "x"))))
 (println (str "  ESS improvement:     " (.toFixed linreg-ess-ratio 1) "x"))
 
 (def result-5e
-  {:label "5E-LinReg"
-   :method_selection (let [sel (ms/select-method linreg-model linreg-obs)]
-                       {:method (name (:method sel))
-                        :reason (:reason sel)
-                        :eliminated (vec (map name (:eliminated sel)))
-                        :residual (vec (map name (:residual-addrs sel)))
-                        :n_eliminated (count (:eliminated sel))
-                        :n_residual (:n-residual sel)})
-   :conjugate_pairs (mapv (fn [p] {:prior (name (:prior-addr p))
-                                    :obs (name (:obs-addr p))
-                                    :family (name (:family p))})
-                          (get-in linreg-model [:schema :conjugate-pairs]))
-   :l3 {:log_ml_mean (:log-ml-mean l3-linreg-results)
-        :log_ml_std (:log-ml-std l3-linreg-results)
-        :log_ml_var (:log-ml-var l3-linreg-results)
-        :ess_mean (:ess-mean l3-linreg-results)
-        :time_ms (:mean-ms l3-linreg-timing)
-        :time_std_ms (:std-ms l3-linreg-timing)}
-   :l2 {:log_ml_mean (:log-ml-mean l2-linreg-results)
-        :log_ml_std (:log-ml-std l2-linreg-results)
-        :log_ml_var (:log-ml-var l2-linreg-results)
-        :ess_mean (:ess-mean l2-linreg-results)
-        :time_ms (:mean-ms l2-linreg-timing)
-        :time_std_ms (:std-ms l2-linreg-timing)}
-   :variance_reduction linreg-var-ratio
-   :ess_improvement linreg-ess-ratio
-   :ground_truth linreg-ground-truth
-   :n_particles n-particles
-   :n_trials n-trials})
+  (cond-> {:label "5E-LinReg"
+           :method_selection (let [sel (ms/select-method linreg-model linreg-obs)]
+                               {:method (name (:method sel))
+                                :reason (:reason sel)
+                                :eliminated (vec (map name (:eliminated sel)))
+                                :residual (vec (map name (:residual-addrs sel)))
+                                :n_eliminated (count (:eliminated sel))
+                                :n_residual (:n-residual sel)})
+           :conjugate_pairs (mapv (fn [p] {:prior (name (:prior-addr p))
+                                            :obs (name (:obs-addr p))
+                                            :family (name (:family p))})
+                                  (get-in linreg-model [:schema :conjugate-pairs]))
+           :closed_form_log_ml linreg-cf
+           :l3 {:log_ml_mean (:log-ml-mean l3-linreg-results)
+                :log_ml_std (:log-ml-std l3-linreg-results)
+                :log_ml_var (:log-ml-var l3-linreg-results)
+                :log_ml_abs_error_nats linreg-l3-err
+                :ess_mean (:ess-mean l3-linreg-results)
+                :time_ms (:mean-ms l3-linreg-timing)
+                :time_std_ms (:std-ms l3-linreg-timing)}
+           :l2 {:log_ml_mean (:log-ml-mean l2-linreg-results)
+                :log_ml_std (:log-ml-std l2-linreg-results)
+                :log_ml_var (:log-ml-var l2-linreg-results)
+                :log_ml_abs_error_nats linreg-l2-err
+                :ess_mean (:ess-mean l2-linreg-results)
+                :time_ms (:mean-ms l2-linreg-timing)
+                :time_std_ms (:std-ms l2-linreg-timing)}
+           :ess_improvement linreg-ess-ratio
+           :ground_truth linreg-ground-truth
+           :n_particles n-particles
+           :n_trials n-trials}
+    (some? linreg-var-ratio) (assoc :variance_reduction linreg-var-ratio)))
 
 ;; =========================================================================
 ;; Summary table
@@ -660,25 +771,20 @@
 
 (def all-results [result-5a result-5b result-5c result-5d result-5e])
 
-(println "\n| Experiment | Family | Eliminated | L2 var(log-ML) | L3 var(log-ML) | Var Reduction | ESS Ratio |")
-(println "|------------|--------|------------|----------------|----------------|---------------|-----------|")
+(println "\n| Experiment | Family | Elim | |L3−cf| (nats) | |L2−cf| (nats) | ESS Ratio |")
+(println "|------------|--------|------|----------------|----------------|-----------|")
 (doseq [r all-results]
   (let [families (if (seq (:conjugate_pairs r))
                    (clojure.string/join "," (distinct (map :family (:conjugate_pairs r))))
                    "none")
-        n-elim (get-in r [:method_selection :n_eliminated])]
+        n-elim (get-in r [:method_selection :n_eliminated])
+        l3e (get-in r [:l3 :log_ml_abs_error_nats])
+        l2e (get-in r [:l2 :log_ml_abs_error_nats])]
     (println (str "| " (.padEnd (:label r) 10)
                   " | " (.padEnd families 6)
-                  " | " (.padStart (str n-elim) 10)
-                  " | " (.padStart (if (> (get-in r [:l2 :log_ml_var]) 0)
-                                     (.toFixed (get-in r [:l2 :log_ml_var]) 6)
-                                     "N/A") 14)
-                  " | " (.padStart (if (> (get-in r [:l3 :log_ml_var]) 0)
-                                     (.toFixed (get-in r [:l3 :log_ml_var]) 6)
-                                     "0 (exact)") 14)
-                  " | " (.padStart (if (= (:variance_reduction r) js/Infinity)
-                                     "Inf"
-                                     (.toFixed (:variance_reduction r) 1)) 13)
+                  " | " (.padStart (str n-elim) 4)
+                  " | " (.padStart (if l3e (.toExponential l3e 2) "n/a (partial)") 14)
+                  " | " (.padStart (if l2e (.toFixed l2e 4) "n/a") 14)
                   " | " (.padStart (.toFixed (:ess_improvement r) 1) 9)
                   " |"))))
 
@@ -711,18 +817,26 @@
     :exp5e result-5e}
    :summary
    {:families_tested ["normal-normal" "beta-bernoulli" "gamma-poisson" "mixed" "linreg"]
-    :variance_reductions (mapv (fn [r] {:label (:label r)
-                                         :ratio (if (= (:variance_reduction r) js/Infinity)
-                                                  "Infinity"
-                                                  (:variance_reduction r))})
-                               all-results)
+    ;; Exactness is the headline: |L3 log-ML − closed form| in nats. Every family
+    ;; with a closed form (all but the partial-conjugacy 5D) eliminates to the
+    ;; float32 floor. This replaces the old >1000x / Infinity / variance=0 artifact
+    ;; (a divide-by-~0 against a different model).
+    :log_ml_abs_error_nats
+    (mapv (fn [r] {:label (:label r)
+                   :l3 (get-in r [:l3 :log_ml_abs_error_nats])
+                   :l2 (get-in r [:l2 :log_ml_abs_error_nats])})
+          all-results)
+    :max_l3_abs_error_nats
+    (apply max (keep #(get-in % [:l3 :log_ml_abs_error_nats]) all-results))
+    ;; Variance reduction is reported ONLY where finite (partial conjugacy / 5D).
+    ;; Where L3 is exact its log-ML variance is 0, so the ratio is undefined and
+    ;; is omitted rather than reported as Infinity.
+    :variance_reductions
+    (vec (keep (fn [r] (when-let [vr (:variance_reduction r)]
+                         {:label (:label r) :ratio vr}))
+               all-results))
     :ess_improvements (mapv (fn [r] {:label (:label r) :ratio (:ess_improvement r)})
                             all-results)
-    :mean_variance_reduction
-    (let [finite-ratios (filter #(not= % js/Infinity)
-                                (map :variance_reduction all-results))]
-      (when (seq finite-ratios)
-        (/ (reduce + finite-ratios) (count finite-ratios))))
     :mean_ess_improvement
     (/ (reduce + (map :ess_improvement all-results)) (count all-results))}})
 

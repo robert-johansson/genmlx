@@ -99,7 +99,7 @@ GenMLX implements five compilation levels, each moving more computation into the
 | 0 | Shape-based GPU batching | baseline |
 | 1 | Model body as single Metal dispatch | 3-5x |
 | 2 | Full SMC/MCMC sweep in one graph | 15-77x |
-| 3 | Conjugate structure eliminated analytically | 33x variance reduction |
+| 3 | Conjugate structure eliminated analytically | exact marginal LL (ESS up to ~50×) |
 | 4 | Model + inference + gradient + optimizer fused | 9x |
 
 Each level subsumes the previous. Models written at Level 0 run unchanged at Level 4. The handler path remains ground truth at every stage.
