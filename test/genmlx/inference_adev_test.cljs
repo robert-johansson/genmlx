@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.inference-adev-test
   "Phase 4.7: ADEV gradient estimation tests.
    ADEV computes unbiased gradients ∇_θ E_{p(·;θ)}[cost(trace)] by

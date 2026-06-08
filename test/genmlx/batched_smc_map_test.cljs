@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.batched-smc-map-test
   "Test batched-smc-unfold with map-valued state."
   (:require [genmlx.mlx :as mx]

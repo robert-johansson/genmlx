@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.branching-property-test
   "Property-based tests for branching models using test.check.
    Tests the measure-theoretic handling of changing support -- uniquely PP.

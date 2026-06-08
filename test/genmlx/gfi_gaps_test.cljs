@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.gfi-gaps-test
   "Property-based tests closing 5 gaps against Cusumano-Towner 2020 thesis.
 

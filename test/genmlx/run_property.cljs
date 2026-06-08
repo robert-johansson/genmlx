@@ -1,3 +1,4 @@
+;; @tier exclude
 (ns genmlx.run-property
   "Category runner: property-based tests only."
   (:require [cljs.test :as t]

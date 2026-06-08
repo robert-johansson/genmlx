@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.vupdate-test
   "Tests for batched update (vupdate)."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-combinator-invariants-test
   "GFI combinator invariants: score additivity, importance weight identity,
    Switch structural update, and regenerate weight correctness.

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.custom-gradient-test
   "CustomGradientGF tests."
   (:require [cljs.test :refer [deftest is testing]]

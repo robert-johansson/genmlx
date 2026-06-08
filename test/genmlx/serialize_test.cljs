@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.serialize-test
   "Tests for serialization/deserialization of traces and choicemaps."
   (:require [cljs.test :refer [deftest is testing]]

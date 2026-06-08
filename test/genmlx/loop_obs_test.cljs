@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.loop-obs-test
   "Tests for loop-obs and merge-obs convenience helpers."
   (:require [cljs.test :refer [deftest is testing]]

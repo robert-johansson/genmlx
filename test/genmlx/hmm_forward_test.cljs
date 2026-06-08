@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.hmm-forward-test
   "HMM forward middleware tests."
   (:require [cljs.test :refer [deftest is testing]]

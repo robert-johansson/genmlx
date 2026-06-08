@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.adev-property-test
   "Property-based tests for ADEV gradient estimation using test.check.
    Every test verifies a genuine algebraic law:

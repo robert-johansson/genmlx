@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.mutation-boundary-test
   "P1-7 M2: Property tests verifying that pure layers have no hidden mutation.
    Tests that the mutation boundary (volatile! in runtime.cljs) is properly

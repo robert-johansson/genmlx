@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.multistep-kalman-ekf-test
   "Multi-step Kalman filter and EKF verification against analytical ground truth.
    Covers CORRECTNESS_PLAN section 2.5 unchecked items."

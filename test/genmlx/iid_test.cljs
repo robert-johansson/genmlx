@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.iid-test
   "Tests for iid and iid-gaussian distributions."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.program-golden-test
   "Byte-exact golden tests for genmlx.program analytical kernels.
 

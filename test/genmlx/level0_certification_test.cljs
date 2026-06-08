@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.level0-certification-test
   "Level 0 Certification: single-file gate for all Level 0 capabilities.
    Must pass before starting Level 1 development.

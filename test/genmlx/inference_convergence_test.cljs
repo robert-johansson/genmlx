@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.inference-convergence-test
   "Inference convergence tests on conjugate models.
    Normal-Normal conjugate: prior N(0,1), likelihood N(x,1), obs y=2.

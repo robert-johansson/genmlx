@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.inference-agreement-test
   "Phase 4.5: Cross-algorithm agreement tests.
    Verifies that IS, MH, and HMC all converge to the same analytical

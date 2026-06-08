@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.wp8-combinator-update-test
   "WP-8 tests: combinator compiled update.
    Validates that compiled update paths for Map, Unfold, Scan, Switch, Mix

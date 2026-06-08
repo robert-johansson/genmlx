@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.mcmc-detailed-balance-test
   "Phase 5.1 -- MCMC stationarity tests.
    Verifies that MH preserves the stationary distribution (Geweke fixed-point),

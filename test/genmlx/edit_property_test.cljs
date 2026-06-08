@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.edit-property-test
   "Property-based tests for the edit interface and its algebraic laws.
    Every test verifies a genuine mathematical invariant of trace mutation:

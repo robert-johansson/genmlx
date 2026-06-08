@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.partial-compile-test
   "L1-M3 tests: partial compilation for dynamic models.
 

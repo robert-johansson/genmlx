@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless test for the goal+lava PSRL exploration world (genmlx.agents.worlds/
 ;; lava-world) on the agentmodels Ch 3d PSRL driver. Demonstrates that lava + noise
 ;; make exploration VISIBLY MEANINGFUL: while uncertain, the agent samples goals all

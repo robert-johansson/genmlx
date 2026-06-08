@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.compiled-pf-test
   "Tests for compiled particle filter (Tier 2c).
    Validates correctness and benchmarks against batched-smc-unfold."

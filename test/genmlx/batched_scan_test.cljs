@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.batched-scan-test
   "Batched scan combinator tests."
   (:require [cljs.test :refer [deftest is testing]]

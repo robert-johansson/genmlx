@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.dist-boundary-test
   "Phase 1.4: Domain boundary tests for all distributions.
    Every bounded distribution must return -Infinity outside its support.

@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.handler-purity-test
   "Phase 3.1: Handler purity verification.
    Tests verify determinism via the GFI protocol (which handles PRNG properly),

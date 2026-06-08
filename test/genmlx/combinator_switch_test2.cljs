@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.combinator-switch-test2
   "Switch combinator: score = selected branch score only."
   (:require [cljs.test :refer [deftest is testing]]

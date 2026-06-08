@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.directional-dist-test
   "Tests for directional statistics distributions: von-mises, wrapped-cauchy, wrapped-normal."
   (:require [cljs.test :refer [deftest is testing]]

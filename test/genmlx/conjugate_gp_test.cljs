@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.conjugate-gp-test
   "Conjugate posterior correctness tests -- Gamma-Poisson pair.
    Verifies that inference algorithms converge to the analytically-known

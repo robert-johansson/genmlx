@@ -1,3 +1,4 @@
+;; @tier fast
 ;; Headless tests for the FUSED MDP rollout (bean genmlx-5zdd):
 ;; genmlx.agents.rollout/rollout-mdp, reached via agent/simulate-mdp :rollout-mode
 ;; :fused. The whole trajectory is one lazy Metal graph (state threaded as an MLX

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.trace-immutability-property-test
   "Property-based tests verifying trace immutability through update and regenerate.
    After p/update or p/regenerate, the ORIGINAL trace must be completely unmodified.

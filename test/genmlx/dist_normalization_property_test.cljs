@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.dist-normalization-property-test
   "Property-based tests for discrete distribution normalization laws.
    Verifies: probability axioms (sum to 1), interface consistency,

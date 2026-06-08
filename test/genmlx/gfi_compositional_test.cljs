@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-compositional-test
   "Property-based verification that GFI laws are preserved by combinators.
    Tests thesis Section 2.1.5: Map, Unfold, and Switch preserve well-formedness.

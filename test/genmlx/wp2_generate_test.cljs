@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.wp2-generate-test
   "WP-2 tests: compiled generate for M4 (branch-rewritten) and M3 (partial prefix) models."
   (:require-macros [genmlx.gen :refer [gen]])

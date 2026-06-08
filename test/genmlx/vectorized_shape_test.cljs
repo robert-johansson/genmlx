@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.vectorized-shape-test
   "Vectorized execution: shape correctness for vsimulate and vgenerate.
    vsimulate: choices [N]-shaped, score [N]-shaped.

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.vectorized-test
   "Tests for vectorized inference: dist-sample-n, vsimulate, vgenerate,
    resample, vectorized IS/SMC, splice batching, and fallback paths."

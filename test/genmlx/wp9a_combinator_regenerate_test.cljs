@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.wp9a-combinator-regenerate-test
   "WP-9A tests: combinator compiled regenerate.
    Validates that compiled regenerate paths for Map, Unfold, Scan, Switch, Mix

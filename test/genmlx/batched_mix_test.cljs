@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.batched-mix-test
   "Batched mix combinator tests."
   (:require [cljs.test :refer [deftest is testing]]

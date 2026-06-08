@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.llm-core-test
   "Phase 2: Test genmlx.llm.core — LLM as generative function.
    Verifies simulate, generate, assess, constrained generation,

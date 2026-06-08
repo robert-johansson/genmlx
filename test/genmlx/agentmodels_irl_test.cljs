@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless tests for agentmodels Ch 4 — Inverse Reinforcement Learning.
 ;; Part A: MDP IRL (utility table + timeCost + alpha) — agentmodels Equation 1.
 ;; Part B: POMDP-IRL (factorSequence belief threading) — agentmodels Equation 2.

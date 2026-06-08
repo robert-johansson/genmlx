@@ -1,3 +1,4 @@
+;; @tier fast
 ;; Headless tests for the TENSOR belief-update kernel (bean genmlx-kpuo):
 ;; genmlx.agents.belief. The pure-MLX observation-Bayes filter b'=normalize(b⊙L)
 ;; must agree to float32 tolerance (1e-6) with the host Clojure-map filters

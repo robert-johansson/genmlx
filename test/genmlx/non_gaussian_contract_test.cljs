@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.non-gaussian-contract-test
   "GFI laws on non-Gaussian canonical models.
    Extends contract_verification_test.cljs to distributions beyond Gaussian:

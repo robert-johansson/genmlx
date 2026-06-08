@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.compiled-loss-grad-test
   "L4-WP1 tests: compiled loss-gradient function and learn API.
 

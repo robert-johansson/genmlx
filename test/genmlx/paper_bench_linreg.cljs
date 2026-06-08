@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.paper-bench-linreg
   "Paper Experiment 3A: Bayesian Linear Regression Correctness.
 

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.enumerate-test
   "Tests for enumerative / grid-based inference."
   (:require [cljs.test :refer [deftest is testing]]

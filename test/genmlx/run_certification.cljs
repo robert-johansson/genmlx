@@ -1,3 +1,4 @@
+;; @tier exclude
 (ns genmlx.run-certification
   "Category runner: certification and compatibility tests."
   (:require [cljs.test :as t]

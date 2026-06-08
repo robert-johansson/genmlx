@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-laws-test-p6
   "GFI law tests part 6: DENOTATIONAL SEMANTICS laws"
   (:require [cljs.test :as t]

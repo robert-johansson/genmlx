@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.nn-test
   "Neural network integration tests."
   (:require [cljs.test :refer [deftest is testing]]

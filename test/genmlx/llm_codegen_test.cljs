@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.llm-codegen-test
   "Tests for code generation pipeline (Phase 7).
 

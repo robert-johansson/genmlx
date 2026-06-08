@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.vsmc-benchmark
   "Benchmark: Sequential SMC vs Vectorized SMC."
   (:require [genmlx.mlx :as mx]

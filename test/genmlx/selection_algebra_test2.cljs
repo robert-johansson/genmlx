@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.selection-algebra-test2
   "Algebraic property tests for Selection — specification-driven, cljs.test."
   (:require [cljs.test :refer [deftest is are testing]]

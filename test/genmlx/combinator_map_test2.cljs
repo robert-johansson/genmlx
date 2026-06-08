@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.combinator-map-test2
   "Map combinator: score = sum of element scores, integer-keyed address structure."
   (:require [cljs.test :refer [deftest is testing]]

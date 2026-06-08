@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-laws-test-p4
   "GFI law tests part 4: AGREEMENT + GRADIENT + IS laws"
   (:require [cljs.test :as t]

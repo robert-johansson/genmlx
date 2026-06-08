@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.wp9b-fused-loop-test
   "WP-9B tests: fused unfold/scan simulate.
    Validates that fused loop execution (single mx/compile-fn dispatch for T steps)

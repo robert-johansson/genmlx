@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.compiled-gradient-test
   "WP-4 tests: gradient through compiled inference.
 

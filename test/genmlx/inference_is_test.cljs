@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.inference-is-test
   "Phase 4.2: Importance sampling convergence tests.
    All posteriors are analytically derived conjugate posteriors.

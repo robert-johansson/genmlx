@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.stack-unstack-property-test
   "Property-based tests for choicemap stack/unstack isomorphism.
    Verifies: round-trip identity, shape promotion to [N], shape

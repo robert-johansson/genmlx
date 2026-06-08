@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.combinator-contract-test
   "Combinator contract tests: edit round-trip, degenerate cases, nested combinators, score additivity."
   (:require [cljs.test :refer [deftest is testing]]

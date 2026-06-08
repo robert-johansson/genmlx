@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.dist-test
   "Distribution tests: sampling, log-prob, GFI bridge, statistical validation."
   (:require [cljs.test :refer [deftest is testing]]

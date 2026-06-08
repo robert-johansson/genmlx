@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.vimco-test
   "Tests for VIMCO (Variational Inference with Multi-sample Objectives).
    Tests convergence, comparison with IWELBO, and shape correctness."

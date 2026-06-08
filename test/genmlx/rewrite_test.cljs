@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.rewrite-test
   "Tests for algebraic graph rewriting engine (WP-5).
    Gate 6: Graph rewriting correctness on conjugate models."

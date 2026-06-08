@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless tests for the ADJACENCY-REVEAL restaurant POMDP (agentmodels Ch 3c
 ;; makeGridWorldPOMDP) — the real local-observation model, vs the single-signpost
 ;; restaurant-gridworld. The latent is a per-restaurant OPEN/CLOSED vector (2^k

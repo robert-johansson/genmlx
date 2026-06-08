@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.fused-vi-test
   "WP-2: Fused VI composition tests.
    Tests the :vi path of fused-learn in a single VI call to stay under

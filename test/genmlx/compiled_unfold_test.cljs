@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.compiled-unfold-test
   "Tests for compiled unfold (Tier 2a).
    Validates correctness against the standard UnfoldCombinator,

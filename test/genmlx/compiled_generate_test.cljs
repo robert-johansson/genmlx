@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.compiled-generate-test
   "WP-1 tests: compiled generate for static DynamicGF models.
    Validates that compiled generate matches handler generate exactly."

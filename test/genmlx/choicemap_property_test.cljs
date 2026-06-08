@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.choicemap-property-test
   "Property-based choicemap algebra tests using test.check.
    Verifies set/get round-trips, to-map/from-map isomorphism,

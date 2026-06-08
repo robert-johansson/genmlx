@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.wp6-regenerate-test
   "WP-6 tests: compiled regenerate for DynamicGF."
   (:require-macros [genmlx.gen :refer [gen]])

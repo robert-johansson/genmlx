@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.synthesis-exact-test
   "Tests for genmlx-w47t: wire LLM model-synthesis to EXACT analytical model
    evidence. Covers the two load-bearing layers, with no LLM required (models

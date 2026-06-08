@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.paper-bench-vectorization
   "Paper Experiment 1: Vectorization speedup curves.
 

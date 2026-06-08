@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.gfi-project-test
   "GFI project: log-probability of selected subset of choices.
    project(all) = score, project(none) = 0, additive decomposition."

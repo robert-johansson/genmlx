@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.handler-transitions-test
   "Phase 3.2-3.3: Handler transition tests with analytical score verification.
    All 7 GFI operations tested: simulate, generate, update, regenerate,

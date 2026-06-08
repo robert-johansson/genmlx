@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.tutorial.ch08-test
   "Test file for Tutorial Chapter 8: Going Fast — Vectorization and Compilation."
   (:require [genmlx.mlx :as mx]

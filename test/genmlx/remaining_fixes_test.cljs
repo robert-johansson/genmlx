@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.remaining-fixes-test
   "Tests for three remaining audit fixes:
    1. Edit interface — IEdit implemented on all GF records

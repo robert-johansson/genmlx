@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.ekf-test
   "Tests for EKF middleware."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.nbb-benchmark
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as random]

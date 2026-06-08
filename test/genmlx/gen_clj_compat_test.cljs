@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gen-clj-compat-test
   "Tests adapted from Gen.clj's test suite to verify GenMLX correctness.
    Sources: gen.distribution-test, gen.dynamic-test, gen.inference.importance-test

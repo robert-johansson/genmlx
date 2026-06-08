@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.fused-map-state-test
   "Phase 1: mx/compile-fn traces through CLJS map intermediates.
    Phase 2: Fused Unfold simulate works with map-state kernels."

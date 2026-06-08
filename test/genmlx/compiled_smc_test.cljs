@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.compiled-smc-test
   "Level 2 WP-2 tests: compiled SMC bootstrap particle filter.
 

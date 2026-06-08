@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.tutorial.ch10-test
   "Test file for Tutorial Chapter 10: Extensions and Verification."
   (:require [genmlx.mlx :as mx]

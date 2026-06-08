@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.pmcmc-test
   "Tests for Tier 3b: Particle MCMC (PMMH and Particle Gibbs)."
   (:require [cljs.test :refer [deftest is testing]]

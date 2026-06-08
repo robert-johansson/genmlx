@@ -1,3 +1,4 @@
+;; @tier bench
 (ns lowering-ground-truth
   "Ground truth test: what is the absolute floor cost of a score function
    on bare Metal, and does mx/compile-fn already skip the SCI body?

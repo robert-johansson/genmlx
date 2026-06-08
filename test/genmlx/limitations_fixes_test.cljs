@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.limitations-fixes-test
   "Tests for the 6 items that previously worked with limitations."
   (:require [cljs.test :refer [deftest is testing]]

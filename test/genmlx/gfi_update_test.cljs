@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.gfi-update-test
   "GFI update: weight = new_score - old_score, discard contains old values."
   (:require [cljs.test :refer [deftest is testing]]

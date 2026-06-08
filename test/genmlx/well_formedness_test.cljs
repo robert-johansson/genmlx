@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.well-formedness-test
   "Tests for DML well-formedness restrictions ([T] Ch. 2.2.1, p.63).
 

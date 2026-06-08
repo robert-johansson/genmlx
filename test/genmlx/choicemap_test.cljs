@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.choicemap-test
   "ChoiceMap data structure tests: EMPTY, Value, constructor, nested,
    set-choice, merge, to-map/from-map."

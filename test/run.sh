@@ -9,6 +9,12 @@
 #   test/run.sh all             # fast + medium + slow  (the pre-merge gate)
 #   test/run.sh fast medium     # any explicit combination
 #   test/run.sh check           # classification gate: every test file is classified exactly once
+#   test/run.sh tags [--write]  # regenerate test/tiers.txt from the in-file @tier tags
+#
+# CLASSIFICATION SOURCE OF TRUTH: a ';; @tier <fast|medium|slow|bench|exclude> [core]'
+# line near the top of each test file. test/tiers.txt is a GENERATED cache the runner
+# reads (fast awk lookup); `check` FAILS if it drifts from the tags. To change a file's
+# tier, edit its @tier line and run `test/run.sh tags --write`.
 #
 # `core` is a 3rd-column marker on `fast` lines (core ⊆ fast), not a separate tier —
 # the manifest stays the single, complete classification that `check` guards.
@@ -69,6 +75,38 @@ manifest_files_for_tier() {
 }
 manifest_all_files()      { awk '!/^#/ && NF>=2 {print $2}' "$MANIFEST"; }
 disk_all_files()          { find test -name '*.cljs' -type f | sort; }
+
+# ---- in-file @tier tags (the source of truth) -------------------------------
+# Each test file carries  ';; @tier <tier> [core]'  near the top. tiers.txt is a
+# generated cache; `check` guards that the two never drift, and `tags --write`
+# regenerates the cache from the tags.
+file_tag() {                # echo "<tier>" or "<tier> core"; empty if missing/invalid
+  awk '
+    NR>8 { exit }
+    /^[[:space:]]*;;[[:space:]]*@tier[[:space:]]/ {
+      for (i=1;i<=NF;i++) if ($i=="@tier") {
+        t=$(i+1); c=$(i+2)
+        if (t ~ /^(fast|medium|slow|bench|exclude)$/)
+          print (c=="core" ? t" core" : t)
+        exit
+      }
+    }' "$1"
+}
+gen_tiers() {               # canonical manifest derived from the tags (path-sorted)
+  printf '%s\n' \
+    '# GenMLX test tier manifest — GENERATED from the in-file ";; @tier" tags.' \
+    '# SOURCE OF TRUTH is the @tier line in each test file; do NOT hand-edit here.' \
+    '# Change a file tier by editing its tag, then run: test/run.sh tags --write' \
+    '# `test/run.sh check` FAILS if this cache drifts. Format: <tier> <path> [core]'
+  local f tag
+  while IFS= read -r f; do
+    tag="$(file_tag "$f")"
+    [ -z "$tag" ] && continue
+    set -- $tag
+    if [ "${2:-}" = core ]; then printf '%s %s core\n' "$1" "$f"
+    else printf '%s %s\n' "$1" "$f"; fi
+  done < <(disk_all_files)
+}
 
 # ---- process-tree teardown (bean genmlx-tkbs) -------------------------------
 # A test is `timeout -> bun -> bunx -> nbb -> node`. Killing the bash parent
@@ -138,6 +176,18 @@ do_check() {
   if [ -n "$badcore" ]; then
     echo "INVALID 3rd column — only 'core' on a 'fast' line is allowed:"
     echo "$badcore" | sed 's/^/  /'; fail=1
+  fi
+  # 7. every file must carry a valid in-file @tier tag (the source of truth) ...
+  local untagged f
+  untagged="$(while IFS= read -r f; do [ -z "$(file_tag "$f")" ] && echo "$f"; done < <(disk_all_files))"
+  if [ -n "$untagged" ]; then
+    echo "MISSING/INVALID ';; @tier' tag (add one near the top of each file):"
+    echo "$untagged" | sed 's/^/  /'; fail=1
+  fi
+  # 8. ... and the generated tiers.txt cache must match the tags (no drift)
+  if ! diff -q <(gen_tiers) "$MANIFEST" >/dev/null 2>&1; then
+    echo "$MANIFEST is STALE vs the in-file @tier tags — run: test/run.sh tags --write"
+    fail=1
   fi
 
   if [ "$fail" -eq 0 ]; then
@@ -235,7 +285,7 @@ run_tiers() {
 }
 
 # ---- main -------------------------------------------------------------------
-[ $# -ge 1 ] || { echo "usage: test/run.sh {core|fast|medium|slow|bench|all|check|clean} [tier...]"; exit 2; }
+[ $# -ge 1 ] || { echo "usage: test/run.sh {core|fast|medium|slow|bench|all|check|clean|tags} [tier...]"; exit 2; }
 
 # internal worker dispatch
 if [ "$1" = "__one" ]; then shift; do_one "$@"; exit $?; fi
@@ -245,6 +295,11 @@ for arg in "$@"; do
   case "$arg" in
     check) do_check; exit $? ;;
     clean) do_clean; exit $? ;;
+    tags)  if [ "${2:-}" = --write ]; then
+             gen_tiers > "$MANIFEST"
+             echo "wrote $MANIFEST from in-file @tier tags ($(disk_all_files | wc -l | tr -d ' ') files)."
+           else gen_tiers; fi
+           exit $? ;;
     all)   TIERS+=(fast medium slow) ;;
     core|fast|medium|slow|bench) TIERS+=("$arg") ;;
     *) echo "unknown tier: $arg"; exit 2 ;;

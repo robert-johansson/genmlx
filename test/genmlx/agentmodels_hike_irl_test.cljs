@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless test for the Big-Hiking world + hiker inverse planning (agentmodels
 ;; Ch 3b world + Ch 4 IRL) — a SECOND IRL domain beyond the Restaurant-Choice grid.
 ;; Observe a hiker's path and infer which PEAK they value (East vs West), reusing

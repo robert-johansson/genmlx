@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.adaptive-nuts-test
   "Tests for NUTS dual-averaging step-size + mass matrix adaptation,
    and HMC adapt-metric."

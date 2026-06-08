@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.tutorial.ch01-test
   "Test file for Tutorial Chapter 1: Your First Model.
    Every code listing in the chapter has a corresponding test here."

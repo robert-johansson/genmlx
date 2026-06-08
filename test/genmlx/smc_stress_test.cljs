@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.smc-stress-test
   "Stress test for SMC on HMM: verifies P0-4 Metal pipeline leak is resolved.
    Tests batched-smc-unfold and smc-unfold at various particle counts on T=50 HMM."

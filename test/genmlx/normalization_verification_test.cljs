@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.normalization-verification-test
   "Verify that all distributions normalize: discrete PMFs sum to 1,
    continuous PDFs integrate to 1 via Simpson's rule.

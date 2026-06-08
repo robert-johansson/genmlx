@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.phase-a-test
   "Tests for Phase A features: propose, custom proposal MH, mask combinator,
    vectorized update/regenerate, new distributions, unfold/switch update/regenerate."

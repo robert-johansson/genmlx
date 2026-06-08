@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.conjugacy-test
   "Tests for Level 3 conjugacy detection.
    Address-based dispatch prototype (marginal LL matches conjugate.cljs)

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.vectorized-grad-test
   "Vectorized gradient infrastructure tests."
   (:require [cljs.test :refer [deftest is testing]]

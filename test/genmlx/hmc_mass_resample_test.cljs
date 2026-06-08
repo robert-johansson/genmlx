@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.hmc-mass-resample-test
   "Tests for HMC mass matrix (14.1), residual resampling (14.3),
    and stratified resampling (14.4)."

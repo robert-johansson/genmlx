@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.dep-graph-test
   "Tests for dependency graph construction and conditional independence.
    Covers: build-dep-graph, d-separated?, find-markov-blanket,

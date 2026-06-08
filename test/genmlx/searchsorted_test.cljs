@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.searchsorted-test
   "Tests for mx/searchsorted and O(N) systematic resampling."
   (:require [cljs.test :refer [deftest is testing]]

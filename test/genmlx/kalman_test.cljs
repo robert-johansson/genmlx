@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.kalman-test
   "Tests for Kalman filter middleware."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.method-selection-test
   "Automatic method selection tests.
    Tests select-method decision tree and tune-method-opts across

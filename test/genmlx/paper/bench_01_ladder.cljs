@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.paper.bench-01-ladder
   "Paper Experiment 1: Compilation Ladder — the hero experiment.
 

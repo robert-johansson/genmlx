@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-laws-test-p8
   "GFI law tests part 8: PF + AIS + INVOLUTIVE MCMC laws"
   (:require [cljs.test :as t]

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.conjugate-posterior-test
   "Conjugate posterior verification against analytically derived ground truth.
 

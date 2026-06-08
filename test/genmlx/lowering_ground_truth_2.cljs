@@ -1,3 +1,4 @@
+;; @tier bench
 (ns lowering-ground-truth-2
   "Part 2: Where does time ACTUALLY go in compiled inference?
    Now that we know compile-fn caches score functions, what's the REAL bottleneck?"

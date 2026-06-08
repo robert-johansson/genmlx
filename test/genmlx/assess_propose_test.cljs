@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.assess-propose-test
   "Assess and propose combinator tests."
   (:require [cljs.test :refer [deftest is testing]]

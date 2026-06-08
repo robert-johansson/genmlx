@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-laws-test-p1
   "GFI law tests part 1: SIMULATE laws"
   (:require [cljs.test :as t]

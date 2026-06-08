@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.amortized-test
   "Amortized inference tests."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless tests for agentmodels Ch 5e — full [immediate,delayed] Restaurant
 ;; geometry + joint inference of biases and preferences (genmlx-69s8).
 ;; Run: bunx nbb@1.4.206 test/genmlx/agentmodels_5e_joint_test.cljs

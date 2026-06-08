@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-laws-test-p7
   "GFI law tests part 7: SELECTION MH + COMPILED PATH EQUIVALENCE laws"
   (:require [cljs.test :as t]

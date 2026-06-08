@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.auto-analytical-test
   "Tests for Level 3 address-based analytical handlers (WP-1).
    Verifies marginal LL, posterior, weight/score accounting against conjugate.cljs."

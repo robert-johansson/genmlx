@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.batched-switch-test
   "Batched switch combinator tests."
   (:require [cljs.test :refer [deftest is testing]]

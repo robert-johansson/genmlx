@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.dist-statistics-test
   "Distribution statistics tests: E[X], Var[X], and discrete PMF sums."
   (:require [cljs.test :refer [deftest is testing]]

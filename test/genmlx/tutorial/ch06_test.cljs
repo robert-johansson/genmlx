@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.tutorial.ch06-test
   "Test file for Tutorial Chapter 6: Composition — Splice and Combinators."
   (:require [genmlx.mlx :as mx]

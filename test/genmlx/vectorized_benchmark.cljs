@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.vectorized-benchmark
   "Benchmark: sequential vs batched inference performance.
    Exit criteria: dist-sample-n >10x for N=100, vgenerate >5x end-to-end."

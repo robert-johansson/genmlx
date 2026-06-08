@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.product-dist-test
   "Tests for product distributions."
   (:require [cljs.test :refer [deftest is testing]]

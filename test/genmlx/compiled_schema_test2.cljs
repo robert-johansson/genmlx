@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.compiled-schema-test2
   "Schema extraction: trace sites, splice sites, param sites, classification.
    Verifies extract-schema produces correct structural metadata."

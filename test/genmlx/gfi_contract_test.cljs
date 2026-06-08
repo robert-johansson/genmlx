@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.gfi-contract-test
   "GFI contract tests across canonical models."
   (:require [cljs.test :refer [deftest is testing]]

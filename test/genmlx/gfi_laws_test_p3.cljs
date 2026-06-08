@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-laws-test-p3
   "GFI law tests part 3: SCORE DECOMPOSITION + STRUCTURED DENSITY + COMPOSITIONALITY"
   (:require [cljs.test :as t]

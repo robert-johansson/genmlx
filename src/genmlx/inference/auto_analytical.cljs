@@ -49,30 +49,50 @@
    posterior: {:mean :var}, obs-values: [T]-shaped array, obs-var (sigma^2)
    Returns: {:mean :var :ll}
 
-   Math: T observations y_1..y_T from N(mu, sigma^2)
-     posterior-prec = 1/prior-var + T/obs-var
-     posterior-mean = posterior-var * (prior-mean/prior-var + sum(y)/obs-var)
-     marginal LL = sum of per-element N(y_i; prior-mean, prior-var + obs-var)"
+   Math: T observations y_1..y_T drawn from N(mu, sigma^2) with a SHARED
+   mu ~ N(prior-mean m0, prior-var tau^2).
+     posterior-prec = 1/tau^2 + T/sigma^2
+     posterior-mean = posterior-var * (m0/tau^2 + sum(y)/sigma^2)
+     marginal LL    = log N(y ; m0*1, Sigma),  Sigma = sigma^2 I + tau^2 11^T
+
+   The marginal is the JOINT multivariate normal: because mu is shared, the y_i
+   are correlated (Cov(y_i,y_j) = tau^2 for i!=j), NOT independent. Computed in
+   closed form via the matrix-determinant lemma / Sherman-Morrison (fixes
+   genmlx-ke9i: the previous code summed independent per-point marginals
+   sum_i log N(y_i; m0, tau^2+sigma^2), ignoring the shared-mu covariance — off
+   by ~3.66 nats for T>1, correct only at T=1)."
   [posterior obs-values obs-var]
   (let [{:keys [mean var]} posterior
         obs-values (mx/ensure-array obs-values)
         t-val (mx/scalar (first (mx/shape obs-values)))
         sum-obs (mx/sum obs-values)
-        ;; Posterior
+        ;; Posterior (unchanged)
         inv-prior (mx/divide (mx/scalar 1.0) var)
         inv-obs-total (mx/divide t-val obs-var)
         new-var (mx/divide (mx/scalar 1.0) (mx/add inv-prior inv-obs-total))
         new-mean (mx/multiply new-var
                               (mx/add (mx/multiply inv-prior mean)
                                       (mx/divide sum-obs obs-var)))
-        ;; Marginal LL: sum of N(y_i; prior-mean, prior-var + obs-var)
-        S (mx/add var obs-var)
-        innov (mx/subtract obs-values mean)
-        element-lls (mx/multiply (mx/scalar -0.5)
-                                 (mx/add (mx/scalar LOG-2PI)
-                                         (mx/add (mx/log S)
-                                                 (mx/divide (mx/multiply innov innov) S))))
-        ll (mx/sum element-lls)]
+        ;; Marginal LL = log N(y; m0*1, sigma^2 I + tau^2 11^T)  (shared-mu joint).
+        ;; det(Sigma)   = (sigma^2)^(T-1) * (sigma^2 + T*tau^2)
+        ;; Sigma^{-1}   = (1/sigma^2)(I - (tau^2/(sigma^2+T*tau^2)) 11^T)
+        ;; quad = d' Sigma^{-1} d = (sum d_i^2 - (tau^2/denom)(sum d_i)^2)/sigma^2
+        s2 obs-var                                   ; sigma^2
+        t2 var                                       ; tau^2
+        innov (mx/subtract obs-values mean)          ; d_i = y_i - m0   [T]
+        sum-d (mx/sum innov)
+        sum-d2 (mx/sum (mx/multiply innov innov))
+        denom (mx/add s2 (mx/multiply t-val t2))     ; sigma^2 + T*tau^2
+        logdet (mx/add (mx/multiply (mx/subtract t-val (mx/scalar 1.0))
+                                    (mx/log (mx/multiply MASK-ON s2)))
+                       (mx/log denom))
+        quad (mx/divide (mx/subtract sum-d2
+                                     (mx/multiply (mx/divide t2 denom)
+                                                  (mx/multiply sum-d sum-d)))
+                        s2)
+        ll (mx/multiply (mx/scalar -0.5)
+                        (mx/add (mx/multiply t-val (mx/scalar LOG-2PI))
+                                (mx/add logdet quad)))]
     {:mean new-mean :var new-var :ll ll}))
 
 (defn bb-update-step

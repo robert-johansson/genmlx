@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.llm-grammar-test
   "Tests for grammar-constrained LLM generation (Phase 4).
 

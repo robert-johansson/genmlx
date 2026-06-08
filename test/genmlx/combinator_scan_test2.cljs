@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.combinator-scan-test2
   "Scan combinator: sequential with carry-state and per-step inputs.
    Score = sum of step scores, carry threads through steps."

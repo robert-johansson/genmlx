@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.inference-property-test
   "Property-based inference algorithm tests using test.check.
    Every test verifies a genuine algebraic law of probabilistic programming:

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.batched-unfold-test
   "Batched unfold combinator tests."
   (:require [cljs.test :refer [deftest is testing]]

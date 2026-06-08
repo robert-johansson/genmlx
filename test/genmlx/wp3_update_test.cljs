@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.wp3-update-test
   "WP-3 tests: compiled update for static DynamicGF models."
   (:require-macros [genmlx.gen :refer [gen]])

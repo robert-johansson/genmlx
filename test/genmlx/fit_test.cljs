@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.fit-test
   "fit API tests.
    Tests the one-call entry point across method selection, dispatch,

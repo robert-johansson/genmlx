@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.l3-5-regenerate-test
   "Level 3.5 WP-0: Regenerate auto-handler integration tests."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.tutorial.ch09-test
   "Test file for Tutorial Chapter 9: Gradients, Learning, and Neural Models."
   (:require [genmlx.mlx :as mx]

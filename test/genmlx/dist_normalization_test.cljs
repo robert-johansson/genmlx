@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.dist-normalization-test
   "Phase 1.6: Normalization tests for discrete distributions.
    For every discrete distribution with finite support, verify that

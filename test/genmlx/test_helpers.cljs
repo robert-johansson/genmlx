@@ -1,3 +1,4 @@
+;; @tier exclude
 (ns genmlx.test-helpers
   "Shared test utilities for the GenMLX test suite.
    Provides numerical comparison, MLX helpers, PRNG management,

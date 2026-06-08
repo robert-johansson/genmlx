@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.smcp3-kernel-test
   "Tests for SMCP3 kernel interface."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.genjax-compat-test
   "Tests adapted from GenJAX (https://github.com/femtomc/genjax/tree/main/tests).
    Verifies GFI invariants, inference convergence, gradient flow, combinators,

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.combinator-unfold-test2
   "Unfold combinator: sequential application with state threading.
    Score = sum of step scores, addresses are integer-keyed by step."

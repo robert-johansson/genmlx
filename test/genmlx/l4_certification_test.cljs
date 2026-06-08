@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.l4-certification-test
   "Level 4 Certification: 5 gates across all WPs.
    Gate-0: Compiled optimizer faster than handler loop

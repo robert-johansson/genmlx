@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.clip-contract-test
   "Regression guard for the mx/clip bounds contract (bean genmlx-aonv).
 

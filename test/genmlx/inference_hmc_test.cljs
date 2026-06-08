@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.inference-hmc-test
   "Phase 4.3: HMC convergence tests.
 

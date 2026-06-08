@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.kernel-combinator-test
   "Tests for kernel combinators: chain, cycle-kernels, mix-kernels, seed."
   (:require [cljs.test :refer [deftest is testing]]

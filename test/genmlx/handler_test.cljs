@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.handler-test
   "Handler state-transition tests: simulate and generate via runtime."
   (:require [cljs.test :refer [deftest is testing]]

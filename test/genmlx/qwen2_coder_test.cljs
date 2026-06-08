@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.qwen2-coder-test
   "Test Qwen2.5-Coder-0.5B loading and generation via qwen2→qwen3 path."
   (:require [genmlx.llm.backend :as llm]

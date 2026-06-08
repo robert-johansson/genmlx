@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.llm-backend-test
   "Phase 1: Test genmlx.llm.backend — model loading, tokenizer, forward pass,
    log-probs, and text generation."

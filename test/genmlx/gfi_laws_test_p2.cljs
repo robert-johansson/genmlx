@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-laws-test-p2
   "GFI law tests part 2: UPDATE + REGENERATE + PROJECT laws"
   (:require [cljs.test :as t]

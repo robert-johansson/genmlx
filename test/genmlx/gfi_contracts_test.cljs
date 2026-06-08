@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.gfi-contracts-test
   "Run core GFI algebraic laws against canonical test models.
    Tests the 11 laws that correspond to the original GFI contracts."

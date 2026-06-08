@@ -1,3 +1,4 @@
+;; @tier exclude
 (ns genmlx.gfi-compiler
   "Compile model specifications (pure Clojure data) into DynamicGF objects.
    Used by the GFI property-based test suite to generate random models."

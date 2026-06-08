@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.choicemap-algebra-test
   "Algebraic property tests for ChoiceMap operations."
   (:require [cljs.test :refer [deftest is testing]]

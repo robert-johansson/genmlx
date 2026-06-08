@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.audit-gaps-test
   "Tests for remaining GFI compliance audit gaps (items 2-9).
 

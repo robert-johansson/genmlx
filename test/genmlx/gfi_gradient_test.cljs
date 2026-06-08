@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.gfi-gradient-test
   "Property-based gradient correctness: AD vs symmetric finite differences.
 

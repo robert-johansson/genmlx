@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.runtime-overhead-benchmark
   "Micro-benchmarks: runtime-as-parameter overhead and Metal memory profile."
   (:require [genmlx.mlx :as mx]

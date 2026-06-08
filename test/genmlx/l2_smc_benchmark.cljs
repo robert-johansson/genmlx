@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.l2-smc-benchmark
   "Level 2 Gate 1+2: compiled SMC benchmark.
 

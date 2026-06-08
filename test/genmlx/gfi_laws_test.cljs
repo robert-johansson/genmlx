@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-laws-test
   "Property-based verification of GFI algebraic laws.
 

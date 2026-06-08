@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.program-test
   "Deterministic tests for genmlx.program — two-level GFI infrastructure.
 

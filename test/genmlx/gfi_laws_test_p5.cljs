@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-laws-test-p5
   "GFI law tests part 5: MH + REGENERATE WEIGHT + INTERNAL PROPOSAL laws"
   (:require [cljs.test :as t]

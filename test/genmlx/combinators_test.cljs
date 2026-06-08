@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.combinators-test
   "Tests for Map, Unfold, Switch, Mask, Scan, Contramap, and MapRetval combinators."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier exclude
 (ns genmlx.gfi-law-checkers
   "Reusable GFI algebraic law checkers for property-based testing.
    Each function takes a generative function and verifies one algebraic

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.conjugate-bb-test
   "Conjugate posterior correctness tests -- Beta-Bernoulli pair.
    Verifies that inference algorithms converge to the analytically-known

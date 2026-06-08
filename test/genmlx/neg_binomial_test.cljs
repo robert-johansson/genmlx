@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.neg-binomial-test
   "Tests for the negative binomial distribution."
   (:require [cljs.test :refer [deftest is testing]]

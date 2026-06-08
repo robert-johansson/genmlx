@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.l3-5-multivariate-test
   "Level 3.5 WP-3: Multivariate conjugacy test suite.
    Tests MVN-MVN conjugate update, auto-handler wiring, condition number guard,

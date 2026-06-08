@@ -1,3 +1,4 @@
+;; @tier bench
 (ns eval-cost-model
   "Ground truth test: what is the eval! cost model?
 

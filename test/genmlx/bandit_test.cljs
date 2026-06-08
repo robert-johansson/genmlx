@@ -1,3 +1,4 @@
+;; @tier medium
 ;; Headless tests for the multi-armed bandit POMDP (agentmodels Ch 3c/3d):
 ;; host-side Beta-Bernoulli belief filter + Thompson posterior sampling. The
 ;; belief update and arm-values are pure; the rollout is made reproducible by

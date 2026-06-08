@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.vi-property-test
   "Property-based tests for variational inference using test.check.
    Every test verifies a genuine algebraic law:

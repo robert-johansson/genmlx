@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.validation-test
   "Parameter validation tests for distributions."
   (:require [cljs.test :refer [deftest is testing]]

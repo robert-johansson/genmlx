@@ -1,3 +1,4 @@
+;; @tier medium
 (ns loop-compilation-test
   "LOOP COMPILATION: Compile entire MH chains into one Metal dispatch.
 

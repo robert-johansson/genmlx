@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.adev-test
   "ADEV gradient estimation tests."
   (:require [cljs.test :refer [deftest is testing]]

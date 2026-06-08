@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.dist-error-test
   "Phase 1.8: Error condition tests for distribution parameter validation.
    Every distribution must throw on invalid parameters.

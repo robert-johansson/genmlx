@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.gpu-pipeline-bench
   "Benchmark: sequential vs vectorized IS and ADEV."
   (:require [genmlx.mlx :as mx]

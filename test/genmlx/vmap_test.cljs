@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.vmap-test
   "Tests for the Vmap combinator."
   (:require [cljs.test :refer [deftest is testing]]

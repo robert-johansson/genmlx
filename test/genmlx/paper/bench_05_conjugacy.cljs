@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.paper.bench-05-conjugacy
   "Paper Experiment 5: L3 Auto-Conjugacy Showcase.
 

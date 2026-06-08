@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless tests for the agentmodels biased/bounded planners (Ch 5).
 ;; Run: bun run --bun nbb test/genmlx/agentmodels_biased_planners_test.cljs
 

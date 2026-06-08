@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.llm-msa-test
   "Tests for the MSA (Model Synthesis Architecture) pipeline.
 

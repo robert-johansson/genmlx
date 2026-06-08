@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Unit tests for genmlx.agents.helpers — the ergonomic PPL helpers used across
 ;; the agentmodels examples library (factor-dist, softmax-action, value-carrying
 ;; draws, boxed-choice). Self-contained; no test framework.

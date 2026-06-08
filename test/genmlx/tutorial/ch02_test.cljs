@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.tutorial.ch02-test
   "Test file for Tutorial Chapter 2: Conditioning — The Core Trick.
    Every code listing in the chapter has a corresponding test here."

@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.perfbench-large
   "Large-model IS benchmark: linear regression with D features.
 

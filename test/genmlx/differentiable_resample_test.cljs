@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.differentiable-resample-test
   "WP-3 tests: differentiable resampling (Gumbel-top-k and Gumbel-softmax).
 

@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.gfi-assess-test
   "GFI assess: weight = log P(choices | args) for fully specified choices."
   (:require [cljs.test :refer [deftest is testing]]

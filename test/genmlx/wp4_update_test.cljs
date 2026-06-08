@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.wp4-update-test
   "WP-4 tests: compiled update for M4 (branch-rewritten) and M3 (partial prefix) models."
   (:require-macros [genmlx.gen :refer [gen]])

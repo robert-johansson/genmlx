@@ -1,3 +1,4 @@
+;; @tier exclude
 (ns genmlx.test-models
   "Canonical test models for the GenMLX test suite.
    Shared across GFI, inference, and property-based tests."

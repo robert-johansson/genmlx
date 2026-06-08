@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.conjugate-test
   "Conjugate prior middleware tests.
    Normal-Normal, Beta-Bernoulli, Gamma-Poisson pure updates,
