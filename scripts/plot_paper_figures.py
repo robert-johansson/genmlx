@@ -847,10 +847,48 @@ def compilation_table_pdf():
 # Fig 9: System Comparison Bar Chart
 # ---------------------------------------------------------------------------
 
+def load_genmlx_crosssystem():
+    """GenMLX cross-system timings in the unified {'comparisons': [...]} schema,
+    synthesized from the tracked native bench output results/cross-system/data.json
+    (produced by bench/cross_system.cljs). Single source of truth — no derived
+    genmlx.json that could silently drift from data.json. Maps GenMLX-native config
+    labels to the (model, algorithm) pairs the table/bars look up via find().
+
+    NB: GenMLX's bench uses N(0,10) priors on a 5-point linreg, whereas the GenJAX /
+    NumPyro IS rows use the shared 20-point N(0,2) spec. The IS *timing* columns are
+    therefore indicative, not matched-spec; the matched-ACCURACY claim lives in the
+    accuracy blocks of numpyro.json (and is exact for GenMLX's L3)."""
+    data = load_json('cross-system/data.json')
+
+    def native(config, particles=None):
+        for r in data['results']:
+            if r['config'] == config and (particles is None
+                                          or r.get('particles') == particles):
+                return r
+        return None
+
+    def cmp(config, model, algo, particles=None):
+        r = native(config, particles)
+        if r is None:
+            return None
+        return {'model': model, 'algorithm': algo, 'time_ms': r['mean_ms'],
+                'time_ms_std': r.get('std_ms'), 'time_ms_min': r.get('min_ms'),
+                'source_config': config}
+
+    comparisons = [c for c in [
+        cmp('VIS-linreg', 'linreg', 'IS', particles=1000),   # vectorized IS (N=1000)
+        cmp('fused-MH-linreg', 'linreg', 'MH'),              # compiled MH
+        cmp('VIS-gmm', 'gmm', 'IS', particles=1000),
+        cmp('L3-exact', 'linreg', 'L3'),                     # GenMLX-only exact marginal
+    ] if c is not None]
+    return {'system': 'genmlx', 'backend': 'Metal GPU', 'comparisons': comparisons}
+
+
 def fig9_system_bars():
-    genmlx = load_json('exp4_system_comparison/genmlx.json')
-    genjl = load_json('exp4_system_comparison/genjl.json')
-    genjax = load_json('exp4_system_comparison/genjax.json')
+    genmlx = load_genmlx_crosssystem()
+    genjl = load_json('cross-system/genjl.json')
+    genjax = load_json('cross-system/genjax.json')
+    numpyro = load_json('cross-system/numpyro.json')
 
     def find(data, model, algo):
         for c in data['comparisons']:
@@ -858,59 +896,58 @@ def fig9_system_bars():
                 return c
         return None
 
-    # Define comparison groups
+    def t(c):
+        return c['time_ms'] if c else None
+
+    # Define comparison groups. Each group is (GenMLX, Gen.jl, GenJAX, NumPyro);
+    # NumPyro is the out-of-family point (only the shared-spec LinReg IS row).
     groups = []
     labels = []
 
     # LinReg IS
-    mlx_lr = find(genmlx, 'linreg', 'IS')
-    jl_lr = find(genjl, 'linreg', 'IS')
-    jx_lr = find(genjax, 'linreg', 'IS')
-    if mlx_lr and jl_lr and jx_lr:
-        groups.append((mlx_lr['time_ms'], jl_lr['time_ms'], jx_lr['time_ms']))
+    if find(genmlx, 'linreg', 'IS') and find(genjl, 'linreg', 'IS') \
+            and find(genjax, 'linreg', 'IS'):
+        groups.append((t(find(genmlx, 'linreg', 'IS')), t(find(genjl, 'linreg', 'IS')),
+                       t(find(genjax, 'linreg', 'IS')), t(find(numpyro, 'linreg', 'IS'))))
         labels.append('LinReg\nIS(1K)')
 
     # GMM IS
-    mlx_gmm = find(genmlx, 'gmm', 'IS')
-    jl_gmm = find(genjl, 'gmm', 'IS')
-    jx_gmm = find(genjax, 'gmm', 'IS')
-    if mlx_gmm and jl_gmm and jx_gmm:
-        groups.append((mlx_gmm['time_ms'], jl_gmm['time_ms'], jx_gmm['time_ms']))
+    if find(genmlx, 'gmm', 'IS') and find(genjl, 'gmm', 'IS') and find(genjax, 'gmm', 'IS'):
+        groups.append((t(find(genmlx, 'gmm', 'IS')), t(find(genjl, 'gmm', 'IS')),
+                       t(find(genjax, 'gmm', 'IS')), t(find(numpyro, 'gmm', 'IS'))))
         labels.append('GMM\nIS(1K)')
 
-    # HMM IS (GenJAX may be missing)
-    mlx_hmm = find(genmlx, 'hmm', 'IS')
-    jl_hmm = find(genjl, 'hmm', 'IS')
-    jx_hmm = find(genjax, 'hmm', 'IS')
-    if mlx_hmm and jl_hmm:
-        hmm_jx = jx_hmm['time_ms'] if jx_hmm else None
-        groups.append((mlx_hmm['time_ms'], jl_hmm['time_ms'], hmm_jx))
+    # HMM IS (GenJAX/NumPyro may be missing)
+    if find(genmlx, 'hmm', 'IS') and find(genjl, 'hmm', 'IS'):
+        groups.append((t(find(genmlx, 'hmm', 'IS')), t(find(genjl, 'hmm', 'IS')),
+                       t(find(genjax, 'hmm', 'IS')), t(find(numpyro, 'hmm', 'IS'))))
         labels.append('HMM\nIS(1K)')
 
     # LinReg MH
-    mlx_mh = find(genmlx, 'linreg', 'MH')
-    jl_mh = find(genjl, 'linreg', 'MH')
-    if mlx_mh and jl_mh:
-        groups.append((mlx_mh['time_ms'], jl_mh['time_ms'], None))
-        labels.append('LinReg\nMH(5K)')
+    if find(genmlx, 'linreg', 'MH') and find(genjl, 'linreg', 'MH'):
+        groups.append((t(find(genmlx, 'linreg', 'MH')), t(find(genjl, 'linreg', 'MH')),
+                       None, None))
+        labels.append('LinReg\nMH')
 
     # HMM SMC
-    mlx_smc = find(genmlx, 'hmm', 'SMC')
-    jl_smc = find(genjl, 'hmm', 'SMC')
-    if mlx_smc and jl_smc:
-        groups.append((mlx_smc['time_ms'], jl_smc['time_ms'], None))
+    if find(genmlx, 'hmm', 'SMC') and find(genjl, 'hmm', 'SMC'):
+        groups.append((t(find(genmlx, 'hmm', 'SMC')), t(find(genjl, 'hmm', 'SMC')),
+                       None, None))
         labels.append('HMM\nSMC(100)')
 
     n_groups = len(groups)
     x = np.arange(n_groups)
-    width = 0.25
+    width = 0.2
 
-    fig, ax = plt.subplots(figsize=(5.0, 3.0))
+    fig, ax = plt.subplots(figsize=(5.5, 3.0))
 
+    # GenMLX-paper GRVS system palette (genmlx_style.COLORS): purple = our system,
+    # darkblue = Gen.jl, deepskyblue = GenJAX, coral = NumPyro (out-of-family).
     for i, (label, color, offset) in enumerate([
-        ('GenMLX (Metal GPU)', BLUE, -width),
-        ('Gen.jl (CPU)', ORANGE, 0),
-        ('GenJAX (JIT, CPU)', GREEN, width),
+        ('GenMLX (Metal GPU)', '#8B5CF6', -1.5 * width),
+        ('Gen.jl (CPU)', 'darkblue', -0.5 * width),
+        ('GenJAX (JIT, CPU)', 'deepskyblue', 0.5 * width),
+        ('NumPyro (out-of-family, JIT CPU)', 'coral', 1.5 * width),
     ]):
         vals = []
         positions = []
@@ -921,7 +958,7 @@ def fig9_system_bars():
                 positions.append(x[j] + offset)
         if vals:
             ax.bar(positions, vals, width, label=label, color=color,
-                   edgecolor='white', linewidth=0.5)
+                   edgecolor='black', linewidth=0.5, alpha=0.9)
             # Annotate values
             for pos, v in zip(positions, vals):
                 if v >= 1000:
@@ -937,10 +974,10 @@ def fig9_system_bars():
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=7)
     ax.set_ylabel('Time (ms, log scale)')
-    ax.legend(loc='upper left', fontsize=6.5)
-    ax.set_title('System Comparison: GenMLX vs Gen.jl vs GenJAX')
+    ax.legend(loc='upper left', fontsize=6.0)
+    ax.set_title('System Comparison: GenMLX vs Gen.jl vs GenJAX vs NumPyro')
 
-    outpath = os.path.join(RESULTS, 'exp4_system_comparison', 'fig9_system_bars.pdf')
+    outpath = os.path.join(RESULTS, 'cross-system', 'fig9_system_bars.pdf')
     fig.savefig(outpath)
     plt.close(fig)
     print(f'  Wrote: {outpath}')
@@ -951,9 +988,10 @@ def fig9_system_bars():
 # ---------------------------------------------------------------------------
 
 def fig10_system_table():
-    genmlx = load_json('exp4_system_comparison/genmlx.json')
-    genjl = load_json('exp4_system_comparison/genjl.json')
-    genjax = load_json('exp4_system_comparison/genjax.json')
+    genmlx = load_genmlx_crosssystem()
+    genjl = load_json('cross-system/genjl.json')
+    genjax = load_json('cross-system/genjax.json')
+    numpyro = load_json('cross-system/numpyro.json')
 
     def find(data, model, algo):
         for c in data['comparisons']:
@@ -977,36 +1015,44 @@ def fig10_system_table():
     rows = [
         ('LinReg', 'IS (1K)',
          find(genmlx, 'linreg', 'IS'), find(genjl, 'linreg', 'IS'),
-         find(genjax, 'linreg', 'IS'), 'Vec IS (Metal) vs JIT (CPU)'),
-        ('LinReg', 'MH (5K)',
+         find(genjax, 'linreg', 'IS'), find(numpyro, 'linreg', 'IS'),
+         'Vec IS (Metal) vs JIT vs effect-handler'),
+        ('LinReg', 'MH',
          find(genmlx, 'linreg', 'MH'), find(genjl, 'linreg', 'MH'),
-         None, 'Compiled MH vs Gen.jl MH'),
+         None, None, 'Compiled MH vs Gen.jl MH'),
         ('HMM', 'IS (1K)',
          find(genmlx, 'hmm', 'IS'), find(genjl, 'hmm', 'IS'),
-         find(genjax, 'hmm', 'IS'), 'Vec IS (Metal) vs Gen.jl (CPU)'),
+         find(genjax, 'hmm', 'IS'), find(numpyro, 'hmm', 'IS'),
+         'Vec IS (Metal) vs Gen.jl (CPU)'),
         ('HMM', 'SMC (100)',
          find(genmlx, 'hmm', 'SMC'), find(genjl, 'hmm', 'SMC'),
-         None, 'Unfold PF vs Gen.jl PF'),
+         None, None, 'Unfold PF vs Gen.jl PF'),
         ('GMM', 'IS (1K)',
          find(genmlx, 'gmm', 'IS'), find(genjl, 'gmm', 'IS'),
-         find(genjax, 'gmm', 'IS'), 'Vec IS (Metal) vs JIT (CPU)'),
+         find(genjax, 'gmm', 'IS'), find(numpyro, 'gmm', 'IS'),
+         'Vec IS (Metal) vs JIT (CPU)'),
     ]
 
-    # LaTeX table
+    # LaTeX table. NumPyro is the out-of-(Gen-)family point: the LinReg IS row is
+    # apples-to-apples (shared 20-pt N(0,2) spec); see numpyro.json accuracy block
+    # for the matched-accuracy claim (NumPyro IS reaches GenMLX's exact L3 log-ML).
     lines = [
         r'\begin{table}[t]',
         r'\centering',
-        r'\caption{System comparison on Apple M2: GenMLX (Metal GPU), Gen.jl (CPU), GenJAX (JIT, CPU).}',
+        r'\caption{System comparison on Apple M-series: GenMLX (Metal GPU), Gen.jl (CPU), '
+        r'GenJAX (JIT, CPU), and the out-of-family NumPyro (effect-handler, JIT CPU). '
+        r'LinReg IS uses the shared 20-point $\mathcal{N}(0,2)$ spec; GenMLX MH/IS '
+        r'timings are on its native bench and indicative, not matched-spec.}',
         r'\label{tab:system-comparison}',
-        r'\begin{tabular}{l l r r r l}',
+        r'\begin{tabular}{l l r r r r l}',
         r'\toprule',
-        r'Model & Algorithm & GenMLX & Gen.jl & GenJAX & Notes \\',
+        r'Model & Algorithm & GenMLX & Gen.jl & GenJAX & NumPyro & Notes \\',
         r'\midrule',
     ]
-    for model, algo, mlx, jl, jx, note in rows:
+    for model, algo, mlx, jl, jx, npyro, note in rows:
         lines.append(
             f'{model} & {algo} & {fmt_ms(mlx)} & {fmt_ms(jl)} '
-            f'& {fmt_ms(jx)} & {note} \\\\'
+            f'& {fmt_ms(jx)} & {fmt_ms(npyro)} & {note} \\\\'
         )
     lines += [
         r'\bottomrule',
@@ -1014,16 +1060,17 @@ def fig10_system_table():
         r'\end{table}',
     ]
 
-    outpath = os.path.join(RESULTS, 'exp4_system_comparison', 'fig10_system_table.tex')
+    outpath = os.path.join(RESULTS, 'cross-system', 'fig10_system_table.tex')
     with open(outpath, 'w') as f:
         f.write('\n'.join(lines) + '\n')
     print(f'  Wrote: {outpath}')
 
 
 def fig10_system_table_pdf():
-    genmlx = load_json('exp4_system_comparison/genmlx.json')
-    genjl = load_json('exp4_system_comparison/genjl.json')
-    genjax = load_json('exp4_system_comparison/genjax.json')
+    genmlx = load_genmlx_crosssystem()
+    genjl = load_json('cross-system/genjl.json')
+    genjax = load_json('cross-system/genjax.json')
+    numpyro = load_json('cross-system/numpyro.json')
 
     def find(data, model, algo):
         for c in data['comparisons']:
@@ -1049,34 +1096,37 @@ def fig10_system_table_pdf():
          fmt_ms(find(genmlx, 'linreg', 'IS')),
          fmt_ms(find(genjl, 'linreg', 'IS')),
          fmt_ms(find(genjax, 'linreg', 'IS')),
-         'Vec IS vs JIT'],
-        ['LinReg', 'MH (5K)',
+         fmt_ms(find(numpyro, 'linreg', 'IS')),
+         'Vec IS vs JIT vs eff-handler'],
+        ['LinReg', 'MH',
          fmt_ms(find(genmlx, 'linreg', 'MH')),
          fmt_ms(find(genjl, 'linreg', 'MH')),
-         '---',
+         '---', '---',
          'Compiled MH'],
         ['HMM', 'IS (1K)',
          fmt_ms(find(genmlx, 'hmm', 'IS')),
          fmt_ms(find(genjl, 'hmm', 'IS')),
          fmt_ms(find(genjax, 'hmm', 'IS')),
+         fmt_ms(find(numpyro, 'hmm', 'IS')),
          'Sequential'],
         ['HMM', 'SMC (100)',
          fmt_ms(find(genmlx, 'hmm', 'SMC')),
          fmt_ms(find(genjl, 'hmm', 'SMC')),
-         '---',
+         '---', '---',
          'Unfold PF'],
         ['GMM', 'IS (1K)',
          fmt_ms(find(genmlx, 'gmm', 'IS')),
          fmt_ms(find(genjl, 'gmm', 'IS')),
          fmt_ms(find(genjax, 'gmm', 'IS')),
+         fmt_ms(find(numpyro, 'gmm', 'IS')),
          'Sequential vs JIT'],
     ]
 
-    outpath = os.path.join(RESULTS, 'exp4_system_comparison', 'fig10_system_table.pdf')
+    outpath = os.path.join(RESULTS, 'cross-system', 'fig10_system_table.pdf')
     _render_table_pdf(
-        ['Model', 'Algorithm', 'GenMLX', 'Gen.jl', 'GenJAX', 'Notes'],
-        pdf_rows, 'System Comparison: Apple M2', outpath,
-        col_widths=[0.12, 0.12, 0.12, 0.12, 0.12, 0.22])
+        ['Model', 'Algorithm', 'GenMLX', 'Gen.jl', 'GenJAX', 'NumPyro', 'Notes'],
+        pdf_rows, 'System Comparison: Apple M-series', outpath,
+        col_widths=[0.10, 0.11, 0.11, 0.10, 0.10, 0.11, 0.22])
 
 
 # ---------------------------------------------------------------------------
