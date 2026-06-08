@@ -37,6 +37,7 @@
             [genmlx.gradients :as grad]
             [genmlx.verify :as verify]
             [genmlx.inference.mcmc :as mcmc]
+            [genmlx.inference.smc :as smc]
             [genmlx.inference.util :as u]
             [genmlx.learning :as learn]
             [genmlx.combinators :as comb]))
@@ -1494,6 +1495,52 @@
                      (recur (inc t) trace k2
                             (approx= w expected 1e-4)))))))}
 
+   {:name :pf-log-ml-convergence
+    :from "[T] Alg 7 — bootstrap PF log-ML = sum_j (logsumexp(weights_j) - log N) -> Kalman"
+    :theorem "For a bootstrap particle filter on an analytically tractable
+              Gaussian SSM (x_t ~ N(x_{t-1},1), y_t ~ N(x_t,1)), the
+              accumulated log marginal likelihood
+                log_ml = sum_j [logsumexp(weights_j) - log N]
+              converges to the exact Kalman-filter log-evidence as N grows.
+              Conjugacy is stripped so the bootstrap (prior) proposal is used:
+              the optimal proposal collapses particle diversity and biases the
+              log-ML estimate. Verified on y=[1,2,0.5], N=1000:
+              |SMC log-ML - Kalman| < 0.25 nats."
+    :tags #{:inference :smc :pf}
+    :check (fn [_]
+             (let [kernel (dyn/make-gen-fn
+                           (fn [rt]
+                             (let [trace (.-trace rt)
+                                   args (.-args rt)
+                                   prev-state (second args)
+                                   x (trace :x (dist/gaussian prev-state 1))]
+                               (trace :y (dist/gaussian x 1))
+                               x))
+                           '([t prev-state]
+                             (let [x (trace :x (dist/gaussian prev-state 1))]
+                               (trace :y (dist/gaussian x 1))
+                               x)))
+                   ;; Strip conjugacy -> force bootstrap (prior) proposal.
+                   stripped (assoc kernel :schema
+                                   (dissoc (:schema kernel)
+                                           :auto-handlers :conjugate-pairs
+                                           :has-conjugate? :analytical-plan
+                                           :auto-regenerate-transition))
+                   ys [1.0 2.0 0.5]
+                   obs-seq (mapv #(cm/choicemap :y (mx/scalar %)) ys)
+                   ;; Kalman analytical log-evidence (per-step innovation LLs):
+                   ;; step0 P_pred=1,S=2,innov=1; step1 P_pred=1.5,S=2.5,innov=1.5;
+                   ;; step2 P_pred=1.6,S=2.6,innov=-0.9.
+                   LOG-2PI (js/Math.log (* 2 js/Math.PI))
+                   ll0 (* -0.5 (+ LOG-2PI (js/Math.log 2.0) (/ 1.0 2.0)))
+                   ll1 (* -0.5 (+ LOG-2PI (js/Math.log 2.5) (/ 2.25 2.5)))
+                   ll2 (* -0.5 (+ LOG-2PI (js/Math.log 2.6) (/ 0.81 2.6)))
+                   analytical (+ ll0 ll1 ll2)
+                   result (smc/smc-unfold {:particles 1000 :key (rng/fresh-key 42)}
+                                          stripped (mx/scalar 0.0) obs-seq)
+                   smc-log-ml (ev (:log-ml result))]
+               (approx= smc-log-ml analytical 0.25)))}
+
    ;; ===================================================================
    ;; AIS DENSITY RATIO laws [T] Alg 8
    ;; ===================================================================
@@ -1538,6 +1585,58 @@
                    total (reduce + increments)]
                (and (every? #(approx= % expected-inc 1e-10) increments)
                     (approx= total lik-score 1e-10))))}
+
+   {:name :ais-weight-accumulation
+    :from "[T] Alg 8 — AIS log-Z = logsumexp(accumulated weights) - log N -> analytical"
+    :theorem "Annealed Importance Sampling accumulates log-weights across a
+              temperature schedule beta_0=0,...,beta_n=1. For the annealed
+              Normal-Normal target f_beta(x) = p_0(x) * L(x)^beta with
+              x ~ N(0,2) and L(x) = N(y | x, 1), the per-step increment is the
+              tempered-score difference (a GFI weight under a temperature
+              change):
+                z_hat_j = z_hat_{j-1} + (beta_j - beta_{j-1}) * log L(x_{j-1}),
+              with x_j resampled from the exact tempered posterior (a kernel
+              leaving f_beta invariant). The AIS estimate
+                log Z = logsumexp_i(z_hat_i) - log N
+              converges to the true marginal log-likelihood. Verified on y=3:
+              analytical log p(y) = log N(3; 0, sqrt(5)) ~ -2.6236, N=2000,
+              |AIS - analytical| < 0.1 nats."
+    :tags #{:inference :ais}
+    :check (fn [_]
+             (let [n 2000
+                   ys 3.0
+                   betas [0.0 0.25 0.5 0.75 1.0]
+                   n-steps (dec (count betas))
+                   sp2 4.0                       ; prior variance (sd 2)
+                   ;; Exact tempered posterior at beta (lik var = 1):
+                   ;;   prec = 1/sp2 + beta, var = 1/prec, mean = var*beta*y
+                   tpost (fn [b] (let [v (/ 1.0 (+ (/ 1.0 sp2) b))]
+                                   {:mean (* v b ys) :sd (js/Math.sqrt v)}))
+                   [k-init k-loop] (rng/split (rng/fresh-key 7))
+                   ;; x_0 ~ prior N(0, 2), shape [n]
+                   x0 (mx/multiply (mx/scalar 2.0) (rng/normal k-init [n]))
+                   lw (loop [j 1, x x0, acc (mx/scalar 0.0), k k-loop]
+                        (if (> j n-steps)
+                          acc
+                          (let [b   (nth betas j)
+                                db  (- b (nth betas (dec j)))
+                                ;; log L(x) = log N(y | x, 1), shape [n]
+                                logL (dist/log-prob (dist/gaussian x 1) (mx/scalar ys))
+                                acc' (mx/add acc (mx/multiply (mx/scalar db) logL))
+                                {pm :mean psd :sd} (tpost b)
+                                [k1 k2] (rng/split k)
+                                x'  (mx/add (mx/scalar pm)
+                                            (mx/multiply (mx/scalar psd)
+                                                         (rng/normal k1 [n])))]
+                            (recur (inc j) x' acc' k2))))
+                   _ (mx/materialize! lw)
+                   log-z (ev (mx/subtract (mx/logsumexp lw)
+                                          (mx/scalar (js/Math.log n))))
+                   ;; analytical log p(y) = log N(3; 0, sqrt(5))
+                   analytical (- (* -0.5 (js/Math.log (* 2 js/Math.PI)))
+                                 (* 0.5 (js/Math.log 5.0))
+                                 (* 0.5 (/ 9.0 5.0)))]
+               (approx= log-z analytical 0.1)))}
 
    ;; ===================================================================
    ;; INVOLUTIVE MCMC laws [T] §3.7, Def 3.7.1, Eq 3.15, Eq 3.17

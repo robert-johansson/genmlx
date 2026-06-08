@@ -200,6 +200,46 @@
       (t/is (close? log-z analytical 0.15)
             (str "IS log-ML=" log-z " analytical=" analytical)))))
 
+;; --- Law #20: AIS Weight Accumulation ---
+;; AIS accumulates log-weights z_hat_j = z_hat_{j-1} + (b_j - b_{j-1})*logL(x)
+;; across a temperature schedule, resampling x from the exact tempered
+;; posterior each step. The estimate logsumexp(z_hat) - log N converges to
+;; the true marginal log-ML. Model: x ~ N(0,2), y ~ N(x,1), y=3.
+
+(t/deftest law:ais-weight-accumulation
+  (t/testing "AIS accumulated log-weights converge to analytical log marginal likelihood"
+    (let [n 2000
+          ys 3.0
+          betas [0.0 0.25 0.5 0.75 1.0]
+          n-steps (dec (count betas))
+          sp2 4.0
+          ;; exact tempered posterior at beta (lik var = 1)
+          tpost (fn [b] (let [v (/ 1.0 (+ (/ 1.0 sp2) b))]
+                          {:mean (* v b ys) :sd (js/Math.sqrt v)}))
+          [k-init k-loop] (rng/split (rng/fresh-key 7))
+          x0 (mx/multiply (mx/scalar 2.0) (rng/normal k-init [n]))
+          lw (loop [j 1, x x0, acc (mx/scalar 0.0), k k-loop]
+               (if (> j n-steps)
+                 acc
+                 (let [b   (nth betas j)
+                       db  (- b (nth betas (dec j)))
+                       logL (dist/log-prob (dist/gaussian x 1) (mx/scalar ys))
+                       acc' (mx/add acc (mx/multiply (mx/scalar db) logL))
+                       {pm :mean psd :sd} (tpost b)
+                       [k1 k2] (rng/split k)
+                       x'  (mx/add (mx/scalar pm)
+                                   (mx/multiply (mx/scalar psd) (rng/normal k1 [n])))]
+                   (recur (inc j) x' acc' k2))))
+          _ (mx/materialize! lw)
+          log-z (ev (mx/subtract (mx/logsumexp lw) (mx/scalar (js/Math.log n))))
+          analytical (- (* -0.5 (js/Math.log (* 2 js/Math.PI)))
+                        (* 0.5 (js/Math.log 5.0))
+                        (* 0.5 (/ 9.0 5.0)))
+          diff (js/Math.abs (- log-z analytical))]
+      ;; AIS with exact tempered-posterior kernels, N=2000, tol = 0.1 nats.
+      (t/is (close? log-z analytical 0.1)
+            (str "AIS log-Z=" log-z " analytical=" analytical " diff=" diff)))))
+
 ;; ---------------------------------------------------------------------------
 ;; INVOLUTIVE MCMC laws [T] §3.7, Def 3.7.1, Eq 3.15, Eq 3.17
 ;; ---------------------------------------------------------------------------
