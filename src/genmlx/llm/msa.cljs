@@ -59,6 +59,7 @@
            'exponential dist/exponential
            'poisson dist/poisson
            'categorical dist/categorical
+           'multivariate-normal dist/multivariate-normal
            'delta dist/delta}
     'mx {'add mx/add
          'subtract mx/subtract
@@ -382,11 +383,14 @@ Output ONLY the lines. No explanation.")
 ;; ============================================================
 
 (defn- observations->choicemap
-  "Convert an observations map {:addr value ...} to a ChoiceMap
-   with each value wrapped as an mx/scalar."
+  "Convert an observations map {:addr value ...} to a ChoiceMap. Scalar values
+   are wrapped as mx/scalar; sequential values (vector/matrix observations, e.g.
+   a multivariate-normal site) as mx/array."
   [observations]
   (apply cm/choicemap
-         (mapcat (fn [[k v]] [k (mx/scalar v)]) observations)))
+         (mapcat (fn [[k v]]
+                   [k (if (sequential? v) (mx/array v) (mx/scalar v))])
+                 observations)))
 
 (defn- log-sum-exp
   "Numerically stable log(sum(exp(xs)))."
