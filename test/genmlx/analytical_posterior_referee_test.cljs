@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.analytical-posterior-referee-test
   "Compare inference output to closed-form conjugate posteriors.
    The analytical posterior serves as referee — neither system's

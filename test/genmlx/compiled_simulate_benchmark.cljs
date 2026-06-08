@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.compiled-simulate-benchmark
   "Benchmark: compiled simulate (noise transforms + mx/compile-fn) vs handler."
   (:require [genmlx.gen :refer [gen]]

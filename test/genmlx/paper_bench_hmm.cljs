@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.paper-bench-hmm
   "Paper Experiment 3B: Hidden Markov Model — IS vs SMC Benchmark.
 

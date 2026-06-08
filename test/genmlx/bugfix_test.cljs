@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.bugfix-test
   "Tests for three bug fixes:
    1. Update weight correctness for dependent variables

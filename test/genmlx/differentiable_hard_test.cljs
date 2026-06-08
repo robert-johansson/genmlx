@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.differentiable-hard-test
   "Hard test for Tier 3a: Hierarchical empirical Bayes with parameter recovery.
 

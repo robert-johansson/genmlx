@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.proposal-edit-test
   "Tests for ProposalEdit."
   (:require [cljs.test :refer [deftest is testing]]

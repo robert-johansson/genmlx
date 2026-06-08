@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.correctness-test
   "Regression tests for Phase 16/17 correctness fixes."
   (:require [cljs.test :refer [deftest is testing]]

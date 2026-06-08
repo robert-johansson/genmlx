@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.combinator-compile-test
   "L1-M5: Combinator-aware compilation tests.
    Tests that combinators with compilable kernels bypass per-step

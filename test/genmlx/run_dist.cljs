@@ -1,3 +1,4 @@
+;; @tier exclude
 (ns genmlx.run-dist
   "Category runner: distribution tests only."
   (:require [cljs.test :as t]

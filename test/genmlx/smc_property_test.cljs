@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.smc-property-test
   "Property-based tests for SMC using test.check.
    Every test verifies a genuine algebraic law:

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.kernel-reversal-test
   "Tests for kernel reversal declarations and auto-reversal of composites."
   (:require [cljs.test :refer [deftest is testing]]

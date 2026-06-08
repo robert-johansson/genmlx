@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.gfi-property-test
   "Property-based GFI contract tests using test.check.
    Verifies that GFI invariants hold across random models and inputs."

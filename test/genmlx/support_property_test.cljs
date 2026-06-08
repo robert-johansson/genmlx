@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.support-property-test
   "Property-based test: every sample from every distribution falls within
    that distribution's analytical support bounds.

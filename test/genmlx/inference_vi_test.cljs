@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.inference-vi-test
   "Phase 4.6: Variational inference tests.
    VI (ADVI) uses a mean-field Gaussian guide and optimizes ELBO via Adam.

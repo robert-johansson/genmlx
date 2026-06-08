@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.l3-5-gate-test
   "Level 3.5 Gate 0 + Gate 1: Regenerate correctness and performance."
   (:require [cljs.test :refer [deftest is testing]]

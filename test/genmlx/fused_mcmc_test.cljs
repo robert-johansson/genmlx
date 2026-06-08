@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.fused-mcmc-test
   "Tests for fused MCMC: pre-generated noise, fused burn-in, fused collection,
    and fused burn+collect (M2-M4)."

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.vmap-property-test
   "Property-based tests for the Vmap combinator's GFI contract.
    Verifies that vmap-gf and repeat-gf satisfy the same algebraic laws

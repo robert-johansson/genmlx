@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.exact-test
   "Tests for exact tensor enumeration engine (genmlx.inference.exact).
    Phase 1: single-model enumeration, conditioning, post-processing.

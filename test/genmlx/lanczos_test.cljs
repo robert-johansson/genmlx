@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.lanczos-test
   "Tests for the optimized Lanczos log-gamma (g=5, 6-term Numerical Recipes)."
   (:require [cljs.test :refer [deftest is testing]]

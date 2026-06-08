@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.affine-test
   "Tests for affine expression analysis.
    Correct coefficient extraction for 10+ expression patterns.

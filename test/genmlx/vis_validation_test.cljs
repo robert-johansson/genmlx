@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.vis-validation-test
   "VIS (Vectorized Inference for Dynamic-Address Models) validation.
    Documents that vsimulate/vgenerate handle dynamic-address models

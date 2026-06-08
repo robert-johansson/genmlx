@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.combinator-mix-test2
   "Mix combinator: mixture model.
    Score = component score + log(mixture weight) for the selected component."

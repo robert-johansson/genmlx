@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.location-scale-property-test
   "Property-based tests for location-scale family distributions.
    For location-scale families (gaussian, laplace, cauchy, student-t),

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.lazy-mcmc-test
   "Correctness tests for compiled MCMC variants.
    NOTE: compiled-mh-lazy and hmc-lazy were removed from the codebase.

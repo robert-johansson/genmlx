@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.paper-bench-funnel
   "Paper Experiment 7: Neal's Funnel — HMC/NUTS Showcase.
 

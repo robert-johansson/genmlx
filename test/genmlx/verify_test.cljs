@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.verify-test
   "Tests for validate-gen-fn static validator."
   (:require [cljs.test :refer [deftest is testing]]

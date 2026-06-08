@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.untested-features-test
   "Tests for features identified as untested or weakly tested:
    - Custom proposal MH

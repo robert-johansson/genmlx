@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.new-dist-test
   "Tests for new distributions: broadcasted-normal, beta-uniform-mixture,
    piecewise-uniform, wishart, inverse-wishart."

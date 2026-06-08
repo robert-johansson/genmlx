@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.gfi-generate-test
   "GFI generate: constrained execution with analytically verified weights.
    weight = log P(constrained choices | args) for the constrained subset."

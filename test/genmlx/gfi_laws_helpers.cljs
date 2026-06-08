@@ -1,3 +1,4 @@
+;; @tier exclude
 (ns genmlx.gfi-laws-helpers
   "Shared model families, pools, generators, and helper functions for the
    GFI law test suite. Split files (gfi_laws_test_p1..p9) require this."

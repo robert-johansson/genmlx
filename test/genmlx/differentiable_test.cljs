@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.differentiable-test
   "Tests for Tier 3a: Differentiable inference — gradient of log-ML w.r.t. model params."
   (:require [cljs.test :refer [deftest is testing]]

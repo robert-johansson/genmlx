@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.handler-property-test
   "Property-based tests for handler.cljs state transitions using test.check.
    Verifies scalar and batched handler transitions are pure and correct."

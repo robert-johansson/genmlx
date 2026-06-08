@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.combinator-recurse-test2
   "Recurse combinator: self-referential generative functions with termination.
    Score accumulates across recursive calls."

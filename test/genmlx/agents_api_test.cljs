@@ -1,3 +1,4 @@
+;; @tier fast
 ;; Contract test for the PROMOTED genmlx.agents Layer-9 API (Lever A, bean genmlx-ssui).
 ;; Proves the 8 promoted namespaces load + are reachable AS A SRC LIBRARY, that an agent
 ;; IS a generative function (GFI ops work), and that the flagship tensor-VI <-> recursive-EU

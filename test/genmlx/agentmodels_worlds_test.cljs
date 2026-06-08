@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless tests for the canonical opening worlds (genmlx.agents.worlds):
 ;; the Ch 3a integer line-world and the Ch 3b Hiking gridworld. Pure data +
 ;; asserts (no Ink/terminal). The hiking world reproduces agentmodels' canonical

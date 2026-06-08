@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.map-dist-test
   "Tests for map->dist: creating distributions from plain maps."
   (:require [cljs.test :refer [deftest is testing]]

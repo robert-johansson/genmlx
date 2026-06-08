@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.prng-key-test
   "Reproducibility tests for PRNG key threading.
    Verifies that same key -> same results, different key -> different results,

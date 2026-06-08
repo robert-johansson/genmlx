@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless tests for agentmodels Chapter 7 — Multi-agent models (native genmlx.agents).
 ;; Run: bun run --bun nbb test/genmlx/agentmodels_multi_agent_test.cljs
 ;;

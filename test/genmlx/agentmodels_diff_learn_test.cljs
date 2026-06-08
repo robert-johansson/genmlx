@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless tests for differentiable MDP utility/alpha learning (bean genmlx-j5um):
 ;; genmlx.agents.differentiable. Recover planted agent params by gradient through
 ;; the planner (lazy value iteration) + the policy log-likelihood at fixed observed

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.inference-test
   "Tests for importance sampling and Metropolis-Hastings inference."
   (:require [cljs.test :refer [deftest is testing]]

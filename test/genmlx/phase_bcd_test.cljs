@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.phase-bcd-test
   "Tests for Phase B, C, D features with meaningful correctness checks."
   (:require [cljs.test :refer [deftest is testing]]

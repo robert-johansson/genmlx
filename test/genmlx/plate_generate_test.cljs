@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.plate-generate-test
   "Regression test for genmlx-7bm6: p/generate silently dropped observation
    constraints when a gen body invoked a TRACING helper (one that receives the

@@ -1,3 +1,4 @@
+;; @tier exclude
 (ns genmlx.gfi-gen
   "test.check generators for GFI model specifications.
    Produces plain Clojure data maps that gfi-compiler transforms into

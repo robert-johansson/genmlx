@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.wishart-gradient-test
   (:require [clojure.test :refer [deftest is testing run-tests]]
             [genmlx.mlx :as mx]

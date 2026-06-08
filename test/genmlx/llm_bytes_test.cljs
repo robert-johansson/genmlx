@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.llm-bytes-test
   "Tests for byte-level token marginalization (Phase 5).
 

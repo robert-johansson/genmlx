@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.compiled-equivalence-test
   "Compiled path equivalence: compiled score = handler score for static models.
    Same PRNG key → same choices and scores."

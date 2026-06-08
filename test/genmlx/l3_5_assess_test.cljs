@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.l3-5-assess-test
   "Level 3.5 WP-1: Assess auto-handler integration tests.
    Verifies that p/assess returns joint LL for all models."

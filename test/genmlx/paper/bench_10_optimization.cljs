@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.paper.bench-10-optimization
   "Paper Experiment 10: L4 Fused Optimization
 

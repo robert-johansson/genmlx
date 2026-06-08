@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.compiled-gen-test
   "Tests for compiled gen functions.
    Verifies correctness and measures speedup of mx/compile-fn

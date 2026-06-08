@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.combinator-property-test
   "Property-based combinator invariant tests using test.check.
    Verifies Map, Unfold, Switch, Scan, Mask, Contramap, MapRetval, Mix,

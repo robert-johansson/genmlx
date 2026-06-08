@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.dist-logprob-test
   "Phase 1.1: Analytical log-prob verification for ALL distributions.
    Every expected value is derived from the mathematical formula.

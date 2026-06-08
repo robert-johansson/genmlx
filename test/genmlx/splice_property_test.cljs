@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.splice-property-test
   "Property-based tests for splice (compositional modeling).
 

@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.vectorized-grad-benchmark
   "Benchmark: vectorized gradient-based MCMC speedups.
    Measures actual wall-clock speedup from:

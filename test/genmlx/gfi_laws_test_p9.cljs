@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-laws-test-p9
   "GFI law tests part 9: WELL-FORMEDNESS + VECTORIZED + GRADIENT laws"
   (:require [cljs.test :as t]

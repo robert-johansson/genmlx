@@ -1,3 +1,4 @@
+;; @tier exclude
 (ns genmlx.run-gfi
   "Category runner: GFI protocol tests only."
   (:require [cljs.test :as t]

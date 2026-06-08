@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.batch-sample-n-test
   "Smoke tests for newly added dist-sample-n implementations."
   (:require [cljs.test :refer [deftest is testing]]

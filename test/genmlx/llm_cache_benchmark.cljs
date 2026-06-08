@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.llm-cache-benchmark
   "Phase 2.3: Benchmark KV cache speedup for LLM generation."
   (:require [genmlx.llm.backend :as llm]

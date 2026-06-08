@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.stress-test
   "Stress tests for Metal GPU resource management.
    Verifies that long inference runs complete without resource exhaustion."

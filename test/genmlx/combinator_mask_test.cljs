@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.combinator-mask-test
   "Mask combinator: active passes through, inactive contributes zero."
   (:require [cljs.test :refer [deftest is testing]]

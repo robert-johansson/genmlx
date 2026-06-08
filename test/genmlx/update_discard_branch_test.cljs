@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.update-discard-branch-test
   "Test that update includes deleted addresses in discard when model switches branches.
    Gen.jl semantics: discard must contain all old addresses not in new trace."

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.tutorial.ch03-test
   "Test file for Tutorial Chapter 3: How It Works — The Handler Loop.
    Tests exercise the handler transitions directly, the runtime,

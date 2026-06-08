@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless tests for the POMDP agent (agentmodels Ch 3c) — belief filtering +
 ;; belief-space (QMDP) action on the hidden-goal restaurant gridworld. Pure data,
 ;; no terminal. The belief filter and belief-Q are pure; the convergence rollout

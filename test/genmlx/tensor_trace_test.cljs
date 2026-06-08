@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.tensor-trace-test
   "Level 2 WP-0 tests: TensorTrace, TensorChoiceMap, pack/unpack, make-tensor-score."
   (:require [cljs.test :refer [deftest is testing]]

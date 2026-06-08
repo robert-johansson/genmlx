@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.gradient-fd-test
   "Phase 4.1: Finite-difference verification of autodiff gradients.
    For every differentiable distribution, verify that mx/grad of log-prob

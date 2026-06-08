@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.l2-gate-test
   "Level 2 Gate 0: Tensor-native score vs GFI-based score benchmark.
 

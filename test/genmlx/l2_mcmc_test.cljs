@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.l2-mcmc-test
   "Level 2 WP-1 tests: compiled MCMC with tensor-native score."
   (:require [cljs.test :refer [deftest is testing]]

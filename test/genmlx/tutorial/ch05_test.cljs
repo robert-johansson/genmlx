@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.tutorial.ch05-test
   "Test file for Tutorial Chapter 5: Updating and Regenerating.
    Exercises update, regenerate, assess, project, and building MH by hand."

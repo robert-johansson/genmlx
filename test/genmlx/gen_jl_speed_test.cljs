@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gen-jl-speed-test
   "Speed benchmark: GenMLX vs Gen.jl.
 

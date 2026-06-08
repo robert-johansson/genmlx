@@ -1,3 +1,4 @@
+;; @tier fast
 ;; Unit tests for genmlx.sensorimotor.
 ;;
 ;; Tests the symbolic-layer (Beta-Bernoulli posterior arithmetic, projection,

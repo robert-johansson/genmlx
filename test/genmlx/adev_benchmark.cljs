@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.adev-benchmark
   "Benchmark: sequential adev-gradient vs vectorized vadev-gradient.
    Gate: ≥10x speedup at N=100."

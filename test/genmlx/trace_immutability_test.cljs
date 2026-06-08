@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.trace-immutability-test
   "Trace record: field access, immutability, type invariants."
   (:require [cljs.test :refer [deftest is are testing]]

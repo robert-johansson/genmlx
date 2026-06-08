@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.fused-mh-api-test
   "Test fused-mh public API (M5)."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier exclude
 (ns genmlx.run-inference
   "Category runner: inference tests only."
   (:require [cljs.test :as t]

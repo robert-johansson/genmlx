@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.loop-compiled-hmc-test
   "Tests for HMC loop compilation: correctness, benchmarks, stability."
   (:require [cljs.test :refer [deftest is testing]]

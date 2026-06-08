@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.vsmc-validation
   "Comprehensive validation and benchmarking of vectorized SMC (vsmc)
    vs sequential SMC. Tests correctness AND performance."

@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.l3-evaluation-benchmark
   "Level 3 evaluation: Auto-analytical elimination vs standard inference.
 

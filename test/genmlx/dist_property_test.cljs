@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.dist-property-test
   "Property-based distribution invariant tests using test.check.
    Verifies that all distributions satisfy core contracts:

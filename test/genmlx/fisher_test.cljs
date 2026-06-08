@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.fisher-test
   "Tests for Tier 3e: Fisher information matrix."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.memory-test
   "Tests for MLX memory management APIs."
   (:require [cljs.test :refer [deftest is testing]]

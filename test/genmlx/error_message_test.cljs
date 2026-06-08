@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.error-message-test
   "Tests for helpful error messages (11.2)."
   (:require [cljs.test :refer [deftest is testing]]

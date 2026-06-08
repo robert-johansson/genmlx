@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.gpu-benchmark
   "GPU-intensive benchmarks for GenMLX.
    Tests that actually exercise Apple Silicon GPU via MLX."

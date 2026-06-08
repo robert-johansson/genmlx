@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.inference-mh-test
   "Phase 4.3: Metropolis-Hastings convergence tests.
 

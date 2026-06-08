@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.inference-smc-test
   "Phase 4.4: SMC convergence tests.
 

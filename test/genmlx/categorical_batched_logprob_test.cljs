@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.categorical-batched-logprob-test
   "Regression tests for categorical log-prob under batched / per-particle logits
    (genmlx-ql6a). A plain (take log-probs v -1) on multi-dim [N,K] logits with a

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.dist-gradient-test
   "Phase 1.7: Gradient flow tests for reparameterized distributions.
    For each reparameterizable distribution, verify that mx/grad of log-prob

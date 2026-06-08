@@ -1,3 +1,4 @@
+;; @tier exclude
 (ns genmlx.run-remaining
   "Category runner: handler, combinator, vectorized, compiled, and data structure tests.
    Covers test namespaces not matched by dist/gfi/inference/property/certification runners."

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.compiled-optimizer-test
   "Tests for WP-0: Compiled optimization step.
    Covers make-compiled-opt-step, compiled-train, and compiled-generate score path."

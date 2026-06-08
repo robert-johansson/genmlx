@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.kernel-dsl-test
   "Tests for kernel DSL: random-walk, prior, proposal, gibbs."
   (:require [cljs.test :refer [deftest is testing]]

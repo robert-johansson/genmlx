@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.benchmark.genmlx-benchmark
   "GenMLX benchmark — comprehensive comparison with GenJAX.
 

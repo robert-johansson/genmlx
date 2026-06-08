@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless tests for agentmodels Ch 3d — Posterior Sampling RL (PSRL) on a gridworld.
 ;; (The bandit Thompson/softmax-greedy + bandit regret are shipped & tested in
 ;; bandit_test.cljs; this covers the remaining model-based gridworld PSRL.)

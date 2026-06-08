@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.score-gradient-test
   "Phase 4.2: Model score gradient tests.
    Verifies gradients flow correctly through generative function models —

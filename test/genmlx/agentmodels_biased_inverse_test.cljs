@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless tests for inverse inference over agent BIAS (agentmodels Ch 5d/5e,
 ;; capability-only slice — bean genmlx-z4si).
 ;; Run: bun run --bun nbb test/genmlx/agentmodels_biased_inverse_test.cljs

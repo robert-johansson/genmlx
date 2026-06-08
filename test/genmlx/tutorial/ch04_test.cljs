@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.tutorial.ch04-test
   "Test file for Tutorial Chapter 4: Choice Maps and Traces.
    Exercises all data structure operations."

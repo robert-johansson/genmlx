@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.compiled-path-equivalence-test
   "Section 7: Compiled path equivalence stress tests.
 

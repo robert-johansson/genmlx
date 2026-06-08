@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-laws-test-p10
   "GFI law tests part 10: VERIFY INTEGRATION tests"
   (:require [cljs.test :as t]

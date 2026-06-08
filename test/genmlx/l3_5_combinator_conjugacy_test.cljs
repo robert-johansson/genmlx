@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.l3-5-combinator-conjugacy-test
   "Level 3.5 WP-2: Combinator-aware conjugacy test suite.
    Verifies that kernel-internal conjugate pairs are detected and

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.recurse-test
   "Tests for the Recurse combinator."
   (:require [cljs.test :refer [deftest is testing]]

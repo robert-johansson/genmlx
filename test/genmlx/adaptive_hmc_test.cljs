@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.adaptive-hmc-test
   "Tests for HMC dual-averaging step-size adaptation."
   (:require [cljs.test :refer [deftest is testing]]

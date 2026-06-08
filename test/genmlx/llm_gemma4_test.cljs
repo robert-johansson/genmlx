@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.llm-gemma4-test
   "P1-1: Test Gemma4 E2B as generative function.
    Covers model loading, tokenizer, forward pass, KV cache, GFI ops,

@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.gfi-simulate-test
   "GFI simulate: score = joint log-probability of all choices.
    Every expected value derived from the mathematical formula."

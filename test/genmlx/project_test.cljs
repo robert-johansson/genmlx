@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.project-test
   "Tests for project (IProject protocol)."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.edit-purity-test
   "Regression for genmlx-5413: genmlx.edit must be usable by pure / deterministic
    GFs whose weights are plain numbers — without the native MLX backend.

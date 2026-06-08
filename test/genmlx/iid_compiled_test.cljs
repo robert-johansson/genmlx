@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.iid-compiled-test
   "M2 Step 3: Compiled noise transform for iid-gaussian."
   (:require [cljs.test :refer [deftest is testing]]

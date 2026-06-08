@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gamma-batch-test
   "Tests for gamma, inv-gamma, beta, and dirichlet batch sampling."
   (:require [cljs.test :refer [deftest is testing]]

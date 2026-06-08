@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.smc-scoring-test
   "Tests for multi-particle IS in msa.cljs and scoring infrastructure in program.cljs.
    Run: bun run --bun nbb test/genmlx/smc_scoring_test.cljs"

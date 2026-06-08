@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.serialize-property-test
   "Property-based tests for serialization round-trip laws.
    Verifies: choicemap round-trip, trace round-trip, dtype preservation,

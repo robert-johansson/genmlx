@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.resource-recovery-test
   "Regression for genmlx-5ucd + Layer 2 (genmlx-x7cl): a Metal buffer-count
    exhaustion must be SURVIVABLE — and, with Layer 2, PRE-EMPTED so the hot path

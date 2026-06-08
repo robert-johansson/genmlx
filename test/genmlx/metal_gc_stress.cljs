@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.metal-gc-stress
   "Stress test to verify Metal buffer cleanup under sustained workload.
    Tests four strategies: sync, gc+sweep, async, and sweep-only."

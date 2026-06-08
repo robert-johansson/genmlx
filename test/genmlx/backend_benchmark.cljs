@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.backend-benchmark
   "Benchmark CLJS↔NAPI dispatch overhead for mlx-node (genmlx.rs).
    Measures the dispatch path, not MLX compute (which is identical)."

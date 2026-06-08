@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.mcmc-property-test
   "Property-based tests for MCMC inference using test.check.
    Every test verifies a genuine algebraic law:

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gfi-regenerate-test
   "GFI Laws #4, #14, #15 — Regenerate weight formula and MH correctness.
 

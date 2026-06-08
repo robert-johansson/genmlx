@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.compiled-equiv-property-test
   "Property-based tests for compiled/handler equivalence.
    The compilation ladder's central invariant: compiled paths must produce

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.gfi-universal-test
   "Property-based GFI verification over generated model structures.
 

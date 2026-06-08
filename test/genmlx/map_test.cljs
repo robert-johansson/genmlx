@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.map-test
   "Tests for MAP (Maximum A Posteriori) optimization."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.l3-5-score-fn-test
   "Level 3.5 WP-4: Score function integration tests."
   (:require [cljs.test :refer [deftest is testing]]

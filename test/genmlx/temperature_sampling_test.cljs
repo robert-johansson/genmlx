@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.temperature-sampling-test
   "Unit tests for temperature-scaled categorical sampling.
    No LLM required — tests the sampling primitives directly."

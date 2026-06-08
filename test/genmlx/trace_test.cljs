@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.trace-test
   "Tests for trace construction and field access."
   (:require [cljs.test :refer [deftest is testing]]

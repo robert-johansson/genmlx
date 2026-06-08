@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.sequential-convergence-test
   "Sequential inference convergence tests on a linear-Gaussian SSM.
 

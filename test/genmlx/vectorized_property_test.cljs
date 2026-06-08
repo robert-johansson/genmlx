@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.vectorized-property-test
   "Property-based vectorized inference tests using test.check.
    Verifies vsimulate/vgenerate shape invariants, statistical equivalence,

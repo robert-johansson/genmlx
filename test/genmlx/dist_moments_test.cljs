@@ -1,3 +1,4 @@
+;; @tier medium
 
 (ns genmlx.dist-moments-test
   "Phase 1.3: Sampling moment tests for distributions with finite moments.

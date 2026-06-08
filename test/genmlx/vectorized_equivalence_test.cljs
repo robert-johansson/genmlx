@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.vectorized-equivalence-test
   "Vectorized equivalence: vsimulate produces N independent samples
    with correct distributional properties. ESS computation.

@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.auto-wiring-test
   "WP-2 Gate 2: Auto-wiring tests — verify that DynamicGF automatically
    detects conjugate pairs and uses analytical handlers in p/generate.

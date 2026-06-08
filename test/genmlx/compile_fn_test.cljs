@@ -1,3 +1,4 @@
+;; @tier fast
 (ns compile-fn-test
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]))

@@ -1,3 +1,4 @@
+;; @tier medium
 ;; Headless tests for the BATCHED bandit inference path (bean genmlx-tl6p):
 ;; pomdp/simulate-bandit-batched runs N independent Thompson episodes at once as
 ;; [N,K]-shaped tensor steps. The batched aggregate (final posterior means, modal

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.contract-verification-test
   "GFI law verification on 13 canonical models covering all features.
    Each model is verified against its applicable law subset (5 trials each).

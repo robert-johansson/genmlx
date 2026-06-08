@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.perfbench-curvefit
   "Performance benchmark: polynomial regression (curvefit).
 

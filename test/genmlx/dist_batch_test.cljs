@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.dist-batch-test
   "Phase 1.5: Batch shape tests for all distributions.
    Every distribution's sample-n must return correctly-shaped arrays.

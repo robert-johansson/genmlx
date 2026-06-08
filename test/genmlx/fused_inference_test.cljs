@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.fused-inference-test
   "WP-2: Fused Inference + Optimization tests.
    Tests fused MCMC+Adam, fused-learn dispatch, metadata reporting,

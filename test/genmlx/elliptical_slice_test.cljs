@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.elliptical-slice-test
   "Tests for elliptical slice sampling."
   (:require [cljs.test :refer [deftest is testing]]

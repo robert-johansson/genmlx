@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.resource-test
   "Stress tests for Metal resource management.
    Verifies that inference loops don't leak Metal buffers over extended runs."

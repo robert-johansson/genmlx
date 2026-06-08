@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.combinator-extra-property-test
   "Property-based tests for Mix, Recurse, Contramap, and Dimap combinators.
    Verifies GFI contracts and structural invariants."

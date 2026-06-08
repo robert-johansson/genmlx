@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gradient-learning-property-test
   "Property-based tests for gradients, parameter stores, optimizers,
    and training loops using test.check."

@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.optimization-benchmark
   "Step 1/Step 9 benchmark for TODO_OPTIMIZATION.md.
    Measures all operations we care about across 3 model sizes.

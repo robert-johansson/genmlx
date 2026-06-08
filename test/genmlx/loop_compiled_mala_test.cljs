@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.loop-compiled-mala-test
   "Tests for MALA loop compilation: correctness, cache validation, benchmarks."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.benchmark
   "Performance benchmarks for GenMLX."
   (:require [genmlx.mlx :as mx]

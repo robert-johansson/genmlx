@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.tutorial.ch07-test
   "Test file for Tutorial Chapter 7: The Inference Toolkit."
   (:require [genmlx.mlx :as mx]

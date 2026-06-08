@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.compiled-benchmark
   "Benchmark suite: compiled inference vs GFI-based inference.
    Measures speedup from compiled score functions and parameter-space iteration.

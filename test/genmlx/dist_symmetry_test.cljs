@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.dist-symmetry-test
   "Phase 1.2: Symmetry and invariant tests for symmetric distributions.
    For distributions symmetric around a location parameter:

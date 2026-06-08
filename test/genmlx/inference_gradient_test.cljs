@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.inference-gradient-test
   "Phase 4.3: Inference gradient magnitude tests.
    Verifies gradient correctness through three inference mechanisms:

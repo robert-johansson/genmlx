@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.paper-bench-gmm
   "Paper Experiment 3C: Gaussian Mixture Model — Enumeration vs IS vs Gibbs.
 

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.unfold-splice-test
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]

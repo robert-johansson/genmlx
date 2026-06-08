@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.paper-bench-changepoint
   "Paper Experiment 8: Changepoint Detection — Expressiveness Showcase.
 

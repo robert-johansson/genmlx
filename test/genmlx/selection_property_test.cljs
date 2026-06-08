@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.selection-property-test
   "Property-based selection algebra tests using test.check.
    Verifies all/none semantics, from-set membership, complement involution,

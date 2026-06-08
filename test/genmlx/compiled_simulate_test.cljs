@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.compiled-simulate-test
   "L1-M2 tests: compiled simulate for static models.
 

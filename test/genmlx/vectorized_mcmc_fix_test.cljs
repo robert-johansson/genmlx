@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.vectorized-mcmc-fix-test
   "Regression test: vectorized MCMC on multi-parameter models.
    Previously crashed with unordered_map::at on 2+ parameters."

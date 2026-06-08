@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.gradient-mcmc-property-test
   "Property-based tests for gradient MCMC (MALA, HMC).
    Every test verifies a genuine probabilistic programming law:

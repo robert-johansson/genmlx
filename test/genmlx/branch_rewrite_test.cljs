@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.branch-rewrite-test
   "L1-M4 tests: automatic branch rewriting for compiled gen functions."
   (:require [cljs.test :refer [deftest is testing]]

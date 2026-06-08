@@ -1,3 +1,4 @@
+;; @tier bench
 (ns eval-cost-model-2
   "Part 2: Tests that need a fresh process (Metal resource limit).
    Tests 4-7 from the eval cost model."

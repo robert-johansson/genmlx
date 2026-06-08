@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.paper.bench-07-system
   "Paper Experiment 7: Cross-System Comparison (GenMLX side).
 

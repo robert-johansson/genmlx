@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.entropy-property-test
   "Entropy verification: for distributions with known closed-form entropy,
    the empirical mean of -log p(x) over N=2000 samples should converge

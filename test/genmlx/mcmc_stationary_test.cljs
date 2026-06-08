@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.mcmc-stationary-test
   "Phase 5.2 -- MCMC stationary distribution tests.
    Each test verifies that a sampler converges to the analytically known

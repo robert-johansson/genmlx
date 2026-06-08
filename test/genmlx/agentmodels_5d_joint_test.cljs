@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless tests for 5d procrastination JOINT inference (agentmodels Ch 5d).
 ;; Run: bun run --bun nbb test/genmlx/agentmodels_5d_joint_test.cljs
 

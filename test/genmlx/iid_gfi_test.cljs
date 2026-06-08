@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.iid-gfi-test
   "M2 Steps 1-2: GFI completeness + inference integration for iid models."
   (:require [cljs.test :refer [deftest is testing]]

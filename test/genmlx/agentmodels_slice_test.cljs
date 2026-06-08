@@ -1,3 +1,4 @@
+;; @tier slow
 ;; Headless tests for the agentmodels TUI vertical slice — everything BELOW the
 ;; render seam: gridworld geometry/tensors, tensor value iteration + the
 ;; softmax-action policy rollout, and the pure Frame producer + ASCII renderer.

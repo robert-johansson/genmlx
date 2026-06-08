@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.schema-test
   "L1-M1: Schema extraction tests.
    Verify that extract-schema correctly analyzes gen body source forms

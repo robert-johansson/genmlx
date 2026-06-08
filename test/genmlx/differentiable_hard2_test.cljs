@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.differentiable-hard2-test
   "Follow-up: test with (a) more iterations, (b) fewer latent dims."
   (:require [cljs.test :refer [deftest is testing]]

@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.wp7-combinator-generate-test
   "WP-7 tests: combinator compiled generate.
    Validates that compiled generate paths for Map, Unfold, Scan, Switch, Mix

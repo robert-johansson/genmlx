@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.kernel-compile-check
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]

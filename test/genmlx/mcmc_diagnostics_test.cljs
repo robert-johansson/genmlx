@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.mcmc-diagnostics-test
   "Phase 5.3 -- MCMC diagnostic infrastructure tests.
    Verifies R-hat convergence, effective sample size bounds, and

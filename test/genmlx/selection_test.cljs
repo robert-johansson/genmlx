@@ -1,3 +1,4 @@
+;; @tier fast core
 (ns genmlx.selection-test
   "Selection algebra tests: all, none, select, from-set, hierarchical, complement."
   (:require [cljs.test :refer [deftest is testing]]

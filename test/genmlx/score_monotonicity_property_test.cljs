@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.score-monotonicity-property-test
   "Property-based tests for importance weight monotonicity.
    For single-site models: constraining at the mode should yield a higher

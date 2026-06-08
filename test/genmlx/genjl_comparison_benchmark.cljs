@@ -1,3 +1,4 @@
+;; @tier bench
 (ns genmlx.genjl-comparison-benchmark
   "Apples-to-apples comparison with Gen.jl benchmark numbers.
    Uses same models, same iteration counts, same timing protocol.
