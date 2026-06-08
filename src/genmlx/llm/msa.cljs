@@ -526,10 +526,17 @@ Output ONLY the lines. No explanation.")
   (let [obs-cm (observations->choicemap observations)
         {:keys [values log-weights]}
         (reduce (fn [acc _]
-                  (let [{:keys [trace weight]} (p/generate gf [] obs-cm)]
+                  (let [{:keys [trace weight]} (p/generate gf [] obs-cm)
+                        ;; A synthesized candidate may not trace `query` at all
+                        ;; (or trace it as a non-leaf). Extracting then yields nil
+                        ;; and mx/item throws. Record NaN instead — infer-answer
+                        ;; drops non-finite values, so one bad site can't NaN the
+                        ;; whole posterior.
+                        v (try
+                            (mx/item (cm/get-value (cm/get-submap (:choices trace) query)))
+                            (catch :default _ js/NaN))]
                     (-> acc
-                        (update :values conj
-                                (mx/item (cm/get-value (cm/get-submap (:choices trace) query))))
+                        (update :values conj v)
                         (update :log-weights conj (mx/item weight)))))
                 {:values [] :log-weights []}
                 (range n))]
@@ -546,23 +553,42 @@ Output ONLY the lines. No explanation.")
   "Compute posterior mean and variance from importance sampling results.
    Normalizes log-weights via log-sum-exp for numerical stability.
 
+   Robust to degenerate inputs: a particle is only usable when BOTH its value
+   and its log-weight are finite. A non-finite value (e.g. a candidate that
+   divides by a near-zero sample) or a non-finite weight (an impossible
+   observation gives -Inf) would otherwise poison the reduction and produce a
+   NaN mean. Such particles are dropped before normalization. When no usable
+   particle remains, the posterior is degenerate — fall back to the unweighted
+   mean of any finite values, else 0.0. The result is always finite.
+
    samples: {:values [...] :log-weights [...] :query keyword}
             as returned by importance-sample
 
    Returns {:mean number, :variance number, :ess number, :query keyword}."
   [{:keys [values log-weights query]}]
-  (let [unnorm (exp-normalize log-weights)
-        total (reduce + unnorm)
-        probs (mapv #(/ % total) unnorm)
-        mean (reduce + (map * values probs))
-        sq-diff (map (fn [v p] (* p (* (- v mean) (- v mean)))) values probs)
-        variance (reduce + sq-diff)
-        ess (/ (* total total)
-               (reduce + (map * unnorm unnorm)))]
-    {:mean mean
-     :variance variance
-     :ess ess
-     :query query}))
+  (let [pairs (filterv (fn [[v w]] (and (js/isFinite v) (js/isFinite w)))
+                       (mapv vector values log-weights))]
+    (if (seq pairs)
+      ;; ≥1 usable particle: standard self-normalized importance estimate.
+      ;; exp-normalize subtracts the max, so the largest weight is exactly 1 and
+      ;; total ≥ 1 — no zero-division, and every term is finite.
+      (let [vs (mapv first pairs)
+            unnorm (exp-normalize (mapv second pairs))
+            total (reduce + unnorm)
+            probs (mapv #(/ % total) unnorm)
+            mean (reduce + (map * vs probs))
+            variance (reduce + (map (fn [v p] (* p (* (- v mean) (- v mean)))) vs probs))
+            ess (/ (* total total) (reduce + (map * unnorm unnorm)))]
+        {:mean mean :variance variance :ess ess :query query})
+      ;; No usable particle — degenerate posterior. Unweighted mean of finite
+      ;; values if any survive, else 0.0. Never NaN.
+      (let [vs (filterv js/isFinite values)
+            n (count vs)]
+        (if (pos? n)
+          (let [mean (/ (reduce + vs) n)
+                variance (/ (reduce + (map #(* (- % mean) (- % mean)) vs)) n)]
+            {:mean mean :variance variance :ess (double n) :query query})
+          {:mean 0.0 :variance 0.0 :ess 0.0 :query query})))))
 
 ;; ============================================================
 ;; 9.9 End-to-end pipeline

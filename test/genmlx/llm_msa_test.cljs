@@ -6,7 +6,7 @@
        importance sampling posterior, error handling
    1b. Knowledge path pure tests — normalize-llm, parse-math (Instaparse),
        parse->assemble->eval->score round-trip, normalize+parse combined
-   2.  Model tests (Qwen3-0.6B fine-tuned + base) — generate-candidate,
+   2.  Model tests (Qwen3.5-0.8B) — generate-candidate,
        synthesize-and-rank, end-to-end MSA, generate-knowledge-candidate,
        end-to-end MSA with :mode :knowledge
 
@@ -273,6 +273,72 @@
     (swap! fail-count inc)
     (println "  FAIL: infer-answer strength threw:" (.-message e))))
 
+;; -- 1.4b infer-answer robustness (no LLM, no model) --
+;; These feed infer-answer hand-crafted samples maps directly, exercising the
+;; degenerate paths an LLM-synthesized candidate can hit at runtime. The fix
+;; guarantees a FINITE posterior mean regardless of which candidate is picked,
+;; so 2.3's end-to-end NaN can never recur. Determined, sub-millisecond — no
+;; model load, no token decode.
+
+(println "\n-- 1.4b infer-answer: drops NaN value, keeps finite particles --")
+(try
+  ;; Middle particle's value is NaN; equal weights on the survivors → mean 2.0.
+  (let [r (msa/infer-answer {:values [1.0 js/NaN 3.0]
+                             :log-weights [0.0 0.0 0.0] :query :x})]
+    (assert-true "mean is finite" (js/isFinite (:mean r)))
+    (assert-close "mean = unweighted mean of survivors" 2.0 (:mean r) 1e-9))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: NaN-value case threw:" (.-message e))))
+
+(println "\n-- 1.4b infer-answer: drops -Inf-weight particle --")
+(try
+  ;; Middle particle has zero posterior mass (-Inf log-weight); it must not
+  ;; contribute. Survivors 10,30 with equal weight → mean 20.0.
+  (let [r (msa/infer-answer {:values [10.0 20.0 30.0]
+                             :log-weights [0.0 ##-Inf 0.0] :query :x})]
+    (assert-true "mean is finite" (js/isFinite (:mean r)))
+    (assert-close "mean excludes zero-mass particle" 20.0 (:mean r) 1e-9))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: -Inf-weight case threw:" (.-message e))))
+
+(println "\n-- 1.4b infer-answer: all weights -Inf → unweighted fallback --")
+(try
+  ;; Every particle is equally impossible — max over all -Inf would make
+  ;; (w - max) = NaN. Fallback is the unweighted mean of finite values: 4.0.
+  (let [r (msa/infer-answer {:values [2.0 4.0 6.0]
+                             :log-weights [##-Inf ##-Inf ##-Inf] :query :x})]
+    (assert-true "mean is finite" (js/isFinite (:mean r)))
+    (assert-close "mean = unweighted mean of values" 4.0 (:mean r) 1e-9))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: all-(-Inf) case threw:" (.-message e))))
+
+(println "\n-- 1.4b infer-answer: no usable particle → finite zero, not NaN --")
+(try
+  ;; All values NaN (weights finite): no usable pair, no finite value either.
+  (let [r (msa/infer-answer {:values [js/NaN js/NaN]
+                             :log-weights [0.0 0.0] :query :x})]
+    (assert-true "mean is finite" (js/isFinite (:mean r)))
+    (assert-equal "mean degenerates to 0.0" 0.0 (:mean r))
+    (assert-equal "ess degenerates to 0.0" 0.0 (:ess r)))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: no-usable-particle case threw:" (.-message e))))
+
+(println "\n-- 1.4b infer-answer: weighted estimate unchanged on clean input --")
+(try
+  ;; Regression: clean finite input still gives the exact weighted mean.
+  ;; weights ∝ [1, 3] → probs [0.25, 0.75] → mean 0*0.25 + 10*0.75 = 7.5.
+  (let [r (msa/infer-answer {:values [0.0 10.0]
+                             :log-weights [0.0 (js/Math.log 3)] :query :x})]
+    (assert-close "weighted mean = 7.5" 7.5 (:mean r) 1e-9)
+    (assert-true "ess is finite" (js/isFinite (:ess r))))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: clean-input regression threw:" (.-message e))))
+
 ;; -- 1.5 Error handling --
 
 (println "\n-- 1.5 eval-model: invalid code returns nil --")
@@ -447,20 +513,19 @@
 (report "Pure tests")
 
 ;; ============================================================
-;; Section 2: Model tests (Qwen3-0.6B fine-tuned + base)
+;; Section 2: Model tests (Qwen3.5-0.8B for both template + knowledge mode)
 ;; ============================================================
 
 (def ^:private model-dir
-  (str (.-HOME js/process.env) "/.cache/models/qwen3-0.6b-cljs"))
+  (str (.-HOME js/process.env) "/.cache/models/qwen3.5-0.8b"))
 
-(def ^:private base-model-dir
-  (str (.-HOME js/process.env) "/.cache/models/qwen3-0.6b"))
-
-(println "\n== Loading Qwen3-0.6B-cljs (fine-tuned) and Qwen3-0.6B (base) for model tests... ==")
+(println "\n== Loading Qwen3.5-0.8B for model tests... ==")
 
 (pr/let [model-map (llm/load-model model-dir)
-         base-model-map (llm/load-model base-model-dir)]
-  (println "Both models loaded.\n")
+         ;; No fine-tuned model in the roster — qwen3.5-0.8b drives both the
+         ;; template-mode (2.1-2.3) and knowledge-mode (2.4-2.5) tests.
+         base-model-map model-map]
+  (println "Model loaded.\n")
 
   ;; -- 2.1 generate-candidate --
   (println "\n-- 2.1 generate-candidate: produces code --")
