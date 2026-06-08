@@ -28,15 +28,26 @@
    which is algebraically identical to the batch marginal/posterior (chain rule
    of the joint Gaussian density) and fits the per-address handler structure.
 
-   v1 scope: generate + assess (exact). regenerate/update DECLINE (the block is
-   excluded from regenerate handlers, so its latents fall through to sampling).
-   Blocks whose latents have non-conjugate children, latent-dependent noise,
-   non-affine means, or latents not preceding their observations are DECLINED —
+   Scope: generate + assess (exact), and regenerate (genmlx-m3tn: the block stays
+   Rao-Blackwellised under MH moves over unrelated residual latents; selecting a
+   block latent re-opens the whole block). UPDATE still declines (no analytical
+   :update path yet — genmlx-6hcu).
+
+   Partial conjugacy (genmlx-4q9d): when the obs noise depends on a RESIDUAL
+   (non-block) latent — e.g. y_j ~ N(slope·x_j+intercept, sigma) with sigma ~ Gamma
+   — the block is eliminated CONDITIONAL on the sampled residual (the marginal is
+   exact per sample; the population gives E_residual[block marginal], a strictly
+   Rao-Blackwellised IS/MH estimate).
+
+   Blocks whose latents have non-conjugate children, whose noise references a
+   BLOCK latent, with non-affine means, with residual noise latents that do not
+   precede the obs, or latents not preceding their observations are DECLINED —
    their pairs are removed so no rule claims a (wrong) exact elimination."
   (:require [clojure.set :as set]
             [genmlx.mlx :as mx]
             [genmlx.mlx.constants :refer [LOG-2PI]]
             [genmlx.choicemap :as cm]
+            [genmlx.selection :as sel]
             [genmlx.compiled :as compiled]))
 
 ;; ===========================================================================
@@ -101,6 +112,14 @@
   (let [names (into #{} (map name) addrs)]
     (boolean (some #(contains? names (name %)) (form-symbols form)))))
 
+(defn- form-trace-addrs
+  "Trace-site addresses (drawn from all-addrs) referenced anywhere in a source
+   form, matched by symbol name. Used to separate an observation's MEAN deps
+   (must be block latents) from its NOISE deps (may be residual latents)."
+  [form all-addrs]
+  (let [by-name (into {} (map (fn [a] [(name a) a])) all-addrs)]
+    (into #{} (keep #(get by-name (name %))) (form-symbols form))))
+
 (defn- connected-components
   "Undirected connected components over conjugate pairs (prior-addr ↔ obs-addr).
    Returns a seq of {:nodes :latents :obs :pairs}."
@@ -144,9 +163,15 @@
    Returns {:eligible? true :block desc} or {:eligible? false}.
 
    Eligible when: priors are independent (no latent in another latent's prior),
-   obs depend only on block latents, no latent has a non-conjugate child, obs
-   noise is latent-independent, latents precede all obs in dep-order, and every
-   obs mean/sigma form compiles."
+   obs MEANS depend only on block latents, no block latent has a non-conjugate
+   child, obs noise references no block latent, block latents precede all obs in
+   dep-order, and every obs mean/sigma form compiles.
+
+   Partial conjugacy (genmlx-4q9d): obs NOISE may reference RESIDUAL (non-block)
+   latents — the block is then eliminated CONDITIONAL on those residual values
+   (read at runtime from :choices). Such residual noise latents must precede the
+   block obs in dep-order, and are recorded as :noise-latents so the obs handlers
+   inject their sampled values when evaluating the noise form."
   [comp schema binding-env site-map dep-idx all-trace-addrs]
   (let [latents (:latents comp)
         obs     (:obs comp)
@@ -158,11 +183,11 @@
         ;; (a) independent priors: a latent's prior must not reference another latent
         indep-priors? (every? (fn [s] (not (references-any? (vec (:dist-args s)) latents)))
                                latent-sites)
-        ;; (b) obs depend only on block latents (mean only references block latents)
-        obs-deps-ok? (every? (fn [s]
-                               (set/subset? (set/intersection (:deps s) all-trace-addrs)
-                                            latents))
-                             obs-sites)
+        ;; (b) obs MEAN references only block latents (noise handled separately below)
+        mean-deps-ok? (every? (fn [s]
+                                (set/subset? (form-trace-addrs (mean-form s) all-trace-addrs)
+                                             latents))
+                              obs-sites)
         ;; (c) no non-conjugate children of any block latent
         children-conjugate?
         (every? (fn [la]
@@ -170,9 +195,21 @@
                                       (contains? obs (:addr s))))
                           (:trace-sites schema)))
                 latents)
-        ;; (d) noise latent-independent: sigma form references no block latent
-        noise-ok? (every? (fn [s] (not (references-any? (sigma-form s) latents))) obs-sites)
-        ;; (e) latents precede obs in dep-order
+        ;; (d) noise references no BLOCK latent (it may reference residual latents)
+        sigma-block-free? (every? (fn [s] (not (references-any? (sigma-form s) latents))) obs-sites)
+        ;; (d') residual latents the noise depends on (genmlx-4q9d): exclude block
+        ;; latents and block obs — what remains are the residual noise latents.
+        noise-latents (reduce (fn [acc s]
+                                (set/union acc (set/difference
+                                                (form-trace-addrs (sigma-form s) all-trace-addrs)
+                                                latents obs)))
+                              #{} obs-sites)
+        ;; (d'') residual noise latents must precede all block obs in dep-order, so
+        ;; their sampled value is available in :choices when the obs handler fires.
+        noise-precede? (or (empty? noise-latents)
+                           (let [min-obs (apply min (map #(get dep-idx % 0) order-obs))]
+                             (every? #(< (get dep-idx % 0) min-obs) noise-latents)))
+        ;; (e) block latents precede obs in dep-order
         order-ok? (or (empty? order-obs)
                       (< (apply max (map #(get dep-idx % 0) latents))
                          (apply min (map #(get dep-idx % 0) obs))))
@@ -184,13 +221,15 @@
                            :sigma-fn (compiled/compile-expr (sigma-form s) binding-env #{})}))
                       order-obs)
         forms-ok? (every? #(and (:mean-fn %) (:sigma-fn %)) obs-fns)]
-    (if (and indep-priors? obs-deps-ok? children-conjugate? noise-ok? order-ok? forms-ok?)
+    (if (and indep-priors? mean-deps-ok? children-conjugate? sigma-block-free?
+             noise-precede? order-ok? forms-ok?)
       {:eligible? true
        :block {:id order-latents            ; stable id (blocks are disjoint)
                :latents order-latents
                :latent-index (into {} (map-indexed (fn [i a] [a i])) order-latents)
                :p (count order-latents)
                :obs obs-fns
+               :noise-latents noise-latents
                :latent-addrs order-latents
                :obs-addrs order-obs
                :all-addrs (set/union latents obs)}}
@@ -249,58 +288,102 @@
     {:h h :c c}))
 
 (defn make-lg-handlers
-  "Build generate-mode address handlers for a linear-Gaussian block.
+  "Build address handlers for a linear-Gaussian block, parameterized by `mode`.
 
    Latent handlers collect each prior (mean, var) and, once all are seen,
    materialise the joint belief. Observation handlers perform a vector-Kalman
    measurement update against the model args (read from :model-args in state),
-   accumulating the marginal LL into :score and :weight and writing posterior
-   means back to the latent choices. Handlers return nil (fall through) when the
-   block cannot proceed (missing args/belief, unconstrained obs)."
-  [block]
-  (let [{:keys [id latents p obs]} block
-        latent-handlers
-        (into {}
-              (map (fn [la]
-                     [la
-                      (fn [state _addr dist]
-                        (let [{:keys [mu sigma]} (:params dist)
-                              var (mx/multiply sigma sigma)
-                              st (-> state
-                                     (assoc-in [:lg-init id la] {:mean (coerce-scalar mu)
-                                                                 :var (coerce-scalar var)})
-                                     (update :choices cm/set-value la mu))
-                              inits (get-in st [:lg-init id])
-                              st (if (= (count inits) p)
-                                   (let [m0 (mx/stack (mapv #(:mean (get inits %)) latents))
-                                         s0 (mx/diag (mx/stack (mapv #(:var (get inits %)) latents)))]
-                                     (assoc-in st [:lg-belief id] {:mean m0 :cov s0}))
-                                   st)]
-                          [mu st]))]))
-              latents)
-        obs-handlers
-        (into {}
-              (map (fn [{:keys [addr mean-fn sigma-fn]}]
-                     [addr
-                      (fn [state _addr _dist]
-                        (let [belief (get-in state [:lg-belief id])
-                              args (:model-args state)
-                              constraint (cm/get-submap (:constraints state) addr)]
-                          (when (and belief args (cm/has-value? constraint))
-                            (let [y (cm/get-value constraint)
-                                  {:keys [h c]} (obs-design mean-fn latents args)
-                                  s (coerce-scalar
-                                     (sigma-fn (zipmap latents (repeat (mx/scalar 0.0))) args))
-                                  r (mx/multiply s s)
-                                  {:keys [mean cov ll]} (lg-kalman-step belief {:y y :h h :c c :r r})
-                                  st (reduce (fn [st i]
-                                               (update st :choices cm/set-value
-                                                       (nth latents i) (mx/index mean i)))
-                                             state (range p))]
-                              [y (-> st
-                                     (assoc-in [:lg-belief id] {:mean mean :cov cov})
-                                     (update :choices cm/set-value addr y)
-                                     (update :score mx/add ll)
-                                     (update :weight mx/add ll))]))))]))
-              obs)]
-    (merge latent-handlers obs-handlers)))
+   writing posterior means back to the latent choices. Handlers return nil (fall
+   through) when the block cannot proceed (missing args/belief, unconstrained obs).
+
+   :generate (default) — obs read :constraints; the marginal LL accumulates into
+     BOTH :score and :weight; latents write the prior mean (placeholder,
+     overwritten with the posterior mean by the obs handlers). Used for generate
+     AND assess.
+   :regenerate — mirrors the scalar-conjugate regenerate contract (genmlx-m3tn).
+     The block is a JOINTLY coupled unit, so if ANY block latent is selected the
+     WHOLE block re-opens: every block handler returns nil, falling through to the
+     base regenerate transition (selected latents resample from prior, others keep
+     their old value, obs scored plainly). Otherwise (no block latent selected)
+     latents seed the belief and write their OLD value; obs read :old-choices, do
+     the Kalman update, write posterior means, and accumulate the marginal LL into
+     :score ONLY (not :weight) — so an MH move over an unrelated residual sees the
+     block's Rao-Blackwellised contribution to the target without double-counting.
+
+   Partial conjugacy (genmlx-4q9d): when the block has :noise-latents, the obs
+   handlers read those residual latents' sampled values from :choices and inject
+   them into the noise (sigma) form — eliminating the block CONDITIONAL on the
+   current residual. The marginal LL is then exact per residual sample, and the
+   overall estimate is E_residual[block marginal] over the particle population."
+  ([block] (make-lg-handlers block :generate))
+  ([block mode]
+   (let [{:keys [id latents p obs noise-latents]} block
+         noise-latents (or noise-latents #{})
+         regenerate? (= mode :regenerate)
+         block-reopened?
+         (fn [state]
+           (and regenerate?
+                (:selection state)
+                (boolean (some #(sel/selected? (:selection state) %) latents))))
+         latent-handlers
+         (into {}
+               (map (fn [la]
+                      [la
+                       (fn [state _addr dist]
+                         (when-not (block-reopened? state)
+                           (let [{:keys [mu sigma]} (:params dist)
+                                 var (mx/multiply sigma sigma)
+                                 value (if regenerate?
+                                         (cm/get-value (cm/get-submap (:old-choices state) la))
+                                         mu)
+                                 st (-> state
+                                        (assoc-in [:lg-init id la] {:mean (coerce-scalar mu)
+                                                                    :var (coerce-scalar var)})
+                                        (update :choices cm/set-value la value))
+                                 inits (get-in st [:lg-init id])
+                                 st (if (= (count inits) p)
+                                      (let [m0 (mx/stack (mapv #(:mean (get inits %)) latents))
+                                            s0 (mx/diag (mx/stack (mapv #(:var (get inits %)) latents)))]
+                                        (assoc-in st [:lg-belief id] {:mean m0 :cov s0}))
+                                      st)]
+                             [value st])))]))
+               latents)
+         obs-handlers
+         (into {}
+               (map (fn [{:keys [addr mean-fn sigma-fn]}]
+                      [addr
+                       (fn [state _addr _dist]
+                         (when-not (block-reopened? state)
+                           (let [belief (get-in state [:lg-belief id])
+                                 args (:model-args state)
+                                 constraint (if regenerate?
+                                              (cm/get-submap (:old-choices state) addr)
+                                              (cm/get-submap (:constraints state) addr))
+                                 ;; Residual noise latents (genmlx-4q9d): their sampled
+                                 ;; values, read live from :choices (set before the obs by
+                                 ;; dep-order). Empty for v1 constant/block-free noise.
+                                 noise-ready? (every? #(cm/has-value? (cm/get-submap (:choices state) %))
+                                                      noise-latents)]
+                             (when (and belief args noise-ready? (cm/has-value? constraint))
+                               (let [y (cm/get-value constraint)
+                                     {:keys [h c]} (obs-design mean-fn latents args)
+                                     noise-vals (into {} (map (fn [nl]
+                                                                [nl (cm/get-value
+                                                                     (cm/get-submap (:choices state) nl))]))
+                                                      noise-latents)
+                                     sigma-env (merge (zipmap latents (repeat (mx/scalar 0.0)))
+                                                      noise-vals)
+                                     s (coerce-scalar (sigma-fn sigma-env args))
+                                     r (mx/multiply s s)
+                                     {:keys [mean cov ll]} (lg-kalman-step belief {:y y :h h :c c :r r})
+                                     st (reduce (fn [st i]
+                                                  (update st :choices cm/set-value
+                                                          (nth latents i) (mx/index mean i)))
+                                                state (range p))]
+                                 [y (cond-> (-> st
+                                                (assoc-in [:lg-belief id] {:mean mean :cov cov})
+                                                (update :choices cm/set-value addr y)
+                                                (update :score mx/add ll))
+                                      (not regenerate?) (update :weight mx/add ll))])))))]))
+               obs)]
+     (merge latent-handlers obs-handlers))))

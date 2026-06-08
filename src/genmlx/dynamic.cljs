@@ -19,6 +19,7 @@
             [genmlx.compiled-ops :as cops]
             [genmlx.conjugacy :as conj]
             [genmlx.rewrite :as rewrite]
+            [genmlx.linear-gaussian :as lg]
             [genmlx.inference.auto-analytical :as auto]
             [genmlx.dispatch :as dispatch]
             [clojure.set :as set]))
@@ -361,6 +362,9 @@
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
                   :key key :selection selection
                   :old-choices (:choices trace)
+                  ;; Linear-Gaussian block regenerate handlers recover the design
+                  ;; matrix by probing the obs mean forms against the model args.
+                  :model-args (:args trace)
                   :auto-posteriors {} :auto-kalman-beliefs {} :auto-kalman-noise-vars {}
                   :old-splice-scores (::splice-scores (meta trace))
                   :old-nested-splice-scores (::nested-splice-scores (meta trace))
@@ -755,20 +759,30 @@
                  (let [augmented (conj/augment-schema-with-conjugacy schema)]
                    (if (:has-conjugate? augmented)
                      (let [plan (rewrite/build-analytical-plan augmented source)
-                           ;; v1: regenerate DECLINES linear-Gaussian blocks (and
-                           ;; declined concern-components) — exclude their addrs so
-                           ;; the latents fall through to base regenerate (sampled).
+                           ;; Keep both declined concern-components AND linear-Gaussian
+                           ;; block addrs off the SCALAR regenerate path: declined addrs
+                           ;; fall through to base regenerate (sampled), and block addrs
+                           ;; would be mis-handled by the per-prior scalar conjugate path
+                           ;; (the off-by-affine-coefficient bug). Blocks instead get
+                           ;; dedicated joint regenerate handlers merged in below
+                           ;; (genmlx-m3tn: Rao-Blackwell under MH moves).
+                           lg-blocks (:lg-blocks plan)
                            lg-excluded (into (set (:declined-addrs plan))
-                                             (mapcat :all-addrs (:lg-blocks plan)))
+                                             (mapcat :all-addrs lg-blocks))
                            regen-pairs (if (seq lg-excluded)
                                          (remove (fn [p]
                                                    (or (contains? lg-excluded (:prior-addr p))
                                                        (contains? lg-excluded (:obs-addr p))))
                                                  (:conjugate-pairs augmented))
                                          (:conjugate-pairs augmented))
-                           regen-handlers (auto/build-all-regenerate-handlers
-                                           regen-pairs
-                                           :chains (:kalman-chains plan))
+                           scalar-regen-handlers (auto/build-all-regenerate-handlers
+                                                  regen-pairs
+                                                  :chains (:kalman-chains plan))
+                           block-regen-handlers (reduce
+                                                 (fn [m blk]
+                                                   (merge m (lg/make-lg-handlers blk :regenerate)))
+                                                 {} lg-blocks)
+                           regen-handlers (merge scalar-regen-handlers block-regen-handlers)
                            ;; Opt 1: precompute dispatch transition once at construction
                            regen-transition (when (seq regen-handlers)
                                               (auto/make-address-dispatch
