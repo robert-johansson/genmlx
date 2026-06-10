@@ -232,12 +232,23 @@
 (println "\n== Listing 4.12: hierarchical ==")
 
 (let [s (sel/hierarchical :params (sel/select :slope))]
-  (assert-true ":params is selected" (sel/selected? s :params))
+  ;; :params maps to a PARTIAL subselection (just :slope), so :params is a
+  ;; DESCENT POINT, not a selected leaf: selected? is false. You reach the
+  ;; selected address by descending with get-subselection.
+  (assert-true ":params is a descent point, not leaf-selected"
+               (not (sel/selected? s :params)))
   (assert-true ":other is not selected" (not (sel/selected? s :other)))
   ;; Sub-selection under :params
   (let [sub (sel/get-subselection s :params)]
     (assert-true "sub selects :slope" (sel/selected? sub :slope))
     (assert-true "sub does not select :intercept" (not (sel/selected? sub :intercept)))))
+
+;; To select an address itself (as a leaf, or its whole subtree), map it to
+;; `all` — then selected? is true and the entire subtree is selected.
+(let [s (sel/hierarchical :params sel/all)]
+  (assert-true ":params mapped to all IS selected" (sel/selected? s :params))
+  (assert-true "everything under :params is selected"
+               (sel/selected? (sel/get-subselection s :params) :anything)))
 
 ;; ============================================================
 ;; Listing 4.13: Selections as Boolean algebra

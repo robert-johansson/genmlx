@@ -99,9 +99,11 @@
 
 (deftest hierarchical-selects-registered-addresses
   (let [h (sel/hierarchical :a (sel/select :x :y) :b sel/all)]
-    (is (sel/selected? h :a))
-    (is (sel/selected? h :b))
-    (is (not (sel/selected? h :c)))))
+    ;; :a maps to a PARTIAL subselection => :a is a descent point, not a
+    ;; selected leaf. :b maps to `all` => :b is selected as a leaf.
+    (is (not (sel/selected? h :a)) "partial-subsel key is not leaf-selected")
+    (is (sel/selected? h :b) "all-subsel key is leaf-selected")
+    (is (not (sel/selected? h :c)) "unregistered key is not selected")))
 
 (deftest hierarchical-subselection-propagates
   (let [h (sel/hierarchical :a (sel/select :x :y) :b sel/all)]
@@ -120,12 +122,15 @@
 (deftest nested-hierarchical-selection
   (let [inner (sel/hierarchical :p (sel/select :q))
         outer (sel/hierarchical :a inner)]
-    (is (sel/selected? outer :a))
+    ;; Path [:a :p :q]: :a and :p are descent points (partial subselections),
+    ;; not selected leaves; only :q at the bottom of the path is selected. The
+    ;; descent itself is verified via get-subselection.
+    (is (not (sel/selected? outer :a)) ":a is a descent point, not leaf-selected")
     (let [sub-a (sel/get-subselection outer :a)]
-      (is (sel/selected? sub-a :p))
-      (is (not (sel/selected? sub-a :z)))
+      (is (not (sel/selected? sub-a :p)) ":p is a descent point, not leaf-selected")
+      (is (not (sel/selected? sub-a :z)) ":z is not under :a")
       (let [sub-a-p (sel/get-subselection sub-a :p)]
-        (is (sel/selected? sub-a-p :q))))))
+        (is (sel/selected? sub-a-p :q) ":q is selected at the bottom of the path")))))
 
 ;; ---------------------------------------------------------------------------
 ;; Complement distributes through hierarchy
@@ -134,9 +139,11 @@
 (deftest complement-of-hierarchical-subselection
   (let [h (sel/hierarchical :a (sel/select :x :y))
         c (sel/complement-sel h)]
-    (testing "complement flips top-level"
-      (is (not (sel/selected? c :a)))
-      (is (sel/selected? c :z)))
+    (testing "complement flips top-level leaf membership"
+      ;; h leaf-selects nothing at the top level (:a is a descent point with a
+      ;; partial subselection), so the complement leaf-selects both :a and :z.
+      (is (sel/selected? c :a) "complement: :a leaf-selected (h does not leaf-select :a)")
+      (is (sel/selected? c :z) "complement: :z leaf-selected"))
     (testing "complement propagates into subselections"
       (let [c-sub-a (sel/get-subselection c :a)]
         (is (not (sel/selected? c-sub-a :x))

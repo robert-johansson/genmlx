@@ -91,4 +91,49 @@
           leaf-addrs (cm/addresses cm)]
       (not-any? (fn [[a]] (sel/selected? sel/none a)) leaf-addrs))))
 
+;; ---------------------------------------------------------------------------
+;; get-subselection descent semantics (genmlx-yey5)
+;;
+;; These pin the property that descent (used by splice/combinator-element
+;; recursion) resamples a subtree iff its address is selected. The prior bug
+;; was SelectAddrs.get-subselection returning `all` unconditionally, so EVERY
+;; unselected subtree was resampled.
+;; ---------------------------------------------------------------------------
+
+(defspec select-subselection-all-iff-selected 100
+  ;; A selected address descends with `all`; an unselected one with `none`.
+  (prop/for-all [s gen-addr-set
+                 k gen-addr]
+    (let [sel (sel/from-set s)
+          sub (sel/get-subselection sel k)]
+      (if (contains? s k)
+        (sel/selected? sub :anything)         ;; selected => everything under k selected
+        (not (sel/selected? sub :anything)))))) ;; unselected => nothing under k selected
+
+(defspec select-descent-consistent-with-leaf 100
+  ;; The leaf check and the descent agree: descending into k selects a leaf
+  ;; iff k itself is selected as a leaf.
+  (prop/for-all [s gen-addr-set
+                 k gen-addr]
+    (let [sel (sel/from-set s)]
+      (= (sel/selected? sel k)
+         (sel/selected? (sel/get-subselection sel k) :anything)))))
+
+(defspec complement-descent-consistent-with-leaf 100
+  ;; Complement mirror-bug regression: selected?(comp, k) agrees with whether
+  ;; everything under k is selected via the descended subselection.
+  (prop/for-all [s gen-addr-set
+                 k gen-addr]
+    (let [comp (sel/complement-sel (sel/from-set s))]
+      (= (sel/selected? comp k)
+         (sel/selected? (sel/get-subselection comp k) :anything)))))
+
+(defspec hierarchical-partial-subsel-not-leaf-selected 100
+  ;; Hierarchical conflation regression: an address mapped to a PARTIAL
+  ;; subselection is NOT selected as a leaf; mapped to `all` it IS.
+  (prop/for-all [k     gen-addr
+                 inner gen-addr]
+    (and (not (sel/selected? (sel/hierarchical k (sel/select inner)) k))
+         (sel/selected? (sel/hierarchical k sel/all) k))))
+
 (t/run-tests)
