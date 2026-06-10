@@ -1,7 +1,7 @@
 {
   "experiment": "changepoint",
-  "git_sha": "5f29f7a",
-  "timestamp": "2026-06-07T19:38:03.148Z",
+  "git_sha": "a53acef",
+  "timestamp": "2026-06-10T15:56:04.353Z",
   "hardware": {
     "platform": "darwin",
     "arch": "arm64",
@@ -12,7 +12,7 @@
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "5829164af2bf17a24b5356e07ebb5c4c58577dcc72f4fbb8068a8e1b6acce326",
-  "duration_ms": 92850,
+  "source_hash": "bfad7e76e6089ac72a5876e80022b55a69cdc94f0108f7766f5af91edbbc9e5c",
+  "duration_ms": 77732,
   "script": "bench/changepoint.cljs"
 }

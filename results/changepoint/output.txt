@@ -3,28 +3,28 @@
 Model: T=50 timesteps, p_change=0.1
 True changepoints at t=[12 30]
 True means: [0 3 -2]
-Data range: [-4.32, 5.23]
+Data range: [-4.70, 5.45]
 
 --- 1. Sequential IS (N=100) ---
 
   [seq-IS-100] running...
-  [seq-IS-100] 3390.1 ms
+  [seq-IS-100] 2754.7 ms
   ESS: 1.0 / 100 (1.0%)
-  log-ML: -115.94
+  log-ML: -159.69
 
 --- 2. Sequential IS (N=200) ---
 
   [seq-IS-200] running...
-  [seq-IS-200] 7244.1 ms
+  [seq-IS-200] 5604.7 ms
   ESS: 1.0 / 200 (0.5%)
-  log-ML: -78.69
+  log-ML: -172.60
 
 --- 3. SMC (N=100) ---
 
   [SMC-100] running...
-  [SMC-100] 81398.6 ms
+  [SMC-100] 68709.0 ms
   ESS: 100.0 / 100 (100.0%)
-  log-ML: -1146.32
+  log-ML: -539.90
 
 
 ========================================
@@ -36,9 +36,9 @@ True means: [0 3 -2]
 
 | Algorithm      | ESS / N       | log-ML   | Time (ms) |
 |----------------|---------------|----------|-----------|
-| seq-IS-100     |   1.0 / 100 ( 1.0%) |  -115.94 |    3390.1 |
-| seq-IS-200     |   1.0 / 200 ( 0.5%) |   -78.69 |    7244.1 |
-| SMC-100        | 100.0 / 100 (100.0%) | -1146.32 |   81398.6 |
+| seq-IS-100     |   1.0 / 100 ( 1.0%) |  -159.69 |    2754.7 |
+| seq-IS-200     |   1.0 / 200 ( 0.5%) |  -172.60 |    5604.7 |
+| SMC-100        | 100.0 / 100 (100.0%) |  -539.90 |   68709.0 |
 
 Expected: IS ESS near 1 (weight collapse on 2^50 latent space).
 SMC should maintain higher ESS by resampling incrementally.

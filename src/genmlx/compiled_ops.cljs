@@ -884,13 +884,6 @@
                              (conj outputs row)
                              (conj scores step-score))))))
               compiled (mx/compile-fn unfold-fn)]
-          ;; Warm up with dummy data
-          (let [dummy-state (if state-keys
-                              (mx/zeros [n-state])
-                              (mx/scalar 0.0))
-                dummy-noise (mx/zeros [T (max 1 noise-dim)])]
-            (let [[outputs scores sc] (compiled dummy-state dummy-noise)]
-              (mx/materialize! outputs scores sc)))
           {:compiled-fn compiled
            :noise-dim noise-dim
            :addr-order addr-order
@@ -958,19 +951,13 @@
                              (conj outputs row)
                              (conj scores step-score))))))
               compiled (mx/compile-fn scan-fn)]
-          ;; Warm up
-          (let [dummy-carry (mx/scalar 0.0)
-                dummy-inputs (mx/zeros [T])
-                dummy-noise (mx/zeros [T (max 1 noise-dim)])]
-            (let [[outputs scores sc] (compiled dummy-carry dummy-inputs dummy-noise)]
-              (mx/materialize! outputs scores sc)))
           {:compiled-fn compiled
            :noise-dim noise-dim
            :addr-order addr-order
            :noise-site-types noise-site-types})))))
 
 (defn fusable-kernel?
-  "Check if a kernel can be fused into a single Metal dispatch.
+  "Check if a kernel can be fused into a single lazy-graph evaluation.
    Returns true if the kernel has a static schema where every trace site is
    either a :noise-fn distribution or a true delta, with at least one
    noise-driven site. Sites with :args-noise-fn (iid-gaussian) are NOT

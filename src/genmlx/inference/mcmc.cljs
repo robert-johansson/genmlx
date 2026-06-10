@@ -185,7 +185,7 @@
     {:state (if accept? proposal params) :accepted? accept?}))
 
 (defn- make-compiled-chain
-  "Build a compiled K-step MH chain as one Metal dispatch.
+  "Build a compiled K-step MH chain as one fused lazy-graph evaluation.
    Returns compiled fn: (params [D], noise [K,D], uniforms [K]) → params [D].
    Noise and uniforms are generated OUTSIDE — compile-fn freezes random ops."
   [k-steps score-fn proposal-std n-params]
@@ -204,10 +204,6 @@
                       accept? (mx/greater log-alpha log-u)]
                   (recur (mx/where accept? proposal p) (inc i))))))
         compiled (mx/compile-fn chain-fn)]
-    ;; Trace call to cache the Metal program
-    (mx/materialize! (compiled (mx/array (vec (repeat n-params 0.0)))
-                               (rng/normal (rng/fresh-key) [k-steps n-params])
-                               (rng/uniform (rng/fresh-key) [k-steps])))
     compiled))
 
 (defn- pre-generate-chain-noise
@@ -280,7 +276,7 @@
         (recur state' (inc b))))))
 
 (defn- make-fused-burn-in
-  "Compile a function that runs n-burn MH steps in one Metal dispatch.
+  "Compile a function that runs n-burn MH steps in one graph evaluation.
    Returns compiled fn: (params [D], noise [B,D], uniforms [B]) → params [D].
    All noise is pre-generated outside."
   [n-burn score-fn proposal-std n-params]
@@ -299,10 +295,6 @@
                       accept? (mx/greater log-alpha log-u)]
                   (recur (mx/where accept? proposal p) (inc i))))))
         compiled (mx/compile-fn burn-fn)]
-    ;; Warmup trace
-    (mx/materialize! (compiled (mx/zeros [n-params])
-                               (rng/normal (rng/fresh-key) [n-burn n-params])
-                               (rng/uniform (rng/fresh-key) [n-burn])))
     compiled))
 
 (def ^:private ^:const fused-step-limit
@@ -375,17 +367,13 @@
                                 sample-count)]
                 (recur new-p (inc i) new-count new-samples)))))
         compiled (mx/compile-fn collect-fn)]
-    ;; Warmup trace
-    (mx/materialize! (compiled (mx/zeros [n-params])
-                               (rng/normal (rng/fresh-key) [total-steps n-params])
-                               (rng/uniform (rng/fresh-key) [total-steps])))
     compiled))
 
 (defn- make-fused-burn-and-collect
   "Compile a single function for burn-in + thinned collection.
    Runs n-burn MH steps (discarded), then thin*n-samples steps (recorded).
    Returns #js [final-params, samples [S,D], accept-count []].
-   ONE Metal dispatch for entire chain."
+   one fused lazy-graph evaluation for the entire chain."
   [n-burn n-samples thin score-fn proposal-std n-params]
   (let [total-steps (+ n-burn (* thin n-samples))
         chain-fn
@@ -419,18 +407,13 @@
                                 sample-count)]
                 (recur new-p (inc i) new-count new-samples new-accept-count)))))
         compiled (mx/compile-fn chain-fn)]
-    ;; Warmup trace
-    (let [result (compiled (mx/zeros [n-params])
-                           (rng/normal (rng/fresh-key) [total-steps n-params])
-                           (rng/uniform (rng/fresh-key) [total-steps]))]
-      (mx/materialize! (aget result 0) (aget result 1) (aget result 2)))
     compiled))
 
 (defn- make-compiled-trajectory
   "Build a compiled K-step MH chain that returns the FULL trajectory [K,D].
    Returns compiled fn: (params [D], noise [K,D], uniforms [K]) → [K,D] tensor.
    Unlike make-compiled-chain which returns only the final params, this returns
-   all intermediate states — enabling collection of K samples per Metal dispatch."
+   all intermediate states — enabling collection of K samples per graph evaluation."
   [k-steps score-fn proposal-std n-params]
   (let [traj-fn
         (fn [params noise-2d uniforms-1d]
@@ -449,10 +432,6 @@
                     p' (mx/where accept? proposal p)]
                 (recur p' (inc i) (conj traj p'))))))
         compiled (mx/compile-fn traj-fn)]
-    ;; Trace call to cache the Metal program
-    (mx/materialize! (compiled (mx/array (vec (repeat n-params 0.0)))
-                               (rng/normal (rng/fresh-key) [k-steps n-params])
-                               (rng/uniform (rng/fresh-key) [k-steps])))
     compiled))
 
 (defn- eager-mh-step
@@ -473,8 +452,8 @@
   "Run compiled MH with loop compilation for burn-in and optional thinning.
    Uses compiled chains for burn-in (block-size steps per dispatch).
    For collection: compiled trajectory chain if thin = 1 (returns [K,D] tensor
-   per Metal dispatch), compiled chain if thin > 1, eager step as fallback.
-   Thin=1 trajectory path collects K samples per dispatch for ~100x speedup."
+   per graph evaluation), compiled chain if thin > 1, eager step as fallback.
+   Thin=1 trajectory path collects K samples per evaluation (no per-step host round-trips)."
   [{:keys [samples burn thin callback key]} init-params n-params
    score-fn proposal-std burn-chain burn-block-size thin-chain
    {:keys [collect-chain block-size-collect]}]
@@ -512,7 +491,7 @@
                     (recur p' (conj! acc (mx/->clj p')) (inc i) rk'))))
           ;; thin = 1: trajectory blocks (compiled) or eager steps (fallback)
               (if collect-chain
-            ;; Compiled trajectory path: K samples per Metal dispatch
+            ;; Compiled trajectory path: K samples per graph evaluation
                 (let [n-blocks (js/Math.ceil (/ samples block-size-collect))
                   ;; Pre-generate all noise/uniforms for all blocks
                       all-keys (rng/split-n rk (* 2 n-blocks))
@@ -574,7 +553,8 @@
    and iterates in parameter space — bypassing GFI regenerate overhead.
 
    When compile? is true (default), uses loop compilation: entire K-step chains
-   are compiled into single Metal dispatches for ~5x speedup. Burn-in runs in
+   are fused into single lazy-graph evaluations (no per-step host
+   round-trips). Burn-in runs in
    blocks of :block-size steps. Collection runs thin steps per sample.
 
    opts: {:samples N :burn B :thin T :addresses [addr...]
@@ -587,12 +567,12 @@
 
    :block-size controls burn-in chain length (default 50).
    :block-size-collect controls collection trajectory length when thin=1 (default 500).
-   :fuse-burn-in? when true, compiles entire burn-in into a single
-   Metal dispatch (or block-fused if burn > 5000 steps). Default false.
-   Fused burn-in has ~1-2s compilation overhead but faster execution —
+   :fuse-burn-in? when true, fuses the entire burn-in into a single
+   lazy-graph evaluation (or block-fused if burn > 5000 steps). Default false.
+   Fused burn-in builds one large lazy graph —
    use when running multiple chains with the same burn count.
    Collection uses compiled trajectories that return [K,D] tensors — all K samples
-   from one Metal dispatch — for ~100x speedup over per-step eager execution.
+   from one fused graph evaluation instead of per-step eager execution.
 
    Returns vector of parameter samples (JS arrays via mx/->clj).
    Default device: :cpu (faster for scalar parameters)."
@@ -665,7 +645,7 @@
     :hmc  (* total-steps (or leapfrog-steps 20))))
 
 (defn- can-fuse?
-  "Decide whether a chain can be fused into a single Metal dispatch.
+  "Decide whether a chain can be fused into a single lazy-graph evaluation.
    Returns true if estimated ops are within safe limits."
   [method total-steps {:keys [tensor-native? leapfrog-steps]}]
   (let [ops (estimate-fused-ops method total-steps {:leapfrog-steps leapfrog-steps})
@@ -684,7 +664,7 @@
    :acceptance-rate nil})
 
 (defn fused-mh
-  "Fully fused MH: burn-in + thinned collection in ONE Metal dispatch.
+  "Fully fused MH: burn-in + thinned collection in one fused lazy-graph evaluation.
    Pre-generates all noise upfront, compiles the entire chain into a single
    function. Returns {:samples MLX-array [S,D] :final-params MLX-array [D]
                       :chain-fn compiled-fn}.
@@ -692,8 +672,7 @@
    Auto-falls back to block-compiled path when chain is too large for a
    single Metal graph.
 
-   First call incurs compilation overhead (~2-10s depending on chain length).
-   Pass :chain-fn from a previous call to skip recompilation.
+   Pass :chain-fn from a previous call to reuse the chain builder.
 
    opts: {:samples N :burn B :thin T :addresses [addr...]
           :proposal-std σ :key prng-key :device :cpu|:gpu
@@ -825,7 +804,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- make-vectorized-compiled-chain
-  "Build a compiled K-step MH chain for [N,D]-shaped params as one Metal dispatch.
+  "Build a compiled K-step MH chain for [N,D]-shaped params as one fused lazy-graph evaluation.
    Returns compiled fn: (params [N,D], noise [K,N,D], uniforms [K,N]) → params [N,D]."
   [k-steps score-fn proposal-std n-chains n-params]
   (let [chain-fn
@@ -847,10 +826,6 @@
                       p' (mx/where (mx/expand-dims accept? 1) proposal p)]
                   (recur p' (inc i))))))
         compiled (mx/compile-fn chain-fn)]
-    ;; Warmup: trace call to cache the Metal program
-    (mx/materialize! (compiled (mx/zeros [n-chains n-params])
-                               (rng/normal (rng/fresh-key) [k-steps n-chains n-params])
-                               (rng/uniform (rng/fresh-key) [k-steps n-chains])))
     compiled))
 
 (defn- make-vectorized-compiled-trajectory
@@ -877,19 +852,15 @@
                     p' (mx/where (mx/expand-dims accept? 1) proposal p)]
                 (recur p' (inc i) (conj traj p'))))))
         compiled (mx/compile-fn traj-fn)]
-    ;; Warmup: trace call to cache the Metal program
-    (mx/materialize! (compiled (mx/zeros [n-chains n-params])
-                               (rng/normal (rng/fresh-key) [k-steps n-chains n-params])
-                               (rng/uniform (rng/fresh-key) [k-steps n-chains])))
     compiled))
 
 (defn vectorized-compiled-trajectory-mh
   "Vectorized compiled trajectory MH: N parallel chains with K steps per
-   Metal dispatch. Combines multi-chain parallelism with loop compilation.
+   graph evaluation. Combines multi-chain parallelism with loop compilation.
    Samples are pooled across chains. Returns vector of [D] JS arrays.
 
    Uses a single compiled trajectory chain for both burn-in and collection,
-   avoiding a second Metal program compilation. Burn-in discards trajectories;
+   reusing one chain builder for both phases. Burn-in discards trajectories;
    collection pools K*N samples per dispatch.
 
    opts: {:samples N :burn B :addresses [addr...] :proposal-std s
@@ -984,7 +955,7 @@
   "Compile a fused chain for N parallel MH chains: burn-in + thinned collection.
    params shape: [N,D], noise: [T,N,D], uniforms: [T,N].
    Returns #js [final-params [N,D], samples [S,N,D], accept-count [N]].
-   ONE Metal dispatch."
+   ONE graph evaluation."
   [n-burn n-samples thin score-fn proposal-std n-chains n-params]
   (let [total-steps (+ n-burn (* thin n-samples))
         chain-fn
@@ -1024,19 +995,14 @@
                                 sample-count)]
                 (recur new-p (inc i) new-count new-samples new-accept-count)))))
         compiled (mx/compile-fn chain-fn)]
-    ;; Warmup trace
-    (let [result (compiled (mx/zeros [n-chains n-params])
-                           (rng/normal (rng/fresh-key) [total-steps n-chains n-params])
-                           (rng/uniform (rng/fresh-key) [total-steps n-chains]))]
-      (mx/materialize! (aget result 0) (aget result 1) (aget result 2)))
     compiled))
 
 (defn fused-vectorized-mh
   "Fully fused vectorized MH: N parallel chains, burn-in + thinned collection
-   in ONE Metal dispatch per call. Returns {:samples [S,N,D] :final-params [N,D]
+   in one fused lazy-graph evaluation per call. Returns {:samples [S,N,D] :final-params [N,D]
    :chain-fn compiled-fn}.
 
-   First call incurs compilation overhead. Pass :chain-fn to skip recompilation.
+   Pass :chain-fn from a previous call to reuse the chain builder.
 
    opts: {:samples S :burn B :thin T :addresses [addr...]
           :proposal-std σ :n-chains N :key prng-key :device :cpu|:gpu
@@ -1245,7 +1211,7 @@
     {:state q-next :accepted? accept?}))
 
 (defn- make-compiled-mala-chain
-  "Build a compiled K-step MALA chain as one Metal dispatch.
+  "Build a compiled K-step MALA chain as one fused lazy-graph evaluation.
    Returns compiled fn: (q [D], score scalar, grad [D], noise [K,D], uniforms [K])
      → #js [q', score', grad'].
    Score and gradient are threaded through iterations — only 1 val-grad call per
@@ -1282,14 +1248,6 @@
                     new-gq (mx/where accept? gq' gq)]
                 (recur new-q new-sq new-gq (inc i))))))
         compiled (mx/compile-fn chain-fn)]
-    ;; Warm-up trace call to cache the Metal program
-    (let [init-q (mx/zeros [n-params])
-          [init-s init-g] (val-grad-fn init-q)]
-      (mx/materialize! init-s init-g)
-      (let [result (compiled init-q init-s init-g
-                             (rng/normal (rng/fresh-key) [k-steps n-params])
-                             (rng/uniform (rng/fresh-key) [k-steps]))]
-        (mx/materialize! (aget result 0) (aget result 1) (aget result 2))))
     compiled))
 
 (defn- run-loop-compiled-mala
@@ -1455,7 +1413,7 @@
   "MALA inference using gradient information for proposals.
 
    When compile? is true (default), uses loop compilation: entire K-step chains
-   are compiled into single Metal dispatches. Score and gradient are cached
+   are compiled into single lazy-graph evaluations. Score and gradient are cached
    across iterations, reducing val-grad calls from 3 to 1 per step.
 
    When :adapt-step-size is true, the burn-in phase uses dual averaging
@@ -1527,7 +1485,7 @@
             start-q))))))
 
 ;; ---------------------------------------------------------------------------
-;; Fused MALA (single Metal dispatch for entire chain)
+;; Fused MALA (one fused graph evaluation for the entire chain)
 ;; ---------------------------------------------------------------------------
 
 (defn- make-fused-mala-burn-and-collect
@@ -1535,7 +1493,7 @@
    State threads [q, score, grad] to avoid redundant val-grad calls.
    Returns compiled fn: (init-q [D], init-score [], init-grad [D], noise [T,D], uniforms [T])
      → #js [final-q, final-score, final-grad, samples [S,D], accept-count []].
-   ONE Metal dispatch for entire chain."
+   one fused lazy-graph evaluation for the entire chain."
   [n-burn n-samples thin val-grad-fn eps half-eps2 two-eps-sq n-params]
   (let [total-steps (+ n-burn (* thin n-samples))
         chain-fn
@@ -1584,19 +1542,10 @@
                 (recur new-q new-sq new-gq (inc i)
                        new-count new-samples new-accept-count)))))
         compiled (mx/compile-fn chain-fn)]
-    ;; Warmup trace
-    (let [init-q (mx/zeros [n-params])
-          [init-s init-g] (val-grad-fn init-q)]
-      (mx/materialize! init-s init-g)
-      (let [result (compiled init-q init-s init-g
-                             (rng/normal (rng/fresh-key) [total-steps n-params])
-                             (rng/uniform (rng/fresh-key) [total-steps]))]
-        (mx/materialize! (aget result 0) (aget result 1) (aget result 2)
-                         (aget result 3) (aget result 4))))
     compiled))
 
 (defn fused-mala
-  "Fully fused MALA: burn-in + thinned collection in ONE Metal dispatch.
+  "Fully fused MALA: burn-in + thinned collection in one fused lazy-graph evaluation.
    Pre-generates all noise upfront, compiles the entire chain into a single
    function. Returns {:samples MLX-array [S,D] :final-params MLX-array [D]
                       :chain-fn compiled-fn :acceptance-rate float}.
@@ -1609,7 +1558,7 @@
    compiles the fused chain with the adapted step-size. The adapted
    step-size is printed and the remaining burn-in is adjusted accordingly.
 
-   First call incurs compilation overhead. Pass :chain-fn to skip recompilation.
+   Pass :chain-fn from a previous call to reuse the chain builder.
 
    opts: {:samples N :burn B :thin T :addresses [addr...]
           :step-size eps :key prng-key :device :cpu|:gpu
@@ -1931,7 +1880,7 @@
     {:state q-next :accepted? accept? :log-accept log-accept}))
 
 (defn- make-compiled-hmc-chain
-  "Build a compiled K-step HMC chain as one Metal dispatch.
+  "Build a compiled K-step HMC chain as one fused lazy-graph evaluation.
    Each step contains L leapfrog sub-steps (fused: L+1 gradient evals per step).
    Identity mass matrix only.
    Returns compiled fn: (q [D], momentum [K,D], uniforms [K]) → q [D].
@@ -1974,10 +1923,6 @@
                       accept? (mx/greater log-alpha log-u)]
                   (recur (mx/where accept? q-lf q) (inc k))))))
         compiled (mx/compile-fn chain-fn)]
-    ;; Warm-up trace call
-    (mx/materialize! (compiled (mx/zeros [n-params])
-                               (rng/normal (rng/fresh-key) [k-steps n-params])
-                               (rng/uniform (rng/fresh-key) [k-steps])))
     compiled))
 
 (defn- run-loop-compiled-hmc
@@ -2057,7 +2002,7 @@
 
    When compile? is true (default) and metric is nil, uses loop compilation:
    entire K-step chains (each with L leapfrog sub-steps) are compiled into
-   single Metal dispatches.
+   single lazy-graph evaluations.
 
    opts: {:samples N :step-size eps :leapfrog-steps L :burn B
           :thin T :addresses [addr...] :compile? bool :callback fn :key prng-key
@@ -2159,7 +2104,7 @@
             start-q))))))
 
 ;; ---------------------------------------------------------------------------
-;; Fused HMC (single Metal dispatch for entire chain)
+;; Fused HMC (one fused graph evaluation for the entire chain)
 ;; ---------------------------------------------------------------------------
 
 (defn- make-fused-hmc-burn-and-collect
@@ -2168,7 +2113,7 @@
    Identity mass matrix only.
    Returns compiled fn: (init-q [D], momentum [T,D], uniforms [T])
      → #js [final-q, samples [S,D], accept-count []].
-   ONE Metal dispatch for entire chain."
+   one fused lazy-graph evaluation for the entire chain."
   [n-burn n-samples thin neg-U-fn grad-neg-U eps half-eps half n-params leapfrog-steps]
   (let [total-steps (+ n-burn (* thin n-samples))
         chain-fn
@@ -2224,15 +2169,10 @@
                                 sample-count)]
                 (recur new-q (inc i) new-count new-samples new-accept-count)))))
         compiled (mx/compile-fn chain-fn)]
-    ;; Warmup trace
-    (let [result (compiled (mx/zeros [n-params])
-                           (rng/normal (rng/fresh-key) [total-steps n-params])
-                           (rng/uniform (rng/fresh-key) [total-steps]))]
-      (mx/materialize! (aget result 0) (aget result 1) (aget result 2)))
     compiled))
 
 (defn fused-hmc
-  "Fully fused HMC: burn-in + thinned collection in ONE Metal dispatch.
+  "Fully fused HMC: burn-in + thinned collection in one fused lazy-graph evaluation.
    Pre-generates all momentum and acceptance noise upfront, compiles the
    entire chain into a single function.
    Returns {:samples MLX-array [S,D] :final-params MLX-array [D]
@@ -2246,7 +2186,7 @@
    compiles the fused chain with the adapted step-size. Identity mass matrix
    only for fused chains (mass matrix adaptation is not supported in fused mode).
 
-   First call incurs compilation overhead. Pass :chain-fn to skip recompilation.
+   Pass :chain-fn from a previous call to reuse the chain builder.
 
    opts: {:samples N :burn B :thin T :addresses [addr...]
           :step-size eps :leapfrog-steps L :key prng-key :device :cpu|:gpu

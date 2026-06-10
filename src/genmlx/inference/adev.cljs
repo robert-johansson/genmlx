@@ -251,8 +251,10 @@
 ;; ---------------------------------------------------------------------------
 
 (defn compiled-adev-optimize
-  "Optimize E[cost] via compiled vectorized ADEV gradient estimation.
-   Uses mx/compile-fn on the gradient function for faster iteration.
+  "Optimize E[cost] via vectorized ADEV gradient estimation.
+   Wraps the gradient function in mx/compile-fn — a documented identity
+   (see mlx.cljs), so there is NO kernel-caching speedup; the perf comes
+   from the vectorized estimator itself.
    opts:
      :iterations     - number of steps (default 100)
      :lr             - learning rate (default 0.01)

@@ -87,7 +87,7 @@
      - new-params has been updated by one Adam step on the gradient of loss
 
    The compiled function does NOT call mx/materialize! internally —
-   the entire gradient + Adam update fuses into a single Metal dispatch.
+   the entire gradient + Adam update fuses into a single lazy-graph evaluation.
 
    Note: This handles deterministic score functions. WP-2 extends this
    pattern for stochastic score functions (MCMC/SMC) where noise must
@@ -144,10 +144,7 @@
   (let [opt-step (make-compiled-opt-step
                   score-fn
                   {:lr lr :beta1 beta1 :beta2 beta2 :epsilon epsilon})
-        d (mx/shape init-params)
-        ;; Warm-up: trace once to cache the Metal program
-        _ (mx/materialize! (aget (opt-step (mx/zeros d) (mx/zeros d)
-                                           (mx/zeros d) (mx/scalar 1.0)) 0))]
+        d (mx/shape init-params)]
     (loop [i 0
            params init-params
            m (mx/zeros d)
@@ -157,7 +154,7 @@
         (do
           (mx/materialize! params)
           {:params params :loss-history (persistent! losses)})
-        (let [;; Fresh MLX scalar each iteration — negligible vs Metal dispatch cost
+        (let [;; Fresh MLX scalar each iteration — negligible vs graph evaluation cost
               t-scalar (mx/scalar (double (inc i)))
               [np nm nv loss-arr] (opt-step params m v t-scalar)
 
@@ -422,7 +419,7 @@
 
    Noise [T,K] and uniforms [T] are generated host-side each iteration.
    The compiled function fuses: chain -> score -> grad -> Adam into one
-   Metal dispatch."
+   graph evaluation."
   [score-fn chain-fn opts]
   (let [;; Objective: run chain, return negative final score (minimize)
         neg-obj (fn [params noise uniforms]
@@ -502,14 +499,7 @@
                   score-fn chain-fn
                   {:lr lr :beta1 beta1 :beta2 beta2 :epsilon epsilon})
 
-        ;; Warm-up: trace once to cache the Metal program
-        rk (rng/ensure-key key)
-        _ (let [n0 (rng/normal (rng/fresh-key) [T K])
-                u0 (rng/uniform (rng/fresh-key) [T])]
-            (mx/materialize! n0 u0)
-            (mx/materialize! (aget (opt-step (mx/zeros [K]) (mx/zeros [K])
-                                             (mx/zeros [K]) (mx/scalar 1.0)
-                                             n0 u0) 0)))]
+        rk (rng/ensure-key key)]
     ;; Training loop: noise generated host-side, compiled step does the rest
     (loop [i 0
            params init-params
