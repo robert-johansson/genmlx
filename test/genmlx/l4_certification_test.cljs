@@ -126,7 +126,10 @@
 
   (testing "GFI-based score function"
     (let [model-k (dyn/auto-key m-conjugate)
-          obs (cm/choicemap {:y (mx/scalar 5.0)})
+          ;; flat kv form — (cm/choicemap {map}) was silently EMPTY pre-ybw9
+          ;; (the partition-2 dropped the lone arg), so generate ran
+          ;; UNCONSTRAINED here; the odd-args guard exposed it
+          obs (cm/choicemap :y (mx/scalar 5.0))
           {:keys [trace]} (p/generate model-k [0] obs)
           score (:score trace)]
       (mx/materialize! score)
