@@ -9,7 +9,8 @@
 
    Level 1 pattern: schema → noise-transform-based pure function → mx/compile-fn.
    Distribution-specific noise transforms bypass multimethod dispatch,
-   enabling fusion into a single Metal kernel. No mutable state, no handler."
+   building one fused lazy graph per call (mx/compile-fn is a documented
+   identity — see mlx.cljs). No mutable state, no handler."
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.mlx.constants :refer [ZERO ONE TWO HALF NEG-INF
@@ -48,7 +49,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn make-compiled-unfold
-  "Build a compiled T-step unfold as one Metal dispatch.
+  "Build a compiled T-step unfold as one fused lazy-graph evaluation.
    step-fn: (fn [state noise-row] -> [new-state score]) — pure MLX ops only.
      state:     [state-dim] MLX array
      noise-row: [noise-dim] MLX array (one row of pre-generated noise)
@@ -58,9 +59,7 @@
    noise-dim: noise needed per step
 
    Returns a compiled fn: (init-state [state-dim], noise [T, noise-dim])
-                         -> [final-state [state-dim], states [T, state-dim], total-score scalar]
-
-   The returned function is warmed up (Metal program cached on first call)."
+                         -> [final-state [state-dim], states [T, state-dim], total-score scalar]"
   [step-fn n-steps state-dim noise-dim]
   (let [unfold-fn
         (fn [init-state noise-2d]
@@ -74,11 +73,6 @@
                        (mx/add score step-score)
                        (conj states new-state))))))
         compiled (mx/compile-fn unfold-fn)]
-    ;; Warm up: trace with dummy data to cache Metal program
-    (let [dummy-state (mx/zeros [state-dim])
-          dummy-noise (mx/zeros [n-steps noise-dim])
-          [s states sc] (compiled dummy-state dummy-noise)]
-      (mx/materialize! s states sc))
     compiled))
 
 (defn make-compiled-unfold-generate
@@ -113,12 +107,6 @@
                        (mx/add weight step-weight)
                        (conj states new-state))))))
         compiled (mx/compile-fn unfold-fn)]
-    ;; Warm up
-    (let [dummy-state (mx/zeros [state-dim])
-          dummy-noise (mx/zeros [n-steps noise-dim])
-          dummy-obs (mx/zeros [n-steps obs-dim])
-          [s states sc w] (compiled dummy-state dummy-noise dummy-obs)]
-      (mx/materialize! s states sc w))
     compiled))
 
 ;; ---------------------------------------------------------------------------
@@ -216,7 +204,7 @@
 ;; ===========================================================================
 ;; Tier 2c: Compiled Inference Graphs
 ;; ===========================================================================
-;; Full inference sweeps compiled into single Metal dispatches.
+;; Full inference sweeps compiled into single lazy-graph evaluations.
 ;; All randomness pre-generated, no materialization between steps.
 
 ;; ---------------------------------------------------------------------------
@@ -224,7 +212,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn make-compiled-particle-filter
-  "Build a compiled T-step bootstrap particle filter as one Metal dispatch.
+  "Build a compiled T-step bootstrap particle filter as one fused lazy-graph evaluation.
 
    particle-step-fn: (fn [states noise obs-row] -> [new-states, log-weights])
      states:     [N, state-dim] MLX array (batched particle states)
@@ -244,8 +232,7 @@
      (init-states [N,D], noise [T,N,noise-dim], obs [T,obs-dim], uniforms [T,1])
      -> [final-states [N,D], log-ml scalar]
 
-   The uniforms [T,1] are used for deterministic systematic resampling at each step.
-   Pre-compile warms up the Metal program cache."
+   The uniforms [T,1] are used for deterministic systematic resampling at each step."
   [particle-step-fn n-steps n-particles state-dim noise-dim obs-dim]
   (let [pf-fn
         (fn [init-states noise-3d obs-2d uniforms-2d]
@@ -273,13 +260,6 @@
                        resampled
                        (mx/add log-ml ml-inc))))))
         compiled (mx/compile-fn pf-fn)]
-    ;; Warm up
-    (let [dummy-states (mx/zeros [n-particles state-dim])
-          dummy-noise (mx/zeros [n-steps n-particles noise-dim])
-          dummy-obs (mx/zeros [n-steps obs-dim])
-          dummy-u (mx/ones [n-steps 1])
-          [s ml] (compiled dummy-states dummy-noise dummy-obs dummy-u)]
-      (mx/materialize! s ml))
     compiled))
 
 (defn compiled-particle-filter
@@ -343,7 +323,7 @@
 ;;     ▼
 ;;   make-compiled-simulate
 ;;     │ builds pure fn using noise transforms (not multimethod dispatch)
-;;     │ wraps in mx/compile-fn → single Metal kernel
+;;     │ one fused lazy graph per call (compile-fn is identity)
 ;;     ▼
 ;;   DynamicGF.simulate (in dynamic.cljs)
 ;;     │ dispatches: compiled path or handler fallback
@@ -919,9 +899,9 @@
    or nil if the model can't be compiled.
 
    Uses noise transforms for inline sampling/scoring (bypasses multimethod
-   dispatch). Wraps in mx/compile-fn for single Metal kernel dispatch.
-   Noise is generated OUTSIDE mx/compile-fn to avoid caching (compile-fn
-   freezes random ops). Follows the same pattern as compiled MCMC chains.
+   dispatch), building one fused lazy graph per call. Noise is generated
+   OUTSIDE the compiled fn so randomness stays an explicit input.
+   Follows the same pattern as compiled MCMC chains.
 
    Compilation fails (returns nil) when:
    - Schema is not static (dynamic addresses, branches, loops)
@@ -1233,7 +1213,7 @@
 ;;     ▼
 ;;   make-branch-rewritten-simulate
 ;;     │ compile cond/args, wrap in mx/where, build step fns
-;;     │ wraps in mx/compile-fn → single Metal kernel
+;;     │ one fused lazy graph per call (compile-fn is identity)
 ;;     ▼
 ;;   DynamicGF.simulate (in dynamic.cljs)
 ;;     │ dispatches: compiled path (same as M2)

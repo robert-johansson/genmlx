@@ -18,12 +18,12 @@ Exact log P(y_{1:T}) = -86.8644
 -- 3. Batched SMC (N=100) --
   log-ML: -86.71 +/- 0.59
   |error|: 0.55 +/- 0.26
-  ESS: 100.0
+  ESS: 11.1
 
 -- 4. Batched SMC (N=200) --
   log-ML: -87.41 +/- 0.53
   |error|: 0.55 +/- 0.53
-  ESS: 200.0
+  ESS: 19.8
 
 
 ========================================
@@ -34,10 +34,10 @@ Exact log P(y_{1:T}) = -86.8644
 
 | Method | N | log-ML | |Error| | ESS | Time |
 |--------|---|--------|---------|-----|------|
-| Vectorized IS | 1000 | -125.32 +/- 10.61 | 38.46 | 1.4 | 14 ms |
-| Sequential IS | 100 | -147.69 +/- 9.34 | 60.82 | 1.0 | 1076 ms |
-| Batched SMC | 100 | -86.71 +/- 0.59 | 0.55 | 100.0 | 249 ms |
-| Batched SMC | 200 | -87.41 +/- 0.53 | 0.55 | 200.0 | 222 ms |
+| Vectorized IS | 1000 | -125.32 +/- 10.61 | 38.46 | 1.4 | 12 ms |
+| Sequential IS | 100 | -147.69 +/- 9.34 | 60.82 | 1.0 | 1049 ms |
+| Batched SMC | 100 | -86.71 +/- 0.59 | 0.55 | 11.1 | 254 ms |
+| Batched SMC | 200 | -87.41 +/- 0.53 | 0.55 | 19.8 | 229 ms |
 
 -- Writing results --
   wrote: /Users/robert/code/genmlx/results/hmm/data.json

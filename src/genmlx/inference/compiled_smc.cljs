@@ -18,6 +18,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.compiled-ops :as cops]
             [genmlx.tensor-trace :as tt]
+            [genmlx.inference.util :as u]
             [genmlx.inference.differentiable-resample :as dr]))
 
 ;; =========================================================================
@@ -111,7 +112,9 @@
    observations-seq: seq of ChoiceMaps, one per timestep
 
    Returns {:log-ml MLX-scalar :particles [N,K] :addr-index {addr->int}
-            :final-ess number}"
+            :final-ess number}.
+   :final-ess is the PRE-resample ESS at the final timestep (post-resample
+   ESS is N by construction). nil when observations-seq is empty."
   [{:keys [particles key callback resample-method tau]
     :or {particles 100 resample-method :systematic tau 1.0}}
    kernel init-state observations-seq]
@@ -140,26 +143,37 @@
       (loop [t 0
              current-particles nil
              current-state init-state-n
-             log-ml (mx/scalar 0.0)]
+             log-ml (mx/scalar 0.0)
+             final-ess nil]
         (if (>= t T)
           {:log-ml log-ml :particles current-particles
-           :addr-index addr-index :final-ess (double N)}
+           :addr-index addr-index :final-ess final-ess}
           (let [{:keys [new-particles new-state obs-log-prob ml-inc]}
                 (extend-particles extend-fn (mx/index (:extend-noise noise) t)
                                   current-state (nth obs-vec t) all-addrs t N)
+                ;; Pre-resample ESS, only computed at the final step
+                ess (when (= t (dec T))
+                      (u/ess-from-log-weight-array obs-log-prob))
                 {:keys [particles state]}
                 (resample-particles new-particles new-state obs-log-prob
                                     resample-method noise t gumbel-noise tau-arr N)]
             (when (zero? (mod (inc t) 5)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
             (when callback (callback {:step t :resampled? true}))
-            (recur (inc t) particles state (mx/add log-ml ml-inc))))))))
+            (recur (inc t) particles state (mx/add log-ml ml-inc)
+                   (or ess final-ess))))))))
 
 ;; =========================================================================
 ;; Convenience: extract results
 ;; =========================================================================
 
 (defn smc-result->traces
-  "Convert compiled SMC result to vector of TensorTraces."
+  "Convert compiled SMC result to vector of TensorTraces.
+
+   The traces carry particle VALUES only: :score is a 0.0 placeholder
+   (compiled-smc does not track per-particle joint scores) and :retval is
+   nil. Use them for choice extraction — not for score-dependent ops
+   (update/regenerate/project would compute wrong weights against the
+   placeholder score)."
   [result kernel]
   (let [{:keys [particles addr-index]} result
         N (first (mx/shape particles))]

@@ -422,7 +422,10 @@
 
    opts: {:particles N :key prng-key}
 
-   Returns {:log-ml MLX-scalar :traces [Trace ...] :final-ess number}"
+   Returns {:log-ml MLX-scalar :traces [Trace ...] :final-ess number}.
+   :final-ess is the PRE-resample ESS at the final timestep — the honest
+   particle-collapse diagnostic (post-resample ESS is N by construction).
+   nil when observations-seq is empty."
   [{:keys [particles key] :or {particles 100}}
    kernel init-state observations-seq]
   (let [unfold-gf (comb/unfold-combinator kernel)
@@ -432,10 +435,10 @@
     (loop [t 0
            traces init-traces
            log-ml (mx/scalar 0.0)
+           final-ess nil
            rk (rng/ensure-key key)]
       (if (>= t n-steps)
-        {:log-ml log-ml :traces traces
-         :final-ess (u/compute-ess (mapv (fn [_] (mx/scalar 0.0)) traces))}
+        {:log-ml log-ml :traces traces :final-ess final-ess}
         (let [[step-key next-rk] (rng/split rk)
               [extend-key resample-key] (rng/split step-key)
               ;; Extend all particles and resample inside tidy to free intermediates
@@ -452,9 +455,13 @@
                         ml-inc (log-ml-increment w-arr particles)
                         ;; Materialize before resampling uses ml-inc as JS number
                         _ (mx/materialize! ml-inc)
+                        ;; Pre-resample ESS, only needed at the final step
+                        ;; (a JS number — safe to escape the tidy scope)
+                        ess (when (= t (dec n-steps))
+                              (u/ess-from-log-weight-array w-arr))
                         indices (u/systematic-resample step-weights particles resample-key)
                         resampled (mapv #(nth new-traces %) indices)]
-                    {:traces resampled :ml-inc ml-inc}))
+                    {:traces resampled :ml-inc ml-inc :ess ess}))
                 (fn [result]
                   ;; Preserve resampled trace arrays and ml-inc
                   (into (vec (mapcat u/collect-trace-arrays (:traces result)))
@@ -464,7 +471,8 @@
               _ (when (zero? (mod (inc t) 2))
                   (mx/force-gc!)
                   (mx/clear-cache!))]
-          (recur (inc t) (:traces step-result) new-log-ml next-rk))))))
+          (recur (inc t) (:traces step-result) new-log-ml
+                 (or (:ess step-result) final-ess) next-rk))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Batched Unfold SMC — one vgenerate call per timestep for all particles
@@ -495,7 +503,9 @@
    State can be an MLX array, a map of MLX arrays, or nil.
    Map-valued state is resampled per-key (each value indexed by particle).
 
-   Returns {:log-ml MLX-scalar :final-states [N]-shaped :final-ess number}"
+   Returns {:log-ml MLX-scalar :final-states [N]-shaped :final-ess number}.
+   :final-ess is the PRE-resample ESS at the final timestep (post-resample
+   ESS is N by construction). nil when observations-seq is empty."
   [{:keys [particles key callback] :or {particles 100}}
    kernel init-state observations-seq]
   (let [obs-vec (vec observations-seq)
@@ -504,10 +514,10 @@
     (loop [t 0
            state init-state
            log-ml (mx/scalar 0.0)
+           final-ess nil
            rk (rng/ensure-key key)]
       (if (>= t n-steps)
-        {:log-ml log-ml :final-states state
-         :final-ess (double particles)}
+        {:log-ml log-ml :final-states state :final-ess final-ess}
         (let [[step-key next-rk] (rng/split rk)
               [vgen-key resample-key] (rng/split step-key)
               ;; 1. Run kernel ONCE for all N particles
@@ -521,6 +531,9 @@
               ml-inc (log-ml-increment step-weights particles)
               ;; Materialize ml-inc before accumulation in next iteration
               _ (mx/materialize! ml-inc)
+              ;; Pre-resample ESS, only computed at the final step
+              ess (when (= t (dec n-steps))
+                    (u/ess-from-log-weight-array step-weights))
               ;; 3. Resample (handles array, map, or nil state)
               indices (vz/systematic-resample-indices step-weights
                                                        particles resample-key)
@@ -531,7 +544,7 @@
               _ (when (zero? (mod (inc t) 5)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
               _ (when callback (callback {:step t}))]
           (recur (inc t) resampled-state
-                 (mx/add log-ml ml-inc) next-rk))))))
+                 (mx/add log-ml ml-inc) (or ess final-ess) next-rk))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized SMC — multi-step batched particle filtering

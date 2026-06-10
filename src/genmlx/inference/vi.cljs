@@ -130,7 +130,8 @@
    Returns {:mu MLX-array :sigma MLX-array :elbo-history [numbers]
             :sample-fn (fn [n] -> samples)}
 
-   For compiled (faster) VI with pure tensor log-density, use compiled-vi."
+   compiled-vi shares this driver; mx/compile-fn is a documented identity,
+   so the two differ only in ELBO-logging key policy (see run-advi)."
   [opts log-density init-params]
   (run-advi (assoc opts :compile? false) log-density init-params))
 
@@ -149,9 +150,10 @@
     (f)))
 
 (defn compiled-vi
-  "Compiled Variational Inference via ADVI.
-   Same as `vi` but uses mx/compile-fn on the gradient and ELBO functions
-   for faster iteration. Same interface and return type.
+  "Variational Inference via ADVI, compiled-path variant.
+   Same as `vi` except ELBO logging uses a fresh-key compiled forward pass.
+   mx/compile-fn is a documented identity (see mlx.cljs), so there is NO
+   kernel-caching speedup over `vi`. Same interface and return type.
 
    opts: {:iterations N :learning-rate lr :elbo-samples N
           :beta1 b1 :beta2 b2 :epsilon eps :callback fn :key prng-key

@@ -1,11 +1,16 @@
 {
-  "timestamp": "2026-06-10T09:58:55.502Z",
-  "total_ms": 1601,
+  "timestamp": "2026-06-10T15:56:04.354Z",
+  "total_ms": 82975,
   "experiments": [
     {
-      "name": "agents-identifiability",
+      "name": "hmm",
       "success?": true,
-      "duration-ms": 1587
+      "duration-ms": 5216
+    },
+    {
+      "name": "changepoint",
+      "success?": true,
+      "duration-ms": 77732
     }
   ]
 }

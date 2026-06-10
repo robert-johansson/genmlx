@@ -231,6 +231,16 @@
   (let [{:keys [probs]} (normalize-log-weights log-weights)]
     (/ 1.0 (transduce (map #(* % %)) + probs))))
 
+(defn ess-from-log-weight-array
+  "Effective sample size from an [N]-shaped MLX log-weight array.
+   Returns a JS number (materializes the normalized probabilities)."
+  [lw]
+  (let [log-probs (mx/subtract lw (mx/logsumexp lw))
+        probs (mx/exp log-probs)
+        _ (mx/materialize! probs)
+        probs-clj (mx/->clj probs)]
+    (/ 1.0 (transduce (map #(* % %)) + probs-clj))))
+
 (defn- walk-value-arrays
   "Recursively find all MLX arrays in a value that may be a scalar, vector, or map."
   [v arrays]
