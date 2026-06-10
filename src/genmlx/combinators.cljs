@@ -274,12 +274,19 @@
          :weight weight :discard discard})))
 
   p/IRegenerate
+  ;; Per-element old scores come from ::element-scores metadata. When that
+  ;; metadata is lost (splice-boundary trace reconstruction, serialize
+  ;; round-trip), the loop runs against ZERO olds and the summed weight is
+  ;; too high by exactly the old total — which the trace always records as
+  ;; (:score trace). Correct at the end instead of silently returning wrong
+  ;; weights (genmlx-v740). When metadata is present the path is unchanged.
   (regenerate [this trace selection]
     (if-let [cregen (cops/get-compiled-regenerate kernel)]
       ;; WP-9A: compiled regenerate path
       (let [old-choices (:choices trace)
             args (:args trace)
             n (count (first args))
+            old-element-scores (::element-scores (meta trace))
             init-key (rng/fresh-key)]
         (loop [i 0 key init-key
                choices cm/EMPTY score ZERO weight ZERO
@@ -289,15 +296,16 @@
                       (tr/make-trace {:gen-fn this :args args
                                       :choices choices :retval retvals :score score})
                       {::element-scores element-scores ::compiled-path true})
-             :weight weight}
+             :weight (if old-element-scores
+                       weight
+                       (mx/subtract weight (:score trace)))}
             (let [[k1 k2] (rng/split key)
                   elem-args (mapv #(nth % i) args)
                   old-sub-choices (cm/get-submap old-choices i)
                   result (cregen k1 (vec elem-args) old-sub-choices
                                  (sel/get-subselection selection i))
                   elem-choices (values->choices (:values result))
-                  old-elem-score (or (some-> (::element-scores (meta trace))
-                                             (nth i nil))
+                  old-elem-score (or (some-> old-element-scores (nth i nil))
                                      ZERO)
                   ;; compiled-regenerate returns proposal_ratio in :weight
                   ;; per-step weight = new_score - old_score - proposal_ratio
@@ -332,7 +340,9 @@
                   (tr/make-trace {:gen-fn this :args args
                                   :choices choices :retval retvals :score score})
                   {::element-scores element-scores})
-         :weight weight}))))
+         :weight (if old-element-scores
+                   weight
+                   (mx/subtract weight (:score trace)))}))))
 
 (defn map-combinator
   "Create a Map combinator from a kernel generative function.
@@ -624,6 +634,10 @@
                          (conj step-scores (:score new-trace)))))))))))
 
   p/IRegenerate
+  ;; Per-step old scores come from ::step-scores metadata; when it is lost
+  ;; (splice-boundary reconstruction, serialize round-trip) the loop runs
+  ;; against ZERO olds and the summed weight is too high by the old total —
+  ;; recorded on (:score trace). Correct at the end (genmlx-v740).
   (regenerate [this trace selection]
     (let [kern (:kernel this)
           cregen (cops/get-compiled-regenerate kern)
@@ -640,7 +654,9 @@
                                     :choices new-choices :retval states :score score})
                     (cond-> {::step-scores step-scores}
                       cregen (assoc ::compiled-path true)))
-           :weight weight}
+           :weight (if old-step-scores
+                     weight
+                     (mx/subtract weight (:score trace)))}
           (let [old-sub-choices (cm/get-submap choices t)
                 kernel-args (into [t state] extra)
                 old-score (if old-step-scores (nth old-step-scores t) ZERO)]
@@ -1571,6 +1587,7 @@
                          (conj step-carries new-carry))))))))))
 
   p/IRegenerate
+  ;; Same ::step-scores-loss correction as Unfold regenerate (genmlx-v740).
   (regenerate [this trace selection]
     (let [kern (:kernel this)
           cregen (cops/get-compiled-regenerate kern)
@@ -1590,7 +1607,9 @@
                                     :score score})
                     (cond-> {::step-scores step-scores ::step-carries step-carries}
                       cregen (assoc ::compiled-path true)))
-           :weight weight}
+           :weight (if old-step-scores
+                     weight
+                     (mx/subtract weight (:score trace)))}
           (let [old-sub-choices (cm/get-submap choices t)
                 kernel-args [carry (nth inputs t)]
                 old-score (if old-step-scores (nth old-step-scores t) ZERO)]
