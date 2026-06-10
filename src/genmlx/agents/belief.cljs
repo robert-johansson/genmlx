@@ -57,11 +57,17 @@
 (defn filter-step
   "Pure differentiable belief filter core: b' = where(Σ(b⊙L) > eps, (b⊙L)/Σ, b).
    Both b and L are [W] MLX arrays; returns a [W] MLX array. No mx/item, no host
-   arithmetic — the gradient flows through b (L is a constant likelihood)."
+   arithmetic — the gradient flows through b (L is a constant likelihood).
+   Safe-where: the division uses a guarded denominator (1 where z ≤ eps) so the
+   untaken branch never computes raw/0 — with autograd, a NaN/Inf in the untaken
+   where branch poisons the gradient even though the forward value is fine
+   (genmlx-xpbm; prerequisite for the 5x3f differentiable-planning path)."
   [b L]
-  (let [raw (mx/multiply b L)
-        z   (mx/sum raw)]
-    (mx/where (mx/greater z eps) (mx/divide raw z) b)))
+  (let [raw    (mx/multiply b L)
+        z      (mx/sum raw)
+        ok     (mx/greater z eps)
+        z-safe (mx/where ok z (mx/scalar 1.0))]
+    (mx/where ok (mx/divide raw z-safe) b)))
 
 (defn tensor-update-belief
   "One Bayes filtering step as pure tensor ops. `b` is a [W] MLX belief aligned to

@@ -483,13 +483,19 @@
 
 (defn- bayes-update
   "Exact Bayes filter on a discrete world belief: b'(w) ∝ b(w)·[observe(w,s')=o].
-   With a deterministic reveal this collapses to the revealed world (and is the
-   identity when o=nil, since every world is consistent). Returns a prob vector
-   aligned to `worlds`. If o is impossible under b, keeps b (defensive)."
+   Observation-model contract (unified across pomdp/belief/biased filters,
+   genmlx-xpbm): o = nil means NO observation and is an unconditional identity —
+   it is never treated as a value to match against observe (which would make
+   absence informative when observe returns non-nil for some worlds). With a
+   deterministic reveal a non-nil o collapses to the revealed world. Returns a
+   prob vector aligned to `worlds`. If o is impossible under b, keeps b
+   (defensive)."
   [worlds observe belief s' o]
-  (let [raw (mapv (fn [bw w] (if (= (observe w s') o) bw 0.0)) belief worlds)
-        z   (reduce + raw)]
-    (if (pos? z) (mapv #(/ % z) raw) belief)))
+  (if (nil? o)
+    belief
+    (let [raw (mapv (fn [bw w] (if (= (observe w s') o) bw 0.0)) belief worlds)
+          z   (reduce + raw)]
+      (if (pos? z) (mapv #(/ % z) raw) belief))))
 
 (defn- build-biased-eu-belief
   "Belief-space delay-indexed biased EU (the faithful information-valuing Ch-3c

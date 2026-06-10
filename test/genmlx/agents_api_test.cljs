@@ -18,6 +18,7 @@
             [genmlx.mlx :as mx]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
+            [genmlx.mlx.random :as rng]
             [genmlx.choicemap :as cm]))
 
 (def passed (volatile! 0))
@@ -70,6 +71,24 @@
 (let [box (h/uniform-draw [:a :b :c])]
   (assert-true "helpers value-carrying draw: box + draw-value by index"
                (and (:dist box) (= 3 (count (:values box))) (= :b (h/draw-value box 1)))))
+
+;; ---- genmlx-xpbm regressions ----
+(println "\n== genmlx-xpbm regressions ==")
+;; recursive-eu without numeric :alpha throws (pre-fix: (* nil q) -> 0 -> silently
+;; uniform softmax policy when callers bypass make-mdp-agent)
+(assert-true "recursive-eu without :alpha throws actionably"
+             (try (agent/recursive-eu mdp) false
+                  (catch :default e (boolean (re-find #"alpha" (str (.-message e)))))))
+;; simulate-mdp :key now threads on the :host path (pre-fix: accepted but ignored)
+(let [k  (rng/fresh-key 7)
+      r1 (agent/simulate-mdp ag (:start-idx mdp) 6 {:key k})
+      r2 (agent/simulate-mdp ag (:start-idx mdp) 6 {:key k})]
+  (assert-true "simulate-mdp: same :key -> identical host trajectory"
+               (and (= (:states r1) (:states r2)) (= (:actions r1) (:actions r2)))))
+;; keyless host path still works (custom 1-arity :act agents keep working)
+(let [r (agent/simulate-mdp ag (:start-idx mdp) 4)]
+  (assert-true "simulate-mdp: keyless host path still rolls out"
+               (and (vector? (:states r)) (vector? (:actions r)))))
 
 ;; ---- biased-planners: k=0 limit recovery (biased == unbiased) ----
 (assert-close "biased-planners/delta(0,d)=1" 1.0 (bp/delta 0 3) 1e-12)

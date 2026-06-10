@@ -24,6 +24,7 @@
    Scope: MDP planning + rollout + the recursive≡tensor equivalence. POMDP
    (make-pomdp-agent, belief filtering, :update-belief, simulate-pomdp) remains."
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
@@ -124,6 +125,11 @@
    Returns {:eu (fn [s a t]) :soft-v (fn [s t])}; EU(s,a,horizon) is the t-step Q
    that `value-iteration` computes with `n = horizon` sweeps."
   [{:keys [A gamma terminals] :as mdp}]
+  (when-not (number? (:alpha mdp))
+    (throw (ex-info "recursive-eu: mdp is missing a numeric :alpha — callers
+bypassing make-mdp-agent must supply it ((* nil q) silently yields 0, making
+the softmax policy uniform; alpha = ##Inf belongs in recursive-eu-inf)."
+                    {:alpha (:alpha mdp)})))
   (let [Rh      (mx/->clj (:R mdp))       ; [S][A] JS numbers
         Th      (mx/->clj (:T mdp))       ; [S][A][S'] JS numbers
         terms   (set (keys terminals))
@@ -183,7 +189,11 @@
         policy     (gen [s] (trace :action (h/softmax-action alpha (mx/idx Q s))))
         rec        (delay (if (= alpha ##Inf) (recursive-eu-inf mdp) (recursive-eu mdp)))]
     {:mdp mdp :Q Q :V V :policy policy
-     :act (fn [s] (int (mx/item (:retval (p/simulate (dyn/auto-key policy) [s])))))
+     ;; act: optional key arity for reproducible rollouts (genmlx-xpbm) —
+     ;; (act s) draws fresh entropy, (act s key) is deterministic in key.
+     :act (fn
+            ([s] (int (mx/item (:retval (p/simulate (dyn/auto-key policy) [s])))))
+            ([s key] (int (mx/item (:retval (p/simulate (if key (dyn/with-key policy key) (dyn/auto-key policy)) [s]))))))
      :expected-utility (fn [s a] ((:eu @rec) s a n-iters))   ; recursive EU(s,a,horizon)
      :params {:alpha alpha :gamma gamma :horizon n-iters}}))
 
@@ -196,10 +206,12 @@
 (defn sample-next
   "Sample the next state from T[s,a,:] (the env-step generative function).
    Deterministic when the row is one-hot (noise = 0). Public so the POMDP rollout
-   (genmlx.agents.pomdp/simulate-pomdp) threads the world transition the same way."
-  [T s a]
-  (let [probs (vec (mx/->clj (mx/idx (mx/idx T s) a)))]      ; T[s,a,:] -> [S'] probs
-    (int (mx/item (:retval (p/simulate (dyn/auto-key env-step) [probs]))))))
+   (genmlx.agents.pomdp/simulate-pomdp) threads the world transition the same way.
+   Optional key for reproducible rollouts (genmlx-xpbm)."
+  ([T s a] (sample-next T s a nil))
+  ([T s a key]
+   (let [probs (vec (mx/->clj (mx/idx (mx/idx T s) a)))]     ; T[s,a,:] -> [S'] probs
+     (int (mx/item (:retval (p/simulate (if key (dyn/with-key env-step key) (dyn/auto-key env-step)) [probs])))))))
 
 (defn simulate-mdp
   "Roll the agent's policy out from `start` for at most `horizon` steps, stopping
@@ -214,10 +226,16 @@
   [{:keys [mdp act] :as agent} start horizon & [{:keys [rollout-mode key]}]]
   (if (= rollout-mode :fused)
     (rollout/rollout-mdp agent start horizon {:key key})
+    ;; :key was previously accepted but IGNORED on the :host path (genmlx-xpbm);
+    ;; it now threads per-step sub-keys through act and sample-next, so the same
+    ;; key reproduces the same trajectory.
     (let [{:keys [T terminals]} mdp]
-      (loop [s start, step 0, states [start], actions []]
+      (loop [s start, step 0, k key, states [start], actions []]
         (if (or (>= step horizon) (contains? terminals s))
           {:states states :actions actions}
-          (let [a  (act s)
-                s' (sample-next T s a)]
-            (recur s' (inc step) (conj states s') (conj actions a))))))))
+          (let [[k-act k-next k'] (if k (rng/split-n k 3) [nil nil nil])
+                ;; keyless path stays 1-arity so custom agents whose :act is
+                ;; (fn [s]) keep working; the key arity is opt-in
+                a  (if k-act (act s k-act) (act s))
+                s' (sample-next T s a k-next)]
+            (recur s' (inc step) k' (conj states s') (conj actions a))))))))
