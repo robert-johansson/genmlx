@@ -31,7 +31,7 @@
 
    Returns {:traces :log-weights :log-ml-increment}"
   [model args observations proposal-gf particles key]
-  (let [model (dyn/auto-key model)
+  (let [model (-> model dyn/auto-key smc/strip-analytical)
         proposal-gf (when proposal-gf (dyn/auto-key proposal-gf))
         results (mapv
                   (fn [_]
@@ -74,9 +74,13 @@
                     If nil, falls back to constraint-based update (plain p/update)
                     — the forward-kernel is NOT used in this case.
                     Weight semantics change:
-                      with backward:    weight = update + backward_score - forward_score
+                      with backward:    weight = obs_update + update + backward_score - forward_score
                       without backward: weight = update_weight only (no proposal correction)
                     Pass nil for both kernels for standard SMC.
+                    With both kernels, the step's observations are applied via
+                    p/update BEFORE the proposal edit (so the forward kernel
+                    sees them in the trace it conditions on) and their update
+                    weight is included — previously they were silently dropped.
    particles: number of particles
    ess-threshold: resample when ESS < threshold * N
    rejuvenation-fn: (optional) fn [trace key] -> trace for MCMC rejuvenation
@@ -95,20 +99,37 @@
                                [(mapv #(nth traces %) indices)
                                 (vec (repeat particles (mx/scalar 0.0)))])
                              [traces log-weights])
+        obs-empty? (empty? (cm/addresses observations))
         ;; Apply forward kernel to each particle via edit
         results (mapv
                   (fn [trace]
                     (if forward-kernel
                       ;; Use proposal edit
-                      (let [edit-req (if backward-kernel
-                                      (edit/proposal-edit forward-kernel backward-kernel)
-                                      ;; Without backward kernel, fall back to constraint update.
-                                      ;; This changes weight semantics: no backward/forward proposal
-                                      ;; correction is applied — weight is pure update weight only.
-                                      (edit/constraint-edit observations))
-                            {:keys [trace weight]} (edit/edit (:gen-fn trace) trace edit-req)]
-                        (mx/materialize! weight)
-                        {:trace trace :weight weight})
+                      (if backward-kernel
+                        ;; Apply the observations first — the proposal edit
+                        ;; only applies the forward kernel's choices, so
+                        ;; without this step the observations never reach the
+                        ;; trace. Doing it before the edit lets the forward
+                        ;; kernel condition on them (locally-optimal
+                        ;; proposals). Weights compose additively.
+                        (let [obs-result (when-not obs-empty?
+                                           (p/update (:gen-fn trace) trace observations))
+                              trace1 (if obs-result (:trace obs-result) trace)
+                              edit-req (edit/proposal-edit forward-kernel backward-kernel)
+                              {:keys [trace weight]} (edit/edit (:gen-fn trace1) trace1 edit-req)
+                              weight (if obs-result
+                                       (mx/add (:weight obs-result) weight)
+                                       weight)]
+                          (mx/materialize! weight)
+                          {:trace trace :weight weight})
+                        ;; Without backward kernel, fall back to constraint update.
+                        ;; This changes weight semantics: no backward/forward proposal
+                        ;; correction is applied — weight is pure update weight only.
+                        (let [{:keys [trace weight]}
+                              (edit/edit (:gen-fn trace) trace
+                                         (edit/constraint-edit observations))]
+                          (mx/materialize! weight)
+                          {:trace trace :weight weight}))
                       ;; Standard update
                       (let [{:keys [trace weight]} (p/update (:gen-fn trace) trace observations)]
                         (mx/materialize! weight)
@@ -122,9 +143,12 @@
                        (let [rkeys (rng/split-n-or-nils rejuv-key particles)]
                          (mapv (fn [t rk] (rejuvenation-fn t rk)) new-traces rkeys))
                        new-traces)
-        ;; log-ML increment
+        ;; log-ML increment: against the post-resample weights the step
+        ;; started from (see smc/log-ml-increment-from — subtracting the
+        ;; carried mass prevents double-counting when the resample is skipped).
         w-arr (u/materialize-weights new-weights)
-        ml-inc (smc/log-ml-increment w-arr particles)]
+        prev-arr (u/materialize-weights weights')
+        ml-inc (smc/log-ml-increment-from w-arr prev-arr)]
     {:traces final-traces :log-weights new-weights :log-ml-increment ml-inc
      :ess ess :resampled? resample?}))
 
@@ -154,7 +178,10 @@
   (let [{:keys [particles ess-threshold forward-kernel backward-kernel
                 init-proposal rejuvenation-fn callback key]
          :or {particles 100 ess-threshold 0.5}} opts
-        model (dyn/auto-key model)
+        ;; Strip analytical handlers (as smc/csmc do): the analytical path
+        ;; returns deterministic posterior means, collapsing particle
+        ;; diversity to N identical particles on L3 models.
+        model (-> model dyn/auto-key smc/strip-analytical)
         forward-kernel (when forward-kernel (dyn/auto-key forward-kernel))
         backward-kernel (when backward-kernel (dyn/auto-key backward-kernel))
         init-proposal (when init-proposal (dyn/auto-key init-proposal))

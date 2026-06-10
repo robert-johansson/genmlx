@@ -2,6 +2,7 @@
   "Sequential Monte Carlo (particle filtering) inference."
   (:require [genmlx.protocols :as p]
             [genmlx.selection :as sel]
+            [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.inference.util :as u]
@@ -12,10 +13,28 @@
 
 (defn log-ml-increment
   "Marginal-likelihood increment for one SMC step: logsumexp(weights) - log N.
-   `w-arr` is a materialized [N]-shaped MLX weight array; `n` is the particle count."
+   `w-arr` is a materialized [N]-shaped MLX weight array; `n` is the particle count.
+
+   This is the increment for a step whose INCOMING weights are uniform — the
+   init step, or any step immediately after a resample (which resets weights
+   to 0, whose logsumexp is log N). When weights carry over from a skipped
+   resample, the increment must instead subtract logsumexp of the carried
+   weights (see `log-ml-increment-from`), otherwise the previously counted
+   mass is counted again every step."
   [w-arr n]
   (mx/subtract (mx/logsumexp w-arr)
                (mx/scalar (js/Math.log n))))
+
+(defn log-ml-increment-from
+  "Marginal-likelihood increment with adaptive resampling:
+   logsumexp(W_t) - logsumexp(W'_{t-1}), where `prev-arr` holds the
+   post-resample weights the step started from (all-zero after a resample,
+   so its logsumexp is log N and this reduces to `log-ml-increment`).
+   Telescoping across steps gives total = logsumexp(W_T) - log N when no
+   resample ever fires."
+  [w-arr prev-arr]
+  (mx/subtract (mx/logsumexp w-arr)
+               (mx/logsumexp prev-arr)))
 
 (defn break-particle-graph!
   "Break the lazy graph for a per-particle generate/update result, preventing
@@ -36,16 +55,37 @@
               (if (u/accept-mh? (mx/realize weight) rk) trace t)))
           trace step-keys))
 
-(defn- strip-analytical
+(defn strip-analytical
   "Strip analytical handlers from a model for particle-based inference.
    The analytical path returns deterministic posterior means, eliminating
-   particle diversity. Particle methods need stochastic prior sampling."
+   particle diversity. Particle methods need stochastic prior sampling.
+   Public so every particle method (smc, csmc, smcp3) shares ONE stripping
+   — mixed stripped/un-stripped scoring puts particles on different weight
+   scales."
   [model]
   (assoc model :schema
          (dissoc (:schema model)
                  :auto-handlers :conjugate-pairs
                  :has-conjugate? :analytical-plan
                  :auto-regenerate-transition)))
+
+(defn- obs-selection
+  "Selection covering exactly the addresses present in an observation
+   choicemap (hierarchical when the choicemap nests). Used to put the cSMC
+   reference particle's weight on the same obs-only scale as the other
+   particles: project of the obs sites = the generate weight the particle
+   would have received had only the observations been constrained."
+  [obs]
+  (letfn [(paths->sel [paths]
+            (sel/->Hierarchical
+              (into {}
+                    (map (fn [[head ps]]
+                           (let [tails (map rest ps)]
+                             [head (if (some empty? tails)
+                                     sel/all
+                                     (paths->sel (map vec tails)))])))
+                    (group-by first paths))))]
+    (paths->sel (cm/addresses obs))))
 
 (defn- residual-resample
   "Residual resampling: deterministically allocate floor(N * w_i) copies,
@@ -166,9 +206,13 @@
         ;; Rejuvenation
         final-traces  (smc-rejuvenate new-traces rejuvenation-steps
                                        rejuvenation-selection rejuv-key)
-        ;; log ml increment
+        ;; log-ML increment: measured against the post-resample weights the
+        ;; step started from. After a resample those are uniform (lse = log N);
+        ;; when the resample is skipped they carry the already-counted mass,
+        ;; which must be subtracted or it is double-counted every step.
         w-arr         (u/materialize-weights new-weights)
-        ml-inc        (log-ml-increment w-arr particles)]
+        prev-arr      (u/materialize-weights weights')
+        ml-inc        (log-ml-increment-from w-arr prev-arr)]
     {:traces final-traces :log-weights new-weights :log-ml-increment ml-inc
      :ess ess :resampled? resample?}))
 
@@ -283,9 +327,22 @@
                                         (break-particle-graph!
                                          (p/generate particle-model args obs-t) i))
                                       (range (dec particles)))
-                  ;; Use reference trace at index 0 (the core of cSMC)
+                  ;; Reference trace at index 0 (the core of cSMC). Its
+                  ;; trajectory is reproduced by constraining ALL its choices,
+                  ;; but that puts the generate weight on the full-joint scale
+                  ;; (prior densities of the retained latents included) while
+                  ;; the other particles carry obs-only weights. Re-score it
+                  ;; via project over the step's observation addresses — the
+                  ;; weight it would have received had only the observations
+                  ;; been constrained — so resampling and the final weighted
+                  ;; draw (pmcmc) compare like with like. Same stripped model
+                  ;; as the other particles: one score semantics for all.
+                  ref-gen (p/generate particle-model args (:choices reference-trace))
                   ref-result (break-particle-graph!
-                              (p/generate model args (:choices reference-trace)) 0)
+                              {:trace (:trace ref-gen)
+                               :weight (p/project particle-model (:trace ref-gen)
+                                                  (obs-selection obs-t))}
+                              0)
                   traces (into [(:trace ref-result)] (mapv :trace other-results))
                   log-weights (into [(:weight ref-result)] (mapv :weight other-results))
                   w-arr (u/materialize-weights log-weights)
@@ -307,10 +364,21 @@
                                          [(mapv #(nth traces %) indices')
                                           (vec (repeat particles (mx/scalar 0.0)))])
                                        [traces log-weights])
-                  ;; Update all particles
+                  ;; Update all particles. The reference particle keeps its
+                  ;; retained trajectory (the update constrains values it
+                  ;; already holds) but its incremental weight is re-scored
+                  ;; via project over the step's observation addresses —
+                  ;; log p(y_t | x_ref) — the same obs-only scale as the
+                  ;; freshly updated particles.
+                  obs-sel (obs-selection obs-t)
                   results (mapv (fn [i trace]
-                                  (break-particle-graph!
-                                   (p/update (:gen-fn trace) trace obs-t) i))
+                                  (let [r (p/update (:gen-fn trace) trace obs-t)
+                                        r (if (= i ref-idx)
+                                            (assoc r :weight
+                                                   (p/project particle-model (:trace r)
+                                                              obs-sel))
+                                            r)]
+                                    (break-particle-graph! r i)))
                                 (range particles) traces')
                   new-traces (mapv :trace results)
                   update-weights (mapv :weight results)
@@ -329,8 +397,11 @@
                                                      (repeat rejuvenation-steps nil)))))
                                          (range particles) new-traces keys))
                                  new-traces)
+                  ;; Same adaptive-resampling increment as smc-step: subtract
+                  ;; the carried mass when the resample was skipped.
                   w-arr (u/materialize-weights new-weights)
-                  ml-inc (log-ml-increment w-arr particles)]
+                  prev-arr (u/materialize-weights weights')
+                  ml-inc (log-ml-increment-from w-arr prev-arr)]
               (when callback
                 (callback {:step t :ess ess :resampled? resample?}))
               (recur (inc t) final-traces new-weights
@@ -534,8 +605,12 @@
               ;; Break lazy graph — weights carried across timesteps
               _ (mx/materialize! cumul-weights)
               vtrace (assoc updated-vtrace :weight cumul-weights)
-              ;; 4. Log-ML increment
-              log-ml-inc (vz/vtrace-log-ml-estimate vtrace)
+              ;; 4. Log-ML increment, measured against the post-resample
+              ;; weights the step started from (uniform after a resample,
+              ;; lse = log N; the carried mass otherwise — subtracting it
+              ;; prevents double-counting when the resample is skipped).
+              log-ml-inc (mx/subtract (mx/logsumexp cumul-weights)
+                                      (mx/logsumexp prev-weights))
               ;; 5. Rejuvenation
               vtrace (vsmc-rejuvenate vtrace rejuvenation-steps
                                        rejuvenation-selection rejuv-key)]

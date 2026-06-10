@@ -283,11 +283,13 @@ fast test/genmlx/score_monotonicity_property_test.cljs
 fast test/genmlx/searchsorted_test.cljs
 fast test/genmlx/selection_algebra_test2.cljs core
 fast test/genmlx/selection_property_test.cljs
+fast test/genmlx/selection_regenerate_test.cljs core
 fast test/genmlx/selection_test.cljs core
 fast test/genmlx/sensorimotor_test.cljs
 slow test/genmlx/sequential_convergence_test.cljs
 fast test/genmlx/serialize_property_test.cljs
 fast test/genmlx/serialize_test.cljs
+medium test/genmlx/smc_evidence_test.cljs
 medium test/genmlx/smc_property_test.cljs
 medium test/genmlx/smc_scoring_test.cljs
 slow test/genmlx/smc_stress_test.cljs
