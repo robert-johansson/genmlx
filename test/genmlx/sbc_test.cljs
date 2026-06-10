@@ -6,8 +6,23 @@
    If inference is correct, ranks ~ Uniform(0, L).
 
    Configuration via environment variables:
-     SBC_N=500   Number of repetitions (default 500)
-     SBC_L=200   Posterior samples per repetition (default 200)
+     SBC_N=500            Number of repetitions (default 500)
+     SBC_L=200            Posterior samples per repetition (default 200)
+     SBC_LIST=1           Print 'COMBO model:algo' lines and exit (for runners)
+     SBC_ONLY=model:algo  Run a single model x algorithm combo
+     SBC_OUT=path         Output JSON path (default results/sbc_results.json)
+
+   The FULL run takes ~6h of sustained GPU work. Do NOT run it in one
+   process: sustained GPU load risks the Metal uninterruptible-sleep wedge
+   (reboot-only recovery). Use the per-combo isolated-process runner:
+       bash test/run_sbc.sh
+   which runs one bun+nbb process per combo (this file with SBC_ONLY),
+   writes one crash-safe fragment per combo to results/sbc/, and merges
+   them into results/sbc_results.json (genmlx-18q9).
+
+   Bonferroni note: ALPHA-CORRECTED is always computed from the FULL combo
+   registry, so a single-combo run applies the same thresholds as the full
+   sweep.
 
    NUTS excluded: triggers Bun segfault (Bun bug, not inference bug).
    HMC validates the same gradient-based math."
@@ -17,8 +32,13 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
+            [genmlx.combinators :as comb]
             [genmlx.inference.mcmc :as mcmc]
+            [genmlx.inference.kernel :as kern]
             [genmlx.inference.importance :as is]
+            [genmlx.inference.smc :as smc]
+            [genmlx.mlx.random :as rng]
+            [clojure.string :as str]
             ["fs" :as fs])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -58,6 +78,16 @@
                    0.0 all-bins)]
     {:statistic statistic :pass? (< statistic critical) :df df :critical critical}))
 
+(defn rank-histogram
+  "Binned rank counts using the same binning as the chi-squared test.
+   Returns {:n-bins N :counts [c0 ... cN-1]} — the per-(model x algo x param)
+   rank histogram surfaced into sbc_results.json (genmlx-18q9)."
+  [ranks]
+  (let [bins (mapv #(js/Math.floor (/ (* % N-BINS) (inc L))) ranks)
+        counts (reduce (fn [acc b] (update acc b (fnil inc 0))) {} bins)]
+    {:n-bins N-BINS
+     :counts (mapv #(get counts % 0) (range N-BINS))}))
+
 (defn ecdf-ks-uniformity
   "Kolmogorov-Smirnov test for uniformity of ranks.
    Ranks should be Uniform(0, L). Returns {:statistic :pass? :critical}.
@@ -79,22 +109,40 @@
     {:statistic statistic :pass? (< statistic critical) :critical critical}))
 
 ;; ── Parameter extraction ─────────────────────────────────────────────────
+;; Addresses may be keywords (:mu) or vector paths ([:chain 0 :x]) so
+;; combinator models with nested choices participate (genmlx-66er).
+
+(defn submap-at
+  "Submap at a keyword address or a vector path."
+  [choices addr]
+  (if (vector? addr)
+    (reduce cm/get-submap choices addr)
+    (cm/get-submap choices addr)))
+
+(defn- addr-path [addr] (if (vector? addr) addr [addr]))
+
+(defn param-label
+  "Printable label for a keyword address or vector path."
+  [addr]
+  (if (vector? addr)
+    (str/join "." (map #(if (keyword? %) (name %) (str %)) addr))
+    (name addr)))
 
 (defn extract-observations
   "Extract observation values from a simulated trace into a choicemap."
   [trace obs-addrs]
   (reduce (fn [obs addr]
-            (let [sub (cm/get-submap (:choices trace) addr)
+            (let [sub (submap-at (:choices trace) addr)
                   v (cm/get-value sub)]
               (mx/eval! v)
-              (cm/set-choice obs [addr] v)))
+              (cm/set-choice obs (addr-path addr) v)))
           cm/EMPTY obs-addrs))
 
 (defn extract-true-params
   "Extract true parameter values from a simulated trace as JS numbers."
   [trace param-addrs]
   (mapv (fn [addr]
-          (let [sub (cm/get-submap (:choices trace) addr)
+          (let [sub (submap-at (:choices trace) addr)
                 v (cm/get-value sub)]
             (mx/eval! v)
             (mx/item v)))
@@ -132,9 +180,20 @@
                                      (dec (count traces)))]
                          (nth traces idx)))))))
 
+(defn- trace-extractor
+  "Extractor reading a parameter value out of a trace's choicemap."
+  [param-addrs]
+  (fn [sample param-idx]
+    (let [addr (nth param-addrs param-idx)
+          sub (submap-at (:choices sample) addr)
+          v (cm/get-value sub)]
+      (mx/eval! v)
+      (mx/item v))))
+
 (defn run-inference
   "Run inference and return {:samples vector :extractor fn}."
-  [algo-key {:keys [model args param-addrs cmh-opts hmc-opts mh-opts is-opts]} observations]
+  [algo-key {:keys [model args param-addrs obs-addrs
+                    cmh-opts hmc-opts mh-opts is-opts smc-opts]} observations]
   (case algo-key
     :cmh
     (let [opts (merge {:samples L :burn (max 100 (quot L 2)) :compile? true :device :cpu} cmh-opts)
@@ -145,13 +204,7 @@
     :mh
     (let [opts (merge {:samples L :burn (max 200 L)} mh-opts)
           traces (mcmc/mh opts model args observations)]
-      {:samples traces
-       :extractor (fn [sample param-idx]
-                    (let [addr (nth param-addrs param-idx)
-                          sub (cm/get-submap (:choices sample) addr)
-                          v (cm/get-value sub)]
-                      (mx/eval! v)
-                      (mx/item v)))})
+      {:samples traces :extractor (trace-extractor param-addrs)})
 
     :hmc
     (let [opts (merge {:samples L :burn (max 100 (quot L 2)) :compile? true :device :cpu} hmc-opts)
@@ -163,13 +216,43 @@
     (let [n-particles (or (:particles is-opts) (* L 20))
           result (is/importance-sampling {:samples n-particles} model args observations)
           resampled (resample-from-is result L)]
-      {:samples resampled
-       :extractor (fn [sample param-idx]
-                    (let [addr (nth param-addrs param-idx)
-                          sub (cm/get-submap (:choices sample) addr)
-                          v (cm/get-value sub)]
-                      (mx/eval! v)
-                      (mx/item v)))})))
+      {:samples resampled :extractor (trace-extractor param-addrs)})
+
+    ;; Single-site sweep MH: one mh-kernel per selection in :selections,
+    ;; cycled every step. Jointly regenerating several latents from the
+    ;; prior has vanishing acceptance on chained models (the proposal is a
+    ;; whole fresh prior trajectory) — per-site sweeps keep acceptance
+    ;; usable (genmlx-18q9, unfold-hmm diagnostics).
+    :mh-cycle
+    (let [{:keys [selections]} mh-opts
+          kernel (kern/cycle-kernels (mapv kern/mh-kernel selections))
+          {:keys [trace]} (p/generate (dyn/auto-key model) args observations)
+          traces (kern/run-kernel {:samples L :burn (max 200 L)
+                                   :key (rng/fresh-key)}
+                                  kernel trace)]
+      {:samples traces :extractor (trace-extractor param-addrs)})
+
+    ;; Staged SMC over the observation addresses (data tempering): one
+    ;; choicemap per group in :obs-groups (default: one address per stage),
+    ;; MH rejuvenation over the latent selection between stages, then
+    ;; resample L unweighted posterior samples from the final weighted
+    ;; particle set (genmlx-18q9).
+    :smc
+    (let [{:keys [obs-groups particles rejuvenation-steps selection]} smc-opts
+          groups (or obs-groups (mapv vector obs-addrs))
+          obs-seq (mapv (fn [addrs]
+                          (reduce (fn [c a]
+                                    (let [v (cm/get-value (submap-at observations a))]
+                                      (cm/set-choice c (addr-path a) v)))
+                                  cm/EMPTY addrs))
+                        groups)
+          result (smc/smc {:particles (or particles (* L 10))
+                           :ess-threshold 0.5
+                           :rejuvenation-steps (or rejuvenation-steps 2)
+                           :rejuvenation-selection selection}
+                          model args obs-seq)
+          resampled (resample-from-is result L)]
+      {:samples resampled :extractor (trace-extractor param-addrs)})))
 
 ;; ── Model definitions ────────────────────────────────────────────────────
 
@@ -307,6 +390,127 @@
    :algorithms [:mh]
    :mh-opts {:selection (sel/select :lambda)}})
 
+;; ── L3 elimination-ON specs (genmlx-18q9) ────────────────────────────────
+;; These two assert that analytical detection is ACTIVE on the model
+;; (:require-analytical? checked at combo start). SBC then validates the
+;; whole dispatch stack end-to-end with elimination in play: cmh/hmc score
+;; extraction, and smc's internal strip-analytical for particle diversity.
+
+;; Statically unrolled (x = 0, 1, 2): loop-built addresses are dynamic and
+;; opt the model out of L3 analysis — elimination requires static sites.
+(def conjugate-linreg-elim
+  {:name "conjugate-linreg-elim"
+   :model (dyn/auto-key
+           (gen []
+                (let [slope (trace :slope (dist/gaussian 0 2))
+                      intercept (trace :intercept (dist/gaussian 0 2))]
+                  (trace :y0 (dist/gaussian intercept 1))
+                  (trace :y1 (dist/gaussian (mx/add slope intercept) 1))
+                  (trace :y2 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 2.0))
+                                                    intercept) 1))
+                  [slope intercept])))
+   :args []
+   :param-addrs [:slope :intercept], :obs-addrs [:y0 :y1 :y2]
+   :require-analytical? true
+   :algorithms [:cmh :hmc :smc]
+   :cmh-opts {:addresses [:slope :intercept] :proposal-std 0.5}
+   :hmc-opts {:addresses [:slope :intercept] :step-size 0.05 :leapfrog-steps 15}
+   :smc-opts {:selection (sel/select :slope :intercept)}})
+
+(def hierarchical-elim
+  {:name "hierarchical-elim"
+   :model (dyn/auto-key (gen []
+                             (let [mu (trace :mu (dist/gaussian 0 2))
+                                   x (trace :x (dist/gaussian mu 1))]
+                               (trace :obs (dist/gaussian x 1))
+                               x)))
+   :args []
+   :param-addrs [:mu :x], :obs-addrs [:obs]
+   :require-analytical? true
+   :algorithms [:cmh :hmc :smc]
+   :cmh-opts {:addresses [:mu :x] :proposal-std 0.7}
+   :hmc-opts {:addresses [:mu :x] :step-size 0.1 :leapfrog-steps 10}
+   :smc-opts {:selection (sel/select :mu :x)}})
+
+;; ── genmlx-66er model classes ────────────────────────────────────────────
+
+;; Multivariate: 5 slope parameters sharing 10 observations. Tests MCMC
+;; mixing under parameter correlation at moderate dimension. Five scalar
+;; sites (not one MVN site) keep the per-address rank machinery unchanged —
+;; the correlation enters through the shared likelihood.
+(def mv-design
+  ;; Fixed deterministic 10x5 design matrix, values in [0, 2).
+  (vec (for [j (range 10)]
+         (vec (for [k (range 5)]
+                (/ (mod (+ (* 3 j) (* 7 k) 1) 11) 5.5))))))
+
+(def multivariate-regression
+  {:name "multivariate-regression-5d"
+   :model (dyn/auto-key
+           (gen []
+                (let [ws (mapv (fn [k] (trace (keyword (str "w" k))
+                                              (dist/gaussian 0 1)))
+                               (range 5))]
+                  (doseq [[j row] (map-indexed vector mv-design)]
+                    (trace (keyword (str "y" j))
+                           (dist/gaussian
+                            (reduce mx/add
+                                    (map (fn [w x] (mx/multiply w (mx/scalar x)))
+                                         ws row))
+                            1)))
+                  ws)))
+   :args []
+   :param-addrs [:w0 :w1 :w2 :w3 :w4]
+   :obs-addrs [:y0 :y1 :y2 :y3 :y4 :y5 :y6 :y7 :y8 :y9]
+   :algorithms [:cmh :hmc]
+   :cmh-opts {:addresses [:w0 :w1 :w2 :w3 :w4] :proposal-std 0.4}
+   :hmc-opts {:addresses [:w0 :w1 :w2 :w3 :w4] :step-size 0.05 :leapfrog-steps 15}})
+
+;; Discrete latent: two-component Gaussian mixture. The bernoulli component
+;; selector z is a discrete latent mixed over by MH; ranks are computed for
+;; the CONTINUOUS component means only (rank statistics need continuous
+;; values — discrete ranks tie and break uniformity by construction).
+(def gmm-discrete
+  {:name "gmm-discrete"
+   :model (dyn/auto-key
+           (gen []
+                (let [z (trace :z (dist/bernoulli 0.5))
+                      mu0 (trace :mu0 (dist/gaussian -2 1))
+                      mu1 (trace :mu1 (dist/gaussian 2 1))]
+                  (mx/eval! z)
+                  (let [mu (if (pos? (mx/item z)) mu1 mu0)]
+                    (trace :obs (dist/gaussian mu 1))
+                    mu))))
+   :args []
+   :param-addrs [:mu0 :mu1]
+   :obs-addrs [:obs]
+   :algorithms [:mh-cycle]
+   :mh-opts {:selections [(sel/select :z) (sel/select :mu0) (sel/select :mu1)]}})
+
+;; Combinator: 3-step Unfold HMM spliced under :chain. Choices nest at
+;; [:chain t :x] / [:chain t :y] — vector-path addresses exercise the
+;; combinator regenerate/selection descent (the genmlx-yey5 fix class).
+(def hmm-kernel
+  (gen [t prev]
+       (let [x (trace :x (dist/gaussian prev 1))]
+         (trace :y (dist/gaussian x 0.5))
+         x)))
+
+(def hmm-unfold-gf (comb/unfold-combinator hmm-kernel))
+
+(def unfold-hmm
+  {:name "unfold-hmm"
+   :model (dyn/auto-key (gen []
+                             (splice :chain hmm-unfold-gf 3 (mx/scalar 0.0))))
+   :args []
+   :param-addrs [[:chain 0 :x] [:chain 1 :x] [:chain 2 :x]]
+   :obs-addrs [[:chain 0 :y] [:chain 1 :y] [:chain 2 :y]]
+   :algorithms [:mh-cycle]
+   :mh-opts {:selections
+             [(sel/hierarchical :chain (sel/hierarchical 0 (sel/select :x)))
+              (sel/hierarchical :chain (sel/hierarchical 1 (sel/select :x)))
+              (sel/hierarchical :chain (sel/hierarchical 2 (sel/select :x)))]}})
+
 ;; ── SBC harness ──────────────────────────────────────────────────────────
 
 (defn run-sbc-single
@@ -379,7 +583,8 @@
                     ranks (nth all-ranks j)
                     chi2 (chi-squared-uniformity ranks (count ranks))
                     ecdf (ecdf-ks-uniformity ranks (count ranks) alpha)]
-                {:param param :ranks ranks :chi2 chi2 :ecdf ecdf}))
+                {:param param :ranks ranks :chi2 chi2 :ecdf ecdf
+                 :histogram (rank-histogram ranks)}))
             (range n-params)))))
 
 ;; ── All models ───────────────────────────────────────────────────────────
@@ -393,14 +598,20 @@
    linear-regression
    hierarchical
    beta-bernoulli
-   gamma-poisson])
+   gamma-poisson
+   conjugate-linreg-elim
+   hierarchical-elim
+   multivariate-regression
+   gmm-discrete
+   unfold-hmm])
 
 ;; ── Runner ───────────────────────────────────────────────────────────────
 
-;; Cap Metal cache to 2GB to prevent RSS blowup (machine has 36GB)
-(mx/set-cache-limit! (* 2 1024 1024 1024))
+(def all-combos (vec (for [m all-models a (:algorithms m)] [m a])))
 
-;; Count total parameter tests for Bonferroni correction
+;; Count total parameter tests for Bonferroni correction. Always computed
+;; over the FULL registry — a single-combo (SBC_ONLY) run must apply the
+;; same per-test threshold as the full sweep.
 (def n-total-tests
   (reduce + (for [m all-models a (:algorithms m)]
               (count (:param-addrs m)))))
@@ -408,34 +619,74 @@
 ;; Bonferroni-corrected alpha: alpha / n_tests
 (def ALPHA-CORRECTED (/ ALPHA n-total-tests))
 
+;; SBC_LIST=1: print the combo registry for the per-combo runner and exit.
+(when (= "1" (aget js/process.env "SBC_LIST"))
+  (doseq [[m a] all-combos]
+    (println (str "COMBO " (:name m) ":" (name a))))
+  (js/process.exit 0))
+
+(def sbc-only
+  "Optional 'model:algo' filter from SBC_ONLY."
+  (aget js/process.env "SBC_ONLY"))
+
+(def selected-combos
+  (if sbc-only
+    (let [[m-name a-name] (str/split sbc-only #":")
+          combos (filterv (fn [[m a]] (and (= (:name m) m-name)
+                                           (= (name a) a-name)))
+                          all-combos)]
+      (when (empty? combos)
+        (println (str "ERROR: unknown combo " sbc-only))
+        (js/process.exit 2))
+      combos)
+    all-combos))
+
+;; Cap Metal cache to 2GB to prevent RSS blowup (machine has 36GB)
+(mx/set-cache-limit! (* 2 1024 1024 1024))
+
 (println (str "=== Simulation-Based Calibration (SBC) Tests ==="))
 (println (str "N=" N ", L=" L ", " N-BINS " bins, alpha=" ALPHA
               " (Bonferroni: " (.toFixed ALPHA-CORRECTED 5)
               " for " n-total-tests " tests)"))
 (println (str "Max failure rate: " (* 100 MAX-FAIL-RATE) "%"))
 (println (str "Metal cache limit: 2GB"))
+(when sbc-only (println (str "Single combo: " sbc-only)))
 
 (def all-results (atom []))
 (def summary (atom {:pass 0 :fail 0}))
-(def results-path "results/sbc_results.json")
+(def results-path
+  (or (aget js/process.env "SBC_OUT") "results/sbc_results.json"))
 
 (defn write-results!
-  "Write current results to JSON incrementally."
-  []
-  (let [{:keys [pass fail]} @summary
-        output (clj->js {:config {:N N :L L :N_BINS N-BINS :ALPHA ALPHA}
-                         :results @all-results
-                         :summary {:pass pass :fail fail :total (+ pass fail)
-                                   :complete? false}})
-        json (js/JSON.stringify output nil 2)]
-    (fs/writeFileSync results-path json)))
+  "Write current results to JSON incrementally. complete? is false until the
+   final write — the merge step (test/run_sbc.sh) trusts only completed
+   fragments."
+  ([] (write-results! false))
+  ([complete?]
+   (let [{:keys [pass fail]} @summary
+         output (clj->js {:config {:N N :L L :N_BINS N-BINS :ALPHA ALPHA
+                                   :n_total_tests n-total-tests
+                                   :only (or sbc-only nil)}
+                          :results @all-results
+                          :summary {:pass pass :fail fail :total (+ pass fail)
+                                    :complete? complete?}})
+         json (js/JSON.stringify output nil 2)]
+     (fs/writeFileSync results-path json))))
 
-(def all-combos (vec (for [m all-models a (:algorithms m)] [m a])))
-(def total-combos (count all-combos))
+(def total-combos (count selected-combos))
 (def combo-idx (atom 0))
 (def run-start (js/Date.now))
 
-(doseq [[model-spec algo-key] all-combos]
+(doseq [[model-spec algo-key] selected-combos]
+  (when (:require-analytical? model-spec)
+    (let [sch (:schema (:model model-spec))]
+      (when-not (or (:has-conjugate? sch)
+                    (seq (:auto-handlers sch))
+                    (:analytical-plan sch))
+        (println (str "ERROR: " (:name model-spec)
+                      " requires L3 analytical detection ON, but the schema "
+                      "has no analytical keys — detection regressed."))
+        (js/process.exit 3))))
   (swap! combo-idx inc)
   (let [start (js/Date.now)
         elapsed-total (/ (- start run-start) 1000)
@@ -452,7 +703,7 @@
       (do
         (doseq [{:keys [param chi2 ecdf]} param-results]
           (let [pass? (and (:pass? chi2) (:pass? ecdf))]
-            (println (str "  " (if pass? "PASS" "FAIL") ": " (name param)
+            (println (str "  " (if pass? "PASS" "FAIL") ": " (param-label param)
                           "  chi2=" (.toFixed (:statistic chi2) 2)
                           " (crit=" (:critical chi2) ")"
                           "  ks=" (.toFixed (:statistic ecdf) 3)
@@ -462,7 +713,7 @@
                {:model (:name model-spec)
                 :algorithm (name algo-key)
                 :params (mapv (fn [{:keys [param ranks chi2 ecdf]}]
-                                {:name (name param)
+                                {:name (param-label param)
                                  :ranks ranks
                                  :chi2 (dissoc chi2 :pass?)
                                  :ecdf (dissoc ecdf :pass?)
@@ -489,13 +740,8 @@
 ;; ── Final write ──────────────────────────────────────────────────────────
 
 (let [{:keys [pass fail]} @summary
-      total (+ pass fail)
-      output (clj->js {:config {:N N :L L :N_BINS N-BINS :ALPHA ALPHA}
-                       :results @all-results
-                       :summary {:pass pass :fail fail :total total
-                                 :complete? true}})
-      json (js/JSON.stringify output nil 2)]
-  (fs/writeFileSync results-path json)
+      total (+ pass fail)]
+  (write-results! true)
   (println (str "\n=== SBC Summary: " pass "/" total " passed ==="))
   (println (str "Results written to " results-path))
   (js/process.exit (if (zero? fail) 0 1)))
