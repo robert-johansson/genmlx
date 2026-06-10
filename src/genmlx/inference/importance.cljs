@@ -111,10 +111,14 @@
    Returns {:vtrace VectorizedTrace (resampled, uniform weights)
             :log-ml-estimate MLX-scalar}"
   [{:keys [particles key] :or {particles 1000}} model args observations]
-  (let [{:keys [vtrace log-ml-estimate]}
-        (vectorized-importance-sampling {:samples particles :key key}
+  (let [;; Split once: reusing the caller's key for both vgenerate and the
+        ;; resample uniforms correlates resampling with particle generation
+        ;; (genmlx-njaq).
+        [k-gen k-res] (rng/split (rng/ensure-key key))
+        {:keys [vtrace log-ml-estimate]}
+        (vectorized-importance-sampling {:samples particles :key k-gen}
                                         model args observations)
-        resampled (vec/resample-vtrace vtrace (or key (rng/fresh-key)))]
+        resampled (vec/resample-vtrace vtrace k-res)]
     {:vtrace resampled
      :log-ml-estimate log-ml-estimate}))
 
@@ -130,12 +134,16 @@
   [{:keys [samples particles key] :or {samples 100 particles 1000}}
    model args observations]
   (let [model (dyn/auto-key model)
+        ;; Split once: split-n of the SAME key for per-particle generate and
+        ;; again for the resample uniforms makes the first `samples` resample
+        ;; keys identical to the generate keys (split prefix semantics) —
+        ;; resampling correlated with particle generation (genmlx-njaq).
+        [k-gen k-res] (rng/split (rng/ensure-key key))
         {:keys [traces log-weights]}
-        (importance-sampling {:samples particles :key key} model args observations)
+        (importance-sampling {:samples particles :key k-gen} model args observations)
         ;; Normalize weights via log-softmax
         {:keys [probs]} (u/normalize-log-weights log-weights)
-        key (or key (rng/fresh-key))
-        keys (rng/split-n key samples)]
+        keys (rng/split-n k-res samples)]
     ;; Resample
     (mapv (fn [ki]
             (let [u (mx/realize (rng/uniform ki []))

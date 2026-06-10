@@ -2009,9 +2009,14 @@
               idx-constraint (when (and sub-constraints
                                         (not= sub-constraints cm/EMPTY))
                                (cm/get-submap sub-constraints :component-idx))
-              ;; Sample or constrain [N]-shaped component indices
+              ;; Sample or constrain [N]-shaped component indices.
+              ;; Three-way split: k-idx samples the indices, k-comps drives
+              ;; the component runs, k-next continues the parent. The parent
+              ;; used to continue with the SAME key that sampled the indices,
+              ;; correlating every downstream site with index sampling
+              ;; (genmlx-njaq; Switch/Unfold already keep these disjoint).
               cat-dist (dc/->Distribution :categorical {:logits log-w})
-              [k1 k2] (rng/split (:key state))
+              [k-next k-comps k-idx] (rng/split-n (:key state) 3)
               [idx-vals idx-score idx-weight]
               (if (and idx-constraint (cm/has-value? idx-constraint))
                 ;; Constrained: fixed value, weight = log-prob
@@ -2019,7 +2024,7 @@
                       lp (dc/dist-log-prob cat-dist v)]
                   [v lp lp])
                 ;; Unconstrained: sample [N] indices
-                (let [sampled (dc/dist-sample-n cat-dist k2 batch-size)
+                (let [sampled (dc/dist-sample-n cat-dist k-idx batch-size)
                       lp (dc/dist-log-prob cat-dist sampled)]
                   [sampled lp (mx/zeros [batch-size])]))
               ;; Inner constraints = everything except :component-idx
@@ -2032,7 +2037,7 @@
               batch-zero (mx/zeros [batch-size])
               ;; Run each component once with batched handler
               comp-results
-              (loop [i 0 results [] key k1]
+              (loop [i 0 results [] key k-comps]
                 (if (>= i (count comps))
                   results
                   (let [[ck nk] (rng/split key)
@@ -2068,7 +2073,7 @@
                           :score final-score
                           :weight final-weight}
               state' (-> state
-                         (assoc :key k2)
+                         (assoc :key k-next)
                          (h/merge-sub-result addr sub-result))]
           [state' combined-retval])))))
 

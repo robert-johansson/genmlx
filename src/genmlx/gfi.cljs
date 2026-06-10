@@ -1249,11 +1249,14 @@
                      (loop [t init i 0 acc [] k (rng/fresh-key 13)]
                        (if (>= i n-steps)
                          acc
-                         (let [[k1 k2] (rng/split k)
+                         (let [;; select and accept need disjoint keys —
+                               ;; reusing k1 for both correlated kernel
+                               ;; selection with acceptance (genmlx-njaq)
+                               [k1 k-acc k2] (rng/split-n k 3)
                                sel (select-fn i k1)
                                {:keys [trace weight]} (p/regenerate kern-model t sel)
                                w (ev weight)
-                               accept? (u/accept-mh? w k1)
+                               accept? (u/accept-mh? w k-acc)
                                next-t (if accept? trace t)
                                x-val (choice-num (:choices next-t) :x)
                                y-val (choice-num (:choices next-t) :y)]
