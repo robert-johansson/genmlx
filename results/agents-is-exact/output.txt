@@ -1,0 +1,49 @@
+======================================================================
+  Agents axis: IS -> exact on the identical biased-agent GF
+======================================================================
+
+  alpha = 2 (finite — at alpha=Inf argmax policies make IS degenerate)
+  N grid: [10 30 100 300 1000 3000], replicates per N: 20 (10 at N=3000)
+  TV(exact, IS) per replicate; deterministic seeds (MLX RNG is bit-reproducible)
+
+------------------------------------------------------------
+  Trajectory safe-x3: states=[0 0 0] actions=[1 1 1]
+------------------------------------------------------------
+  exact (assess-enum):    {:naive 0.448501044290804, :sophisticated 0.551498955709196}
+  policy-idiom oracle:    {:naive 0.448501044290804, :sophisticated 0.551498955709196}  (max |diff| = 0.00e+0)
+  math-verifier ref :sophisticated = 0.5515  (|diff| = 1.04e-6)
+  N=   10  TV mean=1.442e-1  std=1.17e-1  max=4.31e-1  ESS=9.9 (99.1% of N)  [20 reps]
+  N=   30  TV mean=5.361e-2  std=4.31e-2  max=1.59e-1  ESS=29.7 (99.0% of N)  [20 reps]
+  N=  100  TV mean=3.911e-2  std=2.96e-2  max=9.07e-2  ESS=99.0 (99.0% of N)  [20 reps]
+  N=  300  TV mean=2.493e-2  std=2.39e-2  max=9.06e-2  ESS=296.9 (99.0% of N)  [20 reps]
+  N= 1000  TV mean=1.244e-2  std=1.06e-2  max=3.89e-2  ESS=989.5 (98.9% of N)  [20 reps]
+  N= 3000  TV mean=7.784e-3  std=5.00e-3  max=1.42e-2  ESS=2968.5 (99.0% of N)  [10 reps]
+  log-log slope of mean TV vs N: -0.484  (MC rate expectation: -0.5)
+
+------------------------------------------------------------
+  Trajectory tempt-x3: states=[0 0 0] actions=[0 0 0]
+------------------------------------------------------------
+  exact (assess-enum):    {:naive 0.5638096711967175, :sophisticated 0.4361903288032824}
+  policy-idiom oracle:    {:naive 0.5638096711967175, :sophisticated 0.4361903288032824}  (max |diff| = 0.00e+0)
+  math-verifier ref :naive = 0.5638  (|diff| = 9.67e-6)
+  N=   10  TV mean=1.083e-1  std=1.05e-1  max=3.20e-1  ESS=9.9 (98.5% of N)  [20 reps]
+  N=   30  TV mean=5.846e-2  std=5.55e-2  max=2.07e-1  ESS=29.5 (98.4% of N)  [20 reps]
+  N=  100  TV mean=4.194e-2  std=2.74e-2  max=1.11e-1  ESS=98.4 (98.4% of N)  [20 reps]
+  N=  300  TV mean=1.776e-2  std=1.28e-2  max=4.54e-2  ESS=295.2 (98.4% of N)  [20 reps]
+  N= 1000  TV mean=1.617e-2  std=1.06e-2  max=3.61e-2  ESS=984.0 (98.4% of N)  [20 reps]
+  N= 3000  TV mean=1.104e-2  std=8.86e-3  max=2.77e-2  ESS=2952.1 (98.4% of N)  [10 reps]
+  log-log slope of mean TV vs N: -0.401  (MC rate expectation: -0.5)
+
+======================================================================
+  SUMMARY — IS -> exact (TV < eps), never 'exact = sampled'
+======================================================================
+
+| Trajectory | TV @ N=10 | TV @ N=3000 | slope | ESS% @ N=3000 |
+|------------|-----------|-------------|-------|---------------|
+| safe-x3    |   1.44e-1 |     7.78e-3 | -0.48 |          99.0 |
+| tempt-x3   |   1.08e-1 |     1.10e-2 | -0.40 |          98.4 |
+
+  Total: 157.5s
+  Wrote: /Users/robert/code/genmlx/results/agents-is-exact/data.json
+
+Agents IS->exact experiment complete.

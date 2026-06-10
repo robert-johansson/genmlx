@@ -181,6 +181,33 @@
                  "src/genmlx/inference/auto_analytical.cljs"]}
 
   ;; =========================================================================
+  ;; C2. Agents Axis (agents-as-GFs, pluggable inference)
+  ;; =========================================================================
+
+  {:name        "agents-is-exact"
+   :script      "bench/agents_is_exact.cljs"
+   :category    :agents
+   :timeout-ms  420000
+   :description "IS -> exact on the identical biased-agent GF: TV(exact, IS) vs N at finite alpha, ESS, MC-rate slope."
+   :sources     ["examples/agentmodels/biased_inverse.cljs"
+                 "src/genmlx/agents/biased_planners.cljs"
+                 "src/genmlx/agents/helpers.cljs"
+                 "src/genmlx/agents/inverse.cljs"
+                 "src/genmlx/inference/importance.cljs"]}
+
+  {:name        "agents-identifiability"
+   :script      "bench/agents_identifiability.cljs"
+   :category    :agents
+   :timeout-ms  120000
+   :description "Identifiability-ridge contrast: exact posterior concentrates on diagnostic observations, stays at the prior on non-diagnostic ones; flat ridge directions stay flat."
+   :sources     ["examples/agentmodels/biased_inverse.cljs"
+                 "examples/agentmodels/irl.cljs"
+                 "src/genmlx/agents/biased_planners.cljs"
+                 "src/genmlx/agents/agent.cljs"
+                 "src/genmlx/agents/gridworld.cljs"
+                 "src/genmlx/agents/inverse.cljs"]}
+
+  ;; =========================================================================
   ;; D. Cross-System Comparison
   ;; =========================================================================
 
