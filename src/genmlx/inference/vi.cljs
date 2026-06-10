@@ -44,29 +44,33 @@
 (defn- advi-sample-fn
   "Build the posterior sampler returned by ADVI: draws n reparameterized
    samples from the mean-field Gaussian q(mu, sigma). For d==1 returns a
-   vector of CLJS doubles; otherwise the [n,d] sample array as nested CLJS."
-  [mu sigma d rk]
-  (fn [n]
-    (let [sample-key (or rk (rng/fresh-key))
-          eps (rng/normal sample-key [n d])
-          samples (mx/add mu (mx/multiply sigma eps))]
-      (mx/materialize! samples)
-      (if (= d 1)
-        (mapv #(mx/item (mx/index samples %)) (range n))
-        (mx/->clj samples)))))
+   vector of CLJS doubles; otherwise the [n,d] sample array as nested CLJS.
+   (sample-fn n) uses fresh entropy each call; (sample-fn n key) is
+   deterministic in the caller's key. Pre-fix, every call closed over one
+   fixed key, so repeated calls returned identical samples (genmlx-7sqe)."
+  [mu sigma d]
+  (fn sample
+    ([n] (sample n (rng/fresh-key)))
+    ([n key]
+     (let [eps (rng/normal (rng/ensure-key key) [n d])
+           samples (mx/add mu (mx/multiply sigma eps))]
+       (mx/materialize! samples)
+       (if (= d 1)
+         (mapv #(mx/item (mx/index samples %)) (range n))
+         (mx/->clj samples))))))
 
 (defn- run-advi
   "Shared ADVI driver for `vi` and `compiled-vi`. Builds the mean-field
    Gaussian guide, optimizes the negative ELBO via Adam, and returns
    {:mu :sigma :elbo-history :sample-fn}.
 
-   When `compile?` is true the gradient and ELBO functions are wrapped in
-   mx/compile-fn, and ELBO logging uses the compiled forward pass (fresh
-   key, like the original compiled-vi); otherwise ELBO logging re-estimates
-   with the iteration key (like the original vi). The tidy/materialize
-   boundaries are identical to the original per-function loops."
+   The iteration key drives BOTH the gradient's ELBO samples and the
+   logged ELBO estimate, so a run is reproducible from :key. Pre-fix the
+   gradient path hardwired a nil key (fresh entropy every call) and :key
+   only affected logging (genmlx-7sqe). mx/compile-fn is a documented
+   identity, so `vi` and `compiled-vi` share this exact computation."
   [{:keys [iterations learning-rate elbo-samples beta1 beta2 epsilon callback key
-           vectorized-log-density compile?]
+           vectorized-log-density]
     :or {iterations 1000 learning-rate 0.01 elbo-samples 10
          beta1 0.9 beta2 0.999 epsilon 1e-8}}
    log-density init-params]
@@ -78,15 +82,13 @@
         init-vp (mx/tidy-materialize
                  #(mx/concatenate [init-mu init-log-sigma]))
         vmapped-log-density (or vectorized-log-density (mx/vmap log-density))
-        neg-elbo-fn (fn [vp]
-                      (mx/negative (elbo-estimate vp log-density elbo-samples d vmapped-log-density nil)))
-        grad-neg-elbo (cond-> (mx/grad neg-elbo-fn) compile? mx/compile-fn)
-        neg-elbo-compiled (when compile? (mx/compile-fn neg-elbo-fn))
+        neg-elbo-fn (fn [vp iter-key]
+                      (mx/negative (elbo-estimate vp log-density elbo-samples d
+                                                  vmapped-log-density iter-key)))
         ;; ELBO value at the new params, recomputed at log points only.
-        elbo-at (if compile?
-                  (fn [vp' _iter-key] (mx/negative (neg-elbo-compiled vp')))
-                  (fn [vp' iter-key]
-                    (elbo-estimate vp' log-density elbo-samples d vmapped-log-density iter-key)))]
+        elbo-at (fn [vp' iter-key]
+                  (elbo-estimate vp' log-density elbo-samples d
+                                 vmapped-log-density iter-key))]
     (loop [i 0, vp init-vp
            opt-state (learn/adam-init init-vp)
            elbo-history (transient [])
@@ -99,10 +101,11 @@
           {:mu final-mu
            :sigma final-sigma
            :elbo-history (persistent! elbo-history)
-           :sample-fn (advi-sample-fn final-mu final-sigma d rk)})
+           :sample-fn (advi-sample-fn final-mu final-sigma d)})
         (let [[iter-key next-key] (rng/split-or-nils rk)
               ;; Tidy-materialize gradient — frees intermediate graph nodes
-              g (mx/tidy-materialize #(grad-neg-elbo vp))
+              g (mx/tidy-materialize
+                 #((mx/grad (fn [vp*] (neg-elbo-fn vp* iter-key))) vp))
               [vp' opt-state'] (learn/adam-step vp g opt-state
                                                 {:lr learning-rate :beta1 beta1 :beta2 beta2 :epsilon epsilon})
               ;; Tidy-materialize ELBO — prevents graph accumulation at log points
@@ -131,9 +134,9 @@
             :sample-fn (fn [n] -> samples)}
 
    compiled-vi shares this driver; mx/compile-fn is a documented identity,
-   so the two differ only in ELBO-logging key policy (see run-advi)."
+   so the two run the exact same computation (see run-advi)."
   [opts log-density init-params]
-  (run-advi (assoc opts :compile? false) log-density init-params))
+  (run-advi opts log-density init-params))
 
 ;; ---------------------------------------------------------------------------
 ;; Compiled VI (ADVI with mx/compile-fn)
@@ -151,9 +154,9 @@
 
 (defn compiled-vi
   "Variational Inference via ADVI, compiled-path variant.
-   Same as `vi` except ELBO logging uses a fresh-key compiled forward pass.
    mx/compile-fn is a documented identity (see mlx.cljs), so there is NO
-   kernel-caching speedup over `vi`. Same interface and return type.
+   kernel-caching speedup over `vi` — this differs from `vi` only in the
+   :device option. Same interface and return type.
 
    opts: {:iterations N :learning-rate lr :elbo-samples N
           :beta1 b1 :beta2 b2 :epsilon eps :callback fn :key prng-key
@@ -165,7 +168,7 @@
   [{:keys [device] :or {device :cpu} :as opts} log-density init-params]
   (with-device device
     (fn []
-      (run-advi (assoc opts :compile? true) log-density init-params))))
+      (run-advi opts log-density init-params))))
 
 ;; ---------------------------------------------------------------------------
 ;; VI from model (convenience)
@@ -265,24 +268,30 @@
       (mx/sum (mx/multiply (mx/stop-gradient w-norm) log-q)))))
 
 (defn reinforce-estimator
-  "REINFORCE (score function) gradient estimator.
-   For non-reparameterizable distributions.
-   objective-fn: (fn [samples] -> MLX scalar)
-   log-q-fn: (fn [z] -> MLX scalar)
-   Returns (fn [samples] -> MLX scalar) with REINFORCE gradient."
-  [objective-fn log-q-fn]
+  "REINFORCE (score function) gradient estimator for non-reparameterizable
+   samplers.
+   per-sample-objective-fn: (fn [samples] -> [K] MLX array) — the objective
+   value f(z_k) of EACH sample. A scalar (already-averaged) objective makes
+   f - baseline identically zero, so the score-function term vanishes for
+   exactly the case this estimator exists for (genmlx-7sqe).
+   log-q-fn: (fn [z] -> MLX scalar) — guide log-density.
+   Returns (fn [samples] -> MLX scalar): a surrogate loss whose gradient is
+   mean(∇f) + mean(stopgrad(f_k - b_k)·∇log q(z_k)) with leave-one-out
+   baselines b_k = (Σf - f_k)/(K-1) (unbiased; b = 0 when K = 1)."
+  [per-sample-objective-fn log-q-fn]
   (fn [samples]
     (let [vmapped-q (mx/vmap log-q-fn)
           log-q (vmapped-q samples)
-          obj-val (objective-fn samples)
-          ;; REINFORCE: (f(z) - baseline) * grad log q(z)
-          ;; We use mean as baseline for variance reduction
-          baseline (mx/stop-gradient (mx/mean obj-val))]
-      ;; Return surrogate loss whose gradient equals REINFORCE estimator
-      (mx/add obj-val
-              (mx/mean (mx/multiply (mx/stop-gradient
-                                     (mx/subtract obj-val baseline))
-                                    log-q))))))
+          f (per-sample-objective-fn samples)
+          k (first (mx/shape samples))
+          baseline (if (> k 1)
+                     (mx/divide (mx/subtract (mx/sum f) f)
+                                (mx/scalar (dec k)))
+                     (mx/scalar 0.0))
+          signal (mx/stop-gradient (mx/subtract f baseline))]
+      ;; Surrogate loss whose gradient equals the REINFORCE estimator
+      (mx/add (mx/mean f)
+              (mx/mean (mx/multiply signal log-q))))))
 
 (defn vimco-objective
   "VIMCO (Variational Inference with Multi-sample Objectives) estimator.
@@ -319,6 +328,20 @@
       ;; Surrogate loss: gradient equals VIMCO estimator
       (mx/add l-hat reinforce-term))))
 
+(defn- per-sample-objective
+  "[K]-shaped per-sample objective values f(z_k) for the REINFORCE
+   estimator, or nil when the objective does not decompose per sample.
+   :iwelbo couples samples through a logsumexp — its score-function
+   treatment IS the :vimco estimator; :vimco and :qwake already carry
+   their own score-function surrogates."
+  [objective log-p-fn log-q-fn]
+  (case objective
+    :elbo (fn [samples]
+            (mx/subtract ((mx/vmap log-p-fn) samples)
+                         ((mx/vmap log-q-fn) samples)))
+    :pwake (fn [samples] ((mx/vmap log-p-fn) samples))
+    nil))
+
 (defn- estimate-objective
   "Compute the (negated) programmable-VI objective for one batch of `samples`.
    Rebuilds the guide log-density at the current `params`, dispatches the
@@ -335,7 +358,19 @@
                  :qwake (qwake-objective log-p-fn log-q-curr)
                  (fn [s] (objective log-p-fn log-q-curr s)))
         obj-val (if (= estimator :reinforce)
-                  ((reinforce-estimator obj-fn log-q-curr) samples)
+                  (if-let [psf (per-sample-objective objective log-p-fn log-q-curr)]
+                    ((reinforce-estimator psf log-q-curr) samples)
+                    (case objective
+                      ;; These surrogates already differentiate through
+                      ;; log-q via their own score-function terms.
+                      (:vimco :qwake) (obj-fn samples)
+                      (throw (ex-info
+                              (str ":reinforce needs a per-sample objective; "
+                                   (pr-str objective) " couples samples. Use "
+                                   ":vimco for multi-sample score-function "
+                                   "gradients, or :reparam with a "
+                                   "reparameterized sampler.")
+                              {:objective objective :estimator estimator}))))
                   (obj-fn samples))]
     ;; We minimize negative objective
     (mx/negative obj-val)))

@@ -119,7 +119,11 @@
        :log-ml nil
        :samples traces})
 
-    ;; --- VI (skip — not safe in all processes due to vmap segfault) ---
+    ;; --- :vi — currently MAP point estimation via co/learn, NOT
+    ;; variational inference (true VI is avoided here: vmap is not safe in
+    ;; all processes). The optimized joint log-density is reported as
+    ;; :log-joint; it is NOT a marginal likelihood, so :log-ml stays nil
+    ;; (genmlx-7sqe). ---
     :vi
     (let [residual (or (:residual-addrs opts) [])
           addrs (vec residual)
@@ -130,8 +134,9 @@
       {:trace nil
        :posterior {:params (:params result)
                    :latent-index (:latent-index result)}
-       :log-ml (when (seq (:loss-history result))
-                 (- (last (:loss-history result))))
+       :log-ml nil
+       :log-joint (when (seq (:loss-history result))
+                    (- (last (:loss-history result))))
        :loss-history (:loss-history result)})
 
     ;; --- SMC (no temporal structure → fall back to IS) and handler-based
@@ -199,7 +204,9 @@
      {:method       keyword — which method was used
       :trace        Trace   — best/final trace (or nil for VI/HMC)
       :posterior    map     — per-latent summary or distribution params
-      :log-ml      number  — log marginal likelihood estimate (when available)
+      :log-ml      number  — log marginal likelihood estimate (when available;
+                              nil for :vi, which is currently MAP point
+                              estimation and reports :log-joint instead)
       :loss-history [nums] — optimization loss per iteration (if :learn)
       :params      MLX     — learned parameter values (if :learn)
       :diagnostics map     — method-specific diagnostics

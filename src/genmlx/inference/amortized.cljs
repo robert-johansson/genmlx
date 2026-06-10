@@ -96,15 +96,16 @@
      :observations-fn  (fn [data] -> choicemap), default returns EMPTY
      :posterior-family  posterior family spec (default gaussian-posterior)
      :log-joint-fn     (fn [latent-values data] -> scalar log p(z, x))
-                       Pure MxArray function for computing the model log-joint.
-                       REQUIRED for gradient-based training via nn/value-and-grad.
+                       Optional pure MxArray function for the model log-joint.
 
-                       Why: MLX autograd (MxArray.valueAndGrad) traces MxArray
-                       operations to build a computation graph. The GFI handler
-                       system uses a volatile! cell for state threading — this is
-                       opaque to MLX's tracer, so gradients through p/generate
-                       are always zero. The log-joint-fn must express the same
-                       math as the model using only mx/* operations.
+                       Gradients DO flow through the p/generate fallback: the
+                       handler's volatile! threads host-side state only, while
+                       the weight remains one connected lazy MLX graph in the
+                       constraint values (verified analytically in
+                       vi_learning_honesty_test.cljs; cf. score_gradient_test,
+                       gradients.cljs). Provide log-joint-fn when you want to
+                       skip handler execution per training step or express
+                       the joint more cheaply than the full model.
 
                        Example for z ~ N(0,1), x|z ~ N(z, 0.5):
                          (fn [latent-values data]
@@ -113,8 +114,9 @@
                              (mx/add (gaussian-log-prob z 0 1)
                                      (gaussian-log-prob x z 0.5))))
 
-                       If omitted, falls back to p/generate (works for evaluation
-                       and scoring, but NOT for gradient computation).
+                       If omitted, p/generate computes the joint — gradients
+                       flow either way; the handler path just runs the model
+                       per training step.
 
    Returns (fn [forward-fn data] -> scalar loss) for use with nn/value-and-grad."
   [encoder model latent-addrs & {:keys [model-args-fn observations-fn posterior-family
@@ -130,9 +132,10 @@
             {:keys [values log-prob]} (sample-fn out (rng/fresh-key) d)
             log-joint
             (if log-joint-fn
-              ;; Pure MxArray path — gradients flow through
+              ;; Pure MxArray path — skips handler execution
               (log-joint-fn values data)
-              ;; Handler path — no gradient flow, for evaluation only
+              ;; Handler path — gradients flow through the generate weight
+              ;; (one connected lazy graph; the volatile! is host-side only)
               (let [obs (observations-fn data)
                     constraints (reduce (fn [cm [i addr]]
                                           (cm/set-choice cm [addr] (mx/index values i)))
