@@ -186,15 +186,19 @@
    (fn [state addr dist]
      (let [{:keys [base-mean loading noise-std mask]} (:params dist)
            belief (:kalman-belief state)
-           constraint (cm/get-submap (:constraints state) addr)
-           obs (cm/get-value constraint)
-           {:keys [belief ll]} (kalman-update belief obs base-mean loading noise-std mask)
-           n (:kalman-n state)]
-       [obs (-> state
-                (assoc :kalman-belief belief)
-                (update :choices cm/set-value addr obs)
-                (update :kalman-ll
-                  #(mx/add (or % (mx/zeros [n])) ll)))]))})
+           constraint (cm/get-submap (:constraints state) addr)]
+       ;; Guards (genmlx-b470): an unconstrained obs or an obs reached before
+       ;; any latent (no belief) must fall through to the base transition —
+       ;; updating against nil silently produces garbage LL.
+       (when (and belief (cm/has-value? constraint))
+         (let [obs (cm/get-value constraint)
+               {:keys [belief ll]} (kalman-update belief obs base-mean loading noise-std mask)
+               n (:kalman-n state)]
+           [obs (-> state
+                    (assoc :kalman-belief belief)
+                    (update :choices cm/set-value addr obs)
+                    (update :kalman-ll
+                      #(mx/add (or % (mx/zeros [n])) ll)))]))))})
 
 (defn make-kalman-transition
   "Handler middleware: wraps generate-transition for Kalman filtering.

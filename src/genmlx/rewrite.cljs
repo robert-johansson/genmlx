@@ -15,6 +15,7 @@
   (:require [clojure.set :as set]
             [genmlx.dep-graph :as dep-graph]
             [genmlx.affine :as affine]
+            [genmlx.conjugacy :as conj-detect]
             [genmlx.inference.auto-analytical :as auto]
             [genmlx.linear-gaussian :as lg]
             [genmlx.handler :as h]))
@@ -46,14 +47,19 @@
 (defrecord ConjugacyRule [family prior-addr obs-addrs]
   IRewriteRule
   (-applicable? [this graph schema]
-    (and (contains? (:nodes graph) prior-addr)
+    ;; A family present in the conjugacy table but absent from the handler
+    ;; factory map (e.g. dirichlet-categorical) has NO runtime elimination —
+    ;; applying the rule anyway would prune a still-stochastic latent from the
+    ;; graph and let method-selection claim an exact marginal (genmlx-b470).
+    (and (some? (get auto/family->handler-factory family))
+         (contains? (:nodes graph) prior-addr)
          (every? #(contains? (:nodes graph) %) obs-addrs)))
   (-apply [this graph schema constraints]
     (let [factory (get auto/family->handler-factory family)
-          handlers (when factory (factory prior-addr obs-addrs))
+          handlers (factory prior-addr obs-addrs)
           graph' (prune-eliminated graph #{prior-addr})]
       {:graph' graph'
-       :handlers (or handlers {})
+       :handlers handlers
        :eliminated #{prior-addr}
        :description (str "Marginalized " (name prior-addr)
                          " via " (name family))})))
@@ -101,7 +107,8 @@
 (defrecord RaoBlackwellRule [prior-addr conjugate-obs-addrs non-conjugate-children family]
   IRewriteRule
   (-applicable? [this graph schema]
-    (and (contains? (:nodes graph) prior-addr)
+    (and (some? (get auto/family->handler-factory family))
+         (contains? (:nodes graph) prior-addr)
          (seq conjugate-obs-addrs)
          (seq non-conjugate-children)))
   (-apply [this graph schema constraints]
@@ -113,9 +120,9 @@
     ;; requires deferred execution (Level 4 enhancement).
     (let [factory (get auto/family->handler-factory family)
           ;; Build handlers for the conjugate obs subset
-          handlers (when factory (factory prior-addr conjugate-obs-addrs))]
+          handlers (factory prior-addr conjugate-obs-addrs)]
       {:graph' graph  ;; Graph unchanged (prior still sampled)
-       :handlers (or handlers {})
+       :handlers handlers
        :eliminated #{}  ;; Nothing eliminated, but variance reduced
        :description (str "Rao-Blackwellized " (name prior-addr))})))
 
@@ -164,11 +171,14 @@
                            (into #{} (mapcat :all-addrs lg-blocks))
                            (or declined-addrs #{}))
 
-        ;; Group remaining conjugate pairs by prior (excluding claimed addrs)
-        remaining-pairs (remove (fn [p]
-                                  (or (contains? claimed (:prior-addr p))
-                                      (contains? claimed (:obs-addr p))))
-                                conjugate-pairs)
+        ;; Group remaining conjugate pairs by prior (excluding claimed addrs).
+        ;; Multi-parent obs (one obs claimed by several priors) have no correct
+        ;; scalar elimination — drop those pairs entirely (genmlx-b470).
+        remaining-pairs (conj-detect/drop-multi-parent-pairs
+                         (vec (remove (fn [p]
+                                        (or (contains? claimed (:prior-addr p))
+                                            (contains? claimed (:obs-addr p))))
+                                      conjugate-pairs)))
         grouped (group-by :prior-addr remaining-pairs)
 
         ;; One pass over grouped priors: compute non-conjugate children once and

@@ -121,6 +121,16 @@
 ;; Conjugate pair detection
 ;; ---------------------------------------------------------------------------
 
+(def ^:private affine-capable-families
+  "Families whose downstream paths honor an affine coefficient/offset on the
+   natural parameter. Only normal-normal qualifies: affine NN pairs are routed
+   to Kalman chains or joint linear-Gaussian blocks, which recover the design
+   coefficients. Every other family's handlers use the obs value directly
+   against the prior's natural parameter — accepting :affine there silently
+   DROPS the coefficient (genmlx-b470), e.g. gamma-poisson with rate 2*lambda
+   scored as if rate were lambda."
+  #{:normal-normal})
+
 (defn detect-conjugate-pairs
   "Scan schema trace sites for conjugate pairs.
 
@@ -128,7 +138,8 @@
    1. Both sites are static (keyword addresses)
    2. obs depends on prior (prior-addr is in obs's :deps)
    3. [prior-dist-type, obs-dist-type] is in conjugacy-table with non-nil value
-   4. The dependency is through the natural parameter position (:direct)
+   4. The dependency is through the natural parameter position: :direct for
+      any family, :affine only for affine-capable families (normal-normal)
 
    Returns vector of {:prior-addr :obs-addr :family :prior-site :obs-site
                        :dependency-type :family-info}"
@@ -146,8 +157,12 @@
             ;; Must be in table AND non-nil (nil = explicitly not conjugate)
             :when (and (not= family-info ::not-found) (some? family-info))
             :let [dep-type (classify-dependency prior-addr obs-site family-info)]
-            ;; :direct and :affine dependencies are conjugate
-            :when (#{:direct :affine} (:type dep-type))]
+            ;; :direct for all families; :affine only where a path exists that
+            ;; recovers the coefficients (see affine-capable-families)
+            :when (or (= :direct (:type dep-type))
+                      (and (= :affine (:type dep-type))
+                           (contains? affine-capable-families
+                                      (:family family-info))))]
         {:prior-addr prior-addr
          :obs-addr (:addr obs-site)
          :family (:family family-info)
@@ -166,6 +181,26 @@
    Returns {prior-addr [pair1 pair2 ...]}."
   [pairs]
   (group-by :prior-addr pairs))
+
+(defn drop-multi-parent-pairs
+  "Remove all pairs whose obs address is claimed by MORE THAN ONE prior.
+
+   An obs with two conjugate parents (e.g. a Poisson whose rate is bound to
+   one Gamma latent while another Gamma latent also appears in its deps) gets
+   one handler per parent group; merging the handler maps is last-wins, so one
+   parent silently marginalizes against an obs the other parent also claims
+   (genmlx-b470). Normal-normal multi-parent obs are handled JOINTLY by the
+   linear-Gaussian block path and never reach this filter; for every other
+   family there is no joint path, so the only correct move is to decline."
+  [pairs]
+  (let [multi (into #{}
+                    (keep (fn [[obs-addr ps]]
+                            (when (> (count (distinct (map :prior-addr ps))) 1)
+                              obs-addr)))
+                    (group-by :obs-addr pairs))]
+    (if (empty? multi)
+      pairs
+      (vec (remove #(contains? multi (:obs-addr %)) pairs)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Schema augmentation
