@@ -23,6 +23,8 @@
 (defn ess
   "Compute ESS from a vector of parameter samples (MLX arrays).
    Uses the autocorrelation-based estimator.
+   Array-valued samples: only element 0 is diagnosed (see flatten-samples) —
+   pass a single component explicitly for other marginals.
    Returns a number."
   [samples]
   (let [n (count samples)
@@ -229,7 +231,13 @@
 (defn r-hat
   "Compute R-hat from multiple chains of parameter samples.
    chains: vector of vectors of MLX arrays.
-   Returns a number; values close to 1.0 indicate convergence."
+   Returns a number; values close to 1.0 indicate convergence.
+
+   This is the CLASSIC Gelman-Rubin potential scale reduction factor: no
+   chain splitting, no rank normalization. It can miss non-stationarity
+   within chains and heavy-tail pathologies that the rank-normalized
+   split-R-hat of Vehtari et al. 2021 detects; bulk-ess/tail-ess in this
+   namespace ARE the Vehtari diagnostics. Documented as-is (genmlx-7ca0)."
   [chains]
   (let [m (count chains)
         n (count (first chains))
@@ -275,6 +283,7 @@
 
 (defn sample-quantiles
   "Compute quantiles of samples.
+   Array-valued samples: only element 0 is summarized (see flatten-samples).
    Returns {:median :q025 :q975}."
   [samples]
   (let [n (count samples)

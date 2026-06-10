@@ -425,19 +425,33 @@
   (let [;; L3.5: filter out conjugate prior addresses
         eliminated (get-eliminated-addresses model)
         addresses (filter-addresses addresses eliminated)
-        {:keys [score-fn latent-index tensor-native?]}
-        (make-tensor-score-fn model args observations addresses)]
-    (if tensor-native?
-      ;; Tensor-native: params packed in dep-order (latent-index)
-      {:score-fn score-fn
-       :init-params (extract-params-by-index trace latent-index)
-       :n-params (count latent-index)
-       :tensor-native? true
-       :latent-index latent-index}
-      ;; GFI fallback: use existing layout machinery
-      (let [layout (compute-param-layout trace addresses)]
-        {:score-fn score-fn
-         :init-params (extract-params trace addresses layout)
-         :n-params (:total-size layout)
-         :tensor-native? false
-         :latent-index latent-index}))))
+        layout (compute-param-layout trace addresses)]
+    (if (:array-valued? layout)
+      ;; Array-valued latents: only the layout-aware GFI score-fn packs and
+      ;; unpacks flat offsets correctly. The tensor-native and
+      ;; compiled-generate score-fns index one SCALAR per address, so their
+      ;; scores would silently mismatch the array-aware init-params built
+      ;; below (genmlx-7ca0). :latent-index is nil — addr→slot indexing is
+      ;; meaningless under flat offsets; consumers use :layout instead.
+      {:score-fn (make-score-fn model args observations addresses layout)
+       :init-params (extract-params trace addresses layout)
+       :n-params (:total-size layout)
+       :tensor-native? false
+       :layout layout
+       :latent-index nil}
+      (let [{:keys [score-fn latent-index tensor-native?]}
+            (make-tensor-score-fn model args observations addresses)]
+        (if tensor-native?
+          ;; Tensor-native: params packed in dep-order (latent-index)
+          {:score-fn score-fn
+           :init-params (extract-params-by-index trace latent-index)
+           :n-params (count latent-index)
+           :tensor-native? true
+           :latent-index latent-index}
+          ;; GFI/compiled-generate fallback: scalar-per-address layout
+          {:score-fn score-fn
+           :init-params (extract-params trace addresses layout)
+           :n-params (:total-size layout)
+           :tensor-native? false
+           :layout layout
+           :latent-index latent-index})))))

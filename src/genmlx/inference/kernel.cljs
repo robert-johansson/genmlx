@@ -200,23 +200,26 @@
    step-fn extract-fn init-state]
   (mx/with-resource-guard
     (fn []
-      (let [total-iters (+ burn (* samples thin))]
-        (loop [i 0, state init-state, acc (transient []), n 0, n-accepted 0, rk key]
-          (if (>= n samples)
-            (with-meta (persistent! acc)
-              {:acceptance-rate (if (pos? total-iters) (/ n-accepted total-iters) 0)})
-            (let [[step-key next-key] (rng/split-or-nils rk)
-                  {:keys [state accepted?]} (u/tidy-step step-fn state step-key)
-                  _  (mx/clear-cache!)
-                  past-burn? (>= i burn)
-                  keep? (and past-burn? (zero? (mod (- i burn) thin)))]
-              (when (and callback keep?)
-                (callback {:iter n :value (extract-fn state) :accepted? accepted?}))
-              (recur (inc i) state
-                     (if keep? (conj! acc (extract-fn state)) acc)
-                     (if keep? (inc n) n)
-                     (if accepted? (inc n-accepted) n-accepted)
-                     next-key))))))))
+      ;; Acceptance rate divides by the steps actually RUN (i at exit =
+      ;; burn + (samples-1)*thin + 1), not burn + samples*thin — the loop
+      ;; stops at the last kept sample, so the old denominator overcounted
+      ;; by thin-1 steps and biased the rate low (genmlx-7ca0).
+      (loop [i 0, state init-state, acc (transient []), n 0, n-accepted 0, rk key]
+        (if (>= n samples)
+          (with-meta (persistent! acc)
+            {:acceptance-rate (if (pos? i) (/ n-accepted i) 0)})
+          (let [[step-key next-key] (rng/split-or-nils rk)
+                {:keys [state accepted?]} (u/tidy-step step-fn state step-key)
+                _  (mx/clear-cache!)
+                past-burn? (>= i burn)
+                keep? (and past-burn? (zero? (mod (- i burn) thin)))]
+            (when (and callback keep?)
+              (callback {:iter n :value (extract-fn state) :accepted? accepted?}))
+            (recur (inc i) state
+                   (if keep? (conj! acc (extract-fn state)) acc)
+                   (if keep? (inc n) n)
+                   (if accepted? (inc n-accepted) n-accepted)
+                   next-key)))))))
 
 (defn run-kernel
   "Run a kernel for n-samples iterations with burn-in and thinning.

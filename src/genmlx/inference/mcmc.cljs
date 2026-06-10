@@ -61,11 +61,17 @@
    opts: {:samples N :burn B :thin T :selection sel :callback fn :key prng-key}
    model: generative function
    args: model arguments
-   observations: choice map of observed values"
+   observations: choice map of observed values
+
+   :selection defaults to the complement of the observed addresses (all
+   latents). The old default sel/all also resampled the OBSERVATIONS via
+   regenerate — silently targeting the prior (genmlx-7ca0)."
   [{:keys [samples burn thin selection callback key]
-    :or {burn 0 thin 1 selection sel/all}}
+    :or {burn 0 thin 1}}
    model args observations]
-  (let [[init-key chain-key] (rng/split (rng/ensure-key key))
+  (let [selection (or selection
+                      (sel/complement-sel (sel/from-choicemap observations)))
+        [init-key chain-key] (rng/split (rng/ensure-key key))
         {:keys [trace]} (p/generate (dyn/with-key model init-key) args observations)]
     (kern/collect-samples
      {:samples samples :burn burn :thin thin :callback callback :key chain-key}
@@ -775,12 +781,16 @@
                                 (range n-chains)))
              param-shape (mx/shape init-params)
              std (mx/scalar proposal-std)
-             total-iters (+ burn (* samples thin))
              d (count addresses)]
+         ;; Denominator: steps actually run (i at exit) × chains — the loop
+         ;; stops at the last kept sample, burn+(samples-1)*thin+1 steps,
+         ;; not burn+samples*thin (genmlx-7ca0).
          (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
            (if (>= n samples)
              (with-meta (persistent! acc)
-               {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
+               {:acceptance-rate (if (pos? i)
+                                   (/ total-accepted (* i n-chains))
+                                   0)})
              (let [[step-key next-key] (rng/split-or-nils rk)
                    {:keys [state n-accepted]} (vectorized-mh-step
                                                state score-fn std param-shape n-chains step-key)
@@ -1739,12 +1749,15 @@
              init-params (u/init-vectorized-params model args observations addresses n-chains)
              eps (mx/scalar step-size)
              half-eps2 (mx/scalar (* 0.5 step-size step-size))
-             two-eps-sq (mx/scalar (* 2.0 step-size step-size))
-             total-iters (+ burn (* samples thin))]
+             two-eps-sq (mx/scalar (* 2.0 step-size step-size))]
+         ;; Denominator: steps actually run (i at exit), not burn+samples*thin
+         ;; (genmlx-7ca0, see collect-samples).
          (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
            (if (>= n samples)
              (with-meta (persistent! acc)
-               {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
+               {:acceptance-rate (if (pos? i)
+                                   (/ total-accepted (* i n-chains))
+                                   0)})
              (let [[step-key next-key] (rng/split-or-nils rk)
                    {:keys [state n-accepted]}
                    (vectorized-mala-step state score-fn grad-fn eps half-eps2 two-eps-sq
@@ -2413,12 +2426,15 @@
              init-params (u/init-vectorized-params model args observations addresses n-chains)
              eps (mx/scalar step-size)
              half-eps (mx/scalar (* 0.5 step-size))
-             half (mx/scalar 0.5)
-             total-iters (+ burn (* samples thin))]
+             half (mx/scalar 0.5)]
+         ;; Denominator: steps actually run (i at exit), not burn+samples*thin
+         ;; (genmlx-7ca0, see collect-samples).
          (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
            (if (>= n samples)
              (with-meta (persistent! acc)
-               {:acceptance-rate (/ total-accepted (* total-iters n-chains))})
+               {:acceptance-rate (if (pos? i)
+                                   (/ total-accepted (* i n-chains))
+                                   0)})
              (let [[step-key next-key] (rng/split-or-nils rk)
                    {:keys [state n-accepted]}
                    (vectorized-hmc-step state neg-U-fn grad-fn eps half-eps half
