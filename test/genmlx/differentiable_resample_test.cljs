@@ -166,30 +166,46 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest soft-resample-test
-  (testing "correct shape"
+  ;; soft-resample is true soft resampling (Karkus et al. 2018): hard
+  ;; gather of ancestors drawn from the alpha-mixture, with gradients
+  ;; flowing through the returned importance log-weights — NOT a convex
+  ;; combination of particles (the old implementation collapsed the
+  ;; ensemble to its weighted mean; genmlx-7sqe).
+  (testing "correct shapes"
     (let [N 4 K 2
-          particles (mx/array [[1.0 2.0] [3.0 4.0] [5.0 6.0] [7.0 8.0]])
+          parts (mx/array [[1.0 2.0] [3.0 4.0] [5.0 6.0] [7.0 8.0]])
           log-weights (mx/array [-1.0 -2.0 -0.5 -3.0])
-          {:keys [particles]} (dr/soft-resample particles log-weights 0.9)]
-      (mx/eval! particles)
-      (is (= [N K] (mx/shape particles)) "soft-resample shape")))
+          {:keys [particles log-weights indices]}
+          (dr/soft-resample parts log-weights 0.9 (rng/fresh-key 31))]
+      (mx/eval! particles log-weights indices)
+      (is (= [N K] (mx/shape particles)) "particles shape")
+      (is (= [N] (mx/shape log-weights)) "log-weights shape")
+      (is (= [N] (mx/shape indices)) "indices shape")))
 
-  (testing "differentiability"
-    (let [particles (mx/array [[1.0] [10.0]])
+  (testing "differentiability through the importance log-weights"
+    ;; Position-weighted sum so balanced ancestor draws cannot cancel the
+    ;; per-survivor gradient contributions.
+    (let [parts (mx/array [[1.0] [10.0]])
           f (fn [lw]
-              (mx/sum (:particles (dr/soft-resample particles lw 0.9))))
-          grad-f (mx/grad f)
-          lw (mx/array [0.0 0.0])
-          g (grad-f lw)]
+              (mx/sum (mx/multiply
+                       (mx/array [1.0 2.0])
+                       (:log-weights
+                        (dr/soft-resample parts lw 0.9 (rng/fresh-key 32))))))
+          g ((mx/grad f) (mx/array [0.0 1.0]))]
       (mx/eval! g)
-      (is (not (every? zero? (mx/->clj g))) "soft-resample gradient non-zero")))
+      (is (not (every? zero? (mx/->clj g)))
+          "gradient flows through the returned log-weights")))
 
-  (testing "alpha=0 -> uniform average"
-    (let [particles (mx/array [[0.0] [10.0]])
+  (testing "outputs are gathered input particles, not averages"
+    (let [parts (mx/array [[0.0] [10.0]])
           log-weights (mx/array [0.0 100.0])
-          {:keys [particles]} (dr/soft-resample particles log-weights 0.0)]
+          {:keys [particles]} (dr/soft-resample parts log-weights 0.5
+                                                (rng/fresh-key 33))]
       (mx/eval! particles)
-      (is (h/close? 5.0 (get-in (mx/->clj particles) [0 0]) 0.01) "alpha=0 -> uniform average"))))
+      (is (every? #(or (h/close? 0.0 (first %) 1e-6)
+                       (h/close? 10.0 (first %) 1e-6))
+                  (mx/->clj particles))
+          "every survivor is one of the input particles"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 5. Integration: compiled-smc with :resample-method

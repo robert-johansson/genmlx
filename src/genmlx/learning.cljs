@@ -192,10 +192,18 @@
              cm/EMPTY addresses))
 
 (defn wake-phase-loss
-  "Wake phase: minimize KL(q||p) by optimizing guide parameters.
-   Uses reparameterized samples from the guide.
+  "Point optimization of the guide's trace VALUES against the model joint.
+
+   HONESTY NOTE (genmlx-7sqe): this is NOT wake-sleep's wake phase. `params`
+   are the guide's latent trace values themselves (params->guide-cm constrains
+   each guide address to params[i]), not recognition-network parameters —
+   nothing amortized is trained. The loss is -(log p(x, z=params) -
+   log q(z=params)): joint MAP over latent values with the guide's density at
+   the same point subtracted. Real wake-sleep needs a parameterized guide
+   (param-store / nn encoder, cf. inference/amortized.cljs).
+
    model: target generative function
-   guide: guide/recognition generative function
+   guide: guide generative function (its trace addresses are the latents)
    args: model arguments
    observations: observed data
 
@@ -223,10 +231,18 @@
       {:loss loss :grad grad}))))
 
 (defn sleep-phase-loss
-  "Sleep phase: minimize KL(p||q) by optimizing guide to match model's prior.
-   Samples from the model prior, trains guide to reconstruct.
+  "Scores the guide on a model-prior sample, with guide addresses NOT in
+   the dream constrained to the point values `params`.
+
+   HONESTY NOTE (genmlx-7sqe): this is NOT wake-sleep's sleep phase — no
+   recognition-network parameters exist. The model's dreamed choices
+   override the param constraints (merge-cm: model-choices win), so when
+   guide and model share all addresses the loss does not depend on params
+   at all and its gradient is zero. Real sleep-phase training needs a
+   parameterized guide (cf. inference/amortized.cljs).
+
    model: target generative function
-   guide: guide/recognition generative function
+   guide: guide generative function
    args: model arguments
 
    Returns (fn [guide-params key] -> {:loss :grad})"
@@ -258,7 +274,16 @@
     (vec (distinct (map first addrs)))))
 
 (defn wake-sleep
-  "Wake-sleep learning for amortized inference.
+  "Alternating point optimization of guide trace values (wake-sleep in
+   name only).
+
+   HONESTY NOTE (genmlx-7sqe): despite the name, this does NOT train a
+   recognition network — `params` are point values for the guide's trace
+   addresses (see wake-phase-loss / sleep-phase-loss). The wake phase is
+   joint MAP over latent values with a guide-density correction; the sleep
+   phase's gradient is zero whenever guide and model share all addresses.
+   For genuinely amortized inference use inference/amortized.cljs, which
+   trains an nn encoder via reparameterized ELBO.
 
    opts:
      :iterations       - number of wake-sleep cycles (default 1000)

@@ -111,27 +111,43 @@
 ;; =========================================================================
 
 (defn soft-resample
-  "Simple soft resampling: convex combination of weighted and uniform resampling.
+  "Soft resampling (Karkus et al. 2018, Particle Filter Networks): sample
+   ancestor indices from the mixture q(i) = alpha·w_i + (1-alpha)/N, then
+   importance-reweight each survivor by w_{a_k}/q(a_k). The hard gather is
+   not differentiated; gradients flow through the RETURNED log-weights,
+   whose ratio depends on the pre-resample weights — that is the method's
+   point. alpha < 1 keeps q's support full so the ratio stays finite;
+   the importance correction makes the scheme unbiased for alpha in (0,1].
 
+   (The previous implementation broadcast one mixed row to all N output
+   particles — every output was the same convex combination and the
+   ensemble collapsed to its weighted mean; genmlx-7sqe.)
+
+   particles: [N,K] array
    log-weights: [N] unnormalized log-weights
-   alpha: mixing coefficient in [0,1]. alpha=1 → pure categorical, alpha=0 → uniform.
+   alpha: mixing coefficient in (0,1]
+   key: PRNG key for the categorical draw
 
-   Returns {:particles [N,K]}.
-
-   Differentiable. Lower variance than gumbel-softmax but always biased."
-  [particles log-weights alpha]
+   Returns {:particles [N,K] :log-weights [N] :indices [N]}."
+  [particles log-weights alpha key]
   (let [N (first (mx/shape log-weights))
-        ;; Categorical weights
-        cat-weights (mx/softmax log-weights)
-        ;; Uniform weights
-        uniform-w (mx/divide (mx/ones [N]) (mx/scalar N))
-        ;; Mix
-        mixed (mx/add (mx/multiply (mx/scalar alpha) cat-weights)
-                       (mx/multiply (mx/scalar (- 1.0 alpha)) uniform-w))
-        ;; [N] → [N,N] → @ [N,K] → [N,K]
-        weight-matrix (mx/broadcast-to (mx/reshape mixed [1 N]) [N N])
-        resampled (mx/matmul weight-matrix particles)]
-    {:particles resampled}))
+        ;; Normalized log categorical weights
+        log-cat (mx/subtract log-weights (mx/logsumexp log-weights))
+        ;; Mixture q(i) = alpha*w_i + (1-alpha)/N
+        mix-w (mx/add (mx/multiply (mx/scalar alpha) (mx/exp log-cat))
+                      (mx/scalar (/ (- 1.0 alpha) N)))
+        log-mix (mx/log mix-w)
+        ;; N independent draws from categorical(q)
+        indices (rng/categorical (rng/ensure-key key)
+                                 (mx/broadcast-to (mx/reshape log-mix [1 N])
+                                                  [N N]))
+        resampled (mx/take-idx particles indices)
+        ;; Importance correction: log w'_k = log w_{a_k} - log q(a_k)
+        new-log-w (mx/subtract (mx/take-idx log-cat indices)
+                               (mx/take-idx log-mix indices))]
+    {:particles resampled
+     :log-weights new-log-w
+     :indices indices}))
 
 ;; =========================================================================
 ;; 1D convenience: soft resample for per-particle state
