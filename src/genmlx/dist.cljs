@@ -684,14 +684,16 @@
   "Student-t distribution with df degrees of freedom, location and scale."
   [df loc scale]
   (sample [key]
-          (let [df-val (mx/realize df)
-                n-keys (rng/split-n key (+ (int df-val) 1))
-                chi2 (loop [i 0 acc 0.0]
-                       (if (>= i (int df-val))
-                         acc
-                         (let [z (mx/realize (rng/normal (nth n-keys i) []))]
-                           (recur (inc i) (+ acc (* z z))))))
-                z (mx/realize (rng/normal (nth n-keys (int df-val)) []))
+          ;; chi2(df) = Gamma(df/2, rate 1/2) — valid for ANY df > 0. The old
+          ;; sum-of-int(df)-squared-normals sampler silently truncated df
+          ;; (df=2.5 sampled t(2) while log-prob scored t(2.5) — sample/score
+          ;; mismatch breaking importance weights; df<1 divided by an empty
+          ;; chi2 sum = 0 → Inf samples) (genmlx-yeam).
+          (let [[k1 k2] (rng/split key)
+                df-val (mx/realize df)
+                chi2 (gamma-sample-scalar (mx/scalar (/ df-val 2.0))
+                                          (mx/scalar 0.5) k1)
+                z (mx/realize (rng/normal k2 []))
                 t (* z (js/Math.sqrt (/ df-val chi2)))]
             (mx/add loc (mx/multiply scale (mx/scalar t)))))
   (log-prob [v]
@@ -712,11 +714,11 @@
 
 (defmethod dc/dist-sample-n* :student-t [d key n]
   (let [{:keys [df loc scale]} (:params d)
-        df-val (int (mx/realize df))
+        df-val (mx/realize df)
         [k1 k2] (rng/split (rng/ensure-key key))
-        ;; Chi-squared: sum of df squared normals -> [n]
-        normals (rng/normal k1 [n df-val])
-        chi2 (mx/sum (mx/square normals) [1])
+        ;; chi2(df) = Gamma(df/2, rate 1/2) — exact for fractional df
+        ;; (the old [n, int(df)] normals matrix truncated df; genmlx-yeam)
+        chi2 (gamma-sample-n (/ df-val 2.0) (mx/scalar 0.5) k1 n)
         ;; Standard normal -> [n]
         z (rng/normal k2 [n])
         ;; t = z * sqrt(df / chi2)
@@ -795,7 +797,10 @@
 ;; ---------------------------------------------------------------------------
 
 (defdist delta
-  "Delta (point mass) distribution at value v."
+  "Delta (point mass) distribution at value v.
+   log-prob compares by EXACT float equality — correct for the point-mass
+   semantics (constrained values pass through bit-identically), but any
+   recomputation that perturbs the value scores -Inf."
   [v]
   (sample [_key] v)
   (log-prob [value]
@@ -804,8 +809,12 @@
   (support [] [v]))
 
 (defmethod dc/dist-sample-n* :delta [d _key n]
-  (let [{:keys [v]} (:params d)]
-    (mx/broadcast-to v [n])))
+  (let [{:keys [v]} (:params d)
+        ;; Batch shape prepends the particle axis: scalar v → [n],
+        ;; [d]-shaped v → [n d]. broadcast-to v [n] is a shape error for
+        ;; any non-scalar point (genmlx-yeam).
+        sh (if (mx/array? v) (mx/shape v) [])]
+    (mx/broadcast-to v (into [n] sh))))
 
 ;; ---------------------------------------------------------------------------
 ;; Cauchy
@@ -897,7 +906,11 @@
             (mx/floor (mx/divide log-u log-1mp))))
   (log-prob [v]
     ;; log p(k) = k * log(1-p) + log(p)
-            (mx/add (mx/multiply v (mx/log (mx/subtract ONE p)))
+    ;; xlogy guard: at p=1 (legal — success on the first trial, k=0 w.p. 1)
+    ;; the k*log(1-p) term is 0*-Inf = NaN without it (genmlx-yeam).
+            (mx/add (mx/where (mx/equal v ZERO)
+                              ZERO
+                              (mx/multiply v (mx/log (mx/subtract ONE p))))
                     (mx/log p)))
   (support []
     ;; Dynamic support up to 0.999 quantile (capped at 10000)
@@ -916,9 +929,14 @@
 
 (let [raw geometric]
   (defn geometric
-    "Geometric distribution: number of failures before first success, p in (0,1)."
+    "Geometric distribution: number of failures before first success, p in (0,1]."
     [p]
+    ;; p=1 is legal (k=0 w.p. 1; the log-prob xlogy guard handles it), but
+    ;; p=0 sampled floor(log u / log 1) = -Inf garbage (genmlx-yeam).
     (check-probability "geometric" "p" p)
+    (when (and (number? p) (zero? p))
+      (throw (ex-info "geometric: p must be in (0,1], got 0"
+                      {:distribution "geometric" :parameter "p" :value p})))
     (raw p)))
 
 ;; ---------------------------------------------------------------------------
@@ -952,10 +970,13 @@
 (let [raw neg-binomial]
   (defn neg-binomial
     "Negative binomial (Polya) distribution.
-   r: number of successes, p: probability of success."
+   r: number of successes, p: probability of success, p in (0,1)."
     [r p]
     (check-positive "neg-binomial" "r" r)
-    (check-probability "neg-binomial" "p" p)
+    ;; Strictly open: the gamma-Poisson sampler's rate p/(1-p) divides by
+    ;; zero at p=1, and p=0 never terminates — the closed-interval check
+    ;; let both through to garbage (genmlx-yeam).
+    (check-open-probability "neg-binomial" "p" p)
     (raw r p)))
 
 ;; ---------------------------------------------------------------------------
@@ -975,11 +996,19 @@
             (mx/scalar successes)))
   (log-prob [v]
     ;; log C(n, k) + k*log(p) + (n-k)*log(1-p)
-            (let [log-coeff (log-choose n-trials v)]
+    ;; xlogy guards (cf. bernoulli): at p=0 with v=0 the first term is
+    ;; 0*log(0) = 0*-Inf = NaN without the guard; at p=1 with v=n the
+    ;; second term likewise (genmlx-yeam).
+            (let [log-coeff (log-choose n-trials v)
+                  n-minus-v (mx/subtract n-trials v)]
               (-> log-coeff
-                  (mx/add (mx/multiply v (mx/log p)))
-                  (mx/add (mx/multiply (mx/subtract n-trials v)
-                                       (mx/log (mx/subtract ONE p)))))))
+                  (mx/add (mx/where (mx/equal v ZERO)
+                                    ZERO
+                                    (mx/multiply v (mx/log p))))
+                  (mx/add (mx/where (mx/equal n-minus-v ZERO)
+                                    ZERO
+                                    (mx/multiply n-minus-v
+                                                 (mx/log (mx/subtract ONE p))))))))
   (support []
            (let [nt (int (mx/realize n-trials))]
              (mapv #(mx/scalar % mx/int32) (range (inc nt))))))
@@ -1679,9 +1708,11 @@
   "Optimized IID Gaussian. mu/sigma can be scalar or [T]-shaped.
    Generates T samples in a single noise draw."
   [mu sigma t]
+  ;; Validate BEFORE ensure-array: check-positive only inspects JS numbers,
+  ;; so converting first made the check dead code (genmlx-yeam).
+  (check-positive "iid-gaussian" "sigma" sigma)
   (let [mu (mx/ensure-array mu)
         sigma (mx/ensure-array sigma)]
-    (check-positive "iid-gaussian" "sigma" sigma)
     (dc/->Distribution :iid-gaussian {:mu mu :sigma sigma :t t})))
 
 (defmethod dc/dist-sample* :iid-gaussian [d key]
@@ -1730,7 +1761,10 @@
         mu-nd (if (seq (mx/shape mu))
                 (if (= (count (mx/shape mu)) 1)
                   ;; 1D: could be [T] or [N]. If length=t → [T] params (row),
-                  ;; otherwise [N] batched (column).
+                  ;; otherwise [N] batched (column). KNOWN AMBIGUITY: when
+                  ;; N == t a batched [N] mu is misread as per-element [T]
+                  ;; params — shape-pun class tracked in genmlx-ql6a; fixing
+                  ;; it needs an explicit batch-axis marker, not a heuristic.
                   (if (= (first (mx/shape mu)) t)
                     (mx/reshape mu [1 t])
                     (mx/expand-dims mu -1))
