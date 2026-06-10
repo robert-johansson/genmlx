@@ -1,7 +1,8 @@
 (ns genmlx.selection
   "Composable address selection algebra for GenMLX.
    Selections identify subsets of addresses in a choice map
-   for operations like regenerate.")
+   for operations like regenerate."
+  (:require [genmlx.choicemap :as cm]))
 
 (defprotocol ISelection
   (selected?        [s addr] "Is this address selected?")
@@ -69,3 +70,23 @@
   "Create the complement of a selection."
   [s]
   (->Complement s))
+
+(defn from-paths
+  "Build a selection from a collection of leaf address paths (vectors), e.g.
+   [[:x] [:sub :y]]. An empty path means 'this node itself' → all."
+  [paths]
+  (if (some empty? paths)
+    all
+    (->Hierarchical
+     (into {}
+           (map (fn [[addr subpaths]]
+                  [addr (from-paths (map rest subpaths))]))
+           (group-by first paths)))))
+
+(defn from-choicemap
+  "Selection of exactly the leaf addresses present in a choice map (each with
+   everything under it). (complement-sel (from-choicemap observations)) is
+   'all latents' — every address except the observed sites — the safe default
+   selection for MCMC moves (genmlx-7ca0)."
+  [chm]
+  (from-paths (cm/addresses chm)))

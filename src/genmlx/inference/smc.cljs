@@ -239,11 +239,15 @@
             :log-ml-estimate MLX-scalar}"
   [{:keys [particles ess-threshold rejuvenation-steps rejuvenation-selection
            resample-method callback key]
-    :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0
-         rejuvenation-selection sel/all}}
+    :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0}}
    model args observations-seq]
   (let [model (-> model dyn/auto-key strip-analytical)
         obs-vec (vec observations-seq)
+        ;; Default: rejuvenate only the latents. sel/all also resampled the
+        ;; observed addresses — targeting the prior (genmlx-7ca0).
+        rejuvenation-selection
+        (or rejuvenation-selection
+            (sel/complement-sel (sel/from-paths (mapcat cm/addresses obs-vec))))
         n-steps (count obs-vec)]
     (loop [t 0
            traces nil
@@ -300,12 +304,15 @@
    Returns {:traces :log-weights :log-ml-estimate}"
   [{:keys [particles ess-threshold rejuvenation-steps rejuvenation-selection
            resample-method callback key]
-    :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0
-         rejuvenation-selection sel/all}}
+    :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0}}
    model args observations-seq reference-trace]
   (let [model (dyn/auto-key model)
         particle-model (strip-analytical model)
         obs-vec (vec observations-seq)
+        ;; Default: rejuvenate only the latents (genmlx-7ca0, see smc).
+        rejuvenation-selection
+        (or rejuvenation-selection
+            (sel/complement-sel (sel/from-paths (mapcat cm/addresses obs-vec))))
         n-steps (count obs-vec)
         ref-idx 0]  ;; reference particle is always at index 0
     (loop [t 0
@@ -573,11 +580,14 @@
 
    Returns {:vtrace VectorizedTrace :log-ml-estimate MLX-scalar}"
   [{:keys [particles ess-threshold rejuvenation-steps rejuvenation-selection callback key]
-    :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0
-         rejuvenation-selection sel/all}}
+    :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0}}
    model args observations-seq]
   (let [model (dyn/auto-key model)
         obs-vec (vec observations-seq)
+        ;; Default: rejuvenate only the latents (genmlx-7ca0, see smc).
+        rejuvenation-selection
+        (or rejuvenation-selection
+            (sel/complement-sel (sel/from-paths (mapcat cm/addresses obs-vec))))
         n-steps (count obs-vec)
         [init-key next-key] (rng/split-or-nils key)
         ;; Step 0: batched init
