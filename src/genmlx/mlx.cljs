@@ -56,6 +56,10 @@
 (def int32   (.-Int32   (.-DType c)))
 (def int64   (.-Int32   (.-DType c)))  ;; SILENT ALIAS: MLX has no int64
 (def bool-dt (.-Int32   (.-DType c)))  ;; SILENT ALIAS: MLX has no bool
+(def float16  (.-Float16  (.-DType c)))
+(def bfloat16 (.-BFloat16 (.-DType c)))
+(def uint32   (.-Uint32   (.-DType c)))  ;; categorical/token indices
+(def uint8    (.-Uint8    (.-DType c)))
 
 ;; =========================================================================
 ;; Internal helpers

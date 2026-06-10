@@ -18,17 +18,27 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private dtype-code->str
-  "Forward map: numeric NAPI DType enum → string name."
+  "Forward map: numeric NAPI DType enum → string name.
+   Covers the full enum — uint32 is the categorical/token index dtype,
+   so every LLM token trace hits it (genmlx-000i)."
   {0 "float32"
-   1 "int32"})
+   1 "int32"
+   2 "float16"
+   3 "bfloat16"
+   4 "uint32"
+   5 "uint8"})
 
 (def ^:private str->dtype-map
   "Reverse map: string name → MLX dtype constant."
-  {"float32" mx/float32
-   "float64" mx/float64
-   "int32"   mx/int32
-   "int64"   mx/int32
-   "bool"    mx/bool-dt})
+  {"float32"  mx/float32
+   "float64"  mx/float64
+   "int32"    mx/int32
+   "int64"    mx/int32
+   "bool"     mx/bool-dt
+   "float16"  mx/float16
+   "bfloat16" mx/bfloat16
+   "uint32"   mx/uint32
+   "uint8"    mx/uint8})
 
 (defn- dtype->str [dtype]
   (or (get dtype-code->str dtype)
@@ -61,6 +71,37 @@
       (mx/array (:value data) dt))))
 
 ;; ---------------------------------------------------------------------------
+;; Address codec
+;; ---------------------------------------------------------------------------
+;; JSON object keys must be strings, but choicemap addresses are keywords,
+;; integers (Map/Unfold/Scan element indices), or strings. A type prefix
+;; keeps them distinct through the round trip — (name 0) used to throw, so
+;; no combinator trace could be saved, and the load side keywordized
+;; everything anyway (genmlx-000i). Unprefixed keys (legacy v1 files)
+;; decode as keywords, the only address type the old codec produced.
+
+(defn- addr->str
+  "Encode a choicemap address as a prefixed string."
+  [addr]
+  (cond
+    (keyword? addr) (str "k:" (subs (str addr) 1))  ;; keeps namespace
+    (integer? addr) (str "i:" addr)
+    (string? addr)  (str "s:" addr)
+    :else (throw (ex-info (str "Unserializable address type: " (pr-str addr))
+                          {:addr addr}))))
+
+(defn- str->addr
+  "Decode a prefixed address string (or the keyword js->clj made of it).
+   Unprefixed strings decode as keywords for legacy-file compatibility."
+  [s]
+  (let [s (if (keyword? s) (subs (str s) 1) s)]
+    (cond
+      (= "k:" (subs s 0 (min 2 (count s)))) (keyword (subs s 2))
+      (= "i:" (subs s 0 (min 2 (count s)))) (js/parseInt (subs s 2) 10)
+      (= "s:" (subs s 0 (min 2 (count s)))) (subs s 2)
+      :else (keyword s))))
+
+;; ---------------------------------------------------------------------------
 ;; ChoiceMap <-> serializable data
 ;; ---------------------------------------------------------------------------
 
@@ -77,7 +118,7 @@
         {:type "clj" :value (pr-str v)}))
 
     (instance? cm/Node cm-node)
-    (-> (update-keys (:m cm-node) name)
+    (-> (update-keys (:m cm-node) addr->str)
         (update-vals choicemap->data))
 
     :else {}))
@@ -100,9 +141,9 @@
     (and (map? data) (= "clj" (:type data)))
     (cm/->Value (reader/read-string (:value data)))
 
-    ;; Node: map of string -> sub
+    ;; Node: map of encoded-address -> sub
     (map? data)
-    (cm/->Node (-> (update-keys data keyword)
+    (cm/->Node (-> (update-keys data str->addr)
                    (update-vals data->choicemap)))
 
     :else cm/EMPTY))
@@ -112,13 +153,14 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- serialize-value
-  "Serialize a value that may contain MLX arrays."
+  "Serialize a value that may contain MLX arrays. Map keys use the same
+   prefixed address codec as choicemaps, so integer/string keys survive."
   [v]
   (cond
     (mx/array? v)   (mlx-value->data v)
     (sequential? v) (mapv serialize-value v)
-    (map? v)        (-> (update-keys v name) (update-vals serialize-value))
-    (keyword? v)    {:type "keyword" :value (name v)}
+    (map? v)        (-> (update-keys v addr->str) (update-vals serialize-value))
+    (keyword? v)    {:type "keyword" :value (subs (str v) 1)}
     :else           v))
 
 (defn- deserialize-value
@@ -132,7 +174,7 @@
     (keyword (:value v))
 
     (sequential? v) (mapv deserialize-value v)
-    (map? v)        (-> (update-keys v keyword) (update-vals deserialize-value))
+    (map? v)        (-> (update-keys v str->addr) (update-vals deserialize-value))
     :else           v))
 
 ;; ---------------------------------------------------------------------------
@@ -182,11 +224,17 @@
    Options:
      :gen-fn-id - optional string identifier for the gen-fn"
   [trace & {:keys [gen-fn-id]}]
-  (let [data {:version 1
+  (let [score (:score trace)
+        data {:version 1
               :format "genmlx-trace-v1"
               :choices (choicemap->data (:choices trace))
               :args (mapv serialize-value (:args trace))
-              :score (mx/realize (:score trace))}
+              ;; 0-d scores stay plain numbers (legacy format); [N]-shaped
+              ;; batched scores serialize as array data — mx/realize on
+              ;; them used to throw (item needs size 1; genmlx-000i).
+              :score (if (and (mx/array? score) (pos? (count (mx/shape score))))
+                       (mlx-value->data score)
+                       (mx/realize score))}
         ;; retval is best-effort — closures, protocol instances won't survive
         data (try
                (assoc data :retval (serialize-value (:retval trace)))
