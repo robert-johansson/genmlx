@@ -26,7 +26,11 @@
 # (CRASH) or a TIMEOUT is a FAIL, never a silent "skip". Exit is non-zero if any
 # file does not cleanly PASS. CI green must mean CI green.
 #
-# Tunables: TEST_JOBS — parallel degree for fast/medium tiers (default 4).
+# Tunables: TEST_JOBS — parallel degree for fast/medium tiers (default 4,
+# validated 2026-06-10 on the full medium tier: per-file process isolation +
+# the genmlx-5ucd buffer-count mitigation make concurrent GPU load safe, and
+# do_one retries once on the known parallel-bunx launcher race; genmlx-q69j).
+# Slow/bench stay strictly serial. TEST_JOBS=1 restores fully-serial runs.
 set -u -o pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,12 +42,14 @@ MANIFEST="test/tiers.txt"
 #  - The direct `nbb` binary runs on NODE — far slower for GenMLX's compute, and it
 #    wedged heavy tests into uninterruptible Metal sleep (unkillable by `timeout`,
 #    exhausted RAM, load spiked to 67). NEVER use node-nbb.
-#  - Concurrent runs race two ways: `bunx` collides on a shared link ("EEXIST"), and
-#    concurrent GPU load wedges Metal (bean genmlx-5ucd). So default SERIAL. Once the
-#    membrane buffer-count fix lands, parallelism can be revisited via TEST_JOBS.
+#  - Concurrent runs used to race two ways: `bunx` collides on a shared link
+#    ("EEXIST" / "could not determine executable" — do_one now retries that one
+#    identifiable launcher race once), and concurrent GPU load wedged Metal before
+#    the genmlx-5ucd buffer-count mitigation. With both addressed, fast/medium run
+#    TEST_JOBS-way parallel (validated at 4; genmlx-q69j). Slow/bench stay serial.
 NBB_CMD="bun run --bun nbb"
 export NBB_CMD
-JOBS="${TEST_JOBS:-1}"
+JOBS="${TEST_JOBS:-4}"
 
 [ -f "$MANIFEST" ] || { echo "FATAL: $MANIFEST not found"; exit 2; }
 
@@ -202,6 +208,12 @@ do_check() {
 do_one() {
   local tier="$1" rdir="$2" file="$3"
   local to; to="$(tier_timeout "$tier")"
+  # Under J-way parallelism GPU-bound files share the device, inflating
+  # wall-clock up to J-fold — scale the per-file cap accordingly so a busy
+  # GPU is not misreported as a hang. TIMEOUT remains a FAIL (honesty
+  # contract); only the cap is contention-aware.
+  local j; j="$(tier_jobs "$tier")"
+  [ "$j" -gt 1 ] && to=$((to * j))
   local key; key="$(echo "$file" | tr '/.' '__')"
   local log="$rdir/$key.log"
   local start=$SECONDS status code dur pid
@@ -212,12 +224,23 @@ do_one() {
   # the worker itself: if the test ignores SIGTERM, timeout SIGKILLs it after 10s
   # rather than hanging the worker forever.
   set -m
-  timeout -k 10 "$to" $NBB_CMD "$file" > "$log" 2>&1 &
-  pid=$!
-  trap 'kill -KILL -'"$pid"' 2>/dev/null' TERM INT
-  wait "$pid"; code=$?
-  trap - TERM INT
-  kill -KILL -"$pid" 2>/dev/null   # sweep any stragglers left alive in the group
+  local attempt
+  for attempt in 1 2; do
+    timeout -k 10 "$to" $NBB_CMD "$file" > "$log" 2>&1 &
+    pid=$!
+    trap 'kill -KILL -'"$pid"' 2>/dev/null' TERM INT
+    wait "$pid"; code=$?
+    trap - TERM INT
+    kill -KILL -"$pid" 2>/dev/null   # sweep any stragglers left alive in the group
+    # Parallel bunx launches race on the shared install link ("could not
+    # determine executable to run for package nbb", the EEXIST class). The
+    # race fires BEFORE any test code runs, so retrying once is safe and
+    # attribution-honest; a real test failure never prints this line.
+    if [ "$code" -ne 0 ] && [ "$attempt" -eq 1 ] &&        grep -q 'could not determine executable to run for package nbb' "$log"; then
+      continue
+    fi
+    break
+  done
   set +m
   dur=$((SECONDS - start))
   if   [ "$code" -eq 124 ]; then status="TIMEOUT"
@@ -243,7 +266,8 @@ run_tiers() {
   # exits); a clean finish goes through the EXIT trap. Both call reap_children.
   trap on_signal INT TERM
   trap cleanup EXIT
-  export -f do_one tier_timeout
+  export -f do_one tier_timeout tier_jobs
+  export JOBS
 
   echo "nbb: '$NBB_CMD'  jobs(fast/medium): $JOBS"
   local grand_pass=0 grand_fail=0
