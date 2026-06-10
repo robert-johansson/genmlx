@@ -194,15 +194,27 @@ direct import of dynamic.cljs).
 ## Key design principles
 
 1. **Purely functional.** Layers 1-9 are referentially transparent. Mutation is
-   confined to the membrane (Layer 0) and verified by property tests
-   (`mutation_boundary_test.cljs`). The mutable boundaries are:
+   confined to the membrane (Layer 0) plus a small audited set of caches and
+   training state, verified by property tests (`mutation_boundary_test.cljs`).
+   The mutable boundaries are:
    - The handler's `volatile!` in `runtime.cljs` (scoped to a single `run-handler`
      call — created fresh, consumed locally, never escapes)
-   - Two atoms in `mlx.cljs` (`tidy-depth`, `grad-depth` for nesting counters)
-   - Two atoms for dev mode extension (`dispatch-fn`, `validate-fn` — only
-     swapped by `dev.cljs` start!/stop!, no-ops in production)
-   - Auto-cleanup counters in `mlx.cljs` (`ops-since-check`, `gfi-ops-count` —
-     resource management heuristics, do not affect computation results)
+   - Resource-management state in `mlx.cljs`: five atoms (`tidy-depth`,
+     `grad-depth` nesting counters; `alloc-retry-count`, `proactive-sweep-count`
+     telemetry; `buffer-count-threshold` hysteresis) and four `^:mutable`
+     counters (`ops-since-check`, `allocs-since-count-check`, `proactive-armed?`,
+     `gfi-ops-count`) — cleanup heuristics only, never affect computation results
+   - Two atoms for dev mode extension (`dispatch-fn` in `dynamic.cljs`,
+     `validate-fn` in `runtime.cljs` — only swapped by `dev.cljs` start!/stop!,
+     no-ops in production)
+   - Memoization caches of deterministic values: `fused-cache` atoms on
+     Unfold/Scan combinator records (`combinators.cljs`), `with-cache` in
+     `inference/exact.cljs`, and the construction-scoped expected-utility
+     atoms in `agents/` built on it — write-once, invisible to results
+   - Training state owned by the caller: `nn.cljs` layer refs and optimizer
+     state atoms, the encoder atom in `inference/amortized.cljs`
+   - The `defdist` registry bookkeeping atom in `dist/core.cljs` (never read
+     by computation paths)
    - KV cache mutation in `llm/backend.cljs` (always in try/finally)
 
 2. **Data-driven, open for extension.** Distributions are a single `Distribution`

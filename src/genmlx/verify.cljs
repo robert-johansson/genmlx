@@ -144,6 +144,18 @@
 ;; Single-trial validation
 ;; ---------------------------------------------------------------------------
 
+(defn- validation-executor
+  "Splice executor for validation trials: simulate the sub-gf (threading the
+   split PRNG key via with-key) and merge its choices/score under the splice
+   address. Validation trials run simulate semantics only, so constraints/
+   old-choices/selection are always empty here. Without this, any model with
+   a scalar splice crashed the trial and reported :valid? false."
+  [gf args {:keys [key]}]
+  (let [trace (p/simulate (if key (dyn/with-key gf key) gf) (vec args))]
+    {:choices (:choices trace)
+     :score (:score trace)
+     :retval (:retval trace)}))
+
 (defn- run-validation-trial
   "Run one validation trial. Returns {:violations [...] :trace trace} or
    {:violations [{:type :execution-error ...}]} on exception."
@@ -155,7 +167,7 @@
                                   :key key
                                   :seen-addrs #{}
                                   :violations []
-                                  :executor nil}
+                                  :executor validation-executor}
                                  (fn [rt] (apply (:body-fn gf) rt args)))
           violations (:violations result)
           trace (tr/make-trace {:gen-fn gf :args args
@@ -184,9 +196,11 @@
        :trace nil})))
 
 (defn- check-halts
-  "Run n-trials simulates to test that the model terminates.
-   DML restriction 1: model must halt with probability 1.
-   Returns violations vector (empty if all trials succeed)."
+  "Run n-trials simulates as a smoke test for DML restriction 1 (halts with
+   probability 1). HONESTY: this can only catch models that CRASH during a
+   trial — a genuinely non-terminating model hangs the process and cannot be
+   detected here. A trial exception is therefore reported as
+   :halting-trial-error, not non-termination."
   [gf args n-trials key]
   (try
     (let [keys (rng/split-n key n-trials)]
@@ -194,9 +208,10 @@
         (p/simulate (dyn/with-key gf k) args))
       [])
     (catch :default e
-      [{:type :non-termination
+      [{:type :halting-trial-error
         :severity :warning
-        :message (str "Model failed during halting test: " (.-message e))}])))
+        :message (str "Model crashed during halting smoke test (this check "
+                      "cannot detect true non-termination): " (.-message e))}])))
 
 ;; ---------------------------------------------------------------------------
 ;; Public API

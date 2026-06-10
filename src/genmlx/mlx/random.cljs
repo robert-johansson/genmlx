@@ -58,17 +58,30 @@
                     {:key-shape (when (mx/array? k) (mx/shape k))
                      :key-dtype (when (mx/array? k) (mx/dtype k))}))))
 
+(defn- check-key-present
+  "Like check-key, but nil is also an error: split/split-n require a real key.
+   Raising here gives an actionable message instead of the raw NAPI error a
+   nil reaching .randomSplit produces. Nil-tolerant call sites use
+   split-or-nils / split-n-or-nils."
+  [k where]
+  (when (nil? k)
+    (throw (ex-info (str "rng/" where ": key is nil — thread a real PRNG key "
+                         "(rng/fresh-key), or use rng/" where "-or-nils for "
+                         "nil-as-no-entropy call sites.")
+                    {:key nil})))
+  (check-key k where))
+
 (defn split
   "Split a key into two independent sub-keys. Returns [k1 k2]."
   [key]
-  (check-key key "split")
+  (check-key-present key "split")
   (let [ks (.randomSplit c key)]
     [(aget ks 0) (aget ks 1)]))
 
 (defn split-n
   "Split a key into n independent sub-keys. Returns vector of n keys."
   [key n]
-  (check-key key "split-n")
+  (check-key-present key "split-n")
   (let [ks (.randomSplitN c key n)]
     (mapv #(mx/index ks %) (range n))))
 

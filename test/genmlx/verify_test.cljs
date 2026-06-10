@@ -101,4 +101,16 @@
       (is (= 0 (count (:violations result))) "no violations")
       (is (instance? tr/Trace (:trace result)) "trace returned"))))
 
+(deftest splice-model-validates
+  (testing "scalar splice no longer crashes validation (genmlx-vd2j)"
+    ;; pre-fix: run-validation-trial passed :executor nil -> ANY model with a
+    ;; splice crashed the trial and reported :valid? false
+    (let [sub (gen [] (trace :z (dist/gaussian 0 1)))
+          model (gen [] (let [z (splice :sub sub)]
+                          (trace :x (dist/gaussian z 1))))
+          result (verify/validate-gen-fn model [])]
+      (is (:valid? result) "splice model is valid")
+      (is (= 0 (count (:violations result))) "no violations")
+      (is (some? (:trace result)) "trace returned"))))
+
 (cljs.test/run-tests)

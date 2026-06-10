@@ -13,7 +13,7 @@
    namespace is purely functional: graph construction is value manipulation.
 
    The only effectful operations are in the 'Effectful Operations' section:
-   eval!, materialize!, item, ->clj, realize, async-eval!, training-step!.
+   eval!, materialize!, item, ->clj, realize, async-eval!.
    Everything else builds lazy graph nodes or reads metadata.
 
    Most ops are direct references to Rust NAPI exports (genmlx.rs).
@@ -193,9 +193,14 @@
 ;; Model-level helpers -- auto-promote integers, return float32.
 (defn- ->cmp
   "Coerce a number to a comparison operand; pass MLX arrays through.
-   eq?/neq? promote integers (dt int32); gt?/lt? use the float32 default."
+   eq?/neq? promote integers (dt int32) for exact comparison; a non-integer
+   number stays float32 even when dt is int32 — an int32 scalar would
+   truncate it ((eq? arr 2.5) must not compare against 2)."
   ([x] (if (number? x) (scalar x) x))
-  ([x dt] (if (number? x) (scalar x dt) x)))
+  ([x dt] (cond
+            (not (number? x)) x
+            (and (= dt int32) (not (js/Number.isInteger x))) (scalar x)
+            :else (scalar x dt))))
 
 (defn eq?
   "Element-wise a == b. Promotes integer operands (int32) and returns a
@@ -477,10 +482,13 @@
 (defn linspace [start stop num] (.linspace c start stop num))
 
 (defn meshgrid [a b]
+  ;; Via broadcast-to, not native broadcastTo: the [na 1]->[na nb] and
+  ;; [1 nb]->[na nb] expansions are exactly the size-1-source-dim case the
+  ;; v0.31.2 native broadcast_to mis-fills (see broadcast-to).
   (let [sa (shape a) sb (shape b)
         na (first sa) nb (first sb)
-        a-col (.broadcastTo c (.reshape c a (clj->js [na 1])) (clj->js [na nb]))
-        b-row (.broadcastTo c (.reshape c b (clj->js [1 nb])) (clj->js [na nb]))]
+        a-col (broadcast-to (.reshape c a (clj->js [na 1])) [na nb])
+        b-row (broadcast-to (.reshape c b (clj->js [1 nb])) [na nb])]
     #js [a-col b-row]))
 
 ;; --- Neural network ops ---
@@ -612,26 +620,6 @@
                  (mapv #(aget result (inc %)) argnum-vec))]
          [v g])
        (finally (swap! grad-depth dec))))))
-
-(defn jvp [f primals tangents]
-  (let [result-val (apply f primals)
-        eps 1e-5
-        perturbed (mapv (fn [p t] (add p (multiply (scalar eps) t)))
-                        (vec primals) (vec tangents))
-        result-perturbed (apply f perturbed)]
-    [result-val (divide (subtract result-perturbed result-val) (scalar eps))]))
-
-(defn vjp [f primals cotangents]
-  (let [cotangents-arr (vec cotangents)
-        surrogate (fn [& xs]
-                    (let [result (apply f xs)]
-                      (if (sequential? cotangents-arr)
-                        (sum (multiply result (first cotangents-arr)))
-                        (sum (multiply result cotangents-arr)))))
-        result (.valueAndGrad M surrogate (to-array (vec primals)))
-        fval (apply f (vec primals))
-        grads (into-array (map #(aget result (inc %)) (range (dec (.-length result)))))]
-    [fval grads]))
 
 ;; =========================================================================
 ;; EFFECTFUL OPERATIONS (Layer C — triggers GPU dispatch)
@@ -877,7 +865,10 @@
       (and (not (in-tidy?)) (buffer-count-pressure?))
       (count-sweep!)
 
-      (> (get-active-memory) gfi-pressure-threshold)
+      ;; Same in-tidy? gate as the count branch and auto-cleanup!: a tidy
+      ;; scope does its own cleanup on exit, and jsc-cleanup!/clear-cache!
+      ;; mid-scope is the mid-tidy GC the design forbids.
+      (and (not (in-tidy?)) (> (get-active-memory) gfi-pressure-threshold))
       (do (jsc-cleanup!)
           (sweep-dead-arrays!)
           (clear-cache!)))))
@@ -1044,16 +1035,6 @@
   [& arrays]
   (let [promises (mapv #(.evalAsync %) (filter some? arrays))]
     (js/Promise.all (to-array promises))))
-
-(defn training-step!
-  "One training step: forward, backward, update, extract loss.
-   EFFECTFUL: triggers eval on module, loss, and extracts scalar."
-  [module optim vg-fn & inputs]
-  (let [[loss grads] (apply vg-fn inputs)]
-    (.update optim module grads)
-    (eval! module)
-    (eval! loss)
-    (item loss)))
 
 ;; =========================================================================
 ;; CONFIGURATION — device, constants

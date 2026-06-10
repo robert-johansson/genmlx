@@ -50,21 +50,25 @@
       v)))
 
 (defdist hmm-obs
-  "Observation under discrete latent state.
+  "Marker distribution for the HMM forward-algorithm handler ONLY.
    log-emission-probs: [K]-shaped log p(obs | state=k) for each state k.
    mask: 1=observed, 0=missing (masked obs contribute 0 to LL).
 
-   Under standard handler: returns the log-prob of the latent state's emission.
-   Under HMM handler: provides emission log-probs for update step."
+   The forward handler (with-hmm-forward) intercepts sites carrying this
+   distribution and folds the emission log-probs into the forward recursion.
+
+   HONESTY: under a plain handler this distribution samples a dummy 0.0 AND
+   scores log-prob 0.0 — the observation contributes ZERO likelihood to the
+   trace score. A model using hmm-obs is only meaningful under the HMM
+   forward handler; running it under plain simulate/generate/assess yields
+   prior-only scores with no error."
   [log-emission-probs mask]
   (sample [key]
-    ;; Under standard handler, this is just a scoring distribution
-    ;; (the observation is always constrained). Return dummy value.
+    ;; Plain-handler dummy; only the forward handler gives this site meaning.
     (mx/scalar 0.0))
   (log-prob [v]
-    ;; v is ignored — log-emission-probs already contains the per-state LL
-    ;; Under standard handler this isn't directly useful; use kalman-obs
-    ;; pattern or constrain this site.
+    ;; v is ignored and the contribution is ZERO under plain handlers —
+    ;; log-emission-probs is consumed by the forward handler, never here.
     (mx/scalar 0.0)))
 
 ;; ---------------------------------------------------------------------------
