@@ -43,6 +43,9 @@
    (choicemap :x 1.0 :y 2.0)
    (choicemap :params {:slope 2.0 :intercept 1.0})"
   [& kvs]
+  (when (odd? (count kvs))
+    (throw (ex-info "choicemap expects an even number of key-value arguments"
+                    {:arg-count (count kvs) :trailing (last kvs)})))
   (->Node
     (into {}
       (map (fn [[k v]]
@@ -84,10 +87,11 @@
 ;; ---------------------------------------------------------------------------
 
 (defn get-choice
-  "Get the value at a path of addresses.
+  "Get the value at a path of addresses, or nil when the path is missing
+   or resolves to a non-leaf node (same convention as get-value).
    (get-choice cm [:params :slope])"
   [cm path]
-  (-get-value (reduce get-submap cm path)))
+  (get-value (reduce get-submap cm path)))
 
 ;; ---------------------------------------------------------------------------
 ;; Functional update — returns new choicemap (persistent)
@@ -95,10 +99,14 @@
 
 (defn set-value
   "Fast-path: set a Value at a single keyword address in a Node.
-   Avoids path-length check, instance? check, and protocol check.
-   Used by handler transitions where cm is always a Node and value is always raw."
+   Used by handler transitions where cm is always a Node and value is always raw.
+   Throws when cm is not a Node — silently rebuilding from a Value leaf would
+   discard the leaf."
   [cm addr value]
-  (->Node (assoc (:m cm) addr (->Value value))))
+  (if (instance? Node cm)
+    (->Node (assoc (:m cm) addr (->Value value)))
+    (throw (ex-info "set-value expects a Node choicemap"
+                    {:cm-type (type cm) :addr addr}))))
 
 (defn set-submap
   "Fast-path: set a sub-choicemap at a single address in a Node.
@@ -124,20 +132,23 @@
 ;; ---------------------------------------------------------------------------
 
 (defn merge-cm
-  "Merge two choice maps. Values in b override values in a."
+  "Merge two choice maps. Entries in b override entries in a: on any
+   conflict (leaf-vs-leaf, leaf-vs-node, node-vs-leaf) b's entry wins and
+   replaces a's entire subtree at that address. Non-choicemap arguments are
+   coerced (maps -> nested nodes, other values -> leaves)."
   [a b]
-  (cond
-    (nil? b) a
-    (nil? a) b
-    (not (choicemap? b)) b
-    (not (choicemap? a)) a
-    (has-value? b) b
-    (has-value? a) a
-    :else
-    (->Node
-      (merge-with merge-cm
-        (when (instance? Node a) (:m a))
-        (when (instance? Node b) (:m b))))))
+  (let [a (if (or (nil? a) (choicemap? a)) a (from-map a))
+        b (if (or (nil? b) (choicemap? b)) b (from-map b))]
+    (cond
+      (nil? b) a
+      (nil? a) b
+      (has-value? b) b
+      (has-value? a) b
+      :else
+      (->Node
+        (merge-with merge-cm
+          (into {} (-submaps a))
+          (into {} (-submaps b)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Enumeration
@@ -194,16 +205,29 @@
 (defn stack-choicemaps
   "Stack N choicemaps into one with [N]-shaped leaves.
    mlx-stack-fn: function that stacks a vector of arrays → [N,...]-shaped array.
-   All N choicemaps must have the same address structure."
+   All N choicemaps must have the same address structure; throws when they
+   diverge (an address present in one cm but not another, or leaf-vs-node
+   mismatch) instead of silently dropping addresses or stacking nils."
   [cms mlx-stack-fn]
   (cond
     (every? #(= % EMPTY) cms) EMPTY
 
     (has-value? (first cms))
-    (->Value (mlx-stack-fn (mapv get-value cms)))
+    (if (every? has-value? cms)
+      (->Value (mlx-stack-fn (mapv get-value cms)))
+      (throw (ex-info "stack-choicemaps: leaf/node mismatch across choicemaps"
+                      {:leaf-indices (keep-indexed #(when (has-value? %2) %1) cms)})))
 
     (instance? Node (first cms))
-    (let [addrs (keys (:m (first cms)))]
+    (let [addr-sets (mapv #(set (keys (:m %))) cms)
+          addrs (keys (:m (first cms)))]
+      (when-not (apply = addr-sets)
+        (throw (ex-info "stack-choicemaps: address structure differs across choicemaps"
+                        {:first-addrs (first addr-sets)
+                         :divergent (into {}
+                                          (keep-indexed
+                                            (fn [i s] (when (not= s (first addr-sets)) [i s]))
+                                            addr-sets))})))
       (->Node
         (into {}
           (map (fn [addr]

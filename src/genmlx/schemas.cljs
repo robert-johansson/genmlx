@@ -18,22 +18,24 @@
 ;; ---------------------------------------------------------------------------
 
 (defn choicemap?
-  "True if x is a GenMLX choice map (Node or Value)."
+  "True if x satisfies IChoiceMap (Node, Value, TensorChoiceMap, ...).
+   Protocol-based so tensor-backed choicemaps pass validated GFI paths."
   [x]
-  (or (instance? cm/Node x) (instance? cm/Value x)))
+  (cm/choicemap? x))
 
 (defn trace?
-  "True if x is a GenMLX Trace record."
+  "True for any trace representation (Trace, TensorTrace, VectorizedTrace).
+   Protocol-based via tr/ITrace."
   [x]
-  (instance? tr/Trace x))
+  (tr/trace? x))
 
 ;; Named leaf schemas — reference these instead of repeating the [:fn ...] form.
 (def ChoiceMap
-  "A GenMLX choice map (Node or Value)."
+  "A GenMLX choice map (anything satisfying IChoiceMap)."
   [:fn {:error/message "should be a ChoiceMap"} choicemap?])
 
 (def Trace
-  "A GenMLX Trace record."
+  "A GenMLX trace (anything satisfying tr/ITrace)."
   [:fn {:error/message "should be a Trace"} trace?])
 
 ;; ---------------------------------------------------------------------------

@@ -1348,9 +1348,7 @@
           (let [all-addrs (into #{} (mapcat #(cm/addresses (:choices %)) branch-data))]
             (reduce
              (fn [cm addr-path]
-               (let [vals (mapv (fn [bd]
-                                  (try (cm/get-choice (:choices bd) addr-path)
-                                       (catch :default _ nil)))
+               (let [vals (mapv #(cm/get-choice (:choices %) addr-path)
                                 branch-data)
                      combined (reduce-kv
                                (fn [acc i v]
