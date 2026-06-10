@@ -2096,11 +2096,17 @@
           old-idx-score (dc/dist-log-prob idx-dist (mx/scalar old-idx mx/int32))
           idx-selected? (sel/selected? selection :component-idx)]
       (if idx-selected?
-        ;; Resample component index and simulate new component
+        ;; Resample component index and simulate new component. EVERYTHING
+        ;; under the Mix is freshly drawn from the prior, so the regenerate
+        ;; MH weight is exactly 0: the score delta cancels against the
+        ;; forward/backward prior-proposal ratio (system convention
+        ;; W = dS - proposal_ratio, and proposal_ratio = dS here). The old
+        ;; scoreDelta return un-cancelled the whole subtree score at parent
+        ;; splices and skewed top-level MH acceptance (genmlx-v740).
         (let [new-idx-trace (dc/dist-simulate idx-dist)
               new-idx (int (mx/item (cm/get-value (:choices new-idx-trace))))
               new-idx-score (:score new-idx-trace)
-              new-component (nth (:components this) new-idx)
+              new-component (ensure-kernel-key (nth (:components this) new-idx))
               new-comp-trace (p/simulate new-component args)
               new-score (mx/add (:score new-comp-trace) new-idx-score)]
           {:trace (tr/make-trace {:gen-fn this :args args
@@ -2109,7 +2115,7 @@
                                                           (mx/scalar new-idx mx/int32))
                                   :retval (:retval new-comp-trace)
                                   :score new-score})
-           :weight (mx/subtract new-score (:score trace))})
+           :weight ZERO})
         ;; Same component: regenerate within the component
         (let [component (nth (:components this) old-idx)
               inner-old-score (mx/subtract (:score trace) old-idx-score)

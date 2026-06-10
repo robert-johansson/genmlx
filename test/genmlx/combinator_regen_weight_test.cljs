@@ -241,4 +241,23 @@
     (is (every? #(> % 40.0) xs)
         (str "fast-path samples centered on the TRAINED mu=50, got " xs))))
 
+;; ── Mix :component-idx regenerate weight (genmlx-v740 item 6) ────────────
+;; Selecting :component-idx resamples the ENTIRE Mix subtree from the
+;; prior, so the regenerate MH weight is exactly 0 (score delta cancels
+;; the prior-proposal ratio). Pre-fix it returned the raw score delta.
+
+(def mix-gf
+  (comb/mix-combinator
+   [(gen [] (trace :v (dist/gaussian -3 0.5)))
+    (gen [] (trace :v (dist/gaussian 3 0.5)))]
+   (mx/array [(js/Math.log 0.5) (js/Math.log 0.5)])))
+
+(deftest mix-idx-selected-regenerate-weight-zero
+  (let [tr (p/simulate (dyn/with-key mix-gf (rng/fresh-key 61)) [])]
+    (dotimes [i 5]
+      (let [{w :weight} (p/regenerate mix-gf tr (sel/select :component-idx))]
+        (is (< (js/Math.abs (num w)) 1e-5)
+            (str "prior-resample regenerate weight must be 0, got " (num w)
+                 " (attempt " i ")"))))))
+
 (cljs.test/run-tests)
