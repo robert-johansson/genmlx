@@ -807,10 +807,13 @@
 ;; ============================================================
 (deftest test-48-behavior-preservation-update
   (testing "Behavior preservation — update"
+    ;; Non-affine mean keeps the model out of L3 conjugacy: an analytically
+    ;; generated (:marginal) trace now rejects joint-path update by contract
+    ;; (genmlx-pkmx, see strip_compiled_test for that behavior).
     (let [model (dyn/auto-key
                   (gen []
                     (let [x (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
-                      (trace :y (dist/gaussian x (mx/scalar 1))))))
+                      (trace :y (dist/gaussian (mx/multiply x x) (mx/scalar 1))))))
           obs (genmlx.choicemap/set-value genmlx.choicemap/EMPTY :y (mx/scalar 3.0))
           {:keys [trace]} (genmlx.protocols/generate model [] obs)
           new-obs (genmlx.choicemap/set-value genmlx.choicemap/EMPTY :x (mx/scalar 2.0))

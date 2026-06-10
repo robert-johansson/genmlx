@@ -529,6 +529,26 @@
    compiled-dispatcher
    handler-dispatcher])
 
+(declare run-dispatched* strip-alternate-paths)
+
+(defn- joint-rescore-marginal
+  "An analytically-scored trace (::score-type :marginal) carries a collapsed
+   score. Running a joint-scoring update/project/regenerate against it would
+   subtract a marginal old score from a joint new score — silently mixing
+   decompositions (ARCHITECTURE §3.3, genmlx-pkmx). Alternate paths must stay
+   semantically invisible (a model written at L0 runs unchanged at L3), so
+   convert instead of throwing: re-generate the trace fully constrained from
+   its own choices via the handler path, yielding an identical-choices trace
+   with an exact joint score. Costs one handler generate per conversion."
+  [gf key opts]
+  (let [t (:trace opts)]
+    (if (= :marginal (::score-type (meta t)))
+      (let [stripped (strip-alternate-paths gf)
+            res (run-dispatched* stripped :generate (:args t) key
+                                 {:constraints (:choices t)})]
+        (assoc opts :trace (:trace res)))
+      opts)))
+
 (defn run-dispatched*
   "Core dispatch: walk the dispatcher stack and execute the first match.
    Public so genmlx.dev can reference it for start!/stop!."
@@ -536,7 +556,11 @@
   (let [spec (dispatch/resolve default-dispatcher-stack op (:schema gf)
                (assoc opts :gf gf))]
     (assert spec (str "No dispatcher resolved for op " op))
-    ((:run spec) gf args key opts)))
+    (let [opts (if (and (contains? #{:update :project :regenerate} op)
+                        (= :joint (:score-type spec)))
+                 (joint-rescore-marginal gf key opts)
+                 opts)]
+      ((:run spec) gf args key opts))))
 
 ;; Dispatch function atom. Defaults to run-dispatched*.
 ;; genmlx.dev/start! swaps this with a validating wrapper.
@@ -612,6 +636,33 @@
                    {:trace trace :selection selection})]
       (mx/gfi-cleanup!)
       result)))
+
+(def alternate-path-schema-keys
+  "Every schema key the dispatcher stack consults for a non-handler execution
+   path: L1-M2 full-compile keys, L1-M3 prefix keys, and the L3 analytical
+   keys. strip-alternate-paths must remove ALL of them — leaving any behind
+   lets a 'handler ground truth' comparison silently exercise a compiled or
+   analytical path (genmlx-pkmx)."
+  [:compiled-simulate :compiled-generate :compiled-update :compiled-assess
+   :compiled-project :compiled-regenerate
+   :compiled-prefix :compiled-prefix-generate :compiled-prefix-update
+   :compiled-prefix-regenerate :compiled-prefix-assess :compiled-prefix-project
+   :auto-handlers :conjugate-pairs :has-conjugate? :analytical-plan
+   :auto-regenerate-transition])
+
+(defn strip-alternate-paths
+  "Return a copy of gf with all alternate execution paths removed from its
+   schema — full-compile, prefix, and analytical — forcing the handler
+   (interpreter) path for all GFI ops. Preserves the gen-fn's metadata (the
+   PRNG ::key from with-key/auto-key lives there — genmlx-3lgy).
+   Returns gf unchanged if it has no schema."
+  [gf]
+  (if-let [schema (:schema gf)]
+    (with-meta
+      (->DynamicGF (:body-fn gf) (:source gf)
+                   (apply dissoc schema alternate-path-schema-keys))
+      (meta gf))
+    gf))
 
 (defn- propagate-meta
   "Propagate the PRNG key and param-store to a sub-gf via metadata, when present."

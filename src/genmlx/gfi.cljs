@@ -81,18 +81,14 @@
 (def ^:private all-leaf-addrs cm/addresses)
 
 (defn strip-compiled
-  "Return a copy of model with all compiled execution paths removed from
-   its schema, forcing the handler (interpreter) path for all GFI ops.
-   Returns the model unchanged if it has no schema."
+  "Return a copy of model with all alternate execution paths removed from its
+   schema — full-compile, prefix, and analytical — forcing the handler
+   (interpreter) path for all GFI ops. Preserves the gen-fn's metadata (the
+   PRNG ::key from with-key/auto-key lives there — genmlx-3lgy).
+   Returns the model unchanged if it has no schema.
+   Canonical implementation: dyn/strip-alternate-paths (genmlx-pkmx)."
   [model]
-  (let [schema (:schema model)]
-    (if (nil? schema)
-      model
-      (dyn/->DynamicGF (:body-fn model) (:source model)
-                        (dissoc schema
-                                :compiled-simulate :compiled-generate
-                                :compiled-update :compiled-assess
-                                :compiled-project :compiled-regenerate)))))
+  (dyn/strip-alternate-paths model))
 
 ;; ---------------------------------------------------------------------------
 ;; The algebraic laws
@@ -1547,10 +1543,12 @@
     :check (fn [_]
              (let [kernel (dyn/auto-key
                            (dyn/make-gen-fn
-                            (fn [rt]
+                            ;; Handler-path body-fns receive args positionally:
+                            ;; (apply body-fn rt args). Reading (.-args rt) only
+                            ;; appears to work when a compiled path bypasses the
+                            ;; body-fn entirely (genmlx-pkmx).
+                            (fn [rt _t prev-state]
                               (let [trace (.-trace rt)
-                                    args (.-args rt)
-                                    prev-state (second args)
                                     x (trace :x (dist/gaussian prev-state 1))]
                                 (trace :y (dist/laplace x 1))
                                 x))
@@ -1592,10 +1590,10 @@
     :tags #{:inference :smc :pf}
     :check (fn [_]
              (let [kernel (dyn/make-gen-fn
-                           (fn [rt]
+                           ;; Positional args, matching the gen-macro convention
+                           ;; (see :pf-incremental-weight note — genmlx-pkmx).
+                           (fn [rt _t prev-state]
                              (let [trace (.-trace rt)
-                                   args (.-args rt)
-                                   prev-state (second args)
                                    x (trace :x (dist/gaussian prev-state 1))]
                                (trace :y (dist/gaussian x 1))
                                x))
@@ -1604,11 +1602,7 @@
                                (trace :y (dist/gaussian x 1))
                                x)))
                    ;; Strip conjugacy -> force bootstrap (prior) proposal.
-                   stripped (assoc kernel :schema
-                                   (dissoc (:schema kernel)
-                                           :auto-handlers :conjugate-pairs
-                                           :has-conjugate? :analytical-plan
-                                           :auto-regenerate-transition))
+                   stripped (strip-compiled kernel)
                    ys [1.0 2.0 0.5]
                    obs-seq (mapv #(cm/choicemap :y (mx/scalar %)) ys)
                    ;; Kalman analytical log-evidence (per-step innovation LLs):
@@ -1649,11 +1643,7 @@
                            '([] (let [x (trace :x (dist/gaussian 0 2))]
                                   (trace :y (dist/gaussian x 1))
                                   x))))
-                   stripped (assoc model :schema
-                                  (dissoc (:schema model)
-                                          :auto-handlers :conjugate-pairs
-                                          :has-conjugate? :analytical-plan
-                                          :auto-regenerate-transition))
+                   stripped (strip-compiled model)
                    choices (cm/choicemap :x (mx/scalar 2.0) :y (mx/scalar 3.0))
                    {:keys [trace]} (p/generate stripped [] choices)
                    _ (mx/materialize! (:score trace))

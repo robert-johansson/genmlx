@@ -85,6 +85,19 @@
 ;; Custom Proposal MH
 ;; ---------------------------------------------------------------------------
 
+(defn- ensure-joint-trace
+  "MH acceptance ratios are joint-score deltas computed via p/update. A trace
+   produced by an analytical (collapsed) generate carries a marginal score
+   (::dyn/score-type :marginal) and would mix score decompositions — the
+   dispatcher guard throws on it (genmlx-pkmx). Its choices are a perfectly
+   good chain state, so re-generate it jointly from its own choices via the
+   handler path. No-op for joint traces."
+  [model trace]
+  (if (= :marginal (::dyn/score-type (meta trace)))
+    (:trace (p/generate (dyn/strip-alternate-paths model)
+                        (:args trace) (:choices trace)))
+    trace))
+
 (defn mh-custom-step
   "One MH step with a custom proposal generative function.
    proposal-gf: generative function that takes [current-trace-choices]
@@ -100,6 +113,7 @@
    (let [model (dyn/auto-key model)
          proposal-gf (dyn/auto-key proposal-gf)
          backward-gf (when backward-gf (dyn/auto-key backward-gf))
+         current-trace (ensure-joint-trace model current-trace)
          [k1 k2 k3] (rng/split-n (rng/ensure-key key) 3)
          ;; 1. Run propose on the proposal GF → forward choices + forward score
          proposal-args [(:choices current-trace)]
@@ -140,7 +154,8 @@
     :or {burn 0 thin 1}}
    model args observations]
   (let [model (dyn/auto-key model)
-        {:keys [trace]} (p/generate model args observations)]
+        {:keys [trace]} (p/generate model args observations)
+        trace (ensure-joint-trace model trace)]
     (kern/collect-samples
      {:samples samples :burn burn :thin thin :callback callback :key key}
      (fn [state step-key]
@@ -1137,6 +1152,7 @@
   [current-trace model proposal-gf involution key]
   (let [model (dyn/auto-key model)
         proposal-gf (dyn/auto-key proposal-gf)
+        current-trace (ensure-joint-trace model current-trace)
         [k1 k2] (rng/split (rng/ensure-key key))
         ;; 1. Propose auxiliary choices
         fwd-result (p/propose proposal-gf [(:choices current-trace)])
@@ -1178,7 +1194,8 @@
     :or {burn 0 thin 1}}
    model args observations]
   (let [model (dyn/auto-key model)
-        {:keys [trace]} (p/generate model args observations)]
+        {:keys [trace]} (p/generate model args observations)
+        trace (ensure-joint-trace model trace)]
     (kern/collect-samples
      {:samples samples :burn burn :thin thin :callback callback :key key}
      (fn [state step-key]
