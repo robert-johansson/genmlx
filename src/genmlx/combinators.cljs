@@ -982,16 +982,26 @@
 
 (defn- where-select-choicemap
   "Combine two choicemaps using mx/where on a boolean mask.
-   Where mask is true, use cm-true; otherwise use cm-false.
-   Requires both choicemaps to have the same address structure."
+   Where mask is true, use cm-true's value; otherwise cm-false's.
+   Operates on the UNION of leaf addresses: an address present on only
+   one side keeps that side's value for all particles — every branch
+   runs once in batched mode, so a branch-only address holds that
+   branch's sampled values, and score masking already excludes the
+   particles that selected another branch (genmlx-v740)."
   [mask cm-true cm-false]
-  (let [addrs (cm/addresses cm-true)]
+  (let [addrs-t (cm/addresses cm-true)
+        union (into addrs-t (remove (set addrs-t)) (cm/addresses cm-false))]
     (reduce
      (fn [acc addr-path]
-       (let [v-t (cm/get-choice cm-true addr-path)
-             v-f (cm/get-choice cm-false addr-path)]
-         (cm/set-choice acc addr-path (mx/where mask v-t v-f))))
-     cm/EMPTY addrs)))
+       (let [node-t (reduce cm/get-submap cm-true addr-path)
+             node-f (reduce cm/get-submap cm-false addr-path)]
+         (cm/set-choice acc addr-path
+                        (cond
+                          (not (cm/has-value? node-f)) (cm/get-value node-t)
+                          (not (cm/has-value? node-t)) (cm/get-value node-f)
+                          :else (mx/where mask (cm/get-value node-t)
+                                          (cm/get-value node-f))))))
+     cm/EMPTY union)))
 
 (defn- idx-mask
   "Boolean mask selecting particles whose [N]-shaped index equals branch i."
@@ -1007,6 +1017,62 @@
    (fn [acc i r]
      (mx/where (idx-mask index i) (value-fn r) acc))
    init results))
+
+(defn- mask-combinable?
+  "Can the per-branch values vs be mask-selected into one per-particle
+   value? True for: all nil, all MLX arrays/numbers, maps with identical
+   key sets whose values are combinable, same-length vectors combinable
+   element-wise, or identical values across branches."
+  [vs]
+  (cond
+    (every? nil? vs) true
+    (every? #(or (mx/array? %) (number? %)) vs) true
+    (and (every? map? vs) (apply = (map (comp set keys) vs)))
+    (every? (fn [k] (mask-combinable? (mapv #(get % k) vs)))
+            (keys (first vs)))
+    (and (every? vector? vs) (apply = (map count vs)))
+    (every? mask-combinable? (apply mapv vector vs))
+    :else (apply = vs)))
+
+(defn- mask-combine-vals
+  "Mask-select per-branch return values into one per-particle value.
+   Arrays and numbers combine via mx/where on the [N]-shaped index; maps
+   and vectors combine recursively (mirrors vectorized merge-state-by-mask);
+   identical non-numeric values pass through. Call mask-combinable? first —
+   on uncombinable input the equal-values fallthrough is meaningless."
+  [index vs]
+  (cond
+    (every? nil? vs) nil
+    (every? #(or (mx/array? %) (number? %)) vs)
+    (where-combine index (first vs) vs identity)
+    (map? (first vs))
+    (into {} (map (fn [k] [k (mask-combine-vals index (mapv #(get % k) vs))]))
+          (keys (first vs)))
+    (vector? (first vs))
+    (mapv #(mask-combine-vals index %) (apply mapv vector vs))
+    :else (first vs)))
+
+(defn- combine-retvals
+  "Combine per-branch return values per-particle, or throw an honest
+   error when they cannot be represented in shape-batched mode. The old
+   behavior returned nil for any non-array retval — silently wrong for
+   every model that uses the splice's return value (genmlx-v740)."
+  [combinator addr index rvs]
+  (when-not (mask-combinable? rvs)
+    (throw (ex-info (str combinator " batched-splice at " addr ": branch return "
+                         "values cannot be combined per-particle in shape-batched "
+                         "mode. Branches must return MLX arrays, numbers, maps/"
+                         "vectors of those with matching structure, or identical "
+                         "values. Use scalar-mode inference for this model.")
+                    {:addr addr
+                     :retval-types (mapv #(cond (nil? %) :nil
+                                                (mx/array? %) :array
+                                                (number? %) :number
+                                                (map? %) :map
+                                                (vector? %) :vector
+                                                :else (type %))
+                                         rvs)})))
+  (mask-combine-vals index rvs))
 
 (extend-type SwitchCombinator
   p/IBatchedSplice
@@ -1049,9 +1115,7 @@
                    (where-select-choicemap (idx-mask index i) (:choices br) acc)))
                cm/EMPTY branch-results)
               combined-retval
-              (let [rvs (mapv :retval branch-results)]
-                (when (mx/array? (first rvs))
-                  (where-combine index (first rvs) rvs identity)))
+              (combine-retvals "Switch" addr index (mapv :retval branch-results))
               ;; Merge into parent state
               sub-result {:choices combined-choices
                           :score combined-score
@@ -1993,9 +2057,7 @@
                    (where-select-choicemap (idx-mask idx-vals i) (:choices cr) acc)))
                cm/EMPTY comp-results)
               combined-retval
-              (let [rvs (mapv :retval comp-results)]
-                (when (mx/array? (first rvs))
-                  (where-combine idx-vals (first rvs) rvs identity)))
+              (combine-retvals "Mix" addr idx-vals (mapv :retval comp-results))
               ;; Add component-idx to choices + add idx-score to combined score
               final-choices (cm/set-value combined-choices :component-idx idx-vals)
               final-score (mx/add combined-score idx-score)

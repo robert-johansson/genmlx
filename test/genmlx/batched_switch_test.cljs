@@ -88,4 +88,188 @@
         (let [overall-mean (mx/item (mx/mean x-vals))]
           (is (< (js/Math.abs (- 5 overall-mean)) 3) "mixture mean near 5"))))))
 
+;; ---------------------------------------------------------------------------
+;; Heterogeneous branch addresses + non-array retvals (genmlx-v740 item 3)
+;; ---------------------------------------------------------------------------
+
+(def branch-a
+  (gen []
+    (trace :a (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))
+    nil))
+
+(def branch-b
+  (gen []
+    (trace :b (dist/gaussian (mx/scalar 5.0) (mx/scalar 2.0)))
+    nil))
+
+(def het-model
+  (gen [index]
+    (splice :sw (comb/switch-combinator branch-a branch-b) index)))
+
+(deftest batched-switch-heterogeneous-branch-addresses
+  (testing "branch-only addresses survive the mask combine; per-particle
+            score equals the selected branch's closed-form log-density"
+    ;; Pre-fix, where-select-choicemap iterated only the later branch's
+    ;; addresses: :a was dropped from the combined choices and the missing
+    ;; :b on the accumulator side hit mx/where with nil (NAPI type error).
+    (let [n 6
+          index (mx/array [0 1 0 1 0 1] mx/int32)
+          vt (dyn/vsimulate het-model [index] n (rng/fresh-key 11))
+          sw-choices (cm/get-submap (:choices vt) :sw)
+          a-vals (h/realize-vec (cm/get-value (cm/get-submap sw-choices :a)))
+          b-vals (h/realize-vec (cm/get-value (cm/get-submap sw-choices :b)))
+          scores (h/realize-vec (:score vt))]
+      (is (= n (count a-vals)) ":a present and [n]-shaped")
+      (is (= n (count b-vals)) ":b present and [n]-shaped")
+      (doseq [i (range n)]
+        (let [expected (if (even? i)
+                         (h/gaussian-lp (nth a-vals i) 0.0 1.0)
+                         (h/gaussian-lp (nth b-vals i) 5.0 2.0))]
+          (is (h/close? expected (nth scores i) 1e-4)
+              (str "particle " i " score = selected branch closed-form lp")))))))
+
+(def branch-ret-42
+  (gen []
+    (trace :x (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))
+    42))
+
+(def branch-ret-7
+  (gen []
+    (trace :x (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))
+    7))
+
+(deftest batched-switch-number-retvals
+  (testing "numeric branch retvals mask-select per particle (pre-fix: nil)"
+    (let [n 4
+          index (mx/array [0 1 1 0] mx/int32)
+          model (gen [idx]
+                  (splice :sw (comb/switch-combinator branch-ret-42 branch-ret-7) idx))
+          vt (dyn/vsimulate model [index] n (rng/fresh-key 12))]
+      (is (= [42 7 7 42] (h/realize-vec (:retval vt)))
+          "retval is the selected branch's constant per particle"))))
+
+(def branch-done-a
+  (gen []
+    (trace :x (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))
+    :done))
+
+(def branch-done-b
+  (gen []
+    (trace :x (dist/gaussian (mx/scalar 1.0) (mx/scalar 1.0)))
+    :done))
+
+(deftest batched-switch-identical-value-retvals
+  (testing "identical non-numeric retvals pass through (pre-fix: nil)"
+    (let [index (mx/array [0 1] mx/int32)
+          model (gen [idx]
+                  (splice :sw (comb/switch-combinator branch-done-a branch-done-b) idx))
+          vt (dyn/vsimulate model [index] 2 (rng/fresh-key 13))]
+      (is (= :done (:retval vt)) "particle-invariant retval survives"))))
+
+(def branch-map-a
+  (gen []
+    (let [x (trace :x (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))]
+      {:v x})))
+
+(def branch-map-b
+  (gen []
+    (let [x (trace :x (dist/gaussian (mx/scalar 5.0) (mx/scalar 1.0)))]
+      {:v x})))
+
+(deftest batched-switch-map-retvals
+  (testing "map retvals combine recursively, pairing with the combined choices"
+    (let [n 4
+          index (mx/array [0 1 0 1] mx/int32)
+          model (gen [idx]
+                  (splice :sw (comb/switch-combinator branch-map-a branch-map-b) idx))
+          vt (dyn/vsimulate model [index] n (rng/fresh-key 14))
+          x-comb (cm/get-value (cm/get-submap (cm/get-submap (:choices vt) :sw) :x))]
+      (is (map? (:retval vt)) "retval keeps its map structure")
+      (is (= (h/realize-vec x-comb) (h/realize-vec (:v (:retval vt))))
+          "retval :v mask-selects identically to the :x choices"))))
+
+(def branch-left
+  (gen []
+    (trace :x (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))
+    :left))
+
+(def branch-right
+  (gen []
+    (trace :x (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))
+    :right))
+
+(deftest batched-switch-uncombinable-retvals-throw
+  (testing "heterogeneous non-numeric retvals throw honestly (pre-fix: silent nil)"
+    (let [index (mx/array [0 1] mx/int32)
+          model (gen [idx]
+                  (splice :sw (comb/switch-combinator branch-left branch-right) idx))]
+      (is (thrown? js/Error (dyn/vsimulate model [index] 2 (rng/fresh-key 15)))
+          "uncombinable retvals are a loud contract violation"))))
+
+;; ---------------------------------------------------------------------------
+;; Batched Mix: heterogeneous components + retvals (genmlx-v740 item 3)
+;; ---------------------------------------------------------------------------
+
+(def comp-het-a
+  (gen []
+    (trace :a (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))
+    nil))
+
+(def comp-het-b
+  (gen []
+    (trace :b (dist/gaussian (mx/scalar 3.0) (mx/scalar 1.0)))
+    nil))
+
+(deftest batched-mix-heterogeneous-components
+  (testing "component-only addresses survive; per-particle score is the
+            selected component's closed-form lp + categorical lp; constrained
+            component-idx contributes exactly the categorical lp to weight"
+    (let [n 4
+          idx (mx/array [0 1 0 1] mx/int32)
+          log-w (mx/array [(js/Math.log 0.3) (js/Math.log 0.7)])
+          model (gen []
+                  (splice :mix (comb/mix-combinator [comp-het-a comp-het-b] log-w)))
+          obs (cm/set-choice cm/EMPTY [:mix :component-idx] idx)
+          vt (dyn/vgenerate model [] obs n (rng/fresh-key 16))
+          mix-choices (cm/get-submap (:choices vt) :mix)
+          a-vals (h/realize-vec (cm/get-value (cm/get-submap mix-choices :a)))
+          b-vals (h/realize-vec (cm/get-value (cm/get-submap mix-choices :b)))
+          scores (h/realize-vec (:score vt))
+          weights (h/realize-vec (:weight vt))
+          lw0 (js/Math.log 0.3)
+          lw1 (js/Math.log 0.7)]
+      (is (= n (count a-vals)) ":a present and [n]-shaped")
+      (is (= n (count b-vals)) ":b present and [n]-shaped")
+      (doseq [i (range n)]
+        (let [sel0? (even? i)
+              comp-lp (if sel0?
+                        (h/gaussian-lp (nth a-vals i) 0.0 1.0)
+                        (h/gaussian-lp (nth b-vals i) 3.0 1.0))
+              idx-lp (if sel0? lw0 lw1)]
+          (is (h/close? (+ comp-lp idx-lp) (nth scores i) 1e-4)
+              (str "particle " i " score = component lp + categorical lp"))
+          (is (h/close? idx-lp (nth weights i) 1e-4)
+              (str "particle " i " weight = categorical lp of constrained idx")))))))
+
+(def comp-ret-1
+  (gen []
+    (trace :x (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))
+    1))
+
+(def comp-ret-2
+  (gen []
+    (trace :x (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))
+    2))
+
+(deftest batched-mix-number-retvals
+  (testing "numeric component retvals mask-select per particle (pre-fix: nil)"
+    (let [idx (mx/array [1 0 1] mx/int32)
+          log-w (mx/array [(js/Math.log 0.5) (js/Math.log 0.5)])
+          model (gen []
+                  (splice :mix (comb/mix-combinator [comp-ret-1 comp-ret-2] log-w)))
+          obs (cm/set-choice cm/EMPTY [:mix :component-idx] idx)
+          vt (dyn/vgenerate model [] obs 3 (rng/fresh-key 17))]
+      (is (= [2 1 2] (h/realize-vec (:retval vt)))
+          "retval is the selected component's constant per particle"))))
+
 (cljs.test/run-tests)
