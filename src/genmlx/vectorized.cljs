@@ -86,7 +86,13 @@
   [state indices]
   (cond
     (mx/array? state)
-    (mx/take-idx state indices)
+    ;; 0-d arrays (e.g. a scalar constraint passed through as the model's
+    ;; return value) are particle-invariant — permutation is identity, and
+    ;; a gather on a 0-d array is an MLX shape error that aborts the
+    ;; process through NAPI.
+    (if (pos? (count (mx/shape state)))
+      (mx/take-idx state indices)
+      state)
 
     (map? state)
     (update-vals state #(reindex-state % indices))
@@ -95,8 +101,6 @@
     (mapv #(reindex-state % indices) state)
 
     :else state))
-
-(declare reindex-state)
 
 (defn resample-vtrace
   "Resample a VectorizedTrace using systematic resampling.
