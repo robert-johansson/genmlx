@@ -115,13 +115,16 @@
          backward-gf (when backward-gf (dyn/auto-key backward-gf))
          current-trace (ensure-joint-trace model current-trace)
          [k1 k2 k3] (rng/split-n (rng/ensure-key key) 3)
-         ;; 1. Run propose on the proposal GF → forward choices + forward score
+         ;; 1. Run propose on the proposal GF → forward choices + forward score.
+         ;; k1/k2 thread into propose/update — they were split and then never
+         ;; used, leaving both operations on fresh entropy so a seeded chain
+         ;; was not reproducible (genmlx-njaq).
          proposal-args [(:choices current-trace)]
-         forward-result (p/propose proposal-gf proposal-args)
+         forward-result (p/propose (dyn/with-key proposal-gf k1) proposal-args)
          forward-choices (:choices forward-result)
          forward-score (:weight forward-result)
          ;; 2. Apply proposed choices to model via update → new trace
-         update-result (p/update model current-trace forward-choices)
+         update-result (p/update (dyn/with-key model k2) current-trace forward-choices)
          new-trace (:trace update-result)
          ;; 3. Compute backward score
          backward-score (if backward-gf
@@ -1119,9 +1122,11 @@
   (let [model (dyn/auto-key model)
         proposal-gf (dyn/auto-key proposal-gf)
         current-trace (ensure-joint-trace model current-trace)
-        [k1 k2] (rng/split (rng/ensure-key key))
+        ;; k1 → propose, k2 → update, k3 → accept. k1 was split and never
+        ;; used (propose ran on fresh entropy; genmlx-njaq).
+        [k1 k2 k3] (rng/split-n (rng/ensure-key key) 3)
         ;; 1. Propose auxiliary choices
-        fwd-result (p/propose proposal-gf [(:choices current-trace)])
+        fwd-result (p/propose (dyn/with-key proposal-gf k1) [(:choices current-trace)])
         aux-choices (:choices fwd-result)
         fwd-score (:weight fwd-result)
         ;; 2. Apply involution (may return optional log|det J| as third element)
@@ -1133,7 +1138,7 @@
                           (if (mx/array? j) j (mx/scalar j)))
                         (mx/scalar 0.0))
         ;; 3. Update model with new choices
-        update-result (p/update model current-trace new-trace-cm)
+        update-result (p/update (dyn/with-key model k2) current-trace new-trace-cm)
         new-trace (:trace update-result)
         ;; 4. Score backward auxiliary choices under proposal
         bwd-result (p/assess proposal-gf [(:choices new-trace)] new-aux-cm)
@@ -1144,7 +1149,7 @@
         log-alpha (mx/realize (mx/add (mx/add update-weight
                                               (mx/subtract bwd-score fwd-score))
                                       log-abs-det-J))]
-    (if (u/accept-mh? log-alpha k2)
+    (if (u/accept-mh? log-alpha k3)
       new-trace
       current-trace)))
 
@@ -2534,16 +2539,19 @@
                                              (/ total-alpha total-n-alpha)
                                              0.0)}
                              (let [[dk1 dk-next] (rng/split dk)
-                                   [tk1 tk-next] (rng/split tk)
+                                   ;; ak must be disjoint from tk1: build-tree
+                                   ;; splits tk1 internally, so re-splitting it
+                                   ;; here made the accept uniform reuse the
+                                   ;; tree's first key (genmlx-njaq).
+                                   [tk1 ak tk-next] (rng/split-n tk 3)
                                    v (if (< (mx/realize (rng/uniform dk1 [])) 0.5) -1 1)
                                    [qs ps] (if (pos? v)
                                              [q-plus p-plus]
                                              [q-minus p-minus])
                                    tree (build-tree local-ctx qs ps log-u v j current-H tk1)
                                    accept? (and (:s' tree)
-                                                (let [[ak _] (rng/split tk1)]
-                                                  (< (mx/realize (rng/uniform ak []))
-                                                     (/ (:n' tree) (max 1 depth-n)))))
+                                                (< (mx/realize (rng/uniform ak []))
+                                                   (/ (:n' tree) (max 1 depth-n))))
                                    q'' (if accept? (:q' tree) q')
                                    qm' (if (neg? v) (:q-minus tree) q-minus)
                                    pm' (if (neg? v) (:p-minus tree) p-minus)
@@ -2595,16 +2603,16 @@
                           (if (or (not continue?) (>= j max-depth))
                             q'
                             (let [[dk1 dk-next] (rng/split dk)
-                                  [tk1 tk-next] (rng/split tk)
+                                  ;; ak disjoint from tk1 (see warmup loop note)
+                                  [tk1 ak tk-next] (rng/split-n tk 3)
                                   v (if (< (mx/realize (rng/uniform dk1 [])) 0.5) -1 1)
                                   [qs ps] (if (pos? v)
                                             [q-plus p-plus]
                                             [q-minus p-minus])
                                   tree (build-tree ctx qs ps log-u v j current-H tk1)
                                   accept? (and (:s' tree)
-                                               (let [[ak _] (rng/split tk1)]
-                                                 (< (mx/realize (rng/uniform ak []))
-                                                    (/ (:n' tree) (max 1 depth-n)))))
+                                               (< (mx/realize (rng/uniform ak []))
+                                                  (/ (:n' tree) (max 1 depth-n))))
                                   q'' (if accept? (:q' tree) q')
                                   qm' (if (neg? v) (:q-minus tree) q-minus)
                                   pm' (if (neg? v) (:p-minus tree) p-minus)
@@ -2642,7 +2650,9 @@
         addrs (if (vector? selection) selection [selection])
         f (u/extract-params current-trace addrs)
         d (count addrs)
-        [k1 k2 k3] (rng/split-n (rng/ensure-key key) 3)
+        ;; k-loop seeds the shrink loop — looping on the PARENT key would
+        ;; re-derive k1's stream (split prefix semantics; genmlx-njaq).
+        [k1 k2 k3 k-loop] (rng/split-n (rng/ensure-key key) 4)
         ;; 1. nu ~ N(0, σ²I)
         nu (mx/multiply (mx/scalar prior-std) (rng/normal k1 [d]))
         _ (mx/materialize! nu)
@@ -2660,7 +2670,7 @@
            tmin theta-min
            tmax theta-max
            iter 0
-           rk key]
+           rk k-loop]
       (let [;; Propose: f' = f*cos(θ) + nu*sin(θ)
             f' (mx/add (mx/multiply f (mx/scalar (js/Math.cos theta)))
                        (mx/multiply nu (mx/scalar (js/Math.sin theta))))

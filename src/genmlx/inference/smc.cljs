@@ -152,11 +152,17 @@
 
 (defn- smc-init-step
   "First timestep: generate particles from prior with constraints.
+   Per-particle keys derive from `key` (nil → fresh entropy) — unkeyed
+   init made a seeded SMC run irreproducible (genmlx-njaq).
    Returns {:traces :log-weights :log-ml-increment}."
-  [model args obs particles]
-  (let [results    (mapv (fn [i]
-                          (break-particle-graph! (p/generate model args obs) i))
-                        (range particles))
+  [model args obs particles key]
+  (let [pkeys      (rng/split-n-or-nils key particles)
+        results    (mapv (fn [i ki]
+                           (break-particle-graph!
+                            (p/generate (if ki (dyn/with-key model ki) model)
+                                        args obs)
+                            i))
+                         (range particles) pkeys)
         traces     (mapv :trace results)
         log-weights (mapv :weight results)
         w-arr      (u/materialize-weights log-weights)
@@ -188,7 +194,7 @@
   (let [;; Check ESS and resample if needed
         ess        (u/compute-ess log-weights)
         resample?  (< ess (* ess-threshold particles))
-        [resample-key step-key rejuv-key]
+        [resample-key update-key rejuv-key]
         (rng/split-n-or-nils key 3)
         [traces' weights'] (if resample?
                              (let [indices (dispatch-resample resample-method
@@ -196,10 +202,18 @@
                                [(mapv #(nth traces %) indices)
                                 (vec (repeat particles (mx/scalar 0.0)))])
                              [traces log-weights])
-        ;; Update each particle with new observations
-        results       (mapv (fn [i trace]
-                               (break-particle-graph! (p/update (:gen-fn trace) trace obs) i))
-                             (range) traces')
+        ;; Update each particle with new observations. Per-particle keys —
+        ;; the middle split used to be reserved and never threaded, so
+        ;; updates ran on fresh entropy (genmlx-njaq).
+        update-keys   (rng/split-n-or-nils update-key particles)
+        results       (mapv (fn [i ki trace]
+                              (break-particle-graph!
+                               (p/update (if ki
+                                           (dyn/with-key (:gen-fn trace) ki)
+                                           (:gen-fn trace))
+                                         trace obs)
+                               i))
+                            (range) update-keys traces')
         new-traces    (mapv :trace results)
         update-weights (mapv :weight results)
         new-weights   (mapv mx/add weights' update-weights)
@@ -264,7 +278,7 @@
               _ (when (and (pos? t) (zero? (mod t 5))) (mx/clear-cache!))]
           (if (zero? t)
             (let [{:keys [traces log-weights log-ml-increment]}
-                  (smc-init-step model args obs-t particles)]
+                  (smc-init-step model args obs-t particles step-key)]
               (when callback
                 (callback {:step t :ess (u/compute-ess log-weights)}))
               (recur (inc t) traces log-weights

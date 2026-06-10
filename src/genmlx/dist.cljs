@@ -262,15 +262,17 @@
         c (/ 1.0 (js/Math.sqrt (* 9.0 d)))
         [key-sample key-boost] (rng/split key)
         raw (loop [k key-sample]
-              (let [[k1 k2] (rng/split k)
+              ;; Three-way split per attempt: k2 is consumed by the uniform
+              ;; draw, so splitting it for the next attempt correlated
+              ;; successive rejection rounds (genmlx-njaq).
+              (let [[k1 k2 k-next] (rng/split-n k 3)
                     x (mx/realize (rng/normal k1 []))
                     v (js/Math.pow (+ 1.0 (* c x)) 3)
                     u (mx/realize (rng/uniform k2 []))]
                 (if (and (> v 0)
                          (< (js/Math.log u) (+ (* 0.5 x x) (* d (+ 1 (- v) (js/Math.log v))))))
                   (/ (* d v) r)
-                  (let [[k' _] (rng/split k2)]
-                    (recur k')))))]
+                  (recur k-next))))]
     (if alpha<1?
       (* raw (js/Math.pow (mx/realize (rng/uniform key-boost [])) (/ 1.0 a)))
       raw)))
