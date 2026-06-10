@@ -395,6 +395,53 @@
                         (= (set (all-leaf-addrs (:choices t)))
                            (set (all-leaf-addrs (:choices rev-trace)))))))))}
 
+   {:name :flat-selection-at-splice
+    :from "[T] §3.4, Gen.jl selection semantics (genmlx-yey5)"
+    :theorem "A FLAT selection descends correctly through a splice:
+              (select :a) where :a is NOT the splice address leaves the
+              entire splice subtree untouched, while (select :sub) where
+              :sub IS the splice address resamples the WHOLE subtree under
+              it. I.e. get-subselection returns `all` iff the address is
+              selected, else `none` — never `all` unconditionally.
+              Self-contained: builds a leaf :x + splice :sub{:z,:w} model."
+    :tags #{:regenerate :selection :core :compositionality}
+    :check (fn [_]
+             (let [sub (dyn/auto-key
+                        (dyn/make-gen-fn
+                         (fn [rt mu]
+                           (let [trace (.-trace rt)]
+                             (mx/add (trace :z (dist/gaussian mu 1))
+                                     (trace :w (dist/gaussian mu 1)))))
+                         '([mu] (mx/add (trace :z (dist/gaussian mu 1))
+                                        (trace :w (dist/gaussian mu 1))))))
+                   model (dyn/auto-key
+                          (dyn/make-gen-fn
+                           (fn [rt]
+                             (let [trace  (.-trace rt)
+                                   splice (.-splice rt)
+                                   x (trace :x (dist/gaussian 0 10))]
+                               (splice :sub sub x)
+                               x))
+                           '([] (let [x (trace :x (dist/gaussian 0 10))]
+                                  (splice :sub sub x)
+                                  x))))
+                   t  (p/simulate model [])
+                   z0 (ev (cm/get-choice (:choices t) [:sub :z]))
+                   w0 (ev (cm/get-choice (:choices t) [:sub :w]))
+                   x0 (choice-num (:choices t) :x)
+                   ;; (1) flat select of a NON-splice address: subtree untouched
+                   t1 (:trace (p/regenerate model t (sel/select :x)))
+                   ;; (2) flat select of the SPLICE address: whole subtree resampled
+                   t2 (:trace (p/regenerate model t (sel/select :sub)))]
+               (and
+                ;; (1) :sub subtree fully preserved
+                (approx= z0 (ev (cm/get-choice (:choices t1) [:sub :z])) 1e-6)
+                (approx= w0 (ev (cm/get-choice (:choices t1) [:sub :w])) 1e-6)
+                ;; (2) :x preserved, both :sub sites resampled
+                (approx= x0 (choice-num (:choices t2) :x) 1e-6)
+                (not (approx= z0 (ev (cm/get-choice (:choices t2) [:sub :z])) 1e-9))
+                (not (approx= w0 (ev (cm/get-choice (:choices t2) [:sub :w])) 1e-9)))))}
+
    ;; ===================================================================
    ;; PROJECT laws
    ;; ===================================================================
