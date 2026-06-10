@@ -313,7 +313,16 @@
           choices (stack-choices (mapv (comp :choices :trace) results))
           retvals (stack-retvals (mapv (comp :retval :trace) results))
           score (mx-sum-by (comp :score :trace) results)
-          weight (mx/subtract score (:score trace))
+          ;; Regenerate weights are additive across independent elements, but
+          ;; each element weight was computed against the constructed old score
+          ;; (recorded element score, or 0 without metadata). Re-base against
+          ;; the true total old score so both cases stay exact:
+          ;; W = Σ w_i + Σ constructed_old_i - old_total.
+          constructed-old (if old-element-scores
+                            (reduce mx/add (mx/scalar 0.0) old-element-scores)
+                            (mx/scalar 0.0))
+          weight (mx/subtract (mx/add (mx-sum-by :weight results) constructed-old)
+                              (:score trace))
           element-scores (mapv (comp :score :trace) results)]
       {:trace (with-meta
                 (tr/make-trace {:gen-fn this :args (:args trace)

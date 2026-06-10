@@ -624,14 +624,24 @@
         [trace result] (cond
                          ;; Regenerate mode
                          selection
-                         (let [old-trace (-> (tr/make-trace {:gen-fn gf :args args
+                         (let [old-sub-score (or old-splice-score SCORE-ZERO)
+                               old-trace (-> (tr/make-trace {:gen-fn gf :args args
                                                              :choices (or old-choices cm/EMPTY)
-                                                             :retval nil :score (or old-splice-score SCORE-ZERO)})
+                                                             :retval nil :score old-sub-score})
                                              (attach-old-splice-meta old-sub-splice-scores
                                                                      old-sub-nested-splice-scores))
                                {:keys [trace weight]} (p/regenerate gf old-trace selection)]
+                           ;; The child returns its final MH weight
+                           ;; w = ΔS_child - pr_child, but the parent regenerate
+                           ;; state accumulates proposal ratios (make-regen-result
+                           ;; computes W = ΔS_total - accumulator). Convert back:
+                           ;; pr_child = ΔS_child - w. The constructed old score
+                           ;; cancels, so a missing old-splice-score stays exact.
                            [trace {:choices (:choices trace) :retval (:retval trace)
-                                   :score (:score trace) :weight weight}])
+                                   :score (:score trace)
+                                   :weight (mx/subtract
+                                            (mx/subtract (:score trace) old-sub-score)
+                                            weight)}])
 
                          ;; Update mode: has old-choices (possibly with new constraints)
                          (and old-choices (not= old-choices cm/EMPTY))

@@ -309,20 +309,15 @@
                                   (assoc :nested-splice-scores (:nested-splice-scores sub-result)))]
                     (assoc (or nss {}) addr sub-meta)))))))
 
-(defn- mlx-array-like?
-  "Duck-typing probe: does x look like an MLX array (has .shape and .item)?"
-  [x]
-  (and (some? x) (some? (.-shape x)) (some? (.-item x))))
-
 (defn- mlx-arr-batched?
   "Check if x is an MLX array with at least 1 dimension."
   [x]
-  (and (mlx-array-like? x) (pos? (count (mx/shape x)))))
+  (and (mx/array? x) (pos? (count (mx/shape x)))))
 
 (defn- scalar-leaf-val?
   "Check if a value is scalar (0-d or not an MLX array)."
   [v]
-  (or (not (mlx-array-like? v))
+  (or (not (mx/array? v))
       (= [] (mx/shape v))))
 
 (defn- run-batched-particle
@@ -339,8 +334,12 @@
                        :choices old-choices :retval nil
                        :score (mx/scalar 0.0)})
           {:keys [trace weight]} (p/regenerate gf elem-trace sub-selection)]
+      ;; The child returns its final MH weight w = ΔS - pr, computed against
+      ;; the constructed old score of 0. The parent's batched regenerate
+      ;; accumulator holds proposal ratios (its final weight is
+      ;; ΔS_total - accumulator), so convert back: pr = S'_child - w.
       {:choices (:choices trace) :score (:score trace)
-       :weight weight :retval (:retval trace)})
+       :weight (mx/subtract (:score trace) weight) :retval (:retval trace)})
 
     ;; Update mode
     (and old-i (not= old-i cm/EMPTY))
