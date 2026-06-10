@@ -96,11 +96,16 @@
 
     :else state))
 
+(declare reindex-state)
+
 (defn resample-vtrace
   "Resample a VectorizedTrace using systematic resampling.
-   Returns a new VectorizedTrace with reindexed choices, uniform weights."
+   Returns a new VectorizedTrace with reindexed choices, retval, and
+   uniform weights. The retval MUST follow the same ancestor permutation
+   as the choices — leaving it unpermuted silently pairs particle i's
+   choices with ancestor j's return value (genmlx-v740)."
   [vtrace key]
-  (let [{:keys [weight n-particles choices score]} vtrace
+  (let [{:keys [weight n-particles choices score retval]} vtrace
         indices (systematic-resample-indices weight n-particles key)
         new-choices (reindex-choicemap choices indices)
         new-score (mx/take-idx score indices)
@@ -109,7 +114,8 @@
     (assoc vtrace
            :choices new-choices
            :score   new-score
-           :weight  new-weight)))
+           :weight  new-weight
+           :retval  (reindex-state retval indices))))
 
 ;; ---------------------------------------------------------------------------
 ;; Diagnostics
@@ -146,11 +152,31 @@
                   (fn [k sub] (merge-choicemap-by-mask
                                 sub (cm/-get-submap proposed k) mask))))
 
+(defn- merge-state-by-mask
+  "Per-particle merge of two structured retvals by an [N] boolean mask:
+   arrays via mx/where, maps/vectors recursively, anything else keeps
+   current. Mirrors reindex-state's shape handling."
+  [cur prop mask]
+  (cond
+    (and (mx/array? cur) (mx/array? prop))
+    (mx/where mask prop cur)
+
+    (and (map? cur) (map? prop))
+    (into {} (map (fn [[k v]] [k (merge-state-by-mask v (get prop k) mask)])) cur)
+
+    (and (vector? cur) (vector? prop))
+    (mapv #(merge-state-by-mask %1 %2 mask) cur prop)
+
+    :else cur))
+
 (defn merge-vtraces-by-mask
   "Merge two VectorizedTraces per-particle using an [N] boolean mask.
    Where mask=true takes from proposed, where false keeps current.
-   Preserves the current vtrace's :weight (rejuvenation is weight-preserving)."
+   Preserves the current vtrace's :weight (rejuvenation is weight-preserving).
+   The retval merges with the same mask — leaving it unmerged silently
+   pairs accepted choices with rejected return values (genmlx-v740)."
   [current proposed mask]
   (assoc current
     :choices (merge-choicemap-by-mask (:choices current) (:choices proposed) mask)
-    :score   (mx/where mask (:score proposed) (:score current))))
+    :score   (mx/where mask (:score proposed) (:score current))
+    :retval  (merge-state-by-mask (:retval current) (:retval proposed) mask)))

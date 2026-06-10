@@ -20,6 +20,7 @@
             [genmlx.selection :as sel]
             [genmlx.combinators :as comb]
             [genmlx.diff :as diff]
+            [genmlx.vectorized :as vz]
             [genmlx.mlx.random :as rng])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -183,5 +184,40 @@
       (is (< (js/Math.abs (- (num (cm/get-value (reduce cm/get-submap d [2 :m])))
                              old-m2))
              1e-6)))))
+
+;; ── Vectorized retval pairing (genmlx-v740 item 4) ───────────────────────
+;; resample-vtrace and merge-vtraces-by-mask must permute/merge :retval with
+;; the same indices/mask as the choices — otherwise particle i's choices
+;; pair with ancestor j's return value.
+
+(def identity-model
+  ;; retval IS the traced value, so retval[i] must equal choices :x [i]
+  ;; after any permutation/merge.
+  (gen []
+       (trace :x (dist/gaussian 0 1))))
+
+(deftest resample-vtrace-permutes-retval
+  (let [n 8
+        vt (dyn/vsimulate identity-model [] n (rng/fresh-key 31))
+        ;; weight mass concentrated on particle 0 => resample maps all to it
+        vt (assoc vt :weight (mx/array (into [100.0] (repeat (dec n) -100.0))))
+        rs (vz/resample-vtrace vt (rng/fresh-key 32))
+        xs (mx/->clj (cm/get-value (cm/get-submap (:choices rs) :x)))
+        rv (mx/->clj (:retval rs))]
+    (is (= (count (set (mapv #(.toFixed % 5) xs))) 1)
+        "all particles resampled to the dominant ancestor")
+    (is (every? true? (mapv #(< (js/Math.abs (- %1 %2)) 1e-6) xs rv))
+        "retval permuted with the same ancestor indices as choices")))
+
+(deftest merge-vtraces-by-mask-merges-retval
+  (let [n 4
+        cur (dyn/vsimulate identity-model [] n (rng/fresh-key 41))
+        prop (dyn/vsimulate identity-model [] n (rng/fresh-key 42))
+        mask (mx/greater (mx/array [1.0 0.0 1.0 0.0]) (mx/scalar 0.5))
+        merged (vz/merge-vtraces-by-mask cur prop mask)
+        xs (mx/->clj (cm/get-value (cm/get-submap (:choices merged) :x)))
+        rv (mx/->clj (:retval merged))]
+    (is (every? true? (mapv #(< (js/Math.abs (- %1 %2)) 1e-6) xs rv))
+        "retval merged with the same mask as choices")))
 
 (cljs.test/run-tests)
