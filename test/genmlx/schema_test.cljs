@@ -11,6 +11,9 @@
             [genmlx.dist :as dist]
             [genmlx.mlx :as mx]
             [genmlx.combinators :as comb]
+            [genmlx.protocols :as p]
+            [genmlx.choicemap :as cm]
+            [genmlx.mlx.random :as rng]
             [clojure.set])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -1012,5 +1015,113 @@
           ls (first (:loop-sites s))]
       (is (= 'n (:count-form ls)) "count-form is n")
       (is (= 0 (:count-arg-idx ls)) "count-arg-idx is 0"))))
+
+;; ============================================================
+;; Tests 61-67: walker blind spots (genmlx-q3x2)
+;; Trace sites inside map/set literals, splices in :static?,
+;; dep edges for wrapped/destructured bindings, find-all-calls
+;; recursion into matched forms.
+;; ============================================================
+
+(defn- gaussian-lp
+  "Closed-form N(v | mu, sigma) log-density — independent oracle,
+   no genmlx.dist involvement."
+  [v mu sigma]
+  (- (* -0.5 (Math/pow (/ (- v mu) sigma) 2))
+     (Math/log sigma)
+     (* 0.5 (Math/log (* 2 Math/PI)))))
+
+;; Test 61: trace inside a map literal is a real site
+(deftest test-61-trace-in-map-literal
+  (testing "q3x2: trace site inside a map literal is recorded"
+    (let [model (gen []
+                  (let [m {:v (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))}]
+                    (:v m)))
+          s (:schema model)]
+      (is (= 1 (count (:trace-sites s))) "map-literal site recorded")
+      (is (= :x (-> s :trace-sites first :addr)) "addr is :x")
+      (is (= :gaussian (-> s :trace-sites first :dist-type)) "dist recognized")
+      (let [tr (p/simulate (dyn/with-key model (rng/fresh-key 42)) [])]
+        (is (cm/has-value? (cm/get-submap (:choices tr) :x))
+            "simulate samples :x end to end")))))
+
+;; Test 62: trace inside a set literal is a real site
+(deftest test-62-trace-in-set-literal
+  (testing "q3x2: trace site inside a set literal is recorded"
+    (let [model (gen []
+                  (let [s #{(trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))}]
+                    (first s)))
+          sch (:schema model)]
+      (is (= 1 (count (:trace-sites sch))) "set-literal site recorded")
+      (is (= :x (-> sch :trace-sites first :addr)) "addr is :x"))))
+
+;; Test 63: partial blindness — visible site + map-hidden site (end to end)
+(deftest test-63-map-hidden-site-end-to-end
+  (testing "q3x2: a model with one visible and one map-hidden site traces both"
+    (let [model (gen []
+                  (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                        m {:logged (trace :x (dist/gaussian mu (mx/scalar 1)))}]
+                    mu))
+          s (:schema model)]
+      (is (= 2 (count (:trace-sites s))) "both sites recorded")
+      (is (= #{:mu :x} (set (map :addr (:trace-sites s)))) "addrs :mu and :x")
+      (let [tr (p/simulate (dyn/with-key model (rng/fresh-key 42)) [])
+            ch (:choices tr)]
+        (is (cm/has-value? (cm/get-submap ch :mu)) "simulate samples :mu")
+        (is (cm/has-value? (cm/get-submap ch :x)) "simulate samples :x"))
+      ;; Independent oracle: fully-constrained generate weight is the joint
+      ;; closed-form log-density.
+      (let [{:keys [weight]} (p/generate (dyn/with-key model (rng/fresh-key 7)) []
+                                         (cm/choicemap :mu 0.3 :x 1.5))
+            expected (+ (gaussian-lp 0.3 0 1) (gaussian-lp 1.5 0.3 1))]
+        (is (< (Math/abs (- (mx/item weight) expected)) 1e-4)
+            "constrained generate weight matches closed form")))))
+
+;; Test 64: splices disqualify model-level :static?
+(deftest test-64-splice-model-not-static
+  (testing "q3x2: a model with a splice is not static (CLAUDE.md definition)"
+    (let [inner (gen [mu] (trace :y (dist/gaussian mu (mx/scalar 1))))
+          splice-only (gen [] (splice :sub inner (mx/scalar 0)))
+          mixed (gen []
+                  (let [z (trace :z (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                    (splice :sub inner z)))]
+      (is (not (-> splice-only :schema :static?)) "splice-only model not static")
+      (is (not (-> mixed :schema :static?)) "trace+splice model not static")
+      (is (nil? (:compiled-simulate (:schema mixed))) "no full-compile key attached"))))
+
+;; Test 65: wrapped trace binding keeps its dep edge
+(deftest test-65-wrapped-binding-deps
+  (testing "q3x2: deps survive a wrapped (non-literal) trace binding"
+    (let [model (gen []
+                  (let [a (mx/add (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                                  (mx/scalar 1))]
+                    (trace :b (dist/gaussian a (mx/scalar 1)))))
+          s (:schema model)
+          b-site (first (filter #(= :b (:addr %)) (:trace-sites s)))]
+      (is (contains? (:deps b-site) :a) ":b depends on :a through the wrapper")
+      (is (= [:a :b] (:dep-order s)) "topo order :a before :b"))))
+
+;; Test 66: destructured binding conservatively inherits deps
+(deftest test-66-destructured-binding-deps
+  (testing "q3x2: destructuring a traced value keeps the dep edge"
+    (let [model (gen []
+                  (let [{:keys [v]} {:v (trace :x (dist/gaussian (mx/scalar 0) (mx/scalar 1)))}]
+                    (trace :y (dist/gaussian v (mx/scalar 1)))))
+          s (:schema model)
+          y-site (first (filter #(= :y (:addr %)) (:trace-sites s)))]
+      (is (= 2 (count (:trace-sites s))) "both sites recorded")
+      (is (contains? (:deps y-site) :x) ":y depends on :x through destructuring"))))
+
+;; Test 67: find-all-calls recurses into matched forms (loop extraction)
+(deftest test-67-nested-trace-in-loop-site
+  (testing "q3x2: a trace nested in another trace's args is seen by loop analysis"
+    (let [model (gen [xs]
+                  (doseq [i xs]
+                    (trace (keyword (str "y" i))
+                           (dist/gaussian
+                            (trace :inner (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                            (mx/scalar 1)))))
+          ls (-> model :schema :loop-sites first)]
+      (is (= 2 (count (:trace-sites ls))) "loop analysis sees both trace sites"))))
 
 (cljs.test/run-tests)
