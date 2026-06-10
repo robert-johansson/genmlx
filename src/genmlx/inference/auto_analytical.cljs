@@ -170,23 +170,36 @@
   (let [regenerate? (= mode :regenerate)
         prior-handler
         (fn [state addr dist]
-          (when-not (and regenerate? (:selection state)
-                         (sel/selected? (:selection state) addr))
-            (let [posterior (init-posterior (:params dist))
-                  value (if regenerate?
-                          (cm/get-value (cm/get-submap (:old-choices state) addr))
-                          (posterior-mean posterior))]
-              ;; Return point estimate / old value; don't add to score (marginalized out)
-              [value (-> state
-                         (assoc-in [:auto-posteriors prior-addr] posterior)
-                         (update :choices cm/set-value addr value))])))
+          (let [proceed?
+                (if regenerate?
+                  (not (and (:selection state)
+                            (sel/selected? (:selection state) addr)))
+                  ;; Generate/assess (genmlx-b470): the pair group marginalizes
+                  ;; only when the prior itself is UNCONSTRAINED and EVERY obs
+                  ;; is constrained. A constrained prior must keep its value
+                  ;; (the base transition scores it); a partially-constrained
+                  ;; obs set would otherwise produce a score that is neither
+                  ;; joint nor marginal. Declining here leaves no posterior in
+                  ;; state, so the obs handlers below fall through too.
+                  (let [cs (:constraints state)]
+                    (and (not (cm/has-value? (cm/get-submap cs prior-addr)))
+                         (every? #(cm/has-value? (cm/get-submap cs %)) obs-addrs))))]
+            (when proceed?
+              (let [posterior (init-posterior (:params dist))
+                    value (if regenerate?
+                            (cm/get-value (cm/get-submap (:old-choices state) addr))
+                            (posterior-mean posterior))]
+                ;; Return point estimate / old value; don't add to score (marginalized out)
+                [value (-> state
+                           (assoc-in [:auto-posteriors prior-addr] posterior)
+                           (update :choices cm/set-value addr value))]))))
 
         obs-handler
         (fn [state addr dist]
-          ;; Regenerate: fall through if the prior was selected (no posterior).
-          (when-let [current-posterior (if regenerate?
-                                         (get-in state [:auto-posteriors prior-addr])
-                                         ::generate)]
+          ;; Requires an initialized posterior — absent whenever the prior
+          ;; handler fell through (selected under regenerate; constrained prior
+          ;; or partially-constrained obs under generate) → base transition.
+          (when-let [current-posterior (get-in state [:auto-posteriors prior-addr])]
             ;; Regenerate: skip obs that are themselves being resampled.
             (when-not (and regenerate? (:selection state)
                            (sel/selected? (:selection state) addr))
@@ -195,10 +208,7 @@
                                  (cm/get-submap (:constraints state) addr))]
                 (when (cm/has-value? constraint)
                   (let [obs-value (cm/get-value constraint)
-                        cur-post (if regenerate?
-                                   current-posterior
-                                   (get-in state [:auto-posteriors prior-addr]))
-                        {:keys [posterior ll]} (update-step cur-post obs-value (:params dist))
+                        {:keys [posterior ll]} (update-step current-posterior obs-value (:params dist))
                         post-mean (posterior-mean posterior)]
                     [obs-value (cond-> state
                                  true (assoc-in [:auto-posteriors prior-addr] posterior)
@@ -368,6 +378,26 @@
                                            (:obs-dep-types step)))
                                     steps))
         regenerate? (= mode :regenerate)
+        chain-latents (mapv :latent steps)
+        chain-obs (vec (mapcat :observations steps))
+        chain-key (first chain-latents)
+        ;; Generate/assess gate (genmlx-b470): the chain marginalizes only when
+        ;; no chain latent is constrained and every chain obs is constrained.
+        ;; A constrained latent must keep its value (base transition scores it);
+        ;; a partially-constrained obs set would leave the remaining latents at
+        ;; predicted means with no score — neither joint nor marginal. The
+        ;; result is cached in state under [:auto-kalman-ok chain-key] once a
+        ;; latent handler commits (the gate can only be consulted again on the
+        ;; decline path, where handlers consistently fall through).
+        chain-ok?
+        (fn [state]
+          (if regenerate?
+            true
+            (if-some [cached (get-in state [:auto-kalman-ok chain-key])]
+              cached
+              (let [cs (:constraints state)]
+                (and (not-any? #(cm/has-value? (cm/get-submap cs %)) chain-latents)
+                     (every? #(cm/has-value? (cm/get-submap cs %)) chain-obs))))))
 
         latent-handlers
         (into {}
@@ -377,16 +407,18 @@
                   (fn [state addr dist]
                     (when-not (and regenerate? (:selection state)
                                    (sel/selected? (:selection state) addr))
-                      (let [params (:params dist)
-                            new-belief (kalman-init-belief i steps state params)
-                            value (if regenerate?
-                                    (cm/get-value (cm/get-submap (:old-choices state) addr))
-                                    (:mean new-belief))
-                            noise-var (mx/multiply (:sigma params) (:sigma params))]
-                        [value (-> state
-                                   (assoc-in [:auto-kalman-beliefs addr] new-belief)
-                                   (assoc-in [:auto-kalman-noise-vars i] noise-var)
-                                   (update :choices cm/set-value addr value))])))])
+                      (when (chain-ok? state)
+                        (let [params (:params dist)
+                              new-belief (kalman-init-belief i steps state params)
+                              value (if regenerate?
+                                      (cm/get-value (cm/get-submap (:old-choices state) addr))
+                                      (:mean new-belief))
+                              noise-var (mx/multiply (:sigma params) (:sigma params))]
+                          [value (-> state
+                                     (assoc-in [:auto-kalman-ok chain-key] true)
+                                     (assoc-in [:auto-kalman-beliefs addr] new-belief)
+                                     (assoc-in [:auto-kalman-noise-vars i] noise-var)
+                                     (update :choices cm/set-value addr value))]))))])
                steps))
 
         obs-handlers
@@ -449,11 +481,20 @@
 
 (defn- mvn-well-conditioned?
   "Check if a covariance matrix is well-conditioned (min diag > threshold).
-   Returns false if any diagonal element is below 1e-6."
+   Returns false if any diagonal element is below 1e-6, is non-finite, or the
+   check itself fails (nil/malformed matrix).
+
+   NOTE: the mx/item here forces a GPU eval inside a handler transition — a
+   deliberate exception to the eval-at-boundaries rule. It is safe because the
+   analytical path is scalar-only (never batched) and the dispatcher excludes
+   mx/in-grad?; declining (false) on any anomaly falls through to the base
+   transition, which is always correct."
   [cov-matrix]
-  (let [diag-vals (mx/diag cov-matrix)
-        min-diag (mx/item (mx/amin diag-vals))]
-    (> min-diag 1e-6)))
+  (try
+    (let [diag-vals (mx/diag cov-matrix)
+          min-diag (mx/item (mx/amin diag-vals))]
+      (and (js/isFinite min-diag) (> min-diag 1e-6)))
+    (catch :default _ false)))
 
 (defn mvn-update-step
   "MVN-MVN conjugate update.
@@ -503,23 +544,32 @@
   (let [regenerate? (= mode :regenerate)
         prior-handler
         (fn [state addr dist]
-          (when-not (and regenerate? (:selection state)
-                         (sel/selected? (:selection state) addr))
-            (let [{{:keys [mean-vec cov-matrix]} :params} dist
-                  posterior {:mean-vec mean-vec :cov-matrix cov-matrix}
-                  value (if regenerate?
-                          (cm/get-value (cm/get-submap (:old-choices state) addr))
-                          mean-vec)]
-              ;; Return prior mean / old value; don't add to score (marginalized out)
-              [value (-> state
-                         (assoc-in [:auto-posteriors prior-addr] posterior)
-                         (update :choices cm/set-value addr value))])))
+          (let [proceed?
+                (if regenerate?
+                  (not (and (:selection state)
+                            (sel/selected? (:selection state) addr)))
+                  ;; Generate/assess (genmlx-b470): marginalize only when the
+                  ;; prior is unconstrained and every obs is constrained —
+                  ;; mirrors make-conjugate-handlers-core.
+                  (let [cs (:constraints state)]
+                    (and (not (cm/has-value? (cm/get-submap cs prior-addr)))
+                         (every? #(cm/has-value? (cm/get-submap cs %)) obs-addrs))))]
+            (when proceed?
+              (let [{{:keys [mean-vec cov-matrix]} :params} dist
+                    posterior {:mean-vec mean-vec :cov-matrix cov-matrix}
+                    value (if regenerate?
+                            (cm/get-value (cm/get-submap (:old-choices state) addr))
+                            mean-vec)]
+                ;; Return prior mean / old value; don't add to score (marginalized out)
+                [value (-> state
+                           (assoc-in [:auto-posteriors prior-addr] posterior)
+                           (update :choices cm/set-value addr value))]))))
 
         obs-handler
         (fn [state addr dist]
-          (when-let [posterior (if regenerate?
-                                 (get-in state [:auto-posteriors prior-addr])
-                                 ::generate)]
+          ;; Requires an initialized posterior — absent whenever the prior
+          ;; handler fell through → base transition.
+          (when-let [cur-post (get-in state [:auto-posteriors prior-addr])]
             (when-not (and regenerate? (:selection state)
                            (sel/selected? (:selection state) addr))
               (let [constraint (if regenerate?
@@ -527,9 +577,6 @@
                                  (cm/get-submap (:constraints state) addr))]
                 (when (cm/has-value? constraint)
                   (let [obs-value (cm/get-value constraint)
-                        cur-post (if regenerate?
-                                   posterior
-                                   (get-in state [:auto-posteriors prior-addr]))
                         {{obs-cov :cov-matrix} :params} dist
                         result (mvn-update-step cur-post obs-value obs-cov)]
                     ;; Fallthrough if ill-conditioned
@@ -566,9 +613,11 @@
 
 (defn build-auto-handlers
   "Build address-based handlers from detected conjugate pairs.
+   Multi-parent obs pairs are dropped first (handler-map merge is last-wins,
+   so two priors claiming one obs would silently mis-marginalize, genmlx-b470).
    Returns a merged map of {addr handler-fn} for all conjugate sites."
   [conjugate-pairs]
-  (let [grouped (conj/group-by-prior conjugate-pairs)]
+  (let [grouped (conj/group-by-prior (conj/drop-multi-parent-pairs conjugate-pairs))]
     (reduce
      (fn [handlers [prior-addr pairs]]
        (let [family (:family (first pairs))
@@ -613,9 +662,10 @@
 
 (defn build-regenerate-handlers
   "Build regenerate-specific address-based handlers from detected conjugate pairs.
+   Multi-parent obs pairs are dropped first (see build-auto-handlers).
    Returns a merged map of {addr handler-fn}."
   [conjugate-pairs]
-  (let [grouped (conj/group-by-prior conjugate-pairs)]
+  (let [grouped (conj/group-by-prior (conj/drop-multi-parent-pairs conjugate-pairs))]
     (reduce
      (fn [handlers [prior-addr pairs]]
        (let [family (:family (first pairs))

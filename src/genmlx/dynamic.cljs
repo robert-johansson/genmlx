@@ -336,6 +336,16 @@
 
 ;; -- L3: Analytical path --
 
+(defn- analytical-fired?
+  "Did any analytical handler actually marginalize during this run? When every
+   handler fell through (constrained priors, partially-constrained obs,
+   probe-declined blocks — genmlx-b470), the result is plain joint scoring and
+   must NOT be labeled :marginal."
+  [result]
+  (boolean (or (seq (:auto-posteriors result))
+               (seq (:auto-kalman-beliefs result))
+               (seq (:lg-belief result)))))
+
 (defn- run-generate-analytical [gf args key {:keys [constraints]}]
   (let [schema (:schema gf)
         transition (auto/make-address-dispatch
@@ -346,7 +356,9 @@
                   :auto-posteriors {} :auto-kalman-beliefs {} :auto-kalman-noise-vars {}
                   :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt args)))
-        trace (vary-meta (make-result-trace gf args result) assoc ::score-type :marginal)]
+        trace (cond-> (make-result-trace gf args result)
+                (analytical-fired? result)
+                (vary-meta assoc ::score-type :marginal))]
     (make-generate-result trace (:weight result) constraints (:choices result) result)))
 
 (defn- run-assess-analytical [gf args key {:keys [constraints]}]
@@ -377,7 +389,9 @@
                   :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt (:args trace))))
         regen-result (make-regen-result gf trace result old-score)]
-    (clojure.core/update regen-result :trace vary-meta assoc ::score-type :marginal)))
+    (if (analytical-fired? result)
+      (clojure.core/update regen-result :trace vary-meta assoc ::score-type :marginal)
+      regen-result)))
 
 ;; -- Utility --
 
@@ -478,8 +492,11 @@
       (when-let [run-fn (get analytical-table op)]
         (case op
           (:generate :assess)
+          ;; seq, not truthiness: an empty handler map (all rules declined,
+          ;; e.g. family without a runtime factory) must not claim the
+          ;; analytical path (genmlx-b470).
           (when (and (not (mx/in-grad?))
-                     (:auto-handlers schema)
+                     (seq (:auto-handlers schema))
                      (auto/some-conjugate-obs-constrained?
                        (:conjugate-pairs schema) (:constraints opts)))
             {:run run-fn :score-type :marginal :label :analytical})

@@ -140,7 +140,9 @@
         gumbel-noise (dr/generate-gumbel-noise gk T particles)
         _ (mx/materialize! extend-noise gumbel-noise)
         tau-arr (mx/scalar tau)
-        extend-fn (cops/make-smc-extend-step schema source)
+        extend-fn (or (cops/make-smc-extend-step schema source)
+                      (throw (ex-info "Kernel cannot be compiled for gradient SMC"
+                                      {:kernel kernel})))
         ;; Objective: log-ML as function of model-params
         ;; For now, model-params modulate the init-state
         ;; (full parameterization requires make-parameterized-extend)

@@ -158,6 +158,41 @@
 (defn- mean-form [site] (first (:dist-args site)))
 (defn- sigma-form [site] (second (:dist-args site)))
 
+(defn- expand-expr-symbols
+  "Recursively replace symbols bound to :expr forms in the binding env with
+   their defining forms, so INDIRECT trace dependencies become visible to the
+   dependency analysis (genmlx-b470): a let-bound `noise-std` referencing a
+   traced `noise-prec` made noise-latents come out empty, and the obs handler
+   then evaluated the sigma form with the residual latent missing from its
+   env — a hard NAPI error at generate time."
+  [form binding-env seen]
+  (cond
+    (symbol? form)
+    (let [info (get binding-env (name form))]
+      (if (and (= :expr (:kind info)) (not (contains? seen (name form))))
+        (expand-expr-symbols (:form info) binding-env (conj seen (name form)))
+        form))
+    (seq? form) (doall (map #(expand-expr-symbols % binding-env seen) form))
+    (vector? form) (mapv #(expand-expr-symbols % binding-env seen) form)
+    :else form))
+
+(defn- latent-interaction?
+  "Does the form multiply/divide two (sub)expressions that BOTH reference block
+   latents? Static complement to the runtime joint-affinity probe
+   (genmlx-b470): a bilinear mean like (mx/multiply slope intercept) is affine
+   PER-PAIR (each latent looks constant while the other is analyzed) but not
+   JOINTLY affine, so 0/1 probing would fabricate h=0."
+  [form latents]
+  (cond
+    (seq? form)
+    (or (and (symbol? (first form))
+             (contains? #{"multiply" "divide" "matmul" "outer"}
+                        (name (first form)))
+             (>= (count (filter #(references-any? % latents) (rest form))) 2))
+        (boolean (some #(latent-interaction? % latents) (rest form))))
+    (vector? form) (boolean (some #(latent-interaction? % latents) form))
+    :else false))
+
 (defn- eligible-block
   "Validate a concern component and, if eligible, build a block descriptor.
    Returns {:eligible? true :block desc} or {:eligible? false}.
@@ -183,11 +218,21 @@
         ;; (a) independent priors: a latent's prior must not reference another latent
         indep-priors? (every? (fn [s] (not (references-any? (vec (:dist-args s)) latents)))
                                latent-sites)
+        ;; Dependency analysis runs on EXPANDED forms (let-bound :expr symbols
+        ;; replaced by their definitions) so indirect trace references are
+        ;; visible (genmlx-b470). Compilation below still uses the original
+        ;; forms — compile-expr resolves :expr bindings itself.
+        x-mean (fn [s] (expand-expr-symbols (mean-form s) binding-env #{}))
+        x-sigma (fn [s] (expand-expr-symbols (sigma-form s) binding-env #{}))
         ;; (b) obs MEAN references only block latents (noise handled separately below)
         mean-deps-ok? (every? (fn [s]
-                                (set/subset? (form-trace-addrs (mean-form s) all-trace-addrs)
+                                (set/subset? (form-trace-addrs (x-mean s) all-trace-addrs)
                                              latents))
                               obs-sites)
+        ;; (b') obs MEAN has no multiplicative interaction between block
+        ;; latents — bilinear means are not jointly affine (genmlx-b470)
+        no-interaction? (every? (fn [s] (not (latent-interaction? (x-mean s) latents)))
+                                obs-sites)
         ;; (c) no non-conjugate children of any block latent
         children-conjugate?
         (every? (fn [la]
@@ -196,12 +241,12 @@
                           (:trace-sites schema)))
                 latents)
         ;; (d) noise references no BLOCK latent (it may reference residual latents)
-        sigma-block-free? (every? (fn [s] (not (references-any? (sigma-form s) latents))) obs-sites)
+        sigma-block-free? (every? (fn [s] (not (references-any? (x-sigma s) latents))) obs-sites)
         ;; (d') residual latents the noise depends on (genmlx-4q9d): exclude block
         ;; latents and block obs — what remains are the residual noise latents.
         noise-latents (reduce (fn [acc s]
                                 (set/union acc (set/difference
-                                                (form-trace-addrs (sigma-form s) all-trace-addrs)
+                                                (form-trace-addrs (x-sigma s) all-trace-addrs)
                                                 latents obs)))
                               #{} obs-sites)
         ;; (d'') residual noise latents must precede all block obs in dep-order, so
@@ -221,8 +266,8 @@
                            :sigma-fn (compiled/compile-expr (sigma-form s) binding-env #{})}))
                       order-obs)
         forms-ok? (every? #(and (:mean-fn %) (:sigma-fn %)) obs-fns)]
-    (if (and indep-priors? mean-deps-ok? children-conjugate? sigma-block-free?
-             noise-precede? order-ok? forms-ok?)
+    (if (and indep-priors? mean-deps-ok? no-interaction? children-conjugate?
+             sigma-block-free? noise-precede? order-ok? forms-ok?)
       {:eligible? true
        :block {:id order-latents            ; stable id (blocks are disjoint)
                :latents order-latents
@@ -287,6 +332,39 @@
                           latents))]
     {:h h :c c}))
 
+(defn- probe-jointly-affine?
+  "Runtime backstop for the static affine classification (genmlx-b470).
+
+   The 0/1 probing in obs-design recovers h and c correctly ONLY when the mean
+   form is JOINTLY affine in the block latents. Bilinear means like
+   (mx/multiply slope intercept) classify affine PER-PAIR (each latent looks
+   constant while the other is analyzed) yet probe to h=0, c=0 — a silently
+   wrong exact LL. Verify the recovered design reproduces the mean form at two
+   joint probe points:  mean(s,...,s) ?= c + s·Σh  for s ∈ {1, 2}
+   (s=2 additionally catches pure-power forms like β² that pass s=1).
+   Tolerance is relative, float32-scaled. Any evaluation failure declines.
+
+   The mx/item here forces a GPU eval inside a handler transition — acceptable
+   for the same reason as mvn-well-conditioned?: the analytical path is
+   scalar-only and dispatcher-gated against mx/in-grad?.
+
+   The design recovery itself (obs-design) runs INSIDE the try: a mean form
+   whose evaluation fails (e.g. a hidden non-latent trace reference leaving
+   nil in the env) declines the block instead of crashing generate."
+  [mean-fn latents args]
+  (try
+    (let [{:keys [h c]} (obs-design mean-fn latents args)
+          sum-h (mx/sum h)
+          check (fn [s]
+                  (let [probe-env (zipmap latents (repeat (mx/scalar s)))
+                        lhs (mx/item (coerce-scalar (mean-fn probe-env args)))
+                        rhs (mx/item (mx/add c (mx/multiply (mx/scalar s) sum-h)))]
+                    (and (js/isFinite lhs) (js/isFinite rhs)
+                         (<= (js/Math.abs (- lhs rhs))
+                             (* 1e-4 (max 1.0 (js/Math.abs lhs) (js/Math.abs rhs)))))))]
+      (and (check 1.0) (check 2.0)))
+    (catch :default _ false)))
+
 (defn make-lg-handlers
   "Build address handlers for a linear-Gaussian block, parameterized by `mode`.
 
@@ -317,43 +395,76 @@
    overall estimate is E_residual[block marginal] over the particle population."
   ([block] (make-lg-handlers block :generate))
   ([block mode]
-   (let [{:keys [id latents p obs noise-latents]} block
+   (let [{:keys [id latents p obs noise-latents obs-addrs]} block
          noise-latents (or noise-latents #{})
+         obs-addrs (or obs-addrs (mapv :addr obs))
          regenerate? (= mode :regenerate)
          block-reopened?
          (fn [state]
+           ;; Selecting ANY block address — latent OR obs — re-opens the whole
+           ;; block (genmlx-b470: a selected obs must be resampled by the base
+           ;; transition, not Kalman-conditioned on its old value).
            (and regenerate?
                 (:selection state)
-                (boolean (some #(sel/selected? (:selection state) %) latents))))
+                (boolean (some #(sel/selected? (:selection state) %)
+                               (concat latents obs-addrs)))))
+         block-ok?
+         ;; Runtime eligibility gate (genmlx-b470), consulted by EVERY block
+         ;; handler before committing and cached under [:lg-ok id] once a
+         ;; latent commits (on the decline path nothing is committed, so the
+         ;; recomputation cost is only paid by declined blocks):
+         ;; - generate/assess: no block latent constrained, every block obs
+         ;;   constrained (otherwise latents would be left at placeholder
+         ;;   means with no score — neither joint nor marginal);
+         ;; - both modes: every obs mean form passes the joint-affinity probe
+         ;;   (bilinear means classify affine per-pair but probe to h=0).
+         ;; When false, all block handlers fall through to the base transition.
+         (fn [state]
+           (if-some [cached (get-in state [:lg-ok id])]
+             cached
+             (let [args (:model-args state)
+                   cs (:constraints state)
+                   constraints-ok?
+                   (or regenerate?
+                       (and (not-any? #(cm/has-value? (cm/get-submap cs %)) latents)
+                            (every? #(cm/has-value? (cm/get-submap cs %)) obs-addrs)))]
+               (boolean
+                (and args constraints-ok?
+                     (every? (fn [{:keys [mean-fn]}]
+                               (probe-jointly-affine? mean-fn latents args))
+                             obs))))))
          latent-handlers
          (into {}
                (map (fn [la]
                       [la
                        (fn [state _addr dist]
                          (when-not (block-reopened? state)
-                           (let [{:keys [mu sigma]} (:params dist)
-                                 var (mx/multiply sigma sigma)
-                                 value (if regenerate?
-                                         (cm/get-value (cm/get-submap (:old-choices state) la))
-                                         mu)
-                                 st (-> state
-                                        (assoc-in [:lg-init id la] {:mean (coerce-scalar mu)
-                                                                    :var (coerce-scalar var)})
-                                        (update :choices cm/set-value la value))
-                                 inits (get-in st [:lg-init id])
-                                 st (if (= (count inits) p)
-                                      (let [m0 (mx/stack (mapv #(:mean (get inits %)) latents))
-                                            s0 (mx/diag (mx/stack (mapv #(:var (get inits %)) latents)))]
-                                        (assoc-in st [:lg-belief id] {:mean m0 :cov s0}))
-                                      st)]
-                             [value st])))]))
+                           (when (block-ok? state)
+                             (let [{:keys [mu sigma]} (:params dist)
+                                   var (mx/multiply sigma sigma)
+                                   value (if regenerate?
+                                           (cm/get-value (cm/get-submap (:old-choices state) la))
+                                           mu)
+                                   st (-> state
+                                          (assoc-in [:lg-ok id] true)
+                                          (assoc-in [:lg-init id la] {:mean (coerce-scalar mu)
+                                                                      :var (coerce-scalar var)})
+                                          (update :choices cm/set-value la value))
+                                   inits (get-in st [:lg-init id])
+                                   st (if (= (count inits) p)
+                                        (let [m0 (mx/stack (mapv #(:mean (get inits %)) latents))
+                                              s0 (mx/diag (mx/stack (mapv #(:var (get inits %)) latents)))]
+                                          (assoc-in st [:lg-belief id] {:mean m0 :cov s0}))
+                                        st)]
+                               [value st]))))]))
                latents)
          obs-handlers
          (into {}
                (map (fn [{:keys [addr mean-fn sigma-fn]}]
                       [addr
                        (fn [state _addr _dist]
-                         (when-not (block-reopened? state)
+                         (when (and (not (block-reopened? state))
+                                    (block-ok? state))
                            (let [belief (get-in state [:lg-belief id])
                                  args (:model-args state)
                                  constraint (if regenerate?

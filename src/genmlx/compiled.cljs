@@ -405,10 +405,88 @@
        (= "trace" (name (first form)))
        (keyword? (second form))))
 
+(defn- pattern-symbols
+  "Name strings of all symbols appearing anywhere in a binding pattern
+   (a plain symbol or a destructuring form). Over-approximates on purpose:
+   poisoning a name that was not really bound only declines compilation."
+  [pattern]
+  (cond
+    (symbol? pattern) (if (= "&" (name pattern)) #{} #{(name pattern)})
+    (or (vector? pattern) (seq? pattern))
+    (into #{} (mapcat pattern-symbols) pattern)
+    (map? pattern)
+    (into #{} (mapcat pattern-symbols) (concat (keys pattern) (vals pattern)))
+    :else #{}))
+
+(def ^:private binder-heads
+  "Heads of forms that bind locals through mechanisms this walker does not
+   model with proper scoping. Their binding targets are poisoned so
+   compile-expr declines instead of silently falling through to a same-named
+   namespace var (genmlx-b210)."
+  #{"fn" "fn*" "loop" "loop*" "for" "doseq" "dotimes" "letfn" "letfn*"
+    "if-let" "when-let" "if-some" "when-some" "when-first" "binding"
+    "with-redefs" "as->"})
+
+(defn- binding-vector-targets
+  "Names bound by a let-like binding vector [target init target init ...].
+   Handles for/doseq modifiers: :let vectors recurse, :when/:while skip."
+  [bvec]
+  (loop [xs (seq bvec) acc #{}]
+    (if (or (nil? xs) (nil? (next xs)))
+      acc
+      (let [t (first xs) v (second xs)]
+        (recur (nnext xs)
+               (cond
+                 (= :let t) (into acc (binding-vector-targets v))
+                 (keyword? t) acc
+                 :else (into acc (pattern-symbols t))))))))
+
+(defn- binder-target-names
+  "Names bound by a non-let binder form (see binder-heads)."
+  [form]
+  (let [head (name (first form))]
+    (cond
+      (#{"fn" "fn*"} head)
+      (into #{} (mapcat (fn [x]
+                          (cond
+                            (vector? x) (pattern-symbols x)        ; params
+                            (symbol? x) #{(name x)}                ; fn name
+                            (seq? x) (let [params (first x)]       ; arity form
+                                       (when (vector? params)
+                                         (pattern-symbols params)))
+                            :else nil)))
+            (rest form))
+
+      (#{"letfn" "letfn*"} head)
+      ;; Over-approximate: every symbol in the letfn binding vector (names,
+      ;; params, and body references). Safe — only declines compilation.
+      (pattern-symbols (second form))
+
+      (= "as->" head)
+      (let [n (nth form 2 nil)]
+        (if (symbol? n) #{(name n)} #{}))
+
+      (vector? (second form))
+      (binding-vector-targets (second form))
+
+      :else #{})))
+
+(defn- poison-names [env names]
+  (reduce (fn [e n] (assoc e n {:kind :poisoned})) env names))
+
 (declare walk-binding-forms)
 
 (defn- walk-binding-form
-  "Walk a single form, collecting let/do bindings into env."
+  "Walk a single form, collecting let/do bindings into env.
+
+   The env is FLAT — it cannot represent lexical scopes. Any name that would
+   need scoping to resolve correctly is poisoned ({:kind :poisoned}) instead
+   of bound, and compile-expr declines on poisoned names (genmlx-b210):
+   - a let target that rebinds an existing name (last-wins would retroactively
+     change how earlier sites resolve the name)
+   - destructuring targets (invisible to compile-expr, which would otherwise
+     fall through to a same-named namespace var)
+   - targets of fn/loop/for/doseq/... binders (same fallthrough hazard)."
   [env form]
   (cond
     ;; let form: process bindings sequentially, then walk body
@@ -418,12 +496,14 @@
     (let [pairs (partition 2 (second form))
           env' (reduce
                 (fn [env [sym val-form]]
-                  (if (symbol? sym)
+                  (if (and (symbol? sym) (not (contains? env (name sym))))
                     (assoc env (name sym)
                            (if (trace-call? val-form)
                              {:kind :trace :addr (second val-form)}
                              {:kind :expr :form val-form}))
-                    env))
+                    (poison-names env (if (symbol? sym)
+                                        [(name sym)]
+                                        (pattern-symbols sym)))))
                 env pairs)]
       (walk-binding-forms env' (drop 2 form)))
 
@@ -431,6 +511,12 @@
     (and (seq? form) (seq form) (symbol? (first form))
          (= "do" (name (first form))))
     (walk-binding-forms env (rest form))
+
+    ;; Binder forms with unmodeled scoping: poison targets, walk children
+    (and (seq? form) (seq form) (symbol? (first form))
+         (contains? binder-heads (name (first form))))
+    (walk-binding-forms (poison-names env (binder-target-names form))
+                        (rest form))
 
     ;; Other sequences: walk children for nested lets
     (seq? form) (walk-binding-forms env form)
@@ -477,9 +563,15 @@
         :expr (when-not (contains? visited (name form))
                 (compile-expr (:form info) binding-env
                               (conj visited (name form))))
-        ;; Not in binding-env: try to resolve as a closed-over var (captured constant)
-        (when-let [resolved (try (deref (resolve form)) (catch :default _ nil))]
-          (fn [_v _a] resolved))))
+        ;; Shadowed / unscopeable local (genmlx-b210): decline compilation
+        ;; rather than mis-resolve to a namespace var.
+        :poisoned nil
+        ;; Not in binding-env: resolve as a closed-over var. The var is
+        ;; captured once but deref'd PER CALL, so later redefinition is
+        ;; honored instead of baking a stale value (genmlx-b210).
+        (when-let [vr (try (resolve form) (catch :default _ nil))]
+          (when (some? (try (deref vr) (catch :default _ nil)))
+            (fn [_v _a] (deref vr))))))
 
     ;; Keyword-as-function: (:key arg) → (get arg :key) — common map access pattern
     (and (seq? form) (seq form) (keyword? (first form)))
@@ -586,18 +678,26 @@
    {:noise-fn (fn [key] (rng/uniform key []))
     :transform (fn [noise p]
                  (mx/where (mx/less noise p) ONE ZERO))
+    ;; xlogy guards ported from dist.cljs (genmlx-b210): without them p=0,v=0
+    ;; gives 0 * -Inf = NaN where the handler gives 0.
     :log-prob (fn [v p]
-                (mx/add (mx/multiply v (mx/log p))
-                        (mx/multiply (mx/subtract ONE v)
-                                     (mx/log (mx/subtract ONE p)))))}
+                (let [log-p (mx/log p)
+                      log-1-p (mx/log (mx/subtract ONE p))]
+                  (mx/add (mx/where (mx/equal v ZERO) ZERO (mx/multiply v log-p))
+                          (mx/where (mx/equal v ONE) ZERO
+                                    (mx/multiply (mx/subtract ONE v) log-1-p)))))}
 
    :exponential
    {:noise-fn (fn [key] (rng/uniform key []))
     :transform (fn [noise rate]
                  (mx/divide (mx/negative (mx/log (mx/subtract ONE noise)))
                             rate))
+    ;; Support guard ported from dist.cljs (genmlx-b210): v<0 must score -Inf,
+    ;; not the finite extrapolation log(rate) - rate*v.
     :log-prob (fn [v rate]
-                (mx/subtract (mx/log rate) (mx/multiply rate v)))}
+                (mx/where (mx/greater-equal v ZERO)
+                          (mx/subtract (mx/log rate) (mx/multiply rate v))
+                          NEG-INF))}
 
    :log-normal
    {:noise-fn (fn [key] (rng/normal key []))
@@ -712,16 +812,19 @@
   "Build the reduce step function for one trace site using noise transforms.
    Noise is pre-generated OUTSIDE mx/compile-fn and passed in via noise-array.
    Returns (fn [{:keys [values score]} site-idx noise-array args-vec] -> state)
-   or nil if the site can't use noise transforms."
+   or nil if the site can't use noise transforms.
+
+   :args-noise-fn sites (iid-gaussian) are DECLINED: their noise shape depends
+   on dist args that may reference traced values, so it cannot be pre-generated
+   here — the old path crashed at runtime (genmlx-b210). Simulate falls back to
+   the handler; compiled generate/regenerate draw such noise inline and keep
+   working."
   [site-spec]
   (let [{:keys [addr compiled-args dist-type]} site-spec
         nt (get noise-transforms-full dist-type)]
     (when nt
       (cond
-        ;; Noise-driven sites: :noise-fn pre-generates standard noise,
-        ;; :args-noise-fn pre-generates dynamic-shape noise. Both transform the
-        ;; pre-generated noise and score it identically inside the compiled fn.
-        (or (:noise-fn nt) (:args-noise-fn nt))
+        (:noise-fn nt)
         (let [transform-fn (:transform nt)
               log-prob-fn (:log-prob nt)]
           (fn [{:keys [values score]} site-idx noise-array args-vec]
@@ -732,13 +835,17 @@
               {:values (assoc values addr value)
                :score (mx/add score lp)})))
 
-        :else
-        ;; Delta: no noise, value = first arg, lp = 0
+        ;; Delta ONLY when the dist-type really is delta — a transform entry
+        ;; without noise fns must not silently degrade to value=first-arg,
+        ;; score=0 (genmlx-b210).
+        (= dist-type :delta)
         (fn [{:keys [values score]} _site-idx _noise-array args-vec]
           (let [eval-args (mapv #(% values args-vec) compiled-args)
                 value (first eval-args)]
             {:values (assoc values addr value)
-             :score score}))))))
+             :score score}))
+
+        :else nil))))
 
 (defn prepare-static-sites
   "Common pipeline for static model compilation (M2).
@@ -761,11 +868,13 @@
            :binding-env binding-env})))))
 
 (defn- site-noise-fn
-  "Return the noise-generation function for a site-spec, or nil for delta."
+  "Return the noise-generation function for a site-spec, or nil for delta.
+   Only :noise-fn — :args-noise-fn sites never reach noise pre-generation
+   (build-site-step declines them, genmlx-b210)."
   [site-spec]
   (let [nt (get noise-transforms-full (:dist-type site-spec))]
     (when nt
-      (or (:noise-fn nt) (:args-noise-fn nt)))))
+      (:noise-fn nt))))
 
 (defn- generate-site-noise
   "Pre-generate noise for all sites OUTSIDE mx/compile-fn.
@@ -783,15 +892,18 @@
 (defn- run-site-steps
   "Run the noise-transform step-fns and return a flat JS array
    [v0 v1 ... vN score], values ordered by `addrs`. Shared inner-fn body for
-   the M2/M3/M4 compiled simulate paths."
-  [step-fns addrs noise-array args-vec]
-  (let [result (reduce-kv
-                (fn [state idx step-fn]
-                  (step-fn state idx noise-array args-vec))
-                {:values {} :score (mx/scalar 0.0)}
-                step-fns)
-        vals (mapv #(get (:values result) %) addrs)]
-    (to-array (conj vals (:score result)))))
+   the M2/M3/M4 compiled simulate paths. init-values seeds the values map
+   (M4 branch conditions, resolved host-side per call)."
+  ([step-fns addrs noise-array args-vec]
+   (run-site-steps step-fns addrs noise-array args-vec {}))
+  ([step-fns addrs noise-array args-vec init-values]
+   (let [result (reduce-kv
+                 (fn [state idx step-fn]
+                   (step-fn state idx noise-array args-vec))
+                 {:values init-values :score (mx/scalar 0.0)}
+                 step-fns)
+         vals (mapv #(get (:values result) %) addrs)]
+     (to-array (conj vals (:score result))))))
 
 (defn- unpack-result
   "Unpack a flat [v0 ... vN score] JS array (from run-site-steps) into
@@ -826,33 +938,25 @@
               (fn [noise-array args-vec]
                 (run-site-steps step-fns addrs noise-array args-vec))
               ;; Build arity-specific wrapper for mx/compile-fn.
-              ;; Skip mx/compile-fn when any site uses :args-noise-fn
-              ;; (dynamic noise shape breaks Metal graph caching).
+              ;; (:args-noise-fn sites never get here — build-site-step
+              ;; declines them, genmlx-b210.)
               n-params (count (first source))
-              has-dynamic-noise?
-              (some (fn [ss]
-                      (let [nt (get noise-transforms-full (:dist-type ss))]
-                        (and nt (:args-noise-fn nt))))
-                    site-specs)
               compiled-inner
-              (if has-dynamic-noise?
-                ;; Raw noise transforms — still faster than multimethod dispatch
-                (fn [noise args] (inner-fn noise args))
-                (case n-params
-                  0 (let [f (fn [noise] (inner-fn noise []))
-                          cf (mx/compile-fn f)]
-                      (fn [noise _args] (cf noise)))
-                  1 (let [f (fn [noise a0] (inner-fn noise [a0]))
-                          cf (mx/compile-fn f)]
-                      (fn [noise args] (cf noise (nth args 0))))
-                  2 (let [f (fn [noise a0 a1] (inner-fn noise [a0 a1]))
-                          cf (mx/compile-fn f)]
-                      (fn [noise args] (cf noise (nth args 0) (nth args 1))))
-                  3 (let [f (fn [noise a0 a1 a2] (inner-fn noise [a0 a1 a2]))
-                          cf (mx/compile-fn f)]
-                      (fn [noise args] (cf noise (nth args 0) (nth args 1) (nth args 2))))
-                  ;; >3 params: no mx/compile-fn, use raw noise transforms
-                  (fn [noise args] (inner-fn noise args))))]
+              (case n-params
+                0 (let [f (fn [noise] (inner-fn noise []))
+                        cf (mx/compile-fn f)]
+                    (fn [noise _args] (cf noise)))
+                1 (let [f (fn [noise a0] (inner-fn noise [a0]))
+                        cf (mx/compile-fn f)]
+                    (fn [noise args] (cf noise (nth args 0))))
+                2 (let [f (fn [noise a0 a1] (inner-fn noise [a0 a1]))
+                        cf (mx/compile-fn f)]
+                    (fn [noise args] (cf noise (nth args 0) (nth args 1))))
+                3 (let [f (fn [noise a0 a1 a2] (inner-fn noise [a0 a1 a2]))
+                        cf (mx/compile-fn f)]
+                    (fn [noise args] (cf noise (nth args 0) (nth args 1) (nth args 2))))
+                ;; >3 params: no mx/compile-fn, use raw noise transforms
+                (fn [noise args] (inner-fn noise args)))]
           ;; Outer wrapper: GenMLX interface
           ;; Noise generated OUTSIDE compile-fn — fresh per call
           (fn compiled-simulate [key args-vec]
@@ -1274,36 +1378,50 @@
                env)
              env))
          base-env base-env)
-        ;; Compile each site's args (standard or where-wrapped)
+        ;; Compile each site's args (standard or host-branched)
         site-specs
         (mapv
          (fn [site]
            (if (:cond-form site)
-              ;; Rewritten branch: wrap dist args in mx/where.
-              ;; Safety: condition must be a JS value (parameter or literal),
-              ;; not an MLX array. MLX arrays are always truthy in CLJS's if,
-              ;; so mx/where would disagree with the handler path.
+              ;; Rewritten branch (genmlx-b210): the condition is resolved
+              ;; HOST-side with ClojureScript truthiness, exactly matching the
+              ;; handler path's `if`. Conditions are restricted to literals and
+              ;; params so truthiness is computable from the RAW call args
+              ;; (before ensure-mlx-args, which collapses 0 and false): number
+              ;; literals — including 0 — are truthy; params read raw, where
+              ;; only false/nil are falsy (an MLX-array param is truthy, as in
+              ;; the handler). The boolean is seeded per call into the values
+              ;; map under a reserved key by :seed-conds. mx/where is NOT used
+              ;; — it disagrees with CLJS truthiness at numeric 0.
              (let [cf (:cond-form site)
-                   safe-cond? (or (boolean? cf) (number? cf)
-                                  (and (symbol? cf)
-                                       (= :param (:kind (get binding-env (name cf))))))]
-               (when safe-cond?
-                 (let [cond-fn (compile-expr cf binding-env #{})
+                   param-info (when (symbol? cf) (get binding-env (name cf)))
+                   cond-resolver
+                   (cond
+                     (boolean? cf) (constantly cf)
+                     (number? cf) (constantly true)
+                     (= :param (:kind param-info))
+                     (let [i (:index param-info)]
+                       (fn [raw-args] (boolean (nth raw-args i nil))))
+                     :else nil)]
+               (when cond-resolver
+                 (let [cond-key (keyword "genmlx.compiled"
+                                         (str "branch-cond-" (name (:addr site))))
                        true-fns (mapv #(compile-expr % binding-env #{}) (:true-dist-args site))
                        false-fns (mapv #(compile-expr % binding-env #{}) (:false-dist-args site))
                        flipped? (:flipped? site)]
-                   (when (and cond-fn (every? some? true-fns) (every? some? false-fns))
+                   (when (and (every? some? true-fns) (every? some? false-fns))
                      (let [[sel-t sel-f] (if flipped? [false-fns true-fns] [true-fns false-fns])
                            compiled-args
                            (mapv (fn [tf ff]
                                    (fn [values args-vec]
-                                     (mx/where (mx/ensure-array (cond-fn values args-vec))
-                                               (mx/ensure-array (tf values args-vec))
-                                               (mx/ensure-array (ff values args-vec)))))
+                                     (if (get values cond-key)
+                                       (tf values args-vec)
+                                       (ff values args-vec))))
                                  sel-t sel-f)]
                        {:addr (:addr site)
                         :compiled-args compiled-args
-                        :dist-type (:dist-type site)})))))
+                        :dist-type (:dist-type site)
+                        :cond-seed {:key cond-key :resolver cond-resolver}})))))
               ;; Standard site
              (let [cargs (mapv #(compile-expr % binding-env #{}) (:dist-args site))]
                (when (every? some? cargs)
@@ -1320,10 +1438,19 @@
                (when-let [branch (analyze-rewritable-branch return-expr)]
                  (let [addr (:addr branch)]
                    (fn [v _a] (get v addr)))))
-             (compile-expr return-expr binding-env #{}))]
-        {:site-specs site-specs
-         :retval-fn retval-fn
-         :addrs (mapv :addr site-specs)}))))
+             (compile-expr return-expr binding-env #{}))
+            cond-seeds (vec (keep :cond-seed site-specs))
+            seed-conds (fn [raw-args]
+                         (reduce (fn [m {:keys [key resolver]}]
+                                   (assoc m key (resolver raw-args)))
+                                 {} cond-seeds))]
+        ;; retval-fn is REQUIRED (genmlx-b210): without it the M4 paths would
+        ;; emit traces with retval nil — decline so the handler path runs.
+        (when retval-fn
+          {:site-specs site-specs
+           :retval-fn retval-fn
+           :seed-conds seed-conds
+           :addrs (mapv :addr site-specs)})))))
 
 (defn prepare-branch-sites
   "Common pipeline for branch-rewritten compilation (M4).
@@ -1349,25 +1476,22 @@
    Reuses M2 infrastructure: build-binding-env, compile-expr, build-site-step,
    noise-transforms, mx/compile-fn."
   [schema source]
-  (when-let [{:keys [site-specs retval-fn addrs]}
+  (when-let [{:keys [site-specs retval-fn addrs seed-conds]}
              (prepare-branch-sites schema source)]
     (let [step-fns (mapv build-site-step site-specs)]
       (when (every? some? step-fns)
-        (let [n-sites (count site-specs)
-              inner-fn
-              (fn [noise-array args-vec]
-                (run-site-steps step-fns addrs noise-array args-vec))
-              ;; Skip mx/compile-fn for M4 — mx/where args vary per call.
-              ;; Noise generated outside for consistency with M2/M3.
-              compiled-inner
-              (fn [noise args] (inner-fn noise args))]
+        (let [n-sites (count site-specs)]
+          ;; No mx/compile-fn for M4 — branch conditions vary per call.
+          ;; Noise generated outside for consistency with M2/M3.
           (fn compiled-branch-simulate [key args-vec]
             (let [mlx-args (ensure-mlx-args args-vec)
+                  ;; Conditions resolve against the RAW args (genmlx-b210)
+                  init-values (seed-conds args-vec)
                   noise (generate-site-noise site-specs key)
-                  result (compiled-inner noise mlx-args)
+                  result (run-site-steps step-fns addrs noise mlx-args init-values)
                   {:keys [values score]} (unpack-result result addrs n-sites)]
               {:values values
                :score score
-               :retval (when retval-fn
-                         (retval-fn values args-vec))})))))))
+               ;; retval-fn proven truthy by prepare-branch-sites
+               :retval (retval-fn values args-vec)})))))))
 

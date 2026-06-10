@@ -266,15 +266,18 @@
     (let [n (:ekf-nd-n state)
           means (:ekf-nd-means state)
           covs (:ekf-nd-covs state)
-          constraint (cm/get-submap (:constraints state) addr)
-          obs (cm/get-value constraint)
-          result (update-fn latent-addrs means covs obs dist)]
-      [obs (-> state
-               (assoc :ekf-nd-means (:means result)
-                      :ekf-nd-covs (:covs result))
-               (update :choices cm/set-value addr obs)
-               (update :ekf-nd-ll
-                 #(mx/add (or % (mx/zeros [n])) (:ll result))))])))
+          constraint (cm/get-submap (:constraints state) addr)]
+      ;; Guards (genmlx-b470): unconstrained obs or missing belief → fall
+      ;; through to the base transition instead of updating against nil.
+      (when (and means covs (cm/has-value? constraint))
+        (let [obs (cm/get-value constraint)
+              result (update-fn latent-addrs means covs obs dist)]
+          [obs (-> state
+                   (assoc :ekf-nd-means (:means result)
+                          :ekf-nd-covs (:covs result))
+                   (update :choices cm/set-value addr obs)
+                   (update :ekf-nd-ll
+                     #(mx/add (or % (mx/zeros [n])) (:ll result))))])))))
 
 (defn make-multi-ekf-dispatch
   "Create multi-dim EKF dispatch map for use with wrap-analytical.

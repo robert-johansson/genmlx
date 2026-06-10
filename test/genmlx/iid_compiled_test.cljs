@@ -64,24 +64,23 @@
       mu)))
 
 (deftest compiled-simulate-literal-t
-  (testing "compiled simulate (literal T)"
+  (testing "compiled simulate declines (genmlx-b210: args-noise-fn shape cannot
+            be pre-generated; the old path crashed at runtime)"
     (let [schema (:schema iid-const)]
       (is (:static? schema) "model is static")
-      (is (some? (:compiled-simulate schema)) "has compiled-simulate"))))
+      (is (nil? (:compiled-simulate schema))
+          "no compiled-simulate — declined, falls back to handler"))))
 
 ;; ---------------------------------------------------------------------------
-;; 4. Compiled simulate matches handler simulate
+;; 4. Simulate works via handler fallback (was: documented crash)
 ;; ---------------------------------------------------------------------------
-
-;; NOTE: Tests 4-8 trigger the compiled simulate path which has a
-;; pre-existing bug with iid-gaussian ("nth not supported on MLX array").
-;; Tests document the known error.
 
 (deftest compiled-vs-handler-equivalence
-  (testing "compiled vs handler equivalence (pre-existing compiled path issue)"
-    (is (thrown? js/Error
-          (p/simulate (dyn/auto-key iid-const) []))
-        "compiled simulate crashes on iid-gaussian (pre-existing)")))
+  (testing "simulate falls back to handler and produces a valid trace"
+    (let [trace (p/simulate (dyn/auto-key iid-const) [])]
+      (is (= [3] (mx/shape (cm/get-value (cm/get-submap (:choices trace) :ys))))
+          "ys shape [3]")
+      (is (js/isFinite (mx/item (:score trace))) "score finite"))))
 
 (def iid-dyn
   (gen [t]
@@ -90,12 +89,13 @@
       mu)))
 
 (deftest compiled-prefix-dynamic-t
-  (testing "compiled prefix (dynamic T)"
+  (testing "dynamic T simulate works via fallback"
     (let [schema (:schema iid-dyn)]
       (is (some? schema) "schema exists"))
-    (is (thrown? js/Error
-          (p/simulate (dyn/auto-key iid-dyn) [5]))
-        "compiled simulate crashes on iid-gaussian dynamic T (pre-existing)")))
+    (let [trace (p/simulate (dyn/auto-key iid-dyn) [5])]
+      (is (= [5] (mx/shape (cm/get-value (cm/get-submap (:choices trace) :ys))))
+          "ys shape [5]")
+      (is (js/isFinite (mx/item (:score trace))) "score finite"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 6. Compiled generate (literal T)

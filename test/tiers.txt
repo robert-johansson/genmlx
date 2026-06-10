@@ -72,6 +72,7 @@ fast test/genmlx/compiled_generate_test.cljs
 medium test/genmlx/compiled_gradient_test.cljs
 medium test/genmlx/compiled_loss_grad_test.cljs
 medium test/genmlx/compiled_optimizer_test.cljs
+medium test/genmlx/compiled_parity_test.cljs
 medium test/genmlx/compiled_path_equivalence_test.cljs
 medium test/genmlx/compiled_pf_test.cljs
 fast test/genmlx/compiled_schema_test2.cljs
@@ -199,6 +200,7 @@ medium test/genmlx/l3_5_multivariate_test.cljs
 medium test/genmlx/l3_5_regenerate_test.cljs
 medium test/genmlx/l3_5_score_fn_test.cljs
 bench test/genmlx/l3_evaluation_benchmark.cljs
+medium test/genmlx/l3_false_positive_test.cljs
 medium test/genmlx/l4_certification_test.cljs
 fast test/genmlx/lanczos_test.cljs
 medium test/genmlx/lazy_mcmc_test.cljs
@@ -295,6 +297,7 @@ medium test/genmlx/smc_scoring_test.cljs
 slow test/genmlx/smc_stress_test.cljs
 medium test/genmlx/smcp3_kernel_test.cljs
 fast test/genmlx/splice_property_test.cljs
+fast test/genmlx/splice_weight_test.cljs core
 fast test/genmlx/stack_unstack_property_test.cljs
 slow test/genmlx/stress_test.cljs
 medium test/genmlx/support_property_test.cljs
@@ -319,6 +322,7 @@ fast test/genmlx/tutorial/ch10_test.cljs
 fast test/genmlx/unfold_splice_test.cljs
 medium test/genmlx/untested_features_test.cljs
 fast test/genmlx/update_discard_branch_test.cljs
+fast test/genmlx/update_weight_test.cljs core
 fast test/genmlx/validation_test.cljs
 bench test/genmlx/vectorized_benchmark.cljs
 fast test/genmlx/vectorized_equivalence_test.cljs

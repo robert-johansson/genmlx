@@ -86,8 +86,8 @@
                      :weight weight
                      :key k1})))))
 
-          :else
-          ;; Delta distribution: no noise transform
+          ;; Delta ONLY when the dist-type really is delta (genmlx-b210)
+          (= dist-type :delta)
           (fn [{:keys [values score weight key] :as state} args-vec constraints]
             (let [constraint (cm/get-submap constraints addr)]
               (if (cm/has-value? constraint)
@@ -138,7 +138,8 @@
   "Build a compiled generate for models with rewritable branches (L1-M4).
    Returns (fn [key args-vec constraints] -> {:values :score :weight :retval}) or nil."
   [schema source]
-  (when-let [{:keys [site-specs retval-fn]} (compiled/prepare-branch-sites schema source)]
+  (when-let [{:keys [site-specs retval-fn seed-conds]}
+             (compiled/prepare-branch-sites schema source)]
     (let [step-fns (mapv build-generate-site-step site-specs)]
       (when (every? some? step-fns)
         (fn compiled-branch-generate [key args-vec constraints]
@@ -147,13 +148,15 @@
                 (reduce
                  (fn [state step-fn]
                    (step-fn state mlx-args constraints))
-                 {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
+                 ;; Branch conditions resolve against the RAW args (genmlx-b210)
+                 {:values (seed-conds args-vec)
+                  :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
                  step-fns)]
             {:values (:values result)
              :score (:score result)
              :weight (:weight result)
-             :retval (when retval-fn
-                       (retval-fn (:values result) mlx-args))}))))))
+             ;; retval-fn proven truthy by prepare-branch-sites
+             :retval (retval-fn (:values result) mlx-args)}))))))
 
 (defn make-compiled-prefix-generate
   "Build a compiled prefix generate function from a gen schema and source.
@@ -254,7 +257,8 @@
    Returns (fn [key args-vec constraints old-choices]
              -> {:values :score :discard :retval}) or nil."
   [schema source]
-  (when-let [{:keys [site-specs retval-fn]} (compiled/prepare-branch-sites schema source)]
+  (when-let [{:keys [site-specs retval-fn seed-conds]}
+             (compiled/prepare-branch-sites schema source)]
     (let [step-fns (mapv build-update-site-step site-specs)]
       (when (every? some? step-fns)
         (fn compiled-branch-update [key args-vec constraints old-choices]
@@ -263,13 +267,13 @@
                 (reduce
                  (fn [state step-fn]
                    (step-fn state mlx-args constraints old-choices))
-                 {:values {} :score (mx/scalar 0.0) :discard {} :key key}
+                 {:values (seed-conds args-vec)
+                  :score (mx/scalar 0.0) :discard {} :key key}
                  step-fns)]
             {:values (:values result)
              :score (:score result)
              :discard (:discard result)
-             :retval (when retval-fn
-                       (retval-fn (:values result) mlx-args))}))))))
+             :retval (retval-fn (:values result) mlx-args)}))))))
 
 (defn make-compiled-prefix-update
   "Build a compiled prefix update function.
@@ -350,7 +354,8 @@
   "Build a compiled assess for branch-rewritten models (L1-M4).
    Returns (fn [args-vec choices] -> {:score :retval}) or nil."
   [schema source]
-  (when-let [{:keys [site-specs retval-fn]} (compiled/prepare-branch-sites schema source)]
+  (when-let [{:keys [site-specs retval-fn seed-conds]}
+             (compiled/prepare-branch-sites schema source)]
     (let [step-fns (mapv build-assess-site-step site-specs)]
       (when (every? some? step-fns)
         (fn compiled-branch-assess [args-vec choices]
@@ -359,11 +364,10 @@
                 (reduce
                  (fn [state step-fn]
                    (step-fn state mlx-args choices))
-                 {:values {} :score (mx/scalar 0.0)}
+                 {:values (seed-conds args-vec) :score (mx/scalar 0.0)}
                  step-fns)]
             {:score (:score result)
-             :retval (when retval-fn
-                       (retval-fn (:values result) mlx-args))}))))))
+             :retval (retval-fn (:values result) mlx-args)}))))))
 
 (defn make-compiled-prefix-assess
   "Build a compiled prefix assess function.
@@ -463,7 +467,7 @@
              (not (:dynamic-addresses? schema)))
     (when-let [raw-sites (compiled/extract-rewritable-sites source)]
       (when (seq raw-sites)
-        (when-let [{:keys [site-specs retval-fn addrs]}
+        (when-let [{:keys [site-specs seed-conds]}
                    (compiled/compile-branch-rewritten-site-specs schema source raw-sites)]
           (let [step-fns (mapv build-project-site-step site-specs)]
             (when (every? some? step-fns)
@@ -473,7 +477,8 @@
                       (reduce
                        (fn [state step-fn]
                          (step-fn state mlx-args old-choices selection))
-                       {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0)}
+                       {:values (seed-conds args-vec)
+                        :score (mx/scalar 0.0) :weight (mx/scalar 0.0)}
                        step-fns)]
                   (:weight result))))))))))
 
@@ -533,33 +538,45 @@
   (let [{:keys [addr compiled-args dist-type]} site-spec
         nt (get compiled/noise-transforms-full dist-type)]
     (when nt
-      (let [log-prob-fn (:log-prob nt)]
-        (if (:noise-fn nt)
-          ;; Standard distribution with noise transform
-          (let [noise-fn (:noise-fn nt)
-                transform-fn (:transform nt)]
-            (fn [{:keys [values score weight key]} args-vec old-choices selection]
-              (let [eval-args (mapv #(% values args-vec) compiled-args)]
-                (if (sel/selected? selection addr)
-                  ;; Selected: resample via noise transform
-                  (let [[k1 k2] (rng/split key)
-                        noise (noise-fn k2)
-                        new-val (apply transform-fn noise eval-args)
-                        new-lp (apply log-prob-fn new-val eval-args)
-                        old-val (cm/get-value (cm/get-submap old-choices addr))
-                        old-lp (apply log-prob-fn old-val eval-args)]
-                    {:values (assoc values addr new-val)
-                     :score (mx/add score new-lp)
-                     :weight (mx/add weight (mx/subtract new-lp old-lp))
-                     :key k1})
-                  ;; Not selected: keep old value, no key split
-                  (let [val (cm/get-value (cm/get-submap old-choices addr))
-                        lp (apply log-prob-fn val eval-args)]
-                    {:values (assoc values addr val)
-                     :score (mx/add score lp)
-                     :weight weight
-                     :key key})))))
-          ;; Delta distribution: no noise, value = first arg
+      (let [log-prob-fn (:log-prob nt)
+            ;; Shared resample logic for both noise sources (genmlx-b210: the
+            ;; old code treated :args-noise-fn sites as Delta — a selected
+            ;; iid-gaussian was never resampled and contributed weight 0).
+            make-noise-step
+            (fn [draw-noise]
+              (let [transform-fn (:transform nt)]
+                (fn [{:keys [values score weight key]} args-vec old-choices selection]
+                  (let [eval-args (mapv #(% values args-vec) compiled-args)]
+                    (if (sel/selected? selection addr)
+                      ;; Selected: resample via noise transform
+                      (let [[k1 k2] (rng/split key)
+                            noise (draw-noise eval-args k2)
+                            new-val (apply transform-fn noise eval-args)
+                            new-lp (apply log-prob-fn new-val eval-args)
+                            old-val (cm/get-value (cm/get-submap old-choices addr))
+                            old-lp (apply log-prob-fn old-val eval-args)]
+                        {:values (assoc values addr new-val)
+                         :score (mx/add score new-lp)
+                         :weight (mx/add weight (mx/subtract new-lp old-lp))
+                         :key k1})
+                      ;; Not selected: keep old value, no key split
+                      (let [val (cm/get-value (cm/get-submap old-choices addr))
+                            lp (apply log-prob-fn val eval-args)]
+                        {:values (assoc values addr val)
+                         :score (mx/add score lp)
+                         :weight weight
+                         :key key}))))))]
+        (cond
+          (:noise-fn nt)
+          (let [noise-fn (:noise-fn nt)]
+            (make-noise-step (fn [_eval-args k] (noise-fn k))))
+
+          (:args-noise-fn nt)
+          (let [args-noise-fn (:args-noise-fn nt)]
+            (make-noise-step (fn [eval-args k] (args-noise-fn eval-args k))))
+
+          ;; Delta ONLY when the dist-type really is delta (genmlx-b210)
+          (= dist-type :delta)
           (fn [{:keys [values score weight key]} args-vec old-choices selection]
             (let [eval-args (mapv #(% values args-vec) compiled-args)]
               (if (sel/selected? selection addr)
@@ -577,7 +594,9 @@
                   {:values (assoc values addr val)
                    :score score
                    :weight weight
-                   :key key})))))))))
+                   :key key}))))
+
+          :else nil)))))
 
 (defn make-compiled-regenerate
   "Build a compiled regenerate function from a gen schema and source.
@@ -624,7 +643,7 @@
              (not (:dynamic-addresses? schema)))
     (when-let [raw-sites (compiled/extract-rewritable-sites source)]
       (when (seq raw-sites)
-        (when-let [{:keys [site-specs retval-fn addrs]}
+        (when-let [{:keys [site-specs retval-fn seed-conds]}
                    (compiled/compile-branch-rewritten-site-specs schema source raw-sites)]
           (let [step-fns (mapv build-regenerate-site-step site-specs)]
             (when (every? some? step-fns)
@@ -634,13 +653,13 @@
                       (reduce
                        (fn [state step-fn]
                          (step-fn state mlx-args old-choices selection))
-                       {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
+                       {:values (seed-conds args-vec)
+                        :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
                        step-fns)]
                   {:values (:values result)
                    :score (:score result)
                    :weight (:weight result)
-                   :retval (when retval-fn
-                             (retval-fn (:values result) mlx-args))})))))))))
+                   :retval (retval-fn (:values result) mlx-args)})))))))))
 
 (defn make-compiled-prefix-regenerate
   "Build a compiled prefix regenerate function.
@@ -718,13 +737,20 @@
   "Build a site step that reads noise from noise-row[noise-index]
    instead of generating from a PRNG key.
    Returns (fn [{:keys [values score]} args-vec noise-row] -> {:values :score})
-   or nil if the dist-type has no noise transform.
-   For delta sites, noise-index is ignored (no noise consumed)."
+   or nil if the dist-type cannot be fused.
+   For delta sites, noise-index is ignored (no noise consumed).
+
+   Only :noise-fn distributions and true :delta sites are fusable. A transform
+   entry with :args-noise-fn (iid-gaussian — noise shape depends on dist args)
+   must return nil: the previous fallback treated it as Delta, so fused
+   Map/Unfold/Scan kernels gave value=mu with ZERO score contribution,
+   silently (genmlx-b210)."
   [site-spec noise-index]
   (let [{:keys [addr compiled-args dist-type]} site-spec
         nt (get compiled/noise-transforms-full dist-type)]
     (when nt
-      (if (:noise-fn nt)
+      (cond
+        (:noise-fn nt)
         ;; Standard distribution: extract noise from row at noise-index
         (let [transform-fn (:transform nt)
               log-prob-fn (:log-prob nt)]
@@ -735,12 +761,16 @@
                   lp (apply log-prob-fn value eval-args)]
               {:values (assoc values addr value)
                :score (mx/add score lp)})))
+
+        (= dist-type :delta)
         ;; Delta: no noise needed
         (fn [{:keys [values score]} args-vec _noise-row]
           (let [eval-args (mapv #(% values args-vec) compiled-args)
                 value (first eval-args)]
             {:values (assoc values addr value)
-             :score score}))))))
+             :score score}))
+
+        :else nil))))
 
 (defn- assign-noise-indices
   "Assign sequential noise indices to site-specs that have noise-fns.
@@ -941,8 +971,11 @@
 
 (defn fusable-kernel?
   "Check if a kernel can be fused into a single Metal dispatch.
-   Returns true if the kernel has a static schema with noise transforms
-   for all non-delta trace sites."
+   Returns true if the kernel has a static schema where every trace site is
+   either a :noise-fn distribution or a true delta, with at least one
+   noise-driven site. Sites with :args-noise-fn (iid-gaussian) are NOT
+   fusable — they must decline here, mirroring build-fused-site-step
+   (genmlx-b210)."
   [gf]
   (let [schema (:schema gf)]
     (and schema
@@ -950,9 +983,12 @@
          (seq (:trace-sites schema))
          (empty? (:splice-sites schema))
          (empty? (:param-sites schema))
-         (let [nts (mapv #(get compiled/noise-transforms-full (:dist-type %))
-                         (filterv :static? (:trace-sites schema)))]
+         (let [sites (filterv :static? (:trace-sites schema))
+               nts (mapv #(get compiled/noise-transforms-full (:dist-type %)) sites)]
            (and (every? some? nts)
+                (every? (fn [[site nt]]
+                          (or (:noise-fn nt) (= :delta (:dist-type site))))
+                        (map vector sites nts))
                 (some :noise-fn nts))))))
 
 (defn make-fused-map-simulate
@@ -1127,7 +1163,16 @@
     (let [binding-env (compiled/build-binding-env source)
           static-sites (filterv :static? (:trace-sites schema))
           site-specs (compiled/build-fused-site-specs static-sites binding-env)]
-      (when (every? some? site-specs)
+      (when (and (every? some? site-specs)
+                 ;; Every site must be a :noise-fn distribution or a true
+                 ;; delta. The latent/observed split is only known at runtime,
+                 ;; and a latent :args-noise-fn site (iid-gaussian) would
+                 ;; silently degrade to value=first-arg (genmlx-b210) —
+                 ;; decline at build time instead.
+                 (every? (fn [ss]
+                           (let [nt (get compiled/noise-transforms-full (:dist-type ss))]
+                             (or (:noise-fn nt) (= :delta (:dist-type ss)))))
+                         site-specs))
         (let [dep-order (:dep-order schema)
               all-addrs (mapv :addr static-sites)
               addr-index (into {} (map-indexed (fn [i a] [a i]) all-addrs))
@@ -1170,7 +1215,9 @@
                             (let [eval-args (mapv #(% vm mlx-args) (:compiled-args site-spec))
                                   proposed (apply (:transform nt) noise-col eval-args)]
                               (assoc vm addr proposed))
-                            ;; Delta: value = first dist arg
+                            ;; Delta: value = first dist arg (only true deltas
+                            ;; reach here — the build-time gate above declines
+                            ;; every other no-noise-fn transform)
                             (let [eval-args (mapv #(% vm mlx-args) (:compiled-args site-spec))]
                               (assoc vm addr (first eval-args)))))
                         ;; Observed: bake in constant

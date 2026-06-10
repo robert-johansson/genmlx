@@ -156,15 +156,18 @@
    (fn [state addr dist]
      (let [{:keys [obs-fn noise-std mask]} (:params dist)
            belief (:ekf-belief state)
-           constraint (cm/get-submap (:constraints state) addr)
-           obs (cm/get-value constraint)
-           {:keys [belief ll]} (ekf-update belief obs obs-fn noise-std mask)
-           n (:ekf-n state)]
-       [obs (-> state
-                (assoc :ekf-belief belief)
-                (update :choices cm/set-value addr obs)
-                (update :ekf-ll
-                  #(mx/add (or % (mx/zeros [n])) ll)))]))})
+           constraint (cm/get-submap (:constraints state) addr)]
+       ;; Guards (genmlx-b470): unconstrained obs or missing belief → fall
+       ;; through to the base transition instead of updating against nil.
+       (when (and belief (cm/has-value? constraint))
+         (let [obs (cm/get-value constraint)
+               {:keys [belief ll]} (ekf-update belief obs obs-fn noise-std mask)
+               n (:ekf-n state)]
+           [obs (-> state
+                    (assoc :ekf-belief belief)
+                    (update :choices cm/set-value addr obs)
+                    (update :ekf-ll
+                      #(mx/add (or % (mx/zeros [n])) ll)))]))))})
 
 (defn make-ekf-transition
   "Handler middleware: wraps generate-transition for EKF.
