@@ -80,19 +80,33 @@
 ;; Return all leaf address paths from a choicemap.
 (def ^:private all-leaf-addrs cm/addresses)
 
+(def ^:private alternate-path-schema-keys
+  "Every schema key the dispatcher stack consults for a non-handler execution
+   path: L1-M2 full-compile keys, L1-M3 prefix keys, and the L3 analytical
+   keys. strip-compiled must remove ALL of them — leaving any behind lets a
+   'handler ground truth' law silently compare compiled-vs-compiled or
+   analytical-vs-compiled (genmlx-pkmx)."
+  [:compiled-simulate :compiled-generate :compiled-update :compiled-assess
+   :compiled-project :compiled-regenerate
+   :compiled-prefix :compiled-prefix-generate :compiled-prefix-update
+   :compiled-prefix-regenerate :compiled-prefix-assess :compiled-prefix-project
+   :auto-handlers :conjugate-pairs :has-conjugate? :analytical-plan
+   :auto-regenerate-transition])
+
 (defn strip-compiled
-  "Return a copy of model with all compiled execution paths removed from
-   its schema, forcing the handler (interpreter) path for all GFI ops.
+  "Return a copy of model with all alternate execution paths removed from its
+   schema — full-compile, prefix, and analytical — forcing the handler
+   (interpreter) path for all GFI ops. Preserves the gen-fn's metadata (the
+   PRNG ::key from with-key/auto-key lives there — genmlx-3lgy).
    Returns the model unchanged if it has no schema."
   [model]
   (let [schema (:schema model)]
     (if (nil? schema)
       model
-      (dyn/->DynamicGF (:body-fn model) (:source model)
-                        (dissoc schema
-                                :compiled-simulate :compiled-generate
-                                :compiled-update :compiled-assess
-                                :compiled-project :compiled-regenerate)))))
+      (with-meta
+        (dyn/->DynamicGF (:body-fn model) (:source model)
+                         (apply dissoc schema alternate-path-schema-keys))
+        (meta model)))))
 
 ;; ---------------------------------------------------------------------------
 ;; The algebraic laws
@@ -1604,11 +1618,7 @@
                                (trace :y (dist/gaussian x 1))
                                x)))
                    ;; Strip conjugacy -> force bootstrap (prior) proposal.
-                   stripped (assoc kernel :schema
-                                   (dissoc (:schema kernel)
-                                           :auto-handlers :conjugate-pairs
-                                           :has-conjugate? :analytical-plan
-                                           :auto-regenerate-transition))
+                   stripped (strip-compiled kernel)
                    ys [1.0 2.0 0.5]
                    obs-seq (mapv #(cm/choicemap :y (mx/scalar %)) ys)
                    ;; Kalman analytical log-evidence (per-step innovation LLs):
@@ -1649,11 +1659,7 @@
                            '([] (let [x (trace :x (dist/gaussian 0 2))]
                                   (trace :y (dist/gaussian x 1))
                                   x))))
-                   stripped (assoc model :schema
-                                  (dissoc (:schema model)
-                                          :auto-handlers :conjugate-pairs
-                                          :has-conjugate? :analytical-plan
-                                          :auto-regenerate-transition))
+                   stripped (strip-compiled model)
                    choices (cm/choicemap :x (mx/scalar 2.0) :y (mx/scalar 3.0))
                    {:keys [trace]} (p/generate stripped [] choices)
                    _ (mx/materialize! (:score trace))

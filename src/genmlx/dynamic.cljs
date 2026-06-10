@@ -529,6 +529,25 @@
    compiled-dispatcher
    handler-dispatcher])
 
+(defn- guard-marginal-trace!
+  "An analytically-scored trace (::score-type :marginal) carries a collapsed
+   score. Running a joint-scoring update/project/regenerate against it would
+   subtract a marginal old score from a joint new score — silently mixing
+   decompositions (ARCHITECTURE §3.3, genmlx-pkmx). Throw instead. Analytical
+   regenerate and custom dispatchers declaring :score-type :marginal pass."
+  [op spec opts]
+  (when (and (contains? #{:update :project :regenerate} op)
+             (= :joint (:score-type spec))
+             (= :marginal (::score-type (meta (:trace opts)))))
+    (throw (ex-info
+            (str (name op) " on an analytically-scored (:marginal) trace would "
+                 "mix score decompositions: the trace score is marginal "
+                 "(collapsed) but the resolved " (name (:label spec)) " path "
+                 "computes joint scores. Re-create the trace via a handler-path "
+                 "generate (gfi/strip-compiled), or use an op with an "
+                 "analytical path.")
+            {:op op :path (:label spec) :trace-score-type :marginal}))))
+
 (defn run-dispatched*
   "Core dispatch: walk the dispatcher stack and execute the first match.
    Public so genmlx.dev can reference it for start!/stop!."
@@ -536,6 +555,7 @@
   (let [spec (dispatch/resolve default-dispatcher-stack op (:schema gf)
                (assoc opts :gf gf))]
     (assert spec (str "No dispatcher resolved for op " op))
+    (guard-marginal-trace! op spec opts)
     ((:run spec) gf args key opts)))
 
 ;; Dispatch function atom. Defaults to run-dispatched*.
