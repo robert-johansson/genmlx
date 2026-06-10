@@ -39,6 +39,8 @@
     (symbol? form) #{form}
     (seq? form) (into #{} (mapcat find-symbols) form)
     (vector? form) (into #{} (mapcat find-symbols) form)
+    (map? form) (into #{} (mapcat find-symbols) (mapcat identity form))
+    (set? form) (into #{} (mapcat find-symbols) form)
     :else #{}))
 
 (defn- deps-of-syms
@@ -83,6 +85,12 @@
 
     (and (vector? form) (seq form))
     (some contains-gen-call? form)
+
+    (map? form)
+    (boolean (some contains-gen-call? (mapcat identity form)))
+
+    (set? form)
+    (boolean (some contains-gen-call? form))
 
     :else false))
 
@@ -130,7 +138,37 @@
     (and (vector? form) (seq form))
     (some contains-trace-call? form)
 
+    (map? form)
+    (boolean (some contains-trace-call? (mapcat identity form)))
+
+    (set? form)
+    (boolean (some contains-trace-call? form))
+
     :else false))
+
+(defn- find-all-calls
+  "Recursively find all calls matching pred in forms. Recurses into matched
+   forms as well — a match's arguments may contain further matches (e.g. a
+   trace call nested in another trace's dist-args)."
+  [forms pred]
+  (let [results (volatile! [])]
+    (letfn [(walk [form]
+              (when (pred form) (vswap! results conj form))
+              (cond
+                (seq? form) (run! walk form)
+                (vector? form) (run! walk form)
+                (map? form) (run! walk (mapcat identity form))
+                (set? form) (run! walk form)))]
+      (run! walk forms))
+    @results))
+
+(defn- trace-addrs-in
+  "Keyword addresses of all literal trace calls anywhere inside form."
+  [form]
+  (->> (find-all-calls [form] #(call-named? % "trace"))
+       (map second)
+       (filter keyword?)
+       set))
 
 (defn- gen-binding-sym?
   "True for an unqualified symbol that is one of the gen-macro runtime bindings
@@ -259,24 +297,24 @@
           ;; Process bindings sequentially, updating env
           [acc' env'] (reduce
                        (fn [[acc env] [sym val-form]]
-                         (let [acc' (walk-form acc env val-form)]
+                         (let [acc' (walk-form acc env val-form)
+                               ;; Deps flow from referenced bindings AND from
+                               ;; any trace call inside the value form — literal
+                               ;; (trace :x ...) or wrapped, e.g.
+                               ;; (mx/add (trace :x ...) 1).
+                               sym-deps (into (compute-deps env val-form)
+                                              (trace-addrs-in val-form))]
                            (if (symbol? sym)
-                              ;; Simple symbol binding — track deps in env
-                             (let [val-deps (compute-deps env val-form)
-                                    ;; If val-form is a trace call, include the trace addr
-                                   is-trace? (call-named? val-form "trace")
-                                   trace-addr (when (and is-trace?
-                                                         (keyword? (second val-form)))
-                                                (second val-form))
-                                   sym-deps (if trace-addr
-                                              (conj val-deps trace-addr)
-                                              val-deps)
-                                   env' (if (seq sym-deps)
-                                          (assoc env sym sym-deps)
-                                          env)]
-                               [acc' env'])
-                              ;; Destructuring binding — walk but don't track
-                             [acc' env])))
+                             [acc' (if (seq sym-deps)
+                                     (assoc env sym sym-deps)
+                                     env)]
+                             ;; Destructuring binding — conservatively give
+                             ;; every bound symbol the full deps of the value
+                             ;; form (over-approximation keeps dep edges).
+                             [acc' (if (seq sym-deps)
+                                     (reduce (fn [e s] (assoc e s sym-deps))
+                                             env (find-symbols sym))
+                                     env)])))
                        [acc env]
                        (or pairs []))]
       (walk-forms acc' env' body))))
@@ -407,18 +445,6 @@
 
       :else -1)))
 
-(defn- find-all-calls
-  "Recursively find all calls matching pred in forms."
-  [forms pred]
-  (let [results (volatile! [])]
-    (letfn [(walk [form]
-              (cond
-                (pred form) (vswap! results conj form)
-                (seq? form) (run! walk form)
-                (vector? form) (run! walk form)))]
-      (run! walk forms))
-    @results))
-
 (defn- contains-nested-loop?
   "Check if forms contain a nested loop construct."
   [forms]
@@ -430,6 +456,8 @@
                   (some check (rest form))))
             (seq? form) (some check form)
             (vector? form) (some check form)
+            (map? form) (some check (mapcat identity form))
+            (set? form) (some check form)
             :else false))
         forms))
 
@@ -446,6 +474,8 @@
                   (some check (rest form))))
               (seq? form) (some check form)
               (vector? form) (some check form)
+              (map? form) (some check (mapcat identity form))
+              (set? form) (some check form)
               :else false))
           forms)))
 
@@ -686,6 +716,14 @@
     (and (vector? form) (seq form))
     (walk-forms acc env form)
 
+    ;; Map literal → walk keys and values (traces can hide in either)
+    (and (map? form) (seq form))
+    (walk-forms acc env (mapcat identity form))
+
+    ;; Set literal → walk elements
+    (and (set? form) (seq form))
+    (walk-forms acc env (seq form))
+
     ;; Anything else (keyword, symbol, number, string, nil, empty colls)
     :else acc))
 
@@ -757,7 +795,12 @@
                  :return-form (last body)
                  :dep-order (topo-sort (:trace-sites result))
                  :opaque-gen-escape? opaque-escape?
+                 ;; CLAUDE.md definition: static = all keyword-literal
+                 ;; addresses, no branches, no loops, no splices. Splices
+                 ;; were previously compensated for only inside the
+                 ;; compiled.cljs builders (genmlx-q3x2).
                  :static? (and (not (:dynamic-addresses? result))
                                (not (:has-branches? result))
                                (not (:has-loops? result))
+                               (empty? (:splice-sites result))
                                (not opaque-escape?)))))))
