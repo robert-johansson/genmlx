@@ -232,11 +232,17 @@ do_one() {
     wait "$pid"; code=$?
     trap - TERM INT
     kill -KILL -"$pid" 2>/dev/null   # sweep any stragglers left alive in the group
-    # Parallel bunx launches race on the shared install link ("could not
-    # determine executable to run for package nbb", the EEXIST class). The
-    # race fires BEFORE any test code runs, so retrying once is safe and
-    # attribution-honest; a real test failure never prints this line.
-    if [ "$code" -ne 0 ] && [ "$attempt" -eq 1 ] &&        grep -q 'could not determine executable to run for package nbb' "$log"; then
+    # Parallel bun/bunx launches race on shared state (install link EEXIST ->
+    # "could not determine executable to run for package nbb"; bun.lock write
+    # contention -> instant SIGKILL). Every observed flavor dies BEFORE any
+    # test code runs, so retry once IFF the log shows the test never began
+    # executing (no test/error output at all) — a real test failure or load
+    # error always leaves output, so the retry cannot mask one.
+    # Test-output markers ONLY (not generic 'error' — the launcher failures
+    # themselves print 'error:'). A deterministic load error lacks these too
+    # and gets one harmless identical retry; it still reports as FAIL.
+    if [ "$code" -ne 0 ] && [ "$attempt" -eq 1 ] && \
+       ! grep -qE 'Testing |Ran [0-9]+ tests|[0-9]+ failures|PASS|FAIL' "$log"; then
       continue
     fi
     break
