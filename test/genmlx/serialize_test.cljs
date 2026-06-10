@@ -9,6 +9,7 @@
             [genmlx.protocols :as p]
             [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
+            [genmlx.combinators :as comb]
             [genmlx.serialize :as ser])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -159,5 +160,89 @@
         (is (h/close? x-orig x-recon 1e-6) "reconstruct from file x")
         (is (h/close? y-orig y-recon 1e-6) "reconstruct from file y"))
       (.unlinkSync fs path))))
+
+;; ---------------------------------------------------------------------------
+;; Combinator traces, full dtype table, batched scores (genmlx-000i)
+;; ---------------------------------------------------------------------------
+
+(deftest map-combinator-round-trip
+  (testing "Map traces save and load with integer element addresses intact"
+    ;; Pre-fix: (name 0) threw on save, so no Map/Unfold/Scan trace could
+    ;; be serialized at all; the load side keywordized everything to :0.
+    (let [kernel (dyn/auto-key (gen [x] (trace :y (dist/gaussian x 1))))
+          mapped (comb/map-combinator kernel)
+          tr1 (p/simulate mapped [[1.0 2.0 3.0]])
+          json (ser/save-choices tr1)
+          choices (ser/load-choices json)]
+      (doseq [i (range 3)]
+        (let [orig (mx/item (cm/get-choice (:choices tr1) [i :y]))
+              loaded (mx/item (cm/get-choice choices [i :y]))]
+          (is (h/close? orig loaded 1e-6)
+              (str "element " i " value survives under INTEGER address"))))
+      ;; Fully-constrained generate reproduces the original score exactly
+      (let [{tr2 :trace} (p/generate mapped [[1.0 2.0 3.0]] choices)]
+        (is (h/close? (h/realize (:score tr1)) (h/realize (:score tr2)) 1e-5)
+            "reconstructed Map trace scores identically")))))
+
+(deftest unfold-combinator-round-trip
+  (testing "Unfold traces round-trip through save/load + generate"
+    (let [step (dyn/auto-key (gen [t state]
+                 (trace :x (dist/gaussian state 0.5))))
+          unfold (comb/unfold-combinator step)
+          tr1 (p/simulate unfold [4 (mx/scalar 0.0)])
+          json (ser/save-choices tr1)
+          choices (ser/load-choices json)
+          {tr2 :trace} (p/generate unfold [4 (mx/scalar 0.0)] choices)]
+      (is (h/close? (h/realize (:score tr1)) (h/realize (:score tr2)) 1e-5)
+          "reconstructed Unfold trace scores identically"))))
+
+(deftest namespaced-keyword-address-round-trip
+  (testing "namespaced keyword addresses keep their namespace"
+    ;; Pre-fix the codec used (name k), which drops the namespace.
+    (let [choices (cm/set-choice cm/EMPTY [:obs/y] (mx/scalar 2.5))
+          loaded (ser/load-choices (ser/save-choices {:choices choices}))]
+      (is (h/close? 2.5 (mx/item (cm/get-choice loaded [:obs/y])) 1e-6)
+          ":obs/y survives with namespace"))))
+
+(deftest uint32-categorical-round-trip
+  (testing "uint32 leaves (categorical/token samples) serialize"
+    ;; Pre-fix the dtype table only knew float32/int32 — every trace
+    ;; containing a categorical sample failed with Unknown dtype code: 4.
+    (let [model (dyn/auto-key
+                 (gen [] (trace :k (dist/categorical
+                                    (mx/array [0.2 0.3 0.5])))))
+          tr1 (p/simulate model [])
+          loaded (ser/load-choices (ser/save-choices tr1))
+          orig (mx/item (cm/get-choice (:choices tr1) [:k]))
+          got (mx/item (cm/get-choice loaded [:k]))]
+      (is (= orig got) "categorical index value survives")
+      (is (= (mx/dtype (cm/get-value (cm/get-submap loaded :k)))
+             (mx/dtype (cm/get-value (cm/get-submap (:choices tr1) :k))))
+          "uint32 dtype survives"))))
+
+(deftest batched-score-save-trace
+  (testing "save-trace handles [N]-shaped batched scores"
+    ;; Pre-fix mx/realize on an [N] score threw (item needs size 1).
+    (let [trace (tr/make-trace {:gen-fn nil :args []
+                                :choices (cm/choicemap :x (mx/zeros [5]))
+                                :retval nil
+                                :score (mx/array [1.0 2.0 3.0 4.0 5.0])})
+          json (ser/save-trace trace)
+          data (js->clj (js/JSON.parse json) :keywordize-keys true)]
+      (is (string? json) "save-trace returns JSON, does not throw")
+      (is (= "array" (get-in data [:score :type])) "score saved as array data")
+      (is (= [1 2 3 4 5] (mapv int (get-in data [:score :value])))
+          "score values intact"))))
+
+(deftest legacy-unprefixed-keys-load-as-keywords
+  (testing "v1 files written by the old codec still load"
+    (let [json (js/JSON.stringify
+                (clj->js {:version 1
+                          :format "genmlx-choices-v1"
+                          :choices {"x" {:type "scalar" :value 1.5
+                                         :dtype "float32"}}}))
+          loaded (ser/load-choices json)]
+      (is (h/close? 1.5 (mx/item (cm/get-choice loaded [:x])) 1e-6)
+          "unprefixed legacy key decodes as keyword :x"))))
 
 (cljs.test/run-tests)
