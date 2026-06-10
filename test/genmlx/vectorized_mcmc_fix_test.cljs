@@ -24,9 +24,13 @@
       slope)))
 
 (def xs [1.0 2.0 3.0])
-(def obs (cm/choicemap [:y0 (mx/scalar 2.1)]
-                       [:y1 (mx/scalar 4.0)]
-                       [:y2 (mx/scalar 5.9)]))
+;; flat kv form — the old bracketed-pairs call was silently mangled by
+;; (partition 2): key [:y0 v], value [:y1 v], [:y2 v] dropped — so the MH ran
+;; UNCONSTRAINED and this test passed vacuously. The choicemap constructor
+;; now throws on odd args, which exposed it (genmlx-ybw9).
+(def obs (cm/choicemap :y0 (mx/scalar 2.1)
+                       :y1 (mx/scalar 4.0)
+                       :y2 (mx/scalar 5.9)))
 (def n-chains 4)
 (def n-samples 5)
 

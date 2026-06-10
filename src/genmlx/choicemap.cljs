@@ -41,10 +41,13 @@
   "Create a choice map from keyword-value pairs.
    Values are wrapped as leaves; maps become nested nodes.
    (choicemap :x 1.0 :y 2.0)
-   (choicemap :params {:slope 2.0 :intercept 1.0})"
+   (choicemap :params {:slope 2.0 :intercept 1.0})
+   For a single plain map use from-map. NOTE: (choicemap {m}) used to return
+   EMPTY silently — 11 test sites passed vacuous EMPTY constraints that way
+   (genmlx-ybw9); the odd-args throw keeps that mistake loud."
   [& kvs]
   (when (odd? (count kvs))
-    (throw (ex-info "choicemap expects an even number of key-value arguments"
+    (throw (ex-info "choicemap expects an even number of key-value arguments (for a single map, use from-map)"
                     {:arg-count (count kvs) :trailing (last kvs)})))
   (->Node
     (into {}
@@ -100,13 +103,15 @@
 (defn set-value
   "Fast-path: set a Value at a single keyword address in a Node.
    Used by handler transitions where cm is always a Node and value is always raw.
-   Throws when cm is not a Node — silently rebuilding from a Value leaf would
-   discard the leaf."
+   nil cm is treated as empty (callers build choices via (update m :choices ...)
+   where the key may be absent). Throws on a Value leaf or any other non-Node —
+   silently rebuilding from a leaf would discard it."
   [cm addr value]
-  (if (instance? Node cm)
-    (->Node (assoc (:m cm) addr (->Value value)))
-    (throw (ex-info "set-value expects a Node choicemap"
-                    {:cm-type (type cm) :addr addr}))))
+  (cond
+    (instance? Node cm) (->Node (assoc (:m cm) addr (->Value value)))
+    (nil? cm)           (->Node {addr (->Value value)})
+    :else (throw (ex-info "set-value expects a Node choicemap (or nil)"
+                          {:cm-type (type cm) :addr addr}))))
 
 (defn set-submap
   "Fast-path: set a sub-choicemap at a single address in a Node.
