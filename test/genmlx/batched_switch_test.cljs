@@ -57,15 +57,31 @@
 
 (deftest batched-switch-vgenerate
   (testing "batched switch with constraints (vgenerate)"
+    ;; cm/set-choice, not cm/set-value: set-value takes a SINGLE address,
+    ;; so the path vector landed as a literal map key and the constraint
+    ;; was silently ignored — the test asserted only shapes (genmlx-wurv).
     (let [key (rng/fresh-key)
           index (mx/array (vec (concat (repeat 50 0) (repeat 50 1))) mx/int32)
-          obs (cm/set-value cm/EMPTY [:choice :x] (mx/scalar 5.0))
+          obs (cm/set-choice cm/EMPTY [:choice :x] (mx/scalar 5.0))
           vtrace (dyn/vgenerate model-switch [index] obs 100 key)]
       (is (some? vtrace) "vgenerate returns vtrace")
       (mx/eval! (:score vtrace))
       (mx/eval! (:weight vtrace))
       (is (= [100] (mx/shape (:score vtrace))) "score is [100]-shaped")
-      (is (= [100] (mx/shape (:weight vtrace))) "weight is [100]-shaped"))))
+      (is (= [100] (mx/shape (:weight vtrace))) "weight is [100]-shaped")
+      ;; The constraint must actually apply...
+      (let [x-vals (h/realize-vec (cm/get-value (cm/get-submap
+                                                 (cm/get-submap (:choices vtrace) :choice)
+                                                 :x)))]
+        (is (every? #(h/close? 5.0 % 1e-6) x-vals)
+            "constrained :x is 5.0 for every particle"))
+      ;; ...and the weight must equal the selected branch's closed-form
+      ;; log-density at the constrained value: N(5; 0,1) for branch 0
+      ;; particles, N(5; 10,1) for branch 1 — equal by symmetry.
+      (let [w-vals (h/realize-vec (:weight vtrace))
+            expected (h/gaussian-lp 5.0 0.0 1.0)]
+        (is (every? #(h/close? expected % 1e-4) w-vals)
+            "weight = selected branch lp of the constrained value")))))
 
 (def model-mixture
   (gen []
