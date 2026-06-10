@@ -79,11 +79,35 @@
                 (vec (mx/->clj b))
                 (vec (mx/->clj (belief/tensor-update-belief gw-observe gw-worlds b signpost nil))))
   ;; impossible obs (:C, which no world produces at the signpost) -> keep b (mirrors
-  ;; biased_planners.cljs:491 (pos? z) guard); the host pomdp path would NaN here.
+  ;; biased_planners.cljs (pos? z) guard; the host pomdp filter guards the same
+  ;; way since genmlx-xpbm).
   (assert-true "impossible obs -> belief unchanged (z=0 defensive)"
                (vecs-close? (vec (mx/->clj b))
                             (vec (mx/->clj (belief/tensor-update-belief gw-observe gw-worlds b signpost :C)))
                             1e-6)))
+
+(println "\n== Section 3b: genmlx-xpbm regressions (host guard + safe-where grad) ==")
+;; HOST pomdp filter: impossible obs keeps belief unchanged, never NaN
+;; (pre-fix: all log-weights -Inf -> normalize-logs exp(-Inf - -Inf) = NaN)
+(let [ub-host (:update-belief gw-agent)
+      out     (ub-host gw-prior signpost :C)]
+  (assert-true "host filter: impossible obs -> belief unchanged (no NaN)"
+               (maps-close? gw-prior out 1e-12))
+  (assert-true "host filter: no NaN in output"
+               (every? #(js/isFinite %) (vals out))))
+;; host == tensor on the impossible-obs case (the equivalence claim is now true)
+(let [ub-host (:update-belief gw-agent)
+      b       (belief/belief->vec gw-worlds gw-prior)
+      host    (ub-host gw-prior signpost :C)
+      tens    (belief/vec->belief gw-worlds (belief/tensor-update-belief gw-observe gw-worlds b signpost :C))]
+  (assert-true "host == tensor on impossible obs" (maps-close? host tens 1e-6)))
+;; safe-where: gradient through a z=0 filter-step is finite (pre-fix: raw/0 in
+;; the untaken where branch poisoned the gradient with NaN)
+(let [L0   (mx/array #js [0.0 0.0] mx/float32)            ; impossible obs likelihood
+      loss (fn [bv] (mx/sum (belief/filter-step bv L0)))
+      g    ((mx/grad loss) (mx/array #js [0.5 0.5] mx/float32))]
+  (assert-true "filter-step gradient finite at z=0 (safe-where)"
+               (every? #(js/isFinite %) (vec (mx/->clj g)))))
 
 (println "\n== Section 4: belief<->vec round-trip ==")
 (doseq [[label m] [["uniform" gw-prior] ["skewed" {:A 0.8 :B 0.2}]]]

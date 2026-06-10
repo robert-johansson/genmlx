@@ -79,19 +79,27 @@
                       (mx/sum (mx/multiply (mx/reshape bvec [W 1]) (mx/idx Qstack s 1)) [0])))
         ;; one Bayes filtering step: b'(w) ∝ b(w) · P(obs | w, loc).
         ;; obs = nil (uninformative location) => belief unchanged (flat-then-snap).
+        ;; Observation-model contract (unified across pomdp/belief/biased filters,
+        ;; genmlx-xpbm): obs = nil is unconditionally uninformative (identity), and
+        ;; an obs impossible under the current belief keeps b unchanged (defensive)
+        ;; instead of NaN-ing through normalize-logs.
         update-belief (fn [belief loc obs]
                         (if (nil? obs)
                           belief
-                          (inv/normalize-logs
-                            (into {} (map (fn [[w b]]
-                                            [w (+ (Math/log b)
-                                                  (if (= (observe w loc) obs) 0.0 ##-Inf))])
-                                          belief)))))
-        ;; act = softmax-action over the belief-mixed Q row, as a real GFI choice
+                          (let [logm (into {} (map (fn [[w b]]
+                                                     [w (+ (Math/log b)
+                                                           (if (= (observe w loc) obs) 0.0 ##-Inf))])
+                                                   belief))]
+                            (if (every? #(= % ##-Inf) (vals logm))
+                              belief
+                              (inv/normalize-logs logm)))))
+        ;; act = softmax-action over the belief-mixed Q row, as a real GFI choice.
+        ;; policy is hoisted and parameterized on q: constructing a gen fn per act
+        ;; call re-ran schema extraction every rollout step (genmlx-xpbm).
+        policy (gen [q] (trace :action (h/softmax-action alpha q)))
         act (fn [belief s]
-              (let [q      (belief-Q belief s)
-                    policy (gen [] (trace :action (h/softmax-action alpha q)))]
-                (int (mx/item (:retval (p/simulate (dyn/auto-key policy) []))))))]
+              (let [q (belief-Q belief s)]
+                (int (mx/item (:retval (p/simulate (dyn/auto-key policy) [q]))))))]
     {:worlds (vec worlds) :world-agents world-agents :prior prior :observe observe
      :belief-Q belief-Q :update-belief update-belief :act act
      ;; tensor belief kernel (bean genmlx-kpuo): same map-in/map-out contract as
@@ -188,7 +196,10 @@
    uncertain and collapses as the Beta sharpens — NOT the optimal Bayes-adaptive
    (information-valuing) policy."
   [{:keys [strategy alpha] :or {strategy :thompson alpha 4.0}}]
-  (let [arm-values (fn [{:keys [arms]}] (mapv (fn [[a b]] (/ a (+ a b))) arms))]
+  (let [arm-values (fn [{:keys [arms]}] (mapv (fn [[a b]] (/ a (+ a b))) arms))
+        ;; hoisted + parameterized on eu: a per-act (gen ...) re-ran schema
+        ;; extraction every pull (genmlx-xpbm)
+        softmax-pol (gen [eu] (trace :action (h/softmax-action alpha eu)))]
     {:arm-values    arm-values
      :update-belief update-arm
      :act (fn [{:keys [arms]} key]
@@ -206,9 +217,8 @@
                     theta (dist/beta-sample-vec av bv key)]                    ; [K] posterior draw
                 (int (mx/item (mx/argmax theta))))
               :softmax
-              (let [eu  (mx/array (clj->js (arm-values {:arms arms})))
-                    pol (gen [] (trace :action (h/softmax-action alpha eu)))]
-                (int (mx/item (:retval (p/simulate (dyn/with-key pol key) [])))))))
+              (let [eu (mx/array (clj->js (arm-values {:arms arms})))]
+                (int (mx/item (:retval (p/simulate (dyn/with-key softmax-pol key) [eu])))))))
      :params {:strategy strategy :alpha alpha}}))
 
 (defn simulate-bandit
