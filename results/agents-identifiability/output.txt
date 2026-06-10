@@ -1,0 +1,61 @@
+======================================================================
+  Agents axis: identifiability-ridge contrast (diagnostic vs non-diagnostic)
+======================================================================
+
+------------------------------------------------------------
+  Panel A — trajectory contrast (temptation MDP)
+------------------------------------------------------------
+
+  alpha = Inf   per-obs likelihood ratio r = pi_n(a1|s0)/pi_s(a1|s0) = 0.5000
+  n   P(:soph|diag)  H(diag)   P(:soph|nondiag)  H(nondiag)
+  0   0.5000         0.6931    0.5000            0.6931
+  1   0.6667         0.6365    0.5000            0.6931
+  2   0.8000         0.5004    0.5000            0.6931
+  3   0.8889         0.3488    0.5000            0.6931
+  4   0.9412         0.2237    0.5000            0.6931
+  5   0.9697         0.1358    0.5000            0.6931
+  6   0.9846         0.0795    0.5000            0.6931
+  diagnostic curve vs closed form 1/(1+r^n): max |diff| = 0.00e+0   non-diagnostic vs prior: max |diff| = 0.00e+0
+
+  alpha = 2   per-obs likelihood ratio r = pi_n(a1|s0)/pi_s(a1|s0) = 0.9334
+  n   P(:soph|diag)  H(diag)   P(:soph|nondiag)  H(nondiag)
+  0   0.5000         0.6931    0.5000            0.6931
+  1   0.5172         0.6926    0.5000            0.6931
+  2   0.5344         0.6908    0.5000            0.6931
+  3   0.5515         0.6878    0.5000            0.6931
+  4   0.5685         0.6837    0.5000            0.6931
+  5   0.5853         0.6785    0.5000            0.6931
+  6   0.6019         0.6722    0.5000            0.6931
+  diagnostic curve vs closed form 1/(1+r^n): max |diff| = 1.11e-16   non-diagnostic vs prior: max |diff| = 0.00e+0
+
+------------------------------------------------------------
+  Panel B — dimension ridge (restaurant IRL)
+------------------------------------------------------------
+
+  [baseline-alpha2-1step] alpha=2, obs=single leftward step (chapter baseline: low rationality washes out the evidence)
+    P(favourite = donut): prior 0.1852 -> posterior 0.2409   (veg 0.1454, noodle 0.1286)
+    donut   marginal [0.2448 0.3412 0.4140]  H = 1.0765  (contraction 0.0221)
+    veg     marginal [0.3529 0.3487 0.2983]  H = 1.0958  (contraction 0.0028)
+    noodle  marginal [0.3720 0.3444 0.2837]  H = 1.0924  (contraction 0.0062)
+
+  [alpha100-1step] alpha=100, obs=single leftward step (near-rational agent: the same step IS diagnostic)
+    P(favourite = donut): prior 0.1852 -> posterior 0.3571   (veg 0.0001, noodle 0.0001)
+    donut   marginal [0.0715 0.2857 0.6427]  H = 0.8307  (contraction 0.2679)
+    veg     marginal [0.4285 0.3571 0.2144]  H = 1.0610  (contraction 0.0376)
+    noodle  marginal [0.4286 0.3571 0.2143]  H = 1.0609  (contraction 0.0377)
+
+  [alpha100-4step] alpha=100, obs=4-step Donut-South trajectory (evidence accumulates)
+    P(favourite = donut): prior 0.1852 -> posterior 0.3572   (veg 0.0000, noodle 0.0000)
+    donut   marginal [0.0714 0.2857 0.6429]  H = 0.8304  (contraction 0.2682)
+    veg     marginal [0.4286 0.3571 0.2143]  H = 1.0610  (contraction 0.0377)
+    noodle  marginal [0.4286 0.3571 0.2142]  H = 1.0609  (contraction 0.0377)
+
+======================================================================
+  SUMMARY
+======================================================================
+  A (alpha=Inf): after 6 diagnostic obs, entropy 0.6931 -> 0.0795 nats; after 6 non-diagnostic obs, 0.6931 (= prior, exactly)
+  B (alpha=100, 1 step): donut marginal contracts by 0.2679 nats; veg/noodle ridge: 0.0376 / 0.0377 (stays ~flat)
+  Total: 0.9s
+  Wrote: /Users/robert/code/genmlx/results/agents-identifiability/data.json
+
+Agents identifiability experiment complete.

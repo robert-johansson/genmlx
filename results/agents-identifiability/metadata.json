@@ -1,0 +1,18 @@
+{
+  "experiment": "agents-identifiability",
+  "git_sha": "0de48a0",
+  "timestamp": "2026-06-10T09:58:55.501Z",
+  "hardware": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "memory": "32GB"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "source_hash": "0205c00c3651e186c6b288b947487acaa2cc14298d88ffd12f0aab1f870342a3",
+  "duration_ms": 1587,
+  "script": "bench/agents_identifiability.cljs"
+}

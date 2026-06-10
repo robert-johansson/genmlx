@@ -1,0 +1,582 @@
+{
+  "experiment": "agents-identifiability",
+  "description": "Identifiability-ridge contrast: posterior concentrates on diagnostic observations, stays at the prior on non-diagnostic ones; flat ridge directions stay flat",
+  "citation": "Evans, Stuhlmueller & Goodman (2016), 'Learning the Preferences of Ignorant, Inconsistent Agents', AAAI",
+  "timestamp": "2026-06-10T09:58:55.467Z",
+  "panel_a_trajectory_contrast": {
+    "description": "Exact bias posterior vs number of observations, diagnostic (start state) vs non-diagnostic (safe1 state) trajectories, at alpha=Inf (closed form 1/(1+2^-n)) and alpha=2 (same shape, softer)",
+    "model": {
+      "source": "examples/agentmodels/biased_inverse.cljs",
+      "mdp": "temptation (5 states, 2 actions)",
+      "diagnostic_site": "state 0 (start): naive policy ties [0.5 0.5], sophisticated prefers safe — finite likelihood ratio per observation",
+      "non_diagnostic_site": "state 2 (safe1): both actions lead to veg, EU rows identical across actions and biases — policy [0.5 0.5] under BOTH hypotheses at any alpha"
+    },
+    "prior": {
+      "naive": 0.5,
+      "sophisticated": 0.5,
+      "entropy_nats": 0.6931471805599453
+    },
+    "n_obs_grid": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "series": [
+      {
+        "alpha": "Inf",
+        "per_obs_likelihood_ratio": 0.49999999904767284,
+        "diagnostic": [
+          {
+            "n_obs": 0,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 1,
+            "posterior": {
+              "naive": 0.33333333291007683,
+              "sophisticated": 0.6666666670899232
+            },
+            "entropy_nats": 0.6365141680014338,
+            "contraction_nats": 0.0566330125585115
+          },
+          {
+            "n_obs": 2,
+            "posterior": {
+              "naive": 0.1999999993905106,
+              "sophisticated": 0.8000000006094894
+            },
+            "entropy_nats": 0.5004024226932562,
+            "contraction_nats": 0.1927447578666891
+          },
+          {
+            "n_obs": 3,
+            "posterior": {
+              "naive": 0.1111111105467691,
+              "sophisticated": 0.8888888894532309
+            },
+            "entropy_nats": 0.3488320946695157,
+            "contraction_nats": 0.3443150858904296
+          },
+          {
+            "n_obs": 4,
+            "posterior": {
+              "naive": 0.05882352898997275,
+              "sophisticated": 0.9411764710100272
+            },
+            "entropy_nats": 0.22371807489637816,
+            "contraction_nats": 0.4694291056635671
+          },
+          {
+            "n_obs": 5,
+            "posterior": {
+              "naive": 0.030303030023191284,
+              "sophisticated": 0.9696969699768087
+            },
+            "entropy_nats": 0.1357939577817458,
+            "contraction_nats": 0.5573532227781994
+          },
+          {
+            "n_obs": 6,
+            "posterior": {
+              "naive": 0.015384615211505978,
+              "sophisticated": 0.9846153847884941
+            },
+            "entropy_nats": 0.0794870024830953,
+            "contraction_nats": 0.61366017807685
+          }
+        ],
+        "non_diagnostic": [
+          {
+            "n_obs": 0,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 1,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 2,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 3,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 4,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 5,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 6,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          }
+        ],
+        "cross_checks": {
+          "diagnostic_closed_form": {
+            "form": "P(:soph | n safe) = 1/(1 + r^n), r from the independent policy idiom",
+            "max_abs_diff": 0
+          },
+          "non_diagnostic_equals_prior": {
+            "max_abs_diff": 0
+          }
+        }
+      },
+      {
+        "alpha": 2,
+        "per_obs_likelihood_ratio": 0.9334110145451453,
+        "diagnostic": [
+          {
+            "n_obs": 0,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 1,
+            "posterior": {
+              "naive": 0.48277940258074914,
+              "sophisticated": 0.5172205974192509
+            },
+            "entropy_nats": 0.6925539652982633,
+            "contraction_nats": 0.0005932152616819897
+          },
+          {
+            "n_obs": 2,
+            "posterior": {
+              "naive": 0.46559961076223594,
+              "sophisticated": 0.5344003892377641
+            },
+            "entropy_nats": 0.690778536250438,
+            "contraction_nats": 0.0023686443095073395
+          },
+          {
+            "n_obs": 3,
+            "posterior": {
+              "naive": 0.448501044290804,
+              "sophisticated": 0.551498955709196
+            },
+            "entropy_nats": 0.6878334771777361,
+            "contraction_nats": 0.005313703382209156
+          },
+          {
+            "n_obs": 4,
+            "posterior": {
+              "naive": 0.4315233589315094,
+              "sophisticated": 0.5684766410684906
+            },
+            "entropy_nats": 0.6837395413772662,
+            "contraction_nats": 0.009407639182679062
+          },
+          {
+            "n_obs": 5,
+            "posterior": {
+              "naive": 0.4147050835317592,
+              "sophisticated": 0.5852949164682407
+            },
+            "entropy_nats": 0.6785253286629371,
+            "contraction_nats": 0.014621851897008153
+          },
+          {
+            "n_obs": 6,
+            "posterior": {
+              "naive": 0.39808327922332626,
+              "sophisticated": 0.6019167207766738
+            },
+            "entropy_nats": 0.6722268457258422,
+            "contraction_nats": 0.02092033483410305
+          }
+        ],
+        "non_diagnostic": [
+          {
+            "n_obs": 0,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 1,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 2,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 3,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 4,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 5,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          },
+          {
+            "n_obs": 6,
+            "posterior": {
+              "naive": 0.5,
+              "sophisticated": 0.5
+            },
+            "entropy_nats": 0.6931471805599453,
+            "contraction_nats": 0
+          }
+        ],
+        "cross_checks": {
+          "diagnostic_closed_form": {
+            "form": "P(:soph | n safe) = 1/(1 + r^n), r from the independent policy idiom",
+            "max_abs_diff": 1.1102230246251565e-16
+          },
+          "non_diagnostic_equals_prior": {
+            "max_abs_diff": 0
+          }
+        }
+      }
+    ]
+  },
+  "panel_b_dimension_ridge": {
+    "description": "Exact utility-table posterior over the 3x3x3 grid: the donut dimension contracts with diagnostic evidence, the veg/noodle ridge stays ~flat in every regime",
+    "model": {
+      "source": "examples/agentmodels/irl.cljs",
+      "grid": "restaurant-temptation (agentmodels Ch 4 / 5e geometry)",
+      "spec": "utility-only: donut/veg/noodle in {0,1,2}, timeCost=-0.04 fixed"
+    },
+    "prior": {
+      "marginal_each_value": [
+        0.3333333333333333,
+        0.3333333333333333,
+        0.3333333333333333
+      ],
+      "entropy_nats": 1.0986122886681098
+    },
+    "regimes": [
+      {
+        "label": "baseline-alpha2-1step",
+        "alpha": 2,
+        "observations": "single leftward step (chapter baseline: low rationality washes out the evidence)",
+        "marginals": {
+          "donut": {
+            "values": [
+              0,
+              1,
+              2
+            ],
+            "probs": [
+              0.2448462480434421,
+              0.34115891018265365,
+              0.4139948417739045
+            ],
+            "entropy_nats": 1.0765166606564178,
+            "contraction_nats": 0.02209562801169196
+          },
+          "veg": {
+            "values": [
+              0,
+              1,
+              2
+            ],
+            "probs": [
+              0.35292975392044107,
+              0.3487401650881388,
+              0.2983300809914202
+            ],
+            "entropy_nats": 1.0957907547904704,
+            "contraction_nats": 0.002821533877639393
+          },
+          "noodle": {
+            "values": [
+              0,
+              1,
+              2
+            ],
+            "probs": [
+              0.3719745397180979,
+              0.3443525450195733,
+              0.2836729152623289
+            ],
+            "entropy_nats": 1.092376282367782,
+            "contraction_nats": 0.006236006300327723
+          }
+        },
+        "veg_noodle_joint": {
+          "rows": "veg value 0..2",
+          "cols": "noodle value 0..2",
+          "probs": [
+            [
+              0.13669910474010175,
+              0.12132982283255608,
+              0.09490082634778321
+            ],
+            [
+              0.1330581545565933,
+              0.1206917727886959,
+              0.09499023774284962
+            ],
+            [
+              0.10221728042140282,
+              0.1023309493983213,
+              0.09378185117169607
+            ]
+          ]
+        },
+        "p_favorite": {
+          "prior": {
+            "donut": 0.18518518518518517,
+            "veg": 0.18518518518518517,
+            "noodle": 0.18518518518518517
+          },
+          "posterior": {
+            "donut": 0.2409252799406923,
+            "veg": 0.14540258869610456,
+            "noodle": 0.12862207597867317
+          }
+        }
+      },
+      {
+        "label": "alpha100-1step",
+        "alpha": 100,
+        "observations": "single leftward step (near-rational agent: the same step IS diagnostic)",
+        "marginals": {
+          "donut": {
+            "values": [
+              0,
+              1,
+              2
+            ],
+            "probs": [
+              0.07154429586788774,
+              0.2857280704326758,
+              0.6427276336994363
+            ],
+            "entropy_nats": 0.8307370563900096,
+            "contraction_nats": 0.2678752322781002
+          },
+          "veg": {
+            "values": [
+              0,
+              1,
+              2
+            ],
+            "probs": [
+              0.42850190734548554,
+              0.35713637314080016,
+              0.21436171951371422
+            ],
+            "entropy_nats": 1.0609957222514008,
+            "contraction_nats": 0.03761656641670896
+          },
+          "noodle": {
+            "values": [
+              0,
+              1,
+              2
+            ],
+            "probs": [
+              0.428588534742533,
+              0.3571369184500554,
+              0.21427454680741143
+            ],
+            "entropy_nats": 1.060935416651167,
+            "contraction_nats": 0.0376768720169427
+          }
+        },
+        "veg_noodle_joint": {
+          "rows": "veg value 0..2",
+          "cols": "noodle value 0..2",
+          "probs": [
+            [
+              0.21424281687964306,
+              0.1428342413279978,
+              0.07142484913784473
+            ],
+            [
+              0.14287728237189393,
+              0.14283424163106145,
+              0.07142484913784473
+            ],
+            [
+              0.07146843549099612,
+              0.07146843549099613,
+              0.07142484853172197
+            ]
+          ]
+        },
+        "p_favorite": {
+          "prior": {
+            "donut": 0.18518518518518517,
+            "veg": 0.18518518518518517,
+            "noodle": 0.18518518518518517
+          },
+          "posterior": {
+            "donut": 0.35714354648146274,
+            "veg": 0.00009931616871594543,
+            "noodle": 0.00009930775834636696
+          }
+        }
+      },
+      {
+        "label": "alpha100-4step",
+        "alpha": 100,
+        "observations": "4-step Donut-South trajectory (evidence accumulates)",
+        "marginals": {
+          "donut": {
+            "values": [
+              0,
+              1,
+              2
+            ],
+            "probs": [
+              0.07140437283238449,
+              0.28570236516672903,
+              0.6428932620008864
+            ],
+            "entropy_nats": 0.8304088705909963,
+            "contraction_nats": 0.26820341807711345
+          },
+          "veg": {
+            "values": [
+              0,
+              1,
+              2
+            ],
+            "probs": [
+              0.4285533094160444,
+              0.35714893658366,
+              0.21429775400029547
+            ],
+            "entropy_nats": 1.0609536937250845,
+            "contraction_nats": 0.03765859494302526
+          },
+          "noodle": {
+            "values": [
+              0,
+              1,
+              2
+            ],
+            "probs": [
+              0.42863995375561703,
+              0.3571494813513756,
+              0.21421056489300727
+            ],
+            "entropy_nats": 1.0608933402187435,
+            "contraction_nats": 0.037718948449366296
+          }
+        },
+        "veg_noodle_joint": {
+          "rows": "veg value 0..2",
+          "cols": "noodle value 0..2",
+          "probs": [
+            [
+              0.21429860520167754,
+              0.14285118258336452,
+              0.07140352163100243
+            ],
+            [
+              0.14289423236929305,
+              0.14285118258336452,
+              0.07140352163100243
+            ],
+            [
+              0.07144711618464653,
+              0.07144711618464653,
+              0.07140352163100243
+            ]
+          ]
+        },
+        "p_favorite": {
+          "prior": {
+            "donut": 0.18518518518518517,
+            "veg": 0.18518518518518517,
+            "noodle": 0.18518518518518517
+          },
+          "posterior": {
+            "donut": 0.3572355809232326,
+            "veg": 1.5831810236563675e-39,
+            "noodle": 4.495808129504779e-43
+          }
+        }
+      }
+    ]
+  },
+  "duration_ms": 940.6260419999999
+}
