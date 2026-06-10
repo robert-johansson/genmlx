@@ -81,12 +81,15 @@
            result (.send session prompt
                           #js {:images #js [image-bytes]
                                :config config})]
+    ;; Keep the WHOLE answer (lowercased, alphanumerics + single spaces):
+    ;; taking only the first word made multi-word labels ("fire truck")
+    ;; unmatchable in label->index (genmlx-xwxh). label->index normalizes
+    ;; cell-type labels the same way.
     (-> (or (.-text result) "")
-        str/trim
-        (str/split #"\s+")
-        first
         str/lower-case
-        (str/replace #"[^a-z]" ""))))
+        (str/replace #"[^a-z0-9 ]" "")
+        (str/replace #"\s+" " ")
+        str/trim)))
 
 (defn classify-grid
   "Classify all cells of an N×M grid. Returns a promise of
@@ -129,20 +132,47 @@
   [r c]
   (keyword (str "r" r "-c" c)))
 
+(defn- normalize-label
+  "Shared normalization for VLM answers and cell-type labels: lowercase,
+   strip everything but alphanumerics and spaces, collapse whitespace. Both
+   sides of the match go through this, so \"Fire Truck!\" == \"fire truck\"."
+  [s]
+  (-> (or s "")
+      str/lower-case
+      (str/replace #"[^a-z0-9 ]" "")
+      (str/replace #"\s+" " ")
+      str/trim))
+
+(defn- word-contained?
+  "Whole-word containment in either direction between two normalized strings:
+   \"a tree\" contains the label \"tree\"; the terse answer \"fire\" is
+   contained in the label \"fire truck\"."
+  [a b]
+  (let [pa (str " " a " ") pb (str " " b " ")]
+    (or (str/includes? pa pb) (str/includes? pb pa))))
+
 (defn label->index
-  "Look up a label in `cell-types` (case-insensitive). Accepts string or map
-   options. Returns nil if not found."
+  "Look up a label in `cell-types` (case/punctuation/whitespace insensitive —
+   see normalize-label). Accepts string or map options. Exact normalized
+   match first; otherwise whole-word containment in either direction
+   (answer \"a fire truck\" matches label \"fire truck\"; terse answer
+   \"fire\" matches \"fire truck\"), first cell-type winning ties.
+   Returns nil if not found."
   [cell-types label]
-  (let [target (str/lower-case (or label ""))]
-    (first (keep-indexed
-             (fn [i v]
-               (when (= (str/lower-case (option->label v)) target) i))
-             cell-types))))
+  (let [target (normalize-label label)
+        norm   (mapv #(normalize-label (option->label %)) cell-types)]
+    (when (seq target)
+      (or (first (keep-indexed (fn [i v] (when (= v target) i)) norm))
+          (first (keep-indexed
+                   (fn [i v]
+                     (when (and (seq v) (word-contained? target v)) i))
+                   norm))))))
 
 (defn labels->constraints
-  "Build a choicemap-friendly map from a 2D label grid plus `cell-types`,
-   suitable for passing to `p/generate`. Cells whose label is unrecognized
-   (label->index returns nil) are simply omitted."
+  "Build a PLAIN {addr -> mx int32 scalar} map from a 2D label grid plus
+   `cell-types`. NOT itself a choicemap: wrap with cm/from-map (as the
+   examples do) before passing to p/generate. Cells whose label is
+   unrecognized (label->index returns nil) are simply omitted."
   [labels cell-types]
   (into {}
         (for [r (range (count labels))

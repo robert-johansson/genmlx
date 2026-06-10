@@ -447,13 +447,23 @@
    Uses .fromFloat32 directly (not mx/array, which doesn't handle
    JS TypedArrays — it would create a scalar instead of a vector)."
   [constraint dfa-state logits]
+  (when (= dfa-state :dead)
+    (throw (ex-info "apply-mask: DFA is in the :dead state — every token would be
+masked to -inf and the categorical would sample NaN. This happens when
+generation continues past a grammar-final token (e.g. EOS text advanced
+through the DFA) or the prior text left the grammar's language."
+                    {:dfa-state dfa-state})))
   (let [{:keys [dfa eos-id]} constraint
         src-mask (get-mask constraint dfa-state)
         logits-n (first (mx/shape logits))
-        ;; Copy mask to avoid mutating precomputed cache
+        ;; Copy mask to avoid mutating precomputed cache. Truncate when the
+        ;; tokenizer vocab exceeds the model's logits dim (.set with a longer
+        ;; source throws RangeError); ids beyond logits-n cannot be sampled.
         mask-arr (let [buf (js/Float32Array. logits-n)]
                    (.fill buf neg-inf)
-                   (.set buf src-mask)
+                   (.set buf (if (> (.-length src-mask) logits-n)
+                               (.subarray src-mask 0 logits-n)
+                               src-mask))
                    buf)]
     ;; EOS handling: valid only in accept states (bounds-check for model/vocab mismatch)
     (when (< eos-id logits-n)
@@ -490,19 +500,41 @@
               masked-dist (dist/categorical masked-logits)
               [value state'] (base-transition state addr masked-dist)
               tok-id (mx/item value)
-              tok-str (nth token-index tok-id "")
-              new-dfa-state (dfa-advance-string dfa dfa-state tok-str)]
+              ;; EOS terminates generation; advancing the DFA through the EOS
+              ;; LITERAL text would reach :dead and NaN any further site
+              ;; (genmlx-xwxh). Keep the (accepting) state instead.
+              new-dfa-state (if (= tok-id (:eos-id constraint))
+                              dfa-state
+                              (dfa-advance-string dfa dfa-state
+                                                  (nth token-index tok-id "")))]
           [value (assoc state' :grammar-state new-dfa-state)])
         (base-transition state addr dist)))))
+
+(def ^:private standard-transitions
+  "Per-op standard handler transitions, mirrored from the dispatcher table.
+   constrain wraps EACH op's own transition: a single generate-flavored
+   transition serving every op silently ran generate semantics under
+   update/regenerate (old-choices/selection ignored, wrong weights for
+   token-MCMC; genmlx-xwxh)."
+  {:simulate h/simulate-transition, :generate h/generate-transition
+   :update h/update-transition,     :regenerate h/regenerate-transition
+   :assess h/assess-transition,     :project h/project-transition
+   :propose h/simulate-transition})
 
 (defn constrain
   "Convenience: apply grammar constraint to a generative function.
 
    Returns a new GF where all categorical distributions are masked
-   by the grammar. Works with any GF that uses dist/categorical —
-   not limited to LLMs.
+   by the grammar — under EVERY GFI op, each running its own standard
+   transition wrapped with the grammar middleware. Works with any GF
+   that uses dist/categorical — not limited to LLMs.
 
    Equivalent to:
-     (dispatch/with-handler gf (wrap-grammar h/generate-transition constraint))"
+     (dispatch/with-handler gf
+       {:simulate (wrap-grammar h/simulate-transition constraint)
+        :generate (wrap-grammar h/generate-transition constraint)
+        ...})"
   [gf constraint]
-  (dispatch/with-handler gf (wrap-grammar h/generate-transition constraint)))
+  (dispatch/with-handler gf
+    (into {} (map (fn [[op t]] [op (wrap-grammar t constraint)]))
+          standard-transitions)))

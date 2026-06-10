@@ -195,9 +195,13 @@
 
 (defn commit-token-id
   "Select the token ID to commit at a leaf node. A leaf's token-ids set
-   contains exactly the tokens whose byte sequence ends here."
+   contains exactly the tokens whose byte sequence ends here. Duplicate-text
+   tokens (same bytes, different ids) are resolved to the SMALLEST id: the
+   committed id conditions the KV cache, so an arbitrary (first set) pick made
+   logits nondeterministic for identical byte choices, breaking
+   choices-as-sufficient-statistic (genmlx-xwxh)."
   [node]
-  (first (:token-ids node)))
+  (apply min (:token-ids node)))
 
 (defn with-byte-cache
   "Run thunk under the model's KV-cache lifecycle: initialize the cache,

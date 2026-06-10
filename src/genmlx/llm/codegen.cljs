@@ -296,11 +296,18 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
             :text text}))))))
 
 (defn generate-cljs-n
-  "Generate n independent ClojureScript candidates.
-   Returns a vector sorted by :valid? descending."
+  "Generate n independent ClojureScript candidates SEQUENTIALLY (one model
+   session in flight at a time — pr/all on n generate-cljs calls violated the
+   one-in-flight contract and interleaved KV-cache use on the shared model;
+   genmlx-xwxh). Returns a vector sorted by :valid? descending."
   ([model-map prompt n] (generate-cljs-n model-map prompt n {}))
   ([model-map prompt n opts]
-   (pr/let [results (pr/all (repeatedly n #(generate-cljs model-map prompt opts)))]
+   (pr/let [results (reduce (fn [acc-p _]
+                              (pr/let [acc acc-p
+                                       r (generate-cljs model-map prompt opts)]
+                                (conj acc r)))
+                            (pr/resolved [])
+                            (range n))]
      (vec (sort-by (fn [r] (if (:valid? r) 0 1)) results)))))
 
 ;; ============================================================
@@ -505,6 +512,18 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
 (defn generate-and-score
   "Generate code via chat API, then score it through the GFI.
    Returns the model's log-probability (weight) alongside the code.
+
+   WEIGHT APPROXIMATIONS (genmlx-xwxh) — :weight is the GF log-prob of a
+   RE-ENCODING of the generated text, not exactly of the sampled tokens:
+   1. Retokenization: the text is re-encoded with the tokenizer, which need
+      not reproduce the token ids the chat API actually sampled (BPE merges
+      are not unique over strings). The score is exact for the re-encoded
+      sequence, approximate for the generation event.
+   2. Template mismatch: the chat API and format-chat may differ in template
+      details (system tokens, role markers), shifting the conditioning prefix
+      the GF scores under.
+   Weights are comparable ACROSS candidates scored the same way (the MSA/
+   ranking use case); do not read them as exact evidence of the generation.
 
    model-map: {:model :tokenizer :type} from llm/load-model.
    gf:        a token-level GF from llm-core/make-llm-gf on the same model.
