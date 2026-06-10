@@ -221,7 +221,10 @@
 
    {:name :update-density-ratio
     :from "[T] §2.3.1 UPDATE weight = log(p(tau';x')/p(tau;x))"
-    :theorem "update(t, sigma).weight = new_score - old_score"
+    :theorem "update(t, sigma).weight = new_score - old_score for updates
+              that introduce no fresh addresses (fully constrained or fixed
+              structure). See :update-fresh-cancellation for the general
+              form when the internal proposal samples new addresses."
     :tags #{:update :core}
     :check (fn [{:keys [model args]}]
              (let [t1 (p/simulate model args)
@@ -231,6 +234,39 @@
                    new-score (ev (:score trace))
                    w (ev weight)]
                (approx= w (- new-score old-score) 0.1)))}
+
+   {:name :update-fresh-cancellation
+    :from "[T] §2.3.1 UPDATE internal proposal q; Gen.jl/GenJAX update spec"
+    :theorem "update(t, sigma).weight = (new_score - old_score)
+              - project(t', F), where F = the addresses of t' that are in
+              neither t nor sigma (fresh-sampled by the internal proposal).
+              Fresh choices are drawn from the prior and cancel out of the
+              weight; for fixed-structure updates F = {} and this reduces
+              to :update-density-ratio. Checked with a partial constraint
+              (only the first address) so retained sites with changed
+              parents and fresh sites are both exercised when present."
+    :tags #{:update :core}
+    :check (fn [{:keys [model args]}]
+             (let [t1 (p/simulate model args)
+                   t2 (p/simulate model args)
+                   t2-paths (all-leaf-addrs (:choices t2))]
+               (if (empty? t2-paths)
+                 true
+                 (let [sigma-path (first t2-paths)
+                       sigma-val (cm/get-choice (:choices t2) sigma-path)
+                       sigma (cm/set-choice cm/EMPTY sigma-path sigma-val)
+                       {:keys [trace weight]} (p/update model t1 sigma)
+                       old-paths (set (all-leaf-addrs (:choices t1)))
+                       fresh (remove #(or (old-paths %) (= % sigma-path))
+                                     (all-leaf-addrs (:choices trace)))
+                       fresh-lp (reduce
+                                 (fn [acc path]
+                                   (+ acc (ev (p/project model trace
+                                                         (path->selection path)))))
+                                 0.0 fresh)
+                       expected (- (- (ev (:score trace)) (ev (:score t1)))
+                                   fresh-lp)]
+                   (approx= (ev weight) expected 0.05)))))}
 
    {:name :update-round-trip
     :from "[T] Proposition 2.3.1"

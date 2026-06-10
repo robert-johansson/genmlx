@@ -253,7 +253,16 @@
             choices (assemble-choices results (comp :choices :trace))
             retvals (mapv (comp :retval :trace) results)
             score (sum-field results (comp :score :trace))
-            weight (mx/subtract score (:score trace))
+            ;; Thesis update weights are additive across elements, but each
+            ;; element weight was computed against the constructed old score
+            ;; (recorded element score, or 0 without metadata). Re-base
+            ;; against the true total old score so both cases stay exact:
+            ;; W = Σ w_i + Σ constructed_old_i - old_total.
+            constructed-old (if old-element-scores
+                              (reduce mx/add ZERO old-element-scores)
+                              ZERO)
+            weight (mx/subtract (mx/add (sum-field results :weight) constructed-old)
+                                (:score trace))
             discard (assemble-choices
                      (filter :discard results)
                      :discard)
@@ -554,9 +563,16 @@
                             (nth (:retval trace) (dec first-changed))
                             init-state)
               init-key (when cupd (rng/fresh-key))]
-          ;; Execute steps first-changed..n-1
+          ;; Execute steps first-changed..n-1. `nf` accumulates the non-fresh
+          ;; score: prefix steps are retained verbatim (their non-fresh score
+          ;; is the recorded prefix score); compiled steps never sample fresh
+          ;; (full new score counts); fallback steps recover it from the
+          ;; child's thesis weight, nonfresh_t = w_t + constructed_old_t.
+          ;; Final thesis weight = nf - old_total, exact with or without
+          ;; step-score metadata (the constructed old scores cancel).
           (loop [t first-changed state start-state key init-key
                  new-choices prefix-choices score prefix-score
+                 nf prefix-score
                  discard cm/EMPTY
                  states prefix-states step-scores prefix-step-scores]
             (if (>= t n)
@@ -565,7 +581,7 @@
                                         :choices new-choices :retval states :score score})
                         (cond-> {::step-scores step-scores}
                           cupd (assoc ::compiled-path true)))
-               :weight (mx/subtract score (:score trace)) :discard discard}
+               :weight (mx/subtract nf (:score trace)) :discard discard}
               (if cupd
                 ;; WP-8: compiled update path
                 (let [[k1 k2] (rng/split key)
@@ -579,6 +595,7 @@
                   (recur (inc t) new-state k2
                          (cm/set-choice new-choices [t] step-choices)
                          (mx/add score (:score result))
+                         (mx/add nf (:score result))
                          (if (seq (:discard result))
                            (cm/set-choice discard [t] step-discard)
                            discard)
@@ -587,10 +604,11 @@
                 ;; Fallback: handler path
                 (let [old-sub-choices (cm/get-submap choices t)
                       kernel-args (into [t state] extra)
+                      constructed-old (if old-step-scores (nth old-step-scores t) ZERO)
                       old-trace (tr/make-trace
                                  {:gen-fn kern :args kernel-args
                                   :choices old-sub-choices
-                                  :retval nil :score (if old-step-scores (nth old-step-scores t) ZERO)})
+                                  :retval nil :score constructed-old})
                       result (p/update kern old-trace (cm/get-submap constraints t))
                       new-trace (:trace result)
                       new-state (:retval new-trace)]
@@ -598,6 +616,7 @@
                          new-state nil
                          (cm/set-choice new-choices [t] (:choices new-trace))
                          (mx/add score (:score new-trace))
+                         (mx/add nf (mx/add (:weight result) constructed-old))
                          (if (:discard result)
                            (cm/set-choice discard [t] (:discard result))
                            discard)
@@ -858,7 +877,10 @@
                                         :score (:score new-branch-trace)})
                         {::switch-idx new-idx})
                :weight (:weight result) :discard (:discard result)})))
-        ;; Different branch: generate new branch from scratch
+        ;; Different branch: generate new branch from scratch.
+        ;; Thesis weight: the generate weight counts only constrained sites
+        ;; (fresh ones cancel against the internal proposal); the removed old
+        ;; branch is charged via its recorded score.
         (let [new-branch (nth (:branches this) new-idx)
               gen-result (p/generate new-branch (vec branch-args) constraints)
               new-branch-trace (:trace gen-result)
@@ -869,7 +891,7 @@
                                     :retval (:retval new-branch-trace)
                                     :score new-score})
                     {::switch-idx new-idx})
-           :weight (mx/subtract new-score (:score trace))
+           :weight (mx/subtract (:weight gen-result) (:score trace))
            :discard (:choices trace)}))))
 
   p/IRegenerate
@@ -1489,9 +1511,12 @@
                             (nth old-step-carries (dec first-changed))
                             init-carry)
               init-key (when cupd (rng/fresh-key))]
-          ;; Execute steps first-changed..n-1
+          ;; Execute steps first-changed..n-1. `nf` accumulates the non-fresh
+          ;; score (see Unfold update for the convention); final thesis
+          ;; weight = nf - old_total.
           (loop [t first-changed carry start-carry key init-key
                  new-choices prefix-choices score prefix-score
+                 nf prefix-score
                  discard cm/EMPTY
                  outputs prefix-outputs
                  step-scores prefix-step-scores step-carries prefix-step-carries]
@@ -1503,7 +1528,7 @@
                                         :score score})
                         (cond-> {::step-scores step-scores ::step-carries step-carries}
                           cupd (assoc ::compiled-path true)))
-               :weight (mx/subtract score (:score trace)) :discard discard}
+               :weight (mx/subtract nf (:score trace)) :discard discard}
               (if cupd
                 ;; WP-8: compiled update path
                 (let [[k1 k2] (rng/split key)
@@ -1516,6 +1541,7 @@
                   (recur (inc t) new-carry k2
                          (cm/set-choice new-choices [t] step-choices)
                          (mx/add score (:score result))
+                         (mx/add nf (:score result))
                          (if (seq (:discard result))
                            (cm/set-choice discard [t] step-discard)
                            discard)
@@ -1524,10 +1550,11 @@
                          (conj step-carries new-carry)))
                 ;; Fallback: handler path
                 (let [old-sub-choices (cm/get-submap choices t)
+                      constructed-old (if old-step-scores (nth old-step-scores t) ZERO)
                       old-trace (tr/make-trace
                                  {:gen-fn kern :args [carry (nth inputs t)]
                                   :choices old-sub-choices
-                                  :retval nil :score (if old-step-scores (nth old-step-scores t) ZERO)})
+                                  :retval nil :score constructed-old})
                       result (p/update kern old-trace (cm/get-submap constraints t))
                       new-trace (:trace result)
                       [new-carry output] (:retval new-trace)]
@@ -1535,6 +1562,7 @@
                          new-carry nil
                          (cm/set-choice new-choices [t] (:choices new-trace))
                          (mx/add score (:score new-trace))
+                         (mx/add nf (mx/add (:weight result) constructed-old))
                          (if (:discard result)
                            (cm/set-choice discard [t] (:discard result))
                            discard)

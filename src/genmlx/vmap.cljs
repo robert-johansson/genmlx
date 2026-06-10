@@ -282,7 +282,16 @@
           choices (stack-choices (mapv (comp :choices :trace) results))
           retvals (stack-retvals (mapv (comp :retval :trace) results))
           score (mx-sum-by (comp :score :trace) results)
-          weight (mx/subtract score (:score trace))
+          ;; Thesis update weights are additive across elements, but each
+          ;; element weight was computed against the constructed old score
+          ;; (recorded element score, or 0 without metadata). Re-base against
+          ;; the true total old score so both cases stay exact:
+          ;; W = Σ w_i + Σ constructed_old_i - old_total.
+          constructed-old (if old-element-scores
+                            (reduce mx/add (mx/scalar 0.0) old-element-scores)
+                            (mx/scalar 0.0))
+          weight (mx/subtract (mx/add (mx-sum-by :weight results) constructed-old)
+                              (:score trace))
           discard (let [discards (mapv :discard results)]
                     (if (every? #(= % cm/EMPTY) discards)
                       cm/EMPTY

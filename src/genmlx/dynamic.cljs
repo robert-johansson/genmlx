@@ -162,8 +162,11 @@
                   :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt (:args trace))))
         new-trace (make-result-trace gf (:args trace) result)]
+    ;; Thesis update weight: non-fresh score (handler :weight) minus the
+    ;; recorded old score. Freshly sampled new addresses are drawn from the
+    ;; internal proposal and cancel — score-delta would wrongly include them.
     (make-update-result new-trace
-      (mx/subtract (:score result) (:score trace))
+      (mx/subtract (:weight result) (:score trace))
       (:discard result) constraints (:choices result) result)))
 
 (defn- run-regen [transition gf _args key {:keys [trace selection]}]
@@ -279,16 +282,19 @@
   (let [pfx (:compiled-prefix-update (:schema gf))
         result (pfx key (vec (:args trace)) constraints (:choices trace))
         replay (cops/make-replay-update-transition (:values result))
+        ;; Prefix sites never sample fresh (values come from constraints or
+        ;; old choices), so the prefix score seeds the non-fresh :weight
+        ;; accumulator as well as :score.
         handler-result (rt/run-handler replay
                          {:choices cm/EMPTY :score (:score result)
-                          :weight SCORE-ZERO :key key :constraints constraints
+                          :weight (:score result) :key key :constraints constraints
                           :old-choices (:choices trace) :discard (cm/from-flat-map (:discard result))
                           :old-nested-splice-scores (::nested-splice-scores (meta trace))
                           :executor execute-sub :param-store (param-store gf)}
                          (fn [rt] (run-body gf rt (:args trace))))
         new-trace (make-result-trace gf (:args trace) handler-result)]
     (make-update-result new-trace
-      (mx/subtract (:score handler-result) (:score trace))
+      (mx/subtract (:weight handler-result) (:score trace))
       (:discard handler-result) constraints (:choices handler-result) handler-result)))
 
 (defn- run-regen-prefix [gf _args key {:keys [trace selection]}]
@@ -645,15 +651,26 @@
 
                          ;; Update mode: has old-choices (possibly with new constraints)
                          (and old-choices (not= old-choices cm/EMPTY))
-                         (let [old-trace (-> (tr/make-trace {:gen-fn gf :args args
+                         (let [old-sub-score (or old-splice-score SCORE-ZERO)
+                               old-trace (-> (tr/make-trace {:gen-fn gf :args args
                                                              :choices old-choices
-                                                             :retval nil :score (or old-splice-score SCORE-ZERO)})
+                                                             :retval nil :score old-sub-score})
                                              (attach-old-splice-meta old-sub-splice-scores
                                                                      old-sub-nested-splice-scores))
                                {:keys [trace weight discard]} (p/update gf old-trace
                                                                         (or constraints cm/EMPTY))]
+                           ;; The child returns its thesis update weight
+                           ;; w = nonfresh_child - old_child, but the parent's
+                           ;; update accumulator holds non-fresh scores (the
+                           ;; final weight subtracts the parent's recorded old
+                           ;; score, which already includes the child's old
+                           ;; score). Convert back: nonfresh_child = w + old.
+                           ;; The constructed old score cancels, so a missing
+                           ;; old-splice-score stays exact.
                            [trace {:choices (:choices trace) :retval (:retval trace)
-                                   :score (:score trace) :weight weight :discard discard}])
+                                   :score (:score trace)
+                                   :weight (mx/add weight old-sub-score)
+                                   :discard discard}])
 
                          ;; Generate with constraints
                          (and constraints (not= constraints cm/EMPTY))
@@ -886,11 +903,14 @@
                                 :batch-size n :batched? true
                                 :executor execute-sub
                                 :param-store (param-store gf)}
-                               (fn [rt] (run-body gf rt (:args vtrace))))]
+                               (fn [rt] (run-body gf rt (:args vtrace))))
+        ;; Thesis update weight: non-fresh score minus old [N]-shaped score —
+        ;; the same convention as the scalar run-update path.
+        weight (mx/subtract (:weight result) (:score vtrace))]
     {:vtrace (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
-                                    (:score result) (:weight result)
+                                    (:score result) weight
                                     n (:retval result))
-     :weight (:weight result)
+     :weight weight
      :discard (:discard result)}))
 
 (defn vregenerate

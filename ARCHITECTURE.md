@@ -566,7 +566,7 @@ src/genmlx/
   method_selection.cljs, fit.cljs
 
   ;; Layer 10: Verification
-  gfi.cljs                     ;; 53 algebraic laws from the Cusumano-Towner thesis
+  gfi.cljs                     ;; 68 algebraic laws from the Cusumano-Towner thesis
   verify.cljs                  ;; static validator (validate-gen-fn)
 
   ;; Support
