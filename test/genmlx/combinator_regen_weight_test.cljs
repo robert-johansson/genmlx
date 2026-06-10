@@ -21,6 +21,7 @@
             [genmlx.combinators :as comb]
             [genmlx.diff :as diff]
             [genmlx.vectorized :as vz]
+            [genmlx.vmap :as vmap]
             [genmlx.mlx.random :as rng])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -219,5 +220,25 @@
         rv (mx/->clj (:retval merged))]
     (is (every? true? (mapv #(< (js/Math.abs (- %1 %2)) 1e-6) xs rv))
         "retval merged with the same mask as choices")))
+
+;; ── vmap fast path param-store (genmlx-v740 item 5) ──────────────────────
+;; The batched fast path must see the kernel's trained params; pre-fix it
+;; ran the body with param DEFAULTS.
+
+(def param-kernel
+  (gen []
+       (let [mu (param :mu 0.0)]
+         (trace :x (dist/gaussian mu 0.01)))))
+
+(deftest vmap-fast-path-sees-param-store
+  (let [store {:params {:mu (mx/scalar 50.0)} :version 0}
+        vmapped (vmap/vmap-gf
+                 (vary-meta param-kernel assoc
+                            :genmlx.dynamic/param-store store)
+                 :axis-size 4)
+        tr (p/simulate (dyn/with-key vmapped (rng/fresh-key 51)) [])
+        xs (mx/->clj (cm/get-value (cm/get-submap (:choices tr) :x)))]
+    (is (every? #(> % 40.0) xs)
+        (str "fast-path samples centered on the TRAINED mu=50, got " xs))))
 
 (cljs.test/run-tests)
