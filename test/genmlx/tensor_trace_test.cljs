@@ -136,7 +136,11 @@
       (is (= {:slope 0 :intercept 1} (:addr-index t)) "addr-index")
       (is (instance? tt/TensorChoiceMap (:choices t)) "choices is TensorChoiceMap")
       (is (h/close? 3.5 (mx/item (cm/get-value (cm/get-submap (:choices t) :slope))) 1e-6)
-          "choices :slope"))))
+          "choices :slope")
+      (is (tr/trace? t)
+          "TensorTrace passes protocol trace? (genmlx-ybw9; schemas/trace? delegates here)")
+      (is (cm/choicemap? (:choices t))
+          "TensorChoiceMap passes protocol choicemap? (genmlx-ybw9; schemas/choicemap? delegates here)"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 6. trace->tensor-trace and tensor-trace->trace

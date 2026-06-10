@@ -4,13 +4,15 @@
    enabling N particles to be processed in a single model execution."
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.choicemap :as cm]))
+            [genmlx.choicemap :as cm]
+            [genmlx.trace :as tr]))
 
 ;; ---------------------------------------------------------------------------
 ;; VectorizedTrace record
 ;; ---------------------------------------------------------------------------
 
-(defrecord VectorizedTrace [gen-fn args choices score weight n-particles retval])
+(defrecord VectorizedTrace [gen-fn args choices score weight n-particles retval]
+  tr/ITrace)
 
 ;; ---------------------------------------------------------------------------
 ;; Systematic resampling (returns indices as MLX int32 array)

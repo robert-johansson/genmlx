@@ -38,7 +38,8 @@
 ;; so keyword access works identically. Extra fields :values and :addr-index
 ;; provide direct tensor access.
 
-(defrecord TensorTrace [gen-fn args choices values addr-index score retval])
+(defrecord TensorTrace [gen-fn args choices values addr-index score retval]
+  tr/ITrace)
 
 (defn make-tensor-trace
   "Create a TensorTrace. Builds TensorChoiceMap from values + addr-index."
