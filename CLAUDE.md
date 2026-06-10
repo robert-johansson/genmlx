@@ -229,7 +229,7 @@ direct import of dynamic.cljs).
 6. **Compose, don't duplicate.** Compiled paths compose on existing handlers and
    infrastructure — no parallel implementations. The handler is ground truth.
 
-7. **53 algebraic laws.** The GFI algebraic theory (`gfi.cljs`) encodes 53 laws
+7. **68 algebraic laws.** The GFI algebraic theory (`gfi.cljs`) encodes 68 laws
    from the thesis covering all operations, compositionality, gradients, and
    compiled path equivalence. `strip-compiled` forces handler path for testing.
 

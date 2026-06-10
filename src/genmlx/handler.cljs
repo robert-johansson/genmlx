@@ -88,7 +88,15 @@
                       {:addr addr})))))
 
 (defn update-transition
-  "Pure: use new constraint, keep old, or sample fresh."
+  "Pure: use new constraint, keep old, or sample fresh.
+
+   :weight accumulates the NON-FRESH score: the log-prob of every
+   constrained or retained site under the new parameters. Freshly
+   sampled sites (new addresses) contribute only to :score. The caller
+   computes the thesis update weight as non-fresh-score minus the
+   recorded old trace score: fresh choices are drawn from the internal
+   proposal and cancel; removed and overwritten old choices are charged
+   via the old score."
   [state addr dist]
   (let [constraint (cm/get-submap (:constraints state) addr)
         old-choice (cm/get-submap (:old-choices state) addr)]
@@ -97,12 +105,11 @@
       (cm/has-value? constraint)
       (let [new-val (cm/get-value constraint)
             new-lp (dc/dist-log-prob dist new-val)
-            old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
-            old-lp (if old-val (dc/dist-log-prob dist old-val) ZERO)]
+            old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))]
         [new-val (-> state
                      (update :choices cm/set-value addr new-val)
                      (update :score mx/add new-lp)
-                     (update :weight mx/add (mx/subtract new-lp old-lp))
+                     (update :weight mx/add new-lp)
                      (cond->
                       old-val (update :discard cm/set-value addr old-val)))])
 
@@ -112,7 +119,8 @@
             lp (dc/dist-log-prob dist val)]
         [val (-> state
                  (update :choices cm/set-value addr val)
-                 (update :score mx/add lp))])
+                 (update :score mx/add lp)
+                 (update :weight mx/add lp))])
 
       ;; New address: sample fresh
       :else (simulate-transition state addr dist))))
@@ -222,23 +230,25 @@
       (batched-simulate-transition state addr dist))))
 
 (defn batched-update-transition
-  "Pure: batched update with [N]-shaped old values and scalar/[N]-shaped new constraints."
+  "Pure: batched update with [N]-shaped old values and scalar/[N]-shaped new
+   constraints. Same :weight convention as update-transition: accumulate the
+   non-fresh score (constrained + retained site log-probs); the caller
+   subtracts the old [N]-shaped score to obtain the thesis update weight."
   [state addr dist]
   (let [n (:batch-size state)
         constraint (cm/get-submap (:constraints state) addr)
         old-choice (cm/get-submap (:old-choices state) addr)]
     (cond
-      ;; New constraint provided — score difference against old values
+      ;; New constraint provided
       (cm/has-value? constraint)
       (let [new-val (cm/get-value constraint)
             new-lp (dc/dist-log-prob dist new-val)
-            old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
-            old-lp (if old-val (dc/dist-log-prob dist old-val) ZERO)]
+            old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))]
         (check-batched-lp! addr n new-lp)
         [new-val (-> state
                      (update :choices cm/set-value addr new-val)
                      (update :score mx/add new-lp)
-                     (update :weight mx/add (mx/subtract new-lp old-lp))
+                     (update :weight mx/add new-lp)
                      (cond->
                       old-val (update :discard cm/set-value addr old-val)))])
 
@@ -249,7 +259,8 @@
         (check-batched-lp! addr n lp)
         [val (-> state
                  (update :choices cm/set-value addr val)
-                 (update :score mx/add lp))])
+                 (update :score mx/add lp)
+                 (update :weight mx/add lp))])
 
       ;; New address: sample [N] fresh values
       :else (batched-simulate-transition state addr dist))))
@@ -309,20 +320,15 @@
                                   (assoc :nested-splice-scores (:nested-splice-scores sub-result)))]
                     (assoc (or nss {}) addr sub-meta)))))))
 
-(defn- mlx-array-like?
-  "Duck-typing probe: does x look like an MLX array (has .shape and .item)?"
-  [x]
-  (and (some? x) (some? (.-shape x)) (some? (.-item x))))
-
 (defn- mlx-arr-batched?
   "Check if x is an MLX array with at least 1 dimension."
   [x]
-  (and (mlx-array-like? x) (pos? (count (mx/shape x)))))
+  (and (mx/array? x) (pos? (count (mx/shape x)))))
 
 (defn- scalar-leaf-val?
   "Check if a value is scalar (0-d or not an MLX array)."
   [v]
-  (or (not (mlx-array-like? v))
+  (or (not (mx/array? v))
       (= [] (mx/shape v))))
 
 (defn- run-batched-particle
@@ -339,8 +345,12 @@
                        :choices old-choices :retval nil
                        :score (mx/scalar 0.0)})
           {:keys [trace weight]} (p/regenerate gf elem-trace sub-selection)]
+      ;; The child returns its final MH weight w = ΔS - pr, computed against
+      ;; the constructed old score of 0. The parent's batched regenerate
+      ;; accumulator holds proposal ratios (its final weight is
+      ;; ΔS_total - accumulator), so convert back: pr = S'_child - w.
       {:choices (:choices trace) :score (:score trace)
-       :weight weight :retval (:retval trace)})
+       :weight (mx/subtract (:score trace) weight) :retval (:retval trace)})
 
     ;; Update mode
     (and old-i (not= old-i cm/EMPTY))
@@ -350,6 +360,9 @@
                        :choices old-i :retval nil
                        :score (mx/scalar 0.0)})
           {:keys [trace weight discard]} (p/update gf elem-trace c)]
+      ;; The child update weight is non-fresh-score minus its constructed
+      ;; old score of 0, i.e. exactly the non-fresh-score contribution the
+      ;; parent's batched update accumulator expects — merge as-is.
       {:choices (:choices trace) :score (:score trace)
        :weight weight :discard discard :retval (:retval trace)})
 
