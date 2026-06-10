@@ -30,7 +30,7 @@
 
 (deftest fused-vi-dispatch-test
   (testing "single fused-learn :vi call"
-    (let [obs (cm/choicemap {:y (mx/scalar 5.0)})
+    (let [obs (cm/choicemap :y (mx/scalar 5.0))
           result (co/fused-learn simple-model [] obs [:mu :sigma] :vi
                                  {:iterations 20 :lr 0.01})]
       ;; Dispatch metadata
