@@ -183,16 +183,17 @@
 (deftest clean-model-halts
   (let [model (gen [] (trace :x (dist/gaussian 0 1)))
         result (verify/validate-gen-fn model [])]
-    (is (not (has-violation? result :non-termination)))))
+    (is (not (has-violation? result :halting-trial-error)))))
 
-(deftest throwing-model-detected-as-non-halting
-  (testing "model that always throws gets non-termination warning"
+(deftest throwing-model-detected-by-halting-smoke-test
+  (testing "model that crashes during trials gets halting-trial-error warning
+            (true non-termination is undetectable — it would hang; genmlx-vd2j)"
     (let [model (dyn/auto-key
                   (dyn/make-gen-fn
                     (fn [_rt] (throw (js/Error. "infinite loop simulation")))
                     '([] (loop [] (recur)))))
           result (verify/validate-gen-fn model [])]
-      (is (has-violation? result :non-termination)))))
+      (is (has-violation? result :halting-trial-error)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Integration: validate-gen-fn catches all DML violations
@@ -226,7 +227,7 @@
     (is (not (has-violation? result :external-randomness)))
     (is (not (has-violation? result :mutation)))
     (is (not (has-violation? result :hof-gen-fn)))
-    (is (not (has-violation? result :non-termination)))))
+    (is (not (has-violation? result :halting-trial-error)))))
 
 (deftest validate-gen-fn-multiple-violations-combined
   (testing "source with both mutation and external randomness"
