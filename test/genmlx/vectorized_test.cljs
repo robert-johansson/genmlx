@@ -153,6 +153,41 @@
         (is (h/close? 0.0 (h/realize (mx/mean w)) 0.001)
             "resampled weights are zero")))))
 
+(deftest resample-vtrace-scalar-retval-test
+  (testing "resample-vtrace with a 0-d retval (scalar constraint at the
+            returned address) must not gather the retval (genmlx-xlng)"
+    ;; Pre-fix this aborted the whole process: reindex-state called
+    ;; mx/take-idx on the shape-[] retval, an MLX C++ shape error that
+    ;; crosses NAPI as a process abort, not a catchable JS error.
+    (let [model (gen []
+                  (let [x (trace :x (dist/gaussian 0 1))]
+                    (trace :y (dist/gaussian x 1))))
+          n 20
+          key (rng/fresh-key 42)
+          [k1 k2] (rng/split key)
+          vtrace (dyn/vgenerate model [] (cm/choicemap :y (mx/scalar 1.5)) n k1)
+          resampled (vec/resample-vtrace vtrace k2)]
+      (is (= 1.5 (h/realize (:retval resampled)))
+          "0-d retval passes through resample unchanged")
+      (is (= [] (h/realize-shape (:retval resampled)))
+          "retval stays 0-d, not gathered to [n]")
+      (let [x-val (cm/get-value (cm/get-submap (:choices resampled) :x))]
+        (is (= [n] (h/realize-shape x-val)) "choices still reindexed to [n]")))))
+
+(deftest resample-vtrace-batched-retval-test
+  (testing "resample-vtrace permutes an [N]-shaped retval with the choices"
+    (let [model (gen []
+                  (trace :x (dist/gaussian 0 1)))
+          n 30
+          key (rng/fresh-key 7)
+          [k1 k2] (rng/split key)
+          vtrace (dyn/vsimulate model [] n k1)
+          resampled (vec/resample-vtrace vtrace k2)
+          x-val (cm/get-value (cm/get-submap (:choices resampled) :x))]
+      (is (= [n] (h/realize-shape (:retval resampled))) "retval shape [n]")
+      (is (= (h/realize-vec x-val) (h/realize-vec (:retval resampled)))
+          "retval permuted identically to the :x choices"))))
+
 ;; -------------------------------------------------------------------------
 ;; vectorized importance sampling
 ;; -------------------------------------------------------------------------
