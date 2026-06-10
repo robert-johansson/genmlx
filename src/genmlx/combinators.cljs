@@ -27,6 +27,30 @@
           cm/EMPTY
           (map-indexed vector results)))
 
+(defn- ensure-kernel-key
+  "Give the kernel an auto-key when it carries no PRNG key, so handler-path
+   sub-calls (update/regenerate fallbacks) can run instead of throwing
+   'No PRNG key on gen-fn'. Uses the metadata literal to avoid requiring
+   genmlx.dynamic (circular) — same convention as unfold-extend."
+  [kern]
+  (if (:genmlx.dynamic/key (meta kern))
+    kern
+    (vary-meta kern assoc :genmlx.dynamic/key :genmlx.dynamic/auto-key)))
+
+(defn- assemble-indexed-discards
+  "Collect non-empty per-element discards under their ORIGINAL element
+   indices. Filtering before positional reassembly records element i's
+   discard under a compacted (wrong) index, breaking backward-request
+   reversibility (genmlx-v740)."
+  [results]
+  (reduce (fn [cm [i r]]
+            (let [d (:discard r)]
+              (if (and d (not= d cm/EMPTY))
+                (cm/set-choice cm [i] d)
+                cm)))
+          cm/EMPTY
+          (map-indexed vector results)))
+
 (defn- sum-field
   "Sum a field across results, starting from scalar 0.0."
   [results field-fn]
@@ -263,9 +287,7 @@
                               ZERO)
             weight (mx/subtract (mx/add (sum-field results :weight) constructed-old)
                                 (:score trace))
-            discard (assemble-choices
-                     (filter :discard results)
-                     :discard)
+            discard (assemble-indexed-discards results)
             element-scores (mapv (comp :score :trace) results)]
         {:trace (with-meta
                   (tr/make-trace {:gen-fn this :args args
@@ -2194,7 +2216,7 @@
         (let [changed-set (if (diff/no-change? argdiffs)
                             #{}
                             (:changed argdiffs))
-              kernel (:kernel this)
+              kernel (ensure-kernel-key (:kernel this))
               ;; Determine which elements need updating: changed args OR new constraints
               update-set (into changed-set
                                (filter #(not= (cm/get-submap constraints %) cm/EMPTY))
@@ -2223,7 +2245,7 @@
               retvals (mapv (comp :retval :trace) results)
               score (sum-field results (comp :score :trace))
               weight (mx/subtract score (:score trace))
-              discard (assemble-choices (filter #(and (:discard %) (not= (:discard %) cm/EMPTY)) results) :discard)
+              discard (assemble-indexed-discards results)
               element-scores (mapv (comp :score :trace) results)]
           {:trace (with-meta
                     (tr/make-trace {:gen-fn this :args args

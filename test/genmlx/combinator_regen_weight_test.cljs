@@ -19,6 +19,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.combinators :as comb]
+            [genmlx.diff :as diff]
             [genmlx.mlx.random :as rng])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -145,5 +146,42 @@
         (is (< (js/Math.abs (num w)) 1e-4)
             (str "Scan: empty selection => weight 0 without ::step-scores, got "
                  (num w)))))))
+
+;; ── Map update discard indexing (genmlx-v740 item 1) ─────────────────────
+;; Constraining ONLY element 2 must record the displaced old value under
+;; discard index [2] — positional reassembly after a filter put it at [0].
+
+(deftest map-update-discard-keeps-element-index
+  (let [tr (p/simulate (dyn/with-key mapped (rng/fresh-key 23))
+                       [[(mx/scalar 0.0) (mx/scalar 1.0) (mx/scalar 2.0)]])
+        old-m2 (num (cm/get-value (reduce cm/get-submap (:choices tr) [2 :m])))
+        {d :discard} (p/update mapped tr (cm/set-choice cm/EMPTY [2 :m]
+                                                        (mx/scalar 9.0)))]
+    (testing "discard lands under the original element index"
+      (is (cm/has-value? (reduce cm/get-submap d [2 :m]))
+          "displaced value recorded under [2]")
+      (is (= cm/EMPTY (cm/get-submap d 0))
+          "nothing recorded under [0]")
+      (is (< (js/Math.abs (- (num (cm/get-value (reduce cm/get-submap d [2 :m])))
+                             old-m2))
+             1e-6)
+          "discard holds the displaced old value"))))
+
+(deftest map-update-with-diffs-discard-keeps-element-index
+  (let [xs [(mx/scalar 0.0) (mx/scalar 1.0) (mx/scalar 2.0)]
+        tr (p/simulate (dyn/with-key mapped (rng/fresh-key 29)) [xs])
+        old-m2 (num (cm/get-value (reduce cm/get-submap (:choices tr) [2 :m])))
+        {d :discard} (p/update-with-diffs mapped tr
+                                          (cm/set-choice cm/EMPTY [2 :m]
+                                                         (mx/scalar 9.0))
+                                          diff/no-change)]
+    (testing "update-with-diffs discard lands under the original index"
+      (is (cm/has-value? (reduce cm/get-submap d [2 :m]))
+          "displaced value recorded under [2]")
+      (is (= cm/EMPTY (cm/get-submap d 0))
+          "nothing recorded under [0]")
+      (is (< (js/Math.abs (- (num (cm/get-value (reduce cm/get-submap d [2 :m])))
+                             old-m2))
+             1e-6)))))
 
 (cljs.test/run-tests)
