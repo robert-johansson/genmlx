@@ -27,6 +27,30 @@
           cm/EMPTY
           (map-indexed vector results)))
 
+(defn- ensure-kernel-key
+  "Give the kernel an auto-key when it carries no PRNG key, so handler-path
+   sub-calls (update/regenerate fallbacks) can run instead of throwing
+   'No PRNG key on gen-fn'. Uses the metadata literal to avoid requiring
+   genmlx.dynamic (circular) — same convention as unfold-extend."
+  [kern]
+  (if (:genmlx.dynamic/key (meta kern))
+    kern
+    (vary-meta kern assoc :genmlx.dynamic/key :genmlx.dynamic/auto-key)))
+
+(defn- assemble-indexed-discards
+  "Collect non-empty per-element discards under their ORIGINAL element
+   indices. Filtering before positional reassembly records element i's
+   discard under a compacted (wrong) index, breaking backward-request
+   reversibility (genmlx-v740)."
+  [results]
+  (reduce (fn [cm [i r]]
+            (let [d (:discard r)]
+              (if (and d (not= d cm/EMPTY))
+                (cm/set-choice cm [i] d)
+                cm)))
+          cm/EMPTY
+          (map-indexed vector results)))
+
 (defn- sum-field
   "Sum a field across results, starting from scalar 0.0."
   [results field-fn]
@@ -263,9 +287,7 @@
                               ZERO)
             weight (mx/subtract (mx/add (sum-field results :weight) constructed-old)
                                 (:score trace))
-            discard (assemble-choices
-                     (filter :discard results)
-                     :discard)
+            discard (assemble-indexed-discards results)
             element-scores (mapv (comp :score :trace) results)]
         {:trace (with-meta
                   (tr/make-trace {:gen-fn this :args args
@@ -274,12 +296,19 @@
          :weight weight :discard discard})))
 
   p/IRegenerate
+  ;; Per-element old scores come from ::element-scores metadata. When that
+  ;; metadata is lost (splice-boundary trace reconstruction, serialize
+  ;; round-trip), the loop runs against ZERO olds and the summed weight is
+  ;; too high by exactly the old total — which the trace always records as
+  ;; (:score trace). Correct at the end instead of silently returning wrong
+  ;; weights (genmlx-v740). When metadata is present the path is unchanged.
   (regenerate [this trace selection]
     (if-let [cregen (cops/get-compiled-regenerate kernel)]
       ;; WP-9A: compiled regenerate path
       (let [old-choices (:choices trace)
             args (:args trace)
             n (count (first args))
+            old-element-scores (::element-scores (meta trace))
             init-key (rng/fresh-key)]
         (loop [i 0 key init-key
                choices cm/EMPTY score ZERO weight ZERO
@@ -289,15 +318,16 @@
                       (tr/make-trace {:gen-fn this :args args
                                       :choices choices :retval retvals :score score})
                       {::element-scores element-scores ::compiled-path true})
-             :weight weight}
+             :weight (if old-element-scores
+                       weight
+                       (mx/subtract weight (:score trace)))}
             (let [[k1 k2] (rng/split key)
                   elem-args (mapv #(nth % i) args)
                   old-sub-choices (cm/get-submap old-choices i)
                   result (cregen k1 (vec elem-args) old-sub-choices
                                  (sel/get-subselection selection i))
                   elem-choices (values->choices (:values result))
-                  old-elem-score (or (some-> (::element-scores (meta trace))
-                                             (nth i nil))
+                  old-elem-score (or (some-> old-element-scores (nth i nil))
                                      ZERO)
                   ;; compiled-regenerate returns proposal_ratio in :weight
                   ;; per-step weight = new_score - old_score - proposal_ratio
@@ -332,7 +362,9 @@
                   (tr/make-trace {:gen-fn this :args args
                                   :choices choices :retval retvals :score score})
                   {::element-scores element-scores})
-         :weight weight}))))
+         :weight (if old-element-scores
+                   weight
+                   (mx/subtract weight (:score trace)))}))))
 
 (defn map-combinator
   "Create a Map combinator from a kernel generative function.
@@ -624,6 +656,10 @@
                          (conj step-scores (:score new-trace)))))))))))
 
   p/IRegenerate
+  ;; Per-step old scores come from ::step-scores metadata; when it is lost
+  ;; (splice-boundary reconstruction, serialize round-trip) the loop runs
+  ;; against ZERO olds and the summed weight is too high by the old total —
+  ;; recorded on (:score trace). Correct at the end (genmlx-v740).
   (regenerate [this trace selection]
     (let [kern (:kernel this)
           cregen (cops/get-compiled-regenerate kern)
@@ -640,7 +676,9 @@
                                     :choices new-choices :retval states :score score})
                     (cond-> {::step-scores step-scores}
                       cregen (assoc ::compiled-path true)))
-           :weight weight}
+           :weight (if old-step-scores
+                     weight
+                     (mx/subtract weight (:score trace)))}
           (let [old-sub-choices (cm/get-submap choices t)
                 kernel-args (into [t state] extra)
                 old-score (if old-step-scores (nth old-step-scores t) ZERO)]
@@ -1571,6 +1609,7 @@
                          (conj step-carries new-carry))))))))))
 
   p/IRegenerate
+  ;; Same ::step-scores-loss correction as Unfold regenerate (genmlx-v740).
   (regenerate [this trace selection]
     (let [kern (:kernel this)
           cregen (cops/get-compiled-regenerate kern)
@@ -1590,7 +1629,9 @@
                                     :score score})
                     (cond-> {::step-scores step-scores ::step-carries step-carries}
                       cregen (assoc ::compiled-path true)))
-           :weight weight}
+           :weight (if old-step-scores
+                     weight
+                     (mx/subtract weight (:score trace)))}
           (let [old-sub-choices (cm/get-submap choices t)
                 kernel-args [carry (nth inputs t)]
                 old-score (if old-step-scores (nth old-step-scores t) ZERO)]
@@ -2055,11 +2096,17 @@
           old-idx-score (dc/dist-log-prob idx-dist (mx/scalar old-idx mx/int32))
           idx-selected? (sel/selected? selection :component-idx)]
       (if idx-selected?
-        ;; Resample component index and simulate new component
+        ;; Resample component index and simulate new component. EVERYTHING
+        ;; under the Mix is freshly drawn from the prior, so the regenerate
+        ;; MH weight is exactly 0: the score delta cancels against the
+        ;; forward/backward prior-proposal ratio (system convention
+        ;; W = dS - proposal_ratio, and proposal_ratio = dS here). The old
+        ;; scoreDelta return un-cancelled the whole subtree score at parent
+        ;; splices and skewed top-level MH acceptance (genmlx-v740).
         (let [new-idx-trace (dc/dist-simulate idx-dist)
               new-idx (int (mx/item (cm/get-value (:choices new-idx-trace))))
               new-idx-score (:score new-idx-trace)
-              new-component (nth (:components this) new-idx)
+              new-component (ensure-kernel-key (nth (:components this) new-idx))
               new-comp-trace (p/simulate new-component args)
               new-score (mx/add (:score new-comp-trace) new-idx-score)]
           {:trace (tr/make-trace {:gen-fn this :args args
@@ -2068,7 +2115,7 @@
                                                           (mx/scalar new-idx mx/int32))
                                   :retval (:retval new-comp-trace)
                                   :score new-score})
-           :weight (mx/subtract new-score (:score trace))})
+           :weight ZERO})
         ;; Same component: regenerate within the component
         (let [component (nth (:components this) old-idx)
               inner-old-score (mx/subtract (:score trace) old-idx-score)
@@ -2175,7 +2222,7 @@
         (let [changed-set (if (diff/no-change? argdiffs)
                             #{}
                             (:changed argdiffs))
-              kernel (:kernel this)
+              kernel (ensure-kernel-key (:kernel this))
               ;; Determine which elements need updating: changed args OR new constraints
               update-set (into changed-set
                                (filter #(not= (cm/get-submap constraints %) cm/EMPTY))
@@ -2204,7 +2251,7 @@
               retvals (mapv (comp :retval :trace) results)
               score (sum-field results (comp :score :trace))
               weight (mx/subtract score (:score trace))
-              discard (assemble-choices (filter #(and (:discard %) (not= (:discard %) cm/EMPTY)) results) :discard)
+              discard (assemble-indexed-discards results)
               element-scores (mapv (comp :score :trace) results)]
           {:trace (with-meta
                     (tr/make-trace {:gen-fn this :args args

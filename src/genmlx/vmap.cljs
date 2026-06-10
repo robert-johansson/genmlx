@@ -165,25 +165,24 @@
     :score (if element-scores (nth element-scores i) (mx/scalar 0.0))}))
 
 (defn- kernel-update
-  "Update a kernel trace. Falls back to generate if IUpdate not implemented."
+  "Update a kernel trace. Throws when the kernel does not implement IUpdate:
+   the old generate fallback RESAMPLED every unconstrained site — not update
+   semantics — and reported the score delta as the weight (genmlx-v740)."
   [kernel trace constraints]
   (if (satisfies? p/IUpdate kernel)
     (p/update kernel trace constraints)
-    ;; Fallback: generate with constraints, compute weight from score diff
-    (let [old-score (:score trace)
-          {:keys [trace weight]} (p/generate kernel (:args trace) constraints)]
-      {:trace trace :weight (mx/subtract (:score trace) old-score)
-       :discard cm/EMPTY})))
+    (throw (ex-info "vmap kernel does not implement IUpdate — no semantically honest fallback exists"
+                    {:kernel-type (type kernel)}))))
 
 (defn- kernel-regenerate
-  "Regenerate a kernel trace. Falls back to simulate if IRegenerate not implemented."
+  "Regenerate a kernel trace. Throws when the kernel does not implement
+   IRegenerate: the old simulate fallback resampled EVERY site regardless of
+   the selection (genmlx-v740)."
   [kernel trace selection]
   (if (satisfies? p/IRegenerate kernel)
     (p/regenerate kernel trace selection)
-    ;; Fallback: re-simulate, weight = new_score - old_score
-    (let [old-score (:score trace)
-          new-trace (p/simulate kernel (:args trace))]
-      {:trace new-trace :weight (mx/subtract (:score new-trace) old-score)})))
+    (throw (ex-info "vmap kernel does not implement IRegenerate — no semantically honest fallback exists"
+                    {:kernel-type (type kernel)}))))
 
 ;; ---------------------------------------------------------------------------
 ;; VmapCombinator
@@ -198,7 +197,13 @@
         (let [key (rng/fresh-key)
               result (rt/run-handler h/batched-simulate-transition
                                      {:choices cm/EMPTY :score (mx/scalar 0.0)
-                                      :key key :batch-size n :batched? true}
+                                      :key key :batch-size n :batched? true
+                                      ;; Trained params live on the kernel's
+                                      ;; metadata; omitting them made the fast
+                                      ;; path silently use param DEFAULTS
+                                      ;; (genmlx-v740).
+                                      :param-store (:genmlx.dynamic/param-store
+                                                    (meta kernel))}
                                      (fn [rt] (apply (:body-fn kernel) rt args)))
               ;; score is [N]-shaped, sum for total
               total-score (mx/sum (:score result))
@@ -233,7 +238,10 @@
                                      {:choices cm/EMPTY :score (mx/scalar 0.0)
                                       :weight (mx/scalar 0.0)
                                       :key key :constraints cm/EMPTY
-                                      :batch-size n :batched? true}
+                                      :batch-size n :batched? true
+                                      ;; See simulate fast path (genmlx-v740).
+                                      :param-store (:genmlx.dynamic/param-store
+                                                    (meta kernel))}
                                      (fn [rt] (apply (:body-fn kernel) rt args)))
               total-score (mx/sum (:score result))
               total-weight (mx/sum (:weight result))

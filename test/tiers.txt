@@ -59,6 +59,7 @@ fast test/genmlx/combinator_mask_test.cljs
 fast test/genmlx/combinator_mix_test2.cljs
 fast test/genmlx/combinator_property_test.cljs core
 fast test/genmlx/combinator_recurse_test2.cljs
+fast test/genmlx/combinator_regen_weight_test.cljs core
 fast test/genmlx/combinator_scan_test2.cljs
 fast test/genmlx/combinator_switch_test2.cljs
 fast test/genmlx/combinator_unfold_test2.cljs
