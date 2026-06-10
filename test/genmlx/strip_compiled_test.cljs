@@ -3,7 +3,9 @@
   "genmlx-pkmx: strip-compiled must remove ALL alternate-path schema keys
    (full-compile + prefix + analytical) and preserve gen-fn metadata
    (genmlx-3lgy); update/project/regenerate on an analytically-scored
-   (:marginal) trace must fail loudly instead of mixing decompositions."
+   (:marginal) trace must convert it exactly (joint re-score via the handler
+   path) instead of mixing decompositions — alternate paths stay semantically
+   invisible."
   (:require [cljs.test :refer [deftest is testing]]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
@@ -87,28 +89,42 @@
       (is (cm/has-value? (cm/get-submap (:choices tr) :mu)) "trace has :mu"))))
 
 ;; ============================================================
-;; 4. Marginal-trace guard on update/project; regenerate stays analytical
+;; 4. Marginal-trace conversion on update/project; regenerate stays analytical
 ;; ============================================================
-(deftest test-marginal-trace-guard
+;; Oracle: the same choices re-generated on the handler path (a joint trace)
+;; and pushed through the same op. The marginal trace must give the SAME
+;; numbers — the L3 analytical path is an optimization, not a semantic change.
+(deftest test-marginal-trace-conversion
   (let [model (dyn/with-key (conjugate-model) (rng/fresh-key 7))
         obs (cm/choicemap :y 1.5)
-        {:keys [trace]} (p/generate model [] obs)]
+        {:keys [trace]} (p/generate model [] obs)
+        stripped (dyn/auto-key (gfi/strip-compiled model))
+        {jt :trace} (p/generate stripped [] (:choices trace))]
     (testing "precondition: analytical generate produced a marginal trace"
       (is (= :marginal (:genmlx.dynamic/score-type (meta trace)))
           "trace is analytically scored"))
-    (testing "update on a marginal trace throws instead of mixing scores"
-      (is (thrown-with-msg? js/Error #"mix score decompositions"
-            (p/update model trace (cm/choicemap :y 2.0)))))
-    (testing "project on a marginal trace throws instead of mixing scores"
-      (is (thrown-with-msg? js/Error #"mix score decompositions"
-            (p/project model trace (sel/select :mu)))))
-    (testing "regenerate keeps its analytical path (no throw)"
+    (testing "update on a marginal trace = update on the joint-rescored trace"
+      (let [u-marg (p/update model trace (cm/choicemap :y 2.0))
+            u-joint (p/update stripped jt (cm/choicemap :y 2.0))
+            _ (mx/materialize! (:weight u-marg) (:weight u-joint))
+            w-marg (mx/item (:weight u-marg))
+            w-joint (mx/item (:weight u-joint))]
+        (is (< (js/Math.abs (- w-marg w-joint)) 1e-4)
+            (str "update weights match: marginal-path " w-marg
+                 " vs handler baseline " w-joint))
+        (is (nil? (:genmlx.dynamic/score-type (meta (:trace u-marg))))
+            "result trace is joint-scored")))
+    (testing "project on a marginal trace = project on the joint-rescored trace"
+      (let [p-marg (p/project model trace (sel/select :mu))
+            p-joint (p/project stripped jt (sel/select :mu))
+            _ (mx/materialize! p-marg p-joint)]
+        (is (< (js/Math.abs (- (mx/item p-marg) (mx/item p-joint))) 1e-4)
+            "project values match")))
+    (testing "regenerate keeps its analytical path (no conversion needed)"
       (let [{t' :trace} (p/regenerate model trace (sel/select :mu))]
         (is (some? t') "analytical regenerate works on marginal traces")))
-    (testing "joint traces are unaffected by the guard"
-      (let [stripped (dyn/auto-key (gfi/strip-compiled model))
-            {jt :trace} (p/generate stripped [] obs)
-            upd (p/update stripped jt (cm/choicemap :y 2.0))]
+    (testing "joint traces are passed through untouched"
+      (let [upd (p/update stripped jt (cm/choicemap :y 2.0))]
         (is (nil? (:genmlx.dynamic/score-type (meta jt))) "handler trace is joint")
         (is (some? (:trace upd)) "update on joint trace works")))))
 

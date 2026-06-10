@@ -80,33 +80,15 @@
 ;; Return all leaf address paths from a choicemap.
 (def ^:private all-leaf-addrs cm/addresses)
 
-(def ^:private alternate-path-schema-keys
-  "Every schema key the dispatcher stack consults for a non-handler execution
-   path: L1-M2 full-compile keys, L1-M3 prefix keys, and the L3 analytical
-   keys. strip-compiled must remove ALL of them — leaving any behind lets a
-   'handler ground truth' law silently compare compiled-vs-compiled or
-   analytical-vs-compiled (genmlx-pkmx)."
-  [:compiled-simulate :compiled-generate :compiled-update :compiled-assess
-   :compiled-project :compiled-regenerate
-   :compiled-prefix :compiled-prefix-generate :compiled-prefix-update
-   :compiled-prefix-regenerate :compiled-prefix-assess :compiled-prefix-project
-   :auto-handlers :conjugate-pairs :has-conjugate? :analytical-plan
-   :auto-regenerate-transition])
-
 (defn strip-compiled
   "Return a copy of model with all alternate execution paths removed from its
    schema — full-compile, prefix, and analytical — forcing the handler
    (interpreter) path for all GFI ops. Preserves the gen-fn's metadata (the
    PRNG ::key from with-key/auto-key lives there — genmlx-3lgy).
-   Returns the model unchanged if it has no schema."
+   Returns the model unchanged if it has no schema.
+   Canonical implementation: dyn/strip-alternate-paths (genmlx-pkmx)."
   [model]
-  (let [schema (:schema model)]
-    (if (nil? schema)
-      model
-      (with-meta
-        (dyn/->DynamicGF (:body-fn model) (:source model)
-                         (apply dissoc schema alternate-path-schema-keys))
-        (meta model)))))
+  (dyn/strip-alternate-paths model))
 
 ;; ---------------------------------------------------------------------------
 ;; The algebraic laws
@@ -1561,10 +1543,12 @@
     :check (fn [_]
              (let [kernel (dyn/auto-key
                            (dyn/make-gen-fn
-                            (fn [rt]
+                            ;; Handler-path body-fns receive args positionally:
+                            ;; (apply body-fn rt args). Reading (.-args rt) only
+                            ;; appears to work when a compiled path bypasses the
+                            ;; body-fn entirely (genmlx-pkmx).
+                            (fn [rt _t prev-state]
                               (let [trace (.-trace rt)
-                                    args (.-args rt)
-                                    prev-state (second args)
                                     x (trace :x (dist/gaussian prev-state 1))]
                                 (trace :y (dist/laplace x 1))
                                 x))
@@ -1606,10 +1590,10 @@
     :tags #{:inference :smc :pf}
     :check (fn [_]
              (let [kernel (dyn/make-gen-fn
-                           (fn [rt]
+                           ;; Positional args, matching the gen-macro convention
+                           ;; (see :pf-incremental-weight note — genmlx-pkmx).
+                           (fn [rt _t prev-state]
                              (let [trace (.-trace rt)
-                                   args (.-args rt)
-                                   prev-state (second args)
                                    x (trace :x (dist/gaussian prev-state 1))]
                                (trace :y (dist/gaussian x 1))
                                x))
