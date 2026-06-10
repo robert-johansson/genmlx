@@ -97,6 +97,43 @@
       {:retval v :weight lp})
     (throw (ex-info "assess requires fully-specified choices" {:dist (:type dist)}))))
 
+(defn- root-selected?
+  "Does this selection select a Distribution's single root value? The root
+   has no address, so only selections that select everything at this level
+   can select it: canonical `all`, or a Complement whose inner does not.
+   Address-naming selections (SelectAddrs/Hierarchical) name addresses a
+   single-value trace does not have."
+  [selection]
+  (cond
+    (identical? sel/all selection) true
+    (instance? sel/Complement selection) (not (root-selected? (:inner selection)))
+    :else false))
+
+(defn- dist-update
+  "Update a distribution trace. A constrained value replaces the old one
+   with weight lp(v') - lp(v) (thesis update convention: non-fresh new
+   score minus old score; the single site is constrained, so everything
+   is non-fresh). Empty constraints leave the trace unchanged."
+  [dist trace constraints]
+  (if (cm/has-value? constraints)
+    (let [v' (cm/get-value constraints)
+          lp' (dist-log-prob dist v')]
+      {:trace (tr/make-trace {:gen-fn dist :args [] :choices (cm/->Value v')
+                              :retval v' :score lp'})
+       :weight (mx/subtract lp' (:score trace))
+       :discard (:choices trace)})
+    {:trace trace :weight ZERO :discard cm/EMPTY}))
+
+(defn- dist-regenerate
+  "Regenerate a distribution trace. A selected root value resamples from
+   the distribution itself with weight 0 (prior-proposal cancellation:
+   the score delta equals the proposal ratio exactly). Unselected leaves
+   the trace unchanged, also weight 0."
+  [dist trace selection]
+  (if (root-selected? selection)
+    {:trace (dist-simulate dist) :weight ZERO}
+    {:trace trace :weight ZERO}))
+
 ;; ---------------------------------------------------------------------------
 ;; THE single record for all distributions
 ;; ---------------------------------------------------------------------------
@@ -114,12 +151,21 @@
   p/IPropose
   (propose [this _] (dist-propose this))
 
+  p/IUpdate
+  (update [this trace constraints] (dist-update this trace constraints))
+
+  p/IRegenerate
+  (regenerate [this trace selection] (dist-regenerate this trace selection))
+
   p/IProject
   (project [this trace selection]
-    ;; A distribution has a single choice. If nothing is selected, return 0.
-    (if (identical? selection sel/none)
-      ZERO
-      (:score trace))))
+    ;; A distribution has a single root choice: project returns its score
+    ;; iff the selection selects the root. The old check returned the FULL
+    ;; score for ANY selection other than canonical `none` — an unrelated
+    ;; (select :foo) projected the whole score (genmlx-yeam).
+    (if (root-selected? selection)
+      (:score trace)
+      ZERO)))
 
 ;; ---------------------------------------------------------------------------
 ;; IHasArgumentGrads — distributions do not declare argument differentiability
@@ -133,10 +179,19 @@
 ;; map->dist — create a Distribution from a plain map
 ;; ---------------------------------------------------------------------------
 
+(def ^:private map->dist-types
+  "Types registered by map->dist. Re-registering YOUR OWN custom type is
+   normal REPL flow; clobbering a type someone else registered (e.g. a
+   builtin like :gaussian) silently redefined it process-wide, so that
+   now throws (genmlx-yeam). Registry bookkeeping only — never read by
+   computation paths."
+  (atom #{}))
+
 (defn map->dist
   "Create a Distribution from a plain map with :sample and :log-prob functions.
    Required keys:
-     :type      - keyword identifier (auto-generated if omitted)
+     :type      - keyword identifier (auto-generated if omitted); must not
+                  collide with an already-registered distribution type
      :sample    - (fn [key] -> MLX-value)
      :log-prob  - (fn [value] -> MLX-scalar)
    Optional keys:
@@ -145,6 +200,14 @@
      :sample-n  - (fn [key n] -> MLX-array) batch sampling"
   [{:keys [type sample log-prob reparam support sample-n]}]
   (let [type-kw (or type (keyword (gensym "custom-dist")))]
+    (when (and (contains? (methods dist-sample*) type-kw)
+               (not (contains? @map->dist-types type-kw)))
+      (throw (ex-info (str "map->dist: " type-kw " is already a registered "
+                           "distribution type — choose a unique :type "
+                           "(registering it would silently redefine the "
+                           "existing distribution process-wide)")
+                      {:type type-kw})))
+    (swap! map->dist-types conj type-kw)
     (defmethod dist-sample* type-kw [_ key] (sample key))
     (defmethod dist-log-prob type-kw [_ value] (log-prob value))
     (when reparam
