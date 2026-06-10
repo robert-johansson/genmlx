@@ -226,6 +226,7 @@ medium test/genmlx/loop_compiled_mala_test.cljs
 fast test/genmlx/loop_obs_test.cljs
 bench test/genmlx/lowering_ground_truth_2.cljs
 bench test/genmlx/lowering_ground_truth.cljs
+fast test/genmlx/malli_load_test.cljs
 fast test/genmlx/map_dist_test.cljs
 medium test/genmlx/map_test.cljs
 fast test/genmlx/mcmc_defaults_test.cljs core
