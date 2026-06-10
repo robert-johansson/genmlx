@@ -479,11 +479,16 @@
              :score-type (or (:score-type (meta df)) :joint)
              :label :custom})
 
-          ;; Transition substitution: (fn [state addr dist] -> [value state'])
+          ;; Transition substitution: a single (fn [state addr dist]) used for
+          ;; every op, or a per-op map {op -> transition} falling back to the
+          ;; standard transition for omitted ops (genmlx-xwxh).
           (::dispatch/custom-transition gf-meta)
-          (let [t (::dispatch/custom-transition gf-meta)]
-            {:run (partial (get transition-run-fns op) t)
-             :score-type (or (:score-type (meta t)) :joint)
+          (let [t  (::dispatch/custom-transition gf-meta)
+                tf (if (map? t)
+                     (or (get t op) (get standard-transitions op))
+                     t)]
+            {:run (partial (get transition-run-fns op) tf)
+             :score-type (or (:score-type (meta (if (map? t) tf t))) :joint)
              :label :custom}))))))
 
 (def ^:private analytical-dispatcher

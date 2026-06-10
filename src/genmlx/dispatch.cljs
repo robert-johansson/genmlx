@@ -50,17 +50,22 @@
 
 (defn with-handler
   "Attach a custom handler transition to a generative function via metadata.
-   The transition has the standard handler signature:
+   `transition` is either:
 
-       (fn [state addr dist] -> [value state'])
+   - a single transition fn (fn [state addr dist] -> [value state']) — used
+     for EVERY GFI op. Only correct when the transition is genuinely
+     op-agnostic; a generate-flavored transition used for update/regenerate
+     silently runs generate semantics (genmlx-xwxh).
+   - a map {op -> transition} with ops from #{:simulate :generate :update
+     :regenerate :assess :project :propose} — the dispatcher picks the
+     entry per op and falls back to the STANDARD transition for ops the
+     map omits. Prefer this for middleware like grammar constraints.
 
-   The dispatcher wraps it into run-handler with the correct init-state
-   per GFI operation. Use this for domain-specific execution strategies
-   that fit the standard handler state shape (grammar constraints,
-   custom proposals, etc.).
+   The dispatcher wraps the chosen transition into run-handler with the
+   correct init-state per GFI operation.
 
    Usage:
-     (with-handler llm (wrap-grammar generate-transition grammar))
+     (with-handler llm {:generate (wrap-grammar generate-transition grammar)})
      (with-handler model (wrap-analytical generate-transition conjugacy-map))"
   [gf transition]
   (vary-meta gf assoc ::custom-transition transition))
