@@ -642,18 +642,29 @@
       (mx/gfi-cleanup!)
       result)))
 
+(def analytical-path-schema-keys
+  "Every schema key the dispatcher stack consults for the L3 analytical
+   path. Stripping these forces stochastic prior sampling and joint scores
+   while keeping the L1 compiled paths (which are score-equivalent to the
+   handler). Sampling-based methods need this: analytical generate pins
+   eliminated latents at their deterministic posterior MEAN, and
+   :auto-regenerate-transition intercepts regenerate — correct for marginal
+   likelihoods, corrupting for particle diversity (smc) and trace-MH chains
+   (genmlx-540f)."
+  [:auto-handlers :conjugate-pairs :has-conjugate? :analytical-plan
+   :auto-regenerate-transition])
+
 (def alternate-path-schema-keys
   "Every schema key the dispatcher stack consults for a non-handler execution
    path: L1-M2 full-compile keys, L1-M3 prefix keys, and the L3 analytical
    keys. strip-alternate-paths must remove ALL of them — leaving any behind
    lets a 'handler ground truth' comparison silently exercise a compiled or
    analytical path (genmlx-pkmx)."
-  [:compiled-simulate :compiled-generate :compiled-update :compiled-assess
-   :compiled-project :compiled-regenerate
-   :compiled-prefix :compiled-prefix-generate :compiled-prefix-update
-   :compiled-prefix-regenerate :compiled-prefix-assess :compiled-prefix-project
-   :auto-handlers :conjugate-pairs :has-conjugate? :analytical-plan
-   :auto-regenerate-transition])
+  (into [:compiled-simulate :compiled-generate :compiled-update :compiled-assess
+         :compiled-project :compiled-regenerate
+         :compiled-prefix :compiled-prefix-generate :compiled-prefix-update
+         :compiled-prefix-regenerate :compiled-prefix-assess :compiled-prefix-project]
+        analytical-path-schema-keys))
 
 (defn strip-alternate-paths
   "Return a copy of gf with all alternate execution paths removed from its
@@ -667,6 +678,21 @@
       (->DynamicGF (:body-fn gf) (:source gf)
                    (apply dissoc schema alternate-path-schema-keys))
       (meta gf))
+    gf))
+
+(defn strip-analytical-path
+  "Return a copy of gf with ONLY the L3 analytical path removed from its
+   schema, keeping the L1 compiled paths. The canonical strip for every
+   sampling-based method: particle methods (smc, csmc, smcp3, importance)
+   and trace-MH (kern/mh-kernel, mcmc/mh) — analytical generate returns
+   eliminated latents at their deterministic posterior mean and intercepts
+   regenerate, so unstripped chains/particles sample a corrupted posterior
+   (genmlx-540f; chi2 290.9 vs crit 21.67 on two-gaussians mh-cycle).
+   assoc-based so any GFI record with a :schema (DynamicGF, combinators)
+   keeps its type and metadata (the PRNG ::key). Unchanged if no schema."
+  [gf]
+  (if-let [schema (:schema gf)]
+    (assoc gf :schema (apply dissoc schema analytical-path-schema-keys))
     gf))
 
 (defn- propagate-meta

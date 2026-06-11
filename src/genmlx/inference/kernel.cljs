@@ -51,11 +51,14 @@
 
 (defn mh-kernel
   "Create an MH kernel that regenerates the given selection.
-   Returns (fn [trace key] -> trace). Symmetric by default."
+   Returns (fn [trace key] -> trace). Symmetric by default.
+   Strips the L3 analytical path from the trace's gen-fn: analytical
+   regenerate is intercepted by :auto-regenerate-transition and anchors
+   chains at the posterior mean instead of sampling it (genmlx-540f)."
   [selection]
   (symmetric-kernel
     (fn [trace key]
-      (let [gf (dyn/auto-key (:gen-fn trace))
+      (let [gf (dyn/auto-key (dyn/strip-analytical-path (:gen-fn trace)))
             result (p/regenerate gf trace selection)
             w (mx/realize (:weight result))]
         (if (u/accept-mh? w key)
