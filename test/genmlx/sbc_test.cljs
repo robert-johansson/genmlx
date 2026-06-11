@@ -280,7 +280,12 @@
    :args []
    :param-addrs [:a :b], :obs-addrs [:obs-a :obs-b]
    :algorithms [:cmh :hmc :is]
-   :cmh-opts {:addresses [:a :b] :proposal-std 0.7}
+   ;; cmh combos thin to near-independence: cmh is a JOINT random-walk MH, so
+   ;; autocorrelation time grows with dimension/posterior correlation (measured
+   ;; tau 6-23 here, 14-53 on mvr-5d). At thin=1 the L draws carry too few
+   ;; effective samples and SBC ranks go U-shaped (chi2 fails, ks passes).
+   ;; Thin values validated by mini-SBC at N=200/150 (genmlx-t757).
+   :cmh-opts {:addresses [:a :b] :proposal-std 0.7 :thin 20}
    :hmc-opts {:addresses [:a :b] :step-size 0.1 :leapfrog-steps 10}
    :is-opts {}})
 
@@ -339,7 +344,9 @@
                                         (dist/gaussian (mx/add (mx/multiply slope (mx/scalar x))
                                                                intercept) 1)))
                                [slope intercept])))
-   :args [[(mx/scalar 0.0) (mx/scalar 1.0) (mx/scalar 2.0)]]
+   ;; xs must be plain numbers: the body wraps each x in (mx/scalar x), whose
+   ;; NAPI param is a creation f64 — an MxArray here fails napi conversion.
+   :args [[0.0 1.0 2.0]]
    :param-addrs [:slope :intercept], :obs-addrs [:y0 :y1 :y2]
    :algorithms [:hmc :is]
    :hmc-opts {:addresses [:slope :intercept] :step-size 0.05 :leapfrog-steps 15}
@@ -413,7 +420,7 @@
    :param-addrs [:slope :intercept], :obs-addrs [:y0 :y1 :y2]
    :require-analytical? true
    :algorithms [:cmh :hmc :smc]
-   :cmh-opts {:addresses [:slope :intercept] :proposal-std 0.5}
+   :cmh-opts {:addresses [:slope :intercept] :proposal-std 0.5 :thin 20}
    :hmc-opts {:addresses [:slope :intercept] :step-size 0.05 :leapfrog-steps 15}
    :smc-opts {:selection (sel/select :slope :intercept)}})
 
@@ -428,7 +435,7 @@
    :param-addrs [:mu :x], :obs-addrs [:obs]
    :require-analytical? true
    :algorithms [:cmh :hmc :smc]
-   :cmh-opts {:addresses [:mu :x] :proposal-std 0.7}
+   :cmh-opts {:addresses [:mu :x] :proposal-std 0.7 :thin 20}
    :hmc-opts {:addresses [:mu :x] :step-size 0.1 :leapfrog-steps 10}
    :smc-opts {:selection (sel/select :mu :x)}})
 
@@ -463,7 +470,7 @@
    :param-addrs [:w0 :w1 :w2 :w3 :w4]
    :obs-addrs [:y0 :y1 :y2 :y3 :y4 :y5 :y6 :y7 :y8 :y9]
    :algorithms [:cmh :hmc]
-   :cmh-opts {:addresses [:w0 :w1 :w2 :w3 :w4] :proposal-std 0.4}
+   :cmh-opts {:addresses [:w0 :w1 :w2 :w3 :w4] :proposal-std 0.4 :thin 25 :burn 200}
    :hmc-opts {:addresses [:w0 :w1 :w2 :w3 :w4] :step-size 0.05 :leapfrog-steps 15}})
 
 ;; Discrete latent: two-component Gaussian mixture. The bernoulli component
