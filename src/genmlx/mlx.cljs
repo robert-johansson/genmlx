@@ -747,8 +747,22 @@
    Named for backward compatibility; use get-active-memory for clarity."
   [] (.getActiveMemory c))
 
-(defn sweep-dead-arrays! []
-  (when-not (in-tidy?)
+(declare ^:private buffer-count-pressure?)
+
+(defn sweep-dead-arrays!
+  "Collect dead MxArray wrappers (forced GC) and drop the Metal buffer cache.
+
+   Inside a tidy scope this normally defers to the scope-exit cleanup — BUT
+   the ~499000 Metal buffer-COUNT wall does not wait for scope exit: a
+   tiny-array hot loop inside one tidy scope (e.g. one SBC sim's full
+   multi-stage SMC pass, ~10^6 wrapper allocations) climbs to the wall with
+   the deferred cleanup never firing, because every in-loop sweep site
+   no-ops (genmlx-q6lh). Under hysteretic buffer-count pressure the wall is
+   the greater evil, so the sweep fires anyway — once per climb past the
+   high watermark (buffer-count-pressure? disarms until the count falls
+   below the low watermark), so an all-live count cannot make it thrash."
+  []
+  (when (or (not (in-tidy?)) (buffer-count-pressure?))
     (jsc-cleanup!)
     (.clearCache c)))
 
