@@ -55,6 +55,19 @@
               (if (u/accept-mh? (mx/realize weight) rk) trace t)))
           trace step-keys))
 
+(defn break-trace-graph!
+  "Break the lazy graph riding a rejuvenated trace: materialize its score
+   (forcing the regenerated choice values it references), then sweep dead
+   arrays every 50 particles. The rejuvenation counterpart of
+   break-particle-graph! — without it a full rejuvenation pass holds all
+   N x steps regenerate graphs live at once, and on multi-stage runs that
+   peak blows the Metal buffer-count ceiling (genmlx-q6lh). Returns the
+   trace unchanged."
+  [trace i]
+  (mx/materialize! (:score trace))
+  (when (zero? (mod (inc i) 50)) (mx/sweep-dead-arrays!))
+  trace)
+
 (defn strip-analytical
   "Strip analytical handlers from a model for particle-based inference.
    The analytical path returns deterministic posterior means, eliminating
@@ -170,16 +183,19 @@
     {:traces traces :log-weights log-weights :log-ml-increment ml-inc}))
 
 (defn- smc-rejuvenate
-  "Apply rejuvenation-steps MH moves to each trace.
+  "Apply rejuvenation-steps MH moves to each trace, breaking each
+   particle's regenerate graph as it completes (genmlx-q6lh).
    Returns vector of (possibly updated) traces."
   [traces rejuvenation-steps rejuvenation-selection key]
   (if (pos? rejuvenation-steps)
     (let [keys (if key (rng/split-n key (count traces)) (repeat (count traces) nil))]
-      (mapv (fn [trace ki]
+      (mapv (fn [i trace ki]
               (let [trace-keys (if ki (rng/split-n ki rejuvenation-steps)
                                       (repeat rejuvenation-steps nil))]
-                (rejuvenate-trace trace rejuvenation-selection trace-keys)))
-            traces keys))
+                (break-trace-graph!
+                 (rejuvenate-trace trace rejuvenation-selection trace-keys)
+                 i)))
+            (range) traces keys))
     traces))
 
 (defn- smc-step
@@ -412,10 +428,12 @@
                                    (mapv (fn [i trace ki]
                                            (if (= i ref-idx)
                                              trace  ;; Don't rejuvenate reference
-                                             (rejuvenate-trace
-                                              trace rejuvenation-selection
-                                              (if ki (rng/split-n ki rejuvenation-steps)
-                                                     (repeat rejuvenation-steps nil)))))
+                                             (break-trace-graph!
+                                              (rejuvenate-trace
+                                               trace rejuvenation-selection
+                                               (if ki (rng/split-n ki rejuvenation-steps)
+                                                      (repeat rejuvenation-steps nil)))
+                                              i)))
                                          (range particles) new-traces keys))
                                  new-traces)
                   ;; Same adaptive-resampling increment as smc-step: subtract
