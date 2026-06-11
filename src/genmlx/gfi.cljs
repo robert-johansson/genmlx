@@ -753,10 +753,22 @@
                    w (ev (:weight r))
                    a-new (ev (:weight (p/assess model [1.5] (:choices (:trace r)))))
                    a-old (ev (:weight (p/assess model [0.0] (:choices t))))
-                   oracle (- (log-gauss x 1.5 1) (log-gauss x 0.0 1))]
+                   oracle (- (log-gauss x 1.5 1) (log-gauss x 0.0 1))
+                   ;; Batched leg: vupdate-args [N] weights match the same
+                   ;; hand-derived ratio per particle.
+                   n 8
+                   vt (dyn/vsimulate model [0.0] n (rng/fresh-key 43))
+                   xs (mx/->clj (choice-val (:choices vt) :x))
+                   vw (mx/->clj (:weight (dyn/vupdate-args model vt [1.5] cm/EMPTY
+                                                           (rng/fresh-key 44))))]
                (and (approx= w (- a-new a-old) 1e-4)
                     (approx= w oracle 1e-4)
-                    (= [1.5] (:args (:trace r))))))}
+                    (= [1.5] (:args (:trace r)))
+                    (= n (count vw))
+                    (every? (fn [[xi wi]]
+                              (approx= wi (- (log-gauss xi 1.5 1)
+                                             (log-gauss xi 0.0 1)) 1e-3))
+                            (map vector xs vw)))))}
 
    {:name :update-args-roundtrip
     :from "[T] §2.3.1 UPDATE invertibility (ArgsUpdateEdit backward request)"
