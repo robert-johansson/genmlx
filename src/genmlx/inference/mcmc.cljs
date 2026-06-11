@@ -43,11 +43,14 @@
 
 (defn mh-step
   "One MH step. regenerate proposes + computes acceptance ratio.
-   Optional `key` for functional PRNG."
+   Optional `key` for functional PRNG.
+   Strips the L3 analytical path from the trace's gen-fn: analytical
+   regenerate is intercepted by :auto-regenerate-transition and anchors
+   chains at the posterior mean instead of sampling it (genmlx-540f)."
   ([current-trace selection]
    (mh-step current-trace selection nil))
   ([current-trace selection key]
-   (let [gf (:gen-fn current-trace)
+   (let [gf (dyn/strip-analytical-path (:gen-fn current-trace))
          [regen-key accept-key] (rng/split (rng/ensure-key key))
          result (p/regenerate (dyn/with-key gf regen-key) current-trace selection)
          w (mx/realize (:weight result))]
@@ -65,11 +68,17 @@
 
    :selection defaults to the complement of the observed addresses (all
    latents). The old default sel/all also resampled the OBSERVATIONS via
-   regenerate — silently targeting the prior (genmlx-7ca0)."
+   regenerate — silently targeting the prior (genmlx-7ca0).
+
+   The model is stripped of its L3 analytical path (mirroring smc): the
+   analytical generate would pin eliminated latents at their posterior
+   MEAN (a deterministic init with a marginal score) and intercept every
+   regenerate step, anchoring the chain instead of sampling (genmlx-540f)."
   [{:keys [samples burn thin selection callback key]
     :or {burn 0 thin 1}}
    model args observations]
-  (let [selection (or selection
+  (let [model (dyn/strip-analytical-path model)
+        selection (or selection
                       (sel/complement-sel (sel/from-choicemap observations)))
         [init-key chain-key] (rng/split (rng/ensure-key key))
         {:keys [trace]} (p/generate (dyn/with-key model init-key) args observations)]

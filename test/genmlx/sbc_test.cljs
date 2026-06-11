@@ -279,7 +279,13 @@
                                [a b])))
    :args []
    :param-addrs [:a :b], :obs-addrs [:obs-a :obs-b]
-   :algorithms [:cmh :hmc :is]
+   ;; :mh-cycle covers the static-conjugate x trace-MH cell: this model is
+   ;; statically eliminated (#{:a :b}), and per-site trace-MH on eliminated
+   ;; models was silently mean-anchored until kern/mh-kernel stripped the
+   ;; analytical path (genmlx-540f). Every other :mh/:mh-cycle model in the
+   ;; registry is dynamic (mx/item or splices), so this is the only combo
+   ;; that keeps the class covered.
+   :algorithms [:cmh :hmc :is :mh-cycle]
    ;; cmh combos thin to near-independence: cmh is a JOINT random-walk MH, so
    ;; autocorrelation time grows with dimension/posterior correlation (measured
    ;; tau 6-23 here, 14-53 on mvr-5d). At thin=1 the L draws carry too few
@@ -287,6 +293,7 @@
    ;; Thin values validated by mini-SBC at N=200/150 (genmlx-t757).
    :cmh-opts {:addresses [:a :b] :proposal-std 0.7 :thin 20}
    :hmc-opts {:addresses [:a :b] :step-size 0.1 :leapfrog-steps 10}
+   :mh-opts {:selections [(sel/select :a) (sel/select :b)]}
    :is-opts {}})
 
 (def gaussian-multi-obs
