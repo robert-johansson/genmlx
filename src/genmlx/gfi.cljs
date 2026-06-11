@@ -23,8 +23,7 @@
      (gfi/verify model args :law-names [:update-density-ratio])
      (gfi/check-law :score-decomposition model args)
 
-   See also: genmlx.contracts (DEPRECATED — all 11 contracts subsumed here)
-             genmlx.verify (static validation)
+   See also: genmlx.verify (static validation)
              genmlx.schemas (Malli structural schemas)"
   (:require [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]

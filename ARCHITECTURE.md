@@ -227,7 +227,7 @@ Split the PRNG key. Sample a value. Compute the log-probability. Thread all thre
 
 The four batched transitions (`batched-simulate-transition`, `batched-generate-transition`, `batched-update-transition`, `batched-regenerate-transition`) are structurally identical to their scalar counterparts. The sole difference: they call `dist-sample-n` to draw `[N]`-shaped tensors instead of scalars. Because MLX arithmetic broadcasts, an `[N]`-shaped sample paired with a scalar distribution parameter produces `[N]`-shaped log-probabilities. The state threading logic is unchanged. The handler never inspects value shapes -- this is precisely what makes shape-based vectorization transparent.
 
-The only mutable boundary in the entire system sits in `runtime.cljs`. The function `run-handler` wraps a transition in a single `volatile!` cell:
+The mutable boundary of handler execution sits in `runtime.cljs`. The function `run-handler` wraps a transition in a single `volatile!` cell. (System-wide, a small audited set of other mutable points exists outside the execution path — resource-management counters in `mlx.cljs`, dev-mode extension atoms, memoization caches, caller-owned training state; CLAUDE.md "Key design principles" carries the full inventory. None of them affect computation results.)
 
 ```clojure
 (defn run-handler [transition init-state body-fn]
@@ -389,7 +389,7 @@ The GFI method walks the stack and uses the first non-nil result:
 
 The handler system reduces GenMLX's execution model to a single primitive: a pure function from `(State, Address, Distribution)` to `(Value, State')`. GFI operations are choices of initial state and transition function. Vectorization is a transition that samples tensors instead of scalars. Exact enumeration is a transition that expands support sets as tensor axes. Analytical elimination is middleware that intercepts conjugate sites. Grammar-constrained decoding is middleware that rejects invalid extensions. All of these compose under function composition, and all of them produce generative functions that satisfy the same external GFI contract.
 
-The mutable boundary is a single `volatile!` in `run-handler`, created and consumed within one dynamic extent. Below it, transitions are pure. Above it, model bodies are pure. The volatile bridges the gap between the sequential imperative style that model code expects and the functional state-threading that the transitions implement. It is the thinnest possible shim between two pure layers.
+The mutable boundary of handler execution is a single `volatile!` in `run-handler`, created and consumed within one dynamic extent. Below it, transitions are pure. Above it, model bodies are pure. The volatile bridges the gap between the sequential imperative style that model code expects and the functional state-threading that the transitions implement. It is the thinnest possible shim between two pure layers.
 
 ---
 
@@ -476,7 +476,7 @@ Four dispatcher implementations (defined in `dynamic.cljs` where they access the
 
 Resolution walks the stack, returns the first non-nil dispatch-spec. The `:run` function in the spec encapsulates the full execution path for that level.
 
-**`with-handler`** (in `dispatch.cljs`): Attaches a custom `:run` function to a GF's metadata via `vary-meta`. The custom-transition-dispatcher checks for it.
+**`with-handler`** (in `dispatch.cljs`): Attaches a custom transition under `::dispatch/custom-transition` metadata via `vary-meta` (a single `(fn [state addr dist])` or a per-op map). The custom dispatcher checks for it, alongside `::dispatch/custom-dispatch` for full dispatch override via `with-dispatch`.
 
 **Score encoding**: Each dispatch-spec carries `:score-type` (`:joint`, `:marginal`, `:collapsed`, `:beam-marginal`).
 
@@ -485,12 +485,13 @@ Resolution walks the stack, returns the first non-nil dispatch-spec. The `:run` 
 ```clojure
 (simulate [this args]
   (let [key (ensure-key this)
-        _ (rng/seed! key)
-        result (run-dispatched this :simulate args key {})]
+        result (@dispatch-fn this :simulate args key {})]
     (mx/gfi-cleanup!)
-    (schemas/validated schemas/SimulateReturn result "DynamicGF/simulate")
     result))
 ```
+
+(`dispatch-fn` defaults to `run-dispatched*`; `genmlx.dev/start!` swaps in a
+validating wrapper, which is where Malli return-schema validation lives.)
 
 
 ## 5.2 What the Dispatch Layer Leaves Untouched
@@ -512,7 +513,7 @@ The dispatch layer is internal. Every external surface below is independent of i
 src/genmlx/
   ;; Layer 0: MLX + Runtime (unchanged)
   mlx.cljs                    ;; MLX bindings, lazy graph, eval, tidy, auto-cleanup
-  mlx/random.cljs             ;; Functional PRNG: split, seed!, fresh-key
+  mlx/random.cljs             ;; Functional PRNG: split, fresh-key, ensure-key
   runtime.cljs                ;; run-handler, volatile! boundary
 
   ;; Layer 1: Data Algebra (unchanged)
@@ -566,7 +567,7 @@ src/genmlx/
   method_selection.cljs, fit.cljs
 
   ;; Layer 10: Verification
-  gfi.cljs                     ;; 68 algebraic laws from the Cusumano-Towner thesis
+  gfi.cljs                     ;; the GFI algebraic law catalog from the Cusumano-Towner thesis
   verify.cljs                  ;; static validator (validate-gen-fn)
 
   ;; Support

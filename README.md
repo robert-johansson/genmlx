@@ -206,7 +206,7 @@ Layer 7: Vectorized
   genmlx.vectorized   — VectorizedTrace, batched execution, dispatch amortization
 
 Layer 8: Verification
-  genmlx.gfi          — 53 algebraic laws from Cusumano-Towner 2020 thesis
+  genmlx.gfi          — the GFI algebraic law catalog from Cusumano-Towner 2020 thesis
   genmlx.verify       — Static validator (validate-gen-fn)
 
 Layer 9: LLM Integration

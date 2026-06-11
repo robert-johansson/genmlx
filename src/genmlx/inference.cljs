@@ -1,6 +1,11 @@
 (ns genmlx.inference
   "Public inference API for GenMLX.
-   Re-exports all inference algorithms."
+   Re-exports the core inference surface: importance sampling, MCMC, SMC,
+   SMCP3, VI, kernels, diagnostics, ADEV, amortized, and enumeration.
+   NOT re-exported (require their namespaces directly): pmcmc, exact,
+   analytical/conjugate/kalman/ekf, fisher, differentiable, and the
+   compiled variants (compiled-smc, compiled-gradient, compiled-optimizer);
+   vectorized entry points live on genmlx.dynamic (vsimulate/vgenerate/...)."
   (:require [genmlx.inference.importance :as is-ns]
             [genmlx.inference.mcmc :as mcmc-ns]
             [genmlx.inference.smc :as smc-ns]

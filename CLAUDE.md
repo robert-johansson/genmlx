@@ -130,7 +130,7 @@ src/genmlx/
   # Layer 3: DSL + Schema (gen macro, DynamicGF, 4-level dispatcher)
   gen.cljc, dynamic.cljs, schema.cljs, schemas.cljs, inspect.cljs
 
-  # Layer 4: Distributions (31 types, open multimethods)
+  # Layer 4: Distributions (36 constructors, open multimethods)
   dist/core.cljs, dist/macros.cljc, dist.cljs
 
   # Layer 5: Combinators (Map, Unfold, Switch, Scan, Mask, Mix, Recurse, etc.)
@@ -175,7 +175,7 @@ The implementation layers map onto the three-layer purity model:
   Layer 1: Core Data        (choicemap, trace, selection, diff — pure)
   Layer 2: GFI & Execution  (protocols, handler, edit, tensor_trace — pure)
   Layer 3: DSL + Schema     (gen macro, dynamic, schema, schemas, inspect — pure)
-  Layer 4: Distributions    (dist/core, dist/macros, dist — 31 types, pure)
+  Layer 4: Distributions    (dist/core, dist/macros, dist — 36 constructors, pure)
   Layer 5: Combinators      (combinators, vmap — 10 combinators, pure)
   Layer 6: Inference         (26 files, 35+ algorithms — pure)
   Layer 7: Compiled Paths   (compiled, compiled_ops, rewrite, affine, conjugacy, dep_graph,
@@ -241,8 +241,9 @@ direct import of dynamic.cljs).
 6. **Compose, don't duplicate.** Compiled paths compose on existing handlers and
    infrastructure — no parallel implementations. The handler is ground truth.
 
-7. **68 algebraic laws.** The GFI algebraic theory (`gfi.cljs`) encodes 68 laws
-   from the thesis covering all operations, compositionality, gradients, and
+7. **The GFI algebraic laws.** The GFI algebraic theory (`gfi.cljs`) encodes
+   the laws from the thesis (68 as of 2026-06; count the `laws` vector for the
+   current number) covering all operations, compositionality, gradients, and
    compiled path equivalence. `strip-compiled` forces handler path for testing.
 
 8. **Sync math, async events.** GenMLX core is synchronous: GFI ops, inference,
@@ -363,9 +364,10 @@ The key mechanism enabling compiled execution. For each distribution type:
 2. Inside the compiled function, apply a pure deterministic transform
 3. Compute log-probability via a pure function
 
-10 distributions supported: gaussian, uniform, bernoulli, exponential, log-normal,
-delta, laplace, cauchy, iid-gaussian. The expression compiler (`compile-expr`)
-resolves ~45 MLX operations from namespace-qualified symbols in the source form.
+9 distributions supported: gaussian, uniform, bernoulli, exponential, log-normal,
+delta, laplace, cauchy, iid-gaussian (plus `:normal`/`:flip` aliases). The
+expression compiler (`compile-expr`) resolves ~45 MLX operations from
+namespace-qualified symbols in the source form.
 
 ## Schema system (Level 1)
 
@@ -400,9 +402,11 @@ score accumulation, weight computation) just works.
 - Batched handler transitions: structurally identical to scalar ones
 - `VectorizedTrace`: choices where leaves hold `[N]`-shaped arrays
 
-**Limitations:** No `splice` in shape-based batched mode (`vsimulate`/`vgenerate`).
-`vmap-gf` supports splice via combinator fallback. No `mx/item` in model bodies
-during batched execution (breaks vectorization).
+**Limitations:** `splice` in shape-based batched mode (`vsimulate`/`vgenerate`)
+is supported via three runtime paths: DynamicGF sub-gfs run a batched
+sub-handler, combinators implementing `IBatchedSplice` take a fused fast path,
+and other GFI values fall back to scalar-per-particle execution. No `mx/item`
+in model bodies during batched execution (breaks vectorization).
 
 ## LLM integration
 

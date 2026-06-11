@@ -54,7 +54,7 @@
                              (:auto-regenerate-transition schema) (conj :regenerate))})
 
         (seq (:splice-sites schema))
-        (assoc :splice-sites (mapv #(select-keys % [:addr :gf-sym :deps])
+        (assoc :splice-sites (mapv #(select-keys % [:addr :gf-form :deps])
                                     (:splice-sites schema)))
 
         (seq (:param-sites schema))

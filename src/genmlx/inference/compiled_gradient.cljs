@@ -16,9 +16,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.inference.util :as u]
             [genmlx.inference.differentiable-resample :as dr]
-            [genmlx.compiled-ops :as cops]
-            [genmlx.dynamic :as dyn]
-            [genmlx.protocols :as p]))
+            [genmlx.compiled-ops :as cops]))
 
 ;; =========================================================================
 ;; Differentiable MH chain
@@ -176,44 +174,3 @@
     (mx/materialize! value grad)
     {:value value :grad grad}))
 
-;; =========================================================================
-;; Simple gradient helpers
-;; =========================================================================
-
-(defn- score-gradient-through-chain
-  "Simple interface: gradient of final score after running MH chain.
-
-   model: generative function with schema
-   args: model arguments
-   observations: ChoiceMap of observed values
-   addresses: vector of latent addresses
-   opts: {:steps :proposal-std :key}
-
-   Returns {:value scalar :grad [K]-array}."
-  [model args observations addresses
-   {:keys [steps proposal-std key]
-    :or {steps 10 proposal-std 0.1}}]
-  (let [{:keys [score-fn latent-index tensor-native?]}
-        (u/make-tensor-score-fn model args observations addresses)
-        K (count latent-index)
-        ;; Get initial params from a generate call
-        model-k (dyn/auto-key model)
-        {:keys [trace]} (p/generate model-k args observations)
-        init-params (u/extract-params-by-index trace latent-index)
-        _ (mx/materialize! init-params)
-        rk (rng/ensure-key key)
-        [nk uk] (rng/split rk)
-        noise (rng/normal nk [steps K])
-        uniforms (rng/uniform uk [steps])
-        _ (mx/materialize! noise uniforms)
-        std-arr (mx/scalar proposal-std)
-        ;; Build differentiable chain
-        chain-fn (make-differentiable-chain score-fn std-arr steps K)
-        ;; Objective: final score
-        objective (fn [p0]
-                    (let [final (chain-fn p0 noise uniforms)]
-                      (score-fn final)))
-        vag (mx/value-and-grad objective)
-        [value grad] (vag init-params)]
-    (mx/materialize! value grad)
-    {:value value :grad grad :init-params init-params}))

@@ -61,13 +61,6 @@
                  [addr {:mean mean :std std :samples vals}]))
              addrs)))))
 
-(defn- is-posterior
-  "Extract posterior summary from importance sampling traces.
-   Returns {addr {:value number}} from the best (first resampled) trace."
-  [traces data]
-  (when (seq traces)
-    (extract-posterior (first traces) data)))
-
 ;; ---------------------------------------------------------------------------
 ;; Method dispatcher
 ;; ---------------------------------------------------------------------------

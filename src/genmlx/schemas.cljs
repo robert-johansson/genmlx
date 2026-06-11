@@ -8,7 +8,10 @@
    Citations reference [T] Cusumano-Towner 2020 PhD thesis and
    [D] gen.dev/docs/stable/ref/core/gfi.
 
-   See MALLI_INTEGRATION.md for the design rationale."
+   Runtime validation (dev mode) consults BaseState, SubResult, and the
+   per-op *Return schemas; the remaining definitions (per-mode states,
+   TransitionSpec/ScoreType, model-schema shapes) are executable reference
+   documentation of the corresponding data shapes."
   (:require [malli.util :as mu]
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]))

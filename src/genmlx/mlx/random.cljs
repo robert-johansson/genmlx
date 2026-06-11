@@ -23,14 +23,6 @@
   ([] (.randomKey c (js/Math.floor (* (js/Math.random) 2147483647))))
   ([seed] (.randomKey c seed)))
 
-(defn- key->seed
-  "Derive a non-negative integer seed from a PRNG key array."
-  [key]
-  (mx/eval! key)
-  (let [arr (mx/->clj key)]
-    (bit-and (bit-xor (int (nth arr 0)) (int (nth arr 1)))
-             0x7FFFFFFF)))
-
 (defn valid-key?
   "True if k is a well-formed MLX PRNG key: an MLX array of shape [2] whose
    dtype is not float32. A fresh key is uint32[2]; the float 0-scalar that an
