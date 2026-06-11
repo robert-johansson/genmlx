@@ -8,6 +8,7 @@
    Follows GenSerialization.jl conventions."
   (:require [genmlx.mlx :as mx]
             [genmlx.choicemap :as cm]
+            [genmlx.trace :as tr]
             [genmlx.protocols :as p]
             [cljs.reader :as reader]))
 
@@ -234,7 +235,12 @@
               ;; them used to throw (item needs size 1; genmlx-000i).
               :score (if (and (mx/array? score) (pos? (count (mx/shape score))))
                        (mlx-value->data score)
-                       (mx/realize score))}
+                       (mx/realize score))
+              ;; Declare the score's encoding (genmlx-lbae): a marginal
+              ;; (analytically-eliminated) trace's saved score is NOT a joint
+              ;; density. load-trace re-generates from choices, so the loaded
+              ;; trace is freshly joint-scored regardless of this field.
+              :score-type (name (tr/score-type trace))}
         ;; retval is best-effort — closures, protocol instances won't survive
         data (try
                (assoc data :retval (serialize-value (:retval trace)))

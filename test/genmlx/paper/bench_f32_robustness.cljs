@@ -204,7 +204,7 @@
       (throw (ex-info "model not eliminated as expected"
                       {:expected expect-elim :got elim})))
     (let [{:keys [trace weight]} (p/generate (dyn/with-key model (rng/fresh-key 7)) [] obs)]
-      (when (not= :marginal (::dyn/score-type (meta trace)))
+      (when (not= :marginal (:genmlx.trace/score-type (meta trace)))
         (throw (ex-info "generate did not take the analytical path" {})))
       (mx/eval! weight)
       (mx/item weight))))

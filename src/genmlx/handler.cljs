@@ -297,12 +297,17 @@
 ;; ---------------------------------------------------------------------------
 
 (defn merge-sub-result
-  "Pure: merge a sub-generative-function result into parent state."
+  "Pure: merge a sub-generative-function result into parent state.
+   Lubs the sub-result's score-type into the state so a marginal-scored
+   sub-trace cannot launder into a joint-looking parent score
+   (ARCHITECTURE §3.3, genmlx-lbae); make-result-trace reads the
+   accumulated :score-type when tagging the final trace."
   [state addr sub-result]
   (-> state
       (update :choices cm/set-submap addr (:choices sub-result))
       (update :score mx/add (:score sub-result))
       (update :splice-scores (fn [ss] (assoc (or ss {}) addr (:score sub-result))))
+      (update :score-type tr/combine-score-types (:score-type sub-result))
       (cond->
        (and (contains? state :weight) (:weight sub-result))
         (update :weight mx/add (:weight sub-result))

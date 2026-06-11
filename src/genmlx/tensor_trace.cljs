@@ -42,11 +42,15 @@
   tr/ITrace)
 
 (defn make-tensor-trace
-  "Create a TensorTrace. Builds TensorChoiceMap from values + addr-index."
+  "Create a TensorTrace. Builds TensorChoiceMap from values + addr-index.
+   L4 tensor traces are joint-scored by construction (fused graphs compose
+   handler-equivalent log-densities), so the tag is unconditional."
   [{:keys [gen-fn args values addr-index score retval]}]
-  (->TensorTrace gen-fn args
-                 (->TensorChoiceMap values addr-index)
-                 values addr-index score retval))
+  (tr/with-score-type
+    (->TensorTrace gen-fn args
+                   (->TensorChoiceMap values addr-index)
+                   values addr-index score retval)
+    :joint))
 
 ;; =========================================================================
 ;; addr-index construction

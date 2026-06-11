@@ -110,7 +110,7 @@
   (:trace (p/generate (dyn/with-key model key) [] constraints)))
 
 (defn marginal-trace? [trace]
-  (= :marginal (:genmlx.dynamic/score-type (meta trace))))
+  (= :marginal (:genmlx.trace/score-type (meta trace))))
 
 (defn cmv [m] (reduce-kv (fn [c k v] (cm/set-value c k (mx/scalar v))) cm/EMPTY m))
 

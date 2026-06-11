@@ -63,23 +63,29 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- attach-splice-scores
-  "Attach splice scores (and nested splice scores) as metadata on a trace, if present."
+  "Attach splice scores (and nested splice scores) as metadata on a trace, if
+   present. vary-meta, not with-meta: the trace already carries its
+   score-type tag (genmlx-lbae) which must survive."
   [trace result]
   (let [ss (:splice-scores result)
         nss (:nested-splice-scores result)]
     (if (or ss nss)
-      (with-meta trace (cond-> {}
-                         ss (assoc ::splice-scores ss)
-                         nss (assoc ::nested-splice-scores nss)))
+      (vary-meta trace (fn [m] (cond-> (or m {})
+                                 ss (assoc ::splice-scores ss)
+                                 nss (assoc ::nested-splice-scores nss))))
       trace)))
 
 (defn- make-result-trace
-  "Build a Trace from a handler/compiled result map."
+  "Build a Trace from a handler/compiled result map. Tags the trace with the
+   state's accumulated score-type — :joint unless a spliced sub-result
+   carried a non-joint score (merge-sub-result lubs it into the state)."
   [gf args result]
-  (tr/make-trace {:gen-fn gf :args args
-                  :choices (:choices result)
-                  :retval (:retval result)
-                  :score (:score result)}))
+  (tr/with-score-type
+    (tr/make-trace {:gen-fn gf :args args
+                    :choices (:choices result)
+                    :retval (:retval result)
+                    :score (:score result)})
+    (or (:score-type result) :joint)))
 
 (defn- attach-unused
   "Assoc :unused-constraints onto a result map when the trace left some
@@ -112,10 +118,12 @@
   (let [new-score (:score result)
         proposal-ratio (:weight result)
         weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)
-        new-trace (tr/make-trace {:gen-fn gf :args (:args trace)
-                                  :choices (:choices result)
-                                  :retval (:retval result)
-                                  :score new-score})]
+        new-trace (tr/with-score-type
+                    (tr/make-trace {:gen-fn gf :args (:args trace)
+                                    :choices (:choices result)
+                                    :retval (:retval result)
+                                    :score new-score})
+                    (or (:score-type result) :joint))]
     {:trace (attach-splice-scores new-trace result)
      :weight weight}))
 
@@ -210,27 +218,31 @@
 
 ;; -- L1-M2: Compiled path --
 
-(defn- run-simulate-compiled [gf args key _opts]
-  (let [cfn (:compiled-simulate (:schema gf))
-        result (cfn key (vec args))]
+(defn- make-compiled-trace
+  "Build a :joint-tagged Trace from a compiled-path result. Compiled paths
+   are score-equivalent to the handler (joint by construction) and have no
+   splices, so the tag is unconditional."
+  [gf args result]
+  (tr/with-score-type
     (tr/make-trace {:gen-fn gf :args args
                     :choices (cm/from-flat-map (:values result))
-                    :retval (:retval result) :score (:score result)})))
+                    :retval (:retval result) :score (:score result)})
+    :joint))
+
+(defn- run-simulate-compiled [gf args key _opts]
+  (let [cfn (:compiled-simulate (:schema gf))]
+    (make-compiled-trace gf args (cfn key (vec args)))))
 
 (defn- run-generate-compiled [gf args key {:keys [constraints]}]
   (let [cfn (:compiled-generate (:schema gf))
         result (cfn key (vec args) constraints)]
-    {:trace (tr/make-trace {:gen-fn gf :args args
-                            :choices (cm/from-flat-map (:values result))
-                            :retval (:retval result) :score (:score result)})
+    {:trace (make-compiled-trace gf args result)
      :weight (:weight result)}))
 
 (defn- run-update-compiled [gf _args key {:keys [trace constraints]}]
   (let [cfn (:compiled-update (:schema gf))
         result (cfn key (vec (:args trace)) constraints (:choices trace))]
-    {:trace (tr/make-trace {:gen-fn gf :args (:args trace)
-                            :choices (cm/from-flat-map (:values result))
-                            :retval (:retval result) :score (:score result)})
+    {:trace (make-compiled-trace gf (:args trace) result)
      :weight (mx/subtract (:score result) (:score trace))
      :discard (cm/from-flat-map (:discard result))}))
 
@@ -239,9 +251,7 @@
         old-score (:score trace)
         result (cfn key (vec (:args trace)) (:choices trace) selection)
         weight (mx/subtract (mx/subtract (:score result) old-score) (:weight result))]
-    {:trace (tr/make-trace {:gen-fn gf :args (:args trace)
-                            :choices (cm/from-flat-map (:values result))
-                            :retval (:retval result) :score (:score result)})
+    {:trace (make-compiled-trace gf (:args trace) result)
      :weight weight}))
 
 (defn- run-assess-compiled [gf args key {:keys [constraints]}]
@@ -358,7 +368,7 @@
                  (fn [rt] (run-body gf rt args)))
         trace (cond-> (make-result-trace gf args result)
                 (analytical-fired? result)
-                (vary-meta assoc ::score-type :marginal))]
+                (tr/with-score-type :marginal))]
     (make-generate-result trace (:weight result) constraints (:choices result) result)))
 
 (defn- run-assess-analytical [gf args key {:keys [constraints]}]
@@ -390,7 +400,7 @@
                  (fn [rt] (run-body gf rt (:args trace))))
         regen-result (make-regen-result gf trace result old-score)]
     (if (analytical-fired? result)
-      (clojure.core/update regen-result :trace vary-meta assoc ::score-type :marginal)
+      (clojure.core/update regen-result :trace tr/with-score-type :marginal)
       regen-result)))
 
 ;; -- Utility --
@@ -508,7 +518,7 @@
 
           :regenerate
           (when (and (:auto-regenerate-transition schema)
-                     (= :marginal (::score-type (meta (:trace opts)))))
+                     (= :marginal (tr/score-type (:trace opts))))
             {:run run-fn :score-type :marginal :label :analytical})
 
           nil)))))
@@ -537,22 +547,48 @@
 (declare run-dispatched* strip-alternate-paths)
 
 (defn- joint-rescore-marginal
-  "An analytically-scored trace (::score-type :marginal) carries a collapsed
-   score. Running a joint-scoring update/project/regenerate against it would
-   subtract a marginal old score from a joint new score — silently mixing
-   decompositions (ARCHITECTURE §3.3, genmlx-pkmx). Alternate paths must stay
-   semantically invisible (a model written at L0 runs unchanged at L3), so
-   convert instead of throwing: re-generate the trace fully constrained from
-   its own choices via the handler path, yielding an identical-choices trace
-   with an exact joint score. Costs one handler generate per conversion."
-  [gf key opts]
-  (let [t (:trace opts)]
-    (if (= :marginal (::score-type (meta t)))
+  "Score-type boundary check for joint-scoring update/project/regenerate
+   (ARCHITECTURE §3.3, genmlx-pkmx, genmlx-lbae). Consuming a non-joint
+   trace would subtract a marginal old score from a joint new score —
+   silently mixing decompositions.
+
+   :marginal traces CONVERT: alternate paths must stay semantically
+   invisible (a model written at L0 runs unchanged at L3), so re-generate
+   the trace fully constrained from its own choices via the handler path,
+   yielding an identical-choices trace with an exact joint score. Costs one
+   handler generate per conversion.
+
+   :collapsed (and any other non-joint) traces THROW: their choicemaps are
+   empty (all latents integrated out by enumerate/exact), so there is
+   nothing to re-generate from — no conversion exists."
+  [gf op key opts]
+  (let [t (:trace opts)
+        st (tr/score-type t)]
+    (case st
+      :joint opts
+      :marginal
       (let [stripped (strip-alternate-paths gf)
             res (run-dispatched* stripped :generate (:args t) key
-                                 {:constraints (:choices t)})]
-        (assoc opts :trace (:trace res)))
-      opts)))
+                                 {:constraints (:choices t)})
+            converted (:trace res)]
+        ;; Convergence guard: when a sub-gf reproduces a non-joint score
+        ;; even fully constrained (e.g. an enumerate splice), no joint
+        ;; conversion exists — throw, don't pass a still-mixed trace on.
+        (when (not= :joint (tr/score-type converted))
+          (throw (ex-info
+                   (str "Joint-scoring " op ": re-generating the trace's"
+                        " choices did not yield a joint score (a sub-gf"
+                        " reproduces a " (tr/score-type converted) " score)")
+                   {:genmlx/error :score-type-mismatch
+                    :op op :score-type (tr/score-type converted)
+                    :expected :joint})))
+        (assoc opts :trace converted))
+      (throw (ex-info
+               (str "Joint-scoring " op " cannot consume a " st
+                    "-scored trace — its choices do not determine a joint"
+                    " density (collapsed traces have no recorded choices)")
+               {:genmlx/error :score-type-mismatch
+                :op op :score-type st :expected :joint})))))
 
 (defn run-dispatched*
   "Core dispatch: walk the dispatcher stack and execute the first match.
@@ -563,7 +599,7 @@
     (assert spec (str "No dispatcher resolved for op " op))
     (let [opts (if (and (contains? #{:update :project :regenerate} op)
                         (= :joint (:score-type spec)))
-                 (joint-rescore-marginal gf key opts)
+                 (joint-rescore-marginal gf op key opts)
                  opts)]
       ((:run spec) gf args key opts))))
 
@@ -782,7 +818,10 @@
                          (let [trace (p/simulate gf args)]
                            [trace {:choices (:choices trace) :retval (:retval trace)
                                    :score (:score trace)}]))]
-    (extract-splice-meta result trace)))
+    ;; Propagate the sub-trace's score-type: a marginal-scored sub-result
+    ;; must not launder into a joint-looking parent score (genmlx-lbae,
+    ;; ARCHITECTURE §3.3 merge-sub-result).
+    (extract-splice-meta (assoc result :score-type (tr/score-type trace)) trace)))
 
 (defn- execute-sub-project
   "Execute sub-GF in project mode: replay via generate, then project.
@@ -794,6 +833,7 @@
     {:choices (:choices trace)
      :retval (:retval trace)
      :score (:score trace)
+     :score-type (tr/score-type trace)
      :weight weight}))
 
 (defn- execute-sub-assess
@@ -950,6 +990,13 @@
 ;; uses batched handler transitions with [N]-shaped arrays via MLX broadcasting.
 ;; ---------------------------------------------------------------------------
 
+(defn- tag-vtrace
+  "Tag a VectorizedTrace :joint. Batched execution always runs batched
+   handler transitions — no analytical or collapsed producer exists for
+   vectorized traces — so the tag is unconditional (genmlx-lbae)."
+  [vt]
+  (tr/with-score-type vt :joint))
+
 (defn vsimulate
   "Run model body ONCE with batched handler, producing a VectorizedTrace
    with [n]-shaped arrays at each choice site.
@@ -963,8 +1010,9 @@
                                 :executor execute-sub
                                 :param-store (param-store gf)}
                                (fn [rt] (run-body gf rt args)))]
-    (vec/->VectorizedTrace gf args (:choices result) (:score result)
-                           (mx/zeros [n]) n (:retval result))))
+    (tag-vtrace
+      (vec/->VectorizedTrace gf args (:choices result) (:score result)
+                             (mx/zeros [n]) n (:retval result)))))
 
 (defn vgenerate
   "Run model body ONCE with batched generate handler, producing a
@@ -982,8 +1030,9 @@
                                 :executor execute-sub
                                 :param-store (param-store gf)}
                                (fn [rt] (run-body gf rt args)))]
-    (vec/->VectorizedTrace gf args (:choices result) (:score result)
-                           (:weight result) n (:retval result))))
+    (tag-vtrace
+      (vec/->VectorizedTrace gf args (:choices result) (:score result)
+                             (:weight result) n (:retval result)))))
 
 (defn vupdate
   "Batched update: run model body ONCE with batched update handler.
@@ -1006,9 +1055,10 @@
         ;; Thesis update weight: non-fresh score minus old [N]-shaped score —
         ;; the same convention as the scalar run-update path.
         weight (mx/subtract (:weight result) (:score vtrace))]
-    {:vtrace (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
-                                    (:score result) weight
-                                    n (:retval result))
+    {:vtrace (tag-vtrace
+               (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
+                                      (:score result) weight
+                                      n (:retval result)))
      :weight weight
      :discard (:discard result)}))
 
@@ -1033,8 +1083,9 @@
         new-score (:score result)
         proposal-ratio (:weight result)
         weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)]
-    {:vtrace (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
-                                    new-score weight n (:retval result))
+    {:vtrace (tag-vtrace
+               (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
+                                      new-score weight n (:retval result)))
      :weight weight}))
 
 (defn loop-obs

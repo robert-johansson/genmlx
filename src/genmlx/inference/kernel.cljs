@@ -7,6 +7,7 @@
             [genmlx.selection :as sel]
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
+            [genmlx.trace :as tr]
             [genmlx.dynamic :as dyn]
             [genmlx.inference.util :as u]))
 
@@ -54,12 +55,17 @@
    Returns (fn [trace key] -> trace). Symmetric by default.
    Strips the L3 analytical path from the trace's gen-fn: analytical
    regenerate is intercepted by :auto-regenerate-transition and anchors
-   chains at the posterior mean instead of sampling it (genmlx-540f)."
+   chains at the posterior mean instead of sampling it (genmlx-540f).
+   The MH ratio is only valid for joint-scored regenerate results, so the
+   result is asserted :joint — if the strip ever regresses (or the trace's
+   gen-fn substitutes a collapsed regenerate), the chain throws instead of
+   silently miscalibrating (genmlx-lbae)."
   [selection]
   (symmetric-kernel
     (fn [trace key]
       (let [gf (dyn/auto-key (dyn/strip-analytical-path (:gen-fn trace)))
             result (p/regenerate gf trace selection)
+            _ (tr/assert-joint! (:trace result) :mh-kernel)
             w (mx/realize (:weight result))]
         (if (u/accept-mh? w key)
           (:trace result)

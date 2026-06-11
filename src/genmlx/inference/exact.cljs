@@ -143,30 +143,41 @@
    Replaces the former ExactGF record with dispatch-based execution.
    Called as (enumerate-run op gf args key opts) by custom-transition-dispatcher."
   [op gf args key {:keys [constraints trace selection]}]
+  ;; All traces are tagged :collapsed: every latent is integrated out, the
+  ;; choicemap is empty, and the score is a marginal likelihood. Joint-scoring
+  ;; consumers (trace-MH) must throw on these, never reuse them (genmlx-lbae).
   (case op
     :simulate
     (let [{:keys [probs]} (enumerate-and-normalize gf args nil)]
-      (tr/make-trace {:gen-fn gf :args (vec args) :choices cm/EMPTY
-                      :retval probs :score (mx/scalar 0.0)}))
+      (tr/with-score-type
+        (tr/make-trace {:gen-fn gf :args (vec args) :choices cm/EMPTY
+                        :retval probs :score (mx/scalar 0.0)})
+        :collapsed))
 
     :generate
     (let [{:keys [probs log-ml]} (enumerate-and-normalize gf args constraints)]
-      {:trace (tr/make-trace {:gen-fn gf :args (vec args) :choices cm/EMPTY
-                              :retval probs :score log-ml})
+      {:trace (tr/with-score-type
+                (tr/make-trace {:gen-fn gf :args (vec args) :choices cm/EMPTY
+                                :retval probs :score log-ml})
+                :collapsed)
        :weight log-ml})
 
     :update
     (let [old-score (:score trace)
           {:keys [probs log-ml]} (enumerate-and-normalize gf (:args trace) constraints)]
-      {:trace (tr/make-trace {:gen-fn gf :args (:args trace) :choices cm/EMPTY
-                              :retval probs :score log-ml})
+      {:trace (tr/with-score-type
+                (tr/make-trace {:gen-fn gf :args (:args trace) :choices cm/EMPTY
+                                :retval probs :score log-ml})
+                :collapsed)
        :weight (mx/subtract log-ml old-score)
        :discard cm/EMPTY})
 
     :regenerate
     (let [{:keys [probs]} (enumerate-and-normalize gf (:args trace) nil)]
-      {:trace (tr/make-trace {:gen-fn gf :args (:args trace) :choices cm/EMPTY
-                              :retval probs :score (mx/scalar 0.0)})
+      {:trace (tr/with-score-type
+                (tr/make-trace {:gen-fn gf :args (:args trace) :choices cm/EMPTY
+                                :retval probs :score (mx/scalar 0.0)})
+                :collapsed)
        :weight (mx/scalar 0.0)})
 
     :assess
