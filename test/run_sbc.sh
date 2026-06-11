@@ -19,9 +19,10 @@
 # - A combo that exceeds SBC_COMBO_TIMEOUT (default 7200s) is abandoned; if
 #   the process entered the Metal uninterruptible-sleep state it may linger
 #   until reboot, but the runner moves on (see memory: Metal-wedge runs).
-# - Re-running skips combos whose fragment is already complete, so an
-#   interrupted sweep resumes where it left off. Delete results/sbc/ for a
-#   fresh run.
+# - Re-running skips combos whose fragment ran to a PASSED verdict, so an
+#   interrupted sweep resumes where it left off; combos that ran to a
+#   FAILED verdict (sim-failure budget) are re-run. Delete results/sbc/
+#   for a fresh run.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -48,8 +49,8 @@ failed=0
 for combo in $combos; do
   i=$((i+1))
   frag="$FRAG_DIR/$(echo "$combo" | tr ':' '_').json"
-  if [ -f "$frag" ] && python3 -c "import json,sys; sys.exit(0 if json.load(open('$frag'))['summary']['complete?'] else 1)" 2>/dev/null; then
-    echo "[$i/$total] $combo — fragment complete, skipping"
+  if [ -f "$frag" ] && python3 scripts/merge_sbc_results.py --skip-ok "$frag" "$combo" 2>/dev/null; then
+    echo "[$i/$total] $combo — fragment passed, skipping"
     continue
   fi
   echo "[$i/$total] $combo"

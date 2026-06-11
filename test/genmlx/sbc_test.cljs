@@ -734,7 +734,19 @@
                                  :pass? (and (:pass? chi2) (:pass? ecdf))})
                               param-results)
                 :elapsed_s elapsed}))
-      (swap! summary update :fail inc))
+      ;; run-sbc returned nil: the combo ran to a FAILED verdict (sim-failure
+      ;; budget exceeded). Record it as a results row so the merge step can
+      ;; surface it — a failed combo must never be invisible (genmlx-hojy).
+      (do
+        (swap! all-results conj
+               {:model (:name model-spec)
+                :algorithm (name algo-key)
+                :verdict "failed"
+                :reason (str "sim-failure budget exceeded (>"
+                             (* 100 MAX-FAIL-RATE) "% of sims failed)")
+                :params []
+                :elapsed_s elapsed})
+        (swap! summary update :fail inc)))
     (println (str "  [" (.toFixed elapsed 1) "s]"))
     ;; Write after each combo so crashes don't lose everything
     (write-results!)
