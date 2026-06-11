@@ -232,6 +232,7 @@ medium test/genmlx/map_test.cljs
 fast test/genmlx/mcmc_defaults_test.cljs core
 slow test/genmlx/mcmc_detailed_balance_test.cljs
 medium test/genmlx/mcmc_diagnostics_test.cljs
+fast test/genmlx/mcmc_elim_filter_test.cljs core
 medium test/genmlx/mcmc_property_test.cljs
 slow test/genmlx/mcmc_stationary_test.cljs
 slow test/genmlx/membrane_churn_test.cljs
@@ -241,6 +242,7 @@ bench test/genmlx/metal_gc_stress.cljs
 fast test/genmlx/method_selection_test.cljs
 medium test/genmlx/multistep_kalman_ekf_test.cljs
 fast test/genmlx/mutation_boundary_test.cljs core
+fast test/genmlx/native_guard_test.cljs core
 bench test/genmlx/nbb_benchmark.cljs
 medium test/genmlx/neg_binomial_test.cljs
 medium test/genmlx/new_dist_test.cljs
@@ -258,6 +260,7 @@ bench test/genmlx/paper/bench_01_ladder.cljs
 bench test/genmlx/paper/bench_05_conjugacy.cljs
 bench test/genmlx/paper/bench_07_system.cljs
 bench test/genmlx/paper/bench_10_optimization.cljs
+bench test/genmlx/paper/bench_f32_robustness.cljs
 fast test/genmlx/partial_compile_test.cljs core
 bench test/genmlx/perfbench_curvefit.cljs
 bench test/genmlx/perfbench_large.cljs
@@ -317,6 +320,7 @@ exclude test/genmlx/test_helpers.cljs
 exclude test/genmlx/test_models.cljs
 fast test/genmlx/trace_immutability_property_test.cljs
 fast test/genmlx/trace_immutability_test.cljs core
+fast test/genmlx/trace_mh_elim_test.cljs core
 fast test/genmlx/trace_test.cljs core
 fast test/genmlx/tutorial/ch01_test.cljs
 medium test/genmlx/tutorial/ch02_test.cljs
