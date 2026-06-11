@@ -42,9 +42,8 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private score-type-rank
-  "Lattice order for combine-score-types: a composite trace is as collapsed
-   as its most-collapsed part."
-  {:joint 0 :marginal 1 :beam-marginal 2 :collapsed 3})
+  "Propagation order for combine-score-types among the path-unstable tags."
+  {:joint 0 :marginal 1 :beam-marginal 2})
 
 (defn score-type
   "The score encoding of a trace: its ::score-type metadata, or :joint when
@@ -58,15 +57,25 @@
   (vary-meta trace assoc ::score-type st))
 
 (defn combine-score-types
-  "Least upper bound of score-types over the :joint < :marginal <
-   :beam-marginal < :collapsed lattice. nil counts as :joint (untagged).
-   Used to derive a composite trace's tag from its parts (combinator
-   elements, spliced sub-traces)."
+  "Compose a composite trace's score-type from its parts (spliced
+   sub-traces, combinator elements). nil counts as :joint (untagged).
+
+   Only path-UNSTABLE tags propagate (:marginal, :beam-marginal): an
+   analytically-marginal part records latent choices its score does not
+   cover (posterior-mean pinning; scoring switches decomposition between
+   ops), poisoning score deltas for the whole composite. A :collapsed part
+   (enumerate) is the opposite — it records NO internal choices, its score
+   is the exact reproducible density of its empty block (encapsulated
+   exact marginalization), and every op re-derives it consistently, so it
+   composes like any deterministic factor: :joint (the certified
+   MCMC-around-an-enumerate-splice pattern, exact_test 41). Top-level
+   :collapsed tags are assigned directly by enumerate, never derived."
   ([] :joint)
-  ([a] (or a :joint))
+  ([a] (if (contains? score-type-rank a) a :joint))
   ([a b]
-   (let [a (or a :joint) b (or b :joint)]
-     (if (>= (score-type-rank a 0) (score-type-rank b 0)) a b))))
+   (let [a (if (contains? score-type-rank a) a :joint)
+         b (if (contains? score-type-rank b) b :joint)]
+     (if (>= (score-type-rank a) (score-type-rank b)) a b))))
 
 (defn assert-joint!
   "Throw unless trace is joint-scored. Consumers whose math requires joint

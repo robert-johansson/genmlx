@@ -101,13 +101,17 @@
         (is (= 1 (:other (meta t'))))))))
 
 (deftest helpers-combine-score-types
-  (testing "lub over the joint < marginal < collapsed lattice"
+  (testing "only path-unstable tags propagate through composition"
     (is (= :joint (tr/combine-score-types)))
     (is (= :joint (tr/combine-score-types :joint :joint)))
     (is (= :marginal (tr/combine-score-types :joint :marginal)))
     (is (= :marginal (tr/combine-score-types :marginal :joint)))
-    (is (= :collapsed (tr/combine-score-types :marginal :collapsed)))
-    (is (= :collapsed (tr/combine-score-types :collapsed :joint))))
+    (is (= :marginal (tr/combine-score-types :marginal :collapsed))))
+  (testing "a :collapsed PART composes as :joint — enumerate blocks record no
+            internal choices and re-derive their exact score consistently
+            (the MCMC-around-an-enumerate-splice pattern, exact_test 41)"
+    (is (= :joint (tr/combine-score-types :collapsed :joint)))
+    (is (= :joint (tr/combine-score-types :joint :collapsed))))
   (testing "nil (untagged) counts as :joint"
     (is (= :joint (tr/combine-score-types nil nil)))
     (is (= :marginal (tr/combine-score-types nil :marginal)))))
@@ -248,6 +252,34 @@
     (testing "splice-scores metadata coexists with the tag (no meta wipe)"
       (is (some? (:genmlx.dynamic/splice-scores (meta t)))
           "parent trace still carries splice scores"))))
+
+(deftest producer-enumerate-splice-composes-joint
+  ;; The certified mixed-inference pattern (exact_test 41): a parent model
+  ;; splices an enumerate-wrapped discrete block and runs trace-MH on its
+  ;; continuous sites. The collapsed block records no internal choices and
+  ;; re-derives its exact score consistently in every op, so the PARENT is
+  ;; joint-scored — it must not inherit :collapsed (that would make the
+  ;; boundary guard reject a mathematically valid flow).
+  (let [agent-gf (dyn/auto-key (gen [] (trace :choice (dist/bernoulli 0.6))))
+        ;; laplace likelihood: keeps the parent NON-conjugate so the only
+        ;; non-joint tag source is the enumerate splice itself
+        parent (dyn/with-key
+                 (gen []
+                   (let [mu (trace :mu (dist/gaussian (mx/scalar 0) (mx/scalar 5)))]
+                     (splice :agent (exact/enumerate agent-gf))
+                     (trace :obs (dist/laplace mu (mx/scalar 1)))
+                     mu))
+                 (rng/fresh-key 41))
+        {t :trace} (p/generate parent [] (cm/choicemap :obs (mx/scalar 2.0)))]
+    (is (empty? (:auto-handlers (:schema parent)))
+        "precondition: parent itself is not analytically eliminable")
+    (is (= :joint (tr/score-type t))
+        "parent with an enumerate splice is joint-scored, not collapsed")
+    (testing "trace-MH over the continuous site flows"
+      (let [t' ((kern/mh-kernel (sel/select :mu)) t (rng/fresh-key 42))]
+        (is (tr/trace? t') "mh-kernel step runs without throwing"))
+      (let [{rt :trace} (p/regenerate parent t (sel/select :mu))]
+        (is (= :joint (tr/score-type rt)) "regenerate result stays joint")))))
 
 (deftest producer-vectorized-tags-joint
   (let [model (dyn/auto-key (conjugate-model))
