@@ -203,11 +203,14 @@
   "Subsequent timestep: resample (if ESS low), update particles, rejuvenate.
    cfg holds the fixed per-filter config (:model :particles :ess-threshold
    :rejuvenation-steps :rejuvenation-selection :resample-method); the remaining
-   positional args are the per-step loop state.
+   positional args are the per-step loop state. step-spec (nilable) carries
+   per-step model arguments {:args :argdiffs} — when present the particle
+   advance is update-with-args under those args (genmlx-s8e8), otherwise
+   plain update at the trace's own args.
    Returns {:traces :log-weights :log-ml-increment}."
   [{:keys [model particles ess-threshold rejuvenation-steps
            rejuvenation-selection resample-method]}
-   traces log-weights obs key]
+   traces log-weights obs key step-spec]
   (let [;; Check ESS and resample if needed
         ess        (u/compute-ess log-weights)
         resample?  (< ess (* ess-threshold particles))
@@ -225,10 +228,14 @@
         update-keys   (rng/split-n-or-nils update-key particles)
         results       (mapv (fn [i ki trace]
                               (break-particle-graph!
-                               (p/update (if ki
-                                           (dyn/with-key (:gen-fn trace) ki)
-                                           (:gen-fn trace))
-                                         trace obs)
+                               (let [gf (if ki
+                                          (dyn/with-key (:gen-fn trace) ki)
+                                          (:gen-fn trace))]
+                                 (if step-spec
+                                   (p/update-with-args gf trace (:args step-spec)
+                                                       (:argdiffs step-spec :unknown)
+                                                       obs)
+                                   (p/update gf trace obs)))
                                i))
                             (range) update-keys traces')
         new-traces    (mapv :trace results)
@@ -306,11 +313,70 @@
                              :rejuvenation-steps rejuvenation-steps
                              :rejuvenation-selection rejuvenation-selection
                              :resample-method resample-method}
-                            traces log-weights obs-t step-key)]
+                            traces log-weights obs-t step-key nil)]
               (when callback
                 (callback {:step t :ess ess :resampled? resampled?}))
               (recur (inc t) traces log-weights
                      (mx/add log-ml log-ml-increment) next-key))))))))
+
+(defn smc-args
+  "SMC with changing arguments (genmlx-s8e8): a generic particle filter
+   over a sequence of {:args :constraints :argdiffs?} steps — standard
+   SMC for growing data without combinator-specific machinery.
+
+   Step 0 initializes particles by constrained generate under its args;
+   each later step advances every particle via update-with-args, so the
+   per-particle increment is the thesis update weight
+   nonfresh(t'; args_t) - score(t; args_(t-1)) — exactly the incremental
+   importance weight when the new data site is constrained.
+
+   opts: {:particles N :ess-threshold ratio :resample-method method
+          :rejuvenation-steps K :rejuvenation-selection sel :key prng-key}
+
+   Returns {:log-ml MLX-scalar :traces [Trace ...] :log-weights [...]
+            :final-ess number}; :final-ess is the post-update ESS at the
+   final step (the honest particle-collapse diagnostic). nil when steps
+   is empty."
+  [{:keys [particles ess-threshold rejuvenation-steps rejuvenation-selection
+           resample-method key]
+    :or {particles 100 ess-threshold 0.5 rejuvenation-steps 0}}
+   model steps]
+  (let [model (-> model dyn/auto-key strip-analytical)
+        steps-vec (vec steps)
+        n-steps (count steps-vec)
+        ;; Default: rejuvenate only the latents — never the observed
+        ;; addresses (genmlx-7ca0), collected across ALL steps.
+        rejuvenation-selection
+        (or rejuvenation-selection
+            (sel/complement-sel
+              (sel/from-paths
+                (mapcat (comp cm/addresses :constraints) steps-vec))))]
+    (when (pos? n-steps)
+      (loop [t 0
+             traces nil
+             log-weights nil
+             log-ml (mx/scalar 0.0)
+             rk key]
+        (if (>= t n-steps)
+          {:log-ml log-ml :traces traces :log-weights log-weights
+           :final-ess (u/compute-ess log-weights)}
+          (let [{args-t :args obs-t :constraints :as step} (nth steps-vec t)
+                obs-t (or obs-t cm/EMPTY)
+                [step-key next-key] (rng/split-or-nils rk)
+                _ (when (pos? t) (mx/sweep-dead-arrays!))
+                _ (when (and (pos? t) (zero? (mod t 5))) (mx/clear-cache!))
+                {:keys [traces log-weights log-ml-increment]}
+                (if (zero? t)
+                  (smc-init-step model args-t obs-t particles step-key)
+                  (smc-step {:model model :particles particles
+                             :ess-threshold ess-threshold
+                             :rejuvenation-steps rejuvenation-steps
+                             :rejuvenation-selection rejuvenation-selection
+                             :resample-method resample-method}
+                            traces log-weights obs-t step-key
+                            {:args args-t :argdiffs (:argdiffs step :unknown)}))]
+            (recur (inc t) traces log-weights
+                   (mx/add log-ml log-ml-increment) next-key)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Conditional SMC (cSMC) for particle MCMC / PMCMC

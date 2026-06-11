@@ -159,7 +159,11 @@
         trace (make-result-trace gf args result)]
     (make-generate-result trace (:weight result) constraints (:choices result) result)))
 
-(defn- run-update [transition gf _args key {:keys [trace constraints]}]
+(defn- run-update
+  "args is the execution-time argument vector: (:args trace) for plain
+   update, the thesis x' for update-with-args. Retained/constrained sites
+   are re-scored under it; the result trace carries it."
+  [transition gf args key {:keys [trace constraints]}]
   (let [result (rt/run-handler transition
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
                   :key key :constraints constraints
@@ -168,8 +172,8 @@
                   :old-nested-splice-scores (::nested-splice-scores (meta trace))
                   :discard cm/EMPTY
                   :executor execute-sub :param-store (param-store gf)}
-                 (fn [rt] (run-body gf rt (:args trace))))
-        new-trace (make-result-trace gf (:args trace) result)]
+                 (fn [rt] (run-body gf rt args)))
+        new-trace (make-result-trace gf args result)]
     ;; Thesis update weight: non-fresh score (handler :weight) minus the
     ;; recorded old score. Freshly sampled new addresses are drawn from the
     ;; internal proposal and cancel — score-delta would wrongly include them.
@@ -239,10 +243,14 @@
     {:trace (make-compiled-trace gf args result)
      :weight (:weight result)}))
 
-(defn- run-update-compiled [gf _args key {:keys [trace constraints]}]
+(defn- run-update-compiled
+  "Static models have a fixed address set (no fresh/removed sites), so the
+   thesis weight under execution args (x' for update-with-args) reduces to
+   score' - score."
+  [gf args key {:keys [trace constraints]}]
   (let [cfn (:compiled-update (:schema gf))
-        result (cfn key (vec (:args trace)) constraints (:choices trace))]
-    {:trace (make-compiled-trace gf (:args trace) result)
+        result (cfn key (vec args) constraints (:choices trace))]
+    {:trace (make-compiled-trace gf args result)
      :weight (mx/subtract (:score result) (:score trace))
      :discard (cm/from-flat-map (:discard result))}))
 
@@ -288,21 +296,22 @@
     (make-generate-result trace (:weight handler-result) constraints
                           (:choices handler-result) handler-result)))
 
-(defn- run-update-prefix [gf _args key {:keys [trace constraints]}]
+(defn- run-update-prefix [gf args key {:keys [trace constraints]}]
   (let [pfx (:compiled-prefix-update (:schema gf))
-        result (pfx key (vec (:args trace)) constraints (:choices trace))
+        result (pfx key (vec args) constraints (:choices trace))
         replay (cops/make-replay-update-transition (:values result))
         ;; Prefix sites never sample fresh (values come from constraints or
-        ;; old choices), so the prefix score seeds the non-fresh :weight
-        ;; accumulator as well as :score.
+        ;; old choices — the static prefix's address set is arg-independent),
+        ;; so the prefix score seeds the non-fresh :weight accumulator as
+        ;; well as :score.
         handler-result (rt/run-handler replay
                          {:choices cm/EMPTY :score (:score result)
                           :weight (:score result) :key key :constraints constraints
                           :old-choices (:choices trace) :discard (cm/from-flat-map (:discard result))
                           :old-nested-splice-scores (::nested-splice-scores (meta trace))
                           :executor execute-sub :param-store (param-store gf)}
-                         (fn [rt] (run-body gf rt (:args trace))))
-        new-trace (make-result-trace gf (:args trace) handler-result)]
+                         (fn [rt] (run-body gf rt args)))
+        new-trace (make-result-trace gf args handler-result)]
     (make-update-result new-trace
       (mx/subtract (:weight handler-result) (:score trace))
       (:discard handler-result) constraints (:choices handler-result) handler-result)))
@@ -1034,11 +1043,11 @@
       (vec/->VectorizedTrace gf args (:choices result) (:score result)
                              (:weight result) n (:retval result)))))
 
-(defn vupdate
-  "Batched update: run model body ONCE with batched update handler.
-   vtrace: VectorizedTrace with [n]-shaped choices, constraints: new observations.
-   Returns new VectorizedTrace with updated weights."
-  [gf vtrace constraints key]
+(defn- vupdate*
+  "Shared batched-update core: run the model body ONCE with the batched
+   update handler under exec-args ((:args vtrace) for vupdate, the thesis
+   x' for vupdate-args) and stamp the result vtrace with them."
+  [gf vtrace exec-args constraints key]
   (let [key (rng/ensure-key key)
 
         n (:n-particles vtrace)
@@ -1051,16 +1060,31 @@
                                 :batch-size n :batched? true
                                 :executor execute-sub
                                 :param-store (param-store gf)}
-                               (fn [rt] (run-body gf rt (:args vtrace))))
+                               (fn [rt] (run-body gf rt exec-args)))
         ;; Thesis update weight: non-fresh score minus old [N]-shaped score —
         ;; the same convention as the scalar run-update path.
         weight (mx/subtract (:weight result) (:score vtrace))]
     {:vtrace (tag-vtrace
-               (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
+               (vec/->VectorizedTrace gf exec-args (:choices result)
                                       (:score result) weight
                                       n (:retval result)))
      :weight weight
      :discard (:discard result)}))
+
+(defn vupdate
+  "Batched update: run model body ONCE with batched update handler.
+   vtrace: VectorizedTrace with [n]-shaped choices, constraints: new observations.
+   Returns new VectorizedTrace with updated weights."
+  [gf vtrace constraints key]
+  (vupdate* gf vtrace (:args vtrace) constraints key))
+
+(defn vupdate-args
+  "Batched update-with-args (genmlx-s8e8): vupdate under NEW model
+   arguments. Retained [n]-shaped choices are re-scored under new-args;
+   the weight is the [n]-shaped thesis update weight. Batch size is
+   fixed — changing n is out of scope."
+  [gf vtrace new-args constraints key]
+  (vupdate* gf vtrace new-args constraints key))
 
 (defn vregenerate
   "Batched regenerate: run model body ONCE with batched regenerate handler.
@@ -1114,13 +1138,27 @@
   (edit [gf trace edit-request]
     (edit/edit-dispatch gf trace edit-request))
 
+  p/IUpdateWithArgs
+  (update-with-args [gf trace new-args argdiffs constraints]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      ;; Caller asserts no arg changes (Gen.jl trust model) and there are
+      ;; no constraints: the trace is unchanged.
+      {:trace trace :weight SCORE-ZERO :discard cm/EMPTY}
+      ;; Re-execute under x' — same dispatch as update (compiled/prefix/
+      ;; handler all thread the positional args), same lbae score-type
+      ;; boundary guard in run-dispatched*, same deleted-address discard
+      ;; post-pass.
+      (let [key (ensure-key gf)
+            result (@dispatch-fn gf :update new-args key
+                     {:trace trace :constraints constraints :argdiffs argdiffs})]
+        (mx/gfi-cleanup!)
+        (clojure.core/update result :discard
+          add-deleted-to-discard (:choices trace) (:choices (:trace result))))))
+
   p/IUpdateWithDiffs
   (update-with-diffs [gf trace constraints argdiffs]
-    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
-      ;; No arg changes and no constraints: trace is unchanged
-      {:trace trace :weight SCORE-ZERO :discard cm/EMPTY}
-      ;; Otherwise delegate to regular update (body must be re-executed)
-      (p/update gf trace constraints)))
+    ;; update with change hints = update-with-args at unchanged args
+    (p/update-with-args gf trace (:args trace) argdiffs constraints))
 
   p/IHasArgumentGrads
   (has-argument-grads [_] nil))

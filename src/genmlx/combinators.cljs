@@ -2588,6 +2588,418 @@
       (p/update this trace constraints))))
 
 ;; ---------------------------------------------------------------------------
+;; IUpdateWithArgs implementations (genmlx-s8e8)
+;; ---------------------------------------------------------------------------
+;; Sequence combinators share one weight convention with their p/update
+;; loops: accumulate `nf` (the non-fresh score under the NEW args — child
+;; thesis weights re-based by their constructed old scores, verbatim prefix
+;; steps by their recorded true scores, fresh steps by their generate
+;; weights) and return W = nf - old_total. Elements/steps dropped by the
+;; new args never enter nf, so the old-total subtraction charges them; their
+;; choices go to the discard. Exact with or without per-element metadata
+;; (the constructed old scores cancel inside the child weights).
+
+(defn- throw-update-with-args-unsupported
+  [gf]
+  (throw (ex-info (str "update-with-args is not supported by "
+                       (pr-str (type gf))
+                       " — open a bean if you need it; plain update covers"
+                       " unchanged args")
+                  {:genmlx/error :update-with-args-unsupported
+                   :gf-type (type gf)})))
+
+(extend-type MapCombinator
+  p/IUpdateWithArgs
+  (update-with-args [this trace new-args argdiffs constraints]
+    (let [trace (ensure-joint-self this :update trace)
+          kern (ensure-kernel-key (:kernel this))
+          old-args (:args trace)
+          old-choices (:choices trace)
+          old-n (count (first old-args))
+          new-n (count (first new-args))
+          old-element-scores (::element-scores (meta trace))
+          changed (when (diff/vector-diff? argdiffs) (:changed argdiffs))
+          ;; Verbatim retention is valid only when the caller asserts the
+          ;; element unchanged (vector-diff), it is unconstrained, and the
+          ;; true element score is recorded.
+          verbatim? (fn [i]
+                      (and old-element-scores changed
+                           (not (contains? changed i))
+                           (= (cm/get-submap constraints i) cm/EMPTY)))]
+      (loop [i 0
+             choices cm/EMPTY score ZERO nf ZERO
+             discard cm/EMPTY
+             retvals [] element-scores []
+             st :joint]
+        (if (>= i new-n)
+          (let [discard (reduce (fn [d j]
+                                  (cm/set-choice d [j] (cm/get-submap old-choices j)))
+                                discard (range new-n old-n))]
+            {:trace (tr/with-score-type
+                      (with-meta
+                        (tr/make-trace {:gen-fn this :args new-args
+                                        :choices choices :retval retvals :score score})
+                        {::element-scores element-scores})
+                      st)
+             :weight (mx/subtract nf (:score trace))
+             :discard discard})
+          (let [elem-args-new (mapv #(nth % i) new-args)
+                sub-constraints (cm/get-submap constraints i)]
+            (cond
+              ;; Retained verbatim
+              (and (< i old-n) (verbatim? i))
+              (let [sub (cm/get-submap old-choices i)
+                    s-i (nth old-element-scores i)]
+                (recur (inc i)
+                       (cm/set-choice choices [i] sub)
+                       (mx/add score s-i)
+                       (mx/add nf s-i)
+                       discard
+                       (conj retvals (nth (:retval trace) i))
+                       (conj element-scores s-i)
+                       st))
+
+              ;; Kept: re-execute under the new element args
+              (< i old-n)
+              (let [elem-args-old (mapv #(nth % i) old-args)
+                    c-old (if old-element-scores (nth old-element-scores i) ZERO)
+                    old-sub (tr/make-trace
+                              {:gen-fn kern :args elem-args-old
+                               :choices (cm/get-submap old-choices i)
+                               :retval nil :score c-old})
+                    result (p/update-with-args kern old-sub elem-args-new
+                                               :unknown sub-constraints)
+                    ntr (:trace result)]
+                (recur (inc i)
+                       (cm/set-choice choices [i] (:choices ntr))
+                       (mx/add score (:score ntr))
+                       (mx/add nf (mx/add (:weight result) c-old))
+                       (if (and (:discard result) (not= (:discard result) cm/EMPTY))
+                         (cm/set-choice discard [i] (:discard result))
+                         discard)
+                       (conj retvals (:retval ntr))
+                       (conj element-scores (:score ntr))
+                       (tr/combine-score-types st (tr/score-type ntr))))
+
+              ;; Fresh element
+              :else
+              (let [result (p/generate kern elem-args-new sub-constraints)
+                    ntr (:trace result)]
+                (recur (inc i)
+                       (cm/set-choice choices [i] (:choices ntr))
+                       (mx/add score (:score ntr))
+                       (mx/add nf (:weight result))
+                       discard
+                       (conj retvals (:retval ntr))
+                       (conj element-scores (:score ntr))
+                       (tr/combine-score-types st (tr/score-type ntr)))))))))))
+
+(extend-type UnfoldCombinator
+  p/IUpdateWithArgs
+  (update-with-args [this trace new-args argdiffs constraints]
+    (let [trace (ensure-joint-self this :update trace)
+          kern (ensure-kernel-key (:kernel this))
+          old-args (:args trace)
+          [old-n old-init & old-extra] old-args
+          [new-n new-init & new-extra] new-args
+          choices (:choices trace)
+          old-states (:retval trace)
+          old-step-scores (::step-scores (meta trace))
+          ;; Host = is the prefix-enabler: cheap and verifiable for numbers/
+          ;; vectors, reference-conservative for MLX arrays (same object ✓,
+          ;; numerically-equal copy → full sweep, still exact).
+          shared-config? (and (= old-init new-init) (= old-extra new-extra))
+          kept-n (min old-n new-n)
+          boundary (if (and shared-config? old-step-scores)
+                     (loop [t 0]
+                       (cond
+                         (>= t kept-n) kept-n
+                         (not= (cm/get-submap constraints t) cm/EMPTY) t
+                         :else (recur (inc t))))
+                     0)
+          prefix-choices (if (pos? boundary)
+                           (reduce (fn [cm t]
+                                     (cm/set-choice cm [t] (cm/get-submap choices t)))
+                                   cm/EMPTY (range boundary))
+                           cm/EMPTY)
+          prefix-score (if (pos? boundary)
+                         (reduce (fn [acc t] (mx/add acc (nth old-step-scores t)))
+                                 ZERO (range boundary))
+                         ZERO)
+          prefix-states (if (pos? boundary) (subvec old-states 0 boundary) [])
+          prefix-step-scores (if (pos? boundary)
+                               (subvec (vec old-step-scores) 0 boundary)
+                               [])
+          start-state (if (pos? boundary)
+                        (nth old-states (dec boundary))
+                        new-init)
+          old-state-at (fn [t threaded]
+                         (cond
+                           (zero? t) old-init
+                           (vector? old-states) (nth old-states (dec t))
+                           :else threaded))]
+      (loop [t boundary state start-state
+             new-choices prefix-choices score prefix-score nf prefix-score
+             discard cm/EMPTY
+             states prefix-states step-scores prefix-step-scores
+             st :joint]
+        (if (>= t new-n)
+          (let [discard (reduce (fn [d j]
+                                  (cm/set-choice d [j] (cm/get-submap choices j)))
+                                discard (range new-n old-n))]
+            {:trace (tr/with-score-type
+                      (with-meta
+                        (tr/make-trace {:gen-fn this :args new-args
+                                        :choices new-choices :retval states :score score})
+                        {::step-scores step-scores})
+                      st)
+             :weight (mx/subtract nf (:score trace))
+             :discard discard})
+          (let [kernel-args (into [t state] new-extra)
+                sub-constraints (cm/get-submap constraints t)]
+            (if (< t old-n)
+              ;; Kept step: child update-with-args under the new threaded state
+              (let [c-old (if old-step-scores (nth old-step-scores t) ZERO)
+                    old-sub (tr/make-trace
+                              {:gen-fn kern
+                               :args (into [t (old-state-at t state)] old-extra)
+                               :choices (cm/get-submap choices t)
+                               :retval nil :score c-old})
+                    result (p/update-with-args kern old-sub kernel-args
+                                               :unknown sub-constraints)
+                    ntr (:trace result)
+                    new-state (:retval ntr)]
+                (recur (inc t) new-state
+                       (cm/set-choice new-choices [t] (:choices ntr))
+                       (mx/add score (:score ntr))
+                       (mx/add nf (mx/add (:weight result) c-old))
+                       (if (and (:discard result) (not= (:discard result) cm/EMPTY))
+                         (cm/set-choice discard [t] (:discard result))
+                         discard)
+                       (conj states new-state)
+                       (conj step-scores (:score ntr))
+                       (tr/combine-score-types st (tr/score-type ntr))))
+              ;; Fresh step: child generate
+              (let [result (p/generate kern kernel-args sub-constraints)
+                    ntr (:trace result)
+                    new-state (:retval ntr)]
+                (recur (inc t) new-state
+                       (cm/set-choice new-choices [t] (:choices ntr))
+                       (mx/add score (:score ntr))
+                       (mx/add nf (:weight result))
+                       discard
+                       (conj states new-state)
+                       (conj step-scores (:score ntr))
+                       (tr/combine-score-types st (tr/score-type ntr)))))))))))
+
+(extend-type ScanCombinator
+  p/IUpdateWithArgs
+  (update-with-args [this trace new-args argdiffs constraints]
+    (let [trace (ensure-joint-self this :update trace)
+          kern (ensure-kernel-key (:kernel this))
+          [old-init-carry old-inputs] (:args trace)
+          [new-init-carry new-inputs] new-args
+          choices (:choices trace)
+          old-n (count old-inputs)
+          new-n (count new-inputs)
+          old-step-scores (::step-scores (meta trace))
+          old-step-carries (::step-carries (meta trace))
+          kept-n (min old-n new-n)
+          ;; Prefix-skip up to the first constrained step or first changed
+          ;; input — both verified, not asserted (host = on inputs).
+          boundary (if (and (= old-init-carry new-init-carry)
+                            old-step-scores old-step-carries)
+                     (loop [t 0]
+                       (cond
+                         (>= t kept-n) kept-n
+                         (not= (cm/get-submap constraints t) cm/EMPTY) t
+                         (not= (nth old-inputs t) (nth new-inputs t)) t
+                         :else (recur (inc t))))
+                     0)
+          prefix-choices (if (pos? boundary)
+                           (reduce (fn [cm t]
+                                     (cm/set-choice cm [t] (cm/get-submap choices t)))
+                                   cm/EMPTY (range boundary))
+                           cm/EMPTY)
+          prefix-score (if (pos? boundary)
+                         (reduce (fn [acc t] (mx/add acc (nth old-step-scores t)))
+                                 ZERO (range boundary))
+                         ZERO)
+          prefix-outputs (if (pos? boundary)
+                           (subvec (:outputs (:retval trace)) 0 boundary)
+                           [])
+          prefix-step-scores (if (pos? boundary)
+                               (subvec (vec old-step-scores) 0 boundary)
+                               [])
+          prefix-step-carries (if (pos? boundary)
+                                (subvec (vec old-step-carries) 0 boundary)
+                                [])
+          start-carry (if (pos? boundary)
+                        (nth old-step-carries (dec boundary))
+                        new-init-carry)
+          old-carry-at (fn [t threaded]
+                         (cond
+                           (zero? t) old-init-carry
+                           old-step-carries (nth old-step-carries (dec t))
+                           :else threaded))]
+      (loop [t boundary carry start-carry
+             new-choices prefix-choices score prefix-score nf prefix-score
+             discard cm/EMPTY
+             outputs prefix-outputs
+             step-scores prefix-step-scores step-carries prefix-step-carries
+             st :joint]
+        (if (>= t new-n)
+          (let [discard (reduce (fn [d j]
+                                  (cm/set-choice d [j] (cm/get-submap choices j)))
+                                discard (range new-n old-n))]
+            {:trace (tr/with-score-type
+                      (with-meta
+                        (tr/make-trace {:gen-fn this :args new-args
+                                        :choices new-choices
+                                        :retval {:carry carry :outputs outputs}
+                                        :score score})
+                        {::step-scores step-scores ::step-carries step-carries})
+                      st)
+             :weight (mx/subtract nf (:score trace))
+             :discard discard})
+          (let [kernel-args [carry (nth new-inputs t)]
+                sub-constraints (cm/get-submap constraints t)]
+            (if (< t old-n)
+              ;; Kept step
+              (let [c-old (if old-step-scores (nth old-step-scores t) ZERO)
+                    old-sub (tr/make-trace
+                              {:gen-fn kern
+                               :args [(old-carry-at t carry) (nth old-inputs t)]
+                               :choices (cm/get-submap choices t)
+                               :retval nil :score c-old})
+                    result (p/update-with-args kern old-sub kernel-args
+                                               :unknown sub-constraints)
+                    ntr (:trace result)
+                    [new-carry output] (:retval ntr)]
+                (recur (inc t) new-carry
+                       (cm/set-choice new-choices [t] (:choices ntr))
+                       (mx/add score (:score ntr))
+                       (mx/add nf (mx/add (:weight result) c-old))
+                       (if (and (:discard result) (not= (:discard result) cm/EMPTY))
+                         (cm/set-choice discard [t] (:discard result))
+                         discard)
+                       (conj outputs output)
+                       (conj step-scores (:score ntr))
+                       (conj step-carries new-carry)
+                       (tr/combine-score-types st (tr/score-type ntr))))
+              ;; Fresh step
+              (let [result (p/generate kern kernel-args sub-constraints)
+                    ntr (:trace result)
+                    [new-carry output] (:retval ntr)]
+                (recur (inc t) new-carry
+                       (cm/set-choice new-choices [t] (:choices ntr))
+                       (mx/add score (:score ntr))
+                       (mx/add nf (:weight result))
+                       discard
+                       (conj outputs output)
+                       (conj step-scores (:score ntr))
+                       (conj step-carries new-carry)
+                       (tr/combine-score-types st (tr/score-type ntr)))))))))))
+
+(extend-type SwitchCombinator
+  p/IUpdateWithArgs
+  (update-with-args [this trace new-args argdiffs constraints]
+    (let [trace (ensure-joint-self this :update trace)
+          [new-idx & new-bargs] new-args
+          old-idx (or (::switch-idx (meta trace)) (first (:args trace)))]
+      (if (= old-idx new-idx)
+        ;; Same branch: delegate with the TRUE old score, so the child's
+        ;; thesis weight is the Switch weight directly.
+        (let [branch (ensure-kernel-key (nth (:branches this) new-idx))
+              old-branch-trace (tr/make-trace
+                                 {:gen-fn branch :args (vec (rest (:args trace)))
+                                  :choices (:choices trace)
+                                  :retval (:retval trace) :score (:score trace)})
+              result (p/update-with-args branch old-branch-trace (vec new-bargs)
+                                         :unknown constraints)
+              nbt (:trace result)]
+          {:trace (tag-from-traces
+                    (with-meta
+                      (tr/make-trace {:gen-fn this :args new-args
+                                      :choices (:choices nbt)
+                                      :retval (:retval nbt)
+                                      :score (:score nbt)})
+                      {::switch-idx new-idx})
+                    [nbt])
+           :weight (:weight result) :discard (:discard result)})
+        ;; Branch flip: generate the new branch; the removed branch is
+        ;; charged via its recorded score and discarded whole.
+        (let [new-branch (ensure-kernel-key (nth (:branches this) new-idx))
+              gen-result (p/generate new-branch (vec new-bargs) constraints)
+              nbt (:trace gen-result)]
+          {:trace (tag-from-traces
+                    (with-meta
+                      (tr/make-trace {:gen-fn this :args new-args
+                                      :choices (:choices nbt)
+                                      :retval (:retval nbt)
+                                      :score (:score nbt)})
+                      {::switch-idx new-idx})
+                    [nbt])
+           :weight (mx/subtract (:weight gen-result) (:score trace))
+           :discard (:choices trace)})))))
+
+(extend-type ContramapGF
+  p/IUpdateWithArgs
+  (update-with-args [this trace new-args argdiffs constraints]
+    ;; argdiffs describe the PRE-transform args; after f they are :unknown.
+    (let [inner (ensure-kernel-key (:inner this))
+          old-inner-args ((:f this) (:args trace))
+          new-inner-args ((:f this) new-args)
+          inner-trace (tr/with-score-type
+                        (tr/make-trace {:gen-fn inner :args old-inner-args
+                                        :choices (:choices trace)
+                                        :retval (:retval trace) :score (:score trace)})
+                        (tr/score-type trace))
+          result (p/update-with-args inner inner-trace new-inner-args
+                                     :unknown constraints)]
+      {:trace (tr/with-score-type
+                (tr/make-trace {:gen-fn this :args new-args
+                                :choices (:choices (:trace result))
+                                :retval (:retval (:trace result))
+                                :score (:score (:trace result))})
+                (tr/score-type (:trace result)))
+       :weight (:weight result) :discard (:discard result)})))
+
+(extend-type MapRetvalGF
+  p/IUpdateWithArgs
+  (update-with-args [this trace new-args argdiffs constraints]
+    (let [inner (ensure-kernel-key (:inner this))
+          inner-trace (tr/with-score-type
+                        (tr/make-trace {:gen-fn inner :args (:args trace)
+                                        :choices (:choices trace)
+                                        :retval (:retval trace) :score (:score trace)})
+                        (tr/score-type trace))
+          result (p/update-with-args inner inner-trace new-args
+                                     argdiffs constraints)]
+      {:trace (tr/with-score-type
+                (tr/make-trace {:gen-fn this :args new-args
+                                :choices (:choices (:trace result))
+                                :retval ((:g this) (:retval (:trace result)))
+                                :score (:score (:trace result))})
+                (tr/score-type (:trace result)))
+       :weight (:weight result) :discard (:discard result)})))
+
+(extend-type MaskCombinator
+  p/IUpdateWithArgs
+  (update-with-args [this trace new-args argdiffs constraints]
+    (throw-update-with-args-unsupported this)))
+
+(extend-type MixCombinator
+  p/IUpdateWithArgs
+  (update-with-args [this trace new-args argdiffs constraints]
+    (throw-update-with-args-unsupported this)))
+
+(extend-type RecurseCombinator
+  p/IUpdateWithArgs
+  (update-with-args [this trace new-args argdiffs constraints]
+    (throw-update-with-args-unsupported this)))
+
+;; ---------------------------------------------------------------------------
 ;; IProject implementations
 ;; ---------------------------------------------------------------------------
 

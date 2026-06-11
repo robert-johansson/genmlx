@@ -1,8 +1,14 @@
 (ns genmlx.diff
   "Change-tagged values for incremental computation.
-   Argdiffs and retdiffs enable `update` to skip unchanged computation,
+   Argdiffs enable update/update-with-args to skip unchanged computation,
    which is critical for MCMC performance where each MH step only changes
-   one or a few addresses.")
+   one or a few addresses, and for combinator updates over long sequences.
+
+   An argdiff is a caller ASSERTION about which arguments changed (the
+   Gen.jl trust model): :unknown (or any unrecognized value) is always
+   sound and forces full re-execution; no-change permits the identity
+   fast path; vector-diff lets Map/Scan-style combinators skip elements
+   whose indices are not in :changed.")
 
 ;; ---------------------------------------------------------------------------
 ;; Diff types
@@ -14,8 +20,9 @@
 
 (defn vector-diff
   "Argdiff for a vector argument where only the elements whose indices are
-   in `changed` (a set of ints) may differ. Map-style combinators dispatch
-   on this to update only the changed elements (update-with-diffs)."
+   in `changed` (a set of ints) may differ. Map/Scan combinators dispatch
+   on this (update-with-diffs / update-with-args) to retain unchanged
+   elements verbatim."
   [changed]
   {:diff-type :vector-diff :changed (set changed)})
 

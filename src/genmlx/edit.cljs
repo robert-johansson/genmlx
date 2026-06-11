@@ -23,6 +23,10 @@
 ;; forward-gf proposes new choices, backward-gf scores the reverse move
 (defrecord ProposalEdit [forward-gf forward-args backward-gf backward-args])
 
+;; Equivalent to update-with-args: change model arguments and constraints
+;; (genmlx-s8e8, the thesis x' parameter)
+(defrecord ArgsUpdateEdit [new-args argdiffs constraints])
+
 ;; Constructors
 (defn constraint-edit
   "Create a ConstraintEdit (equivalent to update)."
@@ -33,6 +37,14 @@
   "Create a SelectionEdit (equivalent to regenerate)."
   [selection]
   (->SelectionEdit selection))
+
+(defn args-update-edit
+  "Create an ArgsUpdateEdit (equivalent to update-with-args).
+   argdiffs defaults to :unknown — always sound, forces full re-execution."
+  ([new-args constraints]
+   (->ArgsUpdateEdit new-args :unknown constraints))
+  ([new-args argdiffs constraints]
+   (->ArgsUpdateEdit new-args argdiffs constraints)))
 
 (defn proposal-edit
   "Create a ProposalEdit for SMCP3-style reversible kernels."
@@ -99,6 +111,31 @@
         discard (discard-of result)]
     (assoc result
            :backward-request (->ConstraintEdit discard))))
+
+(defmethod edit-dispatch ArgsUpdateEdit
+  [gf trace edit-request]
+  (let [{:keys [new-args argdiffs constraints]} edit-request
+        old-args (:args trace)
+        result (cond
+                 (satisfies? p/IUpdateWithArgs gf)
+                 (p/update-with-args gf trace new-args argdiffs constraints)
+
+                 ;; Unchanged args: plain update covers it
+                 (= new-args old-args)
+                 (p/update gf trace constraints)
+
+                 :else
+                 (throw (ex-info
+                          (str "update-with-args not supported by this"
+                               " generative function (and args changed)")
+                          {:genmlx/error :update-with-args-unsupported
+                           :gf-type (type gf)})))
+        discard (discard-of result)]
+    (assoc result
+           :discard discard
+           ;; Backward: restore the old args, re-constrain from the discard.
+           ;; argdiffs are not invertible in general; :unknown is always sound.
+           :backward-request (->ArgsUpdateEdit old-args :unknown discard))))
 
 (defmethod edit-dispatch SelectionEdit
   [gf trace edit-request]
