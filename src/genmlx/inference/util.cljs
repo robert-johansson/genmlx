@@ -422,7 +422,19 @@
 (defn prepare-mcmc-score
   "Prepare score function + init params for compiled MCMC.
    Tries tensor-native score first (bypasses GFI), falls back to GFI-based.
-   Automatically filters out analytically eliminated addresses (L3.5).
+
+   Eliminated-address filtering (L3.5) applies ONLY on the GFI fallback
+   paths: there the score constrains the filtered addresses and p/generate's
+   analytical handlers marginalize the eliminated ones (Rao-Blackwell).
+   The TENSOR-NATIVE path derives its latent index from the schema/source
+   and ignores the filtered list — MCMC then samples the FULL JOINT,
+   eliminated addresses included. Both parameterizations are valid targets;
+   every current eliminated SBC model is static gaussian and tensor-compiles,
+   so the filter is exercised only by plan-bearing models whose prior lacks
+   a noise transform (genmlx-10z1; pinned by mcmc_elim_filter_test). A model
+   whose latents are ALL eliminated and that falls back to GFI yields
+   n-params 0 — there is nothing left for MCMC to sample; the posterior is
+   fully analytical.
 
    Returns {:score-fn    (fn [D-tensor] -> scalar)
             :init-params [D] MLX array
