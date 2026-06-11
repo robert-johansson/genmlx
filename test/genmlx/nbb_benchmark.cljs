@@ -89,7 +89,7 @@
 (println "\n--- Generate (constrained) ---")
 (bench "generate (3-site, 1 constrained)" 200
   (fn [] (let [k (random/fresh-key (rand-int 10000))
-               obs (cm/choicemap {:y (mx/scalar 2.0)})
+               obs (cm/choicemap :y (mx/scalar 2.0))
                result (p/generate simple-model [(mx/scalar 1.0)] obs {:key k})]
            (mx/eval! (:weight result)) result)))
 
@@ -110,7 +110,7 @@
                  t (p/simulate line-model [xs] {:key k})]
              (mx/eval! (:score t)) t)))
 
-  (let [obs (cm/choicemap (into {} (map (fn [j] [(keyword (str "y" j)) (mx/scalar (float j))]) (range 5))))]
+  (let [obs (cm/from-map (into {} (map (fn [j] [(keyword (str "y" j)) (mx/scalar (float j))]) (range 5))))]
     (bench "generate line model (7 sites, 5 obs)" 100
       (fn [] (let [k (random/fresh-key (rand-int 10000))
                    result (p/generate line-model [xs] obs {:key k})]
@@ -119,7 +119,7 @@
 ;; 7. Importance sampling + MH
 (println "\n--- Inference ---")
 (let [xs (vec (range 5))
-      obs (cm/choicemap (into {} (map (fn [j] [(keyword (str "y" j)) (mx/scalar (float j))]) (range 5))))]
+      obs (cm/from-map (into {} (map (fn [j] [(keyword (str "y" j)) (mx/scalar (float j))]) (range 5))))]
   (bench "importance sampling (10 particles)" 20
     (fn [] (is/importance-sampling {:samples 10} line-model [xs] obs)))
   (bench "MH (10 steps)" 20

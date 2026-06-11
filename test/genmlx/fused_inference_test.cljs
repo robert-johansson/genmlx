@@ -11,6 +11,7 @@
             [genmlx.dynamic :as dyn]
             [genmlx.choicemap :as cm]
             [genmlx.dist :as dist]
+            [genmlx.gfi :as gfi]
             [genmlx.inference.compiled-optimizer :as co]
             [genmlx.inference.compiled-gradient :as cg]
             [genmlx.inference.util :as u])
@@ -51,7 +52,7 @@
 
 (deftest fused-learn-direct-dispatch-test
   (testing "fused-learn :direct dispatch"
-    (let [obs (cm/choicemap {:y (mx/scalar 5.0)})
+    (let [obs (cm/choicemap :y (mx/scalar 5.0))
           result (co/fused-learn simple-model [] obs [:mu :sigma] :direct
                                  {:iterations 20 :lr 0.05 :log-every 10})]
       (is (contains? result :compilation-level) "fused-learn :direct returns :compilation-level")
@@ -62,7 +63,7 @@
     (cleanup!))
 
   (testing "fused-learn nil method falls through to :direct"
-    (let [obs (cm/choicemap {:y (mx/scalar 5.0)})
+    (let [obs (cm/choicemap :y (mx/scalar 5.0))
           result (co/fused-learn simple-model [] obs [:mu :sigma] nil
                                  {:iterations 20 :lr 0.05 :log-every 10})]
       (is (contains? result :compilation-level) "fused-learn nil method falls through to :direct")
@@ -71,7 +72,7 @@
 
 (deftest fused-mcmc-adam-basic-test
   (testing "fused MCMC+Adam basic functionality"
-    (let [obs (cm/choicemap {:y (mx/scalar 5.0)})
+    (let [obs (cm/choicemap :y (mx/scalar 5.0))
           result (co/make-fused-mcmc-train simple-model [] obs [:mu :sigma]
                                            {:iterations 30 :lr 0.01 :mcmc-steps 3 :proposal-std 0.3 :log-every 10})]
       (is (contains? result :params) "returns :params key")
@@ -90,7 +91,7 @@
 
 (deftest noise-pre-generation-shapes-test
   (testing "noise pre-generation shapes"
-    (let [obs (cm/choicemap {:y (mx/scalar 3.0)})
+    (let [obs (cm/choicemap :y (mx/scalar 3.0))
           model-k (dyn/auto-key simple-model)
           {:keys [trace]} (p/generate model-k [] obs)
           {:keys [score-fn n-params]} (u/prepare-mcmc-score simple-model [] obs [:mu :sigma] trace)
@@ -114,7 +115,7 @@
 
 (deftest gradient-direction-through-chain-test
   (testing "gradient direction through chain"
-    (let [obs (cm/choicemap {:y (mx/scalar 5.0)})
+    (let [obs (cm/choicemap :y (mx/scalar 5.0))
           model-k (dyn/auto-key simple-model)
           {:keys [trace]} (p/generate model-k [] obs)
           {:keys [score-fn n-params]}
@@ -126,7 +127,9 @@
           neg-obj (fn [params noise uniforms]
                     (mx/negative (score-fn (chain-fn params noise uniforms))))
           vg (mx/value-and-grad neg-obj)
-          start (mx/array [3.0 1.0 5.0])
+          ;; K-sized: latents are [:mu :sigma] => n-params 2. The old 3-vector
+          ;; dated from the vacuous-EMPTY-constraints era when :y was a latent.
+          start (mx/array [3.0 1.0])
           rk (rng/fresh-key)
           [nk uk] (rng/split rk)
           noise (rng/normal nk [T K])
@@ -142,7 +145,7 @@
 
 (deftest fused-learn-mcmc-dispatch-test
   (testing "fused-learn :mcmc dispatch + metadata"
-    (let [obs (cm/choicemap {:y (mx/scalar 5.0)})
+    (let [obs (cm/choicemap :y (mx/scalar 5.0))
           result (co/fused-learn simple-model [] obs [:mu :sigma] :mcmc
                                  {:iterations 20 :lr 0.01 :mcmc-steps 3 :proposal-std 0.3 :log-every 10})]
       (is (true? (:mcmc-compiled result)) "fused-learn :mcmc returns :mcmc-compiled")
@@ -156,7 +159,7 @@
 
 (deftest callback-invocation-test
   (testing "callback invocation"
-    (let [obs (cm/choicemap {:y (mx/scalar 5.0)})
+    (let [obs (cm/choicemap :y (mx/scalar 5.0))
           callback-log (atom [])
           result (co/make-fused-mcmc-train simple-model [] obs [:mu :sigma]
                                            {:iterations 50 :lr 0.01 :mcmc-steps 3 :proposal-std 0.3
@@ -171,7 +174,7 @@
 
 (deftest prng-key-determinism-test
   (testing "PRNG key determinism"
-    (let [obs (cm/choicemap {:y (mx/scalar 5.0)})
+    (let [obs (cm/choicemap :y (mx/scalar 5.0))
           key1 (rng/fresh-key 42)
           key2 (rng/fresh-key 42)
           r1 (co/make-fused-mcmc-train simple-model [] obs [:mu :sigma]
@@ -189,7 +192,7 @@
 
 (deftest convergence-3-param-model-test
   (testing "fused MCMC+Adam convergence (3-param model)"
-    (let [obs (cm/choicemap {:y (mx/scalar 7.0)})
+    (let [obs (cm/choicemap :y (mx/scalar 7.0))
           result (co/make-fused-mcmc-train three-param-model [] obs [:a :b :c]
                                            {:iterations 300 :lr 0.01 :mcmc-steps 5 :proposal-std 0.3
                                             :log-every 100})
@@ -204,7 +207,7 @@
 
 (deftest memory-bounds-mcmc-test
   (testing "memory bounds: 500 mcmc iterations without leak"
-    (let [obs (cm/choicemap {:y (mx/scalar 5.0)})
+    (let [obs (cm/choicemap :y (mx/scalar 5.0))
           result (co/make-fused-mcmc-train simple-model [] obs [:mu :sigma]
                                            {:iterations 500 :lr 0.01 :mcmc-steps 5 :proposal-std 0.3
                                             :log-every 100})]
@@ -214,11 +217,39 @@
     (cleanup!))
 
   (testing "memory bounds: 500 direct iterations"
-    (let [obs (cm/choicemap {:y (mx/scalar 5.0)})
+    (let [obs (cm/choicemap :y (mx/scalar 5.0))
           result (co/learn simple-model [] obs [:mu :sigma]
                            {:iterations 500 :lr 0.05 :log-every 100})]
       (is (some? result) "direct path 500 iterations completed")
       (is (every? js/isFinite (mx/->clj (:params result))) "direct path params finite after 500 iters"))
+    (cleanup!)))
+
+(deftest fused-score-handler-parity-test
+  (testing "fused score-fn equals handler-path joint score (independent oracle)"
+    ;; Regression oracle for genmlx-i3z8: the fused path's score function,
+    ;; evaluated at explicit latent values, must equal the score of the same
+    ;; fully-constrained model run through the pure handler path. Guards
+    ;; against the fused path silently dropping/ignoring constraints (the
+    ;; vacuous-EMPTY-constraints failure mode this file shipped with).
+    (let [obs (cm/choicemap :y (mx/scalar 5.0))
+          {:keys [trace]} (p/generate (dyn/auto-key simple-model) [] obs)
+          {:keys [score-fn latent-index n-params]}
+          (u/prepare-mcmc-score simple-model [] obs [:mu :sigma] trace)
+          handler-model (gfi/strip-compiled simple-model)]
+      (is (= 2 n-params) "real constraints leave exactly the two latents")
+      (is (= #{:mu :sigma} (set (keys latent-index))) "latent-index covers :mu :sigma")
+      (doseq [[mu sigma] [[0.0 1.0] [3.0 1.0] [5.0 0.5] [-2.0 2.0]]]
+        (let [point {:mu mu :sigma sigma}
+              slots (mapv first (sort-by second latent-index))
+              params (mx/array (mapv point slots))
+              fused-score (mx/item (score-fn params))
+              full (cm/choicemap :mu (mx/scalar mu) :sigma (mx/scalar sigma)
+                                 :y (mx/scalar 5.0))
+              handler-score (-> (p/generate (dyn/auto-key handler-model) [] full)
+                                :trace :score mx/item)]
+          (is (< (js/Math.abs (- fused-score handler-score)) 1e-4)
+              (str "score parity at mu=" mu " sigma=" sigma
+                   " (fused " fused-score " vs handler " handler-score ")")))))
     (cleanup!)))
 
 (cljs.test/run-tests)
