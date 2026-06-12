@@ -430,7 +430,15 @@
    :algorithms [:cmh :hmc :smc]
    :cmh-opts {:addresses [:slope :intercept] :proposal-std 0.5 :thin 20}
    :hmc-opts {:addresses [:slope :intercept] :step-size 0.05 :leapfrog-steps 15}
-   :smc-opts {:selection (sel/select :slope :intercept)}})
+   ;; rejuvenation-steps 10: at the default 2, prior-regeneration MH cannot
+   ;; restore particle diversity after resampling on this correlated 2D
+   ;; posterior — ranks go structured (chi2 fails while ks passes, the
+   ;; t757 signature). Sampler-adequacy tuning like the cmh thin values,
+   ;; NOT spec-weakening; weight math has independent cover (smc_evidence/
+   ;; smc_scoring). Value validated by mini-SBC at N=200: chi2 slope
+   ;; 36.56 -> 9.20, intercept 24.52 -> 7.10 vs crit 21.67 (genmlx-mxss).
+   :smc-opts {:selection (sel/select :slope :intercept)
+              :rejuvenation-steps 10}})
 
 (def hierarchical-elim
   {:name "hierarchical-elim"
