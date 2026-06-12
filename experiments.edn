@@ -111,7 +111,9 @@
   {:name        "funnel"
    :script      "bench/funnel.cljs"
    :category    :inference
-   :timeout-ms  600000
+   ;; 4-chain rewrite (6b55c8a, genmlx-5gww) runs ~9.5 min wall; the old
+   ;; 10-min budget was sized for the single-chain script (genmlx-2zxo).
+   :timeout-ms  1200000
    :description "Neal's funnel (D=11): NUTS vs HMC vs MALA vs MH on pathological geometry."
    :sources     ["src/genmlx/inference/mcmc.cljs"
                  "src/genmlx/inference/diagnostics.cljs"]}
