@@ -835,13 +835,20 @@
   "Called from the allocation/read boundary (with-alloc-retry). Every
    count-check-interval guarded ops, if the live Metal buffer count crosses the
    threshold (hysteretic), reclaim dead buffers BEFORE the ~499000 wall is hit.
-   Gated on (not in-tidy?): a tidy scope does its own cleanup on exit, and a
-   force-gc! mid-scope would call jsc-cleanup! out of turn."
+
+   NOT gated on in-tidy?: a tidy scope defers ordinary cleanup to scope exit,
+   but the buffer-COUNT wall does not wait for it — a gradient-heavy hot loop
+   inside one tidy scope (e.g. one SBC sim's HMC pass) allocates straight
+   past 499000 with every deferred cleanup silent, and the resulting
+   metal::malloc throw inside an FFI call is a failed op, not a recoverable
+   alloc-retry (genmlx-8w48, same disease as the smc case in genmlx-q6lh).
+   Under count pressure the wall is the greater evil; the hysteresis makes
+   this fire once per climb, so an all-live count cannot thrash."
   []
   (set! allocs-since-count-check (inc allocs-since-count-check))
   (when (>= allocs-since-count-check count-check-interval)
     (set! allocs-since-count-check 0)
-    (when (and (not (in-tidy?)) (buffer-count-pressure?))
+    (when (buffer-count-pressure?)
       (count-sweep!))))
 
 (defn auto-cleanup!
