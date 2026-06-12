@@ -39,7 +39,8 @@
             [genmlx.inference.smc :as smc]
             [genmlx.mlx.random :as rng]
             [clojure.string :as str]
-            ["fs" :as fs])
+            ["fs" :as fs]
+            ["child_process" :as cp])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; ── Configuration (from env vars, with defaults) ─────────────────────────
@@ -671,6 +672,24 @@
 (def results-path
   (or (aget js/process.env "SBC_OUT") "results/sbc_results.json"))
 
+(def run-meta
+  "Provenance for the results-freeze gate (genmlx-9ocx): the exact code,
+   binary, runtime, and hardware a run keys to. Recorded once per process;
+   git queries degrade to nil outside a checkout. PRNG seeds are NOT pinned —
+   sims draw fresh entropy by design (rank uniformity is seed-free); see
+   genmlx-g5ys for the csmc determinism caveat."
+  (let [git (fn [dir]
+              (try (-> (cp/execSync (str "git -C " dir " rev-parse HEAD")
+                                    #js {:encoding "utf8"})
+                       str/trim)
+                   (catch :default _ nil)))]
+    {:genmlx_commit (git ".")
+     :mlx_node_commit (git "mlx-node")
+     :bun (some-> js/process.versions .-bun)
+     :node js/process.version
+     :device (:device-name (mx/metal-device-info))
+     :started (.toISOString (js/Date.))}))
+
 (defn write-results!
   "Write current results to JSON incrementally. complete? is false until the
    final write — the merge step (test/run_sbc.sh) trusts only completed
@@ -680,7 +699,8 @@
    (let [{:keys [pass fail]} @summary
          output (clj->js {:config {:N N :L L :N_BINS N-BINS :ALPHA ALPHA
                                    :n_total_tests n-total-tests
-                                   :only (or sbc-only nil)}
+                                   :only (or sbc-only nil)
+                                   :meta run-meta}
                           :results @all-results
                           :summary {:pass pass :fail fail :total (+ pass fail)
                                     :complete? complete?}})
