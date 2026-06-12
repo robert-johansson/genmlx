@@ -92,6 +92,7 @@ def classify_fragment(combo: str, frag_path: pathlib.Path):
 def merge_fragments(registry: list[str], frag_dir: pathlib.Path) -> dict:
     results, config = [], None
     failed, missing = [], []
+    provenance = set()
     for combo in registry:
         frag = frag_dir / (combo.replace(":", "_") + ".json")
         status, rows, frag_config = classify_fragment(combo, frag)
@@ -99,6 +100,10 @@ def merge_fragments(registry: list[str], frag_dir: pathlib.Path) -> dict:
             missing.append(combo)
             continue
         config = config or frag_config
+        meta = (frag_config or {}).get("meta") or {}
+        if meta.get("genmlx_commit") or meta.get("mlx_node_commit"):
+            provenance.add((meta.get("genmlx_commit"),
+                            meta.get("mlx_node_commit")))
         results.extend(rows)
         if status == "failed":
             failed.append(combo)
@@ -117,6 +122,14 @@ def merge_fragments(registry: list[str], frag_dir: pathlib.Path) -> dict:
             "complete?": not missing and not failed,
             "failed_combos": failed,
             "missing_combos": missing,
+            # Freeze-gate honesty (genmlx-9ocx): every distinct
+            # (genmlx_commit, mlx_node_commit) pair the ingested fragments
+            # were produced on. A clean frozen run has exactly one entry;
+            # more means fragments span code/binary states.
+            "provenance": [
+                {"genmlx_commit": g, "mlx_node_commit": m}
+                for g, m in sorted(provenance, key=str)
+            ],
         },
     }
 
