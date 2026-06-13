@@ -3,21 +3,21 @@
   output: /Users/robert/code/genmlx/results/distribution-audit
 
   running: Distribution properties (test/genmlx/dist_property_test.cljs)
-    20/20 assertions passed (4021ms)
+    20/20 assertions passed (4715ms)
 
   running: Distribution normalization (test/genmlx/dist_normalization_property_test.cljs)
-    5/5 assertions passed (30653ms)
+    5/5 assertions passed (33539ms)
 
   running: Distribution unit tests (test/genmlx/dist_test.cljs)
-    48/48 assertions passed (822ms)
+    48/48 assertions passed (814ms)
 
   running: Wishart gradient verification (test/genmlx/wishart_gradient_test.cljs)
-    20/20 assertions passed (412ms)
+    20/20 assertions passed (441ms)
 
 === Summary ===
   suites: 4/4 passed
   assertions: 93/93 passed, 0 failures, 0 errors
-  duration: 35.9s
+  duration: 39.5s
   wrote: /Users/robert/code/genmlx/results/distribution-audit/data.json
 
 === Done ===

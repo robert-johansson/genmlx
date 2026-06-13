@@ -8,18 +8,19 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 5,
-      "duration-ms": 4758,
+      "duration-ms": 4788,
       "status": "pass"
     },
     {
+      "total-assertions": 11,
       "name": "branching_property_test",
       "file": "test/genmlx/branching_property_test.cljs",
-      "pass": 11,
-      "fail": 0,
-      "error": 0,
-      "total-assertions": 11,
-      "duration-ms": 1162,
-      "status": "pass"
+      "duration-ms": 1115,
+      "fail": 1,
+      "status": "error",
+      "error": 1,
+      "pass": 10,
+      "error-message": "Command failed: /Users/robert/.bun/bin/bun run --bun nbb test/genmlx/branching_property_test.cljs\n$ bunx nbb@1.4.206 test/genmlx/branching_property_test.cljs\nSaved lockfile\nerror: script \"nbb\" exited with code 1\n"
     },
     {
       "name": "choicemap_property_test",
@@ -28,7 +29,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 11,
-      "duration-ms": 901,
+      "duration-ms": 871,
       "status": "pass"
     },
     {
@@ -38,7 +39,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 18,
-      "duration-ms": 1421,
+      "duration-ms": 1393,
       "status": "pass"
     },
     {
@@ -48,7 +49,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 17,
-      "duration-ms": 1763,
+      "duration-ms": 1820,
       "status": "pass"
     },
     {
@@ -58,7 +59,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 9,
-      "duration-ms": 1310,
+      "duration-ms": 1293,
       "status": "pass"
     },
     {
@@ -68,7 +69,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 5,
-      "duration-ms": 29412,
+      "duration-ms": 32229,
       "status": "pass"
     },
     {
@@ -78,7 +79,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 20,
-      "duration-ms": 3158,
+      "duration-ms": 4427,
       "status": "pass"
     },
     {
@@ -88,7 +89,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 6,
-      "duration-ms": 846,
+      "duration-ms": 877,
       "status": "pass"
     },
     {
@@ -98,7 +99,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 22,
-      "duration-ms": 395,
+      "duration-ms": 405,
       "status": "pass"
     },
     {
@@ -108,7 +109,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 16,
-      "duration-ms": 1427,
+      "duration-ms": 1457,
       "status": "pass"
     },
     {
@@ -118,7 +119,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 12,
-      "duration-ms": 1722,
+      "duration-ms": 1780,
       "status": "pass"
     },
     {
@@ -128,7 +129,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 4,
-      "duration-ms": 108313,
+      "duration-ms": 112808,
       "status": "pass"
     },
     {
@@ -138,7 +139,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 8,
-      "duration-ms": 796,
+      "duration-ms": 644,
       "status": "pass"
     },
     {
@@ -148,7 +149,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 12,
-      "duration-ms": 2841,
+      "duration-ms": 2859,
       "status": "pass"
     },
     {
@@ -158,7 +159,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 9,
-      "duration-ms": 688,
+      "duration-ms": 3507,
       "status": "pass"
     },
     {
@@ -168,7 +169,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 5,
-      "duration-ms": 121783,
+      "duration-ms": 125194,
       "status": "pass"
     },
     {
@@ -178,17 +179,17 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 10,
-      "duration-ms": 1071,
+      "duration-ms": 1176,
       "status": "pass"
     },
     {
       "name": "selection_property_test",
       "file": "test/genmlx/selection_property_test.cljs",
-      "pass": 11,
+      "pass": 15,
       "fail": 0,
       "error": 0,
-      "total-assertions": 11,
-      "duration-ms": 426,
+      "total-assertions": 15,
+      "duration-ms": 484,
       "status": "pass"
     },
     {
@@ -198,7 +199,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 5,
-      "duration-ms": 669,
+      "duration-ms": 676,
       "status": "pass"
     },
     {
@@ -208,7 +209,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 7,
-      "duration-ms": 1642,
+      "duration-ms": 1631,
       "status": "pass"
     },
     {
@@ -218,7 +219,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 6,
-      "duration-ms": 991,
+      "duration-ms": 1006,
       "status": "pass"
     },
     {
@@ -228,7 +229,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 4,
-      "duration-ms": 1045,
+      "duration-ms": 1030,
       "status": "pass"
     },
     {
@@ -238,7 +239,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 20,
-      "duration-ms": 13411,
+      "duration-ms": 15826,
       "status": "pass"
     },
     {
@@ -248,7 +249,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 9,
-      "duration-ms": 1182,
+      "duration-ms": 1162,
       "status": "pass"
     },
     {
@@ -258,7 +259,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 13,
-      "duration-ms": 1265,
+      "duration-ms": 1285,
       "status": "pass"
     },
     {
@@ -268,7 +269,7 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 7,
-      "duration-ms": 255269,
+      "duration-ms": 260496,
       "status": "pass"
     },
     {
@@ -278,17 +279,17 @@
       "fail": 0,
       "error": 0,
       "total-assertions": 11,
-      "duration-ms": 1416,
+      "duration-ms": 1498,
       "status": "pass"
     }
   ],
   "totals": {
-    "pass": 293,
-    "fail": 0,
-    "error": 0,
-    "total-assertions": 293,
-    "duration-ms": 561089,
-    "suites-passed": 28,
+    "pass": 296,
+    "fail": 1,
+    "error": 1,
+    "total-assertions": 297,
+    "duration-ms": 583742,
+    "suites-passed": 27,
     "suites-total": 28
   }
 }

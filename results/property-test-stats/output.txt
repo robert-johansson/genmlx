@@ -4,93 +4,97 @@
   discovered: 28 property test files
 
   running: adev_property_test (test/genmlx/adev_property_test.cljs)
-    5/5 assertions passed (4758ms)
+    5/5 assertions passed (4788ms)
 
   running: branching_property_test (test/genmlx/branching_property_test.cljs)
-    11/11 assertions passed (1162ms)
+    ERROR: Command failed: /Users/robert/.bun/bin/bun run --bun nbb test/genmlx/branching_property_test.cljs
+$ bunx nbb@1.4.206 test/genmlx/branching_property_test.cljs
+Saved lockfile
+error: script "nbb" exited  (1115ms)
+    partial: 10/11 passed, 1 failures, 0 errors
 
   running: choicemap_property_test (test/genmlx/choicemap_property_test.cljs)
-    11/11 assertions passed (901ms)
+    11/11 assertions passed (871ms)
 
   running: combinator_extra_property_test (test/genmlx/combinator_extra_property_test.cljs)
-    18/18 assertions passed (1421ms)
+    18/18 assertions passed (1393ms)
 
   running: combinator_property_test (test/genmlx/combinator_property_test.cljs)
-    17/17 assertions passed (1763ms)
+    17/17 assertions passed (1820ms)
 
   running: compiled_equiv_property_test (test/genmlx/compiled_equiv_property_test.cljs)
-    9/9 assertions passed (1310ms)
+    9/9 assertions passed (1293ms)
 
   running: dist_normalization_property_test (test/genmlx/dist_normalization_property_test.cljs)
-    5/5 assertions passed (29412ms)
+    5/5 assertions passed (32229ms)
 
   running: dist_property_test (test/genmlx/dist_property_test.cljs)
-    20/20 assertions passed (3158ms)
+    20/20 assertions passed (4427ms)
 
   running: edit_property_test (test/genmlx/edit_property_test.cljs)
-    6/6 assertions passed (846ms)
+    6/6 assertions passed (877ms)
 
   running: entropy_property_test (test/genmlx/entropy_property_test.cljs)
-    22/22 assertions passed (395ms)
+    22/22 assertions passed (405ms)
 
   running: gfi_property_test (test/genmlx/gfi_property_test.cljs)
-    16/16 assertions passed (1427ms)
+    16/16 assertions passed (1457ms)
 
   running: gradient_learning_property_test (test/genmlx/gradient_learning_property_test.cljs)
-    12/12 assertions passed (1722ms)
+    12/12 assertions passed (1780ms)
 
   running: gradient_mcmc_property_test (test/genmlx/gradient_mcmc_property_test.cljs)
-    4/4 assertions passed (108313ms)
+    4/4 assertions passed (112808ms)
 
   running: handler_property_test (test/genmlx/handler_property_test.cljs)
-    8/8 assertions passed (796ms)
+    8/8 assertions passed (644ms)
 
   running: inference_property_test (test/genmlx/inference_property_test.cljs)
-    12/12 assertions passed (2841ms)
+    12/12 assertions passed (2859ms)
 
   running: location_scale_property_test (test/genmlx/location_scale_property_test.cljs)
-    9/9 assertions passed (688ms)
+    9/9 assertions passed (3507ms)
 
   running: mcmc_property_test (test/genmlx/mcmc_property_test.cljs)
-    5/5 assertions passed (121783ms)
+    5/5 assertions passed (125194ms)
 
   running: score_monotonicity_property_test (test/genmlx/score_monotonicity_property_test.cljs)
-    10/10 assertions passed (1071ms)
+    10/10 assertions passed (1176ms)
 
   running: selection_property_test (test/genmlx/selection_property_test.cljs)
-    11/11 assertions passed (426ms)
+    15/15 assertions passed (484ms)
 
   running: serialize_property_test (test/genmlx/serialize_property_test.cljs)
-    5/5 assertions passed (669ms)
+    5/5 assertions passed (676ms)
 
   running: smc_property_test (test/genmlx/smc_property_test.cljs)
-    7/7 assertions passed (1642ms)
+    7/7 assertions passed (1631ms)
 
   running: splice_property_test (test/genmlx/splice_property_test.cljs)
-    6/6 assertions passed (991ms)
+    6/6 assertions passed (1006ms)
 
   running: stack_unstack_property_test (test/genmlx/stack_unstack_property_test.cljs)
-    4/4 assertions passed (1045ms)
+    4/4 assertions passed (1030ms)
 
   running: support_property_test (test/genmlx/support_property_test.cljs)
-    20/20 assertions passed (13411ms)
+    20/20 assertions passed (15826ms)
 
   running: trace_immutability_property_test (test/genmlx/trace_immutability_property_test.cljs)
-    9/9 assertions passed (1182ms)
+    9/9 assertions passed (1162ms)
 
   running: vectorized_property_test (test/genmlx/vectorized_property_test.cljs)
-    13/13 assertions passed (1265ms)
+    13/13 assertions passed (1285ms)
 
   running: vi_property_test (test/genmlx/vi_property_test.cljs)
-    7/7 assertions passed (255269ms)
+    7/7 assertions passed (260496ms)
 
   running: vmap_property_test (test/genmlx/vmap_property_test.cljs)
-    11/11 assertions passed (1416ms)
+    11/11 assertions passed (1498ms)
 
 === Summary ===
-  suites: 28/28 passed
-  assertions: 293/293 passed, 0 failures, 0 errors
-  duration: 561.1s
+  suites: 27/28 passed
+  assertions: 296/297 passed, 1 failures, 1 errors
+  duration: 583.7s
   wrote: /Users/robert/code/genmlx/results/property-test-stats/data.json
 
 === Done ===

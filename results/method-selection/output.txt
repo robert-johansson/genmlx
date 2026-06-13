@@ -16,24 +16,24 @@
 -- B-1: fit(static-linreg) --
 [fit] Selected method: exact — All trace sites eliminated by analytical plan
   Method: :exact
-  Log-ML: -28.14594841003418
-  Posterior: {:slope {:value 0}, :intercept {:value 6.427145481109619}}
-  Elapsed: 4.4 ms
+  Log-ML: -11.418802261352539
+  Posterior: {:slope {:value 1.9993239641189575}, :intercept {:value 0.4411454200744629}}
+  Elapsed: 11.9 ms
   [PASS] Expected :exact, got exact
 
 -- B-2: fit(dynamic-linreg) --
 [fit] Selected method: handler-is — Dynamic addresses — shape-based methods not applicable
   Method: :handler-is
-  Log-ML: -12.182157516479492
+  Log-ML: -10.744409561157227
   Has posterior: true
-  Elapsed: 1726.6 ms
+  Elapsed: 1734.1 ms
   [PASS] Expected :handler-is, got handler-is
 
 -- B-3: fit(mixed-model) --
 [fit] Selected method: hmc — Static model with 1 residual dims (≤ 10)
   Method: :hmc
   Has posterior: true
-  Elapsed: 36055.9 ms
+  Elapsed: 48812.5 ms
   [PASS] Expected :hmc, got hmc
 
 

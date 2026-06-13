@@ -43,7 +43,7 @@
 | safe-x3    |   1.44e-1 |     7.78e-3 | -0.48 |          99.0 |
 | tempt-x3   |   1.08e-1 |     1.10e-2 | -0.40 |          98.4 |
 
-  Total: 157.5s
+  Total: 158.8s
   Wrote: /Users/robert/code/genmlx/results/agents-is-exact/data.json
 
 Agents IS->exact experiment complete.

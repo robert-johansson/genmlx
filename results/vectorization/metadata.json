@@ -1,7 +1,7 @@
 {
   "experiment": "vectorization",
-  "git_sha": "5f29f7a",
-  "timestamp": "2026-06-07T19:31:20.892Z",
+  "git_sha": "c9253bc",
+  "timestamp": "2026-06-13T08:42:08.260Z",
   "hardware": {
     "platform": "darwin",
     "arch": "arm64",
@@ -12,7 +12,7 @@
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "901cf81d9fbd9010f17d8f5d75a848d6ccee7c42816f2fe199011e0465906b30",
-  "duration_ms": 21334,
+  "source_hash": "04f35d41f4294da6569f043feeff36394160ca39560d5c355382e1f08d359946",
+  "duration_ms": 19855,
   "script": "bench/vectorization.cljs"
 }

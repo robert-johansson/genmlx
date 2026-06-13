@@ -23,111 +23,108 @@
     "log_ml_abs_error_nats": [
       {
         "K": 3,
-        "l35": 2.1404766670229947e-7,
-        "l2": 1.5372104917568024
+        "l35": 1.1506034454547756,
+        "l2": 3.3220080036574124
       },
       {
         "K": 5,
-        "l35": 5.896566683816218e-7,
-        "l2": 19.79602481664403
+        "l35": 24.51079817559553,
+        "l2": 14.709979969383813
       },
       {
         "K": 10,
-        "l35": 3.1061989602676476e-7,
-        "l2": 213.40059909876024
+        "l35": 208.321355336362,
+        "l2": 212.70535639507207
       }
     ],
-    "max_l35_abs_error_nats": 5.896566683816218e-7,
-    "mean_ess_improvement": 66.13776741414307,
-    "all_exact?": true
+    "max_l35_abs_error_nats": 208.321355336362,
+    "mean_ess_improvement": 0.8937297629681705,
+    "all_exact?": false
   },
   "experiment": "l3.5-combinator-conjugacy",
   "kernel_info": {
     "prior": "N(0, 10)",
     "likelihood": "N(mu, 1)",
     "family": "normal-normal",
-    "conjugate_pairs": [
-      {
-        "prior": "mu",
-        "obs": "y",
-        "family": "normal-normal"
-      }
-    ]
+    "conjugate_pairs": []
   },
   "results-by-size": [
     {
       "K": 3,
       "closed-form-log-ml": -9.782219147153135,
       "L2-standard": {
-        "log-ml-mean": -11.319429638909938,
-        "log-ml-std": 3.286786460645186,
-        "log-ml-var": 10.80296523788051,
-        "log-ml-abs-error-nats": 1.5372104917568024,
-        "ess-mean": 1.358626682838121,
-        "timing-ms": 0.8321943333333669,
-        "timing-std-ms": 0.028156013111423673
+        "log-ml-mean": -13.104227150810548,
+        "log-ml-std": 3.2915019692768315,
+        "log-ml-var": 10.833985213753259,
+        "log-ml-abs-error-nats": 3.3220080036574124,
+        "ess-mean": 1.6605655546814564,
+        "timing-ms": 0.8608473333333677,
+        "timing-std-ms": 0.04948352943473904
       },
       "L3.5-analytical": {
-        "log-ml-mean": -9.782218933105469,
-        "log-ml-std": 0,
-        "log-ml-var": 0,
-        "log-ml-abs-error-nats": 2.1404766670229947e-7,
-        "ess-mean": 100.00000000000004,
-        "timing-ms": 0.7170693333333702,
-        "timing-std-ms": 0.0304105976484732
+        "log-ml-mean": -10.932822592607911,
+        "log-ml-std": 1.4921584046006529,
+        "log-ml-var": 2.226536704420366,
+        "log-ml-abs-error-nats": 1.1506034454547756,
+        "ess-mean": 1.2620542384135838,
+        "timing-ms": 0.8252086666666401,
+        "timing-std-ms": 0.039433570372691025
       },
       "n-particles": 100,
-      "ess-improvement": 73.60373623098859
+      "ess-improvement": 0.7600147039396355,
+      "variance-reduction": 4.865846223080194
     },
     {
       "K": 5,
       "closed-form-log-ml": -16.48521673040374,
       "L2-standard": {
-        "log-ml-mean": -36.28124154704777,
-        "log-ml-std": 10.806612893104852,
-        "log-ml-var": 116.78288222142001,
-        "log-ml-abs-error-nats": 19.79602481664403,
-        "ess-mean": 1.0547449855813444,
-        "timing-ms": 1.504722333333272,
-        "timing-std-ms": 0.08582607010872748
+        "log-ml-mean": -31.19519669978755,
+        "log-ml-std": 9.994839394468164,
+        "log-ml-var": 99.89681452121273,
+        "log-ml-abs-error-nats": 14.709979969383813,
+        "ess-mean": 1.126920837701889,
+        "timing-ms": 1.4932779999999184,
+        "timing-std-ms": 0.05601956346679089
       },
       "L3.5-analytical": {
-        "log-ml-mean": -16.48521614074707,
-        "log-ml-std": 0,
-        "log-ml-var": 0,
-        "log-ml-abs-error-nats": 5.896566683816218e-7,
-        "ess-mean": 100.00000000000004,
-        "timing-ms": 1.3132916666666763,
-        "timing-std-ms": 0.033978945279693556
+        "log-ml-mean": -40.99601490599927,
+        "log-ml-std": 11.64844732280609,
+        "log-ml-var": 135.68632503218836,
+        "log-ml-abs-error-nats": 24.51079817559553,
+        "ess-mean": 1.1085378554252427,
+        "timing-ms": 1.4838056666665882,
+        "timing-std-ms": 0.03952698539402188
       },
       "n-particles": 100,
-      "ess-improvement": 94.80964722945137
+      "ess-improvement": 0.9836874235867938,
+      "variance-reduction": 0.7362334745046311
     },
     {
       "K": 10,
       "closed-form-log-ml": -34.45558197565896,
       "L2-standard": {
-        "log-ml-mean": -247.8561810744192,
-        "log-ml-std": 78.79365041847923,
-        "log-ml-var": 6208.439346269512,
-        "log-ml-abs-error-nats": 213.40059909876024,
-        "ess-mean": 1.0000027072743543,
-        "timing-ms": 2.141194333332957,
-        "timing-std-ms": 0.015690389106917557
+        "log-ml-mean": -247.16093837073103,
+        "log-ml-std": 70.26233197881062,
+        "log-ml-var": 4936.795295100593,
+        "log-ml-abs-error-nats": 212.70535639507207,
+        "ess-mean": 1.097524773788503,
+        "timing-ms": 3.950346999999965,
+        "timing-std-ms": 0.1468571048366072
       },
       "L3.5-analytical": {
-        "log-ml-mean": -34.45558166503906,
-        "log-ml-std": 0,
-        "log-ml-var": 0,
-        "log-ml-abs-error-nats": 3.1061989602676476e-7,
-        "ess-mean": 30,
-        "timing-ms": 3.0598196666666504,
-        "timing-std-ms": 0.06506534069906449
+        "log-ml-mean": -242.77693731202095,
+        "log-ml-std": 57.247640928267856,
+        "log-ml-var": 3277.292391851889,
+        "log-ml-abs-error-nats": 208.321355336362,
+        "ess-mean": 1.0289153847211057,
+        "timing-ms": 3.55247233333345,
+        "timing-std-ms": 0.02105748195651841
       },
       "n-particles": 30,
-      "ess-improvement": 29.99991878198925
+      "ess-improvement": 0.9374871613780824,
+      "variance-reduction": 1.5063640056574181
     }
   ],
   "kernel": "normal-normal conjugate",
-  "timestamp": "2026-06-08T16:31:33.439Z"
+  "timestamp": "2026-06-13T08:59:06.786Z"
 }

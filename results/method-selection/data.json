@@ -1,6 +1,6 @@
 {
   "experiment": "method-selection",
-  "timestamp": "2026-06-07T19:41:41.265Z",
+  "timestamp": "2026-06-13T09:04:09.109Z",
   "method_selection": {
     "description": "Method selection accuracy across 6 model types",
     "results": [
@@ -12,7 +12,7 @@
         "reason": "All trace sites eliminated by analytical plan",
         "n_residual": 0,
         "n_eliminated": 2,
-        "elapsed_ms": 0.1075420000000804
+        "elapsed_ms": 0.055959000000029846
       },
       {
         "label": "Mixed Model (partial conjugate)",
@@ -22,7 +22,7 @@
         "reason": "Static model with 1 residual dims (≤ 10)",
         "n_residual": 1,
         "n_eliminated": 2,
-        "elapsed_ms": 0.04979200000002493
+        "elapsed_ms": 0.04316700000003948
       },
       {
         "label": "Dynamic LinReg (dynamic addresses)",
@@ -32,7 +32,7 @@
         "reason": "Dynamic addresses — shape-based methods not applicable",
         "n_residual": 3,
         "n_eliminated": 0,
-        "elapsed_ms": 0.02133400000002439
+        "elapsed_ms": 0.01587500000005093
       },
       {
         "label": "Empty model (no trace sites)",
@@ -42,7 +42,7 @@
         "reason": "No trace sites — trivial model",
         "n_residual": 0,
         "n_eliminated": 0,
-        "elapsed_ms": 0.00829199999998309
+        "elapsed_ms": 0.007334000000014385
       },
       {
         "label": "Large model (15+ latents)",
@@ -52,7 +52,7 @@
         "reason": "Static model with 15 residual dims (> 10) — VI preferred",
         "n_residual": 15,
         "n_eliminated": 0,
-        "elapsed_ms": 0.05625000000009095
+        "elapsed_ms": 0.038584000000014385
       },
       {
         "label": "Splice model (sub-model call)",
@@ -62,7 +62,7 @@
         "reason": "Splice sites present — SMC for sub-model structure",
         "n_residual": 1,
         "n_eliminated": 0,
-        "elapsed_ms": 0.11454200000002857
+        "elapsed_ms": 0.05195800000001327
       }
     ],
     "total": 6,
@@ -76,25 +76,25 @@
         "method": "exact",
         "expected_method": "exact",
         "pass": true,
-        "log_ml": -28.14594841003418,
+        "log_ml": -11.418802261352539,
         "posterior": {
           "slope": {
-            "value": 0
+            "value": 1.9993239641189575
           },
           "intercept": {
-            "value": 6.427145481109619
+            "value": 0.4411454200744629
           }
         },
-        "elapsed_ms": 4.430666999999971
+        "elapsed_ms": 11.877166999999986
       },
       {
         "model": "dynamic-linreg",
         "method": "handler-is",
         "expected_method": "handler-is",
         "pass": true,
-        "log_ml": -12.182157516479492,
+        "log_ml": -10.744409561157227,
         "has_posterior": true,
-        "elapsed_ms": 1726.6060420000003
+        "elapsed_ms": 1734.050209
       },
       {
         "model": "mixed-model",
@@ -103,7 +103,7 @@
         "pass": true,
         "log_ml": null,
         "has_posterior": true,
-        "elapsed_ms": 36055.891
+        "elapsed_ms": 48812.50825
       }
     ],
     "total": 3,

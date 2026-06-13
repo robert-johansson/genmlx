@@ -6,7 +6,7 @@
       "total-assertions": 32,
       "name": "Mutation boundary",
       "file": "test/genmlx/mutation_boundary_test.cljs",
-      "duration-ms": 704,
+      "duration-ms": 733,
       "fail": 0,
       "status": "pass",
       "expected": 32,
@@ -21,7 +21,7 @@
     "error": 0,
     "total-assertions": 32,
     "expected": 32,
-    "duration-ms": 705,
+    "duration-ms": 734,
     "properties-verified": 12,
     "purity-status": "verified"
   }

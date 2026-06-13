@@ -1,43 +1,42 @@
 
-=== Neal's Funnel ===
+=== Neal's Funnel (joint, no observations) ===
 Model: v ~ N(0,3), x_i ~ N(0, exp(v/2)) for i=1..10
-Observations: all x_i = 0
-Ground truth: E[v | x=0] ~ 0 (by symmetry)
+Ground truth: v ~ N(0,3) marginally  ->  mean=0, std=3
 
---- 1. HMC (100 samples, burn 50, 10 leapfrog steps) ---
+-- HMC (4 chains) --
+  chain 2...
+  chain 3...
+  chain 4...
+  v: mean=1.7489 std=1.6750 (truth: 0)
+  R-hat=2.364  ESS=1807.3  bulk-ESS=5.6  tail-ESS=14.4  time=56215ms
 
-  [HMC-100] running...
-  [HMC-100] 5199.5 ms
-  posterior v: mean=1.8931 std=2.5081
-  n-samples: 100
+-- NUTS (4 chains) --
+  chain 2...
+  chain 3...
+  chain 4...
+  v: mean=1.0692 std=3.1253 (truth: 0)
+  R-hat=3.270  ESS=640.5  bulk-ESS=5.5  tail-ESS=4.0  time=41455ms
 
---- 2. NUTS (100 samples, burn 50) ---
-
-  [NUTS-100] running...
-  [NUTS-100] 55931.0 ms
-  posterior v: mean=2.3977 std=2.0477
-  n-samples: 100
-  acceptance rate: 100.0%
-
---- 3. Compiled MH (100 samples, burn 50) ---
-
-  [compiled-MH-100] running...
-  [compiled-MH-100] 856.6 ms
-  posterior v: mean=-2.0981 std=0.3001
-  n-samples: 100
+-- compiled-MH (4 chains) --
+  chain 2...
+  chain 3...
+  chain 4...
+  v: mean=-0.9127 std=3.6000 (truth: 0)
+  R-hat=7.662  ESS=61.4  bulk-ESS=4.6  tail-ESS=10.7  time=13451ms
 
 
 ========================================
-         FUNNEL RESULTS
+            FUNNEL RESULTS
 ========================================
 
-| Algorithm     | v mean  | v std   | Time (ms) | Samples |
-|---------------|---------|---------|-----------|---------|
-| HMC-100       |  1.8931 |  2.5081 |    5199.5 |     100 |
-| NUTS-100      |  2.3977 |  2.0477 |   55931.0 |     100 |
-| compiled-MH   | -2.0981 |  0.3001 |     856.6 |     100 |
+| Algorithm    | v mean  | v std   | R-hat | ESS    | bulk | tail | Time(ms) |
+|--------------|---------|---------|-------|--------|------|------|----------|
+| HMC          |  1.7489 |  1.6750 | 2.364 | 1807.3 |    6 |   14 |    56215 |
+| NUTS         |  1.0692 |  3.1253 | 3.270 |  640.5 |    6 |    4 |    41455 |
+| compiled-MH  | -0.9127 |  3.6000 | 7.662 |   61.4 |    5 |   11 |    13451 |
 
-Ground truth: E[v | x=0] ~ 0
+Ground truth: v ~ N(0,3) (mean=0, std=3). R-hat target <= 1.01 (Vehtari et al. 2021).
+bulk/tail-ESS are rank-normalized (Vehtari); R-hat + ESS are multi-chain on v.
   wrote: /Users/robert/code/genmlx/results/funnel/data.json
 
 Funnel benchmark complete.

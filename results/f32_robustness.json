@@ -1,0 +1,131 @@
+{
+  "config": {
+    "chain": {
+      "q": 0.5,
+      "r": 0.3,
+      "Ls": [
+        2,
+        3,
+        5,
+        8,
+        13,
+        21,
+        34,
+        55,
+        89,
+        144
+      ]
+    },
+    "regression": {
+      "sw": 2,
+      "sigma": 1,
+      "Ns": [
+        3,
+        5,
+        10,
+        20,
+        50,
+        100
+      ]
+    },
+    "n-reps": 5,
+    "data": "host-double simulation, fround'ed so f32/f64 paths see identical inputs"
+  },
+  "kalman-sweep": [
+    {
+      "L": 2,
+      "max-abs-err": 2.868142487955083e-7,
+      "max-rel-err": 5.799081628961338e-8
+    },
+    {
+      "L": 3,
+      "max-abs-err": 9.087500885129884e-8,
+      "max-rel-err": 2.9642854667268143e-8
+    },
+    {
+      "L": 5,
+      "max-abs-err": 4.28670277052845e-7,
+      "max-rel-err": 9.694642516935538e-8
+    },
+    {
+      "L": 8,
+      "max-abs-err": 7.970349109598374e-7,
+      "max-rel-err": 9.26429604640744e-8
+    },
+    {
+      "L": 13,
+      "max-abs-err": 7.27032830383223e-7,
+      "max-rel-err": 6.046276061995141e-8
+    },
+    {
+      "L": 21,
+      "max-abs-err": 0.00000207273972563371,
+      "max-rel-err": 9.760949385378765e-8
+    },
+    {
+      "L": 34,
+      "max-abs-err": 0.0000035775788020941945,
+      "max-rel-err": 8.617994328186427e-8
+    },
+    {
+      "L": 55,
+      "max-abs-err": 0.000014133218151357596,
+      "max-rel-err": 2.871809979450202e-7
+    },
+    {
+      "L": 89,
+      "max-abs-err": 0.000021348177284608028,
+      "max-rel-err": 2.2916247084261128e-7
+    },
+    {
+      "L": 144,
+      "max-abs-err": 0.000021816906468075103,
+      "max-rel-err": 1.5171931978139033e-7
+    }
+  ],
+  "regression-sweep": [
+    {
+      "N": 3,
+      "max-abs-err": 5.55336087337821e-7,
+      "max-rel-err": 1.0308600751666359e-7
+    },
+    {
+      "N": 5,
+      "max-abs-err": 6.16720267743176e-7,
+      "max-rel-err": 7.199285435612906e-8
+    },
+    {
+      "N": 10,
+      "max-abs-err": 0.0000010655717996854719,
+      "max-rel-err": 6.869826308317519e-8
+    },
+    {
+      "N": 20,
+      "max-abs-err": 0.0000022886908155328456,
+      "max-rel-err": 7.801572246727105e-8
+    },
+    {
+      "N": 50,
+      "max-abs-err": 0.00001188335997426293,
+      "max-rel-err": 1.4356125006973263e-7
+    },
+    {
+      "N": 100,
+      "max-abs-err": 0.000024513266311032567,
+      "max-rel-err": 1.6780272671938328e-7
+    }
+  ],
+  "model-selection": {
+    "n-decisions": 80,
+    "flips": 0,
+    "min-margin-f64-nats": 0.026606907528293533,
+    "max-f32-err-nats": 0.000024513266311032567
+  },
+  "sbc-margins": {
+    "n-passing-params": 32,
+    "min-chi2-margin": 1.3100000000000023,
+    "min-ks-margin": 0.03012576139542976
+  },
+  "max-abs-err-nats": 0.000024513266311032567,
+  "conclusion": "max |f32 - f64| = 2.45e-5 nats across chain L<=144 and regression N<=100; 0 of 80 model-selection decisions flip"
+}

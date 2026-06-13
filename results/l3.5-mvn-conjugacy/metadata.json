@@ -1,7 +1,7 @@
 {
   "experiment": "l3.5-mvn-conjugacy",
-  "git_sha": "5f29f7a",
-  "timestamp": "2026-06-07T19:39:34.975Z",
+  "git_sha": "c9253bc",
+  "timestamp": "2026-06-13T08:58:57.461Z",
   "hardware": {
     "platform": "darwin",
     "arch": "arm64",
@@ -12,7 +12,7 @@
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "5a2a4d30b33d9945eb5b6d09256ef5af74be2de3fb798398344f504dbab46a66",
-  "duration_ms": 87158,
+  "source_hash": "43cb0e178c0fe2f9095417f2c69b2725fd32ff78036f39ca7a6efc8395c369fc",
+  "duration_ms": 94749,
   "script": "bench/l3_5_mvn_conjugacy.cljs"
 }

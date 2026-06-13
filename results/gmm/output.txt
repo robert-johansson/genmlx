@@ -6,23 +6,23 @@ Latent space: 3^8 = 6561 configurations
 --- 1. Sequential IS (N=200) ---
 
   [seq-IS-200] warming up...
-  [seq-IS-200] 978.597 ± 5.224 ms
-  ESS: 1.0 / 200 (0.5%)
-  log-ML: -42.8393
+  [seq-IS-200] 966.742 ± 4.551 ms
+  ESS: 1.8 / 200 (0.9%)
+  log-ML: -48.6062
 
 --- 2. Vectorized IS (N=1000) ---
 
   [VIS-1000] warming up...
-  [VIS-1000] 1.971 ± 0.059 ms
-  ESS: 1.6 / 1000 (0.2%)
-  log-ML: -39.5213
+  [VIS-1000] 1.857 ± 0.036 ms
+  ESS: 1.4 / 1000 (0.1%)
+  log-ML: -34.4630
 
 --- 3. Vectorized IS (N=10000) ---
 
   [VIS-10000] warming up...
-  [VIS-10000] 3.534 ± 0.152 ms
-  ESS: 3.0 / 10000 (0.0%)
-  log-ML: -28.3306
+  [VIS-10000] 3.649 ± 0.100 ms
+  ESS: 1.0 / 10000 (0.0%)
+  log-ML: -25.7334
 
 
 ========================================
@@ -31,9 +31,9 @@ Latent space: 3^8 = 6561 configurations
 
 | Algorithm | N | ESS | ESS% | Time (ms) | log-ML |
 |-----------|---|-----|------|-----------|--------|
-| seq-IS | 200 | 1.0 | 0.5% | 978.6 ± 5.2 | -42.84 |
-| VIS | 1000 | 1.6 | 0.2% | 2.0 ± 0.1 | -39.52 |
-| VIS | 10000 | 3.0 | 0.0% | 3.5 ± 0.2 | -28.33 |
+| seq-IS | 200 | 1.8 | 0.9% | 966.7 ± 4.6 | -48.61 |
+| VIS | 1000 | 1.4 | 0.1% | 1.9 ± 0.0 | -34.46 |
+| VIS | 10000 | 1.0 | 0.0% | 3.6 ± 0.1 | -25.73 |
   wrote: /Users/robert/code/genmlx/results/gmm/data.json
 
 GMM benchmark complete.

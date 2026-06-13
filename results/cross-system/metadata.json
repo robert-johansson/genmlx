@@ -1,7 +1,7 @@
 {
   "experiment": "cross-system",
-  "git_sha": "5f29f7a",
-  "timestamp": "2026-06-07T19:41:02.772Z",
+  "git_sha": "c9253bc",
+  "timestamp": "2026-06-13T09:03:17.790Z",
   "hardware": {
     "platform": "darwin",
     "arch": "arm64",
@@ -12,7 +12,7 @@
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "5b9417dda3f0bef0c7a65a15f5f5e06b961bcdb8c774f3e501986134ef66caca",
-  "duration_ms": 50528,
+  "source_hash": "f5bbec8a277cb9380f64fe2a54baf72a6e53b0f3ea2963d56062f7978ddbfa08",
+  "duration_ms": 52199,
   "script": "bench/cross_system.cljs"
 }

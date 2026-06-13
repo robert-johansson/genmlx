@@ -55,7 +55,7 @@
 ======================================================================
   A (alpha=Inf): after 6 diagnostic obs, entropy 0.6931 -> 0.0795 nats; after 6 non-diagnostic obs, 0.6931 (= prior, exactly)
   B (alpha=100, 1 step): donut marginal contracts by 0.2679 nats; veg/noodle ridge: 0.0376 / 0.0377 (stays ~flat)
-  Total: 0.9s
+  Total: 1.0s
   Wrote: /Users/robert/code/genmlx/results/agents-identifiability/data.json
 
 Agents identifiability experiment complete.

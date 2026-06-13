@@ -1,7 +1,7 @@
 {
   "experiment": "rao-blackwell",
-  "git_sha": "5f29f7a",
-  "timestamp": "2026-06-07T19:38:07.802Z",
+  "git_sha": "c9253bc",
+  "timestamp": "2026-06-13T08:57:22.700Z",
   "hardware": {
     "platform": "darwin",
     "arch": "arm64",
@@ -12,7 +12,7 @@
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "af55c5ce60c1277433cdaf981a9aca06bc14a7057ac875bc535f78ff81dc9156",
-  "duration_ms": 1249,
+  "source_hash": "ac922c693477e8d7bbe6fda69ac272761f38fd4cda22cb095bd21c93b59928b3",
+  "duration_ms": 1202,
   "script": "bench/rao_blackwell.cljs"
 }

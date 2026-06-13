@@ -1,7 +1,7 @@
 {
   "experiment": "l3.5-regenerate-analytical",
-  "git_sha": "5f29f7a",
-  "timestamp": "2026-06-07T19:40:12.230Z",
+  "git_sha": "c9253bc",
+  "timestamp": "2026-06-13T08:59:35.999Z",
   "hardware": {
     "platform": "darwin",
     "arch": "arm64",
@@ -12,7 +12,7 @@
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "d1f8c950d283d08770aa9dcd73e50d3e02a1c181c4f8431ebce284e33cc4a979",
-  "duration_ms": 28117,
+  "source_hash": "f07cd808884d1bcdec31858e2ae1ee6beb9ae8bf64c33edf4023fc1300c41b20",
+  "duration_ms": 29170,
   "script": "bench/l3_5_regenerate_analytical.cljs"
 }
