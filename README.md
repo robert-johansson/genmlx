@@ -209,7 +209,11 @@ Layer 8: Verification
   genmlx.gfi          — the GFI algebraic law catalog from Cusumano-Towner 2020 thesis
   genmlx.verify       — Static validator (validate-gen-fn)
 
-Layer 9: LLM Integration
+Layer 9: Domain Verticals (domain-as-GF; inference orthogonal)
+  genmlx.agents.gridworld/agent — MDP/POMDP agents as GFs (build-mdp, make-mdp-agent;
+                        the policy is a GF, inference is pluggable)
+  genmlx.agents.inverse — goal inference / IRL (Bayesian inference over the agent)
+  genmlx.agents.pomdp   — belief-space planning, bandits; .biased-planners, .differentiable
   genmlx.llm.core     — make-llm-gf: wrap LLM as DynamicGF (each token = trace site)
   genmlx.llm.backend  — mlx-node loader, forward pass, KV cache
   genmlx.llm.grammar  — DFA-constrained generation (regex → token mask)
@@ -335,6 +339,57 @@ Every generative function supports the full Gen interface:
 ;; Parametric edit (constraint, selection, or proposal)
 (p/edit model trace edit-request)    ;; => {:trace Trace :weight MLX-scalar :discard ChoiceMap}
 ```
+
+## Vertical Libraries
+
+The GFI is a substrate. A *domain* becomes a library by writing its model as a generative function — and inference stays **orthogonal**: the same model runs under exact, Monte Carlo, or mixed inference, chosen by the caller, never baked into the domain. Two Layer-9 verticals ship today; a third is planned.
+
+### genmlx.agents — agents as generative functions
+
+MDP/POMDP planning, inverse planning, and multi-agent models. An agent's **policy is a generative function**, so every GFI operation works on it, and inference (exact value iteration, Monte Carlo rollouts, inverse-planning posteriors) is pluggable and orthogonal to the agent.
+
+```clojure
+(require '[genmlx.agents.gridworld :as gw]
+         '[genmlx.agents.agent :as agent])
+
+;; A gridworld MDP: reach goal :G under a small per-step cost
+(def mdp (gw/build-mdp {:grid [[:empty :G] [:empty :empty]]
+                        :utilities {:G 2.0 :timeCost -0.1}
+                        :start [0 1] :gamma 1.0}))
+
+;; A softmax-rational agent — its :policy IS a generative function
+(def ag (agent/make-mdp-agent {:mdp mdp :alpha 1.0 :gamma 1.0 :n-iters 6}))
+
+;; The full GFI works on the policy:
+(p/simulate (dyn/auto-key (:policy ag)) [(:start-idx mdp)])   ;; => Trace with an :action choice
+(p/assess   (dyn/auto-key (:policy ag)) [(:start-idx mdp)]
+            (cm/choicemap :action 0))                         ;; => {:weight log p(action)}
+```
+
+Also in the vertical: `genmlx.agents.inverse` (goal inference / IRL), `genmlx.agents.pomdp` (belief-space planning, bandits), `genmlx.agents.biased-planners` (time-inconsistent agents), and gridworld/restaurant environments. Because an agent is just a GF, inverse planning is ordinary Bayesian inference over it — observe actions, infer the goal.
+
+### genmlx.llm — LLMs as generative functions
+
+A local LLM wrapped as a `DynamicGF`: each generated token is a trace site (`:t0`, `:t1`, …) sampling from a categorical over the model's logits, with a KV cache for O(n) generation. All GFI operations apply — `simulate` generates text, `generate` constrains and scores tokens, `assess` scores a sequence — and grammar / byte / reader constraints compose as handler middleware (`genmlx.llm.grammar`, `genmlx.llm.bytes`, `genmlx.llm.codegen`). Following "sync math, async events": model loading and tokenization are async (promesa) at the I/O boundary, while the GFI ops themselves are synchronous.
+
+```clojure
+(require '[genmlx.llm.backend :as llm]
+         '[genmlx.llm.core :as llm-core]
+         '[promesa.core :as pr])
+
+(pr/let [m   (llm/load-model "<model-dir>/qwen3.5-…")
+         gf  (llm-core/make-llm-gf m)            ;; a DynamicGF over [prompt-ids max-tokens]
+         tok (:tokenizer m)
+         ids (vec (llm/encode tok "The best programming language is"))
+         tid (first (vec (llm/encode tok " Clojure")))]
+  (p/simulate gf [ids 10])                       ;; free generation from the LLM prior
+  (p/generate gf [ids 10]                        ;; force + score the first token
+              (cm/set-value cm/EMPTY :t0 (mx/scalar tid mx/int32))))
+```
+
+### genmlx.control — planned
+
+The third axis: **control ⊥ inference ⊥ model**. A metareasoner over computation — steppable/budgeted inference, a compute-cost meter, and a controller that is itself an agent-GF (reusing `genmlx.agents`) pointed at the inference process — turning "how much inference, and which kind" into a first-class, rational, anytime decision. Designed, not yet in `src/`.
 
 ## Vectorized Inference
 
