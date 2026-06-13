@@ -95,12 +95,29 @@
   (and (symbol? sym)
        (= (name sym) (name addr))))
 
+(defn- log-link?
+  "True when `arg` is (mx/log <sym>) where <sym> resolves to prior-addr.
+
+   This is the canonical link for Dirichlet–Categorical: GenMLX's categorical is
+   logit-parameterized, so passing log(theta) as its logits makes
+   softmax(log theta) = theta — i.e. (dist/categorical (mx/log theta)) is exactly
+   Categorical(theta) over the simplex theta, with log p(x=k) = log theta_k. The
+   head is matched namespace-agnostically (mx/log, genmlx.mlx/log both qualify)."
+  [arg prior-addr]
+  (and (seq? arg) (seq arg)
+       (symbol? (first arg))
+       (= "log" (name (first arg)))
+       (= 2 (count arg))
+       (symbol-resolves-to-addr? (second arg) prior-addr)))
+
 (defn- classify-dependency
   "Classify how an obs site depends on a prior site's value.
-   Returns {:type :direct|:affine|:nonlinear} with metadata.
+   Returns {:type :direct|:log-link|:affine|:nonlinear} with metadata.
 
    :direct — the prior's value appears directly as the natural parameter
              argument (e.g., mu is position 0 in (dist/gaussian mu sigma))
+   :log-link — the natural parameter is (mx/log prior); the Dirichlet–Categorical
+             link (see log-link?)
    :affine — the natural parameter is an affine function of the prior
              (e.g., (mx/multiply 0.9 mu)), with :coefficient and :offset
    :nonlinear — dependency exists but through a non-trivial expression"
@@ -109,6 +126,18 @@
         dist-args (:dist-args obs-site)
         natural-arg (nth dist-args natural-idx nil)]
     (cond
+      ;; Dirichlet–Categorical is conjugate ONLY through the log link
+      ;; (dist/categorical (mx/log theta)). Bare (dist/categorical theta) is raw
+      ;; logit space and NOT conjugate to a Dirichlet prior — its marginal
+      ;; E[softmax(theta)_k] has no closed form — so it must classify as
+      ;; :nonlinear and be declined. This closes the health-audit over-promise
+      ;; (the table advertised the pair with no handler) without admitting a
+      ;; ke9i-class wrong-math false positive (genmlx-cf0d).
+      (= :dirichlet-categorical (:family family-info))
+      (if (log-link? natural-arg prior-addr)
+        {:type :log-link}
+        {:type :nonlinear})
+
       ;; Direct: the natural parameter arg IS the prior symbol
       (symbol-resolves-to-addr? natural-arg prior-addr)
       {:type :direct}
@@ -139,7 +168,8 @@
    2. obs depends on prior (prior-addr is in obs's :deps)
    3. [prior-dist-type, obs-dist-type] is in conjugacy-table with non-nil value
    4. The dependency is through the natural parameter position: :direct for
-      any family, :affine only for affine-capable families (normal-normal)
+      any family, :log-link for Dirichlet–Categorical (which is conjugate ONLY
+      through the log link), :affine only for affine-capable families (normal-normal)
 
    Returns vector of {:prior-addr :obs-addr :family :prior-site :obs-site
                        :dependency-type :family-info}"
@@ -157,9 +187,12 @@
             ;; Must be in table AND non-nil (nil = explicitly not conjugate)
             :when (and (not= family-info ::not-found) (some? family-info))
             :let [dep-type (classify-dependency prior-addr obs-site family-info)]
-            ;; :direct for all families; :affine only where a path exists that
-            ;; recovers the coefficients (see affine-capable-families)
+            ;; :direct for all families; :log-link only ever produced for
+            ;; Dirichlet–Categorical (classify-dependency gates it by family);
+            ;; :affine only where a path exists that recovers the coefficients
+            ;; (see affine-capable-families)
             :when (or (= :direct (:type dep-type))
+                      (= :log-link (:type dep-type))
                       (and (= :affine (:type dep-type))
                            (contains? affine-capable-families
                                       (:family family-info))))]

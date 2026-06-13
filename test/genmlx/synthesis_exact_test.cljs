@@ -104,6 +104,32 @@
   (let [d 2.0 log-det (* 2.0 (js/Math.log 3.0)) mahal (/ 2.0 3.0)]
     (* -0.5 (+ (* d (js/Math.log (* 2.0 js/Math.PI))) log-det mahal))))
 
+;; Dirichlet-Categorical (single obs): theta ~ Dir([1,2,3]), x ~ Cat(theta) via
+;; the log link (categorical is logit-parameterized; softmax(log theta)=theta).
+;; Marginal P(x=2) = alpha_2/sum(alpha) = 3/6 = 1/2 -> log(1/2).
+(def ^:private dc-gf
+  (synth [:theta :x] {:theta "(dist/dirichlet [1 2 3])"
+                      :x     "(dist/categorical (mx/log theta))"}))
+(def ^:private dc-obs {:x 2})
+(def ^:private dc-exact-truth (js/Math.log 0.5))
+
+;; Dirichlet-Categorical (multi-obs, shared theta): theta ~ Dir([1,1,1]),
+;; x0,x1,x2 ~ Cat(theta). Ordered seq [0,0,1], counts [2,1,0] ->
+;; Dirichlet-multinomial sequence marginal = -3.401197 (math-verified).
+(def ^:private dcm-gf
+  (synth [:theta :x0 :x1 :x2]
+         {:theta "(dist/dirichlet [1 1 1])"
+          :x0    "(dist/categorical (mx/log theta))"
+          :x1    "(dist/categorical (mx/log theta))"
+          :x2    "(dist/categorical (mx/log theta))"}))
+(def ^:private dcm-obs {:x0 0 :x1 0 :x2 1})
+(def ^:private dcm-exact-truth
+  (+ (- (lgamma 3.0) (lgamma 1.0))   ;; cat 0: n=2 -> lgamma(1+2)-lgamma(1)
+     (- (lgamma 2.0) (lgamma 1.0))   ;; cat 1: n=1 -> lgamma(1+1)-lgamma(1)
+     (- (lgamma 1.0) (lgamma 1.0))   ;; cat 2: n=0
+     (lgamma 3.0)                    ;; + lgamma(sum alpha = 3)
+     (- (lgamma 6.0))))              ;; - lgamma(sum alpha + n = 6)
+
 (defn- strip-analytical
   "Return a copy of gf with the L3 analytical plan removed from its schema, so
    p/generate uses the handler/compiled path (genuine importance sampling)
@@ -153,6 +179,17 @@
   (assert-true "MVN-Normal: family is :mvn-normal"
                (boolean (some #(= :mvn-normal (:family %)) pairs))))
 
+(let [pairs (:conjugate-pairs (:schema dc-gf))]
+  (assert-true "Dirichlet-Categorical: :conjugate-pairs non-empty" (boolean (seq pairs)))
+  (assert-true "Dirichlet-Categorical: family is :dirichlet-categorical"
+               (boolean (some #(= :dirichlet-categorical (:family %)) pairs))))
+
+(let [pairs (:conjugate-pairs (:schema dcm-gf))]
+  (assert-true "Dirichlet-Categorical (multi-obs): one pair per obs (3)"
+               (= 3 (count pairs)))
+  (assert-true "Dirichlet-Categorical (multi-obs): all :dirichlet-categorical"
+               (every? #(= :dirichlet-categorical (:family %)) pairs)))
+
 (let [pairs (:conjugate-pairs (:schema nonconj-gf))]
   (assert-true "Non-conjugate (a^2 dep): no conjugate pairs" (empty? pairs)))
 
@@ -181,6 +218,14 @@
 (let [{:keys [method log-ml]} (msa/score-model* mvn-gf mvn-obs)]
   (assert-true "MVN-Normal routed to :exact" (= :exact method))
   (assert-true "MVN-Normal exact log-ml finite" (js/isFinite log-ml)))
+
+(let [{:keys [method log-ml]} (msa/score-model* dc-gf dc-obs)]
+  (assert-true "Dirichlet-Categorical routed to :exact" (= :exact method))
+  (assert-true "Dirichlet-Categorical exact log-ml finite" (js/isFinite log-ml)))
+
+(let [{:keys [method log-ml]} (msa/score-model* dcm-gf dcm-obs)]
+  (assert-true "Dirichlet-Categorical (multi-obs) routed to :exact" (= :exact method))
+  (assert-true "Dirichlet-Categorical (multi-obs) exact log-ml finite" (js/isFinite log-ml)))
 
 (let [{:keys [method log-ml]} (msa/score-model* nonconj-gf nonconj-obs {:n-particles 100})]
   (assert-true "Non-conjugate NOT routed to exact"
@@ -229,6 +274,20 @@
       is    (msa/score-model (strip-analytical mvn-gf) mvn-obs {:n-particles 6000})]
   (assert-close "MVN-Normal exact == closed-form" mvn-exact-truth exact 0.05)
   (assert-close "MVN-Normal exact == IS estimate" exact is 0.5))
+
+;; Dirichlet-Categorical (single obs): exact, closed-form log(1/2), and IS agree.
+(let [exact (msa/score-model dc-gf dc-obs)
+      is    (msa/score-model (strip-analytical dc-gf) dc-obs {:n-particles 4000})]
+  (assert-close "Dirichlet-Categorical exact == closed-form log(1/2)" dc-exact-truth exact 0.05)
+  (assert-close "Dirichlet-Categorical exact == IS estimate" exact is 0.2))
+
+;; Dirichlet-Categorical (multi-obs): exact == Dirichlet-multinomial closed form,
+;; and the SHARED-theta IS agrees (one theta per particle scores all 3 obs — the
+;; non-circular ke9i-safe check; the independence trap would land at -3.296).
+(let [exact (msa/score-model dcm-gf dcm-obs)
+      is    (msa/score-model (strip-analytical dcm-gf) dcm-obs {:n-particles 12000})]
+  (assert-close "Dirichlet-Categorical multi-obs exact == closed-form" dcm-exact-truth exact 0.05)
+  (assert-close "Dirichlet-Categorical multi-obs exact == shared-theta IS" exact is 0.2))
 
 ;; ===========================================================================
 ;; Regression — synthesized GFs still simulate; score-model number contract

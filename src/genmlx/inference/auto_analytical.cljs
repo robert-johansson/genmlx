@@ -284,7 +284,33 @@
     :posterior-mean (fn [{:keys [shape rate]}] (mx/divide shape rate))
     :update-step (fn [posterior obs-value _params]
                    (let [{:keys [shape rate ll]} (ge-update-step posterior obs-value)]
-                     {:posterior {:shape shape :rate rate} :ll ll}))}})
+                     {:posterior {:shape shape :rate rate} :ll ll}))}
+   ;; Dirichlet–Categorical (genmlx-cf0d). Prior theta ~ Dirichlet(alpha), obs
+   ;; x ~ Categorical(theta) — written (dist/categorical (mx/log theta)) so the
+   ;; logit-parameterized categorical scores log p(x=k)=log theta_k (conjugacy
+   ;; detection accepts ONLY this log-link form). The latent value is the VECTOR
+   ;; posterior mean alpha/sum(alpha). Per-obs predictive log-evidence is
+   ;; log alpha_k - log(sum alpha); the posterior folds alpha <- alpha + e_k, so
+   ;; the generic core's sequential fold of N obs yields the exact ordered
+   ;; Dirichlet-multinomial sequence marginal.
+   :dirichlet-categorical
+   ;; Force float32: a synthesized model may pass an INT vector literal
+   ;; (dist/dirichlet [1 2 3]); log/divide downstream need a float dtype.
+   {:init-posterior (fn [{:keys [alpha]}] {:alpha (mx/ensure-array alpha mx/float32)})
+    :posterior-mean (fn [{:keys [alpha]}] (mx/divide alpha (mx/sum alpha)))
+    :update-step
+    (fn [{:keys [alpha]} obs-value _params]
+      (let [d (first (mx/shape alpha))
+            dt (mx/dtype alpha)
+            ;; one-hot indicator for the observed category, built at graph level
+            ;; so it works for a JS-int OR an MLX-scalar obs-value:
+            ;; (arange D == k) cast to alpha's dtype.
+            onehot (mx/astype (mx/equal (mx/astype (mx/arange d) dt) obs-value) dt)
+            sum-alpha (mx/sum alpha)
+            alpha-k (mx/sum (mx/multiply alpha onehot))   ;; gather alpha_k
+            ll (mx/subtract (mx/log alpha-k) (mx/log sum-alpha))
+            alpha' (mx/add alpha onehot)]                 ;; alpha <- alpha + e_k
+        {:posterior {:alpha alpha'} :ll ll}))}})
 
 (defn- make-family-handlers
   "Build conjugate handlers for `family` from conjugate-family-specs, in `mode`."
@@ -633,6 +659,7 @@
    :beta-bernoulli (make-auto-handlers-for :beta-bernoulli)
    :gamma-poisson (make-auto-handlers-for :gamma-poisson)
    :gamma-exponential (make-auto-handlers-for :gamma-exponential)
+   :dirichlet-categorical (make-auto-handlers-for :dirichlet-categorical)
    :mvn-normal (make-auto-handlers-for :mvn-normal)})
 
 (defn build-auto-handlers
@@ -682,6 +709,7 @@
    :beta-bernoulli (make-regenerate-handlers-for :beta-bernoulli)
    :gamma-poisson (make-regenerate-handlers-for :gamma-poisson)
    :gamma-exponential (make-regenerate-handlers-for :gamma-exponential)
+   :dirichlet-categorical (make-regenerate-handlers-for :dirichlet-categorical)
    :mvn-normal (make-regenerate-handlers-for :mvn-normal)})
 
 (defn build-regenerate-handlers
