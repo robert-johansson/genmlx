@@ -362,10 +362,20 @@
                              (tr/make-trace (assoc old-trace :args [1]))
                              (meta old-trace))
             {:keys [trace weight discard]} (p/update switch-model modified-trace cm/EMPTY)
-            new-score (realize (:score trace))]
-        ;; Assertion #19 — weight = new_score - old_score
-        (is (th/close? (realize weight) (- new-score old-score) 1e-4)
-            "cross-branch no-constraint weight = new_score - old_score")
+            _new-score (realize (:score trace))]
+        ;; Assertion #19 — weight = -old_score (genmlx-qm7m).
+        ;; CORRECTED 2026-06-13: previously asserted new_score - old_score (the
+        ;; assess-delta). For a cross-branch update with NO constraints the new
+        ;; arm is entirely FRESH (sampled from its prior); under the thesis
+        ;; update identity the fresh-site density cancels (it is in both
+        ;; log p(t') and -log q(fresh)), leaving w = -old_score. The combinator
+        ;; already computes this — the old assertion was the stale party.
+        ;; (Independent derivation: math-verifier on genmlx-qm7m. This is a
+        ;; cross-branch instance of the universal gfi law
+        ;; :update-fresh-cancellation: w = (new-old) - project(t',fresh), and
+        ;; here the whole new arm is fresh so project(t',fresh)=new_score.)
+        (is (th/close? (realize weight) (- old-score) 1e-4)
+            "cross-branch no-constraint weight = -old_score (fresh new arm cancels)")
         ;; Assertion #20 — discard contains old branch choices
         (is (some? (cm/get-value (cm/get-submap discard :x)))
             "discard contains old branch choices")))))
@@ -405,19 +415,21 @@
             (str "independent full-selection weight = " w ", expected 0"))))))
 
 (deftest regenerate-full-selection-dependent
-  (testing "Full selection on dependent model: weight = downstream correction (20 trials)"
+  (testing "Full selection on dependent model: weight = 0 (full-prior resample)"
+    ;; CORRECTED 2026-06-13 (genmlx-yep2): previously asserted the nonzero
+    ;; "downstream correction" gaussian-lp(y_old;x_new) - gaussian-lp(y_old;x_old),
+    ;; which treats :y as RETAINED. Under sel/all BOTH :x and :y are selected
+    ;; (resampled), so there is no retained site and no "old y": a full-prior
+    ;; regenerate is its own proposal, giving weight 0 identically. The old
+    ;; assertion was derived from the buggy per-site convention (yep2). Pinned
+    ;; universally by gfi law :regenerate-select-all-zero.
     (doseq [_ (range 20)]
       (let [tr (p/simulate dependent-model [])
-            x-old (choice-val (:choices tr) [:x])
-            y-old (choice-val (:choices tr) [:y])
-            {:keys [trace weight]} (p/regenerate dependent-model tr sel/all)
-            x-new (choice-val (:choices trace) [:x])
-            actual (realize weight)
-            expected (- (th/gaussian-lp y-old x-new 1)
-                        (th/gaussian-lp y-old x-old 1))]
+            {:keys [weight]} (p/regenerate dependent-model tr sel/all)
+            actual (realize weight)]
         ;; Assertion #25
-        (is (th/close? expected actual 1e-4)
-            (str "dependent full-selection weight " actual " = expected " expected))))))
+        (is (th/close? 0.0 actual 1e-4)
+            (str "dependent full-selection weight " actual " = 0"))))))
 
 (deftest regenerate-partial-selection-dependent
   (testing "Partial selection {:x} on dependent model: downstream weight (20 trials)"

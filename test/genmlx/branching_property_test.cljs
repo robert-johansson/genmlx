@@ -189,7 +189,7 @@
           w (eval-weight weight)]
       (finite? w))))
 
-(defspec branching-update-flip-coin-weight-equals-new-score-minus-old-score 50
+(defspec branching-update-flip-coin-weight-cancels-fresh-arm 50
   (prop/for-all [_k gen-key]
     (let [tr (p/simulate branch-model [])
           old-score (trace-score tr)
@@ -197,12 +197,15 @@
           flipped (if (> coin 0.5) 0.0 1.0)
           constraint (cm/choicemap :coin (mx/scalar flipped))
           {:keys [trace weight]} (p/update branch-model tr constraint)
-          w (eval-weight weight)
-          new-score (trace-score trace)]
-      ;; Fundamental GFI update weight identity:
-      ;; weight = new_score - old_score (for address-changing updates
-      ;; where new addresses are freshly sampled)
-      (close? w (- new-score old-score) 0.1))))
+          w (eval-weight weight)]
+      ;; CORRECTED 2026-06-13 (genmlx-qm7m): previously asserted
+      ;; new_score - old_score, which wrongly includes the FRESH new-arm latent
+      ;; (:heads/:tails) density. Under the thesis update identity that fresh
+      ;; density cancels (it is in both log p(t') and -log q(fresh)). Only the
+      ;; CONSTRAINED :coin contributes: w = lp(coin_new) - old_score, and since
+      ;; :coin ~ Bernoulli(0.5), lp(coin_new) = log(0.5) regardless of value.
+      ;; (Independent derivation: math-verifier §3 on genmlx-qm7m.)
+      (close? w (- (js/Math.log 0.5) old-score) 0.1))))
 
 (defspec branching-update-flip-coin-discard-contains-old-coin 50
   (prop/for-all [_k gen-key]

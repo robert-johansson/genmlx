@@ -397,20 +397,33 @@
 ;; 9. Batched: uniform flip coherent; divergent flip throws
 ;; ---------------------------------------------------------------------------
 
-(deftest batched-regenerate-fast-eligibility-gate
-  ;; The batched per-site convention is exact only for fast-eligible
-  ;; selections; a dependent JOINT batched move would carry the yep2 residual,
-  ;; and a structure-changing batched flip is ill-posed under shape-batching
-  ;; (math-verifier §7). vregenerate rejects both loudly rather than silently
-  ;; miscalibrate. The full batched retained-only path is genmlx-8xia.
-  (testing "dependent joint batched regenerate is rejected (no silent yep2)"
-    (let [vt (dyn/vsimulate dep-pair [] 8 (rng/fresh-key 3000))]
-      (is (thrown? :default
-            (dyn/vregenerate dep-pair vt (sel/from-paths [[:a] [:b]]) (rng/fresh-key 3100)))
-          "dependent joint batched regenerate throws, not silently miscalibrated")))
+(deftest batched-retained-only-regenerate
+  ;; genmlx-8xia: the batched retained-only general path. Dependent-joint
+  ;; batched moves (no structure change) take two batched project passes —
+  ;; exact per particle, no yep2 residual. Single-site/independent use the fast
+  ;; path. Structure-change/spliced batched regenerate is still rejected.
+  (testing "dependent select-all => per-particle weight 0 (batched yep2 fix)"
+    (let [vt (dyn/vsimulate dep-pair [] 8 (rng/fresh-key 3000))
+          {:keys [weight]} (dyn/vregenerate dep-pair vt (sel/from-paths [[:a] [:b]]) (rng/fresh-key 3100))
+          ws (mx/->clj weight)]
+      (is (= 8 (count ws)) "weight is [N]-shaped")
+      (is (every? #(< (js/Math.abs %) 1e-4) ws) "every particle weight is 0")))
+  (testing "dependent joint {a,b}, y retained: per-particle closed-form oracle"
+    (let [sigma 0.7
+          vt (dyn/vsimulate cascade [sigma] 8 (rng/fresh-key 3200))
+          y-old (mx/->clj (cm/get-value (cm/get-submap (:choices vt) :y)))
+          b-old (mx/->clj (cm/get-value (cm/get-submap (:choices vt) :b)))
+          {:keys [vtrace weight]} (dyn/vregenerate cascade vt (sel/from-paths [[:a] [:b]]) (rng/fresh-key 3300))
+          b-new (mx/->clj (cm/get-value (cm/get-submap (:choices vtrace) :b)))
+          ws (mx/->clj weight)
+          oracle (mapv (fn [yi bn bo] (- (h/gaussian-lp yi bn sigma) (h/gaussian-lp yi bo sigma)))
+                       y-old b-new b-old)]
+      (is (= 8 (count ws)) "weight is [N]-shaped")
+      (is (every? (fn [[w o]] (< (js/Math.abs (- w o)) 1e-3)) (map vector ws oracle))
+          "each particle weight = retained-y log-density delta (batched yep2-exact)")))
   (testing "single-site batched regenerate is fast-eligible and succeeds"
-    (let [vt (dyn/vsimulate dep-pair [] 8 (rng/fresh-key 3200))
-          {:keys [vtrace]} (dyn/vregenerate dep-pair vt (sel/select :b) (rng/fresh-key 3300))]
-      (is (some? vtrace) "single-site batched regenerate is allowed (fast-eligible)"))))
+    (let [vt (dyn/vsimulate dep-pair [] 8 (rng/fresh-key 3400))
+          {:keys [vtrace]} (dyn/vregenerate dep-pair vt (sel/select :b) (rng/fresh-key 3500))]
+      (is (some? vtrace) "single-site batched regenerate uses the fast path"))))
 
 (cljs.test/run-tests)
