@@ -101,10 +101,12 @@ The GFI operates on three data structures. Each exists for a precise reason, and
 A **trace** is an immutable record:
 
 ```
-Trace = {gen-fn, args, choices, retval, score}
+Trace = {gen-fn, args, choices, retval, score, omega?}
 ```
 
 A trace is one complete execution. It records not just *what* happened (the choices) but *in what context* (the generative function and arguments) and *at what probability* (the score). Inference algorithms need to re-enter the computation at any point, and the trace carries everything needed to do so. `update` takes a trace and produces a new trace. `regenerate` takes a trace and produces a new trace. The generative function reference inside the trace tells these operations which model to re-execute.
+
+The optional `omega` field carries **encapsulated randomness** (thesis §4.5; nil for ordinary exact-density traces). When a generative function's score is an unbiased density *estimator* rather than an exact density, `omega` records the internal randomness that realized that estimate, making the score reproducible — see Part IV §4.1.
 
 Traces are immutable. An `update` does not mutate the old trace; it produces a new one. Clojure's persistent data structures make this efficient through structural sharing.
 
@@ -459,6 +461,68 @@ guard the convention.
 
 ---
 
+# Part IV -- Extended Thesis Mechanisms
+
+Two mechanisms from later chapters of the Cusumano-Towner thesis extend the
+engine beyond the seven core operations. Both compose on the existing GFI; the
+handler remains ground truth.
+
+## 4.1 Encapsulated Randomness (§4.5)
+
+A generative function may own internal randomness *ω* that is not part of its
+choice dictionary *τ*. Its realized score is then a value of an unbiased density
+*estimator* *ξ*(*x*, *τ*, *ω*) rather than the exact density *p*(*τ*; *x*):
+
+> E_*ω*[ *ξ*(*x*, *τ*, *ω*) ] = *p*(*τ*; *x*)     (Eq 4.3)
+
+The `Trace` record carries the optional `omega` field so the realized score is
+reproducible: re-evaluating the estimator at the recorded *ω* yields the same
+*ξ*. This makes identity `update`/`project` cost weight 0 exactly, while a genuine
+move (changed value or arguments) resamples *ω* and pays the pseudo-marginal
+ratio log *ξ'* − log *ξ*_old.
+
+`genmlx.encapsulated` provides `EncapsulatedGF` (the full GFI over one observed
+address), two estimator families with closed-form oracles — `marginalized-gaussian`
+(black-box stochastic code, importance sampling over a nuisance) and
+`mixture-density` (a finite mixture whose component index is integrated by Monte
+Carlo) — and `pseudo-marginal-mh` (Andrieu-Roberts), which infers a parameter
+whose likelihood is available only as an unbiased estimate and still targets the
+exact posterior. The laws `:encapsulated-estimator-unbiased`,
+`:encapsulated-identity-update-zero`, and `:pseudo-marginal-stationarity` in
+`gfi.cljs` pin the contract.
+
+## 4.2 Trace Translators (§3.6-3.7)
+
+A **trace translator** maps a trace of model *P₁* to a trace of model *P₂* whose
+choice dictionaries live in different spaces. It is built from forward/backward
+auxiliary proposals *Q₁*, *Q₂* and a bijection *h* between (*τ₁*, *ρ₁*) and
+(*τ₂*, *ρ₂*) (Def 3.6.1), with importance weight (Eq 3.12):
+
+> log *w* = (log *p₂* − log *p₁*) + (log *q₂* − log *q₁*) + log|det *J_h*|
+
+The forward auxiliary density is the denominator, the backward the numerator, and
+the Jacobian is taken over the continuous coordinates only (discrete coordinates
+contribute no column). The involutive-MCMC kernel in `inference/mcmc.cljs` is the
+symmetric special case (*P₁*=*P₂*, *Q₁*=*Q₂*, *h* an involution, §3.7).
+
+`genmlx.inference.translator` provides `trace-translator` (the constructor),
+`apply-translator`/`translator-weight` (Eq 3.12), an AD Jacobian
+(`jacobian-logdet`, via `mx/grad`; the log|det| is computed on the host because
+the native determinant is unreliable for non-diagonal matrices) with a
+sparsity-aware variant (`sparse-jacobian-logdet`, §3.6.2: coordinates *h* copies
+unchanged are identity columns excluded from the determinant block), a
+`read`/`write`/`copy` introspection API for writing bijections,
+`reversible-jump-mh` (structure-changing split/merge moves, §3.7.4), and
+`coarse-to-fine-smc` (a model sequence bridged by translators, §3.6.4). Because
+translators drive sampling-based methods, `apply-translator` strips the L3
+analytical path before scoring so a conjugate target yields joint scores, not
+posterior-mean-pinned marginals (the genmlx-540f failure class). Five laws
+(`:translator-weight-formula`, `:translator-jacobian-ad`,
+`:translator-sparsity-equiv`, `:translator-bijection-roundtrip`,
+`:reversible-jump-detailed-balance`) pin the contract.
+
+---
+
 # Part V -- Separation of Concerns
 
 The previous sections argued that GenMLX's architecture embodies the right abstractions: pure transitions, immutable traces, composable protocols. The remaining concern is where the dispatch logic lives. The naive design puts a `cond` ladder in every GFI method of `dynamic.cljs` — each checking schema flags to select between handler, compiled, analytical, and prefix paths. Those ladders are structurally identical: same priority order, operation-specific wiring. Adding an execution strategy would mean updating every ladder in lockstep.
@@ -571,6 +635,7 @@ src/genmlx/
     conjugate.cljs, kalman.cljs, ekf.cljs, ekf_nd.cljs, hmm_forward.cljs
     compiled_smc.cljs, compiled_optimizer.cljs, compiled_gradient.cljs
     differentiable.cljs, differentiable_resample.cljs, amortized.cljs
+    translator.cljs            ;; General trace translators (§3.6-3.7): Eq 3.12, RJMCMC, coarse-to-fine
 
   ;; Layer 8: LLM Integration
   llm/
@@ -593,6 +658,7 @@ src/genmlx/
   ;; Support
   edit.cljs, diff.cljs, gradients.cljs, learning.cljs
   custom_gradient.cljs, nn.cljs, vectorized.cljs, serialize.cljs
+  encapsulated.cljs           ;; Encapsulated randomness (§4.5): EncapsulatedGF, estimators, pseudo-marginal-mh
 ```
 
 
