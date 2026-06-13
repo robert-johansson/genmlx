@@ -343,36 +343,72 @@
                (pos? (count (:conjugate-pairs schema)))))
 
 ;; ===========================================================================
-;; SECTION 4 — Family without runtime factory: not eliminated, no :exact claim
+;; SECTION 4 — Dirichlet–Categorical: bare logits NOT conjugate; log-link IS
+;; (genmlx-cf0d). GenMLX's categorical is logit-parameterized, so ONLY the log
+;; link (dist/categorical (mx/log theta)) equals Categorical(theta) over the
+;; simplex and is conjugate to a Dirichlet prior. Bare (dist/categorical theta)
+;; is raw logit space — its marginal E[softmax(theta)_k] has no closed form, so
+;; it must be DECLINED (the false-positive guard this file is about). The
+;; log-link form is the genuine pair and routes to exact.
 ;; ===========================================================================
 
-(println "\n== Section 4: dirichlet-categorical has no factory ==")
+(println "\n== Section 4: dirichlet-categorical — bare declined, log-link exact ==")
 
-(def dc-model
+;; (a) BARE logits — NOT conjugate to Dirichlet; detection must NOT fire.
+(def dc-bare-model
   (gen []
     (let [th (trace :th (dist/dirichlet (mx/array [1.0 1.0 1.0])))]
       (trace :c (dist/categorical th))
       th)))
 
-(let [schema (:schema dc-model)
-      eliminated (get-in schema [:analytical-plan :rewrite-result :eliminated])
-      sel-result (ms/select-method dc-model (cmv {:c 1.0}))]
-  (assert-true "DC: pair detected (in conjugacy table)"
-               (pos? (count (:conjugate-pairs schema))))
-  (assert-true "DC: prior NOT counted as eliminated"
-               (not (contains? (or eliminated #{}) :th)))
-  (assert-true "DC: no analytical handlers installed"
+(let [schema (:schema dc-bare-model)
+      sel-result (ms/select-method dc-bare-model (cmv {:c 1.0}))]
+  (assert-true "DC bare: NO conjugate pair (logit space is not conjugate)"
+               (empty? (:conjugate-pairs schema)))
+  (assert-true "DC bare: no analytical handlers installed"
                (empty? (:auto-handlers schema)))
-  (assert-true "DC: method selection does NOT claim :exact"
+  (assert-true "DC bare: method selection does NOT claim :exact"
                (not= :exact (:method sel-result))))
 
 (let [k (rng/fresh-key 10)
       obs (cmv {:c 1.0})
-      w (gen-weight dc-model obs k)
-      w-handler (gen-weight (strip-l3 dc-model) obs k)
-      tr (gen-trace dc-model obs k)]
-  (assert-true "DC: trace NOT labeled :marginal" (not (marginal-trace? tr)))
-  (assert-close "DC: weight matches handler path (same key)" w-handler w TOL))
+      w (gen-weight dc-bare-model obs k)
+      w-handler (gen-weight (strip-l3 dc-bare-model) obs k)
+      tr (gen-trace dc-bare-model obs k)]
+  (assert-true "DC bare: trace NOT labeled :marginal" (not (marginal-trace? tr)))
+  (assert-close "DC bare: weight matches handler path (same key)" w-handler w TOL))
+
+;; (b) LOG-LINK — the genuine Dirichlet–Categorical: fires, eliminates, exact.
+(def dc-loglink-model
+  (gen []
+    (let [th (trace :th (dist/dirichlet (mx/array [1.0 1.0 1.0])))]
+      (trace :c (dist/categorical (mx/log th)))
+      th)))
+
+(let [schema (:schema dc-loglink-model)
+      eliminated (get-in schema [:analytical-plan :rewrite-result :eliminated])
+      sel-result (ms/select-method dc-loglink-model (cmv {:c 1.0}))]
+  (assert-true "DC log-link: conjugate pair detected"
+               (pos? (count (:conjugate-pairs schema))))
+  (assert-true "DC log-link: family is :dirichlet-categorical"
+               (= :dirichlet-categorical (:family (first (:conjugate-pairs schema)))))
+  (assert-true "DC log-link: prior :th eliminated"
+               (contains? (or eliminated #{}) :th))
+  (assert-true "DC log-link: analytical handlers installed for :th and :c"
+               (and (contains? (:auto-handlers schema) :th)
+                    (contains? (:auto-handlers schema) :c)))
+  (assert-true "DC log-link: method selection claims :exact"
+               (= :exact (:method sel-result))))
+
+;; Single-obs marginal: P(c=1) = alpha_1 / sum(alpha) = 1/3  ->  log(1/3).
+;; Independent closed-form oracle (host-side), exact path matches to float floor.
+(let [k (rng/fresh-key 10)
+      obs (cmv {:c 1.0})
+      w (gen-weight dc-loglink-model obs k)
+      tr (gen-trace dc-loglink-model obs k)]
+  (assert-true "DC log-link: trace labeled :marginal" (marginal-trace? tr))
+  (assert-close "DC log-link: exact weight == closed form log(1/3)"
+                (js/Math.log (/ 1.0 3.0)) w TOL))
 
 ;; ===========================================================================
 ;; SECTION 5 — Constraint checks: constrained prior, partial obs

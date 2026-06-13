@@ -59,6 +59,7 @@
            'exponential dist/exponential
            'poisson dist/poisson
            'categorical dist/categorical
+           'dirichlet dist/dirichlet
            'multivariate-normal dist/multivariate-normal
            'delta dist/delta}
     'mx {'add mx/add

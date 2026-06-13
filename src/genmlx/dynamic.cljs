@@ -1197,13 +1197,18 @@
                                               (auto/make-address-dispatch
                                                h/regenerate-transition regen-handlers))
                            ;; Analytical UPDATE handlers (genmlx-6hcu): scalar
-                           ;; conjugate pairs + LG blocks. MVN and Kalman analytical
-                           ;; update are unimplemented, so a model containing EITHER
-                           ;; gets NO :auto-update-transition and its update falls to
-                           ;; the joint handler path (correct, just no Rao-Blackwell)
-                           ;; — never a mixed marginal/joint score (cf genmlx-wl1y).
+                           ;; conjugate pairs + LG blocks. MVN, Kalman, and
+                           ;; Dirichlet–Categorical (genmlx-cf0d) analytical update
+                           ;; are unimplemented, so a model containing ANY of them
+                           ;; gets NO :auto-update-transition and its update falls
+                           ;; to the joint handler path (correct, just no
+                           ;; Rao-Blackwell) — never a mixed marginal/joint score
+                           ;; (cf genmlx-wl1y). Declining the WHOLE update (not just
+                           ;; the unsupported pair) is what prevents the mix.
                            update-supported? (and (empty? (:kalman-chains plan))
-                                                  (not-any? #(= :mvn-normal (:family %)) regen-pairs))
+                                                  (not-any? #(#{:mvn-normal :dirichlet-categorical}
+                                                              (:family %))
+                                                            regen-pairs))
                            scalar-update-handlers (if update-supported?
                                                     (auto/build-update-handlers regen-pairs)
                                                     {})

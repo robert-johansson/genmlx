@@ -47,10 +47,12 @@
 (defrecord ConjugacyRule [family prior-addr obs-addrs]
   IRewriteRule
   (-applicable? [this graph schema]
-    ;; A family present in the conjugacy table but absent from the handler
-    ;; factory map (e.g. dirichlet-categorical) has NO runtime elimination —
-    ;; applying the rule anyway would prune a still-stochastic latent from the
-    ;; graph and let method-selection claim an exact marginal (genmlx-b470).
+    ;; Defensive guard: a family present in the conjugacy table but absent from
+    ;; the handler factory map has NO runtime elimination — applying the rule
+    ;; anyway would prune a still-stochastic latent from the graph and let
+    ;; method-selection claim an exact marginal (genmlx-b470). Every table family
+    ;; is currently wired (dirichlet-categorical since genmlx-cf0d); this keeps
+    ;; any future detection-only entry from silently mis-eliminating.
     (and (some? (get auto/family->handler-factory family))
          (contains? (:nodes graph) prior-addr)
          (every? #(contains? (:nodes graph) %) obs-addrs)))
