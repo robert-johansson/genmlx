@@ -1,7 +1,7 @@
 {
   "experiment": "ffi-scaling",
-  "git_sha": "5f29f7a",
-  "timestamp": "2026-06-07T19:31:25.074Z",
+  "git_sha": "c9253bc",
+  "timestamp": "2026-06-13T08:42:12.551Z",
   "hardware": {
     "platform": "darwin",
     "arch": "arm64",
@@ -12,7 +12,7 @@
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "6bd48a6d6f0796eecbcccda2cf386d8cd968f4029b3b1b04d9892d7170ab75ae",
-  "duration_ms": 3456,
+  "source_hash": "127322471ff0e120a24f3d5c039212f4d2d5134ccb38f0a06088cc7cc548458d",
+  "duration_ms": 3571,
   "script": "bench/ffi_scaling.cljs"
 }

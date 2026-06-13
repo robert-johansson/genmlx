@@ -1,7 +1,7 @@
 {
   "experiment": "linreg",
-  "git_sha": "5f29f7a",
-  "timestamp": "2026-06-07T19:35:17.365Z",
+  "git_sha": "c9253bc",
+  "timestamp": "2026-06-13T08:45:47.940Z",
   "hardware": {
     "platform": "darwin",
     "arch": "arm64",
@@ -12,7 +12,7 @@
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "592cfa7c33cb1774606a357146a91bb6f4edc9601fcb1fdc7d334760f3669027",
-  "duration_ms": 206561,
+  "source_hash": "350669f4db0eafe8153fde028ac9b34b841857f3372a906f4389fc1f255b5f39",
+  "duration_ms": 190243,
   "script": "bench/linreg.cljs"
 }

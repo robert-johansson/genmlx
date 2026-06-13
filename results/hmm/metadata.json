@@ -1,7 +1,7 @@
 {
   "experiment": "hmm",
-  "git_sha": "a53acef",
-  "timestamp": "2026-06-10T15:54:46.608Z",
+  "git_sha": "c9253bc",
+  "timestamp": "2026-06-13T08:45:53.415Z",
   "hardware": {
     "platform": "darwin",
     "arch": "arm64",
@@ -12,7 +12,7 @@
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "f4a335cbc44099cfb45f64b454dc5f01be9863971036764cad68945c45414802",
-  "duration_ms": 5216,
+  "source_hash": "e5ea04b8690263710b54a1b6169132bdd1fd88198836680eb857ae6b26b618c7",
+  "duration_ms": 5463,
   "script": "bench/hmm.cljs"
 }

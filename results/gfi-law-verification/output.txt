@@ -3,51 +3,51 @@
   output: /Users/robert/code/genmlx/results/gfi-law-verification
 
   running: GFI Laws (1/10) (test/genmlx/gfi_laws_test_p1.cljs)
-    9/9 assertions passed (1609ms) [OK]
+    9/9 assertions passed (1673ms) [OK]
 
   running: GFI Laws (2/10) (test/genmlx/gfi_laws_test_p2.cljs)
-    10/10 assertions passed (1900ms) [OK]
+    10/10 assertions passed (1970ms) [OK]
 
   running: GFI Laws (3/10) (test/genmlx/gfi_laws_test_p3.cljs)
-    9/9 assertions passed (3505ms) [OK]
+    9/9 assertions passed (3571ms) [OK]
 
   running: GFI Laws (4/10) (test/genmlx/gfi_laws_test_p4.cljs)
-    8/8 assertions passed (8095ms) [OK]
+    8/8 assertions passed (8617ms) [OK]
 
   running: GFI Laws (5/10) (test/genmlx/gfi_laws_test_p5.cljs)
-    20/20 assertions passed (21361ms) [OK]
+    20/20 assertions passed (21036ms) [OK]
 
   running: GFI Laws (6/10) (test/genmlx/gfi_laws_test_p6.cljs)
-    42/42 assertions passed (13025ms) [OK]
+    42/42 assertions passed (13528ms) [OK]
 
   running: GFI Laws (7/10) (test/genmlx/gfi_laws_test_p7.cljs)
-    14/14 assertions passed (38753ms) [OK]
+    14/14 assertions passed (37583ms) [OK]
 
   running: GFI Laws (8/10) (test/genmlx/gfi_laws_test_p8.cljs)
-    59/59 assertions passed (8772ms) [OK]
+    60/60 assertions passed (8934ms) [OK]
 
   running: GFI Laws (9/10) (test/genmlx/gfi_laws_test_p9.cljs)
-    23/23 assertions passed (2327ms) [OK]
+    23/23 assertions passed (3559ms) [OK]
 
   running: GFI Laws (10/10) (test/genmlx/gfi_laws_test_p10.cljs)
-    2/2 assertions passed (7638ms) [OK]
+    2/2 assertions passed (12949ms) [OK]
 
   running: GFI Universal (test/genmlx/gfi_universal_test.cljs)
-    14/14 assertions passed (3832ms) [OK]
+    14/14 assertions passed (3797ms) [OK]
 
   running: GFI Compositional (test/genmlx/gfi_compositional_test.cljs)
-    35/35 assertions passed (5239ms) [OK]
+    35/35 assertions passed (5247ms) [OK]
 
   running: GFI Gradient (test/genmlx/gfi_gradient_test.cljs)
-    3/3 assertions passed (1308ms) [OK]
+    3/3 assertions passed (1179ms) [OK]
 
   running: GFI Gaps (test/genmlx/gfi_gaps_test.cljs)
-    12/12 assertions passed (2455ms) [OK]
+    12/12 assertions passed (2465ms) [OK]
 
 === Summary ===
   suites: 14/14 passed
-  assertions: 260/260 passed, 0 failures, 0 errors
-  duration: 119.8s
+  assertions: 261/261 passed, 0 failures, 0 errors
+  duration: 126.1s
   wrote: /Users/robert/code/genmlx/results/gfi-law-verification/data.json
 
 === Done ===

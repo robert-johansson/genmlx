@@ -5,32 +5,32 @@ Model: 5-obs linear regression
 --- A: MH Chain (200 steps) ---
 
   [handler-MH-200] warming up...
-  [handler-MH-200] 858.254 +/- 10.784 ms
+  [handler-MH-200] 872.409 +/- 10.240 ms
 
   [compiled-MH-200] warming up...
-  [compiled-MH-200] 144.781 +/- 1.679 ms
+  [compiled-MH-200] 104.198 +/- 0.238 ms
 
-  MH speedup (handler/compiled): 5.93x
+  MH speedup (handler/compiled): 8.37x
 
 --- B: Score Function ---
 
   [score-uncompiled] warming up...
-  [score-uncompiled] 0.618 +/- 0.151 ms
+  [score-uncompiled] 0.617 +/- 0.139 ms
 
   [score-compiled] warming up...
-  [score-compiled] 0.778 +/- 0.010 ms
+  [score-compiled] 0.771 +/- 0.008 ms
 
-  Score speedup (uncompiled/compiled): 0.79x
+  Score speedup (uncompiled/compiled): 0.80x
 
 --- C: Vectorized Multi-Chain MH (4 chains, 200 steps) ---
 
   [serial-compiled-MH-50] warming up...
-  [serial-compiled-MH-50] 146.374 +/- 3.127 ms
+  [serial-compiled-MH-50] 106.178 +/- 1.369 ms
 
   [vectorized-4chain-MH-50] warming up...
-  [vectorized-4chain-MH-50] 139.321 +/- 7.126 ms
+  [vectorized-4chain-MH-50] 139.326 +/- 7.399 ms
 
-  Vectorized speedup (serial/4-chain): 1.05x
+  Vectorized speedup (serial/4-chain): 0.76x
 
 
 ========================================
@@ -39,12 +39,12 @@ Model: 5-obs linear regression
 
 | Comparison | Variant | Time (ms) | Speedup |
 |------------|---------|-----------|---------|
-| MH chain | handler | 858.254 +/- 10.784 | - |
-| MH chain | compiled | 144.781 +/- 1.679 | 5.93x |
-| Score fn | uncompiled | 0.618 +/- 0.151 | - |
-| Score fn | compiled | 0.778 +/- 0.010 | 0.79x |
-| Vec MH | serial-compiled | 146.374 +/- 3.127 | - |
-| Vec MH | vectorized-4chain | 139.321 +/- 7.126 | 1.05x |
+| MH chain | handler | 872.409 +/- 10.240 | - |
+| MH chain | compiled | 104.198 +/- 0.238 | 8.37x |
+| Score fn | uncompiled | 0.617 +/- 0.139 | - |
+| Score fn | compiled | 0.771 +/- 0.008 | 0.80x |
+| Vec MH | serial-compiled | 106.178 +/- 1.369 | - |
+| Vec MH | vectorized-4chain | 139.326 +/- 7.399 | 0.76x |
   wrote: /Users/robert/code/genmlx/results/compiled-inference/data.json
 
 Compiled inference benchmark complete.

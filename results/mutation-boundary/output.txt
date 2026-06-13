@@ -3,7 +3,7 @@
   output: /Users/robert/code/genmlx/results/mutation-boundary
 
   running: Mutation boundary (test/genmlx/mutation_boundary_test.cljs)
-    32/32 assertions passed (704ms) [OK]
+    32/32 assertions passed (733ms) [OK]
 
 === Summary ===
   assertions: 32/32 passed, 0 failures, 0 errors

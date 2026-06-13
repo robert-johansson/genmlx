@@ -9,32 +9,32 @@
   "dimension-scaling": [
     {
       "d": 2,
-      "analytical-ms": 1.3412958000000799,
-      "standard-ms": 1.0610249999997905,
+      "analytical-ms": 1.3783125000001746,
+      "standard-ms": 1.0494145999997273,
       "auto-detected": true
     },
     {
       "d": 5,
-      "analytical-ms": 1.428033349999896,
-      "standard-ms": 1.0693937500000175,
+      "analytical-ms": 1.423091650000424,
+      "standard-ms": 1.1145854000002147,
       "auto-detected": true
     },
     {
       "d": 10,
-      "analytical-ms": 1.5021083499996166,
-      "standard-ms": 1.1539375000000291,
+      "analytical-ms": 1.4689353999994637,
+      "standard-ms": 1.162443749999511,
       "auto-detected": true
     },
     {
       "d": 20,
-      "analytical-ms": 1.626835449999635,
-      "standard-ms": 1.3123146000005363,
+      "analytical-ms": 1.7135291500002494,
+      "standard-ms": 1.337560400000075,
       "auto-detected": true
     },
     {
       "d": 50,
-      "analytical-ms": 3.104558299999917,
-      "standard-ms": 2.579956249999668,
+      "analytical-ms": 3.184858350000286,
+      "standard-ms": 2.719047950000095,
       "auto-detected": true
     }
   ],
@@ -52,8 +52,8 @@
       "log-ml-var": 10.29235010765019,
       "ess-mean": 1.5156339849877238,
       "posterior-mean-error": 2.161848049700597,
-      "timing-ms": 0.9929331999999704,
-      "timing-std-ms": 0.02393841821630533
+      "timing-ms": 1.010525200000029,
+      "timing-std-ms": 0.0800175361948935
     },
     "L3.5-analytical": {
       "log-ml-mean": -16.220117568969727,
@@ -61,8 +61,8 @@
       "log-ml-var": 0,
       "ess-mean": 1000,
       "posterior-mean-error": 2.4313973878697937e-8,
-      "timing-ms": 1.4696832000000086,
-      "timing-std-ms": 0.01992760505431571
+      "timing-ms": 1.4683334000000285,
+      "timing-std-ms": 0.01605187295302965
     }
   },
   "analytic-posterior": {
@@ -77,6 +77,6 @@
     "log-ml": -16.22011772050275
   },
   "ess-improvement": 659.7899030405416,
-  "timestamp": "2026-06-08T16:33:10.708Z",
+  "timestamp": "2026-06-13T08:58:57.442Z",
   "log-ml-abs-error": 1.5153302257431278e-7
 }

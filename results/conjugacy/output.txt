@@ -27,21 +27,23 @@
   Running L3 (auto-conjugacy), 50 particles x 3 trials...
 
   [5A-Normal-Normal-L3] warming up...
-  [5A-Normal-Normal-L3] 0.825 +/- 0.055 ms
+  [5A-Normal-Normal-L3] 0.829 +/- 0.066 ms
   L3 log-ML: -7.843255 +/- 0.000000
   L3 ESS:    50.0 / 50 (100.0%)
 
   Running L2 (prior-proposal IS), 50 particles x 3 trials...
 
   [5A-Normal-Normal-L2] warming up...
-  [5A-Normal-Normal-L2] 0.679 +/- 0.045 ms
+  [5A-Normal-Normal-L2] 0.615 +/- 0.046 ms
   L2 log-ML: -8.107790 +/- 0.366827
   L2 ESS:    3.6 / 50 (7.2%)
 
   --- Summary ---
-  Variance reduction:  Inf (L3 exact)
+  |L3 log-ML − closed form|: 1.546e-7 nats  (exactness — the headline)
+  |L2 log-ML − closed form|: 0.2645 nats
+  Variance reduction:  n/a (L3 exact, var=0)
   ESS improvement:     13.9x
-  L3 time: 0.825 ms, L2 time: 0.679 ms
+  L3 time: 0.829 ms, L2 time: 0.615 ms
 
  ======================================================================
   5B: Beta-Bernoulli (coin flip)
@@ -63,21 +65,23 @@
   Running L3 (auto-conjugacy), 50 particles x 3 trials...
 
   [5B-Beta-Bernoulli-L3] warming up...
-  [5B-Beta-Bernoulli-L3] 0.877 +/- 0.025 ms
+  [5B-Beta-Bernoulli-L3] 0.857 +/- 0.031 ms
   L3 log-ML: -3.843030 +/- 0.000000
   L3 ESS:    50.0 / 50 (100.0%)
 
   Running L2 (prior-proposal IS), 50 particles x 3 trials...
 
   [5B-Beta-Bernoulli-L2] warming up...
-  [5B-Beta-Bernoulli-L2] 1.802 +/- 0.016 ms
-  L2 log-ML: -3.831841 +/- 0.028713
-  L2 ESS:    40.4 / 50 (80.8%)
+  [5B-Beta-Bernoulli-L2] 1.926 +/- 0.024 ms
+  L2 log-ML: -3.824099 +/- 0.031444
+  L2 ESS:    39.5 / 50 (79.0%)
 
   --- Summary ---
-  Variance reduction:  Inf (L3 exact)
-  ESS improvement:     1.2x
-  L3 time: 0.877 ms, L2 time: 1.802 ms
+  |L3 log-ML − closed form|: 1.581e-7 nats  (exactness — the headline)
+  |L2 log-ML − closed form|: 0.0189 nats
+  Variance reduction:  n/a (L3 exact, var=0)
+  ESS improvement:     1.3x
+  L3 time: 0.857 ms, L2 time: 1.926 ms
 
  ======================================================================
   5C: Gamma-Poisson (count data)
@@ -98,21 +102,23 @@
   Running L3 (auto-conjugacy), 50 particles x 3 trials...
 
   [5C-Gamma-Poisson-L3] warming up...
-  [5C-Gamma-Poisson-L3] 0.942 +/- 0.022 ms
+  [5C-Gamma-Poisson-L3] 0.893 +/- 0.008 ms
   L3 log-ML: -8.302189 +/- 0.000000
   L3 ESS:    50.0 / 50 (100.0%)
 
   Running L2 (prior-proposal IS), 50 particles x 3 trials...
 
   [5C-Gamma-Poisson-L2] warming up...
-  [5C-Gamma-Poisson-L2] 1.080 +/- 0.007 ms
-  L2 log-ML: -8.241341 +/- 0.053504
-  L2 ESS:    18.2 / 50 (36.5%)
+  [5C-Gamma-Poisson-L2] 1.152 +/- 0.005 ms
+  L2 log-ML: -8.457855 +/- 0.054857
+  L2 ESS:    14.6 / 50 (29.3%)
 
   --- Summary ---
-  Variance reduction:  Inf (L3 exact)
-  ESS improvement:     2.7x
-  L3 time: 0.942 ms, L2 time: 1.080 ms
+  |L3 log-ML − closed form|: 1.435e-6 nats  (exactness — the headline)
+  |L2 log-ML − closed form|: 0.1557 nats
+  Variance reduction:  n/a (L3 exact, var=0)
+  ESS improvement:     3.4x
+  L3 time: 0.893 ms, L2 time: 1.152 ms
 
  ======================================================================
   5D: Mixed Model (partial conjugacy)
@@ -134,21 +140,21 @@
   Running L3 (auto-conjugacy), 50 particles x 3 trials...
 
   [5D-Mixed-L3] warming up...
-  [5D-Mixed-L3] 1.765 +/- 0.036 ms
-  L3 log-ML: -9.410499 +/- 0.123335
-  L3 ESS:    21.4 / 50 (42.8%)
+  [5D-Mixed-L3] 1.639 +/- 0.073 ms
+  L3 log-ML: -9.496578 +/- 0.078924
+  L3 ESS:    20.7 / 50 (41.5%)
 
   Running L2 (prior-proposal IS), 50 particles x 3 trials...
 
   [5D-Mixed-L2] warming up...
-  [5D-Mixed-L2] 1.346 +/- 0.044 ms
-  L2 log-ML: -11.337304 +/- 1.241643
-  L2 ESS:    3.0 / 50 (6.0%)
+  [5D-Mixed-L2] 1.314 +/- 0.015 ms
+  L2 log-ML: -9.977575 +/- 1.490876
+  L2 ESS:    2.6 / 50 (5.3%)
 
   --- Summary ---
-  Variance reduction:  101.3x
-  ESS improvement:     7.2x
-  L3 time: 1.765 ms, L2 time: 1.346 ms
+  Variance reduction:  356.8x
+  ESS improvement:     7.9x
+  L3 time: 1.639 ms, L2 time: 1.314 ms
 
  ======================================================================
   5E: Static Linear Regression (full elimination)
@@ -173,21 +179,23 @@
     Pair: :intercept -> :y5 [:normal-normal]
 
   [5E-LinReg-L3] warming up...
-  [5E-LinReg-L3] 1.608 +/- 0.007 ms
+  [5E-LinReg-L3] 6.398 +/- 0.022 ms
 
   Running L3, 50 particles x 3 trials...
-  L3 log-ML: -28.145948 +/- 0.000000
+  L3 log-ML: -11.418802 +/- 0.000000
   L3 ESS:    50.0 / 50
 
   [5E-LinReg-L2] warming up...
-  [5E-LinReg-L2] 1.099 +/- 0.161 ms
+  [5E-LinReg-L2] 0.989 +/- 0.033 ms
 
   Running L2, 50 particles x 3 trials...
   L2 log-ML: -20.715904 +/- 8.341735
   L2 ESS:    1.0 / 50
 
   --- Summary ---
-  Variance reduction:  Inf (L3 exact)
+  |L3 log-ML − closed form|: 1.128e-6 nats  (exactness — the headline; closed form = -11.4188)
+  |L2 log-ML − closed form|: 9.2971 nats
+  Variance reduction:  n/a (L3 exact, var=0)
   ESS improvement:     50.0x
 
 
@@ -195,21 +203,21 @@
          CONJUGACY RESULTS SUMMARY
 ======================================================================
 
-| Experiment | Family | Eliminated | L2 var(log-ML) | L3 var(log-ML) | Var Reduction | ESS Ratio |
-|------------|--------|------------|----------------|----------------|---------------|-----------|
-| 5A-Normal-Normal | normal-normal |          1 |       0.134562 |      0 (exact) |           Inf |      13.9 |
-| 5B-Beta-Bernoulli | beta-bernoulli |          1 |       0.000824 |      0 (exact) |           Inf |       1.2 |
-| 5C-Gamma-Poisson | gamma-poisson |          1 |       0.002863 |      0 (exact) |           Inf |       2.7 |
-| 5D-Mixed   | normal-normal |          2 |       1.541678 |       0.015211 |         101.3 |       7.2 |
-| 5E-LinReg  | normal-normal |          2 |      69.584545 |      0 (exact) |           Inf |      50.0 |
+| Experiment | Family | Elim | |L3−cf| (nats) | |L2−cf| (nats) | ESS Ratio |
+|------------|--------|------|----------------|----------------|-----------|
+| 5A-Normal-Normal | normal-normal |    1 |        1.55e-7 |         0.2645 |      13.9 |
+| 5B-Beta-Bernoulli | beta-bernoulli |    1 |        1.58e-7 |         0.0189 |       1.3 |
+| 5C-Gamma-Poisson | gamma-poisson |    1 |        1.44e-6 |         0.1557 |       3.4 |
+| 5D-Mixed   | normal-normal |    2 |  n/a (partial) |            n/a |       7.9 |
+| 5E-LinReg  | normal-normal |    2 |        1.13e-6 |         9.2971 |      50.0 |
 
 | Experiment | L3 time (ms) | L2 time (ms) |
 |------------|--------------|--------------|
-| 5A-Normal-Normal |        0.825 |        0.679 |
-| 5B-Beta-Bernoulli |        0.877 |        1.802 |
-| 5C-Gamma-Poisson |        0.942 |        1.080 |
-| 5D-Mixed   |        1.765 |        1.346 |
-| 5E-LinReg  |        1.608 |        1.099 |
+| 5A-Normal-Normal |        0.829 |        0.615 |
+| 5B-Beta-Bernoulli |        0.857 |        1.926 |
+| 5C-Gamma-Poisson |        0.893 |        1.152 |
+| 5D-Mixed   |        1.639 |        1.314 |
+| 5E-LinReg  |        6.398 |        0.989 |
   Wrote: /Users/robert/code/genmlx/results/conjugacy/data.json
 
 Experiment 5 complete.

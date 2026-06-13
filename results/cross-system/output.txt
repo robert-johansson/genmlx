@@ -2,44 +2,44 @@
 === Cross-System Comparison (GenMLX) ===
 
   [IS-linreg-seq-200] warming up...
-  [IS-linreg-seq-200] 335.508 +/- 1.793 ms
+  [IS-linreg-seq-200] 341.636 +/- 0.856 ms
 
   [VIS-linreg-1000] warming up...
-  [VIS-linreg-1000] 0.762 +/- 0.043 ms
+  [VIS-linreg-1000] 0.786 +/- 0.064 ms
 
   [VIS-linreg-10000] warming up...
-  [VIS-linreg-10000] 0.918 +/- 0.024 ms
+  [VIS-linreg-10000] 0.954 +/- 0.032 ms
 
   [MH-linreg-200] warming up...
-  [MH-linreg-200] 419.617 +/- 2.981 ms
+  [MH-linreg-200] 384.691 +/- 3.204 ms
 
   [IS-gmm-seq-200] warming up...
-  [IS-gmm-seq-200] 864.039 +/- 3.730 ms
+  [IS-gmm-seq-200] 870.950 +/- 5.977 ms
 
   [VIS-gmm-1000] warming up...
-  [VIS-gmm-1000] 1.600 +/- 0.054 ms
+  [VIS-gmm-1000] 1.597 +/- 0.041 ms
 
   [L3-exact-linreg] warming up...
-  [L3-exact-linreg] 0.844 +/- 0.234 ms
+  [L3-exact-linreg] 5.267 +/- 0.047 ms
 
   [L4-fit-linreg] warming up...
-  [L4-fit-linreg] 1.037 +/- 0.039 ms
+  [L4-fit-linreg] 5.407 +/- 0.057 ms
 
   [HMC-linreg-100] warming up...
-  [HMC-linreg-100] 4500.595 +/- 21.083 ms
+  [HMC-linreg-100] 4592.261 +/- 13.681 ms
 
   [NUTS-linreg-100] warming up...
-  [NUTS-linreg-100] 6454.254 +/- 2090.983 ms
+  [NUTS-linreg-100] 5988.715 +/- 1270.431 ms
 
   [fused-mh] compiling chain (one-time)...
 
   [fused-MH-linreg-200] warming up...
-  [fused-MH-linreg-200] 24.023 +/- 0.107 ms
+  [fused-MH-linreg-200] 28.776 +/- 0.084 ms
 
   [fused-vec-mh] compiling vectorized chain (one-time)...
 
   [fused-vec-MH-linreg-N8-200] warming up...
-  [fused-vec-MH-linreg-N8-200] 50.845 +/- 2.107 ms
+  [fused-vec-MH-linreg-N8-200] 252.544 +/- 3.673 ms
 
 
 ========================================
@@ -48,18 +48,18 @@
 
 | Config | N | Time (ms) |
 |--------|---|-----------|
-| IS-linreg-seq | 200 | 335.508 +/- 1.793 |
-| VIS-linreg | 1000 | 0.762 +/- 0.043 |
-| VIS-linreg | 10000 | 0.918 +/- 0.024 |
-| MH-linreg | 200 | 419.617 +/- 2.981 |
-| fused-MH-linreg | 200 | 24.023 +/- 0.107 |
-| fused-vec-MH-linreg-N8 | 200 | 50.845 +/- 2.107 |
-| IS-gmm-seq | 200 | 864.039 +/- 3.730 |
-| VIS-gmm | 1000 | 1.600 +/- 0.054 |
-| L3-exact | --- | 0.844 +/- 0.234 |
-| L4-fit | --- | 1.037 +/- 0.039 |
-| HMC-linreg | 100 | 4500.595 +/- 21.083 |
-| NUTS-linreg | 100 | 6454.254 +/- 2090.983 |
+| IS-linreg-seq | 200 | 341.636 +/- 0.856 |
+| VIS-linreg | 1000 | 0.786 +/- 0.064 |
+| VIS-linreg | 10000 | 0.954 +/- 0.032 |
+| MH-linreg | 200 | 384.691 +/- 3.204 |
+| fused-MH-linreg | 200 | 28.776 +/- 0.084 |
+| fused-vec-MH-linreg-N8 | 200 | 252.544 +/- 3.673 |
+| IS-gmm-seq | 200 | 870.950 +/- 5.977 |
+| VIS-gmm | 1000 | 1.597 +/- 0.041 |
+| L3-exact | --- | 5.267 +/- 0.047 |
+| L4-fit | --- | 5.407 +/- 0.057 |
+| HMC-linreg | 100 | 4592.261 +/- 13.681 |
+| NUTS-linreg | 100 | 5988.715 +/- 1270.431 |
   Wrote: /Users/robert/code/genmlx/results/cross-system/data.json
 
 Cross-system comparison (GenMLX) complete.

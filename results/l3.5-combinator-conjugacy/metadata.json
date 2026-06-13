@@ -1,7 +1,7 @@
 {
   "experiment": "l3.5-combinator-conjugacy",
-  "git_sha": "5f29f7a",
-  "timestamp": "2026-06-07T19:39:44.099Z",
+  "git_sha": "c9253bc",
+  "timestamp": "2026-06-13T08:59:06.817Z",
   "hardware": {
     "platform": "darwin",
     "arch": "arm64",
@@ -12,7 +12,7 @@
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "310a589867f986d73bec84ceaab4b67abdbf38c54d45981710ef954d8639e248",
-  "duration_ms": 9105,
+  "source_hash": "ef9a786481aa35c5a3f1a70f1f81146af81632f18a717006cea65d38a7e72d72",
+  "duration_ms": 9344,
   "script": "bench/l3_5_combinator_conjugacy.cljs"
 }

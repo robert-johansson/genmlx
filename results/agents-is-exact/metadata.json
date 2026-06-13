@@ -1,7 +1,7 @@
 {
   "experiment": "agents-is-exact",
-  "git_sha": "0de48a0",
-  "timestamp": "2026-06-10T09:52:49.738Z",
+  "git_sha": "c9253bc",
+  "timestamp": "2026-06-13T09:02:23.738Z",
   "hardware": {
     "platform": "darwin",
     "arch": "arm64",
@@ -12,7 +12,7 @@
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "c4d004f3ab9df72d8b54e5aa9f82638d98824d7259b95cc8ef66b435a4a62559",
-  "duration_ms": 158108,
+  "source_hash": "6b7167e10ce33b5006489bb7e45f14e1e5d0a5b0d04b64aef57f2c8f13090d8b",
+  "duration_ms": 159454,
   "script": "bench/agents_is_exact.cljs"
 }

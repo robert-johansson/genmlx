@@ -17,8 +17,8 @@
       "log-ml-var": 4.700068900182432,
       "log-ml-abs-error-nats": 0.6388708743762628,
       "ess-mean": 1.4472544663638118,
-      "timing-ms": 1.3161249999999807,
-      "timing-std-ms": 0.00592285125593261
+      "timing-ms": 1.3551526666666405,
+      "timing-std-ms": 0.033649779870524525
     },
     "L3-with-analytical": {
       "log-ml-mean": -9.12209415435791,
@@ -26,12 +26,12 @@
       "log-ml-var": 0,
       "log-ml-abs-error-nats": 2.876094971071552e-7,
       "ess-mean": 50,
-      "timing-ms": 1.361347333333356,
-      "timing-std-ms": 0.04041306038069318
+      "timing-ms": 1.4097223333333393,
+      "timing-std-ms": 0.09728492969794388
     }
   },
   "ess-improvement": 34.54817460375414,
-  "timestamp": "2026-06-08T16:31:13.732Z",
+  "timestamp": "2026-06-13T08:57:22.658Z",
   "non-conjugate-sites": [
     "sigma"
   ],
