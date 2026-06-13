@@ -124,7 +124,7 @@ src/genmlx/
   # Layer 1: Core Data (pure immutable structures)
   choicemap.cljs, trace.cljs, selection.cljs, diff.cljs
 
-  # Layer 2: GFI & Execution (10 protocols, 6+4 handler transitions)
+  # Layer 2: GFI & Execution (11 protocols, 6+4 handler transitions)
   protocols.cljs, handler.cljs, edit.cljs, tensor_trace.cljs
 
   # Layer 3: DSL + Schema (gen macro, DynamicGF, 4-level dispatcher)
@@ -268,10 +268,11 @@ direct import of dynamic.cljs).
                                       intercept) 1)))
       slope)))
 
-;; GFI operations (10 protocols)
+;; GFI operations (11 protocols)
 (p/simulate model args)                  ;; => Trace
 (p/generate model args constraints)      ;; => {:trace Trace :weight scalar}
 (p/update model trace new-constraints)   ;; => {:trace :weight :discard}
+(p/update-with-args model trace new-args argdiffs constraints) ;; thesis x'
 (p/regenerate model trace selection)     ;; => {:trace :weight}
 (p/assess model args choices)            ;; => {:retval :weight}
 (p/project model trace selection)        ;; => scalar
@@ -282,6 +283,7 @@ direct import of dynamic.cljs).
 (dyn/vsimulate model args n key)         ;; => VectorizedTrace
 (dyn/vgenerate model args obs n key)     ;; => VectorizedTrace with weights
 (dyn/vupdate model vtrace constraints key) ;; => {:vtrace :weight :discard}
+(dyn/vupdate-args model vtrace new-args constraints key) ;; batched thesis x'
 (dyn/vregenerate model vtrace selection key) ;; => {:vtrace :weight}
 
 ;; Schema introspection (Level 1)

@@ -80,6 +80,15 @@
 ;; Return all leaf address paths from a choicemap.
 (def ^:private all-leaf-addrs cm/addresses)
 
+(defn- log-gauss
+  "Hand-derived gaussian log-density on JS numbers — the independent
+   oracle for the update-with-args weight laws (never computed through
+   genmlx's own dist code)."
+  [x mu sigma]
+  (- (* -0.5 (js/Math.log (* 2 js/Math.PI)))
+     (js/Math.log sigma)
+     (* 0.5 (js/Math.pow (/ (- x mu) sigma) 2))))
+
 (defn strip-compiled
   "Return a copy of model with all alternate execution paths removed from its
    schema — full-compile, prefix, and analytical — forcing the handler
@@ -698,6 +707,172 @@
                (and (approx= (ev (:weight upd)) (ev (:weight uwd)) 1e-6)
                     (approx= (ev (:score (:trace upd)))
                              (ev (:score (:trace uwd))) 1e-6))))}
+
+   ;; ===================================================================
+   ;; UPDATE-WITH-ARGS laws [T] §2.3.1 (the thesis x' parameter, genmlx-s8e8)
+   ;; ===================================================================
+
+   {:name :update-args-noop
+    :from "[T] §2.3.1 UPDATE (x' = x degenerate case)"
+    :theorem "update-with-args(P, t, x, :unknown, sigma) at the trace's own
+              args produces identical weight and score to update(P, t, sigma)."
+    :tags #{:update :update-args :core}
+    :check (fn [{:keys [model args]}]
+             (if-not (satisfies? p/IUpdateWithArgs model)
+               true
+               (let [t1 (p/simulate model args)
+                     sigma (:choices (p/simulate model args))
+                     upd (p/update model t1 sigma)
+                     uwa (p/update-with-args model t1 args :unknown sigma)]
+                 (and (approx= (ev (:weight upd)) (ev (:weight uwa)) 1e-6)
+                      (approx= (ev (:score (:trace upd)))
+                               (ev (:score (:trace uwa))) 1e-6)))))}
+
+   {:name :update-args-weight-is-density-ratio
+    :from "[T] §2.3.1 UPDATE weight, structure-preserving case"
+    :theorem "When the address set is unchanged, the update-with-args weight
+              equals log p(t'; x') - log p(t; x) — checked both against
+              assess on the same choices and against a hand-derived gaussian
+              closed form (independent oracle).
+              Self-contained: x ~ N(m,1); y ~ N(x,1), m: 0 -> 1.5."
+    :tags #{:update :update-args :core}
+    :check (fn [_]
+             (let [model (dyn/auto-key
+                          (dyn/make-gen-fn
+                           (fn [rt m]
+                             (let [trace (.-trace rt)
+                                   x (trace :x (dist/gaussian m 1))]
+                               (trace :y (dist/gaussian x 1))
+                               x))
+                           '([m] (let [x (trace :x (dist/gaussian m 1))]
+                                   (trace :y (dist/gaussian x 1))
+                                   x))))
+                   t (p/simulate model [0.0])
+                   x (choice-num (:choices t) :x)
+                   r (p/update-with-args model t [1.5] :unknown cm/EMPTY)
+                   w (ev (:weight r))
+                   a-new (ev (:weight (p/assess model [1.5] (:choices (:trace r)))))
+                   a-old (ev (:weight (p/assess model [0.0] (:choices t))))
+                   oracle (- (log-gauss x 1.5 1) (log-gauss x 0.0 1))
+                   ;; Batched leg: vupdate-args [N] weights match the same
+                   ;; hand-derived ratio per particle.
+                   n 8
+                   vt (dyn/vsimulate model [0.0] n (rng/fresh-key 43))
+                   xs (mx/->clj (choice-val (:choices vt) :x))
+                   vw (mx/->clj (:weight (dyn/vupdate-args model vt [1.5] cm/EMPTY
+                                                           (rng/fresh-key 44))))]
+               (and (approx= w (- a-new a-old) 1e-4)
+                    (approx= w oracle 1e-4)
+                    (= [1.5] (:args (:trace r)))
+                    (= n (count vw))
+                    (every? (fn [[xi wi]]
+                              (approx= wi (- (log-gauss xi 1.5 1)
+                                             (log-gauss xi 0.0 1)) 1e-3))
+                            (map vector xs vw)))))}
+
+   {:name :update-args-roundtrip
+    :from "[T] §2.3.1 UPDATE invertibility (ArgsUpdateEdit backward request)"
+    :theorem "For a structure-preserving args change, applying the backward
+              ArgsUpdateEdit to the updated trace restores the original
+              choices and negates the weight."
+    :tags #{:update :update-args :edit}
+    :check (fn [_]
+             (let [model (dyn/auto-key
+                          (dyn/make-gen-fn
+                           (fn [rt m]
+                             (let [trace (.-trace rt)
+                                   x (trace :x (dist/gaussian m 1))]
+                               (trace :y (dist/gaussian x 1))
+                               x))
+                           '([m] (let [x (trace :x (dist/gaussian m 1))]
+                                   (trace :y (dist/gaussian x 1))
+                                   x))))
+                   t (p/simulate model [0.0])
+                   fwd (edit/edit model t (edit/args-update-edit [2.0] cm/EMPTY))
+                   bwd (edit/edit model (:trace fwd) (:backward-request fwd))]
+               (and (approx= (ev (:weight bwd)) (- (ev (:weight fwd))) 1e-4)
+                    (approx= (choice-num (:choices (:trace bwd)) :x)
+                             (choice-num (:choices t) :x) 1e-6)
+                    (= [0.0] (:args (:trace bwd))))))}
+
+   {:name :update-args-compiled-parity
+    :from "[T] §2.3.1; GenMLX compiled-path equivalence (handler = ground truth)"
+    :theorem "On a static (L1-compiled) model, update-with-args through the
+              compiled path produces the same weight and score as through
+              the forced handler path."
+    :tags #{:update :update-args :compiled}
+    :check (fn [_]
+             (let [mk #(dyn/auto-key
+                        (dyn/make-gen-fn
+                         (fn [rt m]
+                           (let [trace (.-trace rt)
+                                 x (trace :x (dist/gaussian m 1))]
+                             (trace :y (dist/gaussian x 1))
+                             x))
+                         '([m] (let [x (trace :x (dist/gaussian m 1))]
+                                 (trace :y (dist/gaussian x 1))
+                                 x))))
+                   compiled (mk)
+                   stripped (strip-compiled (mk))
+                   t-c (p/simulate compiled [0.0])
+                   t-h (:trace (p/generate stripped [0.0] (:choices t-c)))
+                   r-c (p/update-with-args compiled t-c [1.0] :unknown cm/EMPTY)
+                   r-h (p/update-with-args stripped t-h [1.0] :unknown cm/EMPTY)]
+               (and (approx= (ev (:weight r-c)) (ev (:weight r-h)) 1e-4)
+                    (approx= (ev (:score (:trace r-c)))
+                             (ev (:score (:trace r-h))) 1e-4))))}
+
+   {:name :unfold-extend-equivalence
+    :from "GenMLX unfold-extend contract (the n' = n+1 special case)"
+    :theorem "unfold-extend(t, sigma, k) and update-with-args(t, [n+1 init],
+              :unknown, {n: sigma}) agree on weight and extended score when
+              the new step is fully constrained (both paths deterministic)."
+    :tags #{:update :update-args :combinator}
+    :check (fn [_]
+             (let [kern (dyn/auto-key
+                         (dyn/make-gen-fn
+                          (fn [rt t prev]
+                            (let [trace (.-trace rt)]
+                              (trace :s (dist/gaussian prev 1))))
+                          '([t prev] (trace :s (dist/gaussian prev 1)))))
+                   unf (comb/unfold-combinator kern)
+                   t (p/simulate unf [3 0.0])
+                   sigma (cm/choicemap :s (mx/scalar 1.0))
+                   ext (comb/unfold-extend t sigma (rng/fresh-key 41))
+                   r (p/update-with-args unf t [4 0.0] :unknown
+                                         (cm/set-choice cm/EMPTY [3] sigma))]
+               (and (approx= (ev (:weight ext)) (ev (:weight r)) 1e-4)
+                    (approx= (ev (:score (:trace ext)))
+                             (ev (:score (:trace r))) 1e-4))))}
+
+   {:name :update-args-structure-change
+    :from "[T] §2.3.1 UPDATE weight, address set changed by x'"
+    :theorem "When new args remove an address, its value lands in the
+              discard and the weight charges exactly its old log-prob
+              (hand-derived oracle). Self-contained: mu ~ N(0,1);
+              y_i ~ N(mu,1) for i < n, n: 2 -> 1."
+    :tags #{:update :update-args :core}
+    :check (fn [_]
+             (let [model (dyn/auto-key
+                          (dyn/make-gen-fn
+                           (fn [rt n]
+                             (let [trace (.-trace rt)
+                                   mu (trace :mu (dist/gaussian 0 1))]
+                               (doseq [i (range n)]
+                                 (trace (keyword (str "y" i)) (dist/gaussian mu 1)))
+                               mu))
+                           '([n] (let [mu (trace :mu (dist/gaussian 0 1))]
+                                   (doseq [i (range n)]
+                                     (trace (keyword (str "y" i)) (dist/gaussian mu 1)))
+                                   mu))))
+                   {t :trace} (p/generate model [2]
+                                          (cm/choicemap :y0 (mx/scalar 1.0)
+                                                        :y1 (mx/scalar -1.0)))
+                   mu (choice-num (:choices t) :mu)
+                   r (p/update-with-args model t [1] :unknown cm/EMPTY)]
+               (and (approx= (ev (:weight r)) (- (log-gauss -1.0 mu 1)) 1e-4)
+                    (approx= (ev (cm/get-choice (:discard r) [:y1])) -1.0 1e-6)
+                    (nil? (cm/get-choice (:choices (:trace r)) [:y1])))))}
 
    ;; ===================================================================
    ;; GRADIENT laws [T] Eq 2.12, §2.3.1

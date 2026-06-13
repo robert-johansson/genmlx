@@ -1,6 +1,6 @@
 (ns genmlx.protocols
   "GFI (Generative Function Interface) protocol definitions.
-   Ten single-operation protocols. There are no protocol-level defaults: each
+   Eleven single-operation protocols. There are no protocol-level defaults: each
    generative function implements the operations it supports (simulate is the
    conceptual primitive; the generic run-* dispatch logic lives in the handler).")
 
@@ -40,6 +40,17 @@
   (update-with-diffs [gf trace constraints argdiffs]
     "Update a trace with change hints. argdiffs describes which arguments changed.
      Enables combinators to skip unchanged sub-computations.
+     Equivalent to update-with-args with new-args = (:args trace).
+     Returns {:trace Trace :weight MLX-scalar :discard ChoiceMap}."))
+
+(defprotocol IUpdateWithArgs
+  (update-with-args [gf trace new-args argdiffs constraints]
+    "Update a trace while the model arguments change (thesis x').
+     Retained choices are re-scored under the new arguments; fresh sites
+     cancel; removed sites are charged via the old score and discarded.
+     Weight: nonfresh-score(t'; x') - score(t; x).
+     argdiffs: genmlx.diff/no-change | genmlx.diff/vector-diff | :unknown —
+     a caller assertion about which arguments changed (trusted, Gen.jl-style).
      Returns {:trace Trace :weight MLX-scalar :discard ChoiceMap}."))
 
 (defprotocol IHasArgumentGrads
