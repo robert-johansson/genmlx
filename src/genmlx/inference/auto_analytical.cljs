@@ -164,16 +164,30 @@
    :regenerate — prior returns the old value and falls through (nil) when the
      site is selected; obs reads :old-choices, requires an initialized posterior,
      skips selected obs, ll → :score only.
+   :update (genmlx-6hcu) — prior marginalizes when UNCONSTRAINED (a constrained
+     prior re-opens the pair → fall through to the base transition, mirroring
+     regenerate Case A); obs reads :constraints with fallback to :old-choices
+     (new-over-old) so the full marginal LL is refolded over the merged obs,
+     ll → :score + :weight; a CHANGED obs charges its old value into :discard.
 
    Returns {addr handler-fn} for prior + all obs addresses."
   [prior-addr obs-addrs init-posterior posterior-mean update-step mode]
   (let [regenerate? (= mode :regenerate)
+        update? (= mode :update)
         prior-handler
         (fn [state addr dist]
           (let [proceed?
-                (if regenerate?
+                (cond
+                  regenerate?
                   (not (and (:selection state)
                             (sel/selected? (:selection state) addr)))
+                  ;; Update (genmlx-6hcu): marginalize unless the prior latent is
+                  ;; itself constrained — pinning it re-opens the pair (scored
+                  ;; jointly), so fall through to the base transition. (The
+                  ;; dispatcher also declines the whole analytical-update for such
+                  ;; constraints; this is the per-pair backstop.)
+                  update?
+                  (not (cm/has-value? (cm/get-submap (:constraints state) prior-addr)))
                   ;; Generate/assess (genmlx-b470): the pair group marginalizes
                   ;; only when the prior itself is UNCONSTRAINED and EVERY obs
                   ;; is constrained. A constrained prior must keep its value
@@ -181,6 +195,7 @@
                   ;; obs set would otherwise produce a score that is neither
                   ;; joint nor marginal. Declining here leaves no posterior in
                   ;; state, so the obs handlers below fall through too.
+                  :else
                   (let [cs (:constraints state)]
                     (and (not (cm/has-value? (cm/get-submap cs prior-addr)))
                          (every? #(cm/has-value? (cm/get-submap cs %)) obs-addrs))))]
@@ -203,18 +218,27 @@
             ;; Regenerate: skip obs that are themselves being resampled.
             (when-not (and regenerate? (:selection state)
                            (sel/selected? (:selection state) addr))
-              (let [constraint (if regenerate?
-                                 (cm/get-submap (:old-choices state) addr)
-                                 (cm/get-submap (:constraints state) addr))]
+              (let [old-sub (cm/get-submap (:old-choices state) addr)
+                    new-sub (cm/get-submap (:constraints state) addr)
+                    ;; new-over-old: update reads the CHANGED obs from :constraints
+                    ;; and UNCHANGED obs from :old-choices, so the full marginal LL
+                    ;; is refolded; regenerate reads old, generate reads constraints.
+                    constraint (cond
+                                 regenerate? old-sub
+                                 update?     (if (cm/has-value? new-sub) new-sub old-sub)
+                                 :else       new-sub)]
                 (when (cm/has-value? constraint)
                   (let [obs-value (cm/get-value constraint)
                         {:keys [posterior ll]} (update-step current-posterior obs-value (:params dist))
-                        post-mean (posterior-mean posterior)]
+                        post-mean (posterior-mean posterior)
+                        ;; update: a changed obs charges its old value to :discard
+                        changed? (and update? (cm/has-value? new-sub) (cm/has-value? old-sub))]
                     [obs-value (cond-> state
                                  true (assoc-in [:auto-posteriors prior-addr] posterior)
                                  true (update :choices cm/set-value addr obs-value)
                                  true (update :score mx/add ll)
                                  (not regenerate?) (update :weight mx/add ll)
+                                 changed? (update :discard cm/set-value addr (cm/get-value old-sub))
                                  ;; Update prior's value to posterior mean
                                  true (update :choices cm/set-value prior-addr post-mean))]))))))]
     (assoc (zipmap obs-addrs (repeat obs-handler)) prior-addr prior-handler)))
@@ -714,6 +738,46 @@
                           conjugate-pairs)
         non-chain-handlers (build-regenerate-handlers remaining)]
     (merge kalman-handlers non-chain-handlers)))
+
+;; ---------------------------------------------------------------------------
+;; Update-specific handlers (genmlx-6hcu) — SCALAR conjugate families only.
+;; MVN and Kalman analytical UPDATE are not implemented; models containing them
+;; decline the analytical-update path entirely (at schema construction) and use
+;; the joint handler path, so no factory is registered for those families here.
+;; ---------------------------------------------------------------------------
+
+(defn- make-update-handlers-for
+  "Update-mode handler factory for `family`: a (fn [prior-addr obs-addrs])."
+  [family]
+  (fn [prior-addr obs-addrs] (make-family-handlers family :update prior-addr obs-addrs)))
+
+(def update-family->handler-factory
+  "Map from conjugate family keyword to update-specific handler factory.
+   No :mvn-normal — MVN analytical update is unimplemented (decline to joint)."
+  {:normal-normal     (make-update-handlers-for :normal-normal)
+   :normal-iid-normal (make-update-handlers-for :normal-iid-normal)
+   :beta-bernoulli    (make-update-handlers-for :beta-bernoulli)
+   :gamma-poisson     (make-update-handlers-for :gamma-poisson)
+   :gamma-exponential (make-update-handlers-for :gamma-exponential)})
+
+(defn build-update-handlers
+  "Build update-specific address-based handlers from conjugate pairs (scalar
+   families only). Multi-parent obs pairs are dropped first (see
+   build-auto-handlers). Pairs whose family has no update factory (e.g. MVN)
+   are skipped — callers must decline the analytical-update path for models that
+   contain them. Returns a merged map of {addr handler-fn}."
+  [conjugate-pairs]
+  (let [grouped (conj/group-by-prior (conj/drop-multi-parent-pairs conjugate-pairs))]
+    (reduce
+     (fn [handlers [prior-addr pairs]]
+       (let [family (:family (first pairs))
+             factory (get update-family->handler-factory family)
+             obs-addrs (mapv :obs-addr pairs)]
+         (if factory
+           (merge handlers (factory prior-addr obs-addrs))
+           handlers)))
+     {}
+     grouped)))
 
 ;; ---------------------------------------------------------------------------
 ;; Utility: check if any conjugate obs is constrained
