@@ -203,31 +203,27 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest regenerate-dependent-select-all-stale-child
-  (testing "Dependent model, select-all: weight = lp(y_old;x',1) - lp(y_old;x,1)"
-    ;; Derivation: x ~ N(0,1), y ~ N(x,1), S = {:x,:y}
-    ;; handler for :x: lp(x';0,1) - lp(x;0,1)
-    ;; handler for :y: lp(y';x',1) - lp(y;x',1)
-    ;;   [old_lp for y evaluated under NEW x' because x was already replayed]
-    ;; handler_weight = [lp(x';0,1)-lp(x;0,1)] + [lp(y';x',1)-lp(y;x',1)]
+  (testing "Dependent model, select-all: weight = 0 (full-prior resample)"
+    ;; x ~ N(0,1), y ~ N(x,1), S = {:x,:y}.
     ;;
-    ;; weight = new_score - old_score - handler_weight
-    ;; = [lp(x';0,1)+lp(y';x',1)] - [lp(x;0,1)+lp(y;x,1)]
-    ;;   - [lp(x';0,1)-lp(x;0,1)] - [lp(y';x',1)-lp(y;x',1)]
-    ;; Cancel lp(x';0,1), lp(x;0,1), lp(y';x',1):
-    ;; = lp(y;x',1) - lp(y;x,1)
+    ;; CORRECTED 2026-06-13 (genmlx-yep2): this test previously asserted the
+    ;; nonzero value lp(y_old;x',1) - lp(y_old;x,1), DERIVED FROM the buggy
+    ;; per-site handler convention (it scored the SELECTED site :y's backward
+    ;; proposal under the NEW parent x'). That is the yep2 bug, baked into a
+    ;; test via implementation arithmetic rather than independent theory.
     ;;
-    ;; This is the "stale child" correction: old y's density changes
-    ;; because its parent changed. Weight != 0 in general.
-    ;; Tolerance: 1e-4 (float32 accumulation)
+    ;; Correct semantics: selecting ALL sites is a full-prior resample, so the
+    ;; internal proposal IS the prior — q(t->t') = p(t';x), q(t'->t) = p(t;x) —
+    ;; and the MH weight is identically 0. There is no "old y" in the new trace:
+    ;; y is SELECTED, hence resampled to a fresh y'. (Independent derivation:
+    ;; math-verifier §2 on genmlx-hmch; gfi law :regenerate-select-all-zero.)
     (let [x-old 1.0
           y-old 2.0
           constraints (cm/choicemap :x (mx/scalar x-old) :y (mx/scalar y-old))
           {:keys [trace]} (p/generate models/dependent-model [] constraints)
-          {:keys [trace weight]} (p/regenerate models/dependent-model trace sel/all)
-          x-new (h/realize (cm/get-value (cm/get-submap (:choices trace) :x)))
-          expected (- (h/gaussian-lp y-old x-new 1) (h/gaussian-lp y-old x-old 1))]
-      (is (h/close? expected (h/realize weight) 1e-4)
-          "weight is stale-child correction for old y under new x"))))
+          {:keys [weight]} (p/regenerate models/dependent-model trace sel/all)]
+      (is (h/close? 0.0 (h/realize weight) 1e-4)
+          "dependent select-all weight is 0 (yep2 fix)"))))
 
 ;; ---------------------------------------------------------------------------
 ;; Case 5: Empty selection — identity operation

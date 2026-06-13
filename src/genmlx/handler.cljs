@@ -154,6 +154,46 @@
                    (update :choices cm/set-value addr val)
                    (update :score mx/add lp))])))))
 
+(defn regenerate-transition-general
+  "Pure: the retained-only regenerate transition (genmlx-hmch, genmlx-yep2).
+
+   The MH weight for a DML regenerate is
+     W = Σ over RETAINED sites of [lp(v; new ctx) - lp(v; old ctx)],
+   where retained = unselected AND present in BOTH executions; selected,
+   freshly-appearing (structure change), and removed sites all cancel to 0.
+
+   This transition only builds the new trace and its :score — it does NOT
+   accumulate the weight. make-regen-result-general computes W with two
+   project passes over the retained selection (new-context minus old-context),
+   which recurses correctly through spliced sub-models and never double-counts.
+
+   - selected (resample) and unselected-&-ABSENT (fresh — a structure change
+     replacing the old throw): draw from the NEW context, add lp to :score,
+     split the key. These behave identically; the only difference from the
+     fast transition is that fresh sites are sampled instead of throwing.
+   - unselected & present (RETAINED): keep the old value, add lp to :score,
+     no key split.
+   Removed sites are simply never visited in the new execution."
+  [state addr dist]
+  (let [sel (:selection state)
+        old-choice (cm/get-submap (:old-choices state) addr)]
+    (if (or (and sel (sel/selected? sel addr))
+            (not (cm/has-value? old-choice)))
+      ;; Selected resample OR fresh structure-change draw: sample, score, split
+      (let [[k1 k2] (rng/split (:key state))
+            new-val (dc/dist-sample dist k2)
+            new-lp (dc/dist-log-prob dist new-val)]
+        [new-val (-> state
+                     (assoc :key k1)
+                     (update :choices cm/set-value addr new-val)
+                     (update :score mx/add new-lp))])
+      ;; Retained: keep old value, score, no key split
+      (let [val (cm/get-value old-choice)
+            lp (dc/dist-log-prob dist val)]
+        [val (-> state
+                 (update :choices cm/set-value addr val)
+                 (update :score mx/add lp))]))))
+
 (defn project-transition
   "Pure: replay old value, accumulate log-prob for selected addresses."
   [state addr dist]

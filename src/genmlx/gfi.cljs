@@ -367,6 +367,43 @@
                    (and (check-addr first-addr)
                         (check-addr last-addr))))))}
 
+   {:name :regenerate-select-all-zero
+    :from "[T] §3.4.2 retained-only weight (genmlx-hmch, genmlx-yep2)"
+    :theorem "regenerate(t, all).weight = 0 for ANY model. A full-prior
+              resample is its own proposal: q(t→t') = p(t';x) and
+              q(t'→t) = p(t;x), so the MH weight is identically 0. This holds
+              even for DEPENDENT latents (e.g. b ~ N(a,1) with {a,b} both
+              selected) and for branch-flipping selections (the new-arm sites
+              are fresh, the old-arm sites removed — both cancel). The
+              per-site fast convention leaked a nonzero residual here by
+              scoring a selected site's backward proposal under the NEW parent
+              values (genmlx-yep2); the retained-only general path fixes it."
+    :tags #{:regenerate :inference :mcmc :consistency}
+    :check (fn [{:keys [model args]}]
+             (let [t (p/simulate model args)
+                   {:keys [weight]} (p/regenerate model t sel/all)]
+               (approx= 0.0 (ev weight) 0.01)))}
+
+   {:name :regenerate-fast-general-equivalence
+    :from "[D] fast ≡ general retained-only path (genmlx-hmch)"
+    :theorem "On a fast-eligible selection, the fast per-site regenerate
+              convention and the forced general retained-only path (the
+              project-pass algebra) produce identical weights when seeded with
+              the same PRNG key. Pins the hot-loop fast path so it can never
+              silently diverge from the always-correct general path."
+    :tags #{:regenerate :inference :mcmc :consistency}
+    :check (fn [{:keys [model args]}]
+             (let [t (p/simulate model args)
+                   addrs (all-leaf-addrs (:choices t))]
+               (if (empty? addrs)
+                 true
+                 (let [k (rng/fresh-key 7)
+                       sel (sel/select (first (first addrs)))
+                       fast (p/regenerate (dyn/with-key model k) t sel)
+                       general (binding [dyn/*force-general-regen* true]
+                                 (p/regenerate (dyn/with-key model k) t sel))]
+                   (approx= (ev (:weight fast)) (ev (:weight general)) 0.01)))))}
+
    {:name :mh-acceptance-correctness
     :from "[T] Alg 5, §3.4.2"
     :theorem "MH with regenerate weight produces a chain whose
