@@ -28,10 +28,12 @@
    which is algebraically identical to the batch marginal/posterior (chain rule
    of the joint Gaussian density) and fits the per-address handler structure.
 
-   Scope: generate + assess (exact), and regenerate (genmlx-m3tn: the block stays
+   Scope: generate + assess (exact), regenerate (genmlx-m3tn: the block stays
    Rao-Blackwellised under MH moves over unrelated residual latents; selecting a
-   block latent re-opens the whole block). UPDATE still declines (no analytical
-   :update path yet — genmlx-6hcu).
+   block latent re-opens the whole block), and UPDATE (genmlx-6hcu: a value-only
+   obs change re-folds the block marginal LL — weight = Δ marginal-LL, latents →
+   new posterior mean, changed-obs old values to the discard; constraining a block
+   latent re-opens it → the joint handler path).
 
    Partial conjugacy (genmlx-4q9d): when the obs noise depends on a RESIDUAL
    (non-block) latent — e.g. y_j ~ N(slope·x_j+intercept, sigma) with sigma ~ Gamma
@@ -399,15 +401,25 @@
          noise-latents (or noise-latents #{})
          obs-addrs (or obs-addrs (mapv :addr obs))
          regenerate? (= mode :regenerate)
+         update? (= mode :update)
          block-reopened?
          (fn [state]
-           ;; Selecting ANY block address — latent OR obs — re-opens the whole
-           ;; block (genmlx-b470: a selected obs must be resampled by the base
-           ;; transition, not Kalman-conditioned on its old value).
-           (and regenerate?
-                (:selection state)
-                (boolean (some #(sel/selected? (:selection state) %)
-                               (concat latents obs-addrs)))))
+           (cond
+             ;; Regenerate: selecting ANY block address — latent OR obs — re-opens
+             ;; the whole block (genmlx-b470: a selected obs must be resampled by
+             ;; the base transition, not Kalman-conditioned on its old value).
+             regenerate?
+             (and (:selection state)
+                  (boolean (some #(sel/selected? (:selection state) %)
+                                 (concat latents obs-addrs))))
+             ;; Update (genmlx-6hcu): pinning a block LATENT in the constraints
+             ;; re-opens the block (it can no longer be marginalised — score it
+             ;; jointly). Constraining an OBS is the normal update (re-eliminate).
+             ;; The dispatcher also declines the whole analytical-update for latent
+             ;; constraints; this is the per-block backstop.
+             update?
+             (boolean (some #(cm/has-value? (cm/get-submap (:constraints state) %)) latents))
+             :else false))
          block-ok?
          ;; Runtime eligibility gate (genmlx-b470), consulted by EVERY block
          ;; handler before committing and cached under [:lg-ok id] once a
@@ -425,9 +437,13 @@
              (let [args (:model-args state)
                    cs (:constraints state)
                    constraints-ok?
-                   (or regenerate?
-                       (and (not-any? #(cm/has-value? (cm/get-submap cs %)) latents)
-                            (every? #(cm/has-value? (cm/get-submap cs %)) obs-addrs)))]
+                   (cond
+                     regenerate? true
+                     ;; Update: ok as long as no block latent is pinned (obs are
+                     ;; read new-over-old, so they need not all be in :constraints).
+                     update? (not-any? #(cm/has-value? (cm/get-submap cs %)) latents)
+                     :else (and (not-any? #(cm/has-value? (cm/get-submap cs %)) latents)
+                                (every? #(cm/has-value? (cm/get-submap cs %)) obs-addrs)))]
                (boolean
                 (and args constraints-ok?
                      (every? (fn [{:keys [mean-fn]}]
@@ -442,7 +458,7 @@
                            (when (block-ok? state)
                              (let [{:keys [mu sigma]} (:params dist)
                                    var (mx/multiply sigma sigma)
-                                   value (if regenerate?
+                                   value (if (or regenerate? update?)
                                            (cm/get-value (cm/get-submap (:old-choices state) la))
                                            mu)
                                    st (-> state
@@ -467,9 +483,15 @@
                                     (block-ok? state))
                            (let [belief (get-in state [:lg-belief id])
                                  args (:model-args state)
-                                 constraint (if regenerate?
-                                              (cm/get-submap (:old-choices state) addr)
-                                              (cm/get-submap (:constraints state) addr))
+                                 old-sub (cm/get-submap (:old-choices state) addr)
+                                 new-sub (cm/get-submap (:constraints state) addr)
+                                 ;; new-over-old: update reads a CHANGED obs from
+                                 ;; :constraints, an UNCHANGED obs from :old-choices,
+                                 ;; so the full marginal LL is refolded.
+                                 constraint (cond
+                                              regenerate? old-sub
+                                              update?     (if (cm/has-value? new-sub) new-sub old-sub)
+                                              :else       new-sub)
                                  ;; Residual noise latents (genmlx-4q9d): their sampled
                                  ;; values, read live from :choices (set before the obs by
                                  ;; dep-order). Empty for v1 constant/block-free noise.
@@ -495,6 +517,9 @@
                                                 (assoc-in [:lg-belief id] {:mean mean :cov cov})
                                                 (update :choices cm/set-value addr y)
                                                 (update :score mx/add ll))
-                                      (not regenerate?) (update :weight mx/add ll))])))))]))
+                                      (not regenerate?) (update :weight mx/add ll)
+                                      ;; update: a changed obs charges its old value to :discard
+                                      (and update? (cm/has-value? new-sub) (cm/has-value? old-sub))
+                                      (update :discard cm/set-value addr (cm/get-value old-sub)))])))))]))
                obs)]
      (merge latent-handlers obs-handlers))))

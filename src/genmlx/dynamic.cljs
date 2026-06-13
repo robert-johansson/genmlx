@@ -532,6 +532,41 @@
       (clojure.core/update regen-result :trace tr/with-score-type :marginal)
       regen-result)))
 
+(defn- run-update-analytical
+  "Analytical :update for eliminated linear-Gaussian blocks + scalar conjugate
+   pairs (genmlx-6hcu). Runs the :auto-update-transition: each eliminated
+   structure re-folds its marginal LL under the merged (new-over-old) obs into
+   BOTH :score and :weight, sets its latent choices to the NEW posterior mean,
+   and charges changed-obs old values into :discard. The thesis update weight
+   ((:weight result) − old score) then collapses to the Δ marginal-LL of the
+   changed structure(s): untouched blocks/pairs and retained residual sites
+   contribute identically to both sides and cancel. The result trace stays
+   :marginal. Gated to value-only obs updates (no re-opening latent constraint,
+   no Kalman/MVN) by the analytical-dispatcher; otherwise the joint handler path
+   runs via joint-rescore-marginal."
+  [gf _args key {:keys [trace constraints]}]
+  (let [schema (:schema gf)
+        result (rt/run-handler (:auto-update-transition schema)
+                 {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
+                  :key key :constraints constraints
+                  :old-choices (:choices trace)
+                  ;; LG block update handlers recover the design matrix by probing
+                  ;; the obs mean forms against the model args.
+                  :model-args (:args trace)
+                  :auto-posteriors {} :auto-kalman-beliefs {} :auto-kalman-noise-vars {}
+                  :old-splice-scores (::splice-scores (meta trace))
+                  :old-nested-splice-scores (::nested-splice-scores (meta trace))
+                  :discard cm/EMPTY
+                  :executor execute-sub :param-store (param-store gf)}
+                 (fn [rt] (run-body gf rt (:args trace))))
+        new-trace (make-result-trace gf (:args trace) result)
+        update-result (make-update-result new-trace
+                        (mx/subtract (:weight result) (:score trace))
+                        (:discard result) constraints (:choices result) result)]
+    (if (analytical-fired? result)
+      (clojure.core/update update-result :trace tr/with-score-type :marginal)
+      update-result)))
+
 ;; -- Utility --
 
 (defn- add-deleted-to-discard
@@ -596,7 +631,8 @@
 (def ^:private analytical-table
   {:generate run-generate-analytical
    :assess   run-assess-analytical
-   :regenerate run-regen-analytical})
+   :regenerate run-regen-analytical
+   :update   run-update-analytical})
 
 (def ^:private compiled-keys
   {:simulate :compiled-simulate,   :generate :compiled-generate
@@ -656,6 +692,23 @@
       (and selection
            (some (fn [addr] (sel/selected? selection addr)) (keys handlers))))))
 
+(defn- update-reopens-analytical?
+  "True when the update CONSTRAINTS pin an eliminated LATENT (a conjugate prior
+   or linear-Gaussian block latent) or a block noise latent (genmlx-4q9d).
+   Pinning a latent re-opens its marginalisation (it must be scored jointly under
+   the pinned value); changing a block's noise latent alters every obs variance,
+   breaking the closed-form Δ marginal-LL. In either case the analytical update
+   declines so the joint handler path + joint-rescore-marginal runs (correct, no
+   Rao-Blackwell). Constraining only block OBS is the normal value-update case and
+   does NOT re-open (genmlx-6hcu)."
+  [schema constraints]
+  (let [elim  (get-in schema [:analytical-plan :rewrite-result :eliminated])
+        noise (into #{} (mapcat :noise-latents (:linear-gaussian-blocks schema)))
+        reopen (into (set elim) noise)]
+    (boolean
+      (and (seq reopen)
+           (some (fn [addr] (cm/has-value? (cm/get-submap constraints addr))) reopen)))))
+
 (def ^:private analytical-dispatcher
   (reify dispatch/IDispatcher
     (resolve-transition [_ op schema opts]
@@ -680,6 +733,22 @@
           (when (and (:auto-regenerate-transition schema)
                      (= :marginal (tr/score-type (:trace opts)))
                      (not (regen-reopens-analytical? schema (:selection opts))))
+            {:run run-fn :score-type :marginal :label :analytical})
+
+          :update
+          ;; First analytical :update path (genmlx-6hcu). Same decomposition-
+          ;; consistency rule as regenerate: the marginal old-score is a valid
+          ;; subtrahend only when THIS pass also scores every eliminated structure
+          ;; marginally. :auto-update-transition is built ONLY for fully-supported
+          ;; models (scalar conjugate + LG blocks, no Kalman/MVN); a constraint that
+          ;; pins an eliminated latent re-opens it (decline). Otherwise → joint path.
+          ;; PLAIN update only: update-with-args (op :update + :argdiffs in opts,
+          ;; genmlx-s8e8) re-executes under NEW args x' — a changed design X breaks
+          ;; the closed-form Δ marginal-LL — so it keeps its joint-conversion path.
+          (when (and (:auto-update-transition schema)
+                     (not (contains? opts :argdiffs))
+                     (= :marginal (tr/score-type (:trace opts)))
+                     (not (update-reopens-analytical? schema (:constraints opts))))
             {:run run-fn :score-type :marginal :label :analytical})
 
           nil)))))
@@ -862,7 +931,7 @@
    likelihoods, corrupting for particle diversity (smc) and trace-MH chains
    (genmlx-540f)."
   [:auto-handlers :conjugate-pairs :has-conjugate? :analytical-plan
-   :auto-regenerate-transition])
+   :auto-regenerate-transition :auto-update-transition :auto-update-handlers])
 
 (def alternate-path-schema-keys
   "Every schema key the dispatcher stack consults for a non-handler execution
@@ -1126,11 +1195,32 @@
                            ;; Opt 1: precompute dispatch transition once at construction
                            regen-transition (when (seq regen-handlers)
                                               (auto/make-address-dispatch
-                                               h/regenerate-transition regen-handlers))]
+                                               h/regenerate-transition regen-handlers))
+                           ;; Analytical UPDATE handlers (genmlx-6hcu): scalar
+                           ;; conjugate pairs + LG blocks. MVN and Kalman analytical
+                           ;; update are unimplemented, so a model containing EITHER
+                           ;; gets NO :auto-update-transition and its update falls to
+                           ;; the joint handler path (correct, just no Rao-Blackwell)
+                           ;; — never a mixed marginal/joint score (cf genmlx-wl1y).
+                           update-supported? (and (empty? (:kalman-chains plan))
+                                                  (not-any? #(= :mvn-normal (:family %)) regen-pairs))
+                           scalar-update-handlers (if update-supported?
+                                                    (auto/build-update-handlers regen-pairs)
+                                                    {})
+                           block-update-handlers (reduce
+                                                  (fn [m blk]
+                                                    (merge m (lg/make-lg-handlers blk :update)))
+                                                  {} lg-blocks)
+                           update-handlers (merge scalar-update-handlers block-update-handlers)
+                           update-transition (when (and update-supported? (seq update-handlers))
+                                               (auto/make-address-dispatch
+                                                h/update-transition update-handlers))]
                        (-> augmented
                            (assoc :auto-handlers (get-in plan [:rewrite-result :handlers]))
                            (assoc :auto-regenerate-handlers regen-handlers)
                            (assoc :auto-regenerate-transition regen-transition)
+                           (assoc :auto-update-handlers (when update-transition update-handlers))
+                           (assoc :auto-update-transition update-transition)
                            (assoc :linear-gaussian-blocks (:lg-blocks plan))
                            (assoc :analytical-plan plan)))
                      augmented))

@@ -20,6 +20,7 @@
             [genmlx.selection :as sel]
             [genmlx.mlx.random :as rng]
             [genmlx.method-selection :as ms]
+            [genmlx.trace :as tr]
             [genmlx.linear-gaussian :as lg])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -528,6 +529,106 @@
                 (< (js/Math.abs (- sig-mean oracle-sigma-mean)) 0.35))
   (assert-close "block re-eliminated conditional on current sigma"
                 fem-slope (choice-val final :slope) 2e-2))
+
+;; ===========================================================================
+;; SECTION 6 — analytical UPDATE (genmlx-6hcu)
+;; ===========================================================================
+;; p/update over an eliminated structure with a value-only obs change: the
+;; weight is the Δ block-marginal-LL (logZ_new − logZ_old, the FULL-vector
+;; correlated Gaussian evidence — NOT a per-obs sum, the ke9i trap), the block
+;; latent choices move to the NEW posterior mean, and the discard carries the
+;; changed obs's old value. Re-opening the block (constraining a latent) declines
+;; to the joint handler path. Oracle is an INDEPENDENT float64 quadrature /
+;; closed-form marginal, never lg-eliminate.
+
+(println "\n== Section 6: analytical UPDATE (genmlx-6hcu) ==")
+
+(def BR-X [1.0 2.0 3.0 4.0 5.0])
+
+(defn br-quad
+  "Independent float64 2D quadrature for br-model: the block marginal evidence
+   logZ(y) = log ∫∫ N(s;0,10) N(i;0,10) ∏_j N(y_j; s·x_j+i, 1) ds di, plus the
+   posterior means E[slope|y], E[intercept|y]. Pure model density — does NOT use
+   the Kalman eliminator under test. (Grid discretisation largely cancels in the
+   logZ DIFFERENCE that the weight test checks.)"
+  [ys]
+  (let [log2pi (js/Math.log (* 2 js/Math.PI))
+        c0 (- (* -0.5 log2pi) (js/Math.log 10.0))      ; N(·;0,10) log-norm const
+        ds 0.0125 di 0.025
+        cells (for [k (range 160) m (range 200)]
+                (let [s (+ 1.0 (* ds k)) i (+ -2.0 (* di m))
+                      lik (reduce + (map (fn [xj yj]
+                                           (let [r (- yj (+ (* s xj) i))]
+                                             (+ (* -0.5 log2pi) (* -0.5 r r))))
+                                         BR-X ys))
+                      lp (+ c0 (/ (* s s) -200.0) c0 (/ (* i i) -200.0) lik)]
+                  [s i lp]))
+        mxlp (reduce max (map #(nth % 2) cells))
+        ws   (mapv (fn [[s i lp]] [s i (js/Math.exp (- lp mxlp))]) cells)
+        z    (reduce + (map #(nth % 2) ws))]
+    {:logZ (+ mxlp (js/Math.log z) (js/Math.log (* ds di)))
+     :slope-mean (/ (reduce + (map (fn [[s _ w]] (* s w)) ws)) z)
+     :intercept-mean (/ (reduce + (map (fn [[_ i w]] (* i w)) ws)) z)}))
+
+(defn br-post-mean
+  "Closed-form analytic posterior mean E[β|y] for br-model — independent of the
+   Kalman eliminator (batch normal equations, float64): m1 = (XᵀX + S0⁻¹)⁻¹ Xᵀy
+   with prior N(0,100·I), R=I, so Λ1 = [[Σx²+1/100, Σx],[Σx, n+1/100]]. Exact (no
+   grid error), unlike the quadrature mean."
+  [ys]
+  (let [a (+ 55.0 0.01) b 15.0 d (+ 5.0 0.01)        ; Λ1 = [[a,b],[b,d]]
+        det (- (* a d) (* b b))
+        sxy (reduce + (map * BR-X ys)) sy (reduce + ys)]
+    {:slope     (/ (- (* d sxy) (* b sy)) det)
+     :intercept (/ (- (* a sy) (* b sxy)) det)}))
+
+;; -- U1: update a block obs (:y3); weight = Δ marginal-LL (independent quadrature),
+;;    posterior mean vs the exact closed form.
+(println "-- U1 (update :y3): weight = Δ block-marginal-LL (independent quadrature)")
+(let [{otrace :trace} (p/generate br-model br-xs br-obs)
+      new-y3 7.5
+      y-old [2.3 4.7 6.1 8.9 10.2]
+      y-new [2.3 4.7 7.5 8.9 10.2]
+      new-constraints (cm/set-choice cm/EMPTY [:y3] (mx/scalar new-y3))
+      {rtrace :trace weight :weight discard :discard} (p/update br-model otrace new-constraints)
+      w-oracle (- (:logZ (br-quad y-new)) (:logZ (br-quad y-old)))
+      pm (br-post-mean y-new)]
+  (assert-true  "U1 result trace is :marginal (analytical update fired)"
+                (= :marginal (tr/score-type rtrace)))
+  (assert-close "U1 weight = Δ block-marginal-LL (independent quadrature)" w-oracle (mx/item weight) 5e-3)
+  (assert-close "U1 slope → new posterior mean (closed form)" (:slope pm) (choice-val rtrace :slope) 1e-3)
+  (assert-close "U1 intercept → new posterior mean (closed form)" (:intercept pm) (choice-val rtrace :intercept) 1e-3)
+  (assert-close "U1 discard carries old y3" 6.1 (mx/item (cm/get-value (cm/get-submap discard :y3))) 1e-5))
+
+;; -- U2: constrain a block LATENT (:slope) → re-open → joint handler path
+(println "-- U2 (constrain :slope): re-opens block → analytical declines → joint path")
+(let [{otrace :trace} (p/generate br-model br-xs br-obs)
+      new-constraints (cm/set-choice cm/EMPTY [:slope] (mx/scalar 2.5))
+      {rtrace :trace weight :weight} (p/update br-model otrace new-constraints)]
+  (assert-true "U2 weight finite (re-open → joint path, no marginal/joint mixing)"
+               (js/isFinite (mx/item weight)))
+  (assert-true "U2 result trace is :joint (joint-rescore conversion, not anchored)"
+               (= :joint (tr/score-type rtrace))))
+
+;; -- U3: scalar conjugate (normal-normal) update vs closed-form marginal
+(println "-- U3 (scalar conjugate normal-normal): update :y, weight vs closed-form marginal")
+(def nn-model
+  (dyn/auto-key
+    (gen [] (let [mu (trace :mu (dist/gaussian 0 2))]
+              (trace :y (dist/gaussian mu 1))
+              mu))))
+(let [{otrace :trace} (p/generate nn-model [] (cm/set-choice cm/EMPTY [:y] (mx/scalar 1.0)))
+      {rtrace :trace weight :weight discard :discard}
+      (p/update nn-model otrace (cm/set-choice cm/EMPTY [:y] (mx/scalar 2.5)))
+      ;; marginal y ~ N(0, prior-var + obs-var) = N(0, 5); closed form, exact.
+      mvar 5.0
+      lz (fn [y] (- (* -0.5 (js/Math.log (* 2 js/Math.PI mvar))) (/ (* y y) (* 2 mvar))))
+      w-oracle (- (lz 2.5) (lz 1.0))]
+  (assert-true  "U3 result trace is :marginal (scalar analytical update fired)"
+                (= :marginal (tr/score-type rtrace)))
+  (assert-close "U3 scalar-conjugate update weight = Δ marginal-LL" w-oracle (mx/item weight) 2e-4)
+  (assert-close "U3 mu → new posterior mean (4y/5)" (/ (* 4 2.5) 5.0) (choice-val rtrace :mu) 1e-4)
+  (assert-close "U3 discard carries old y" 1.0 (mx/item (cm/get-value (cm/get-submap discard :y))) 1e-9))
 
 ;; ===========================================================================
 ;; Summary
