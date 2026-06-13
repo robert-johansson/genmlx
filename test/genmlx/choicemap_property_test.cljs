@@ -126,4 +126,52 @@
       (and (= val-a (cm/get-choice merged path-a))
            (= val-b (cm/get-choice merged path-b))))))
 
+;; ---------------------------------------------------------------------------
+;; Merge associativity (genmlx-ota8)
+;;
+;; merge-cm is a RIGHT-biased deep merge: on a leaf-vs-node conflict, b replaces
+;; a's entire subtree (documented). That makes it associative ONLY over
+;; PREFIX-FREE address sets (no path is a proper prefix of another) — which is
+;; exactly the invariant real GFI choicemaps satisfy (a model's trace addresses
+;; are prefix-free). Counterexample WITH a prefix conflict, to show the
+;; constraint is load-bearing, not incidental:
+;;   a={:x {:y 1}}, b={:x 2}, c={:x {:z 3}}
+;;   (merge (merge a b) c) = {:x {:z 3}}      (b's leaf wiped a's :y subtree)
+;;   (merge a (merge b c)) = {:x {:y 1 :z 3}} (a's :y survived)
+;; So the generators below are deliberately prefix-free: flat (depth 1) and
+;; fixed-depth-2 (all leaves at depth 2, all nodes at depth 1 — never a
+;; leaf-vs-node clash). Over those, last-write-wins is associative.
+
+(def gen-path2
+  "Generator for a path of EXACTLY 2 keywords (prefix-free w.r.t. other depth-2
+   paths: no depth-2 path is a prefix of another)."
+  (gen/vector gen-addr 2 2))
+
+(def gen-path2-value
+  (gen/tuple gen-path2 gen-value))
+
+(defn gen-choicemap2
+  "Generator for a prefix-free nested choicemap from 1-5 depth-2 path-value pairs."
+  []
+  (gen/fmap
+    (fn [pvs]
+      (reduce (fn [cm [path val]] (cm/set-choice cm path val))
+              cm/EMPTY pvs))
+    (gen/not-empty (gen/vector gen-path2-value 1 5))))
+
+(defspec merge-cm-associative-flat 100
+  (prop/for-all [a gen-flat-map
+                 b gen-flat-map
+                 c gen-flat-map]
+    (let [ca (cm/from-map a) cb (cm/from-map b) cc (cm/from-map c)]
+      (= (cm/to-map (cm/merge-cm (cm/merge-cm ca cb) cc))
+         (cm/to-map (cm/merge-cm ca (cm/merge-cm cb cc)))))))
+
+(defspec merge-cm-associative-nested-prefix-free 100
+  (prop/for-all [a (gen-choicemap2)
+                 b (gen-choicemap2)
+                 c (gen-choicemap2)]
+    (= (cm/to-map (cm/merge-cm (cm/merge-cm a b) c))
+       (cm/to-map (cm/merge-cm a (cm/merge-cm b c))))))
+
 (t/run-tests)

@@ -11,6 +11,7 @@
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
+            [genmlx.trace :as tr]
             [genmlx.selection :as sel]
             [genmlx.combinators :as comb])
   (:require-macros [genmlx.gen :refer [gen]]
@@ -302,5 +303,58 @@
       (every? (fn [a]
                 (close? (get orig-unsel a) (get new-unsel a) 1e-6))
               unselected))))
+
+;; ---------------------------------------------------------------------------
+;; Property 10: make-trace preserves every field, and the record is immutable
+;; (genmlx-ota8). make-trace is map->Trace; field access must return exactly
+;; what was put in, and assoc must yield a NEW trace without touching the
+;; original.
+;; ---------------------------------------------------------------------------
+
+(def gen-field-num
+  (gen/double* {:min -1e6 :max 1e6 :NaN? false :infinite? false}))
+
+(def gen-flat-choice-map
+  "Generator for a flat {addr -> number} map (0-5 distinct addrs)."
+  (gen/fmap (fn [kvs] (into {} kvs))
+            (gen/vector (gen/tuple (gen/elements [:a :b :c :d :e]) gen-field-num) 0 5)))
+
+(defspec make-trace-preserves-all-fields 50
+  (prop/for-all [gfn    (gen/elements [:gfn-x :gfn-y nil])
+                 args   (gen/vector gen-field-num 0 3)
+                 retval gen-field-num
+                 score  gen-field-num
+                 cmap   gen-flat-choice-map]
+    (let [choices (cm/from-flat-map (into {} (map (fn [[a v]] [a (mx/scalar v)]) cmap)))
+          fields {:gen-fn gfn :args args :choices choices :retval retval :score score}
+          t (tr/make-trace fields)]
+      (and (tr/trace? t)
+           (= gfn (:gen-fn t))
+           (= args (:args t))
+           (identical? choices (:choices t))
+           (= retval (:retval t))
+           (= score (:score t))
+           ;; immutability: assoc returns a NEW trace, original untouched
+           (let [t2 (assoc t :score (inc score))]
+             (and (= (inc score) (:score t2))
+                  (= score (:score t))
+                  (not (identical? t2 t))))))))
+
+;; Across the real model pool + generated args: snapshot a simulated trace's
+;; fields and confirm make-trace reconstructs an identical-field trace.
+(defspec make-trace-roundtrips-simulated-fields 50
+  (prop/for-all [m gen-model]
+    (let [orig    (p/simulate (:model m) (:args m))
+          rebuilt (tr/make-trace {:gen-fn  (:gen-fn orig)
+                                  :args    (:args orig)
+                                  :choices (:choices orig)
+                                  :retval  (:retval orig)
+                                  :score   (:score orig)})]
+      (and (tr/trace? rebuilt)
+           (identical? (:gen-fn orig)  (:gen-fn rebuilt))
+           (=          (:args orig)    (:args rebuilt))
+           (identical? (:choices orig) (:choices rebuilt))
+           (identical? (:retval orig)  (:retval rebuilt))
+           (identical? (:score orig)   (:score rebuilt))))))
 
 (t/run-tests)
