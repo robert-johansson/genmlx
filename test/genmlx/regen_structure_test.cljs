@@ -426,4 +426,32 @@
           {:keys [vtrace]} (dyn/vregenerate dep-pair vt (sel/select :b) (rng/fresh-key 3500))]
       (is (some? vtrace) "single-site batched regenerate uses the fast path"))))
 
+;; ---------------------------------------------------------------------------
+;; 10. Batched dependent-joint selection INSIDE a spliced sub-GF (genmlx-20p7)
+;; ---------------------------------------------------------------------------
+
+(deftest batched-regenerate-through-splice-dependent-joint
+  (testing "select {child:a, child:b} (dependent, inside splice), :y retained: per-particle oracle"
+    ;; parent-splice splices child-cascade (a~N(0,1), b~N(a,1) -> b), then
+    ;; y ~ N(b, sigma). Selecting BOTH child latents is a dependent-joint move
+    ;; INSIDE the spliced sub-GF; :y (parent-direct) is retained. The batched
+    ;; per-site convention would carry the yep2 residual through the splice;
+    ;; the executor-gated sub general path makes W exact per particle:
+    ;;   W[i] = logN(y_i; b_new_i, sigma) - logN(y_i; b_old_i, sigma).
+    (let [sigma 0.7
+          n 8
+          vt (dyn/vsimulate parent-splice [sigma] n (rng/fresh-key 3600))
+          y-old (mx/->clj (cm/get-value (cm/get-submap (:choices vt) :y)))
+          b-old (mx/->clj (cm/get-choice (:choices vt) [:child :b]))
+          {:keys [vtrace weight]} (dyn/vregenerate parent-splice vt
+                                                   (sel/from-paths [[:child :a] [:child :b]])
+                                                   (rng/fresh-key 3700))
+          b-new (mx/->clj (cm/get-choice (:choices vtrace) [:child :b]))
+          ws (mx/->clj weight)
+          oracle (mapv (fn [yi bn bo] (- (h/gaussian-lp yi bn sigma) (h/gaussian-lp yi bo sigma)))
+                       y-old b-new b-old)]
+      (is (= n (count ws)) "weight is [N]-shaped")
+      (is (every? (fn [[w o]] (< (js/Math.abs (- w o)) 1e-3)) (map vector ws oracle))
+          "each particle weight = retained-:y delta only (sub residual cancels)"))))
+
 (cljs.test/run-tests)

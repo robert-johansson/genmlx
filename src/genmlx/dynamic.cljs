@@ -1267,6 +1267,52 @@
                                                 new-score weight n (:retval result)))
      :weight weight}))
 
+(defn batched-sub-regen
+  "Executor for a spliced DynamicGF sub-GF during BATCHED regenerate
+   (genmlx-20p7). Threaded into the batched handler state as :batched-sub-regen
+   and invoked by the runtime splice handler for the regenerate sub-case.
+
+   Returns nil when the sub-selection is FAST-ELIGIBLE for the sub-GF — the
+   caller then uses the per-site batched transition, which is exact there
+   (single-site / independent / prior-resample). Otherwise (a dependent-joint
+   selection inside the sub) runs the sub's batched retained-only general path
+   and returns a batched sub-result whose :weight is the parent-fast-formula
+   proposal ratio (child_new_score - child_old_score - w_child), so the parent's
+   (new_score - old_score) - proposal_ratio yields the child's exact retained-
+   only w_child. Throws if the sub ITSELF splices (deeper batched recursion is
+   unimplemented — scalar p/regenerate is exact there)."
+  [sub-gf sub-args sub-selection sub-old-choices n key param-store]
+  (when-not (regen-fast-eligible? sub-gf sub-selection)
+    (when (seq (:splice-sites (:schema sub-gf)))
+      (throw (ex-info (str "batched regenerate: a dependent-joint selection inside a "
+                           "spliced sub-GF that itself splices is unsupported "
+                           "(genmlx-20p7). Use scalar p/regenerate per particle.")
+                      {:genmlx/error :batched-nested-splice-regenerate :addr sub-args})))
+    (let [sub-gf (propagate-meta sub-gf nil param-store)
+          [k1 k2] (rng/split key)
+          old-vt (vec/->VectorizedTrace sub-gf sub-args sub-old-choices SCORE-ZERO nil n nil)
+          result (rt/run-handler h/batched-regenerate-transition-general
+                   {:choices cm/EMPTY :score SCORE-ZERO :key k1 :selection sub-selection
+                    :old-choices sub-old-choices :batch-size n :batched? true
+                    :executor execute-sub :param-store param-store}
+                   (fn [rt] (run-body sub-gf rt sub-args)))
+          child-new-score (:score result)
+          new-vt (vec/->VectorizedTrace sub-gf sub-args (:choices result)
+                                        child-new-score nil n (:retval result))
+          retained-sel (regen-retained-selection (:choices result) sub-old-choices sub-selection)
+          w-child (if retained-sel
+                    (mx/subtract (vproject sub-gf new-vt retained-sel k2)
+                                 (vproject sub-gf old-vt retained-sel k2))
+                    (mx/subtract child-new-score child-new-score))
+          ;; child's full OLD joint score (re-scored under old choices) — the
+          ;; parent's recorded old score already includes it, so the conversion
+          ;; below makes the parent fast formula reproduce w_child exactly.
+          child-old-score (vproject sub-gf old-vt
+                                    (sel/from-paths (cm/addresses sub-old-choices)) k2)
+          proposal-ratio (mx/subtract (mx/subtract child-new-score child-old-score) w-child)]
+      {:choices (:choices result) :score child-new-score
+       :weight proposal-ratio :retval (:retval result) :score-type :joint})))
+
 (defn vregenerate
   "Batched regenerate (genmlx-hmch / yep2 / 8xia). Returns {:vtrace :weight}.
 
@@ -1303,6 +1349,7 @@
                                   :old-choices (:choices vtrace)
                                   :batch-size n :batched? true
                                   :executor execute-sub
+                                  :batched-sub-regen batched-sub-regen
                                   :param-store (param-store gf)}
                                  (fn [rt] (run-body gf rt (:args vtrace))))
           new-score (:score result)
