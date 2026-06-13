@@ -74,6 +74,19 @@
       (trace :obs-b (dist/gaussian b 1))
       [a b])))
 
+;; Eliminated conjugate latent :mu (normal-normal via :y) PLUS a residual :tau
+;; (Gamma prior, non-conjugate scale obs :w). Trace is :marginal; selecting :mu
+;; RE-OPENS the eliminated pair (a wl1y decline → joint conversion), while
+;; selecting the residual :tau does NOT re-open it (the analytical regenerate
+;; still fires and returns a :marginal result).
+(defn- conj+residual []
+  (gen []
+    (let [mu  (trace :mu (dist/gaussian 0 1))
+          tau (trace :tau (dist/gamma-dist 2 1))]
+      (trace :y (dist/gaussian mu 1))
+      (trace :w (dist/gaussian 0 tau))
+      mu)))
+
 (def ^:private tg-obs
   (-> cm/EMPTY
       (cm/set-choice [:obs-a] (mx/scalar 1.0))
@@ -365,23 +378,61 @@
 ;; 5. Backstop teeth — the law guarding the check itself (540f)
 ;; ============================================================
 
-(deftest backstop-throws-when-strip-is-bypassed
-  ;; If the 540f strip fix ever regresses (a new entry point forgets to
-  ;; strip, or the strip is broken), trace-MH on an eliminated model must
-  ;; THROW — never silently anchor at the posterior mean.
-  (let [model (dyn/auto-key (two-gaussians))
-        {t :trace} (p/generate model [] tg-obs)]
-    (is (= #{:a :b} (get-in (:schema model)
-                            [:analytical-plan :rewrite-result :eliminated]))
+(deftest backstop-protects-eliminated-model-when-strip-bypassed
+  ;; The 540f safety GOAL: if the trace-MH analytical strip ever regresses, an
+  ;; eliminated model must NOT silently anchor chains at the posterior mean
+  ;; (chi2 290.9 vs crit 21.67). Two protections now hold that line, both
+  ;; exercised here with the strip forced to identity (the regressed-strip case):
+  ;;
+  ;;  (1) wl1y re-opening decline — selecting an eliminated latent makes the
+  ;;      analytical regenerate dispatcher DECLINE (the selection re-opens the
+  ;;      block), routing to the joint handler + joint-rescore-marginal. The
+  ;;      latent is resampled, not pinned: a CORRECT joint move, so the result is
+  ;;      :joint and no throw is needed — the chain is not corrupted. (Pre-wl1y
+  ;;      this case threw; the throw was the only protection. The decline is the
+  ;;      stronger one: it makes the move correct, not merely loud.)
+  ;;  (2) assert-joint! teeth — see backstop-throws-on-marginal-residual-move:
+  ;;      any :marginal result that still reaches trace-MH throws loudly.
+  (let [tg (dyn/auto-key (two-gaussians))
+        {t :trace} (p/generate tg [] tg-obs)]
+    (is (= #{:a :b} (get-in (:schema tg) [:analytical-plan :rewrite-result :eliminated]))
         "precondition: model is statically eliminated")
     (is (= :marginal (tr/score-type t)) "precondition: analytical generate fired")
+    ;; Direct regenerate of an eliminated latent (the move mh-kernel runs after the
+    ;; — here bypassed — strip): the wl1y decline routes it to the joint handler +
+    ;; conversion, so the RESULT trace is :joint (not a marginal anchor) with a
+    ;; finite weight.
+    (let [{rt :trace rw :weight}
+          (p/regenerate (dyn/auto-key (:gen-fn t)) t (sel/select :a))]
+      (is (= :joint (tr/score-type rt))
+          "regenerate result is joint — wl1y decline → conversion, not a marginal anchor")
+      (is (js/isFinite (mx/item rw)) "regenerate weight is finite"))
+    ;; Backstop: with the strip forced to identity, mh-kernel/mh-step therefore do
+    ;; NOT trip assert-joint! — the regenerate result they assert on is joint. (A
+    ;; :marginal result would still throw; see the residual-move test below.) The
+    ;; returned trace is the accept/reject outcome, so it may be the old :marginal
+    ;; trace on rejection — the point is only that no corruption-guard fired.
+    (with-redefs [dyn/strip-analytical-path identity]
+      (is (tr/trace? ((kern/mh-kernel (sel/select :a)) t (rng/fresh-key 540)))
+          "mh-kernel runs without throwing (joint regenerate result)")
+      (is (tr/trace? (mcmc/mh-step t (sel/select :a) (rng/fresh-key 541)))
+          "mh-step runs without throwing (joint regenerate result)"))))
+
+(deftest backstop-throws-on-marginal-residual-move-when-strip-bypassed
+  ;; The assert-joint! teeth are intact: with the strip bypassed, a residual MH
+  ;; move on a model with an eliminated block does NOT re-open it, so the
+  ;; analytical regenerate fires and returns a :marginal result — trace-MH must
+  ;; THROW, never silently accept a marginal-scored step (genmlx-540f / wl1y).
+  (let [m (dyn/auto-key (conj+residual))
+        {t :trace} (p/generate m [] (cm/choicemap :y (mx/scalar 1.5)))]
+    (is (= :marginal (tr/score-type t)) "precondition: analytical generate fired (mu eliminated)")
     (with-redefs [dyn/strip-analytical-path identity]
       (is (score-type-error?
-            #((kern/mh-kernel (sel/select :a)) t (rng/fresh-key 540)))
-          "mh-kernel with a bypassed strip throws instead of corrupting the chain")
+            #((kern/mh-kernel (sel/select :tau)) t (rng/fresh-key 542)))
+          "mh-kernel throws on a marginal residual move when the strip is bypassed")
       (is (score-type-error?
-            #(mcmc/mh-step t (sel/select :a) (rng/fresh-key 541)))
-          "mh-step with a bypassed strip throws instead of corrupting the chain"))))
+            #(mcmc/mh-step t (sel/select :tau) (rng/fresh-key 543)))
+          "mh-step throws on a marginal residual move when the strip is bypassed"))))
 
 ;; ============================================================
 ;; 6. Strip consolidation — importance sampling on eliminated models
