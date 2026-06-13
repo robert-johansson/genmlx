@@ -327,6 +327,7 @@ fast test/genmlx/trace_immutability_property_test.cljs
 fast test/genmlx/trace_immutability_test.cljs core
 fast test/genmlx/trace_mh_elim_test.cljs core
 fast test/genmlx/trace_test.cljs core
+medium test/genmlx/trace_translator_test.cljs
 fast test/genmlx/tutorial/ch01_test.cljs
 medium test/genmlx/tutorial/ch02_test.cljs
 fast test/genmlx/tutorial/ch03_test.cljs

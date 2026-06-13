@@ -39,6 +39,7 @@
             [genmlx.gradients :as grad]
             [genmlx.verify :as verify]
             [genmlx.inference.mcmc :as mcmc]
+            [genmlx.inference.translator :as transl]
             [genmlx.inference.smc :as smc]
             [genmlx.inference.util :as u]
             [genmlx.learning :as learn]
@@ -2147,7 +2148,135 @@
                                         (if (>= i 500) (conj acc x-val) acc)
                                         k2))))
                    mean-x (/ (reduce + samples) (count samples))]
-               (approx= mean-x 1.6 0.2)))}])
+               (approx= mean-x 1.6 0.2)))}
+
+   ;; ===================================================================
+   ;; GENERAL TRACE TRANSLATOR laws [T] §3.6-3.7 (genmlx-oen5)
+   ;;
+   ;; The general case of the involutive kernel above: translators between
+   ;; models with different latent spaces (Def 3.6.1; Eq 3.12 importance weight
+   ;; + Jacobian; reversible-jump MCMC §3.7.4). Self-contained, seeded, tagged
+   ;; #{:translator} so they run only on request.
+   ;; ===================================================================
+
+   {:name :translator-jacobian-ad
+    :from "[T] §3.6 — Jacobian of the bijection via automatic differentiation"
+    :theorem "jacobian-logdet (AD, mx/grad) computes log|det J|: g(x)=2x => log 2,
+              the split map (mu,u)->(mu-u,mu+u) => log 2."
+    :tags #{:translator}
+    :check (fn [_]
+             (and (approx= (ev (transl/jacobian-logdet #(mx/multiply % (mx/scalar 2.0))
+                                                       (mx/array [3.0]) 1)) (js/Math.log 2) 1e-4)
+                  (approx= (ev (transl/jacobian-logdet
+                                (fn [x] (let [m (mx/index x 0) u (mx/index x 1)]
+                                          (mx/stack [(mx/subtract m u) (mx/add m u)])))
+                                (mx/array [1.0 0.5]) 2))
+                           (js/Math.log 2) 1e-4)))}
+
+   {:name :translator-sparsity-equiv
+    :from "[T] §3.6.2 — sparsity-aware Jacobian (copied coords are identity cols)"
+    :theorem "sparse-jacobian-logdet over the transformed coordinates equals the
+              full jacobian-logdet when the remaining coordinates are copied
+              (identity columns, determinant 1)."
+    :tags #{:translator}
+    :check (fn [_]
+             (let [g (fn [x] (let [a (mx/index x 0) b (mx/index x 1) c (mx/index x 2)]
+                               (mx/stack [(mx/subtract a b) (mx/add a b) c])))
+                   x (mx/array [1.0 0.5 9.0])]
+               (approx= (ev (transl/jacobian-logdet g x 3))
+                        (ev (transl/sparse-jacobian-logdet g x [0 1])) 1e-5)))}
+
+   {:name :translator-weight-formula
+    :from "[T] Eq 3.12 — trace-translator importance weight"
+    :theorem "A translator over a pure reparameterization (x ~ N(0,1) vs
+              u ~ N(0,0.5) with x=2u — the same law in different coordinates)
+              has importance weight 0 by change of variables."
+    :tags #{:translator}
+    :check (fn [_]
+             (let [P1 (dyn/auto-key (dyn/make-gen-fn
+                                     (fn [rt] ((.-trace rt) :x (dist/gaussian 0 1)))
+                                     '([] (trace :x (dist/gaussian 0 1)))))
+                   P2 (dyn/make-gen-fn
+                       (fn [rt] ((.-trace rt) :u (dist/gaussian 0 0.5)))
+                       '([] (trace :u (dist/gaussian 0 0.5))))
+                   h (fn [in _aux] {:trace (cm/set-value cm/EMPTY :u
+                                                         (mx/divide (transl/read-choice in :x) (mx/scalar 2.0)))
+                                    :aux cm/EMPTY :log-det-jacobian (mx/scalar (- (js/Math.log 2)))})
+                   ttr (transl/trace-translator {:p2 P2 :h h})]
+               (every? true?
+                       (for [seed (range 6)]
+                         (let [in-tr (p/simulate (dyn/with-key P1 (rng/fresh-key seed)) [])
+                               {:keys [weight]} (transl/apply-translator ttr in-tr [] (rng/fresh-key (+ 50 seed)))]
+                           (approx= (ev weight) 0.0 1e-4))))))}
+
+   {:name :translator-bijection-roundtrip
+    :from "[T] §3.7 — the split/merge bijection is invertible"
+    :theorem "Split (mu,u)->(mu-u,mu+u) then merge ->((m1+m2)/2,(m2-m1)/2)
+              recovers (mu,u); the split/merge log-Jacobians (+log2,-log2) are
+              exact negatives."
+    :tags #{:translator}
+    :check (fn [_]
+             (every? true?
+                     (for [[mu u] [[1.0 0.5] [-0.3 0.2] [2.7 -1.1]]]
+                       (let [m1 (- mu u) m2 (+ mu u)
+                             mu' (/ (+ m1 m2) 2.0) u' (/ (- m2 m1) 2.0)]
+                         (and (approx= mu mu' 1e-9) (approx= u u' 1e-9)
+                              (approx= (+ (js/Math.log 2) (- (js/Math.log 2))) 0.0 1e-12))))))}
+
+   {:name :reversible-jump-detailed-balance
+    :from "[T] §3.7.4, Eq 3.12 — split/merge reversible-jump weights are reciprocal"
+    :theorem "For a dimension-changing split/merge move, the split translator
+              weight and the merge translator weight on the round-tripped trace
+              sum to 0 (detailed balance): model-score, auxiliary-proposal, and
+              Jacobian terms each cancel between the two directions."
+    :tags #{:translator :mcmc}
+    :check (fn [_]
+             (let [su 1.5
+                   model (dyn/auto-key
+                          (dyn/make-gen-fn
+                           (fn [rt]
+                             (let [trace (.-trace rt)
+                                   k (trace :k (dist/bernoulli 0.5))]
+                               (if (> (mx/item k) 0.5)
+                                 (let [mu1 (trace :mu1 (dist/gaussian 0 10))
+                                       mu2 (trace :mu2 (dist/gaussian 0 10))]
+                                   (trace :y0 (dist/gaussian mu1 1))
+                                   (trace :y1 (dist/gaussian mu2 1)))
+                                 (let [mu (trace :mu (dist/gaussian 0 10))]
+                                   (trace :y0 (dist/gaussian mu 1))
+                                   (trace :y1 (dist/gaussian mu 1))))))
+                           '([] nil)))
+                   uprop (dyn/make-gen-fn
+                          (fn [rt] ((.-trace rt) :u (dist/gaussian 0 su)))
+                          '([_in] (trace :u (dist/gaussian 0 su))))
+                   split (transl/trace-translator
+                          {:p2 model :q1 uprop
+                           :h (fn [in aux]
+                                (let [m (transl/read-choice in :mu) uu (transl/read-aux aux :u)]
+                                  {:trace (-> cm/EMPTY
+                                              (cm/set-value :k (mx/scalar 1.0))
+                                              (cm/set-value :mu1 (mx/subtract m uu))
+                                              (cm/set-value :mu2 (mx/add m uu))
+                                              (cm/set-value :y0 (transl/read-choice in :y0))
+                                              (cm/set-value :y1 (transl/read-choice in :y1)))
+                                   :aux cm/EMPTY :log-det-jacobian (mx/scalar (js/Math.log 2))}))})
+                   mrg (transl/trace-translator
+                        {:p2 model :q2 uprop
+                         :h (fn [in _aux]
+                              (let [m1 (transl/read-choice in :mu1) m2 (transl/read-choice in :mu2)]
+                                {:trace (-> cm/EMPTY
+                                            (cm/set-value :k (mx/scalar 0.0))
+                                            (cm/set-value :mu (mx/divide (mx/add m1 m2) (mx/scalar 2.0)))
+                                            (cm/set-value :y0 (transl/read-choice in :y0))
+                                            (cm/set-value :y1 (transl/read-choice in :y1)))
+                                 :aux (cm/set-value cm/EMPTY :u (mx/divide (mx/subtract m2 m1) (mx/scalar 2.0)))
+                                 :log-det-jacobian (mx/scalar (- (js/Math.log 2)))}))})
+                   init (:trace (p/generate (dyn/with-key model (rng/fresh-key 3)) []
+                                            (cm/choicemap :k (mx/scalar 0.0)
+                                                          :y0 (mx/scalar -2.0) :y1 (mx/scalar 2.0))))
+                   {t2 :trace w-split :weight} (transl/apply-translator split init [] (rng/fresh-key 4))
+                   {w-merge :weight} (transl/apply-translator mrg t2 [] (rng/fresh-key 5))]
+               (approx= (+ (ev w-split) (ev w-merge)) 0.0 1e-4)))}])
 
 ;; ---------------------------------------------------------------------------
 ;; Law index (for fast lookup)
