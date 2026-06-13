@@ -426,16 +426,36 @@ L0 is neither -- it is the identity. It is the base transition that everything e
 The middleware pattern means L3 composes with L0 or L1. A partially-compiled model can have its static prefix compiled (L1) while its dynamic suffix runs under an analytical-wrapped handler (L3 on L0). The dispatcher stack resolves per-site, not per-model.
 
 
-## 3.3 Score Encoding as Transition Metadata
+## 3.3 Score Encoding as Enforced Metadata
 
 Different transitions assign different meanings to the score field:
 
 - **Standard transitions**: score = log *p*(*τ*; *x*) (joint log-probability)
 - **Analytical middleware**: score = marginal log-likelihood (conjugate sites collapsed)
 - **Enumerate transition**: score = exact marginal likelihood (all latents collapsed)
-- **Beam transition**: score = beam-approximated marginal likelihood
+- **Beam transition**: score = beam-approximated marginal likelihood (reserved)
 
-The score encoding should be explicit metadata on the transition result, not an implicit convention. When `merge-sub-result` accumulates a sub-result's score into the parent state, it must know whether that score is a joint density, a marginal likelihood, or an approximation. Making it metadata makes the convention checkable.
+The score encoding is explicit, checked metadata, not an implicit convention.
+Every trace carries `:genmlx.trace/score-type` metadata (`:joint`,
+`:marginal`, `:collapsed`), set by every producing path: handler and
+compiled paths tag `:joint`, the analytical path tags `:marginal` when a
+handler actually marginalized, enumerate tags `:collapsed`. Composite
+producers propagate: `merge-sub-result` lubs a spliced sub-result's
+score-type into the parent state, and combinators tag their result traces
+with the lub over element traces — a marginal sub-score cannot launder into
+a joint-looking total.
+
+Consumers enforce the contract at joint-scoring boundaries
+(update/project/regenerate, via the dispatcher guard for `DynamicGF` and
+`ensure-joint-self` for combinator records): `:marginal` traces convert by
+re-generating fully constrained from their own choices (one handler
+generate; alternate paths stay semantically invisible), while `:collapsed`
+traces throw — their choicemaps are empty, so no joint conversion exists.
+Trace-MH entry points additionally assert their regenerate results are
+joint-scored, so a forgotten analytical strip throws instead of silently
+anchoring chains at the posterior mean (the genmlx-540f failure class).
+The law `:score-type-soundness` in `gfi.cljs` and `score_type_test.cljs`
+guard the convention.
 
 ---
 

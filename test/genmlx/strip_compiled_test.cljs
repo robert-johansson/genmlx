@@ -101,7 +101,7 @@
         stripped (dyn/auto-key (gfi/strip-compiled model))
         {jt :trace} (p/generate stripped [] (:choices trace))]
     (testing "precondition: analytical generate produced a marginal trace"
-      (is (= :marginal (:genmlx.dynamic/score-type (meta trace)))
+      (is (= :marginal (:genmlx.trace/score-type (meta trace)))
           "trace is analytically scored"))
     (testing "update on a marginal trace = update on the joint-rescored trace"
       (let [u-marg (p/update model trace (cm/choicemap :y 2.0))
@@ -112,8 +112,8 @@
         (is (< (js/Math.abs (- w-marg w-joint)) 1e-4)
             (str "update weights match: marginal-path " w-marg
                  " vs handler baseline " w-joint))
-        (is (nil? (:genmlx.dynamic/score-type (meta (:trace u-marg))))
-            "result trace is joint-scored")))
+        (is (= :joint (:genmlx.trace/score-type (meta (:trace u-marg))))
+            "result trace is joint-scored (explicitly tagged — genmlx-lbae)")))
     (testing "project on a marginal trace = project on the joint-rescored trace"
       (let [p-marg (p/project model trace (sel/select :mu))
             p-joint (p/project stripped jt (sel/select :mu))
@@ -125,7 +125,8 @@
         (is (some? t') "analytical regenerate works on marginal traces")))
     (testing "joint traces are passed through untouched"
       (let [upd (p/update stripped jt (cm/choicemap :y 2.0))]
-        (is (nil? (:genmlx.dynamic/score-type (meta jt))) "handler trace is joint")
+        (is (= :joint (:genmlx.trace/score-type (meta jt)))
+            "handler trace is joint (explicitly tagged — genmlx-lbae)")
         (is (some? (:trace upd)) "update on joint trace works")))))
 
 (cljs.test/run-tests)

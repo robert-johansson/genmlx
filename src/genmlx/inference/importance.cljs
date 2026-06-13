@@ -8,15 +8,13 @@
             [genmlx.dynamic :as dyn]
             [genmlx.vectorized :as vec]))
 
-(defn- strip-analytical
-  "Remove L3 analytical handlers so generate samples from the prior,
-   not the deterministic posterior mean. The analytical path is correct
-   for single-trace operations (MCMC, marginal LL) but returns identical
-   particles in multi-particle IS, breaking the method."
-  [model]
-  (if-let [schema (:schema model)]
-    (assoc model :schema (dissoc schema :auto-handlers :conjugate-pairs))
-    model))
+(def ^:private strip-analytical
+  "Remove the L3 analytical path so generate samples from the prior, not
+   the deterministic posterior mean — identical particles break
+   multi-particle IS (genmlx-540f). Delegates to the canonical strip in
+   genmlx.dynamic: the old local copy here removed only 2 of the 5
+   analytical schema keys (genmlx-jr90 copy drift)."
+  dyn/strip-analytical-path)
 
 (defn- log-ml-from-weights
   "Marginal-likelihood estimate from JS-number log-weights:

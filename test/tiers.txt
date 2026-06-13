@@ -293,6 +293,7 @@ slow test/genmlx/sbc_test.cljs
 fast test/genmlx/schema_test.cljs core
 fast test/genmlx/score_gradient_test.cljs core
 fast test/genmlx/score_monotonicity_property_test.cljs
+fast test/genmlx/score_type_test.cljs core
 fast test/genmlx/searchsorted_test.cljs
 fast test/genmlx/selection_algebra_test2.cljs core
 fast test/genmlx/selection_property_test.cljs

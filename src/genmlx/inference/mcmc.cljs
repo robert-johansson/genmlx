@@ -8,6 +8,7 @@
             [genmlx.selection :as sel]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
+            [genmlx.trace :as tr]
             [genmlx.dynamic :as dyn]
             [genmlx.inference.util :as u]
             [genmlx.inference.kernel :as kern]
@@ -53,6 +54,10 @@
    (let [gf (dyn/strip-analytical-path (:gen-fn current-trace))
          [regen-key accept-key] (rng/split (rng/ensure-key key))
          result (p/regenerate (dyn/with-key gf regen-key) current-trace selection)
+         ;; MH ratios are only valid for joint-scored regenerate results:
+         ;; throw if the strip regressed or the gen-fn substitutes a
+         ;; collapsed regenerate (genmlx-lbae, genmlx-540f).
+         _ (tr/assert-joint! (:trace result) :mh-step)
          w (mx/realize (:weight result))]
      (if (u/accept-mh? w accept-key)
        (:trace result)
@@ -97,12 +102,12 @@
 (defn- ensure-joint-trace
   "MH acceptance ratios are joint-score deltas computed via p/update. A trace
    produced by an analytical (collapsed) generate carries a marginal score
-   (::dyn/score-type :marginal) and would mix score decompositions — the
-   dispatcher guard throws on it (genmlx-pkmx). Its choices are a perfectly
-   good chain state, so re-generate it jointly from its own choices via the
-   handler path. No-op for joint traces."
+   (:genmlx.trace/score-type :marginal) and would mix score decompositions
+   (genmlx-pkmx). Its choices are a perfectly good chain state, so
+   re-generate it jointly from its own choices via the handler path.
+   No-op for joint traces."
   [model trace]
-  (if (= :marginal (::dyn/score-type (meta trace)))
+  (if (= :marginal (tr/score-type trace))
     (:trace (p/generate (dyn/strip-alternate-paths model)
                         (:args trace) (:choices trace)))
     trace))

@@ -31,6 +31,7 @@
             [genmlx.selection :as sel]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
+            [genmlx.trace :as tr]
             [genmlx.dynamic :as dyn]
             [genmlx.dist :as dist]
             [genmlx.gradients :as grad]
@@ -611,6 +612,23 @@
                (and (js/Number.isFinite pw)
                     (let [{:keys [weight]} (p/assess model args choices)]
                       (approx= pw (ev weight) 0.01)))))}
+
+   {:name :score-type-soundness
+    :from "ARCHITECTURE §3.3 (genmlx-lbae)"
+    :theorem "Every produced trace carries an EXPLICIT score-type tag
+              (:genmlx.trace/score-type metadata). simulate never fires the
+              analytical path and generate without constraints declines it,
+              so both must tag :joint; the accessor default agrees. Boundary
+              semantics (marginal converts, collapsed throws) are pinned in
+              score_type_test.cljs."
+    :tags #{:simulate :generate :dispatch :consistency}
+    :check (fn [{:keys [model args]}]
+             (let [t (p/simulate model args)
+                   {gt :trace} (p/generate model args cm/EMPTY)]
+               (and (contains? (meta t) :genmlx.trace/score-type)
+                    (= :joint (tr/score-type t))
+                    (contains? (meta gt) :genmlx.trace/score-type)
+                    (= :joint (tr/score-type gt)))))}
 
    ;; ===================================================================
    ;; COMPOSITIONALITY laws

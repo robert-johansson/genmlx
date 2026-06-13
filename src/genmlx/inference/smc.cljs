@@ -5,6 +5,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
+            [genmlx.trace :as tr]
             [genmlx.inference.util :as u]
             [genmlx.dynamic :as dyn]
             [genmlx.vectorized :as vz]
@@ -52,6 +53,10 @@
   [trace selection step-keys]
   (reduce (fn [t rk]
             (let [{:keys [trace weight]} (p/regenerate (:gen-fn t) t selection)]
+              ;; MH ratios are only valid for joint-scored regenerate results
+              ;; (genmlx-lbae) — particles enter with the stripped model, so
+              ;; this only fires if the entry strip regresses (genmlx-540f).
+              (tr/assert-joint! trace :rejuvenate-trace)
               (if (u/accept-mh? (mx/realize weight) rk) trace t)))
           trace step-keys))
 
@@ -68,19 +73,15 @@
   (when (zero? (mod (inc i) 50)) (mx/sweep-dead-arrays!))
   trace)
 
-(defn strip-analytical
+(def strip-analytical
   "Strip analytical handlers from a model for particle-based inference.
    The analytical path returns deterministic posterior means, eliminating
    particle diversity. Particle methods need stochastic prior sampling.
    Public so every particle method (smc, csmc, smcp3) shares ONE stripping
    — mixed stripped/un-stripped scoring puts particles on different weight
-   scales."
-  [model]
-  (assoc model :schema
-         (dissoc (:schema model)
-                 :auto-handlers :conjugate-pairs
-                 :has-conjugate? :analytical-plan
-                 :auto-regenerate-transition)))
+   scales. Delegates to the canonical strip in genmlx.dynamic
+   (genmlx-jr90: one strip, no copy drift)."
+  dyn/strip-analytical-path)
 
 (defn- obs-selection
   "Selection covering exactly the addresses present in an observation
