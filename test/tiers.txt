@@ -95,6 +95,7 @@ medium test/genmlx/differentiable_hard2_test.cljs
 medium test/genmlx/differentiable_resample_test.cljs
 medium test/genmlx/differentiable_test.cljs
 medium test/genmlx/directional_dist_test.cljs
+medium test/genmlx/dirichlet_categorical_test.cljs
 fast test/genmlx/dist_batch_test.cljs
 fast test/genmlx/dist_boundary_test.cljs core
 fast test/genmlx/dist_boundary2_test.cljs
@@ -113,6 +114,7 @@ fast test/genmlx/edit_purity_test.cljs
 medium test/genmlx/ekf_nd_test.cljs
 medium test/genmlx/ekf_test.cljs
 medium test/genmlx/elliptical_slice_test.cljs
+medium test/genmlx/encapsulated_test.cljs
 fast test/genmlx/entropy_property_test.cljs
 medium test/genmlx/enumerate_test.cljs
 fast test/genmlx/error_message_test.cljs
@@ -317,6 +319,7 @@ fast test/genmlx/strip_compiled_test.cljs core
 medium test/genmlx/support_property_test.cljs
 medium test/genmlx/synthesis_exact_test.cljs
 fast test/genmlx/temperature_sampling_test.cljs
+fast test/genmlx/tensor_trace_property_test.cljs
 medium test/genmlx/tensor_trace_test.cljs
 exclude test/genmlx/test_helpers.cljs
 exclude test/genmlx/test_models.cljs

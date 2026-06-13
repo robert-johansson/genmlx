@@ -32,8 +32,10 @@
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.trace :as tr]
+            [genmlx.diff :as diff]
             [genmlx.dynamic :as dyn]
             [genmlx.dist :as dist]
+            [genmlx.encapsulated :as enc]
             [genmlx.gradients :as grad]
             [genmlx.verify :as verify]
             [genmlx.inference.mcmc :as mcmc]
@@ -1509,6 +1511,89 @@
                ;; Both kernels converge to the same analytical posterior
                (and (approx= mean-mix analytical-mean 0.25)
                     (approx= mean-cycle analytical-mean 0.25))))}
+
+   ;; ===================================================================
+   ;; ENCAPSULATED RANDOMNESS laws [T] §4.5 (genmlx-qbaa)
+   ;;
+   ;; A generative function whose realized score is an unbiased density
+   ;; ESTIMATOR xi(x, tau, omega), not the exact density p(tau; x). omega
+   ;; lives in the trace; reuse makes identity ops cost weight 0, resample
+   ;; drives pseudo-marginal MCMC. These laws are SELF-CONTAINED (they build
+   ;; their own encapsulated models and ignore the passed model/args) and
+   ;; seeded for reproducibility, like :mixture-kernel-stationarity. Tagged
+   ;; #{:encapsulated} so they run only when explicitly requested.
+   ;; ===================================================================
+
+   {:name :encapsulated-estimator-unbiased
+    :from "[T] §4.5 Eq 4.3 — E_omega[xi(x,tau,omega)] = p(tau;x)"
+    :theorem "The Monte-Carlo average over omega of the realized density
+              estimate xi converges to the exact marginal density p(y),
+              checked on a 3-component Gaussian mixture whose exact density is
+              an independent closed form."
+    :tags #{:encapsulated :inference}
+    :check (fn [{:keys [_model _args]}]
+             (let [w [0.3 0.5 0.2] mu [-2 0 3] sg [1 0.5 2]
+                   {:keys [gf]} (enc/mixture-density
+                                 {:weights w :means mu :sigmas sg :k 32})
+                   y 0.0
+                   wsum (reduce + w)
+                   ;; independent oracle: exact mixture density at y
+                   p-exact (reduce + (map (fn [wk m s]
+                                            (* (/ wk wsum)
+                                               (js/Math.exp (log-gauss y m s))))
+                                          w mu sg))
+                   obs (cm/choicemap :y (mx/scalar y))
+                   r 300
+                   xis (mapv (fn [i]
+                               (js/Math.exp
+                                (ev (:weight (p/assess
+                                              (dyn/with-key gf (rng/fresh-key (+ 7000 i)))
+                                              [] obs)))))
+                             (range r))
+                   mc (/ (reduce + xis) r)
+                   sd (js/Math.sqrt (/ (reduce + (map #(let [d (- % mc)] (* d d)) xis)) r))
+                   band (max (* 5.0 (/ sd (js/Math.sqrt r))) 0.01)]
+               (approx= mc p-exact band)))}
+
+   {:name :encapsulated-identity-update-zero
+    :from "[T] §4.5 — stored omega makes a no-op move reproducible"
+    :theorem "update / update-with-args / regenerate that change nothing reuse
+              the recorded omega, so the realized xi is unchanged and the
+              weight is EXACTLY 0. Without stored omega a fresh xi would inject
+              nonzero weight into SMC/MH."
+    :tags #{:encapsulated :inference}
+    :check (fn [{:keys [_model _args]}]
+             (let [{:keys [gf]} (enc/marginalized-gaussian
+                                 {:n 2 :tau 1.0 :sigma 1.0 :k 16})
+                   theta (mx/scalar 0.4)
+                   y (mx/array [1.0 2.0])
+                   obs (cm/choicemap :y y)
+                   t (:trace (p/generate (dyn/with-key gf (rng/fresh-key 31)) [theta] obs))
+                   w-upd (ev (:weight (p/update gf t obs)))
+                   w-uwa (ev (:weight (p/update-with-args gf t [theta]
+                                                          diff/no-change cm/EMPTY)))
+                   w-reg (ev (:weight (p/regenerate gf t sel/none)))]
+               (and (= 0.0 w-upd) (= 0.0 w-uwa) (= 0.0 w-reg))))}
+
+   {:name :pseudo-marginal-stationarity
+    :from "[T] §4.5 / Andrieu-Roberts 2009 — unbiased likelihood ⇒ exact target"
+    :theorem "Pseudo-marginal MH on theta using an unbiased ESTIMATE of the
+              likelihood (never the exact density), reusing the stored old xi as
+              the auxiliary variable, has the exact posterior as its stationary
+              distribution. Normal-Normal conjugate: posterior mean recovered to
+              tolerance (independent closed form 24/13)."
+    :tags #{:encapsulated :mcmc :inference}
+    :check (fn [{:keys [_model _args]}]
+             (let [{:keys [gf]} (enc/marginalized-gaussian
+                                 {:n 3 :tau 0.6 :sigma 0.8 :k 8})
+                   y (mx/array [1.0 2.0 3.0])
+                   log-prior (fn [th] (log-gauss th 0.0 2.0))
+                   {:keys [samples]} (enc/pseudo-marginal-mh
+                                      {:enc-gf gf :y y :theta0 0.0 :log-prior log-prior
+                                       :step 0.7 :samples 3000 :burn 800
+                                       :key (rng/fresh-key 4242)})
+                   m (/ (reduce + samples) (count samples))]
+               (approx= m (/ 24.0 13.0) 0.1)))}
 
    ;; ===================================================================
    ;; WELL-FORMEDNESS laws [T] §2.2.1 (DML restrictions)

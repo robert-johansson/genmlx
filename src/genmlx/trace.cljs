@@ -10,11 +10,28 @@
    by TensorTrace and VectorizedTrace at their definition sites, so
    predicates (e.g. genmlx.schemas) accept every trace representation.")
 
-(defrecord Trace [gen-fn args choices retval score]
+(defrecord Trace [gen-fn args choices retval score omega]
   ITrace)
 
+;; ---------------------------------------------------------------------------
+;; Encapsulated randomness (genmlx-qbaa, thesis §4.5)
+;;
+;; The 6th field `omega` is optional (default nil). It holds the *encapsulated
+;; randomness* a generative function used to realize its score when the score
+;; is an unbiased density ESTIMATOR ξ(x, τ, ω) rather than the exact density
+;; p(τ; x) (Def 4.5.1, Eq 4.2). Ordinary exact-density traces leave it nil.
+;;
+;; Storing ω makes the realized score reproducible: re-evaluating the
+;; estimator at the recorded ω yields the same ξ, so identity update/project
+;; over an encapsulated trace return weight 0 exactly, while a genuine move
+;; (changed value or args) resamples ω and pays the pseudo-marginal ratio
+;; log ξ' − log ξ_old. See genmlx.encapsulated.
+;; ---------------------------------------------------------------------------
+
 (defn make-trace
-  "Create a trace from a map of {:gen-fn :args :choices :retval :score}."
+  "Create a trace from a map of {:gen-fn :args :choices :retval :score} and the
+   optional :omega (encapsulated randomness, genmlx-qbaa §4.5; nil for ordinary
+   exact-density traces)."
   [m]
   (map->Trace m))
 

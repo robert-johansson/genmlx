@@ -222,6 +222,10 @@
 (defn save-trace
   "Serialize a full trace to a JSON string.
    Includes choices, args, and retval (best-effort for retval).
+   The optional :omega field (encapsulated randomness, genmlx-qbaa §4.5) is
+   intentionally NOT persisted: it is internal randomness, and load-trace
+   reconstructs via p/generate, which redraws a fresh omega for an
+   EncapsulatedGF (the saved :score is reproduced in expectation, not exactly).
    Options:
      :gen-fn-id - optional string identifier for the gen-fn"
   [trace & {:keys [gen-fn-id]}]
