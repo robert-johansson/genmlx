@@ -1224,49 +1224,105 @@
   [gf vtrace new-args constraints key]
   (vupdate* gf vtrace new-args constraints key))
 
-(defn vregenerate
-  "Batched regenerate: run model body ONCE with batched regenerate handler.
-   vtrace: VectorizedTrace with [n]-shaped choices, selection: addresses to resample.
-   Returns new VectorizedTrace with resampled selected addresses.
-
-   Uses the per-site batched convention, which is exact ONLY for fast-eligible
-   selections (single-site / mutually-independent, no structure change). A
-   DEPENDENT JOINT batched selection would carry the genmlx-yep2 residual, and
-   a structure-changing batched flip is ill-posed under shape-batching (host
-   control flow must be uniform across particles — math-verifier §7 on
-   genmlx-hmch). Rather than silently miscalibrate, those are rejected loudly;
-   the full batched retained-only path is the genmlx-8xia follow-up. The scalar
-   p/regenerate handles all these cases correctly."
+(defn vproject
+  "Batched project (genmlx-8xia): replay the vtrace's [N]-shaped choices and
+   return the [N]-shaped sum of log-probs at the selected addresses. The
+   batched counterpart of p/project, used to compute the retained-only batched
+   regenerate weight."
   [gf vtrace selection key]
-  (when-not (regen-fast-eligible? gf selection)
-    (throw (ex-info
-             (str "vregenerate: this selection is not fast-eligible (dependent "
-                  "joint move or structure change). The batched per-site "
-                  "convention would carry the genmlx-yep2 weight residual or be "
-                  "ill-posed under shape-batching. Use scalar p/regenerate "
-                  "per particle, or restrict to single-site / independent "
-                  "selections. Full batched retained-only: genmlx-8xia.")
-             {:genmlx/error :batched-regenerate-not-fast-eligible})))
-  (let [key (rng/ensure-key key)
+  (let [n (:n-particles vtrace)
+        result (rt/run-handler h/batched-project-transition
+                 {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
+                  :key (rng/ensure-key key) :selection selection
+                  :old-choices (:choices vtrace) :constraints cm/EMPTY
+                  :batch-size n :batched? true
+                  :executor execute-sub-project :param-store (param-store gf)}
+                 (fn [rt] (run-body gf rt (:args vtrace))))]
+    (:weight result)))
 
-        n (:n-particles vtrace)
-        old-score (:score vtrace)
-        result (rt/run-handler h/batched-regenerate-transition
-                               {:choices cm/EMPTY :score SCORE-ZERO
-                                :weight SCORE-ZERO :key key
-                                :selection selection
-                                :old-choices (:choices vtrace)
-                                :batch-size n :batched? true
-                                :executor execute-sub
-                                :param-store (param-store gf)}
-                               (fn [rt] (run-body gf rt (:args vtrace))))
+(defn- make-vregen-result-general
+  "Batched retained-only regenerate (genmlx-8xia, batched counterpart of
+   make-regen-result-general). Builds the new [N] trace, then
+   W = vproject(new, retained) - vproject(old, retained), where retained =
+   leaf addresses present in both minus the selection. For non-structure-change
+   dependent-joint selections (the batched yep2 case); the [N] weight is exact
+   per particle because the per-site residual cancels in the two project passes."
+  [gf vtrace selection key]
+  (let [n (:n-particles vtrace)
+        [k1 k2] (rng/split (rng/ensure-key key))
+        result (rt/run-handler h/batched-regenerate-transition-general
+                 {:choices cm/EMPTY :score SCORE-ZERO :key k1 :selection selection
+                  :old-choices (:choices vtrace) :batch-size n :batched? true
+                  :executor execute-sub :param-store (param-store gf)}
+                 (fn [rt] (run-body gf rt (:args vtrace))))
         new-score (:score result)
-        proposal-ratio (:weight result)
-        weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)]
-    {:vtrace (tag-vtrace
-               (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
-                                      new-score weight n (:retval result)))
+        new-vtrace (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
+                                          new-score nil n (:retval result))
+        retained-sel (regen-retained-selection (:choices result) (:choices vtrace) selection)
+        weight (if retained-sel
+                 (mx/subtract (vproject gf new-vtrace retained-sel k2)
+                              (vproject gf vtrace retained-sel k2))
+                 (mx/subtract new-score new-score))]  ; [N]-shaped zero (select-all)
+    {:vtrace (tag-vtrace (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
+                                                new-score weight n (:retval result)))
      :weight weight}))
+
+(defn vregenerate
+  "Batched regenerate (genmlx-hmch / yep2 / 8xia). Returns {:vtrace :weight}.
+
+   Routing (cond order matters):
+   1. Fast-eligible at the PARENT (single-site / mutually-independent direct
+      sites, no structure change) → the per-site batched convention.
+   2. Otherwise, a structure-changing (has-branches?) or splice-bearing model
+      whose PARENT selection is not fast-eligible → throw (host control flow
+      cannot shape-batch coherently — math-verifier §7).
+   3. Otherwise (dependent-joint over the parent's own sites, no structure
+      change) → the batched retained-only general path (two batched project
+      passes — exact, no residual).
+
+   KNOWN GAP (genmlx-8xia, batched splice recursion): a model that only SPLICES
+   a sub-GF and selects no direct parent site is fast-eligible at the parent and
+   takes path 1. Inside the splice the per-site batched convention is used; this
+   is exact for fast-eligible sub-selections (single-site / independent, and the
+   prior-resample case → weight 0), but a DEPENDENT-JOINT selection INSIDE a
+   spliced sub-GF would carry the yep2 residual. Batched splice recursion routed
+   through the executor (so the sub-GF re-gates) is unimplemented — the sub-GF is
+   only a runtime value, not resolvable from the schema at gate time, and the
+   runtime splice handler is below the dynamic layer. For a dependent-joint
+   selection inside a spliced sub-GF, use scalar p/regenerate, which is exact."
+  [gf vtrace selection key]
+  (cond
+    (regen-fast-eligible? gf selection)
+    (let [key (rng/ensure-key key)
+          n (:n-particles vtrace)
+          old-score (:score vtrace)
+          result (rt/run-handler h/batched-regenerate-transition
+                                 {:choices cm/EMPTY :score SCORE-ZERO
+                                  :weight SCORE-ZERO :key key
+                                  :selection selection
+                                  :old-choices (:choices vtrace)
+                                  :batch-size n :batched? true
+                                  :executor execute-sub
+                                  :param-store (param-store gf)}
+                                 (fn [rt] (run-body gf rt (:args vtrace))))
+          new-score (:score result)
+          proposal-ratio (:weight result)
+          weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)]
+      {:vtrace (tag-vtrace
+                 (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
+                                        new-score weight n (:retval result)))
+       :weight weight})
+
+    (or (:has-branches? (:schema gf)) (seq (:splice-sites (:schema gf))))
+    (throw (ex-info
+             (str "vregenerate: structure-changing or spliced batched regenerate "
+                  "is not supported — host control flow cannot shape-batch "
+                  "coherently across particles, and batched splice recursion is "
+                  "unimplemented. Use scalar p/regenerate per particle.")
+             {:genmlx/error :batched-regenerate-unsupported}))
+
+    :else
+    (make-vregen-result-general gf vtrace selection key)))
 
 (defn loop-obs
   "Create flat constraints from prefix + values sequence.

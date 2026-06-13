@@ -332,6 +332,55 @@
                  (update :choices cm/set-value addr val)
                  (update :score mx/add lp))]))))
 
+(defn batched-project-transition
+  "Pure: batched project — replay the [N]-shaped old value, accumulate its
+   [N] log-prob into :score, and into :weight when the address is selected.
+   The batched counterpart of project-transition (genmlx-8xia)."
+  [state addr dist]
+  (let [n (:batch-size state)
+        old-choice (cm/get-submap (:old-choices state) addr)
+        val (when (cm/has-value? old-choice) (cm/get-value old-choice))]
+    (when (nil? val)
+      (throw (ex-info (str "batched project: address " addr
+                           " not found in previous trace choices.")
+                      {:addr addr})))
+    (let [lp (dc/dist-log-prob dist val)
+          sel (:selection state)]
+      (check-batched-lp! addr n lp)
+      [val (-> state
+               (update :choices cm/set-value addr val)
+               (update :score mx/add lp)
+               (cond-> (and sel (sel/selected? sel addr))
+                 (update :weight mx/add lp)))])))
+
+(defn batched-regenerate-transition-general
+  "Pure: batched retained-only regenerate transition (genmlx-8xia) — the
+   batched counterpart of regenerate-transition-general. Builds the new [N]
+   trace (selected sites resample [N]; unselected sites are retained) and
+   accumulates NO weight; make-vregen-result-general computes the [N]-shaped
+   W via two batched project passes. Only used for non-structure-change
+   selections (the address set is fixed across the batch), so there are no
+   fresh/removed sites — this is the dependent-joint (yep2) batched case."
+  [state addr dist]
+  (let [n (:batch-size state)
+        sel (:selection state)
+        old-choice (cm/get-submap (:old-choices state) addr)]
+    (if (and sel (sel/selected? sel addr))
+      (let [[k1 k2] (rng/split (:key state))
+            new-val (dc/dist-sample-n dist k2 n)
+            new-lp (dc/dist-log-prob dist new-val)]
+        (check-batched-lp! addr n new-lp)
+        [new-val (-> state
+                     (assoc :key k1)
+                     (update :choices cm/set-value addr new-val)
+                     (update :score mx/add new-lp))])
+      (let [val (cm/get-value old-choice)
+            lp (dc/dist-log-prob dist val)]
+        (check-batched-lp! addr n lp)
+        [val (-> state
+                 (update :choices cm/set-value addr val)
+                 (update :score mx/add lp))]))))
+
 ;; ---------------------------------------------------------------------------
 ;; Pure helpers used by runtime.cljs
 ;; ---------------------------------------------------------------------------
