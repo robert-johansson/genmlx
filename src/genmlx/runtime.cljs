@@ -112,9 +112,20 @@
                       sub-init-state (if-let [ps (:param-store state)]
                                        (assoc sub-init-state :param-store ps)
                                        sub-init-state)
-                      ;; Recursive call to run-handler
-                      sub-result (run-handler sub-transition sub-init-state
-                                              (fn [rt] (apply sub-body-fn rt (vec args))))
+                      ;; genmlx-20p7: gate the REGENERATE sub-case via the
+                      ;; batched-sub-regen executor (threaded from dynamic.cljs).
+                      ;; A dependent-joint selection inside the sub takes the
+                      ;; retained-only general path instead of the residual-
+                      ;; bearing per-site convention. nil => fast-eligible (or no
+                      ;; executor) => fall through to the per-site run-handler.
+                      gated-sub (when (and sub-selection (:batched-sub-regen state))
+                                  ((:batched-sub-regen state)
+                                   gf (vec args) sub-selection
+                                   (or sub-old-choices cm/EMPTY) n k2 (:param-store state)))
+                      ;; Recursive call to run-handler (per-site path)
+                      sub-result (or gated-sub
+                                     (run-handler sub-transition sub-init-state
+                                                  (fn [rt] (apply sub-body-fn rt (vec args)))))
                       ;; Merge into parent state
                       _ (@validate-fn :sub-result sub-result
                           (str "splice sub-result at " addr))
