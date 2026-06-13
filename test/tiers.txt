@@ -277,6 +277,7 @@ fast test/genmlx/project_test.cljs
 medium test/genmlx/proposal_edit_test.cljs
 slow test/genmlx/qwen2_coder_test.cljs
 fast test/genmlx/recurse_test.cljs
+medium test/genmlx/regen_structure_test.cljs
 fast test/genmlx/remaining_fixes_test.cljs
 slow test/genmlx/resource_recovery_test.cljs
 medium test/genmlx/resource_test.cljs

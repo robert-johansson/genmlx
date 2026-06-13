@@ -112,6 +112,13 @@
        :discard discard}
       (attach-unused constraints result-choices)))
 
+(def ^:dynamic *force-general-regen*
+  "When true, regenerate always takes the retained-only GENERAL path (the
+   project-pass algebra), never the fast path. Used by the fast≡general law
+   test to pin equivalence on fast-eligible models. Default false (the fast
+   path is auto-selected when provably equivalent)."
+  false)
+
 (defn- make-regen-result
   "Build the regenerate return map from handler result, computing the MH weight."
   [gf trace result old-score]
@@ -126,6 +133,90 @@
                     (or (:score-type result) :joint))]
     {:trace (attach-splice-scores new-trace result)
      :weight weight}))
+
+(defn- selected-path?
+  "Does selection `sel` select the full leaf path `path` (a vector of
+   addresses)? Descends sub-selections for all but the last address, so it
+   handles hierarchical selections over spliced sub-models."
+  [sel path]
+  (cond
+    (nil? sel) false
+    (empty? path) false
+    (= 1 (count path)) (sel/selected? sel (first path))
+    :else (selected-path? (sel/get-subselection sel (first path)) (rest path))))
+
+(defn- regen-retained-selection
+  "Selection of the RETAINED leaf addresses of a regenerate move: leaf paths
+   present in BOTH the new and old choices, minus the selected ones. Returns
+   nil when nothing is retained (weight is then 0)."
+  [new-choices old-choices selection]
+  (let [old-set (set (cm/addresses old-choices))
+        retained (into [] (comp (filter old-set)
+                                (remove #(selected-path? selection %)))
+                       (cm/addresses new-choices))]
+    (when (seq retained)
+      (sel/from-paths retained))))
+
+(defn- make-regen-result-general
+  "Build the regenerate return for the retained-only GENERAL path
+   (genmlx-hmch, genmlx-yep2).
+
+   W = project(new-trace, retained) - project(old-trace, retained)
+     = Σ_retained [lp(v; new ctx) - lp(v; old ctx)],
+   where retained = leaf addresses present in BOTH executions and unselected.
+   Selected, fresh (structure change), and removed sites are excluded and
+   contribute 0. Each project pass restores the corresponding execution context
+   (args + values of that trace) and recurses through splices, so dependent
+   retained sites — whose parameters moved because a selected upstream site was
+   resampled — are scored correctly under both contexts (the yep2 fix), and
+   spliced sub-models compose with no weight bookkeeping in the parent."
+  [gf trace result selection]
+  (let [new-trace (-> (tr/make-trace {:gen-fn gf :args (:args trace)
+                                      :choices (:choices result)
+                                      :retval (:retval result)
+                                      :score (:score result)})
+                      (tr/with-score-type (or (:score-type result) :joint))
+                      (attach-splice-scores result))
+        retained-sel (regen-retained-selection (:choices result) (:choices trace) selection)
+        weight (if retained-sel
+                 (mx/subtract (p/project gf new-trace retained-sel)
+                              (p/project gf trace retained-sel))
+                 SCORE-ZERO)]
+    {:trace new-trace :weight weight}))
+
+(defn- regen-fast-eligible?
+  "The fast regenerate path (per-site convention, no project pass) is provably
+   equivalent to the general retained-only path iff (a) no structure change can
+   occur and (b) the selected sites are mutually independent (no selected site
+   feeds another selected site's distribution parameters). Otherwise the
+   general path is required for correctness.
+
+   (a) holds when the model has no branches (the address set is fixed).
+   (b) holds when, for every selected static site, none of its dependency set
+       contains another selected site.
+   Returns false conservatively whenever the schema lacks the static info
+   needed to prove eligibility (dynamic addresses, loops, missing trace-sites)."
+  [gf selection]
+  (let [schema (:schema gf)
+        sites (or (:trace-sites schema) [])]
+    (cond
+      *force-general-regen* false
+      (:has-branches? schema) false
+      (:dynamic-addresses? schema) false
+      (:has-loops? schema) false
+      :else
+      ;; Only the parent's DIRECT trace sites are checked here. Spliced
+      ;; sub-gfs recurse through p/regenerate and gate themselves; a parent
+      ;; with no directly-selected sites (e.g. one that only splices children
+      ;; and retains its own observations) is fast-eligible — the existing
+      ;; execute-sub composition handles the child weights exactly.
+      (let [selected (into #{} (comp (map :addr)
+                                     (filter #(sel/selected? selection %)))
+                           sites)]
+        (every? (fn [s]
+                  (or (not (contains? selected (:addr s)))
+                      (empty? (set/intersection selected (set (:deps s))))))
+                sites)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Execution helpers — each takes [gf args key opts] and returns a GFI result.
@@ -192,6 +283,35 @@
                   :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt (:args trace))))]
     (make-regen-result gf trace result old-score)))
+
+(defn- run-regen-general
+  "Retained-only regenerate via the handler (genmlx-hmch, genmlx-yep2).
+   Builds the new trace with regenerate-transition-general (selected sites
+   resample, unselected-absent sites sample fresh — a structure change instead
+   of the old throw, unselected-present sites are retained); the weight is then
+   two project passes over the retained selection (new-context minus
+   old-context), which is exact for dependent joint moves (yep2) and recurses
+   through splices."
+  [gf _args key {:keys [trace selection]}]
+  (let [result (rt/run-handler h/regenerate-transition-general
+                 {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
+                  :key key :selection selection
+                  :old-choices (:choices trace)
+                  :old-splice-scores (::splice-scores (meta trace))
+                  :old-nested-splice-scores (::nested-splice-scores (meta trace))
+                  :executor execute-sub :param-store (param-store gf)}
+                 (fn [rt] (run-body gf rt (:args trace))))]
+    (make-regen-result-general gf trace result selection)))
+
+(defn- run-regen-handler
+  "Handler-path regenerate dispatcher: take the fast per-site convention when
+   it is provably equivalent (regen-fast-eligible?), else the general
+   retained-only path. The fast path keeps the MCMC hot loop (single-site
+   mh-cycle) free of the extra project pass."
+  [gf args key {:keys [selection] :as opts}]
+  (if (regen-fast-eligible? gf selection)
+    (run-regen h/regenerate-transition gf args key opts)
+    (run-regen-general gf args key opts)))
 
 (defn- run-assess [transition gf args key {:keys [constraints]}]
   (let [result (rt/run-handler transition
@@ -453,10 +573,15 @@
    :propose h/simulate-transition})
 
 ;; Handler table: each entry is (partial run-* standard-transition).
+;; :regenerate is overridden with the fast/general gating dispatcher
+;; (run-regen-handler) — the retained-only general path is selected when the
+;; fast per-site convention is not provably equivalent (genmlx-hmch/yep2).
+;; transition-run-fns keeps the plain run-regen for custom with-handler use.
 (def ^:private handler-table
-  (into {} (map (fn [[op run-fn]]
-                  [op (partial run-fn (get standard-transitions op))]))
-        transition-run-fns))
+  (assoc (into {} (map (fn [[op run-fn]]
+                         [op (partial run-fn (get standard-transitions op))]))
+                 transition-run-fns)
+         :regenerate run-regen-handler))
 
 (def ^:private compiled-table
   {:simulate run-simulate-compiled, :generate run-generate-compiled
@@ -534,8 +659,21 @@
 
 (def ^:private compiled-dispatcher
   (reify dispatch/IDispatcher
-    (resolve-transition [_ op schema _opts]
+    (resolve-transition [_ op schema opts]
       (cond
+        ;; Non-fast-eligible regenerate (dependent joint moves / structure
+        ;; change) must take the handler general retained-only path: the
+        ;; compiled, prefix, and branch-rewrite per-site regen conventions are
+        ;; exact ONLY for fast-eligible selections (genmlx-hmch / genmlx-yep2).
+        ;; Returning nil falls through to the handler-dispatcher, whose
+        ;; run-regen-handler then takes the general path. The analytical
+        ;; dispatcher sits EARLIER in the stack, so conjugate-posterior
+        ;; regenerate is never bypassed by this.
+        (and (= op :regenerate)
+             (:selection opts)               ; absent for introspective resolve (inspect)
+             (not (regen-fast-eligible? (:gf opts) (:selection opts))))
+        nil
+
         (get schema (get compiled-keys op))
         {:run (get compiled-table op) :score-type :joint :label :compiled}
 
@@ -1089,8 +1227,26 @@
 (defn vregenerate
   "Batched regenerate: run model body ONCE with batched regenerate handler.
    vtrace: VectorizedTrace with [n]-shaped choices, selection: addresses to resample.
-   Returns new VectorizedTrace with resampled selected addresses."
+   Returns new VectorizedTrace with resampled selected addresses.
+
+   Uses the per-site batched convention, which is exact ONLY for fast-eligible
+   selections (single-site / mutually-independent, no structure change). A
+   DEPENDENT JOINT batched selection would carry the genmlx-yep2 residual, and
+   a structure-changing batched flip is ill-posed under shape-batching (host
+   control flow must be uniform across particles — math-verifier §7 on
+   genmlx-hmch). Rather than silently miscalibrate, those are rejected loudly;
+   the full batched retained-only path is the genmlx-8xia follow-up. The scalar
+   p/regenerate handles all these cases correctly."
   [gf vtrace selection key]
+  (when-not (regen-fast-eligible? gf selection)
+    (throw (ex-info
+             (str "vregenerate: this selection is not fast-eligible (dependent "
+                  "joint move or structure change). The batched per-site "
+                  "convention would carry the genmlx-yep2 weight residual or be "
+                  "ill-posed under shape-batching. Use scalar p/regenerate "
+                  "per particle, or restrict to single-site / independent "
+                  "selections. Full batched retained-only: genmlx-8xia.")
+             {:genmlx/error :batched-regenerate-not-fast-eligible})))
   (let [key (rng/ensure-key key)
 
         n (:n-particles vtrace)

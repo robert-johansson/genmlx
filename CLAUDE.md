@@ -347,6 +347,24 @@ Batched variants add `:batch-size` (int) and `:batched?` (true).
 The handler never inspects value shapes — MLX broadcasting handles
 `[N]`-shaped arrays transparently.
 
+**Regenerate has two transitions (genmlx-hmch, genmlx-yep2).** The *fast*
+`regenerate-transition` (per-site convention) is used when the selection is
+proven equivalent to the general path — no structure change (`has-branches?`
+false) and the selected sites are mutually independent (no selected site feeds
+another's distribution parameters). Otherwise `regenerate-transition-general`
+builds the new trace (selected sites resample; unselected-&-absent sites sample
+fresh — a structure change replacing the old throw, enabling branch flips;
+unselected-&-present sites are retained), and `make-regen-result-general`
+computes the retained-only weight `W = Σ_retained [lp(v; new ctx) − lp(v; old
+ctx)]` with two project passes — `project(new-trace, retained) −
+project(old-trace, retained)` — where `retained` = leaf addresses present in
+both traces minus the selection. Selected, fresh, and removed sites cancel to
+0; the project passes recurse through splices, so dependent joint moves and
+spliced sub-models compose with no weight bookkeeping in the parent. The
+compiled/prefix/branch-rewrite regen paths are skipped (deferred to the handler
+general path) for non-fast-eligible selections; the analytical path is
+unaffected.
+
 **Dispatcher stack (4-level priority, first non-nil wins):**
 
 1. **custom-dispatcher** — `::custom-dispatch` or `::custom-transition` metadata
