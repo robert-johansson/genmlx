@@ -7,9 +7,10 @@
    model posterior), coarse-to-fine SMC, and the discrete<->continuous bridge.
 
    INDEPENDENT ORACLE discipline: every numeric expectation is a closed form
-   derived by hand here (o-log-gauss, o-cat, the change-of-variables identities,
-   the split/merge log-Jacobians +/- log 2, and the Normal-Normal marginal
-   likelihoods giving P(k=2|y)=0.8804741734), never via the code under test."
+   derived by hand here (o-log-gauss, the change-of-variables identities, the
+   split/merge log-Jacobians +/- log 2, and the Normal-Normal marginal
+   likelihoods giving P(k=2|y)=0.5656 for the RJMCMC data y=[-1.5,1.5]), never
+   via the code under test."
   (:require [cljs.test :refer [deftest is testing]]
             [genmlx.inference.translator :as tt]
             [genmlx.inference.mcmc :as mcmc]
@@ -250,8 +251,10 @@
     (* -0.5 (+ (* 2 (js/Math.log (* 2 js/Math.PI))) (js/Math.log det) quad))))
 
 (deftest reversible-jump-split-merge
-  ;; Less-separated data => P(k=2|y) ~ 0.566 => balanced split/merge transitions
-  ;; => fast k-mixing. Exact posterior from the closed-form marginal likelihoods.
+  ;; Less-separated data y=[-1.5,1.5] (s0=10, sigma=1) => P(k=2|y) ~ 0.5656 =>
+  ;; balanced split/merge transitions => fast k-mixing. (Well-separated data like
+  ;; [-2,2] gives P(k=2)=0.8805 but mixes slowly — merge is rarely accepted.)
+  ;; Exact posterior computed inline from the closed-form marginal likelihoods.
   (testing "split/merge RJMCMC recovers the exact model posterior P(k=2|y)"
     (let [model (sm-model)
           s0 10.0 sigma 1.0 yy0 -1.5 yy1 1.5
@@ -328,6 +331,40 @@
           analytic (o-log-gauss 1.5 0 (js/Math.sqrt 2))]
       (is (< (js/Math.abs (- (:log-ml ctf) analytic)) 0.06)
           (str "reparam-bridged log-ML " (:log-ml ctf) " ~ analytic " analytic)))))
+
+;; ===========================================================================
+;; 7b. Preconditions (adversarial-review hardening)
+;; ===========================================================================
+
+(deftest translator-preconditions
+  (let [P1 (reparam-p1) P2 (reparam-p2)
+        h-jac (fn [in _aux] {:trace (cm/set-value cm/EMPTY :u
+                                                  (mx/divide (tt/read-choice in :x) (mx/scalar 2.0)))
+                             :aux cm/EMPTY :log-det-jacobian (mx/scalar (- LOG2))})]
+    (testing "apply-translator rejects a non-joint (:marginal) input trace"
+      (let [translator (tt/trace-translator {:p2 P2 :h h-jac})
+            jt (p/simulate (dyn/with-key P1 (rng/fresh-key 1)) [])
+            marginal-t (tr/with-score-type jt :marginal)]
+        (is (thrown? js/Error
+                     (tt/apply-translator translator marginal-t [] (rng/fresh-key 2)))
+            "a :marginal input would silently corrupt the Eq 3.12 weight")))
+    (testing "continuous move with NO declared Jacobian and not volume-preserving throws"
+      (let [h-nojac (fn [in _aux] {:trace (cm/set-value cm/EMPTY :u
+                                                        (mx/divide (tt/read-choice in :x) (mx/scalar 2.0)))
+                                   :aux cm/EMPTY})   ;; transforms but declares no Jacobian
+            translator (tt/trace-translator {:p2 P2 :h h-nojac})  ;; no :volume-preserving?, no :jacobian-fn
+            jt (p/simulate (dyn/with-key P1 (rng/fresh-key 3)) [])]
+        (is (thrown? js/Error
+                     (tt/apply-translator translator jt [] (rng/fresh-key 4)))
+            "a missing change-of-variables term must be explicit, never a silent 0")))
+    (testing "volume-preserving? true allows a missing Jacobian (log|det J| = 0)"
+      (let [P2id (gen [] (trace :u (dist/gaussian 0 1)))
+            h-copy (fn [in _aux] {:trace (cm/set-value cm/EMPTY :u (tt/read-choice in :x))
+                                  :aux cm/EMPTY})
+            translator (tt/trace-translator {:p2 P2id :h h-copy :volume-preserving? true})
+            jt (p/simulate (dyn/with-key P1 (rng/fresh-key 5)) [])
+            {:keys [log-det-jacobian]} (tt/apply-translator translator jt [] (rng/fresh-key 6))]
+        (is (= 0.0 (it log-det-jacobian)) "volume-preserving => log|det J| = 0")))))
 
 ;; ===========================================================================
 ;; 8. GFI laws registered + hold

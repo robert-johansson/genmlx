@@ -160,9 +160,12 @@
      :jacobian-fn       optional (fn [in-choices aux-choices] -> log|det J|)
                         used when h omits :log-det-jacobian (e.g. via
                         jacobian-logdet).
-     :volume-preserving? when true, default log|det J| = 0 silently (discrete /
-                        copy-only moves). Otherwise a missing Jacobian also
-                        defaults to 0 but is the caller's responsibility."
+     :volume-preserving? assert that this move has unit Jacobian (log|det J| = 0)
+                        — discrete or copy-only moves. Required when neither h
+                        nor :jacobian-fn supplies a Jacobian: a continuous
+                        transform with NO declared Jacobian and this flag unset
+                        is an error (a missing Jacobian must be explicit, never
+                        a silent 0)."
   [{:keys [p2 q1 q2 h jacobian-fn volume-preserving?]}]
   (assert (some? p2) "trace-translator: :p2 (target model) is required")
   (assert (fn? h) "trace-translator: :h (bijection) must be a fn")
@@ -170,22 +173,36 @@
 
 (defn- log-det-of
   "Resolve log|det J| for one application: h's value, else the translator's
-   :jacobian-fn, else 0."
+   :jacobian-fn, else 0 IFF the translator is declared :volume-preserving?.
+   A non-volume-preserving move with no declared Jacobian throws — a missing
+   change-of-variables term must be explicit, never a silent 0 (CLAUDE.md:
+   no no-op that lies about what it does)."
   [tt h-result in-choices aux-choices]
   (cond
     (contains? h-result :log-det-jacobian)
     (let [j (:log-det-jacobian h-result)] (if (mx/array? j) j (mx/scalar j)))
     (:jacobian-fn tt)
     (let [j ((:jacobian-fn tt) in-choices aux-choices)] (if (mx/array? j) j (mx/scalar j)))
-    :else ZERO))
+    (:volume-preserving? tt) ZERO
+    :else (throw (ex-info (str "trace-translator: no Jacobian for a non-"
+                               "volume-preserving move. Return :log-det-jacobian "
+                               "from h, set :jacobian-fn (e.g. via jacobian-logdet), "
+                               "or pass :volume-preserving? true for discrete/copy-only moves.")
+                          {:genmlx/error :translator-missing-jacobian}))))
 
 (defn apply-translator
   "Apply trace translator `tt` to input trace `in-trace`, producing a trace of
    the target model p2 with new args `args2`. Returns
      {:trace out-trace :weight log-w :aux rho2 :log-det-jacobian ldj}
    where log-w is the Eq 3.12 importance weight (log domain). `key` supplies
-   entropy for the forward auxiliary proposal."
+   entropy for the forward auxiliary proposal.
+
+   PRECONDITION: `in-trace` must be JOINT-scored — the Eq 3.12 weight
+   differences score1 against score2, so a :marginal trace (latents pinned at
+   the posterior mean) would silently corrupt it. Asserted (genmlx-540f class);
+   all internal call sites already strip the analytical path."
   [tt in-trace args2 key]
+  (tr/assert-joint! in-trace :apply-translator)
   (let [{:keys [p2 q1 q2 h]} tt
         in-choices (:choices in-trace)
         [k1 k2] (rng/split (rng/ensure-key key))
@@ -304,7 +321,9 @@
      :key          prng-key
      :resample?    resample between stages (default true)
 
-   Returns {:particles [trace ...] :log-weights [scalar ...] :log-ml number}.
+   Returns {:particles [trace ...] :log-weights [number ...] :log-ml number}.
+   (:log-weights and :log-ml are realized JS numbers, not MLX scalars — the SMC
+   loop materializes per-particle weights for host-side resampling/logmeanexp.)
    log-ml is the accumulated unbiased marginal-likelihood estimate for the fine
    model: at stage 0 the importance weights are P_0.generate weights; each
    translator application multiplies in its Eq 3.12 weight; resampling adds the
