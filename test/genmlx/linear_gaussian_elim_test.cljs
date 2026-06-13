@@ -301,6 +301,50 @@
   (assert-close "intercept (unselected) kept at posterior mean"
                 0.441145 (choice-val rtrace :intercept) POST-TOL))
 
+;; -- Case A weight vs INDEPENDENT oracle (genmlx-wl1y): re-opening the block by
+;;    selecting :slope must yield the model-density-only MH regenerate weight
+;;    W = Σ_retained [lp(v;new) − lp(v;old)]. retained = every site but :slope;
+;;    only the y_j depend on slope (intercept is retained at its old value, tau & w
+;;    are slope-independent), so the closed form collapses to the Gaussian residual
+;;    difference below — computed in float64 JS from the model density, NOT via the
+;;    Kalman eliminator or the GFI weight machinery. The new/old slope are read back
+;;    from the actual traces so the oracle scores the move that really happened.
+;;    Pre-fix the analytical regenerate differenced a JOINT new-score against the
+;;    MARGINAL old-score (the block re-marginalised differently across passes), so
+;;    the weight carried a spurious (block-joint − block-marginal) term and this
+;;    assertion failed.
+(println "-- Case A (select :slope): regen weight == independent closed-form oracle (wl1y)")
+(let [xs        [1.0 2.0 3.0 4.0 5.0]
+      ys        [2.3 4.7 6.1 8.9 10.2]
+      {otrace :trace} (p/generate (dyn/with-key br-model (rng/fresh-key 7)) br-xs br-obs)
+      old-slope (choice-val otrace :slope)
+      {rtrace :trace rweight :weight}
+      (p/regenerate (dyn/with-key br-model (rng/fresh-key 13)) otrace (sel/select :slope))
+      w-analytical (mx/item rweight)
+      new-slope (choice-val rtrace :slope)
+      intercept (choice-val rtrace :intercept)             ; retained at old value
+      ;; W = Σ_j [logN(y_j; new-slope·x_j+intercept, 1) − logN(y_j; old-slope·x_j+intercept, 1)]
+      ;;   = Σ_j [ −½(y_j−μ_new)² + ½(y_j−μ_old)² ]   (the −½log2π and σ=1 terms cancel)
+      w-oracle  (reduce + (map (fn [xj yj]
+                                 (let [rn (- yj (+ (* new-slope xj) intercept))
+                                       ro (- yj (+ (* old-slope xj) intercept))]
+                                   (+ (* -0.5 rn rn) (* 0.5 ro ro))))
+                               xs ys))
+      ;; Ground-truth cross-check: regenerate the SAME old trace with the SAME key via
+      ;; the stripped (handler-only) model. Post-fix the analytical path declines on a
+      ;; block-reopening selection and takes that very handler path, so the two weights
+      ;; are bit-identical regardless of magnitude; pre-fix they differed by the bug
+      ;; term. This is magnitude-robust where the float64 oracle is float32-floor-bound.
+      w-stripped (mx/item (:weight (p/regenerate
+                                     (dyn/with-key (strip-analytical br-model) (rng/fresh-key 13))
+                                     otrace (sel/select :slope))))]
+  ;; tol scaled to the float32 floor at this weight magnitude (|w|≈2400 ⇒ ~1 ulp ≈ 3e-4);
+  ;; the bug it guards against is ~0.12 nat, two orders larger.
+  (assert-close "Case A regen weight = closed-form MH weight (independent oracle)"
+                w-oracle w-analytical 3e-3)
+  (assert-close "Case A analytical regen weight = handler ground truth (stripped)"
+                w-stripped w-analytical 1e-4))
+
 ;; -- MH over tau (analytical): converges to the oracle, AND the eliminated block
 ;;    stays at the EXACT posterior mean every step (zero MC variance = Rao-Blackwell).
 (println "-- MH over tau (analytical): oracle convergence + zero-variance block")

@@ -635,6 +635,27 @@
              :score-type (or (:score-type (meta (if (map? t) tf t))) :joint)
              :label :custom}))))))
 
+(defn- regen-reopens-analytical?
+  "True when the regenerate selection selects any address that carries an analytical
+   regenerate handler — an eliminated conjugate prior, a linear-Gaussian block
+   latent/obs, or a Kalman state/obs. Selecting such an address RE-OPENS the
+   marginalisation: the analytical handler declines and the site is scored JOINTLY
+   this pass (genmlx-b470's block-reopened? / Case-A fallthrough, and the scalar
+   conjugate \"prior selected → nil\" path). The incoming trace is :marginal, so the
+   fast (new-score − old-score) difference in make-regen-result would subtract a
+   marginal old score from a now-joint new score — not a valid MH weight
+   (genmlx-wl1y). When this holds the analytical regenerate declines; the joint
+   handler path then runs through joint-rescore-marginal, which converts the old
+   trace to a joint score so BOTH sides share one decomposition. When it does NOT
+   hold (e.g. an MH move over an unrelated residual) the block re-marginalises
+   identically to the old trace, so the fast analytical path stays exact and
+   Rao-Blackwellised (genmlx-m3tn / genmlx-4q9d)."
+  [schema selection]
+  (boolean
+    (when-let [handlers (:auto-regenerate-handlers schema)]
+      (and selection
+           (some (fn [addr] (sel/selected? selection addr)) (keys handlers))))))
+
 (def ^:private analytical-dispatcher
   (reify dispatch/IDispatcher
     (resolve-transition [_ op schema opts]
@@ -651,8 +672,14 @@
             {:run run-fn :score-type :marginal :label :analytical})
 
           :regenerate
+          ;; The marginal old-score is only a valid subtrahend when THIS pass also
+          ;; scores every eliminated structure marginally. A selection that re-opens
+          ;; a block (genmlx-wl1y) flips it to joint scoring this pass — decline so
+          ;; the joint handler path + joint-rescore-marginal differences two joint
+          ;; scores consistently. Stable (no-reopen) moves keep the fast path.
           (when (and (:auto-regenerate-transition schema)
-                     (= :marginal (tr/score-type (:trace opts))))
+                     (= :marginal (tr/score-type (:trace opts)))
+                     (not (regen-reopens-analytical? schema (:selection opts))))
             {:run run-fn :score-type :marginal :label :analytical})
 
           nil)))))
