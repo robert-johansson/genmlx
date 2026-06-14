@@ -80,3 +80,14 @@ arity. Consumers must dispatch on the agent family, not assume a universal shape
 A future uniform agent protocol could normalize `:act` (e.g. a single
 `(act agent state-or-belief & [key])`), but that is an API *change* (owner decision),
 not part of this freeze. This document fixes the surface **as built**.
+
+## NOT frozen — `genmlx.agents.remote` is PROVISIONAL
+
+`genmlx.agents.remote` (the glue for the FIRST EXTERNAL ENVIRONMENT, ROADMAP Phase 3
+item 5 — Gym transport, env-server handlers, and remote rollouts over the
+`genmlx.world.net` membrane) is **explicitly OUTSIDE this frozen surface**. Its
+signatures may change; it is **not pinned by a contracts test** (only by the
+behavioural/parity self-checks in `examples/external_env.cljs` +
+`test/genmlx/external_env_test.cljs`). Do not treat anything in `genmlx.agents.remote`
+as a stable v1.0 contract. (The membrane it sits on, `genmlx.world.net`, lives in the
+`genmlx.world.*` membrane tree, mirroring `genmlx.mlx` — not the agents surface.)
