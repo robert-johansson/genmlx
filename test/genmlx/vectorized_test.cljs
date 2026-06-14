@@ -388,4 +388,52 @@
             max-val (mx/realize (mx/amax samples))]
         (is (and (> min-val 0) (< max-val 1)) "beta samples in (0,1)")))))
 
+;; -------------------------------------------------------------------------
+;; [N]-score-shape contract for fully-observed batched models
+;; (genmlx-fgb6 / genmlx-x93e / genmlx-5nch / genmlx-v4mz)
+;;
+;; When every trace site is constrained there is no [N]-shaped sample to
+;; establish the batch axis, so a scalar init score/weight would leave the
+;; VectorizedTrace :score / :weight (and vupdate :weight, vregenerate weight)
+;; shape [] instead of [N]. The batched producers seed an [N] init so the
+;; contract holds for ANY model, fully-observed or not. Deterministic (fixed
+;; keys) so it is a reproducible oracle, unlike the time-seeded property law.
+;; -------------------------------------------------------------------------
+
+(def ^:private one-site-model
+  (gen [] (trace :y (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))
+
+(def ^:private two-site-model
+  (gen []
+    (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+      (trace :b (dist/gaussian a (mx/scalar 1))))))
+
+(deftest fully-observed-batched-score-shape-test
+  (let [n 7]
+    (testing "single-site model, only site observed: vgenerate score+weight are [N]"
+      (let [obs (cm/choicemap :y 1.5)
+            vt (dyn/vgenerate one-site-model [] obs n (rng/fresh-key 1))]
+        (is (= [n] (h/realize-shape (:score vt))) "vgenerate score [N]")
+        (is (= [n] (h/realize-shape (:weight vt))) "vgenerate weight [N]")
+        (is (every? h/finite? (mx/->clj (:score vt))) "vgenerate score finite")))
+    (testing "single-site model, unconstrained: vsimulate score is [N]"
+      (let [vt (dyn/vsimulate one-site-model [] n (rng/fresh-key 2))]
+        (is (= [n] (h/realize-shape (:score vt))) "vsimulate score [N]")))
+    (testing "single-site fully-observed: vupdate weight is [N]"
+      (let [vt (dyn/vgenerate one-site-model [] (cm/choicemap :y 1.5) n (rng/fresh-key 3))
+            {:keys [weight]} (dyn/vupdate one-site-model vt (cm/choicemap :y 2.0) (rng/fresh-key 4))]
+        (is (= [n] (h/realize-shape weight)) "vupdate weight [N]")
+        (is (every? h/finite? (mx/->clj weight)) "vupdate weight finite")))
+    (testing "multi-site model, ALL sites observed: vgenerate/vupdate stay [N]"
+      (let [obs (cm/choicemap :a 0.3 :b 0.7)
+            vt (dyn/vgenerate two-site-model [] obs n (rng/fresh-key 5))
+            {:keys [weight]} (dyn/vupdate two-site-model vt (cm/choicemap :a 0.4 :b 0.9) (rng/fresh-key 6))]
+        (is (= [n] (h/realize-shape (:score vt))) "all-observed vgenerate score [N]")
+        (is (= [n] (h/realize-shape (:weight vt))) "all-observed vgenerate weight [N]")
+        (is (= [n] (h/realize-shape weight)) "all-observed vupdate weight [N]")))
+    (testing "single-site fully-observed: vregenerate (select the site) weight is [N]"
+      (let [vt (dyn/vsimulate one-site-model [] n (rng/fresh-key 7))
+            {:keys [weight]} (dyn/vregenerate one-site-model vt (sel/select :y) (rng/fresh-key 8))]
+        (is (= [n] (h/realize-shape weight)) "vregenerate weight [N]")))))
+
 (cljs.test/run-tests)
