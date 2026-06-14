@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "nbb": "bunx nbb@1.4.206",
+    "nbb": "bunx nbb@1.4.208",
     "test:fast": "bash test/run.sh core",
     "test:fast-all": "bash test/run.sh fast",
     "test:medium": "bash test/run.sh medium",

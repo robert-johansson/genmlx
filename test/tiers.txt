@@ -173,6 +173,7 @@ fast test/genmlx/handler_property_test.cljs
 fast test/genmlx/handler_purity_test.cljs core
 fast test/genmlx/handler_test.cljs core
 fast test/genmlx/handler_transitions_test.cljs core
+fast test/genmlx/hardening_sweep_2026_06_14_test.cljs
 medium test/genmlx/hmc_mass_resample_test.cljs
 medium test/genmlx/hmm_forward_test.cljs
 fast test/genmlx/iid_compiled_test.cljs

@@ -111,8 +111,11 @@ bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 No build step, no compilation. nbb interprets ClojureScript directly.
 
 **Requirements:** macOS with Apple Silicon, Bun (or Node.js 18+), `npm install`
-for `@mlx-node/core` and `@mlx-node/lm`. Malli (included as git submodule,
-temporary until upstream nbb/malli releases align).
+for `@mlx-node/core` and `@mlx-node/lm`, and nbb `1.4.208` (pinned via the `nbb`
+script in `package.json`). Malli is a git submodule tracking **official upstream
+`metosin/malli`** on the nbb classpath — the earlier robert-johansson/malli fork
+existed only for nbb 1.4.206 compatibility, which 1.4.208 made unnecessary (its
+SCI exposes `IPrintWithWriter`).
 
 ## Project structure
 
