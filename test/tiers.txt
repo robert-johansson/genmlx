@@ -90,6 +90,7 @@ fast test/genmlx/contract_verification_test.cljs
 fast test/genmlx/correctness_test.cljs
 fast test/genmlx/custom_gradient_test.cljs
 fast test/genmlx/dep_graph_test.cljs
+fast test/genmlx/det_contract_test.cljs core
 medium test/genmlx/differentiable_hard_test.cljs
 medium test/genmlx/differentiable_hard2_test.cljs
 medium test/genmlx/differentiable_resample_test.cljs
