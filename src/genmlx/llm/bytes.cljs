@@ -219,12 +219,62 @@
    [next-trie-pos next-logprobs]. At a leaf the accumulated bytes form a
    complete token: reset to the trie root and commit the token via a cached
    forward step, yielding fresh logprobs. Otherwise descend and keep the
-   current logprobs."
-  [model trie trie-pos logprobs chosen-byte]
-  (let [next-node (get-in trie-pos [:children chosen-byte])]
-    (if (trie-leaf? next-node)
-      [trie (logits->logprobs (llm/forward-step model (commit-token-id next-node)))]
-      [next-node logprobs])))
+   current logprobs.
+
+   eager? (default false): commit at the FIRST token boundary (any node with
+   token-ids), i.e. shortest-match tokenization, instead of greedy longest-match.
+   This keeps the trie near the root so any grammar-required byte stays
+   reachable — it eliminates the mid-token stranding that longest-match suffers
+   when a grammar boundary falls inside a multi-byte token (e.g. an enum literal
+   whose bytes span an awkward tokenization). Used by structured generation,
+   where validity matters more than matching the model's natural tokenization."
+  ([model trie trie-pos logprobs chosen-byte]
+   (trie-advance model trie trie-pos logprobs chosen-byte false))
+  ([model trie trie-pos logprobs chosen-byte eager?]
+   (let [next-node (get-in trie-pos [:children chosen-byte])]
+     (if (or (trie-leaf? next-node)
+             (and eager? (seq (:token-ids next-node))))
+       [trie (logits->logprobs (llm/forward-step model (commit-token-id next-node)))]
+       [next-node logprobs]))))
+
+(defn alive-byte-lps
+  "Byte marginals at trie-pos filtered to bytes that keep the DFA alive from
+   dfa-state. Map {char -> raw-marginal-logprob} (raw, not yet renormalized)."
+  [trie-pos logprobs dfa dfa-state]
+  (let [alive (:alive dfa)]
+    (into {} (filter (fn [[ch _]]
+                       (contains? alive (grammar/dfa-advance dfa dfa-state ch))))
+          (byte-logprobs trie-pos logprobs))))
+
+(defn resolve-grammar-step
+  "Compute the DFA-alive byte marginals at the current position. Greedy BPE
+   traversal can strand us mid-token when the grammar requires a byte that is
+   not a continuation of the current trie node (e.g. a separator after a
+   keyword that is itself a token-with-children). In that case, if the current
+   node is a committable token, force-commit it — advance the KV cache, reset to
+   the trie root, refetch logprobs — and retry once, so the boundary byte
+   becomes reachable. Returns [trie-pos' logprobs' valid-lps]; valid-lps may be
+   empty only if generation is genuinely stuck (DFA dead or no committable
+   continuation)."
+  [model trie trie-pos logprobs dfa dfa-state]
+  (let [valid (alive-byte-lps trie-pos logprobs dfa dfa-state)]
+    (if (or (seq valid) (empty? (:token-ids trie-pos)))
+      [trie-pos logprobs valid]
+      (let [lp' (logits->logprobs (llm/forward-step model (commit-token-id trie-pos)))
+            valid' (alive-byte-lps trie lp' dfa dfa-state)]
+        [trie lp' valid']))))
+
+(defn resolve-replay-step
+  "Replay analogue of resolve-grammar-step: ensure the known `target-byte` is
+   reachable from trie-pos. If it is not a child but trie-pos is a committable
+   token, force-commit (advance the cache, reset to root, refetch logprobs) so
+   the byte becomes reachable. Returns [trie-pos' logprobs']. Drives scoring on
+   the same cache trajectory as constrained generation."
+  [model trie trie-pos logprobs target-byte]
+  (if (or (contains? (:children trie-pos) target-byte)
+          (empty? (:token-ids trie-pos)))
+    [trie-pos logprobs]
+    [trie (logits->logprobs (llm/forward-step model (commit-token-id trie-pos)))]))
 
 ;; ============================================================
 ;; Public API: unconstrained byte-level generation
@@ -323,18 +373,22 @@
    the byte-marginal map (at most 256 entries) rather than masking a
    151K-entry logit vector.
 
+   opts :commit-eager? (default false): use shortest-match tokenization (commit
+   at the first token boundary) so grammar boundaries inside multi-byte tokens
+   never strand generation. See trie-advance.
+
    Generation stops when the DFA has no valid continuations."
   ([model-map constraint] (constrain-bytes model-map constraint {}))
   ([model-map constraint opts]
    (let [{:keys [model tokenizer]} model-map
+         eager? (boolean (:commit-eager? opts))
          dfa (if (string? constraint)
                (grammar/compile-regex constraint)
                constraint)
          {:keys [trie]}
          (if (:trie opts)
            opts
-           (prepare tokenizer))
-         alive (:alive dfa)]
+           (prepare tokenizer))]
      (dyn/auto-key
       (gen [prompt-ids max-bytes]
            (if (zero? max-bytes)
@@ -349,13 +403,8 @@
                         bytes-acc []]
                    (if (>= i max-bytes)
                      bytes-acc
-                     (let [raw-lps (byte-logprobs trie-pos logprobs)
-                           valid-lps (into {}
-                                           (filter (fn [[ch _]]
-                                                     (let [s (grammar/dfa-advance
-                                                              dfa dfa-state ch)]
-                                                       (contains? alive s))))
-                                           raw-lps)]
+                     (let [[trie-pos* logprobs* valid-lps]
+                           (resolve-grammar-step model trie trie-pos logprobs dfa dfa-state)]
                        (if (empty? valid-lps)
                          bytes-acc
                          (let [{:keys [dist chars]}
@@ -365,7 +414,7 @@
                                chosen-byte (nth chars (mx/item idx))
                                next-dfa (grammar/dfa-advance dfa dfa-state chosen-byte)
                                [next-pos next-logprobs]
-                               (trie-advance model trie trie-pos logprobs chosen-byte)]
+                               (trie-advance model trie trie-pos* logprobs* chosen-byte eager?)]
 
                            (recur (inc i) next-pos next-dfa next-logprobs
                                   (conj bytes-acc chosen-byte)))))))))))))))

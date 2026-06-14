@@ -69,7 +69,7 @@
      class-body = class-item+
      <class-item> = range | class-char
      range = class-char <'-'> class-char
-     class-char = #'[^\\]\\\\-]' | <'\\\\'> #'.'"))
+     class-char = #'[^\\]\\\\^-]' | <'\\\\'> #'.'"))
 
 (defn parse-regex
   "Parse a regex string into an AST.

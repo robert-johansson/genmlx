@@ -107,10 +107,16 @@
    All operations stay on the MLX graph — no materialization to typed arrays."
   [model token-ids]
   (let [ids (->id-vec token-ids)
-        n (count ids)
         input (ids->input ids)
-        logits (.forward model input)]
-    (-> logits (mx/index 0) (mx/index (dec n)))))
+        logits (.forward model input)
+        ;; Index the LAST position from the logits' ACTUAL time dimension, not
+        ;; the input token count: this mlx-node build's .forward returns
+        ;; [1 1 vocab] (last position only). The old (dec n) indexed row n-1 of a
+        ;; 1-row matrix → out-of-range garbage (decoded to "导图" instead of the
+        ;; real next token). Using (dec t) is correct whether .forward returns
+        ;; [1 1 vocab] or a full [1 T vocab].
+        t (nth (mx/shape logits) 1)]
+    (-> logits (mx/index 0) (mx/index (dec t)))))
 
 (defn next-token-logprobs
   "Get log-probabilities for the next token given context.
