@@ -3,7 +3,7 @@
 	url = https://github.com/robert-johansson/test.check.git
 [submodule "malli"]
 	path = malli
-	url = https://github.com/robert-johansson/malli.git
+	url = https://github.com/metosin/malli.git
 [submodule "mlx-node"]
 	path = mlx-node
 	url = https://github.com/robert-johansson/mlx-node.git

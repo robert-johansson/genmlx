@@ -27,14 +27,14 @@ Gen implementations exist for Julia and JAX — but nothing for MLX. MLX's unifi
   - `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` (then restart your shell, or `source "$HOME/.cargo/env"`)
 - **[Node.js](https://nodejs.org/) ≥ 18** — provides `npm` (for installing nbb and yarn). `brew install node` on macOS, or [nodejs.org](https://nodejs.org/).
 - **[Bun](https://bun.sh/)** — `curl -fsSL https://bun.sh/install | bash`. The `bun run --bun nbb …` commands throughout this README use it (recommended — 3-4x faster than Node.js for iterative inference). The installer only updates `~/.bashrc`/`~/.zshrc`; **fish** users must add it to `PATH` themselves: `fish_add_path ~/.bun/bin`. To run on Node.js instead, replace `bun run --bun nbb` with `nbb` and `bun install` with `npm install`.
-- **[nbb](https://github.com/babashka/nbb) — pin to `1.4.206`** — `npm install -g nbb@1.4.206`. ⚠️ Do **not** use the latest `1.4.207`: it ships an SCI regression that fails to resolve record types across namespaces (`Unable to resolve symbol: cm/Node`), which breaks the handler loop and therefore all inference. `1.4.206` is the last known-good release.
+- **[nbb](https://github.com/babashka/nbb) — `1.4.208`** — `npm install -g nbb@1.4.208`. The repo also pins it via the `nbb` script in `package.json`, so `bun run --bun nbb …` resolves to `1.4.208` regardless of any globally installed nbb. ⚠️ Avoid `1.4.207` specifically: it shipped a short-lived SCI regression that failed to resolve record types across namespaces (`Unable to resolve symbol: cm/Node`), breaking the handler loop and therefore all inference. `1.4.208` fixes that and additionally exposes the `IPrintWithWriter` protocol, which is what lets GenMLX run stock upstream `malli` (no fork needed).
 - **[Yarn](https://yarnpkg.com/)** — needed only to build the `mlx-node` submodule. You don't need a specific version: mlx-node vendors the exact release it wants (`.yarn/releases/yarn-4.13.0.cjs`) and any `yarn` launcher on `PATH` auto-delegates to it via the `yarnPath` setting in `.yarnrc.yml`. Install one with `npm install -g yarn` or `brew install yarn`. (If you prefer Corepack, note it is **no longer bundled** with current Node.js — `npm install -g corepack && corepack enable` — but it's unnecessary here.)
 - **`git`** with submodule support — GenMLX vendors its dependencies as nested submodules (see below).
 
 ## Quick Start
 
 ```bash
-# Clone with ALL submodules (forks of mlx-node, mlx, malli, instaparse, test.check).
+# Clone with ALL submodules (mlx-node, mlx, instaparse, test.check forks + upstream malli).
 # --recurse-submodules is required: it also pulls the MLX C++ fork nested one
 # level deeper inside mlx-node (crates/mlx-sys/mlx).
 git clone --recurse-submodules https://github.com/robert-johansson/genmlx
@@ -66,8 +66,10 @@ bun install
 bun run --bun nbb test/genmlx/inference_test.cljs
 ```
 
-> **Note — the forks.** GenMLX vendors five git submodules, all forks maintained
-> alongside this repo:
+> **Note — the submodules.** GenMLX vendors five git submodules. Four are forks
+> maintained alongside this repo; the fifth, `malli`, now tracks **upstream
+> `metosin/malli`** directly (the earlier fork existed only for nbb 1.4.206
+> compatibility, which `1.4.208` makes unnecessary):
 >
 > - [`mlx-node`](https://github.com/robert-johansson/mlx-node) — adds a custom
 >   `genmlx.rs` Rust module with 138 module-level NAPI exports tuned for
@@ -76,13 +78,15 @@ bun run --bun nbb test/genmlx/inference_test.cljs
 >   *nested* submodule ([`mlx`](https://github.com/robert-johansson/mlx) at
 >   `crates/mlx-sys/mlx`), which `--recurse-submodules` pulls automatically and
 >   `yarn build` compiles statically (the `build:native` part of the script).
-> - [`malli`](https://github.com/robert-johansson/malli),
->   [`instaparse`](https://github.com/robert-johansson/instaparse), and
->   [`test.check`](https://github.com/robert-johansson/test.check) — patched for
->   nbb/Babashka compatibility. Their source sits directly on the nbb classpath
->   (see `nbb.edn`), so no build step is needed. malli backs schema validation
->   (`genmlx.schemas`), instaparse the LLM grammar layer (`genmlx.llm.grammar`),
->   and test.check the property-based tests.
+> - [`instaparse`](https://github.com/robert-johansson/instaparse) and
+>   [`test.check`](https://github.com/robert-johansson/test.check) — forks patched
+>   for nbb/Babashka compatibility.
+> - [`malli`](https://github.com/metosin/malli) — the **official upstream** library,
+>   pinned to a specific commit; no fork is needed under nbb `1.4.208`.
+>
+>   All three sit directly on the nbb classpath (see `nbb.edn`), so no build step is
+>   needed. malli backs schema validation (`genmlx.schemas`), instaparse the LLM
+>   grammar layer (`genmlx.llm.grammar`), and test.check the property-based tests.
 
 Run the included examples:
 

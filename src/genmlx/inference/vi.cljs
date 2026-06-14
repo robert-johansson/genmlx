@@ -475,7 +475,7 @@
                 (callback {:iter i :loss loss-val}))
               (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
               (recur (inc i) params' opt-state'
-                     (conj! losses loss-val)))))))))
+                     (conj! losses loss-val) next-key))))))))
 
 (defn vimco
   "VIMCO: Variational Inference with Multi-sample Objectives.
