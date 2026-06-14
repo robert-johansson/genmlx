@@ -145,6 +145,56 @@
                  (conj states s') (conj actions a)
                  (conj obss o) (conj beliefs b')))))))
 
+(defn fused-simulate-pomdp
+  "Fully-fused (in-graph) POMDP rollout for the OPTIMAL deterministic regime
+   (alpha = ##Inf, noise = 0). Threads the physical state as a one-hot [S] tensor
+   and the belief as a [W] tensor through: tensor belief-Q -> argmax action ->
+   tensor transition (argmax of T[s,a]) -> the tensor observation likelihood
+   (belief/obs-likelihood-tensor, no host int for s') -> belief/filter-step. The
+   rollout LOOP builds one lazy MLX graph with NO per-step mx/item (bean
+   genmlx-r35c); state/belief are extracted only once at the boundary.
+
+   Returns {:states [...] :beliefs [b0 b1 ...]} matching simulate-pomdp at
+   alpha = ##Inf / noise = 0: the fused run is taken to the full horizon and
+   TRUNCATED at the first terminal to align with the host early-stop. For a
+   stochastic policy or transition, use the host simulate-pomdp."
+  [{:keys [world-agents worlds prior observe]} env start horizon]
+  (let [worlds   (vec worlds)
+        W        (count worlds)
+        tw       (:true-world env)
+        true-mdp (:mdp (world-agents tw))
+        T        (:T true-mdp)                                       ; [S,A,S']
+        S        (:S true-mdp)
+        A        (:A true-mdp)
+        terms    (set (keys (:terminals true-mdp)))
+        Qstack   (mx/stack (mapv #(:Q (world-agents %)) worlds))     ; [W,S,A]
+        Obs      (belief/obs-id-tensor observe worlds S)             ; [S,W]
+        oh       (fn [i n] (.astype (mx/equal (mx/arange n) (mx/scalar (double i))) mx/float32))
+        oh-am    (fn [v n] (.astype (mx/equal (mx/arange n) (mx/argmax v)) mx/float32))
+        tw-oh    (oh (.indexOf worlds tw) W)
+        b0       (belief/belief->vec worlds prior)                   ; [W]
+        s0-oh    (oh start S)
+        ;; accumulate (s-onehot, belief) tensors over the FULL horizon — no mx/item
+        trace    (loop [s-oh s0-oh, b b0, k 0, acc [[s0-oh b0]]]
+                   (if (>= k horizon)
+                     acc
+                     (let [mixedQ (mx/sum (mx/multiply (mx/reshape b [W 1 1]) Qstack) [0])    ; [S,A]
+                           q      (mx/sum (mx/multiply (mx/reshape s-oh [S 1]) mixedQ) [0])   ; [A]
+                           a-oh   (oh-am q A)                                                 ; [A]
+                           sa     (mx/multiply (mx/reshape s-oh [S 1]) (mx/reshape a-oh [1 A])) ; [S,A]
+                           Tsa    (mx/sum (mx/multiply (mx/reshape sa [S A 1]) T) [0 1])       ; [S']
+                           s'-oh  (oh-am Tsa S)                                               ; [S'] (one-hot at noise 0)
+                           L      (belief/obs-likelihood-tensor Obs s'-oh tw-oh)              ; [W]
+                           b'     (belief/filter-step b L)]                                   ; [W]
+                       (recur s'-oh b' (inc k) (conj acc [s'-oh b'])))))
+        ;; extract once at the boundary (mx/item only here, never in the loop)
+        states   (mapv (fn [[s-oh _]] (int (mx/item (mx/argmax s-oh)))) trace)
+        beliefs  (mapv (fn [[_ b]] (belief/vec->belief worlds b)) trace)
+        term-idx (or (first (keep-indexed (fn [i s] (when (terms s) i)) states))
+                     (dec (count states)))
+        n        (inc term-idx)]
+    {:states (vec (take n states)) :beliefs (vec (take n beliefs))}))
+
 ;; ---------------------------------------------------------------------------
 ;; Multi-armed bandit POMDP (agentmodels Ch 3c/3d)
 ;; ---------------------------------------------------------------------------
