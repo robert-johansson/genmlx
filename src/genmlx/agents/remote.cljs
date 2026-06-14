@@ -47,6 +47,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.agents.agent :as agent]
             [genmlx.world.net :as net]
+            [cljs.reader :as reader]
             [promesa.core :as pr]))
 
 ;; ===========================================================================
@@ -58,7 +59,12 @@
    {:step (fn [action] -> Promise<obs-map>) :reset (fn [] -> Promise<obs-map>)
     :close (fn [] -> nil)} where obs-map = {:obs :reward :done :info}. :step POSTs
    {:action action} to /step, :reset POSTs {} to /reset. The RL contract lives here,
-   in the agents layer — the membrane (genmlx.world.net) stays neutral."
+   in the agents layer — the membrane (genmlx.world.net) stays neutral.
+
+   `:close` is intentionally INERT: this transport holds only the url, not the live
+   listener, so it cannot stop the server. The server lifecycle is owned by
+   genmlx.world.net/with-server (its p/finally tears the listener down) — never by
+   the client transport."
   [url]
   {:step  (fn [action] (net/request url "/step" {:action action}))
    :reset (fn [] (net/request url "/reset"))
@@ -99,12 +105,14 @@
       (case route
         "/reset" (do (reset! st s0)
                      {:obs s0 :reward 0.0 :done (contains? terminals s0) :info {}})
-        "/step"  (let [s  @st
-                       a  (:action payload)
-                       s' (world-step T kref s a)
-                       r  (double (mx/item (mx/idx (mx/idx R s) a)))]
-                   (reset! st s')
-                   {:obs s' :reward r :done (contains? terminals s') :info {}})
+        "/step"  (let [a (:action payload)]
+                   (if-not (number? a)
+                     {:error "step requires an integer :action"}
+                     (let [s  @st
+                           s' (world-step T kref s a)
+                           r  (double (mx/item (mx/idx (mx/idx R s) a)))]
+                       (reset! st s')
+                       {:obs s' :reward r :done (contains? terminals s') :info {}})))
         {:error (str "unknown route " route)}))))
 
 (defn pomdp-env-handler
@@ -122,8 +130,10 @@
         T          (:T true-mdp)
         terminals  (:terminals true-mdp)
         observe    (:observe pomdp-agent)
-        ;; keyword observations -> name strings on the wire (JSON has no keywords)
-        enc        (fn [o] (cond (nil? o) nil (keyword? o) (name o) :else o))
+        ;; EDN-encode the observation for the wire (JSON has no keywords/vectors):
+        ;; pr-str round-trips ANY observe range (a keyword, nil, or a [restaurant
+        ;; open?] vector) — remote-pomdp-rollout decodes with reader/read-string.
+        enc        (fn [o] (pr-str o))
         s0         (or start (:start-idx env))
         st         (atom s0)
         kref       (atom key)]
@@ -132,13 +142,15 @@
         "/reset" (do (reset! st s0)
                      {:obs    {:loc s0 :sense (enc (observe true-world s0))}
                       :reward 0.0 :done (contains? terminals s0) :info {}})
-        "/step"  (let [s  @st
-                       a  (:action payload)
-                       s' (world-step T kref s a)
-                       o  (observe true-world s')]
-                   (reset! st s')
-                   {:obs    {:loc s' :sense (enc o)}
-                    :reward 0.0 :done (contains? terminals s') :info {}})
+        "/step"  (let [a (:action payload)]
+                   (if-not (number? a)
+                     {:error "step requires an integer :action"}
+                     (let [s  @st
+                           s' (world-step T kref s a)
+                           o  (observe true-world s')]
+                       (reset! st s')
+                       {:obs    {:loc s' :sense (enc o)}
+                        :reward 0.0 :done (contains? terminals s') :info {}})))
         {:error (str "unknown route " route)}))))
 
 ;; ===========================================================================
@@ -168,14 +180,12 @@
               (pr/recur (:obs o) (inc step) k' (:done o)
                         (conj states (:obs o)) (conj actions a) (conj rewards (:reward o))))))))))
 
-(defn- decode-sense
-  "Reconstruct a keyword observation from its wire form (a name string) by matching
-   against the agent's known `worlds`. nil and non-string values pass through."
-  [worlds s]
-  (cond
-    (nil? s)    nil
-    (string? s) (some #(when (= (name %) s) %) worlds)
-    :else       s))
+(defn- decode-obs
+  "Reverse `enc`: read the EDN wire form of an observation back to its value
+   (keyword, nil, vector, …). The peer always sends a pr-str string; a non-string
+   (defensive) passes through unchanged."
+  [s]
+  (if (string? s) (reader/read-string s) s))
 
 (defn remote-pomdp-rollout
   "Drive a POMDP `agent` (make-pomdp-agent result) against a REMOTE POMDP over
@@ -185,8 +195,9 @@
    constraint) → repeat. Returns a PROMISE of
    {:states :actions :observations :beliefs} (the simulate-pomdp shape). At
    alpha=##Inf / noise=0 the states, actions, observations and beliefs match
-   simulate-pomdp exactly."
-  [{:keys [act update-belief prior worlds]} transport horizon & [_opts]]
+   simulate-pomdp exactly. (At finite alpha act uses auto-key, same as
+   simulate-pomdp, so neither is per-step reproducible — hence no :key option.)"
+  [{:keys [act update-belief prior]} transport horizon]
   (pr/let [o0 ((:reset transport))]
     (let [start (:loc (:obs o0))]
       (pr/loop [s start, b prior, step 0, done? (:done o0)
@@ -197,7 +208,7 @@
             (pr/let [o ((:step transport) a)]
               (let [obsmap (:obs o)
                     s'     (:loc obsmap)
-                    sense  (decode-sense worlds (:sense obsmap))
+                    sense  (decode-obs (:sense obsmap))
                     b'     (update-belief b s' sense)]
                 (pr/recur s' b' (inc step) (:done o)
                           (conj states s') (conj actions a)
