@@ -79,6 +79,45 @@
     b
     (filter-step b (obs-likelihood-vec observe worlds loc o))))
 
+;; -- tensor observation model (bean genmlx-qbb0; enables the fused rollout) -----
+;;
+;; obs-likelihood-vec above builds L host-side: it calls (observe w loc) per world,
+;; so loc (the next state s') must be a HOST int — which is exactly what stops a
+;; POMDP rollout from staying in-graph (bean genmlx-r35c). The fix is to precompute
+;; the observation geometry ONCE into a tensor and make the per-step likelihood a
+;; pure in-graph gather, so s' can thread through as a one-hot.
+
+(defn obs-id-tensor
+  "Precompute the [S,W] observation-id tensor: entry [s,w] is a small float id of
+   (observe w s), with DISTINCT observations (Clojure `=`, nil included) getting
+   distinct ids. Built host-side ONCE from the host `observe` geometry; the in-graph
+   likelihood (obs-likelihood-tensor) is then a pure comparison of these ids, so it
+   matches the host `=` for ANY observe model (signpost reveal / restaurant open-set
+   / nil) without a host int per step. `worlds` is the fixed world ordering."
+  [observe worlds S]
+  (let [worlds  (vec worlds)
+        ids     (atom {})
+        next-id (atom 0.0)
+        id-of   (fn [o] (if-let [i (get @ids o)] i
+                          (let [i @next-id] (swap! ids assoc o i) (swap! next-id inc) i)))
+        rows    (vec (for [s (range S)] (vec (for [w worlds] (id-of (observe w s))))))]
+    (mx/array (clj->js rows) mx/float32)))
+
+(defn obs-likelihood-tensor
+  "In-graph per-world likelihood L:[W] from the precomputed [S,W] obs-id tensor, a
+   one-hot next state `s-onehot`:[S], and a one-hot `true-w-onehot`:[W]. Threads s'
+   as a TENSOR (no host int): obs-row[w] = the obs id world w yields at s', true-obs
+   = obs-row at the true world, L[w] = [obs-row[w] == true-obs]. The tensor form of
+   obs-likelihood-vec; when the true observation is nil (uninformative cell) every
+   world matches so L is all-ones, and filter-step(b, ones) = b (the host nil
+   identity, reproduced without a fast-path)."
+  [obs-tensor s-onehot true-w-onehot]
+  (let [S        (first (mx/shape obs-tensor))
+        obs-row  (mx/sum (mx/multiply (mx/reshape s-onehot [S 1]) obs-tensor) [0])  ; [W]
+        true-obs (mx/sum (mx/multiply obs-row true-w-onehot))                       ; []
+        L        (.astype (mx/equal obs-row true-obs) mx/float32)]                  ; [W]
+    L))
+
 ;; -- belief <-> vector seam (host map/vector callers <-> [W] MLX) --------------
 
 (defn belief->vec

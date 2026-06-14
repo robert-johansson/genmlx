@@ -29,6 +29,7 @@ slow test/genmlx/agentmodels_slice_test.cljs
 slow test/genmlx/agentmodels_worlds_test.cljs
 fast test/genmlx/agents_api_test.cljs
 medium test/genmlx/agents_contracts_test.cljs
+medium test/genmlx/agents_fused_pomdp_test.cljs
 slow test/genmlx/agents_llm_inverse_test.cljs
 slow test/genmlx/agents_llm_policy_test.cljs
 medium test/genmlx/amortized_test.cljs
