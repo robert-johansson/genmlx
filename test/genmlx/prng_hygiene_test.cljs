@@ -17,6 +17,7 @@
             [genmlx.selection :as sel]
             [genmlx.inference.smc :as smc]
             [genmlx.inference.importance :as imp]
+            [genmlx.inference.util :as u]
             [genmlx.inference.mcmc :as mcmc])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -156,5 +157,52 @@
                             :key (rng/fresh-key 41)}
                            xy-model [] obs))]
       (is (= (run) (run)) "resampled traces bit-identical under the same seed"))))
+
+;; ---------------------------------------------------------------------------
+;; POSITIVE decorrelation oracle (genmlx-3ezj)
+;;
+;; The same-seed determinism guards above pass identically whether or not the
+;; generate/resample key streams are disjoint — they cannot detect the njaq
+;; correlation defect. This oracle re-creates the defect (k-res := k-gen) and
+;; asserts production differs from it: a re-collision would make production
+;; equal the collided reference and FAIL here.
+;; ---------------------------------------------------------------------------
+
+(defn- resample-by-key
+  "The exact CDF resample importance-resampling performs, factored so it can be
+   driven by an arbitrary resample key. probs: normalized weights; rk: the
+   resample key (split-n per draw)."
+  [traces probs rk]
+  (mapv (fn [ki]
+          (let [u (mx/realize (rng/uniform ki []))
+                idx (->> (reductions + probs)
+                         (keep-indexed (fn [i c] (when (>= c u) i)))
+                         first)]
+            (nth traces (or idx (dec (count traces))))))
+        (rng/split-n rk (count traces))))
+
+(deftest importance-resample-stream-disjoint-from-generation
+  (testing "production resamples from a key DISJOINT from generation, not the
+            njaq-collided same-key stream"
+    (let [obs (cm/choicemap :y0 (mx/scalar 2.5) :y1 (mx/scalar 2.5))
+          n 40
+          key (rng/fresh-key 7)
+          [k-gen k-res] (rng/split (rng/ensure-key key))
+          {:keys [traces log-weights]} (imp/importance-sampling
+                                        {:samples n :key k-gen}
+                                        (dyn/auto-key xy-model) [] obs)
+          {:keys [probs]} (u/normalize-log-weights log-weights)
+          disjoint (mapv x-of (resample-by-key traces probs k-res))   ; production semantics
+          collided (mapv x-of (resample-by-key traces probs k-gen))   ; the njaq bug
+          prod     (mapv x-of (imp/importance-resampling
+                               {:samples n :particles n :key key} xy-model [] obs))]
+      (is (not= disjoint collided)
+          "a disjoint resample key gives a different resample than reusing the
+           generation key — the disjointness has real, measurable effect")
+      (is (= prod disjoint)
+          "production importance-resampling uses the disjoint resample key")
+      (is (not= prod collided)
+          "production does NOT use the generation key to resample — a
+           re-collision (k-res := k-gen) would flip this and fail the oracle"))))
 
 (cljs.test/run-tests)
