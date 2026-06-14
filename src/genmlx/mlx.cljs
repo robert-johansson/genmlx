@@ -501,6 +501,33 @@
 (def nan-to-num (.-nanToNum c))
 (def stop-gradient (.-stopGradient c))
 
+;; --- Fused NN primitives (genmlx.rs fast:: ops; f6ov GenMLX-owned forward) ---
+
+(defn rms-norm
+  "RMSNorm: x * rsqrt(mean(x^2)+eps) * weight (variance in f32). Builds a lazy
+   graph node (fast::rms_norm). x: [.. dim], weight: [dim]."
+  [x weight eps]
+  (.rmsNorm c x weight eps))
+
+(defn rope
+  "Rotary position embedding (fast::rope). x: [.. seq, dims]; offset = the
+   KV-cache position (rotation starts here, NOT absolute recompute)."
+  [x dims traditional? base scale offset]
+  (.rope c x dims traditional? base scale offset))
+
+(defn scaled-dot-product-attention
+  "Scaled dot-product attention with an EXPLICIT mask array (pass nil for none —
+   the explicit-mask path avoids the \"causal\" string-mode kernel that null-ptrs
+   across MLX builds, genmlx-7siy). q/k/v: [batch heads seq head-dim];
+   scale = 1/sqrt(head-dim)."
+  ([q k v scale] (.scaledDotProductAttention c q k v scale nil))
+  ([q k v scale mask] (.scaledDotProductAttention c q k v scale mask)))
+
+(defn silu
+  "SiLU / swish activation: x * sigmoid(x) (dtype-preserving)."
+  [x]
+  (.silu c x))
+
 ;; =========================================================================
 ;; QUERY OPERATIONS (no side effects, no graph construction)
 ;;
