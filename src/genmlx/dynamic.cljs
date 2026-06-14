@@ -870,6 +870,18 @@
                     :op op :score-type (tr/score-type converted)
                     :expected :joint})))
         (assoc opts :trace converted))
+      :placeholder
+      ;; genmlx-b2mj: the trace's :score is a 0.0 placeholder (e.g. compiled-SMC
+      ;; particle values), not a real joint density. Differencing against it
+      ;; would silently produce a wrong weight — reject instead.
+      (throw (ex-info
+               (str "Joint-scoring " op " cannot consume a :placeholder-scored"
+                    " trace — its :score is a 0.0 placeholder (e.g. compiled-SMC"
+                    " particle values, genmlx-b2mj), so the weight would be"
+                    " wrong. Re-score the choices via p/generate first, or use"
+                    " the trace for choice extraction only.")
+               {:genmlx/error :placeholder-score
+                :op op :score-type st :expected :joint}))
       (throw (ex-info
                (str "Joint-scoring " op " cannot consume a " st
                     "-scored trace — its choices do not determine a joint"
