@@ -996,12 +996,87 @@
   ([a]     (.linalgNorm c a))
   ([a ord] (.linalgNorm c a ord)))
 
-(defn logdet [a]
+;; --- Determinants ---------------------------------------------------------
+;;
+;; Two families. The SPD pair (spd-logdet/spd-det) is Cholesky-based: lazy,
+;; on-device, and DIFFERENTIABLE, but valid ONLY for symmetric positive-definite
+;; matrices (covariances — MVN/Wishart). The general family
+;; (logabsdet/slogdet/det/logdet) is correct for ANY square matrix:
+;;   - logabsdet uses QR (lazy, on-device): |det A| = prod |R_ii|;
+;;   - slogdet/det/logdet add the sign via a host-side LU with partial pivoting,
+;;     which MATERIALIZES the input (not part of a lazy/differentiable graph).
+;; Cholesky silently returns garbage on a non-SPD matrix (it reads one triangle),
+;; so a determinant of a general matrix MUST go through the general family, never
+;; spd-*. (genmlx-rqp9.)
+
+(defn spd-logdet
+  "log(det A) for a SYMMETRIC POSITIVE-DEFINITE A, via Cholesky — lazy and
+   DIFFERENTIABLE (for MVN/Wishart log-prob). Silently WRONG for non-SPD A; use
+   logdet/logabsdet for general matrices."
+  [a]
   (let [L (cholesky a)]
     (multiply (scalar 2.0) (sum (log (diag L))))))
-(defn det [a]
+
+(defn spd-det
+  "det A for a SYMMETRIC POSITIVE-DEFINITE A, via Cholesky — lazy and
+   DIFFERENTIABLE. Silently WRONG for non-SPD A; use det for general matrices."
+  [a]
   (let [L (cholesky a)]
     (power (prod (diag L)) (scalar 2))))
+
+(defn logabsdet
+  "log|det A| for ANY square matrix A, via QR (lazy, on-device): |det A| =
+   prod_i |R_ii|. Correct for non-symmetric / indefinite A (unlike spd-logdet).
+   The general workhorse for change-of-variables / Jacobian log-determinants."
+  [a]
+  (sum (log (abs (diag (second (qr a)))))))
+
+(defn- host-lu-slogdet
+  "[sign, log|det|] of a square matrix (clj nested-vector `rows`) via Gaussian
+   elimination with partial pivoting. sign in {-1.0, 0.0, 1.0}; log|det| is
+   -Infinity for a singular matrix. Exact for any square matrix."
+  [rows]
+  (let [n (count rows)]
+    (loop [a (mapv #(mapv double %) rows), k 0, acc 0.0, sign 1.0]
+      (if (>= k n)
+        [sign acc]
+        (let [p (apply max-key #(js/Math.abs (get-in a [% k])) (range k n))
+              sign (if (= p k) sign (- sign))
+              a (if (= p k) a (assoc a k (a p) p (a k)))
+              piv (get-in a [k k])]
+          (if (zero? piv)
+            [0.0 ##-Inf]
+            (let [a (reduce
+                     (fn [a i]
+                       (let [f (/ (get-in a [i k]) piv)]
+                         (reduce (fn [a j] (update-in a [i j] - (* f (get-in a [k j]))))
+                                 a (range k n))))
+                     a (range (inc k) n))]
+              (recur a (inc k) (+ acc (js/Math.log (js/Math.abs piv)))
+                     (if (neg? piv) (- sign) sign)))))))))
+
+(defn slogdet
+  "[sign, log|det A|] for ANY square matrix A (host-side LU; MATERIALIZES A).
+   sign is an MLX scalar in {-1, 0, 1}; the second element is log|det A|. For
+   an SPD A inside a differentiable graph, use spd-logdet."
+  [a]
+  (let [[sgn lad] (host-lu-slogdet (realize-clj a))]
+    [(scalar sgn) (scalar lad)]))
+
+(defn det
+  "Signed det A for ANY square matrix A (host-side LU; MATERIALIZES A). For an
+   SPD A inside a differentiable graph, use spd-det."
+  [a]
+  (let [[sgn lad] (host-lu-slogdet (realize-clj a))]
+    (scalar (* sgn (js/Math.exp lad)))))
+
+(defn logdet
+  "log(det A) for ANY square matrix A with det A > 0 (host-side LU; MATERIALIZES
+   A); NaN when det A <= 0. For an SPD A inside a differentiable graph (the
+   common MVN/Wishart case), use spd-logdet; for |det| use logabsdet."
+  [a]
+  (let [[sgn lad] (host-lu-slogdet (realize-clj a))]
+    (scalar (if (pos? sgn) lad ##NaN))))
 
 ;; --- Utilities ---
 

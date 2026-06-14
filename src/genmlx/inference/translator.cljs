@@ -46,34 +46,11 @@
 ;; ---------------------------------------------------------------------------
 ;; Jacobian via automatic differentiation (mx/grad)
 ;;
-;; NOTE on the determinant: the native mx/det is unreliable for non-diagonal
-;; matrices (genmlx-det-bug: [[1,2],[3,4]] -> 25 not -2) and mx/logdet is
-;; cholesky-based (SPD only). Jacobians of trace-translator bijections are
-;; LOW-dimensional (1-4 coords), so we realize the AD Jacobian and take its
-;; log|det| on the HOST via LU with partial pivoting — exact and bug-free.
-;; (The host-geometry / GPU-linalg split.)
+;; The AD Jacobian is built row-by-row with mx/grad; its log|det| comes from
+;; mx/logabsdet (QR-based, general — correct for the non-symmetric Jacobians
+;; bijections produce, where the SPD-only mx/spd-logdet would be silently wrong;
+;; genmlx-rqp9).
 ;; ---------------------------------------------------------------------------
-
-(defn- host-log-abs-det
-  "log|det| of a small square matrix (clj nested-vector `rows`) via Gaussian
-   elimination with partial pivoting. -Infinity for a singular matrix."
-  [rows]
-  (let [n (count rows)]
-    (loop [a (mapv #(mapv double %) rows), k 0, acc 0.0]
-      (if (>= k n)
-        acc
-        (let [p (apply max-key #(js/Math.abs (get-in a [% k])) (range k n))
-              a (if (= p k) a (assoc a k (a p) p (a k)))
-              piv (get-in a [k k])]
-          (if (zero? piv)
-            ##-Inf
-            (let [a (reduce
-                     (fn [a i]
-                       (let [f (/ (get-in a [i k]) piv)]
-                         (reduce (fn [a j] (update-in a [i j] - (* f (get-in a [k j]))))
-                                 a (range k n))))
-                     a (range (inc k) n))]
-              (recur a (inc k) (+ acc (js/Math.log (js/Math.abs piv)))))))))))
 
 (defn jacobian-matrix
   "The n x n Jacobian of g : R^n -> R^n at point x ([n]-shaped MLX vector),
@@ -85,8 +62,8 @@
 
 (defn jacobian-logdet
   "log|det J_g(x)| (MLX scalar) for a bijective numeric transform
-   g : R^n -> R^n at x. The AD Jacobian (mx/grad on g) is realized and its
-   log|det| taken on the host (orientation-sign-safe).
+   g : R^n -> R^n at x. The AD Jacobian (mx/grad on g) is fed to mx/logabsdet
+   (QR, general / orientation-safe).
 
    SPARSITY (thesis §3.6.2): pass g and x restricted to the TRANSFORMED
    continuous coordinates only. Coordinates that h copies unchanged contribute
@@ -94,7 +71,7 @@
    while reducing the matrix from m x m to (m-c) x (m-c) — O((m-c)^3) instead of
    O(m^3). sparse-jacobian-logdet packages this from the full transform."
   [g x n]
-  (mx/scalar (host-log-abs-det (mx/->clj (jacobian-matrix g x n)))))
+  (mx/logabsdet (jacobian-matrix g x n)))
 
 (defn sparse-jacobian-logdet
   "Sparsity-aware (thesis §3.6.2) log|det J| (MLX scalar). `g-full` : R^m -> R^m
@@ -104,11 +81,11 @@
    indices (the copied coordinates are identity rows/cols, determinant 1).
    Equals jacobian-logdet on the full matrix but over the smaller block."
   [g-full x transformed-idxs]
-  (let [m (first (mx/shape x))           ;; vector length (not rank)
-        full-j (mx/->clj (jacobian-matrix g-full x m))
-        idxs (vec transformed-idxs)
-        sub (mapv (fn [i] (mapv (fn [j] (get-in full-j [i j])) idxs)) idxs)]
-    (mx/scalar (host-log-abs-det sub))))
+  (let [m (first (mx/shape x))                  ;; vector length (not rank)
+        full-j (jacobian-matrix g-full x m)
+        idx (mx/array (vec transformed-idxs) mx/int32)
+        sub (mx/take-idx (mx/take-idx full-j idx 0) idx 1)]  ;; rows then cols
+    (mx/logabsdet sub)))
 
 ;; ---------------------------------------------------------------------------
 ;; read / write / copy — introspection API for writing bijections h

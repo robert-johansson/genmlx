@@ -1371,8 +1371,8 @@
         ;; Recompute V-inv and log-det-V from scale-matrix (not precomputed)
         ;; so gradient tape is preserved for differentiating w.r.t. V.
         V-inv (mx/inv scale-matrix)
-        log-det-V (mx/logdet scale-matrix)
-        log-det-X (mx/logdet x-2d)
+        log-det-V (mx/spd-logdet scale-matrix)
+        log-det-X (mx/spd-logdet x-2d)
         ;; log p(X) = ((df-k-1)/2)*log|X| - (1/2)*tr(V^{-1}X) - (df*k/2)*log(2)
         ;;            - (df/2)*log|V| - log_multivariate_gamma(df/2, k)
         half-df (/ df 2.0)
@@ -1415,8 +1415,8 @@
         X-inv (mx/inv x-2d)
         ;; Recompute log-det from raw matrices (not precomputed) so gradient
         ;; tape is preserved for differentiating w.r.t. Psi and X.
-        log-det-Psi (mx/logdet scale-matrix)
-        log-det-X (mx/logdet x-2d)
+        log-det-Psi (mx/spd-logdet scale-matrix)
+        log-det-X (mx/spd-logdet x-2d)
         ;; log p(X) = (df/2)*log|Psi| - (df*k/2)*log(2) - log_multivariate_gamma(df/2, k)
         ;;            - ((df+k+1)/2)*log|X| - (1/2)*tr(Psi * X^{-1})
         half-df (/ df 2.0)
