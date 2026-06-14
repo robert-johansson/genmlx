@@ -18,6 +18,7 @@
             [genmlx.inference.smc :as smc]
             [genmlx.inference.importance :as imp]
             [genmlx.inference.util :as u]
+            [genmlx.combinators :as comb]
             [genmlx.inference.mcmc :as mcmc])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -204,5 +205,53 @@
       (is (not= prod collided)
           "production does NOT use the generation key to resample — a
            re-collision (k-res := k-gen) would flip this and fail the oracle"))))
+
+;; ---------------------------------------------------------------------------
+;; POSITIVE decorrelation oracle for the Mix combinator (genmlx-3ezj item 2)
+;;
+;; Batched Mix does a 3-way split [k-next k-comps k-idx] so the PARENT
+;; continuation (k-next) is disjoint from the index-sampling stream (k-idx).
+;; Pre-njaq the parent continued with the SAME key that sampled the indices,
+;; correlating every downstream site with index sampling. We force that
+;; collision (k-next := k-idx) via a targeted split-n redef and assert the
+;; downstream site differs from production — a re-collision would make them
+;; equal and FAIL.
+;; ---------------------------------------------------------------------------
+
+(def ^:private comp-lo (gen [_x] (trace :y (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))))
+(def ^:private comp-hi (gen [_x] (trace :y (dist/gaussian (mx/scalar 10.0) (mx/scalar 1.0)))))
+
+(def ^:private mix-then-z
+  ;; Mix, THEN a downstream parent site :z — :z is sampled with k-next, so the
+  ;; njaq collision (k-next = k-idx) would tie :z to index sampling.
+  (gen [x]
+    (let [mix (comb/mix-combinator [comp-lo comp-hi] (mx/array [0.0 0.0]))]
+      (splice :mixture mix x)
+      (trace :z (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0))))))
+
+(defn- z-vals [vtrace]
+  (mx/->clj (cm/get-value (cm/get-submap (:choices vtrace) :z))))
+
+(deftest mix-parent-continuation-disjoint-from-index-sampling
+  (testing "the Mix parent continuation (k-next) is disjoint from the index
+            stream (k-idx); re-colliding them changes the downstream site"
+    (let [n 32
+          key (rng/fresh-key 13)
+          prod (z-vals (dyn/vsimulate mix-then-z [(mx/scalar 0.0)] n key))
+          ;; Force k-next := k-idx in the Mix 3-way split (the njaq bug),
+          ;; leaving every other split untouched.
+          collided (with-redefs [rng/split-n
+                                 (let [orig rng/split-n]
+                                   (fn [k m]
+                                     (if (= m 3)
+                                       ;; [k-next k-comps k-idx]: set k-next := k-idx
+                                       ;; (the njaq bug — parent continues with the
+                                       ;; index key), leaving k-comps disjoint.
+                                       (let [[_ b c] (orig k m)] [c b c])
+                                       (orig k m))))]
+                     (z-vals (dyn/vsimulate mix-then-z [(mx/scalar 0.0)] n key)))]
+      (is (not= prod collided)
+          "downstream :z differs when the parent continuation is re-collided
+           with index sampling — the 3-way disjoint split has real effect"))))
 
 (cljs.test/run-tests)
