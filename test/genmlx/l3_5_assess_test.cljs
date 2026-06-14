@@ -16,11 +16,9 @@
 ;; Helpers
 ;; ---------------------------------------------------------------------------
 
-(defn- strip-analytical
-  "Remove auto-handlers from a gen-fn, forcing standard handler path."
-  [gf]
-  (assoc gf :schema (dissoc (:schema gf) :auto-handlers :conjugate-pairs
-                            :has-conjugate? :analytical-plan)))
+;; genmlx-jr90: the single canonical strip (was a private copy that stripped
+;; only 4 keys — it missed :auto-regenerate-transition and :auto-update-transition).
+(def ^:private strip-analytical dyn/strip-analytical-path)
 
 (defn- has-auto-handlers? [gf]
   (boolean (:auto-handlers (:schema gf))))

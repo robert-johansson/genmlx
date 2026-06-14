@@ -215,13 +215,12 @@
 
 (println "\n== Section 4: regenerate (genmlx-m3tn) ==")
 
-(defn- strip-analytical
-  "Force the standard handler/compiled path (drop analytical auto-handlers)."
-  [gf]
-  (assoc gf :schema (dissoc (:schema gf)
-                            :auto-handlers :auto-regenerate-handlers
-                            :auto-regenerate-transition :conjugate-pairs
-                            :has-conjugate? :analytical-plan :linear-gaussian-blocks)))
+;; genmlx-jr90: the single canonical strip. (The old copy also dropped
+;; :linear-gaussian-blocks, but that key is only consulted by the reopens-guards
+;; inside the analytical update/regenerate cases, which are already disabled once
+;; :auto-update-transition / :auto-regenerate-transition are stripped — so the
+;; canonical strip is dispatch-equivalent.)
+(def ^:private strip-analytical dyn/strip-analytical-path)
 
 (def br-model
   (dyn/auto-key

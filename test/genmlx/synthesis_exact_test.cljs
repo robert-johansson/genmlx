@@ -131,15 +131,11 @@
      (- (lgamma 6.0))))              ;; - lgamma(sum alpha + n = 6)
 
 (defn- strip-analytical
-  "Return a copy of gf with the L3 analytical plan removed from its schema, so
-   p/generate uses the handler/compiled path (genuine importance sampling)
-   instead of the analytical shortcut. Real trace-sites are kept, so method
-   selection still sees residual latents and routes to IS."
+  "Force the handler/compiled path (genuine IS): the canonical analytical strip
+   (genmlx-jr90) plus a fresh key, since this test re-runs generate on it. Real
+   trace-sites are kept, so method selection still sees residual latents."
   [gf]
-  (dyn/auto-key
-   (update gf :schema dissoc
-           :auto-handlers :auto-regenerate-transition :auto-regenerate-handlers
-           :conjugate-pairs :has-conjugate? :analytical-plan)))
+  (dyn/auto-key (dyn/strip-analytical-path gf)))
 
 ;; ===========================================================================
 ;; done-means 1 — schema has non-empty :conjugate-pairs on synthesized models

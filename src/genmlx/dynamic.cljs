@@ -987,7 +987,8 @@
    likelihoods, corrupting for particle diversity (smc) and trace-MH chains
    (genmlx-540f)."
   [:auto-handlers :conjugate-pairs :has-conjugate? :analytical-plan
-   :auto-regenerate-transition :auto-update-transition :auto-update-handlers])
+   :auto-regenerate-transition :auto-regenerate-handlers
+   :auto-update-transition :auto-update-handlers])
 
 (def alternate-path-schema-keys
   "Every schema key the dispatcher stack consults for a non-handler execution
