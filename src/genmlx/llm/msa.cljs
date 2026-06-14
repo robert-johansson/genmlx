@@ -25,7 +25,7 @@
             [clojure.string :as str]
             [cljs.reader :as reader]
             [instaparse.core :as insta]
-            ["@mlx-node/lm" :refer [ChatSession]]
+            [genmlx.llm.backend :as llm]
             [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
@@ -306,8 +306,12 @@
       (str/replace #"\(defn-?\s+\[" "(fn [")))
 
 (defn generate-candidate
-  "Generate a single model candidate from the LLM.
-   Uses .chat with enableThinking=false for direct output.
+  "DEPRECATED (genmlx-n4ds): template mode was built around a fine-tuned model
+   (qwen3-0.6b-cljs) that is not in the supported roster. Knowledge mode
+   (generate-knowledge-candidate) is the keeper. Kept functional for any model by
+   routing through generate-text-raw (which injects the qwen3 think-skip so the
+   output is not contaminated with <think>...</think> — genmlx-wumc), but prefer
+   :knowledge mode in synthesize-and-rank.
 
    model-map: {:model :tokenizer :type} from llm/load-model
    task:      {:description :variables ...}
@@ -320,12 +324,10 @@
           :or {max-tokens 150 temperature 0.5}} opts
          {:keys [variables]} task
          prompt (build-prompt task)]
-     (pr/let [sess (ChatSession. (:model model-map)
-                                (clj->js {:system msa-system-prompt
-                                          :maxNewTokens max-tokens
-                                          :temperature temperature}))
-              result (.send sess prompt)
-              text (normalize-defn->fn (.-text result))
+     (pr/let [raw (llm/generate-text-raw model-map prompt
+                                         {:max-tokens max-tokens :temperature temperature
+                                          :system-prompt msa-system-prompt})
+              text (normalize-defn->fn raw)
               dist-map (parse-dist-lines text variables)
               code (assemble-gen-fn variables dist-map)]
        {:code code
@@ -362,18 +364,20 @@ Output ONLY the lines. No explanation.")
    task:      {:description :variables :observations ...}
    opts:      :max-tokens (default 120), :temperature (default 0.5)
 
-   Returns a promise of {:code :dist-map :variables}."
+   Returns a promise of {:code :dist-map :variables}.
+
+   Generation routes through generate-text-raw, which injects the qwen3
+   think-skip (<think>\\n\\n</think>\\n\\n) so the math-notation output is not
+   contaminated by <think>...</think> reasoning (which broke parse-math —
+   genmlx-wumc)."
   ([model-map task] (generate-knowledge-candidate model-map task {}))
   ([model-map task opts]
    (let [{:keys [max-tokens temperature]
           :or {max-tokens 120 temperature 0.5}} opts
          {:keys [variables]} task]
-     (pr/let [sess (ChatSession. (:model model-map)
-                                (clj->js {:system knowledge-system-prompt
-                                          :maxNewTokens max-tokens
-                                          :temperature temperature}))
-              result (.send sess (build-knowledge-prompt task))
-              text (.-text result)
+     (pr/let [text (llm/generate-text-raw model-map (build-knowledge-prompt task)
+                                          {:max-tokens max-tokens :temperature temperature
+                                           :system-prompt knowledge-system-prompt})
               dist-map (or (parse-math text) {})]
        {:code (assemble-gen-fn variables dist-map)
         :dist-map dist-map
@@ -447,10 +451,18 @@ Output ONLY the lines. No explanation.")
      (let [{:keys [n-particles] :or {n-particles 50}} opts]
        (try
          (let [obs-cm (observations->choicemap observations)
-               method (:method (ms/select-method gf obs-cm))]
-           (if (#{:exact :kalman} method)
+               method (:method (ms/select-method gf obs-cm))
+               ;; :exact / :kalman is a SINGLE analytical p/generate weight — valid
+               ;; only when latents were actually eliminated. An opaque-fallback
+               ;; model (genmlx-sndo) has an EMPTY trace-sites schema, which
+               ;; method-selection labels :exact (count-trace-sites==0); scoring
+               ;; it by one joint draw is NOT the marginal log p(obs). Require real
+               ;; sites; otherwise score by IS, labeled honestly as :handler-is.
+               eliminable? (pos? (count (:trace-sites (:schema gf))))]
+           (if (and (#{:exact :kalman} method) eliminable?)
              {:log-ml (score-exact gf obs-cm) :method method}
-             {:log-ml (score-is gf obs-cm n-particles) :method method}))
+             {:log-ml (score-is gf obs-cm n-particles)
+              :method (if (#{:exact :kalman} method) :handler-is method)}))
          (catch :default _ {:log-ml ##-Inf :method nil}))))))
 
 (defn score-model
