@@ -10,7 +10,23 @@
 
 (defprotocol IGenerate
   (generate [gf args constraints]
-    "Constrained execution. Returns {:trace Trace :weight MLX-scalar}."))
+    "Constrained execution. Returns {:trace Trace :weight MLX-scalar}.
+
+     Default (handler/compiled paths): unconstrained choices are sampled from the
+     prior; :weight is the sum of log-probabilities at the constrained addresses
+     (log p(constraints | sampled latents)); the trace's score-type is :joint.
+
+     L3 analytical special case: when the model's STATIC keyword addresses form a
+     detected conjugate pair and the observation is constrained while its prior
+     latent is not, generate marginalizes the latent analytically — the latent in
+     the returned trace is the deterministic analytic posterior mean (not a prior
+     sample) and :weight is the analytic MARGINAL log p(obs). This is the optimal
+     zero-variance importance weight; the trace is tagged :marginal (detect with
+     genmlx.trace/score-type). The same joint written with DYNAMIC addresses skips
+     conjugacy and uses the default behavior. To force prior-sample + conditional
+     (:joint) weight — required for correct multi-particle importance sampling and
+     trace-MH — strip the path with genmlx.dynamic/strip-analytical-path (every
+     built-in importance/SMC/MCMC entry point does this internally)."))
 
 (defprotocol IAssess
   (assess [gf args choices]

@@ -83,4 +83,49 @@
       (is (some? result) "importance-sampling completed without abort")
       (is (< c (long (* 0.9 limit))) "IS live-buffer count bounded under the wall"))))
 
+;; --- genmlx-py4a: nested PLATE (shared latent + N sessions x cycles tracing
+;;     sites) at MODERATE scale. Before the deep-trace materialize fix
+;;     (importance.cljs only materialized weight+score), each of the N retained
+;;     traces pinned its whole per-sample subgraph (hundreds of native buffers)
+;;     alive — the dead-buffer sweep cannot free buffers a live retained leaf
+;;     references. After the fix (u/materialize-state per particle) each retained
+;;     trace holds only bounded leaf buffers and the intermediates become
+;;     dead+sweepable. This is a bounded-completion regression guard exercising
+;;     the retain-many-leaves path; the EXTREME regime (~264 arrays/sample at
+;;     very high :samples) stays deferred to the wedge-tolerant host.
+(def plate-model
+  (dyn/auto-key
+    (gen [n-sessions n-cycles]
+      (let [mu (trace :mu (dist/gaussian 0 5))]
+        (dotimes [s n-sessions]
+          (let [seed (trace (keyword (str "s" s "_seed")) (dist/gaussian mu 1.0))]
+            (dotimes [c n-cycles]
+              (trace (keyword (str "s" s "_c" c)) (dist/gaussian seed 0.5)))))
+        :done))))
+
+(deftest py4a-plate-importance-sampling-bounded
+  (testing "IS on a nested plate deep-materializes each retained trace + stays bounded"
+    (reset! mx/alloc-retry-count 0)
+    (reset! mx/proactive-sweep-count 0)
+    (let [sessions 8 cycles 12 samples 250
+          sites-per-sample (+ 1 (* sessions (+ 1 cycles)))
+          limit (mx/get-resource-limit)
+          obs (cm/choicemap (keyword "s0_c0") (mx/scalar 0.0)
+                            (keyword "s1_c0") (mx/scalar 0.5))
+          {:keys [traces log-ml-estimate]}
+          (is/importance-sampling {:samples samples :gc-every 25 :key (rng/fresh-key 11)}
+                                  plate-model [sessions cycles] obs)
+          c (mx/get-num-resources)
+          ml (mx/item log-ml-estimate)]
+      (println (str "  PLATE IS " samples " samples x " sites-per-sample
+                    " sites/sample | live-buffers=" c "/" limit
+                    " | proactive-sweeps=" @mx/proactive-sweep-count
+                    " | reactive-retries=" @mx/alloc-retry-count " | log-ml=" ml))
+      (is (= samples (count traces)) "all N traces returned (usable weighted traces)")
+      (is (js/isFinite ml) "log-ml estimate is finite")
+      (is (js/isFinite (mx/item (cm/get-value (cm/get-submap (:choices (first traces)) :mu))))
+          "retained trace leaf is materialized + usable (deep-materialize worked)")
+      (is (< c (long (* 0.9 limit)))
+          (str "plate IS live-buffer count " c " stays under the ~" limit " wall")))))
+
 (cljs.test/run-tests)

@@ -28,22 +28,35 @@
   "Importance sampling. Generate traces constrained by observations,
    return weighted samples.
 
-   opts: {:samples N :key prng-key}
+   opts: {:samples N :key prng-key :gc-every K}
    model: generative function
    args: model arguments
    observations: choice map of observed values
+   :gc-every — sweep dead native arrays every K particles (default 50); pass a
+   smaller K for heavy nested-combinator/plate models that allocate hundreds of
+   leaves per sample.
 
    Returns {:traces [Trace ...] :log-weights [MLX-scalar ...]
             :log-ml-estimate MLX-scalar}"
-  [{:keys [samples key] :or {samples 100}} model args observations]
+  [{:keys [samples key gc-every] :or {samples 100}} model args observations]
   (let [model (-> model dyn/auto-key strip-analytical)
         keys (rng/split-n (rng/ensure-key key) samples)
+        ;; Deep-materialize EACH FULL trace (all choice leaves + retval + score),
+        ;; not just weight+score: an un-materialized leaf MxArray pins its whole
+        ;; per-sample computation subgraph (hundreds of native buffers for a
+        ;; nested-combinator plate) alive, which the dead-buffer sweep cannot free
+        ;; while the retained trace still references it. u/materialize-state
+        ;; evaluates every leaf, detaching it so the per-sample intermediates
+        ;; become dead + sweepable (genmlx-py4a). mh already does this via
+        ;; collect-samples/tidy-step.
+        gc-every (or gc-every 50)
         results (into []
                       (map-indexed
                        (fn [i ki]
                          (let [r (p/generate (dyn/with-key model ki) args observations)]
-                           (mx/materialize! (:weight r) (:score (:trace r)))
-                           (when (zero? (mod (inc i) 50)) (mx/sweep-dead-arrays!))
+                           (mx/materialize! (:weight r))
+                           (u/materialize-state (:trace r))
+                           (when (zero? (mod (inc i) gc-every)) (mx/sweep-dead-arrays!))
                            r)))
                       keys)
         traces     (mapv :trace results)

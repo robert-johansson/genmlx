@@ -108,12 +108,14 @@
       (trace :ys (dist/iid-gaussian mu (mx/scalar 1.0) t))
       mu)))
 
-;; NOTE: scalar simulate triggers compiled path which has a pre-existing
-;; bug (nth on MLX array constructor). This test documents that known error.
+;; An iid-gaussian site declines :compiled-simulate (genmlx-b210), so a static
+;; model containing one falls back to the handler and simulates cleanly.
 (deftest model-scalar-simulate
-  (testing "iid in model: scalar simulate (known compiled path issue)"
-    (is (thrown? js/Error (p/simulate (dyn/auto-key iid-model) [5]))
-        "compiled path error on iid model with dynamic T (pre-existing)")))
+  (testing "iid in model: scalar simulate falls back to handler"
+    (let [trace (p/simulate (dyn/auto-key iid-model) [5])]
+      (is (= [5] (mx/shape (cm/get-value (cm/get-submap (:choices trace) :ys))))
+          "ys shape [5]")
+      (is (js/isFinite (mx/item (:score trace))) "score finite"))))
 
 (deftest model-scalar-generate
   (testing "iid in model: scalar generate with stacked obs"

@@ -52,7 +52,9 @@ Forward-sample all random choices from their prior distributions. No observation
 
 Execute the model with some choices constrained to observed values. Unconstrained choices are sampled from the prior. Returns a trace and an importance weight.
 
-The weight is \\(\log p(\text{constraints} \mid \text{args})\\) -- specifically, the sum of log-probabilities at constrained addresses. For a fully constrained model, this equals the joint log-probability.
+The weight is the sum of log-probabilities at the constrained addresses, i.e. \\(\log p(\text{constraints} \mid \text{latents}, \text{args})\\) where the latents are the values sampled into the trace. For a fully constrained model, this equals the joint log-probability. The returned trace is `:joint` (see [score-type](trace.md)).
+
+**Conjugate special case (L3 analytical elimination).** When the model's *static* keyword addresses form a detected conjugate pair (e.g. a `gaussian` prior + `gaussian` likelihood) and the observation is constrained while its prior latent is not, `generate` marginalizes the latent analytically: the latent in the returned trace is the **deterministic analytic posterior mean** (not a prior sample), and the weight is the **analytic marginal** \\(\log p(\text{obs} \mid \text{args})\\) with the latent integrated out. This is the optimal, zero-variance importance weight, and the trace is tagged `:marginal` rather than `:joint` — detect it with `(genmlx.trace/score-type (:trace result))`. The same joint written with *dynamic* addresses (e.g. `(keyword (str "y" j))`) skips conjugacy detection and uses the default prior-sample + conditional-weight behavior above. To force the default behavior on a conjugate model — required for correct multi-particle importance sampling and trace-MH (the analytic path yields identical particles otherwise) — strip it with `genmlx.dynamic/strip-analytical-path`. All built-in inference entry points do this automatically.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
