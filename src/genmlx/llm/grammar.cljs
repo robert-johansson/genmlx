@@ -542,5 +542,12 @@ through the DFA) or the prior text left the grammar's language."
         ...})"
   [gf constraint]
   (dispatch/with-handler gf
-    (into {} (map (fn [[op t]] [op (wrap-grammar t constraint)]))
-          standard-transitions)))
+    (assoc (into {} (map (fn [[op t]] [op (wrap-grammar t constraint)]))
+                 standard-transitions)
+           ;; The retained-only GENERAL regenerate transition, grammar-masked, so
+           ;; a structure-changing constrained move (e.g. resampling an early
+           ;; token shifts EOS and changes the number of sites) routes through the
+           ;; correct retained-only weight instead of the fast per-site
+           ;; (new-score − old-score) − ratio (genmlx-fayo C8). The dispatcher
+           ;; gates fast vs general; this supplies the general arm.
+           :regenerate-general (wrap-grammar h/regenerate-transition-general constraint))))

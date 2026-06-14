@@ -289,16 +289,17 @@
                  (fn [rt] (run-body gf rt (:args trace))))]
     (make-regen-result gf trace result old-score)))
 
-(defn- run-regen-general
-  "Retained-only regenerate via the handler (genmlx-hmch, genmlx-yep2).
-   Builds the new trace with regenerate-transition-general (selected sites
-   resample, unselected-absent sites sample fresh — a structure change instead
-   of the old throw, unselected-present sites are retained); the weight is then
-   two project passes over the retained selection (new-context minus
-   old-context), which is exact for dependent joint moves (yep2) and recurses
-   through splices."
-  [gf _args key {:keys [trace selection]}]
-  (let [result (rt/run-handler h/regenerate-transition-general
+(defn- run-regen-general*
+  "Retained-only regenerate via the handler (genmlx-hmch, genmlx-yep2), with the
+   GENERAL transition as a parameter so custom (e.g. grammar-masked) regenerate
+   moves can route through the same retained-only path. Builds the new trace with
+   `general-transition` (selected sites resample, unselected-absent sites sample
+   fresh — a structure change instead of the old throw, unselected-present sites
+   are retained); the weight is then two project passes over the retained
+   selection (new-context minus old-context), exact for dependent joint moves and
+   recursing through splices."
+  [general-transition gf _args key {:keys [trace selection]}]
+  (let [result (rt/run-handler general-transition
                  {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
                   :key key :selection selection
                   :old-choices (:choices trace)
@@ -308,15 +309,31 @@
                  (fn [rt] (run-body gf rt (:args trace))))]
     (make-regen-result-general gf trace result selection)))
 
-(defn- run-regen-handler
-  "Handler-path regenerate dispatcher: take the fast per-site convention when
-   it is provably equivalent (regen-fast-eligible?), else the general
-   retained-only path. The fast path keeps the MCMC hot loop (single-site
-   mh-cycle) free of the extra project pass."
-  [gf args key {:keys [selection] :as opts}]
+(defn- run-regen-general
+  "Retained-only regenerate via the standard general transition."
+  [gf args key opts]
+  (run-regen-general* h/regenerate-transition-general gf args key opts))
+
+(defn- run-regen-gated
+  "Regenerate fast/general gating, parameterized by the fast and general
+   transitions: take the fast per-site convention when it is provably equivalent
+   (regen-fast-eligible?), else the general retained-only path. The fast path
+   keeps the MCMC hot loop (single-site mh-cycle) free of the extra project pass.
+
+   The handler path passes the standard transitions; a custom (with-handler /
+   grammar constrain) path passes its own wrapped fast + general transitions so a
+   structure-changing constrained move still gets the correct retained-only
+   weight instead of the fast (new-score − old-score) − ratio (genmlx-fayo C8)."
+  [fast-transition general-transition gf args key {:keys [selection] :as opts}]
   (if (regen-fast-eligible? gf selection)
-    (run-regen h/regenerate-transition gf args key opts)
-    (run-regen-general gf args key opts)))
+    (run-regen fast-transition gf args key opts)
+    (run-regen-general* general-transition gf args key opts)))
+
+(defn- run-regen-handler
+  "Handler-path regenerate dispatcher (standard transitions)."
+  [gf args key opts]
+  (run-regen-gated h/regenerate-transition h/regenerate-transition-general
+                   gf args key opts))
 
 (defn- run-assess [transition gf args key {:keys [constraints]}]
   (let [result (rt/run-handler transition
@@ -672,7 +689,20 @@
                 tf (if (map? t)
                      (or (get t op) (get standard-transitions op))
                      t)]
-            {:run (partial (get transition-run-fns op) tf)
+            {:run (if (and (= op :regenerate) (map? t) (:regenerate-general t))
+                    ;; Custom (e.g. grammar-masked) regenerate ALWAYS takes the
+                    ;; retained-only general path. The fast per-site weight
+                    ;; (new-score − old-score) − ratio is only valid when the
+                    ;; selected and retained sites are independent — but masking
+                    ;; can couple them in ways the schema cannot see (a grammar
+                    ;; where a later token's valid set depends on an earlier one,
+                    ;; or a structure-changing move that shifts EOS and the number
+                    ;; of sites). The general path's two project passes are
+                    ;; themselves grammar-masked, so they capture that coupling
+                    ;; exactly, and reduce to the fast result when sites really are
+                    ;; independent (genmlx-fayo C8).
+                    (partial run-regen-general* (:regenerate-general t))
+                    (partial (get transition-run-fns op) tf))
              :score-type (or (:score-type (meta (if (map? t) tf t))) :joint)
              :label :custom}))))))
 
