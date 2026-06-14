@@ -285,7 +285,16 @@
   (let [dist-args (:dist-args obs-site)
         natural-arg (when (and dist-args (< natural-param-idx (count dist-args)))
                       (nth dist-args natural-param-idx))
-        ;; The target symbol should match the prior address name
+        ;; The target symbol and env are derived from the address NAME, so the
+        ;; affine path matches only when the binding name equals the trace
+        ;; address (e.g. (let [mu (trace :mu ...)] (trace :y (gaussian
+        ;; (mx/multiply 0.9 mu) s)))). A RENAMED binding inside an affine
+        ;; expression (m bound to :mu) is not resolved here and declines to
+        ;; :nonlinear — L3 elimination silently falls back to the handler
+        ;; (genmlx-7zuq). This is PERF-ONLY (the handler path is exact), so it is
+        ;; left as a documented limitation rather than risk a wrong-coefficient
+        ;; affine misclassification by rewriting the env from :arg-aliases. The
+        ;; :direct case IS rename-resilient (conjugacy.cljs uses :arg-aliases).
         target-sym (symbol (name prior-addr))
         ;; Build env from obs-site deps (symbols that map to trace addrs)
         ;; We need to know which symbols in the expression are trace-dependent
