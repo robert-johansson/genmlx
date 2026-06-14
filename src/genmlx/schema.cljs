@@ -242,6 +242,21 @@
   [acc env forms]
   (reduce (fn [acc form] (walk-form acc env form)) acc forms))
 
+(defn- bare-trace-alias-addr
+  "If `val-form` is a bare trace call to a static (keyword) address —
+   (trace :addr <dist> ...) — return that address keyword, else nil. Recorded
+   under env's ::arg-aliases so conjugacy classification can tell a DIRECT
+   binding (mu = (trace :mu ...)) from an affine REBINDING that reuses the
+   symbol name (mu = (mx/add mu 5)) — the latter must not classify :direct
+   (genmlx-1thx). Also lets a direct alias with a non-matching name (m =
+   (trace :mu ...)) be recognized as direct."
+  [val-form]
+  (when (and (seq? val-form) (seq val-form)
+             (symbol? (first val-form))
+             (= "trace" (name (first val-form)))
+             (keyword? (second val-form)))
+    (second val-form)))
+
 (defn- handle-trace [acc env args]
   (let [addr-form (first args)
         dist-form (second args)
@@ -259,6 +274,9 @@
                                    :dist-type dist-type
                                    :dist-args (or dist-args [])
                                    :deps deps
+                                   ;; direct trace-alias provenance for dist-arg
+                                   ;; symbols (genmlx-1thx)
+                                   :arg-aliases (or (::arg-aliases env) {})
                                    :static? static?})
         (cond-> (not static?) (assoc :dynamic-addresses? true)))))
 
@@ -305,16 +323,31 @@
                                sym-deps (into (compute-deps env val-form)
                                               (trace-addrs-in val-form))]
                            (if (symbol? sym)
-                             [acc' (if (seq sym-deps)
-                                     (assoc env sym sym-deps)
-                                     env)]
+                             ;; Maintain direct trace-alias provenance: record
+                             ;; sym -> :addr when bound directly to (trace :addr
+                             ;; ...), and clear it on any rebinding so an affine
+                             ;; reuse of the name is not mistaken for a direct
+                             ;; natural parameter (genmlx-1thx).
+                             (let [env1 (if (seq sym-deps) (assoc env sym sym-deps) env)
+                                   alias-addr (bare-trace-alias-addr val-form)
+                                   env2 (cond
+                                          alias-addr (assoc-in env1 [::arg-aliases sym] alias-addr)
+                                          (get-in env1 [::arg-aliases sym]) (update env1 ::arg-aliases dissoc sym)
+                                          :else env1)]
+                               [acc' env2])
                              ;; Destructuring binding — conservatively give
                              ;; every bound symbol the full deps of the value
-                             ;; form (over-approximation keeps dep edges).
-                             [acc' (if (seq sym-deps)
-                                     (reduce (fn [e s] (assoc e s sym-deps))
-                                             env (find-symbols sym))
-                                     env)])))
+                             ;; form (over-approximation keeps dep edges), and
+                             ;; clear any aliases for the bound symbols.
+                             (let [env1 (if (seq sym-deps)
+                                          (reduce (fn [e s] (assoc e s sym-deps))
+                                                  env (find-symbols sym))
+                                          env)
+                                   env2 (if (::arg-aliases env1)
+                                          (update env1 ::arg-aliases
+                                                  #(apply dissoc % (find-symbols sym)))
+                                          env1)]
+                               [acc' env2]))))
                        [acc env]
                        (or pairs []))]
       (walk-forms acc' env' body))))

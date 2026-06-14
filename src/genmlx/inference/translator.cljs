@@ -249,7 +249,12 @@
             {:keys [trace weight]} (apply-translator translator current-trace
                                                      (or args2 (:args current-trace)) k-app)
             n-prop (count (applicable-moves moves trace))
-            corr (if (pos? n-prop) (- (js/Math.log n-cur) (js/Math.log n-prop)) 0.0)
+            ;; If the proposed state has no applicable moves the reverse move is
+            ;; unselectable (reverse prob 0), so the Hastings ratio is 0 and the
+            ;; move MUST be rejected; corr = log(n-cur) - log(0) = +Inf in the
+            ;; denominator, i.e. -Inf correction (genmlx-jtou). corr=0 here could
+            ;; wrongly accept and break detailed balance.
+            corr (if (pos? n-prop) (- (js/Math.log n-cur) (js/Math.log n-prop)) ##-Inf)
             log-w (+ (mx/realize weight) corr)
             accept? (u/accept-mh? log-w k-acc)]
         {:trace (if accept? trace current-trace) :accepted? accept? :move i}))))
@@ -333,14 +338,22 @@
          :log-ml (+ log-ml (logmeanexp-js (mapv :lw parts)))}
         (let [;; normalise + (optionally) resample before bridging to the next model
               lws (mapv :lw parts)
-              lme (logmeanexp-js lws)
               [k-res rk1] (rng/split rk)
-              parts' (if resample?
-                       ;; systematic-resample takes MLX log-weight scalars; our
-                       ;; lws are realized JS numbers, so box them.
-                       (let [idxs (u/systematic-resample (mapv mx/scalar lws) n k-res)]
-                         (mapv (fn [j] {:trace (:trace (nth parts j)) :lw 0.0}) idxs))
-                       parts)
+              ;; The SMC log-Z increment (logmeanexp over the current weights) is
+              ;; only valid when paired with a weight RESET — i.e. when a resample
+              ;; actually happens. Without resampling, weights accumulate and a
+              ;; SINGLE terminal logmeanexp over the fully-accumulated weights is
+              ;; the unbiased single-path IS estimate; adding a per-stage
+              ;; increment too would double-count (genmlx-jtou).
+              [parts' log-ml']
+              (if resample?
+                ;; systematic-resample takes MLX log-weight scalars; our lws are
+                ;; realized JS numbers, so box them. Reset weights to 0 and bank
+                ;; the normaliser increment.
+                (let [idxs (u/systematic-resample (mapv mx/scalar lws) n k-res)]
+                  [(mapv (fn [j] {:trace (:trace (nth parts j)) :lw 0.0}) idxs)
+                   (+ log-ml (logmeanexp-js lws))])
+                [parts log-ml])
               ;; bridge every particle to the next model via the translator
               tt (nth translators stage)
               keysT (rng/split-n rk1 (inc n))
@@ -351,4 +364,4 @@
                                                       (nth keysT j))]
                                 {:trace t2 :lw (+ lw (mx/realize w))}))
                             (range n))]
-          (recur (inc stage) bridged (+ log-ml lme) (nth keysT n)))))))
+          (recur (inc stage) bridged log-ml' (nth keysT n)))))))

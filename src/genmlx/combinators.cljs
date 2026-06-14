@@ -2313,10 +2313,21 @@
                                         :retval (:retval new-inner-trace)
                                         :score new-score})
                         [new-inner-trace])
-               :weight (mx/subtract new-score (:score trace))
+               ;; Same component: the inner update weight is the combinator
+               ;; weight (the unchanged index score cancels). Using the raw
+               ;; score delta over-counts any fresh sites the inner update
+               ;; sampled on a nested structural change (genmlx-zek9).
+               :weight (:weight result)
                :discard (:discard result)})))
-        ;; Different component: generate new component from scratch
-        (let [new-component (nth (:components this) new-idx)
+        ;; Different component: generate new component from scratch.
+        ;; Thesis weight: the generate weight counts only constrained inner
+        ;; sites (fresh unconstrained sites cancel against the internal
+        ;; proposal); add the new index score and charge the removed old
+        ;; component via the recorded old total. Using (:score new-inner-trace)
+        ;; here would double-count the new component's fresh latents
+        ;; (genmlx-zek9). The new component is keyed so its unconstrained
+        ;; latents can be sampled (else p/generate throws 'No PRNG key').
+        (let [new-component (ensure-kernel-key (nth (:components this) new-idx))
               new-idx-score (dc/dist-log-prob idx-dist (mx/scalar new-idx mx/int32))
               gen-result (p/generate new-component args inner-constraints)
               new-inner-trace (:trace gen-result)
@@ -2329,7 +2340,8 @@
                                     :retval (:retval new-inner-trace)
                                     :score new-score})
                     [new-inner-trace])
-           :weight (mx/subtract new-score (:score trace))
+           :weight (mx/subtract (mx/add (:weight gen-result) new-idx-score)
+                                (:score trace))
            :discard old-choices}))))
 
   p/IRegenerate
@@ -2346,28 +2358,51 @@
           old-idx-score (dc/dist-log-prob idx-dist (mx/scalar old-idx mx/int32))
           idx-selected? (sel/selected? selection :component-idx)]
       (if idx-selected?
-        ;; Resample component index and simulate new component. EVERYTHING
-        ;; under the Mix is freshly drawn from the prior, so the regenerate
-        ;; MH weight is exactly 0: the score delta cancels against the
-        ;; forward/backward prior-proposal ratio (system convention
-        ;; W = dS - proposal_ratio, and proposal_ratio = dS here). The old
-        ;; scoreDelta return un-cancelled the whole subtree score at parent
-        ;; splices and skewed top-level MH acceptance (genmlx-v740).
+        ;; Resample the component index. Only :component-idx is selected, so
+        ;; the inner component sites are UNSELECTED and must be retained
+        ;; whenever the structure is unchanged (genmlx-zek9).
         (let [new-idx-trace (dc/dist-simulate idx-dist)
               new-idx (int (mx/item (cm/get-value (:choices new-idx-trace))))
-              new-idx-score (:score new-idx-trace)
-              new-component (ensure-kernel-key (nth (:components this) new-idx))
-              new-comp-trace (p/simulate new-component args)
-              new-score (mx/add (:score new-comp-trace) new-idx-score)]
-          {:trace (tag-from-traces
-                    (tr/make-trace {:gen-fn this :args args
-                                    :choices (cm/set-choice (:choices new-comp-trace)
-                                                            [:component-idx]
-                                                            (mx/scalar new-idx mx/int32))
-                                    :retval (:retval new-comp-trace)
-                                    :score new-score})
-                    [new-comp-trace])
-           :weight ZERO})
+              new-idx-score (:score new-idx-trace)]
+          (if (= new-idx old-idx)
+            ;; Same component resampled: retain the unselected inner choices.
+            ;; Nothing under the component moves, so the retained-only weight
+            ;; is 0 (and the selected index resample cancels its own delta).
+            (let [component (nth (:components this) old-idx)
+                  inner-old-choices (without-component-idx old-choices)
+                  inner-old-score (mx/subtract (:score trace) old-idx-score)
+                  inner-old-trace (tr/make-trace {:gen-fn component :args args
+                                                  :choices inner-old-choices
+                                                  :retval (:retval trace)
+                                                  :score inner-old-score})
+                  new-score (mx/add inner-old-score new-idx-score)]
+              {:trace (tag-from-traces
+                        (tr/make-trace {:gen-fn this :args args
+                                        :choices (cm/set-choice inner-old-choices
+                                                                [:component-idx]
+                                                                (mx/scalar new-idx mx/int32))
+                                        :retval (:retval trace)
+                                        :score new-score})
+                        [inner-old-trace])
+               :weight ZERO})
+            ;; Different component: EVERYTHING under the Mix is freshly drawn
+            ;; from the prior, so the regenerate MH weight is exactly 0: the
+            ;; score delta cancels against the forward/backward prior-proposal
+            ;; ratio (W = dS - proposal_ratio, proposal_ratio = dS here). The
+            ;; old scoreDelta return un-cancelled the whole subtree score at
+            ;; parent splices and skewed top-level MH acceptance (genmlx-v740).
+            (let [new-component (ensure-kernel-key (nth (:components this) new-idx))
+                  new-comp-trace (p/simulate new-component args)
+                  new-score (mx/add (:score new-comp-trace) new-idx-score)]
+              {:trace (tag-from-traces
+                        (tr/make-trace {:gen-fn this :args args
+                                        :choices (cm/set-choice (:choices new-comp-trace)
+                                                                [:component-idx]
+                                                                (mx/scalar new-idx mx/int32))
+                                        :retval (:retval new-comp-trace)
+                                        :score new-score})
+                        [new-comp-trace])
+               :weight ZERO})))
         ;; Same component: regenerate within the component
         (let [component (nth (:components this) old-idx)
               inner-old-score (mx/subtract (:score trace) old-idx-score)

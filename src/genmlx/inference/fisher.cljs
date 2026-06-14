@@ -193,7 +193,16 @@
 
    Returns {:log-evidence scalar, :log-ml scalar, :log-det-fisher scalar}."
   [{:keys [fisher log-ml]} D]
-  (let [{:keys [L added-damping]} (robust-cholesky fisher D default-cholesky-schedule)
+  (let [chol (robust-cholesky fisher D default-cholesky-schedule)
+        ;; robust-cholesky returns nil when EVERY damping attempt fails (it uses
+        ;; `some`); destructuring nil left L=nil and crashed opaquely in
+        ;; (mx/diag nil). Fail with a clear diagnostic instead (genmlx-alxa).
+        _ (when-not chol
+            (throw (ex-info (str "laplace-log-evidence: Fisher information is not "
+                                 "positive-definite even after maximal damping "
+                                 "(near-singular or NaN Fisher) — cannot compute log|F|")
+                            {:D D})))
+        {:keys [L added-damping]} chol
         log-det (log-det-via-cholesky L)
         _ (mx/materialize! log-det)
         log-ml-val (mx/item log-ml)

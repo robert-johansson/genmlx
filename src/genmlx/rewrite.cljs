@@ -176,11 +176,14 @@
         ;; Group remaining conjugate pairs by prior (excluding claimed addrs).
         ;; Multi-parent obs (one obs claimed by several priors) have no correct
         ;; scalar elimination — drop those pairs entirely (genmlx-b470).
-        remaining-pairs (conj-detect/drop-multi-parent-pairs
-                         (vec (remove (fn [p]
-                                        (or (contains? claimed (:prior-addr p))
-                                            (contains? claimed (:obs-addr p))))
-                                      conjugate-pairs)))
+        ;; Decline priors conjugate to >1 obs family (no correct single-family
+        ;; scalar elimination — genmlx-1thx) in addition to multi-parent obs.
+        remaining-pairs (conj-detect/drop-mixed-family-priors
+                         (conj-detect/drop-multi-parent-pairs
+                          (vec (remove (fn [p]
+                                         (or (contains? claimed (:prior-addr p))
+                                             (contains? claimed (:obs-addr p))))
+                                       conjugate-pairs))))
         grouped (group-by :prior-addr remaining-pairs)
 
         ;; One pass over grouped priors: compute non-conjugate children once and

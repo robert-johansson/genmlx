@@ -668,7 +668,9 @@
    so two priors claiming one obs would silently mis-marginalize, genmlx-b470).
    Returns a merged map of {addr handler-fn} for all conjugate sites."
   [conjugate-pairs]
-  (let [grouped (conj/group-by-prior (conj/drop-multi-parent-pairs conjugate-pairs))]
+  (let [grouped (conj/group-by-prior
+                 (conj/drop-mixed-family-priors
+                  (conj/drop-multi-parent-pairs conjugate-pairs)))]
     (reduce
      (fn [handlers [prior-addr pairs]]
        (let [family (:family (first pairs))
@@ -717,7 +719,9 @@
    Multi-parent obs pairs are dropped first (see build-auto-handlers).
    Returns a merged map of {addr handler-fn}."
   [conjugate-pairs]
-  (let [grouped (conj/group-by-prior (conj/drop-multi-parent-pairs conjugate-pairs))]
+  (let [grouped (conj/group-by-prior
+                 (conj/drop-mixed-family-priors
+                  (conj/drop-multi-parent-pairs conjugate-pairs)))]
     (reduce
      (fn [handlers [prior-addr pairs]]
        (let [family (:family (first pairs))
@@ -795,7 +799,9 @@
    are skipped — callers must decline the analytical-update path for models that
    contain them. Returns a merged map of {addr handler-fn}."
   [conjugate-pairs]
-  (let [grouped (conj/group-by-prior (conj/drop-multi-parent-pairs conjugate-pairs))]
+  (let [grouped (conj/group-by-prior
+                 (conj/drop-mixed-family-priors
+                  (conj/drop-multi-parent-pairs conjugate-pairs)))]
     (reduce
      (fn [handlers [prior-addr pairs]]
        (let [family (:family (first pairs))

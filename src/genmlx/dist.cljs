@@ -899,11 +899,13 @@
   "Geometric distribution: number of failures before first success, p in (0,1)."
   [p]
   (sample [key]
-    ;; Inverse CDF: floor(log(u) / log(1-p))
+    ;; Inverse CDF: floor(log(1-u) / log(1-p)). Use (1-u), not u: rng/uniform
+    ;; returns [0,1) which INCLUDES 0, and log(0) = -Inf -> +Inf, a sample
+    ;; outside the support; 1-u in (0,1] keeps the log finite (genmlx-lgun).
           (let [u (rng/uniform key [])
-                log-u (mx/log u)
+                log-1mu (mx/log (mx/subtract ONE u))
                 log-1mp (mx/log (mx/subtract ONE p))]
-            (mx/floor (mx/divide log-u log-1mp))))
+            (mx/floor (mx/divide log-1mu log-1mp))))
   (log-prob [v]
     ;; log p(k) = k * log(1-p) + log(p)
     ;; xlogy guard: at p=1 (legal — success on the first trial, k=0 w.p. 1)
@@ -923,9 +925,10 @@
   (let [{:keys [p]} (:params d)
         key (rng/ensure-key key)
         u (rng/uniform key [n])
-        log-u (mx/log u)
+        ;; (1-u), not u: avoid log(0)=-Inf -> +Inf at the u=0 boundary (genmlx-lgun)
+        log-1mu (mx/log (mx/subtract ONE u))
         log-1mp (mx/log (mx/subtract ONE p))]
-    (mx/floor (mx/divide log-u log-1mp))))
+    (mx/floor (mx/divide log-1mu log-1mp))))
 
 (let [raw geometric]
   (defn geometric
@@ -1205,12 +1208,19 @@
           (let [sh (mx/shape mu)]
             (mx/add mu (mx/multiply sigma (rng/normal key sh)))))
   (log-prob [v]
-            (let [z (mx/divide (mx/subtract v mu) sigma)]
-              (mx/sum
-               (mx/negative
-                (mx/add LOG-2PI-HALF
-                        (mx/log sigma)
-                        (mx/multiply HALF (mx/square z)))))))
+            (let [k (count (mx/shape mu))   ; event rank (mu carries the event shape)
+                  z (mx/divide (mx/subtract v mu) sigma)
+                  lp (mx/negative
+                      (mx/add LOG-2PI-HALF
+                              (mx/log sigma)
+                              (mx/multiply HALF (mx/square z))))]
+              ;; Sum only over the trailing event axes so a leading particle axis
+              ;; survives in batched mode: [...mu]->scalar, [N,...mu]->[N]. Summing
+              ;; over ALL axes collapsed the particle axis to a scalar and
+              ;; corrupted per-particle weights (genmlx-lgun); cf. gaussian-vec.
+              (if (pos? k)
+                (mx/sum lp (vec (range (- k) 0)))
+                lp)))
   (reparam [key]
            (let [sh (mx/shape mu)]
              (mx/add mu (mx/multiply sigma (rng/normal key sh))))))

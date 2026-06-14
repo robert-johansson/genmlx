@@ -307,12 +307,16 @@
 (defn- vsub [a b] (mapv - a b))
 
 (defn- mat-lu-solve
-  "Solve Ax = b via Gaussian elimination with partial pivoting. A is p*p, b is p-vector."
+  "Solve Ax = b via Gaussian elimination with partial pivoting. A is p*p, b is
+   p-vector. Returns nil when A is SINGULAR (a near-zero pivot remains): the old
+   early-exit left that zero on the diagonal and back-substitution divided by it,
+   producing Inf/NaN that silently poisoned downstream estimates (genmlx-alxa).
+   Callers must handle nil."
   [A b]
   (let [p (count b)
-        aug (vec (for [i (range p)]
-                   (conj (vec (nth A i)) (nth b i))))
-        aug (loop [k 0, aug aug]
+        aug0 (vec (for [i (range p)]
+                    (conj (vec (nth A i)) (nth b i))))
+        aug (loop [k 0, aug aug0]
               (if (>= k p) aug
                   (let [pivot-row (apply max-key
                                          (fn [i] (js/Math.abs (get-in aug [i k])))
@@ -323,7 +327,7 @@
                                       (assoc pivot-row tmp))))
                         pivot-val (get-in aug [k k])]
                     (if (< (js/Math.abs pivot-val) 1e-15)
-                      aug
+                      ::singular
                       (recur (inc k)
                              (reduce (fn [aug i]
                                        (let [factor (/ (get-in aug [i k]) pivot-val)]
@@ -335,12 +339,13 @@
                                                  (range k (inc p)))))
                                      aug
                                      (range (inc k) p)))))))]
-    (loop [k (dec p), x (vec (repeat p 0.0))]
-      (if (< k 0) x
-          (let [sum (reduce + (map (fn [j] (* (get-in aug [k j]) (nth x j)))
-                                   (range (inc k) p)))
-                x-k (/ (- (get-in aug [k p]) sum) (get-in aug [k k]))]
-            (recur (dec k) (assoc x k x-k)))))))
+    (when-not (= aug ::singular)
+      (loop [k (dec p), x (vec (repeat p 0.0))]
+        (if (< k 0) x
+            (let [sum (reduce + (map (fn [j] (* (get-in aug [k j]) (nth x j)))
+                                     (range (inc k) p)))
+                  x-k (/ (- (get-in aug [k p]) sum) (get-in aug [k k]))]
+              (recur (dec k) (assoc x k x-k))))))))
 
 (defn- mat-log-det
   "Log absolute determinant of a p*p matrix via Gaussian elimination."
@@ -416,15 +421,20 @@
                    (* s s)
                    (if (<= n p)
                      1.0
-                     (let [beta-hat (mat-lu-solve gram Xty)
-                           Xbeta-y (reduce + (map * beta-hat Xty))
-                           rss (- (get yty target) Xbeta-y)]
-                       (/ (max rss 0.001) n))))
+                     (if-let [beta-hat (mat-lu-solve gram Xty)]
+                       (let [Xbeta-y (reduce + (map * beta-hat Xty))
+                             rss (- (get yty target) Xbeta-y)]
+                         (/ (max rss 0.001) n))
+                       ;; Singular Gram (constant / collinear predictor) — no OLS
+                       ;; estimate; fall back like the n<=p case (genmlx-alxa).
+                       1.0)))
         M (vec (for [i (range p)]
                  (vec (for [j (range p)]
                         (+ (get-in gram [i j])
                            (if (= i j) (/ sigma-sq (nth s0 i)) 0))))))
-        Minv-Xtr (mat-lu-solve M Xtr)
+        ;; M is gram + positive diagonal (sigma/s0 > 0) so it is PD and
+        ;; non-singular; guard defensively against nil (genmlx-alxa).
+        Minv-Xtr (or (mat-lu-solve M Xtr) (vec (repeat p 0.0)))
         quad-corr (reduce + (map * Xtr Minv-Xtr))
         A (vec (for [i (range p)]
                  (vec (for [j (range p)]

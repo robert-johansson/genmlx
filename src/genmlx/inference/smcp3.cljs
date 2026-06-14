@@ -15,6 +15,14 @@
             [genmlx.inference.smc :as smc]
             [genmlx.inference.util :as u]))
 
+(defn- rekey
+  "Give gf a deterministic per-particle PRNG key pk for reproducibility, or
+   auto-key when pk is nil (no seed supplied). Threading these keys is what makes
+   SMCP3 reproducible under a fixed :key — previously the proposals/models were
+   only ever auto-keyed, drawing fresh global entropy (genmlx-ivs0)."
+  [gf pk]
+  (when gf (if pk (dyn/with-key gf pk) (dyn/auto-key gf))))
+
 
 ;; ---------------------------------------------------------------------------
 ;; SMCP3 init step
@@ -31,27 +39,30 @@
 
    Returns {:traces :log-weights :log-ml-increment}"
   [model args observations proposal-gf particles key]
-  (let [model (-> model dyn/auto-key smc/strip-analytical)
-        proposal-gf (when proposal-gf (dyn/auto-key proposal-gf))
+  (let [model (smc/strip-analytical model)
+        pkeys (rng/split-n-or-nils key particles)
         results (mapv
-                  (fn [_]
-                    (if proposal-gf
-                      ;; Use proposal to generate initial choices
-                      (let [{proposal-choices :choices proposal-score :weight}
-                            (p/propose proposal-gf [])
-                            ;; Merge proposal choices with observations
-                            merged (cm/merge-cm proposal-choices observations)
-                            ;; Generate model trace with merged constraints
-                            {:keys [trace weight]} (p/generate model args merged)
-                            ;; Importance weight = model-weight - proposal-score
-                            iw (mx/subtract weight proposal-score)]
-                        (mx/materialize! iw (:score trace))
-                        {:trace trace :weight iw})
-                      ;; No proposal: standard importance sampling
-                      (let [r (p/generate model args observations)]
-                        (mx/materialize! (:weight r) (:score (:trace r)))
-                        r)))
-                  (range particles))
+                  (fn [pk]
+                    (let [[kp kg] (rng/split-n-or-nils pk 2)
+                          model (rekey model kg)
+                          proposal-gf (rekey proposal-gf kp)]
+                      (if proposal-gf
+                        ;; Use proposal to generate initial choices
+                        (let [{proposal-choices :choices proposal-score :weight}
+                              (p/propose proposal-gf [])
+                              ;; Merge proposal choices with observations
+                              merged (cm/merge-cm proposal-choices observations)
+                              ;; Generate model trace with merged constraints
+                              {:keys [trace weight]} (p/generate model args merged)
+                              ;; Importance weight = model-weight - proposal-score
+                              iw (mx/subtract weight proposal-score)]
+                          (mx/materialize! iw (:score trace))
+                          {:trace trace :weight iw})
+                        ;; No proposal: standard importance sampling
+                        (let [r (p/generate model args observations)]
+                          (mx/materialize! (:weight r) (:score (:trace r)))
+                          r))))
+                  pkeys)
         traces (mapv :trace results)
         log-weights (mapv :weight results)
         w-arr (u/materialize-weights log-weights)
@@ -100,41 +111,47 @@
                                 (vec (repeat particles (mx/scalar 0.0)))])
                              [traces log-weights])
         obs-empty? (empty? (cm/addresses observations))
+        ;; Per-particle keys derived from the step-key so the per-particle
+        ;; proposal/update sampling is reproducible under a fixed seed
+        ;; (genmlx-ivs0); rekey falls back to auto-key when no seed is given.
+        pkeys (rng/split-n-or-nils step-key particles)
         ;; Apply forward kernel to each particle via edit
         results (mapv
-                  (fn [trace]
-                    (if forward-kernel
-                      ;; Use proposal edit
-                      (if backward-kernel
-                        ;; Apply the observations first — the proposal edit
-                        ;; only applies the forward kernel's choices, so
-                        ;; without this step the observations never reach the
-                        ;; trace. Doing it before the edit lets the forward
-                        ;; kernel condition on them (locally-optimal
-                        ;; proposals). Weights compose additively.
-                        (let [obs-result (when-not obs-empty?
-                                           (p/update (:gen-fn trace) trace observations))
-                              trace1 (if obs-result (:trace obs-result) trace)
-                              edit-req (edit/proposal-edit forward-kernel backward-kernel)
-                              {:keys [trace weight]} (edit/edit (:gen-fn trace1) trace1 edit-req)
-                              weight (if obs-result
-                                       (mx/add (:weight obs-result) weight)
-                                       weight)]
+                  (fn [trace pk]
+                    (let [[k-obs k-fwd k-upd] (rng/split-n-or-nils pk 3)]
+                      (if forward-kernel
+                        ;; Use proposal edit
+                        (if backward-kernel
+                          ;; Apply the observations first — the proposal edit
+                          ;; only applies the forward kernel's choices, so
+                          ;; without this step the observations never reach the
+                          ;; trace. Doing it before the edit lets the forward
+                          ;; kernel condition on them (locally-optimal
+                          ;; proposals). Weights compose additively.
+                          (let [obs-result (when-not obs-empty?
+                                             (p/update (rekey (:gen-fn trace) k-obs) trace observations))
+                                trace1 (if obs-result (:trace obs-result) trace)
+                                ;; only the forward kernel samples; backward only scores
+                                edit-req (edit/proposal-edit (rekey forward-kernel k-fwd) backward-kernel)
+                                {:keys [trace weight]} (edit/edit (rekey (:gen-fn trace1) k-upd) trace1 edit-req)
+                                weight (if obs-result
+                                         (mx/add (:weight obs-result) weight)
+                                         weight)]
+                            (mx/materialize! weight)
+                            {:trace trace :weight weight})
+                          ;; Without backward kernel, fall back to constraint update.
+                          ;; This changes weight semantics: no backward/forward proposal
+                          ;; correction is applied — weight is pure update weight only.
+                          (let [{:keys [trace weight]}
+                                (edit/edit (rekey (:gen-fn trace) k-upd) trace
+                                           (edit/constraint-edit observations))]
+                            (mx/materialize! weight)
+                            {:trace trace :weight weight}))
+                        ;; Standard update
+                        (let [{:keys [trace weight]} (p/update (rekey (:gen-fn trace) k-upd) trace observations)]
                           (mx/materialize! weight)
-                          {:trace trace :weight weight})
-                        ;; Without backward kernel, fall back to constraint update.
-                        ;; This changes weight semantics: no backward/forward proposal
-                        ;; correction is applied — weight is pure update weight only.
-                        (let [{:keys [trace weight]}
-                              (edit/edit (:gen-fn trace) trace
-                                         (edit/constraint-edit observations))]
-                          (mx/materialize! weight)
-                          {:trace trace :weight weight}))
-                      ;; Standard update
-                      (let [{:keys [trace weight]} (p/update (:gen-fn trace) trace observations)]
-                        (mx/materialize! weight)
-                        {:trace trace :weight weight})))
-                  traces')
+                          {:trace trace :weight weight}))))
+                  traces' pkeys)
         new-traces (mapv :trace results)
         update-weights (mapv :weight results)
         new-weights (mapv mx/add weights' update-weights)

@@ -125,9 +125,15 @@
                        (= q :opt)   [:alt node [:empty]]
                        (vector? q)  (let [[_ lo hi] q
                                           required (repeat lo node)
-                                          optional (repeat (- hi lo) [:alt node [:empty]])]
-                                      (reduce (fn [a b] [:cat a b])
-                                              (concat required optional)))))
+                                          optional (repeat (- hi lo) [:alt node [:empty]])
+                                          parts (concat required optional)]
+                                      (if (seq parts)
+                                        (reduce (fn [a b] [:cat a b]) parts)
+                                        ;; a{0} / a{0,0}: zero copies — matches the
+                                        ;; empty string for this atom. Without this
+                                        ;; (reduce ... ()) returned nil and crashed
+                                        ;; NFA construction (genmlx-abw8).
+                                        [:empty]))))
        :cat        (fn [& items]
                      (if (= 1 (count items))
                        (first items)

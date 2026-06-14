@@ -171,14 +171,17 @@
 
 (defn vadev-gradient
   "Compute ADEV gradient via vectorized execution (single model body call).
-   opts: {:n-samples N} — batch size (default 100).
+   opts: {:n-samples N :baseline b} — batch size (default 100), and an
+   optional variance-reduction baseline forwarded to vadev-surrogate (the
+   default vectorized path otherwise silently ignores :baseline-decay —
+   genmlx-9rwf). A control-variate baseline does not bias the gradient.
    Returns {:loss MLX-scalar, :grad MLX-array}."
-  [{:keys [n-samples] :or {n-samples 100}} gf args cost-fn param-names params-array]
+  [{:keys [n-samples baseline] :or {n-samples 100}} gf args cost-fn param-names params-array]
   (let [loss-fn (fn [p]
                   (let [store {:params (learn/array->params p param-names)}
                         gf' (vary-meta gf assoc :genmlx.dynamic/param-store store)
                         key (rng/fresh-key)]
-                    (vadev-surrogate gf' args cost-fn n-samples key)))
+                    (vadev-surrogate gf' args cost-fn n-samples key baseline)))
         vg (mx/value-and-grad loss-fn)
         [loss grad] (vg params-array)]
     {:loss loss :grad grad}))
@@ -232,7 +235,7 @@
         {:params params :loss-history (persistent! losses)}
         (let [{:keys [loss grad]}
               (if use-vectorized?
-                (vadev-gradient {:n-samples n-samples}
+                (vadev-gradient {:n-samples n-samples :baseline baseline}
                                 gf args cost-fn param-names params)
                 (adev-gradient {:n-samples n-samples :baseline baseline}
                                gf args cost-fn param-names params))

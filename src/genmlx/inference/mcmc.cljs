@@ -2431,11 +2431,16 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- compute-u-turn?
-  "Check NUTS U-turn criterion."
-  [q-minus q-plus p-minus p-plus]
+  "Check NUTS U-turn criterion. The criterion uses the VELOCITY v = M^{-1} p, not
+   raw momentum, so it is correct under a non-identity mass matrix (:metric /
+   :adapt-metric); for the identity metric M^{-1}p = p and this is unchanged
+   (genmlx-o78h)."
+  [q-minus q-plus p-minus p-plus metric]
   (let [diff (mx/subtract q-plus q-minus)
-        check-fwd (mx/sum (mx/multiply diff p-plus))
-        check-bwd (mx/sum (mx/multiply diff p-minus))]
+        v-plus (inv-mass-multiply p-plus metric)
+        v-minus (inv-mass-multiply p-minus metric)
+        check-fwd (mx/sum (mx/multiply diff v-plus))
+        check-bwd (mx/sum (mx/multiply diff v-minus))]
     ;; Break lazy graph — dot products needed as JS numbers for U-turn check
     (mx/materialize! check-fwd check-bwd)
     (and (>= (mx/item check-fwd) 0)
@@ -2480,7 +2485,7 @@
               q-plus (if (pos? v) (:q-plus tree2) (:q-plus tree1))
               p-plus (if (pos? v) (:p-plus tree2) (:p-plus tree1))
               s' (and (:s' tree2)
-                      (compute-u-turn? q-minus q-plus p-minus p-plus))]
+                      (compute-u-turn? q-minus q-plus p-minus p-plus (:metric ctx)))]
           {:q-minus q-minus :p-minus p-minus
            :q-plus q-plus :p-plus p-plus
            :q' q' :n' total-n :s' s'
@@ -2572,7 +2577,7 @@
                                    qp' (if (pos? v) (:q-plus tree) q-plus)
                                    pp' (if (pos? v) (:p-plus tree) p-plus)
                                    cont? (and (:s' tree)
-                                              (compute-u-turn? qm' qp' pm' pp'))]
+                                              (compute-u-turn? qm' qp' pm' pp' (:metric local-ctx)))]
                                (recur (inc j) qm' pm' qp' pp' q''
                                       (+ depth-n (:n' tree)) cont?
                                       (+ total-alpha (:alpha tree))
@@ -2633,7 +2638,7 @@
                                   qp' (if (pos? v) (:q-plus tree) q-plus)
                                   pp' (if (pos? v) (:p-plus tree) p-plus)
                                   cont? (and (:s' tree)
-                                             (compute-u-turn? qm' qp' pm' pp'))]
+                                             (compute-u-turn? qm' qp' pm' pp' (:metric ctx)))]
                               (recur (inc j) qm' pm' qp' pp' q''
                                      (+ depth-n (:n' tree)) cont?
                                      dk-next tk-next))))]

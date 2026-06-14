@@ -138,8 +138,19 @@
         {:type :log-link}
         {:type :nonlinear})
 
-      ;; Direct: the natural parameter arg IS the prior symbol
-      (symbol-resolves-to-addr? natural-arg prior-addr)
+      ;; Direct: the natural parameter arg is a symbol bound DIRECTLY to
+      ;; (trace prior-addr ...). When the schema walker recorded :arg-aliases
+      ;; provenance, use it: it distinguishes a direct binding from an affine
+      ;; rebinding that reuses the same symbol name, e.g.
+      ;;   (let [mu (trace :mu ...) mu (mx/add mu 5)] (trace :y (gaussian mu 1)))
+      ;; which must fall through to affine analysis, not be scored as if the
+      ;; offset were 0 (genmlx-1thx); it also recognizes a direct alias under a
+      ;; different name (m = (trace :mu ...)). Hand-built schemas without the
+      ;; :arg-aliases key fall back to the legacy name match.
+      (if (contains? obs-site :arg-aliases)
+        (and (symbol? natural-arg)
+             (= prior-addr (get (:arg-aliases obs-site) natural-arg)))
+        (symbol-resolves-to-addr? natural-arg prior-addr))
       {:type :direct}
 
       ;; Try affine analysis on the natural parameter expression
@@ -234,6 +245,27 @@
     (if (empty? multi)
       pairs
       (vec (remove #(contains? multi (:obs-addr %)) pairs)))))
+
+(defn drop-mixed-family-priors
+  "Remove all pairs whose PRIOR is conjugate to obs of MORE THAN ONE family.
+
+   A single prior conjugate to two different obs families (e.g. a Gamma prior
+   with both Poisson and Exponential children) has no correct single-family
+   scalar elimination: the joint marginal couples the families through the
+   shared latent, so it is NOT the product of the per-family marginals, and
+   applying one family's update-step to every obs in the group scores the
+   minority family with the wrong likelihood (genmlx-1thx). Decline such
+   priors entirely so the handler path scores them exactly. (Joint
+   multi-family elimination would be a future feature, not a bug fix.)"
+  [pairs]
+  (let [mixed (into #{}
+                    (keep (fn [[prior-addr ps]]
+                            (when (> (count (distinct (map :family ps))) 1)
+                              prior-addr)))
+                    (group-by :prior-addr pairs))]
+    (if (empty? mixed)
+      pairs
+      (vec (remove #(contains? mixed (:prior-addr %)) pairs)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Schema augmentation

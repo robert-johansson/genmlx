@@ -311,21 +311,28 @@
           log-k (mx/scalar (js/Math.log k))
           ;; IWELBO estimate: L̂ = logsumexp(log_w) - log(K)
           l-hat (mx/subtract (mx/logsumexp log-w) log-k)
-          ;; Leave-one-out geometric means:
-          ;; loo_mean_k = (sum(log_w) - log_w_k) / (K-1)
-          loo-mean (mx/divide (mx/subtract (mx/sum log-w) log-w)
-                              (mx/scalar (dec k)))
-          ;; Build [K,K] matrix: row k has all log_w values,
-          ;; with diagonal (k,k) replaced by loo_mean_k
-          off-diag (mx/broadcast-to (mx/reshape log-w [1 k]) [k k])
-          loo-bcast (mx/broadcast-to (mx/reshape loo-mean [k 1]) [k k])
-          loo-matrix (mx/where (mx/eye k) loo-bcast off-diag)
-          ;; Baselines: L̂_{-k} = logsumexp(loo_matrix[k,:]) - log(K)
-          baselines (mx/subtract (mx/logsumexp loo-matrix [1]) log-k)
-          ;; REINFORCE signal with leave-one-out baseline
-          signal (mx/stop-gradient (mx/subtract l-hat baselines))
-          reinforce-term (mx/mean (mx/multiply signal log-q))]
-      ;; Surrogate loss: gradient equals VIMCO estimator
+          ;; REINFORCE score-function term with leave-one-out control
+          ;; variates. It must be SUMMED over the K samples so its scale
+          ;; matches l-hat's direct term, whose autodiff gradient is the full
+          ;; sum Σ_k w̃_k ∇log_w_k; averaging would make this term K× too small
+          ;; and mis-scale the two halves of the gradient (genmlx-9rwf).
+          ;; VIMCO needs K>1 — for K=1 the leave-one-out mean divides by zero,
+          ;; so the score term is 0 (single-sample IWELBO).
+          reinforce-term
+          (if (> k 1)
+            (let [;; loo_mean_k = (sum(log_w) - log_w_k) / (K-1)
+                  loo-mean (mx/divide (mx/subtract (mx/sum log-w) log-w)
+                                      (mx/scalar (dec k)))
+                  ;; [K,K] matrix: row k = all log_w, diagonal replaced by loo_mean_k
+                  off-diag (mx/broadcast-to (mx/reshape log-w [1 k]) [k k])
+                  loo-bcast (mx/broadcast-to (mx/reshape loo-mean [k 1]) [k k])
+                  loo-matrix (mx/where (mx/eye k) loo-bcast off-diag)
+                  ;; baselines: L̂_{-k} = logsumexp(loo_matrix[k,:]) - log(K)
+                  baselines (mx/subtract (mx/logsumexp loo-matrix [1]) log-k)
+                  signal (mx/stop-gradient (mx/subtract l-hat baselines))]
+              (mx/sum (mx/multiply signal log-q)))
+            (mx/scalar 0.0))]
+      ;; Surrogate loss: gradient equals the VIMCO estimator
       (mx/add l-hat reinforce-term))))
 
 (defn- per-sample-objective

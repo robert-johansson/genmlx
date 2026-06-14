@@ -330,11 +330,17 @@
           choices (stack-choices (mapv (comp :choices :trace) results))
           retvals (stack-retvals (mapv (comp :retval :trace) results))
           score (mx-sum-by (comp :score :trace) results)
-          ;; Regenerate weights are additive across independent elements, but
-          ;; each element weight was computed against the constructed old score
-          ;; (recorded element score, or 0 without metadata). Re-base against
-          ;; the true total old score so both cases stay exact:
-          ;; W = Σ w_i + Σ constructed_old_i - old_total.
+          ;; Regenerate weights are additive across independent elements, but each
+          ;; element weight was computed against the constructed old score
+          ;; (recorded element score, or 0 without metadata). Re-base against the
+          ;; true total old score. NOTE (genmlx-nt0c): this is exact when
+          ;; ::element-scores is present (the re-base term is 0 — every vmap-produced
+          ;; trace carries it, so both fast and general kernel paths are correct),
+          ;; and also for FAST-path kernels when it is absent (e.g. the nested-vmap
+          ;; reconstructed inner trace: −old_total exactly compensates). The one
+          ;; unsound case is a GENERAL retained-only kernel weight on a trace whose
+          ;; ::element-scores were externally dropped — a project-based weight is
+          ;; not linear in the element :score; callers must keep the metadata.
           constructed-old (if old-element-scores
                             (reduce mx/add (mx/scalar 0.0) old-element-scores)
                             (mx/scalar 0.0))
