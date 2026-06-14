@@ -436,11 +436,20 @@
               _ (when (pos? t) (mx/sweep-dead-arrays!))
               _ (when (and (pos? t) (zero? (mod t 5))) (mx/clear-cache!))]
           (if (zero? t)
-            ;; Init step: reference trace at index 0, rest from prior
-            (let [other-results (mapv (fn [i]
+            ;; Init step: reference trace at index 0, rest from prior. Thread
+            ;; per-particle keys from the user key so a seeded cSMC is
+            ;; bit-for-bit reproducible — generating from particle-model's
+            ;; auto-key alone leaked fresh entropy, making csmc nondeterministic
+            ;; under an explicit :key (genmlx-g5ys; the same fix smc-init-step
+            ;; got under genmlx-njaq).
+            (let [pkeys (rng/split-n-or-nils step-key (dec particles))
+                  other-results (mapv (fn [i ki]
                                         (break-particle-graph!
-                                         (p/generate particle-model args obs-t) i))
-                                      (range (dec particles)))
+                                         (p/generate (if ki (dyn/with-key particle-model ki)
+                                                         particle-model)
+                                                     args obs-t)
+                                         i))
+                                      (range (dec particles)) pkeys)
                   ;; Reference trace at index 0 (the core of cSMC). Its
                   ;; trajectory is reproduced by constraining ALL its choices,
                   ;; but that puts the generate weight on the full-joint scale

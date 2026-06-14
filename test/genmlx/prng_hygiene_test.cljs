@@ -118,6 +118,35 @@
                                                  xy-model [] obs))]
       (is (= (run) (run)) "chains bit-identical under the same seed"))))
 
+;; ---------------------------------------------------------------------------
+;; cSMC: seeded run is bit-reproducible (genmlx-g5ys: the init-step generate
+;; leaked auto-key entropy — fixed by threading per-particle keys like smc).
+;; This is a POSITIVE reproducibility test: it FAILED pre-fix (csmc gave
+;; different log-ML/particles every run under a fixed :key) and PASSES post-fix.
+;; ---------------------------------------------------------------------------
+
+(deftest csmc-seeded-determinism
+  (testing "same :key → identical cSMC log-ML and retained particles"
+    (let [obs-seq [(cm/choicemap :y0 (mx/scalar 1.0))
+                   (cm/choicemap :y1 (mx/scalar 1.2))]
+          ref-trace (p/simulate (dyn/with-key xy-model (rng/fresh-key 5)) [])
+          run #(smc/csmc {:particles 16 :key (rng/fresh-key 17)
+                          :rejuvenation-steps 2}
+                         xy-model [] obs-seq ref-trace)
+          r1 (run)
+          r2 (run)]
+      (is (= (h/realize (:log-ml-estimate r1))
+             (h/realize (:log-ml-estimate r2)))
+          "log-ML bit-identical under the same seed")
+      (is (= (mapv x-of (:traces r1)) (mapv x-of (:traces r2)))
+          "particle :x values bit-identical under the same seed")
+      (is (not= (mapv x-of (:traces r1))
+                (mapv x-of (:traces (smc/csmc {:particles 16
+                                               :key (rng/fresh-key 18)
+                                               :rejuvenation-steps 2}
+                                              xy-model [] obs-seq ref-trace))))
+          "different seed → different particles"))))
+
 (deftest importance-resampling-seeded-determinism
   (testing "same :key → identical resampled traces (guards the
             generate/resample key streams being disjoint)"
