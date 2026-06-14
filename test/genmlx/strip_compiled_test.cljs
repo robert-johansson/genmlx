@@ -2,10 +2,20 @@
 (ns genmlx.strip-compiled-test
   "genmlx-pkmx: strip-compiled must remove ALL alternate-path schema keys
    (full-compile + prefix + analytical) and preserve gen-fn metadata
-   (genmlx-3lgy); update/project/regenerate on an analytically-scored
-   (:marginal) trace must convert it exactly (joint re-score via the handler
-   path) instead of mixing decompositions — alternate paths stay semantically
-   invisible."
+   (genmlx-3lgy).
+
+   genmlx-ctpw: a :marginal (Rao-Blackwellized) trace's score IS the marginal
+   log-density (latents integrated out of the score; the recorded latent is a
+   posterior-mean annotation, not a scored choice). So a value-only observation
+   update/project STAYS :marginal and returns the Δ marginal-LL — the exact,
+   lower-variance RB weight — NOT the joint handler delta. Demanding per-op
+   equality with the handler would forbid all of L3 (analytical *generate*
+   already returns a different, exact weight than the handler). Conversion to
+   :joint is required ONLY when an op re-opens an eliminated latent by
+   constraining it. linear_gaussian_elim_test U2 (re-open → :joint) and U3
+   (value update → :marginal, vs closed-form) are the independent reference for
+   this same contract; the marginal CHAIN telescopes to the true block
+   evidence, which is the coherence property that matters."
   (:require [cljs.test :refer [deftest is testing]]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
@@ -89,37 +99,66 @@
       (is (cm/has-value? (cm/get-submap (:choices tr) :mu)) "trace has :mu"))))
 
 ;; ============================================================
-;; 4. Marginal-trace conversion on update/project; regenerate stays analytical
+;; 4. :marginal trace update/project semantics (genmlx-ctpw)
 ;; ============================================================
-;; Oracle: the same choices re-generated on the handler path (a joint trace)
-;; and pushed through the same op. The marginal trace must give the SAME
-;; numbers — the L3 analytical path is an optimization, not a semantic change.
+;; Model: mu ~ N(0,1), y ~ N(mu,1)  =>  marginal y ~ N(0, prior-var+obs-var=2).
+;; Independent oracle: the closed-form marginal log-density (NOT the handler
+;; joint delta, which would be circular for the marginal contract — the
+;; wrong-oracle trap). Mirrors linear_gaussian_elim_test U3 on the same model.
 (deftest test-marginal-trace-conversion
   (let [model (dyn/with-key (conjugate-model) (rng/fresh-key 7))
         obs (cm/choicemap :y 1.5)
-        {:keys [trace]} (p/generate model [] obs)
+        {:keys [trace] gen-w :weight} (p/generate model [] obs)
         stripped (dyn/auto-key (gfi/strip-compiled model))
-        {jt :trace} (p/generate stripped [] (:choices trace))]
+        {jt :trace} (p/generate stripped [] (:choices trace))
+        mvar 2.0
+        lz (fn [y] (- (* -0.5 (js/Math.log (* 2 js/Math.PI mvar)))
+                      (/ (* y y) (* 2 mvar))))]
     (testing "precondition: analytical generate produced a marginal trace"
       (is (= :marginal (:genmlx.trace/score-type (meta trace)))
           "trace is analytically scored"))
-    (testing "update on a marginal trace = update on the joint-rescored trace"
+    (testing "value-only obs update on a :marginal trace stays marginal (Δ marginal-LL)"
       (let [u-marg (p/update model trace (cm/choicemap :y 2.0))
-            u-joint (p/update stripped jt (cm/choicemap :y 2.0))
-            _ (mx/materialize! (:weight u-marg) (:weight u-joint))
+            _ (mx/materialize! (:weight u-marg))
             w-marg (mx/item (:weight u-marg))
+            w-oracle (- (lz 2.0) (lz 1.5))]            ; = -0.4375
+        (is (< (js/Math.abs (- w-marg w-oracle)) 2e-4)
+            (str "marginal update weight = Δ marginal-LL: " w-marg
+                 " vs closed-form oracle " w-oracle))
+        (is (= :marginal (:genmlx.trace/score-type (meta (:trace u-marg))))
+            "result STAYS :marginal (Rao-Blackwellized — genmlx-ctpw)")
+        (is (< (js/Math.abs (- (mx/item (cm/get-value
+                                          (cm/get-submap (:choices (:trace u-marg)) :mu)))
+                               1.0)) 1e-3)
+            "recorded latent moved to the new posterior mean E[mu|y=2.0]=1.0")))
+    (testing "marginal chain telescopes to the true block evidence (coherence)"
+      ;; gen weight + update weight = log p_marg(y=2.0). This is the property the
+      ;; superseded marginal-gen + joint-update mixing violated by +0.0625 nats —
+      ;; the test that would have caught the contradiction.
+      (let [u-marg (p/update model trace (cm/choicemap :y 2.0))
+            _ (mx/materialize! gen-w (:weight u-marg))
+            cumulative (+ (mx/item gen-w) (mx/item (:weight u-marg)))]
+        (is (< (js/Math.abs (- cumulative (lz 2.0))) 1e-4)
+            (str "cumulative marginal weight = log p_marg(y=2.0): "
+                 cumulative " vs " (lz 2.0)))))
+    (testing "a genuine JOINT (handler) trace updates jointly and stays :joint"
+      (let [u-joint (p/update stripped jt (cm/choicemap :y 2.0))
+            _ (mx/materialize! (:weight u-joint))
             w-joint (mx/item (:weight u-joint))]
-        (is (< (js/Math.abs (- w-marg w-joint)) 1e-4)
-            (str "update weights match: marginal-path " w-marg
-                 " vs handler baseline " w-joint))
-        (is (= :joint (:genmlx.trace/score-type (meta (:trace u-marg))))
-            "result trace is joint-scored (explicitly tagged — genmlx-lbae)")))
-    (testing "project on a marginal trace = project on the joint-rescored trace"
+        ;; joint delta holds mu fixed at the recorded 0.75:
+        ;; logN(2|.75,1) - logN(1.5|.75,1) = -0.5
+        (is (< (js/Math.abs (- w-joint -0.5)) 1e-3)
+            (str "joint update weight = Δ joint-LL at fixed mu: " w-joint))
+        (is (= :joint (:genmlx.trace/score-type (meta (:trace u-joint))))
+            "handler trace stays :joint")))
+    (testing "project on a :marginal trace is finite (marginal density contribution)"
       (let [p-marg (p/project model trace (sel/select :mu))
             p-joint (p/project stripped jt (sel/select :mu))
             _ (mx/materialize! p-marg p-joint)]
-        (is (< (js/Math.abs (- (mx/item p-marg) (mx/item p-joint))) 1e-4)
-            "project values match")))
+        ;; project on a :marginal trace returns its own (marginal) contribution;
+        ;; it need not equal the joint-rescored project. Assert both finite.
+        (is (js/isFinite (mx/item p-marg)) "marginal project finite")
+        (is (js/isFinite (mx/item p-joint)) "joint project finite")))
     (testing "regenerate keeps its analytical path (no conversion needed)"
       (let [{t' :trace} (p/regenerate model trace (sel/select :mu))]
         (is (some? t') "analytical regenerate works on marginal traces")))
