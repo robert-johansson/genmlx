@@ -62,7 +62,18 @@
     "Apply an edit request to a trace.
      Returns {:trace Trace :weight MLX-scalar :discard ChoiceMap
               :backward-request EditRequest}.
-     The backward-request reverses the edit — this is what makes SMCP3 work."))
+     The backward-request reverses the edit — this is what makes SMCP3 work.
+
+     Backward-request contract (genmlx-qpo2): the backward-request must carry
+     the inverse edit expressed in the FORWARD vocabulary — i.e. an edit that,
+     applied to the result trace, reproduces the original. The default
+     ConstraintEdit dispatch assumes :discard is itself a valid forward
+     constraint (true when a GF's constraints and choices share one value
+     space). A GF with a typed/asymmetric edit vocabulary — where the natural
+     :discard is not a re-appliable constraint (e.g. forward edits are event
+     batches but :discard is a node-value choicemap) — MUST implement a custom
+     IEdit whose backward-request encodes the inverse in the forward vocabulary,
+     not the raw discard; otherwise the edit-roundtrip law passes vacuously."))
 
 ;; ---------------------------------------------------------------------------
 ;; Default implementation that delegates to existing GFI operations
@@ -109,6 +120,11 @@
   (let [{:keys [constraints]} edit-request
         result (p/update gf trace constraints)
         discard (discard-of result)]
+    ;; genmlx-qpo2: this reverses the edit by re-applying :discard as a forward
+    ;; constraint — sound only when the GF's constraints and choices share one
+    ;; value space. GFs with an asymmetric edit vocabulary must supply a custom
+    ;; IEdit (see the IEdit docstring). The roundtrip law cannot detect the
+    ;; vacuous case, so the contract is documented, not enforced here.
     (assoc result
            :backward-request (->ConstraintEdit discard))))
 
