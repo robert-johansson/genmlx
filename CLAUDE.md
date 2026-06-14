@@ -219,7 +219,10 @@ direct import of dynamic.cljs).
    - The `defdist` registry bookkeeping atom in `dist/core.cljs` (never read
      by computation paths)
    - KV cache mutation in `llm/backend.cljs` (always in try/finally)
-
+   - The live `Bun.serve` listener (an OS resource, not pure state) in the network
+     face of the Bun world membrane (`world/net.cljs`): created by `serve!`, scoped
+     and torn down by `with-server`'s `p/finally` (the blessed path) — analogous to
+     the KV-cache try/finally. A bare `serve!` hands the lifecycle to the caller.
 2. **Data-driven, open for extension.** Distributions are a single `Distribution`
    record with open multimethods. New distributions via `defdist`. New execution
    strategies via `dispatch/with-handler` or `dispatch/with-dispatch`. Grammar

@@ -129,6 +129,7 @@ fast test/genmlx/error_message_test.cljs
 bench test/genmlx/eval_cost_model_2.cljs
 bench test/genmlx/eval_cost_model.cljs
 medium test/genmlx/exact_test.cljs
+slow test/genmlx/external_env_test.cljs
 medium test/genmlx/fisher_test.cljs
 medium test/genmlx/fit_test.cljs
 medium test/genmlx/fused_inference_test.cljs
