@@ -68,5 +68,17 @@
     (is (= 0 (:n-params r))
         "filter removed the eliminated latent from the param vector")))
 
+(deftest extract-params-empty-latent-index-names-its-cause
+  ;; genmlx-nytl: when a tensor-native score exposes ZERO sampling params
+  ;; (every selected latent analytically eliminated), extract-params-by-index
+  ;; must name the cause, not crash with the cryptic native error
+  ;; 'stack requires at least one array' (mx/stack on []).
+  (let [{:keys [trace]} (p/generate two-g [] obs-2g)]
+    (is (thrown-with-msg? js/Error #"no free latent addresses to sample"
+          (u/extract-params-by-index trace {}))
+        "empty latent-index throws a clear :no-mcmc-latents ex-info")
+    (is (= [2] (vec (mx/shape (u/extract-params-by-index trace {:a 0 :b 1}))))
+        "non-empty latent-index still extracts normally (no regression)")))
+
 (cljs.test/run-tests)
 
