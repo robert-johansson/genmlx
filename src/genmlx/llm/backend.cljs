@@ -12,7 +12,23 @@
             ["@mlx-node/core" :as mlx-core]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
+            [genmlx.llm.qwen3-forward :as fwd]
             [promesa.core :as p]))
+
+;; ---------------------------------------------------------------------------
+;; GenMLX-owned forward (f6ov): a value-level CLJS forward over genmlx.rs
+;; primitives instead of upstream's per-model forward structs.
+;;
+;; CljsForwardModel wraps the functional qwen3-forward (whose prefill/step RETURN
+;; the next cache) in a single mutable cache cell, so it presents the SAME
+;; stateful API as the upstream model (init-cache! / forward-prefill /
+;; forward-step / reset-cache!) and every caller (LLM-as-GF, byte/structured GFs)
+;; works unchanged. The atom is the one audited KV-cache mutation boundary.
+;; ---------------------------------------------------------------------------
+
+(defrecord CljsForwardModel [fwd cache])  ; fwd = {:config :weights}; cache = atom
+
+(defn cljs-forward-model? [model] (instance? CljsForwardModel model))
 
 ;; ---------------------------------------------------------------------------
 ;; Model loading
@@ -24,15 +40,27 @@
 
    The model directory must contain config.json, safetensors weights,
    and tokenizer.json. Model type is auto-detected from config.json.
-   Supports Qwen3, Qwen3.5, Gemma4, and other HuggingFace models."
-  [model-path]
-  (p/let [model (.loadModel mlx-lm model-path)
-          model-type (.detectModelType mlx-lm model-path)
-          tokenizer (.fromPretrained (.-Qwen3Tokenizer mlx-core)
-                                     (str model-path "/tokenizer.json"))]
-    {:model model
-     :tokenizer tokenizer
-     :type (keyword model-type)}))
+   Supports Qwen3, Qwen3.5, Gemma4, and other HuggingFace models.
+
+   opts :cljs-forward? (default false) — load a GenMLX-OWNED forward (f6ov):
+   :model is a CljsForwardModel driving a pure-CLJS Qwen3 forward over the
+   genmlx.rs primitives, decoupled from upstream's model structs. Supports the
+   forward/cache API used by the LLM-as-GF (standard Qwen3 only; ChatSession-based
+   convenience paths still need the upstream model). The upstream model is not
+   loaded in this mode."
+  ([model-path] (load-model model-path {}))
+  ([model-path {:keys [cljs-forward?]}]
+   (p/let [model-type (.detectModelType mlx-lm model-path)
+           tokenizer (.fromPretrained (.-Qwen3Tokenizer mlx-core)
+                                      (str model-path "/tokenizer.json"))]
+     (if cljs-forward?
+       {:model (->CljsForwardModel (fwd/load-model model-path) (atom nil))
+        :tokenizer tokenizer
+        :type (keyword model-type)}
+       (p/let [model (.loadModel mlx-lm model-path)]
+         {:model model
+          :tokenizer tokenizer
+          :type (keyword model-type)})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Tokenizer
@@ -106,17 +134,19 @@
 
    All operations stay on the MLX graph — no materialization to typed arrays."
   [model token-ids]
-  (let [ids (->id-vec token-ids)
-        input (ids->input ids)
-        logits (.forward model input)
-        ;; Index the LAST position from the logits' ACTUAL time dimension, not
-        ;; the input token count: this mlx-node build's .forward returns
-        ;; [1 1 vocab] (last position only). The old (dec n) indexed row n-1 of a
-        ;; 1-row matrix → out-of-range garbage (decoded to "导图" instead of the
-        ;; real next token). Using (dec t) is correct whether .forward returns
-        ;; [1 1 vocab] or a full [1 T vocab].
-        t (nth (mx/shape logits) 1)]
-    (-> logits (mx/index 0) (mx/index (dec t)))))
+  (if (cljs-forward-model? model)
+    (fwd/next-token-logits (:fwd model) (->id-vec token-ids))
+    (let [ids (->id-vec token-ids)
+          input (ids->input ids)
+          logits (.forward model input)
+          ;; Index the LAST position from the logits' ACTUAL time dimension, not
+          ;; the input token count: this mlx-node build's .forward returns
+          ;; [1 1 vocab] (last position only). The old (dec n) indexed row n-1 of a
+          ;; 1-row matrix → out-of-range garbage (decoded to "导图" instead of the
+          ;; real next token). Using (dec t) is correct whether .forward returns
+          ;; [1 1 vocab] or a full [1 T vocab].
+          t (nth (mx/shape logits) 1)]
+      (-> logits (mx/index 0) (mx/index (dec t))))))
 
 (defn next-token-logprobs
   "Get log-probabilities for the next token given context.
@@ -141,12 +171,16 @@
   "Initialize KV caches for incremental generation.
    Must be called before forward-step. Mutates model state."
   [model]
-  (.initCaches model))
+  (if (cljs-forward-model? model)
+    (reset! (:cache model) nil)
+    (.initCaches model)))
 
 (defn reset-cache!
   "Clear KV caches after generation. Mutates model state."
   [model]
-  (.resetCaches model))
+  (if (cljs-forward-model? model)
+    (reset! (:cache model) nil)
+    (.resetCaches model)))
 
 (defn- forward-with-cache
   "Dispatch forwardWithCache — always pass use_cache=true."
@@ -161,9 +195,14 @@
 
    Must call init-cache! before this."
   [model token-ids]
-  (let [input (ids->input token-ids)
-        logits (forward-with-cache model input)]
-    (-> logits (mx/index 0) (mx/index 0))))
+  (if (cljs-forward-model? model)
+    (let [ids (->id-vec token-ids)
+          [logits cache] (fwd/prefill (:fwd model) ids)]
+      (reset! (:cache model) {:cache cache :offset (count ids)})
+      logits)
+    (let [input (ids->input token-ids)
+          logits (forward-with-cache model input)]
+      (-> logits (mx/index 0) (mx/index 0)))))
 
 (defn forward-step
   "Run a single-token cached forward pass.
@@ -173,9 +212,14 @@
 
    Constant time in sequence length — does not recompute the full context."
   [model token-id]
-  (let [input (ids->input [token-id])
-        logits (forward-with-cache model input)]
-    (-> logits (mx/index 0) (mx/index 0))))
+  (if (cljs-forward-model? model)
+    (let [{:keys [cache offset]} @(:cache model)
+          [logits cache'] (fwd/step (:fwd model) cache offset token-id)]
+      (reset! (:cache model) {:cache cache' :offset (inc offset)})
+      logits)
+    (let [input (ids->input [token-id])
+          logits (forward-with-cache model input)]
+      (-> logits (mx/index 0) (mx/index 0)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Text generation (smoke test / convenience)
