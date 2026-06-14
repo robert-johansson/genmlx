@@ -204,6 +204,11 @@
       (:has-branches? schema) false
       (:dynamic-addresses? schema) false
       (:has-loops? schema) false
+      ;; Opaque-escape bodies have hidden trace sites the walker never recorded,
+      ;; so fast-eligibility cannot be proven (a hidden structure change or
+      ;; interdependent hidden site would mis-weight or throw). Force the general
+      ;; retained-only path (genmlx-9yuw).
+      (:opaque-gen-escape? schema) false
       :else
       ;; Only the parent's DIRECT trace sites are checked here. Spliced
       ;; sub-gfs recurse through p/regenerate and gate themselves; a parent
@@ -732,7 +737,16 @@
           ;; scores consistently. Stable (no-reopen) moves keep the fast path.
           (when (and (:auto-regenerate-transition schema)
                      (= :marginal (tr/score-type (:trace opts)))
-                     (not (regen-reopens-analytical? schema (:selection opts))))
+                     (not (regen-reopens-analytical? schema (:selection opts)))
+                     ;; The analytical fast per-site weight
+                     ;; (new-score − old-score − proposal-ratio) is exact ONLY
+                     ;; for fast-eligible selections; for interdependent residual
+                     ;; selections it mis-weights, and the compiled dispatcher's
+                     ;; fast-eligible guard sits AFTER this one in the stack — so
+                     ;; gate here too, declining to the handler general
+                     ;; retained-only path otherwise (genmlx-9yuw).
+                     (:selection opts)
+                     (regen-fast-eligible? (:gf opts) (:selection opts)))
             {:run run-fn :score-type :marginal :label :analytical})
 
           :update

@@ -186,14 +186,21 @@
    [:dist-type keyword?]
    [:dist-args vector?]
    [:deps set?]
+   ;; direct trace-alias provenance for dist-arg symbols (schema.cljs, genmlx-1thx)
+   [:arg-aliases {:optional true} map?]
    [:static? boolean?]])
 
 (def SpliceSite
-  "One splice site extracted from a gen body."
+  "One splice site extracted from a gen body (matches schema.cljs/handle-splice:
+   :addr :addr-form :gf-form :splice-args :deps :static? — there is no :gf-sym
+   key anywhere; the real key is :gf-form, genmlx-flmw)."
   [:map
    [:addr some?]
-   [:gf-sym some?]
-   [:deps set?]])
+   [:addr-form some?]
+   [:gf-form some?]
+   [:splice-args vector?]
+   [:deps set?]
+   [:static? boolean?]])
 
 (def ModelSchema
   "[T] section 2.2.2 denotational semantics. Output of schema/extract-schema,

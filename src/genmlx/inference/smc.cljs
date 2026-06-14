@@ -127,11 +127,16 @@
               (loop [i 0, cumsum 0.0, j 0, acc (transient [])]
                 (if (>= j n-resid)
                   (persistent! acc)
-                  (let [threshold (+ u (/ j n-resid))
-                        cumsum' (+ cumsum (nth resid-probs i))]
-                    (if (>= cumsum' threshold)
-                      (recur i cumsum (inc j) (conj! acc i))
-                      (recur (inc i) cumsum' j acc)))))]
+                  (if (>= i (count resid-probs))
+                    ;; Floating-point exhaustion: residual probs sum to <1.0;
+                    ;; fill remaining slots with the last particle (mirrors
+                    ;; u/systematic-resample — genmlx-vqh9).
+                    (persistent! (reduce conj! acc (repeat (- n-resid j) (dec (count resid-probs)))))
+                    (let [threshold (+ u (/ j n-resid))
+                          cumsum' (+ cumsum (nth resid-probs i))]
+                      (if (>= cumsum' threshold)
+                        (recur i cumsum (inc j) (conj! acc i))
+                        (recur (inc i) cumsum' j acc))))))]
         (into det-indices resid-indices)))))
 
 (defn- stratified-resample
@@ -148,11 +153,16 @@
     (loop [i 0, cumsum 0.0, j 0, indices (transient [])]
       (if (>= j n)
         (persistent! indices)
-        (let [threshold (nth uniforms j)
-              cumsum' (+ cumsum (nth probs i))]
-          (if (>= cumsum' threshold)
-            (recur i cumsum (inc j) (conj! indices i))
-            (recur (inc i) cumsum' j indices)))))))
+        (if (>= i (count probs))
+          ;; Floating-point exhaustion: probs sum to <1.0 due to rounding; fill
+          ;; remaining strata with the last particle (mirrors
+          ;; u/systematic-resample — genmlx-vqh9). Avoids an out-of-bounds nth.
+          (persistent! (reduce conj! indices (repeat (- n j) (dec (count probs)))))
+          (let [threshold (nth uniforms j)
+                cumsum' (+ cumsum (nth probs i))]
+            (if (>= cumsum' threshold)
+              (recur i cumsum (inc j) (conj! indices i))
+              (recur (inc i) cumsum' j indices))))))))
 
 (defn- dispatch-resample
   "Dispatch to the appropriate resampling method.

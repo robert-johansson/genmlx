@@ -138,7 +138,7 @@
   "Build a compiled generate for models with rewritable branches (L1-M4).
    Returns (fn [key args-vec constraints] -> {:values :score :weight :retval}) or nil."
   [schema source]
-  (when-let [{:keys [site-specs retval-fn seed-conds]}
+  (when-let [{:keys [site-specs retval-fn seed-conds addrs]}
              (compiled/prepare-branch-sites schema source)]
     (let [step-fns (mapv build-generate-site-step site-specs)]
       (when (every? some? step-fns)
@@ -152,7 +152,10 @@
                  {:values (seed-conds args-vec)
                   :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
                  step-fns)]
-            {:values (:values result)
+            ;; Strip the reserved branch-cond bookkeeping keys so the trace
+            ;; choicemap holds only real addresses (genmlx-gc4w); the simulate
+            ;; path already does this via unpack-result.
+            {:values (select-keys (:values result) addrs)
              :score (:score result)
              :weight (:weight result)
              ;; retval-fn proven truthy by prepare-branch-sites
@@ -257,7 +260,7 @@
    Returns (fn [key args-vec constraints old-choices]
              -> {:values :score :discard :retval}) or nil."
   [schema source]
-  (when-let [{:keys [site-specs retval-fn seed-conds]}
+  (when-let [{:keys [site-specs retval-fn seed-conds addrs]}
              (compiled/prepare-branch-sites schema source)]
     (let [step-fns (mapv build-update-site-step site-specs)]
       (when (every? some? step-fns)
@@ -270,7 +273,8 @@
                  {:values (seed-conds args-vec)
                   :score (mx/scalar 0.0) :discard {} :key key}
                  step-fns)]
-            {:values (:values result)
+            ;; Strip reserved branch-cond keys from the trace choicemap (genmlx-gc4w)
+            {:values (select-keys (:values result) addrs)
              :score (:score result)
              :discard (:discard result)
              :retval (retval-fn (:values result) mlx-args)}))))))
@@ -643,7 +647,7 @@
              (not (:dynamic-addresses? schema)))
     (when-let [raw-sites (compiled/extract-rewritable-sites source)]
       (when (seq raw-sites)
-        (when-let [{:keys [site-specs retval-fn seed-conds]}
+        (when-let [{:keys [site-specs retval-fn seed-conds addrs]}
                    (compiled/compile-branch-rewritten-site-specs schema source raw-sites)]
           (let [step-fns (mapv build-regenerate-site-step site-specs)]
             (when (every? some? step-fns)
@@ -656,7 +660,8 @@
                        {:values (seed-conds args-vec)
                         :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
                        step-fns)]
-                  {:values (:values result)
+                  ;; Strip reserved branch-cond keys from the trace choicemap (genmlx-gc4w)
+                  {:values (select-keys (:values result) addrs)
                    :score (:score result)
                    :weight (:weight result)
                    :retval (retval-fn (:values result) mlx-args)})))))))))

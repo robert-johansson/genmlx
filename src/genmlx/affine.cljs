@@ -294,6 +294,18 @@
         result (when natural-arg
                  (analyze-affine natural-arg target-sym env))]
     (cond
+      ;; A bare-symbol natural parameter that is NOT a direct trace alias of the
+      ;; prior is a rebinding whose defining expression the schema has erased
+      ;; (only the symbol survives, e.g. (let [mu (trace :mu ...) mu (mx/add mu 5)]
+      ;; ...)); its affine form is unknowable, so decline rather than assume
+      ;; coeff 1 / offset 0 via the name-based target match (genmlx-1thx). Only
+      ;; applies when the walker recorded :arg-aliases provenance; hand-built
+      ;; schemas without it keep the legacy behavior.
+      (and (symbol? natural-arg)
+           (contains? obs-site :arg-aliases)
+           (not= prior-addr (get (:arg-aliases obs-site) natural-arg)))
+      {:type :nonlinear}
+
       (or (nil? result)
           (not (:affine? result))
           (not (:has-target? result)))  ;; nonlinear, unknown, or no prior dependency

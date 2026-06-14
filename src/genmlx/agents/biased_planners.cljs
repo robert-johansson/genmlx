@@ -184,17 +184,29 @@
                                (h/softmax-action alpha (mx/array (clj->js (eu-row s)) mx/float32))))]
     {:mdp mdp
      :policy policy
-     :act (fn [s] (int (mx/item (:retval (p/simulate (dyn/auto-key policy) [s])))))
+     ;; 2-arity like agent/make-mdp-agent: (act s) draws fresh entropy, (act s key)
+     ;; is deterministic in key. simulate-mdp's keyed :host path calls (act s k-act),
+     ;; so a 1-arity :act threw an ArityException under :key (genmlx-m3nn).
+     :act (fn
+            ([s] (int (mx/item (:retval (p/simulate (dyn/auto-key policy) [s])))))
+            ([s key] (int (mx/item (:retval (p/simulate (if key (dyn/with-key policy key) (dyn/auto-key policy)) [s]))))))
      :expected-utility (fn [s a] (eu s a H 0))
      :eu eu
      :params {:alpha alpha :gamma gamma :horizon H
               :discount discount :bias bias :reward-myopic-bound reward-myopic-bound}}))
 
-(def simulate-biased-mdp
-  "Roll a biased MDP agent out from `start` for ≤ horizon steps (= agent/simulate-mdp,
-   which re-plans via :act each step — the d=0 re-planning that drives Naive
-   time-inconsistency)."
-  agent/simulate-mdp)
+(defn simulate-biased-mdp
+  "Roll a biased MDP agent out from `start` for ≤ horizon steps (= agent/simulate-mdp's
+   :host path, which re-plans via :act each step — the d=0 re-planning that drives
+   Naive time-inconsistency). :rollout-mode :fused is unsupported: biased agents
+   carry no tensor :Q, so rollout/rollout-mdp would deref nil (genmlx-m3nn) — use
+   the default :host rollout."
+  [ag start horizon & [opts]]
+  (when (= (:rollout-mode opts) :fused)
+    (throw (ex-info (str "simulate-biased-mdp does not support :rollout-mode :fused — "
+                         "biased agents have no tensor :Q; use the default :host rollout")
+                    {:agent-keys (keys ag)})))
+  (agent/simulate-mdp ag start horizon opts))
 
 (defn- argmax-of [xs] (first (apply max-key second (map-indexed vector xs))))
 
