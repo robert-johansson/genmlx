@@ -79,11 +79,10 @@
    ;; ---------------------------------------------------------------
    ;; 1.3 forward-prefill (cached path)
    ;;
-   ;; NB the uncached `.forward` / forward-pass path is BROKEN for the
-   ;; qwen3_5 arch (returns garbage logits — see bean genmlx-z7m2 + the gated
-   ;; 1.6 smoke below). The cached forwardWithCache path is correct and is
-   ;; what make-llm-gf / codegen / bytes / msa actually use, so 1.3-1.5 test
-   ;; that path.
+   ;; The cached forwardWithCache path is what make-llm-gf / codegen / bytes /
+   ;; msa actually use, so 1.3-1.5 test that path. The uncached `.forward` path
+   ;; for qwen3_5 — previously reported as garbage on the bf16 artifact
+   ;; (genmlx-z7m2) — now agrees with it and is asserted correct in 1.6.
    ;; ---------------------------------------------------------------
   _ (println "\n== 1.3 forward-prefill (cached) ==")
   prompt-ids (llm/encode tok "The capital of France is")
@@ -147,21 +146,26 @@
   _ (assert-true "decodes to a string" (string? gen-text))
 
    ;; ---------------------------------------------------------------
-   ;; 1.6 uncached forward-pass — KNOWN-BROKEN for qwen3_5 (bean genmlx-z7m2)
+   ;; 1.6 uncached forward-pass — qwen3_5 bf16 (genmlx-z7m2 RESOLVED 2026-06-14)
    ;;
-   ;; The native `.forward` path RUNS and returns a vocab-sized logits vector,
-   ;; but its values are GARBAGE for qwen3_5 (mishandles attn_output_gate /
-   ;; full_attention_interval). We exercise it as a smoke test (so a future
-   ;; regression to a throw/crash is caught) but DELIBERATELY do not assert
-   ;; correctness — the fix is tracked in genmlx-z7m2. Contrast with 1.4: the
-   ;; cached path predicts "Paris", this one predicts token 0 ("!").
+   ;; The earlier z7m2 report (uncached `.forward` returns garbage for qwen3_5 on
+   ;; the bf16 artifact — argmax 0 = "!" + a Metal GPU-timeout) no longer
+   ;; reproduces on the pinned mlx-node build: the uncached path now agrees with
+   ;; the cached path (1.4) and predicts "Paris". The GenMLX-owned forward (f6ov)
+   ;; is the trusted path (parity-gated vs upstream); this asserts the upstream
+   ;; uncached path on the bf16 artifact is correct too, so a future binary that
+   ;; reintroduced the garbage-logits drift would be CAUGHT here, not silent.
    ;; ---------------------------------------------------------------
-  _ (println "\n== 1.6 uncached forward-pass (KNOWN-BROKEN for qwen3_5 — see z7m2) ==")
+  _ (println "\n== 1.6 uncached forward-pass (qwen3_5 bf16 — z7m2 resolved) ==")
   u-logits (llm/forward-pass (:model m) prompt-ids)
   u-argmax (mx/item (mx/argmax u-logits))
   u-pred (llm/decode tok (js/Uint32Array.from #js [u-argmax]))
-  _ (println (str "  Uncached argmax: " u-argmax " → '" u-pred "' (cached 1.4 gave 'Paris')"))
-  _ (assert-true "uncached path executes + returns vocab-sized logits (correctness NOT asserted — z7m2)"
-                 (>= (first (mx/shape u-logits)) vs))]
+  _ (println (str "  Uncached argmax: " u-argmax " → '" u-pred "' (cached 1.4 gave '" predicted "')"))
+  _ (assert-true "uncached path returns vocab-sized logits"
+                 (>= (first (mx/shape u-logits)) vs))
+  _ (assert-true "uncached argmax == cached argmax (z7m2 resolved)"
+                 (= argmax-id u-argmax))
+  _ (assert-true "uncached predicts Paris (z7m2 resolved)"
+                 (re-find #"(?i)paris" u-pred))]
 
   (println (str "\n== Phase 1: " @pass-count " passed, " @fail-count " failed ==")))

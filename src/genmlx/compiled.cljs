@@ -821,7 +821,14 @@
         (= dist-type :delta)
         (fn [{:keys [values score]} _site-idx _noise-array args-vec]
           (let [eval-args (mapv #(% values args-vec) compiled-args)
-                value (first eval-args)]
+                ;; A bare numeric-literal delta arg (e.g. (dist/delta 1)) compiles
+                ;; to a raw JS number (compile-expr number? branch), but the handler
+                ;; path wraps delta args with ensure-array so the choice value is an
+                ;; MLX array. Match the handler — otherwise mx/item on the choice
+                ;; fails with "Failed to recover MxArray type from napi value"
+                ;; (genmlx-lcka: compiled-vs-handler parity bug surfaced by
+                ;; branch_rewrite distribution-variety delta case).
+                value (mx/ensure-array (first eval-args))]
             {:values (assoc values addr value)
              :score score}))
 

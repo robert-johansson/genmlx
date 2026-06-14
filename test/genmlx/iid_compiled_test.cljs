@@ -125,13 +125,15 @@
       mu)))
 
 (deftest multi-site-gaussian-iid
-  (testing "multi-site: gaussian + iid-gaussian"
+  (testing "multi-site gaussian + iid-gaussian declines compiled, runs via handler"
     (let [schema (:schema multi-model)]
       (is (:static? schema) "multi-site: static")
-      (is (some? (:compiled-simulate schema)) "multi-site: has compiled-simulate"))
-    (is (thrown? js/Error
-          (p/simulate (dyn/auto-key multi-model) []))
-        "compiled simulate crashes on multi-site iid (pre-existing)")))
+      (is (nil? (:compiled-simulate schema))
+          "no compiled-simulate — iid-gaussian site declines, falls back to handler (genmlx-b210)"))
+    (let [trace (p/simulate (dyn/auto-key multi-model) [])]
+      (is (= [4] (mx/shape (cm/get-value (cm/get-submap (:choices trace) :ys))))
+          "ys shape [4]")
+      (is (js/isFinite (mx/item (:score trace))) "score finite"))))
 
 ;; ---------------------------------------------------------------------------
 ;; 8. [T]-shaped mu in compiled path
@@ -145,9 +147,13 @@
       mu)))
 
 (deftest per-elem-mu-compiled
-  (testing "[T]-shaped mu compiled (pre-existing compiled path issue)"
-    (is (thrown? js/Error
-          (p/simulate (dyn/auto-key per-elem-model) []))
-        "compiled simulate crashes on per-elem iid (pre-existing)")))
+  (testing "[T]-shaped mu declines compiled, runs via handler"
+    (let [schema (:schema per-elem-model)]
+      (is (nil? (:compiled-simulate schema))
+          "no compiled-simulate — iid-gaussian site declines, falls back to handler (genmlx-b210)"))
+    (let [trace (p/simulate (dyn/auto-key per-elem-model) [])]
+      (is (= [3] (mx/shape (cm/get-value (cm/get-submap (:choices trace) :ys))))
+          "ys shape [3]")
+      (is (js/isFinite (mx/item (:score trace))) "score finite"))))
 
 (cljs.test/run-tests)
