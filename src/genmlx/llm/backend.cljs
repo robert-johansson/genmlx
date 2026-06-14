@@ -12,21 +12,26 @@
             ["@mlx-node/core" :as mlx-core]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.llm.qwen3-forward :as fwd]
+            ;; f6ov: model-family-dispatching façade over the GenMLX-owned
+            ;; forwards (vanilla Qwen3 + Qwen3.5 hybrid GatedDeltaNet). Same
+            ;; 6-fn interface either way; routes on config.json model_type.
+            [genmlx.llm.forward :as fwd]
             [promesa.core :as p]))
 
 ;; ---------------------------------------------------------------------------
 ;; GenMLX-owned forward (f6ov): a value-level CLJS forward over genmlx.rs
 ;; primitives instead of upstream's per-model forward structs.
 ;;
-;; CljsForwardModel wraps the functional qwen3-forward (whose prefill/step RETURN
-;; the next cache) in a single mutable cache cell, so it presents the SAME
-;; stateful API as the upstream model (init-cache! / forward-prefill /
-;; forward-step / reset-cache!) and every caller (LLM-as-GF, byte/structured GFs)
-;; works unchanged. The atom is the one audited KV-cache mutation boundary.
+;; CljsForwardModel wraps the functional family forward (genmlx.llm.forward,
+;; whose prefill/step RETURN the next cache) in a single mutable cache cell, so
+;; it presents the SAME stateful API as the upstream model (init-cache! /
+;; forward-prefill / forward-step / reset-cache!) and every caller (LLM-as-GF,
+;; byte/structured GFs) works unchanged. The forward dispatches on model_type
+;; (vanilla Qwen3 or Qwen3.5 hybrid). The atom is the one audited KV-cache
+;; mutation boundary.
 ;; ---------------------------------------------------------------------------
 
-(defrecord CljsForwardModel [fwd cache])  ; fwd = {:config :weights}; cache = atom
+(defrecord CljsForwardModel [fwd cache])  ; fwd = {:config :weights :impl}; cache = atom
 
 (defn cljs-forward-model? [model] (instance? CljsForwardModel model))
 
@@ -43,9 +48,10 @@
    Supports Qwen3, Qwen3.5, Gemma4, and other HuggingFace models.
 
    opts :cljs-forward? (default false) — load a GenMLX-OWNED forward (f6ov):
-   :model is a CljsForwardModel driving a pure-CLJS Qwen3 forward over the
-   genmlx.rs primitives, decoupled from upstream's model structs. Supports the
-   forward/cache API used by the LLM-as-GF (standard Qwen3 only; ChatSession-based
+   :model is a CljsForwardModel driving a pure-CLJS forward over the genmlx.rs
+   primitives, decoupled from upstream's model structs. The forward dispatches on
+   config.json model_type: vanilla Qwen3 or the Qwen3.5 hybrid GatedDeltaNet
+   stack. Supports the forward/cache API used by the LLM-as-GF (ChatSession-based
    convenience paths still need the upstream model). The upstream model is not
    loaded in this mode."
   ([model-path] (load-model model-path {}))
