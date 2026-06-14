@@ -528,6 +528,17 @@
   [x]
   (.silu c x))
 
+(defn load-safetensors
+  "Load a .safetensors file as a {tensor-name -> MxArray} CLJS map. Tensors are
+   lazy graph leaves (materialized on first eval). GenMLX-owned weight loading
+   for the f6ov forward path — decoupled from upstream's per-model structs."
+  [path]
+  (let [obj (.loadSafetensors c path)]
+    (persistent!
+     (reduce (fn [m k] (assoc! m k (unchecked-get obj k)))
+             (transient {})
+             (js-keys obj)))))
+
 ;; =========================================================================
 ;; QUERY OPERATIONS (no side effects, no graph construction)
 ;;
