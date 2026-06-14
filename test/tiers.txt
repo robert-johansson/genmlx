@@ -13,6 +13,9 @@ slow test/genmlx/agentmodels_5d_joint_test.cljs
 slow test/genmlx/agentmodels_5e_joint_test.cljs
 slow test/genmlx/agentmodels_biased_inverse_test.cljs
 slow test/genmlx/agentmodels_biased_planners_test.cljs
+slow test/genmlx/agentmodels_ch01_intro_test.cljs
+slow test/genmlx/agentmodels_ch02_webppl_test.cljs
+slow test/genmlx/agentmodels_ch08_library_test.cljs
 slow test/genmlx/agentmodels_diff_learn_test.cljs
 slow test/genmlx/agentmodels_helpers_test.cljs
 slow test/genmlx/agentmodels_hike_irl_test.cljs
@@ -25,6 +28,9 @@ slow test/genmlx/agentmodels_psrl_test.cljs
 slow test/genmlx/agentmodels_slice_test.cljs
 slow test/genmlx/agentmodels_worlds_test.cljs
 fast test/genmlx/agents_api_test.cljs
+medium test/genmlx/agents_contracts_test.cljs
+slow test/genmlx/agents_llm_inverse_test.cljs
+slow test/genmlx/agents_llm_policy_test.cljs
 medium test/genmlx/amortized_test.cljs
 slow test/genmlx/analytical_posterior_referee_test.cljs
 fast test/genmlx/assess_propose_test.cljs
@@ -217,12 +223,23 @@ medium test/genmlx/linear_gaussian_elim_test.cljs
 slow test/genmlx/llm_backend_test.cljs
 slow test/genmlx/llm_bytes_test.cljs
 bench test/genmlx/llm_cache_benchmark.cljs
+slow test/genmlx/llm_cljs_forward_qwen35_test.cljs
+slow test/genmlx/llm_cljs_forward_test.cljs
 slow test/genmlx/llm_codegen_test.cljs
+slow test/genmlx/llm_composition_test.cljs
 slow test/genmlx/llm_core_test.cljs
+slow test/genmlx/llm_forward_golden_test.cljs
+slow test/genmlx/llm_forward_parity_test.cljs
 slow test/genmlx/llm_gemma4_test.cljs
 slow test/genmlx/llm_grammar_test.cljs
+fast test/genmlx/llm_msa_scoring_test.cljs
 slow test/genmlx/llm_msa_test.cljs
 fast test/genmlx/llm_pure_helpers_test.cljs
+slow test/genmlx/llm_qwen35_forward_parity_test.cljs
+fast test/genmlx/llm_schema_grammar_test.cljs
+slow test/genmlx/llm_structured_test.cljs
+fast test/genmlx/llm_token_mcmc_test.cljs
+slow test/genmlx/llm_weights_test.cljs
 fast test/genmlx/location_scale_property_test.cljs
 medium test/genmlx/loop_compilation_test.cljs
 medium test/genmlx/loop_compiled_hmc_test.cljs
@@ -244,6 +261,7 @@ fast test/genmlx/membrane_honesty_test.cljs
 fast test/genmlx/memory_test.cljs
 bench test/genmlx/metal_gc_stress.cljs
 fast test/genmlx/method_selection_test.cljs
+fast test/genmlx/mlx_fused_ops_test.cljs
 medium test/genmlx/multistep_kalman_ekf_test.cljs
 fast test/genmlx/mutation_boundary_test.cljs core
 fast test/genmlx/native_guard_test.cljs core
