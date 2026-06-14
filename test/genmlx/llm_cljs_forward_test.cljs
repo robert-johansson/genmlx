@@ -25,7 +25,7 @@
 (if-not (.existsSync fs (str dir "/model.safetensors"))
   (println "SKIP llm-cljs-forward-test: qwen3-0.6b checkpoint absent")
   (pr/let [cljs-m  (llm/load-model dir {:cljs-forward? true})
-           up-m    (llm/load-model dir)
+           up-m    (llm/load-model dir {:cljs-forward? false})
            ids-raw (llm/encode (:tokenizer cljs-m) "The capital of France is" false)
            prompt  (vec ids-raw)
            cljs-gf (core/make-llm-gf cljs-m)

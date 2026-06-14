@@ -13,18 +13,37 @@
             [genmlx.llm.qwen35-forward :as q35]
             ["fs" :as fs]))
 
+(def supported-model-types
+  "config.json model_type strings the GenMLX-owned forward actually implements.
+   Anything else must use the upstream forward (load-model {:cljs-forward? false})."
+  #{"qwen3" "qwen3_5"})
+
 (defn- detect-model-type [dir]
   (-> (.readFileSync fs (str dir "/config.json") "utf8")
       (js/JSON.parse)
       (.-model_type)))
 
+(defn supported?
+  "True if the owned forward implements this checkpoint's config.json model_type.
+   backend/load-model's smart default uses this: owned forward for supported
+   families, upstream forward otherwise."
+  [dir]
+  (contains? supported-model-types (detect-model-type dir)))
+
 (defn load-model
   "Load a checkpoint, dispatching on config.json model_type. Returns the family's
-   {:config :weights ..} tagged with :impl so the other fns route correctly."
+   {:config :weights ..} tagged with :impl so the other fns route correctly.
+   Throws on a model_type the owned forward does not implement, instead of
+   silently mis-routing it to the vanilla-Qwen3 forward."
   [dir]
-  (if (= "qwen3_5" (detect-model-type dir))
-    (assoc (q35/load-model dir) :impl :qwen3_5)
-    (assoc (q3/load-model dir)  :impl :qwen3)))
+  (let [mt (detect-model-type dir)]
+    (case mt
+      "qwen3_5" (assoc (q35/load-model dir) :impl :qwen3_5)
+      "qwen3"   (assoc (q3/load-model dir)  :impl :qwen3)
+      (throw (ex-info (str "genmlx.llm.forward: the GenMLX-owned forward does not "
+                           "implement model_type " (pr-str mt) "; load with "
+                           "{:cljs-forward? false} to use the upstream forward.")
+                      {:model-type mt :dir dir :supported supported-model-types})))))
 
 (defn- q35? [m] (= :qwen3_5 (:impl m)))
 

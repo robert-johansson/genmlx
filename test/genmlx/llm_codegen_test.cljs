@@ -257,7 +257,8 @@
 
 (println "\n== Loading Qwen3-0.6B for model tests... ==")
 
-(pr/let [model-map (llm/load-model model-dir)
+;; codegen uses generate-text (ChatSession) -> needs the upstream model
+(pr/let [model-map (llm/load-model model-dir {:cljs-forward? false})
          prepared (bytes/prepare (:tokenizer model-map))
          opts {:prepared prepared :max-bytes 200}]
 

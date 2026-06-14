@@ -27,7 +27,7 @@
 
 (if-not (.existsSync fs (str dir "/model.safetensors"))
   (println "SKIP llm-forward-parity-test: qwen3-0.6b checkpoint absent")
-  (pr/let [up (llm/load-model dir)
+  (pr/let [up (llm/load-model dir {:cljs-forward? false})
            ids-raw (llm/encode (:tokenizer up) "The capital of France is" false)
            ids (vec ids-raw)
            ;; upstream forward (cached prefill — the path the LLM-as-GF uses)

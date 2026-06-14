@@ -60,7 +60,11 @@
   (let [path (str model-root "/" dir)]
     (if-not (.existsSync fs path)
       (do (println (str "\n== " name " — SKIP (absent: " path ") ==")) (pr/resolved nil))
-      (pr/let [m (llm/load-model path)
+      ;; Explicitly pins the UPSTREAM/borrowed forward — its captured golden
+      ;; values are upstream's, tol 0.01. The owned forward (now the default for
+      ;; qwen3/qwen3_5) differs by bf16 cross-kernel noise (~0.12) and is guarded
+      ;; separately by the parity tests + scripts/llm_forward_xval_mlxlm.py.
+      (pr/let [m (llm/load-model path {:cljs-forward? false})
                tok (:tokenizer m)
                ids-raw (llm/encode tok prompt false)
                ids (vec ids-raw)]
