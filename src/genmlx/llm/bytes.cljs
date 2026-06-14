@@ -181,11 +181,31 @@
 ;; Internal helpers
 ;; ============================================================
 
+(defn- f64-logsumexp
+  "logsumexp over a full logit vector computed in JS float64. MLX's logsumexp is
+   float32; over a 248K-element vocab the reduction drifts ~0.04, leaving the
+   normalization under-subtracted so the byte marginals summed to ~1.04
+   (genmlx-h2ki). Materializing once and reducing in float64 (max-subtracted)
+   recovers a sum of 1.0 to float32 precision. Returns a JS number."
+  [logits]
+  (mx/eval! logits)
+  (let [f32 (.toFloat32 logits)
+        n (.-length f32)
+        m (loop [i 0 mx js/Number.NEGATIVE_INFINITY]
+            (if (< i n) (recur (inc i) (let [v (aget f32 i)] (if (> v mx) v mx))) mx))]
+    (if (= m js/Number.NEGATIVE_INFINITY)
+      js/Number.NEGATIVE_INFINITY
+      (let [s (loop [i 0 s 0.0]
+                (if (< i n) (recur (inc i) (+ s (js/Math.exp (- (aget f32 i) m)))) s))]
+        (+ m (js/Math.log s))))))
+
 (defn logits->logprobs
-  "Numerically stable log-softmax: logits - logsumexp(logits).
+  "Numerically stable log-softmax: logits - logsumexp(logits), with the
+   normalization computed in float64 (f64-logsumexp) so the full-vocab byte
+   marginals sum to 1.0 rather than drifting to ~1.04 in float32 (genmlx-h2ki).
    Returns MxArray [vocab-size]."
   [logits]
-  (mx/subtract logits (mx/logsumexp logits)))
+  (mx/subtract logits (mx/scalar (f64-logsumexp logits))))
 
 (defn trie-leaf?
   "A trie node is a leaf when it has no children — the accumulated bytes

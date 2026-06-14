@@ -176,7 +176,7 @@
     (let [prompt-ids [6723 25 220] ;; "Phone: "
           _ (llm/init-cache! model)
           logits (llm/forward-prefill model prompt-ids)
-          log-probs (mx/subtract logits (mx/logsumexp logits))
+          log-probs (bytes/logits->logprobs logits) ;; f64-accurate norm (genmlx-h2ki)
           byte-lps (bytes/byte-logprobs trie log-probs)
           _ (llm/reset-cache! model)]
 
@@ -192,13 +192,14 @@
       ;; exp of values sum to approximately 1.0
       ;; The sum accounts for all probability mass that goes through byte-
       ;; producing tokens. EOS and special tokens with empty strings are
-      ;; excluded from the trie, so their mass is missing. In exact arithmetic
-      ;; the sum is <= 1.0; with float32 over a 248K-token vocab (Qwen3.5) the
-      ;; logsumexp reduction drifts a few % high (the full-vocab softmax itself
-      ;; sums to ~1.04 here), so the upper bound is a loose float32 tolerance.
+      ;; excluded from the trie, so their mass is missing, so the sum is <= 1.0.
+      ;; The normalization is now computed in float64 (logits->logprobs uses
+      ;; f64-logsumexp), so the full-vocab softmax sums to 1.0 to float32
+      ;; precision rather than drifting to ~1.04 (genmlx-h2ki) — the tight bound
+      ;; is restored.
       (let [total (reduce + (map #(js/Math.exp %) (vals byte-lps)))]
         (println (str "  exp sum: " total))
-        (assert-true "exp sum ~<= 1.0 (EOS mass excluded; float32, 248K vocab)" (<= total 1.1))
+        (assert-true "exp sum <= 1.0 + eps (EOS mass excluded; f64-normalized)" (<= total 1.001))
         (assert-true "exp sum > 0.95 (most mass in byte tokens)" (> total 0.95)))
 
       ;; Common ASCII bytes have reasonable probabilities (not -infinity)
