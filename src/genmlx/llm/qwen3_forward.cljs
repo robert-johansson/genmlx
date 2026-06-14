@@ -47,8 +47,12 @@
 
 (defn- attention
   "Self-attention for one layer over the pre-attention-normed hidden `hn`
-   [seq hidden]. GQA via the fast SDPA (q has n-heads, k/v have n-kv-heads)."
-  [{:keys [n-heads n-kv-heads head-dim eps rope-theta]} w prefix hn seq mask]
+   [seq hidden]. GQA via the fast SDPA (q has n-heads, k/v have n-kv-heads).
+   `ce` is the prior {:k :v} cache entry (or nil); `offset` is the absolute
+   position of the first new token (for RoPE + correct causal scope). Returns
+   [attn-out new-cache-entry] — the new entry holds the post-RoPE k/v of the full
+   context, so it threads straight into the next step."
+  [{:keys [n-heads n-kv-heads head-dim eps rope-theta]} w prefix hn seq ce offset mask]
   (let [g     (fn [s] (get w (str prefix s)))
         scale (/ 1.0 (js/Math.sqrt head-dim))
         proj-heads (fn [name nh norm?]
@@ -57,15 +61,17 @@
                                  (mx/transpose [0 2 1 3]))]      ; [1 nh seq d]
                        (if norm?
                          (-> t (mx/rms-norm (g (str name "_norm.weight")) eps)
-                               (mx/rope head-dim false rope-theta 1.0 0))
+                               (mx/rope head-dim false rope-theta 1.0 offset))
                          t)))
         q (proj-heads "q" n-heads true)
         k (proj-heads "k" n-kv-heads true)
         v (proj-heads "v" n-kv-heads false)
-        o (-> (mx/scaled-dot-product-attention q k v scale mask)
+        k-full (if ce (mx/concatenate [(:k ce) k] 2) k)          ; concat along seq axis
+        v-full (if ce (mx/concatenate [(:v ce) v] 2) v)
+        o (-> (mx/scaled-dot-product-attention q k-full v-full scale mask)
               (mx/transpose [0 2 1 3])                            ; [1 seq nh d]
               (mx/reshape [seq (* n-heads head-dim)]))]
-    (linear o (g "o_proj.weight"))))
+    [(linear o (g "o_proj.weight")) {:k k-full :v v-full}]))
 
 (defn- mlp
   "SwiGLU MLP over the post-attention-normed hidden `hn`: down(silu(gate)·up)."
@@ -75,29 +81,60 @@
                          (linear hn (g "up_proj.weight")))
             (g "down_proj.weight"))))
 
-(defn forward
-  "Run the full forward over a token-id sequence. Returns logits [seq vocab]
-   (lazy MxArray); take row (dec seq) for the next-token distribution."
-  [{:keys [config weights]} token-ids]
+(defn init-cache
+  "An empty per-layer KV cache (vector of nils, one slot per layer)."
+  [{:keys [config]}]
+  (vec (repeat (:n-layers config) nil)))
+
+(defn forward-cached
+  "Run the forward over `token-ids` starting at absolute position `offset`, using
+   and extending the per-layer KV `cache` (vector of {:k :v} or nils). A causal
+   mask is applied only for multi-token chunks (prefill); a single-token step
+   attends to the whole cache unmasked. Returns [logits new-cache] where logits
+   is [seq vocab]."
+  [{:keys [config weights]} token-ids cache offset]
   (let [{:keys [n-layers eps]} config
         seq   (count token-ids)
         ids   (mx/array (vec token-ids) [seq] mx/int32)
         embed (get weights "model.embed_tokens.weight")
         dtype (mx/dtype embed)
-        mask  (causal-mask seq dtype)
+        mask  (when (> seq 1) (causal-mask seq dtype))
         h0    (mx/take-idx embed ids 0)                          ; [seq hidden]
-        h     (reduce
-               (fn [h layer]
-                 (let [p  (str "model.layers." layer ".")
-                       hn (mx/rms-norm h (get weights (str p "input_layernorm.weight")) eps)
-                       h1 (mx/add h (attention config weights (str p "self_attn.") hn seq mask))
-                       mn (mx/rms-norm h1 (get weights (str p "post_attention_layernorm.weight")) eps)]
-                   (mx/add h1 (mlp weights (str p "mlp.") mn))))
-               h0 (range n-layers))
-        hf    (mx/rms-norm h (get weights "model.norm.weight") eps)]
-    (linear hf embed)))                                          ; tied lm_head: h embed^T
+        [h new-cache]
+        (reduce
+         (fn [[h nc] layer]
+           (let [p  (str "model.layers." layer ".")
+                 hn (mx/rms-norm h (get weights (str p "input_layernorm.weight")) eps)
+                 [a ce] (attention config weights (str p "self_attn.") hn seq
+                                   (nth cache layer) offset mask)
+                 h1 (mx/add h a)
+                 mn (mx/rms-norm h1 (get weights (str p "post_attention_layernorm.weight")) eps)]
+             [(mx/add h1 (mlp weights (str p "mlp.") mn)) (conj nc ce)]))
+         [h0 []] (range n-layers))
+        hf (mx/rms-norm h (get weights "model.norm.weight") eps)]
+    [(linear hf embed) new-cache]))                              ; tied lm_head
+
+(defn forward
+  "Uncached full forward over a token-id sequence (offset 0, fresh cache).
+   Returns logits [seq vocab]; take row (dec seq) for the next-token distribution."
+  [model token-ids]
+  (first (forward-cached model token-ids (init-cache model) 0)))
 
 (defn next-token-logits
   "Last-position logits [vocab] for the next token given a prompt token-id seq."
   [model token-ids]
   (mx/index (forward model token-ids) (dec (count token-ids))))
+
+(defn prefill
+  "Process the full prompt, populating the KV cache. Returns [last-logits cache]
+   where last-logits is [vocab] for the next token after the prompt."
+  [model prompt-ids]
+  (let [[logits cache] (forward-cached model (vec prompt-ids) (init-cache model) 0)]
+    [(mx/index logits (dec (count prompt-ids))) cache]))
+
+(defn step
+  "Advance one token from `cache` (current length = `offset`). Returns
+   [logits cache'] where logits is [vocab]. Constant work in sequence length."
+  [model cache offset token-id]
+  (let [[logits cache'] (forward-cached model [token-id] cache offset)]
+    [(mx/index logits 0) cache']))

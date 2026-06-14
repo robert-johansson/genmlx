@@ -56,4 +56,18 @@
         (assert-true "argmax decodes to \" Paris\"" (= " Paris" dec))
         (assert-true "top-5 token ids identical to upstream" (= up-top cljs-top))
         (assert-true "top-5 logits within bf16 cross-kernel tol (<0.5)" (< max-diff 0.5))
+
+        ;; --- KV cache consistency (P3): prefill == uncached; step matches the
+        ;; uncached forward of the extended sequence (argmax exact, logits bf16) ---
+        (println "\n-- KV cache (prefill + step) --")
+        (let [[pf cache] (fwd/prefill cljs-model ids)
+              pf-diff (let [pf32 (do (mx/eval! pf) (.toFloat32 pf))]
+                        (reduce max (map (fn [i] (js/Math.abs (- (aget pf32 i) (aget cf i)))) up-top)))
+              next-id (mx/item (mx/argmax pf))
+              [st _] (fwd/step cljs-model cache (count ids) next-id)
+              unc-ext (fwd/next-token-logits cljs-model (conj ids next-id))]
+          (mx/eval! st) (mx/eval! unc-ext)
+          (assert-true "prefill last-logits == uncached forward (exact)" (< pf-diff 1e-3))
+          (assert-true "step argmax == uncached(prompt+token) argmax"
+                       (= (mx/item (mx/argmax st)) (mx/item (mx/argmax unc-ext)))))
         (println (str "\n=== forward-parity: " @pass " PASS, " @fail " FAIL ==="))))))
