@@ -48,7 +48,9 @@ arity. Consumers must dispatch on the agent family, not assume a universal shape
 
 ### `pomdp/make-pomdp-agent {:keys [grid goals alpha noise gamma n-iters start prior observe world-utils]}` — partially-observed (QMDP)
 - **Returns** `{:worlds :world-agents :prior :observe :belief-Q :update-belief
-  :update-belief-tensor :act :expected-utility :params}`.
+  :update-belief-tensor :act :expected-utility :params}` (all ten keys are
+  returned; `:world-agents` is the per-world MDP-agent map and
+  `:update-belief-tensor` the opt-in `[W]`-MLX filter).
 - **Belief** is a plain `{world -> prob}` map (always; both host and tensor filters
   return a map).
 - `:act` — **belief-based**: `(act belief s)` → action int (softmax over the QMDP

@@ -29,15 +29,18 @@
    `:fixed` is a map of utilities merged into EVERY hypothesis (terrain that is
    known and shared, not part of the inferred preference) — e.g. a hiking Hill
    cliff {:hill -40} so all peak-preference hypotheses still avoid the cliff.
-   `:start` only affects rollout, not the policy/Q used for action-loglik."
-  [{:keys [grid goals high low time-cost alpha noise gamma fixed start]
-    :or   {high 5.0 low 0.0 time-cost -0.1 alpha 2.0 noise 0.0 gamma 1.0 fixed {} start [0 0]}}]
+   `:start` only affects rollout, not the policy/Q used for action-loglik.
+   `:n-iters` is the value-iteration horizon (default 40); pass it to keep the
+   inverted agents at the same horizon as a sibling differentiable/forward agent."
+  [{:keys [grid goals high low time-cost alpha noise gamma fixed start n-iters]
+    :or   {high 5.0 low 0.0 time-cost -0.1 alpha 2.0 noise 0.0 gamma 1.0 fixed {} start [0 0]
+           n-iters 40}}]
   (reduce
     (fn [m g]
       (let [utils (merge (assoc (zipmap goals (repeat low)) g high :timeCost time-cost) fixed)
             mdp   (gw/build-mdp {:grid grid :utilities utils :start start
                                  :gamma gamma :noise noise})]
-        (assoc m g (agent/make-mdp-agent {:mdp mdp :alpha alpha :gamma gamma :n-iters 40}))))
+        (assoc m g (agent/make-mdp-agent {:mdp mdp :alpha alpha :gamma gamma :n-iters n-iters}))))
     {} goals))
 
 (defn action-loglik

@@ -209,6 +209,20 @@
                  "src/genmlx/agents/gridworld.cljs"
                  "src/genmlx/agents/inverse.cljs"]}
 
+  {:name        "agents-pluggable-inference"
+   :script      "bench/agents_pluggable_inference.cljs"
+   :category    :agents
+   :timeout-ms  480000
+   :description "Pluggable inference on one goal-inference agent GF (Ch 6): exact / IS / MH agree on a non-degenerate P(goal|actions); TV(exact,sampler) -> 0 at the N^(-1/2) MC rate; plus gradient/amortized recovery of a continuous utility latent."
+   :sources     ["examples/agentmodels/ch06_pluggable_inference.cljs"
+                 "src/genmlx/agents/inverse.cljs"
+                 "src/genmlx/agents/agent.cljs"
+                 "src/genmlx/agents/gridworld.cljs"
+                 "src/genmlx/agents/differentiable.cljs"
+                 "src/genmlx/agents/helpers.cljs"
+                 "src/genmlx/inference/importance.cljs"
+                 "src/genmlx/inference/mcmc.cljs"]}
+
   ;; =========================================================================
   ;; D. Cross-System Comparison
   ;; =========================================================================
