@@ -21,6 +21,21 @@
   [dist]
   (contains? (methods dc/dist-reparam) (:type dist)))
 
+(def ^:private discrete-relaxation-types
+  "Distributions whose dist-reparam is a SCALAR straight-through relaxation
+   (Gumbel-softmax) with no batched dist-reparam-n yet. The shape-batched vadev
+   path samples reparam sites via dist-sample-n, which for these returns a hard
+   (non-differentiable) index — so vadev must treat them as NON-reparam (REINFORCE)
+   or it would silently produce zero gradients. Sequential adev handles them via
+   dist-reparam; batched categorical reparam is a follow-up (genmlx-0nyj)."
+  #{:categorical})
+
+(defn- batch-reparam?
+  "Reparameterizable along the shape-batched (dist-sample-n) path. Excludes the
+   scalar-only discrete relaxations so vadev keeps them on the REINFORCE path."
+  [dist]
+  (and (has-reparam? dist) (not (discrete-relaxation-types (:type dist)))))
+
 ;; ---------------------------------------------------------------------------
 ;; ADEV handler transition (sequential)
 ;; ---------------------------------------------------------------------------
@@ -36,7 +51,12 @@
         value (if reparam?
                 (dc/dist-reparam dist k2)
                 (mx/stop-gradient (dc/dist-sample dist k2)))
-        lp (dc/dist-log-prob dist value)]
+        ;; Score the reparam value via dist-reparam-log-prob (default = dist-log-prob,
+        ;; so continuous dists are unchanged; categorical's [K] one-hot needs the
+        ;; differentiable override — dist-log-prob would int-truncate it). genmlx-0nyj.
+        lp (if reparam?
+             (dc/dist-reparam-log-prob dist value)
+             (dc/dist-log-prob dist value))]
     [value (-> state
              (assoc :key k1)
              (update :choices #(cm/set-choice % [addr] value))
@@ -124,7 +144,10 @@
   [state addr dist]
   (let [n (:batch-size state)
         [k1 k2] (rng/split (:key state))
-        reparam? (has-reparam? dist)
+        ;; batch-reparam? (not has-reparam?): a scalar-only discrete relaxation
+        ;; (categorical) has no differentiable dist-sample-n, so it stays on the
+        ;; REINFORCE path in batched mode (genmlx-0nyj).
+        reparam? (batch-reparam? dist)
         value (if reparam?
                 (dc/dist-sample-n dist k2 n)
                 (mx/stop-gradient (dc/dist-sample-n dist k2 n)))

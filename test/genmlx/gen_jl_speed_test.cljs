@@ -90,6 +90,19 @@
     (gen []
       (trace :x (dist/gaussian 0 1)))))
 
+;; Model 1b: 1-latent Normal-Normal for compiled-MH (genmlx-pdm2).
+;; single-gaussian's only site :x is the one the constraint observes, so
+;; compiled-MH would (correctly) throw :no-mcmc-latents — there is no free
+;; latent to sample. This model gives compiled-MH a genuine 1-parameter target:
+;; latent :mu, with a SEPARATE observed :y, so the tensor score exposes one
+;; sampling parameter.
+(def normal-normal-1d
+  (dyn/auto-key
+    (gen []
+      (let [mu (trace :mu (dist/gaussian 0 1))]
+        (trace :y (dist/gaussian mu 1))
+        mu))))
+
 ;; Model 2: Linear Regression (5 obs + 2 latents = 7 sites)
 (def linear-regression
   (dyn/auto-key
@@ -147,6 +160,9 @@
 
 (defn- constraints-single-gaussian []
   (cm/choicemap :x (mx/scalar 0.5)))
+
+(defn- obs-normal-normal-1d []
+  (cm/choicemap :y (mx/scalar 0.5)))
 
 (defn- constraints-linear-regression []
   (-> cm/EMPTY
@@ -371,10 +387,13 @@
 
 (println "\n-- Compiled MH (200 steps) --")
 
-(run-bench! "single_gaussian" "compiled_mh" 200
+;; 1-param compiled-MH: normal-normal (latent :mu, observed :y). single-gaussian's
+;; only site :x is observed by its constraint, so compiled-MH has no free latent
+;; (it would throw :no-mcmc-latents — the correct contract; genmlx-pdm2).
+(run-bench! "normal_normal_1d" "compiled_mh" 200
   (fn [] (mcmc/compiled-mh
-           {:samples 200 :addresses [:x]}
-           single-gaussian [] (constraints-single-gaussian))))
+           {:samples 200 :addresses [:mu]}
+           normal-normal-1d [] (obs-normal-normal-1d))))
 
 (run-bench! "linear_regression" "compiled_mh" 200
   (fn [] (mcmc/compiled-mh
@@ -392,10 +411,10 @@
 
 (println "\n-- Loop-Compiled MH (200 steps) --")
 
-(run-bench! "single_gaussian" "compiled_mh_loop" 200
+(run-bench! "normal_normal_1d" "compiled_mh_loop" 200
   (fn [] (mcmc/compiled-mh
-           {:samples 200 :addresses [:x] :compile? true}
-           single-gaussian [] (constraints-single-gaussian))))
+           {:samples 200 :addresses [:mu] :compile? true}
+           normal-normal-1d [] (obs-normal-normal-1d))))
 
 (run-bench! "linear_regression" "compiled_mh_loop" 200
   (fn [] (mcmc/compiled-mh
@@ -475,6 +494,7 @@
 
 (let [;; Abbreviate labels for table readability
       abbrev {"single_gaussian" "gauss1"
+              "normal_normal_1d" "nn1"
               "linear_regression" "linreg"
               "mixed" "mixed"
               "map_combinator" "map"

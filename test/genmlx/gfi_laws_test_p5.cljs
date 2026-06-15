@@ -294,4 +294,5 @@
             (str "Factorization failed (constrain a+c) in "
                  (count (remove true? results-ac)) "/20 trials")))))
 
-(t/run-tests)
+(with-redefs [rng/fresh-key glh/det-fresh-key]
+  (t/run-tests))

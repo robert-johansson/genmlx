@@ -155,14 +155,36 @@
   [f results]
   (reduce (fn [acc r] (mx/add acc (f r))) (mx/scalar 0.0) results))
 
+(defn- capture-nested-meta
+  "Per-element vector of each inner trace's OWN combinator metadata (nil entries
+   for plain-kernel elements; nil overall when no element carries any). Stored on
+   a vmap trace as ::nested-element-meta and re-attached by element-trace so that a
+   reconstructed inner trace — when the kernel is ITSELF a combinator — carries
+   its own ::element-scores. The general retained-only regenerate/update weight is
+   project-based and NOT linear in the element :score, so without the inner
+   metadata a nested (vmap-of-vmap / combinator-of-combinator) general-path
+   regenerate mis-weights by the whole inner old score (genmlx-nt0c). Selecting
+   ::nested-element-meta too makes the propagation recursive (3+ levels)."
+  [traces]
+  (let [v (mapv #(not-empty (select-keys (meta %)
+                              [::element-scores ::n ::nested-element-meta ::batched?]))
+                traces)]
+    (when (some some? v) v)))
+
 (defn- element-trace
   "Reconstruct the kernel trace for element i from stored per-element state.
-   Score falls back to scalar 0.0 when no element-scores were recorded."
-  [kernel args choices element-scores i]
-  (tr/make-trace
-   {:gen-fn kernel :args args
-    :choices choices :retval nil
-    :score (if element-scores (nth element-scores i) (mx/scalar 0.0))}))
+   Score falls back to scalar 0.0 when no element-scores were recorded. nested-meta
+   (when present) re-attaches element i's own combinator metadata so a nested
+   kernel's regenerate/update/project sees its ::element-scores (genmlx-nt0c)."
+  ([kernel args choices element-scores i]
+   (element-trace kernel args choices element-scores i nil))
+  ([kernel args choices element-scores i nested-meta]
+   (let [t (tr/make-trace
+            {:gen-fn kernel :args args
+             :choices choices :retval nil
+             :score (if element-scores (nth element-scores i) (mx/scalar 0.0))})
+         m (when nested-meta (nth nested-meta i))]
+     (if m (vary-meta t merge m) t))))
 
 (defn- kernel-update
   "Update a kernel trace. Throws when the kernel does not implement IUpdate:
@@ -208,6 +230,10 @@
               ;; score is [N]-shaped, sum for total
               total-score (mx/sum (:score result))
               element-scores (mapv #(mx/index (:score result) %) (range n))]
+          ;; No ::nested-element-meta on the fast paths: it is only needed when the
+          ;; kernel is ITSELF a combinator, and combinators (records, no :body-fn)
+          ;; never satisfy the fast-path guard above — a combinator kernel always
+          ;; takes the slow path, where nested metadata IS captured (genmlx-nt0c).
           (with-meta
             (tr/make-trace {:gen-fn this :args args
                             :choices (:choices result) :retval (:retval result)
@@ -225,6 +251,7 @@
             (tr/make-trace {:gen-fn this :args args
                             :choices choices :retval retvals :score score})
             {::element-scores element-scores
+             ::nested-element-meta (capture-nested-meta results)
              ::n n})))))
 
   p/IGenerate
@@ -268,6 +295,7 @@
                     (tr/make-trace {:gen-fn this :args args
                                     :choices choices :retval retvals :score score})
                     {::element-scores element-scores
+                     ::nested-element-meta (capture-nested-meta (mapv :trace results))
                      ::n n})
            :weight weight}))))
 
@@ -279,11 +307,12 @@
           scalar-c? (scalar-constraints? constraints)
           new-per-constraints (when-not scalar-c? (unstack-choices constraints n))
           old-element-scores (::element-scores (meta trace))
+          old-nested-meta (::nested-element-meta (meta trace))
           results (mapv (fn [i]
                           (let [elem-args (extract-element-args (:args trace) in-axes i)
                                 old-trace (element-trace kernel elem-args
                                                          (nth old-per-choices i)
-                                                         old-element-scores i)]
+                                                         old-element-scores i old-nested-meta)]
                             (kernel-update kernel old-trace
                                            (if scalar-c? constraints (nth new-per-constraints i)))))
                         (range n))
@@ -309,6 +338,7 @@
                 (tr/make-trace {:gen-fn this :args (:args trace)
                                 :choices choices :retval retvals :score score})
                 {::element-scores element-scores
+                 ::nested-element-meta (capture-nested-meta (mapv :trace results))
                  ::n n})
        :weight weight
        :discard discard}))
@@ -319,11 +349,12 @@
                 (resolve-axis-size (:args trace) in-axes axis-size))
           old-per-choices (unstack-choices (:choices trace) n)
           old-element-scores (::element-scores (meta trace))
+          old-nested-meta (::nested-element-meta (meta trace))
           results (mapv (fn [i]
                           (let [elem-args (extract-element-args (:args trace) in-axes i)
                                 old-trace (element-trace kernel elem-args
                                                          (nth old-per-choices i)
-                                                         old-element-scores i)]
+                                                         old-element-scores i old-nested-meta)]
                             (kernel-regenerate kernel old-trace
                                                (extract-element-selection selection i))))
                         (range n))
@@ -333,14 +364,16 @@
           ;; Regenerate weights are additive across independent elements, but each
           ;; element weight was computed against the constructed old score
           ;; (recorded element score, or 0 without metadata). Re-base against the
-          ;; true total old score. NOTE (genmlx-nt0c): this is exact when
-          ;; ::element-scores is present (the re-base term is 0 — every vmap-produced
-          ;; trace carries it, so both fast and general kernel paths are correct),
-          ;; and also for FAST-path kernels when it is absent (e.g. the nested-vmap
-          ;; reconstructed inner trace: −old_total exactly compensates). The one
-          ;; unsound case is a GENERAL retained-only kernel weight on a trace whose
-          ;; ::element-scores were externally dropped — a project-based weight is
-          ;; not linear in the element :score; callers must keep the metadata.
+          ;; true total old score: W = Σ wᵢ + Σ constructed_oldᵢ − old_total.
+          ;; NOTE (genmlx-nt0c): ::element-scores is now propagated through nested
+          ;; reconstructions (::nested-element-meta + element-trace), so every
+          ;; reconstructed kernel old-trace — including the inner trace of a
+          ;; vmap-of-vmap — carries its own metadata and the re-base term is 0 for
+          ;; BOTH fast and general kernel paths. The expression is kept verbatim as
+          ;; a 0-valued safety net: a fast-eligible kernel still degrades exactly
+          ;; (−old_total compensates) if a trace's metadata is ever externally
+          ;; stripped; only a GENERAL retained-only kernel on an externally-stripped
+          ;; trace (no longer produced anywhere) would mis-weight.
           constructed-old (if old-element-scores
                             (reduce mx/add (mx/scalar 0.0) old-element-scores)
                             (mx/scalar 0.0))
@@ -351,6 +384,7 @@
                 (tr/make-trace {:gen-fn this :args (:args trace)
                                 :choices choices :retval retvals :score score})
                 {::element-scores element-scores
+                 ::nested-element-meta (capture-nested-meta (mapv :trace results))
                  ::n n})
        :weight weight}))
 
@@ -390,13 +424,14 @@
     (let [n (or (::n (meta trace))
                 (resolve-axis-size (:args trace) (:in-axes this) (:axis-size this)))
           old-per-choices (unstack-choices (:choices trace) n)
-          old-element-scores (::element-scores (meta trace))]
+          old-element-scores (::element-scores (meta trace))
+          old-nested-meta (::nested-element-meta (meta trace))]
       (reduce
        (fn [acc i]
          (let [elem-args (extract-element-args (:args trace) (:in-axes this) i)
                elem-trace (element-trace (:kernel this) elem-args
                                          (nth old-per-choices i)
-                                         old-element-scores i)]
+                                         old-element-scores i old-nested-meta)]
            (mx/add acc (p/project (:kernel this) elem-trace
                                   (extract-element-selection selection i)))))
        (mx/scalar 0.0)

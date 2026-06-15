@@ -582,6 +582,38 @@
         perturbed (mx/add logits gumbel)]
     (mx/argmax perturbed 1)))
 
+;; Gumbel-softmax (concrete) reparameterization for categorical (genmlx-0nyj).
+;; Enables low-variance reparameterized gradients through a discrete choice via
+;; ADEV instead of REINFORCE. CONTRACT: returns a [K] STRAIGHT-THROUGH ONE-HOT
+;; vector — forward value is the exact one-hot of the Gumbel-argmax (so the trace
+;; choice stays a legitimate discrete one-hot), backward gradient is the smooth
+;; Gumbel-softmax Jacobian via stop_gradient(hard − soft) + soft. This is the
+;; ADEV/gradient path only; ordinary categorical sample/log-prob/assess/generate
+;; are unchanged (they keep integer indices + exact log-softmax). Temperature is
+;; read from (:reparam-tau params) (default 0.5); smaller = lower bias, higher
+;; variance. Assumes 1-D logits [K] (the sequential ADEV path); batched/vadev
+;; categorical reparam needs a dist-reparam-n and is a follow-up.
+(defmethod dc/dist-reparam :categorical [d key]
+  (let [{:keys [logits reparam-tau]} (:params d)
+        tau (mx/scalar (double (or reparam-tau 0.5)))
+        k (last (mx/shape logits))
+        g (rng/gumbel (rng/ensure-key key) [k])
+        perturbed (mx/add (logits->logprobs logits) g)
+        soft (mx/softmax (mx/divide perturbed tau) -1)
+        ;; straight-through: exact one-hot forward, soft Jacobian backward.
+        ;; (Ties are measure-zero under continuous Gumbel noise.)
+        hard (mx/astype (mx/equal soft (mx/amax soft)) mx/float32)]
+    (mx/add (mx/stop-gradient (mx/subtract hard soft)) soft)))
+
+;; Differentiable score of a relaxed categorical: <one-hot, log_softmax(logits)>.
+;; Equals log_softmax(logits)[argmax] in the forward pass, but is differentiable
+;; w.r.t. BOTH the straight-through value and the logits — unlike dist-log-prob
+;; :categorical, which int-casts its argument and index-gathers (corrupting a
+;; one-hot). Kept off the ordinary scoring path (genmlx-0nyj).
+(defmethod dc/dist-reparam-log-prob :categorical [d value]
+  (let [{:keys [logits]} (:params d)]
+    (mx/sum (mx/multiply value (logits->logprobs logits)))))
+
 (defn categorical-weights
   "Categorical distribution from unnormalized weights (not logits).
    Handles zero weights safely — no log(0), no NaN gradients.

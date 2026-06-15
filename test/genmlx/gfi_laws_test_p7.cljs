@@ -8,6 +8,7 @@
             [genmlx.dist :as dist]
             [genmlx.diff :as diff]
             [genmlx.dynamic :as dyn]
+            [genmlx.dispatch :as dispatch]
             [genmlx.edit :as edit]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
@@ -101,6 +102,104 @@
                        (h/finite? (ev (:score t2)))
                        (= (set (cm/addresses (:choices t1)))
                           (set (cm/addresses (:choices t2))))))))
+
+;; --- Law: Proposal Override [T] Alg 16, §4.1.4 ---
+;; Algorithm 16 routes :generate through a custom proposal Q instead of model P's
+;; internal (prior) proposal, via dispatch/with-dispatch. R = P plus a custom
+;; dispatch fn that, on :generate, samples latents from Q and returns the
+;; importance weight log p(latents, obs) − log q(latents); every other op
+;; delegates to a CLEAN P. Proves: (A) the non-overridden op (simulate) is
+;; untouched; (B) Q is genuinely in the generate path — the proposed latent is
+;; Q-distributed, not prior-distributed (the non-vacuity guard); (C) both P's
+;; default-prior proposal AND R's Q proposal give importance-sampling log-ML
+;; estimates that converge to the SAME closed-form Normal-Normal marginal
+;; likelihood — the independent oracle. (genmlx-wojm)
+
+(t/deftest law:proposal-override-alg16
+  (t/testing "Alg-16 proposal override via with-dispatch"
+    (let [;; Target P: mu ~ N(0,2), y ~ N(mu,1). strip-analytical-path so generate
+          ;; samples mu from the PRIOR (a real sampling proposal) rather than the
+          ;; conjugate analytical path (which would pin mu and zero the variance).
+          P (dyn/strip-analytical-path
+              (gen [] (let [mu (trace :mu (dist/gaussian 0 2))]
+                        (trace :y (dist/gaussian mu 1))
+                        mu)))
+          ;; Custom proposal Q: deliberately overdispersed and OFF the prior
+          ;; (mean 2 ≠ prior mean 0, sd 1.5) so its weights provably differ from
+          ;; P's, while still covering the posterior (mu|y=3 ~ N(2.4, 0.89)).
+          Q (gen [_obs] (trace :mu (dist/gaussian 2 1.5)))
+          obs (cm/choicemap :y (mx/scalar 3.0))
+          ;; Independent oracle: y ~ N(0, sqrt(prior_var+obs_var)=sqrt5).
+          analytical (- (* -0.5 (js/Math.log (* 2 js/Math.PI)))
+                        (* 0.5 (js/Math.log 5.0))
+                        (* 0.5 (/ 9.0 5.0)))
+          ;; Algorithm-16 dispatch fn. On :generate, propose mu~Q, score the full
+          ;; joint under P, return IS weight log p(mu,y) − log q(mu). df closes
+          ;; over the CLEAN P (no custom-dispatch) and delegates other ops to it —
+          ;; calling p/* on `gf` (=R) would recurse forever.
+          df (fn [op _gf args key opts]
+               (case op
+                 :generate
+                 (let [[kq kp] (rng/split key)
+                       {q-choices :choices q-score :weight}
+                       (p/propose (dyn/with-key Q kq) [(:constraints opts)])
+                       full (cm/merge-cm (:constraints opts) q-choices)
+                       {p-trace :trace} (p/generate (dyn/with-key P kp) args full)
+                       w (mx/subtract (:score p-trace) q-score)]
+                   {:trace p-trace :weight w})
+                 :simulate (p/simulate (dyn/with-key P key) args)
+                 :assess   (p/assess   (dyn/with-key P key) args (:constraints opts))
+                 :propose  (p/propose  (dyn/with-key P key) args)
+                 (throw (ex-info "proposal-override: op not delegated" {:op op}))))
+          R (dispatch/with-dispatch P df)
+          k (fn [base i] (rng/fresh-key (+ base i)))
+          mu-of (fn [choices] (ev (cm/get-value (cm/get-submap choices :mu))))]
+
+      ;; (A) simulate(R) is the non-overridden op — must equal simulate(P): same
+      ;;     address set and prior-distributed mu (mean ≈ 0).
+      (let [r-mus (vec (for [i (range 1000)]
+                         (mu-of (:choices (p/simulate (dyn/with-key R (k 5000 i)) [])))))
+            p-mus (vec (for [i (range 1000)]
+                         (mu-of (:choices (p/simulate (dyn/with-key P (k 7000 i)) [])))))
+            r-addrs (set (cm/addresses (:choices (p/simulate (dyn/with-key R (k 1 0)) []))))
+            p-addrs (set (cm/addresses (:choices (p/simulate (dyn/with-key P (k 2 0)) []))))]
+        (t/is (= r-addrs p-addrs) "simulate(R) address set = simulate(P)")
+        (t/is (close? (glh/sample-mean r-mus) 0.0 0.2)
+              "simulate(R) mu ~ prior (mean 0): non-overridden op untouched")
+        (t/is (close? (glh/sample-mean r-mus) (glh/sample-mean p-mus) 0.2)
+              "simulate(R) mu-mean = simulate(P) mu-mean"))
+
+      ;; (B) NON-VACUITY: generate(R) must use Q — the proposed latent mu is
+      ;;     Q-distributed (mean ≈ 2), NOT prior-distributed (mean 0). If the
+      ;;     override silently fell through to P, mu would have mean 0.
+      (let [r-gen-mus (vec (for [i (range 1000)]
+                             (mu-of (:choices (:trace (p/generate (dyn/with-key R (k 8000 i)) [] obs))))))
+            p-gen-mus (vec (for [i (range 1000)]
+                             (mu-of (:choices (:trace (p/generate (dyn/with-key P (k 9000 i)) [] obs))))))]
+        (t/is (close? (glh/sample-mean r-gen-mus) 2.0 0.2)
+              "generate(R) proposes mu ~ Q (mean 2): Q is genuinely in the path")
+        (t/is (close? (glh/sample-mean p-gen-mus) 0.0 0.2)
+              "generate(P) proposes mu ~ prior (mean 0)")
+        (t/is (> (js/Math.abs (- (glh/sample-mean r-gen-mus) (glh/sample-mean p-gen-mus))) 1.0)
+              "R's proposal differs from P's default proposal (non-vacuous)"))
+
+      ;; (C) HEADLINE: both proposals give IS log-ML estimates converging to the
+      ;;     SAME closed-form marginal likelihood — the independent oracle. (A
+      ;;     manual loop keeps R's custom-dispatch path intact; importance-sampling
+      ;;     would re-wrap/strip it.)
+      (let [n 4000
+            w-P (vec (for [i (range n)]
+                       (ev (:weight (p/generate (dyn/with-key P (k 100000 i)) [] obs)))))
+            w-R (vec (for [i (range n)]
+                       (ev (:weight (p/generate (dyn/with-key R (k 200000 i)) [] obs)))))
+            est-P (- (glh/logsumexp w-P) (js/Math.log n))
+            est-R (- (glh/logsumexp w-R) (js/Math.log n))]
+        (t/is (close? est-P analytical 0.2)
+              (str "P default-proposal IS log-ML " est-P " vs analytical " analytical))
+        (t/is (close? est-R analytical 0.2)
+              (str "R Q-proposal IS log-ML " est-R " vs analytical " analytical))
+        (t/is (close? est-P est-R 0.25)
+              "both proposals agree on the marginal likelihood")))))
 
 ;; --- Law #16: Mixture Kernel Stationarity [T] Prop 3.4.1 ---
 ;; Mix of stationary kernels is stationary. Random-mix and deterministic-cycle
@@ -339,4 +438,5 @@
                                   1e-6))
                                unselected)))))
 
-(t/run-tests)
+(with-redefs [rng/fresh-key glh/det-fresh-key]
+  (t/run-tests))

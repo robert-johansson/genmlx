@@ -17,6 +17,13 @@
 (defmulti dist-sample*   (fn [d _key] (:type d)))
 (defmulti dist-log-prob  (fn [d _value] (:type d)))
 (defmulti dist-reparam   (fn [d _key] (:type d)))
+;; Differentiable log-prob of a REPARAMETERIZED sample. For continuous dists the
+;; reparam value is an ordinary sample, so the default delegates to dist-log-prob
+;; (unchanged behavior). Discrete relaxations (Gumbel-softmax categorical) whose
+;; reparam value is a [K] one-hot — which dist-log-prob would int-truncate and
+;; mis-gather — override this with a differentiable score, keeping the relaxation
+;; OUT of ordinary categorical scoring/assess/generate (genmlx-0nyj).
+(defmulti dist-reparam-log-prob (fn [d _value] (:type d)))
 (defmulti dist-support   (fn [d] (:type d)))
 (defmulti dist-log-prob-support
   "Log-probabilities for ALL support values at once. Returns tensor of shape
@@ -44,6 +51,10 @@
 (defmethod dist-reparam :default [d _]
   (throw (ex-info (str "Distribution " (:type d) " does not support reparameterized sampling")
                   {:type (:type d)})))
+
+;; Default: the reparam value is an ordinary sample, score it as usual. Only
+;; relaxed-discrete dists (categorical) need an override.
+(defmethod dist-reparam-log-prob :default [d v] (dist-log-prob d v))
 
 (defmethod dist-support :default [d]
   (throw (ex-info (str "Distribution " (:type d) " is not enumerable")

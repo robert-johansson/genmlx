@@ -486,4 +486,46 @@
       (mx/eval! (:weight vtrace))
       (is (js/isFinite (mx/item (:weight vtrace))) "vgenerate weight is finite"))))
 
+(deftest general-path-regenerate-weight-equals-delta-project
+  ;; genmlx-nt0c: a kernel that forces the GENERAL retained-only regenerate path —
+  ;; a 3-site chain a→b→c, selecting {:a :b} so a selected site (:a) feeds another
+  ;; selected site (:b) (not fast-eligible) and :c is a dependent RETAINED site.
+  ;; The general retained-only weight is project-based (W = Σ_retained Δlp), NOT
+  ;; linear in the element :score, so a reconstructed inner trace MUST carry its
+  ;; own ::element-scores. ORACLE (thesis, non-circular): the regenerate weight
+  ;; must equal project(new, retained) − project(old, retained), computed via
+  ;; vmap's project (an element-wise sum of retained log-probs — a different code
+  ;; path than regenerate's re-base).
+  (let [kern (dyn/auto-key (gen [m] (let [a (trace :a (dist/gaussian m 1))
+                                          b (trace :b (dist/gaussian a 1))
+                                          c (trace :c (dist/gaussian b 1))]
+                                      c)))
+        sel-ab (sel/select :a :b)
+        retained (sel/select :c)
+        delta-project (fn [gf old-tr new-tr]
+                        (mx/subtract (p/project gf new-tr retained)
+                                     (p/project gf old-tr retained)))]
+    ;; ANTI-VACUITY: the whole point is the GENERAL retained-only path (project-
+    ;; based weight). If this selection were fast-eligible, w_i would be linear in
+    ;; the element score and the test would pass even with the bug present. Pin it.
+    (is (not (#'dyn/regen-fast-eligible? kern sel-ab))
+        "test kernel+selection must force the general (non-fast) regenerate path")
+    (testing "single-level vmap, general retained-only path"
+      (let [v (vmap/vmap-gf kern)
+            tr (p/simulate v [(mx/array [0.0 1.0 2.0])])
+            {new-tr :trace w :weight} (p/regenerate v tr sel-ab)]
+        (is (js/isFinite (mx/item w)) "weight finite")
+        (is (h/close? (mx/item (delta-project v tr new-tr)) (mx/item w) 1e-3)
+            "single-level weight = Δproject(retained)")))
+    (testing "NESTED vmap-of-vmap, general retained-only path (the nt0c bug)"
+      ;; Without nested ::element-scores propagation this mis-weighted by the whole
+      ;; inner old score (empirically 2.93 vs oracle -23.86).
+      (let [inner (vmap/vmap-gf kern)
+            outer (vmap/vmap-gf inner)
+            tr (p/simulate outer [(mx/array [[0.0 1.0 2.0] [3.0 4.0 5.0]])])
+            {new-tr :trace w :weight} (p/regenerate outer tr sel-ab)]
+        (is (js/isFinite (mx/item w)) "nested weight finite")
+        (is (h/close? (mx/item (delta-project outer tr new-tr)) (mx/item w) 1e-3)
+            "nested vmap-of-vmap weight = Δproject(retained)")))))
+
 (cljs.test/run-tests)

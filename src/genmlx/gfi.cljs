@@ -921,7 +921,9 @@
    {:name :gradient-choice-correctness
     :from "[T] Eq 2.12"
     :theorem "Choice gradients: d(score)/d(tau[a]) matches finite-difference
-              approximation for all continuous addresses."
+              approximation for all continuous addresses within the distribution
+              support (a probe that leaves support has an undefined FD gradient
+              and is skipped — genmlx-v4mz)."
     :tags #{:gradient :core}
     :check (fn [{:keys [model args]}]
              (let [t (p/simulate model args)
@@ -938,10 +940,17 @@
                         score-plus (-> (p/generate model args choices-plus)
                                        :trace :score ev)
                         score-minus (-> (p/generate model args choices-minus)
-                                        :trace :score ev)
-                        fd-grad (/ (- score-plus score-minus) (* 2 h))
-                        analytical (ev (get grads addr))]
-                    (approx= analytical fd-grad 0.05)))
+                                        :trace :score ev)]
+                    ;; If a finite-difference probe leaves the site's support
+                    ;; (bounded distributions near an edge) its score is -Inf and
+                    ;; the FD gradient is undefined — skip that address rather than
+                    ;; report a spurious law violation on a domain artifact. The
+                    ;; interior comparison (the real AD-vs-FD check) is unchanged.
+                    (if (and (js/isFinite score-plus) (js/isFinite score-minus))
+                      (let [fd-grad (/ (- score-plus score-minus) (* 2 h))
+                            analytical (ev (get grads addr))]
+                        (approx= analytical fd-grad 0.05))
+                      true)))
                 addrs)))}
 
    {:name :gradient-argument-correctness

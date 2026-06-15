@@ -185,4 +185,5 @@
                        (close? (+ w1 w2) 0.0 1e-3)
                        choices-match))))
 
-(t/run-tests)
+(with-redefs [rng/fresh-key glh/det-fresh-key]
+  (t/run-tests))

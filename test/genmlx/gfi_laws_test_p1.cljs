@@ -130,4 +130,5 @@
                       aw (ev weight)]
                   (close? pw aw 1e-5))))
 
-(t/run-tests)
+(with-redefs [rng/fresh-key glh/det-fresh-key]
+  (t/run-tests))

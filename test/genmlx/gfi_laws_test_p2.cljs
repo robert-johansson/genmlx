@@ -158,4 +158,5 @@
                       proj (ev (p/project (:model m) t sel/none))]
                   (close? 0.0 proj 0.01))))
 
-(t/run-tests)
+(with-redefs [rng/fresh-key glh/det-fresh-key]
+  (t/run-tests))
