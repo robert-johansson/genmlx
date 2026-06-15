@@ -63,11 +63,16 @@
   [selection]
   (symmetric-kernel
     (fn [trace key]
-      (let [gf (dyn/auto-key (dyn/strip-analytical-path (:gen-fn trace)))
+      ;; Seed the proposal (regenerate resamples the selected sites) from a
+      ;; split of the THREADED key, not auto-key (fresh entropy) — otherwise the
+      ;; chain is irreproducible under a fixed seed. Mirror mcmc/mh-step
+      ;; (genmlx-vv3t).
+      (let [[regen-key accept-key] (rng/split (rng/ensure-key key))
+            gf (dyn/with-key (dyn/strip-analytical-path (:gen-fn trace)) regen-key)
             result (p/regenerate gf trace selection)
             _ (tr/assert-joint! (:trace result) :mh-kernel)
             w (mx/realize (:weight result))]
-        (if (u/accept-mh? w key)
+        (if (u/accept-mh? w accept-key)
           (:trace result)
           trace)))))
 

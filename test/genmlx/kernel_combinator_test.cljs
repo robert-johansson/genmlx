@@ -82,14 +82,22 @@
       (is (h/close? 3.0 mu-mean 1.0) "mix-kernels(2): posterior mu near 3"))))
 
 (deftest seed-convergence-test
-  (testing "seed: kernel with fixed key converges"
+  ;; A seeded MCMC chain must use a fixed run-kernel :key (a deterministic but
+  ;; EVOLVING per-step key sequence), NOT kern/seed (which forces the SAME key
+  ;; every step — that degenerates a correct, key-respecting MH kernel into a
+  ;; repeated identical move that cannot mix; see genmlx-vv3t / the kern/seed
+  ;; follow-up). The old test passed only because mh-kernel ignored its key
+  ;; (auto-key fresh entropy) — the genmlx-vv3t bug.
+  (testing "seed: an MH chain under a fixed run-kernel :key converges AND is reproducible"
     (let [{:keys [trace]} (p/generate model [] observations)
-          fixed-key (rng/fresh-key)
-          k (kern/seed (kern/mh-kernel (sel/select :mu)) fixed-key)
-          traces (kern/run-kernel {:samples 100 :burn 50} k trace)
-          mu-mean (extract-mu-mean traces)]
-      (is (= 100 (count traces)) "seed: 100 samples")
-      (is (h/close? 3.0 mu-mean 1.0) "seed: posterior mu near 3"))))
+          k (kern/mh-kernel (sel/select :mu))
+          run (fn [] (kern/run-kernel {:samples 100 :burn 50 :key (rng/fresh-key 24680)} k trace))
+          t1 (run)
+          mu-mean (extract-mu-mean t1)]
+      (is (= 100 (count t1)) "seed: 100 samples")
+      (is (h/close? 3.0 mu-mean 1.0) "seed: posterior mu near 3 (converges)")
+      (is (= (extract-mu-mean t1) (extract-mu-mean (run)))
+          "seed: reproducible under a fixed run-kernel :key (genmlx-vv3t)"))))
 
 (deftest seed-deterministic-test
   (testing "seed: deterministic with update-kernel"
