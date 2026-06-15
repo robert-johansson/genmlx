@@ -816,12 +816,18 @@
                 normalized (mapv #(/ % total) gammas)]
             (mx/array normalized)))
   (log-prob [v]
+            ;; Reduce only the trailing event (K) axis so batched values broadcast
+            ;; per-particle: [K]->[] in scalar mode, [N,K]->[N] in batched mode.
+            ;; A bare (mx/sum ...) collapses EVERY axis, silently summing the
+            ;; particle axis into one scalar that then broadcasts onto every
+            ;; particle's score (genmlx-t5qa).
             (let [v (mx/ensure-array v)
-                  log-beta (mx/subtract (mx/sum (mx/lgamma alpha))
-                                        (mx/lgamma (mx/sum alpha)))
+                  log-beta (mx/subtract (mx/sum (mx/lgamma alpha) [-1])
+                                        (mx/lgamma (mx/sum alpha [-1])))
                   log-terms (mx/sum
                              (mx/multiply (mx/subtract alpha ONE)
-                                          (mx/log v)))]
+                                          (mx/log v))
+                             [-1])]
               (mx/subtract log-terms log-beta))))
 
 ;; ---------------------------------------------------------------------------
