@@ -253,7 +253,7 @@ direct import of dynamic.cljs).
    infrastructure — no parallel implementations. The handler is ground truth.
 
 7. **The GFI algebraic laws.** The GFI algebraic theory (`gfi.cljs`) encodes
-   the laws from the thesis (86 as of 2026-06; count the `laws` vector for the
+   the laws from the thesis (85 as of 2026-06; count the `laws` vector for the
    current number) covering all operations, compositionality, gradients, and
    compiled path equivalence. `strip-compiled` forces handler path for testing.
 
