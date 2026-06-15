@@ -1156,14 +1156,19 @@
           static-sites (filterv :static? (:trace-sites schema))
           site-specs (compiled/build-fused-site-specs static-sites binding-env)]
       (when (and (every? some? site-specs)
-                 ;; Every site must be a :noise-fn distribution or a true
-                 ;; delta. The latent/observed split is only known at runtime,
-                 ;; and a latent :args-noise-fn site (iid-gaussian) would
-                 ;; silently degrade to value=first-arg (genmlx-b210) —
-                 ;; decline at build time instead.
+                 ;; Every site must be a NORMAL-noise distribution or a true
+                 ;; delta. The supplied noise slice is standard normal, so a
+                 ;; latent uniform/bernoulli/exponential/laplace/cauchy site
+                 ;; (whose :noise-fn is inverse-CDF from UNIFORM noise) would be
+                 ;; fed the wrong noise and corrupt the particle + its bootstrap
+                 ;; weight (genmlx-j22a). A latent :args-noise-fn site
+                 ;; (iid-gaussian) would silently degrade to value=first-arg
+                 ;; (genmlx-b210). Both are declined at build time, falling back
+                 ;; to the handler SMC path.
                  (every? (fn [ss]
-                           (let [nt (get compiled/noise-transforms-full (:dist-type ss))]
-                             (or (:noise-fn nt) (= :delta (:dist-type ss)))))
+                           (or (= :delta (:dist-type ss))
+                               (contains? compiled/normal-noise-dist-types
+                                          (:dist-type ss))))
                          site-specs))
         (let [dep-order (:dep-order schema)
               all-addrs (mapv :addr static-sites)
