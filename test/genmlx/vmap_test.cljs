@@ -505,6 +505,11 @@
         delta-project (fn [gf old-tr new-tr]
                         (mx/subtract (p/project gf new-tr retained)
                                      (p/project gf old-tr retained)))]
+    ;; ANTI-VACUITY: the whole point is the GENERAL retained-only path (project-
+    ;; based weight). If this selection were fast-eligible, w_i would be linear in
+    ;; the element score and the test would pass even with the bug present. Pin it.
+    (is (not (#'dyn/regen-fast-eligible? kern sel-ab))
+        "test kernel+selection must force the general (non-fast) regenerate path")
     (testing "single-level vmap, general retained-only path"
       (let [v (vmap/vmap-gf kern)
             tr (p/simulate v [(mx/array [0.0 1.0 2.0])])

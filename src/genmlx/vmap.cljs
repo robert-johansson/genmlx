@@ -230,6 +230,10 @@
               ;; score is [N]-shaped, sum for total
               total-score (mx/sum (:score result))
               element-scores (mapv #(mx/index (:score result) %) (range n))]
+          ;; No ::nested-element-meta on the fast paths: it is only needed when the
+          ;; kernel is ITSELF a combinator, and combinators (records, no :body-fn)
+          ;; never satisfy the fast-path guard above — a combinator kernel always
+          ;; takes the slow path, where nested metadata IS captured (genmlx-nt0c).
           (with-meta
             (tr/make-trace {:gen-fn this :args args
                             :choices (:choices result) :retval (:retval result)

@@ -921,7 +921,9 @@
    {:name :gradient-choice-correctness
     :from "[T] Eq 2.12"
     :theorem "Choice gradients: d(score)/d(tau[a]) matches finite-difference
-              approximation for all continuous addresses."
+              approximation for all continuous addresses within the distribution
+              support (a probe that leaves support has an undefined FD gradient
+              and is skipped — genmlx-v4mz)."
     :tags #{:gradient :core}
     :check (fn [{:keys [model args]}]
              (let [t (p/simulate model args)
