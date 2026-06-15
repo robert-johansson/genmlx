@@ -609,4 +609,41 @@
       (let [new-z1 (h/realize (cm/get-choice (:choices new-trace) [1 :z]))]
         (is (h/close? 5.0 new-z1 1e-6) "element 1 constrained to z=5.0")))))
 
+;; ===========================================================================
+;; genmlx-llpt: batched combinator splice must REPLAY (not resample) on
+;; vupdate/vregenerate. The IBatchedSplice fast paths (Unfold/Scan/Switch/Mix)
+;; ignored parent :old-choices / :selection and re-sampled every kernel step.
+;; ===========================================================================
+
+(def ^:private llpt-kernel (gen [_t prev] (let [x (trace :x (dist/gaussian prev 1))] x)))
+
+(defn- llpt-step0-x [vt]
+  ;; [N] values of the spliced combinator's step-0 :x site
+  (mx/->clj (cm/get-value
+             (cm/get-submap (cm/get-submap (cm/get-submap (:choices vt) :seq) 0) :x))))
+
+(deftest batched-spliced-combinator-replays-on-vupdate
+  (testing "vupdate with empty constraints REPLAYS the spliced Unfold kernel
+            sites (retain all) instead of resampling them"
+    (let [n 64
+          model (gen [] (let [a (trace :a (dist/gaussian 0 1))]
+                          (splice :seq (comb/unfold-combinator llpt-kernel) 3 a) a))
+          [k1 k2] (rng/split (rng/fresh-key 5))
+          vt  (dyn/vsimulate model [] n k1)
+          vt2 (:vtrace (dyn/vupdate model vt cm/EMPTY k2))]
+      (is (= (llpt-step0-x vt) (llpt-step0-x vt2))
+          "empty-constraint vupdate replays the spliced kernel site, not resamples"))))
+
+(deftest batched-spliced-combinator-replays-on-vregenerate
+  (testing "vregenerate with EMPTY selection is identity on spliced combinator
+            kernel sites (retain all)"
+    (let [n 64
+          model (gen [] (let [a (trace :a (dist/gaussian 0 1))]
+                          (splice :seq (comb/unfold-combinator llpt-kernel) 3 a) a))
+          [k1 k2] (rng/split (rng/fresh-key 6))
+          vt  (dyn/vsimulate model [] n k1)
+          vt2 (:vtrace (dyn/vregenerate model vt (sel/select) k2))]
+      (is (= (llpt-step0-x vt) (llpt-step0-x vt2))
+          "empty-selection vregenerate retains the spliced kernel sites"))))
+
 (cljs.test/run-tests)

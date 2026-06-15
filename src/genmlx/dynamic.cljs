@@ -870,6 +870,18 @@
                     :op op :score-type (tr/score-type converted)
                     :expected :joint})))
         (assoc opts :trace converted))
+      :placeholder
+      ;; genmlx-b2mj: the trace's :score is a 0.0 placeholder (e.g. compiled-SMC
+      ;; particle values), not a real joint density. Differencing against it
+      ;; would silently produce a wrong weight — reject instead.
+      (throw (ex-info
+               (str "Joint-scoring " op " cannot consume a :placeholder-scored"
+                    " trace — its :score is a 0.0 placeholder (e.g. compiled-SMC"
+                    " particle values, genmlx-b2mj), so the weight would be"
+                    " wrong. Re-score the choices via p/generate first, or use"
+                    " the trace for choice extraction only.")
+               {:genmlx/error :placeholder-score
+                :op op :score-type st :expected :joint}))
       (throw (ex-info
                (str "Joint-scoring " op " cannot consume a " st
                     "-scored trace — its choices do not determine a joint"
@@ -975,7 +987,8 @@
    likelihoods, corrupting for particle diversity (smc) and trace-MH chains
    (genmlx-540f)."
   [:auto-handlers :conjugate-pairs :has-conjugate? :analytical-plan
-   :auto-regenerate-transition :auto-update-transition :auto-update-handlers])
+   :auto-regenerate-transition :auto-regenerate-handlers
+   :auto-update-transition :auto-update-handlers])
 
 (def alternate-path-schema-keys
   "Every schema key the dispatcher stack consults for a non-handler execution
@@ -1318,7 +1331,11 @@
   (let [key (rng/ensure-key key)
 
         result (rt/run-handler h/batched-simulate-transition
-                               {:choices cm/EMPTY :score SCORE-ZERO
+                               ;; [N]-shaped init score so the VectorizedTrace
+                               ;; :score is [N] even when every site is
+                               ;; constrained/deterministic and no [N] sample
+                               ;; establishes the batch axis (genmlx-fgb6/x93e).
+                               {:choices cm/EMPTY :score (mx/zeros [n])
                                 :key key :batch-size n :batched? true
                                 :executor execute-sub
                                 :param-store (param-store gf)}
@@ -1337,8 +1354,13 @@
   (let [key (rng/ensure-key key)
 
         result (rt/run-handler h/batched-generate-transition
-                               {:choices cm/EMPTY :score SCORE-ZERO
-                                :weight SCORE-ZERO :key key
+                               ;; [N]-shaped init score/weight: a single-site
+                               ;; fully-observed model has no [N] sample to
+                               ;; establish the batch axis, so a scalar init
+                               ;; would leave :score/:weight shape [] instead of
+                               ;; [N] (genmlx-fgb6/x93e/5nch/v4mz).
+                               {:choices cm/EMPTY :score (mx/zeros [n])
+                                :weight (mx/zeros [n]) :key key
                                 :constraints constraints :batch-size n :batched? true
                                 :executor execute-sub
                                 :param-store (param-store gf)}
@@ -1356,8 +1378,10 @@
 
         n (:n-particles vtrace)
         result (rt/run-handler h/batched-update-transition
-                               {:choices cm/EMPTY :score SCORE-ZERO
-                                :weight SCORE-ZERO :key key
+                               ;; [N]-shaped init: keeps :score/:weight [N] when
+                               ;; every site is constrained (genmlx-x93e).
+                               {:choices cm/EMPTY :score (mx/zeros [n])
+                                :weight (mx/zeros [n]) :key key
                                 :constraints constraints
                                 :old-choices (:choices vtrace)
                                 :discard cm/EMPTY
@@ -1398,7 +1422,9 @@
   [gf vtrace selection key]
   (let [n (:n-particles vtrace)
         result (rt/run-handler h/batched-project-transition
-                 {:choices cm/EMPTY :score SCORE-ZERO :weight SCORE-ZERO
+                 ;; [N]-shaped init so an empty/scalar selection still yields an
+                 ;; [N] projected weight (genmlx-x93e).
+                 {:choices cm/EMPTY :score (mx/zeros [n]) :weight (mx/zeros [n])
                   :key (rng/ensure-key key) :selection selection
                   :old-choices (:choices vtrace) :constraints cm/EMPTY
                   :batch-size n :batched? true
@@ -1417,7 +1443,8 @@
   (let [n (:n-particles vtrace)
         [k1 k2] (rng/split (rng/ensure-key key))
         result (rt/run-handler h/batched-regenerate-transition-general
-                 {:choices cm/EMPTY :score SCORE-ZERO :key k1 :selection selection
+                 ;; [N]-shaped init score (genmlx-x93e).
+                 {:choices cm/EMPTY :score (mx/zeros [n]) :key k1 :selection selection
                   :old-choices (:choices vtrace) :batch-size n :batched? true
                   :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt (:args vtrace))))

@@ -16,10 +16,9 @@
 ;; Helpers
 ;; ---------------------------------------------------------------------------
 
-(defn- strip-analytical [gf]
-  (assoc gf :schema (dissoc (:schema gf) :auto-handlers :auto-regenerate-handlers
-                            :auto-regenerate-transition
-                            :conjugate-pairs :has-conjugate? :analytical-plan)))
+;; genmlx-jr90: the single canonical strip (was a private copy that drifted
+;; from the dispatcher key list — it missed :auto-update-transition).
+(def ^:private strip-analytical dyn/strip-analytical-path)
 
 (defn- time-ms [f]
   (let [start (js/Date.now)]

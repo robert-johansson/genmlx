@@ -816,8 +816,12 @@
   p/IBatchedSplice
   (batched-splice [this state addr args]
     (let [kern (:kernel this)]
-      (if-not (:body-fn kern)
-        ;; Kernel is not a DynamicGF — fall back to generic slow path
+      ;; Fall back to the per-particle slow path when the kernel is not a
+      ;; DynamicGF, OR in update/regenerate mode (:old-choices present): the fast
+      ;; path below only runs batched simulate/generate and would RESAMPLE every
+      ;; step instead of replaying/regenerating the retained kernel sites
+      ;; (genmlx-llpt). combinator-batched-fallback consults old-choices/selection.
+      (if (or (not (:body-fn kern)) (contains? state :old-choices))
         (h/combinator-batched-fallback state addr this (vec args))
         ;; Fast path: loop T times with batched handler
         (let [[n-steps init-state & extra] args
@@ -1184,8 +1188,10 @@
   (batched-splice [this state addr args]
     (let [brs (:branches this)
           all-dynamic? (every? :body-fn brs)]
-      (if-not all-dynamic?
-        ;; Not all branches are DynamicGF — fall back to slow path
+      ;; genmlx-llpt: fall back when not all branches are DynamicGF, OR in
+      ;; update/regenerate mode (:old-choices present) — the fast path would
+      ;; resample the chosen branch instead of replaying/regenerating it.
+      (if (or (not all-dynamic?) (contains? state :old-choices))
         (h/combinator-batched-fallback state addr this (vec args))
         ;; Fast path: run all branches with batched handler, mx/where combine
         (let [[index & branch-args] args
@@ -1894,7 +1900,9 @@
   p/IBatchedSplice
   (batched-splice [this state addr args]
     (let [kern (:kernel this)]
-      (if-not (:body-fn kern)
+      ;; genmlx-llpt: fall back in update/regenerate mode so retained kernel
+      ;; steps are replayed/regenerated, not resampled.
+      (if (or (not (:body-fn kern)) (contains? state :old-choices))
         (h/combinator-batched-fallback state addr this (vec args))
         (let [[init-carry inputs] args
               n-steps (count inputs)
@@ -2175,7 +2183,9 @@
   (batched-splice [this state addr args]
     (let [comps (:components this)
           all-dynamic? (every? :body-fn comps)]
-      (if-not all-dynamic?
+      ;; genmlx-llpt: fall back in update/regenerate mode so retained component
+      ;; sites are replayed/regenerated, not resampled.
+      (if (or (not all-dynamic?) (contains? state :old-choices))
         (h/combinator-batched-fallback state addr this (vec args))
         ;; Fast path
         (let [batch-size (:batch-size state)

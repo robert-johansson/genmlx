@@ -85,6 +85,31 @@
       (is (= :p (:prior-addr (first pairs))) "C2-BB: prior-addr")
       (is (= :x (:obs-addr (first pairs))) "C2-BB: obs-addr"))))
 
+(deftest conjugacy-renamed-binding-7zuq
+  ;; genmlx-7zuq: conjugacy detection must NOT depend on the let-binding name
+  ;; matching the trace address. The schema's :arg-aliases env resolves the
+  ;; renamed symbol back to its address, so renaming a binding does not silently
+  ;; disable L3 elimination (resolved by the genmlx-1thx :arg-aliases work).
+  (testing "renamed binding (pp bound to :p) still detects beta-bernoulli"
+    (let [m (gen []
+              (let [pp (trace :p (dist/beta-dist 2 2))]
+                (trace :obs (dist/bernoulli pp))
+                pp))
+          pairs (conj/detect-conjugate-pairs (:schema m))]
+      (is (= 1 (count pairs)) "renamed binding: pair detected, not silently disabled")
+      (is (= :beta-bernoulli (:family (first pairs))) "renamed binding: family")
+      (is (= :p (:prior-addr (first pairs))) "renamed binding: prior-addr resolved via alias")
+      (is (= :obs (:obs-addr (first pairs))) "renamed binding: obs-addr")
+      (is (= :direct (get-in (first pairs) [:dependency-type :type])) "renamed binding: direct")))
+  (testing "renamed binding (m bound to :mu) still detects normal-normal"
+    (let [model (gen [sigma]
+                  (let [m (trace :mu (dist/gaussian 0 10))]
+                    (trace :y (dist/gaussian m sigma))
+                    m))
+          pairs (conj/detect-conjugate-pairs (:schema model))]
+      (is (= 1 (count pairs)) "renamed NN: pair detected")
+      (is (= :mu (:prior-addr (first pairs))) "renamed NN: prior-addr resolved via alias"))))
+
 (deftest conjugate-model-c3-gamma-poisson
   (testing "C3: Gamma-Poisson"
     (let [m (gen []

@@ -171,15 +171,16 @@
 
    The traces carry particle VALUES only: :score is a 0.0 placeholder
    (compiled-smc does not track per-particle joint scores) and :retval is
-   nil. Use them for choice extraction — not for score-dependent ops
-   (update/regenerate/project would compute wrong weights against the
-   placeholder score)."
+   nil. They are tagged :placeholder (genmlx-b2mj), so any score-dependent op
+   (update/regenerate/project) THROWS a clear :placeholder-score error rather
+   than silently differencing a wrong weight against 0.0. Use them for choice
+   extraction only."
   [result kernel]
   (let [{:keys [particles addr-index]} result
         N (first (mx/shape particles))]
     (mapv (fn [i]
             (let [values (mx/index particles i)]
-              (tt/make-tensor-trace
+              (tt/make-placeholder-tensor-trace
                 {:gen-fn kernel :args nil
                  :values values :addr-index addr-index
                  :score (mx/scalar 0.0) :retval nil})))

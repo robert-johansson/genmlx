@@ -413,6 +413,21 @@
   "Extract parameter values from a trace using latent-index ordering.
    Returns [K] MLX array matching the latent-index mapping."
   [trace latent-index]
+  ;; genmlx-nytl: name the cause instead of crashing with the cryptic
+  ;; 'stack requires at least one array'. An empty latent-index means the
+  ;; tensor-native score function exposes zero sampling parameters — every
+  ;; selected latent is analytically eliminated (conjugate / Rao-Blackwellized)
+  ;; or observed, so there is nothing for MCMC to sample. (e.g. compiled-mh on a
+  ;; fully-conjugate normal-normal / linear-Gaussian model.)
+  (when (empty? latent-index)
+    (throw (ex-info
+             (str "compiled MCMC has no free latent addresses to sample: every "
+                  "selected latent is analytically eliminated (conjugate / "
+                  "Rao-Blackwellized) or observed, so the tensor-native score "
+                  "function exposes zero sampling parameters. Select a "
+                  "non-eliminated address, or use the analytical posterior — "
+                  "this model is fully solvable in closed form.")
+             {:genmlx/error :no-mcmc-latents})))
   (let [choices (:choices trace)
         pairs (sort-by val latent-index)]
     (mx/stack (mapv (fn [[addr]]

@@ -226,12 +226,9 @@
 
 (println "\n== 6: regenerate wired — analytical == handler (same key) ==")
 
-(defn- strip-analytical [model]
-  (dyn/->DynamicGF (:body-fn model) (:source model)
-                   (dissoc (:schema model)
-                           :auto-handlers :auto-regenerate-transition
-                           :auto-regenerate-handlers :analytical-plan
-                           :conjugate-pairs :has-conjugate?)))
+;; genmlx-jr90: the single canonical strip — assoc-based, so it preserves the
+;; record type and metadata (the old copy rebuilt via ->DynamicGF, dropping meta).
+(def ^:private strip-analytical dyn/strip-analytical-path)
 
 (let [k (rng/fresh-key 4)
       ;; ONE marginal base trace; regenerate it via BOTH the analytical model and

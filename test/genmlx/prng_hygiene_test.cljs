@@ -17,6 +17,8 @@
             [genmlx.selection :as sel]
             [genmlx.inference.smc :as smc]
             [genmlx.inference.importance :as imp]
+            [genmlx.inference.util :as u]
+            [genmlx.combinators :as comb]
             [genmlx.inference.mcmc :as mcmc])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -118,6 +120,35 @@
                                                  xy-model [] obs))]
       (is (= (run) (run)) "chains bit-identical under the same seed"))))
 
+;; ---------------------------------------------------------------------------
+;; cSMC: seeded run is bit-reproducible (genmlx-g5ys: the init-step generate
+;; leaked auto-key entropy — fixed by threading per-particle keys like smc).
+;; This is a POSITIVE reproducibility test: it FAILED pre-fix (csmc gave
+;; different log-ML/particles every run under a fixed :key) and PASSES post-fix.
+;; ---------------------------------------------------------------------------
+
+(deftest csmc-seeded-determinism
+  (testing "same :key → identical cSMC log-ML and retained particles"
+    (let [obs-seq [(cm/choicemap :y0 (mx/scalar 1.0))
+                   (cm/choicemap :y1 (mx/scalar 1.2))]
+          ref-trace (p/simulate (dyn/with-key xy-model (rng/fresh-key 5)) [])
+          run #(smc/csmc {:particles 16 :key (rng/fresh-key 17)
+                          :rejuvenation-steps 2}
+                         xy-model [] obs-seq ref-trace)
+          r1 (run)
+          r2 (run)]
+      (is (= (h/realize (:log-ml-estimate r1))
+             (h/realize (:log-ml-estimate r2)))
+          "log-ML bit-identical under the same seed")
+      (is (= (mapv x-of (:traces r1)) (mapv x-of (:traces r2)))
+          "particle :x values bit-identical under the same seed")
+      (is (not= (mapv x-of (:traces r1))
+                (mapv x-of (:traces (smc/csmc {:particles 16
+                                               :key (rng/fresh-key 18)
+                                               :rejuvenation-steps 2}
+                                              xy-model [] obs-seq ref-trace))))
+          "different seed → different particles"))))
+
 (deftest importance-resampling-seeded-determinism
   (testing "same :key → identical resampled traces (guards the
             generate/resample key streams being disjoint)"
@@ -127,5 +158,100 @@
                             :key (rng/fresh-key 41)}
                            xy-model [] obs))]
       (is (= (run) (run)) "resampled traces bit-identical under the same seed"))))
+
+;; ---------------------------------------------------------------------------
+;; POSITIVE decorrelation oracle (genmlx-3ezj)
+;;
+;; The same-seed determinism guards above pass identically whether or not the
+;; generate/resample key streams are disjoint — they cannot detect the njaq
+;; correlation defect. This oracle re-creates the defect (k-res := k-gen) and
+;; asserts production differs from it: a re-collision would make production
+;; equal the collided reference and FAIL here.
+;; ---------------------------------------------------------------------------
+
+(defn- resample-by-key
+  "The exact CDF resample importance-resampling performs, factored so it can be
+   driven by an arbitrary resample key. probs: normalized weights; rk: the
+   resample key (split-n per draw)."
+  [traces probs rk]
+  (mapv (fn [ki]
+          (let [u (mx/realize (rng/uniform ki []))
+                idx (->> (reductions + probs)
+                         (keep-indexed (fn [i c] (when (>= c u) i)))
+                         first)]
+            (nth traces (or idx (dec (count traces))))))
+        (rng/split-n rk (count traces))))
+
+(deftest importance-resample-stream-disjoint-from-generation
+  (testing "production resamples from a key DISJOINT from generation, not the
+            njaq-collided same-key stream"
+    (let [obs (cm/choicemap :y0 (mx/scalar 2.5) :y1 (mx/scalar 2.5))
+          n 40
+          key (rng/fresh-key 7)
+          [k-gen k-res] (rng/split (rng/ensure-key key))
+          {:keys [traces log-weights]} (imp/importance-sampling
+                                        {:samples n :key k-gen}
+                                        (dyn/auto-key xy-model) [] obs)
+          {:keys [probs]} (u/normalize-log-weights log-weights)
+          disjoint (mapv x-of (resample-by-key traces probs k-res))   ; production semantics
+          collided (mapv x-of (resample-by-key traces probs k-gen))   ; the njaq bug
+          prod     (mapv x-of (imp/importance-resampling
+                               {:samples n :particles n :key key} xy-model [] obs))]
+      (is (not= disjoint collided)
+          "a disjoint resample key gives a different resample than reusing the
+           generation key — the disjointness has real, measurable effect")
+      (is (= prod disjoint)
+          "production importance-resampling uses the disjoint resample key")
+      (is (not= prod collided)
+          "production does NOT use the generation key to resample — a
+           re-collision (k-res := k-gen) would flip this and fail the oracle"))))
+
+;; ---------------------------------------------------------------------------
+;; POSITIVE decorrelation oracle for the Mix combinator (genmlx-3ezj item 2)
+;;
+;; Batched Mix does a 3-way split [k-next k-comps k-idx] so the PARENT
+;; continuation (k-next) is disjoint from the index-sampling stream (k-idx).
+;; Pre-njaq the parent continued with the SAME key that sampled the indices,
+;; correlating every downstream site with index sampling. We force that
+;; collision (k-next := k-idx) via a targeted split-n redef and assert the
+;; downstream site differs from production — a re-collision would make them
+;; equal and FAIL.
+;; ---------------------------------------------------------------------------
+
+(def ^:private comp-lo (gen [_x] (trace :y (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0)))))
+(def ^:private comp-hi (gen [_x] (trace :y (dist/gaussian (mx/scalar 10.0) (mx/scalar 1.0)))))
+
+(def ^:private mix-then-z
+  ;; Mix, THEN a downstream parent site :z — :z is sampled with k-next, so the
+  ;; njaq collision (k-next = k-idx) would tie :z to index sampling.
+  (gen [x]
+    (let [mix (comb/mix-combinator [comp-lo comp-hi] (mx/array [0.0 0.0]))]
+      (splice :mixture mix x)
+      (trace :z (dist/gaussian (mx/scalar 0.0) (mx/scalar 1.0))))))
+
+(defn- z-vals [vtrace]
+  (mx/->clj (cm/get-value (cm/get-submap (:choices vtrace) :z))))
+
+(deftest mix-parent-continuation-disjoint-from-index-sampling
+  (testing "the Mix parent continuation (k-next) is disjoint from the index
+            stream (k-idx); re-colliding them changes the downstream site"
+    (let [n 32
+          key (rng/fresh-key 13)
+          prod (z-vals (dyn/vsimulate mix-then-z [(mx/scalar 0.0)] n key))
+          ;; Force k-next := k-idx in the Mix 3-way split (the njaq bug),
+          ;; leaving every other split untouched.
+          collided (with-redefs [rng/split-n
+                                 (let [orig rng/split-n]
+                                   (fn [k m]
+                                     (if (= m 3)
+                                       ;; [k-next k-comps k-idx]: set k-next := k-idx
+                                       ;; (the njaq bug — parent continues with the
+                                       ;; index key), leaving k-comps disjoint.
+                                       (let [[_ b c] (orig k m)] [c b c])
+                                       (orig k m))))]
+                     (z-vals (dyn/vsimulate mix-then-z [(mx/scalar 0.0)] n key)))]
+      (is (not= prod collided)
+          "downstream :z differs when the parent continuation is re-collided
+           with index sampling — the 3-way disjoint split has real effect"))))
 
 (cljs.test/run-tests)

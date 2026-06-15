@@ -18,6 +18,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
             [genmlx.choicemap :as cm]
+            [genmlx.selection :as sel]
             [genmlx.compiled-ops :as compiled]
             [genmlx.tensor-trace :as tt]
             [genmlx.inference.compiled-smc :as csmc]))
@@ -148,7 +149,17 @@
         (is (not= cm/EMPTY (cm/get-submap choices :x)) "choices has :x")
         (let [x-val (cm/get-value (cm/get-submap choices :x))]
           (mx/eval! x-val)
-          (is (js/isFinite (mx/item x-val)) ":x value is finite"))))))
+          (is (js/isFinite (mx/item x-val)) ":x value is finite"))
+        ;; genmlx-b2mj: the 0.0 placeholder score must NOT be silently used.
+        (is (= :placeholder (:genmlx.trace/score-type (meta t0)))
+            "compiled-SMC traces are tagged :placeholder")
+        (let [keyed (dyn/auto-key rw-kernel)]   ; reach the dispatcher (needs a key)
+          (is (thrown-with-msg? js/Error #"placeholder"
+                (p/update keyed t0 (cm/choicemap :y (mx/scalar 2.0))))
+              "a score-dependent op on a placeholder trace throws, not 0.0-weight")
+          (is (thrown-with-msg? js/Error #"placeholder"
+                (p/project keyed t0 (sel/select :x)))
+              "project on a placeholder trace throws"))))))
 
 (deftest randomness-test
   (testing "different keys give different results"

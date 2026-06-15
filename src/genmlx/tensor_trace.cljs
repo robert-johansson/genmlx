@@ -52,6 +52,16 @@
                    values addr-index score retval)
     :joint))
 
+(defn make-placeholder-tensor-trace
+  "Like make-tensor-trace, but tags the trace :placeholder (genmlx-b2mj).
+   The producer (e.g. compiled-SMC) does not track a per-particle joint score,
+   so :score is a 0.0 placeholder. The :placeholder tag makes any
+   score-dependent op (update/regenerate/project) REJECT the trace via
+   joint-rescore-marginal instead of silently differencing against 0.0. The
+   trace still carries particle VALUES/choices for choice extraction."
+  [m]
+  (tr/with-score-type (make-tensor-trace m) :placeholder))
+
 ;; =========================================================================
 ;; addr-index construction
 ;; =========================================================================
