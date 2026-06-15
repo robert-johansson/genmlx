@@ -7,7 +7,8 @@
     "test:slow": "bash test/run.sh slow",
     "test:bench": "bash test/run.sh bench",
     "test:all": "bash test/run.sh all",
-    "test:check": "bash test/run.sh check"
+    "test:check": "bash test/run.sh check",
+    "test:xval-llm": "python3 scripts/llm_forward_xval_mlxlm.py"
   },
   "dependencies": {
     "@mlx-node/core": "file:./mlx-node/packages/core",

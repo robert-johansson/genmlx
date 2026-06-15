@@ -47,26 +47,37 @@
    and tokenizer.json. Model type is auto-detected from config.json.
    Supports Qwen3, Qwen3.5, Gemma4, and other HuggingFace models.
 
-   opts :cljs-forward? (default false) — load a GenMLX-OWNED forward (f6ov):
-   :model is a CljsForwardModel driving a pure-CLJS forward over the genmlx.rs
-   primitives, decoupled from upstream's model structs. The forward dispatches on
-   config.json model_type: vanilla Qwen3 or the Qwen3.5 hybrid GatedDeltaNet
-   stack. Supports the forward/cache API used by the LLM-as-GF (ChatSession-based
-   convenience paths still need the upstream model). The upstream model is not
-   loaded in this mode."
+   Forward selection (f6ov), :cljs-forward? in opts:
+   - omitted (DEFAULT): SMART — use the GenMLX-OWNED pure-CLJS forward for the
+     model families it implements (genmlx.llm.forward/supported?: qwen3, qwen3_5)
+     and the upstream model otherwise. So trusted Qwen3/Qwen3.5 checkpoints run on
+     the owned forward by default; MoE/Gemma/other types fall back to upstream
+     automatically (and auto-upgrade once the owned forward learns the family).
+   - true:  force the GenMLX-owned forward (throws if the family is unsupported).
+   - false: force the upstream model (the borrowed-forward fallback).
+   The owned forward (CljsForwardModel) drives the forward/cache API used by the
+   LLM-as-GF; it does NOT load the upstream model, so the ChatSession-based
+   generate-text path requires {:cljs-forward? false} (generate-text-raw works on
+   either). The VLM path (genmlx.llm.vision/load-vlm) is separate and unaffected."
   ([model-path] (load-model model-path {}))
-  ([model-path {:keys [cljs-forward?]}]
+  ([model-path opts]
    (p/let [model-type (.detectModelType mlx-lm model-path)
            tokenizer (.fromPretrained (.-Qwen3Tokenizer mlx-core)
                                       (str model-path "/tokenizer.json"))]
-     (if cljs-forward?
-       {:model (->CljsForwardModel (fwd/load-model model-path) (atom nil))
-        :tokenizer tokenizer
-        :type (keyword model-type)}
-       (p/let [model (.loadModel mlx-lm model-path)]
-         {:model model
+     ;; Explicit :cljs-forward? always wins (keeps the borrowed forward reachable
+     ;; as a one-release fallback); otherwise default to owned iff the owned
+     ;; forward implements this checkpoint's family.
+     (let [use-cljs? (if (contains? opts :cljs-forward?)
+                       (boolean (:cljs-forward? opts))
+                       (fwd/supported? model-path))]
+       (if use-cljs?
+         {:model (->CljsForwardModel (fwd/load-model model-path) (atom nil))
           :tokenizer tokenizer
-          :type (keyword model-type)})))))
+          :type (keyword model-type)}
+         (p/let [model (.loadModel mlx-lm model-path)]
+           {:model model
+            :tokenizer tokenizer
+            :type (keyword model-type)}))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Tokenizer
@@ -242,6 +253,11 @@
   ([model-map prompt] (generate-text model-map prompt {}))
   ([{:keys [model]} prompt {:keys [max-tokens temperature system-prompt]
                             :or {max-tokens 100 temperature 0.7}}]
+   (when (cljs-forward-model? model)
+     (throw (ex-info (str "generate-text uses ChatSession, which requires the "
+                          "upstream model. Load with {:cljs-forward? false}, or "
+                          "use generate-text-raw (works on the owned forward).")
+                     {:model-type (type model)})))
    (let [session (ChatSession. model
                                (clj->js (cond-> {:maxNewTokens max-tokens
                                                  :temperature temperature}

@@ -107,7 +107,7 @@
         ;; ---- (4) direct parity vs LIVE upstream .forward (0.8b only) ----
         (if-not upstream?
           (pr/resolved nil)
-          (pr/let [mu (llm/load-model path)]
+          (pr/let [mu (llm/load-model path {:cljs-forward? false})]
             (let [cl (log-softmax (llm/forward-pass (:model m) ids))
                   up (log-softmax (llm/forward-pass (:model mu) ids))
                   up-ids (topk-ids up 5)

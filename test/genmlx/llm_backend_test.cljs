@@ -28,7 +28,7 @@
 (println "\n== 1.1 load-model ==")
 
 (p/let
- [m (llm/load-model (str model-dir "/qwen3.5-0.8b-mlx-bf16"))
+ [m (llm/load-model (str model-dir "/qwen3.5-0.8b-mlx-bf16") {:cljs-forward? false})
   _ (assert-true "returns map" (map? m))
   _ (assert-true "has :model" (some? (:model m)))
   _ (assert-true "has :tokenizer" (some? (:tokenizer m)))

@@ -12,6 +12,14 @@
    forward-pass indexed the input length into a [1 1 vocab] last-position-only
    result, decoding garbage instead of the true next token.
 
+   EXTERNAL ORACLE (the f6ov self-reference cure): this gate pins GenMLX against
+   itself, so the pins below are cross-validated against an INDEPENDENT forward —
+   Python mlx-lm — by scripts/llm_forward_xval_mlxlm.py (`npm run test:xval-llm`).
+   That script is the source-of-truth's reference oracle; run it before a release
+   (it needs Python mlx-lm + the checkpoints, so it is NOT in the bun gate; it
+   skips cleanly if either is absent). Last confirmed: 18/18 vs mlx-lm 0.31.1 on
+   qwen3.5-0.8b + 4b.
+
    Skips cleanly if a model directory is absent."
   (:require [genmlx.llm.backend :as llm]
             [genmlx.mlx :as mx]
@@ -60,7 +68,11 @@
   (let [path (str model-root "/" dir)]
     (if-not (.existsSync fs path)
       (do (println (str "\n== " name " — SKIP (absent: " path ") ==")) (pr/resolved nil))
-      (pr/let [m (llm/load-model path)
+      ;; Explicitly pins the UPSTREAM/borrowed forward — its captured golden
+      ;; values are upstream's, tol 0.01. The owned forward (now the default for
+      ;; qwen3/qwen3_5) differs by bf16 cross-kernel noise (~0.12) and is guarded
+      ;; separately by the parity tests + scripts/llm_forward_xval_mlxlm.py.
+      (pr/let [m (llm/load-model path {:cljs-forward? false})
                tok (:tokenizer m)
                ids-raw (llm/encode tok prompt false)
                ids (vec ids-raw)]

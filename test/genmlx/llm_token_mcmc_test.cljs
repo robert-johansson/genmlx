@@ -15,6 +15,7 @@
             [genmlx.dynamic :as dyn]
             [genmlx.mlx.random :as rng]
             [genmlx.inference.mcmc :as mcmc]
+            [genmlx.edit :as edit]
             [genmlx.llm.grammar :as grammar])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -32,6 +33,10 @@
 (def base-model (gen [] (trace :t0 (dist/categorical logits))
                         (trace :t1 (dist/categorical logits)) nil))
 (def cmodel (grammar/constrain base-model constraint))
+;; Keyed alias: project/update/edit run ensure-key even when they don't sample
+;; (deterministic replay), so they need a key on the gf; a fixed one keeps them
+;; reproducible.
+(def kmodel (dyn/with-key cmodel (rng/fresh-key 7)))
 
 ;; ---- exact distribution over the 4 valid sequences -------------------------
 (defn- masked-softmax [allowed tok]
@@ -56,6 +61,19 @@
 (defn- empirical [pairs]
   (let [n (count pairs)]
     (into {} (map (fn [[k v]] [k (/ v n)])) (frequencies pairs))))
+
+;; ---- exact per-site masked log-probs (the INDEPENDENT oracle: closed form,
+;;      no function-under-test) -------------------------------------------------
+(defn- allowed-t1 [t0] (if (= t0 A) [B C] [A C]))      ; grammar: after a→{b,c}, after b→{a,c}
+(defn- lp0 [t0]    (js/Math.log (masked-softmax [A B] t0)))
+(defn- lp1 [t0 t1] (js/Math.log (masked-softmax (allowed-t1 t0) t1)))
+(defn- choice [cmap addr] (mx/item (cm/get-value (cm/get-submap cmap addr))))
+
+;; A deterministic constrained trace with the given (t0,t1): fully-constrained
+;; generate is an exact draw. Reused by the update/project/edit op tests.
+(defn- known-trace [t0 t1]
+  (:trace (p/generate kmodel []
+                      (cm/from-map {:t0 (mx/array t0) :t1 (mx/array t1)}))))
 
 ;; ---------------------------------------------------------------------------
 (deftest simulate-matches-exact
@@ -97,5 +115,64 @@
       (is (every? #{A B} (keys emp)) "t1=c retained; t0 stays in {a,b}")
       (is (< (js/Math.abs (- (get emp A 0.0) (exact-post A))) 0.05)
           (str "MCMC p(t0=a|t1=c)=" (get emp A 0.0) " vs exact " (exact-post A))))))
+
+;; ===========================================================================
+;; B.1 (fayo): the remaining GFI ops over token traces — project / update /
+;; propose / edit — each pinned to the SAME independent masked-softmax oracle
+;; (the function under test never appears in the ground truth). With the
+;; simulate/assess/generate/regenerate tests above, this completes the
+;; "LLM-as-GF validated across ALL GFI operations over token traces" claim.
+;; ===========================================================================
+
+(deftest project-selected-densities-match-exact
+  (testing "project(selection) == Σ selected masked log-probs; additive to score"
+    (doseq [[t0 t1] [[A B] [A C] [B A] [B C]]]
+      (let [tr   (known-trace t0 t1)
+            p0   (mx/item (p/project kmodel tr (sel/select :t0)))
+            p1   (mx/item (p/project kmodel tr (sel/select :t1)))
+            pall (mx/item (p/project kmodel tr sel/all))]
+        (is (< (js/Math.abs (- p0 (lp0 t0))) 1e-4)    (str "project :t0 " [t0 t1] " = " p0))
+        (is (< (js/Math.abs (- p1 (lp1 t0 t1))) 1e-4) (str "project :t1 " [t0 t1] " = " p1))
+        (is (< (js/Math.abs (- pall (+ (lp0 t0) (lp1 t0 t1)))) 1e-4) "project all == full score")
+        (is (< (js/Math.abs (- pall (+ p0 p1))) 1e-4) "additive: all == :t0 + :t1")))))
+
+(deftest update-changed-site-weight-matches-exact
+  (testing "update t1 b->c (t0=a retained): weight == Δ(t1 term); discard = old t1"
+    (let [tr (known-trace A B)
+          {:keys [trace weight discard]} (p/update kmodel tr (cm/from-map {:t1 (mx/array C)}))
+          exp (- (lp1 A C) (lp1 A B))]
+      (is (= [(choice (:choices trace) :t0) (choice (:choices trace) :t1)] [A C]) "t1->c, t0 retained")
+      (is (< (js/Math.abs (- (mx/item weight) exp)) 1e-4)
+          (str "update weight " (mx/item weight) " vs exact " exp))
+      (is (= B (choice discard :t1)) "discard carries old t1=b"))))
+
+(deftest propose-weight-equals-joint-and-matches-exact
+  (testing "propose: each weight == masked joint log-prob; empirical == exact"
+    (let [props (mapv (fn [i] (p/propose (dyn/with-key cmodel (rng/fresh-key (+ 5000 i))) []))
+                      (range 3000))
+          bad   (filter (fn [{:keys [choices weight]}]
+                          (let [t0 (choice choices :t0) t1 (choice choices :t1)]
+                            (>= (js/Math.abs (- (mx/item weight) (+ (lp0 t0) (lp1 t0 t1)))) 1e-4)))
+                        props)
+          emp   (empirical (map (fn [{:keys [choices]}] [(choice choices :t0) (choice choices :t1)]) props))]
+      (println "  propose emp:" (pr-str (into {} (map (fn [[k v]] [k (.toFixed v 3)]) emp))))
+      (is (zero? (count bad)) (str (count bad) "/3000 propose weights != joint log-prob"))
+      (is (every? #{[A B] [A C] [B A] [B C]} (keys emp)) "only valid sequences proposed")
+      (is (< (tv exact emp) 0.04) (str "TV(propose, exact) = " (tv exact emp))))))
+
+(deftest edit-constraint-is-update-and-reverses
+  (testing "ConstraintEdit t1 b->c == update; backward-request restores the trace"
+    (let [tr (known-trace A B)
+          {:keys [trace weight discard backward-request]}
+          (edit/edit kmodel tr (edit/constraint-edit (cm/from-map {:t1 (mx/array C)})))
+          exp (- (lp1 A C) (lp1 A B))]
+      (is (= [(choice (:choices trace) :t0) (choice (:choices trace) :t1)] [A C]) "forward edit sets t1=c")
+      (is (< (js/Math.abs (- (mx/item weight) exp)) 1e-4) "edit weight == update weight")
+      (is (= B (choice discard :t1)) "discard old t1=b")
+      (is (instance? edit/ConstraintEdit backward-request) "backward-request is a ConstraintEdit")
+      ;; Reversibility (the SMCP3 contract): backward edit restores (a,b), weights cancel.
+      (let [{bt :trace bw :weight} (edit/edit kmodel trace backward-request)]
+        (is (= [(choice (:choices bt) :t0) (choice (:choices bt) :t1)] [A B]) "backward restores (a,b)")
+        (is (< (js/Math.abs (+ (mx/item weight) (mx/item bw))) 1e-4) "round-trip weights cancel")))))
 
 (cljs.test/run-tests)

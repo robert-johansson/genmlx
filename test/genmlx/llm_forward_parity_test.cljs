@@ -27,7 +27,7 @@
 
 (if-not (.existsSync fs (str dir "/model.safetensors"))
   (println "SKIP llm-forward-parity-test: qwen3-0.6b checkpoint absent")
-  (pr/let [up (llm/load-model dir)
+  (pr/let [up (llm/load-model dir {:cljs-forward? false})
            ids-raw (llm/encode (:tokenizer up) "The capital of France is" false)
            ids (vec ids-raw)
            ;; upstream forward (cached prefill — the path the LLM-as-GF uses)
@@ -69,5 +69,23 @@
           (mx/eval! st) (mx/eval! unc-ext)
           (assert-true "prefill last-logits == uncached forward (exact)" (< pf-diff 1e-3))
           (assert-true "step argmax == uncached(prompt+token) argmax"
-                       (= (mx/item (mx/argmax st)) (mx/item (mx/argmax unc-ext)))))
+                       (= (mx/item (mx/argmax st)) (mx/item (mx/argmax unc-ext))))
+
+          ;; --- f6ov P5: decode-rate (tok/s) on the OWNED forward. A tracking
+          ;; number for the done-means box, NOT a gate — greedy-decode N tokens
+          ;; from the prefilled cache, timed including per-step mx/eval!. ---
+          (println "\n-- decode rate (owned cljs forward, qwen3-0.6b) --")
+          (let [n-steps 24
+                t0 (js/Date.now)]
+            (loop [i 0, off (count ids), id next-id, c cache]
+              (when (< i n-steps)
+                (let [[lg c'] (fwd/step cljs-model c off id)]
+                  (mx/eval! lg)
+                  (recur (inc i) (inc off) (mx/item (mx/argmax lg)) c'))))
+            (let [dt-ms (- (js/Date.now) t0)
+                  tok-s (/ (* 1000.0 n-steps) dt-ms)]
+              (println (str "  decoded " n-steps " tokens in " (.toFixed dt-ms 0)
+                            " ms = " (.toFixed tok-s 1) " tok/s"))
+              (assert-true "decode rate finite & positive"
+                           (and (js/isFinite tok-s) (pos? tok-s))))))
         (println (str "\n=== forward-parity: " @pass " PASS, " @fail " FAIL ==="))))))
