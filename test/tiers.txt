@@ -15,6 +15,7 @@ slow test/genmlx/agentmodels_biased_inverse_test.cljs
 slow test/genmlx/agentmodels_biased_planners_test.cljs
 slow test/genmlx/agentmodels_ch01_intro_test.cljs
 slow test/genmlx/agentmodels_ch02_webppl_test.cljs
+slow test/genmlx/agentmodels_ch06_pluggable_inference_test.cljs
 slow test/genmlx/agentmodels_ch08_library_test.cljs
 slow test/genmlx/agentmodels_diff_learn_test.cljs
 slow test/genmlx/agentmodels_helpers_test.cljs
@@ -232,6 +233,7 @@ slow test/genmlx/llm_composition_test.cljs
 slow test/genmlx/llm_core_test.cljs
 slow test/genmlx/llm_forward_golden_test.cljs
 slow test/genmlx/llm_forward_parity_test.cljs
+fast test/genmlx/llm_forward_seam_test.cljs
 slow test/genmlx/llm_gemma4_test.cljs
 slow test/genmlx/llm_grammar_test.cljs
 fast test/genmlx/llm_msa_scoring_test.cljs
