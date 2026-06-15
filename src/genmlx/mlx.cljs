@@ -40,6 +40,87 @@
 (def core c)
 
 ;; =========================================================================
+;; Install guard — Tier-A native-core capability probe (genmlx-91b3)
+;;
+;; The mlx-node native-binary install has a silent trap (bean genmlx-7siy): the
+;; napi loader tries the local ./mlx-core.*.node build first and SILENTLY falls
+;; back to a (possibly stale/incompatible) prebuilt. A fundamentally broken or
+;; incompatible core then surfaces as a cryptic NAPI error deep inside some op,
+;; far from the cause. This guard asserts — at require time, fail fast — that the
+;; representative native exports the membrane needs are present, and otherwise
+;; throws a CLEAR ex-info naming the missing capability + the rebuild steps + the
+;; resolved @mlx-node/core version. It asserts CAPABILITY, not version: mlx-node
+;; exports no runtime version, so a version-equality guard would be a lie. (The
+;; LLM forward/forwardWithCache surface is checked separately at load time —
+;; Tier-B in genmlx.llm.backend — which is what catches the stale-prebuilt
+;; Qwen3.5 case. This Tier-A probe adds value for a PARTIAL core: one where
+;; MxArray resolves (so line 28's deref succeeds without throwing) but other
+;; required exports are missing — a case that would otherwise surface only as a
+;; cryptic NAPI error deep inside an op much later.) The probe is pure —
+;; property/fn? checks only, no GPU eval — so it is free on the hot path and safe
+;; for tooling to call via `native-core-report`.
+;; =========================================================================
+
+(def ^:private required-core-caps
+  "Representative native exports that MUST resolve for the membrane to work:
+   MxArray (the array constructor), add (a pure graph op), item + evalArrays
+   (the two eval! chokepoints)."
+  ["MxArray" "add" "item" "evalArrays"])
+
+(defn- mlx-core-version
+  "Best-effort @mlx-node/core package version, for DIAGNOSTICS ONLY (never a hard
+   pin — there is no runtime version export). \"unknown\" if it can't be read."
+  []
+  (try (.-version (js/require "@mlx-node/core/package.json"))
+       (catch :default _ "unknown")))
+
+(defn native-report
+  "Pure capability report for an mlx-node core module object + version string:
+   which required exports resolve as functions, what's missing, and whether the
+   core is usable. No GPU eval — safe to call on a partial/broken core. The
+   live-core wrapper is `native-core-report`."
+  [core-module version]
+  (let [present (into {} (map (fn [k] [k (fn? (aget core-module k))])) required-core-caps)
+        missing (->> present (remove (comp true? val)) (mapv key))]
+    {:module-loaded? (some? core-module)
+     :version        version
+     :capabilities   present
+     :missing        missing
+     :ok?            (and (some? core-module) (empty? missing))}))
+
+(defn native-core-report
+  "Capability report for the LIVE loaded @mlx-node/core (for a doctor/README
+   check or diagnostics). `(:ok? (native-core-report))` is true on a healthy
+   install."
+  []
+  (native-report c (mlx-core-version)))
+
+(defn assert-core-capable!
+  "Throw a clear ex-info (Tier-A install guard) unless `report` shows a capable
+   core. Names the missing capabilities + remediation; carries the version in
+   ex-data under :mlx-node-core-version. Returns nil when capable."
+  [report]
+  (when-not (:ok? report)
+    (throw (ex-info
+             (str "genmlx.mlx: the loaded @mlx-node/core (" (:version report) ") is missing "
+                  "native capabilities " (pr-str (:missing report)) ". The local build is "
+                  "absent or stale and the napi loader fell back to an incompatible binary. "
+                  "Rebuild the native layer:\n"
+                  "  git submodule update --init --recursive\n"
+                  "  (cd mlx-node && yarn build:native)\n"
+                  "  bun install\n"
+                  "Then verify the LOCAL .node loaded (not a prebuilt). See README "
+                  "(Requirements / Quick Start).")
+             {:genmlx/error          :native-core-incompatible
+              :missing               (:missing report)
+              :mlx-node-core-version (:version report)
+              :report                report})))
+  nil)
+
+;; Fail fast at require time with an actionable message.
+(assert-core-capable! (native-core-report))
+
+;; =========================================================================
 ;; Dtypes
 ;;
 ;; IMPORTANT: MLX on Apple Silicon has no float64, int64, or bool dtypes.

@@ -64,6 +64,13 @@ bun install
 # the freshly-built native MLX addon, so it confirms both the build and your nbb
 # version are good. Should print "0 failures, 0 errors".
 bun run --bun nbb test/genmlx/inference_test.cljs
+
+# Confirm a COMPATIBLE native core loaded (not a stale prebuilt). Prints
+# {:ok? true ... :version "x.y.z"}; on a stale/incompatible binary the Tier-A
+# install guard throws a clear rebuild instruction instead of a cryptic NAPI
+# error deep in an op. (LLM checkpoints are additionally capability-checked at
+# load-model — Tier-B in genmlx.llm.backend.)
+bun run --bun nbb -e '(require (quote [genmlx.mlx :as mx])) (prn (mx/native-core-report))'
 ```
 
 > **Note — the submodules.** GenMLX vendors five git submodules. Four are forks

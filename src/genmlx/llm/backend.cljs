@@ -36,6 +36,67 @@
 (defn cljs-forward-model? [model] (instance? CljsForwardModel model))
 
 ;; ---------------------------------------------------------------------------
+;; Install guard — Tier-B LLM-forward capability probe (genmlx-91b3)
+;;
+;; Tier-A (genmlx.mlx) asserts the native CORE is alive at require time. Tier-B
+;; asserts, at load-model, that the forward surface the LLM-as-GF actually drives
+;; is present — and it differs by path because f6ov flipped the default:
+;;   - OWNED path (default for supported families): the GenMLX-owned forward
+;;     (genmlx.llm.forward) supplies the fns this backend actually drives —
+;;     load-model, next-token-logits (the uncached scoring path), prefill, step.
+;;   - UPSTREAM path ({:cljs-forward? false} / unsupported family): the loaded
+;;     mlx-node model INSTANCE supplies native .forward + .forwardWithCache.
+;; The upstream check is the one that catches the genmlx-7siy stale-prebuilt
+;; fallback (@mlx-node/core@0.0.6 lacks Qwen3.5 .forward), turning a cryptic
+;; "Could not find instance method: forward" into a clear rebuild instruction.
+;; Both assert CAPABILITY, not version.
+;; ---------------------------------------------------------------------------
+
+(defn assert-owned-forward!
+  "Tier-B (owned path): the GenMLX-owned forward must expose the fns this backend
+   actually drives on the CljsForwardModel path — load-model (constructs the
+   model), next-token-logits (the uncached scoring path forward-pass drives),
+   prefill, and step (the cached path). Throws a clear ex-info naming the missing
+   fn if genmlx.llm.forward is broken; returns nil when complete. (Deliberately
+   does NOT check fwd/forward — it is not invoked on the owned LLM-as-GF path.)"
+  []
+  (let [present {:load-model        (fn? fwd/load-model)
+                 :next-token-logits (fn? fwd/next-token-logits)
+                 :prefill           (fn? fwd/prefill)
+                 :step              (fn? fwd/step)}
+        missing (->> present (remove (comp true? val)) (mapv key))]
+    (when (seq missing)
+      (throw (ex-info
+               (str "genmlx.llm.backend: the GenMLX-owned forward is missing "
+                    (pr-str missing) " — genmlx.llm.forward is broken or partially built. "
+                    "Rebuild the native layer and reinstall:\n"
+                    "  (cd mlx-node && yarn build:native) && bun install")
+               {:genmlx/error :owned-forward-incomplete :missing missing})))
+    nil))
+
+(defn assert-upstream-forward!
+  "Tier-B (upstream path): the loaded mlx-node model instance must expose
+   .forward + .forwardWithCache. Throws a clear ex-info (naming the missing
+   capability + rebuild steps) when the binary is stale/incompatible — the guard
+   that converts the genmlx-7siy cryptic NAPI failure into an actionable error.
+   Returns nil when capable."
+  [model]
+  (let [present {:forward          (fn? (.-forward model))
+                 :forwardWithCache (fn? (.-forwardWithCache model))}
+        missing (->> present (remove (comp true? val)) (mapv key))]
+    (when (seq missing)
+      (throw (ex-info
+               (str "genmlx.llm.backend: the loaded mlx-node model is missing "
+                    (pr-str missing) " — the native binary is stale/incompatible "
+                    "(the napi loader likely fell back to an older prebuilt). Rebuild it:\n"
+                    "  git submodule update --init --recursive\n"
+                    "  (cd mlx-node && yarn build:native) && bun install\n"
+                    "Or, for a supported family, force the GenMLX-owned forward with "
+                    "{:cljs-forward? true}.")
+               {:genmlx/error :upstream-forward-incompatible :missing missing})))
+    nil))
+
+;; ---------------------------------------------------------------------------
 ;; Model loading
 ;; ---------------------------------------------------------------------------
 
@@ -71,10 +132,16 @@
                        (boolean (:cljs-forward? opts))
                        (fwd/supported? model-path))]
        (if use-cljs?
-         {:model (->CljsForwardModel (fwd/load-model model-path) (atom nil))
-          :tokenizer tokenizer
-          :type (keyword model-type)}
+         (do
+           ;; Tier-B (owned path): assert the owned forward surface before use.
+           (assert-owned-forward!)
+           {:model (->CljsForwardModel (fwd/load-model model-path) (atom nil))
+            :tokenizer tokenizer
+            :type (keyword model-type)})
          (p/let [model (.loadModel mlx-lm model-path)]
+           ;; Tier-B (upstream path): assert the loaded instance exposes the
+           ;; native forward methods — catches the genmlx-7siy stale prebuilt.
+           (assert-upstream-forward! model)
            {:model model
             :tokenizer tokenizer
             :type (keyword model-type)}))))))
