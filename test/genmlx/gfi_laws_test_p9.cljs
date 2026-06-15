@@ -200,4 +200,5 @@
           (t/is (close? fd-grad analytical 0.01)
                 (str "FD grad at x=" x-val ": " fd-grad " vs analytical " analytical)))))))
 
-(t/run-tests)
+(with-redefs [rng/fresh-key glh/det-fresh-key]
+  (t/run-tests))

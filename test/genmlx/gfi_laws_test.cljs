@@ -32,6 +32,7 @@
             [genmlx.test-helpers :as h]
             [genmlx.combinators :as comb]
             [genmlx.inference.smc :as smc]
+            [genmlx.gfi-laws-helpers :as glh]
             [genmlx.verify :as verify])
   (:require-macros [genmlx.gen :refer [gen]]
                    [clojure.test.check.clojure-test :refer [defspec]]))
@@ -708,10 +709,17 @@
                            score-plus (-> (p/generate model args choices-plus)
                                           :trace :score ev)
                            score-minus (-> (p/generate model args choices-minus)
-                                           :trace :score ev)
-                           fd-grad (/ (- score-plus score-minus) (* 2 h))
-                           analytical (ev (get grads addr))]
-                       (close? analytical fd-grad 0.05)))
+                                           :trace :score ev)]
+                       ;; If a finite-difference probe leaves the site's support
+                       ;; (uniform/beta/exponential near a boundary) its score is
+                       ;; -Inf and the FD gradient is undefined — skip that address
+                       ;; (vacuously true) rather than fail on a domain artifact.
+                       ;; Interior probes still assert AD==FD at 0.05 (genmlx-v4mz).
+                       (if (and (h/finite? score-plus) (h/finite? score-minus))
+                         (let [fd-grad (/ (- score-plus score-minus) (* 2 h))
+                               analytical (ev (get grads addr))]
+                           (close? analytical fd-grad 0.05))
+                         true)))
                    addrs))))
 
 (defspec law:gradient-argument-correctness 50
@@ -2239,4 +2247,5 @@
           (t/is (close? fd-grad analytical 0.01)
                 (str "FD grad at x=" x-val ": " fd-grad " vs analytical " analytical)))))))
 
-(t/run-tests)
+(with-redefs [rng/fresh-key glh/det-fresh-key]
+  (t/run-tests))

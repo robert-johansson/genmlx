@@ -9,8 +9,52 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.gfi :as gfi]
+            [genmlx.mlx.random :as rng]
             [genmlx.test-helpers :as h])
   (:require-macros [genmlx.gen :refer [gen]]))
+
+;; ---------------------------------------------------------------------------
+;; Deterministic seeding (genmlx-v4mz)
+;; ---------------------------------------------------------------------------
+;; The GFI law suite asserts stochastic convergence/finiteness thresholds, so it
+;; must be reproducible. Its sampled VALUES come from `rng/fresh-key`, whose
+;; 0-arg form seeds itself from js/Math.random (mlx/random.cljs L23) — NOT from
+;; test.check's :seed (which only controls gen/elements model selection + shrink
+;; order). nbb/SCI cannot propagate a (set! js/Math.random) override into required
+;; namespaces, so each split test file wraps its trailing (t/run-tests) in
+;;   (with-redefs [rng/fresh-key glh/det-fresh-key] (t/run-tests))
+;; which reseeds fresh-key from one deterministic mulberry32 stream. MLX's keyed
+;; RNG + compute are bit-reproducible across processes given a seed, so the suite
+;; is then fully deterministic. Each test file runs as its OWN nbb process, so it
+;; gets its own fresh `rng-stream` state below — no cross-file coupling.
+;; Test-only: no production code or inference behavior changes.
+
+(defn- mulberry32
+  "Deterministic seeded PRNG: a 0-arg fn yielding doubles in [0,1) (bryc/code)."
+  [seed]
+  (let [state (atom (bit-or seed 0))]
+    (fn []
+      (let [a (swap! state #(bit-or (+ % 0x6D2B79F5) 0))
+            t (js/Math.imul (bit-xor a (unsigned-bit-shift-right a 15)) (bit-or a 1))
+            t (bit-xor (+ t (js/Math.imul (bit-xor t (unsigned-bit-shift-right t 7))
+                                          (bit-or t 61)))
+                       t)]
+        (/ (unsigned-bit-shift-right (bit-xor t (unsigned-bit-shift-right t 14)) 0)
+           4294967296)))))
+
+(def ^:private rng-stream (mulberry32 424242))
+
+(def ^:private orig-fresh-key
+  "The real rng/fresh-key, captured at load time so det-fresh-key never recurses."
+  rng/fresh-key)
+
+(defn det-fresh-key
+  "rng/fresh-key reseeded from the shared mulberry32 stream instead of
+   js/Math.random (which nbb cannot override inside required namespaces). The
+   explicit-seed 1-arg form passes through unchanged. with-redefs'd around
+   (t/run-tests) at the bottom of each split GFI-law test file."
+  ([]     (orig-fresh-key (js/Math.floor (* (rng-stream) 2147483647))))
+  ([seed] (orig-fresh-key seed)))
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers

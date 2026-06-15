@@ -394,4 +394,5 @@
             (str "p: expected score=" analytical-score
                  ", got " (ev (:score trace)))))))
 
-(t/run-tests)
+(with-redefs [rng/fresh-key glh/det-fresh-key]
+  (t/run-tests))

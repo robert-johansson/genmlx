@@ -351,4 +351,5 @@
       (t/is (close? var-x 0.2 0.08)
             (str "Posterior var=" var-x " expected=0.2")))))
 
-(t/run-tests)
+(with-redefs [rng/fresh-key glh/det-fresh-key]
+  (t/run-tests))

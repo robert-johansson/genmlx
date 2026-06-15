@@ -4,6 +4,7 @@
   (:require [cljs.test :as t]
             [genmlx.mlx :as mx]
             [genmlx.gfi :as gfi]
+            [genmlx.mlx.random :as rng]
             [genmlx.gfi-laws-helpers :as glh
              :refer [gaussian-chain branching-model]])
   (:require-macros [genmlx.gen :refer [gen]]))
@@ -46,4 +47,5 @@
             (str "Too few core law passes on branching model: "
                  (:total-pass report))))))
 
-(t/run-tests)
+(with-redefs [rng/fresh-key glh/det-fresh-key]
+  (t/run-tests))
