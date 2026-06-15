@@ -104,6 +104,44 @@
       (is (some #(= :x (:addr %)) (:trace-sites s)) "trace :x found"))))
 
 ;; ============================================================
+;; Test 5b: conditional macros outside the original hardcoded list
+;; ============================================================
+(deftest test-5b-conditional-macros-set-has-branches
+  (testing "genmlx-blkz: condp/if-some/when-some/when-first/cond-> with a conditional trace flag :has-branches? and are NOT static"
+    ;; condp — both clauses trace :y conditionally on the dispatch
+    (let [s (:schema (gen [x]
+                       (condp = x
+                         :a (trace :y (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                         (trace :y (dist/gaussian (mx/scalar 10) (mx/scalar 1))))))]
+      (is (:has-branches? s) "condp -> has-branches?")
+      (is (not (:static? s)) "condp -> not static (no divergent L1-M2 path)"))
+    ;; if-some
+    (let [s (:schema (gen [m]
+                       (if-some [v (:k m)]
+                         (trace :y (dist/gaussian (mx/scalar 0) (mx/scalar 1)))
+                         (trace :y (dist/gaussian (mx/scalar 10) (mx/scalar 1))))))]
+      (is (:has-branches? s) "if-some -> has-branches?")
+      (is (not (:static? s)) "if-some -> not static"))
+    ;; when-some — single conditionally-executed trace
+    (let [s (:schema (gen [m]
+                       (when-some [v (:k m)]
+                         (trace :y (dist/gaussian (mx/scalar 0) (mx/scalar 1))))))]
+      (is (:has-branches? s) "when-some -> has-branches?")
+      (is (not (:static? s)) "when-some -> not static"))
+    ;; when-first
+    (let [s (:schema (gen [xs]
+                       (when-first [v xs]
+                         (trace :y (dist/gaussian (mx/scalar 0) (mx/scalar 1))))))]
+      (is (:has-branches? s) "when-first -> has-branches?")
+      (is (not (:static? s)) "when-first -> not static"))
+    ;; cond-> — trace inside a conditionally-threaded form
+    (let [s (:schema (gen [cnd]
+                       (cond-> (mx/scalar 0)
+                         cnd (mx/add (trace :y (dist/gaussian (mx/scalar 0) (mx/scalar 1)))))))]
+      (is (:has-branches? s) "cond-> -> has-branches?")
+      (is (not (:static? s)) "cond-> -> not static"))))
+
+;; ============================================================
 ;; Test 6: Loop with traces (doseq)
 ;; ============================================================
 (deftest test-6-loop-with-traces
