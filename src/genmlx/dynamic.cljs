@@ -889,6 +889,10 @@
                {:genmlx/error :score-type-mismatch
                 :op op :score-type st :expected :joint})))))
 
+;; strip-analytical-path is defined further down; run-dispatched*'s
+;; analytical-bail fallback (genmlx-0e0j) needs a forward reference.
+(declare strip-analytical-path)
+
 (defn run-dispatched*
   "Core dispatch: walk the dispatcher stack and execute the first match.
    Public so genmlx.dev can reference it for start!/stop!."
@@ -896,11 +900,23 @@
   (let [spec (dispatch/resolve default-dispatcher-stack op (:schema gf)
                (assoc opts :gf gf))]
     (assert spec (str "No dispatcher resolved for op " op))
-    (let [opts (if (and (contains? #{:update :project :regenerate} op)
-                        (= :joint (:score-type spec)))
-                 (joint-rescore-marginal gf op key opts)
-                 opts)]
-      ((:run spec) gf args key opts))))
+    (let [opts* (if (and (contains? #{:update :project :regenerate} op)
+                         (= :joint (:score-type spec)))
+                  (joint-rescore-marginal gf op key opts)
+                  opts)]
+      (try
+        ((:run spec) gf args key opts*)
+        (catch :default e
+          (if (:genmlx.analytical/bail (ex-data e))
+            ;; An analytical handler discovered mid-run that its elimination is
+            ;; invalid for THIS execution (e.g. an ill-conditioned MVN/Kalman
+            ;; obs update reached AFTER its latent was already marginalized).
+            ;; Re-run the whole op on the analytical-stripped gf so prior+obs
+            ;; take the coherent handler JOINT path, instead of a hybrid weight
+            ;; (prior marginalized to 0, obs scored at the prior-mean point
+            ;; estimate). genmlx-0e0j.
+            (run-dispatched* (strip-analytical-path gf) op args key opts)
+            (throw e)))))))
 
 ;; Dispatch function atom. Defaults to run-dispatched*.
 ;; genmlx.dev/start! swaps this with a validating wrapper.
