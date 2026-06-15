@@ -179,6 +179,39 @@
     :else           v))
 
 ;; ---------------------------------------------------------------------------
+;; Public composition surface (genmlx.memory composes these codecs)
+;; ---------------------------------------------------------------------------
+;; genmlx.memory is the durable PERSISTENCE face of the Bun membrane; it owns
+;; the backend (bun:sqlite) but reuses these value<->data codecs rather than
+;; re-deriving the dtype/address/MLX-array machinery. They are the same
+;; functions the choices/trace round trip uses, exposed under stable names.
+
+(defn choices->data
+  "ChoiceMap -> JSON-serializable data (the recursive choicemap codec, MLX
+   leaves included). Inverse: `data->choices`."
+  [cm-node]
+  (choicemap->data cm-node))
+
+(defn data->choices
+  "JSON-serializable data -> ChoiceMap. Inverse of `choices->data`."
+  [data]
+  (data->choicemap data))
+
+(defn value->data
+  "Serialize an arbitrary value that may contain MLX arrays plus nested
+   maps/seqs (a score, weight, args vector, or parameter store). Map keys use
+   the prefixed address codec, so keyword/int/string keys survive. Inverse:
+   `data->value`."
+  [v]
+  (serialize-value v))
+
+(defn data->value
+  "Deserialize a value produced by `value->data` back to MLX arrays + CLJS
+   data. Inverse of `value->data`."
+  [v]
+  (deserialize-value v))
+
+;; ---------------------------------------------------------------------------
 ;; Public API: choices-only (recommended)
 ;; ---------------------------------------------------------------------------
 

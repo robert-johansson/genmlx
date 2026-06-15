@@ -261,6 +261,7 @@ fast test/genmlx/mcmc_elim_filter_test.cljs core
 medium test/genmlx/mcmc_property_test.cljs
 slow test/genmlx/mcmc_stationary_test.cljs
 slow test/genmlx/membrane_churn_test.cljs
+fast test/genmlx/membrane_guard_test.cljs
 fast test/genmlx/membrane_honesty_test.cljs
 fast test/genmlx/memory_test.cljs
 bench test/genmlx/metal_gc_stress.cljs
@@ -388,6 +389,7 @@ bench test/genmlx/vsmc_validation.cljs
 fast test/genmlx/vupdate_test.cljs
 fast test/genmlx/well_formedness_test.cljs
 fast test/genmlx/wishart_gradient_test.cljs
+fast test/genmlx/world_memory_test.cljs
 fast test/genmlx/wp2_generate_test.cljs
 fast test/genmlx/wp3_update_test.cljs
 fast test/genmlx/wp4_update_test.cljs
