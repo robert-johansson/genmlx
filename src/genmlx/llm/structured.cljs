@@ -23,6 +23,7 @@
    the same schema; it is not a model-marginal likelihood."
   (:require [genmlx.mlx :as mx]
             [genmlx.protocols :as p]
+            [genmlx.dynamic :as dyn]
             [genmlx.llm.backend :as llm]
             [genmlx.llm.bytes :as bytes]
             [genmlx.llm.grammar :as grammar]
@@ -59,12 +60,17 @@
   "A generative function constraining an LLM to emit a value conforming to
    `schema`. Returns a DynamicGF over [prompt-ids max-bytes] with byte trace
    sites :b0,:b1,... (the same shape as bytes/constrain-bytes). Reuse a shared
-   trie via (assoc opts :trie (:trie (bytes/prepare tokenizer)))."
+   trie via (assoc opts :trie (:trie (bytes/prepare tokenizer))).
+
+   opts :key — optional PRNG key (rng/fresh-key) pinning the byte draw for
+   REPRODUCIBLE structured generation (sample/generate). Omitted, the GF
+   auto-keys (fresh entropy per simulate, the prior behaviour)."
   ([model-map schema] (gen-structured model-map schema {}))
   ([model-map schema opts]
-   (bytes/constrain-bytes model-map
-                          (grammar/compile-regex (sg/schema->regex schema))
-                          (merge {:commit-eager? true} opts))))
+   (let [gf (bytes/constrain-bytes model-map
+                                   (grammar/compile-regex (sg/schema->regex schema))
+                                   (merge {:commit-eager? true} opts))]
+     (if-let [k (:key opts)] (dyn/with-key gf k) gf))))
 
 (defn decode-value
   "Parse the byte retval of a structured trace into a typed value, validated

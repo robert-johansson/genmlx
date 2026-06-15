@@ -118,11 +118,16 @@
    t0-val (mx/item (cm/get-value (cm/get-submap (:choices gen-trace) :t0)))
    _ (assert-true ":t0 = constrained value" (= t0-val best-id))
 
-   ;; Weight should be log-prob of constrained token
+   ;; Weight should be log-prob of constrained token.
+   ;; best-lp comes from an UNCACHED next-token-logprobs over the prompt; gen-weight
+   ;; comes from the CACHED generate (prefill) path. Under the GenMLX-owned forward
+   ;; (now the default for qwen3/qwen3_5, f6ov) the cached-vs-uncached bf16 eval-order
+   ;; gap is ~0.057 here — within the documented <0.1 cross-kernel band (see
+   ;; llm_forward_golden_test + scripts/llm_forward_xval_mlxlm.py), so pin at 0.1.
    _ (println (str "  Weight: " gen-weight))
    _ (println (str "  Score: " gen-score))
    _ (assert-close "weight ≈ log p(constrained token)"
-                   best-lp gen-weight 0.01)
+                   best-lp gen-weight 0.1)
 
    ;; Score should still be full sequence log-prob
    _ (assert-true "score < 0" (< gen-score 0))
