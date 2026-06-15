@@ -13,7 +13,7 @@ ClojureScript's immutable data, open multimethods, and macro system map perfectl
 onto the GFI's mathematical structure. MLX's lazy graphs, unified memory, and
 broadcasting reinforce this — functional-style array programming without penalty.
 
-~31,900 lines of ClojureScript across 76 source files. Purely functional,
+~43,100 lines of ClojureScript across 105 source files. Purely functional,
 data-driven, GPU end-to-end.
 
 ## Three-layer purity architecture
@@ -35,7 +35,7 @@ structure. No GPU work occurs until `mx/eval!` is called. This means most of
 (or wrappers like `item`, `->clj`, `materialize!`). Everything else — arithmetic,
 reductions, autograd, vmap, compile — builds lazy graphs.
 
-**mlx-node is at the heart of GenMLX.** The Rust/NAPI layer (328 exports, 5 crates)
+**mlx-node is at the heart of GenMLX.** The Rust/NAPI layer (212 @mlx-node/core function exports, pinned by the coverage matrix; 5 crates)
 is not "mutable substrate we contain" — it is a functional graph engine that aligns
 naturally with ClojureScript's value semantics. `mlx.cljs` is the thin membrane
 between them; `Either<&MxArray, f64>` in Rust handles type coercion so CLJS
@@ -131,7 +131,7 @@ src/genmlx/
   # Layer 1: Core Data (pure immutable structures)
   choicemap.cljs, trace.cljs, selection.cljs, diff.cljs
 
-  # Layer 2: GFI & Execution (11 protocols, 6+4 handler transitions)
+  # Layer 2: GFI & Execution (11 protocols, 7+6 handler transitions)
   protocols.cljs, handler.cljs, edit.cljs, tensor_trace.cljs
 
   # Layer 3: DSL + Schema (gen macro, DynamicGF, 4-level dispatcher)
@@ -143,11 +143,12 @@ src/genmlx/
   # Layer 5: Combinators (Map, Unfold, Switch, Scan, Mask, Mix, Recurse, etc.)
   combinators.cljs, vmap.cljs
 
-  # Layer 6: Inference (35+ algorithms across 26 files)
+  # Layer 6: Inference (35+ algorithms across 29 files)
   inference/ — importance, mcmc, smc, smcp3, vi, adev, amortized, kernel,
   util, diagnostics, analytical, conjugate, auto_analytical, kalman, ekf,
   ekf_nd, hmm_forward, enumerate, exact, fisher, compiled_gradient,
-  compiled_optimizer, compiled_smc, differentiable, differentiable_resample, pmcmc
+  compiled_optimizer, compiled_smc, differentiable, differentiable_resample,
+  pmcmc, cost, steppable, translator
 
   # Layer 7: Compiled Paths (L1-L4 compilation pipeline)
   compiled.cljs, compiled_ops.cljs, compiled_gen.cljs, rewrite.cljs,
@@ -171,7 +172,7 @@ The implementation layers map onto the three-layer purity model:
 
 ```
 ── Layer C (GPU execution) ──────────────────────────────────────────────
-  mlx-node Rust/C++   5 crates, 328 NAPI exports. MxArray = Arc<lazy graph node>.
+  mlx-node Rust/C++   5 crates; 212 @mlx-node/core function exports (coverage-matrix-pinned). MxArray = Arc<lazy graph node>.
                       eval! is the only operation that dispatches to Metal.
 
 ── Membrane (mlx.cljs) ─────────────────────────────────────────────────
@@ -184,7 +185,7 @@ The implementation layers map onto the three-layer purity model:
   Layer 3: DSL + Schema     (gen macro, dynamic, schema, schemas, inspect — pure)
   Layer 4: Distributions    (dist/core, dist/macros, dist — 36 constructors, pure)
   Layer 5: Combinators      (combinators, vmap — 10 combinators, pure)
-  Layer 6: Inference         (26 files, 35+ algorithms — pure)
+  Layer 6: Inference         (29 files, 35+ algorithms — pure)
   Layer 7: Compiled Paths   (compiled, compiled_ops, rewrite, affine, conjugacy, dep_graph,
                              method_selection — pure)
   Layer 8: Supporting       (vectorized, gradients, learning, nn, serialize, gfi, verify,
@@ -252,7 +253,7 @@ direct import of dynamic.cljs).
    infrastructure — no parallel implementations. The handler is ground truth.
 
 7. **The GFI algebraic laws.** The GFI algebraic theory (`gfi.cljs`) encodes
-   the laws from the thesis (68 as of 2026-06; count the `laws` vector for the
+   the laws from the thesis (86 as of 2026-06; count the `laws` vector for the
    current number) covering all operations, compositionality, gradients, and
    compiled path equivalence. `strip-compiled` forces handler path for testing.
 
@@ -332,8 +333,9 @@ Key properties:
 
 The handler system has two parts:
 
-1. **Pure transitions** in `handler.cljs` — 6 scalar state transition functions
-   (simulate, generate, assess, update, regenerate, project) + 4 batched variants.
+1. **Pure transitions** in `handler.cljs` — 7 scalar state transition functions
+   (the 6 GFI modes simulate/generate/assess/update/regenerate/project + a general
+   retained-only `regenerate-transition-general`) + 6 batched variants.
    Each is `(fn [state addr dist] -> [value state'])`. Zero side effects.
 
 2. **Execution runtime** in `runtime.cljs` — `run-handler` wraps a transition
@@ -466,7 +468,7 @@ candidates by log-ML. Two modes: template (fine-tuned + regex) and knowledge
 
 ## Rust NAPI boundary (genmlx.rs)
 
-~105 NAPI-exported functions in `mlx-node/crates/mlx-core/src/genmlx.rs`.
+~85 NAPI-exported functions in `mlx-node/crates/mlx-core/src/genmlx.rs`.
 The core pattern: `Either<&MxArray, f64>` accepts both MLX arrays and JS numbers
 transparently. `Vec<f64>` for shapes (no BigInt64Array needed). This makes
 `mlx.cljs` extremely thin — most ops are direct property references to Rust exports.
