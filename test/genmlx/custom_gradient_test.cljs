@@ -94,6 +94,24 @@
       (mx/eval! (first grad-result))
       (is (h/close? 8.0 (mx/item (first grad-result)) 1e-5) "custom gradient at x=4 is 2*4=8"))))
 
+(deftest custom-gradient-non-scalar-forward-throws
+  (testing "genmlx-8ku8: a custom :gradient with a NON-SCALAR forward is rejected (the fixed-cotangent surrogate is only a correct VJP for a scalar forward)"
+    (let [gf (cg/custom-gradient-gf
+               {:forward (fn [x] (mx/stack [x (mx/multiply (mx/scalar 2.0) x)]))  ; -> [2]-vector
+                :gradient (fn [_args _retval _cot] [(mx/scalar 1.0)])
+                :has-argument-grads [true]})]
+      (is (thrown-with-msg? js/Error #"SCALAR forward"
+            (p/simulate gf [(mx/scalar 3.0)]))
+          "non-scalar forward with a custom :gradient throws on invocation")))
+  (testing "a SCALAR forward with a custom :gradient still works"
+    (let [gf (cg/custom-gradient-gf
+               {:forward (fn [x] (mx/multiply x x))
+                :gradient (fn [args _retval cot]
+                            [(mx/multiply (mx/multiply (mx/scalar 2.0) (first args)) cot)])
+                :has-argument-grads [true]})
+          tr (p/simulate gf [(mx/scalar 4.0)])]
+      (is (h/close? 16.0 (mx/item (:retval tr)) 1e-5) "scalar custom-gradient forward simulates fine"))))
+
 ;; ---------------------------------------------------------------------------
 ;; Use in model via splice -- gradient flow
 ;; ---------------------------------------------------------------------------

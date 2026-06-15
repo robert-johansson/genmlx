@@ -494,15 +494,26 @@
             :else false))
         forms))
 
+(def ^:private branch-heads
+  "Canonical set of conditional-macro heads whose body may be conditionally
+   executed. The SINGLE source of truth shared by handle-call's branch dispatch
+   and contains-branch-with-trace?. A trace site reachable only through one of
+   these is conditional, so the model is NOT static and must not get an L1-M2
+   compiled path that samples all branch sites unconditionally (genmlx-blkz).
+   Any new conditional macro must be added here AND given a clause in
+   handle-call (with the right `scan` skip for non-conditional head positions)."
+  #{"if" "when" "when-not" "when-let" "if-let" "if-not" "cond" "case" "and" "or"
+    "condp" "cond->" "cond->>" "if-some" "when-some" "when-first"})
+
 (defn- contains-branch-with-trace?
-  "Check if forms contain a branch (if/when/cond) that has trace calls."
+  "Check if forms contain a branch (see branch-heads) that has trace calls."
   [forms]
   (let [trace-call? #(call-named? % "trace")]
     (some (fn check [form]
             (cond
               (head-sym form)
               (let [n (name (head-sym form))]
-                (if (#{"if" "when" "when-not" "cond" "case" "if-let" "when-let" "if-not"} n)
+                (if (branch-heads n)
                   (seq (find-all-calls (rest form) trace-call?))
                   (some check (rest form))))
               (seq? form) (some check form)
@@ -721,6 +732,19 @@
       "case" (handle-branching acc env args (rest args))
       "and" (handle-branching acc env args args)
       "or" (handle-branching acc env args args)
+      ;; genmlx-blkz: these conditional macros were silently falling through to
+      ;; the default (walk-forms) which records sites but never sets
+      ;; :has-branches?, so a branchy model was misclassified :static?.
+      "if-some" (handle-branching acc env args args)
+      "when-some" (handle-branching acc env args args)
+      "when-first" (handle-branching acc env args args)
+      ;; condp: skip the dispatch predicate + the dispatch expr (both always
+      ;; evaluated); the clause result-exprs are the conditional part.
+      "condp" (handle-branching acc env args (drop 2 args))
+      ;; cond->/cond->>: the initial threaded value is unconditional; the
+      ;; test/form clause pairs are the conditional part.
+      "cond->" (handle-branching acc env args (rest args))
+      "cond->>" (handle-branching acc env args (rest args))
       "do" (walk-forms acc env args)
       "doseq" (handle-loop-form (assoc acc :current-loop-type :doseq) env args)
       "dotimes" (handle-loop-form (assoc acc :current-loop-type :dotimes) env args)

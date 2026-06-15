@@ -138,6 +138,23 @@
 (def digamma    (.-digamma c))
 (def bessel-i0e (.-besselI0e c))
 (def bessel-i1e (.-besselI1e c))
+;; Completing the trig/hyperbolic family + a few pure-math gaps (genmlx-0vwn).
+;; All standard graph builders (no eval!); thin pass-throughs.
+(def arcsin     (.-arcsin c))
+(def arctan     (.-arctan c))
+(def sinh       (.-sinh c))
+(def cosh       (.-cosh c))
+(def isfinite   (.-isfinite c))   ; elementwise 0/1 mask (finite -> 1)
+(def logical-and (.-logicalAnd c))
+(def logical-or  (.-logicalOr c))
+(def logical-not (.-logicalNot c))
+(def log-softmax (.-logSoftmax c)) ; (a) or (a axis); = a - logsumexp(a)
+(def cumprod    (.-cumprod c))     ; (a axis) running product
+(def ^:private roll* (.-roll c))
+(defn roll
+  "Circular shift along `axis` (default 0). Native roll requires an explicit axis."
+  ([a shift] (roll* a shift 0))
+  ([a shift axis] (roll* a shift axis)))
 (def floor      (.-floor c))
 (def ceil       (.-ceil c))
 (def round      (.-round c))
@@ -667,16 +684,44 @@
 ;; Everything above this section is pure graph construction or metadata.
 ;; =========================================================================
 
+;; -------------------------------------------------------------------------
+;; Compute-cost meter counters (genmlx-i0s4). These are MONOTONIC (between
+;; explicit resets) — distinct from the GC-heuristic counters below
+;; (ops-since-check / gfi-ops-count), which RESET every interval and must NOT
+;; be used as a compute meter. There are THREE chokepoints because item and
+;; ->clj force GPU dispatch WITHOUT going through eval! (item is a fused
+;; eval+read; ->clj calls .eval directly); materialize!/realize/tidy-* route
+;; through eval! and so are counted there (no double-count). genmlx.inference.cost
+;; reads these as deltas (read-before / read-after a measured thunk).
+(def ^:private ^:mutable forced-eval-count 0)
+(def ^:private ^:mutable item-count 0)
+(def ^:private ^:mutable clj-read-count 0)
+
+(defn read-cost-counters
+  "Snapshot the monotonic compute-cost counters: forced-evals (eval! dispatches),
+   items (item reads), clj-reads (->clj reads)."
+  []
+  {:forced-evals forced-eval-count :items item-count :clj-reads clj-read-count})
+
+(defn reset-cost-counters!
+  "Zero the monotonic compute-cost counters."
+  []
+  (set! forced-eval-count 0)
+  (set! item-count 0)
+  (set! clj-read-count 0))
+
 (defn item
   "Extract scalar value from a 0-d or 1-element array.
    EFFECTFUL: fused eval + read in one NAPI call."
   [a]
+  (set! item-count (inc item-count))
   (with-alloc-retry #(.item c a)))
 
 (defn ->clj
   "Evaluate an MLX array and convert to nested ClojureScript data.
    EFFECTFUL: triggers eval, then transfers data from GPU to CPU."
   [a]
+  (set! clj-read-count (inc clj-read-count))
   (.eval a)
   (let [sh (shape a)
         flat (if (= (.dtypeOf c a) int32)
@@ -695,6 +740,7 @@
   ;; silently ignored them; this restores that, matching materialize!.
   (let [valid (filterv array? arrs)]
     (when (seq valid)
+      (set! forced-eval-count (inc forced-eval-count))
       (.evalArrays c (to-array valid)))))
 
 (defn materialize!

@@ -111,6 +111,31 @@
           (let [lp-vals (mx/->clj (:log-prob result))]
             (is (every? js/isFinite lp-vals) "all log-probs finite")))))))
 
+(deftest make-smc-extend-step-noise-gate-test
+  (testing "genmlx-j22a: only NORMAL-noise latent transitions are admitted; uniform/exponential are declined (the supplied noise slice is standard normal, so an inverse-CDF-from-uniform transform would be fed the wrong noise)"
+    ;; uniform latent transition -> DECLINED (falls back to handler SMC)
+    (let [k (gen [t state]
+              (let [s (trace :x (dist/uniform state (mx/add state 1)))]
+                (trace :y (dist/gaussian s 0.5)) s))]
+      (is (:static? (:schema k)) "uniform-latent kernel is static")
+      (is (nil? (compiled/make-smc-extend-step (:schema k) (:source k)))
+          "uniform latent transition declined by the extend-step gate"))
+    ;; exponential latent transition -> DECLINED
+    (let [k (gen [t state]
+              (let [s (trace :x (dist/exponential (mx/scalar 1.0)))]
+                (trace :y (dist/gaussian (mx/add state s) 0.5)) s))]
+      (is (nil? (compiled/make-smc-extend-step (:schema k) (:source k)))
+          "exponential latent transition declined by the extend-step gate"))
+    ;; gaussian latent transition -> still ADMITTED (normal noise)
+    (is (some? (compiled/make-smc-extend-step (:schema rw-kernel) (:source rw-kernel)))
+        "gaussian latent transition still admitted")
+    ;; log-normal latent transition -> ADMITTED (also normal noise)
+    (let [k (gen [t state]
+              (let [s (trace :x (dist/log-normal state 1))]
+                (trace :y (dist/gaussian s 0.5)) s))]
+      (is (some? (compiled/make-smc-extend-step (:schema k) (:source k)))
+          "log-normal latent transition admitted (normal-noise transform)"))))
+
 (deftest compiled-smc-test
   (testing "compiled-smc runs correctly"
     (let [key (rng/fresh-key 999)

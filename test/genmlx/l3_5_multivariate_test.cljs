@@ -11,6 +11,7 @@
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
+            [genmlx.trace :as tr]
             [genmlx.gen :refer [gen]]
             [genmlx.inference.auto-analytical :as auto-analytical]))
 
@@ -86,6 +87,20 @@
             y  (trace :y (dist/multivariate-normal mu (eye d)))]
         y))))
 
+;; genmlx-0e0j: S0 + R has a near-zero diagonal in dim 0 (2e-7 < 1e-6), so the
+;; MVN marginal M = S0 + R is ill-conditioned and mvn-update-step returns nil
+;; AFTER the prior was already marginalized — the bug case.
+(def mvn-illconditioned-model
+  (dyn/auto-key
+    (gen []
+      (let [mu (trace :mu (dist/multivariate-normal
+                            (mx/array [0 0])
+                            (mx/reshape (mx/array [1e-7 0 0 10]) [2 2])))
+            y  (trace :y (dist/multivariate-normal
+                            mu
+                            (mx/reshape (mx/array [1e-7 0 0 1]) [2 2])))]
+        y))))
+
 ;; ---------------------------------------------------------------------------
 ;; Tests
 ;; ---------------------------------------------------------------------------
@@ -137,6 +152,31 @@
             y-val (cm/get-value (cm/get-submap choices :y))]
         (is (h/close? 4.545 (mx/item (mx/index mu-val 0)) 0.02) "MVN generate: mu[0] approx 4.545")
         (is (h/close? 5.0 (mx/item (mx/index y-val 0)) 0.001) "MVN generate: y equals observation")))))
+
+(deftest mvn-illconditioned-bail-test
+  (testing "genmlx-0e0j: an ill-conditioned MVN obs update (reached after the prior was marginalized) bails to the handler JOINT path instead of producing a hybrid weight"
+    (let [obs (cm/set-value cm/EMPTY :y (mx/array [0.0 5.0]))
+          k   (rng/fresh-key 7)
+          ;; Analytical path: the prior marginalizes, then the obs update is
+          ;; ill-conditioned (S0+R min-diag 2e-7 < 1e-6) -> bail.
+          ra  (p/generate (dyn/with-key mvn-illconditioned-model k) [] obs)
+          ;; The bail target: the analytical-stripped handler path, same key.
+          rh  (p/generate (dyn/with-key (dyn/strip-analytical-path mvn-illconditioned-model) k) [] obs)
+          wa  (mx/item (:weight ra))
+          wh  (mx/item (:weight rh))]
+      (is (js/isFinite wa) "ill-conditioned analytical-path weight is finite (no crash / NaN / hybrid)")
+      (is (h/close? wa wh 1e-3)
+          "bailed analytical generate weight EQUALS the handler joint weight")
+      ;; The bail re-runs the stripped handler path, so the trace is :joint, not
+      ;; :marginal — proof the analytical elimination was abandoned coherently
+      ;; rather than committing a hybrid marginal weight.
+      (is (= :joint (tr/score-type (:trace ra)))
+          "bailed trace is :joint (elimination abandoned, not a hybrid :marginal)")))
+  (testing "the well-conditioned MVN model still marginalizes (analytical path, :marginal trace) — bail is not over-firing"
+    (let [obs (cm/set-value cm/EMPTY :y (mx/array [5 3]))
+          r   (p/generate mvn-model [] obs)]
+      (is (= :marginal (tr/score-type (:trace r)))
+          "well-conditioned MVN still takes the analytical :marginal path"))))
 
 (deftest d1-consistency-test
   (testing "d=1 MVN matches scalar NN"

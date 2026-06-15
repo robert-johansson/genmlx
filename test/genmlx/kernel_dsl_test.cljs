@@ -185,4 +185,20 @@
                                   k trace)]
       (is (= 10 @callback-count) "run-kernel callback fires"))))
 
+(deftest mh-kernel-key-reproducibility-test
+  (testing "genmlx-vv3t: mh-kernel proposal is seeded by the THREADED key, so a chain is reproducible under a fixed :key (previously the proposal used auto-key fresh entropy)"
+    (let [{:keys [trace]} (p/generate model [] observations)
+          k    (kern/mh-kernel (sel/select :mu))
+          mus  (fn [traces]
+                 (mapv (fn [t] (mx/realize (cm/get-value (cm/get-submap (:choices t) :mu)))) traces))
+          run  (fn [seed]
+                 (mus (kern/run-kernel {:samples 50 :burn 20 :key (rng/fresh-key seed)} k trace)))
+          c1   (run 777)
+          c2   (run 777)
+          c3   (run 31337)]
+      (is (= c1 c2)
+          "two mh-kernel chains with the same :key are bit-identical (reproducible proposal)")
+      (is (not= c1 c3)
+          "a different :key yields a different chain (the key actually drives the proposal)"))))
+
 (cljs.test/run-tests)

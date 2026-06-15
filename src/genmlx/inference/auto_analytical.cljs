@@ -487,9 +487,19 @@
                                 (let [s (cm/get-submap (:constraints state) addr)]
                                   (when (cm/has-value? s) (cm/get-value s))))]
                           (when obs-value
-                            (let [obs-var (mx/multiply (:sigma (:params dist)) (:sigma (:params dist)))]
-                              (when-let [{:keys [ll new-belief]} (kalman-obs-update belief obs-value obs-var dep-type)]
-                                (let [step-idx (get latent->idx latent)
+                            (let [obs-var (mx/multiply (:sigma (:params dist)) (:sigma (:params dist)))
+                                  kres (kalman-obs-update belief obs-value obs-var dep-type)]
+                              (when (nil? kres)
+                                ;; genmlx-0e0j: the latent was already marginalized
+                                ;; (belief present) but this Kalman obs update is
+                                ;; unresolvable/ill-conditioned. Don't fall through
+                                ;; to base (which scores the obs at the point
+                                ;; estimate while the latent contributed 0). Bail to
+                                ;; the handler joint path.
+                                (throw (ex-info "Kalman obs update unresolvable; bailing analytical elimination to the handler joint path"
+                                                {:genmlx.analytical/bail true :addr addr :latent latent})))
+                              (let [{:keys [ll new-belief]} kres
+                                    step-idx (get latent->idx latent)
                                       state' (cond-> (-> state
                                                          (assoc-in [:auto-kalman-beliefs latent] new-belief)
                                                          (update :choices cm/set-value addr obs-value)
@@ -501,7 +511,7 @@
                                       state'' (if (and noise-vars (< (inc step-idx) n-steps))
                                                 (cascade-predictions steps step-idx state' noise-vars)
                                                 state')]
-                                  [obs-value state'']))))))))])
+                                  [obs-value state''])))))))])
                obs-to-latent))]
     (merge latent-handlers obs-handlers)))
 
@@ -629,8 +639,7 @@
                   (let [obs-value (cm/get-value constraint)
                         {{obs-cov :cov-matrix} :params} dist
                         result (mvn-update-step cur-post obs-value obs-cov)]
-                    ;; Fallthrough if ill-conditioned
-                    (when result
+                    (if result
                       (let [{:keys [mean-vec cov-matrix ll]} result]
                         [obs-value (cond-> state
                                      true (assoc-in [:auto-posteriors prior-addr]
@@ -638,7 +647,16 @@
                                      true (update :choices cm/set-value addr obs-value)
                                      true (update :score mx/add ll)
                                      (not regenerate?) (update :weight mx/add ll)
-                                     true (update :choices cm/set-value prior-addr mean-vec))]))))))))]
+                                     true (update :choices cm/set-value prior-addr mean-vec))])
+                      ;; genmlx-0e0j: the prior was already marginalized (cur-post
+                      ;; present) but this obs update is ill-conditioned. Falling
+                      ;; through to the base transition would score the obs at the
+                      ;; prior-mean point estimate while the prior contributed 0 —
+                      ;; a hybrid weight that is neither the true joint marginal
+                      ;; nor a valid importance weight. Bail the whole op to the
+                      ;; handler joint path (caught in dynamic/run-dispatched*).
+                      (throw (ex-info "MVN obs update ill-conditioned; bailing analytical elimination to the handler joint path"
+                                      {:genmlx.analytical/bail true :addr addr :prior prior-addr})))))))))]
     (assoc (zipmap obs-addrs (repeat obs-handler)) prior-addr prior-handler)))
 
 ;; ---------------------------------------------------------------------------

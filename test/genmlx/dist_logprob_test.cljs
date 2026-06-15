@@ -264,6 +264,28 @@
                                             (mx/array [(/ 1 3) (/ 1 3) (/ 1 3)])))
                   1e-3))))
 
+(deftest dirichlet-log-prob-batched
+  ;; genmlx-t5qa: a batched [N,K] value must yield [N] DISTINCT per-particle
+  ;; log-probs. The old (mx/sum ...) without an axis collapsed BOTH the K event
+  ;; axis and the N particle axis into one scalar, silently broadcasting the
+  ;; same total log-prob onto every particle's score in vectorized inference.
+  (testing "Dirichlet([2,2,2]) log-prob over a batch of N=2 simplex points -> [2]"
+    (let [d   (dist/dirichlet (mx/array [2.0 2.0 2.0]))
+          ;; row0 = [1/3,1/3,1/3], row1 = [0.5,0.25,0.25]
+          vs  (mx/array [[(/ 1 3) (/ 1 3) (/ 1 3)]
+                         [0.5 0.25 0.25]])
+          lp  (dist/log-prob d vs)]
+      ;; lnB([2,2,2]) = 3*lgamma(2) - lgamma(6) = 0 - log(120) = -4.787492
+      ;; row0: 3*log(1/3) - (-4.787492) = -3.295837 + 4.787492 = 1.491655
+      ;; row1: (log0.5+2*log0.25) + 4.787492 = -3.465736 + 4.787492 = 1.321756
+      (is (= [2] (vec (mx/shape lp)))
+          "batched dirichlet log-prob keeps the particle axis: shape [2]")
+      (let [[a b] (mx/->clj lp)]
+        (is (h/close? 1.491655 a 1e-3) "particle 0 log-prob")
+        (is (h/close? 1.321756 b 1e-3) "particle 1 log-prob (DISTINCT from particle 0)")
+        (is (not (h/close? a b 1e-2))
+            "the two particles get genuinely different log-probs (not collapsed)")))))
+
 ;; ==========================================================================
 ;; Laplace
 ;; ==========================================================================
@@ -459,7 +481,15 @@
   (testing "point mass"
     (is (= 0.0 (h/realize (dist/log-prob (dist/delta (mx/scalar 5.0)) (mx/scalar 5.0)))))
     (is (= ##-Inf (h/realize (dist/log-prob (dist/delta (mx/scalar 5.0)) (mx/scalar 6.0)))))
-    (is (= 0.0 (h/realize (dist/log-prob (dist/delta (mx/scalar 0.0)) (mx/scalar 0.0)))))))
+    (is (= 0.0 (h/realize (dist/log-prob (dist/delta (mx/scalar 0.0)) (mx/scalar 0.0))))))
+  (testing "vector point mass returns the JOINT scalar, not an elementwise mask (genmlx-exw9)"
+    (let [d (dist/delta (mx/array [1.0 2.0 3.0]))]
+      ;; all elements match -> joint log-prob 0, rank-0 scalar
+      (is (= 0.0 (h/realize (dist/log-prob d (mx/array [1.0 2.0 3.0])))))
+      (is (= [] (vec (mx/shape (dist/log-prob d (mx/array [1.0 2.0 3.0])))))
+          "joint vector-delta log-prob is rank-0, not [3]")
+      ;; one element differs -> joint -Inf (NOT [0 -Inf 0])
+      (is (= ##-Inf (h/realize (dist/log-prob d (mx/array [1.0 9.0 3.0]))))))))
 
 ;; ==========================================================================
 ;; Multivariate Normal (MVN)

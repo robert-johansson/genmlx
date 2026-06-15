@@ -749,6 +749,14 @@
          :normal (:gaussian noise-transforms)
          :flip (:bernoulli noise-transforms)))
 
+(def normal-noise-dist-types
+  "Dist-types whose :noise-fn draws STANDARD NORMAL noise (vs inverse-CDF from a
+   UNIFORM(0,1) draw). Only these can correctly consume the standard-normal
+   noise slice supplied by the compiled SMC extend-step and gradient paths.
+   uniform/bernoulli/flip/exponential/laplace/cauchy use rng/uniform and would
+   silently transform normal noise through the wrong inverse-CDF (genmlx-j22a)."
+  #{:gaussian :normal :log-normal})
+
 ;; ---------------------------------------------------------------------------
 ;; Return form extraction
 ;; ---------------------------------------------------------------------------
