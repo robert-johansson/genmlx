@@ -138,6 +138,23 @@
 (def digamma    (.-digamma c))
 (def bessel-i0e (.-besselI0e c))
 (def bessel-i1e (.-besselI1e c))
+;; Completing the trig/hyperbolic family + a few pure-math gaps (genmlx-0vwn).
+;; All standard graph builders (no eval!); thin pass-throughs.
+(def arcsin     (.-arcsin c))
+(def arctan     (.-arctan c))
+(def sinh       (.-sinh c))
+(def cosh       (.-cosh c))
+(def isfinite   (.-isfinite c))   ; elementwise 0/1 mask (finite -> 1)
+(def logical-and (.-logicalAnd c))
+(def logical-or  (.-logicalOr c))
+(def logical-not (.-logicalNot c))
+(def log-softmax (.-logSoftmax c)) ; (a) or (a axis); = a - logsumexp(a)
+(def cumprod    (.-cumprod c))     ; (a axis) running product
+(def ^:private roll* (.-roll c))
+(defn roll
+  "Circular shift along `axis` (default 0). Native roll requires an explicit axis."
+  ([a shift] (roll* a shift 0))
+  ([a shift axis] (roll* a shift axis)))
 (def floor      (.-floor c))
 (def ceil       (.-ceil c))
 (def round      (.-round c))
