@@ -425,6 +425,11 @@
   (let [a (if (instance? M a) a (.scalar c a))]
     (add (.zeros c (clj->js sh) (.dtypeOf c a)) a)))
 (defn tile       [a reps] (.tile c a (clj->js reps)))
+(defn pad
+  "Pad array `a` with `const-val`. `pad-width` is a flat vector of 2*ndim
+   [before_0 after_0 before_1 after_1 …] (Vec<f64>-coerced at the NAPI boundary).
+   Pure array op; a thin one-liner like tile (genmlx-0vwn)."
+  [a pad-width const-val] (.pad c a (clj->js pad-width) const-val))
 (defn repeat-arr [a repeats axis] (.repeat c a repeats axis))
 (defn stack
   ([arrs]      (.stack c (to-array arrs)))
@@ -832,6 +837,16 @@
     (when (seq mx-arrs)
       (apply eval! mx-arrs))))
 
+(defn synchronize!
+  "Block until all already-dispatched GPU work on the default stream completes.
+   EFFECTFUL: a Metal barrier (native synchronize()). Distinct from eval! — it
+   does NOT force pending graph nodes to evaluate; it only fences work already
+   in flight (e.g. to bound a wall-clock timing read in the cost meter). A no-op
+   when nothing is dispatched. Wired here, not as a graph builder, because a
+   barrier is a Layer-C effect (genmlx-0vwn)."
+  []
+  (.synchronize c))
+
 ;; =========================================================================
 ;; MEMORY MANAGEMENT — the mutable boundary
 ;;
@@ -884,6 +899,14 @@
 (defn get-cache-memory   [] (.getCacheMemory c))
 (defn get-peak-memory    [] (.getPeakMemory c))
 (defn reset-peak-memory! [] (.resetPeakMemory c))
+;; Configured limits (read side of set-memory-limit! / set-wired-limit!),
+;; completing the introspection family (genmlx-0vwn).
+(defn get-memory-limit
+  "The MLX soft memory limit in bytes (0 = unset). Read side of set-memory-limit!."
+  [] (.getMemoryLimit c))
+(defn get-wired-limit
+  "The MLX wired (resident) memory limit in bytes. Read side of set-wired-limit!."
+  [] (.getWiredLimit c))
 
 (defn get-num-resources
   "Live Metal buffer allocation count (active + cached). Each counts toward the
@@ -939,6 +962,13 @@
 (defn clear-cache!      []  (.clearCache c))
 
 (defn metal-is-available? [] (.metalIsAvailable c))
+(defn gpu-architecture-gen
+  "The Metal GPU architecture generation as an integer (e.g. 16 = M4). This is
+   the SOLE native source of the arch generation — metalDeviceInfo does NOT
+   expose it (it returns only availability + working-set size), so the
+   :architecture string in metal-device-info below is a fallback placeholder.
+   Read-only introspection (genmlx-0vwn)."
+  [] (.gpuArchitectureGen c))
 (defn metal-device-info []
   (let [info (js/JSON.parse (.metalDeviceInfo c))]
     {:architecture (or (.-architecture info) "apple")
@@ -951,6 +981,28 @@
   {:active-bytes (get-active-memory)
    :cache-bytes  (get-cache-memory)
    :peak-bytes   (get-peak-memory)})
+
+;; Single-call allocator snapshots (read-only; no GPU dispatch). These are the
+;; native superset of the individual getters above — wired for the cost meter
+;; and memory diagnostics (genmlx-0vwn). Keys kebab-cased from the native
+;; MemoryStats / GpuMemorySnapshot interfaces.
+(defn memory-stats
+  "Allocator stats in one call: {:active :peak :cache :wired-limit} (bytes)."
+  []
+  (let [s (.memoryStats c)]
+    {:active      (.-active s)
+     :peak        (.-peak s)
+     :cache       (.-cache s)
+     :wired-limit (.-wiredLimit s)}))
+
+(defn get-memory-snapshot
+  "GPU-buffer snapshot: {:active-bytes :peak-bytes :cache-bytes}. The buffer-pool
+   view paired with clear-cache! (cache-bytes is what clear-cache! releases)."
+  []
+  (let [s (.getMemorySnapshot c)]
+    {:active-bytes (.-activeBytes s)
+     :peak-bytes   (.-peakBytes s)
+     :cache-bytes  (.-cacheBytes s)}))
 
 ;; --- Cleanup heuristics (global mutable counters) ---
 ;;

@@ -79,14 +79,18 @@ for f in choicemap_test trace_test selection_test handler_test dist_test combina
   bun run --bun nbb "test/genmlx/${f}.cljs"
 done
 
-# Native/membrane contract guard — MUST run after any mlx-node rebuild.
+# Native/membrane contract guard — MUST run after any mlx-node rebuild/bump.
 # These exercise mx/array JS-array shaping (take/squeeze, value_and_grad,
 # multivariate-normal cholesky) and the mx/clip Either<&MxArray,f64> bounds
 # contract. A stricter MLX binary turns a malformed-array CLJS bug into a hard
 # SIGTRAP; a more lenient one silently produces NaN/garbage; a narrowed NAPI
 # signature rejects valid bounds. Either way these suites catch it, so a stale
-# or drifted binary can never silently mask the regression.
-for f in exact_test gradient_fd_test score_gradient_test clip_contract_test; do
+# or drifted binary can never silently mask the regression. membrane_coverage_test
+# is the SURFACE drift guard (genmlx-0vwn): it partitions every @mlx-node/core
+# function export into wrapped ∪ intentional-omissions (both directions), so an
+# upstream add/delete/rename surfaces as a red test naming exactly what moved.
+# See docs/membrane-coverage.md for the matrix.
+for f in exact_test gradient_fd_test score_gradient_test clip_contract_test membrane_coverage_test; do
   bun run --bun nbb "test/genmlx/${f}.cljs"
 done
 
