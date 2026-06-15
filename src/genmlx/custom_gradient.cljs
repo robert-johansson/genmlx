@@ -16,17 +16,30 @@
 (defn- wrap-with-custom-grad
   "Wrap forward-fn so MLX autograd uses gradient-fn for backward pass.
    Uses stop-gradient trick: output = sg(f(x)) + surrogate - sg(surrogate)
-   where surrogate is a linear function with the desired gradient."
+   where surrogate is a linear function with the desired gradient.
+
+   CONTRACT (genmlx-8ku8): the user gradient-fn is invoked with a FIXED
+   cotangent of 1.0, so the surrogate encodes dL/dargs = sg(grads). Autograd
+   through the surrogate yields the true VJP (c̄_O ⊙ ∂fwd/∂args) ONLY when fwd
+   is a SCALAR (then c̄_O is a scalar that commutes through). For a non-scalar
+   forward under a non-uniform upstream cotangent the result is silently wrong,
+   so a non-scalar forward is rejected here rather than miscomputing the grad."
   [forward-fn gradient-fn]
   (fn [& args]
-    (let [fwd (apply forward-fn args)
-          cotangent (mx/scalar 1.0)            ; seed cotangent for the backward pass
-          grads (gradient-fn (vec args) fwd cotangent)
-          surrogate (reduce mx/add ZERO
-                      (map (fn [g a] (mx/multiply (mx/stop-gradient g) a))
-                           grads args))]
-      (mx/add (mx/stop-gradient fwd)
-              (mx/subtract surrogate (mx/stop-gradient surrogate))))))
+    (let [fwd (apply forward-fn args)]
+      (when (seq (mx/shape fwd))
+        (throw (ex-info (str "custom :gradient is only correct for a SCALAR forward output; got shape "
+                             (vec (mx/shape fwd))
+                             ". The surrogate fixes the cotangent to 1.0, giving a wrong VJP for a "
+                             "non-scalar forward under a non-uniform upstream cotangent.")
+                        {:shape (vec (mx/shape fwd))})))
+      (let [cotangent (mx/scalar 1.0)          ; seed cotangent for the backward pass
+            grads (gradient-fn (vec args) fwd cotangent)
+            surrogate (reduce mx/add ZERO
+                        (map (fn [g a] (mx/multiply (mx/stop-gradient g) a))
+                             grads args))]
+        (mx/add (mx/stop-gradient fwd)
+                (mx/subtract surrogate (mx/stop-gradient surrogate)))))))
 
 (defrecord CustomGradientGF [forward-fn gradient-fn arg-grads]
   p/IGenerativeFunction

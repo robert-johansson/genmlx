@@ -842,8 +842,17 @@
   [v]
   (sample [_key] v)
   (log-prob [value]
-            (let [eq (mx/equal v value)]
-              (mx/where eq ZERO NEG-INF)))
+            ;; Reduce the trailing event axes to the JOINT point-mass log-prob:
+            ;; 0 iff ALL elements match, else -Inf. A scalar point mass has no
+            ;; event axis (ev=0) so the elementwise mask is already the answer
+            ;; ([] scalar / [N] batched). A vector/tensor point mass must be
+            ;; reduced, else log-prob returns an elementwise [T] mask instead of
+            ;; the joint scalar (genmlx-exw9).
+            (let [eq (mx/equal v value)
+                  ev (count (mx/shape v))
+                  joint (reduce (fn [m _] (mx/all m (dec (count (mx/shape m)))))
+                                eq (range ev))]
+              (mx/where joint ZERO NEG-INF)))
   (support [] [v]))
 
 (defmethod dc/dist-sample-n* :delta [d _key n]
@@ -1741,8 +1750,15 @@
 (defmethod dc/dist-reparam :iid [d key]
   (let [{:keys [base-dist t]} (:params d)
         key (rng/ensure-key key)
-        keys (rng/split-n key t)]
-    (mx/stack (mapv #(dc/dist-reparam base-dist %) keys))))
+        keys (rng/split-n key t)
+        ;; Mirror dist-sample* :iid exactly: [T,N] -> [N,T] for [N]-batched base
+        ;; params so reparam values are laid out [N,T] like the sampling path,
+        ;; not transposed (which would mis-pair particles with scores). No-op for
+        ;; the scalar [T] case (genmlx-exw9).
+        stacked (mx/stack (mapv #(dc/dist-reparam base-dist %) keys))]
+    (if (> (count (mx/shape stacked)) 1)
+      (mx/transpose stacked)
+      stacked)))
 
 ;; ---------------------------------------------------------------------------
 ;; IID Gaussian — specialized for maximum performance

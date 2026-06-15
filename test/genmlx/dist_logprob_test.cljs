@@ -481,7 +481,15 @@
   (testing "point mass"
     (is (= 0.0 (h/realize (dist/log-prob (dist/delta (mx/scalar 5.0)) (mx/scalar 5.0)))))
     (is (= ##-Inf (h/realize (dist/log-prob (dist/delta (mx/scalar 5.0)) (mx/scalar 6.0)))))
-    (is (= 0.0 (h/realize (dist/log-prob (dist/delta (mx/scalar 0.0)) (mx/scalar 0.0)))))))
+    (is (= 0.0 (h/realize (dist/log-prob (dist/delta (mx/scalar 0.0)) (mx/scalar 0.0))))))
+  (testing "vector point mass returns the JOINT scalar, not an elementwise mask (genmlx-exw9)"
+    (let [d (dist/delta (mx/array [1.0 2.0 3.0]))]
+      ;; all elements match -> joint log-prob 0, rank-0 scalar
+      (is (= 0.0 (h/realize (dist/log-prob d (mx/array [1.0 2.0 3.0])))))
+      (is (= [] (vec (mx/shape (dist/log-prob d (mx/array [1.0 2.0 3.0])))))
+          "joint vector-delta log-prob is rank-0, not [3]")
+      ;; one element differs -> joint -Inf (NOT [0 -Inf 0])
+      (is (= ##-Inf (h/realize (dist/log-prob d (mx/array [1.0 9.0 3.0]))))))))
 
 ;; ==========================================================================
 ;; Multivariate Normal (MVN)
