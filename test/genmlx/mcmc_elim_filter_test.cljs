@@ -16,12 +16,13 @@
    These tests pin which path each model class takes, so a dispatch change
    that silently flips a model between joint and Rao-Blackwellized MCMC
    (or zeroes out a param vector) fails here first."
-  (:require [cljs.test :refer [deftest is]]
+  (:require [cljs.test :refer [deftest is testing]]
             [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
+            [genmlx.inference.mcmc :as mcmc]
             [genmlx.inference.util :as u])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -79,6 +80,33 @@
         "empty latent-index throws a clear :no-mcmc-latents ex-info")
     (is (= [2] (vec (mx/shape (u/extract-params-by-index trace {:a 0 :b 1}))))
         "non-empty latent-index still extracts normally (no regression)")))
+
+(deftest pdm2-observed-only-latent-throws-but-free-latent-samples
+  ;; genmlx-pdm2: the gen_jl_speed_test "single_gaussian" compiled-MH benchmark
+  ;; observed its ONLY latent (model :x, constraint {:x 0.5}), leaving zero free
+  ;; latents — so compiled-MH (correctly) threw :no-mcmc-latents. The bean's
+  ;; premise (linreg/many are "fully eliminated") was inverted: those are
+  ;; non-static loop models that sample fine; single_gaussian was the real crash,
+  ;; an observed-sole-latent collision. The fix replaces it with a 1-latent
+  ;; normal-normal (latent :mu, SEPARATE observed :y). This pins both halves.
+  (testing "sole latent is observed -> :no-mcmc-latents (the documented contract)"
+    (let [m (dyn/auto-key (gen [] (trace :x (dist/gaussian 0 1))))
+          obs (cm/choicemap :x (mx/scalar 0.5))
+          {:keys [trace]} (p/generate m [] obs)]
+      (is (thrown-with-msg? js/Error #"no free latent addresses to sample"
+            (u/prepare-mcmc-score m [] obs [:x] trace))
+          "selecting the sole observed latent exposes zero sampling params")))
+  (testing "free latent (normal-normal :mu, observed :y) -> samples, no throw"
+    (let [m (dyn/auto-key (gen [] (let [mu (trace :mu (dist/gaussian 0 1))]
+                                    (trace :y (dist/gaussian mu 1))
+                                    mu)))
+          obs (cm/choicemap :y (mx/scalar 0.5))
+          {:keys [trace]} (p/generate m [] obs)
+          r (u/prepare-mcmc-score m [] obs [:mu] trace)
+          samples (mcmc/compiled-mh {:samples 10 :addresses [:mu]} m [] obs)]
+      (is (= 1 (:n-params r)) "the :mu latent is a free sampling parameter")
+      (is (= 10 (count samples)) "compiled-MH returns the requested samples")
+      (is (= 1 (count (first samples))) "each sample is the 1-D :mu latent"))))
 
 (cljs.test/run-tests)
 
