@@ -136,7 +136,7 @@ Full MH chain with a custom proposal generative function. Same chain structure a
 ;; Custom random-walk proposal with tuned width
 (def proposal
   (gen [current-choices]
-    (let [old-slope (cm/get-value current-choices :slope)]
+    (let [old-slope (cm/get-choice current-choices [:slope])]
       (trace :slope (dist/gaussian old-slope 0.5)))))
 
 (mcmc/mh-custom {:samples 500 :burn 100 :proposal-gf proposal}
@@ -815,16 +815,16 @@ Full involutive MCMC chain.
     (trace :new-value (dist/gaussian 0 1))))
 
 (defn birth-death-involution [trace-cm aux-cm]
-  (let [move (cm/get-value aux-cm :move-type)]
+  (let [move (cm/get-choice aux-cm [:move-type])]
     (if (pos? (mx/item move))
       ;; Birth: add a component
-      [(cm/set-choice trace-cm [:new-comp] (cm/get-value aux-cm :new-value))
+      [(cm/set-choice trace-cm [:new-comp] (cm/get-choice aux-cm [:new-value]))
        (cm/choicemap :move-type (mx/scalar 0)
-                     :new-value (cm/get-value trace-cm :new-comp))]
-      ;; Death: remove a component
-      [(cm/remove-choice trace-cm :new-comp)
+                     :new-value (cm/get-choice trace-cm [:new-comp]))]
+      ;; Death: remove a component by rebuilding the choicemap without :new-comp
+      [(cm/from-map (dissoc (cm/to-map trace-cm) :new-comp))
        (cm/choicemap :move-type (mx/scalar 1)
-                     :new-value (cm/get-value trace-cm :new-comp))])))
+                     :new-value (cm/get-choice trace-cm [:new-comp]))])))
 
 (mcmc/involutive-mh {:samples 500 :burn 200
                       :proposal-gf birth-death-proposal

@@ -1,48 +1,51 @@
 # Contracts
 
-The contracts module provides a data-driven registry of 11 measure-theoretic invariants that every GFI-compliant generative function must satisfy. Each contract is a named theorem paired with a check function that tests the invariant over random traces.
+The GFI algebraic-theory module provides a data-driven registry of 85 measure-theoretic invariants ("laws") that every GFI-compliant generative function must satisfy. Each law is a named theorem paired with a check function that tests the invariant over random traces.
 
-Use `verify-gfi-contracts` to run the full contract suite against any model. This is the primary tool for validating that new generative functions, combinators, or compiled paths preserve GFI semantics.
+Use `verify` to run the full law suite against any model. This is the primary tool for validating that new generative functions, combinators, or compiled paths preserve GFI semantics.
 
 ```clojure
-(require '[genmlx.contracts :as ct])
+(require '[genmlx.gfi :as gfi])
 ```
 
-Source: `src/genmlx/contracts.cljs`
+Source: `src/genmlx/gfi.cljs`
 
 ---
 
 ## Overview
 
-The `contracts` var holds a map from contract keyword to `{:theorem string, :check fn}`. Each `:check` function takes `{:keys [model args trace]}` and returns a boolean. The verifier runs each contract over multiple random traces to catch violations that only appear under certain sampled values.
+The `laws` var is a **vector** of law maps. Each law is `{:name keyword, :from string, :theorem string, :tags set, :check fn}`. Each `:check` function takes `{:keys [model args]}` and returns a boolean (it may internally simulate traces as needed). The verifier runs each law over multiple random trials to catch violations that only appear under certain sampled values.
 
 ---
 
-## verify-gfi-contracts
+## verify
 
-### `verify-gfi-contracts`
+### `verify`
 
 ```clojure
-(ct/verify-gfi-contracts model args & {:keys [n-trials contract-keys]})
+(gfi/verify model args & {:keys [law-names tags n-trials]})
 ```
 
-Run GFI contracts over multiple random trials and return a structured report.
+Run GFI laws over multiple random trials and return a structured report.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `model` | IGenerativeFunction | The generative function to verify |
 | `args` | vector | Arguments to the model |
-| `n-trials` | integer (optional) | Number of random traces per contract (default: 50) |
-| `contract-keys` | collection (optional) | Subset of contract keys to run (default: all 11) |
+| `law-names` | collection (optional) | Subset of law keywords to run (default: all) |
+| `tags` | collection (optional) | Run laws matching ANY of these tag keywords |
+| `n-trials` | integer (optional) | Number of independent trials per law (default: 10) |
 
 **Returns:** Map with keys:
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `:results` | map | `{contract-key -> {:pass int :fail int :theorem string}}` |
-| `:total-pass` | integer | Sum of all passes across all contracts |
-| `:total-fail` | integer | Sum of all failures across all contracts |
-| `:all-pass?` | boolean | `true` if every trial of every contract passed |
+| `:results` | vector | One map per law: `{:name :from :theorem :passes :fails :pass?}` |
+| `:total-pass` | integer | Sum of all passes across all laws |
+| `:total-fail` | integer | Sum of all failures across all laws |
+| `:all-pass?` | boolean | `true` if every trial of every law passed |
+| `:n-laws` | integer | Number of laws selected |
+| `:n-trials` | integer | Trials per law |
 
 **Example:**
 ```clojure
@@ -51,80 +54,80 @@ Run GFI contracts over multiple random trials and return a structured report.
     (let [mu (trace :mu (dist/gaussian 0 10))]
       (trace :y (dist/gaussian mu 1)))))
 
-;; Run all 11 contracts, 50 trials each
-(def report (ct/verify-gfi-contracts model [0.0]))
+;; Run all laws, 10 trials each
+(def report (gfi/verify model [0.0]))
 (println (:all-pass? report))  ;; => true
 
-;; Run a subset of contracts
-(def report (ct/verify-gfi-contracts model [0.0]
-              :contract-keys [:generate-weight-equals-score
-                              :update-empty-identity]
+;; Run a subset of laws
+(def report (gfi/verify model [0.0]
+              :law-names [:generate-full-weight-equals-score
+                          :update-identity]
               :n-trials 100))
+
+;; Run laws by tag
+(def report (gfi/verify model [0.0] :tags [:update :regenerate]))
+```
+
+A companion `print-report` pretty-prints the result:
+
+```clojure
+(gfi/print-report report)
 ```
 
 ---
 
-## Contract List
+## check-law
 
-The 11 contracts, grouped by the GFI operation they verify:
+### `check-law`
 
-### 1. `:generate-weight-equals-score`
+```clojure
+(gfi/check-law law-name model args)
+```
 
-**Theorem:** `generate(model, args, trace.choices).weight = trace.score` when fully constrained.
+Run a single law (one trial) against a model. Returns `{:name :pass? :theorem}`, plus an `:error` string if the check threw. Throws `ex-info` if `law-name` is not a known law.
 
-When `generate` is given a complete set of constraints (all choices pinned), the returned weight equals the trace score. This verifies that the importance weight under full observation is the joint log-density.
-
----
-
-### 2. `:update-empty-identity`
-
-**Theorem:** `update(model, trace, trace.choices).weight = 0` (no-op update).
-
-Updating a trace with its own choices is a no-op. The weight is zero because the new and old scores are equal.
+```clojure
+(gfi/check-law :generate-full-weight-equals-score model [0.0])
+;; => {:name :generate-full-weight-equals-score :pass? true :theorem "..."}
+```
 
 ---
 
-### 3. `:update-weight-correctness`
+## Law List
 
-**Theorem:** `update(model, trace, constraint).weight = new_score - old_score`.
+The laws are grouped by the GFI operation they verify. A representative selection (use `(map :name gfi/laws)` for the full list):
 
-The update weight equals the difference between the new and old trace scores. This is the fundamental correctness property of incremental recomputation.
+### `:simulate-produces-trace`
 
----
-
-### 4. `:update-round-trip`
-
-**Theorem:** `update(trace, c)` then `update(trace', discard)` recovers original values.
-
-Applying an update and then applying the discard as a constraint recovers the original trace values. This verifies that update and discard are inverses.
+**Theorem:** `simulate(P, x)` returns trace `t = (P, x, tau)` where `tau` is in `supp(p(.; x))` and score is finite.
 
 ---
 
-### 5. `:regenerate-empty-identity`
+### `:simulate-score-is-log-density`
 
-**Theorem:** `regenerate(model, trace, sel/none).weight = 0`, choices unchanged.
+**Theorem:** `trace.score = log p(tau; x) = assess(P, x, tau).weight`.
 
-Regenerating with an empty selection is a no-op. The weight is zero and all choices are preserved.
-
----
-
-### 6. `:project-all-equals-score`
-
-**Theorem:** `project(model, trace, sel/all) = trace.score`.
-
-Projecting onto all addresses recovers the full trace score. This verifies that the score decomposes correctly over addresses.
+The trace score is the joint log-density and matches the weight returned by `assess` on the same choices.
 
 ---
 
-### 7. `:project-none-equals-zero`
+### `:generate-empty-is-simulate`
 
-**Theorem:** `project(model, trace, sel/none) = 0`.
+**Theorem:** `generate(P, x, {}).weight = 0` (equivalent to simulate).
 
-Projecting onto no addresses yields zero. No choices selected means no log-density contribution.
+With empty constraints, `generate` is equivalent to `simulate` and the importance weight is zero.
 
 ---
 
-### 8. `:assess-equals-generate-score`
+### `:generate-full-weight-equals-score`
+
+**Theorem:** when fully constrained, `generate(model, args, trace.choices).weight = trace.score`.
+
+When `generate` is given a complete set of constraints (all choices pinned), the returned weight equals the trace score. The importance weight under full observation is the joint log-density.
+
+---
+
+### `:assess-equals-generate-score`
 
 **Theorem:** `assess(model, args, choices).weight = generate(model, args, choices).score`.
 
@@ -132,45 +135,94 @@ The weight returned by `assess` matches the score of a trace generated with the 
 
 ---
 
-### 9. `:propose-generate-round-trip`
+### `:update-identity`
 
-**Theorem:** `propose(model, args)` produces choices; `generate` with those choices has finite weight.
+**Theorem:** updating a trace with its own choices is a no-op; the weight is zero.
 
-A model can propose choices and those choices can be fed back to `generate` to produce a valid trace with finite weight.
-
----
-
-### 10. `:score-decomposition`
-
-**Theorem:** Sum of `project(trace, {addr_i})` over all leaf addresses equals `trace.score`.
-
-The total trace score equals the sum of individual per-address projections. This verifies additive decomposition of the log-density.
+The new and old scores are equal, so the update weight is zero.
 
 ---
 
-### 11. `:broadcast-equivalence`
+### `:update-density-ratio`
 
-**Theorem:** `vsimulate(model, args, N)` produces finite scores with shape `[N]`.
+**Theorem:** `update(model, trace, constraint).weight = new_score - old_score`.
 
-Vectorized simulation produces a batch of `N` traces, each with a finite score. This verifies that shape-based batching works correctly for the model.
+The update weight equals the difference between the new and old trace scores -- the fundamental correctness property of incremental recomputation.
 
 ---
 
-## contracts
+### `:update-round-trip`
 
-### `contracts`
+**Theorem:** `update(trace, c)` then re-applying the discard recovers the original trace values.
+
+Applying an update and then applying the discard as a constraint recovers the original trace, verifying that update and discard are inverses.
+
+---
+
+### `:regenerate-empty-identity`
+
+**Theorem:** `regenerate(model, trace, sel/none).weight = 0`, choices unchanged.
+
+Regenerating with an empty selection is a no-op: the weight is zero and all choices are preserved.
+
+---
+
+### `:regenerate-weight-formula`
+
+**Theorem:** the regenerate weight is the retained-only density ratio `W = Σ_retained [lp(v; new) − lp(v; old)]`.
+
+Selected, fresh, and removed sites cancel to zero; only retained sites contribute to the weight.
+
+---
+
+### `:project-all-equals-score`
+
+**Theorem:** `project(model, trace, sel/all) = trace.score`.
+
+Projecting onto all addresses recovers the full trace score, verifying that the score decomposes correctly over addresses.
+
+---
+
+### `:project-none-equals-zero`
+
+**Theorem:** `project(model, trace, sel/none) = 0`.
+
+Projecting onto no addresses yields zero -- no choices selected means no log-density contribution.
+
+---
+
+### `:score-decomposition`
+
+**Theorem:** the sum of per-address projections equals `trace.score`.
+
+The total trace score equals the sum of individual per-address projections, verifying additive decomposition of the log-density.
+
+---
+
+### `:vsimulate-shape-correctness`
+
+**Theorem:** `vsimulate(model, args, N)` produces a batch of `N` traces with finite scores of shape `[N]`.
+
+Vectorized simulation produces a batch of `N` traces, each with a finite score, verifying that shape-based batching works for the model.
+
+---
+
+## laws
+
+### `laws`
 
 ```clojure
-ct/contracts
+gfi/laws
 ```
 
-The contract registry -- a map from contract keyword to `{:theorem string, :check fn}`. Can be used directly for custom verification workflows.
+The law registry -- a **vector** of `{:name keyword, :from string, :theorem string, :tags set, :check fn}` maps. Can be used directly for custom verification workflows.
 
 **Example:**
 ```clojure
-;; Run a single contract manually
-(let [{:keys [check]} (:generate-weight-equals-score ct/contracts)
-      trace (p/simulate model args)]
-  (check {:model model :args args :trace trace}))
+;; Run a single law's check manually
+(let [law  (first (filter #(= :generate-full-weight-equals-score (:name %))
+                          gfi/laws))
+      check (:check law)]
+  (check {:model model :args [0.0]}))
 ;; => true
 ```

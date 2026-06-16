@@ -520,7 +520,7 @@ Options for `opts`:
 
 (def result
   (learn/wake-sleep
-    {:iterations 500 :lr 0.001 :key (rng/key 42)}
+    {:iterations 500 :lr 0.001 :key (rng/fresh-key 42)}
     model guide [2.0] obs
     nil    ;; auto-discover guide addresses
     nil))  ;; zero-init guide params

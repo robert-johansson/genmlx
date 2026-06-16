@@ -1,6 +1,6 @@
 # Distributions
 
-GenMLX provides 30+ built-in distributions, all sharing a single `Distribution` record type with behavior dispatched via open multimethods. New distributions can be added from any namespace using `defdist` or manual `defmethod`, without modifying core code.
+GenMLX provides 36 built-in distribution constructors, all sharing a single `Distribution` record type with behavior dispatched via open multimethods. New distributions can be added from any namespace using `defdist` or manual `defmethod`, without modifying core code.
 
 **Source files:**
 - `src/genmlx/dist.cljs` -- all built-in distribution definitions
@@ -103,13 +103,13 @@ For vectorized inference, distributions should provide a `dc/dist-sample-n*` imp
     (mx/add loc (mx/multiply scale (rng/normal key [n])))))
 ```
 
-### `gamma-sample-n`
+### `gamma-sample-vec`
 
 ```clojure
-(dist/gamma-sample-n shape-val rate key n)
+(dist/gamma-sample-vec shape key)
 ```
 
-Vectorized Marsaglia-Tsang gamma sampling. `shape-val` is a JS number, `rate` is an MLX scalar. Exposed for reuse by distributions built on Gamma (Beta, Dirichlet, Inverse-Gamma, Chi-squared).
+Public tensor-valued Marsaglia-Tsang gamma sampling (rate fixed at 1). `shape` is an MLX array of any shape (e.g. `[K]` arms or `[N, K]` particles x arms); returns gamma draws of the same shape, mixing per-element shape values `< 1` and `>= 1` in a single call. (The scalar-shape batch helper `gamma-sample-n` used internally by Beta, Dirichlet, and Inverse-Gamma batch sampling is private.)
 
 ---
 

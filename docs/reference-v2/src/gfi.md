@@ -127,7 +127,7 @@ Returns the updated trace, an incremental weight, and the discarded old values.
       {:keys [trace weight discard]} (p/update model tr new-obs)]
   (println "new slope:" (mx/item (cm/get-value (cm/get-submap (:choices trace) :slope))))
   (println "incremental weight:" (mx/item weight))
-  (println "old slope:" (mx/item (cm/get-value discard :slope))))
+  (println "old slope:" (mx/item (cm/get-value (cm/get-submap discard :slope)))))
 ```
 
 ---
@@ -183,7 +183,7 @@ Forward-sample all choices and return them as a choice map together with their j
 **Example:**
 ```clojure
 (let [{:keys [choices weight]} (p/propose model [(mx/scalar 2.0)])]
-  (println "proposed slope:" (mx/item (cm/get-value choices :slope)))
+  (println "proposed slope:" (mx/item (cm/get-value (cm/get-submap choices :slope))))
   (println "log-joint:" (mx/item weight)))
 ```
 
@@ -483,7 +483,7 @@ Return a copy of the generative function with a specific PRNG key attached as me
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `gf` | Generative function | The gen-fn to attach a key to |
-| `key` | MLX array | PRNG key from `rng/key` or `rng/split` |
+| `key` | MLX array | PRNG key from `rng/fresh-key` or `rng/split` |
 
 **Returns:** The same gen-fn with the key stored as metadata.
 
@@ -491,7 +491,7 @@ Return a copy of the generative function with a specific PRNG key attached as me
 ```clojure
 (require '[genmlx.mlx.random :as rng])
 
-(let [k (rng/key 42)
+(let [k (rng/fresh-key 42)
       model-k (dyn/with-key model k)
       tr1 (p/simulate model-k [(mx/scalar 1.0)])
       tr2 (p/simulate model-k [(mx/scalar 1.0)])]
@@ -572,7 +572,7 @@ No `splice` is supported in shape-based batched mode. Use `vmap-gf` for models w
 
 **Example:**
 ```clojure
-(let [k (rng/key 0)
+(let [k (rng/fresh-key 0)
       vtr (dyn/vsimulate model [(mx/scalar 2.0)] 1000 k)]
   (println "particles:" (:n-particles vtr))
   (println "score shape:" (mx/shape (:score vtr))))
@@ -602,7 +602,7 @@ Batched `generate`. Constrained sites use the scalar observation (broadcast to a
 
 **Example:**
 ```clojure
-(let [k (rng/key 0)
+(let [k (rng/fresh-key 0)
       obs (cm/choicemap {:y (mx/scalar 3.5)})
       vtr (dyn/vgenerate model [(mx/scalar 2.0)] obs 1000 k)]
   (println "weight shape:" (mx/shape (:weight vtr))))

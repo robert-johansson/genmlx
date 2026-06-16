@@ -1,6 +1,6 @@
 # MLX Operations
 
-Thin ClojureScript wrapper over Apple's MLX framework (`@frost-beta/mlx`).
+Thin ClojureScript wrapper over Apple's MLX framework (`@mlx-node/core`).
 All operations produce lazy computation graphs -- call `mx/eval!` to materialize.
 Values stay as MLX arrays from sampling through scoring through gradient computation.
 
@@ -363,13 +363,15 @@ Cast an array to a different dtype. Like `numpy.ndarray.astype`.
 
 ### Data type constants
 
+MLX has no float64, int64, or bool dtype. The following constants are **silent aliases** -- code expecting 64-bit precision or a true boolean type gets the aliased 32-bit type with no warning.
+
 | Constant | MLX dtype |
 |----------|-----------|
 | `mx/float32` | 32-bit float (default) |
-| `mx/float64` | 64-bit float |
+| `mx/float64` | **alias for** `float32` (no 64-bit float in MLX) |
 | `mx/int32` | 32-bit integer |
-| `mx/int64` | 64-bit integer |
-| `mx/bool-dt` | Boolean |
+| `mx/int64` | **alias for** `int32` (no 64-bit int in MLX) |
+| `mx/bool-dt` | **alias for** `int32` (no bool dtype in MLX) |
 
 ---
 
@@ -2256,42 +2258,6 @@ Create a function that returns both the value and gradient. More efficient than 
 
 ---
 
-### `jvp`
-
-```clojure
-(let [[primals tangents] (mx/jvp f [x] [dx])] ...)
-```
-
-Jacobian-vector product (forward-mode AD). Computes `f(primals)` and the directional derivative along `tangents`.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `f` | function | Function to differentiate |
-| `primals` | vector | Input values |
-| `tangents` | vector | Tangent vectors (directions) |
-
-**Returns:** vector `[primals tangents-out]`
-
----
-
-### `vjp`
-
-```clojure
-(let [[primals cotangents] (mx/vjp f [x] [dy])] ...)
-```
-
-Vector-Jacobian product (reverse-mode AD). Computes `f(primals)` and propagates `cotangents` backward.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `f` | function | Function to differentiate |
-| `primals` | vector | Input values |
-| `cotangents` | vector | Cotangent vectors |
-
-**Returns:** vector `[primals cotangents-out]`
-
----
-
 ### `stop-gradient`
 
 ```clojure
@@ -2449,38 +2415,6 @@ Return `key` if non-nil, otherwise create a fresh random key.
 | `key` | MLX array / nil | PRNG key or nil |
 
 **Returns:** MLX array (PRNG key)
-
----
-
-#### `key->seed`
-
-```clojure
-(rng/key->seed key)  ;; => 1234567
-```
-
-Derive a non-negative integer seed from a PRNG key. Combines both uint32 elements via XOR, then masks to 31 bits to ensure non-negative.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `key` | MLX array | PRNG key |
-
-**Returns:** non-negative integer
-
----
-
-#### `seed!`
-
-```clojure
-(rng/seed! key)
-```
-
-Seed the global MLX PRNG state from a key array. MLX random functions require this for deterministic output.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `key` | MLX array | PRNG key |
-
-**Returns:** nil
 
 ---
 
@@ -2682,25 +2616,6 @@ Sample from the multivariate normal distribution N(mean, cov). Runs on CPU strea
 
 ---
 
-#### `permutation`
-
-```clojure
-(rng/permutation key 10)          ;; random permutation of [0..9]
-(rng/permutation key arr 0)       ;; shuffle array along axis 0
-```
-
-Return a random permutation of integers [0, n) or shuffle an array along an axis.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `key` | MLX array | PRNG key |
-| `n` / `arr` | integer / MLX array | Length or array to shuffle |
-| `axis` | integer (optional) | Axis to shuffle along (for array input) |
-
-**Returns:** MLX array
-
----
-
 ## Memory Management
 
 ### `materialize!`
@@ -2827,22 +2742,6 @@ Run `f` inside `mx/tidy`, materialize the result, return it. For simple cases wh
 Returns `true` if currently executing inside an `mx/tidy` scope.
 
 **Returns:** boolean
-
----
-
-### `dispose!`
-
-```clojure
-(mx/dispose! a)
-```
-
-Explicitly free an array's memory.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `a` | MLX array | Array to free |
-
-**Returns:** nil
 
 ---
 
@@ -3211,25 +3110,6 @@ GPU device constant.
 ---
 
 ## Utilities
-
-### `training-step!`
-
-```clojure
-(mx/training-step! module optimizer vg-fn input1 input2)
-```
-
-One neural network training step: compute loss + gradients, update module parameters. Returns the loss as a JS number.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `module` | NN module | Neural network module |
-| `optim` | optimizer | MLX optimizer |
-| `vg-fn` | function | Value-and-grad function |
-| `inputs` | any (variadic) | Training inputs |
-
-**Returns:** JS number (loss value)
-
----
 
 ### `jsc-cleanup!`
 
