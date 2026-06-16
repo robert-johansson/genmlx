@@ -177,6 +177,34 @@
     (swap! fail-count inc)
     (println "  FAIL: parse-dist-lines missing threw:" (.-message e))))
 
+(println "\n-- 1.2 parse-dist-lines: prefix collision (genmlx-m3p0) --")
+(try
+  (let [text "ab = (dist/gaussian 0 1)\na = (dist/gaussian 5 2)"
+        result (msa/parse-dist-lines text [:a :ab])]
+    ;; :a must NOT capture the 'ab = …' line (prefix collision). Pre-fix,
+    ;; starts-with? matched 'ab' and the anchored strip no-op'd, so :a got the
+    ;; whole line.
+    (assert-equal ":a captures only its own line" "(dist/gaussian 5 2)" (:a result))
+    (assert-equal ":ab captures its own line" "(dist/gaussian 0 1)" (:ab result)))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: parse-dist-lines prefix-collision threw:" (.-message e))))
+
+(println "\n-- 1.3 parse-math: left-associative chained ops + precedence (genmlx-1mcv) --")
+(try
+  (let [div (msa/parse-math "z ~ gaussian(30 / strength / 2, 1)")
+        sub (msa/parse-math "w ~ gaussian(10 - x - 2, 1)")
+        prec (msa/parse-math "v ~ gaussian(a + b * c, 1)")]
+    (assert-equal "a/b/c is left-associative (not 30/(strength/2))"
+                  "(dist/gaussian (mx/divide (mx/divide 30 strength) 2) 1)" (:z div))
+    (assert-equal "a-b-c is left-associative"
+                  "(dist/gaussian (mx/subtract (mx/subtract 10 x) 2) 1)" (:w sub))
+    (assert-equal "mul binds tighter than add"
+                  "(dist/gaussian (mx/add a (mx/multiply b c)) 1)" (:v prec)))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: parse-math associativity threw:" (.-message e))))
+
 (println "\n-- 1.2 assemble-gen-fn: produces valid code --")
 (try
   (let [dist-map {:x "(dist/gaussian 0 10)" :y "(dist/gaussian x 1)"}

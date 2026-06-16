@@ -192,11 +192,18 @@
   (let [lines (str/split-lines (str/trim text))]
     (reduce
      (fn [acc var-kw]
-       (let [var-name (name var-kw)]
-         (if-let [line (some #(when (str/starts-with? (str/trim %) var-name) %)
-                             lines)]
+       (let [var-name (name var-kw)
+             ;; Anchored, word-boundary-aware head: 'name = …' / 'name : …'.
+             ;; Plain starts-with? let :a match a line 'ab = …' (prefix
+             ;; collision); since the strip below is anchored it then no-op'd and
+             ;; captured the WHOLE line as :a's dist (genmlx-m3p0). Use the SAME
+             ;; anchored regex for matching and stripping; escape regex-special
+             ;; chars in the variable name.
+             esc (str/replace var-name #"[.*+?^${}()|\[\]\\]" (fn [m] (str "\\" m)))
+             head-re (re-pattern (str "^\\s*" esc "\\s*[=:]\\s*"))]
+         (if-let [line (some #(when (re-find head-re (str %)) %) lines)]
            (let [expr (-> line
-                          (str/replace (re-pattern (str "^\\s*" var-name "\\s*[=:]\\s*")) "")
+                          (str/replace head-re "")
                           str/trim
                           (str/replace #"[,;]\s*$" ""))]
              (assoc acc var-kw expr))
@@ -212,6 +219,12 @@
   "Instaparse grammar for math-notation model specs.
    Parses lines like: name ~ gaussian(param, param)
    Supports +, -, *, / arithmetic with variable references."
+  ;; genmlx-1mcv: precedence/associativity-explicit arithmetic. The old flat
+  ;; rule `binop = arg op arg` was ambiguous for chained ops, and insta/parse
+  ;; silently returned the RIGHT-associative tree (30/strength/2 -> 30/(strength/2)).
+  ;; Standard math grammar: term (+/-) over factor (*//) over atom, each level
+  ;; left-folded in the transform, so a/b/c -> (/ (/ a b) c) and mul/div bind
+  ;; tighter than add/sub.
   (insta/parser
    "specs = (line <nl>)* line
      <nl> = #'\\n'
@@ -222,12 +235,27 @@
      dist-expr = dist-name <'('> args <')'>
      dist-name = 'gaussian' | 'uniform' | 'bernoulli' | 'exponential'
      args = arg (<','> <ws> arg)*
-     <arg> = number | ref | binop
-     binop = <'('> arg <ws> op <ws> arg <')'> | arg <ws> op <ws> arg
-     op = '+' | '-' | '*' | '/'
+     <arg> = term
+     term = factor (<ws> add-op <ws> factor)*
+     factor = atom (<ws> mul-op <ws> atom)*
+     <atom> = number | ref | <'('> <ws> term <ws> <')'>
+     add-op = '+' | '-'
+     mul-op = '*' | '/'
      ref = #'[a-zA-Z][a-zA-Z0-9_-]*'
      name = #'[a-zA-Z][a-zA-Z0-9_-]*'
      number = #'-?[0-9]+(\\.[0-9]+)?'"))
+
+(defn- math-left-fold
+  "Left-fold a flat [a op b op c …] sequence of operand/operator strings into
+   nested mx s-expressions: a op b op c -> (op (op a b) c). With a single
+   operand (no ops) returns it unchanged (genmlx-1mcv)."
+  [a & more]
+  (reduce (fn [acc [op b]]
+            (str "(" (case op "+" "mx/add" "-" "mx/subtract"
+                       "*" "mx/multiply" "/" "mx/divide")
+                 " " acc " " b ")"))
+          a
+          (partition 2 more)))
 
 (def ^:private math->sexpr
   "Instaparse transform map: math notation parse tree -> S-expression strings."
@@ -235,11 +263,10 @@
    :ref identity
    :name identity
    :dist-name identity
-   :op identity
-   :binop (fn [a op b]
-            (let [mx-op (case op "+" "mx/add" "-" "mx/subtract"
-                              "*" "mx/multiply" "/" "mx/divide")]
-              (str "(" mx-op " " a " " b ")")))
+   :add-op identity
+   :mul-op identity
+   :term math-left-fold
+   :factor math-left-fold
    :args (fn [& args] (str/join " " args))
    :dist-expr (fn [dname args] (str "(dist/" dname " " args ")"))
    :line (fn [n expr] [(keyword (str/lower-case n)) expr])
