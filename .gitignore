@@ -21,6 +21,9 @@ environment_files/
 .shadow-cljs/
 out/
 
+# Local scratch (review outputs, ephemeral notes — kept out of the tree)
+tmp/
+
 # OS
 .DS_Store
 
