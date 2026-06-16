@@ -100,6 +100,25 @@
 ;; Model loading
 ;; ---------------------------------------------------------------------------
 
+(def ^:private crashing-native-moe-types
+  "model_type values whose native (upstream mlx-node) forward hard-crashes the
+   process with an uncatchable SIGTRAP on real checkpoints. Currently the
+   256-expert qwen3_5_moe MoE/VLM forward (genmlx-5luk): the panic is a C++
+   exception in the native gather_mm / mlx_qwen35_moe_forward over the expert
+   weight tensors during prefill, surfaced as SIGTRAP and uncatchable from CLJS.
+   No qwen3_5_moe checkpoint is verified-working and the owned CLJS forward does
+   not implement the MoE family, so loading one is refused by default."
+  #{"qwen3_5_moe"})
+
+(defn unsupported-native-moe?
+  "True when `model-type` would route to a known-crashing native MoE forward and
+   the caller has NOT opted in via {:allow-native-moe? true}. Pure and
+   side-effect-free so the load-model guard is unit-testable without loading a
+   model, and usable as a public 'would this model be refused?' query (genmlx-5luk)."
+  [model-type opts]
+  (and (contains? crashing-native-moe-types model-type)
+       (not (:allow-native-moe? opts))))
+
 (defn load-model
   "Load an LLM from a directory. Returns a promise of
    {:model <Model> :tokenizer <Tokenizer> :type keyword}.
@@ -125,26 +144,47 @@
    (p/let [model-type (.detectModelType mlx-lm model-path)
            tokenizer (.fromPretrained (.-Qwen3Tokenizer mlx-core)
                                       (str model-path "/tokenizer.json"))]
-     ;; Explicit :cljs-forward? always wins (keeps the borrowed forward reachable
-     ;; as a one-release fallback); otherwise default to owned iff the owned
-     ;; forward implements this checkpoint's family.
-     (let [use-cljs? (if (contains? opts :cljs-forward?)
-                       (boolean (:cljs-forward? opts))
-                       (fwd/supported? model-path))]
-       (if use-cljs?
-         (do
-           ;; Tier-B (owned path): assert the owned forward surface before use.
-           (assert-owned-forward!)
-           {:model (->CljsForwardModel (fwd/load-model model-path) (atom nil))
-            :tokenizer tokenizer
-            :type (keyword model-type)})
-         (p/let [model (.loadModel mlx-lm model-path)]
-           ;; Tier-B (upstream path): assert the loaded instance exposes the
-           ;; native forward methods — catches the genmlx-7siy stale prebuilt.
-           (assert-upstream-forward! model)
-           {:model model
-            :tokenizer tokenizer
-            :type (keyword model-type)}))))))
+     ;; genmlx-5luk: refuse a known-crashing native MoE forward BEFORE the native
+     ;; .loadModel below, so callers get a CATCHABLE rejection instead of the
+     ;; uncatchable SIGTRAP the native qwen3_5_moe prefill raises once the model
+     ;; is loaded and simulate runs a forward. Opt in with {:allow-native-moe?
+     ;; true} to attempt it anyway at your own risk.
+     (if (unsupported-native-moe? model-type opts)
+       ;; Return a REJECTED promise, not (throw …): a throw inside this p/let body
+       ;; is wrapped by promesa/nbb and loses the ex-info data, so a caller's
+       ;; p/catch would see the message but not :genmlx/error. p/rejected carries
+       ;; the ex-info object through intact.
+       (p/rejected
+        (ex-info
+         (str "genmlx.llm/load-model: model_type \"" model-type "\" is not "
+              "supported — its native MoE forward crashes the process with "
+              "an uncatchable SIGTRAP on real checkpoints (e.g. "
+              "Qwen3.6-35B-A3B-4bit; bean genmlx-5luk). Load a dense qwen3 / "
+              "qwen3_5 checkpoint, or pass {:allow-native-moe? true} to "
+              "bypass this guard at your own risk.")
+         {:genmlx/error :unsupported-model-type
+          :model-type (keyword model-type)
+          :model-path model-path}))
+       ;; Explicit :cljs-forward? always wins (keeps the borrowed forward reachable
+       ;; as a one-release fallback); otherwise default to owned iff the owned
+       ;; forward implements this checkpoint's family.
+       (let [use-cljs? (if (contains? opts :cljs-forward?)
+                         (boolean (:cljs-forward? opts))
+                         (fwd/supported? model-path))]
+         (if use-cljs?
+           (do
+             ;; Tier-B (owned path): assert the owned forward surface before use.
+             (assert-owned-forward!)
+             {:model (->CljsForwardModel (fwd/load-model model-path) (atom nil))
+              :tokenizer tokenizer
+              :type (keyword model-type)})
+           (p/let [model (.loadModel mlx-lm model-path)]
+             ;; Tier-B (upstream path): assert the loaded instance exposes the
+             ;; native forward methods — catches the genmlx-7siy stale prebuilt.
+             (assert-upstream-forward! model)
+             {:model model
+              :tokenizer tokenizer
+              :type (keyword model-type)})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Tokenizer
