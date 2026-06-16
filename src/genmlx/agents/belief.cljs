@@ -87,19 +87,30 @@
 ;; the observation geometry ONCE into a tensor and make the per-step likelihood a
 ;; pure in-graph gather, so s' can thread through as a one-hot.
 
+(def ^:private nil-obs-id
+  "Fixed sentinel obs-id reserved for the nil (uninformative) observation. Real
+   observations get ids 0.0, 1.0, … so this never collides. Reserving it lets the
+   in-graph likelihood detect the nil case explicitly and force the host nil
+   identity (all-ones L) regardless of whether OTHER worlds also yield nil — the
+   world-DEPENDENT-nil case the emergent all-ones did not cover (genmlx-2sgt)."
+  -1.0)
+
 (defn obs-id-tensor
   "Precompute the [S,W] observation-id tensor: entry [s,w] is a small float id of
-   (observe w s), with DISTINCT observations (Clojure `=`, nil included) getting
-   distinct ids. Built host-side ONCE from the host `observe` geometry; the in-graph
-   likelihood (obs-likelihood-tensor) is then a pure comparison of these ids, so it
-   matches the host `=` for ANY observe model (signpost reveal / restaurant open-set
-   / nil) without a host int per step. `worlds` is the fixed world ordering."
+   (observe w s), with DISTINCT observations (Clojure `=`) getting distinct ids and
+   nil getting the reserved nil-obs-id sentinel. Built host-side ONCE from the host
+   `observe` geometry; the in-graph likelihood (obs-likelihood-tensor) is then a
+   pure comparison of these ids, so it matches the host `=` for ANY observe model
+   (signpost reveal / restaurant open-set / nil) without a host int per step.
+   `worlds` is the fixed world ordering."
   [observe worlds S]
   (let [worlds  (vec worlds)
         ids     (atom {})
         next-id (atom 0.0)
-        id-of   (fn [o] (if-let [i (get @ids o)] i
-                          (let [i @next-id] (swap! ids assoc o i) (swap! next-id inc) i)))
+        id-of   (fn [o] (cond
+                          (nil? o)           nil-obs-id
+                          (contains? @ids o) (get @ids o)
+                          :else (let [i @next-id] (swap! ids assoc o i) (swap! next-id inc) i)))
         rows    (vec (for [s (range S)] (vec (for [w worlds] (id-of (observe w s))))))]
     (mx/array (clj->js rows) mx/float32)))
 
@@ -112,10 +123,17 @@
    world matches so L is all-ones, and filter-step(b, ones) = b (the host nil
    identity, reproduced without a fast-path)."
   [obs-tensor s-onehot true-w-onehot]
-  (let [S        (first (mx/shape obs-tensor))
+  (let [[S W]    (mx/shape obs-tensor)
         obs-row  (mx/sum (mx/multiply (mx/reshape s-onehot [S 1]) obs-tensor) [0])  ; [W]
         true-obs (mx/sum (mx/multiply obs-row true-w-onehot))                       ; []
-        L        (.astype (mx/equal obs-row true-obs) mx/float32)]                  ; [W]
+        match    (.astype (mx/equal obs-row true-obs) mx/float32)                   ; [W]
+        ;; genmlx-2sgt: when the TRUE world's obs is the nil sentinel, the host
+        ;; filter SKIPS the update unconditionally (effective L = all-ones). Force
+        ;; that explicitly so a WORLD-DEPENDENT nil observe model — where other
+        ;; worlds yield non-nil at s' — can't make L disagree with the host. The
+        ;; emergent all-ones only held when nil was world-independent.
+        is-nil   (mx/equal true-obs (mx/scalar nil-obs-id))                         ; []
+        L        (mx/where is-nil (mx/ones [W] mx/float32) match)]                  ; [W]
     L))
 
 ;; -- belief <-> vector seam (host map/vector callers <-> [W] MLX) --------------
