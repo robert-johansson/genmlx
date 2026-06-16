@@ -8,9 +8,18 @@
       :clj-reads n     ; mx/->clj reads
       :gfi-ops n       ; caller-supplied GFI-op count (not auto-instrumented)
       :particles n     ; particles processed
+      :llm-tokens n    ; host LLM decode tokens (synthesis; not GPU-membrane-visible)
+      :sci-evals n     ; host SCI form evaluations (synthesis; not GPU-membrane-visible)
       :steps n         ; steppable steps taken
       :structural n    ; static dep-graph blast radius (per model, once)
       :wall-ns n}      ; optional wall-clock (off by default)
+
+   :llm-tokens and :sci-evals are HOST-synthesis counters (genmlx-yd7c): program
+   synthesis is host-dominated (LLM decode + SCI eval), and `measure` only sees the
+   GPU-membrane deltas, so these are supplied EXPLICITLY by the synthesis steppable
+   (genmlx.control.synth-steppable) and folded via `cost+`. Within a frozen
+   proposer-stream seed they are deterministic per candidate, preserving paired-seed
+   bootstrap-CI rigor; wall-ns stays the non-deterministic cross-check only.
 
    `measure` brackets a thunk and reports the forced-eval/item/clj-read DELTAS it
    incurred, read from the honest mlx.cljs membrane counters (the sole GPU-
@@ -23,7 +32,16 @@
 (def zero
   "The empty CostMeter (all fields present so cost+ is total)."
   {:forced-evals 0 :items 0 :clj-reads 0 :gfi-ops 0
-   :particles 0 :steps 0 :structural 0 :wall-ns 0})
+   :particles 0 :llm-tokens 0 :sci-evals 0 :steps 0 :structural 0 :wall-ns 0})
+
+(defn synth-compute
+  "Total commensurate synthesis compute = host (:llm-tokens + :sci-evals) + scoring
+   (:particles) — the design's §4 net-utility cost unit for resource-rational program
+   synthesis. The GPU :forced-evals of a VECTORIZED IS run are ~O(1) in particle count
+   (one batched dispatch), so :particles is the honest depth-cost signal, not
+   :forced-evals. A scalar reduction of a CostMeter for the VOC controller's cost-key."
+  [m]
+  (+ (:llm-tokens m 0) (:sci-evals m 0) (:particles m 0)))
 
 (defn cost+
   "Additive merge of CostMeters (associative + commutative on every field).
