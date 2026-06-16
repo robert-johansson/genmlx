@@ -24,12 +24,15 @@
    the result from LLM nondeterminism; a real frozen LLM stream is a drop-in
    substitution on the same surface (the demo is model-agnostic by construction).
 
-   Net-utility = held-out-predictive-LL(committed model) − λ·compute, compute =
+   Net-utility = TEST-predictive-LL(committed model) − λ·compute, compute =
    :llm-tokens + :sci-evals + :particles (cost/synth-compute), deterministic per seed.
-   The controller's decision-value is the held-out predictive LL of its current best
-   (downstream, passes assert-downstream!; NEVER the train log-evidence). The held-out
-   predictive is EXACT closed-form for the conjugate models and high-N IS for the
-   non-conjugate one — the same oracle P0 cross-checked to ~5e-7.
+   LEAKAGE-FREE SPLIT (closes the referee's concern #3): the held-out is split into a
+   VALIDATION set (the controller's decision-value / stopping signal) and a DISJOINT TEST
+   set (the reported reward), so the controller can never optimize the quantity it is
+   scored on. The decision-value is the VALIDATION predictive LL of the current best
+   (downstream, passes assert-downstream!; NEVER the train log-evidence); the reward is
+   the TEST predictive. Both are EXACT closed-form for the conjugate models and high-N IS
+   for the non-conjugate one — the same oracle P0 cross-checked to ~5e-7.
 
    Run:  bun run --bun nbb bench/rrps.cljs            (fast: 16 seeds)
          GENMLX_BENCH=1 bun run --bun nbb bench/rrps.cljs   (full: 40 seeds, frozen artifact)
@@ -55,45 +58,57 @@
 ;; Task (shared lineage with bench/rrps_p0.cljs — self-contained per bench convention)
 ;; ===========================================================================
 (def TAU 3.0) (def SIGMA 1.0) (def NU 2.0)
-(def TRAIN-IDX [0 1 2 3 6 7 8 9]) (def TEST-IDX [4 5 10 11])
-(def G1-TRAIN [0 1 2 3]) (def G1-FULL [0 1 2 3 4 5])
-(def G2-TRAIN [6 7 8 9]) (def G2-FULL [6 7 8 9 10 11]) (def ALL-IDX (vec (range 12)))
+;; k=20, 2 groups of 10 (g1=0..9, g2=10..19). The held-out is split into a VALIDATION set
+;; (the controller's decision-value / stopping signal) and a DISJOINT TEST set (the
+;; reported reward), so the controller can never optimize the quantity it is scored on —
+;; the leakage-free design the referee requires. 3 val + 3 test points per group (6+6),
+;; enough to estimate the heavy-tailed (Student-t, nu=2) predictive faithfully so the
+;; validation signal is a good proxy for the test reward.
+(def TRAIN-IDX [0 1 2 3 10 11 12 13])
+(def VAL-IDX   [4 5 6 14 15 16])      ;; controller dv (stopping signal) — never the reward
+(def TEST-IDX  [7 8 9 17 18 19])      ;; reported reward — DISJOINT from VAL
+(def TRAINVAL-IDX  [0 1 2 3 4 5 6 10 11 12 13 14 15 16])
+(def TRAINTEST-IDX [0 1 2 3 7 8 9 10 11 12 13 17 18 19])
+(def G1-TRAIN [0 1 2 3]) (def G1-TRAINVAL [0 1 2 3 4 5 6]) (def G1-TRAINTEST [0 1 2 3 7 8 9])
+(def G2-TRAIN [10 11 12 13]) (def G2-TRAINVAL [10 11 12 13 14 15 16]) (def G2-TRAINTEST [10 11 12 13 17 18 19])
+(def ALL-IDX (vec (range 20)))
 (def MU-EASY 2.0) (def SEP-HARD 3.0)
 
 (def c1-train (dyn/auto-key (gen [] (let [mu (trace :mu (dist/gaussian 0 3.0))]
   (trace :y0 (dist/gaussian mu 1.0)) (trace :y1 (dist/gaussian mu 1.0)) (trace :y2 (dist/gaussian mu 1.0))
-  (trace :y3 (dist/gaussian mu 1.0)) (trace :y6 (dist/gaussian mu 1.0)) (trace :y7 (dist/gaussian mu 1.0))
-  (trace :y8 (dist/gaussian mu 1.0)) (trace :y9 (dist/gaussian mu 1.0)) mu))))
-(def c1-full (dyn/auto-key (gen [] (let [mu (trace :mu (dist/gaussian 0 3.0))]
-  (trace :y0 (dist/gaussian mu 1.0)) (trace :y1 (dist/gaussian mu 1.0)) (trace :y2 (dist/gaussian mu 1.0))
-  (trace :y3 (dist/gaussian mu 1.0)) (trace :y4 (dist/gaussian mu 1.0)) (trace :y5 (dist/gaussian mu 1.0))
-  (trace :y6 (dist/gaussian mu 1.0)) (trace :y7 (dist/gaussian mu 1.0)) (trace :y8 (dist/gaussian mu 1.0))
-  (trace :y9 (dist/gaussian mu 1.0)) (trace :y10 (dist/gaussian mu 1.0)) (trace :y11 (dist/gaussian mu 1.0)) mu))))
+  (trace :y3 (dist/gaussian mu 1.0)) (trace :y10 (dist/gaussian mu 1.0)) (trace :y11 (dist/gaussian mu 1.0))
+  (trace :y12 (dist/gaussian mu 1.0)) (trace :y13 (dist/gaussian mu 1.0)) mu))))
 (def c2-train (dyn/auto-key (gen [] (let [mu1 (trace :mu1 (dist/gaussian 0 3.0)) mu2 (trace :mu2 (dist/gaussian 0 3.0))]
   (trace :y0 (dist/gaussian mu1 1.0)) (trace :y1 (dist/gaussian mu1 1.0)) (trace :y2 (dist/gaussian mu1 1.0))
-  (trace :y3 (dist/gaussian mu1 1.0)) (trace :y6 (dist/gaussian mu2 1.0)) (trace :y7 (dist/gaussian mu2 1.0))
-  (trace :y8 (dist/gaussian mu2 1.0)) (trace :y9 (dist/gaussian mu2 1.0)) [mu1 mu2]))))
-(def c2-full (dyn/auto-key (gen [] (let [mu1 (trace :mu1 (dist/gaussian 0 3.0)) mu2 (trace :mu2 (dist/gaussian 0 3.0))]
-  (trace :y0 (dist/gaussian mu1 1.0)) (trace :y1 (dist/gaussian mu1 1.0)) (trace :y2 (dist/gaussian mu1 1.0))
-  (trace :y3 (dist/gaussian mu1 1.0)) (trace :y4 (dist/gaussian mu1 1.0)) (trace :y5 (dist/gaussian mu1 1.0))
-  (trace :y6 (dist/gaussian mu2 1.0)) (trace :y7 (dist/gaussian mu2 1.0)) (trace :y8 (dist/gaussian mu2 1.0))
-  (trace :y9 (dist/gaussian mu2 1.0)) (trace :y10 (dist/gaussian mu2 1.0)) (trace :y11 (dist/gaussian mu2 1.0)) [mu1 mu2]))))
+  (trace :y3 (dist/gaussian mu1 1.0)) (trace :y10 (dist/gaussian mu2 1.0)) (trace :y11 (dist/gaussian mu2 1.0))
+  (trace :y12 (dist/gaussian mu2 1.0)) (trace :y13 (dist/gaussian mu2 1.0)) [mu1 mu2]))))
 (def cflex-train (dyn/auto-key (gen [] (let [mu1 (trace :mu1 (dist/gaussian 0 3.0)) mu2 (trace :mu2 (dist/gaussian 0 3.0))]
   (trace :y0 (dist/student-t 2.0 mu1 1.0)) (trace :y1 (dist/student-t 2.0 mu1 1.0)) (trace :y2 (dist/student-t 2.0 mu1 1.0))
-  (trace :y3 (dist/student-t 2.0 mu1 1.0)) (trace :y6 (dist/student-t 2.0 mu2 1.0)) (trace :y7 (dist/student-t 2.0 mu2 1.0))
-  (trace :y8 (dist/student-t 2.0 mu2 1.0)) (trace :y9 (dist/student-t 2.0 mu2 1.0)) [mu1 mu2]))))
-(def cflex-full (dyn/auto-key (gen [] (let [mu1 (trace :mu1 (dist/gaussian 0 3.0)) mu2 (trace :mu2 (dist/gaussian 0 3.0))]
+  (trace :y3 (dist/student-t 2.0 mu1 1.0)) (trace :y10 (dist/student-t 2.0 mu2 1.0)) (trace :y11 (dist/student-t 2.0 mu2 1.0))
+  (trace :y12 (dist/student-t 2.0 mu2 1.0)) (trace :y13 (dist/student-t 2.0 mu2 1.0)) [mu1 mu2]))))
+;; Cflex predictive models for the leakage-free split: train+val (14 sites) and
+;; train+test (14 sites), group1 over mu1, group2 over mu2. Non-conjugate -> high-N IS.
+(def cflex-train-val (dyn/auto-key (gen [] (let [mu1 (trace :mu1 (dist/gaussian 0 3.0)) mu2 (trace :mu2 (dist/gaussian 0 3.0))]
   (trace :y0 (dist/student-t 2.0 mu1 1.0)) (trace :y1 (dist/student-t 2.0 mu1 1.0)) (trace :y2 (dist/student-t 2.0 mu1 1.0))
   (trace :y3 (dist/student-t 2.0 mu1 1.0)) (trace :y4 (dist/student-t 2.0 mu1 1.0)) (trace :y5 (dist/student-t 2.0 mu1 1.0))
-  (trace :y6 (dist/student-t 2.0 mu2 1.0)) (trace :y7 (dist/student-t 2.0 mu2 1.0)) (trace :y8 (dist/student-t 2.0 mu2 1.0))
-  (trace :y9 (dist/student-t 2.0 mu2 1.0)) (trace :y10 (dist/student-t 2.0 mu2 1.0)) (trace :y11 (dist/student-t 2.0 mu2 1.0)) [mu1 mu2]))))
+  (trace :y6 (dist/student-t 2.0 mu1 1.0))
+  (trace :y10 (dist/student-t 2.0 mu2 1.0)) (trace :y11 (dist/student-t 2.0 mu2 1.0)) (trace :y12 (dist/student-t 2.0 mu2 1.0))
+  (trace :y13 (dist/student-t 2.0 mu2 1.0)) (trace :y14 (dist/student-t 2.0 mu2 1.0)) (trace :y15 (dist/student-t 2.0 mu2 1.0))
+  (trace :y16 (dist/student-t 2.0 mu2 1.0)) [mu1 mu2]))))
+(def cflex-train-test (dyn/auto-key (gen [] (let [mu1 (trace :mu1 (dist/gaussian 0 3.0)) mu2 (trace :mu2 (dist/gaussian 0 3.0))]
+  (trace :y0 (dist/student-t 2.0 mu1 1.0)) (trace :y1 (dist/student-t 2.0 mu1 1.0)) (trace :y2 (dist/student-t 2.0 mu1 1.0))
+  (trace :y3 (dist/student-t 2.0 mu1 1.0)) (trace :y7 (dist/student-t 2.0 mu1 1.0)) (trace :y8 (dist/student-t 2.0 mu1 1.0))
+  (trace :y9 (dist/student-t 2.0 mu1 1.0))
+  (trace :y10 (dist/student-t 2.0 mu2 1.0)) (trace :y11 (dist/student-t 2.0 mu2 1.0)) (trace :y12 (dist/student-t 2.0 mu2 1.0))
+  (trace :y13 (dist/student-t 2.0 mu2 1.0)) (trace :y17 (dist/student-t 2.0 mu2 1.0)) (trace :y18 (dist/student-t 2.0 mu2 1.0))
+  (trace :y19 (dist/student-t 2.0 mu2 1.0)) [mu1 mu2]))))
 
 ;; The frozen proposer stream (P1): simple structure first, the conjugate competitor
 ;; second, the heavy-tailed truth last.
 (def stream
-  [{:id :C1 :conjugate? true  :train c1-train :full c1-full}
-   {:id :C2 :conjugate? true  :train c2-train :full c2-full}
-   {:id :Cflex :conjugate? false :train cflex-train :full cflex-full}])
+  [{:id :C1 :conjugate? true  :train c1-train}
+   {:id :C2 :conjugate? true  :train c2-train}
+   {:id :Cflex :conjugate? false :train cflex-train}])
 
 (defn nn-marginal-closed [ys tau sigma]
   (let [k (count ys) s2 (* sigma sigma) t2 (* tau tau)
@@ -117,25 +132,35 @@
       (let [[ks k1] (rng/split k)
             sgn (if (< (lcg1 (+ 880000 seed)) 0.5) -1.0 1.0)
             mu (+ (* sgn MU-EASY) (mx/item (dist/sample (dist/gaussian 0 0.5) ks)))
-            ys (loop [t 0 kk k1 acc []] (if (>= t 12) acc
+            ys (loop [t 0 kk k1 acc []] (if (>= t 20) acc
                  (let [[ky k2] (rng/split kk)] (recur (inc t) k2 (conj acc (mx/item (dist/sample (dist/gaussian (mx/scalar mu) (mx/scalar SIGMA)) ky)))))))]
         {:type :easy :true-id :C1 :ys (vec ys)})
       (let [[ka kb] (rng/split k) half (/ SEP-HARD 2.0)
             mu1 (+ (- half) (mx/item (dist/sample (dist/gaussian 0 0.4) ka)))
             [kc kd] (rng/split kb) mu2 (+ half (mx/item (dist/sample (dist/gaussian 0 0.4) kc)))
-            ys (loop [t 0 kk kd acc []] (if (>= t 12) acc
-                 (let [[ky k2] (rng/split kk) m (if (< t 6) mu1 mu2)]
+            ys (loop [t 0 kk kd acc []] (if (>= t 20) acc
+                 (let [[ky k2] (rng/split kk) m (if (< t 10) mu1 mu2)]
                    (recur (inc t) k2 (conj acc (mx/item (dist/sample (dist/student-t (mx/scalar NU) (mx/scalar m) (mx/scalar SIGMA)) ky)))))))]
         {:type :hard :true-id :Cflex :ys (vec ys)}))))
 
 (def HELDOUT-IS-N (if (aget (.-env js/process) "GENMLX_BENCH") 16000 8000))
 
-(defn heldout-ll [id ys seed]
+;; Held-out predictive log-likelihood of a structure, on the VALIDATION set (which=:val,
+;; the controller's stopping signal) or the DISJOINT TEST set (which=:test, the reported
+;; reward) = log-evidence(train+P) - log-evidence(train). Exact closed-form for the
+;; conjugate structures; high-N IS for the non-conjugate Cflex. The two index sets share
+;; no observation, so optimizing the val predictive cannot inflate the test predictive.
+(defn predictive-ll [id ys which seed]
   (case id
-    :C1 (- (nn-marginal-closed (pick ys ALL-IDX) TAU SIGMA) (nn-marginal-closed (pick ys TRAIN-IDX) TAU SIGMA))
-    :C2 (+ (- (nn-marginal-closed (pick ys G1-FULL) TAU SIGMA) (nn-marginal-closed (pick ys G1-TRAIN) TAU SIGMA))
-           (- (nn-marginal-closed (pick ys G2-FULL) TAU SIGMA) (nn-marginal-closed (pick ys G2-TRAIN) TAU SIGMA)))
-    :Cflex (let [f (is-log-ml cflex-full ys ALL-IDX HELDOUT-IS-N (rng/fresh-key (+ 610000 seed)))
+    :C1 (let [tv (if (= which :val) TRAINVAL-IDX TRAINTEST-IDX)]
+          (- (nn-marginal-closed (pick ys tv) TAU SIGMA) (nn-marginal-closed (pick ys TRAIN-IDX) TAU SIGMA)))
+    :C2 (let [[g1tv g2tv] (if (= which :val) [G1-TRAINVAL G2-TRAINVAL] [G1-TRAINTEST G2-TRAINTEST])]
+          (+ (- (nn-marginal-closed (pick ys g1tv) TAU SIGMA) (nn-marginal-closed (pick ys G1-TRAIN) TAU SIGMA))
+             (- (nn-marginal-closed (pick ys g2tv) TAU SIGMA) (nn-marginal-closed (pick ys G2-TRAIN) TAU SIGMA))))
+    :Cflex (let [[model idx kb] (if (= which :val)
+                                  [cflex-train-val TRAINVAL-IDX 611000]
+                                  [cflex-train-test TRAINTEST-IDX 631000])
+                 f (is-log-ml model ys idx HELDOUT-IS-N (rng/fresh-key (+ kb seed)))
                  t (is-log-ml cflex-train ys TRAIN-IDX HELDOUT-IS-N (rng/fresh-key (+ 620000 seed)))]
              (mx/clear-cache!) (- f t))))
 
@@ -184,14 +209,16 @@
                                   :init-depth 64 :deepen-factor 2 :max-depth 512 :deepen-margin 3.0
                                   :proposal-cost (fn [_] PROP-COST)})
         be-fn (:best-entry base)
-        dv-fn (fn [st] (if-let [be (be-fn st)] (get heldout (:id be)) -1e18))
+        ;; decision-value = VALIDATION predictive of the current best (NEVER the test set)
+        dv-fn (fn [st] (if-let [be (be-fn st)] (:val (get heldout (:id be))) -1e18))
         mr (ctrl/make-metareasoner {:lambda lambda :decision-value-fn dv-fn
                                     :cost-key cost/synth-compute :hysteresis hysteresis :alpha ##Inf})
         ctl ((:control mr) base)
         out (proc/with-deadline (:init ctl) (:step ctl) (:done? ctl) (:best ctl)
                                 {:budget-ms 120000 :chunk 1 :gc-every 0})
         st (:state out) sel (:best out)
-        compute (cost/synth-compute (:total-cost st)) reward (get heldout sel)]
+        ;; reward = DISJOINT TEST predictive of the committed best (the leakage-free metric)
+        compute (cost/synth-compute (:total-cost st)) reward (:test (get heldout sel))]
     (mx/clear-cache!)
     {:method (if (= hysteresis 1) :meta-greedy :controller)
      :selected sel :reward reward :compute compute :net-utility (- reward (* lambda compute))
@@ -207,8 +234,9 @@
         n-is (count (filter #(not (:conjugate? %)) revealed))
         compute (+ (* n PROP-UNITS) (* n-is depth))]
     (mx/clear-cache!)
-    {:method :fixed :n n :depth depth :selected sel :reward (get heldout sel)
-     :compute compute :net-utility (- (get heldout sel) (* lambda compute))}))
+    (let [reward (:test (get heldout sel))]
+      {:method :fixed :n n :depth depth :selected sel :reward reward
+       :compute compute :net-utility (- reward (* lambda compute))})))
 
 (defn run-threshold
   "Non-VOC heuristic stopper (a fair baseline): reveal candidates in order, SELECT by
@@ -224,25 +252,26 @@
     (loop [i 0, best-id nil, best-ev -1e18, prev-dv -1e18, compute 0]
       (if (>= i (count stream))
         (do (mx/clear-cache!)
-            {:method :threshold :selected best-id :reward (get heldout best-id)
-             :compute compute :net-utility (- (get heldout best-id) (* lambda compute))})
+            {:method :threshold :selected best-id :reward (:test (get heldout best-id))
+             :compute compute :net-utility (- (:test (get heldout best-id)) (* lambda compute))})
         (let [c (nth stream i)
               {:keys [log-ml conjugate?]} (score-result c ys 64 seed)  ;; train-evidence @ depth 64
               compute' (+ compute PROP-UNITS (if conjugate? 0 64))
               [bid bev] (if (> log-ml best-ev) [(:id c) log-ml] [best-id best-ev])
-              dv (get heldout bid)                ;; held-out predictive of the best-by-evidence
+              dv (:val (get heldout bid))         ;; VALIDATION predictive of best-by-evidence (like the controller)
               improved (- dv prev-dv)]
           (if (and (pos? i) (< improved eps))
             (do (mx/clear-cache!)
-                {:method :threshold :selected bid :reward (get heldout bid)
-                 :compute compute' :net-utility (- (get heldout bid) (* lambda compute'))})
+                {:method :threshold :selected bid :reward (:test (get heldout bid))
+                 :compute compute' :net-utility (- (:test (get heldout bid)) (* lambda compute'))})
             (recur (inc i) bid bev dv compute')))))))
 
 (defn run-llm-only
   "Ablate the evidence scorer: commit the FIRST proposal (no scoring-based selection)."
   [seed lambda heldout]
-  {:method :llm-only :selected :C1 :reward (get heldout :C1)
-   :compute PROP-UNITS :net-utility (- (get heldout :C1) (* lambda PROP-UNITS))})
+  (let [reward (:test (get heldout :C1))]
+    {:method :llm-only :selected :C1 :reward reward
+     :compute PROP-UNITS :net-utility (- reward (* lambda PROP-UNITS))}))
 
 ;; ===========================================================================
 ;; Sweep + title resolution
@@ -258,7 +287,9 @@
         _ (println (str "\n== RRPS sweep: " seeds-n " seeds, lambda=" lambdas
                         ", held-out IS N=" HELDOUT-IS-N " ==\n  precomputing held-out cache..."))
         heldout (into {} (map (fn [s] (let [{:keys [ys]} (gen-instance s)]
-                                        [s {:C1 (heldout-ll :C1 ys s) :C2 (heldout-ll :C2 ys s) :Cflex (heldout-ll :Cflex ys s)}])) seeds))
+                                        [s (into {} (map (fn [id] [id {:val (predictive-ll id ys :val s)
+                                                                       :test (predictive-ll id ys :test s)}])
+                                                         [:C1 :C2 :Cflex]))])) seeds))
         types (into {} (map (fn [s] [s (instance-type s)]) seeds))
         true-ids (into {} (map (fn [s] [s (:true-id (gen-instance s))]) seeds))
         per-lambda
@@ -387,11 +418,12 @@
                   "gate; IS bias is one-directional) — recovering the heavy-tailed truth that shallow IS "
                   "under-rates. That on-demand deepening is why meta-greedy beats the fixed-depth "
                   "threshold-stopper (CI-lo>0). Both knobs (when-to-propose, when-to-deepen) contribute.")
-             (str "- **Decision-value vs reward:** the controller's dv and the reported reward are the SAME "
-                  "held-out predictive set (validation-based cost-aware early stopping, reported on the "
-                  "validation set). The adaptivity-ablation control (CI-lo>0) shows the win comes from "
-                  "PER-INSTANCE allocation, not from held-out access per se: replacing the controller by its own "
-                  "mean budget — same held-out access — loses. A fully separate test split is a clean-up refinement.")
+             (str "- **Decision-value and reward are on DISJOINT splits (leakage-free):** the controller's dv "
+                  "is the predictive on a VALIDATION set (idx " (pr-str VAL-IDX) ") and the reported reward is "
+                  "the predictive on a DISJOINT TEST set (idx " (pr-str TEST-IDX) ") — the controller can never "
+                  "optimize the quantity it is scored on. The win below is measured on the held-out TEST split, "
+                  "and the adaptivity-ablation control (CI-lo>0) further shows it comes from PER-INSTANCE "
+                  "allocation, not from validation access per se.")
              (str "- **Exactness is load-bearing** (vs ModelSMC, docs/rrps-literature.md): the evidence oracle "
                   "is EXACT closed-form for the conjugate majority (P0 cross-check ~5e-7); IS appears only where "
                   "unavoidable (the non-conjugate candidate), and the held-out reward there is high-N IS.")))
