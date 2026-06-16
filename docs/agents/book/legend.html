@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-4cf37326.js";
+            window.path_to_searchindex_js = "searchindex-c5b2276e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -224,6 +224,15 @@ centre; all four are equidistant, so an optimal Pac-Man’s choice is pure value
 <li><strong><code>haunted-maze</code></strong> — a hidden-state maze whose true rewarding cache is revealed only
 at a signpost floor cell (the POMDP chapter).</li>
 </ul>
+<h2 id="the-maze-rendered"><a class="header" href="#the-maze-rendered">The maze, rendered</a></h2>
+<p>Every figure in this book is a <strong>live capture</strong> of real GenMLX inference, produced by
+<code>bin/agents-book-figures</code>. Here is <code>classic-maze</code> itself — the floor shaded by the
+agent’s value function <code>V(s)</code> (brighter = higher value), Pac-Man at the centre, and
+the four corner caches (pellet, cyan power pellet, red fruit):</p>
+<p><img src="figures/classic-value.png" alt="The classic Pac-Man maze with the value function V(s) shaded onto the floor; Pac-Man at the centre, a pellet top-left, a cyan power pellet top-right, red fruit bottom-left, and a pellet bottom-right."></p>
+<p>And the optimal Pac-Man rolling out from the centre to the highest-value cache — the
+fruit — one frame per step:</p>
+<p><img src="figures/classic-rollout.gif" alt="Animation of the optimal Pac-Man walking left then down through the maze to reach the fruit."></p>
 
                     </main>
 

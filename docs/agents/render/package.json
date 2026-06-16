@@ -1,0 +1,11 @@
+{
+  "name": "genmlx-agents-figures",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "In-tree live-figure pipeline for the GenMLX Agents book: a ctx-agnostic Canvas2D renderer + headless PNG/GIF capture. No cs188-cljs dependency (vendored in-tree per milestone genmlx-ez2i).",
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.0",
+    "gifenc": "^1.0.3"
+  }
+}

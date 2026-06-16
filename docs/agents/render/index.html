@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GenMLX Agents — Canvas2D renderer (browser)</title>
+  <style>
+    body { background:#0b1026; color:#e6e9ff; font-family:system-ui,sans-serif; text-align:center; padding:24px; }
+    canvas { margin:18px; box-shadow:0 4px 24px rgba(0,0,0,.4); }
+    code { background:#1b2347; padding:1px 6px; border-radius:4px; }
+    p { color:#8b93c4; }
+  </style>
+</head>
+<body>
+  <h2>GenMLX Agents — the Canvas2D renderer, in a browser</h2>
+  <p>The same <code>pacman-render.mjs</code> that the headless figure pipeline uses drives this live canvas — proof the renderer is context-agnostic.</p>
+  <p><small>Serve over http (<code>python3 -m http.server</code>) — ES-module imports are blocked on <code>file://</code>.</small></p>
+  <canvas id="c"></canvas>
+  <script type="module">
+    import { renderFrame, frameSize } from './pacman-render.mjs';
+    const cell = 52;
+    const grid = [
+      ['wall','wall','wall','wall','wall'],
+      ['wall','pellet','pacman','power','wall'],
+      ['wall','fruit','path','ghost','wall'],
+    ];
+    const cells = [];
+    for (const row of grid) for (const role of row) cells.push({ glyph:'', role, value: role === 'path' ? 0.6 : null });
+    const frame = { W:5, H:3, cells, meta:{ step:1, action:'right' } };
+    const { width, height } = frameSize(frame, cell);
+    const cv = document.getElementById('c'); cv.width = width; cv.height = height;
+    renderFrame(cv.getContext('2d'), frame, { cell });
+  </script>
+</body>
+</html>

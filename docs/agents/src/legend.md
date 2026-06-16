@@ -42,3 +42,17 @@ library apply to a Pac-Man maze unchanged.
   (the inverse-planning setup: the first step reveals the preference).
 - **`haunted-maze`** — a hidden-state maze whose true rewarding cache is revealed only
   at a signpost floor cell (the POMDP chapter).
+
+## The maze, rendered
+
+Every figure in this book is a **live capture** of real GenMLX inference, produced by
+`bin/agents-book-figures`. Here is `classic-maze` itself — the floor shaded by the
+agent's value function `V(s)` (brighter = higher value), Pac-Man at the centre, and
+the four corner caches (pellet, cyan power pellet, red fruit):
+
+![The classic Pac-Man maze with the value function V(s) shaded onto the floor; Pac-Man at the centre, a pellet top-left, a cyan power pellet top-right, red fruit bottom-left, and a pellet bottom-right.](figures/classic-value.png)
+
+And the optimal Pac-Man rolling out from the centre to the highest-value cache — the
+fruit — one frame per step:
+
+![Animation of the optimal Pac-Man walking left then down through the maze to reach the fruit.](figures/classic-rollout.gif)

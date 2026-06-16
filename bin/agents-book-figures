@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Regenerate ALL GenMLX Agents book figures from scratch, deterministically.
+#   stage 1: run the genmlx.agents Pac-Man substrate (nbb + MLX) -> data JSON
+#   stage 2: render the data to PNG/GIF (headless @napi-rs/canvas + gifenc)
+# Output lands in docs/agents/src/figures/ (committed; served by GitHub Pages).
+set -euo pipefail
+cd "$(dirname "$0")/.."   # repo root
+
+echo "[1/2] stage 1 — computing figure data (nbb + MLX)"
+bun run --bun nbb docs/agents/render/figures.cljs
+
+echo "[2/2] stage 2 — rendering figures (Canvas2D)"
+if [ ! -d docs/agents/render/node_modules ]; then
+  echo "  (installing render deps: @napi-rs/canvas + gifenc)"
+  npm install --prefix docs/agents/render
+fi
+node docs/agents/render/build-figures.mjs
+
+echo "done."
