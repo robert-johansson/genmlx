@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# GenMLX Agents book — one-command verification gate (genmlx-ellz, E7).
+#
+# Serial by design (no parallel GPU, per the metal-wedge constraint). Certifies:
+#   1. every book example runs with zero FAIL          (E7.1)
+#   2. all figures regenerate from real inference        (E7.2)
+#   3. the mdBook builds clean                           (E7.2)
+#   4. public-repo hygiene: no cross-repo (cs188-cljs / sibling-repo) imports
+#
+# Usage: bin/agents-book-verify
+set -uo pipefail
+cd "$(dirname "$0")/.."
+fail=0
+
+echo "== [1/4] book examples run green (serial) =="
+for f in examples/agentmodels/*.cljs; do
+  b=$(basename "$f")
+  case "$b" in harness.cljs) echo "  skip  $b (library, no entry point)"; continue;; esac
+  if timeout 280 bun run --bun nbb "$f" >"/tmp/abv_$b.log" 2>&1; then
+    echo "  PASS  $b"
+  else
+    echo "  FAIL  $b  (see /tmp/abv_$b.log)"; fail=1
+  fi
+done
+
+echo "== [2/4] regenerate all figures =="
+if bash bin/agents-book-figures >/tmp/abv_figs.log 2>&1; then
+  echo "  PASS  $(grep -c 'bytes)' /tmp/abv_figs.log) figures regenerated"
+else
+  echo "  FAIL  figure regeneration (see /tmp/abv_figs.log)"; fail=1
+fi
+
+echo "== [3/4] mdbook build =="
+if ( cd docs/agents && mdbook build ) >/tmp/abv_book.log 2>&1; then
+  echo "  PASS  book builds (docs/agents/book/)"
+else
+  echo "  FAIL  mdbook build (see /tmp/abv_book.log)"; fail=1
+fi
+
+echo "== [4/4] public-repo hygiene (no cross-repo imports) =="
+# Definitive checks: the sibling repo lives under ~/code/Artificial-Intelligence/...;
+# importing it would surface that path, a cs188 cljs require, or a cs188 npm dep.
+hits=$(
+  grep -rn "Artificial-Intelligence" docs/agents src/genmlx/agents 2>/dev/null
+  grep -rnE "\(:require|:as " docs/agents/render src/genmlx/agents 2>/dev/null | grep -iE "cs188"
+  grep -rnE "from +['\"][^'\"]*cs188|require\(['\"][^'\"]*cs188" docs/agents/render 2>/dev/null
+  grep -n '"cs188' docs/agents/render/package.json 2>/dev/null
+)
+if [ -z "$hits" ]; then
+  echo "  PASS  no cs188-cljs / sibling-repo imports"
+else
+  echo "  FAIL  cross-repo import(s) found:"; echo "$hits"; fail=1
+fi
+
+echo ""
+if [ "$fail" -eq 0 ]; then
+  echo "ALL GREEN — GenMLX Agents book verified (examples + figures + build + hygiene)."
+else
+  echo "VERIFICATION FAILED."; exit 1
+fi

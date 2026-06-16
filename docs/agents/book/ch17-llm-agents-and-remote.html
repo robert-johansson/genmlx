@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e7e4764f.js";
+            window.path_to_searchindex_js = "searchindex-e255d9ad.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -180,24 +180,117 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="beyond-agentmodels-llm-as-policy-llm-over-agent-and-remote-environments"><a class="header" href="#beyond-agentmodels-llm-as-policy-llm-over-agent-and-remote-environments">Beyond agentmodels: LLM-as-Policy, LLM-over-Agent, and Remote Environments</a></h1>
+                        <h1 id="beyond-agentmodels-llm-policies-and-remote-environments"><a class="header" href="#beyond-agentmodels-llm-policies-and-remote-environments">Beyond agentmodels: LLM Policies and Remote Environments</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org extension beyond agentmodels (Phase 3 external environment + LLM agents); thematically continues 4 / 6.</p>
+<p><strong>Beyond agentmodels.org.</strong> This capstone is the unfrozen frontier of
+<code>genmlx.agents</code> — it goes past the textbook to two ideas the GFI makes almost
+free: the <em>policy</em> of an agent can be a language model, and the <em>environment</em> an
+agent acts in can live on the other end of a network connection. Both fall out of
+the same thesis we have leaned on all book — an agent is a generative function —
+with <strong>zero engine change</strong>.</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
-<p>LLM-as-policy = a Pac-Man whose action logits ARE an LLM’s p/assess log-probs over up/down/left/right given a state description. LLM-over-agent = inverse planning over a hidden goal that FUSES the agent-GF likelihood P(action|goal) with an LLM reasoner P_LLM(yes|goal). Remote = a Gym-style episodic transport running a Pac-Man MDP/POMDP env as an HTTP service (genmlx.world.net), with async client rollouts crossing the wire.</p>
-<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> partial — LLM-as-policy and LLM-over-agent exist and are tested but SKIP when qwen3-0.6b is absent (no always-on regression): test/genmlx/agents_llm_policy_test.cljs (per-action LLM logits, p/assess==logsoftmax, reproducible, state-dependent) + test/genmlx/agents_llm_inverse_test.cljs (fused agent+LLM posterior, g* optimal-action MAP). Remote is explicitly PROVISIONAL/unfrozen: src/genmlx/agents/remote.cljs (gym-transport, mdp-env-handler, pomdp-env-handler, remote-mdp-rollout, remote-pomdp-rollout) marked maturity:partial in CONTRACTS.md. Mark this chapter clearly as the unfrozen frontier; the cs188 layout→genmlx bridge (~20 lines) for a live remote Pac-Man env is must-write.</li>
-</ul>
-<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
-<ul>
-<li>ch17-llm-policy.png — LLM per-action logits → softmax action bars for a maze state</li>
-<li>ch17-llm-inverse.png — fused agent+LLM posterior over hidden goal bars</li>
-<li>ch17-remote-rollout.gif — Pac-Man driven over the HTTP gym transport (live remote env)</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>Every chapter so far has hand-built Pac-Man’s policy: a softmax over expected
+utilities, a biased recursion, a belief-mixed Q-row. But the policy is just a
+generative function with one <code>:action</code> site. Nothing says we have to write it
+ourselves. What if the distribution over actions came from a <em>language model</em>? And
+what if the maze Pac-Man walks were not a tensor in this process, but a service
+answering over HTTP? This chapter shows both, on the same maze, through the same
+GFI.</p>
+<h2 id="an-llm-in-policy-position"><a class="header" href="#an-llm-in-policy-position">An LLM in policy position</a></h2>
+<p>The idea is exact, not metaphorical: make the per-action policy logits <em>be</em> a
+language model’s own log-probabilities. We describe the state in words, and for
+each move word — <code>" left" " right" " up" " down"</code>, aligned to the gridworld action
+indices — we ask the LLM how likely it is to say that word next. That likelihood is
+recovered through the GFI, with <code>p/assess</code> on the LLM generative function:</p>
+<pre><code class="language-clojure">(defn action-logprob
+  "log p(action tokens | state prompt) via the LLM GF's GFI assess op."
+  [llm-gf prompt-ids act-ids]
+  (let [n           (count act-ids)
+        constraints (reduce (fn [cm i]
+                              (cm/set-value cm (keyword (str "t" i))
+                                            (mx/scalar (nth act-ids i) mx/int32)))
+                            cm/EMPTY (range n))]
+    (-&gt;num (:weight (p/assess llm-gf [prompt-ids n] constraints)))))
+</code></pre>
+<p>The LLM generative function traces one categorical token per position (<code>:t0</code>,
+<code>:t1</code>, …); constraining those sites to an action word’s token ids and calling
+<code>p/assess</code> returns exactly <code>log p(word | prompt)</code>. Do that for all four words and
+you have four numbers — the policy logits at this state:</p>
+<pre><code class="language-clojure">(defn llm-action-logits
+  "The four policy logits at a state: each is the LLM GF's assess log-prob of the
+   corresponding action word given the (pre-encoded) state prompt."
+  [llm-gf prompt-ids act-id-lists]
+  {:logits (mapv #(action-logprob llm-gf prompt-ids %) act-id-lists)
+   :ntoks  (mapv count act-id-lists)})
+</code></pre>
+<p>And now the punchline. The policy itself is the <em>same</em> categorical generative
+function we have used since Chapter 2 — only its logits happen to come from a
+transformer:</p>
+<pre><code class="language-clojure">(def action-policy
+  (gen [logits] (trace :action (dist/categorical logits))))
+</code></pre>
+<p>That is the entire composition. <code>p/simulate</code> samples an action from the LLM’s
+distribution; <code>p/assess</code> scores one; <code>p/generate</code> constrains one — all through the
+ordinary handler, with no custom dispatch and no change to the engine. The
+companion check (<code>agents_llm_policy_test</code>, which skips cleanly when no model is
+present) pins the GFI nesting: the policy’s <code>p/assess</code> weight equals
+<code>logsoftmax(LLM logits)[a]</code> to <code>1e-3</code>, the four <code>p/generate</code> weights exponentiate
+to a distribution summing to <code>1</code>, the same key reproduces the same action, and the
+distribution genuinely varies from cell to cell — the LLM is conditioning on the
+state, not parroting a constant.</p>
+<p><strong>One honest caveat.</strong> A 0.6-billion-parameter base model is <em>not</em> a competent
+gridworld planner, and we never assert that it is. What this proves is the
+<em>composition</em> — a language model dropped into policy position, scored and sampled
+through the GFI like any other distribution — not that the LLM plans well. The
+inverse direction is just as natural: <strong>LLM-over-agent</strong> inference fuses the
+agent-GF likelihood <code>P(action | goal)</code> with a language-model reasoner about goals,
+so the posterior over what Pac-Man wants is informed by both its trajectory and a
+model’s prior over plausible intentions.</p>
+<h2 id="a-maze-on-the-other-end-of-a-wire"><a class="header" href="#a-maze-on-the-other-end-of-a-wire">A maze on the other end of a wire</a></h2>
+<p>The second frontier moves the <em>environment</em> out of process. The agent/environment
+boundary — act, transition, observe — is exactly the boundary a network draws, so
+<code>genmlx.agents.remote</code> reifies it as real HTTP over the <code>genmlx.world.net</code> membrane.
+Bridging a Pac-Man maze into a served environment is a one-liner: compile the ASCII
+maze to MDP tensors, hand them to the environment handler, and let the membrane host
+it:</p>
+<pre><code class="language-clojure">(defn pacman-remote-handler
+  "The cs188-layout -&gt; genmlx-remote bridge: compile a Pac-Man ASCII maze into a
+   build-mdp bundle and hand it to remote/mdp-env-handler — the single handler that
+   genmlx.world.net/serve! hosts."
+  [maze &amp; [opts]]
+  (remote/mdp-env-handler (pac/pacman-mdp {:ascii maze}) opts))
+</code></pre>
+<p>The world’s true location now lives <em>behind</em> the membrane, in a server-side cell
+the agent cannot see; the agent learns where it landed only by receiving the next
+observation across the wire. Driving it is the same act/transition loop as
+<code>simulate-mdp</code>, except the transition is a POST:</p>
+<pre><code class="language-clojure">(net/with-server (pacman-remote-handler pac/corridor {:start start})
+  (fn [url]
+    (pr/let [rem (remote/remote-mdp-rollout ag (remote/gym-transport url) H)]
+      ;; rem =&gt; {:states [...] :actions [...] :rewards [...]}
+      (= (:states in-proc) (:states rem)))))   ; =&gt; true
+</code></pre>
+<p>The decisive property is <em>faithfulness</em>: at the deterministic regime
+(<code>alpha = ##Inf</code>, noise 0) the across-wire trajectory is <strong>bit-identical</strong> to the
+in-process one. The agent code does not change at all — only where the transition
+happens. Running the bridge confirms it: the corridor rollout <code>[0 1 2 3 4 5 6]</code>
+comes back identical from the server, every step a real network round-trip.</p>
+<p><img src="figures/classic-rollout.gif" alt="The optimal Pac-Man rolling out through the maze — the same trajectory whether the environment is an in-process tensor or a remote service answering over HTTP; at the deterministic regime the two are bit-identical, which is the proof the membrane is faithful."></p>
+<p>The figure is the in-process rollout, but that is exactly the point: across the
+wire it is the same frames. (The LLM-policy figures — the per-action distribution
+and the fused inverse posterior — regenerate from real model output when a local
+model is present; without one they are noted rather than shown, and the build is
+never blocked.) <code>genmlx.agents.remote</code> is marked <strong>provisional</strong>: it sits outside
+the frozen v1.0 surface, and its shapes may still change.</p>
+<h2 id="where-the-maze-ends"><a class="header" href="#where-the-maze-ends">Where the maze ends</a></h2>
+<p>We started with a coin for a ghost’s turn and end with a transformer choosing
+Pac-Man’s move over a network. Nothing about the agent had to change along the way,
+because the whole book rests on one idea: an agent is a generative function, and
+everything else — the planner, the belief filter, the bias, the inference backend,
+the policy’s <em>source</em>, the environment’s <em>location</em> — is a pluggable seam around it.
+A model written in Chapter 2 still runs here. That is the resource-rational,
+GFI-native picture of agency this book set out to show — minds inferred, and now
+also <em>spoken</em> and <em>served</em>, all in the same maze.</p>
 
                     </main>
 
