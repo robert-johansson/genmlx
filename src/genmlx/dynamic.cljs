@@ -1535,16 +1535,16 @@
       change) → the batched retained-only general path (two batched project
       passes — exact, no residual).
 
-   KNOWN GAP (genmlx-8xia, batched splice recursion): a model that only SPLICES
-   a sub-GF and selects no direct parent site is fast-eligible at the parent and
-   takes path 1. Inside the splice the per-site batched convention is used; this
-   is exact for fast-eligible sub-selections (single-site / independent, and the
-   prior-resample case → weight 0), but a DEPENDENT-JOINT selection INSIDE a
-   spliced sub-GF would carry the yep2 residual. Batched splice recursion routed
-   through the executor (so the sub-GF re-gates) is unimplemented — the sub-GF is
-   only a runtime value, not resolvable from the schema at gate time, and the
-   runtime splice handler is below the dynamic layer. For a dependent-joint
-   selection inside a spliced sub-GF, use scalar p/regenerate, which is exact."
+   SPLICE RECURSION (genmlx-8xia / genmlx-20p7): a model that only SPLICES a
+   sub-GF and selects no direct parent site is fast-eligible at the parent and
+   takes path 1. The ONE-LEVEL dependent-joint-inside-splice case is now handled
+   (genmlx-20p7): the batched sub-regen is threaded into the handler state
+   (:batched-sub-regen) so the sub-GF re-gates and a dependent-joint sub-selection
+   gets the exact batched retained-only weight — no yep2 residual. The remaining
+   gap is DEEPER nesting: a spliced sub-GF that ITSELF splices is unsupported
+   (the inner sub-GF is only a runtime value, not resolvable from the schema at
+   gate time) and throws — use scalar p/regenerate per particle there, which is
+   exact."
   [gf vtrace selection key]
   (cond
     (regen-fast-eligible? gf selection)

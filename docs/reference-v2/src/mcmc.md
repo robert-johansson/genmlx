@@ -76,7 +76,7 @@ Full Metropolis-Hastings inference chain. Initializes from `generate`, then runs
             model [xs] obs))
 
 ;; Extract posterior samples
-(map #(cm/get-value (:choices %) :slope) traces)
+(map #(cm/get-value (cm/get-submap (:choices %) :slope)) traces)
 ```
 
 ---
