@@ -47,6 +47,8 @@
   "Default reasoning backend: exact enumeration. Returns the [k] posterior marginal
    of `addr` in `model` under observation choicemap `obs`, as an MLX vector."
   [model obs addr k]
+  ;; Reads :marginals off exact-posterior's result map directly (no public addr-marginal
+  ;; accessor exists yet); the [addr v] lookup is the documented shape of that map.
   (let [r (exact/exact-posterior model [] obs)]
     (mx/array (clj->js (mapv #(get-in (:marginals r) [addr %]) (range k))))))
 
@@ -116,6 +118,10 @@
      numbers (within MC error). Call alice for d>=1, bob for d>=0."
   ([] (schelling-agents exact-marginal))
   ([infer]
+   ;; Atoms (not letfn) because alice and bob are mutually recursive AND each is wrapped
+   ;; in exact/with-cache: we need each to close over the OTHER's memoized fn, which only
+   ;; exists after both are built. The atoms are write-once during construction and never
+   ;; mutated thereafter — a construction-scoped knot-tie, not stateful recursion.
    (let [alice (atom nil)
          bob   (atom nil)]
      (reset! alice (exact/with-cache (fn [d] (coordinate (@bob (dec d)) infer))))
@@ -158,7 +164,7 @@
   "The literal-listener table L0: [n-utts × n-states], row u = P_L0(state | utterance u).
    Each row is produced by the pluggable inference seam over the listener GF."
   [{:keys [denotation state-prior infer] :or {infer exact-marginal}}]
-  (let [[nu ns] (vec (mx/shape denotation))
+  (let [[nu ns] (mx/shape denotation)
         rows (mapv (fn [u] (infer (literal-listener-model state-prior (mx/idx denotation u))
                                   HOLDS :s ns))
                    (range nu))]
@@ -176,8 +182,8 @@
   "The pragmatic listener L1: [n-utts × n-states], row u = P_L1(state | utterance u).
    Bayesian inversion of the speaker: L1(s|u) ∝ prior(s)·S1(u|s)."
   [L0 state-prior alpha]
-  (let [S1    (speaker-table L0 alpha)                          ; [ns × nu]
-        ns    (first (vec (mx/shape S1)))
+  (let [S1     (speaker-table L0 alpha)                         ; [ns × nu]
+        [ns _] (mx/shape S1)
         joint (mx/multiply S1 (mx/reshape state-prior #js [ns 1]))  ; [ns × nu]
         col-z (mx/sum joint [0] true)                           ; [1 × nu] = P(u)
         L1-su (mx/divide joint col-z)]                          ; [ns × nu] = P(s | u)
@@ -202,19 +208,17 @@
 (defn table-row
   "Row `i` of a probability table as a vector of JS numbers."
   [table i]
-  (let [row (mx/idx table i)
-        n   (first (vec (mx/shape row)))]
-    (mapv #(mx/item (mx/slice row % (inc %))) (range n))))
+  (vec (mx/->clj (mx/idx table i))))
 
 ;; -- Two denotations, same tower (the re-parameterized-denotation point) --
 
 (def sprouted-denotation
   "Sprouted-seeds scalar implicature (agentmodels.org Ch 7). Utterances [all some none],
    states [0 1 2 3] = number of sprouted seeds. all=(s==3), some=(s>0), none=(s==0)."
-  (.astype (mx/array #js [#js [0 0 0 1]      ; all  : s == 3
-                          #js [0 1 1 1]      ; some : s  > 0
-                          #js [1 0 0 0]])    ; none : s == 0
-           mx/float32))
+  (mx/array #js [#js [0 0 0 1]      ; all  : s == 3
+                 #js [0 1 1 1]      ; some : s  > 0
+                 #js [1 0 0 0]]     ; none : s == 0
+            mx/float32))
 
 (def sprouted-prior (mx/array #js [0.25 0.25 0.25 0.25]))
 
@@ -222,9 +226,9 @@
   "A minimal referential-implicature game. Utterances [u0 uboth], referents [r0 r1].
    u0 is true of r0 only; uboth is true of both. Different denotation, same tower —
    the pragmatic listener resolves the ambiguous 'uboth' toward r1."
-  (.astype (mx/array #js [#js [1 0]          ; u0    : r0 only
-                          #js [1 1]])        ; uboth : both
-           mx/float32))
+  (mx/array #js [#js [1 0]          ; u0    : r0 only
+                 #js [1 1]]         ; uboth : both
+            mx/float32))
 
 (def reference-prior (mx/array #js [0.5 0.5]))
 
@@ -267,6 +271,11 @@
 
 (defn place [board i player] (assoc board i player))
 
+;; Host-geometry side of the split: the value recursion and policy weights are pure
+;; host arithmetic over the (tiny, combinatorial) game tree. MLX is reserved for the
+;; final softmax-action policy distribution in make-game-agent — deliberately NOT
+;; pushed down here, since the tree walk is irregular host control flow.
+
 (defn- softmax-weights [alpha qs]
   (let [m  (apply max qs)
         es (mapv #(Math/exp (* alpha (- % m))) qs)
@@ -291,6 +300,9 @@
    soft-rational opponent. The full game tree from a near-terminal board is tiny;
    with-cache (the transposition table) keeps deeper boards tractable."
   [{:keys [alpha] :or {alpha ##Inf}}]
+  ;; The atom (not letfn) lets the with-cache-wrapped val recurse into its OWN memoized
+  ;; self: val is defined in terms of @val so deeper boards hit the transposition table.
+  ;; Write-once at construction, then read-only — a knot-tie, not stateful recursion.
   (let [val (atom nil)]
     (reset! val
       (exact/with-cache
@@ -312,7 +324,7 @@
                        ;; raw traced index (NO in-body mx/item) — stays vectorization-safe,
                        ;; matching agent.cljs / biased_planners.cljs. The legal cell is
                        ;; resolved host-side in :act below.
-                       (trace :move (h/softmax-action alpha (mx/array (clj->js (mapv double eus))))))))]
+                       (trace :move (h/softmax-action alpha (mx/array (clj->js eus)))))))]
       {:alpha alpha
        :val @val
        :move-q (fn [board player]               ; [[move eu]...] EU to `player` of each legal move
@@ -321,7 +333,7 @@
        :policy policy
        :act (fn [board player]                  ; host-side: simulate the policy, resolve the chosen legal cell
               (let [ms (legal-moves board)
-                    i  (int (mx/item (:retval (p/simulate (dyn/auto-key (policy player)) [board]))))]
+                    i  (Math/round (mx/item (:retval (p/simulate (dyn/auto-key (policy player)) [board]))))]
                 (nth ms i)))})))
 
 (defn best-move

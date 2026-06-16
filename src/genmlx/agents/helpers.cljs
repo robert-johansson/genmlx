@@ -17,6 +17,7 @@
    over the GFI, not new GFI machinery."
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
+            [genmlx.choicemap :as cm]
             [genmlx.combinators :as comb]
             [genmlx.inference.exact :as exact])
   (:require-macros [genmlx.gen :refer [gen]]
@@ -141,3 +142,19 @@
      (p/simulate choose [kind arg0 arg1])   ; runs branch `kind`"
   [branches]
   (apply comb/switch-combinator branches))
+
+;; ---------------------------------------------------------------------------
+;; action-choicemap — condition on an observed action trajectory
+;; ---------------------------------------------------------------------------
+;;
+;; The agentmodels inverse examples condition a joint generative function on a
+;; sequence of observed actions, traced at sites :a0 :a1 …. This builds that
+;; constraint choicemap from a plain action seq (one shared copy — it was
+;; previously duplicated across biased_inverse / restaurant_joint_inference / ch06).
+
+(defn action-choicemap
+  "Choicemap constraining sequential action sites {:a0 a0, :a1 a1, …} from a seq of
+   `actions` — the convention the inverse examples use to condition on an observed
+   action trajectory."
+  [actions]
+  (cm/from-flat-map (zipmap (map #(keyword (str "a" %)) (range)) actions)))

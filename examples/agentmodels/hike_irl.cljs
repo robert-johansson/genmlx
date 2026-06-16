@@ -63,9 +63,9 @@
   "Build the hypotheses, observe a true East-preferring hiker, and report how the
    peak-preference posterior sharpens toward :east along the path."
   []
-  (let [agents (peak-agents)
-        obs    (greedy-observations (:east agents))
-        seq    (infer-peak agents obs)]
+  (let [agents   (peak-agents)
+        obs      (greedy-observations (:east agents))
+        post-seq (infer-peak agents obs)]
     {:observations obs
-     :posterior-sequence seq
-     :final (last seq)}))
+     :posterior-sequence post-seq
+     :final (last post-seq)}))

@@ -195,6 +195,15 @@
      :params {:alpha alpha :gamma gamma :horizon H
               :discount discount :bias bias :reward-myopic-bound reward-myopic-bound}}))
 
+(defn eu-row
+  "Expected-utility row over `n-actions` actions at state `s` for a biased (or plain)
+   MDP agent — the vector its softmax policy acts on at delay 0. Uses the agent's
+   public `:expected-utility` accessor (frozen on MDP and biased agents); the action
+   count is passed in by the caller (it knows it from the MDP it built). Promoted
+   here so the inverse examples stop re-deriving it from un-frozen agent internals."
+  [agent s n-actions]
+  (mapv #((:expected-utility agent) s %) (range n-actions)))
+
 (defn simulate-biased-mdp
   "Roll a biased MDP agent out from `start` for ≤ horizon steps (= agent/simulate-mdp's
    :host path, which re-plans via :act each step — the d=0 re-planning that drives

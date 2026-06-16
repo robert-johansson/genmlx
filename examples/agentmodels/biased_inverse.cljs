@@ -8,8 +8,8 @@
    …) is pluggable and orthogonal to the agent definition. Here we trace the agent's
    bias (:naive vs :sophisticated) as the one latent random choice, wire it into the
    forward biased EU recursion from `biased-planners.cljs` (no duplicated recursion —
-   we reuse `make-biased-mdp-agent` verbatim; `eu-row` is a thin accessor over the
-   agent's public `:eu`), and recover P(:bias | observed actions) two ways on the
+   we reuse `make-biased-mdp-agent` verbatim; `bp/eu-row` is a thin accessor over the
+   agent's public `:expected-utility`), and recover P(:bias | observed actions) two ways on the
    SAME generative function:
 
      1. EXACT — enumerate the finite bias prior, score the full trajectory
@@ -120,15 +120,6 @@
                {:mdp mdp :alpha alpha :gamma 1.0 :n-iters n-iters}
                {:discount discount :bias b :reward-myopic-bound reward-myopic-bound})])))
 
-(defn eu-row
-  "Expected-utility vector over actions at state `s` (delay 0, the agent's horizon)
-   for a forward biased agent — exactly the row its softmax policy acts on."
-  [agent s]
-  (let [eu (:eu agent)
-        H  (:horizon (:params agent))
-        A  (:A (:mdp agent))]
-    (mapv #(eu s % H 0) (range A))))
-
 ;; ===========================================================================
 ;; The joint generative function — :bias is a first-class traced latent
 ;; ===========================================================================
@@ -145,16 +136,17 @@
 
    cfg keys: :mdp :alpha :discount :reward-myopic-bound :n-iters :states [:prior].
    Returns a DynamicGF of zero user args."
-  [{:keys [states alpha prior] :or {alpha ##Inf} :as cfg}]
-  (let [agents (bias-agents cfg)
-        box    (if prior
-                 (h/weighted-draw bias-values prior)
-                 (h/uniform-draw bias-values))
+  [{:keys [states alpha prior mdp] :or {alpha ##Inf} :as cfg}]
+  (let [agents    (bias-agents cfg)
+        n-actions (:A mdp)
+        box       (if prior
+                    (h/weighted-draw bias-values prior)
+                    (h/uniform-draw bias-values))
         ;; Precompute the policy logit array per (bias, state) ONCE — the gen body
         ;; is re-run per IS particle, so it must only index, never rebuild arrays.
-        rows   (into {} (for [b bias-values]
-                          [b (mapv #(mx/array (clj->js (eu-row (agents b) %)) mx/float32)
-                                   states)]))]
+        rows      (into {} (for [b bias-values]
+                             [b (mapv #(mx/array (clj->js (bp/eu-row (agents b) % n-actions)) mx/float32)
+                                      states)]))]
     (gen []
       (let [bi   (trace :bias (:dist box))
             bias (h/draw-value box bi)
@@ -168,16 +160,10 @@
 ;; Choicemap builders
 ;; ===========================================================================
 
-(defn action-cm
-  "Choicemap constraining the action sites only: {:a0 a0, :a1 a1, …}."
-  [actions]
-  (cm/from-flat-map
-    (into {} (map-indexed (fn [t a] [(keyword (str "a" t)) a]) actions))))
-
 (defn full-cm
   "Choicemap constraining the full trajectory: {:bias i, :a0 a0, …}."
   [bias-idx actions]
-  (cm/set-choice (action-cm actions) [:bias] bias-idx))
+  (cm/set-choice (h/action-choicemap actions) [:bias] bias-idx))
 
 ;; ===========================================================================
 ;; Exact posterior — enumerate the finite bias prior via p/assess
@@ -204,8 +190,8 @@
   "Normalized prior probability per bias value from a weight vector (nil = uniform)."
   [prior]
   (let [ws (or prior (vec (repeat (count bias-values) 1.0)))
-        z  (reduce + ws)]
-    (into {} (map-indexed (fn [i b] [b (/ (nth ws i) z)]) bias-values))))
+        z  (apply + ws)]
+    (zipmap bias-values (map #(/ % z) ws))))
 
 (defn bias-posterior-via-policy
   "The SAME exact posterior via the established inverse.cljs idiom: one forward
@@ -217,11 +203,10 @@
   (check-aligned cfg)
   (let [agents (bias-agents cfg)
         p0     (prior-prob prior)
-        obs    (map vector states actions)
         logw   (into {}
                      (for [b bias-values]
                        [b (reduce + (Math/log (p0 b))
-                                  (map (fn [[s a]] (inv/action-loglik (agents b) s a)) obs))]))]
+                                  (map (fn [s a] (inv/action-loglik (agents b) s a)) states actions))]))]
     (inv/normalize-logs logw)))
 
 ;; ===========================================================================
@@ -240,13 +225,13 @@
   [{:keys [actions] :as cfg} n key]
   (check-aligned cfg)
   (let [model (biased-agent-model cfg)
-        obs   (action-cm actions)
+        obs   (h/action-choicemap actions)
         {:keys [traces log-weights]} (is/importance-sampling {:samples n :key key} model [] obs)
         {:keys [probs]} (iu/normalize-log-weights log-weights)
         ess   (iu/compute-ess log-weights)
-        post  (reduce (fn [m [tr w]]
-                        (let [i (int (mx/item (cm/get-choice (:choices tr) [:bias])))]
-                          (update m (nth bias-values i) + w)))
+        post  (reduce (fn [m [bias w]] (update m bias + w))
                       {:naive 0.0 :sophisticated 0.0}
-                      (map vector traces probs))]
+                      (map (fn [tr w]
+                             [(nth bias-values (int (mx/item (cm/get-choice (:choices tr) [:bias])))) w])
+                           traces probs))]
     {:posterior post :ess ess}))

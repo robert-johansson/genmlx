@@ -1,32 +1,25 @@
 (ns agentmodels.psrl
   "Posterior Sampling Reinforcement Learning on a gridworld (agentmodels Ch 3d).
 
-   The agent knows the transition structure but NOT the reward: exactly one (free)
-   cell of a 4×4 gridworld is rewarding, and the agent has a posterior over which.
-   Each EPISODE it runs the canonical Osband PSRL loop:
-
-     1. SAMPLE a reward model (a goal cell) from the posterior  (Thompson sampling)
-     2. SOLVE that model optimally by value iteration → a policy
-     3. ACT — run one episode following that policy, observing each visited cell's
-        true reward
-     4. UPDATE the posterior on the observations (exact Bayes)
-
-   When the posterior is uncertain, sampling yields diverse goals → the agent visits
-   diverse cells → it learns (explores); as the posterior concentrates, it exploits.
-   Cumulative regret (V*_true(start) − achieved return per episode) decreases as the
-   posterior concentrates on the true goal. (agentmodels plots regret only for its
-   bandit example and merely visualizes gridworld-PSRL trajectories — the regret curve
-   here is the faithful Osband-theory extension the bean asks for.)
-
-   Reward model: per-cell reward applied each step over a finite horizon, with a 5th
-   'stay' action so the agent can dwell on the goal — the clean realization of
-   agentmodels' finite-horizon utility(state)=rewardGrid[loc]. The planner reuses
-   agent/value-iteration (value-iteration ≡ agentmodels' recursive expectedUtility).
-   The shipped multi-armed bandit (genmlx.agents.pomdp/make-bandit-agent, bandit_test
-   18/18) already covers the chapter's Thompson/softmax-greedy bandit + bandit regret.
-
-   Reuse: gw/parse-grid + gw/next-state (geometry), agent/value-iteration +
-   make-mdp-agent + simulate-mdp (planning/rollout). Zero engine change."
+   The agent knows the transitions but not the reward (one free cell is rewarding);
+   each episode it Thompson-samples a goal from the posterior, solves that model by
+   value iteration, acts greedily, and exactly Bayes-updates on the observed cells.
+   Cumulative regret decreases as the posterior concentrates on the true goal."
+  ;; When the posterior is uncertain, sampling yields diverse goals -> the agent
+  ;; visits diverse cells -> it explores; as the posterior concentrates, it exploits.
+  ;; Regret = V*_true(start) - achieved return per episode. (agentmodels plots regret
+  ;; only for its bandit example and merely visualizes gridworld-PSRL trajectories;
+  ;; the regret curve here is the faithful Osband-theory extension the bean asks for.)
+  ;;
+  ;; Reward model: per-cell reward applied each step over a finite horizon, with a 5th
+  ;; 'stay' action so the agent can dwell on the goal -- the clean realization of
+  ;; agentmodels' finite-horizon utility(state)=rewardGrid[loc]. The planner reuses
+  ;; agent/value-iteration (value-iteration == agentmodels' recursive expectedUtility).
+  ;; The shipped multi-armed bandit (genmlx.agents.pomdp/make-bandit-agent, bandit_test
+  ;; 18/18) already covers the chapter's Thompson/softmax-greedy bandit + bandit regret.
+  ;;
+  ;; Reuse: gw/parse-grid + gw/next-state (geometry), agent/value-iteration +
+  ;; make-mdp-agent + simulate-mdp (planning/rollout). Zero engine change.
   (:require [genmlx.mlx :as mx]
             [genmlx.agents.gridworld :as gw]
             [genmlx.agents.agent :as agent]))
@@ -96,7 +89,7 @@
          T       (mx/array (clj->js (vec (for [s (range S)]
                                            (vec (for [a (range A)] (t-row S ns-rows s a noise))))))
                            mx/float32)
-         R       (mx/array (clj->js (vec (for [s (range S)] (vec (repeat A (double (nth reward s))))))) mx/float32)
+         R       (mx/array (clj->js (vec (for [s (range S)] (vec (repeat A (nth reward s)))))) mx/float32)
          term    (mx/array (clj->js (vec (repeat S 0.0))) mx/float32)]
      (mx/eval! T R term)
      {:W W :H H :S S :A A :T T :R R :term term :terminals {} :walls walls
@@ -120,16 +113,16 @@
 (defn uniform-posterior
   "Uniform one-hot prior over the free cells (exactly one is the goal)."
   [free]
-  (let [p (/ 1.0 (count free))] (into {} (map (fn [c] [c p]) free))))
+  (let [p (/ 1.0 (count free))] (zipmap free (repeat p))))
 
 (defn update-posterior
   "Exact Bayes update on observing reward `r` at cell `c`: hypotheses inconsistent
    with the observation are dropped (h=c requires r=1; h≠c requires r=0) and the rest
    renormalized. Observing the reward (r=1 at c) collapses the posterior to c."
   [post c r]
-  (let [keep (into {} (filter (fn [[h p]] (= (if (= h c) 1.0 0.0) (double r))) post))
+  (let [keep (into {} (filter (fn [[h _]] (= (if (= h c) 1.0 0.0) (double r))) post))
         z    (reduce + (vals keep))]
-    (if (pos? z) (into {} (map (fn [[h p]] [h (/ p z)]) keep)) post)))
+    (if (pos? z) (update-vals keep #(/ % z)) post)))
 
 ;; deterministic LCG, so Thompson sampling is reproducible in tests
 (defn- lcg [s] (mod (+ (* s 1103515245) 12345) 2147483648))

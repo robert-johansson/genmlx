@@ -30,16 +30,16 @@
    not behavioral — see `donut-tempting?`.
 
    Reuse, zero engine change: bp/restaurant-temptation-mdp (Phase-1 geometry),
-   bp/make-biased-mdp-agent (forward model), inv/normalize-logs (stable softmax),
-   h/uniform-draw (finite priors), bi/action-cm (action choicemap)."
+   bp/make-biased-mdp-agent (forward model), bp/eu-row (EU vector via the frozen
+   :expected-utility accessor), inv/normalize-logs (stable softmax),
+   h/uniform-draw (finite priors), h/action-choicemap (action choicemap)."
   (:require [genmlx.mlx :as mx]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
             [genmlx.agents.biased-planners :as bp]
             [genmlx.agents.helpers :as h]
-            [genmlx.agents.inverse :as inv]
-            [agentmodels.biased-inverse :as bi])
+            [genmlx.agents.inverse :as inv])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 (def H 18)            ; planning + scoring horizon (≈ agentmodels plan-until-terminal)
@@ -57,16 +57,15 @@
    {:donut-n [imm del] :donut-s [imm del] :veg [imm del] :noodle [imm del]
     :timeCost t}. Reuses the base :T/:terminals/:twin/:restaurants (same geometry)."
   [{:keys [S A terminals restaurants] :as base} utilities]
-  (let [time-cost (double (get utilities :timeCost 0.0))
+  (let [time-cost (get utilities :timeCost 0.0)
         comp-of   (fn [kw i] (let [u (get utilities kw)]
-                               (double (if (sequential? u) (nth u i) u))))
+                               (if (sequential? u) (nth u i) u)))
         reward-of (fn [s]
                     (cond
                       (contains? terminals s)   (comp-of (terminals s) 1)    ; L@1: delayed
                       (contains? restaurants s) (comp-of (restaurants s) 0)  ; L@0: immediate
                       :else                     time-cost))
-        R (mx/array (clj->js (vec (for [s (range S)] (vec (repeat A (reward-of s)))))) mx/float32)]
-    (mx/eval! R)
+        R (mx/array (clj->js (for [s (range S)] (repeat A (reward-of s)))) mx/float32)]
     (assoc base :R R)))
 
 ;; ===========================================================================
@@ -128,11 +127,6 @@
                               {:discount k :bias bias})
                   :donut donut :veg veg :discount k :bias bias :alpha alpha}]))))
 
-(defn- eu-row
-  "EU vector over the 4 grid actions at state s, planning horizon t, delay 0."
-  [agent s t]
-  (mapv #((:eu agent) s % t 0) (range 4)))
-
 ;; ===========================================================================
 ;; The joint generative function (extends the 5d multi-latent model)
 ;; ===========================================================================
@@ -144,14 +138,15 @@
    are precomputed before `gen` (the body is re-run per enumerated tuple, so it only
    indexes)."
   [{:keys [donut-imm-vals donut-del-vals veg-imm-vals veg-del-vals
-           discount-vals bias-vals alpha-vals n-iters] :or {n-iters H} :as spec}
+           discount-vals bias-vals alpha-vals] :as spec}
    states agents]
-  (let [boxes [(h/uniform-draw donut-imm-vals) (h/uniform-draw donut-del-vals)
+  (let [n-actions (:A base-mdp)
+        boxes [(h/uniform-draw donut-imm-vals) (h/uniform-draw donut-del-vals)
                (h/uniform-draw veg-imm-vals)   (h/uniform-draw veg-del-vals)
                (h/uniform-draw discount-vals)  (h/uniform-draw bias-vals)
                (h/uniform-draw alpha-vals)]
         rows  (into {} (for [[tup {:keys [agent]}] agents]
-                         [tup (mapv (fn [s] (mx/array (clj->js (eu-row agent s n-iters)) mx/float32))
+                         [tup (mapv (fn [s] (mx/array (clj->js (bp/eu-row agent s n-actions)) mx/float32))
                                     states)]))]
     (gen []
       (let [di (trace :di (:dist (nth boxes 0)))
@@ -164,14 +159,14 @@
             tup [di dd vi vd dc bi ai]
             er    (rows tup)
             alpha (:alpha (agents tup))]
-        (doseq [i (range (count states))]
+        (dotimes [i (count states)]
           (trace (keyword (str "a" i)) (h/softmax-action alpha (nth er i))))
         tup))))
 
 (defn- full-cm
   "Choicemap {:di .. :dd .. :vi .. :vd .. :dc .. :bi .. :ai .. :a0 .. :a1 ..}."
   [[di dd vi vd dc bi ai] actions]
-  (-> (bi/action-cm actions)
+  (-> (h/action-choicemap actions)
       (cm/set-choice [:di] di) (cm/set-choice [:dd] dd)
       (cm/set-choice [:vi] vi) (cm/set-choice [:vd] vd)
       (cm/set-choice [:dc] dc) (cm/set-choice [:bi] bi)
@@ -206,7 +201,7 @@
   [{:keys [states actions number-repeats] :or {number-repeats 0} :as spec} agents]
   (assert (= (count states) (count actions))
           (str "5e joint: states/actions length mismatch " (count states) " vs " (count actions)))
-  (let [model   (joint-restaurant-model spec states agents)
+  (let [model   (dyn/auto-key (joint-restaurant-model spec states agents))
         ;; numberRepeats: condition on the same observed path (r+1) times. The assess
         ;; weight w = log-prior + log-likelihood; since EVERY latent prior here is a
         ;; uniform-draw, log-prior is the SAME constant for all tuples, so the correct
@@ -216,7 +211,7 @@
         tuples  (keys agents)
         logw    (into {}
                       (for [tup tuples]
-                        [tup (* reps (mx/item (:weight (p/assess (dyn/auto-key model) []
+                        [tup (* reps (mx/item (:weight (p/assess model []
                                                                  (full-cm tup actions)))))]))
         post    (inv/normalize-logs logw)
         uniform (let [n (count tuples)] (mapv (fn [t] [t (/ 1.0 n)]) tuples))]
@@ -237,7 +232,7 @@
   (let [ag (bp/make-biased-mdp-agent {:mdp base-mdp :alpha ##Inf :gamma 1.0 :n-iters H}
                                      {:discount k :bias bias})
         {:keys [states actions]} (bp/simulate-biased-mdp ag (:start-idx base-mdp) H)]
-    {:states (vec (butlast states)) :actions (vec actions)}))
+    {:states (pop (vec states)) :actions (vec actions)}))
 
 (def naive-trajectory         (delay (observed-trajectory :naive 1.0)))
 (def sophisticated-trajectory (delay (observed-trajectory :sophisticated 1.0)))

@@ -22,7 +22,7 @@
    faithful reading of agentmodels' `observe(act(state, 0), action)`.
 
    Reuse (no duplicated recursion/enumeration): bp/make-biased-mdp-agent +
-   bp/procrastination-mdp (forward model), bi/action-cm (z4si choicemap),
+   bp/procrastination-mdp (forward model), h/action-choicemap (z4si choicemap),
    inv/normalize-logs (stable softmax), h/uniform-draw|weighted-draw (finite priors).
    Zero engine change.
 
@@ -34,8 +34,7 @@
             [genmlx.dynamic :as dyn]
             [genmlx.agents.biased-planners :as bp]
             [genmlx.agents.helpers :as h]
-            [genmlx.agents.inverse :as inv]
-            [agentmodels.biased-inverse :as bi])
+            [genmlx.agents.inverse :as inv])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 ;; agentmodels Ch 5d priors
@@ -61,16 +60,19 @@
     (into {}
           (for [ri (range (count reward-vals))
                 ai (range (count alpha-vals))
-                di (range (count discount-vals))]
-            (let [a (nth alpha-vals ai) k (nth discount-vals di)]
-              [[ri ai di]
-               {:agent   (bp/make-biased-mdp-agent
-                           {:mdp (nth mdps ri) :alpha a :gamma 1.0 :n-iters n-iters}
-                           {:discount k :bias bias})
-                :alpha a :reward (nth reward-vals ri) :discount k}])))))
+                di (range (count discount-vals))
+                :let [a (nth alpha-vals ai)
+                      k (nth discount-vals di)]]
+            [[ri ai di]
+             {:agent   (bp/make-biased-mdp-agent
+                         {:mdp (nth mdps ri) :alpha a :gamma 1.0 :n-iters n-iters}
+                         {:discount k :bias bias})
+              :alpha a :reward (nth reward-vals ri) :discount k}]))))
 
-(defn- eu-at
-  "EU vector over actions at wait-state s, horizon t (delay 0)."
+(defn- eu-row-at
+  "EU vector over actions at wait-state s, horizon t (delay 0). Uses the agent's
+   frozen :eu accessor at the per-state remaining horizon t — NOT bp/eu-row, which
+   reads :expected-utility at the agent's FIXED build horizon (a different t)."
   [agent s t]
   (mapv #((:eu agent) s % t 0) (range 2)))
 
@@ -89,7 +91,7 @@
         alpha-box    (if alpha-probs (h/weighted-draw alpha-vals alpha-probs) (h/uniform-draw alpha-vals))
         discount-box (h/uniform-draw discount-vals)
         rows (into {} (for [[k {:keys [agent]}] agents]
-                        [k (mapv (fn [s] (mx/array (clj->js (eu-at agent s (horizon-fn s))) mx/float32))
+                        [k (mapv (fn [s] (mx/array (eu-row-at agent s (horizon-fn s)) mx/float32))
                                  states)]))]
     (gen []
       (let [ri (trace :reward   (:dist reward-box))
@@ -104,7 +106,7 @@
 (defn- multi-full-cm
   "Choicemap {:reward ri, :alpha ai, :discount di, :a0 a0, ...}."
   [ri ai di actions]
-  (-> (bi/action-cm actions)
+  (-> (h/action-choicemap actions)
       (cm/set-choice [:reward] ri)
       (cm/set-choice [:alpha] ai)
       (cm/set-choice [:discount] di)))
@@ -132,6 +134,8 @@
         tuples (for [ri (range (count reward-vals))
                      ai (range (count alpha-vals))
                      di (range (count discount-vals))] [ri ai di])
+        ;; assess args are [] — joint-procrastination-model returns a gen-fn closing
+        ;; over cfg/agents/rows, so its (gen []) body takes no positional args.
         logw (into {} (for [[ri ai di :as tup] tuples]
                         [tup (mx/item (:weight (p/assess (dyn/auto-key model) []
                                                          (multi-full-cm ri ai di actions))))]))
@@ -147,7 +151,7 @@
   [post agents predict-state predict-horizon]
   (reduce (fn [acc [tup pr]]
             (let [{:keys [agent alpha]} (agents tup)
-                  eus (eu-at agent predict-state predict-horizon)
+                  eus (eu-row-at agent predict-state predict-horizon)
                   m   (apply max (mapv #(* alpha %) eus))
                   es  (mapv #(Math/exp (- (* alpha %) m)) eus)
                   pw  (/ (nth es 1) (reduce + es))]   ; action 1 = work
@@ -162,6 +166,8 @@
   "Posterior expectations + predict-work after each prefix of the observed
    sequence (index 0 = prior). Reuses joint-posterior on truncated observations."
   [{:keys [states actions] :as cfg} agents predict-state predict-horizon]
+  ;; Re-enumerates the full joint per prefix (immutable, correct). An incremental
+  ;; update could reuse the previous prefix's log-weights; left as a comment only.
   (mapv (fn [L]
           (let [c (assoc cfg :states (vec (take L states)) :actions (vec (take L actions)))
                 {:keys [joint marginals]} (joint-posterior c agents)]

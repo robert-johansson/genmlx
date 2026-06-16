@@ -55,27 +55,15 @@
             [genmlx.inference.mcmc :as mcmc]
             [genmlx.inference.util :as iu]
             [genmlx.agents.gridworld :as gw]
-            [genmlx.agents.agent :as agent]
             [genmlx.agents.helpers :as h]
             [genmlx.agents.inverse :as inv]
-            [genmlx.agents.differentiable :as diff])
+            [genmlx.agents.differentiable :as diff]
+            [agentmodels.harness :as chk])
   (:require-macros [genmlx.gen :refer [gen]]))
 
-;; ===========================================================================
-;; Self-check harness (chapter convention — cf. ch01_intro)
-;; ===========================================================================
-
-(def ^:private fails (atom 0))
-
-(defn- check-true [label ok]
-  (println (str "  " (if ok "PASS" "FAIL") "  " label))
-  (when-not ok (swap! fails inc)))
-
-(defn- check-close [label expected actual tol]
-  (let [ok (<= (Math/abs (- expected actual)) tol)]
-    (println (str "  " (if ok "PASS" "FAIL") "  " label
-                  "  (exp " (.toFixed expected 4) " got " (.toFixed actual 4) ")"))
-    (when-not ok (swap! fails inc))))
+;; Self-checks use the shared agentmodels.harness (chk/check-true,
+;; chk/check-close, chk/report!) — one copy of the assert helpers across the
+;; chapter scripts.
 
 ;; ===========================================================================
 ;; The world: a small 5×5 gridworld with three distinct goals
@@ -138,11 +126,11 @@
         Q        (:Q ag)
         eu       (:expected-utility ag)
         ;; compare over the non-terminal observed states (and both actions there)
-        max-diff (apply max
-                        (for [s obs-states a [0 1 2 3]]
-                          (Math/abs (- (mx/item (mx/idx (mx/idx Q s) a)) (eu s a)))))]
-    (check-true "value iteration Q[s,a] == recursive EU(s,a) to 1e-3"
-                (< max-diff 1e-3))
+        max-diff (reduce max 0
+                         (for [s obs-states a [0 1 2 3]]
+                           (Math/abs (- (mx/item (mx/idx (mx/idx Q s) a)) (eu s a)))))]
+    (chk/check-true "value iteration Q[s,a] == recursive EU(s,a) to 1e-3"
+                    (< max-diff 1e-3))
     (println (str "       max |Q - EU| over observed (s,a) = " (.toExponential max-diff 2)))))
 
 ;; ===========================================================================
@@ -180,24 +168,20 @@
                  (h/softmax-action ALPHA (nth er t))))
         gi))))
 
-(defn- action-cm
-  "Choicemap constraining the action sites only: {:a0 a0, :a1 a1, …}."
-  [actions]
-  (cm/from-flat-map
-    (into {} (map-indexed (fn [t a] [(keyword (str "a" t)) a]) actions))))
-
 (defn- full-cm
   "Choicemap constraining the full trajectory: {:goal i, :a0 a0, …}."
   [goal-idx actions]
-  (cm/set-choice (action-cm actions) [:goal] goal-idx))
+  (cm/set-choice (h/action-choicemap actions) [:goal] goal-idx))
 
 (defn normalize-map
   "{goal -> non-negative weight} -> {goal -> probability}."
   [m]
   (let [z (reduce + (vals m))]
-    (if (pos? z) (into {} (map (fn [[k v]] [k (/ v z)]) m)) m)))
+    (if (pos? z) (update-vals m #(/ % z)) m)))
 
-(defn tv
+;; Chapter-local total-variation diagnostic over the {goal -> prob} posteriors
+;; (kept private — a one-off check, not part of the inverse-inference API).
+(defn- tv
   "Total-variation distance between two {goal -> prob} maps."
   [p q]
   (* 0.5 (reduce + (map #(Math/abs (- (get p % 0.0) (get q % 0.0))) goals))))
@@ -229,7 +213,7 @@
    :ess ess}.  Run at finite ALPHA; pass a fixed key for reproducibility."
   [actions n key]
   (let [model (goal-inference-model)
-        obs   (action-cm actions)
+        obs   (h/action-choicemap actions)
         {:keys [traces log-weights]} (is/importance-sampling {:samples n :key key} model [] obs)
         {:keys [probs]} (iu/normalize-log-weights log-weights)
         ess   (iu/compute-ess log-weights)
@@ -253,7 +237,7 @@
    {:posterior {..} :n-samples n}."
   [actions {:keys [samples burn thin key]}]
   (let [model  (goal-inference-model)
-        obs    (action-cm actions)
+        obs    (h/action-choicemap actions)
         traces (mcmc/mh {:samples samples :burn (or burn 0) :thin (or thin 1) :key key}
                         model [] obs)
         counts (reduce (fn [m tr]
@@ -318,12 +302,12 @@
     (println (str "       planted utilities  = " plant-utils))
     (println (str "       recovered utilities = " (mapv #(js/Number (.toFixed % 3)) rec-utils)))
     (println (str "       loss: plant=" (.toFixed plant-loss 4) "  recovered=" (.toFixed rec-loss 4)))
-    (check-true "recovered :a utility is the largest (correct ordering)"
-                (> a-util max-other))
-    (check-true "recovered loss <= plant loss + 1e-2 (likelihood-equivalent)"
-                (<= rec-loss (+ plant-loss 1e-2)))
-    (check-true "loss decreased from init (gradient actually descended)"
-                (< (last loss-history) (first loss-history)))))
+    (chk/check-true "recovered :a utility is the largest (correct ordering)"
+                    (> a-util max-other))
+    (chk/check-true "recovered loss <= plant loss + 1e-2 (likelihood-equivalent)"
+                    (<= rec-loss (+ plant-loss 1e-2)))
+    (chk/check-true "loss decreased from init (gradient actually descended)"
+                    (< (last loss-history) (first loss-history)))))
 
 ;; ===========================================================================
 ;; -main — the chapter self-check
@@ -342,13 +326,13 @@
         exact   (exact-goal-posterior obs-actions)]
     (doseq [[k post] (map-indexed vector sharpen)]
       (println (str "       after " k " obs " (if (zero? k) "(prior)    " "          ")
-                    ": " (pr-str (into {} (map (fn [g] [g (js/Number (.toFixed (get post g) 3))]) goals))))))
+                    ": " (pr-str (zipmap goals (map #(js/Number (.toFixed (get post %) 3)) goals))))))
     (println (str "       exact (assess-enum) final: " (pr-str (normalize-map exact))))
-    (check-true "exact posterior favors the true goal :a"
-                (= :a (key (apply max-key val exact))))
-    (check-true "posterior is NON-degenerate (:a favored but < 0.99; :b keeps real mass — backends must really agree)"
-                (and (< (get exact :a) 0.99) (> (get exact :b) 0.02)))
-    (check-close "independent oracle (posterior-sequence) == exact (TV)" 0.0 (tv exact oseq) 1e-4)
+    (chk/check-true "exact posterior favors the true goal :a"
+                    (= :a (key (apply max-key val exact))))
+    (chk/check-true "posterior is NON-degenerate (:a favored but < 0.99; :b keeps real mass — backends must really agree)"
+                    (and (< (get exact :a) 0.99) (> (get exact :b) 0.02)))
+    (chk/check-close "independent oracle (posterior-sequence) == exact (TV)" 0.0 (tv exact oseq) 1e-4)
 
     ;; (6b) the three backends AGREE
     (println "\n-- (6b) Three inference backends on the SAME agent GF, all agreeing --")
@@ -361,18 +345,15 @@
                     "   (ESS " (.toFixed (:ess is-res) 1) ")"))
       (println (str "       MCMC (MH)  : " (pr-str mh-post)
                     "   (" (:n-samples mh-res) " samples)"))
-      (check-close "IS posterior == exact (TV < 0.03)"  0.0 (tv exact is-post) 0.03)
-      (check-close "MH posterior == exact (TV < 0.05)"  0.0 (tv exact mh-post) 0.05)
-      (check-true "IS effective sample size is healthy (> 10% of N)"
-                  (> (:ess is-res) 500))))
+      (chk/check-close "IS posterior == exact (TV < 0.03)"  0.0 (tv exact is-post) 0.03)
+      (chk/check-close "MH posterior == exact (TV < 0.05)"  0.0 (tv exact mh-post) 0.05)
+      (chk/check-true "IS effective sample size is healthy (> 10% of N)"
+                      (> (:ess is-res) 500))))
 
   ;; (6c)
   (check-6c-gradient-recovery)
 
-  (println (str "\n" (if (zero? @fails)
-                       "ALL CHECKS PASSED ✓"
-                       (str @fails " CHECK(S) FAILED ✗"))))
-  (when (pos? @fails) (js/process.exit 1)))
+  (chk/report!))
 
 ;; Auto-run the self-check ONLY when this file is the script entry point (run
 ;; directly) — so the bench and tests can `require` the public model + backends
@@ -382,6 +363,6 @@
 ;; test wrapper ("…_ch06_pluggable_inference_test.cljs") or the bench — so a
 ;; `require` from either never double-runs the self-check.
 (defn- run-as-script? []
-  (boolean (some #(re-find #"ch06_pluggable_inference\.cljs" (str %)) (vec (.-argv js/process)))))
+  (some #(re-find #"ch06_pluggable_inference\.cljs" (str %)) (.-argv js/process)))
 
 (when (run-as-script?) (-main))

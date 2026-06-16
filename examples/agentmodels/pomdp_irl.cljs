@@ -63,7 +63,11 @@
      {:q (fn [arm b n] -> Q) :policy (gen [b n]) :act-loglik (fn [b n arm] -> logp)}.
    Reachable beliefs are {belief, 0.0, 1.0} (arm0 reveals nothing; arm1 reveals arm1),
    so the recursion is small. Pulling arm0 yields :chocolate; pulling arm1 yields its
-   true prize and REVEALS arm1 (belief → 0 or 1)."
+   true prize and REVEALS arm1 (belief → 0 or 1).
+
+   NOTE: this exact belief-space VOI planner lives OUTSIDE the frozen four-constructor
+   bandit family (it does not call pomdp/make-bandit-agent) — it is a chapter-local
+   agent specialized to the 2-armed reveal-on-pull structure of this example."
   [{:keys [utility belief alpha] :or {alpha 1000.0}}]
   (let [u      (fn [prize] (double (get utility prize 0.0)))
         u-choc (u :chocolate)
@@ -72,11 +76,13 @@
         q-atom (atom nil)
         soft-v (fn [b n]
                  (if (<= n 0) 0.0
-                     (let [qs [(@q-atom 0 b n) (@q-atom 1 b n)]
-                           m  (apply max qs)
-                           es (mapv #(Math/exp (* alpha (- % m))) qs)
-                           z  (reduce + es)]
-                       (reduce + (map * (mapv #(/ % z) es) qs)))))
+                     (let [q0 (@q-atom 0 b n)
+                           q1 (@q-atom 1 b n)
+                           m  (max q0 q1)
+                           e0 (Math/exp (* alpha (- q0 m)))
+                           e1 (Math/exp (* alpha (- q1 m)))
+                           z  (+ e0 e1)]
+                       (+ (* (/ e0 z) q0) (* (/ e1 z) q1)))))
         q     (memoize
                 (fn [arm b n]
                   (case arm
@@ -86,7 +92,7 @@
                          (* (- 1.0 b) (exploit :nothing (dec n)))))))]
     (reset! q-atom q)
     (let [policy (gen [b n] (trace :arm (h/softmax-action alpha
-                                          (mx/array (clj->js [(q 0 b n) (q 1 b n)]) mx/float32))))]
+                                          (mx/array #js [(q 0 b n) (q 1 b n)] mx/float32))))]
       {:q q
        :policy policy
        :act-loglik (fn [b n arm]
@@ -102,8 +108,8 @@
   [belief arm prize]
   (if (= arm 0) belief (if (= prize :champagne) 1.0 0.0)))
 
-(def ^:private reveal reveal-belief)
-
+;; NOTE: this mirrors inverse/action-loglik but scores the :arm policy trace site
+;; (not :action) — the deliberate bandit-domain naming for the agent's pull choice.
 (defn factor-sequence-loglik
   "agentmodels' factorSequence (Equation 2): thread the agent's belief through the
    observed sequence and sum the per-step action log-likelihoods. `observed` is a seq
@@ -117,7 +123,7 @@
       (let [{:keys [arm prize]} (first obs)
             n   (- horizon t)
             ll' (+ ll ((:act-loglik agent) b n arm))]
-        (recur (rest obs) (inc t) (reveal b arm prize) ll')))))
+        (recur (rest obs) (inc t) (reveal-belief b arm prize) ll')))))
 
 ;; ===========================================================================
 ;; Two-level prior (utility × initial belief) via the Switch combinator
@@ -130,6 +136,7 @@
 
 ;; Switch realization of the two-level belief prior: each branch returns its initial
 ;; belief value (a deterministic GF), the Switch index selects which.
+;; These branches are keyed once at load time (dyn/auto-key) and reused as fixed GFs.
 (def ^:private belief-branch-informed    (dyn/auto-key (gen [] 1.0)))
 (def ^:private belief-branch-misinformed (dyn/auto-key (gen [] MISINFORMED-P)))
 (def belief-prior-switch
@@ -141,6 +148,12 @@
    The branch retval is a plain double, so no mx/item extraction is needed."
   [idx]
   (:retval (p/simulate (dyn/auto-key belief-prior-switch) [idx])))
+
+(defn- marginal-prob
+  "Sum the probabilities in the joint posterior over entries whose [util-kw belief-kw]
+   key satisfies `pred`."
+  [post pred]
+  (reduce (fn [s [k pr]] (+ s (if (pred k) pr 0.0))) 0.0 post))
 
 (defn joint-posterior
   "Exact P(utility, initial-belief | observed pulls) over the 2×2 joint prior, via the
@@ -155,8 +168,8 @@
                    [[uk bk] (factor-sequence-loglik agent b0 horizon observed)])))
         post (inv/normalize-logs logw)]
     {:joint post
-     :p-likes-chocolate (reduce (fn [s [[uk _] pr]] (+ s (if (= uk :chocolate) pr 0.0))) 0.0 post)
-     :p-informed        (reduce (fn [s [[_ bk] pr]] (+ s (if (= bk :informed) pr 0.0))) 0.0 post)}))
+     :p-likes-chocolate (marginal-prob post (fn [[uk _]] (= uk :chocolate)))
+     :p-informed        (marginal-prob post (fn [[_ bk]] (= bk :informed)))}))
 
 ;; ===========================================================================
 ;; Observations + analyses
@@ -189,8 +202,9 @@
 ;; exactly the belief factor-sequence-loglik scores against. Run in simulate mode (no
 ;; constraints) so it is unaffected by the p/generate-over-combinator bug (genmlx-7bm6).
 
+;; The kernel is keyed once at load time (dyn/auto-key) and reused as a fixed GF.
 (def ^:private belief-scan-kernel
-  (dyn/auto-key (gen [belief obs] [(reveal belief (:arm obs) (:prize obs)) belief])))
+  (dyn/auto-key (gen [belief obs] [(reveal-belief belief (:arm obs) (:prize obs)) belief])))
 (def ^:private belief-scan (comb/scan-combinator belief-scan-kernel))
 
 (defn belief-trajectory-via-scan
@@ -205,4 +219,4 @@
   (loop [obs observed, b initial-belief, acc []]
     (if (empty? obs) acc
         (let [{:keys [arm prize]} (first obs)]
-          (recur (rest obs) (reveal b arm prize) (conj acc b))))))
+          (recur (rest obs) (reveal-belief b arm prize) (conj acc b))))))

@@ -11,7 +11,7 @@
                              argmax) and SOFT-RATIONAL (finite alpha, Boltzmann).
    3. make-gridworld-mdp   — worlds/hike-mdp: the 5×5 hiking gridworld; an agent
                              plans a route to the high peak.
-   4. hyperbolic discounting— biased_planners/make-biased-mdp-agent: a present-
+   4. hyperbolic discounting— bp/make-biased-mdp-agent: a present-
                              biased (Naive hyperbolic) planner, the genuine
                              time-inconsistent agent, alongside the optimal one.
    5. make-line-pomdp      — pomdp_env/restaurant-gridworld on a corridor +
@@ -36,7 +36,6 @@
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.inference.exact :as exact]
-            [genmlx.protocols :as p]
             [genmlx.gen :refer [gen]]
             [genmlx.agents.worlds :as worlds]
             [genmlx.agents.agent :as agent]
@@ -187,12 +186,12 @@
   (gen [s]
     (let [explore (trace :explore (dist/flip epsilon))]
       (trace :action
-             (if (pos? (int (mx/item explore)))
+             (if (pos? (mx/item explore))
                (:dist (h/uniform-draw (vec (range n-actions))))
                (exact/categorical-argmax (mx/array (nth q-rows s) mx/float32)))))))
 
 (defn- policy-act [policy s]
-  (int (mx/item (:retval (p/simulate (dyn/auto-key policy) [s])))))
+  (int (mx/item (dyn/call policy s))))
 
 (defn demo-custom-agents []
   (println "\n-- 6. custom agents: random + epsilon-greedy --")
@@ -205,13 +204,13 @@
                    (first (apply max-key second (map-indexed vector row))))
         ;; random agent: 40 draws, all in range
         rnd      (random-policy n-act)
-        rnd-acts (mapv (fn [_] (policy-act rnd start)) (range 40))
+        rnd-acts (vec (repeatedly 40 #(policy-act rnd start)))
         ;; epsilon-greedy with epsilon=0 is pure greedy (deterministic)
         eg0      (epsilon-greedy-policy q-rows n-act 0.0)
-        eg0-acts (mapv (fn [_] (policy-act eg0 start)) (range 10))
+        eg0-acts (vec (repeatedly 10 #(policy-act eg0 start)))
         ;; epsilon-greedy with epsilon=1 is pure exploration
         eg1      (epsilon-greedy-policy q-rows n-act 1.0)
-        eg1-acts (set (mapv (fn [_] (policy-act eg1 start)) (range 60)))]
+        eg1-acts (set (repeatedly 60 #(policy-act eg1 start)))]
     (println (str "  random agent actions (sample): " (take 8 rnd-acts)))
     (check-true "random agent: every action is a legal index 0..3"
                 (every? #(contains? #{0 1 2 3} %) rnd-acts))

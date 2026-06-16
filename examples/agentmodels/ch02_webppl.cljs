@@ -37,7 +37,6 @@
             [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
             [genmlx.inference.exact :as exact]
-            [genmlx.protocols :as p]
             [genmlx.gen :refer [gen]]))
 
 ;; ---------------------------------------------------------------------------
@@ -50,7 +49,7 @@
 
 (defn- check-close [label expected actual tol]
   (let [a  (->num actual)
-        ok (<= (abs (- expected a)) tol)]
+        ok (<= (js/Math.abs (- expected a)) tol)]
     (println (str (if ok "  ✓ " "  ✗ FAIL ") label
                   " — expected " expected ", got " (.toFixed a 6)))
     (when-not ok (swap! fails inc))
@@ -78,8 +77,7 @@
 (defn erp-draw
   "One forward draw of the ERP bundle, as plain numbers (print boundary)."
   []
-  (let [r (p/simulate (dyn/auto-key erp-model) [])
-        rv (:retval r)]
+  (let [rv (dyn/call erp-model)]
     {:bern (int (->num (:bern rv)))
      :cat  (int (->num (:cat rv)))
      :norm (->num (:norm rv))
@@ -95,7 +93,7 @@
                                           (mx/array [[1.0 0.0] [0.0 1.0]])))))
 
 (defn mvn-draw []
-  (mx/->clj (:retval (p/simulate (dyn/auto-key mvn-model) []))))
+  (mx/->clj (dyn/call mvn-model)))
 
 ;; ---------------------------------------------------------------------------
 ;; 3. binomial from three flips — distribution over the SUM, two ways
@@ -108,18 +106,17 @@
     (let [a (trace :a (dist/flip 0.5))
           b (trace :b (dist/flip 0.5))
           c (trace :c (dist/flip 0.5))]
-      (mx/add (mx/add (.astype a mx/float32) (.astype b mx/float32))
-              (.astype c mx/float32)))))
+      (reduce mx/add (mapv #(mx/astype % mx/float32) [a b c])))))
 
 (defn binomial-pmf-from-flips
   "Enumerate the three-flip program and read P(sum = 0..3) by probability-
    weighting the (tensor-shaped) return value across the full joint."
   []
   (let [{:keys [probs retval]} (exact/exact-joint three-flips-sum [] nil)
-        rv (.astype retval mx/float32)]
+        rv (mx/astype retval mx/float32)]
     (mapv (fn [k]
             (mx/item (mx/sum (mx/multiply probs
-                               (.astype (mx/equal rv (mx/scalar (* 1.0 k))) mx/float32)))))
+                               (mx/astype (mx/equal rv (mx/scalar k)) mx/float32)))))
           (range 4))))
 
 (def binomial-builtin (gen [] (trace :k (dist/binomial 3 0.5))))
@@ -147,8 +144,7 @@
     (let [a     (trace :a (dist/flip 0.5))
           b     (trace :b (dist/flip 0.5))
           c     (trace :c (dist/flip 0.5))
-          total (mx/add (mx/add (.astype a mx/float32) (.astype b mx/float32))
-                        (.astype c mx/float32))
+          total (reduce mx/add (mapv #(mx/astype % mx/float32) [a b c]))
           mask  (mx/where (mx/greater-equal total (mx/scalar 2.0))
                           (mx/scalar 1.0) (mx/scalar 0.0))]
       (trace :ge2 (dist/bernoulli mask))
@@ -169,6 +165,7 @@
         r-total (exact/exact-posterior total-given-ge2 []
                                        (cm/choicemap :ge2 (mx/scalar 1)))]
     {:p-first-heads (get-in r-first [:marginals :a 1])
+     ;; :log-ml is already a host number, so this is Math/exp (not mx/exp).
      :evidence      (js/Math.exp (:log-ml r-first)) ; P(total heads >= 2)
      :p-total-2     (get-in r-total [:marginals :k 2])
      :p-total-3     (get-in r-total [:marginals :k 3])
@@ -183,19 +180,20 @@
    return value is the final position in {-2, 0, +2}. Enumerated exactly, this is
    agentmodels' forward positionDist in miniature."
   (gen []
-    (let [s1 (trace :s1 (dist/flip 0.5))
-          s2 (trace :s2 (dist/flip 0.5))
-          step (fn [f] (mx/subtract (mx/multiply (.astype f mx/float32) (mx/scalar 2.0))
-                                    (mx/scalar 1.0)))] ; 1->+1, 0->-1
-      (mx/add (step s1) (step s2)))))
+    (letfn [(step [f] ; 1->+1, 0->-1
+              (mx/subtract (mx/multiply (mx/astype f mx/float32) (mx/scalar 2.0))
+                           (mx/scalar 1.0)))]
+      (let [s1 (trace :s1 (dist/flip 0.5))
+            s2 (trace :s2 (dist/flip 0.5))]
+        (mx/add (step s1) (step s2))))))
 
 (defn position-dist
   "P(final position = v) for v in {-2, 0, +2}."
   []
   (let [{:keys [probs retval]} (exact/exact-joint position-walk [] nil)
-        rv (.astype retval mx/float32)
+        rv (mx/astype retval mx/float32)
         pv (fn [v] (mx/item (mx/sum (mx/multiply probs
-                              (.astype (mx/equal rv (mx/scalar (* 1.0 v))) mx/float32)))))]
+                              (mx/astype (mx/equal rv (mx/scalar v)) mx/float32)))))]
     {-2 (pv -2) 0 (pv 0) 2 (pv 2)}))
 
 ;; ---------------------------------------------------------------------------

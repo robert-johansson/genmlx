@@ -34,7 +34,8 @@
   (:require [genmlx.agents.gridworld :as gw]
             [genmlx.agents.agent :as agent]
             [genmlx.agents.biased-planners :as bp]
-            [genmlx.agents.inverse :as inv]))
+            [genmlx.agents.inverse :as inv]
+            [genmlx.agents.rollout :as rollout]))
 
 ;; The Restaurant-Choice grid (agentmodels Ch4 uses the same grid as Ch5b/5e).
 (def grid bp/restaurant-temptation-grid)
@@ -71,6 +72,8 @@
               ti (range (count time-cost-vals)), ai (range (count alpha-vals))]
           (let [donut (nth donut-vals di) veg (nth veg-vals vi) noodle (nth noodle-vals ni)
                 tc (nth time-cost-vals ti) alpha (nth alpha-vals ai)
+                ;; :timeCost is camelCase to match the gridworld parser / restaurant-mdp
+                ;; utilities-map convention (most of the codebase is kebab-case).
                 mdp (restaurant-mdp {:donut-n donut :donut-s donut :veg veg :noodle noodle :timeCost tc})]
             [[di vi ni ti ai]
              {:agent (agent/make-mdp-agent {:mdp mdp :alpha alpha :gamma 1.0 :n-iters n-iters})
@@ -101,9 +104,9 @@
   (reduce (fn [acc [tup pr]]
             (let [a (agents tup)]
               (-> acc
-                  (update :p-donut-favorite  + (* pr (if (fav a :donut)  1.0 0.0)))
-                  (update :p-veg-favorite    + (* pr (if (fav a :veg)    1.0 0.0)))
-                  (update :p-noodle-favorite + (* pr (if (fav a :noodle) 1.0 0.0)))
+                  (update :p-donut-favorite  + (if (fav a :donut)  pr 0.0))
+                  (update :p-veg-favorite    + (if (fav a :veg)    pr 0.0))
+                  (update :p-noodle-favorite + (if (fav a :noodle) pr 0.0))
                   (update :e-donut     + (* pr (:donut a)))
                   (update :e-alpha     + (* pr (:alpha a)))
                   (update :e-time-cost + (* pr (:time-cost a))))))
@@ -115,7 +118,7 @@
   "Summary statistics under the uniform prior (each tuple equally likely)."
   [agents]
   (let [n (count agents)]
-    (summarize (mapv (fn [t] [t (/ 1.0 n)]) (keys agents)) agents)))
+    (summarize (zipmap (keys agents) (repeat (/ 1.0 n))) agents)))
 
 ;; ===========================================================================
 ;; Generate-and-compare (the chapter's motivating example; high-alpha only)
@@ -132,12 +135,12 @@
                       :let [donut (nth donut-vals di) veg (nth veg-vals vi) noodle (nth noodle-vals ni)
                             mdp (restaurant-mdp {:donut-n donut :donut-s donut :veg veg :noodle noodle :timeCost time-cost})
                             ag  (agent/make-mdp-agent {:mdp mdp :alpha alpha :gamma 1.0 :n-iters N-ITERS})
-                            {:keys [states actions]} (agent/simulate-mdp ag start-idx horizon)
+                            {:keys [states actions]} (rollout/rollout-mdp ag start-idx horizon)
                             pred (mapv vector states actions)]
                       :when (= (vec observations) (vec (take obs-len pred)))]
                   [di vi ni])
         n (count matches)]
-    (into {} (map (fn [t] [t (/ 1.0 n)]) matches))))
+    (zipmap matches (repeat (/ 1.0 n)))))
 
 ;; ===========================================================================
 ;; Model specs (agentmodels Ch4)

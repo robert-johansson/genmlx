@@ -5,6 +5,7 @@
 
 (ns genmlx.agentmodels-biased-inverse-test
   (:require [agentmodels.biased-inverse :as bi]
+            [genmlx.agents.biased-planners :as bp]
             [genmlx.agents.inverse :as inv]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
@@ -36,8 +37,8 @@
 (def agents (bi/bias-agents {:mdp mdp :alpha ##Inf :discount 1.0 :n-iters 10}))
 (def naive-ag (:naive agents))
 (def soph-ag  (:sophisticated agents))
-(def eu-n (bi/eu-row naive-ag 0))
-(def eu-s (bi/eu-row soph-ag 0))
+(def eu-n (bp/eu-row naive-ag 0 (:A mdp)))
+(def eu-s (bp/eu-row soph-ag 0 (:A mdp)))
 (println "  naive EU(start) =" eu-n "   soph EU(start) =" eu-s)
 (assert-close "naive EU(a0)=8/3 (believes future self resists)" EU-VEG (nth eu-n 0) 1e-6)
 (assert-close "naive EU(a1)=8/3"                                 EU-VEG (nth eu-n 1) 1e-6)
