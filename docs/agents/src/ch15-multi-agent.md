@@ -77,6 +77,8 @@ in depth, and by depth `4` Alice's belief in the popular corridor has climbed to
 at least `0.83`. Deeper theory-of-mind doesn't add information — it amplifies the
 one asymmetry that was already there until the focal point dominates.
 
+![Line chart: P(popular corridor) climbing from 0.55 at depth 0 toward about 0.9 as theory-of-mind recursion deepens — each level of "I think that you think …" amplifies the focal asymmetry until coordination is nearly certain.](figures/ch15-schelling.png)
+
 Crucially, *the agents never change*. Swapping the exact backend for importance
 sampling over the very same `coordination-model` GF reproduces the answer: exact
 Alice(1) `0.5990` versus importance-sampled Alice(1) within a tolerance of `0.05`

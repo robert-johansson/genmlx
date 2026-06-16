@@ -56,7 +56,10 @@ then the truth arrives all at once.
 ## Belief is just a map
 
 There is no special data structure here. A belief is a plain Clojure map from
-world to probability, `{:A 0.5 :B 0.5}` at the start. The filter that updates it
+world to probability, `{:A 0.5 :B 0.5}` at the start. (In the haunted maze those two candidate goals are
+the pellet and the power pellet — read `:A` as the pellet and `:B` as the power
+pellet; `restaurant-gridworld` just names a generic pair, so the same code serves any
+two-goal world.) The filter that updates it
 is one Bayes step, lifted verbatim from `make-pomdp-agent`:
 
 ```clojure
@@ -156,6 +159,7 @@ This is the resource-rational picture in miniature: Pac-Man spends no effort
 guessing while the signpost is out of reach, gathers the one observation the
 geometry offers, and acts decisively once it lands.
 
-Next we let the hidden state be richer than a single bit — each corridor
-independently open or closed, revealed only when Pac-Man is *adjacent* — and watch
-him replan a detour the moment he learns his preferred route is blocked.
+So far the rewards were known and only the world was hidden. Next we hide the
+*rewards* themselves: Pac-Man must **learn** which corridors pay — pulling them,
+watching what spawns, and updating his beliefs — the multi-armed bandit and
+posterior-sampling reinforcement learning.

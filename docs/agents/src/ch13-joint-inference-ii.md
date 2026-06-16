@@ -134,4 +134,6 @@ The summary statistics are the verbatim webppl-agents predicates — `donut-temp
 
 The same maze, the same GFI `assess`, three rival explanations — and the only thing that ever decided between them was *how many times you looked*.
 
-Next: from inferring why one agent acted to coordinating several of them.
+Next: we have inferred over agents by exact enumeration throughout — the closing
+chapters run the *same* inference through interchangeable backends (enumeration,
+sampling, gradient) that must agree, making inference a pluggable axis of its own.

@@ -193,6 +193,6 @@ There is the whole library in one frame: a `:act` is called, a step is taken, an
 the agent advances toward value. Swap the policy and the picture stays the same;
 only the path changes.
 
-**Next:** with the families and the contract in hand, the following chapters turn
-the camera around — using inference *over* an agent to recover the parameters
-behind its choices.
+**Next:** the capstone steps past agentmodels.org entirely — a Pac-Man whose policy
+*is* a language model scored through the GFI, and a maze served from across a
+network — both falling out of this same agent-as-generative-function contract.

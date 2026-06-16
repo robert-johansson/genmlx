@@ -125,14 +125,15 @@ math that shares none of its implementation. The sequence also makes the two-sta
 sharpening visible: a flat 1/3 prior, then mass moving toward the two left-hand caches
 after the leftward steps, then concentrating on `:a` after the disambiguating *up*.
 
-The bars below show exactly this kind of converged cache posterior — the distribution
-that enumeration, importance sampling, and Metropolis-Hastings all land on:
+The animation below cycles the *same* goal posterior through all three backends —
+exact enumeration, importance sampling, Metropolis-Hastings. Only the title changes;
+the bars barely move:
 
-![Bar chart of the posterior probability over Pac-Man's valued cache, with one cache clearly favoured but a second retaining substantial probability mass — the non-degenerate goal posterior that the exact, importance-sampling, and Metropolis-Hastings backends all agree on.](figures/cache-posterior.png)
+![Animation cycling the goal posterior computed three ways — exact enumeration, importance sampling, and Metropolis-Hastings: across the frames the bars stay put (the valued cache near 0.74, a rival near 0.21, the third near 0.04) while only the backend name in the title changes — the answer is invariant to how it is computed.](figures/ch14-backend-agreement.gif)
 
-The reader should see one cache standing tallest while a rival keeps a real share of
-the mass — precisely the non-degenerate posterior that makes "the backends agree" a
-meaningful claim rather than a trivial one.
+One cache stands tallest while a rival keeps a real share of the mass — a
+non-degenerate posterior, so "the backends agree" is a meaningful claim, not a
+trivial one. The backend is a swap; the inference is the same.
 
 ## (6c) When the latent goes continuous, swap to gradients
 
@@ -176,5 +177,6 @@ enumeration, IS, and MH agree with each other and with an independent oracle to 
 total variations of `1e-4` to `0.05`. Nothing in the agent changed between backends.
 Inference is the pluggable, orthogonal axis the thesis promised.
 
-Next we let Pac-Man reason about something he *cannot see*: a ghost whose cell is
-hidden state, turning the maze into a POMDP.
+Next, the maze fills with *other minds*: Pac-Men trying to meet, a ghost trying to
+catch, a signaller choosing how to hint — agents reasoning about agents, each a
+generative function nested inside another.

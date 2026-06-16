@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-81cff193.js";
+            window.path_to_searchindex_js = "searchindex-ee44fc62.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -288,7 +288,9 @@
 </code></pre>
 <p>The summary statistics are the verbatim webppl-agents predicates — <code>donut-tempting?</code> tests whether the discounted utilities encode a preference reversal (veg preferred from afar, donut preferred up close), and <code>veg-minus-donut</code> measures net taste. With the discount fixed at <code>k = 1</code>, conditioning on the tempting detour raises <code>P(donutTempting)</code> from a prior under 0.1 toward ~0.9, and <code>E[vegMinusDonut]</code> turns positive — the agent net-prefers veg yet was tempted, exactly the discounting signature. And the <code>:number-repeats</code> knob does for the joint model what repetition did for the bias model: seeing the same path again strengthens the discounting explanation over the high-noise one, because noise, unlike a stable bias or a stable taste, does not repeat.</p>
 <p>The same maze, the same GFI <code>assess</code>, three rival explanations — and the only thing that ever decided between them was <em>how many times you looked</em>.</p>
-<p>Next: from inferring why one agent acted to coordinating several of them.</p>
+<p>Next: we have inferred over agents by exact enumeration throughout — the closing
+chapters run the <em>same</em> inference through interchangeable backends (enumeration,
+sampling, gradient) that must agree, making inference a pluggable axis of its own.</p>
 
                     </main>
 

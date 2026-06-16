@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-81cff193.js";
+            window.path_to_searchindex_js = "searchindex-ee44fc62.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -271,11 +271,12 @@ observed actions) and hands back a log-weight. Joint inference is just enumerati
 plus normalization on top of that contract — exactly the orthogonality this book keeps
 arguing for. The result is a joint distribution over the agent’s hidden type, with
 clean marginals for each latent.</p>
-<p><img src="figures/ch13-bias-posterior.png" alt="A joint posterior over an agent’s hidden parameters, shown as a bar distribution that concentrates probability mass on a small region of the latent space — the kind of distribution joint inference returns."></p>
-<p>The figure above is illustrative — a representative joint posterior over an agent’s
-hidden settings, not these exact procrastination marginals. What you should take from
-it is the <em>shape</em>: joint inference returns a full distribution over the type, with
-mass pooling on the explanations that fit, rather than a single point estimate.</p>
+<p><img src="figures/ch12-online-revision.png" alt="Line chart of E[reward] over the observed waiting: it sits low and flat while Pac-Man keeps deferring, then jumps sharply at the final step when he finally acts — the joint posterior revising the moment the task completes."></p>
+<p>This is the real online posterior under the discounting model: <code>E[reward]</code> stays low
+through the eight waits — the agent looks like it barely values the goal — and then
+<strong>jumps</strong> the instant Pac-Man finally acts, because one completed action is decisive
+evidence the reward was worth waiting for all along. Joint inference does not merely
+settle on a type; it <em>revises</em> as the behaviour unfolds.</p>
 <h2 id="what-the-two-models-conclude"><a class="header" href="#what-the-two-models-conclude">What the two models conclude</a></h2>
 <p>Run both models on the eight observed waits (<code>j5d/analyze</code>) and the contrast is
 stark. The <strong>Optimal</strong> model, forbidden from invoking present bias, is cornered into

@@ -39,7 +39,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-81cff193.js";
+            window.path_to_searchindex_js = "searchindex-ee44fc62.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -727,7 +727,10 @@ characteristic <em>flat-then-snap</em> shape: nothing happens for step after ste
 then the truth arrives all at once.</p>
 <h2 id="belief-is-just-a-map"><a class="header" href="#belief-is-just-a-map">Belief is just a map</a></h2>
 <p>There is no special data structure here. A belief is a plain Clojure map from
-world to probability, <code>{:A 0.5 :B 0.5}</code> at the start. The filter that updates it
+world to probability, <code>{:A 0.5 :B 0.5}</code> at the start. (In the haunted maze those two candidate goals are
+the pellet and the power pellet — read <code>:A</code> as the pellet and <code>:B</code> as the power
+pellet; <code>restaurant-gridworld</code> just names a generic pair, so the same code serves any
+two-goal world.) The filter that updates it
 is one Bayes step, lifted verbatim from <code>make-pomdp-agent</code>:</p>
 <pre><code class="language-clojure">;; one Bayes filtering step: b'(w) ∝ b(w) · P(obs | w, loc).
 ;; obs = nil (uninformative location) =&gt; belief unchanged (flat-then-snap).
@@ -805,9 +808,10 @@ away from the world that turns out to be real, it only waits and then commits.</
 <p>This is the resource-rational picture in miniature: Pac-Man spends no effort
 guessing while the signpost is out of reach, gathers the one observation the
 geometry offers, and acts decisively once it lands.</p>
-<p>Next we let the hidden state be richer than a single bit — each corridor
-independently open or closed, revealed only when Pac-Man is <em>adjacent</em> — and watch
-him replan a detour the moment he learns his preferred route is blocked.</p>
+<p>So far the rewards were known and only the world was hidden. Next we hide the
+<em>rewards</em> themselves: Pac-Man must <strong>learn</strong> which corridors pay — pulling them,
+watching what spawns, and updating his beliefs — the multi-armed bandit and
+posterior-sampling reinforcement learning.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="learning-the-maze-bandits-thompson-sampling-and-psrl"><a class="header" href="#learning-the-maze-bandits-thompson-sampling-and-psrl">Learning the Maze: Bandits, Thompson Sampling, and PSRL</a></h1>
 <blockquote>
@@ -879,7 +883,7 @@ pull as fruit and misses arrive:</p>
 <p>The posterior arithmetic is exact. Before any data, the prior is uniform over the <strong>12 free cells</strong> — each cell gets ≈ 1/12. Observing reward 0 at a cell removes it and renormalizes the survivors; observing reward 1 at the true goal <strong>collapses the posterior to it</strong> with all mass on that single cell (P &gt; 0.999).</p>
 <p>Run the full loop and the learning is decisive. Over five seeds, the posterior concentrates on the true goal with <strong>P ≥ 0.99</strong> every time, the final episode achieves <strong>exactly zero regret</strong> — it has converged to the optimal route — and PSRL beats a no-learning baseline (which keeps sampling from the fixed prior and never updates) on cumulative regret in every seed, staying well under the linear <code>n·V\* = 30</code> worst case.</p>
 <p>Best of all, the regret <em>plateaus</em>. Splitting a 12-episode run in half, the test confirms that regret accrued in the second half is <strong>exactly 0.0</strong> — once the posterior collapses, Pac-Man stops paying the exploration tax entirely. That is the signature of posterior sampling: regret is front-loaded into early episodes while the belief is uncertain, then vanishes the moment the maze is learned.</p>
-<p>A bandit taught Pac-Man to <em>learn a rate</em>; PSRL taught him to <em>learn a maze</em>. Next we let the maze hide more than rewards — and watch belief itself become the state.</p>
+<p>A bandit taught Pac-Man to <em>learn a rate</em>; PSRL taught him to <em>learn a maze</em>. Next we turn the telescope around: instead of Pac-Man learning the world, <em>we</em> watch Pac-Man and infer what he wants — inverse planning.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="reasoning-about-agents-inverse-reinforcement-learning"><a class="header" href="#reasoning-about-agents-inverse-reinforcement-learning">Reasoning About Agents: Inverse Reinforcement Learning</a></h1>
 <blockquote>
@@ -1006,8 +1010,9 @@ happen, is the discriminating one.</p>
 <p>The agent was a generative function; that is the whole trick. Forward, it plans
 and acts. Backward, the very same policy <em>is</em> the likelihood, and inference is
 just Bayes’ rule bolted onto <code>p/assess</code> — no new machinery, only the arrow
-reversed. Next we let the world itself hide things from Pac-Man, and infer his
-<em>beliefs</em> alongside his preferences.</p>
+reversed. But all of this assumed Pac-Man is (softly) rational. Next we ask what happens when
+his departures from the optimal path are <em>systematic</em> — biases that decision-noise
+alone can never explain.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="cognitive-biases-and-bounded-rationality"><a class="header" href="#cognitive-biases-and-bounded-rationality">Cognitive Biases and Bounded Rationality</a></h1>
 <blockquote>
@@ -1414,11 +1419,12 @@ observed actions) and hands back a log-weight. Joint inference is just enumerati
 plus normalization on top of that contract — exactly the orthogonality this book keeps
 arguing for. The result is a joint distribution over the agent’s hidden type, with
 clean marginals for each latent.</p>
-<p><img src="figures/ch13-bias-posterior.png" alt="A joint posterior over an agent’s hidden parameters, shown as a bar distribution that concentrates probability mass on a small region of the latent space — the kind of distribution joint inference returns."></p>
-<p>The figure above is illustrative — a representative joint posterior over an agent’s
-hidden settings, not these exact procrastination marginals. What you should take from
-it is the <em>shape</em>: joint inference returns a full distribution over the type, with
-mass pooling on the explanations that fit, rather than a single point estimate.</p>
+<p><img src="figures/ch12-online-revision.png" alt="Line chart of E[reward] over the observed waiting: it sits low and flat while Pac-Man keeps deferring, then jumps sharply at the final step when he finally acts — the joint posterior revising the moment the task completes."></p>
+<p>This is the real online posterior under the discounting model: <code>E[reward]</code> stays low
+through the eight waits — the agent looks like it barely values the goal — and then
+<strong>jumps</strong> the instant Pac-Man finally acts, because one completed action is decisive
+evidence the reward was worth waiting for all along. Joint inference does not merely
+settle on a type; it <em>revises</em> as the behaviour unfolds.</p>
 <h2 id="what-the-two-models-conclude"><a class="header" href="#what-the-two-models-conclude">What the two models conclude</a></h2>
 <p>Run both models on the eight observed waits (<code>j5d/analyze</code>) and the contrast is
 stark. The <strong>Optimal</strong> model, forbidden from invoking present bias, is cornered into
@@ -1576,7 +1582,9 @@ exists at all</em>.</p>
 </code></pre>
 <p>The summary statistics are the verbatim webppl-agents predicates — <code>donut-tempting?</code> tests whether the discounted utilities encode a preference reversal (veg preferred from afar, donut preferred up close), and <code>veg-minus-donut</code> measures net taste. With the discount fixed at <code>k = 1</code>, conditioning on the tempting detour raises <code>P(donutTempting)</code> from a prior under 0.1 toward ~0.9, and <code>E[vegMinusDonut]</code> turns positive — the agent net-prefers veg yet was tempted, exactly the discounting signature. And the <code>:number-repeats</code> knob does for the joint model what repetition did for the bias model: seeing the same path again strengthens the discounting explanation over the high-noise one, because noise, unlike a stable bias or a stable taste, does not repeat.</p>
 <p>The same maze, the same GFI <code>assess</code>, three rival explanations — and the only thing that ever decided between them was <em>how many times you looked</em>.</p>
-<p>Next: from inferring why one agent acted to coordinating several of them.</p>
+<p>Next: we have inferred over agents by exact enumeration throughout — the closing
+chapters run the <em>same</em> inference through interchangeable backends (enumeration,
+sampling, gradient) that must agree, making inference a pluggable axis of its own.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="efficient-inference-one-model-many-backends"><a class="header" href="#efficient-inference-one-model-many-backends">Efficient Inference: One Model, Many Backends</a></h1>
 <blockquote>
@@ -1686,12 +1694,13 @@ posterior to a total variation of <code>1e-4</code> — the closed form is cross
 math that shares none of its implementation. The sequence also makes the two-stage
 sharpening visible: a flat 1/3 prior, then mass moving toward the two left-hand caches
 after the leftward steps, then concentrating on <code>:a</code> after the disambiguating <em>up</em>.</p>
-<p>The bars below show exactly this kind of converged cache posterior — the distribution
-that enumeration, importance sampling, and Metropolis-Hastings all land on:</p>
-<p><img src="figures/cache-posterior.png" alt="Bar chart of the posterior probability over Pac-Man’s valued cache, with one cache clearly favoured but a second retaining substantial probability mass — the non-degenerate goal posterior that the exact, importance-sampling, and Metropolis-Hastings backends all agree on."></p>
-<p>The reader should see one cache standing tallest while a rival keeps a real share of
-the mass — precisely the non-degenerate posterior that makes “the backends agree” a
-meaningful claim rather than a trivial one.</p>
+<p>The animation below cycles the <em>same</em> goal posterior through all three backends —
+exact enumeration, importance sampling, Metropolis-Hastings. Only the title changes;
+the bars barely move:</p>
+<p><img src="figures/ch14-backend-agreement.gif" alt="Animation cycling the goal posterior computed three ways — exact enumeration, importance sampling, and Metropolis-Hastings: across the frames the bars stay put (the valued cache near 0.74, a rival near 0.21, the third near 0.04) while only the backend name in the title changes — the answer is invariant to how it is computed."></p>
+<p>One cache stands tallest while a rival keeps a real share of the mass — a
+non-degenerate posterior, so “the backends agree” is a meaningful claim, not a
+trivial one. The backend is a swap; the inference is the same.</p>
 <h2 id="6c-when-the-latent-goes-continuous-swap-to-gradients"><a class="header" href="#6c-when-the-latent-goes-continuous-swap-to-gradients">(6c) When the latent goes continuous, swap to gradients</a></h2>
 <p>Replace the discrete goal with a <em>continuous</em> utility vector over the same caches and
 the natural backend swaps again — now to gradient ascent. The differentiable planner
@@ -1727,8 +1736,9 @@ function, and all agree: VI equals recursive expected-utility to <code>1e-3</cod
 enumeration, IS, and MH agree with each other and with an independent oracle to within
 total variations of <code>1e-4</code> to <code>0.05</code>. Nothing in the agent changed between backends.
 Inference is the pluggable, orthogonal axis the thesis promised.</p>
-<p>Next we let Pac-Man reason about something he <em>cannot see</em>: a ghost whose cell is
-hidden state, turning the maze into a POMDP.</p>
+<p>Next, the maze fills with <em>other minds</em>: Pac-Men trying to meet, a ghost trying to
+catch, a signaller choosing how to hint — agents reasoning about agents, each a
+generative function nested inside another.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="multi-agent-models-coordination-adversaries-and-signaling"><a class="header" href="#multi-agent-models-coordination-adversaries-and-signaling">Multi-Agent Models: Coordination, Adversaries, and Signaling</a></h1>
 <blockquote>
@@ -1796,6 +1806,7 @@ reaches Alice <code>0.6905</code> and Bob <code>0.7317</code>. The probability i
 in depth, and by depth <code>4</code> Alice’s belief in the popular corridor has climbed to
 at least <code>0.83</code>. Deeper theory-of-mind doesn’t add information — it amplifies the
 one asymmetry that was already there until the focal point dominates.</p>
+<p><img src="figures/ch15-schelling.png" alt="Line chart: P(popular corridor) climbing from 0.55 at depth 0 toward about 0.9 as theory-of-mind recursion deepens — each level of “I think that you think …” amplifies the focal asymmetry until coordination is nearly certain."></p>
 <p>Crucially, <em>the agents never change</em>. Swapping the exact backend for importance
 sampling over the very same <code>coordination-model</code> GF reproduces the answer: exact
 Alice(1) <code>0.5990</code> versus importance-sampled Alice(1) within a tolerance of <code>0.05</code>
@@ -2036,9 +2047,9 @@ a single power pellet — the smallest MDP that still has a real decision:</p>
 <p>There is the whole library in one frame: a <code>:act</code> is called, a step is taken, and
 the agent advances toward value. Swap the policy and the picture stays the same;
 only the path changes.</p>
-<p><strong>Next:</strong> with the families and the contract in hand, the following chapters turn
-the camera around — using inference <em>over</em> an agent to recover the parameters
-behind its choices.</p>
+<p><strong>Next:</strong> the capstone steps past agentmodels.org entirely — a Pac-Man whose policy
+<em>is</em> a language model scored through the GFI, and a maze served from across a
+network — both falling out of this same agent-as-generative-function contract.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="beyond-agentmodels-llm-policies-and-remote-environments"><a class="header" href="#beyond-agentmodels-llm-policies-and-remote-environments">Beyond agentmodels: LLM Policies and Remote Environments</a></h1>
 <blockquote>

@@ -99,4 +99,4 @@ Run the full loop and the learning is decisive. Over five seeds, the posterior c
 
 Best of all, the regret *plateaus*. Splitting a 12-episode run in half, the test confirms that regret accrued in the second half is **exactly 0.0** — once the posterior collapses, Pac-Man stops paying the exploration tax entirely. That is the signature of posterior sampling: regret is front-loaded into early episodes while the belief is uncertain, then vanishes the moment the maze is learned.
 
-A bandit taught Pac-Man to *learn a rate*; PSRL taught him to *learn a maze*. Next we let the maze hide more than rewards — and watch belief itself become the state.
+A bandit taught Pac-Man to *learn a rate*; PSRL taught him to *learn a maze*. Next we turn the telescope around: instead of Pac-Man learning the world, *we* watch Pac-Man and infer what he wants — inverse planning.

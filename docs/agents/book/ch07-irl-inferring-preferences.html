@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-81cff193.js";
+            window.path_to_searchindex_js = "searchindex-ee44fc62.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -305,8 +305,9 @@ happen, is the discriminating one.</p>
 <p>The agent was a generative function; that is the whole trick. Forward, it plans
 and acts. Backward, the very same policy <em>is</em> the likelihood, and inference is
 just Bayes’ rule bolted onto <code>p/assess</code> — no new machinery, only the arrow
-reversed. Next we let the world itself hide things from Pac-Man, and infer his
-<em>beliefs</em> alongside his preferences.</p>
+reversed. But all of this assumed Pac-Man is (softly) rational. Next we ask what happens when
+his departures from the optimal path are <em>systematic</em> — biases that decision-noise
+alone can never explain.</p>
 
                     </main>
 

@@ -103,12 +103,13 @@ plus normalization on top of that contract — exactly the orthogonality this bo
 arguing for. The result is a joint distribution over the agent's hidden type, with
 clean marginals for each latent.
 
-![A joint posterior over an agent's hidden parameters, shown as a bar distribution that concentrates probability mass on a small region of the latent space — the kind of distribution joint inference returns.](figures/ch13-bias-posterior.png)
+![Line chart of E[reward] over the observed waiting: it sits low and flat while Pac-Man keeps deferring, then jumps sharply at the final step when he finally acts — the joint posterior revising the moment the task completes.](figures/ch12-online-revision.png)
 
-The figure above is illustrative — a representative joint posterior over an agent's
-hidden settings, not these exact procrastination marginals. What you should take from
-it is the *shape*: joint inference returns a full distribution over the type, with
-mass pooling on the explanations that fit, rather than a single point estimate.
+This is the real online posterior under the discounting model: `E[reward]` stays low
+through the eight waits — the agent looks like it barely values the goal — and then
+**jumps** the instant Pac-Man finally acts, because one completed action is decisive
+evidence the reward was worth waiting for all along. Joint inference does not merely
+settle on a type; it *revises* as the behaviour unfolds.
 
 ## What the two models conclude
 

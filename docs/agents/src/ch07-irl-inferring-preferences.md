@@ -153,5 +153,6 @@ happen, is the discriminating one.
 The agent was a generative function; that is the whole trick. Forward, it plans
 and acts. Backward, the very same policy *is* the likelihood, and inference is
 just Bayes' rule bolted onto `p/assess` — no new machinery, only the arrow
-reversed. Next we let the world itself hide things from Pac-Man, and infer his
-*beliefs* alongside his preferences.
+reversed. But all of this assumed Pac-Man is (softly) rational. Next we ask what happens when
+his departures from the optimal path are *systematic* — biases that decision-noise
+alone can never explain.
