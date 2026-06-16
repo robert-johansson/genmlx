@@ -2220,17 +2220,65 @@
 
    {:name :translator-bijection-roundtrip
     :from "[T] §3.7 — the split/merge bijection is invertible"
-    :theorem "Split (mu,u)->(mu-u,mu+u) then merge ->((m1+m2)/2,(m2-m1)/2)
-              recovers (mu,u); the split/merge log-Jacobians (+log2,-log2) are
-              exact negatives."
+    :theorem "Split (mu,u)->(m1,m2)=(mu-u,mu+u) through a REAL trace-translator,
+              then merge (m1,m2)->((m1+m2)/2,(m2-m1)/2), recovers the original
+              choices; the two log-det-Jacobians RETURNED by apply-translator
+              (+log2,-log2) are exact negatives; and because the round trip
+              cancels the model scores, the two translator weights sum to 0.
+              Drives transl/apply-translator on a real trace (genmlx-vjtl)."
     :tags #{:translator}
     :check (fn [_]
-             (every? true?
-                     (for [[mu u] [[1.0 0.5] [-0.3 0.2] [2.7 -1.1]]]
-                       (let [m1 (- mu u) m2 (+ mu u)
-                             mu' (/ (+ m1 m2) 2.0) u' (/ (- m2 m1) 2.0)]
-                         (and (approx= mu mu' 1e-9) (approx= u u' 1e-9)
-                              (approx= (+ (js/Math.log 2) (- (js/Math.log 2))) 0.0 1e-12))))))}
+             (let [P1 (dyn/auto-key
+                       (dyn/make-gen-fn
+                        (fn [rt] (let [t (.-trace rt)]
+                                   (t :mu (dist/gaussian 0 1))
+                                   (t :u (dist/gaussian 0 1))))
+                        '([] (do (trace :mu (dist/gaussian 0 1))
+                                 (trace :u (dist/gaussian 0 1))))))
+                   P2 (dyn/make-gen-fn
+                       (fn [rt] (let [t (.-trace rt)]
+                                  (t :m1 (dist/gaussian 0 1))
+                                  (t :m2 (dist/gaussian 0 1))))
+                       '([] (do (trace :m1 (dist/gaussian 0 1))
+                                (trace :m2 (dist/gaussian 0 1)))))
+                   split (transl/trace-translator
+                          {:p2 P2
+                           :h (fn [in _aux]
+                                (let [mu (transl/read-choice in :mu)
+                                      u  (transl/read-choice in :u)]
+                                  {:trace (-> cm/EMPTY
+                                              (cm/set-value :m1 (mx/subtract mu u))
+                                              (cm/set-value :m2 (mx/add mu u)))
+                                   :aux cm/EMPTY
+                                   :log-det-jacobian (mx/scalar (js/Math.log 2))}))})
+                   mrg (transl/trace-translator
+                        {:p2 P1
+                         :h (fn [in _aux]
+                              (let [m1 (transl/read-choice in :m1)
+                                    m2 (transl/read-choice in :m2)]
+                                {:trace (-> cm/EMPTY
+                                            (cm/set-value :mu (mx/divide (mx/add m1 m2) (mx/scalar 2.0)))
+                                            (cm/set-value :u  (mx/divide (mx/subtract m2 m1) (mx/scalar 2.0))))
+                                 :aux cm/EMPTY
+                                 :log-det-jacobian (mx/scalar (- (js/Math.log 2)))}))})]
+               (every? true?
+                       (for [seed (range 6)]
+                         (let [in-tr (p/simulate (dyn/with-key P1 (rng/fresh-key seed)) [])
+                               s (transl/apply-translator split in-tr [] (rng/fresh-key (+ 70 seed)))
+                               m (transl/apply-translator mrg (:trace s) [] (rng/fresh-key (+ 90 seed)))
+                               in-c (:choices in-tr)
+                               out-c (:choices (:trace m))]
+                           (and ;; (a) round-trip recovers the original choices
+                                (approx= (ev (transl/read-choice out-c :mu))
+                                         (ev (transl/read-choice in-c :mu)) 1e-4)
+                                (approx= (ev (transl/read-choice out-c :u))
+                                         (ev (transl/read-choice in-c :u)) 1e-4)
+                                ;; (b) the log-det-Jacobians RETURNED by the
+                                ;;     translators are exact negatives
+                                (approx= (+ (ev (:log-det-jacobian s))
+                                            (ev (:log-det-jacobian m))) 0.0 1e-9)
+                                ;; (c) detailed balance: the two weights sum to 0
+                                (approx= (+ (ev (:weight s)) (ev (:weight m))) 0.0 1e-4)))))))}
 
    {:name :reversible-jump-detailed-balance
     :from "[T] §3.7.4, Eq 3.12 — split/merge reversible-jump weights are reciprocal"

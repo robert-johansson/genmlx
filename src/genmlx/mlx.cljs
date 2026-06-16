@@ -965,14 +965,25 @@
 (defn gpu-architecture-gen
   "The Metal GPU architecture generation as an integer (e.g. 16 = M4). This is
    the SOLE native source of the arch generation — metalDeviceInfo does NOT
-   expose it (it returns only availability + working-set size), so the
-   :architecture string in metal-device-info below is a fallback placeholder.
+   expose architecture or a device name (it returns only availability +
+   working-set size). metal-device-info below derives its :architecture-gen and
+   :device-name from THIS, never from a fabricated constant (genmlx-r3u4).
    Read-only introspection (genmlx-0vwn)."
   [] (.gpuArchitectureGen c))
-(defn metal-device-info []
-  (let [info (js/JSON.parse (.metalDeviceInfo c))]
-    {:architecture (or (.-architecture info) "apple")
-     :device-name  (or (.-device_name info) "apple-gpu")
+(defn metal-device-info
+  "Honest device introspection. Native metalDeviceInfo() exposes only memory
+   limits + availability — it does NOT report architecture or a device name, so
+   we never fabricate those (the old hardcoded \"apple\"/\"apple-gpu\" lied,
+   genmlx-r3u4). :architecture-gen is the real GPU arch generation integer from
+   gpu-architecture-gen (e.g. 16 = M4); :device-name is a label DERIVED from it
+   (varies with hardware), or :unavailable if the arch gen cannot be read."
+  []
+  (let [info (js/JSON.parse (.metalDeviceInfo c))
+        arch-gen (gpu-architecture-gen)]
+    {:architecture-gen arch-gen
+     :device-name (if (number? arch-gen)
+                    (str "apple-gpu-gen-" arch-gen)
+                    :unavailable)
      :memory-size  (or (.-max_recommended_working_set_size info) 0)
      :max-buffer-length (or (.-max_buffer_length info) 0)
      :max-recommended-working-set-size (or (.-max_recommended_working_set_size info) 0)}))

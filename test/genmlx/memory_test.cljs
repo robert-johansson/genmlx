@@ -31,12 +31,18 @@
       (is (map? info) "device-info is a map")
       ;; :resource-limit removed — v0.31.2's metalDeviceInfo no longer reports it.
       (is (contains? info :device-name) "has :device-name")
-      (is (string? (:device-name info)) "device-name is string")
+      ;; genmlx-r3u4: native exposes no device name; :device-name is DERIVED from
+      ;; the real arch-gen (a string), or :unavailable — never a fabricated const.
+      (is (or (string? (:device-name info)) (= :unavailable (:device-name info)))
+          "device-name is a derived string or :unavailable, not fabricated")
       (is (contains? info :memory-size) "has :memory-size")
       (is (> (:memory-size info) 0) "memory-size > 0")
       (is (contains? info :max-buffer-length) "has :max-buffer-length")
       (is (contains? info :max-recommended-working-set-size) "has :max-recommended-working-set-size")
-      (is (contains? info :architecture) "has :architecture"))))
+      ;; genmlx-r3u4: the real GPU arch generation integer replaces the old
+      ;; hardcoded :architecture "apple" placeholder.
+      (is (contains? info :architecture-gen) "has :architecture-gen")
+      (is (number? (:architecture-gen info)) "architecture-gen is a real integer (gpu-architecture-gen)"))))
 
 (deftest set-cache-limit-roundtrip
   (testing "set-cache-limit! roundtrip"

@@ -27,7 +27,10 @@ out/
 # External repos (cloned for comparison)
 genjax/
 genstudio/
-bench/
+# Only the external comparison clones under bench/ — NOT the whole dir, or new
+# bench/*.cljs scripts get silently untracked (genmlx-yo0d).
+bench/genjax/
+bench/genjl/
 
 
 # Python

@@ -135,14 +135,27 @@
               ar-term
               sources))))
 
+(def default-priors
+  "Single source of truth for the transition-model prior hyperparameters, shared
+   by BOTH the IS-generated source (param-bindings) and the analytical extractor
+   (extract-regression-data) so :importance and :analytical score the SAME model
+   (genmlx-b4z9). Previously param-bindings hardcoded the cross-effect prior std
+   at 0.3 while the analytical path defaulted to 3.0 — a 10x std / 100x variance
+   mismatch that made the two log-ML estimates integrate against different models."
+  {:ar-prior-mean 0.5 :ar-prior-std 0.15
+   :beta-prior-mean 0.0 :beta-prior-std 3.0})
+
 (defn- param-bindings
   "Build the let-binding strings for model parameters.
-   Returns a vector of binding strings."
-  [var-names edges]
-  (let [ar-bindings (mapv (fn [v]
+   Returns a vector of binding strings. `priors` (merged over default-priors)
+   sets the AR + cross-effect prior hyperparameters interpolated into the source."
+  [var-names edges priors]
+  (let [{:keys [ar-prior-mean ar-prior-std beta-prior-mean beta-prior-std]}
+        (merge default-priors priors)
+        ar-bindings (mapv (fn [v]
                             (str "ar-" (name v)
                                  " (trace :ar-" (name v)
-                                 " (dist/gaussian 0.5 0.15))"))
+                                 " (dist/gaussian " ar-prior-mean " " ar-prior-std "))"))
                           var-names)
         cross-bindings (vec
                         (for [target var-names
@@ -151,7 +164,7 @@
                                          (get edges [(name source) (name target)]))]
                           (str "beta-" (name source) "->" (name target)
                                " (trace :beta-" (name source) "->" (name target)
-                               " (dist/gaussian 0 0.3))")))
+                               " (dist/gaussian " beta-prior-mean " " beta-prior-std "))")))
         sigma-bindings (mapv (fn [v]
                                (str "sigma-" (name v)
                                     " (trace :sigma-" (name v)
@@ -168,9 +181,14 @@
 
    Returns a string: (fn [trace transitions] ...) that when evaluated by SCI
    produces a function. The function traces parameters once, then traces
-   observations for each transition in the data."
-  [var-names edges]
-  (let [bindings (param-bindings var-names edges)
+   observations for each transition in the data.
+
+   `opts` may carry prior overrides (:ar-prior-mean/:ar-prior-std,
+   :beta-prior-mean/:beta-prior-std); they are interpolated into the generated
+   source so the IS model matches the analytical extractor's priors (genmlx-b4z9)."
+  ([var-names edges] (build-transition-source var-names edges {}))
+  ([var-names edges opts]
+  (let [bindings (param-bindings var-names edges opts)
         binding-str (str/join "\n        " bindings)
         body-lines
         (mapv (fn [v]
@@ -187,7 +205,7 @@
     (str "(fn [trace transitions]\n"
          "  (let [" binding-str "]\n"
          "    (doseq [[i {:keys [" destructure-keys "]}] (map-indexed vector transitions)]\n"
-         "      " body-str ")))")))
+         "      " body-str ")))"))))
 
 ;; ============================================================
 ;; Model compilation
@@ -449,11 +467,10 @@
 (defn- extract-regression-data
   "Build regression components for one variable's transition equation.
    Returns {:y [observations] :cols [{:values :prior-mean :prior-var} ...]}"
-  [transitions target var-names edges
-   {:keys [ar-prior-mean ar-prior-std beta-prior-mean beta-prior-std]
-    :or {ar-prior-mean 0.5 ar-prior-std 0.15
-         beta-prior-mean 0.0 beta-prior-std 3.0}}]
-  (let [y (mapv #(get % (next-key target)) transitions)
+  [transitions target var-names edges opts]
+  (let [{:keys [ar-prior-mean ar-prior-std beta-prior-mean beta-prior-std]}
+        (merge default-priors opts)
+        y (mapv #(get % (next-key target)) transitions)
         ar-col {:values (mapv #(get % (prev-key target)) transitions)
                 :prior-mean ar-prior-mean
                 :prior-var (* ar-prior-std ar-prior-std)}
@@ -636,7 +653,7 @@
                         (enumerate-2var-structures (first var-names) (second var-names)))
          scored (vec
                  (for [s structures]
-                   (let [source (build-transition-source var-names (:edges s))]
+                   (let [source (build-transition-source var-names (:edges s) opts)]
                      (println (str "  scoring: " (:name s) "..."))
                      (if (= scoring :analytical)
                        (let [lml (score-model-analytical transitions var-names (:edges s) opts)]
@@ -753,8 +770,8 @@
    Returns the structures augmented with :log-ml."
   ([transitions var-names] (score-all-structures transitions var-names {}))
   ([transitions var-names opts]
-   (let [{:keys [ar-prior-mean ar-prior-std beta-prior-std]
-          :or {ar-prior-mean 0.5 ar-prior-std 0.15 beta-prior-std 3.0}} opts
+   (let [{:keys [ar-prior-mean ar-prior-std beta-prior-std]}
+         (merge default-priors opts)
          ar-var (* ar-prior-std ar-prior-std)
          beta-var (* beta-prior-std beta-prior-std)
          n (count transitions)
@@ -869,8 +886,8 @@
             :elapsed-ms    scoring time}"
   ([transitions var-names] (discover-structure-decomposed transitions var-names {}))
   ([transitions var-names opts]
-   (let [{:keys [ar-prior-mean ar-prior-std beta-prior-std]
-          :or {ar-prior-mean 0.5 ar-prior-std 0.15 beta-prior-std 3.0}} opts
+   (let [{:keys [ar-prior-mean ar-prior-std beta-prior-std]}
+         (merge default-priors opts)
          ar-var (* ar-prior-std ar-prior-std)
          beta-var (* beta-prior-std beta-prior-std)
          n (count transitions)

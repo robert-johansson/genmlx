@@ -38,7 +38,7 @@ Forward-sample all random choices from their prior distributions. No observation
       slope)))
 
 (let [tr (p/simulate model [(mx/scalar 2.0)])]
-  (println "slope:" (mx/item (cm/get-value (:choices tr) :slope)))
+  (println "slope:" (mx/item (cm/get-value (cm/get-submap (:choices tr) :slope))))
   (println "score:" (mx/item (:score tr))))
 ```
 
@@ -68,7 +68,7 @@ The weight is the sum of log-probabilities at the constrained addresses, i.e. \\
 ```clojure
 (let [obs (cm/choicemap {:y (mx/scalar 3.5)})
       {:keys [trace weight]} (p/generate model [(mx/scalar 2.0)] obs)]
-  (println "sampled slope:" (mx/item (cm/get-value (:choices trace) :slope)))
+  (println "sampled slope:" (mx/item (cm/get-value (cm/get-submap (:choices trace) :slope))))
   (println "log-weight:" (mx/item weight)))
 ```
 
@@ -125,7 +125,7 @@ Returns the updated trace, an incremental weight, and the discarded old values.
 (let [tr (p/simulate model [(mx/scalar 2.0)])
       new-obs (cm/choicemap {:slope (mx/scalar 0.5)})
       {:keys [trace weight discard]} (p/update model tr new-obs)]
-  (println "new slope:" (mx/item (cm/get-value (:choices trace) :slope)))
+  (println "new slope:" (mx/item (cm/get-value (cm/get-submap (:choices trace) :slope))))
   (println "incremental weight:" (mx/item weight))
   (println "old slope:" (mx/item (cm/get-value discard :slope))))
 ```
@@ -159,7 +159,7 @@ Used as the default proposal in Metropolis-Hastings inference.
 (let [tr (p/simulate model [(mx/scalar 2.0)])
       sel (sel/select :slope)
       {:keys [trace weight]} (p/regenerate model tr sel)]
-  (println "resampled slope:" (mx/item (cm/get-value (:choices trace) :slope)))
+  (println "resampled slope:" (mx/item (cm/get-value (cm/get-submap (:choices trace) :slope))))
   (println "MH weight:" (mx/item weight)))
 ```
 
@@ -249,7 +249,7 @@ There are three edit request types:
 (let [tr (p/simulate model [(mx/scalar 2.0)])
       req (edit/constraint-edit (cm/choicemap {:slope (mx/scalar 1.0)}))
       {:keys [trace weight backward-request]} (p/edit model tr req)]
-  (println "new slope:" (mx/item (cm/get-value (:choices trace) :slope)))
+  (println "new slope:" (mx/item (cm/get-value (cm/get-submap (:choices trace) :slope))))
   ;; backward-request is a ConstraintEdit with the old discarded values
   (println "backward type:" (type backward-request)))
 ```

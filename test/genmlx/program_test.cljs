@@ -521,6 +521,43 @@
                 " P=" (.toFixed (:posterior (first results)) 4))))
 
 ;; ============================================================
+;; 19b. IS and analytical score the SAME model (genmlx-b4z9)
+;; ============================================================
+
+(println "\n== IS vs analytical use one prior source of truth (genmlx-b4z9) ==")
+
+;; (1) Deterministic oracle: the IS-generated source carries the SAME cross-effect
+;;     prior std (3.0) as the analytical extractor (default-priors) — not the old
+;;     hardcoded 0.3 — and stays overridable from opts. Previously param-bindings
+;;     hardcoded 0.3 while extract-regression-data used 3.0, a 10x mismatch that
+;;     made :importance and :analytical integrate against DIFFERENT models.
+(let [edges {["x" "y"] true ["y" "x"] false}
+      src (prog/build-transition-source [:x :y] edges {})
+      src-override (prog/build-transition-source [:x :y] edges {:beta-prior-std 0.3})]
+  (assert-true "generated source uses the matched beta prior (dist/gaussian 0 3)"
+               (str/includes? src "(dist/gaussian 0 3)"))
+  (assert-true "generated source no longer hardcodes the old 0.3 beta std"
+               (not (str/includes? src "(dist/gaussian 0 0.3)")))
+  (assert-true "beta prior std is overridable from opts"
+               (str/includes? src-override "(dist/gaussian 0 0.3)")))
+
+;; (2) Statistical confirmation: on a small fixture where prior-IS converges, the
+;;     :importance log-ML matches the :analytical log-ML within MC error — they now
+;;     integrate against the same model. (On large data prior-IS is biased low by
+;;     design — that is why the analytical path exists, not a model mismatch.)
+(let [data (prog/generate-synthetic-data {:beta-xy -0.3 :beta-yx 0
+                                          :n-individuals 2 :n-steps 2})
+      trans (prog/extract-transitions data)
+      edges {["x" "y"] true ["y" "x"] false}
+      an (prog/score-model-analytical trans [:x :y] edges {})
+      gf (prog/compile-model (prog/build-transition-source [:x :y] edges {}))
+      is (prog/score-model gf trans [:x :y] {:n-particles 8000})]
+  (println (str "    analytical=" (.toFixed an 3) " IS=" (.toFixed is 3)
+                " gap=" (.toFixed (- an is) 3)))
+  (assert-true "IS and analytical log-ML agree within MC error on small data"
+               (< (js/Math.abs (- an is)) 3.0)))
+
+;; ============================================================
 ;; 20. K-variable data generation and transition extraction
 ;; ============================================================
 

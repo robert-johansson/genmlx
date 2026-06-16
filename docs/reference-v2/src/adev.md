@@ -227,7 +227,7 @@ Optimize E[cost] via ADEV gradient estimation with Adam. Uses the vectorized (ba
 ;; Cost: squared distance from target
 (defn cost-fn [result]
   ;; Vectorized: result has [N]-shaped arrays
-  (let [x (cm/get-value (:choices result) :x)]
+  (let [x (cm/get-value (cm/get-submap (:choices result) :x))]
     (mx/square (mx/subtract x (mx/scalar 5.0)))))
 
 ;; Optimize: find mu that minimizes E[(x - 5)^2]
