@@ -1,0 +1,18 @@
+[book]
+title = "GenMLX Agents"
+authors = ["Robert Johansson"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/robert-johansson/genmlx"
+additional-css = ["custom.css"]
+mathjax-support = true
+
+[output.html.search]
+enable = true
