@@ -39,7 +39,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c5b2276e.js";
+            window.path_to_searchindex_js = "searchindex-3a2ce01d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -273,93 +273,415 @@ fruit — one frame per step:</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="probabilistic-programming-in-five-minutes"><a class="header" href="#probabilistic-programming-in-five-minutes">Probabilistic Programming in Five Minutes</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 1-introduction.md (taster snippets), 2-webppl.md (language primer).</p>
+<p><strong>Ports</strong> agentmodels.org Ch 1 (the taster snippets) and Ch 2 (the WebPPL/PPL primer).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
-<p>coin() = does a ghost turn left or right at a junction (flip). geometric(p) = how many cells Pac-Man travels before a random ghost blocks it (recursive sampler). categorical = which of 4 directions Pac-Man picks. condition = ‘given Pac-Man reached the pellet, what path did it take?’ (the two-heads conditioning example reframed as a surviving trajectory).</p>
-<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — test/genmlx/agentmodels_ch01_intro_test.cljs (geometric P(n=k)=0.5^(k+1), E[n]=1) and test/genmlx/agentmodels_ch02_webppl_test.cljs (ERP, multivariateGaussian, twoHeads/moreThanTwoHeads conditioning P(first=H|&gt;=2)=0.75, forward positionDist). Examples: examples/agentmodels/ch01_intro.cljs + ch02_webppl.cljs. dist/* primitives + p/generate/condition. No new code.</li>
-</ul>
-<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
-<ul>
-<li>ch01-geometric-bars.png — posterior bar chart over trajectory length (presentation/dist-&gt;bars rendered)</li>
-<li>ch01-conditioning.png — reuse template figures/conditioning.png concept, redrawn as surviving-vs-all maze paths</li>
-<li>ch01-position-gaussian.png — 2D Gaussian scatter of a noisy ghost position estimate</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>Stand at a junction in the maze. A ghost is bearing down a corridor, and it has a choice to make: turn left, or turn right. You don’t know which. But you can <em>describe</em> the not-knowing — and once you can describe it, you can compute with it. That is the whole promise of probabilistic programming, and we can deliver on it before the ghost even reaches you.</p>
+<p>A few primitives carry the entire idea. We’ll meet them one at a time, motivated by ghosts and corridors, then step back and name what they have in common.</p>
+<h2 id="a-coin-for-the-ghosts-choice"><a class="header" href="#a-coin-for-the-ghosts-choice">A coin for the ghost’s choice</a></h2>
+<p>The ghost’s turn is a coin flip. In GenMLX a coin is a one-line generative function:</p>
+<pre><code class="language-clojure">(def coin
+  "A one-site probabilistic program: a single fair coin. Its return value IS the
+   drawn choice, so `Infer`-ing it (here: forward p/simulate) is a distribution
+   over {0,1}."
+  (gen [] (trace :c (dist/flip 0.5))))
+</code></pre>
+<p>Two things are doing the work here. <code>dist/flip 0.5</code> is an <em>elementary random primitive</em> — a fair Bernoulli, returning <code>0</code> or <code>1</code>. And <code>trace :c</code> <em>names</em> that draw: it records the sampled value at the address <code>:c</code> so we can read it back, condition on it, or score it later. A generative function is, at bottom, just ordinary Clojure with named random choices threaded through it.</p>
+<p>Running it forward is <code>p/simulate</code>. Each call draws a fresh ghost-turn; we map <code>1</code>→<code>H</code> (right) and <code>0</code>→<code>T</code> (left) only at the print boundary, because values stay as MLX arrays inside the model:</p>
+<pre><code class="language-clojure">(defn coin-taster
+  "Three forward draws from `coin`, each as T/H. Returns the vector of faces."
+  []
+  (mapv (fn [_]
+          (-&gt; (p/simulate coin* []) :retval flip-&gt;HT))
+        (range 3)))
+</code></pre>
+<p><code>p/simulate</code> hands back a <strong>Trace</strong> — the central object of the whole library. A trace bundles three things you can inspect: <code>:choices</code> (the choicemap of named draws, here <code>{:c 1}</code>), <code>:retval</code> (what the program returned), and <code>:score</code> (the log-probability of those choices). Everything downstream — conditioning, planning, inference — is built from reading and editing traces.</p>
+<h2 id="four-directions-categorical"><a class="header" href="#four-directions-categorical">Four directions: <code>categorical</code></a></h2>
+<p>A coin has two faces; a junction has four exits. When Pac-Man must pick among <code>:left :right :up :down</code>, the primitive is <code>categorical</code> over a vector of (log-)weights:</p>
+<pre><code class="language-clojure">(def erp-model
+  "A handful of ERPs in one program, returned as a structured map. Forward
+   p/simulate draws all of them jointly."
+  (gen []
+    (let [b (trace :bern (dist/bernoulli 0.5))
+          c (trace :cat  (dist/categorical (mx/array [0.0 0.0 0.0]))) ; uniform over 3
+          g (trace :norm (dist/gaussian 0.0 1.0))
+          u (trace :unif (dist/uniform 0.0 1.0))]
+      {:bern b :cat c :norm g :unif u})))
+</code></pre>
+<p>Equal weights give a uniform choice over the directions (three here, four in a real junction). Note how <code>bernoulli</code>, <code>categorical</code>, <code>gaussian</code>, and <code>uniform</code> all live side by side in one <code>gen</code> body and return a structured map — a generative function can mix discrete and continuous randomness freely, and forward <code>p/simulate</code> draws the whole bundle jointly. That <code>gaussian</code> is exactly what you’d use for a noisy estimate of a ghost’s position; <code>uniform</code>, for jitter in the corridor.</p>
+<h2 id="how-far-before-a-ghost-blocks-you"><a class="header" href="#how-far-before-a-ghost-blocks-you">How far before a ghost blocks you?</a></h2>
+<p>Now a genuinely recursive question: Pac-Man walks down a corridor, and at each cell a ghost might cut him off. How many cells does he get? At each step, flip a fair coin — heads, he continues; tails, he’s blocked. The count of consecutive continues is a <strong>geometric</strong> random variable, and agentmodels writes it as a recursion: <code>geometric = function(){ return flip() ? 1 + geometric() : 0 }</code>.</p>
+<p>We can write the same recursion as a generative function. Because we want an <em>exact</em> answer (not a sampled estimate), we unroll it to a fixed depth so every flip becomes its own enumeration axis:</p>
+<pre><code class="language-clojure">(defn geometric-recursive
+  "Depth-bounded recursive geometric as a gen function. n = number of consecutive
+   `continue`s (fair flips landing 1) before the first stop; capped at max-depth."
+  [max-depth]
+  (gen []
+    (loop [i 0, reached (mx/scalar 1.0), n (mx/scalar 0.0)]
+      (if (&gt;= i max-depth)
+        n
+        (let [c        (trace (keyword (str "c" i)) (dist/flip 0.5))
+              ;; reached stays 1.0 only while every earlier flip continued
+              continue (mx/multiply reached (mx/astype c mx/float32))]
+          (recur (inc i) continue (mx/add n continue)))))))
+</code></pre>
+<p>The trick is <code>reached</code>: it stays <code>1.0</code> only while <em>every</em> earlier flip continued, so <code>n</code> accumulates the length of the leading run of continues — exactly the geometric count, with no host branching that enumeration couldn’t follow. The closed form is <code>P(n = k) = 0.5^{k+1}</code>, and the mean number of cells is <code>E[n] = 1</code>.</p>
+<p><img src="figures/ch01-geometric.png" alt="Bar chart of the geometric pmf P(n) = 0.5^(n+1): P(0)=0.5, P(1)=0.25, P(2)=0.125, P(3)=0.0625, the bars halving each step — the number of cells Pac-Man travels before a ghost blocks him."></p>
+<p>Each bar halves the one before it: half the time the ghost blocks immediately (<code>n=0</code>), a quarter of the time after one cell, and so on. The long thin tail is why the <em>average</em> run is just one cell even though long runs are possible.</p>
+<p>For everyday use you’d never unroll by hand — GenMLX ships the primitive, and you can read its pmf straight off the log-probability with <code>p/assess</code>, no enumeration needed:</p>
+<pre><code class="language-clojure">(def geometric-builtin
+  "The same distribution as a single primitive trace site."
+  (gen [] (trace :n (dist/geometric 0.5))))
+</code></pre>
+<p><code>p/assess</code> is the trace inspector’s mirror image: hand it a model and a fixed choicemap (say <code>{:n k}</code>) and it returns the log-probability the model assigns to those choices. <code>(Math/exp weight)</code> recovers <code>0.5^{k+1}</code> exactly.</p>
+<h2 id="conditioning-given-pac-man-survived"><a class="header" href="#conditioning-given-pac-man-survived">Conditioning: “given Pac-Man survived”</a></h2>
+<p>The last primitive is the one that turns description into <em>inference</em>. Suppose three ghosts each flip to decide whether to chase, and we learn that at least two of them did. What does that tell us about the first ghost? In GenMLX, a hard condition is a tiny idiom: trace a Bernoulli whose probability is the event’s 0/1 mask, then observe it equal to <code>1</code>.</p>
+<pre><code class="language-clojure">(def first-flip-given-ge2
+  "Three fair flips; condition (via :ge2) on total heads &gt;= 2; RETURN the first
+   flip so its marginal is P(first = H | total &gt;= 2)."
+  (gen []
+    (let [a     (trace :a (dist/flip 0.5))
+          b     (trace :b (dist/flip 0.5))
+          c     (trace :c (dist/flip 0.5))
+          total (reduce mx/add (mapv #(mx/astype % mx/float32) [a b c]))
+          mask  (mx/where (mx/greater-equal total (mx/scalar 2.0))
+                          (mx/scalar 1.0) (mx/scalar 0.0))]
+      (trace :ge2 (dist/bernoulli mask))
+      a)))
+</code></pre>
+<p>Observing <code>bernoulli(mask) = 1</code> contributes <code>log(mask)</code>: zero where the event holds, <code>-∞</code> where it doesn’t — a hard filter that erases the worlds inconsistent with the evidence. Conditioning this model on <code>:ge2 = 1</code> and reading the marginal of the first flip gives <code>P(first = H | total ≥ 2) = 0.75</code>. Knowing at least two ghosts chased makes it three-to-one that any particular one did. Reframed for the maze: <em>given Pac-Man reached the pellet, which paths could he have taken?</em> — the surviving trajectories, reweighted by how likely each was to survive.</p>
+<h2 id="what-just-happened"><a class="header" href="#what-just-happened">What just happened</a></h2>
+<p>Five primitives — <code>flip</code>, <code>categorical</code>/<code>gaussian</code>/<code>uniform</code>, a recursive sampler, and <code>condition</code> — and one object, the <strong>Trace</strong>, with its <code>:choices</code>, <code>:retval</code>, and <code>:score</code>. Every model in this book is some arrangement of these. What changes from chapter to chapter is not the primitives but the <em>question</em> we ask of the trace: forward-simulate it, score it, or condition on evidence and infer backward.</p>
+<p>Next we make the maze itself the model: a generative function whose random choices are an agent’s <em>actions</em>, and whose conditioning is the assumption that the agent is rational.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="agents-as-probabilistic-programs-one-shot-choice-at-a-junction"><a class="header" href="#agents-as-probabilistic-programs-one-shot-choice-at-a-junction">Agents as Probabilistic Programs: One-Shot Choice at a Junction</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 3-agents-as-programs.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 3 (agents as programs).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-1"><a class="header" href="#the-pac-man-scenario-1">The Pac-Man scenario</a></h2>
-<p>Pac-Man at a 4-way junction: actions = up/down/left/right, transition returns the resulting cell (deterministic) or a ghost-perturbed distribution (stochastic), utility high for pellet cells / negative for ghost cells. maxAgent = one-step-lookahead Pac-Man; inferenceAgent = planning-as-inference (‘imagine we observe Pac-Man ate the pellet — which way did it go?’); softMaxAgent = a noisy human player. Monty-Hall exercise → which of three corridors hides the ghost.</p>
-<h2 id="what-this-chapter-builds-on-1"><a class="header" href="#what-this-chapter-builds-on-1">What this chapter builds on</a></h2>
+<p>Pac-Man rolls to a stop at a 4-way junction. Four corridors leave the cell: a power pellet glows down the left arm, fruit waits to the right, ordinary pellets sit top and bottom. He has one decision to make — which way? Before we write a planner that <em>searches</em>, this chapter makes a smaller, sharper claim: the act of choosing is itself a tiny probabilistic program. An agent is a generative function whose single random choice is its action, and the distribution over that choice <em>is</em> the agent’s rationality. Change one number and the same program slides from a perfect optimizer to a distractible human.</p>
+<h2 id="a-junction-scored"><a class="header" href="#a-junction-scored">A junction, scored</a></h2>
+<p>Suppose someone has already handed us the value of standing at each neighbouring cell — the expected utility <code>EU</code> of each of the four moves. (The next chapter earns those numbers with value iteration; here we take them as given, the way agentmodels’ first agent does.) The floor below is shaded by that value function <code>V(s)</code>: brighter arms lead to richer caches.</p>
+<p><img src="figures/ch02-junction.png" alt="A 4-way junction in the Pac-Man maze with Pac-Man centered; a power pellet down the left arm, fruit to the right, pellets top and bottom, and the floor shaded by the value function V(s) so that brighter corridors lead to higher-value caches."></p>
+<p>Reading the figure, the two horizontal arms glow most — the fruit (+100) and the power pellet (+50) dominate the two pellet arms (+10 each). A rational Pac-Man should lean right. The question is <em>how</em> strongly.</p>
+<h2 id="the-policy-is-one-traced-choice"><a class="header" href="#the-policy-is-one-traced-choice">The policy is one traced choice</a></h2>
+<p>In GenMLX an agent’s policy is a generative function with exactly one random site: <code>:action</code>. The distribution at that site is a <em>Boltzmann</em> (soft-max) policy — it turns a vector of expected utilities into a distribution over actions. The whole construction lives in one helper:</p>
+<pre><code class="language-clojure">(defn softmax-action
+  "Boltzmann action policy: returns a Categorical distribution over actions
+   with logits `alpha * eu`, i.e. action ~ Categorical(softmax(alpha * eu)).
+
+   `eu` is a vector/array of expected utilities, one per action. `alpha` is the
+   (inverse-temperature) rationality parameter. With alpha = ##Inf the policy is
+   the deterministic argmax, delegated to exact/categorical-argmax so ties break
+   uniformly. This is the primary GenMLX realization of factor(alpha * EU)."
+  [alpha eu]
+  (if (= alpha ##Inf)
+    (exact/categorical-argmax eu)
+    (dist/categorical (mx/multiply (mx/scalar alpha) eu))))
+</code></pre>
+<p><code>dist/categorical</code> treats its argument as <em>logits</em> and normalizes through a log-softmax, so feeding it <code>alpha * eu</code> yields exactly <code>Categorical(softmax(alpha · EU))</code>. That is the GenMLX translation of the move agentmodels makes when it writes <code>factor(alpha * EU(action))</code> inside an enumerated action choice: scoring an action by <code>alpha · EU</code> and renormalizing is <em>identical</em> to drawing it from a softmax over <code>alpha · EU</code>. Same maths, expressed as a distribution instead of a side condition.</p>
+<p>With the helper in hand the policy itself is a three-line generative function — the core contract of the whole book:</p>
+<pre><code class="language-clojure">;; usage — the agent IS a generative function
+(def policy
+  (gen [eu]
+    (trace :action (softmax-action alpha eu))))
+
+(p/simulate policy [eu])   ;; =&gt; a Trace whose :action site holds the chosen move
+</code></pre>
+<p><code>p/simulate</code> runs the body, samples the action, and records it as a trace. Every GFI operation now applies for free: <code>assess</code> scores an observed move under the policy, <code>generate</code> conditions on a chosen direction, <code>propose</code> draws one with its weight. The agent is not a special object with a <code>.act</code> method — it is a program, and the eleven-protocol machinery from the tutorial treats it like any other.</p>
+<h2 id="alpha-is-the-rationality-knob"><a class="header" href="#alpha-is-the-rationality-knob">Alpha is the rationality knob</a></h2>
+<p>The single parameter <code>alpha</code> (an inverse temperature) controls <em>how</em> rational the agent is, and it interpolates a whole family of agents:</p>
 <ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/helpers.cljs implements factor-dist (WebPPL factor as defdist) and softmax-action (Boltzmann policy via dist/categorical, delegates to exact/categorical-argmax at alpha=Inf); verified in test/genmlx/agentmodels_helpers_test.cljs (factor score injection additive, softmax matches hand-computed reference). The agent-as-GF policy (gen [s] (trace :action (softmax-action alpha Q[s]))) is the core contract. No new code for the concepts; one small worked junction example to write.</li>
+<li><strong><code>alpha = 0</code></strong> — every logit collapses to <code>0</code>, the softmax is uniform, and Pac-Man picks a corridor by coin-flip. A drunk ghost-dodger; utility ignored.</li>
+<li><strong>moderate <code>alpha</code></strong> — a <em>noisy</em> but sensible chooser. He usually heads for the fruit, sometimes wanders toward the power pellet, rarely toward a lone pellet. This is the <code>softMaxAgent</code>: a plausible model of a human player who mostly does the smart thing.</li>
+<li><strong><code>alpha = ##Inf</code></strong> — the limit concentrates all mass on <code>argmax(EU)</code>. <code>softmax-action</code> makes this exact rather than merely near-exact by short-circuiting to <code>exact/categorical-argmax</code>, which also breaks ties uniformly so two equally-good arms split 50/50 instead of relying on float noise. This is the optimal one-step <code>maxAgent</code>.</li>
 </ul>
-<h2 id="live-figures-planned-1"><a class="header" href="#live-figures-planned-1">Live figures (planned)</a></h2>
-<ul>
-<li>ch02-junction.png — static maze junction with 4 candidate next-cells annotated with utility</li>
-<li>ch02-softmax-bars.gif — action-probability bar chart sweeping alpha from 0 to Inf (presentation bars over a sweep)</li>
-<li>ch02-planning-as-inference.png — diagram: condition on outcome → posterior over action</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>The probability the agent takes the single best action climbs from chance toward certainty as <code>alpha</code> grows:</p>
+<p><img src="figures/ch02-softmax.png" alt="A line chart of P(best action) against the rationality parameter alpha, rising from 0.25 at alpha=0 — uniform over four actions — and curving upward toward 1.0 as alpha increases."></p>
+<p>At <code>alpha = 0</code> the curve sits at <code>0.25</code>: one of four corridors, chosen blind. As <code>alpha</code> rises the best arm’s share sweeps up toward <code>1.0</code>. The shape of that climb is the agent’s <em>temperament</em>, and it is one scalar in the program — no separate “rational” and “irrational” code paths, just a knob.</p>
+<h2 id="why-this-is-planning-as-inference"><a class="header" href="#why-this-is-planning-as-inference">Why this is planning-as-inference</a></h2>
+<p>The deepest point is hiding in <code>dist/categorical</code>. Because the policy is an honest distribution, choosing an action and <em>inferring</em> an action are the same operation viewed from two sides. The forward read is a noisy controller: sample <code>:action</code>, watch Pac-Man move. The inverse read is planning-as-inference: imagine we <em>observe</em> an outcome — “Pac-Man reached the fruit” — and condition the program on it. Conditioning reshapes the prior over <code>:action</code> into a posterior; the moves consistent with eating the fruit gain weight, the rest lose it, and the posterior over <code>:action</code> <em>is</em> the plan.</p>
+<p>The mechanism that makes soft observations like this composable is <code>factor-dist</code>, a pseudo-distribution whose log-probability is a free scalar:</p>
+<pre><code class="language-clojure">(defdist factor-dist
+  "Soft-conditioning pseudo-distribution. Deterministically draws 0 and
+   contributes log-weight w to the trace :score for *any* drawn value, so
+
+     (trace :soft (factor-dist (mx/scalar 2.3)))   ; score += 2.3
+
+   realizes agentmodels' factor(2.3). Mirrors dist/delta but injects an
+   arbitrary scalar log-factor rather than a 0/-inf point-mass indicator."
+  [w]
+  (sample [_key] (mx/scalar 0.0))
+  (log-prob [_value] w)
+  (support [] [(mx/scalar 0.0)]))
+</code></pre>
+<p>Every handler transition accumulates <code>score += dist-log-prob(value)</code>, so a distribution whose log-prob is a constant <code>w</code> injects exactly <code>w</code> into the trace score regardless of what is drawn — which is precisely WebPPL’s <code>factor(w)</code>, a soft observation that reweights a trace without binding a variable. <code>softmax-action</code> is just <code>factor-dist</code> specialized to <code>alpha · EU</code> and folded into a categorical: the rationality of the policy and the conditioning of inference are <em>the same primitive</em>, which is why one program serves both directions.</p>
+<p>So the agent at the junction is already a complete probabilistic story. What it still lacks is where the expected utilities come from — right now we <em>assumed</em> them. Next we compute <code>EU</code> properly by looking more than one step ahead: the Markov decision process and value iteration.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="sequential-decisions-mdps-and-the-maze"><a class="header" href="#sequential-decisions-mdps-and-the-maze">Sequential Decisions: MDPs and the Maze</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 3a-mdp.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 3a (MDPs).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-2"><a class="header" href="#the-pac-man-scenario-2">The Pac-Man scenario</a></h2>
-<p>Integer-line MDP = a 1-D Pac-Man corridor with a pellet at the far end and a per-step time cost. Restaurant-Choice gridworld = a Pac-Man maze with pellet caches of different values as terminal cells. Show act/expectedUtility mutual recursion, terminal states, and the exponential-blowup → dp.cache (memoization) lesson as planning-step count grows.</p>
-<h2 id="what-this-chapter-builds-on-2"><a class="header" href="#what-this-chapter-builds-on-2">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/agent.cljs (bellman-step, value-iteration, value-iteration-lazy, recursive-eu memoized via exact/with-cache, make-mdp-agent, simulate-mdp); src/genmlx/agents/worlds.cljs (line-mdp); src/genmlx/agents/gridworld.cljs (parse-grid, build-mdp, transition-tensor). Tests: test/genmlx/agentmodels_worlds_test.cljs (line S=7 rollout 0→6) + agentmodels_slice_test.cljs (3×3 VI Q/V + rollout). The dp.cache vs no-cache runtime-scaling demo is the agent.cljs two-path (tensor VI vs recursive-eu) story — a small timing harness to write for the figure.</li>
-</ul>
-<h2 id="live-figures-planned-2"><a class="header" href="#live-figures-planned-2">Live figures (planned)</a></h2>
-<ul>
-<li>ch03-corridor.gif — Pac-Man walking the 1-D line MDP to the goal pellet</li>
-<li>ch03-gridworld-policy.png — maze with optimal-policy direction arrows per cell (render.cljs overlay)</li>
-<li>ch03-runtime-scaling.png — bar chart: recursive EU runtime with vs without with-cache memoization</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>So far Pac-Man has made <em>one</em> choice at a time. But the interesting thing about a maze is that choices are linked: where you step now decides which steps are available next, and the pellet at the end is only worth chasing if the corridor between here and there isn’t too long. To reason about a <em>sequence</em> of decisions we need a model of how the world unfolds — a <strong>Markov decision process</strong>, or MDP.</p>
+<p>The glyphs and the −1 step cost are fixed on the shared <a href="#the-pac-man-maze-a-legend">legend</a>; this chapter is about what to <em>do</em> with them.</p>
+<h2 id="the-minimal-maze-a-corridor"><a class="header" href="#the-minimal-maze-a-corridor">The minimal maze: a corridor</a></h2>
+<p>Strip the maze down to a single row and put one power pellet at the far right. That is the <strong>corridor</strong> — agentmodels’ integer line-world, the smallest MDP you can fully trace by hand. Pac-Man starts at the left; every step costs −1; reaching the pellet ends the episode with its reward. The only question is whether the pellet is worth walking to.</p>
+<p><code>line-mdp</code> builds exactly this world as plain data, then compiles it through the gridworld builder:</p>
+<pre><code class="language-clojure">(defn line-mdp
+  "Build the Ch 3a integer line-world: an n-state 1-D corridor with a single
+   :goal reward and a per-step timeCost (so the agent reaches the goal quickly).
+   Movement is left/right; up/down clamp to a stay since the grid is one row high.
+
+   Options: :n (default 7) :goal-idx (default n-1) :reward (default 1.0)
+            :time-cost (default -0.1) :start (default [0 0]) :gamma (default 1.0)."
+  [{:keys [n goal-idx reward time-cost start gamma]
+    :or {n 7 reward 1.0 time-cost -0.1 gamma 1.0}}]
+  (let [goal-idx (or goal-idx (dec n))]
+    (gw/build-mdp {:grid (line-grid n goal-idx)
+                   :utilities {:goal reward :timeCost time-cost}
+                   :start (or start [0 0]) :gamma gamma :noise 0.0})))
+</code></pre>
+<p>Five things define the MDP, and they are all right here: the <strong>states</strong> (the <code>n</code> cells of the grid), the <strong>actions</strong> (left/right, with up/down clamping to a stay), the <strong>transition function</strong> (<code>:noise 0.0</code>, so a move lands deterministically one cell over), the <strong>per-step time cost</strong> (<code>:timeCost</code>, the pressure to finish), and the <strong>terminal reward</strong> (<code>:goal</code>, the cell that ends the episode and pays out). <code>build-mdp</code> turns these into the dense tensors <code>T</code> (transition), <code>R</code> (reward), and <code>term</code> (terminal mask) that the planner consumes.</p>
+<p>Here is the corridor in motion — Pac-Man walking rightward, one frame per step, to the power pellet that closes the episode:</p>
+<p><img src="figures/corridor-rollout.gif" alt="Animation of Pac-Man walking rightward along a one-row corridor, cell by cell, until he reaches the power pellet at the far right end."></p>
+<p>The walk looks obvious, but <em>why</em> Pac-Man heads right rather than left is a value computation — and that is the heart of the chapter.</p>
+<h2 id="value-the-same-answer-computed-two-ways"><a class="header" href="#value-the-same-answer-computed-two-ways">Value: the same answer, computed two ways</a></h2>
+<p>The value <code>V(s)</code> of a state is the total future reward Pac-Man expects from there, acting by his own policy. agentmodels defines this with two mutually recursive functions: <code>expectedUtility(s, a)</code> — the value of taking action <code>a</code> in state <code>s</code> — and the policy, a <em>softmax</em> over those expected utilities. Softmax (controlled by a rationality parameter <code>alpha</code>) means the agent strongly prefers high-value actions but isn’t a perfect maximizer; in the <code>alpha = ##Inf</code> limit it becomes the hard <code>max</code>.</p>
+<p>GenMLX computes this value <strong>two ways that agree by construction</strong>, and the agreement is the point: it certifies that the fast tensor path means the same thing as the faithful recursive one.</p>
+<p>The first path is <strong>tensor value iteration</strong> — the Bellman backup, run as MLX graph ops on the GPU. Start from <code>V = 0</code> and sweep:</p>
+<pre><code class="language-clojure">(defn value-iteration
+  "Run `n` Bellman sweeps from V = 0. Backup is the soft policy-expectation for
+   finite alpha and hard max at alpha = ##Inf. Returns {:Q [S,A] :V [S]}.
+   Materializes V each sweep to break lazy-graph accumulation."
+  [{:keys [S gamma] :as mdp} alpha n]
+  (let [value-of (value-fn-for alpha)]
+    (loop [V (mx/zeros #js [S]), i 0, Q nil]
+      (if (&gt;= i n)
+        {:Q Q :V V}
+        (let [[Q' V'] (bellman-step mdp gamma alpha value-of V)]
+          (mx/materialize! V')
+          (recur V' (inc i) Q'))))))
+</code></pre>
+<p>Each sweep computes <code>Q[s,a] = R + gamma·(1−term)·(T·V)</code> and then folds <code>Q</code> back into a new <code>V</code> — the soft policy-expectation <code>V(s) = Σ_a softmax(alpha·Q[s])[a]·Q[s,a]</code>. The <code>mx/materialize!</code> call forces each sweep’s <code>V</code> to a concrete array so the lazy graph doesn’t grow without bound across iterations. After enough sweeps <code>V</code> stops changing: it has converged.</p>
+<p>The second path is the <strong>faithful recursive <code>expectedUtility</code></strong> — agentmodels’ <code>act</code>/<code>expectedUtility</code> recursion almost line for line, on host scalars, memoized with <code>exact/with-cache</code> (the <code>dp.cache</code> analog):</p>
+<pre><code class="language-clojure">(defn recursive-eu
+  "agentmodels' expectedUtility / act, memoized with exact/with-cache (the
+   dp.cache analog). SOFT-rational and mutually recursive: the future value is
+   the expectation of EU under the agent's own softmax(alpha*EU) policy. Operates
+   on host-side scalars (state, action, timeLeft) — with-cache keys on JS args.
+
+       EU(s,a,t) = u(s,a) + gamma*[ terminal(s) or t&lt;=1 ? 0
+                                    : Σ_s' T(s,a,s') * V(s', t-1) ]
+       V(s,t)    = Σ_a  softmax(alpha*EU(s,·,t))[a] * EU(s,a,t)
+
+   Returns {:eu (fn [s a t]) :soft-v (fn [s t])}; EU(s,a,horizon) is the t-step Q
+   that `value-iteration` computes with `n = horizon` sweeps."
+  [{:keys [A gamma terminals] :as mdp}]
+  ...
+  (let [Rh      (mx/-&gt;clj (:R mdp))       ; [S][A] JS numbers
+        Th      (mx/-&gt;clj (:T mdp))       ; [S][A][S'] JS numbers
+        terms   (set (keys terminals))
+        eu-atom (atom nil)
+        soft-v  (fn [s t]
+                  (let [qs (mapv (fn [a] (@eu-atom s a t)) (range A))]
+                    (reduce + (map * (softmax-vec (mapv #(* (:alpha mdp) %) qs)) qs))))
+        eu      (exact/with-cache
+                  (fn [s a t]
+                    (let [u (get-in Rh [s a])]
+                      (if (or (terms s) (&lt;= t 1))
+                        u
+                        (+ u (* gamma
+                                (reduce-kv
+                                  (fn [acc s' pr]
+                                    (if (pos? pr) (+ acc (* pr (soft-v s' (dec t)))) acc))
+                                  0.0 (get-in Th [s a]))))))))]
+    (reset! eu-atom eu)
+    {:eu eu :soft-v soft-v}))
+</code></pre>
+<p>Read the <code>EU</code> formula in the docstring as a sentence: the value of doing <code>a</code> in <code>s</code> is the immediate reward <code>u(s,a)</code>, plus — unless <code>s</code> is terminal or we’ve run out of time — the discounted average over next states of <em>their</em> value one step shorter. The <code>V</code> formula closes the loop by mixing the <code>EU</code>s under the agent’s own softmax policy. That mutual recursion is exponential if computed naively: each state expands into all its successors, which expand again. <code>exact/with-cache</code> is what tames it — every <code>(s, a, t)</code> triple is computed once and remembered, turning the exponential tree into a polynomial table. This is the chapter’s load-bearing lesson, and the reason memoization isn’t an optimization detail but a correctness-of-scale requirement.</p>
+<p>Both paths return the same <code>Q</code> and <code>V</code> (this is certified by the equivalence test). <code>EU(s, a, horizon)</code> from the recursive path equals <code>Q[s,a]</code> from <code>n = horizon</code> value-iteration sweeps.</p>
+<h2 id="watching-value-propagate"><a class="header" href="#watching-value-propagate">Watching value propagate</a></h2>
+<p>Why does value iteration need <em>several</em> sweeps rather than one? Because reward information has to travel backward through the maze. On sweep one, only cells adjacent to the goal learn they’re valuable. On sweep two, their neighbors learn it. The goal’s worth ripples outward one cell per sweep until it reaches the start.</p>
+<p>The plot below tracks <code>V(start)</code> — the value Pac-Man assigns to where he’s standing — across successive sweeps:</p>
+<p><img src="figures/vi-convergence.png" alt="Line chart of V(start) versus value-iteration sweep number: the value sits flat and low for several early sweeps while the goal reward has not yet propagated back across the corridor, then jumps sharply once the information reaches the start cell and plateaus at the converged value."></p>
+<p>The flat early region is Pac-Man not yet knowing the pellet is worth walking to — the reward signal simply hasn’t reached the start. The jump is the moment the backup chain connects start to goal; the plateau is convergence. The number of sweeps you need is the distance the reward must travel, which is exactly why the corridor’s horizon (<code>n-iters</code>) is set generously.</p>
+<h2 id="acting-it-out"><a class="header" href="#acting-it-out">Acting it out</a></h2>
+<p><code>make-mdp-agent</code> packages all of this: it runs value iteration to get <code>Q</code> and <code>V</code>, wraps the softmax policy as a generative function, and exposes <code>:act</code> (sample one action) and <code>:expected-utility</code> (the recursive value, computed lazily only if you ask). The policy being a generative function is the unifying idea of the whole book — choosing an action is just <code>(trace :action (softmax-action alpha (Q s)))</code>, a GFI random choice like any other.</p>
+<p>To produce a full trajectory, <code>simulate-mdp</code> rolls the policy forward from the start until a terminal cell:</p>
+<pre><code class="language-clojure">(defn simulate-mdp
+  "Roll the agent's policy out from `start` for at most `horizon` steps, stopping
+   at a terminal. The action comes from the softmax policy (decision noise) and
+   the next state is sampled from T (environment / transition noise). Returns
+   {:states [s0 s1 ...] :actions [a0 a1 ...]} (JS ints); one action per transition."
+  [{:keys [mdp act] :as agent} start horizon &amp; [{:keys [rollout-mode key]}]]
+  (if (= rollout-mode :fused)
+    (rollout/rollout-mdp agent start horizon {:key key})
+    (let [{:keys [T terminals]} mdp]
+      (loop [s start, step 0, k key, states [start], actions []]
+        (if (or (&gt;= step horizon) (contains? terminals s))
+          {:states states :actions actions}
+          (let [[k-act k-next k'] (if k (rng/split-n k 3) [nil nil nil])
+                a  (if k-act (act s k-act) (act s))
+                s' (sample-next T s a k-next)]
+            (recur s' (inc step) k' (conj states s') (conj actions a))))))))
+</code></pre>
+<p>Two kinds of randomness meet in that loop: the <strong>decision noise</strong> of the softmax policy (<code>act</code>) and the <strong>environment noise</strong> of the transition (<code>sample-next</code> draws the next state from <code>T[s,a,:]</code>). For the corridor both are tame — <code>noise 0.0</code> makes the transition one-hot — so the rollout is the clean rightward walk you saw in the GIF. The whole thing in practice is one builder and one roll:</p>
+<pre><code class="language-clojure">(let [agent (make-mdp-agent {:mdp (line-mdp {:n 7})})]
+  (simulate-mdp agent 0 12))
+;; =&gt; {:states [0 1 2 3 4 5 6] :actions [...]}
+</code></pre>
+<p>That is the corridor solved: a line of states, a backed-up value function, and a policy that walks the gradient to the pellet.</p>
+<p>Next we widen the corridor into two dimensions — and discover that with walls and a cliff, the <em>shortest</em> path and the <em>best</em> path stop being the same thing.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="gridworld-in-depth-stochastic-transitions-and-q-values"><a class="header" href="#gridworld-in-depth-stochastic-transitions-and-q-values">Gridworld in Depth: Stochastic Transitions and Q-Values</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 3b-mdp-gridworld.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 3b (stochastic gridworld).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-3"><a class="header" href="#the-pac-man-scenario-3">The Pac-Man scenario</a></h2>
-<p>Hiking MDP as a Pac-Man maze: West/East peaks = high-value pellet clusters, the Hill hazard row = a ghost corridor that ends the episode with negative reward, transitionNoiseProbability = a slippery maze floor (orthogonal slip). Deterministic Pac-Man cuts the short risky route; the stochastic agent detours the long safe route. Q-value heatmap shows per-cell action values; alpha sweep tunes player noisiness.</p>
-<h2 id="what-this-chapter-builds-on-3"><a class="header" href="#what-this-chapter-builds-on-3">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/worlds.cljs (hike-mdp 5×5 noise 0.0/0.1, big-hike-mdp 6×6); gridworld.cljs transition-tensor implements orthogonal-slip noise; agent.cljs value-iteration yields Q for the heatmap; alpha lives in softmax-action (helpers.cljs). Verified in test/genmlx/agentmodels_worlds_test.cljs (deterministic bottom-row cut vs stochastic top detour, both reach East peak). Trajectory-length histogram + Q-value-overlay rendering to write for figures (presentation.cljs env-&gt;trajectory accepts an MLX V for value shading).</li>
-</ul>
-<h2 id="live-figures-planned-3"><a class="header" href="#live-figures-planned-3">Live figures (planned)</a></h2>
-<ul>
-<li>ch04-hike-deterministic.gif — short risky route past the ghost corridor</li>
-<li>ch04-hike-stochastic.gif — long safe detour under slippery floor</li>
-<li>ch04-qvalue-heatmap.png — per-cell action Q-values overlaid on the maze (presentation V-shading + render.cljs)</li>
-<li>ch04-trajectory-length-hist.png — histogram of rollout lengths under stochastic transitions</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>So far Pac-Man has lived in a hallway. Now drop him into a real maze: a 9×7 ring
+with four caches at the corners and Pac-Man stranded in the middle. Every cache is
+exactly five steps away, so distance tells him nothing — the only thing that breaks
+the tie is <em>value</em>. Which corner is worth the most? And what happens when the maze
+floor turns slippery, and the action he intends is not always the action he gets?</p>
+<p>This chapter answers both questions with one machine: compile the maze into
+tensors, run value iteration to get a number <code>V(s)</code> for every cell, and read off
+the optimal route. The glyphs and rewards are fixed on the shared <a href="#the-pac-man-maze-a-legend">legend</a>;
+here we care about the numbers underneath them.</p>
+<h2 id="the-maze-as-a-tensor"><a class="header" href="#the-maze-as-a-tensor">The maze, as a tensor</a></h2>
+<p>A planner cannot reason about ASCII art. <code>build-mdp</code> turns a grid literal into the
+three tensors a Markov Decision Process is made of: a transition tensor <code>T</code> indexed
+by <code>[state, action, next-state]</code>, a reward tensor <code>R</code> indexed by <code>[state, action]</code>,
+and a terminal mask. Here is the whole compiler:</p>
+<pre><code class="language-clojure">(defn build-mdp
+  [{:keys [grid utilities start gamma noise] :or {utilities {} gamma 1.0 noise 0.0}}]
+  (let [{:keys [W H S walls terminals]} (parse-grid grid)
+        A          (count action-deltas)
+        time-cost  (get utilities :timeCost 0.0)
+        ns-fn      (fn [s a] (next-state W H walls s a))
+        ;; geometry (host-side, pure CLJS) -&gt; [S,A] table of next-state indices
+        ns-rows    (vec (for [s (range S)] (vec (for [a (range A)] (ns-fn s a)))))
+        ;; transition tensor: deterministic when noise = 0, orthogonal slip otherwise
+        T          (transition-tensor S A ns-rows noise)              ; [S,A,S']
+        util       (fn [s] (+ (get utilities (get terminals s) 0.0) time-cost))
+        R          (mx/array (clj-&gt;js (vec (for [s (range S)] (vec (repeat A (util s))))))
+                             mx/float32)                              ; [S,A]
+        term       (mx/array (clj-&gt;js (vec (for [s (range S)]
+                                             (if (contains? terminals s) 1.0 0.0))))
+                             mx/float32)                              ; [S]
+        [sx sy]    (or start [0 0])
+        start-idx  (+ sx (* W sy))]
+    (mx/eval! T R term)
+    {:W W :H H :S S :A A
+     :T T :R R :term term
+     :terminals terminals :walls walls :start-idx start-idx
+     :ns-fn ns-fn :action-kw action-kw :gamma gamma :noise noise}))
+</code></pre>
+<p>Note the purity split that the docstring insists on. The discrete <em>geometry</em> —
+which cell is a wall, where each of the four actions lands — is tiny and obvious, so
+it runs in plain host-side ClojureScript (<code>ns-rows</code>). The heavy numeric tensor <code>T</code>
+is built once, <code>mx/eval!</code>-ed, and from there everything is MLX. Reward is just
+<code>utility(s) + timeCost</code>, broadcast across actions: in our maze every step costs −1,
+so a rational Pac-Man pays for distance and the corner he picks had better be worth
+the walk.</p>
+<h2 id="a-slippery-floor"><a class="header" href="#a-slippery-floor">A slippery floor</a></h2>
+<p>When <code>noise = 0</code>, each <code>T</code> row is a one-hot vector: action <code>:right</code> sends Pac-Man
+right, full stop. Turn the noise up and the floor becomes slippery. Crucially, this
+is <em>not</em> a uniform random action — agentmodels calls it <code>transitionNoiseProbability</code>,
+and it only ever slips the intended action to one of its two <strong>perpendicular</strong>
+directions:</p>
+<pre><code class="language-clojure">;; Orthogonal slip: a horizontal action (left/right) slips to a vertical one
+;; (up/down), and vice-versa — agentmodels' transitionNoiseProbability. NOT a
+;; uniform random action; the reverse direction is never part of the slip.
+(def ^:private perpendicular {0 [2 3] 1 [2 3] 2 [0 1] 3 [0 1]})
+
+(defn transition-tensor
+  [S A ns-rows noise]
+  (mx/array
+    (clj-&gt;js
+      (vec (for [s (range S)]
+             (vec (for [a (range A)]
+                    (let [[p q] (perpendicular a)
+                          mass  (merge-with +
+                                  {(get-in ns-rows [s a]) (- 1.0 noise)}
+                                  {(get-in ns-rows [s p]) (* 0.5 noise)}
+                                  {(get-in ns-rows [s q]) (* 0.5 noise)})]
+                      (mapv #(get mass % 0.0) (range S))))))))
+    mx/float32))
+</code></pre>
+<p>The intended next-state keeps mass <code>1 − noise</code>; the two perpendiculars split the
+remaining <code>noise</code> evenly. If a slip would push Pac-Man into a wall, <code>ns-rows</code>
+already encodes “stay put”, so that mass falls back onto his current cell — no
+probability leaks, every row sums to 1 by construction. The behavioural upshot:
+under a slippery floor Pac-Man can no longer trust a corridor that runs alongside a
+hazard, because an orthogonal slip might shove him sideways into it. He will <em>value
+cliff-adjacent cells less and detour</em> around them — exactly the risk-aversion that
+emerges, for free, from the transition model.</p>
+<h2 id="solving-for-value-the-bellman-backup"><a class="header" href="#solving-for-value-the-bellman-backup">Solving for value: the Bellman backup</a></h2>
+<p>Given <code>T</code>, <code>R</code>, and the terminal mask, the value of a state is the discounted
+reward Pac-Man can expect if he acts well from here on. Value iteration computes it
+by sweeping the Bellman backup until it settles. Each sweep is one matrix-vector
+product on the GPU:</p>
+<pre><code class="language-clojure">(defn bellman-step
+  "One synchronous Bellman backup (pure MLX graph). V:[S] -&gt; [Q:[S,A], V':[S]].
+   next-V[s,a] = Σ_s' T[s,a,s'] * V[s']  via a flat matrix-vector product."
+  [{:keys [S A T R term]} gamma alpha value-of V]
+  (let [V-col  (mx/reshape V #js [S 1])
+        T-flat (mx/reshape T #js [(* S A) S])
+        next-V (mx/reshape (mx/matmul T-flat V-col) #js [S A])           ; [S,A]
+        cont   (mx/reshape (mx/subtract (mx/scalar 1.0) term) #js [S 1]) ; [S,1] -&gt; bcast over A
+        Q      (mx/add R (mx/multiply (mx/scalar gamma)
+                                      (mx/multiply cont next-V)))]
+    [Q (value-of alpha Q)]))
+</code></pre>
+<p>Read it as the definition of a <strong>Q-value</strong>. <code>Q[s, a]</code> is the worth of taking action
+<code>a</code> in state <code>s</code>: the immediate reward <code>R[s, a]</code> plus the discounted value of where
+you land, <code>Σ_s' T[s,a,s'] * V[s']</code>. The <code>cont</code> factor zeroes the future at terminal
+cells — once Pac-Man eats the fruit, the episode is over and there is no
+continuation to add. Running this sweep <code>n</code> times from <code>V = 0</code> is the whole of
+<code>value-iteration</code>, which returns both <code>{:Q [S,A] :V [S]}</code>. The Q tensor is the
+per-cell, per-action heatmap; <code>V</code> is the best you can do from each cell, and that is
+what gets shaded onto the floor.</p>
+<p><img src="figures/classic-value.png" alt="The classic Pac-Man maze with the value function V(s) shaded onto the floor; Pac-Man at the centre, a pellet top-left, a cyan power pellet top-right, red fruit bottom-left, and a pellet bottom-right."></p>
+<p>The shading <em>is</em> <code>V</code>. The floor glows brightest in the basin around the fruit
+(reward +100, bottom-left) and fades toward the modest pellets (+10) at the other
+corners. Value is not painted by hand — it diffuses outward from each cache through
+the Bellman sweeps, strongest near the richest one. Pac-Man, sitting at the centre
+where all four caches are equidistant, sees the brightest gradient pulling toward
+the fruit.</p>
+<h2 id="following-the-gradient"><a class="header" href="#following-the-gradient">Following the gradient</a></h2>
+<p>Reading <code>V</code> off the floor, the optimal policy is “climb toward higher value”. The
+agent’s first action at any cell is just the highest-Q action there, and rolling
+that policy out from the start produces a trajectory:</p>
+<pre><code class="language-clojure">;; an optimal MDP Pac-Man over the classic maze (alpha = ##Inf is hard argmax)
+(def agent (pac/mdp-agent {:maze pac/classic-maze}))
+(agent/simulate-mdp agent (:start-idx (:mdp agent)) 30)
+;; =&gt; {:states [s0 s1 ...] :actions [a0 a1 ...]}
+</code></pre>
+<p><img src="figures/classic-rollout.gif" alt="Animation of the optimal Pac-Man walking left then down through the maze to reach the fruit."></p>
+<p>Watch where he goes: not to the nearest corner, but to the <em>most valuable</em> reachable
+one. With four equidistant caches, distance is a wash and value decides — so the
+optimal Pac-Man threads left and down to the +100 fruit, leaving the +10 pellets
+untouched. That is the entire lesson of value iteration in one walk: the agent does
+not search the maze, it follows a number that already encodes the answer at every
+cell.</p>
+<p>Turn <code>:noise</code> up in <code>pac/mdp-agent</code> and run it again, and the same machinery bends
+the route: cells beside a hazard lose value because a slip could be costly, and
+Pac-Man trades a short risky line for a longer safe one — risk-aversion as a
+consequence of the model, never a rule we wrote down.</p>
+<p>So far Pac-Man can see the whole maze. Next we take that away: a ghost waits
+somewhere he cannot see through the walls. When the state is <em>hidden</em>, planning is
+no longer about a known cell but about a <em>belief</em> over where the ghost might be —
+the partially observed maze, and the POMDP that solves it.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="hidden-state-pomdps-and-belief-over-ghosts"><a class="header" href="#hidden-state-pomdps-and-belief-over-ghosts">Hidden State: POMDPs and Belief Over Ghosts</a></h1>
 <blockquote>
 <p><strong>Ports</strong> agentmodels.org 3c-pomdp.md.</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-4"><a class="header" href="#the-pac-man-scenario-4">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
 <p>Ghost positions are the canonical hidden state — Pac-Man can’t see ghosts through walls and maintains a belief distribution over their locations, updating it when a ghost enters the observable neighborhood. Restaurant-open/closed latent maps to ‘is this corridor safe?’. Signpost reveal and adjacency-reveal both shown. QMDP belief-directed exploration and rational replanning when a corridor is found blocked.</p>
-<h2 id="what-this-chapter-builds-on-4"><a class="header" href="#what-this-chapter-builds-on-4">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> exists — src/genmlx/agents/belief.cljs (filter-step differentiable Bayes update, tensor-update-belief, obs-id-tensor, belief&lt;-&gt;vec); src/genmlx/agents/pomdp.cljs (make-pomdp-agent QMDP [W,S,A] belief-Q, simulate-pomdp, fused-simulate-pomdp); src/genmlx/agents/pomdp_env.cljs (restaurant-gridworld signpost, restaurant-pomdp adjacency-reveal 2^k worlds). Tests: agentmodels_pomdp_test.cljs (belief snaps at signpost, QMDP reaches goal), agentmodels_pomdp_adjacency_test.cljs (detour when preferred closed), agents_fused_pomdp_test.cljs (S×W obs-tensor parity). No new agent code; ghostbusters belief-heatmap browser renderer is the figure gap.</li>
 </ul>
-<h2 id="live-figures-planned-4"><a class="header" href="#live-figures-planned-4">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
 <ul>
 <li>ch05-belief-heatmap.gif — belief over ghost cells concentrating as Pac-Man senses (cs188 ghostbusters shade → ghostbusters.html canvas extension, or ANSI fallback)</li>
 <li>ch05-pomdp-graph.png — POMDP dependency graph (s,a,o,u,b) authored figure</li>
@@ -373,13 +695,13 @@ fruit — one frame per step:</p>
 <p><strong>Ports</strong> agentmodels.org 3d-reinforcement-learning.md (also the bandit arm of 3c).</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-5"><a class="header" href="#the-pac-man-scenario-5">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario-1"><a class="header" href="#the-pac-man-scenario-1">The Pac-Man scenario</a></h2>
 <p>Multi-armed bandit = Pac-Man repeatedly choosing among corridors, tracking which yields more fruit (cumulative regret vs random baseline). PSRL on a gridworld = Pac-Man learning an unknown maze: the unknown reward function is the unknown fruit layout; each episode it samples a hypothesized layout, plans optimally, then updates beliefs from what it actually found. The lava-world variant shows uncertainty-driven exploration avoiding danger.</p>
-<h2 id="what-this-chapter-builds-on-5"><a class="header" href="#what-this-chapter-builds-on-5">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on-1"><a class="header" href="#what-this-chapter-builds-on-1">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> exists — src/genmlx/agents/pomdp.cljs (make-bandit-agent Thompson/softmax, update-arm Beta-Bernoulli, simulate-bandit + simulate-bandit-batched [N,K] no per-step mx/item); src/genmlx/agents/pomdp_env.cljs (bandit-pomdp); src/genmlx/agents/worlds.cljs (lava-world). Tests: agentmodels_psrl_test.cljs (posterior concentrates P&gt;=0.99, final-episode zero regret, beats baseline), agentmodels_psrl_lava_test.cljs (reduces lava exposure across 6 seeds). Example examples/agentmodels/psrl.cljs. PSRL gridworld loop reuses agent.cljs make-mdp-agent per sampled model.</li>
 </ul>
-<h2 id="live-figures-planned-5"><a class="header" href="#live-figures-planned-5">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned-1"><a class="header" href="#live-figures-planned-1">Live figures (planned)</a></h2>
 <ul>
 <li>ch06-bandit-regret.png — cumulative-regret line, Thompson/softmax vs random baseline</li>
 <li>ch06-psrl-episodes.gif — concatenated per-episode Pac-Man trajectories getting more direct to fruit</li>
@@ -393,13 +715,13 @@ fruit — one frame per step:</p>
 <p><strong>Ports</strong> agentmodels.org 4-reasoning-about-agents.md.</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-6"><a class="header" href="#the-pac-man-scenario-6">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario-2"><a class="header" href="#the-pac-man-scenario-2">The Pac-Man scenario</a></h2>
 <p>An observer watches Pac-Man’s path and infers which pellet cache it values most. One leftward step makes the near cache the MAP goal; symmetric caches stay unidentifiable until paths diverge — motivating active learning and multiple trajectories. Joint inference of utility + softmax noise alpha + time cost. POMDP-IRL adds inferring Pac-Man’s beliefs about hidden ghosts from its detours.</p>
-<h2 id="what-this-chapter-builds-on-6"><a class="header" href="#what-this-chapter-builds-on-6">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on-2"><a class="header" href="#what-this-chapter-builds-on-2">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> exists — src/genmlx/agents/inverse.cljs (goal-agents, action-loglik via p/assess on the goal policy, normalize-logs, posterior-sequence batched [G,S,A], observe-rollout). The likelihood IS p/assess — no bespoke likelihood code. Tests: agentmodels_irl_test.cljs (Eq 1 utility-table inference, donut MAP after one step, Veg/Noodle unidentifiable, soft-alpha washout, POMDP-IRL Eq 2 factorSequence, joint alpha+utility, deterministic via with-redefs of rng/fresh-key) + agentmodels_hike_irl_test.cljs (Big-Hiking S=36, posterior flat over shared prefix then concentrates P&gt;0.99). Examples irl.cljs, pomdp_irl.cljs, hike_irl.cljs.</li>
 </ul>
-<h2 id="live-figures-planned-6"><a class="header" href="#live-figures-planned-6">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned-2"><a class="header" href="#live-figures-planned-2">Live figures (planned)</a></h2>
 <ul>
 <li>ch07-observed-path.png — the trajectory to be explained, on the maze</li>
 <li>ch07-posterior-marginals.gif — prior→posterior bars over favorite cache as steps accrue (presentation/marginals-&gt;bars)</li>
@@ -413,13 +735,13 @@ fruit — one frame per step:</p>
 <p><strong>Ports</strong> agentmodels.org 5-biases-intro.md.</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-7"><a class="header" href="#the-pac-man-scenario-7">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario-3"><a class="header" href="#the-pac-man-scenario-3">The Pac-Man scenario</a></h2>
 <p>Expository: a Pac-Man player who systematically avoids power pellets near ghosts, or keeps returning to a low-value corridor, shows SYSTEMATIC (not random) deviation from optimal play — something softmax noise alone cannot explain. Motivates extending the agent model with biases (time inconsistency, myopia) so inverse planning recovers true preferences.</p>
-<h2 id="what-this-chapter-builds-on-7"><a class="header" href="#what-this-chapter-builds-on-7">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on-3"><a class="header" href="#what-this-chapter-builds-on-3">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> exists — no-code narrative chapter (mirrors agentmodels 5-biases-intro which has no models). Sets up the biased-planner machinery in src/genmlx/agents/biased_planners.cljs covered in following chapters. Includes the ‘two uses of decision models’ table (authored).</li>
 </ul>
-<h2 id="live-figures-planned-7"><a class="header" href="#live-figures-planned-7">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned-3"><a class="header" href="#live-figures-planned-3">Live figures (planned)</a></h2>
 <ul>
 <li>ch08-systematic-vs-noise.png — two maze paths: a noisy wobble vs a systematic dominated detour (static, authored from real rollouts)</li>
 <li>ch08-two-uses-table.png — Table 1 (practical problem-solving vs learning preferences) authored figure</li>
@@ -431,13 +753,13 @@ fruit — one frame per step:</p>
 <p><strong>Ports</strong> agentmodels.org 5a-time-inconsistency.md.</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-8"><a class="header" href="#the-pac-man-scenario-8">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario-4"><a class="header" href="#the-pac-man-scenario-4">The Pac-Man scenario</a></h2>
 <p>Hyperbolic discounting = Pac-Man increasingly tempted by a NEARBY power pellet even while heading to a higher-value distant pellet. Naive Pac-Man gets diverted to the close pellet; Sophisticated Pac-Man pre-commits to a route that avoids passing the tempting pellet, paying extra steps. Immediate vs delayed utility = eat a pellet now (small score) vs a power pellet enabling ghost-eating later (large delayed score). Discount-curve comparison D=1/2^t vs 1/(1+2t).</p>
-<h2 id="what-this-chapter-builds-on-8"><a class="header" href="#what-this-chapter-builds-on-8">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on-4"><a class="header" href="#what-this-chapter-builds-on-4">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> exists — src/genmlx/agents/biased_planners.cljs (delta hyperbolic 1/(1+kd), bias-&gt;perceived-delay :naive=inc / :sophisticated=const-0, biased-eu/biased-eu-inf, make-biased-mdp-agent, simulate-biased-mdp re-planning each step, planned-rollout = believed trajectory, restaurant-mdp + restaurant-temptation-mdp). Tests: agentmodels_biased_planners_test.cljs (delta limit cases, restaurant-temptation naive vs sophisticated action differences, limit recovery k=0 matches standard agent at alpha=1 and Inf). Discount-curve plot to write for figure.</li>
 </ul>
-<h2 id="live-figures-planned-8"><a class="header" href="#live-figures-planned-8">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned-4"><a class="header" href="#live-figures-planned-4">Live figures (planned)</a></h2>
 <ul>
 <li>ch09-discount-curves.png — exponential vs hyperbolic discount-curve line chart</li>
 <li>ch09-naive-detour.gif — Naive Pac-Man diverting to the tempting near pellet</li>
@@ -450,13 +772,13 @@ fruit — one frame per step:</p>
 <p><strong>Ports</strong> agentmodels.org 5b-time-inconsistency.md.</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-9"><a class="header" href="#the-pac-man-scenario-9">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario-5"><a class="header" href="#the-pac-man-scenario-5">The Pac-Man scenario</a></h2>
 <p>Procrastination MDP = Pac-Man must eat a power pellet before a deadline or lose the level (work/wait actions, deadline T, diminishing reward). Naive hyperbolic Pac-Man keeps deferring the grab — always ‘next step’ — until forced or failing; Sophisticated commits. dynamicActionExpectedUtilities shows EU of each action changing with position and subjective delay along the trajectory. Discount-rate sweep finds the threshold above which Pac-Man never acts.</p>
-<h2 id="what-this-chapter-builds-on-9"><a class="header" href="#what-this-chapter-builds-on-9">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on-5"><a class="header" href="#what-this-chapter-builds-on-5">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> exists — src/genmlx/agents/biased_planners.cljs (procrastination-mdp time-augmented wait/work MDP, biased-eu with perceived-delay branching, planned-rollout for the believed-vs-actual divergence). Tests: agentmodels_biased_planners_test.cljs (procrastination preference reversal — naive procrastinates, sophisticated commits). The dynamic-EU-along-trajectory overlay (per-step Q at the agent’s current delay) is presentation-layer work to write for the figure.</li>
 </ul>
-<h2 id="live-figures-planned-9"><a class="header" href="#live-figures-planned-9">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned-5"><a class="header" href="#live-figures-planned-5">Live figures (planned)</a></h2>
 <ul>
 <li>ch10-procrastination-graph.png — work/wait transition graph authored figure</li>
 <li>ch10-dynamic-eu.gif — per-step action-EU overlay changing as Naive Pac-Man defers (presentation V-shading per delay)</li>
@@ -469,13 +791,13 @@ fruit — one frame per step:</p>
 <p><strong>Ports</strong> agentmodels.org 5c-myopic.md.</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-10"><a class="header" href="#the-pac-man-scenario-10">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario-6"><a class="header" href="#the-pac-man-scenario-6">The Pac-Man scenario</a></h2>
 <p>Reward-myopic Pac-Man only looks C_g steps ahead — greedy about nearby pellets, may miss optimal routes to power pellets (epsilon-greedy-like on bandits). Update-myopic Pac-Man assumes belief updates stop after C_m steps: with hidden ghosts observable only by moving adjacent, a C_m=1 Pac-Man won’t plan a route that first reveals ghost positions then exploits the info — the Restaurant-Search failure mode. Runtime: update-myopic scales better than full POMDP.</p>
-<h2 id="what-this-chapter-builds-on-10"><a class="header" href="#what-this-chapter-builds-on-10">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on-6"><a class="header" href="#what-this-chapter-builds-on-6">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> exists — src/genmlx/agents/biased_planners.cljs (reward-myopia C_g and update-myopia C_m bounds in the delay-indexed recursion, line-mdp reward-myopia corridor, make-biased-pomdp-agent with C_m bound, simulate-biased-pomdp, voi-world value-of-information walk-and-check POMDP). Limit recovery biased(C_g=Inf) matches standard agent — agentmodels_biased_planners_test.cljs. Bandit reward-myopia regret-ratio + runtime-scaling timing harness to write for figures.</li>
 </ul>
-<h2 id="live-figures-planned-10"><a class="header" href="#live-figures-planned-10">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned-6"><a class="header" href="#live-figures-planned-6">Live figures (planned)</a></h2>
 <ul>
 <li>ch11-rewardmyopic-bandit.png — average-reward-near-optimal-despite-myopia bar/line</li>
 <li>ch11-voi-failure.gif — update-myopic Pac-Man avoiding the info-revealing detour (voi-world)</li>
@@ -488,13 +810,13 @@ fruit — one frame per step:</p>
 <p><strong>Ports</strong> agentmodels.org 5d-joint-inference.md.</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-11"><a class="header" href="#the-pac-man-scenario-11">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario-7"><a class="header" href="#the-pac-man-scenario-7">The Pac-Man scenario</a></h2>
 <p>A Pac-Man that never explores an unknown corridor: the Optimal model explains it as strongly preferring the known reward; the Possibly-Reward-myopic model explains it as greedy (low C_g). The procrastination scenario: a Pac-Man that must hit a switch before a countdown — Naive hyperbolic Pac-Man keeps deferring, while the Optimal-only model wrongly infers the switch reward is tiny + noise is huge. Online posteriors revise sharply when the task finally completes.</p>
-<h2 id="what-this-chapter-builds-on-11"><a class="header" href="#what-this-chapter-builds-on-11">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on-7"><a class="header" href="#what-this-chapter-builds-on-7">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> exists — joint inference over agent TYPE and parameters (U, alpha, b0, k, C). Tests: test/genmlx/agentmodels_5d_joint_test.cljs (optimal explains waiting via E[reward]~0.530 + E[alpha]~457.5, predictWorkLastMinute~0.006; discounting via E[discount]~2.63, predict~0.216; posterior revision on completion E[reward]&gt;2.0 and E[alpha] collapses &gt;100x; online sequence 9 entries). Example examples/agentmodels/joint_5d_inference.cljs. Built on biased_planners.cljs + inverse.cljs p/assess + standard inference backends.</li>
 </ul>
-<h2 id="live-figures-planned-11"><a class="header" href="#live-figures-planned-11">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned-7"><a class="header" href="#live-figures-planned-7">Live figures (planned)</a></h2>
 <ul>
 <li>ch12-procrastination-timeseries.gif — posterior E[reward], E[alpha], E[discount], predict-work over t=0..9, optimal vs discounting (presentation bars per step)</li>
 <li>ch12-noexplore-horizon.png — E[chocolate utility] and E[C_g] vs time horizon 2..10, optimal vs reward-myopic</li>
@@ -507,13 +829,13 @@ fruit — one frame per step:</p>
 <p><strong>Ports</strong> agentmodels.org 5e-joint-inference.md.</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-12"><a class="header" href="#the-pac-man-scenario-12">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario-8"><a class="header" href="#the-pac-man-scenario-8">The Pac-Man scenario</a></h2>
 <p>A Pac-Man that passes near a power pellet but eats a regular pellet first could be (a) noisy, (b) a Naive hyperbolic discounter tempted by the immediate pellet, or (c) genuinely preferring regular pellets. Joint inference over all three from repeated plays: observing the same ‘mistake’ three times collapses the noise explanation. Expanding the preference space (DonutN != DonutS, positive time cost) lets alternative tastes compete with discounting. Uses the full [immediate, delayed] restaurant-twin geometry.</p>
-<h2 id="what-this-chapter-builds-on-12"><a class="header" href="#what-this-chapter-builds-on-12">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on-8"><a class="header" href="#what-this-chapter-builds-on-8">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> exists — full joint model (discount in {0,1}, sophisticatedOrNaive, vegMinusDonut, donutTempting summary stats), conditioning on Naive path once vs three times, two-donut and positive-timeCost competing explanations. Tests: test/genmlx/agentmodels_5e_joint_test.cljs ([imm,del] 6×8 grid 48+4 twins=52 states, 2-step stay delivers delta(d)*imm + delta(d+1)*del disU formula, joint k+utility inference) + agentmodels_biased_inverse_test.cljs (naive EU(a0)=8/3 tie, soph=2.5, pi_naive(a0)=0.5 vs pi_soph(a0)=0, prior decomposition via p/assess on {:bias} alone, posterior concentrates on :sophisticated). Examples restaurant_joint_inference.cljs, biased_inverse.cljs.</li>
 </ul>
-<h2 id="live-figures-planned-12"><a class="header" href="#live-figures-planned-12">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned-8"><a class="header" href="#live-figures-planned-8">Live figures (planned)</a></h2>
 <ul>
 <li>ch13-three-explanations.png — the ambiguous detour on the maze with three candidate causes</li>
 <li>ch13-once-vs-thrice.gif — posterior bars for sophisticatedOrNaive/discount/alpha after 1 vs 3 identical observations</li>
@@ -526,13 +848,13 @@ fruit — one frame per step:</p>
 <p><strong>Ports</strong> agentmodels.org 6-efficient-inference.md, 6a-inference-dp.md, 6b-inference-sampling.md, 6c-inference-rl.md.</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-13"><a class="header" href="#the-pac-man-scenario-13">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario-9"><a class="header" href="#the-pac-man-scenario-9">The Pac-Man scenario</a></h2>
 <p>The same Pac-Man goal-inference problem solved four ways that MUST agree: (6a) DP — value iteration over maze states == faithful recursive EU; (6b) sampling — exact enumeration vs importance sampling vs Metropolis-Hastings over the joint goal-inference GF; (6c) RL/gradient — gradient and amortized utility recovery through the differentiable planner. Demonstrates inference is a pluggable orthogonal axis over the agent-GF.</p>
-<h2 id="what-this-chapter-builds-on-13"><a class="header" href="#what-this-chapter-builds-on-13">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on-9"><a class="header" href="#what-this-chapter-builds-on-9">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> exists — src/genmlx/agents/differentiable.cljs (build-diff-mdp, diff-q via value-iteration-lazy, action-loglik-loss, recover-params Adam, loss-at). agent.cljs value-iteration vs recursive-eu certified equal. Tests: test/genmlx/agentmodels_ch06_pluggable_inference_test.cljs (VI==recursive-EU, enumerate/IS/MH agreement cross-checked by independent posterior-sequence oracle, gradient/amortized recovery) + agentmodels_diff_learn_test.cljs (diff-reward reconstructs R, lazy Q matches eager 1e-5, fix-alpha-learn-utilities + fix-utilities-learn-alpha to likelihood-equivalence). Example examples/agentmodels/ch06_pluggable_inference.cljs. The 6a/6b/6c stubs in agentmodels are fleshed out here.</li>
 </ul>
-<h2 id="live-figures-planned-13"><a class="header" href="#live-figures-planned-13">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned-9"><a class="header" href="#live-figures-planned-9">Live figures (planned)</a></h2>
 <ul>
 <li>ch14-backend-agreement.png — same posterior from enumerate/IS/MH overlaid as bars</li>
 <li>ch14-dp-value-iteration.gif — V(s) sweeps converging across the maze (cs188 rl.cljs value-iteration display → canvas)</li>
@@ -545,13 +867,13 @@ fruit — one frame per step:</p>
 <p><strong>Ports</strong> agentmodels.org 7-multi-agent.md.</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-14"><a class="header" href="#the-pac-man-scenario-14">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario-10"><a class="header" href="#the-pac-man-scenario-10">The Pac-Man scenario</a></h2>
 <p>Schelling coordination = two Pac-Men trying to meet at a junction without communicating, the popular corridor as the focal point; recursive theory-of-mind at increasing depth predicts convergence. Adversarial = Pac-Man vs ghost planning ahead via simulate/act alternation (minimax/expectimax) on the cs188 GameState. RSA signaling = Pac-Man signaling ghost positions to a partner through movement patterns (literal vs pragmatic listener/speaker).</p>
-<h2 id="what-this-chapter-builds-on-14"><a class="header" href="#what-this-chapter-builds-on-14">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on-10"><a class="header" href="#what-this-chapter-builds-on-10">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> exists — Schelling + focal-point amplification + RSA scalar implicature shipped. Tests: test/genmlx/agentmodels_multi_agent_test.cljs (bob(0)=0.55 prior, focal amplification strictly increasing, alice(4)&gt;=0.83; exact ~ importance-sampling tol 0.05; L0/S1/L1 RSA, ‘some’ implies not-all, pragmatic posteriors analytically verified). Example examples/agentmodels/multi_agent.cljs. Adversarial Pac-Man tree search ALREADY exists in cs188.agents (minimax/alpha-beta/expectimax over generate-successor, proven alpha-beta==minimax) — partial: bridging cs188.agents adversarial search into a genmlx multi-agent GF narrative is the one must-write piece.</li>
 </ul>
-<h2 id="live-figures-planned-14"><a class="header" href="#live-figures-planned-14">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned-10"><a class="header" href="#live-figures-planned-10">Live figures (planned)</a></h2>
 <ul>
 <li>ch15-schelling-convergence.png — meeting-probability vs recursion depth line chart</li>
 <li>ch15-adversarial-pacman.gif — Pac-Man vs ghost expectimax self-play (cs188 play.cljs / web canvas)</li>
@@ -564,13 +886,13 @@ fruit — one frame per step:</p>
 <p><strong>Ports</strong> agentmodels.org 8-guide-library.md.</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-15"><a class="header" href="#the-pac-man-scenario-15">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario-11"><a class="header" href="#the-pac-man-scenario-11">The Pac-Man scenario</a></h2>
 <p>A tutorial-style tour building each agent on Pac-Man worlds: line MDP = corridor; gridworld with walls = maze; named features (gold/silver) = pellets/power-pellets with different utilities; line POMDP with signpost = a corridor with a hidden ghost (treasureAt3 → ghostAt[x,y]); custom RANDOM and EPSILON-GREEDY policy GFs. Shows the minimal agent contract (:act + :params) and the four constructors.</p>
-<h2 id="what-this-chapter-builds-on-15"><a class="header" href="#what-this-chapter-builds-on-15">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on-11"><a class="header" href="#what-this-chapter-builds-on-11">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> exists — src/genmlx/agents/CONTRACTS.md (frozen v1.0 API: the four constructor shapes), worlds.cljs (line-mdp, hike-mdp), agent.cljs (make-mdp-agent optimal/soft), biased_planners.cljs (Naive hyperbolic), pomdp.cljs + pomdp_env.cljs (line POMDP belief filter). Tests: test/genmlx/agentmodels_ch08_library_test.cljs (make-line-mdp + agent, hiking, naive biased, POMDP belief snaps at signpost + QMDP reaches goal, custom RANDOM + EPSILON-GREEDY GFs) + agents_api_test.cljs (8 namespaces load) + agents_contracts_test.cljs (per-constructor return-map shapes + :act signatures pinned). Example examples/agentmodels/ch08_library_guide.cljs.</li>
 </ul>
-<h2 id="live-figures-planned-15"><a class="header" href="#live-figures-planned-15">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned-11"><a class="header" href="#live-figures-planned-11">Live figures (planned)</a></h2>
 <ul>
 <li>ch16-corridor-basic.png — bare line MDP / 3×4 gridworld with walls (render.cljs)</li>
 <li>ch16-named-features.gif — agent navigating to the gold (power-pellet) terminal</li>
@@ -583,13 +905,13 @@ fruit — one frame per step:</p>
 <p><strong>Ports</strong> agentmodels.org extension beyond agentmodels (Phase 3 external environment + LLM agents); thematically continues 4 / 6.</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-16"><a class="header" href="#the-pac-man-scenario-16">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario-12"><a class="header" href="#the-pac-man-scenario-12">The Pac-Man scenario</a></h2>
 <p>LLM-as-policy = a Pac-Man whose action logits ARE an LLM’s p/assess log-probs over up/down/left/right given a state description. LLM-over-agent = inverse planning over a hidden goal that FUSES the agent-GF likelihood P(action|goal) with an LLM reasoner P_LLM(yes|goal). Remote = a Gym-style episodic transport running a Pac-Man MDP/POMDP env as an HTTP service (genmlx.world.net), with async client rollouts crossing the wire.</p>
-<h2 id="what-this-chapter-builds-on-16"><a class="header" href="#what-this-chapter-builds-on-16">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on-12"><a class="header" href="#what-this-chapter-builds-on-12">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> partial — LLM-as-policy and LLM-over-agent exist and are tested but SKIP when qwen3-0.6b is absent (no always-on regression): test/genmlx/agents_llm_policy_test.cljs (per-action LLM logits, p/assess==logsoftmax, reproducible, state-dependent) + test/genmlx/agents_llm_inverse_test.cljs (fused agent+LLM posterior, g* optimal-action MAP). Remote is explicitly PROVISIONAL/unfrozen: src/genmlx/agents/remote.cljs (gym-transport, mdp-env-handler, pomdp-env-handler, remote-mdp-rollout, remote-pomdp-rollout) marked maturity:partial in CONTRACTS.md. Mark this chapter clearly as the unfrozen frontier; the cs188 layout→genmlx bridge (~20 lines) for a live remote Pac-Man env is must-write.</li>
 </ul>
-<h2 id="live-figures-planned-16"><a class="header" href="#live-figures-planned-16">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned-12"><a class="header" href="#live-figures-planned-12">Live figures (planned)</a></h2>
 <ul>
 <li>ch17-llm-policy.png — LLM per-action logits → softmax action bars for a maze state</li>
 <li>ch17-llm-inverse.png — fused agent+LLM posterior over hidden goal bars</li>

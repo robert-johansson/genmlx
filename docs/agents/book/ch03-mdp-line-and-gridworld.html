@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-c5b2276e.js";
+            window.path_to_searchindex_js = "searchindex-3a2ce01d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -182,22 +182,118 @@
                     <main>
                         <h1 id="sequential-decisions-mdps-and-the-maze"><a class="header" href="#sequential-decisions-mdps-and-the-maze">Sequential Decisions: MDPs and the Maze</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 3a-mdp.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 3a (MDPs).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
-<p>Integer-line MDP = a 1-D Pac-Man corridor with a pellet at the far end and a per-step time cost. Restaurant-Choice gridworld = a Pac-Man maze with pellet caches of different values as terminal cells. Show act/expectedUtility mutual recursion, terminal states, and the exponential-blowup → dp.cache (memoization) lesson as planning-step count grows.</p>
-<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/agent.cljs (bellman-step, value-iteration, value-iteration-lazy, recursive-eu memoized via exact/with-cache, make-mdp-agent, simulate-mdp); src/genmlx/agents/worlds.cljs (line-mdp); src/genmlx/agents/gridworld.cljs (parse-grid, build-mdp, transition-tensor). Tests: test/genmlx/agentmodels_worlds_test.cljs (line S=7 rollout 0→6) + agentmodels_slice_test.cljs (3×3 VI Q/V + rollout). The dp.cache vs no-cache runtime-scaling demo is the agent.cljs two-path (tensor VI vs recursive-eu) story — a small timing harness to write for the figure.</li>
-</ul>
-<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
-<ul>
-<li>ch03-corridor.gif — Pac-Man walking the 1-D line MDP to the goal pellet</li>
-<li>ch03-gridworld-policy.png — maze with optimal-policy direction arrows per cell (render.cljs overlay)</li>
-<li>ch03-runtime-scaling.png — bar chart: recursive EU runtime with vs without with-cache memoization</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>So far Pac-Man has made <em>one</em> choice at a time. But the interesting thing about a maze is that choices are linked: where you step now decides which steps are available next, and the pellet at the end is only worth chasing if the corridor between here and there isn’t too long. To reason about a <em>sequence</em> of decisions we need a model of how the world unfolds — a <strong>Markov decision process</strong>, or MDP.</p>
+<p>The glyphs and the −1 step cost are fixed on the shared <a href="./legend.html">legend</a>; this chapter is about what to <em>do</em> with them.</p>
+<h2 id="the-minimal-maze-a-corridor"><a class="header" href="#the-minimal-maze-a-corridor">The minimal maze: a corridor</a></h2>
+<p>Strip the maze down to a single row and put one power pellet at the far right. That is the <strong>corridor</strong> — agentmodels’ integer line-world, the smallest MDP you can fully trace by hand. Pac-Man starts at the left; every step costs −1; reaching the pellet ends the episode with its reward. The only question is whether the pellet is worth walking to.</p>
+<p><code>line-mdp</code> builds exactly this world as plain data, then compiles it through the gridworld builder:</p>
+<pre><code class="language-clojure">(defn line-mdp
+  "Build the Ch 3a integer line-world: an n-state 1-D corridor with a single
+   :goal reward and a per-step timeCost (so the agent reaches the goal quickly).
+   Movement is left/right; up/down clamp to a stay since the grid is one row high.
+
+   Options: :n (default 7) :goal-idx (default n-1) :reward (default 1.0)
+            :time-cost (default -0.1) :start (default [0 0]) :gamma (default 1.0)."
+  [{:keys [n goal-idx reward time-cost start gamma]
+    :or {n 7 reward 1.0 time-cost -0.1 gamma 1.0}}]
+  (let [goal-idx (or goal-idx (dec n))]
+    (gw/build-mdp {:grid (line-grid n goal-idx)
+                   :utilities {:goal reward :timeCost time-cost}
+                   :start (or start [0 0]) :gamma gamma :noise 0.0})))
+</code></pre>
+<p>Five things define the MDP, and they are all right here: the <strong>states</strong> (the <code>n</code> cells of the grid), the <strong>actions</strong> (left/right, with up/down clamping to a stay), the <strong>transition function</strong> (<code>:noise 0.0</code>, so a move lands deterministically one cell over), the <strong>per-step time cost</strong> (<code>:timeCost</code>, the pressure to finish), and the <strong>terminal reward</strong> (<code>:goal</code>, the cell that ends the episode and pays out). <code>build-mdp</code> turns these into the dense tensors <code>T</code> (transition), <code>R</code> (reward), and <code>term</code> (terminal mask) that the planner consumes.</p>
+<p>Here is the corridor in motion — Pac-Man walking rightward, one frame per step, to the power pellet that closes the episode:</p>
+<p><img src="figures/corridor-rollout.gif" alt="Animation of Pac-Man walking rightward along a one-row corridor, cell by cell, until he reaches the power pellet at the far right end."></p>
+<p>The walk looks obvious, but <em>why</em> Pac-Man heads right rather than left is a value computation — and that is the heart of the chapter.</p>
+<h2 id="value-the-same-answer-computed-two-ways"><a class="header" href="#value-the-same-answer-computed-two-ways">Value: the same answer, computed two ways</a></h2>
+<p>The value <code>V(s)</code> of a state is the total future reward Pac-Man expects from there, acting by his own policy. agentmodels defines this with two mutually recursive functions: <code>expectedUtility(s, a)</code> — the value of taking action <code>a</code> in state <code>s</code> — and the policy, a <em>softmax</em> over those expected utilities. Softmax (controlled by a rationality parameter <code>alpha</code>) means the agent strongly prefers high-value actions but isn’t a perfect maximizer; in the <code>alpha = ##Inf</code> limit it becomes the hard <code>max</code>.</p>
+<p>GenMLX computes this value <strong>two ways that agree by construction</strong>, and the agreement is the point: it certifies that the fast tensor path means the same thing as the faithful recursive one.</p>
+<p>The first path is <strong>tensor value iteration</strong> — the Bellman backup, run as MLX graph ops on the GPU. Start from <code>V = 0</code> and sweep:</p>
+<pre><code class="language-clojure">(defn value-iteration
+  "Run `n` Bellman sweeps from V = 0. Backup is the soft policy-expectation for
+   finite alpha and hard max at alpha = ##Inf. Returns {:Q [S,A] :V [S]}.
+   Materializes V each sweep to break lazy-graph accumulation."
+  [{:keys [S gamma] :as mdp} alpha n]
+  (let [value-of (value-fn-for alpha)]
+    (loop [V (mx/zeros #js [S]), i 0, Q nil]
+      (if (&gt;= i n)
+        {:Q Q :V V}
+        (let [[Q' V'] (bellman-step mdp gamma alpha value-of V)]
+          (mx/materialize! V')
+          (recur V' (inc i) Q'))))))
+</code></pre>
+<p>Each sweep computes <code>Q[s,a] = R + gamma·(1−term)·(T·V)</code> and then folds <code>Q</code> back into a new <code>V</code> — the soft policy-expectation <code>V(s) = Σ_a softmax(alpha·Q[s])[a]·Q[s,a]</code>. The <code>mx/materialize!</code> call forces each sweep’s <code>V</code> to a concrete array so the lazy graph doesn’t grow without bound across iterations. After enough sweeps <code>V</code> stops changing: it has converged.</p>
+<p>The second path is the <strong>faithful recursive <code>expectedUtility</code></strong> — agentmodels’ <code>act</code>/<code>expectedUtility</code> recursion almost line for line, on host scalars, memoized with <code>exact/with-cache</code> (the <code>dp.cache</code> analog):</p>
+<pre><code class="language-clojure">(defn recursive-eu
+  "agentmodels' expectedUtility / act, memoized with exact/with-cache (the
+   dp.cache analog). SOFT-rational and mutually recursive: the future value is
+   the expectation of EU under the agent's own softmax(alpha*EU) policy. Operates
+   on host-side scalars (state, action, timeLeft) — with-cache keys on JS args.
+
+       EU(s,a,t) = u(s,a) + gamma*[ terminal(s) or t&lt;=1 ? 0
+                                    : Σ_s' T(s,a,s') * V(s', t-1) ]
+       V(s,t)    = Σ_a  softmax(alpha*EU(s,·,t))[a] * EU(s,a,t)
+
+   Returns {:eu (fn [s a t]) :soft-v (fn [s t])}; EU(s,a,horizon) is the t-step Q
+   that `value-iteration` computes with `n = horizon` sweeps."
+  [{:keys [A gamma terminals] :as mdp}]
+  ...
+  (let [Rh      (mx/-&gt;clj (:R mdp))       ; [S][A] JS numbers
+        Th      (mx/-&gt;clj (:T mdp))       ; [S][A][S'] JS numbers
+        terms   (set (keys terminals))
+        eu-atom (atom nil)
+        soft-v  (fn [s t]
+                  (let [qs (mapv (fn [a] (@eu-atom s a t)) (range A))]
+                    (reduce + (map * (softmax-vec (mapv #(* (:alpha mdp) %) qs)) qs))))
+        eu      (exact/with-cache
+                  (fn [s a t]
+                    (let [u (get-in Rh [s a])]
+                      (if (or (terms s) (&lt;= t 1))
+                        u
+                        (+ u (* gamma
+                                (reduce-kv
+                                  (fn [acc s' pr]
+                                    (if (pos? pr) (+ acc (* pr (soft-v s' (dec t)))) acc))
+                                  0.0 (get-in Th [s a]))))))))]
+    (reset! eu-atom eu)
+    {:eu eu :soft-v soft-v}))
+</code></pre>
+<p>Read the <code>EU</code> formula in the docstring as a sentence: the value of doing <code>a</code> in <code>s</code> is the immediate reward <code>u(s,a)</code>, plus — unless <code>s</code> is terminal or we’ve run out of time — the discounted average over next states of <em>their</em> value one step shorter. The <code>V</code> formula closes the loop by mixing the <code>EU</code>s under the agent’s own softmax policy. That mutual recursion is exponential if computed naively: each state expands into all its successors, which expand again. <code>exact/with-cache</code> is what tames it — every <code>(s, a, t)</code> triple is computed once and remembered, turning the exponential tree into a polynomial table. This is the chapter’s load-bearing lesson, and the reason memoization isn’t an optimization detail but a correctness-of-scale requirement.</p>
+<p>Both paths return the same <code>Q</code> and <code>V</code> (this is certified by the equivalence test). <code>EU(s, a, horizon)</code> from the recursive path equals <code>Q[s,a]</code> from <code>n = horizon</code> value-iteration sweeps.</p>
+<h2 id="watching-value-propagate"><a class="header" href="#watching-value-propagate">Watching value propagate</a></h2>
+<p>Why does value iteration need <em>several</em> sweeps rather than one? Because reward information has to travel backward through the maze. On sweep one, only cells adjacent to the goal learn they’re valuable. On sweep two, their neighbors learn it. The goal’s worth ripples outward one cell per sweep until it reaches the start.</p>
+<p>The plot below tracks <code>V(start)</code> — the value Pac-Man assigns to where he’s standing — across successive sweeps:</p>
+<p><img src="figures/vi-convergence.png" alt="Line chart of V(start) versus value-iteration sweep number: the value sits flat and low for several early sweeps while the goal reward has not yet propagated back across the corridor, then jumps sharply once the information reaches the start cell and plateaus at the converged value."></p>
+<p>The flat early region is Pac-Man not yet knowing the pellet is worth walking to — the reward signal simply hasn’t reached the start. The jump is the moment the backup chain connects start to goal; the plateau is convergence. The number of sweeps you need is the distance the reward must travel, which is exactly why the corridor’s horizon (<code>n-iters</code>) is set generously.</p>
+<h2 id="acting-it-out"><a class="header" href="#acting-it-out">Acting it out</a></h2>
+<p><code>make-mdp-agent</code> packages all of this: it runs value iteration to get <code>Q</code> and <code>V</code>, wraps the softmax policy as a generative function, and exposes <code>:act</code> (sample one action) and <code>:expected-utility</code> (the recursive value, computed lazily only if you ask). The policy being a generative function is the unifying idea of the whole book — choosing an action is just <code>(trace :action (softmax-action alpha (Q s)))</code>, a GFI random choice like any other.</p>
+<p>To produce a full trajectory, <code>simulate-mdp</code> rolls the policy forward from the start until a terminal cell:</p>
+<pre><code class="language-clojure">(defn simulate-mdp
+  "Roll the agent's policy out from `start` for at most `horizon` steps, stopping
+   at a terminal. The action comes from the softmax policy (decision noise) and
+   the next state is sampled from T (environment / transition noise). Returns
+   {:states [s0 s1 ...] :actions [a0 a1 ...]} (JS ints); one action per transition."
+  [{:keys [mdp act] :as agent} start horizon &amp; [{:keys [rollout-mode key]}]]
+  (if (= rollout-mode :fused)
+    (rollout/rollout-mdp agent start horizon {:key key})
+    (let [{:keys [T terminals]} mdp]
+      (loop [s start, step 0, k key, states [start], actions []]
+        (if (or (&gt;= step horizon) (contains? terminals s))
+          {:states states :actions actions}
+          (let [[k-act k-next k'] (if k (rng/split-n k 3) [nil nil nil])
+                a  (if k-act (act s k-act) (act s))
+                s' (sample-next T s a k-next)]
+            (recur s' (inc step) k' (conj states s') (conj actions a))))))))
+</code></pre>
+<p>Two kinds of randomness meet in that loop: the <strong>decision noise</strong> of the softmax policy (<code>act</code>) and the <strong>environment noise</strong> of the transition (<code>sample-next</code> draws the next state from <code>T[s,a,:]</code>). For the corridor both are tame — <code>noise 0.0</code> makes the transition one-hot — so the rollout is the clean rightward walk you saw in the GIF. The whole thing in practice is one builder and one roll:</p>
+<pre><code class="language-clojure">(let [agent (make-mdp-agent {:mdp (line-mdp {:n 7})})]
+  (simulate-mdp agent 0 12))
+;; =&gt; {:states [0 1 2 3 4 5 6] :actions [...]}
+</code></pre>
+<p>That is the corridor solved: a line of states, a backed-up value function, and a policy that walks the gradient to the pellet.</p>
+<p>Next we widen the corridor into two dimensions — and discover that with walls and a cliff, the <em>shortest</em> path and the <em>best</em> path stop being the same thing.</p>
 
                     </main>
 

@@ -70,6 +70,37 @@
           :series [{:label "V(start)" :points pts}]}
          {:width 480 :height 300}))
 
+;; --- ch01: the geometric distribution as a bar chart -------------------------
+;; P(n) = 0.5^(n+1) (trials until the first head) — the geometric pmf the ch01
+;; example samples; shown truncated to n=0..6.
+(emit! "ch01-geometric" :bars
+       {:title "P(n) — geometric: ghost-blocked steps before a turn"
+        :bars  (vec (for [k (range 7)] {:label (str k) :weight (Math/pow 0.5 (inc k))}))}
+       {:width 470})
+
+;; --- ch02: softmax policy — P(best action) vs rationality alpha (line) -------
+(let [eu     [3.0 1.0 0.5 0.0]
+      alphas [0.0 0.25 0.5 1.0 2.0 4.0 8.0]
+      p-best (fn [a] (let [es (mapv #(Math/exp (* a %)) eu)] (/ (first es) (reduce + es))))]
+  (emit! "ch02-softmax" :lines
+         {:title "softmax policy: P(best action) vs rationality α" :xlabel "α (sweep)" :ylabel "P(a*)"
+          :series [{:label "P(best)" :points (mapv p-best alphas)}]}
+         {:width 480 :height 300}))
+
+;; --- ch02: a 4-way junction, floor shaded by V(s) (frame) --------------------
+(def junction-maze
+  ["%%.%%"
+   "%% %%"
+   "o P F"
+   "%% %%"
+   "%%.%%"])
+(def jmdp (pac/pacman-mdp {:ascii junction-maze}))
+(def jag  (agent/make-mdp-agent {:mdp jmdp :alpha ##Inf :gamma 1.0 :n-iters 20}))
+(let [vs (vec (mx/->clj (:V jag))) vlo (reduce min vs) vhi (reduce max vs)]
+  (emit! "ch02-junction" :frame
+         (pac/frame jmdp (:start-idx jmdp) {:vs vs :vlo vlo :vhi vhi :step 0})
+         {:cell 48}))
+
 ;; --- manifest ---------------------------------------------------------------
 (fs/writeFileSync (str data-dir "/manifest.json")
                   (js/JSON.stringify (clj->js {:figures @manifest})))
