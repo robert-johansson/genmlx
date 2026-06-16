@@ -39,7 +39,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e255d9ad.js";
+            window.path_to_searchindex_js = "searchindex-81cff193.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -396,6 +396,10 @@ fruit — one frame per step:</p>
 </ul>
 <p>The probability the agent takes the single best action climbs from chance toward certainty as <code>alpha</code> grows:</p>
 <p><img src="figures/ch02-softmax.png" alt="A line chart of P(best action) against the rationality parameter alpha, rising from 0.25 at alpha=0 — uniform over four actions — and curving upward toward 1.0 as alpha increases."></p>
+<p>The line summarises one number; the animation shows the whole policy. Watch all
+four action probabilities as α sweeps from 0 to 16 — they start level at 0.25, and
+the best move pulls away toward certainty:</p>
+<p><img src="figures/ch02-alpha-anim.gif" alt="Animation of the four action probabilities as α increases through 0, 0.2, 0.5, 1, 2, 4, 8, 16: at α=0 all four bars sit at 0.25, and as α rises the best action’s bar climbs toward 1 while the rest shrink — the policy sharpening from a coin-flip to an argmax."></p>
 <p>At <code>alpha = 0</code> the curve sits at <code>0.25</code>: one of four corridors, chosen blind. As <code>alpha</code> rises the best arm’s share sweeps up toward <code>1.0</code>. The shape of that climb is the agent’s <em>temperament</em>, and it is one scalar in the program — no separate “rational” and “irrational” code paths, just a knob.</p>
 <h2 id="why-this-is-planning-as-inference"><a class="header" href="#why-this-is-planning-as-inference">Why this is planning-as-inference</a></h2>
 <p>The deepest point is hiding in <code>dist/categorical</code>. Because the policy is an honest distribution, choosing an action and <em>inferring</em> an action are the same operation viewed from two sides. The forward read is a noisy controller: sample <code>:action</code>, watch Pac-Man move. The inverse read is planning-as-inference: imagine we <em>observe</em> an outcome — “Pac-Man reached the fruit” — and condition the program on it. Conditioning reshapes the prior over <code>:action</code> into a posterior; the moves consistent with eating the fruit gain weight, the rest lose it, and the posterior over <code>:action</code> <em>is</em> the plan.</p>
@@ -502,6 +506,10 @@ fruit — one frame per step:</p>
 <p>Why does value iteration need <em>several</em> sweeps rather than one? Because reward information has to travel backward through the maze. On sweep one, only cells adjacent to the goal learn they’re valuable. On sweep two, their neighbors learn it. The goal’s worth ripples outward one cell per sweep until it reaches the start.</p>
 <p>The plot below tracks <code>V(start)</code> — the value Pac-Man assigns to where he’s standing — across successive sweeps:</p>
 <p><img src="figures/vi-convergence.png" alt="Line chart of V(start) versus value-iteration sweep number: the value sits flat and low for several early sweeps while the goal reward has not yet propagated back across the corridor, then jumps sharply once the information reaches the start cell and plateaus at the converged value."></p>
+<p>The line tracks one cell; the maze shows them all. Here value iteration runs on the
+classic maze, the floor shaded by <code>V(s)</code> after each sweep — the worth of the fruit
+spilling outward one ring of cells at a time until the whole maze knows the way home:</p>
+<p><img src="figures/ch03-vi-propagation.gif" alt="Animation of value iteration on the classic maze: the floor begins uniformly dark (every cell at the bare step cost), then over successive sweeps brightens outward from the fruit as the goal’s value propagates back cell by cell, converging to the value heatmap."></p>
 <p>The flat early region is Pac-Man not yet knowing the pellet is worth walking to — the reward signal simply hasn’t reached the start. The jump is the moment the backup chain connects start to goal; the plateau is convergence. The number of sweeps you need is the distance the reward must travel, which is exactly why the corridor’s horizon (<code>n-iters</code>) is set generously.</p>
 <h2 id="acting-it-out"><a class="header" href="#acting-it-out">Acting it out</a></h2>
 <p><code>make-mdp-agent</code> packages all of this: it runs value iteration to get <code>Q</code> and <code>V</code>, wraps the softmax policy as a generative function, and exposes <code>:act</code> (sample one action) and <code>:expected-utility</code> (the recursive value, computed lazily only if you ask). The policy being a generative function is the unifying idea of the whole book — choosing an action is just <code>(trace :action (softmax-action alpha (Q s)))</code>, a GFI random choice like any other.</p>
@@ -613,6 +621,7 @@ under a slippery floor Pac-Man can no longer trust a corridor that runs alongsid
 hazard, because an orthogonal slip might shove him sideways into it. He will <em>value
 cliff-adjacent cells less and detour</em> around them — exactly the risk-aversion that
 emerges, for free, from the transition model.</p>
+<p><img src="figures/ch04-slippery-rollout.gif" alt="Animation of a slippery-floor rollout on the classic maze: Pac-Man heads for the fruit, but the noisy transitions occasionally slip him orthogonally off his intended line, so his path wobbles rather than running straight — the stochastic transition model at work."></p>
 <h2 id="solving-for-value-the-bellman-backup"><a class="header" href="#solving-for-value-the-bellman-backup">Solving for value: the Bellman backup</a></h2>
 <p>Given <code>T</code>, <code>R</code>, and the terminal mask, the value of a state is the discounted
 reward Pac-Man can expect if he acts well from here on. Value iteration computes it
@@ -747,6 +756,9 @@ and observe <code>:A</code>, and the belief collapses to a point mass: <strong>P
 <strong>P(:B) = 1.0</strong>. Every filtered belief sums to <strong>1.0</strong> — it stays a proper
 distribution throughout.</p>
 <p><img src="figures/ch05-belief.png" alt="Bar chart of Pac-Man’s belief over which cache rewards, collapsed entirely onto the power pellet after the signpost observation: one bar at probability 1 and the other at 0."></p>
+<p>Better, watch it move. As Pac-Man walks up toward the signpost the two bars hold
+even — he genuinely does not know — and then snap the instant he reads it:</p>
+<p><img src="figures/ch05-belief-anim.gif" alt="Animation of the belief over the two caches: the bars hold at 0.5/0.5 for the first steps while Pac-Man approaches the signpost, then snap so all the mass jumps onto the true cache the moment he reads the sign."></p>
 <p>Before the signpost the two bars are even — Pac-Man genuinely doesn’t know. After
 the reveal, all the mass is on the world the signpost named. That single snap is
 the entire epistemic content of the episode.</p>
@@ -789,6 +801,7 @@ him to the correct cache, and he reaches goal index <strong>0</strong> (the <cod
 with the truth set to <code>:B</code> and the mirror happens: the belief snaps to <code>:B</code> and he
 ends at index <strong>2</strong>. The belief is monotone toward the truth — it never moves
 away from the world that turns out to be real, it only waits and then commits.</p>
+<p><img src="figures/ch05-pomdp-rollout.gif" alt="Animation of the POMDP rollout on the haunted maze: Pac-Man walks up the corridor under an even belief, reaches the signpost and reads it, and only then forks decisively toward the cache it revealed."></p>
 <p>This is the resource-rational picture in miniature: Pac-Man spends no effort
 guessing while the signpost is out of reach, gathers the one observation the
 geometry offers, and acts decisively once it lands.</p>
@@ -830,6 +843,9 @@ him replan a detour the moment he learns his preferred route is blocked.</p>
 <p><code>make-bandit-agent</code> hands back exactly the GFI-shaped pieces the rollout needs: an <code>:act</code> function, an <code>:update-belief</code> (which is <code>update-arm</code> above), and an <code>:arm-values</code> reporter that returns each corridor’s posterior mean α/(α+β). After a run of pulls, those means tell you what Pac-Man learned:</p>
 <p><img src="figures/ch06-arm-posteriors.png" alt="Bar chart of Beta posterior means per corridor after learning; corridor 2 stands out near 0.83 as the true fruit-spawner while a dry corridor sits near 0.25."></p>
 <p>The figure shows the posterior means once the dust settles. Corridor 2 — the real fruit-spawner — concentrates near <strong>0.83</strong>, while a dry corridor sits down near <strong>0.25</strong>. Thompson sampling has discovered the productive corridor without an explicit explore schedule: it simply sampled, acted, and updated until the Betas told it where the fruit lived.</p>
+<p>And here is that learning as it happened — the three Beta means updating pull by
+pull as fruit and misses arrive:</p>
+<p><img src="figures/ch06-arm-anim.gif" alt="Animation of the three corridors’ Beta posterior means updating pull by pull: all three start at 0.5, and as outcomes arrive corridor 2’s estimate climbs toward 0.83 while the dry corridor settles near 0.25."></p>
 <h2 id="psrl-lifting-posterior-sampling-back-into-a-maze"><a class="header" href="#psrl-lifting-posterior-sampling-back-into-a-maze">PSRL: lifting posterior sampling back into a maze</a></h2>
 <p>Thompson sampling works because a bandit’s “plan” is trivial — just pull an arm. A real maze is harder: even if you knew the reward map, finding the best route takes planning. <strong>Posterior Sampling RL</strong> is the beautiful generalization. Each episode:</p>
 <ol>
@@ -940,6 +956,9 @@ uniform prior decisively, but not to certainty — under soft rationality a
 power-pellet-lover <em>usually</em> heads south, and a pellet-lover <em>occasionally</em>
 does too, so the posterior keeps mass on both.</p>
 <h2 id="when-one-step-is-not-enough"><a class="header" href="#when-one-step-is-not-enough">When one step is not enough</a></h2>
+<p>One step rarely settles it. Watch the posterior sharpen as the evidence accrues —
+each additional southward step drives more mass onto the power pellet:</p>
+<p><img src="figures/ch07-posterior-anim.gif" alt="Animation of the favourite-cache posterior over successive observed steps: it begins even at 0.5/0.5, tilts toward the power pellet after the first southward step, and concentrates further after the second — inference sharpening with evidence."></p>
 <p>The companion tests run the richer Restaurant-Choice geometry, where three
 caches replace two and we also infer the time cost and <code>alpha</code>. They make the
 identifiability story precise. After one leftward step toward the near (Donut)

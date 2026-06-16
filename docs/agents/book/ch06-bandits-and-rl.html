@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e255d9ad.js";
+            window.path_to_searchindex_js = "searchindex-81cff193.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -214,6 +214,9 @@
 <p><code>make-bandit-agent</code> hands back exactly the GFI-shaped pieces the rollout needs: an <code>:act</code> function, an <code>:update-belief</code> (which is <code>update-arm</code> above), and an <code>:arm-values</code> reporter that returns each corridor’s posterior mean α/(α+β). After a run of pulls, those means tell you what Pac-Man learned:</p>
 <p><img src="figures/ch06-arm-posteriors.png" alt="Bar chart of Beta posterior means per corridor after learning; corridor 2 stands out near 0.83 as the true fruit-spawner while a dry corridor sits near 0.25."></p>
 <p>The figure shows the posterior means once the dust settles. Corridor 2 — the real fruit-spawner — concentrates near <strong>0.83</strong>, while a dry corridor sits down near <strong>0.25</strong>. Thompson sampling has discovered the productive corridor without an explicit explore schedule: it simply sampled, acted, and updated until the Betas told it where the fruit lived.</p>
+<p>And here is that learning as it happened — the three Beta means updating pull by
+pull as fruit and misses arrive:</p>
+<p><img src="figures/ch06-arm-anim.gif" alt="Animation of the three corridors’ Beta posterior means updating pull by pull: all three start at 0.5, and as outcomes arrive corridor 2’s estimate climbs toward 0.83 while the dry corridor settles near 0.25."></p>
 <h2 id="psrl-lifting-posterior-sampling-back-into-a-maze"><a class="header" href="#psrl-lifting-posterior-sampling-back-into-a-maze">PSRL: lifting posterior sampling back into a maze</a></h2>
 <p>Thompson sampling works because a bandit’s “plan” is trivial — just pull an arm. A real maze is harder: even if you knew the reward map, finding the best route takes planning. <strong>Posterior Sampling RL</strong> is the beautiful generalization. Each episode:</p>
 <ol>

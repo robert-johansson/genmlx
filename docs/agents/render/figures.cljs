@@ -14,9 +14,11 @@
 (ns figures
   (:require [genmlx.agents.pacman :as pac]
             [genmlx.agents.agent :as agent]
+            [genmlx.agents.pomdp :as pomdp]
             [genmlx.agents.inverse :as inv]
             [agentmodels.biased-inverse :as bi]
             [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             ["fs" :as fs]))
 
 (def data-dir "docs/agents/render/data")
@@ -155,6 +157,79 @@
   (emit! "ch13-bias-posterior" :bars
          (pac/belief->bars "P(bias | Pac-Man took the safe route once)" post :sophisticated)
          {:width 480}))
+
+;; ===========================================================================
+;; Animated figures — the DYNAMICS each chapter is actually about
+;; ===========================================================================
+
+;; --- ch02: the policy sharpening from uniform to argmax as α rises ------------
+(let [eu     [3.0 1.0 0.5 0.0]
+      labels ["left" "right" "up" "down"]
+      sm     (fn [a] (let [es (mapv #(Math/exp (* a %)) eu) z (reduce + es)] (mapv #(/ % z) es)))
+      frames (mapv (fn [a]
+                     {:title (str "policy π(action)   α = " (.toFixed a 2))
+                      :bars  (vec (map-indexed (fn [i p] (cond-> {:label (nth labels i) :weight p}
+                                                           (= i 0) (assoc :highlight true)))
+                                               (sm a)))})
+                   [0.0 0.2 0.5 1.0 2.0 4.0 8.0 16.0])]
+  (emit! "ch02-alpha-anim" :bars-anim frames {:width 460 :delay 450}))
+
+;; --- ch03: value iteration propagating outward from the goal ------------------
+(let [vlo  (reduce min (vec (mx/->clj (:V (agent/value-iteration classic ##Inf 30)))))
+      vhi  (reduce max (vec (mx/->clj (:V (agent/value-iteration classic ##Inf 30)))))
+      frames (mapv (fn [n]
+                     (let [vs (vec (mx/->clj (:V (agent/value-iteration classic ##Inf n))))]
+                       (pac/frame classic (:start-idx classic) {:vs vs :vlo vlo :vhi vhi :step n})))
+                   (range 1 14))]
+  (emit! "ch03-vi-propagation" :trajectory frames {:cell 36 :delay 280}))
+
+;; --- ch04: a slippery-floor rollout (stochastic orthogonal slip) --------------
+(let [noisy (pac/pacman-mdp {:ascii pac/classic-maze :noise 0.12})
+      nag   (agent/make-mdp-agent {:mdp noisy :alpha ##Inf :gamma 1.0 :n-iters 30})
+      roll  (agent/simulate-mdp nag (:start-idx noisy) 30 {:key (rng/fresh-key 5)})]
+  (emit! "ch04-slippery-rollout" :trajectory
+         (pac/trajectory noisy roll {:V (:V nag)}) {:cell 40 :delay 340}))
+
+;; --- ch05: belief flat-then-snap + the POMDP rollout to the signpost ----------
+(def tall-haunted
+  ["%%%%%"
+   "%. o%"
+   "%   %"
+   "%   %"
+   "% P %"
+   "%%%%%"])
+(let [env  (pac/pacman-pomdp {:maze tall-haunted :signpost 12 :true-world :power})
+      pag  (pac/pomdp-agent env {:alpha ##Inf :n-iters 30})
+      roll (pomdp/simulate-pomdp pag env (:start-idx env) 12)
+      hm   (pac/pacman-mdp {:ascii tall-haunted})]
+  (emit! "ch05-belief-anim" :bars-anim
+         (mapv (fn [b] (pac/belief->bars "belief over the rewarding cache" b :power)) (:beliefs roll))
+         {:width 470 :delay 600})
+  (emit! "ch05-pomdp-rollout" :trajectory
+         (pac/trajectory hm {:states (:states roll) :actions (:actions roll)} {})
+         {:cell 50 :delay 420}))
+
+;; --- ch06: the Beta arm-posteriors sharpening over pulls ----------------------
+(let [bandit (pac/bandit-agent {:strategy :thompson})
+      pulls  [[2 1] [0 0] [2 1] [1 1] [2 1] [0 0] [2 1]]
+      states (reductions (fn [b [arm r]] ((:update-belief bandit) b arm r))
+                         {:arms [[1.0 1.0] [1.0 1.0] [1.0 1.0]]} pulls)]
+  (emit! "ch06-arm-anim" :bars-anim
+         (mapv (fn [b]
+                 {:title "corridor fruit-rate posteriors (Beta means)"
+                  :bars  (vec (map-indexed (fn [i m] (cond-> {:label (str "corridor " i) :weight m}
+                                                       (= i 2) (assoc :highlight true)))
+                                           ((:arm-values bandit) b)))})
+               states)
+         {:width 480 :delay 450}))
+
+;; --- ch07: the goal posterior sharpening as steps are observed ----------------
+(let [grid (:grid (pac/parse-ascii pac/two-caches))
+      gas  (inv/goal-agents {:grid grid :goals [:pellet :power] :alpha 2.0})
+      pseq (inv/posterior-sequence gas {:pellet 0.5 :power 0.5} [[7 3] [10 3]])]
+  (emit! "ch07-posterior-anim" :bars-anim
+         (mapv (fn [post] (pac/belief->bars "P(favourite cache | steps so far)" post :power)) pseq)
+         {:width 470 :delay 700}))
 
 ;; --- manifest ---------------------------------------------------------------
 (fs/writeFileSync (str data-dir "/manifest.json")

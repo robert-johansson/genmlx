@@ -111,6 +111,12 @@ The plot below tracks `V(start)` — the value Pac-Man assigns to where he's sta
 
 ![Line chart of V(start) versus value-iteration sweep number: the value sits flat and low for several early sweeps while the goal reward has not yet propagated back across the corridor, then jumps sharply once the information reaches the start cell and plateaus at the converged value.](figures/vi-convergence.png)
 
+The line tracks one cell; the maze shows them all. Here value iteration runs on the
+classic maze, the floor shaded by `V(s)` after each sweep — the worth of the fruit
+spilling outward one ring of cells at a time until the whole maze knows the way home:
+
+![Animation of value iteration on the classic maze: the floor begins uniformly dark (every cell at the bare step cost), then over successive sweeps brightens outward from the fruit as the goal's value propagates back cell by cell, converging to the value heatmap.](figures/ch03-vi-propagation.gif)
+
 The flat early region is Pac-Man not yet knowing the pellet is worth walking to — the reward signal simply hasn't reached the start. The jump is the moment the backup chain connects start to goal; the plateau is convergence. The number of sweeps you need is the distance the reward must travel, which is exactly why the corridor's horizon (`n-iters`) is set generously.
 
 ## Acting it out

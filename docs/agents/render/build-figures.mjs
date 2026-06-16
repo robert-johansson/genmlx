@@ -17,10 +17,11 @@ mkdirSync(outDir, { recursive: true });
 const manifest = JSON.parse(readFileSync(join(dataDir, 'manifest.json'), 'utf8'));
 
 const RENDER = {
-  frame:      (data, opts) => ['png', cap.pngFromFrame(data, opts)],
-  trajectory: (data, opts) => ['gif', cap.gifFromTrajectory(data, opts)],
-  bars:       (data, opts) => ['png', cap.pngFromBars(data, opts)],
-  lines:      (data, opts) => ['png', cap.pngFromLines(data, opts)],
+  frame:       (data, opts) => ['png', cap.pngFromFrame(data, opts)],
+  trajectory:  (data, opts) => ['gif', cap.gifFromTrajectory(data, opts)],
+  'bars-anim': (data, opts) => ['gif', cap.gifFromBars(data, opts)],
+  bars:        (data, opts) => ['png', cap.pngFromBars(data, opts)],
+  lines:       (data, opts) => ['png', cap.pngFromLines(data, opts)],
 };
 
 let n = 0;

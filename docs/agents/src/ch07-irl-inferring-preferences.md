@@ -94,6 +94,11 @@ does too, so the posterior keeps mass on both.
 
 ## When one step is not enough
 
+One step rarely settles it. Watch the posterior sharpen as the evidence accrues —
+each additional southward step drives more mass onto the power pellet:
+
+![Animation of the favourite-cache posterior over successive observed steps: it begins even at 0.5/0.5, tilts toward the power pellet after the first southward step, and concentrates further after the second — inference sharpening with evidence.](figures/ch07-posterior-anim.gif)
+
 The companion tests run the richer Restaurant-Choice geometry, where three
 caches replace two and we also infer the time cost and `alpha`. They make the
 identifiability story precise. After one leftward step toward the near (Donut)

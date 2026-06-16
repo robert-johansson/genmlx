@@ -58,6 +58,12 @@ The probability the agent takes the single best action climbs from chance toward
 
 ![A line chart of P(best action) against the rationality parameter alpha, rising from 0.25 at alpha=0 — uniform over four actions — and curving upward toward 1.0 as alpha increases.](figures/ch02-softmax.png)
 
+The line summarises one number; the animation shows the whole policy. Watch all
+four action probabilities as α sweeps from 0 to 16 — they start level at 0.25, and
+the best move pulls away toward certainty:
+
+![Animation of the four action probabilities as α increases through 0, 0.2, 0.5, 1, 2, 4, 8, 16: at α=0 all four bars sit at 0.25, and as α rises the best action's bar climbs toward 1 while the rest shrink — the policy sharpening from a coin-flip to an argmax.](figures/ch02-alpha-anim.gif)
+
 At `alpha = 0` the curve sits at `0.25`: one of four corridors, chosen blind. As `alpha` rises the best arm's share sweeps up toward `1.0`. The shape of that climb is the agent's *temperament*, and it is one scalar in the program — no separate "rational" and "irrational" code paths, just a knob.
 
 ## Why this is planning-as-inference

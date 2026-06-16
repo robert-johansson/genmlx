@@ -92,6 +92,8 @@ hazard, because an orthogonal slip might shove him sideways into it. He will *va
 cliff-adjacent cells less and detour* around them — exactly the risk-aversion that
 emerges, for free, from the transition model.
 
+![Animation of a slippery-floor rollout on the classic maze: Pac-Man heads for the fruit, but the noisy transitions occasionally slip him orthogonally off his intended line, so his path wobbles rather than running straight — the stochastic transition model at work.](figures/ch04-slippery-rollout.gif)
+
 ## Solving for value: the Bellman backup
 
 Given `T`, `R`, and the terminal mask, the value of a state is the discounted

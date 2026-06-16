@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e255d9ad.js";
+            window.path_to_searchindex_js = "searchindex-81cff193.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -262,6 +262,7 @@ under a slippery floor Pac-Man can no longer trust a corridor that runs alongsid
 hazard, because an orthogonal slip might shove him sideways into it. He will <em>value
 cliff-adjacent cells less and detour</em> around them — exactly the risk-aversion that
 emerges, for free, from the transition model.</p>
+<p><img src="figures/ch04-slippery-rollout.gif" alt="Animation of a slippery-floor rollout on the classic maze: Pac-Man heads for the fruit, but the noisy transitions occasionally slip him orthogonally off his intended line, so his path wobbles rather than running straight — the stochastic transition model at work."></p>
 <h2 id="solving-for-value-the-bellman-backup"><a class="header" href="#solving-for-value-the-bellman-backup">Solving for value: the Bellman backup</a></h2>
 <p>Given <code>T</code>, <code>R</code>, and the terminal mask, the value of a state is the discounted
 reward Pac-Man can expect if he acts well from here on. Value iteration computes it

@@ -48,6 +48,11 @@ The whole strategy is one line of consequence: `theta (dist/beta-sample-vec av b
 
 The figure shows the posterior means once the dust settles. Corridor 2 — the real fruit-spawner — concentrates near **0.83**, while a dry corridor sits down near **0.25**. Thompson sampling has discovered the productive corridor without an explicit explore schedule: it simply sampled, acted, and updated until the Betas told it where the fruit lived.
 
+And here is that learning as it happened — the three Beta means updating pull by
+pull as fruit and misses arrive:
+
+![Animation of the three corridors' Beta posterior means updating pull by pull: all three start at 0.5, and as outcomes arrive corridor 2's estimate climbs toward 0.83 while the dry corridor settles near 0.25.](figures/ch06-arm-anim.gif)
+
 ## PSRL: lifting posterior sampling back into a maze
 
 Thompson sampling works because a bandit's "plan" is trivial — just pull an arm. A real maze is harder: even if you knew the reward map, finding the best route takes planning. **Posterior Sampling RL** is the beautiful generalization. Each episode:

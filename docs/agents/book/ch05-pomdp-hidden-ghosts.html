@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e255d9ad.js";
+            window.path_to_searchindex_js = "searchindex-81cff193.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -257,6 +257,9 @@ and observe <code>:A</code>, and the belief collapses to a point mass: <strong>P
 <strong>P(:B) = 1.0</strong>. Every filtered belief sums to <strong>1.0</strong> — it stays a proper
 distribution throughout.</p>
 <p><img src="figures/ch05-belief.png" alt="Bar chart of Pac-Man’s belief over which cache rewards, collapsed entirely onto the power pellet after the signpost observation: one bar at probability 1 and the other at 0."></p>
+<p>Better, watch it move. As Pac-Man walks up toward the signpost the two bars hold
+even — he genuinely does not know — and then snap the instant he reads it:</p>
+<p><img src="figures/ch05-belief-anim.gif" alt="Animation of the belief over the two caches: the bars hold at 0.5/0.5 for the first steps while Pac-Man approaches the signpost, then snap so all the mass jumps onto the true cache the moment he reads the sign."></p>
 <p>Before the signpost the two bars are even — Pac-Man genuinely doesn’t know. After
 the reveal, all the mass is on the world the signpost named. That single snap is
 the entire epistemic content of the episode.</p>
@@ -299,6 +302,7 @@ him to the correct cache, and he reaches goal index <strong>0</strong> (the <cod
 with the truth set to <code>:B</code> and the mirror happens: the belief snaps to <code>:B</code> and he
 ends at index <strong>2</strong>. The belief is monotone toward the truth — it never moves
 away from the world that turns out to be real, it only waits and then commits.</p>
+<p><img src="figures/ch05-pomdp-rollout.gif" alt="Animation of the POMDP rollout on the haunted maze: Pac-Man walks up the corridor under an even belief, reaches the signpost and reads it, and only then forks decisively toward the cache it revealed."></p>
 <p>This is the resource-rational picture in miniature: Pac-Man spends no effort
 guessing while the signpost is out of reach, gathers the one observation the
 geometry offers, and acts decisively once it lands.</p>

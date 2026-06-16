@@ -91,6 +91,11 @@ distribution throughout.
 
 ![Bar chart of Pac-Man's belief over which cache rewards, collapsed entirely onto the power pellet after the signpost observation: one bar at probability 1 and the other at 0.](figures/ch05-belief.png)
 
+Better, watch it move. As Pac-Man walks up toward the signpost the two bars hold
+even — he genuinely does not know — and then snap the instant he reads it:
+
+![Animation of the belief over the two caches: the bars hold at 0.5/0.5 for the first steps while Pac-Man approaches the signpost, then snap so all the mass jumps onto the true cache the moment he reads the sign.](figures/ch05-belief-anim.gif)
+
 Before the signpost the two bars are even — Pac-Man genuinely doesn't know. After
 the reveal, all the mass is on the world the signpost named. That single snap is
 the entire epistemic content of the episode.
@@ -144,6 +149,8 @@ him to the correct cache, and he reaches goal index **0** (the `:A` cell). Run i
 with the truth set to `:B` and the mirror happens: the belief snaps to `:B` and he
 ends at index **2**. The belief is monotone toward the truth — it never moves
 away from the world that turns out to be real, it only waits and then commits.
+
+![Animation of the POMDP rollout on the haunted maze: Pac-Man walks up the corridor under an even belief, reaches the signpost and reads it, and only then forks decisively toward the cache it revealed.](figures/ch05-pomdp-rollout.gif)
 
 This is the resource-rational picture in miniature: Pac-Man spends no effort
 guessing while the signpost is out of reach, gathers the one observation the

@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-e255d9ad.js";
+            window.path_to_searchindex_js = "searchindex-81cff193.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -223,6 +223,10 @@
 </ul>
 <p>The probability the agent takes the single best action climbs from chance toward certainty as <code>alpha</code> grows:</p>
 <p><img src="figures/ch02-softmax.png" alt="A line chart of P(best action) against the rationality parameter alpha, rising from 0.25 at alpha=0 — uniform over four actions — and curving upward toward 1.0 as alpha increases."></p>
+<p>The line summarises one number; the animation shows the whole policy. Watch all
+four action probabilities as α sweeps from 0 to 16 — they start level at 0.25, and
+the best move pulls away toward certainty:</p>
+<p><img src="figures/ch02-alpha-anim.gif" alt="Animation of the four action probabilities as α increases through 0, 0.2, 0.5, 1, 2, 4, 8, 16: at α=0 all four bars sit at 0.25, and as α rises the best action’s bar climbs toward 1 while the rest shrink — the policy sharpening from a coin-flip to an argmax."></p>
 <p>At <code>alpha = 0</code> the curve sits at <code>0.25</code>: one of four corridors, chosen blind. As <code>alpha</code> rises the best arm’s share sweeps up toward <code>1.0</code>. The shape of that climb is the agent’s <em>temperament</em>, and it is one scalar in the program — no separate “rational” and “irrational” code paths, just a knob.</p>
 <h2 id="why-this-is-planning-as-inference"><a class="header" href="#why-this-is-planning-as-inference">Why this is planning-as-inference</a></h2>
 <p>The deepest point is hiding in <code>dist/categorical</code>. Because the policy is an honest distribution, choosing an action and <em>inferring</em> an action are the same operation viewed from two sides. The forward read is a noisy controller: sample <code>:action</code>, watch Pac-Man move. The inverse read is planning-as-inference: imagine we <em>observe</em> an outcome — “Pac-Man reached the fruit” — and condition the program on it. Conditioning reshapes the prior over <code>:action</code> into a posterior; the moves consistent with eating the fruit gain weight, the rest lose it, and the posterior over <code>:action</code> <em>is</em> the plan.</p>

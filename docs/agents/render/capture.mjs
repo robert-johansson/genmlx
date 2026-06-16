@@ -41,6 +41,25 @@ export function pngFromBars(p, opts = {}) {
   return c.toBuffer('image/png');
 }
 
+export function gifFromBars(barsList, opts = {}) {
+  const delay = opts.delay ?? 500;
+  // Stable canvas across frames: every frame must have the same bar count.
+  const maxN = Math.max(...barsList.map(p => p.bars.length));
+  const { width, height } = R.barsSize({ bars: new Array(maxN) }, opts);
+  const c = createCanvas(width, height);
+  const ctx = c.getContext('2d');
+  const enc = GIFEncoder();
+  barsList.forEach((p, i) => {
+    R.renderBars(ctx, p, opts);
+    const { data } = ctx.getImageData(0, 0, width, height);
+    const pal = quantize(data, 256);
+    const d = i === barsList.length - 1 ? delay * 3 : delay;  // hold the final frame
+    enc.writeFrame(applyPalette(data, pal), width, height, { palette: pal, delay: d });
+  });
+  enc.finish();
+  return Buffer.from(enc.bytes());
+}
+
 export function pngFromLines(chart, opts = {}) {
   const { width, height } = R.linesSize(chart, opts);
   const c = createCanvas(width, height);
