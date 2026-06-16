@@ -10,15 +10,16 @@ The `defdist` macro defines a new distribution type with sampling and log-probab
 (defdist my-uniform-int
   "Uniform integer distribution on [lo, hi]."
   [lo hi]
+  ;; defdist auto-wraps params with ensure-array, so lo/hi are MLX arrays here —
+  ;; use MLX ops, not Clojure arithmetic or (mx/scalar <array>).
   (sample [key]
-    (let [range-size (- hi lo -1)
+    (let [range-size (mx/add (mx/subtract hi lo) (mx/scalar 1))
           u (rng/uniform key [] mx/float32)
-          idx (mx/astype (mx/floor (mx/multiply u (mx/scalar range-size)))
-                         mx/int32)]
-      (mx/add idx (mx/scalar lo mx/int32))))
+          idx (mx/floor (mx/multiply u range-size))]
+      (mx/astype (mx/add idx lo) mx/int32)))
   (log-prob [value]
-    (let [range-size (- hi lo -1)]
-      (mx/negative (mx/log (mx/scalar range-size))))))
+    (let [range-size (mx/add (mx/subtract hi lo) (mx/scalar 1))]
+      (mx/negative (mx/log range-size)))))
 ```
 
 This creates a constructor function `my-uniform-int` and registers multimethod implementations for `dist-sample*` and `dist-log-prob`. The new distribution works immediately with all GFI operations:

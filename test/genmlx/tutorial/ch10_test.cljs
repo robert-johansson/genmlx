@@ -29,14 +29,16 @@
 (defdist my-uniform-int
   "Uniform integer distribution on [lo, hi]."
   [lo hi]
+  ;; NOTE: defdist auto-wraps params with ensure-array, so lo/hi are MLX arrays
+  ;; here — use MLX ops, not Clojure arithmetic / (mx/scalar <array>) (genmlx-dn56).
   (sample [key]
-    (let [range-size (- hi lo -1)
+    (let [range-size (mx/add (mx/subtract hi lo) (mx/scalar 1))
           u (rng/uniform key [] mx/float32)
-          idx (mx/astype (mx/floor (mx/multiply u (mx/scalar range-size))) mx/int32)]
-      (mx/add idx (mx/scalar lo mx/int32))))
+          idx (mx/floor (mx/multiply u range-size))]
+      (mx/astype (mx/add idx lo) mx/int32)))
   (log-prob [value]
-    (let [range-size (- hi lo -1)]
-      (mx/negative (mx/log (mx/scalar range-size))))))
+    (let [range-size (mx/add (mx/subtract hi lo) (mx/scalar 1))]
+      (mx/negative (mx/log range-size)))))
 
 (let [d (my-uniform-int 1 6)
       key (rng/fresh-key)
