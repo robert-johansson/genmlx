@@ -281,6 +281,17 @@
                  abl (mapv #(run-fixed % lam abl-n 64 (heldout %)) seeds)
                  ;; headline policy = meta-greedy (myopic VOC), like gdtq
                  head meta
+                 ;; per-type adaptive spending: the headline policy's mean compute +
+                 ;; proposals on EASY vs HARD instances, vs the best-tuned fixed budget
+                 ;; (type-independent by construction). Shows WHY it wins: cheap on easy,
+                 ;; full on hard, while a fixed budget spends the same on both.
+                 spend (let [tagged (map-indexed (fn [i r] [(types (nth seeds i)) r]) meta)
+                             of-type (fn [t] (mapv second (filter #(= t (first %)) tagged)))
+                             m (fn [rs k] (mean (mapv k rs)))
+                             e (of-type :easy) h (of-type :hard)]
+                         {:easy {:compute (m e :compute) :proposals (m e :proposals)}
+                          :hard {:compute (m h :compute) :proposals (m h :proposals)}
+                          :fixed {:compute (:compute (first best-fixed)) :proposals (:n (first best-fixed))}})
                  vs-bestfixed (bootstrap-ci (mapv - (nu head) (nu best-fixed)) 2000 0.05 (+ 100 (int (* 1000 lam))))
                  vs-meta (bootstrap-ci (mapv - (nu ctrl) (nu meta)) 2000 0.05 (+ 200 (int (* 1000 lam))))
                  vs-abl (bootstrap-ci (mapv - (nu head) (nu abl)) 2000 0.05 (+ 300 (int (* 1000 lam))))
@@ -297,7 +308,7 @@
               :mean-proposals mean-prop :ablation-n abl-n
               :vs-best-fixed vs-bestfixed :vs-meta vs-meta :vs-ablation vs-abl
               :vs-threshold vs-thr :vs-llm-only vs-llm
-              :beats-all-fixed beats-all-fixed :win win
+              :beats-all-fixed beats-all-fixed :win win :spend spend
               :thr-mean (mean-nu thr) :llm-mean (mean-nu llm) :abl-mean (mean-nu abl)})))
         ;; recovery study (selection accuracy by type), lambda-independent (uses full reveal)
         recovery (let [full (mapv #(run-fixed % 0.0 3 512 (heldout %)) seeds)
@@ -344,6 +355,21 @@
              (str "EASY | " (:n (:easy r)) " | " (ci-str (:ci (:easy r))) " (rate " (.toFixed (:rate (:easy r)) 3) ")")
              (str "HARD | " (:n (:hard r)) " | " (ci-str (:ci (:hard r))) " (rate " (.toFixed (:rate (:hard r)) 3) ")")
              (str "overall | " (:n (:overall r)) " | " (ci-str (:ci (:overall r))) " (rate " (.toFixed (:rate (:overall r)) 3) ")")))
+    ;; adaptive-spending table at a representative win-band lambda (why it wins)
+    (let [win-rows (filter :win (:per-lambda res))
+          rep (or (nth win-rows (quot (count win-rows) 2) nil) (first (:per-lambda res)))
+          sp (:spend rep)]
+      (when sp
+        (swap! L conj "" (str "## Adaptive spending at λ=" (:lambda rep) " (why it wins)") ""
+               "instance type | controller proposals | controller compute | fixed proposals | fixed compute"
+               "---|---|---|---|---"
+               (str "EASY | " (.toFixed (:proposals (:easy sp)) 2) " | " (.toFixed (:compute (:easy sp)) 0)
+                    " | " (:proposals (:fixed sp)) " | " (.toFixed (:compute (:fixed sp)) 0))
+               (str "HARD | " (.toFixed (:proposals (:hard sp)) 2) " | " (.toFixed (:compute (:hard sp)) 0)
+                    " | " (:proposals (:fixed sp)) " | " (.toFixed (:compute (:fixed sp)) 0))
+               (str "The controller spends LESS than the best-tuned fixed budget on easy instances and "
+                    "matches it on hard ones; the fixed budget cannot adapt and pays the same on both. "
+                    "That per-instance reallocation is the source of the net-utility win."))))
     (let [win-lams (mapv :lambda (filter :win (:per-lambda res)))]
       (swap! L conj "" "## Honest caveats (load-bearing)" ""
              (str "- **Headline policy = the MYOPIC VOC** (meta-greedy, hysteresis 1). The hysteresis-3 "

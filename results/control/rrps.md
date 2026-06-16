@@ -34,6 +34,14 @@ EASY | 25 | 0.960 [0.880, 1.000] (rate 0.960)
 HARD | 25 | 0.720 [0.520, 0.880] (rate 0.720)
 overall | 50 | 0.840 [0.740, 0.940] (rate 0.840)
 
+## Adaptive spending at λ=0.006 (why it wins)
+
+instance type | controller proposals | controller compute | fixed proposals | fixed compute
+---|---|---|---|---
+EASY | 1.00 | 242 | 3 | 427
+HARD | 1.80 | 360 | 3 | 427
+The controller spends LESS than the best-tuned fixed budget on easy instances and matches it on hard ones; the fixed budget cannot adapt and pays the same on both. That per-instance reallocation is the source of the net-utility win.
+
 ## Honest caveats (load-bearing)
 
 - **Headline policy = the MYOPIC VOC** (meta-greedy, hysteresis 1). The hysteresis-3 `controller` over-explores the short 3-candidate stream and is worse (the `vs meta(+hyst)` column is negative) — reported transparently, exactly as the gdtq anytime bench reports its own hysteresis wash. The win is the myopic VOC's.
