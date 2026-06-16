@@ -70,6 +70,27 @@ arity. Consumers must dispatch on the agent family, not assume a universal shape
   vector of posterior means. `:update-belief` — `(belief arm reward)` → conjugate
   Beta increment (success → α+1, failure → β+1; other arms unchanged).
 
+## Rollout
+
+Rolling an agent's policy out in its environment is part of the frozen surface
+(pinned reachable by `agents_api_test`, with the `:key` reproducibility regression
+under genmlx-xpbm).
+
+### `agent/simulate-mdp agent start horizon & [{:keys [rollout-mode key]}]`
+- Rolls the agent's policy out from `start` for ≤ `horizon` steps, stopping at a
+  terminal. **Returns** `{:states [s0 s1 ...] :actions [a0 a1 ...]}` (JS ints), one
+  action per transition: the action is drawn from the softmax policy (decision
+  noise) and the next state is sampled from `T` (transition noise).
+- `:key` makes the run reproducible — the same key yields identical
+  `:states`/`:actions` on the default `:host` path. `:rollout-mode :fused` selects
+  the single-graph tensor rollout (`agents.rollout/rollout-mdp`); at `alpha ##Inf`
+  / `noise 0` both modes produce identical trajectories.
+- Drives biased agents too: `biased-planners/simulate-biased-mdp` is `simulate-mdp`'s
+  `:host` path (re-planning from delay 0 each step — the Naive plan↔do divergence);
+  `:rollout-mode :fused` is rejected there (biased agents carry no tensor `:Q`).
+- The POMDP analogue is `pomdp/simulate-pomdp` (threads state + belief + observation,
+  returning `{:states :actions :observations :beliefs}`).
+
 ## Summary of the family-specific differences (the honest contract)
 
 | family  | `:act` signature   | `:policy` (GF) | `:Q`/`:V` | belief surface                  |
