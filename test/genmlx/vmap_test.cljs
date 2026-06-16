@@ -484,7 +484,14 @@
         (mx/eval! y-val)
         (is (= [5 3] (mx/shape y-val)) "vgenerate vmap y is [5,3]-shaped"))
       (mx/eval! (:weight vtrace))
-      (is (js/isFinite (mx/item (:weight vtrace))) "vgenerate weight is finite"))))
+      ;; genmlx-aykz: VectorizedTrace weights are per-particle [N], not scalar —
+      ;; the canonical contract pinned by vectorized_test ("vgenerate weight [N]").
+      ;; mx/item requires size 1, so it errored on the [5] weight; assert [N] +
+      ;; per-particle finiteness instead.
+      (is (= [5] (h/realize-shape (:weight vtrace)))
+          "vgenerate vmap-splice weight is [N]-shaped (per-particle)")
+      (is (every? h/finite? (mx/->clj (:weight vtrace)))
+          "vgenerate weight finite per particle"))))
 
 (deftest general-path-regenerate-weight-equals-delta-project
   ;; genmlx-nt0c: a kernel that forces the GENERAL retained-only regenerate path —
