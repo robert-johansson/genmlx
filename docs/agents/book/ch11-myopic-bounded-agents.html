@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-3a2ce01d.js";
+            window.path_to_searchindex_js = "searchindex-e7e4764f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -182,22 +182,65 @@
                     <main>
                         <h1 id="bounded-agents-reward-myopia-and-update-myopia"><a class="header" href="#bounded-agents-reward-myopia-and-update-myopia">Bounded Agents: Reward-Myopia and Update-Myopia</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 5c-myopic.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 5c (myopic agents).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
-<p>Reward-myopic Pac-Man only looks C_g steps ahead — greedy about nearby pellets, may miss optimal routes to power pellets (epsilon-greedy-like on bandits). Update-myopic Pac-Man assumes belief updates stop after C_m steps: with hidden ghosts observable only by moving adjacent, a C_m=1 Pac-Man won’t plan a route that first reveals ghost positions then exploits the info — the Restaurant-Search failure mode. Runtime: update-myopic scales better than full POMDP.</p>
-<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/biased_planners.cljs (reward-myopia C_g and update-myopia C_m bounds in the delay-indexed recursion, line-mdp reward-myopia corridor, make-biased-pomdp-agent with C_m bound, simulate-biased-pomdp, voi-world value-of-information walk-and-check POMDP). Limit recovery biased(C_g=Inf) matches standard agent — agentmodels_biased_planners_test.cljs. Bandit reward-myopia regret-ratio + runtime-scaling timing harness to write for figures.</li>
-</ul>
-<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
-<ul>
-<li>ch11-rewardmyopic-bandit.png — average-reward-near-optimal-despite-myopia bar/line</li>
-<li>ch11-voi-failure.gif — update-myopic Pac-Man avoiding the info-revealing detour (voi-world)</li>
-<li>ch11-runtime-scaling.png — runtime vs trials: update-myopic vs optimal POMDP line chart</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>A rational Pac-Man plans to the horizon and assigns the right price to every fact he could discover. Real Pac-Man — and the people agentmodels.org wants to model — does neither. This chapter adds two <em>bounds</em> to the planner and watches them make Pac-Man fail in two distinct, characteristically human ways. The glyph and scoring legend lives on the <a href="./legend.html">shared page</a>; here we only change how far ahead Pac-Man can think.</p>
+<p>Both bounds live in the same delay-indexed expected-utility recursion the discounting chapter introduced. The key idea: the recursion carries a <em>subjective delay</em> <code>d</code> alongside objective time, and each bound is a single comparison against <code>d</code>.</p>
+<h2 id="reward-myopia-a-horizon-cap-c_g"><a class="header" href="#reward-myopia-a-horizon-cap-c_g">Reward-myopia: a horizon cap C_g</a></h2>
+<p>Reward-myopia says: value everything past <code>C_g</code> look-ahead steps at exactly zero. Pac-Man becomes greedy about whatever pellet is close and blind to anything further out. The whole mechanism is one extra clause in the base case of the recursion:</p>
+<pre><code class="language-clojure">(defn delta
+  "Hyperbolic discount factor at subjective delay `d`: 1/(1 + k·d).
+   δ(k,0)=1; strictly decreasing in d for k&gt;0; k=0 ⇒ δ≡1 (no discounting)."
+  [k d]
+  (/ 1.0 (+ 1.0 (* (double k) (double d)))))
+</code></pre>
+<p><code>delta</code> is the discount; reward-myopia rides on top of it. Inside <code>build-biased-eu</code> the expected-utility function <code>eu</code> reads:</p>
+<pre><code class="language-clojure">(fn [s a t d]
+  (let [u (* (delta k d) (get-in Rh [s a]))]
+    (if (or (terms s) (&lt;= t 1) (&gt;= d cg))
+      u
+      (+ u (* gamma
+              (reduce-kv
+                (fn [acc s' pr]
+                  (if (pos? pr)
+                    (+ acc (* pr (backup s' (dec t) (inc d) (pd-fn d))))
+                    acc))
+                0.0 (get-in Th [s a])))))))
+</code></pre>
+<p>Read the <code>if</code>: the agent stops recursing — returns only the discounted immediate reward <code>u</code> — when the state is terminal, when objective time runs out (<code>t ≤ 1</code>), <strong>or when the subjective delay reaches the cap</strong> (<code>d ≥ cg</code>, where <code>cg</code> is <code>:reward-myopic-bound</code>). Everything beyond <code>C_g</code> steps contributes nothing. The default is <code>##Inf</code>: with no cap the clause never fires and you get the ordinary unbounded agent back.</p>
+<p>The companion test builds a one-row corridor — a small reward one step to Pac-Man’s left, a big reward five steps to his right — and asks where he heads first:</p>
+<pre><code class="language-clojure">(defn line-first-action [cg]
+  ((:act (bp/make-biased-mdp-agent {:mdp lmdp :alpha ##Inf :gamma 1.0 :n-iters 10}
+                                   {:discount 0.0 :bias :sophisticated :reward-myopic-bound cg}))
+   l-start))
+;; action 0 = left (toward small/near), 1 = right (toward big/far)
+</code></pre>
+<p>The unbounded agent (<code>C_g = ##Inf</code>) walks <strong>right</strong>, toward the big reward five steps away — action <code>1</code>. The capped agent (<code>C_g = 2</code>) cannot see five steps, so the big reward is invisible and it grabs the small one to its <strong>left</strong> — action <code>0</code>. Same world, same utilities; the only difference is how far the agent is allowed to look.</p>
+<p>This is also the limit-recovery anchor. With <code>:discount 0.0</code> the discount <code>δ ≡ 1</code>, the recursion no longer depends on <code>d</code>, and a biased agent with <code>C_g = ##Inf</code> reproduces the standard agent <em>exactly</em>. The test confirms it numerically against both the recursive expected utility and the tensor value-iteration <code>Q</code>: across every state-action pair, the maximum disagreement is <strong>below 1e-4</strong> (for both a soft α = 1.0 policy and a hard α = ∞ policy), and the first action at the start state agrees. The bound is a true superset — turn the knob to infinity and the bias disappears with no residue.</p>
+<h2 id="update-myopia-a-belief-update-cap-c_m-and-the-failure-of-curiosity"><a class="header" href="#update-myopia-a-belief-update-cap-c_m-and-the-failure-of-curiosity">Update-myopia: a belief-update cap C_m, and the failure of curiosity</a></h2>
+<p>Reward-myopia bounds how far you look for <em>reward</em>. Update-myopia bounds how far you look for <em>information</em> — and it is the more interesting failure, because it is the failure to be curious.</p>
+<p>In a POMDP, a good plan can be worth taking <em>because it reveals something</em>: walk to the signpost, learn where the reward is, then commit. Valuing that detour requires the planner to simulate its own future belief <em>updating</em>. Update-myopia severs exactly that: the agent plans as if it will stop learning after <code>C_m</code> steps. Past that point its simulated future self is frozen — it keeps acting but never revises its belief — so any information available only farther ahead is priced at zero. The agent under-explores.</p>
+<p>In the belief-space recursion this is one gate on the Bayes filter:</p>
+<pre><code class="language-clojure">;; I_{d&lt;C_m}: keep the observation factor while d&lt;C_m, else ignore it (the
+;; simulated future self stops learning — push-forward only, which for a
+;; world-independent transition leaves the belief unchanged).
+(gated   (fn [belief s' o d]
+           (if (&lt; d cm) (bayes-update worlds observe belief s' o) belief))
+</code></pre>
+<p>While the simulated delay <code>d</code> is below the cap <code>cm</code> (<code>:update-myopic-bound</code>), <code>gated</code> runs a real Bayesian update on the belief. Once <code>d ≥ cm</code> it returns the belief untouched — observations stop counting. Crucially this gate biases <em>planning only</em>: the real rollout filter, <code>:update-belief</code>, is the ungated <code>bayes-update</code>, so the agent genuinely keeps learning as it walks — it just fails to <em>anticipate</em> that it will.</p>
+<p>The test world is a walk-and-check POMDP. Two goals — A at one end of the top row, B at the other — and a signpost one step below the start that reveals which goal actually pays. The prior is <code>{:A 0.55 :B 0.45}</code> and the true rewarding goal is B (the minority of the prior).</p>
+<p><img src="figures/ch05-haunted.png" alt="A small hidden-state maze: Pac-Man’s start at top-center with two candidate caches at opposite ends of the top corridor, and a signpost floor cell one step below the start that reveals which cache is the true reward. An update-myopic Pac-Man, planning as if his belief will never update, sees no value in the one-step detour down to the signpost and commits blind."></p>
+<p>This is the haunted maze the legend describes — the reward is hidden, and the only way to learn it is to detour onto the signpost. The figure shows what an update-myopic agent never plans: the small step <em>down</em> to read the sign before choosing a corridor.</p>
+<pre><code class="language-clojure">(def opt (pomdp-agent ##Inf))   ; optimal: values information
+(def myo (pomdp-agent 0))        ; update-myopic: never updates in look-ahead
+;; action 3 = down = the 1-step detour onto the signpost (which reveals the world)
+</code></pre>
+<p>The optimal agent (<code>C_m = ##Inf</code>) chooses action <strong>3</strong> — down, onto the signpost — first. The update-myopic agent (<code>C_m = 0</code>) does <strong>not</strong>: with its planned belief frozen at the prior, the detour buys nothing, so it skips it. Rolled out under the true world B, the consequences diverge cleanly. The optimal agent walks and checks, then reaches the <strong>true goal B</strong>. The myopic agent commits blind to the higher-prior goal <strong>A</strong> — and is wrong.</p>
+<p>You can see the value-of-information directly in the numbers. Comparing the value of stepping toward the signpost against stepping toward goal A, the optimal agent prefers the detour by strictly more than the myopic one does. Stronger: the optimal agent values the <em>very same detour action</em> by <strong>more than 1.0</strong> above the myopic agent — roughly the gap between collecting the true reward and committing blind. That gap is information value, not a one-step time-cost artifact: the myopic agent’s planner literally cannot represent that the step is about to teach it something.</p>
+<p>A reassuring closing detail from the test: the bound only touches planning. Hand the agent an un-normalised prior <code>{:A 1.1 :B 0.9}</code> and it normalises internally to sum 1, then acts <em>identically</em> to the <code>{0.55, 0.45}</code> agent — the belief recursion always reasons over a genuine distribution.</p>
+<h2 id="two-knobs-one-recursion"><a class="header" href="#two-knobs-one-recursion">Two knobs, one recursion</a></h2>
+<p>Reward-myopia (<code>d ≥ C_g</code> truncates value) and update-myopia (<code>d &lt; C_m</code> gates learning) are independent comparisons against the same subjective-delay counter. Neither needs a new engine, a new handler, or a new inference path — they are pure host arithmetic over the expected-utility recursion, and at the unbounded limit both vanish into the rational agent. Bound a planner two different ways and you get two different shapes of human shortsightedness from one line of code each.</p>
+<p>Next: when the <em>world itself</em> is uncertain, and we must do inference over an agent’s plan rather than just run it forward.</p>
 
                     </main>
 

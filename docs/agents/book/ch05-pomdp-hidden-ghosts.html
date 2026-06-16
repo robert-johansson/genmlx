@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-3a2ce01d.js";
+            window.path_to_searchindex_js = "searchindex-e7e4764f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -182,23 +182,129 @@
                     <main>
                         <h1 id="hidden-state-pomdps-and-belief-over-ghosts"><a class="header" href="#hidden-state-pomdps-and-belief-over-ghosts">Hidden State: POMDPs and Belief Over Ghosts</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 3c-pomdp.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 3c (POMDPs).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
-<p>Ghost positions are the canonical hidden state — Pac-Man can’t see ghosts through walls and maintains a belief distribution over their locations, updating it when a ghost enters the observable neighborhood. Restaurant-open/closed latent maps to ‘is this corridor safe?’. Signpost reveal and adjacency-reveal both shown. QMDP belief-directed exploration and rational replanning when a corridor is found blocked.</p>
-<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/belief.cljs (filter-step differentiable Bayes update, tensor-update-belief, obs-id-tensor, belief&lt;-&gt;vec); src/genmlx/agents/pomdp.cljs (make-pomdp-agent QMDP [W,S,A] belief-Q, simulate-pomdp, fused-simulate-pomdp); src/genmlx/agents/pomdp_env.cljs (restaurant-gridworld signpost, restaurant-pomdp adjacency-reveal 2^k worlds). Tests: agentmodels_pomdp_test.cljs (belief snaps at signpost, QMDP reaches goal), agentmodels_pomdp_adjacency_test.cljs (detour when preferred closed), agents_fused_pomdp_test.cljs (S×W obs-tensor parity). No new agent code; ghostbusters belief-heatmap browser renderer is the figure gap.</li>
-</ul>
-<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
-<ul>
-<li>ch05-belief-heatmap.gif — belief over ghost cells concentrating as Pac-Man senses (cs188 ghostbusters shade → ghostbusters.html canvas extension, or ANSI fallback)</li>
-<li>ch05-pomdp-graph.png — POMDP dependency graph (s,a,o,u,b) authored figure</li>
-<li>ch05-signpost-reveal.gif — belief snaps to revealed goal at the signpost cell</li>
-<li>ch05-adjacency-detour.gif — Pac-Man detours after observing a corridor closed</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>Every maze so far has been fully visible: Pac-Man knew exactly where the reward
+was and planned a path to it. But the interesting worlds are the ones he can’t
+see through. In the <em>haunted maze</em> there are two candidate caches at the top — a
+pellet and a power pellet — and only <strong>one of them actually pays</strong>. Which one is
+hidden state. Pac-Man can’t tell by looking; he learns the truth only by walking
+onto a single <strong>signpost</strong> floor cell between the two caches. Until then he is
+acting under uncertainty.</p>
+<p>This is a Partially Observable MDP. The agent no longer knows which world he is
+in, so he can’t plan against a single MDP. Instead he carries a <strong>belief</strong> — a
+distribution over which latent world is the real one — acts on that belief, and
+updates it by Bayes’ rule whenever an observation arrives. See the
+<a href="./legend.html">legend</a> for the glyph and scoring vocabulary.</p>
+<p><img src="figures/ch05-haunted.png" alt="The haunted maze: Pac-Man at the bottom of a vertical corridor, a pellet and a power pellet as the two candidate caches at the top, and a signpost floor cell sitting between them."></p>
+<p>The corridor forces the issue. The only path from Pac-Man’s start at the bottom
+up to the fork runs <em>through</em> the signpost, so he must pass the reveal before he
+ever has to commit left or right.</p>
+<h2 id="the-world-as-data"><a class="header" href="#the-world-as-data">The world, as data</a></h2>
+<p>The environment is pure geometry plus an observation model. <code>restaurant-gridworld</code>
+lays out the two candidate goals, marks the signpost cell, fixes which world is
+actually true, and — crucially — defines what Pac-Man can observe from where:</p>
+<pre><code class="language-clojure">(defn restaurant-gridworld
+  [{:keys [grid goals signpost true-world start] :or {goals [:A :B] start [0 0]}}]
+  (let [W (count (first grid))
+        [sx sy] start]
+    {:kind       :gridworld
+     :grid       grid
+     :goals      goals
+     :worlds     goals                 ; latent = which goal is rewarding
+     :true-world true-world
+     :signpost   signpost
+     :start-idx  (+ sx (* W sy))
+     :prior      (zipmap goals (repeat (/ 1.0 (count goals))))
+     ;; deterministic location-gated reveal: standing on the signpost reveals the
+     ;; world identity; everywhere else there is no information (obs = nil).
+     :observe    (fn [world loc] (when (= loc signpost) world))}))
+</code></pre>
+<p>The whole partial-observability story lives in that last line. The <code>:observe</code>
+function returns the true world only when Pac-Man’s location <em>is</em> the signpost;
+everywhere else it returns <code>nil</code>. A <code>nil</code> observation carries no information —
+it is the <strong>identity</strong> for belief updates. This is what gives the belief its
+characteristic <em>flat-then-snap</em> shape: nothing happens for step after step, and
+then the truth arrives all at once.</p>
+<h2 id="belief-is-just-a-map"><a class="header" href="#belief-is-just-a-map">Belief is just a map</a></h2>
+<p>There is no special data structure here. A belief is a plain Clojure map from
+world to probability, <code>{:A 0.5 :B 0.5}</code> at the start. The filter that updates it
+is one Bayes step, lifted verbatim from <code>make-pomdp-agent</code>:</p>
+<pre><code class="language-clojure">;; one Bayes filtering step: b'(w) ∝ b(w) · P(obs | w, loc).
+;; obs = nil (uninformative location) =&gt; belief unchanged (flat-then-snap).
+update-belief (fn [belief loc obs]
+                (if (nil? obs)
+                  belief
+                  (let [logm (into {} (map (fn [[w b]]
+                                             [w (+ (Math/log b)
+                                                   (if (= (observe w loc) obs) 0.0 ##-Inf))])
+                                           belief))]
+                    (if (every? #(= % ##-Inf) (vals logm))
+                      belief
+                      (inv/normalize-logs logm)))))
+</code></pre>
+<p>Read it as Bayes’ rule in three moves. If the observation is <code>nil</code>, return the
+belief untouched — the uninformative case. Otherwise score each world in
+log-space: a world that <em>would</em> have produced this observation keeps its log-prior
+(<code>+ 0.0</code>); a world that contradicts the observation is annihilated (<code>+ ##-Inf</code>).
+Renormalising with <code>inv/normalize-logs</code> turns those scores back into a
+distribution. (The final guard is defensive: an observation that is impossible
+under <em>every</em> world leaves the belief unchanged rather than dividing by zero.)</p>
+<p>The companion test pins exactly this behaviour. Off the signpost the belief does
+not move — <code>(ub prior 10 nil)</code> still puts <strong>P(:A) = 0.5</strong>. Step onto the signpost
+and observe <code>:A</code>, and the belief collapses to a point mass: <strong>P(:A) = 1.0</strong> and
+<strong>P(:B) = 0.0</strong> (to 1e-9). Observe <code>:B</code> instead and it snaps the other way,
+<strong>P(:B) = 1.0</strong>. Every filtered belief sums to <strong>1.0</strong> — it stays a proper
+distribution throughout.</p>
+<p><img src="figures/ch05-belief.png" alt="Bar chart of Pac-Man’s belief over which cache rewards, collapsed entirely onto the power pellet after the signpost observation: one bar at probability 1 and the other at 0."></p>
+<p>Before the signpost the two bars are even — Pac-Man genuinely doesn’t know. After
+the reveal, all the mass is on the world the signpost named. That single snap is
+the entire epistemic content of the episode.</p>
+<h2 id="acting-on-a-belief-qmdp"><a class="header" href="#acting-on-a-belief-qmdp">Acting on a belief: QMDP</a></h2>
+<p>Knowing <em>what</em> to believe is half the problem; the agent still has to choose an
+action while uncertain. GenMLX builds one fully-solved MDP planner <strong>per world</strong>,
+each carrying its own action-value table <code>Q_w[s,a]</code>. The belief-space value mixes
+those tables under the current belief — this is the <strong>QMDP</strong> approximation:</p>
+<pre><code class="language-clojure">belief-Q  (fn [belief s]
+            (let [bvec (mx/array (clj-&gt;js (mapv #(double (get belief % 0.0)) worlds-vec)) mx/float32)]
+              (mx/sum (mx/multiply (mx/reshape bvec [W 1]) (mx/idx Qstack s 1)) [0])))
+</code></pre>
+<p>The per-world <code>Q</code> tables are stacked once into a <code>[W,S,A]</code> tensor; at state <code>s</code>
+the belief vector <code>[W]</code> is contracted against the <code>[W,A]</code> slice in a single fused
+MLX reduction. The result is <code>Q_QMDP(b,s) = Σ_w b(w)·Q_w[s]</code> — each world’s
+opinion about the best action, weighted by how strongly Pac-Man believes he is in
+that world. The agent then picks an action by softmax over this mixed row, scored
+through the GFI exactly like any other policy.</p>
+<p>Two properties make this honest. First, the mixture is a genuine convex
+combination: the test confirms <code>belief-Q</code> at <code>{:A 0.5 :B 0.5}</code> equals
+<code>0.5·Q_A + 0.5·Q_B</code> elementwise (to 1e-4). Second, it <strong>collapses to the
+underlying MDP</strong> at certainty — a point-mass belief <code>{:A 1.0 :B 0.0}</code> gives a
+belief-Q identical to <code>Q_A</code> (to 1e-6), and the POMDP agent’s chosen action under
+that certain belief is <em>exactly</em> the bare MDP agent’s action. Uncertainty is the
+only thing QMDP adds; remove it and you are back to an ordinary planner.</p>
+<h2 id="the-rollout-flat-then-a-snap-then-the-right-fork"><a class="header" href="#the-rollout-flat-then-a-snap-then-the-right-fork">The rollout: flat, then a snap, then the right fork</a></h2>
+<p>Putting it together, <code>simulate-pomdp</code> threads state, belief, action, and
+observation through the maze. With the optimal regime (<code>alpha = ##Inf</code>, noise 0)
+the rollout is deterministic, so we can watch the belief evolve step by step:</p>
+<pre><code class="language-clojure">(doseq [[tw goal-idx] [[:A 0] [:B 2]]]
+  (let [[e pa] (build tw ##Inf)            ; alpha=Inf + noise 0 =&gt; deterministic rollout
+        roll   (pomdp/simulate-pomdp pa e (:start-idx e) 12)
+        {:keys [states beliefs]} roll]
+    ...))
+</code></pre>
+<p>When the true world is <code>:A</code>, Pac-Man’s belief is flat at the start — <strong>P(:A) = 0.5</strong>
+— and <em>still</em> flat one step later, because he hasn’t reached the signpost yet.
+On the step he lands on it, the belief <strong>snaps to 1.0</strong>. From there QMDP routes
+him to the correct cache, and he reaches goal index <strong>0</strong> (the <code>:A</code> cell). Run it
+with the truth set to <code>:B</code> and the mirror happens: the belief snaps to <code>:B</code> and he
+ends at index <strong>2</strong>. The belief is monotone toward the truth — it never moves
+away from the world that turns out to be real, it only waits and then commits.</p>
+<p>This is the resource-rational picture in miniature: Pac-Man spends no effort
+guessing while the signpost is out of reach, gathers the one observation the
+geometry offers, and acts decisively once it lands.</p>
+<p>Next we let the hidden state be richer than a single bit — each corridor
+independently open or closed, revealed only when Pac-Man is <em>adjacent</em> — and watch
+him replan a detour the moment he learns his preferred route is blocked.</p>
 
                     </main>
 

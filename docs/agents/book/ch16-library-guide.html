@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-3a2ce01d.js";
+            window.path_to_searchindex_js = "searchindex-e7e4764f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -182,22 +182,158 @@
                     <main>
                         <h1 id="quick-start-guide-to-the-genmlxagents-library"><a class="header" href="#quick-start-guide-to-the-genmlxagents-library">Quick-Start Guide to the genmlx.agents Library</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 8-guide-library.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 8 (the webppl-agents library) — here as a single
+guided tour over the <code>genmlx.agents</code> spine, told in Pac-Man mazes.</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
-<p>A tutorial-style tour building each agent on Pac-Man worlds: line MDP = corridor; gridworld with walls = maze; named features (gold/silver) = pellets/power-pellets with different utilities; line POMDP with signpost = a corridor with a hidden ghost (treasureAt3 → ghostAt[x,y]); custom RANDOM and EPSILON-GREEDY policy GFs. Shows the minimal agent contract (:act + :params) and the four constructors.</p>
-<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/CONTRACTS.md (frozen v1.0 API: the four constructor shapes), worlds.cljs (line-mdp, hike-mdp), agent.cljs (make-mdp-agent optimal/soft), biased_planners.cljs (Naive hyperbolic), pomdp.cljs + pomdp_env.cljs (line POMDP belief filter). Tests: test/genmlx/agentmodels_ch08_library_test.cljs (make-line-mdp + agent, hiking, naive biased, POMDP belief snaps at signpost + QMDP reaches goal, custom RANDOM + EPSILON-GREEDY GFs) + agents_api_test.cljs (8 namespaces load) + agents_contracts_test.cljs (per-constructor return-map shapes + :act signatures pinned). Example examples/agentmodels/ch08_library_guide.cljs.</li>
-</ul>
-<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
-<ul>
-<li>ch16-corridor-basic.png — bare line MDP / 3×4 gridworld with walls (render.cljs)</li>
-<li>ch16-named-features.gif — agent navigating to the gold (power-pellet) terminal</li>
-<li>ch16-custom-policy.gif — epsilon-greedy Pac-Man wandering then exploiting</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>This chapter is the orientation lap. Everything earlier in the book built one
+agent family at a time; here we line them all up on Pac-Man worlds and show that
+they share a deliberately tiny contract, that they compose, and that you can drop
+in your own policy without leaving the GFI. One <code>require</code> carries the whole tour:</p>
+<pre><code class="language-clojure">(require '[genmlx.agents.pacman :as pac])
+</code></pre>
+<p>The glyph and scoring legend (walls, pellets, power pellets, fruit, the per-step
+time cost) lives on the <a href="./legend.html">shared legend page</a> — we lean on it here
+rather than restating it.</p>
+<h2 id="the-whole-contract-is-two-keys"><a class="header" href="#the-whole-contract-is-two-keys">The whole contract is two keys</a></h2>
+<p>The honest surface is small. Every constructor in <code>genmlx.agents</code> returns a map,
+and the <em>only</em> keys you are promised on <strong>every</strong> agent are <code>:act</code> and <code>:params</code>.
+Everything else is family-specific — there is no universal <code>:policy</code>, no universal
+<code>:Q</code>, and not even a single <code>:act</code> arity. The contracts test pins exactly this:</p>
+<pre><code class="language-clojure">(doseq [[nm a] [["mdp" mdp-ag] ["biased" biased-ag] ["pomdp" pomdp-ag] ["bandit" bandit-ag]]]
+  (assert-true (str nm ": :act is callable")  (fn? (:act a)))
+  (assert-true (str nm ": :params is a map")  (map? (:params a))))
+</code></pre>
+<p>That loop passes for all four families. So the mental model is: an agent is a map
+with a callable <code>:act</code>; the family tells you how to <em>call</em> <code>:act</code> and what extra
+machinery (a value table, a belief filter, an arm posterior) rides alongside.</p>
+<h2 id="pacmdp-agent--the-optimal-or-soft-planner"><a class="header" href="#pacmdp-agent--the-optimal-or-soft-planner"><code>pac/mdp-agent</code> — the optimal (or soft) planner</a></h2>
+<p>The flagship family is the fully-observed MDP planner. The Pac-Man binding is a
+one-line convenience wrapper that compiles an ASCII maze and hands it to
+<code>agent/make-mdp-agent</code>:</p>
+<pre><code class="language-clojure">(defn mdp-agent
+  "Optimal (alpha ##Inf) or soft (finite alpha) MDP Pac-Man over a maze. Returns the
+   agent/make-mdp-agent contract {:mdp :Q :V :policy :act :expected-utility :params}.
+   Opts: :maze (ascii, default classic-maze) :utilities :noise :alpha :gamma :n-iters."
+  ([] (mdp-agent {}))
+  ([{:keys [maze utilities noise alpha gamma n-iters]
+     :or   {maze classic-maze utilities pacman-scoring noise 0.0
+            alpha ##Inf gamma 1.0 n-iters 30}}]
+   (agent/make-mdp-agent {:mdp   (pacman-mdp {:ascii maze :utilities utilities
+                                              :gamma gamma :noise noise})
+                          :alpha alpha :gamma gamma :n-iters n-iters})))
+</code></pre>
+<p><code>alpha ##Inf</code> is the optimal agent (a hard argmax over Q-values); any finite
+<code>alpha</code> is the soft-rational Boltzmann planner. The returned map carries the full
+MDP surface: <code>:Q</code>, <code>:V</code>, a <code>:policy</code> generative function, <code>:act</code>, and
+<code>:expected-utility</code>. The <code>:act</code> is <em>state-based</em> — <code>(act s)</code> draws fresh entropy,
+<code>(act s key)</code> is deterministic in the key — and both return an action integer.</p>
+<p>On the <code>classic-maze</code> (a ring with four equidistant caches — pellet, power pellet,
+and fruit at the corners), value is the only thing breaking the tie, so an optimal
+Pac-Man heads for the highest cache. Here it is rolling out from the centre:</p>
+<p><img src="figures/classic-rollout.gif" alt="Animation of the optimal MDP Pac-Man walking from the centre of the maze, choosing the route to the highest-value cache, one frame per step."></p>
+<p>Each frame is one <code>:act</code> call followed by a transition sample. The floor shading
+is the value function <code>V(s)</code> underneath — the agent is, frame by frame, climbing
+its own value gradient toward the fruit.</p>
+<h2 id="pacbiased-agent--present-bias-same-shape-minus-the-table"><a class="header" href="#pacbiased-agent--present-bias-same-shape-minus-the-table"><code>pac/biased-agent</code> — present bias, same shape minus the table</a></h2>
+<p>The hyperbolic-discounting planner is the genuine time-inconsistent agent. Its
+binding takes a <code>bias</code> spec (<code>{:discount k :bias :naive|:sophisticated}</code>) and
+otherwise mirrors <code>mdp-agent</code>. The contract difference is the load-bearing one:
+the biased agent is <em>recursion-only</em>, so it has a <code>:policy</code> and an
+<code>:expected-utility</code> but <strong>no</strong> tensor <code>:Q</code>/<code>:V</code>. The contracts test asserts both
+directions of that boundary at once:</p>
+<pre><code class="language-clojure">;; biased: GF policy + EU, but NO tensor :Q/:V (recursion-only) — the key drift
+(assert-true "biased: has :policy :expected-utility but NO :Q/:V (recursion-only)"
+             (and (some? (:policy biased-ag)) (fn? (:expected-utility biased-ag))
+                  (nil? (:Q biased-ag)) (nil? (:V biased-ag))))
+</code></pre>
+<p>At <code>:discount 0</code> the biased planner recovers the unbiased plan exactly — a useful
+sanity anchor. The <code>:act</code> arities are identical to the MDP agent’s, so from a
+caller’s seat a biased Pac-Man is a drop-in for an optimal one; only its <em>choices</em>
+betray the present bias.</p>
+<h2 id="pacpomdp-agent--a-hidden-cache-and-a-belief-filter"><a class="header" href="#pacpomdp-agent--a-hidden-cache-and-a-belief-filter"><code>pac/pomdp-agent</code> — a hidden cache and a belief filter</a></h2>
+<p>When the maze hides which cache actually pays, the planner state stays the single
+dense cell index and the uncertainty lives in a <strong>belief</strong> over latent worlds. The
+<code>pomdp-agent</code> binding builds a QMDP agent over a <code>pacman-pomdp</code> env (default
+<code>haunted-maze</code>, where a plain floor cell at index 12 is the signpost that reveals
+the truth). Its surface is belief-shaped: <code>:belief-Q</code>, <code>:update-belief</code>,
+<code>:expected-utility</code>, and the per-world agents — but its <code>:act</code> is now
+<em>belief-based</em>, <code>(act belief s)</code>.</p>
+<p>The belief is just a normalized <code>{world -&gt; prob}</code> map, and the filter obeys a
+clean observation contract. The contracts test pins the headline behaviors: the
+prior is flat, a <code>nil</code> observation is the identity, and a real observation at the
+signpost snaps the belief to certainty while staying normalized.</p>
+<pre><code class="language-clojure">(let [ub    (:update-belief pomdp-ag)
+      prior (:prior pomdp-ag)]
+  (assert-close "prior sums to 1" 1.0 (reduce + (vals prior)) 1e-9)
+  ;; nil-obs is the identity (absence is non-informative — the unified contract)
+  (assert-true "nil observation leaves the belief unchanged (agent level)"
+               (= prior (ub prior 10 nil)))
+  ;; an informative observation snaps + stays normalized
+  (let [b' (ub prior 7 :A)]
+    (assert-close "reveal :A at the signpost -&gt; P(:A)=1" 1.0 (:A b') 1e-9)
+    (assert-close "filtered belief stays normalized" 1.0 (reduce + (vals b')) 1e-9)))
+</code></pre>
+<p>So the prior splits its mass evenly, observing <code>:A</code> at the signpost drives
+<code>P(:A) = 1.0</code>, and the posterior still sums to <code>1.0</code> to within <code>1e-9</code>. The
+manifest action trajectory is orthogonal to the latent world: the agent walks
+toward the signpost, <em>learns</em>, then commits.</p>
+<h2 id="pacbandit-agent--corridors-as-arms"><a class="header" href="#pacbandit-agent--corridors-as-arms"><code>pac/bandit-agent</code> — corridors as arms</a></h2>
+<p>The bandit family re-stories the maze: corridors become Bernoulli fruit-spawners,
+and a “world” is the posterior over each arm’s payout. There is no GF policy here
+(Thompson sampling and softmax-of-means are not a distribution over a fixed action
+set), so the contract is <code>{:act :update-belief :arm-values :params}</code>. The belief
+is <code>{:arms [[α β] ...]}</code>, one Beta per arm, and the update is conjugate. The
+contracts test reads off the exact numbers:</p>
+<pre><code class="language-clojure">(let [vals (:arm-values bandit-ag)
+      ub   (:update-belief bandit-ag)]
+  (assert-close "Beta(1,1) arm mean = 0.5" 0.5 (first (vals bandit-belief)) 1e-9)
+  (let [b' (ub bandit-belief 0 1)]            ; success on arm 0
+    (assert-true "conjugate update: arm 0 success -&gt; alpha+1" (= [2 1] (get-in b' [:arms 0])))
+    (assert-true "conjugate update: other arms unchanged"     (= [1 1] (get-in b' [:arms 1])))))
+</code></pre>
+<p>A fresh <code>Beta(1,1)</code> arm has mean exactly <code>0.5</code>; a success on arm 0 increments its
+α to give <code>[2 1]</code> while arm 1 stays <code>[1 1]</code> untouched. The <code>:act</code> here is
+<code>(act belief key)</code> and returns an arm index — belief-based, like the POMDP agent,
+but keyed by entropy rather than by current cell.</p>
+<h2 id="bring-your-own-policy"><a class="header" href="#bring-your-own-policy">Bring your own policy</a></h2>
+<p>The point of the two-key contract is that <em>you</em> can satisfy it. A policy is just
+an ordinary generative function whose <code>:action</code> site is the decision. Here are two
+custom agents from the tour. First a uniform random walker:</p>
+<pre><code class="language-clojure">(defn random-policy
+  "A custom RANDOM agent: act uniformly at random over `n-actions`, via the
+   value-carrying uniform-draw helper."
+  [n-actions]
+  (gen [_s] (trace :action (:dist (h/uniform-draw (vec (range n-actions)))))))
+</code></pre>
+<p>And an epsilon-greedy chooser that flips a biased coin between exploring uniformly
+and exploiting the greedy argmax of a host-side Q-row:</p>
+<pre><code class="language-clojure">(defn epsilon-greedy-policy
+  "A custom EPSILON-GREEDY agent: with prob epsilon explore uniformly, else exploit
+   the greedy argmax of the Q-row via exact/categorical-argmax. `q-rows` is the
+   host-side [S][A] value table (mx/-&gt;clj of an agent's :Q)."
+  [q-rows n-actions epsilon]
+  (gen [s]
+    (let [explore (trace :explore (dist/flip epsilon))]
+      (trace :action
+             (if (pos? (mx/item explore))
+               (:dist (h/uniform-draw (vec (range n-actions))))
+               (exact/categorical-argmax (mx/array (nth q-rows s) mx/float32)))))))
+</code></pre>
+<p>Because these are GFs, they slot into the same rollout and inference machinery as
+the built-in families — no engine change. The example checks the limiting cases:
+with <code>epsilon = 0.0</code> the policy <em>always</em> takes the greedy argmax action (pure
+exploitation over 10 draws), and with <code>epsilon = 1.0</code> it explores more than one
+distinct action over 60 draws (pure exploration), while the random walker keeps
+every one of 40 draws inside the legal index range <code>0..3</code>.</p>
+<p>The minimal world to test any of this on is the <code>corridor</code> — a one-row hallway to
+a single power pellet — the smallest MDP that still has a real decision:</p>
+<p><img src="figures/corridor-rollout.gif" alt="Animation of the minimal corridor agent walking step by step rightward along a one-row hallway to reach its goal at the end."></p>
+<p>There is the whole library in one frame: a <code>:act</code> is called, a step is taken, and
+the agent advances toward value. Swap the policy and the picture stays the same;
+only the path changes.</p>
+<p><strong>Next:</strong> with the families and the contract in hand, the following chapters turn
+the camera around — using inference <em>over</em> an agent to recover the parameters
+behind its choices.</p>
 
                     </main>
 

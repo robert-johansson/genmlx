@@ -15,6 +15,7 @@
   (:require [genmlx.agents.pacman :as pac]
             [genmlx.agents.agent :as agent]
             [genmlx.agents.inverse :as inv]
+            [agentmodels.biased-inverse :as bi]
             [genmlx.mlx :as mx]
             ["fs" :as fs]))
 
@@ -100,6 +101,60 @@
   (emit! "ch02-junction" :frame
          (pac/frame jmdp (:start-idx jmdp) {:vs vs :vlo vlo :vhi vhi :step 0})
          {:cell 48}))
+
+;; ===========================================================================
+;; E5 — advanced chapters
+;; ===========================================================================
+
+;; --- ch05 POMDP: the haunted maze + the belief snap at the signpost ----------
+(def hmdp (pac/pacman-mdp {:ascii pac/haunted-maze}))
+(emit! "ch05-haunted" :frame
+       (pac/frame hmdp (:start-idx hmdp) {:step 0})
+       {:cell 52})
+(let [env  (pac/pacman-pomdp {:true-world :power})
+      pag  (pac/pomdp-agent env {:alpha 2.0 :n-iters 30})
+      post ((:update-belief pag) (:prior pag) pac/haunted-signpost :power)]
+  (emit! "ch05-belief" :bars
+         (pac/belief->bars "belief over the rewarding cache, after the signpost" post :power)
+         {:width 480}))
+
+;; --- ch06 bandits: corridor fruit-rate posteriors (Beta means) ---------------
+(let [bandit (pac/bandit-agent {:strategy :thompson})
+      pulls  [[2 1] [2 1] [2 1] [2 1] [0 0] [0 0] [1 1]]   ; corridor 2 spawns fruit, 0 is dry
+      belief (reduce (fn [b [arm r]] ((:update-belief bandit) b arm r))
+                     {:arms [[1.0 1.0] [1.0 1.0] [1.0 1.0]]} pulls)
+      means  ((:arm-values bandit) belief)]
+  (emit! "ch06-arm-posteriors" :bars
+         {:title "corridor fruit-rate posteriors (Beta means) after learning"
+          :bars  (vec (map-indexed (fn [i m] (cond-> {:label (str "corridor " i) :weight m}
+                                               (= i 2) (assoc :highlight true)))
+                                   means))}
+         {:width 480}))
+
+;; --- ch07 IRL: the observed step on two-caches (value-shaded) ----------------
+(let [tc   (pac/pacman-mdp {:ascii pac/two-caches})
+      ag   (agent/make-mdp-agent {:mdp tc :alpha ##Inf :gamma 1.0 :n-iters 12})
+      vs   (vec (mx/->clj (:V ag))) vlo (reduce min vs) vhi (reduce max vs)
+      roll (agent/simulate-mdp ag (:start-idx tc) 12)
+      mid  (nth (:states roll) 1)]                          ; one step south, toward power
+  (emit! "ch07-twocaches" :frame
+         (pac/frame tc mid {:vs vs :vlo vlo :vhi vhi :path #{(:start-idx tc)} :step 1 :action :down})
+         {:cell 56}))
+
+;; --- ch09 biases: exponential vs hyperbolic discounting (line) ---------------
+(let [ts (range 0 11)]
+  (emit! "ch09-discount-curves" :lines
+         {:title "discounting a delayed reward: exponential vs hyperbolic" :xlabel "delay t" :ylabel "weight D(t)"
+          :series [{:label "exponential 1/2^t"   :points (mapv #(Math/pow 0.5 %) ts)}
+                   {:label "hyperbolic 1/(1+2t)" :points (mapv #(/ 1.0 (+ 1.0 (* 2.0 %))) ts)}]}
+         {:width 500 :height 300}))
+
+;; --- ch13 joint inference: P(bias | one safe step) — a real posterior --------
+(let [post (bi/bias-posterior {:mdp (bi/temptation-mdp) :alpha ##Inf :discount 1.0
+                               :n-iters 10 :states [0] :actions [1]})]
+  (emit! "ch13-bias-posterior" :bars
+         (pac/belief->bars "P(bias | Pac-Man took the safe route once)" post :sophisticated)
+         {:width 480}))
 
 ;; --- manifest ---------------------------------------------------------------
 (fs/writeFileSync (str data-dir "/manifest.json")

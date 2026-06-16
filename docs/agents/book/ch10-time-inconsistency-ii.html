@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-3a2ce01d.js";
+            window.path_to_searchindex_js = "searchindex-e7e4764f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -182,22 +182,148 @@
                     <main>
                         <h1 id="time-inconsistency-ii-procrastination-and-changing-plans"><a class="header" href="#time-inconsistency-ii-procrastination-and-changing-plans">Time Inconsistency II: Procrastination and Changing Plans</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 5b-time-inconsistency.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 5b (time inconsistency II).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
-<p>Procrastination MDP = Pac-Man must eat a power pellet before a deadline or lose the level (work/wait actions, deadline T, diminishing reward). Naive hyperbolic Pac-Man keeps deferring the grab — always ‘next step’ — until forced or failing; Sophisticated commits. dynamicActionExpectedUtilities shows EU of each action changing with position and subjective delay along the trajectory. Discount-rate sweep finds the threshold above which Pac-Man never acts.</p>
-<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/biased_planners.cljs (procrastination-mdp time-augmented wait/work MDP, biased-eu with perceived-delay branching, planned-rollout for the believed-vs-actual divergence). Tests: agentmodels_biased_planners_test.cljs (procrastination preference reversal — naive procrastinates, sophisticated commits). The dynamic-EU-along-trajectory overlay (per-step Q at the agent’s current delay) is presentation-layer work to write for the figure.</li>
-</ul>
-<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
-<ul>
-<li>ch10-procrastination-graph.png — work/wait transition graph authored figure</li>
-<li>ch10-dynamic-eu.gif — per-step action-EU overlay changing as Naive Pac-Man defers (presentation V-shading per delay)</li>
-<li>ch10-discount-threshold.png — final-state / time-elapsed vs discount rate k sweep</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>Pac-Man has a power pellet to eat and a deadline to eat it by. Every step he can
+<strong>work</strong> (grab the pellet now, paying a small cost up front) or <strong>wait</strong> (drift
+one step closer to the deadline, paying a tiny patience cost). The reward for the
+pellet lands one step <em>after</em> he works — so the cost is felt now, the payoff
+later. A patient agent works on day zero. A present-biased agent keeps telling
+itself <em>I’ll do it tomorrow</em> — and tomorrow it says the same thing.</p>
+<p>This chapter is about the gap between what a hyperbolic agent <strong>believes it will
+do</strong> and what it <strong>actually does</strong>. For a Naive agent those two stories diverge,
+and that divergence <em>is</em> time inconsistency. The glyphs and scoring are on the
+<a href="./legend.html">shared legend</a>; here we only need <em>work</em> and <em>wait</em>.</p>
+<h2 id="why-the-reversal-happens"><a class="header" href="#why-the-reversal-happens">Why the reversal happens</a></h2>
+<p>The hyperbolic discount factor weights a reward by how many subjective steps away
+it sits. In <code>biased_planners.cljs</code> it is one line:</p>
+<pre><code class="language-clojure">(defn delta
+  "Hyperbolic discount factor at subjective delay `d`: 1/(1 + k·d).
+   δ(k,0)=1; strictly decreasing in d for k&gt;0; k=0 ⇒ δ≡1 (no discounting)."
+  [k d]
+  (/ 1.0 (+ 1.0 (* (double k) (double d)))))
+</code></pre>
+<p>At <code>k = 0</code> this is flat — <code>δ(0, d) = 1</code> for every <code>d</code>, recovering the unbiased
+exponential agent. For <code>k &gt; 0</code> it drops fast and then <em>flattens</em>: the companion
+test pins <code>δ(2, 3) = 1/7</code> and checks <code>δ(1, ·)</code> is strictly decreasing. The
+flattening is the whole story. Seen from far away (large delay) two future
+rewards look almost equally distant, so the agent happily prefers the larger
+later one. Seen from up close (delay 0) the near reward towers over the far one.
+As the agent walks toward a decision, the curve under its feet steepens and its
+preference <em>reverses</em>.</p>
+<p><img src="figures/ch09-discount-curves.png" alt="Hyperbolic versus exponential discount curves: the exponential curve decays at a constant proportional rate while the hyperbolic curve drops steeply at first and then flattens, so two distant rewards look nearly equal but a near reward dominates — the crossing that produces preference reversal."></p>
+<p>The exponential curve never crosses itself under a shift in viewpoint; the
+hyperbolic one does. That crossing is exactly the procrastination spiral: from
+tomorrow’s vantage, working looks worth it; from today’s, waiting always wins.</p>
+<h2 id="believe-versus-do"><a class="header" href="#believe-versus-do">Believe versus do</a></h2>
+<p>The agent’s recursion carries two clocks. Objective time <code>t</code> drives the deadline;
+subjective delay <code>d</code> drives <code>delta</code>. The single line that separates a Naive agent
+from a Sophisticated one is which delay it hands to its <em>simulated future self</em>
+when predicting that self’s action:</p>
+<pre><code class="language-clojure">(defn bias-&gt;perceived-delay
+  "The perceivedDelay function the agent uses for its SIMULATED future self when
+   choosing that self's action (agentmodels: perceivedDelay = naive ? delay+1 : 0).
+     :naive         → (fn [d] (inc d))   ; believes future self stays patient
+     :sophisticated → (fn [_] 0)         ; models future self's present bias
+   Only the policy that picks the simulated future action uses this; the
+   continuation VALUE always uses the true d+1. At k=0 (δ≡1) both coincide and
+   equal the unbiased agent. (Default → sophisticated/0 for any other key.)"
+  [bias]
+  (case bias
+    :naive         inc
+    :sophisticated (constantly 0)
+    (constantly 0)))
+</code></pre>
+<p>A <strong>Naive</strong> agent (<code>inc</code>) models its future self as keeping the same ever-growing
+delay clock — so the future always looks patient, and the agent predicts it will
+resist temptation later. A <strong>Sophisticated</strong> agent (<code>constantly 0</code>) correctly
+models its future self as re-planning from delay 0, carrying the same present
+bias it has now, so it <em>foresees</em> that it would succumb.</p>
+<p>This belief is captured by <code>planned-rollout</code> — the trajectory the agent <em>thinks</em>
+it will follow. At each predicted future step it advances the policy delay through
+its own <code>pd-fn</code>:</p>
+<pre><code class="language-clojure">(defn planned-rollout
+  "The trajectory the agent BELIEVES it will follow — predicting each future
+   action with the perceivedDelay its OWN recursion uses (Naive: the policy delay
+   grows along the plan, so the far future looks patient; Sophisticated: it stays
+   0). Contrast with `simulate-biased-mdp`, which re-plans from delay 0 each REAL
+   step. For a Naive agent the two DIVERGE — its plan reaches the patient goal while
+   it actually defects to the nearby temptation — which is exactly time-inconsistency.
+   For a Sophisticated (or k=0) agent plan == do. ..."
+  [{:keys [mdp eu params]} start horizon]
+  (let [{:keys [T terminals A]} mdp
+        pd-fn (bias-&gt;perceived-delay (:bias params))
+        H     (:horizon params)]
+    (loop [s start, d 0, step 0, states [start], actions []]
+      (if (or (&gt;= step horizon) (contains? terminals s))
+        {:states states :actions actions}
+        (let [a  (argmax-of (mapv #(eu s % H d) (range A)))    ; predicted action at policy-delay d
+              s' (agent/sample-next T s a)]
+          (recur s' (pd-fn d) (inc step) (conj states s') (conj actions a)))))))
+</code></pre>
+<p>Notice the recursion: after each predicted step the delay becomes <code>(pd-fn d)</code>.
+For a Naive agent that is <code>(inc d)</code>, so the believed future drifts ever more
+patient and the plan eventually grabs the pellet. The plan is a fiction the agent
+tells itself.</p>
+<p>What the agent <em>actually</em> does is a different function, and the difference is one
+word — it re-plans from delay 0 on every real step:</p>
+<pre><code class="language-clojure">(defn simulate-biased-mdp
+  "Roll a biased MDP agent out from `start` for ≤ horizon steps (= agent/simulate-mdp's
+   :host path, which re-plans via :act each step — the d=0 re-planning that drives
+   Naive time-inconsistency). :rollout-mode :fused is unsupported: biased agents
+   carry no tensor :Q, so rollout/rollout-mdp would deref nil (genmlx-m3nn) — use
+   the default :host rollout."
+  [ag start horizon &amp; [opts]]
+  (when (= (:rollout-mode opts) :fused)
+    (throw (ex-info (str "simulate-biased-mdp does not support :rollout-mode :fused — "
+                         "biased agents have no tensor :Q; use the default :host rollout")
+                    {:agent-keys (keys ag)})))
+  (agent/simulate-mdp ag start horizon opts))
+</code></pre>
+<p><code>simulate-biased-mdp</code> delegates to the ordinary host rollout, whose <code>:act</code>
+evaluates expected utility at delay 0 each step (the agent’s <code>:act</code> is built to
+re-plan from delay 0 — agentmodels’ <code>delay || 0</code>). So <code>planned-rollout</code> lets the
+delay grow along the imagined future; <code>simulate-biased-mdp</code> resets it to 0 every
+real step. For a Naive agent these read out two different trajectories from the
+<em>same</em> expected-utility function. That mismatch is time inconsistency made into
+two callable functions.</p>
+<h2 id="what-the-numbers-say"><a class="header" href="#what-the-numbers-say">What the numbers say</a></h2>
+<p>Build the procrastination MDP (reward 4.5, work cost −1, wait cost −0.1, deadline
+10) and sweep the discount rate <code>k</code>. At <code>k = 0</code> the Naive agent <strong>works on day 0</strong>
+— it is just the unbiased agent. As <code>k</code> climbs the first work-day is
+non-decreasing (it procrastinates more), and the test pins the headline reversal:
+the Naive agent <strong>works at <code>k = 0</code> but never completes at <code>k = 4</code></strong>, and still
+fails to finish by the deadline at <code>k = 8</code>. The preference flips.</p>
+<p>The mechanism is asserted directly at the start state <code>W_0</code>. With <code>k = 4</code>:</p>
+<pre><code class="language-clojure">(let [n4 (bp/make-biased-mdp-agent {:mdp pmdp :alpha ##Inf :gamma 1.0 :n-iters 14}
+                                   {:discount 4.0 :bias :naive})
+      H  14, eu (:eu n4)]                       ; action 0 = wait, 1 = work
+  ;; PLANS to work — its planned-rollout contains a work action
+  (some #(= 1 %) (:actions (bp/planned-rollout n4 0 10)))
+  ;; but NEVER works in reality — simulate-biased-mdp contains no work action
+  (not-any? #(= 1 %) (:actions (bp/simulate-biased-mdp n4 0 10)))
+  ;; W_0 preference reverses:
+  (and (&gt; (eu 0 0 H 0) (eu 0 1 H 0))     ; at d=0: EU(wait) &gt; EU(work)
+       (&gt; (eu 0 1 H 1) (eu 0 0 H 1))))   ; at d=1: EU(work) &gt; EU(wait)
+</code></pre>
+<p>The same <code>eu</code> function says <em>wait beats work at delay 0</em> and <em>work beats wait at
+delay 1</em>. From tomorrow’s view (<code>d = 1</code>) the agent prefers to have worked; from
+today’s view (<code>d = 0</code>) it prefers to wait. <code>planned-rollout</code> reads the optimistic
+<code>d = 1</code>-and-beyond story and reports a plan that works; <code>simulate-biased-mdp</code>
+re-reads <code>d = 0</code> every step and reports a trajectory that never does.</p>
+<p>The Sophisticated agent, seeing this in advance, behaves differently — and the
+test quantifies the advantage: at <code>k = 2</code> the Sophisticated agent <strong>completes
+(works)</strong> where the Naive agent <strong>never does</strong>, and across every swept <code>k</code> in
+<code>[0, 0.5, 1, 2, 4]</code> the Sophisticated agent works no later than the Naive one.
+Foreseeing the spiral is what lets it commit.</p>
+<p>The contrast survives in space, too. In the Restaurant-Choice grid (Section 3 of
+the same test) a Naive agent with <code>k = 3</code> <strong>plans to reach the high-value Veg
+cache but is actually captured by the adjacent Donut</strong>, while the Sophisticated
+agent’s plan equals its action — both reach Veg. <code>planned-rollout</code> returns Veg;
+<code>restaurant-endpoint</code> returns Donut-North; the two disagree, and that disagreement
+is, once more, the whole of the phenomenon.</p>
+<p>Next: when the agent cannot even see far enough to plan — bounding the look-ahead
+itself, with reward-myopia and bounded value of information.</p>
 
                     </main>
 

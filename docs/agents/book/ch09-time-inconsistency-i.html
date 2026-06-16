@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-3a2ce01d.js";
+            window.path_to_searchindex_js = "searchindex-e7e4764f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -180,24 +180,69 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="time-inconsistency-i-hyperbolic-discounting-in-the-maze"><a class="header" href="#time-inconsistency-i-hyperbolic-discounting-in-the-maze">Time Inconsistency I: Hyperbolic Discounting in the Maze</a></h1>
+                        <h1 id="time-inconsistency-i-hyperbolic-discounting"><a class="header" href="#time-inconsistency-i-hyperbolic-discounting">Time Inconsistency I: Hyperbolic Discounting</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 5a-time-inconsistency.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 5a (time inconsistency).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
-<p>Hyperbolic discounting = Pac-Man increasingly tempted by a NEARBY power pellet even while heading to a higher-value distant pellet. Naive Pac-Man gets diverted to the close pellet; Sophisticated Pac-Man pre-commits to a route that avoids passing the tempting pellet, paying extra steps. Immediate vs delayed utility = eat a pellet now (small score) vs a power pellet enabling ghost-eating later (large delayed score). Discount-curve comparison D=1/2^t vs 1/(1+2t).</p>
-<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/biased_planners.cljs (delta hyperbolic 1/(1+kd), bias-&gt;perceived-delay :naive=inc / :sophisticated=const-0, biased-eu/biased-eu-inf, make-biased-mdp-agent, simulate-biased-mdp re-planning each step, planned-rollout = believed trajectory, restaurant-mdp + restaurant-temptation-mdp). Tests: agentmodels_biased_planners_test.cljs (delta limit cases, restaurant-temptation naive vs sophisticated action differences, limit recovery k=0 matches standard agent at alpha=1 and Inf). Discount-curve plot to write for figure.</li>
-</ul>
-<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
-<ul>
-<li>ch09-discount-curves.png — exponential vs hyperbolic discount-curve line chart</li>
-<li>ch09-naive-detour.gif — Naive Pac-Man diverting to the tempting near pellet</li>
-<li>ch09-sophisticated-precommit.gif — Sophisticated Pac-Man taking the avoidance route</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>Every agent so far has been rational in a specific sense: it had one stable ranking of futures and it followed it. This chapter breaks that. We give Pac-Man a <em>human</em> flaw — he weighs a reward less the longer he must wait for it, but not by a clean exponential. He uses a hyperbolic curve, and that single change makes him disagree with his own past plans. Glyphs and scoring are on the <a href="./legend.html">shared legend</a>.</p>
+<h2 id="the-temptation"><a class="header" href="#the-temptation">The temptation</a></h2>
+<p>Picture two corridors to a high-value power pellet. The short one climbs right past a small pellet sitting in an alcove; the long one detours around it. A patient Pac-Man takes the short route — the small pellet is no threat, he just walks past it to the bigger prize. But our discounter has a problem: the closer he gets to that small pellet, the larger it looms, until at the moment he’s adjacent it outshines the still-distant power pellet. He veers in, eats it, and the plan is ruined.</p>
+<p>The whole mechanism is two tiny functions. First, the discount itself:</p>
+<pre><code class="language-clojure">(defn delta
+  "Hyperbolic discount factor at subjective delay `d`: 1/(1 + k·d).
+   δ(k,0)=1; strictly decreasing in d for k&gt;0; k=0 ⇒ δ≡1 (no discounting)."
+  [k d]
+  (/ 1.0 (+ 1.0 (* (double k) (double d)))))
+</code></pre>
+<p>A reward <code>d</code> steps away is multiplied by <code>1/(1 + k·d)</code> rather than the exponential <code>γ^d</code>. The test pins the arithmetic exactly: <code>δ(0,d)=1</code> for every <code>d</code> (no discounting at all), <code>δ(1,0)=1</code>, and <code>δ(2,3)=1/7</code>. It is also strictly decreasing in <code>d</code> for <code>k&gt;0</code>. That <code>1/7</code> is the crux — compare it to an exponential. Here are the two curves:</p>
+<p><img src="figures/ch09-discount-curves.png" alt="Two discount curves over time: a steep exponential 1/2^t that plunges toward zero, and a shallower hyperbolic 1/(1+2t) that starts dropping faster but crosses above the exponential in the tail and decays much more slowly."></p>
+<p>The hyperbolic curve (right) starts dropping <em>faster</em> than the exponential near <code>t=0</code>, then crosses <strong>above</strong> it and lingers in the tail. That crossing is the entire story. Because the early slope is steep, the gap in perceived value between “now” and “one step from now” is huge — so an imminent small reward can beat a larger one that’s a few steps off. Yet because the tail is flat, two rewards both far in the future look almost equally valued. As time passes and a far reward becomes a near one, its perceived value shoots up disproportionately, and Pac-Man’s ranking flips. That is a <strong>preference reversal</strong>: an exponential discounter can never have one, a hyperbolic discounter cannot avoid one.</p>
+<h2 id="naive-versus-sophisticated"><a class="header" href="#naive-versus-sophisticated">Naive versus sophisticated</a></h2>
+<p>The second function is where the two personalities split. When Pac-Man plans, he simulates his own future self choosing actions. The question is: what delay does he assume that future self is operating under?</p>
+<pre><code class="language-clojure">(defn bias-&gt;perceived-delay
+  "The perceivedDelay function the agent uses for its SIMULATED future self when
+   choosing that self's action (agentmodels: perceivedDelay = naive ? delay+1 : 0).
+     :naive         → (fn [d] (inc d))   ; believes future self stays patient
+     :sophisticated → (fn [_] 0)         ; models future self's present bias
+   Only the policy that picks the simulated future action uses this; the
+   continuation VALUE always uses the true d+1. At k=0 (δ≡1) both coincide and
+   equal the unbiased agent. (Default → sophisticated/0 for any other key.)"
+  [bias]
+  (case bias
+    :naive         inc
+    :sophisticated (constantly 0)
+    (constantly 0)))
+</code></pre>
+<p>The <strong>Naive</strong> agent passes <code>(inc d)</code> — he models his future self as <em>more patient than he is</em>, with an ever-growing delay clock that flattens the discount. So when he plans, the small pellet four steps away looks negligible: “future me will be patient and walk past it.” The <strong>Sophisticated</strong> agent passes <code>0</code> — he models his future self as re-planning from delay zero, with exactly the same present-bias he feels right now. He correctly predicts that future-him will succumb, and routes around the temptation in advance.</p>
+<p>The asymmetry is razor-thin and it’s all in the recursion in <code>build-biased-eu</code>. The continuation <em>value</em> always uses the true <code>(inc d)</code>; only the <em>policy</em> that picks the simulated future action uses <code>(pd-fn d)</code>:</p>
+<pre><code class="language-clojure">        backup  (fn [s t dv dp]
+                  (let [eu    @eu-atom
+                        q-pol (mapv (fn [a] (eu s a t dp)) (range A))
+                        q-val (if (== dp dv) q-pol (mapv (fn [a] (eu s a t dv)) (range A)))]
+                    (case backup-kind
+                      :soft
+                      (let [w (softmax-vec (mapv #(* alpha %) q-pol))]
+                        (reduce + (map * w q-val)))
+                      :hard
+                      (let [m    (apply max q-pol)
+                            idxs (filterv #(&gt; (nth q-pol %) (- m 1e-9)) (range A))]
+                        (/ (reduce + (map #(nth q-val %) idxs)) (count idxs))))))
+</code></pre>
+<p><code>q-pol</code> ranks actions at the <em>perceived</em> delay <code>dp</code>; <code>q-val</code> averages utilities at the <em>true</em> delay <code>dv</code>. For the Naive agent <code>dp = dv</code> at every node (he never notices the difference), so the two rows coincide — which is exactly why he predicts a future that never arrives. For the Sophisticated agent <code>dp = 0</code> while <code>dv ≥ 1</code>, and the split is real.</p>
+<h2 id="plan-versus-do"><a class="header" href="#plan-versus-do">Plan versus do</a></h2>
+<p>This is a generative function like any other — <code>make-biased-mdp-agent</code> returns the same <code>{:policy :act :expected-utility …}</code> shape as a rational agent, and <code>simulate-biased-mdp</code> rolls it out. The twist is that real execution always re-plans from delay zero each step (<code>(act s)</code> evaluates EU at <code>d=0</code>), so the trajectory the agent <em>believes</em> it will follow can diverge from what it <em>actually does</em>. <code>planned-rollout</code> traces the believed path; <code>simulate-biased-mdp</code> traces the real one.</p>
+<p>The restaurant grid makes this concrete. With discount <code>k=3</code> and a hard (<code>α=##Inf</code>) policy, the test sweeps three agents through the 8×6 grid:</p>
+<pre><code class="language-clojure">(def K 3.0)
+(let [rational (rest-agent :naive 0.0)              ; k=0 ⇒ unbiased
+      naive    (rest-agent :naive K)
+      soph     (rest-agent :sophisticated K)]
+  (assert-equal "rational (k=0) reaches Veg"             :veg     (bp/restaurant-endpoint rational r-start 16))
+  (assert-equal "Naive (k=3) is captured by Donut-North" :donut-n (bp/restaurant-endpoint naive r-start 16))
+  (assert-equal "Sophisticated (k=3) reaches Veg"        :veg     (bp/restaurant-endpoint soph  r-start 16)))
+</code></pre>
+<p>The rational agent (<code>k=0</code>, which collapses the whole machinery back to the unbiased agent — the test confirms <code>δ≡1</code> makes it match the standard tensor <code>Q</code> to within <code>1e-4</code>) walks the short route to the high-value goal. The <strong>Naive</strong> agent (<code>k=3</code>) heads for the same goal but is captured by the tempting near reward when he passes adjacent to it: he ends at Donut-North. The <strong>Sophisticated</strong> agent (<code>k=3</code>) foresees that capture and takes the long way, reaching the goal. And the plan-versus-do gap is asserted directly: the Naive agent <em>plans</em> to reach the goal (<code>Naive PLANS to reach Veg</code> → <code>:veg</code>) but his actual endpoint differs (<code>Naive's plan ≠ what it does</code>), while the Sophisticated agent’s plan equals his deed (<code>plan == do (both Veg)</code>). The equal-value decoy near the goal is reached by nobody — temptation, not indifference, is what diverts the Naive agent.</p>
+<p>The same reversal shows up starkly in the procrastination world: a Naive agent at <code>k=4</code> “works on day 0” is false — he <code>PLANS to work</code> but <code>NEVER works in reality</code>, and his preference over a single state literally flips, preferring to wait at delay 0 (<code>EU(wait) &gt; EU(work)</code>) but believing he’ll work at delay 1 (<code>EU(work) &gt; EU(wait)</code>). Sophistication is the cure: it <code>completes where Naive fails</code>, working no later than the Naive agent at every discount the test sweeps.</p>
+<p>Naive and Sophisticated differ by one line — <code>inc</code> versus <code>(constantly 0)</code> — and yet one is doomed to repeat a mistake it can see coming while the other pre-commits its way out. Next we extend this to <em>bounded</em> foresight: an agent whose look-ahead is capped, valuing nothing beyond its horizon.</p>
 
                     </main>
 

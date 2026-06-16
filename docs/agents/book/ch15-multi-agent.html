@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-3a2ce01d.js";
+            window.path_to_searchindex_js = "searchindex-e7e4764f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -182,22 +182,158 @@
                     <main>
                         <h1 id="multi-agent-models-coordination-adversaries-and-signaling"><a class="header" href="#multi-agent-models-coordination-adversaries-and-signaling">Multi-Agent Models: Coordination, Adversaries, and Signaling</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 7-multi-agent.md.</p>
+<p><strong>Ports</strong> agentmodels.org Chapter 7 (multi-agent).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
-<p>Schelling coordination = two Pac-Men trying to meet at a junction without communicating, the popular corridor as the focal point; recursive theory-of-mind at increasing depth predicts convergence. Adversarial = Pac-Man vs ghost planning ahead via simulate/act alternation (minimax/expectimax) on the cs188 GameState. RSA signaling = Pac-Man signaling ghost positions to a partner through movement patterns (literal vs pragmatic listener/speaker).</p>
-<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — Schelling + focal-point amplification + RSA scalar implicature shipped. Tests: test/genmlx/agentmodels_multi_agent_test.cljs (bob(0)=0.55 prior, focal amplification strictly increasing, alice(4)&gt;=0.83; exact ~ importance-sampling tol 0.05; L0/S1/L1 RSA, ‘some’ implies not-all, pragmatic posteriors analytically verified). Example examples/agentmodels/multi_agent.cljs. Adversarial Pac-Man tree search ALREADY exists in cs188.agents (minimax/alpha-beta/expectimax over generate-successor, proven alpha-beta==minimax) — partial: bridging cs188.agents adversarial search into a genmlx multi-agent GF narrative is the one must-write piece.</li>
-</ul>
-<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
-<ul>
-<li>ch15-schelling-convergence.png — meeting-probability vs recursion depth line chart</li>
-<li>ch15-adversarial-pacman.gif — Pac-Man vs ghost expectimax self-play (cs188 play.cljs / web canvas)</li>
-<li>ch15-rsa-implicature.png — literal vs pragmatic listener posterior bars</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>So far every Pac-Man has reasoned about a <em>maze</em>. Now they reason about <em>each
+other</em>. An agent who models another agent is still just a generative function —
+only now the world it samples from contains a second mind. That recursion is the
+whole subject of this chapter, and it shows up in three guises: two Pac-Men
+trying to <em>meet</em>, a Pac-Man trying to <em>escape</em> a ghost, and a Pac-Man trying to
+<em>signal</em> where a ghost is. (The glyphs and scoring live on the shared
+<a href="./legend.html">legend</a>.)</p>
+<h2 id="coordination-meeting-at-the-focal-corridor"><a class="header" href="#coordination-meeting-at-the-focal-corridor">Coordination: meeting at the focal corridor</a></h2>
+<p>Two Pac-Men want to rendezvous at a junction. They cannot communicate; each can
+only <em>imagine</em> where the other will go and try to match. The maze has a popular
+corridor and an unpopular one — a slight bias, <code>0.55</code> versus <code>0.45</code>. That tiny
+asymmetry is a <em>focal point</em>: a place that stands out enough to coordinate on.</p>
+<p>Here is the core coordination model. It samples both locations and then
+<em>conditions on meeting</em> using the native bernoulli-observe idiom — a Bernoulli
+whose success probability is <code>1</code> exactly when the two locations match, observed
+to be <code>1</code>:</p>
+<pre><code class="language-clojure">(defn coordination-model
+  "One agent reasoning about the other: sample my location ~ prior and the other's
+   ~ `other-probs`, then CONDITION on meeting."
+  [other-probs]
+  (gen []
+    (let [other (trace :other (dist/categorical (mx/log other-probs)))
+          me    (trace :me    (dist/categorical (mx/log location-prior)))
+          match (.astype (mx/equal me other) mx/float32)]
+      (trace :meet (dist/bernoulli match))           ; observed = 1  ⇒  condition(me == other)
+      me)))
+</code></pre>
+<p>Nothing here decides <em>how</em> we reason about that model. The posterior over <code>:me</code>
+is produced by a pluggable backend — exact enumeration by default, importance
+sampling on demand — and <code>coordinate</code> just hands the model and the
+“meeting-happened” observation to whatever <code>infer</code> it is given:</p>
+<pre><code class="language-clojure">(defn coordinate
+  "The coordination posterior over my location (the [2] marginal of :me), given the
+   other agent's location distribution. `infer` is the pluggable reasoning backend."
+  [other-probs infer]
+  (infer (coordination-model other-probs) MEET :me 2))
+</code></pre>
+<p>The interesting part is the recursion of theory-of-mind. Alice at depth <code>d</code>
+coordinates with her <em>model</em> of Bob at depth <code>d-1</code>; Bob at depth <code>d</code> coordinates
+with Alice at depth <code>d</code>; and Bob at depth <code>0</code> is the non-strategic base case who
+simply follows the prior. Each agent is memoized over the depth ladder so the
+mutual recursion terminates:</p>
+<pre><code class="language-clojure">(defn schelling-agents
+  ([] (schelling-agents exact-marginal))
+  ([infer]
+   (let [alice (atom nil)
+         bob   (atom nil)]
+     (reset! alice (exact/with-cache (fn [d] (coordinate (@bob (dec d)) infer))))
+     (reset! bob   (exact/with-cache (fn [d] (if (zero? d)
+                                               location-prior
+                                               (coordinate (@alice d) infer)))))
+     {:alice @alice :bob @bob})))
+</code></pre>
+<p>Why does this converge on the popular corridor? Because conditioning on a <em>match</em>
+multiplies each agent’s belief by the other’s belief, and that product is sharper
+than either factor — the <code>0.55</code> bias compounds at every rung. The test confirms
+the climb exactly. Bob at depth <code>0</code> is just the prior, <code>P(popular) = 0.55</code>. One
+level of reasoning lifts Alice to <code>0.5990</code> and Bob to <code>0.6461</code>; a second level
+reaches Alice <code>0.6905</code> and Bob <code>0.7317</code>. The probability is <em>strictly increasing</em>
+in depth, and by depth <code>4</code> Alice’s belief in the popular corridor has climbed to
+at least <code>0.83</code>. Deeper theory-of-mind doesn’t add information — it amplifies the
+one asymmetry that was already there until the focal point dominates.</p>
+<p>Crucially, <em>the agents never change</em>. Swapping the exact backend for importance
+sampling over the very same <code>coordination-model</code> GF reproduces the answer: exact
+Alice(1) <code>0.5990</code> versus importance-sampled Alice(1) within a tolerance of <code>0.05</code>
+across <code>4000</code> samples. Inference is an axis orthogonal to the model — the entire
+thesis of <code>genmlx.agents</code> in one assertion.</p>
+<h2 id="adversary-pac-man-versus-the-ghost-a-classical-baseline"><a class="header" href="#adversary-pac-man-versus-the-ghost-a-classical-baseline">Adversary: Pac-Man versus the ghost (a classical baseline)</a></h2>
+<p>When the second agent is a <em>ghost</em> instead of a partner, coordination becomes
+conflict, and the natural tool is game-tree search. The model represents this as
+a recursive value over board positions — the mover picks a move under a softmax
+policy of its <em>own</em> continuation value, while the value passed up to the scorer
+is the expectation under the mover’s policy. As <code>α → ∞</code> the softmax collapses to
+an <code>argmax</code>, and soft expectimax becomes hard, adversarial minimax:</p>
+<pre><code class="language-clojure">(reset! val
+  (exact/with-cache
+    (fn [board mover scorer]
+      (if (terminal? board)
+        (utility board scorer)
+        (let [ms  (legal-moves board)
+              qs  (mapv (fn [m] (@val (place board m mover) (other-player mover) mover)) ms)
+              pol (policy-weights alpha qs)
+              vs  (mapv (fn [m] (@val (place board m mover) (other-player mover) scorer)) ms)]
+          (reduce + (map * pol vs)))))))
+</code></pre>
+<p><strong>A deliberate honesty note:</strong> this minimax/expectimax tree search is a
+<em>classical baseline</em>, not GFI inference. It is the one place this book steps
+outside the agent-as-generative-function frame. The recursion above is plain host
+arithmetic over a transposition table (<code>with-cache</code>); MLX appears only in the
+final <code>softmax-action</code> policy distribution. The pure-search agent is included
+because the chapter needs a strong adversary to plan <em>against</em>, not because it is
+itself a probabilistic program.</p>
+<p>The test exercises it on two tic-tac-toe positions that stand in for the
+escape-and-block dynamics of a chase. On a forced-win board the planning agent
+completes the line at cell <code>2</code>, and so does the one-step agent — an immediate win
+needs no lookahead. The discriminator is the forced-<em>block</em> board: planning
+blocks at cell <code>5</code> to salvage a draw (value <code>0</code>) instead of conceding a loss
+(value <code>−10</code>), so the block’s value strictly beats every alternative, while the
+non-planning agent is <em>indifferent</em> — every immediate move is non-terminal and
+scores <code>0</code>. Lookahead is exactly what separates a Pac-Man who survives from one
+who walks into the ghost. At <code>α = ∞</code> the softmax-action policy is deterministic:
+five rollouts all take cell <code>2</code>, and <code>best-move</code> is bit-repeatable.</p>
+<h2 id="signaling-literal-versus-pragmatic-listeners"><a class="header" href="#signaling-literal-versus-pragmatic-listeners">Signaling: literal versus pragmatic listeners</a></h2>
+<p>The third multi-agent pattern is <em>communication</em>. A Pac-Man emits a signal about
+ghost positions; a partner interprets it. The Rational Speech Acts (RSA) tower
+formalizes how interpretation deepens with reasoning. A denotation matrix says
+which signals are literally true of which world-states; the literal listener
+<code>L0</code> takes a signal at face value, a state <code>~ prior</code> conditioned on the signal’s
+meaning holding:</p>
+<pre><code class="language-clojure">(defn literal-listener-model
+  "L0 as a GF: a state ~ prior, observe that the utterance's denotation (`truth-row`,
+   a [n-states] 0/1 vector gathered at the sampled state) holds."
+  [state-prior truth-row]
+  (gen []
+    (let [s (trace :s (dist/categorical (mx/log state-prior)))]
+      (trace :holds (dist/bernoulli (mx/take-idx truth-row s)))   ; observed = 1 ⇒ condition(denotes)
+      s)))
+</code></pre>
+<p>The pragmatic <em>speaker</em> <code>S1</code> is a softmax-action agent — <code>factor(α·EU)</code> with
+utility equal to the literal listener’s log-score — and the pragmatic <em>listener</em>
+<code>L1</code> is the Bayesian inversion of that speaker. The chapter’s canonical example is
+scalar implicature: utterances <code>[all some none]</code> over states <code>[0 1 2 3]</code> counting
+sprouted seeds. Literally, “some” is true of states <code>{1,2,3}</code>, so <code>L0(some)</code>
+spreads uniformly — <code>1/3</code> on each, <code>0</code> on state <code>0</code>. But a speaker who <em>knew</em> all
+three sprouted would almost surely say “all”: <code>S1(all | s=3) = 0.9</code>, leaving only
+<code>0.1</code> for “some”. The pragmatic listener reasons backward through that choice. On
+hearing “some” she infers the speaker <em>would have said “all” if all were true</em>,
+so <code>L1(some)</code> concentrates on the middle states — <code>10/21</code> on state <code>1</code>, <code>10/21</code>
+on state <code>2</code> — and assigns a mere <code>1/21</code> to “all” (state <code>3</code>) and <code>0</code> to “none”.
+The weak word implies <em>not-all</em>: this is the scalar implicature, derived rather
+than stipulated, with <code>P(3 | some) ≪ P(1 | some)</code>.</p>
+<p>The figure below shows the kind of sharply asymmetric posterior this recursive
+reasoning produces — most of the mass shifted onto the pragmatically-favored
+interpretation and almost none on the literal-but-uninformative alternative,
+exactly the shape of <code>L1(some)</code> above:</p>
+<p><img src="figures/cache-posterior.png" alt="Posterior bar chart showing probability mass concentrated on the pragmatically inferred interpretation and near-zero on the over-informative alternative, the characteristic shape of an RSA pragmatic listener’s belief."></p>
+<p>The same tower, fed a different denotation, yields referential implicature: an
+ambiguous “uboth” signal that is literally true of two referents resolves toward
+the one the unambiguous signal <em>didn’t</em> claim, <code>P(r1 | uboth) = 0.75</code> versus
+<code>0.25</code> for <code>r0</code>. And because <code>L0</code> runs through the pluggable inference seam, the
+implicature survives even when the literal listener is <em>sampled</em> rather than
+enumerated — a mixed pipeline (importance-sampled <code>L0</code>, exact <code>S1</code>/<code>L1</code>) still
+gives <code>P(0 | some) = 0</code> exactly and <code>P(1 | some) ≈ P(2 | some) ≈ 0.476</code>. The
+backend moved; the meaning did not.</p>
+<hr>
+<p>Coordination, conflict, and communication all reduce to one move: putting a
+<em>model of another agent</em> inside your own generative function. That completes the
+agentmodels arc in the maze. The next chapter is a quick-start tour of the
+<code>genmlx.agents</code> library itself — every agent family we have met, reachable behind a
+single <code>require</code>.</p>
 
                     </main>
 

@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-3a2ce01d.js";
+            window.path_to_searchindex_js = "searchindex-e7e4764f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -180,24 +180,150 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="joint-inference-of-biases-and-preferences-i-procrastination-and-no-exploration"><a class="header" href="#joint-inference-of-biases-and-preferences-i-procrastination-and-no-exploration">Joint Inference of Biases and Preferences I: Procrastination and No-Exploration</a></h1>
+                        <h1 id="joint-inference-of-biases-and-preferences-i"><a class="header" href="#joint-inference-of-biases-and-preferences-i">Joint Inference of Biases and Preferences I</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 5d-joint-inference.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 5d (joint inference).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
-<p>A Pac-Man that never explores an unknown corridor: the Optimal model explains it as strongly preferring the known reward; the Possibly-Reward-myopic model explains it as greedy (low C_g). The procrastination scenario: a Pac-Man that must hit a switch before a countdown — Naive hyperbolic Pac-Man keeps deferring, while the Optimal-only model wrongly infers the switch reward is tiny + noise is huge. Online posteriors revise sharply when the task finally completes.</p>
-<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — joint inference over agent TYPE and parameters (U, alpha, b0, k, C). Tests: test/genmlx/agentmodels_5d_joint_test.cljs (optimal explains waiting via E[reward]~0.530 + E[alpha]~457.5, predictWorkLastMinute~0.006; discounting via E[discount]~2.63, predict~0.216; posterior revision on completion E[reward]&gt;2.0 and E[alpha] collapses &gt;100x; online sequence 9 entries). Example examples/agentmodels/joint_5d_inference.cljs. Built on biased_planners.cljs + inverse.cljs p/assess + standard inference backends.</li>
-</ul>
-<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
-<ul>
-<li>ch12-procrastination-timeseries.gif — posterior E[reward], E[alpha], E[discount], predict-work over t=0..9, optimal vs discounting (presentation bars per step)</li>
-<li>ch12-noexplore-horizon.png — E[chocolate utility] and E[C_g] vs time horizon 2..10, optimal vs reward-myopic</li>
-<li>ch12-completion-revision.png — before/after posterior bars when the switch is finally hit</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>In every earlier chapter we knew what kind of mind we were watching. We assumed a
+discount rate and inferred a reward, or assumed optimality and inferred noise. But a
+real observer faces a harder question: <em>which kind of agent is this in the first
+place?</em> A Pac-Man who waits at a corridor mouth and never explores the dark branch
+might be perfectly rational and simply uninterested — or biased, and merely
+short-sighted about a payoff down the corridor. The behaviour is the same; the
+explanations are not. So we infer the agent’s <strong>type and its parameters jointly</strong>,
+and let the data say which story it prefers.</p>
+<p>See <a href="./legend.html">the legend</a> for the maze glyphs and the −1 step cost.</p>
+<h2 id="two-models-for-the-same-waiting"><a class="header" href="#two-models-for-the-same-waiting">Two models for the same waiting</a></h2>
+<p>The classic test case is <em>procrastination</em>. A Pac-Man must hit a switch before a
+countdown expires. Each day it can <strong>wait</strong> (cheap, but the deadline creeps closer)
+or <strong>work</strong> (pay a cost now, finish the task). Our Pac-Man waits eight days running.
+What explains that?</p>
+<p>Two models compete over the very same observation. An <strong>Optimal</strong> model fixes the
+discount to zero — no present bias allowed — so the only way it can rationalize all
+that waiting is to decide the switch reward must be tiny <em>and</em> the agent’s choices
+must be very noisy. A <strong>Possibly-Discounting</strong> model lets the hyperbolic discount
+range over <code>{0, ½, 1, 2, 4}</code>; it can read the waiting as ordinary time-inconsistency,
+keeping the reward respectable and the noise low.</p>
+<p>Both are the <em>same</em> forward planner — <code>bp/make-biased-mdp-agent</code> over a
+<code>bp/procrastination-mdp</code> — wired into one generative function that traces three
+latents:</p>
+<pre><code class="language-clojure">(defn joint-procrastination-model
+  "Joint GF tracing :reward, :alpha, :discount (indices into finite prior boxes);
+   the sampled tuple selects a precomputed forward agent; one softmax-action site
+   :a0 :a1 ... per observed wait-state, scored at the remaining horizon
+   (horizon-fn s). All agents + EU-row arrays precomputed before `gen` (the body is
+   re-run per enumerated tuple, so it only indexes)."
+  [{:keys [states horizon-fn reward-vals alpha-vals discount-vals alpha-probs] :as cfg} agents]
+  (let [reward-box   (h/uniform-draw reward-vals)
+        alpha-box    (if alpha-probs (h/weighted-draw alpha-vals alpha-probs) (h/uniform-draw alpha-vals))
+        discount-box (h/uniform-draw discount-vals)
+        rows (into {} (for [[k {:keys [agent]}] agents]
+                        [k (mapv (fn [s] (mx/array (eu-row-at agent s (horizon-fn s)) mx/float32))
+                                 states)]))]
+    (gen []
+      (let [ri (trace :reward   (:dist reward-box))
+            ai (trace :alpha    (:dist alpha-box))
+            di (trace :discount (:dist discount-box))
+            er (rows [ri ai di])
+            al (:alpha (agents [ri ai di]))]
+        (doseq [i (range (count states))]
+          (trace (keyword (str "a" i)) (h/softmax-action al (nth er i))))
+        [ri ai di]))))
+</code></pre>
+<p>Read the body top to bottom and it is just a story about an agent. First sample the
+three hidden settings — reward, softmax noise <code>alpha</code>, discount — as indices into
+finite prior boxes. That tuple <em>selects</em> one of the forward agents we precomputed
+(no planning happens inside <code>gen</code>; the body only indexes the cached expected-utility
+rows). Then, for each observed wait-state, the agent emits an action from its softmax
+policy <code>h/softmax-action</code>. The action site is scored at the <strong>remaining</strong> horizon —
+the deadline shrinks as days pass — which is the faithful reading of agentmodels’
+<code>observe(act(state, 0), action)</code>. The likelihood of “wait” on day <code>i</code> is exactly the
+policy probability of waiting; there is no bespoke likelihood function anywhere.</p>
+<h2 id="inverting-it-by-exact-enumeration"><a class="header" href="#inverting-it-by-exact-enumeration">Inverting it by exact enumeration</a></h2>
+<p>Because the priors are finite, the inference is exact: enumerate every
+<code>[reward alpha discount]</code> tuple, ask the model to <code>p/assess</code> the full observation
+under that tuple, and normalize the resulting log-weights.</p>
+<pre><code class="language-clojure">(defn joint-posterior
+  "Exact P(reward,alpha,discount | actions). Enumerate the joint finite prior; for
+   each tuple assess the joint GF on the full choicemap; normalize. Returns
+   {:joint {[ri ai di] prob} :marginals {:reward {...} :alpha {...} :discount {...}}}."
+  [{:keys [states actions reward-vals alpha-vals discount-vals] :as cfg} agents]
+  (assert (= (count states) (count actions))
+          (str "5d joint: states/actions length mismatch " (count states) " vs " (count actions)))
+  (let [model (joint-procrastination-model cfg agents)
+        tuples (for [ri (range (count reward-vals))
+                     ai (range (count alpha-vals))
+                     di (range (count discount-vals))] [ri ai di])
+        ;; assess args are [] — joint-procrastination-model returns a gen-fn closing
+        ;; over cfg/agents/rows, so its (gen []) body takes no positional args.
+        logw (into {} (for [[ri ai di :as tup] tuples]
+                        [tup (mx/item (:weight (p/assess (dyn/auto-key model) []
+                                                         (multi-full-cm ri ai di actions))))]))
+        post (inv/normalize-logs logw)]
+    {:joint post
+     :marginals {:reward   (marginal post reward-vals 0)
+                 :alpha    (marginal post alpha-vals 1)
+                 :discount (marginal post discount-vals 2)}}))
+</code></pre>
+<p>The engine never changed. <code>p/assess</code> is the same GFI operation used everywhere in the
+library; here it scores a fully-constrained choicemap (the latent tuple plus the
+observed actions) and hands back a log-weight. Joint inference is just enumeration
+plus normalization on top of that contract — exactly the orthogonality this book keeps
+arguing for. The result is a joint distribution over the agent’s hidden type, with
+clean marginals for each latent.</p>
+<p><img src="figures/ch13-bias-posterior.png" alt="A joint posterior over an agent’s hidden parameters, shown as a bar distribution that concentrates probability mass on a small region of the latent space — the kind of distribution joint inference returns."></p>
+<p>The figure above is illustrative — a representative joint posterior over an agent’s
+hidden settings, not these exact procrastination marginals. What you should take from
+it is the <em>shape</em>: joint inference returns a full distribution over the type, with
+mass pooling on the explanations that fit, rather than a single point estimate.</p>
+<h2 id="what-the-two-models-conclude"><a class="header" href="#what-the-two-models-conclude">What the two models conclude</a></h2>
+<p>Run both models on the eight observed waits (<code>j5d/analyze</code>) and the contrast is
+stark. The <strong>Optimal</strong> model, forbidden from invoking present bias, is cornered into
+a low-reward, high-noise explanation: its posterior reward expectation collapses to
+<strong>E[reward] ≈ 0.530</strong> and its noise expectation balloons to <strong>E[alpha] ≈ 457.5</strong>.
+Translated: “the switch is barely worth anything, and this agent is essentially
+flipping coins.” The <strong>Possibly-Discounting</strong> model tells a kinder story — it keeps
+<strong>E[reward] ≈ 2.849</strong> and reads the waiting off the discount instead, with
+<strong>E[discount] ≈ 2.631</strong>.</p>
+<p>This shows up directly in prediction. Asked for the posterior-predictive probability
+that Pac-Man finally works at the last minute, the Optimal model says
+<strong>P(work) ≈ 0.0056</strong> while the discounting model says <strong>P(work) ≈ 0.216</strong> — a factor
+of more than thirty between them (both still below 0.3, because eight straight waits
+is strong evidence of a procrastinator either way).</p>
+<h2 id="the-moment-the-task-completes"><a class="header" href="#the-moment-the-task-completes">The moment the task completes</a></h2>
+<p>The decisive test is what happens when the waiting <em>ends</em>. Append a ninth
+observation — Pac-Man finally hits the switch at <code>W_8</code> — and re-infer. The two models
+revise in opposite ways.</p>
+<pre><code class="language-clojure">(defn online-posteriors
+  "Posterior expectations + predict-work after each prefix of the observed
+   sequence (index 0 = prior). Reuses joint-posterior on truncated observations."
+  [{:keys [states actions] :as cfg} agents predict-state predict-horizon]
+  (mapv (fn [L]
+          (let [c (assoc cfg :states (vec (take L states)) :actions (vec (take L actions)))
+                {:keys [joint marginals]} (joint-posterior c agents)]
+            {:n L
+             :E-reward   (expect (:reward marginals))
+             :E-alpha    (expect (:alpha marginals))
+             :E-discount (expect (:discount marginals))
+             :predict-work (predict-work joint agents predict-state predict-horizon)}))
+        (range (inc (count states)))))
+</code></pre>
+<p>The Optimal model’s “noisy and indifferent” story cannot survive a deliberate
+completion. Its reward expectation jumps by <strong>more than 2.0</strong>, and — most tellingly —
+its inferred noise <em>collapses by over 100×</em>: the moment the agent acts purposefully,
+“random flailing” stops being a credible account. The discounting model barely
+flinches: its alpha changes by <strong>less than 3×</strong> (it never needed high noise), while
+its reward rises moderately by <strong>more than 1.0</strong>. The Optimal model’s alpha revision
+dwarfs the discounting model’s — it had the most to take back.</p>
+<p>The online sequence makes the build-up visible too. It returns <strong>nine</strong> entries —
+the prior plus one per observation. Index 0 is the untouched prior (its
+<code>E[discount]</code> sits exactly at the prior mean <strong>1.5</strong>). As the waits accumulate,
+<code>predict-work</code> <em>falls</em> and <code>E[discount]</code> <em>rises</em> toward <strong>≈ 2.63</strong> — the observer
+watching the evidence pile up and concluding, day by day, that it is looking at a
+procrastinator.</p>
+<p>Next we extend the same joint machinery from a one-dimensional countdown to spatial
+exploration — inferring not just <em>how</em> biased a Pac-Man is, but <em>whether the bias
+exists at all</em>.</p>
 
                     </main>
 

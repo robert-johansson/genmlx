@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-3a2ce01d.js";
+            window.path_to_searchindex_js = "searchindex-e7e4764f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -182,22 +182,113 @@
                     <main>
                         <h1 id="joint-inference-ii-was-that-detour-noise-bias-or-taste"><a class="header" href="#joint-inference-ii-was-that-detour-noise-bias-or-taste">Joint Inference II: Was That Detour Noise, Bias, or Taste?</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 5e-joint-inference.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 5e (joint inference II).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
-<p>A Pac-Man that passes near a power pellet but eats a regular pellet first could be (a) noisy, (b) a Naive hyperbolic discounter tempted by the immediate pellet, or (c) genuinely preferring regular pellets. Joint inference over all three from repeated plays: observing the same ‘mistake’ three times collapses the noise explanation. Expanding the preference space (DonutN != DonutS, positive time cost) lets alternative tastes compete with discounting. Uses the full [immediate, delayed] restaurant-twin geometry.</p>
-<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
+<p>Watch a Pac-Man pass right by a power pellet — fifty points, glowing cyan, one corridor away — and stop to eat a plain ten-point pellet first. Why? Three stories fit equally well from a single glance:</p>
 <ul>
-<li><strong>genmlx code:</strong> exists — full joint model (discount in {0,1}, sophisticatedOrNaive, vegMinusDonut, donutTempting summary stats), conditioning on Naive path once vs three times, two-donut and positive-timeCost competing explanations. Tests: test/genmlx/agentmodels_5e_joint_test.cljs ([imm,del] 6×8 grid 48+4 twins=52 states, 2-step stay delivers delta(d)*imm + delta(d+1)*del disU formula, joint k+utility inference) + agentmodels_biased_inverse_test.cljs (naive EU(a0)=8/3 tie, soph=2.5, pi_naive(a0)=0.5 vs pi_soph(a0)=0, prior decomposition via p/assess on {:bias} alone, posterior concentrates on :sophisticated). Examples restaurant_joint_inference.cljs, biased_inverse.cljs.</li>
+<li>He is <strong>noisy</strong>: a softmax actor with low <code>alpha</code> who simply slipped.</li>
+<li>He is <strong>biased</strong>: a <em>Naive</em> hyperbolic discounter, tempted by the nearer reward because his future self looks (to him) like it will hold out.</li>
+<li>He has <strong>taste</strong>: he genuinely values plain pellets more than power pellets.</li>
 </ul>
-<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
+<p>One observation cannot tell these apart. This chapter is about what <em>can</em>: watching the same detour happen again, and giving taste a seat at the table so it has to compete with bias. (For the glyphs and the −1-per-step scoring, see <a href="./legend.html">the legend</a>.)</p>
+<h2 id="the-temptation-maze-as-an-mdp"><a class="header" href="#the-temptation-maze-as-an-mdp">The temptation maze as an MDP</a></h2>
+<p>We strip the maze down to its decision spine. From the start, Pac-Man can head toward the <strong>temptation gate</strong> (action <code>0</code>) or take the <strong>safe route</strong> (action <code>1</code>). At the gate he can succumb and eat the donut now (Rd = 5), or continue on to the more valuable veg (Rv = 8). The safe route reaches veg with no temptation along the way. Here is the hand-built MDP, copied verbatim from <code>examples/agentmodels/biased_inverse.cljs</code>:</p>
+<pre><code class="language-clojure">(defn temptation-mdp
+  "Build the minimal 5-state / 2-action temptation MDP (see namespace notes).
+   Returns an MDP map {:S :A :T :R :terminals} feeding make-biased-mdp-agent."
+  []
+  (let [S 5
+        A 2
+        ;; T[s][a][s'] one-hot transitions
+        T-rows [[[0 1 0 0 0] [0 0 1 0 0]]    ; start : a0→tempt, a1→safe1
+                [[0 0 0 1 0] [0 0 0 0 1]]    ; tempt : a0→donut(eat), a1→veg(continue)
+                [[0 0 0 0 1] [0 0 0 0 1]]    ; safe1 : both → veg
+                [[0 0 0 1 0] [0 0 0 1 0]]    ; donut : absorbing
+                [[0 0 0 0 1] [0 0 0 0 1]]]   ; veg   : absorbing
+        R-rows [[0 0]                         ; start
+                [5 0]                         ; tempt : a0 eat donut (Rd=5), a1 continue
+                [0 0]                         ; safe1
+                [0 0]                         ; donut
+                [8 8]]                        ; veg   : Rv=8
+        T (mx/array (clj-&gt;js T-rows) mx/float32)
+        R (mx/array (clj-&gt;js R-rows) mx/float32)]
+    {:S S :A A :T T :R R :terminals {3 :donut 4 :veg}}))
+</code></pre>
+<p>The reward crossover is the whole trick. With hyperbolic discount <code>k = 1</code>, a self standing <em>at the gate</em> (delay 0) values the donut at <code>δ(1)·5 = 2.5</code> and veg at <code>δ(2)·8 = 8/3 ≈ 2.667</code> — so the gate-self would prefer veg, barely. But a self planning <em>from the start</em> (delay 1) values the donut even less. The result is a textbook preference reversal, and it splits the two biases cleanly. The companion test <code>agentmodels_biased_inverse_test.cljs</code> pins the expected utilities at the start state: the <strong>Naive</strong> agent sees <code>EU(start) = [8/3, 8/3]</code> — a dead tie, because he believes his future self will resist temptation, so both routes look like they reach veg. The <strong>Sophisticated</strong> agent sees <code>EU(start) = [2.5, 8/3]</code> — he foresees his own succumbing on the tempting route, and discounts it.</p>
+<p>Those expected utilities become softmax policies. At the decisive softmax limit (<code>alpha = ##Inf</code>):</p>
 <ul>
-<li>ch13-three-explanations.png — the ambiguous detour on the maze with three candidate causes</li>
-<li>ch13-once-vs-thrice.gif — posterior bars for sophisticatedOrNaive/discount/alpha after 1 vs 3 identical observations</li>
-<li>ch13-competing-tastes.png — prior vs posterior bars over vegMinusDonut, donutNGreaterDonutS, timeCost</li>
+<li><code>π_naive(a0) = 0.5</code>, <code>π_naive(a1) = 0.5</code> — the Naive agent is <em>indifferent</em> at the start and may head for temptation.</li>
+<li><code>π_soph(a0) = 0.0</code>, <code>π_soph(a1) = 1.0</code> — the Sophisticated agent <em>never</em> heads for temptation.</li>
 </ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>Heading for the gate is therefore diagnostic of Naivety; taking the safe route is evidence — but not proof — of Sophistication.</p>
+<h2 id="bias-as-a-traced-latent"><a class="header" href="#bias-as-a-traced-latent">Bias as a traced latent</a></h2>
+<p>The point of <code>genmlx.agents</code> is that an agent is a generative function, and the thing we want to infer about him — his bias — is just one more traced random choice inside it. The joint model below draws <code>:bias</code> from the prior, lets that draw <em>select</em> a precomputed forward planner, and then emits one softmax-action site per observed state:</p>
+<pre><code class="language-clojure">(defn biased-agent-model
+  [{:keys [states alpha prior mdp] :or {alpha ##Inf} :as cfg}]
+  (let [agents    (bias-agents cfg)
+        n-actions (:A mdp)
+        box       (if prior
+                    (h/weighted-draw bias-values prior)
+                    (h/uniform-draw bias-values))
+        ;; Precompute the policy logit array per (bias, state) ONCE — the gen body
+        ;; is re-run per IS particle, so it must only index, never rebuild arrays.
+        rows      (into {} (for [b bias-values]
+                             [b (mapv #(mx/array (clj-&gt;js (bp/eu-row (agents b) % n-actions)) mx/float32)
+                                      states)]))]
+    (gen []
+      (let [bi   (trace :bias (:dist box))
+            bias (h/draw-value box bi)
+            er   (rows bias)]
+        (doseq [t (range (count states))]
+          (trace (keyword (str "a" t))
+                 (h/softmax-action alpha (nth er t))))
+        bi))))
+</code></pre>
+<p>The likelihood of an observed action is <em>just the agent’s own softmax policy probability</em> — there is no bespoke likelihood function anywhere. Inverting the model is then mechanical: enumerate the finite bias prior, <code>assess</code> the full trajectory under each value, and normalize. Because the bias set is finite and <code>assess</code> only scores, this is the exact closed-form posterior — no sampling, no approximation. Inference is fully pluggable: the same model also accepts importance sampling as a cross-check, with no change to the agent.</p>
+<h2 id="one-detour-proves-little"><a class="header" href="#one-detour-proves-little">One detour proves little</a></h2>
+<p>Condition on a single safe-route observation. With a uniform prior over <code>{:naive :sophisticated}</code>, the test reports:</p>
+<pre><code>P(:naive | safe×1) = 1/3        P(:sophisticated | safe×1) = 2/3
+</code></pre>
+<p>That is the figure below: after watching the careful route exactly once, the odds are two-to-one that Pac-Man is Sophisticated rather than Naive (0.667 vs 0.333). The arithmetic is transparent — each safe step is twice as likely under Sophisticated (<code>π_soph(a1) = 1</code> vs <code>π_naive(a1) = 0.5</code>), so the 1:2 likelihood ratio tilts a 1:1 prior to a 1:2 posterior.</p>
+<p><img src="figures/ch13-bias-posterior.png" alt="Two posterior bars over Pac-Man’s bias after one safe-route observation: the Naive bar at one-third and the taller Sophisticated bar at two-thirds, a two-to-one lead."></p>
+<p>The mirror case is sharper. If Pac-Man instead heads <em>for</em> the gate even once, the Sophisticated story is annihilated — <code>π_soph(a0) = 0</code> — so <code>P(:naive | tempt×1) = 1.0</code> exactly. A single move toward temptation is a smoking gun; a single careful move is only suggestive.</p>
+<h2 id="seeing-it-three-times-collapses-the-noise-story"><a class="header" href="#seeing-it-three-times-collapses-the-noise-story">Seeing it three times collapses the noise story</a></h2>
+<p>Now the crux. A genuinely careless agent would slip <em>occasionally</em>, not reliably. So repeat the safe-route observation and watch the explanations sort themselves out. The exact posterior follows a clean law, asserted in the test as <code>P(:soph | n safe) = 1/(1 + (1/2)ⁿ)</code>:</p>
+<ul>
+<li>n = 1: P(:soph) = 2/3 ≈ 0.667</li>
+<li>n = 2: P(:soph) = 4/5 = 0.800</li>
+<li>n = 3: P(:soph) = <strong>8/9 ≈ 0.889</strong></li>
+</ul>
+<p>Each repeated detour multiplies the likelihood ratio by another factor of two, and the posterior climbs monotonically — the test verifies <code>P(:soph|×1) &lt; P(:soph|×2) &lt; P(:soph|×3)</code>. A noise explanation cannot keep up with that, because noise would not produce the <em>same</em> deliberate choice three times running. Repetition is what separates a systematic bias from a random slip.</p>
+<p>This identifiability survives softer rationality, too. Drop to a finite <code>alpha = 2</code>, where even the Sophisticated agent occasionally wanders toward temptation, and the posterior loosens but still points the right way: the test pins <code>P(:soph | safe×3) ≈ 0.5515</code> and the mirror <code>P(:naive | tempt×3) ≈ 0.5638</code>, both safely above one-half. An importance-sampling run of N = 5000 particles agrees with the exact answer to within 0.05, with effective sample size comfortably above N/4 — the pluggable sampler reproduces the closed-form posterior it had no part in deriving.</p>
+<h2 id="letting-taste-compete-with-bias"><a class="header" href="#letting-taste-compete-with-bias">Letting taste compete with bias</a></h2>
+<p>So far the only explanations on offer were bias and noise. But the original detour had a third reading — maybe Pac-Man just <em>likes plain pellets</em>. To let taste compete, we expand the latent space from one dimension to the full restaurant-twin preference table. The joint model in <code>restaurant_joint_inference.cljs</code> traces seven indices at once — the immediate and delayed utilities of donut and veg, the discount, the bias, and the softmax <code>alpha</code>:</p>
+<pre><code class="language-clojure">(defn joint-posterior
+  "Exact P(params | trajectory). Enumerate the joint finite prior; for each tuple
+   assess the joint GF on the full choicemap (latent indices + observed actions);
+   normalize. `:number-repeats` r conditions on the SAME action sequence r+1 times
+   (agentmodels numberRepeats — strengthens the evidence). Returns
+   {:joint {tuple prob} :posterior &lt;summary&gt; :prior &lt;summary&gt; :n-tuples n}."
+  [{:keys [states actions number-repeats] :or {number-repeats 0} :as spec} agents]
+  (assert (= (count states) (count actions))
+          (str "5e joint: states/actions length mismatch " (count states) " vs " (count actions)))
+  (let [model   (dyn/auto-key (joint-restaurant-model spec states agents))
+        reps    (inc number-repeats)
+        tuples  (keys agents)
+        logw    (into {}
+                      (for [tup tuples]
+                        [tup (* reps (mx/item (:weight (p/assess model []
+                                                                 (full-cm tup actions)))))]))
+        post    (inv/normalize-logs logw)
+        uniform (let [n (count tuples)] (mapv (fn [t] [t (/ 1.0 n)]) tuples))]
+    {:joint     post
+     :posterior (summarize post agents)
+     :prior     (summarize uniform agents)
+     :n-tuples  (count tuples)}))
+</code></pre>
+<p>The summary statistics are the verbatim webppl-agents predicates — <code>donut-tempting?</code> tests whether the discounted utilities encode a preference reversal (veg preferred from afar, donut preferred up close), and <code>veg-minus-donut</code> measures net taste. With the discount fixed at <code>k = 1</code>, conditioning on the tempting detour raises <code>P(donutTempting)</code> from a prior under 0.1 toward ~0.9, and <code>E[vegMinusDonut]</code> turns positive — the agent net-prefers veg yet was tempted, exactly the discounting signature. And the <code>:number-repeats</code> knob does for the joint model what repetition did for the bias model: seeing the same path again strengthens the discounting explanation over the high-noise one, because noise, unlike a stable bias or a stable taste, does not repeat.</p>
+<p>The same maze, the same GFI <code>assess</code>, three rival explanations — and the only thing that ever decided between them was <em>how many times you looked</em>.</p>
+<p>Next: from inferring why one agent acted to coordinating several of them.</p>
 
                     </main>
 

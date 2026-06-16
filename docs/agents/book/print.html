@@ -39,7 +39,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-3a2ce01d.js";
+            window.path_to_searchindex_js = "searchindex-e7e4764f.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-76a4568c.js"></script>
@@ -672,246 +672,1367 @@ the partially observed maze, and the POMDP that solves it.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="hidden-state-pomdps-and-belief-over-ghosts"><a class="header" href="#hidden-state-pomdps-and-belief-over-ghosts">Hidden State: POMDPs and Belief Over Ghosts</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 3c-pomdp.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 3c (POMDPs).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
-<p>Ghost positions are the canonical hidden state — Pac-Man can’t see ghosts through walls and maintains a belief distribution over their locations, updating it when a ghost enters the observable neighborhood. Restaurant-open/closed latent maps to ‘is this corridor safe?’. Signpost reveal and adjacency-reveal both shown. QMDP belief-directed exploration and rational replanning when a corridor is found blocked.</p>
-<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/belief.cljs (filter-step differentiable Bayes update, tensor-update-belief, obs-id-tensor, belief&lt;-&gt;vec); src/genmlx/agents/pomdp.cljs (make-pomdp-agent QMDP [W,S,A] belief-Q, simulate-pomdp, fused-simulate-pomdp); src/genmlx/agents/pomdp_env.cljs (restaurant-gridworld signpost, restaurant-pomdp adjacency-reveal 2^k worlds). Tests: agentmodels_pomdp_test.cljs (belief snaps at signpost, QMDP reaches goal), agentmodels_pomdp_adjacency_test.cljs (detour when preferred closed), agents_fused_pomdp_test.cljs (S×W obs-tensor parity). No new agent code; ghostbusters belief-heatmap browser renderer is the figure gap.</li>
-</ul>
-<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
-<ul>
-<li>ch05-belief-heatmap.gif — belief over ghost cells concentrating as Pac-Man senses (cs188 ghostbusters shade → ghostbusters.html canvas extension, or ANSI fallback)</li>
-<li>ch05-pomdp-graph.png — POMDP dependency graph (s,a,o,u,b) authored figure</li>
-<li>ch05-signpost-reveal.gif — belief snaps to revealed goal at the signpost cell</li>
-<li>ch05-adjacency-detour.gif — Pac-Man detours after observing a corridor closed</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>Every maze so far has been fully visible: Pac-Man knew exactly where the reward
+was and planned a path to it. But the interesting worlds are the ones he can’t
+see through. In the <em>haunted maze</em> there are two candidate caches at the top — a
+pellet and a power pellet — and only <strong>one of them actually pays</strong>. Which one is
+hidden state. Pac-Man can’t tell by looking; he learns the truth only by walking
+onto a single <strong>signpost</strong> floor cell between the two caches. Until then he is
+acting under uncertainty.</p>
+<p>This is a Partially Observable MDP. The agent no longer knows which world he is
+in, so he can’t plan against a single MDP. Instead he carries a <strong>belief</strong> — a
+distribution over which latent world is the real one — acts on that belief, and
+updates it by Bayes’ rule whenever an observation arrives. See the
+<a href="#the-pac-man-maze-a-legend">legend</a> for the glyph and scoring vocabulary.</p>
+<p><img src="figures/ch05-haunted.png" alt="The haunted maze: Pac-Man at the bottom of a vertical corridor, a pellet and a power pellet as the two candidate caches at the top, and a signpost floor cell sitting between them."></p>
+<p>The corridor forces the issue. The only path from Pac-Man’s start at the bottom
+up to the fork runs <em>through</em> the signpost, so he must pass the reveal before he
+ever has to commit left or right.</p>
+<h2 id="the-world-as-data"><a class="header" href="#the-world-as-data">The world, as data</a></h2>
+<p>The environment is pure geometry plus an observation model. <code>restaurant-gridworld</code>
+lays out the two candidate goals, marks the signpost cell, fixes which world is
+actually true, and — crucially — defines what Pac-Man can observe from where:</p>
+<pre><code class="language-clojure">(defn restaurant-gridworld
+  [{:keys [grid goals signpost true-world start] :or {goals [:A :B] start [0 0]}}]
+  (let [W (count (first grid))
+        [sx sy] start]
+    {:kind       :gridworld
+     :grid       grid
+     :goals      goals
+     :worlds     goals                 ; latent = which goal is rewarding
+     :true-world true-world
+     :signpost   signpost
+     :start-idx  (+ sx (* W sy))
+     :prior      (zipmap goals (repeat (/ 1.0 (count goals))))
+     ;; deterministic location-gated reveal: standing on the signpost reveals the
+     ;; world identity; everywhere else there is no information (obs = nil).
+     :observe    (fn [world loc] (when (= loc signpost) world))}))
+</code></pre>
+<p>The whole partial-observability story lives in that last line. The <code>:observe</code>
+function returns the true world only when Pac-Man’s location <em>is</em> the signpost;
+everywhere else it returns <code>nil</code>. A <code>nil</code> observation carries no information —
+it is the <strong>identity</strong> for belief updates. This is what gives the belief its
+characteristic <em>flat-then-snap</em> shape: nothing happens for step after step, and
+then the truth arrives all at once.</p>
+<h2 id="belief-is-just-a-map"><a class="header" href="#belief-is-just-a-map">Belief is just a map</a></h2>
+<p>There is no special data structure here. A belief is a plain Clojure map from
+world to probability, <code>{:A 0.5 :B 0.5}</code> at the start. The filter that updates it
+is one Bayes step, lifted verbatim from <code>make-pomdp-agent</code>:</p>
+<pre><code class="language-clojure">;; one Bayes filtering step: b'(w) ∝ b(w) · P(obs | w, loc).
+;; obs = nil (uninformative location) =&gt; belief unchanged (flat-then-snap).
+update-belief (fn [belief loc obs]
+                (if (nil? obs)
+                  belief
+                  (let [logm (into {} (map (fn [[w b]]
+                                             [w (+ (Math/log b)
+                                                   (if (= (observe w loc) obs) 0.0 ##-Inf))])
+                                           belief))]
+                    (if (every? #(= % ##-Inf) (vals logm))
+                      belief
+                      (inv/normalize-logs logm)))))
+</code></pre>
+<p>Read it as Bayes’ rule in three moves. If the observation is <code>nil</code>, return the
+belief untouched — the uninformative case. Otherwise score each world in
+log-space: a world that <em>would</em> have produced this observation keeps its log-prior
+(<code>+ 0.0</code>); a world that contradicts the observation is annihilated (<code>+ ##-Inf</code>).
+Renormalising with <code>inv/normalize-logs</code> turns those scores back into a
+distribution. (The final guard is defensive: an observation that is impossible
+under <em>every</em> world leaves the belief unchanged rather than dividing by zero.)</p>
+<p>The companion test pins exactly this behaviour. Off the signpost the belief does
+not move — <code>(ub prior 10 nil)</code> still puts <strong>P(:A) = 0.5</strong>. Step onto the signpost
+and observe <code>:A</code>, and the belief collapses to a point mass: <strong>P(:A) = 1.0</strong> and
+<strong>P(:B) = 0.0</strong> (to 1e-9). Observe <code>:B</code> instead and it snaps the other way,
+<strong>P(:B) = 1.0</strong>. Every filtered belief sums to <strong>1.0</strong> — it stays a proper
+distribution throughout.</p>
+<p><img src="figures/ch05-belief.png" alt="Bar chart of Pac-Man’s belief over which cache rewards, collapsed entirely onto the power pellet after the signpost observation: one bar at probability 1 and the other at 0."></p>
+<p>Before the signpost the two bars are even — Pac-Man genuinely doesn’t know. After
+the reveal, all the mass is on the world the signpost named. That single snap is
+the entire epistemic content of the episode.</p>
+<h2 id="acting-on-a-belief-qmdp"><a class="header" href="#acting-on-a-belief-qmdp">Acting on a belief: QMDP</a></h2>
+<p>Knowing <em>what</em> to believe is half the problem; the agent still has to choose an
+action while uncertain. GenMLX builds one fully-solved MDP planner <strong>per world</strong>,
+each carrying its own action-value table <code>Q_w[s,a]</code>. The belief-space value mixes
+those tables under the current belief — this is the <strong>QMDP</strong> approximation:</p>
+<pre><code class="language-clojure">belief-Q  (fn [belief s]
+            (let [bvec (mx/array (clj-&gt;js (mapv #(double (get belief % 0.0)) worlds-vec)) mx/float32)]
+              (mx/sum (mx/multiply (mx/reshape bvec [W 1]) (mx/idx Qstack s 1)) [0])))
+</code></pre>
+<p>The per-world <code>Q</code> tables are stacked once into a <code>[W,S,A]</code> tensor; at state <code>s</code>
+the belief vector <code>[W]</code> is contracted against the <code>[W,A]</code> slice in a single fused
+MLX reduction. The result is <code>Q_QMDP(b,s) = Σ_w b(w)·Q_w[s]</code> — each world’s
+opinion about the best action, weighted by how strongly Pac-Man believes he is in
+that world. The agent then picks an action by softmax over this mixed row, scored
+through the GFI exactly like any other policy.</p>
+<p>Two properties make this honest. First, the mixture is a genuine convex
+combination: the test confirms <code>belief-Q</code> at <code>{:A 0.5 :B 0.5}</code> equals
+<code>0.5·Q_A + 0.5·Q_B</code> elementwise (to 1e-4). Second, it <strong>collapses to the
+underlying MDP</strong> at certainty — a point-mass belief <code>{:A 1.0 :B 0.0}</code> gives a
+belief-Q identical to <code>Q_A</code> (to 1e-6), and the POMDP agent’s chosen action under
+that certain belief is <em>exactly</em> the bare MDP agent’s action. Uncertainty is the
+only thing QMDP adds; remove it and you are back to an ordinary planner.</p>
+<h2 id="the-rollout-flat-then-a-snap-then-the-right-fork"><a class="header" href="#the-rollout-flat-then-a-snap-then-the-right-fork">The rollout: flat, then a snap, then the right fork</a></h2>
+<p>Putting it together, <code>simulate-pomdp</code> threads state, belief, action, and
+observation through the maze. With the optimal regime (<code>alpha = ##Inf</code>, noise 0)
+the rollout is deterministic, so we can watch the belief evolve step by step:</p>
+<pre><code class="language-clojure">(doseq [[tw goal-idx] [[:A 0] [:B 2]]]
+  (let [[e pa] (build tw ##Inf)            ; alpha=Inf + noise 0 =&gt; deterministic rollout
+        roll   (pomdp/simulate-pomdp pa e (:start-idx e) 12)
+        {:keys [states beliefs]} roll]
+    ...))
+</code></pre>
+<p>When the true world is <code>:A</code>, Pac-Man’s belief is flat at the start — <strong>P(:A) = 0.5</strong>
+— and <em>still</em> flat one step later, because he hasn’t reached the signpost yet.
+On the step he lands on it, the belief <strong>snaps to 1.0</strong>. From there QMDP routes
+him to the correct cache, and he reaches goal index <strong>0</strong> (the <code>:A</code> cell). Run it
+with the truth set to <code>:B</code> and the mirror happens: the belief snaps to <code>:B</code> and he
+ends at index <strong>2</strong>. The belief is monotone toward the truth — it never moves
+away from the world that turns out to be real, it only waits and then commits.</p>
+<p>This is the resource-rational picture in miniature: Pac-Man spends no effort
+guessing while the signpost is out of reach, gathers the one observation the
+geometry offers, and acts decisively once it lands.</p>
+<p>Next we let the hidden state be richer than a single bit — each corridor
+independently open or closed, revealed only when Pac-Man is <em>adjacent</em> — and watch
+him replan a detour the moment he learns his preferred route is blocked.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="learning-the-maze-bandits-thompson-sampling-and-psrl"><a class="header" href="#learning-the-maze-bandits-thompson-sampling-and-psrl">Learning the Maze: Bandits, Thompson Sampling, and PSRL</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 3d-reinforcement-learning.md (also the bandit arm of 3c).</p>
+<p><strong>Ports</strong> agentmodels.org Ch 3d (reinforcement learning), plus the bandit arm of 3c.</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-1"><a class="header" href="#the-pac-man-scenario-1">The Pac-Man scenario</a></h2>
-<p>Multi-armed bandit = Pac-Man repeatedly choosing among corridors, tracking which yields more fruit (cumulative regret vs random baseline). PSRL on a gridworld = Pac-Man learning an unknown maze: the unknown reward function is the unknown fruit layout; each episode it samples a hypothesized layout, plans optimally, then updates beliefs from what it actually found. The lava-world variant shows uncertainty-driven exploration avoiding danger.</p>
-<h2 id="what-this-chapter-builds-on-1"><a class="header" href="#what-this-chapter-builds-on-1">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/pomdp.cljs (make-bandit-agent Thompson/softmax, update-arm Beta-Bernoulli, simulate-bandit + simulate-bandit-batched [N,K] no per-step mx/item); src/genmlx/agents/pomdp_env.cljs (bandit-pomdp); src/genmlx/agents/worlds.cljs (lava-world). Tests: agentmodels_psrl_test.cljs (posterior concentrates P&gt;=0.99, final-episode zero regret, beats baseline), agentmodels_psrl_lava_test.cljs (reduces lava exposure across 6 seeds). Example examples/agentmodels/psrl.cljs. PSRL gridworld loop reuses agent.cljs make-mdp-agent per sampled model.</li>
-</ul>
-<h2 id="live-figures-planned-1"><a class="header" href="#live-figures-planned-1">Live figures (planned)</a></h2>
-<ul>
-<li>ch06-bandit-regret.png — cumulative-regret line, Thompson/softmax vs random baseline</li>
-<li>ch06-psrl-episodes.gif — concatenated per-episode Pac-Man trajectories getting more direct to fruit</li>
-<li>ch06-lava-avoidance.gif — PSRL Pac-Man learning to skirt the lava gap</li>
-<li>ch06-arm-posteriors.gif — Beta posteriors over corridor fruit-rates sharpening (presentation/bandit-bars)</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>Every chapter so far has handed Pac-Man a maze whose rewards he already knows — the pellet is worth +10, the fruit +100, and value iteration grinds out the rest (see <a href="#the-pac-man-maze-a-legend">the legend</a> for the full scoring table). But what if the rewards are <em>unknown</em>? Then Pac-Man cannot plan; he must first <strong>learn</strong>. This chapter is about the gap between not-knowing and knowing, and the two algorithms that close it: <strong>Thompson sampling</strong> for the simplest case, and <strong>Posterior Sampling RL (PSRL)</strong> for the full gridworld.</p>
+<h2 id="a-bandit-is-not-a-maze-a-deliberate-re-narration"><a class="header" href="#a-bandit-is-not-a-maze-a-deliberate-re-narration">A bandit is not a maze (a deliberate re-narration)</a></h2>
+<p>agentmodels re-stories its multi-armed bandit as a row of restaurants, each with an unknown chance of being good. We do the same trick, but in Pac-Man’s vocabulary: imagine <code>k</code> corridors, each of which is a <strong>Bernoulli fruit-spawner</strong>. Walk down corridor <code>i</code> and with some hidden probability θ_i a fruit appears; otherwise the corridor is empty. The catch is that θ_i is unknown, and the only way to learn it is to <em>go look</em> — which costs a turn you could have spent on a corridor you already trust.</p>
+<p>This framing is <strong>authored fiction</strong>. A bandit has no geometry: there is no shortest path, no value function over cells, no spatial layout at all. Re-narrating corridors as spawners is faithful to exactly how agentmodels re-stories restaurants and slot machines — it borrows Pac-Man’s <em>imagery</em> to make an abstract decision problem concrete, while keeping the math honestly non-spatial.</p>
+<p>The belief over each corridor is a <code>Beta(α, β)</code> distribution — the conjugate prior for a Bernoulli rate. A success bumps α, a failure bumps β, and that single increment <em>is</em> the entire posterior update:</p>
+<pre><code class="language-clojure">(defn update-arm
+  "Conjugate Beta-Bernoulli posterior update on arm `i`: a success (reward 1)
+   bumps alpha, a failure bumps beta; every other arm is untouched (independence)."
+  [belief i reward]
+  (update-in belief [:arms i]
+             (fn [[a b]] (if (== reward 1) [(inc a) b] [a (inc b)]))))
+</code></pre>
+<p>No gradient, no sampling, no inference loop — Beta-Bernoulli conjugacy collapses Bayesian learning into a <code>(inc a)</code>. The belief is just <code>{:arms [[a b] ...]}</code>, one Beta per corridor, and the corridors are independent, so visiting one tells you nothing about the others.</p>
+<h2 id="thompson-sampling-pick-by-sampling-not-by-mean"><a class="header" href="#thompson-sampling-pick-by-sampling-not-by-mean">Thompson sampling: pick by sampling, not by mean</a></h2>
+<p>The naive thing is to always pull the corridor with the highest posterior <em>mean</em>. That over-exploits: a corridor that looked bad on its first pull gets written off forever. Thompson sampling fixes this elegantly — instead of comparing means, <strong>sample one θ from each posterior and pull the argmax</strong>:</p>
+<pre><code class="language-clojure">:act (fn [{:keys [arms]} key]
+       (case strategy
+         :thompson
+         ;; posterior sampling: draw theta_i ~ Beta(alpha_i,beta_i) per arm and
+         ;; pull the argmax.
+         (let [av    (mx/array (clj-&gt;js (mapv first arms)) mx/float32)    ; [K] alpha
+               bv    (mx/array (clj-&gt;js (mapv second arms)) mx/float32)   ; [K] beta
+               theta (dist/beta-sample-vec av bv key)]                    ; [K] posterior draw
+           (int (mx/item (mx/argmax theta))))
+         ...))
+</code></pre>
+<p>The whole strategy is one line of consequence: <code>theta (dist/beta-sample-vec av bv key)</code> draws all <code>K</code> corridors’ rates in a single MLX op, and <code>mx/argmax</code> picks the winner of that draw. The explore-vs-exploit balance is <em>emergent</em>, not hand-tuned. When a corridor’s Beta is wide (few visits), its sampled θ swings high often enough to get re-tried; once the Beta sharpens, the draws barely move and the agent settles. As the docstring puts it, this is posterior sampling, not the optimal information-valuing policy — but it is strikingly close and almost free.</p>
+<p><code>make-bandit-agent</code> hands back exactly the GFI-shaped pieces the rollout needs: an <code>:act</code> function, an <code>:update-belief</code> (which is <code>update-arm</code> above), and an <code>:arm-values</code> reporter that returns each corridor’s posterior mean α/(α+β). After a run of pulls, those means tell you what Pac-Man learned:</p>
+<p><img src="figures/ch06-arm-posteriors.png" alt="Bar chart of Beta posterior means per corridor after learning; corridor 2 stands out near 0.83 as the true fruit-spawner while a dry corridor sits near 0.25."></p>
+<p>The figure shows the posterior means once the dust settles. Corridor 2 — the real fruit-spawner — concentrates near <strong>0.83</strong>, while a dry corridor sits down near <strong>0.25</strong>. Thompson sampling has discovered the productive corridor without an explicit explore schedule: it simply sampled, acted, and updated until the Betas told it where the fruit lived.</p>
+<h2 id="psrl-lifting-posterior-sampling-back-into-a-maze"><a class="header" href="#psrl-lifting-posterior-sampling-back-into-a-maze">PSRL: lifting posterior sampling back into a maze</a></h2>
+<p>Thompson sampling works because a bandit’s “plan” is trivial — just pull an arm. A real maze is harder: even if you knew the reward map, finding the best route takes planning. <strong>Posterior Sampling RL</strong> is the beautiful generalization. Each episode:</p>
+<ol>
+<li><strong>Sample</strong> a hypothesized reward map from the posterior (the maze’s Thompson draw),</li>
+<li><strong>Plan optimally</strong> for that hypothesis by value iteration,</li>
+<li><strong>Act</strong> greedily on the plan, then</li>
+<li><strong>Update</strong> the posterior from what was actually found.</li>
+</ol>
+<p>Here the unknown is <em>which free cell is rewarding</em>. The posterior is a categorical over candidate cells, and because the reward signal is deterministic (a cell either pays out or it does not), the Bayes update is exact — observe a reward and the posterior collapses; observe nothing at a cell and that cell is ruled out:</p>
+<pre><code class="language-clojure">(defn update-posterior
+  "Exact Bayes update on observing reward `r` at cell `c`: hypotheses inconsistent
+   with the observation are dropped (h=c requires r=1; h≠c requires r=0) and the rest
+   renormalized. Observing the reward (r=1 at c) collapses the posterior to c."
+  [post c r]
+  (let [keep (into {} (filter (fn [[h _]] (= (if (= h c) 1.0 0.0) (double r))) post))
+        z    (reduce + (vals keep))]
+    (if (pos? z) (update-vals keep #(/ % z)) post)))
+</code></pre>
+<p>The Thompson draw over the maze is just as simple — walk the cumulative posterior with a uniform sample:</p>
+<pre><code class="language-clojure">(defn sample-goal
+  "Thompson sample: draw a goal cell from the posterior with seed `s`."
+  [post s]
+  (let [cells (vec (keys post)), u (unit s)]
+    (loop [i 0, acc 0.0]
+      (let [acc' (+ acc (post (nth cells i)))]
+        (if (or (&gt;= i (dec (count cells))) (&lt; u acc')) (nth cells i) (recur (inc i) acc'))))))
+</code></pre>
+<p>The episode loop in <code>psrl</code> then samples a goal, builds a one-cell reward map for it (<code>combined-reward</code>), plans by reusing the <em>same</em> <code>agent/value-iteration</code> from the planning chapters, rolls out greedily, and folds every visited cell into the posterior. Crucially, the planner is unchanged — PSRL is not a new engine, it is the existing MDP planner wrapped in a sample-plan-act-update shell. That is the chapter’s whole thesis in miniature: the agent is a generative function, and <em>learning</em> is an orthogonal axis bolted on without touching the planner.</p>
+<h2 id="what-the-agent-actually-learns"><a class="header" href="#what-the-agent-actually-learns">What the agent actually learns</a></h2>
+<p>The companion test pins this down on agentmodels’ 4×4 RL grid. Pac-Man starts at the top-left corner; the true reward sits in the bottom-right free cell, <strong>6 steps away</strong> across a 9-step horizon. The optimal agent reaches it in 6 and dwells (using the <code>stay</code> action) for the remaining 3, collecting reward on 3 of 9 steps — so the best achievable return is <strong>V*(start) = 3.0</strong>.</p>
+<p>The posterior arithmetic is exact. Before any data, the prior is uniform over the <strong>12 free cells</strong> — each cell gets ≈ 1/12. Observing reward 0 at a cell removes it and renormalizes the survivors; observing reward 1 at the true goal <strong>collapses the posterior to it</strong> with all mass on that single cell (P &gt; 0.999).</p>
+<p>Run the full loop and the learning is decisive. Over five seeds, the posterior concentrates on the true goal with <strong>P ≥ 0.99</strong> every time, the final episode achieves <strong>exactly zero regret</strong> — it has converged to the optimal route — and PSRL beats a no-learning baseline (which keeps sampling from the fixed prior and never updates) on cumulative regret in every seed, staying well under the linear <code>n·V\* = 30</code> worst case.</p>
+<p>Best of all, the regret <em>plateaus</em>. Splitting a 12-episode run in half, the test confirms that regret accrued in the second half is <strong>exactly 0.0</strong> — once the posterior collapses, Pac-Man stops paying the exploration tax entirely. That is the signature of posterior sampling: regret is front-loaded into early episodes while the belief is uncertain, then vanishes the moment the maze is learned.</p>
+<p>A bandit taught Pac-Man to <em>learn a rate</em>; PSRL taught him to <em>learn a maze</em>. Next we let the maze hide more than rewards — and watch belief itself become the state.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="reasoning-about-agents-inverse-reinforcement-learning"><a class="header" href="#reasoning-about-agents-inverse-reinforcement-learning">Reasoning About Agents: Inverse Reinforcement Learning</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 4-reasoning-about-agents.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 4, <em>Reasoning about agents</em>.</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-2"><a class="header" href="#the-pac-man-scenario-2">The Pac-Man scenario</a></h2>
-<p>An observer watches Pac-Man’s path and infers which pellet cache it values most. One leftward step makes the near cache the MAP goal; symmetric caches stay unidentifiable until paths diverge — motivating active learning and multiple trajectories. Joint inference of utility + softmax noise alpha + time cost. POMDP-IRL adds inferring Pac-Man’s beliefs about hidden ghosts from its detours.</p>
-<h2 id="what-this-chapter-builds-on-2"><a class="header" href="#what-this-chapter-builds-on-2">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/inverse.cljs (goal-agents, action-loglik via p/assess on the goal policy, normalize-logs, posterior-sequence batched [G,S,A], observe-rollout). The likelihood IS p/assess — no bespoke likelihood code. Tests: agentmodels_irl_test.cljs (Eq 1 utility-table inference, donut MAP after one step, Veg/Noodle unidentifiable, soft-alpha washout, POMDP-IRL Eq 2 factorSequence, joint alpha+utility, deterministic via with-redefs of rng/fresh-key) + agentmodels_hike_irl_test.cljs (Big-Hiking S=36, posterior flat over shared prefix then concentrates P&gt;0.99). Examples irl.cljs, pomdp_irl.cljs, hike_irl.cljs.</li>
-</ul>
-<h2 id="live-figures-planned-2"><a class="header" href="#live-figures-planned-2">Live figures (planned)</a></h2>
-<ul>
-<li>ch07-observed-path.png — the trajectory to be explained, on the maze</li>
-<li>ch07-posterior-marginals.gif — prior→posterior bars over favorite cache as steps accrue (presentation/marginals-&gt;bars)</li>
-<li>ch07-single-step.png — one-action [3,1]→[2,1] conditioning illustration</li>
-<li>ch07-multiple-trajectories.png — two side-by-side paths sharpening the posterior</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
-<div style="break-before: page; page-break-before: always;"></div>
-<h1 id="cognitive-biases-and-bounded-rationality-why-softmax-isnt-enough"><a class="header" href="#cognitive-biases-and-bounded-rationality-why-softmax-isnt-enough">Cognitive Biases and Bounded Rationality (Why Softmax Isn’t Enough)</a></h1>
+<p>Every chapter so far has run the agent <em>forward</em>: give Pac-Man a utility
+table, plan, watch him walk. This chapter runs the arrow backwards. We sit in
+the gallery, watch a single step, and ask the inverse question — <em>what does he
+want?</em> The glyphs and the −1-per-step time cost are on <a href="#the-pac-man-maze-a-legend">the legend</a>;
+here the only thing we add is an observer.</p>
+<h2 id="the-maze-two-caches-one-corridor"><a class="header" href="#the-maze-two-caches-one-corridor">The maze: two caches, one corridor</a></h2>
+<p>The setup is the <code>two-caches</code> maze from the legend — a vertical corridor with a
+small <strong>pellet</strong> to the north and a fat <strong>power pellet</strong> to the south. Pac-Man
+starts in the middle. We have not been told which cache he prefers; we only get
+to watch him move. He takes one step <strong>south</strong>.</p>
+<p><img src="figures/ch07-twocaches.png" alt="The two-caches maze: a vertical corridor with a pellet to the north and a cyan power pellet to the south. Pac-Man has taken one step south from the centre start cell, which is marked as part of his path; the floor is shaded by the value function so the southern half glows brighter."></p>
+<p>The floor is shaded by the value function. Notice that the brighter half is the
+southern one — but that shading is <em>our</em> reconstruction, not something Pac-Man
+announced. All we actually observed is a single <code>[state, action]</code> pair: <em>he was
+in the centre, he stepped down</em>. Everything else has to be inferred.</p>
+<h2 id="the-likelihood-is-already-written"><a class="header" href="#the-likelihood-is-already-written">The likelihood is already written</a></h2>
+<p>The crucial move is that we do <strong>not</strong> write a new likelihood function for the
+observer. The probability of an observed action under a hypothesised goal is
+<em>exactly</em> the score of that action under the goal’s own softmax policy — which
+is the GFI’s <code>p/assess</code>. The forward policy that the agent <em>acts</em> with is the
+same object the observer <em>scores</em> with.</p>
+<pre><code class="language-clojure">(defn action-loglik
+  "log P(action = a | state = s) under `agent`'s policy — the GFI assess weight.
+   assess fully constrains :action, so no sampling happens; the auto-key is just
+   to satisfy the handler and does not affect the (deterministic) score."
+  [agent s a]
+  (mx/item (:weight (p/assess (dyn/auto-key (:policy agent)) [s] (cm/choicemap :action a)))))
+</code></pre>
+<p>Read that carefully. <code>p/assess</code> takes a generative function, its arguments
+<code>[s]</code>, and a choicemap that pins <code>:action</code> to the observed <code>a</code>. Because the
+action is fully constrained, no sampling happens — <code>assess</code> just returns the
+log-probability the policy assigns to that choice. That returned <code>:weight</code> <em>is</em>
+the per-step likelihood. There is no bespoke inverse-RL code: the likelihood is
+a corollary of the agent being a generative function.</p>
+<p>Soft rationality is what makes this work. The policy is a Boltzmann softmax with
+finite temperature <code>alpha</code>, not a hard argmax. If Pac-Man planned by argmax, any
+sub-optimal observed step would have probability zero and instantly collapse the
+posterior. With a finite <code>alpha</code>, every action has positive probability — so
+evidence accumulates smoothly instead of vetoing hypotheses.</p>
+<h2 id="one-agent-per-hypothesis"><a class="header" href="#one-agent-per-hypothesis">One agent per hypothesis</a></h2>
+<p>To turn the likelihood into a posterior, we instantiate one forward agent for
+each candidate preference. The agent that values a given cache gives it <code>high</code>
+utility and every rival cache <code>low</code>; the grid, noise, and softmax <code>alpha</code> are
+shared.</p>
+<pre><code class="language-clojure">(defn goal-agents
+  [{:keys [grid goals high low time-cost alpha noise gamma fixed start n-iters]
+    :or   {high 5.0 low 0.0 time-cost -0.1 alpha 2.0 noise 0.0 gamma 1.0 fixed {} start [0 0]
+           n-iters 40}}]
+  (reduce
+    (fn [m g]
+      (let [utils (merge (assoc (zipmap goals (repeat low)) g high :timeCost time-cost) fixed)
+            mdp   (gw/build-mdp {:grid grid :utilities utils :start start
+                                 :gamma gamma :noise noise})]
+        (assoc m g (agent/make-mdp-agent {:mdp mdp :alpha alpha :gamma gamma :n-iters n-iters}))))
+    {} goals))
+</code></pre>
+<p>Each hypothesis is a complete MDP agent carrying its own <code>:policy</code> and value
+table <code>:Q</code>. Inference is then Bayes’ rule over this finite set: prior times the
+product of per-step likelihoods, normalised. <code>posterior-sequence</code> does this
+incrementally, returning one posterior map per prefix length so the belief can be
+revealed one observed step at a time — index 0 is the prior, index <code>k</code> the
+posterior after <code>k</code> actions.</p>
+<h2 id="the-posterior-after-one-southward-step"><a class="header" href="#the-posterior-after-one-southward-step">The posterior after one southward step</a></h2>
+<p>Conditioning the two-caches hypotheses on Pac-Man’s single step south gives this:</p>
+<p><img src="figures/cache-posterior.png" alt="Bar chart of the posterior over Pac-Man’s favourite cache after one southward step: the power pellet at 0.748 and the northern pellet at 0.252."></p>
+<p>A southward step is roughly three-to-one evidence for the power pellet:
+<strong>P(power) = 0.748</strong> against <strong>P(pellet) = 0.252</strong>. One step has moved a
+uniform prior decisively, but not to certainty — under soft rationality a
+power-pellet-lover <em>usually</em> heads south, and a pellet-lover <em>occasionally</em>
+does too, so the posterior keeps mass on both.</p>
+<h2 id="when-one-step-is-not-enough"><a class="header" href="#when-one-step-is-not-enough">When one step is not enough</a></h2>
+<p>The companion tests run the richer Restaurant-Choice geometry, where three
+caches replace two and we also infer the time cost and <code>alpha</code>. They make the
+identifiability story precise. After one leftward step toward the near (Donut)
+cache, the posterior favourite shifts to Donut — but the two <em>far</em> caches stay
+tied:</p>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 5-biases-intro.md.</p>
+<p>Veg vs Noodle is <strong>unidentifiable</strong>, with <code>|P(vegFav) − P(noodleFav)| &lt; 0.05</code>.</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-3"><a class="header" href="#the-pac-man-scenario-3">The Pac-Man scenario</a></h2>
-<p>Expository: a Pac-Man player who systematically avoids power pellets near ghosts, or keeps returning to a low-value corridor, shows SYSTEMATIC (not random) deviation from optimal play — something softmax noise alone cannot explain. Motivates extending the agent model with biases (time inconsistency, myopia) so inverse planning recovers true preferences.</p>
-<h2 id="what-this-chapter-builds-on-3"><a class="header" href="#what-this-chapter-builds-on-3">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — no-code narrative chapter (mirrors agentmodels 5-biases-intro which has no models). Sets up the biased-planner machinery in src/genmlx/agents/biased_planners.cljs covered in following chapters. Includes the ‘two uses of decision models’ table (authored).</li>
-</ul>
-<h2 id="live-figures-planned-3"><a class="header" href="#live-figures-planned-3">Live figures (planned)</a></h2>
-<ul>
-<li>ch08-systematic-vs-noise.png — two maze paths: a noisy wobble vs a systematic dominated detour (static, authored from real rollouts)</li>
-<li>ch08-two-uses-table.png — Table 1 (practical problem-solving vs learning preferences) authored figure</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>The single step distinguishes near from far, but gives no evidence to separate
+two caches that lie symmetrically beyond it. Their paths have not yet diverged.
+This is exactly why an observer wants <em>multiple</em> trajectories — and why an
+<em>active</em> learner would steer Pac-Man toward a junction that splits the
+hypotheses. Feed the longer four-step trajectory all the way to the Donut cache
+and the tests confirm the posterior sharpens: <code>P(donutFav)</code> rises over the
+single-step value while <code>P(noodleFav)</code> — the far cache — is suppressed.</p>
+<h2 id="preference-and-noise-jointly"><a class="header" href="#preference-and-noise-jointly">Preference and noise, jointly</a></h2>
+<p>Because <code>alpha</code> is itself a hypothesis dimension, the same enumeration recovers
+preference <em>and</em> rationality together. The factorised softmax posterior is built
+by scoring each observation against every candidate <code>(utility, timeCost, alpha)</code>
+tuple, accumulating <code>action-loglik</code>:</p>
+<pre><code class="language-clojure">(defn joint-posterior
+  "Exact P(U,timeCost,alpha | observations). observations = seq of [state action].
+   Weight = Σ_i action-loglik (the factorized softmax likelihood); uniform prior
+   cancels in normalize-logs. Returns {tuple -&gt; probability}."
+  [agents observations]
+  (inv/normalize-logs
+    (into {} (for [[tup {:keys [agent]}] agents]
+               [tup (reduce (fn [acc [s a]] (+ acc (inv/action-loglik agent s a))) 0.0 observations)]))))
+</code></pre>
+<p>The tests pin down why joint inference matters. On the <em>same</em> single leftward
+step, a low-noise agent and a high-noise agent disagree about how much to read
+into it. With <code>alpha = 0.1</code>, the step is nearly uninformative — <code>P(donutFav)</code>
+stays within <code>0.03</code> of the prior, because a noisy agent might step left for no
+reason at all. With <code>alpha = 100</code>, the very same step is sharply diagnostic,
+pushing <code>P(donutFav)</code> well above the low-<code>alpha</code> value. A behaviour only counts
+as evidence to the extent the agent is believed to be acting deliberately — and
+the model infers that deliberateness from the same data.</p>
+<p>There is a tempting shortcut — generate-and-compare: at high <code>alpha</code> just predict
+each table’s argmax path and keep the ones that match the observation. The tests
+include it and show why it is the <em>worse</em> tool: because Donut South is the
+nearest cache, far too many tables (even the all-equal one) route through it, so
+at least 10 of the 27 candidates survive. The factorised softmax likelihood,
+which weighs <em>how likely</em> each step was rather than merely <em>whether</em> it could
+happen, is the discriminating one.</p>
+<p>The agent was a generative function; that is the whole trick. Forward, it plans
+and acts. Backward, the very same policy <em>is</em> the likelihood, and inference is
+just Bayes’ rule bolted onto <code>p/assess</code> — no new machinery, only the arrow
+reversed. Next we let the world itself hide things from Pac-Man, and infer his
+<em>beliefs</em> alongside his preferences.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="time-inconsistency-i-hyperbolic-discounting-in-the-maze"><a class="header" href="#time-inconsistency-i-hyperbolic-discounting-in-the-maze">Time Inconsistency I: Hyperbolic Discounting in the Maze</a></h1>
+<h1 id="cognitive-biases-and-bounded-rationality"><a class="header" href="#cognitive-biases-and-bounded-rationality">Cognitive Biases and Bounded Rationality</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 5a-time-inconsistency.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 5 (biases intro).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-4"><a class="header" href="#the-pac-man-scenario-4">The Pac-Man scenario</a></h2>
-<p>Hyperbolic discounting = Pac-Man increasingly tempted by a NEARBY power pellet even while heading to a higher-value distant pellet. Naive Pac-Man gets diverted to the close pellet; Sophisticated Pac-Man pre-commits to a route that avoids passing the tempting pellet, paying extra steps. Immediate vs delayed utility = eat a pellet now (small score) vs a power pellet enabling ghost-eating later (large delayed score). Discount-curve comparison D=1/2^t vs 1/(1+2t).</p>
-<h2 id="what-this-chapter-builds-on-4"><a class="header" href="#what-this-chapter-builds-on-4">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/biased_planners.cljs (delta hyperbolic 1/(1+kd), bias-&gt;perceived-delay :naive=inc / :sophisticated=const-0, biased-eu/biased-eu-inf, make-biased-mdp-agent, simulate-biased-mdp re-planning each step, planned-rollout = believed trajectory, restaurant-mdp + restaurant-temptation-mdp). Tests: agentmodels_biased_planners_test.cljs (delta limit cases, restaurant-temptation naive vs sophisticated action differences, limit recovery k=0 matches standard agent at alpha=1 and Inf). Discount-curve plot to write for figure.</li>
-</ul>
-<h2 id="live-figures-planned-4"><a class="header" href="#live-figures-planned-4">Live figures (planned)</a></h2>
-<ul>
-<li>ch09-discount-curves.png — exponential vs hyperbolic discount-curve line chart</li>
-<li>ch09-naive-detour.gif — Naive Pac-Man diverting to the tempting near pellet</li>
-<li>ch09-sophisticated-precommit.gif — Sophisticated Pac-Man taking the avoidance route</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>So far Pac-Man has been a <em>good</em> optimiser — sometimes a perfect one, sometimes a noisy one, but always optimal in expectation. When we let him be stochastic, we did it with softmax: he picks better actions more often, worse actions less often, and the temperature α tunes how sharply. That single knob carried us a long way. This chapter is about where it runs out.</p>
+<p>The glyphs, rewards, and the −1 step cost are all on the <a href="#the-pac-man-maze-a-legend">shared legend</a>; we lean on them here without redefining them.</p>
+<h2 id="the-baseline-a-bias-departs-from"><a class="header" href="#the-baseline-a-bias-departs-from">The baseline a bias departs from</a></h2>
+<p>Here is the agent we have been studying — the rational planner, rolled out from the centre of the maze straight to the highest-value cache.</p>
+<p><img src="figures/classic-rollout.gif" alt="Animation of the optimal Pac-Man walking left then down through the maze to reach the fruit, ignoring nearer but smaller pellets along the way."></p>
+<p>Watch what he <em>doesn’t</em> do. He passes within a step of a small pellet on the way and never turns aside for it; he commits to the long walk to the fruit because the fruit, net of the steps it costs, is worth more. This is the behaviour every earlier chapter recovered, and it is the reference frame for everything below: <strong>a bias is a systematic, reproducible departure from this path.</strong></p>
+<h2 id="two-kinds-of-departure"><a class="header" href="#two-kinds-of-departure">Two kinds of departure</a></h2>
+<p>Now suppose we watch a <em>human</em> play, and they do turn aside for the near pellet — every single time, in every maze where a tempting reward sits close to the start. How should our model account for it?</p>
+<p>The softmax agent already deviates from optimal. But it deviates <em>randomly</em>. Crank α down and Pac-Man wobbles: sometimes he grabs the near pellet, sometimes the far fruit, sometimes he wanders into a wall. Over many rollouts the errors average out and centre on the optimal path. That is the signature of softmax noise — <strong>unbiased scatter</strong> around the right answer.</p>
+<p>A real player’s diversion is different. It is not scatter; it is a <em>lean</em>. The near pellet wins not occasionally but consistently, and the size of the pull tracks how close the temptation is, not how warm the temperature is. No setting of α reproduces this, because α only controls the <em>width</em> of the deviation, never its <em>direction</em>. A symmetric noise model cannot manufacture an asymmetric, repeatable detour. To capture systematic deviation you have to change the agent’s <em>expected-utility computation itself</em>, not the noise wrapped around it.</p>
+<p>That is exactly what the biased planners do. The whole family is built by adding one subjective axis — a <em>delay</em> — to the value recursion, and then a few pure knobs over it. The cleanest way to see the principle is the discount factor:</p>
+<pre><code class="language-clojure">(defn delta
+  "Hyperbolic discount factor at subjective delay `d`: 1/(1 + k·d).
+   δ(k,0)=1; strictly decreasing in d for k&gt;0; k=0 ⇒ δ≡1 (no discounting)."
+  [k d]
+  (/ 1.0 (+ 1.0 (* (double k) (double d)))))
+</code></pre>
+<p><code>delta</code> is the entire mechanism of one bias in three lines. With <code>k = 0</code> it returns <code>1.0</code> for every delay <code>d</code>, so future reward counts exactly as much as present reward — that is the rational agent, and at that limit the biased recursion reproduces the unbiased one exactly. Crank <code>k</code> above zero and <code>delta</code> falls off <em>hyperbolically</em> with delay: the agent values a reward one step away at <code>1/(1+k)</code>, two steps away at <code>1/(1+2k)</code>, and so on. The fruit, being far, gets discounted hard; the near pellet, being close, barely at all. The temptation now <em>outscores</em> the fruit in the agent’s own arithmetic — and it does so every time, in the same direction. That is systematic deviation, produced inside the value computation rather than bolted on as noise.</p>
+<p>A second bias enriches the model with <em>myopia</em> — a cap on how far ahead the agent looks at all. The biased agent constructor exposes both as plain options:</p>
+<pre><code class="language-clojure">(defn make-biased-mdp-agent
+  "Build a biased MDP agent over `mdp` with a `bias` map
+     {:discount k :bias :naive|:sophisticated :reward-myopic-bound C_g}.
+   ...
+   `:act` re-plans from delay 0 each
+   call (agentmodels' `delay || 0`), which is what produces the Naive plan↔do
+   divergence. `simulate-biased-mdp` (= agent/simulate-mdp) rolls it out."
+  [{:keys [mdp alpha gamma n-iters] :or {alpha ##Inf gamma 1.0 n-iters 24}}
+   {:keys [discount bias reward-myopic-bound]
+    :or   {discount 0.0 bias :sophisticated reward-myopic-bound ##Inf} :as biasm}]
+  ...)
+</code></pre>
+<p>The <code>bias</code> map is the whole vocabulary of bounded rationality this book uses: <code>:discount k</code> is time inconsistency (the hyperbolic pull of <code>delta</code>), <code>:reward-myopic-bound C_g</code> is myopia (look no further than <code>C_g</code> steps), and <code>:bias :naive</code> vs <code>:sophisticated</code> decides whether the agent <em>knows</em> it is time-inconsistent. Note the defaults — <code>discount 0.0</code>, <code>reward-myopic-bound ##Inf</code> — are precisely the <em>un</em>-biased agent. A biased Pac-Man is the rational one with one or two knobs nudged off their neutral settings, which is what makes “bias as a systematic departure from the baseline” a literal statement about the code.</p>
+<h2 id="why-this-matters-two-ways"><a class="header" href="#why-this-matters-two-ways">Why this matters two ways</a></h2>
+<p>There are two reasons to care, and they are mirror images of each other.</p>
+<p>The first is <strong>solving problems</strong>: if you want an agent that <em>acts well</em> in a maze, you want it unbiased — you turn the knobs to their neutral defaults and let it plan optimally. Bias is a defect to be engineered away.</p>
+<p>The second is <strong>learning preferences</strong>: if you want to <em>infer</em> what a real player wants from watching them play, you must model the bias, because a player who skips the fruit is not telling you the fruit is worthless — they are telling you they discount it. An inverse planner that assumes the player is unbiased will misread that detour as “prefers the near pellet” and recover the wrong utilities. Only an agent model rich enough to contain the bias can subtract it back out and reveal the true preference underneath. Bias here is not a defect; it is the thing the data is shaped by, and modelling it is the price of reading the data honestly.</p>
+<p>The same generative function serves both: turn the knobs off to act, turn them on (and infer their settings) to understand. That duality — decision models as tools for <em>doing</em> and as models for <em>interpreting</em> — is the spine of the chapters that follow.</p>
+<p>Next we make the first of these biases concrete, and watch a Naive Pac-Man’s plan diverge from what he actually does.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="time-inconsistency-i-hyperbolic-discounting"><a class="header" href="#time-inconsistency-i-hyperbolic-discounting">Time Inconsistency I: Hyperbolic Discounting</a></h1>
+<blockquote>
+<p><strong>Ports</strong> agentmodels.org Ch 5a (time inconsistency).</p>
+</blockquote>
+<p>Every agent so far has been rational in a specific sense: it had one stable ranking of futures and it followed it. This chapter breaks that. We give Pac-Man a <em>human</em> flaw — he weighs a reward less the longer he must wait for it, but not by a clean exponential. He uses a hyperbolic curve, and that single change makes him disagree with his own past plans. Glyphs and scoring are on the <a href="#the-pac-man-maze-a-legend">shared legend</a>.</p>
+<h2 id="the-temptation"><a class="header" href="#the-temptation">The temptation</a></h2>
+<p>Picture two corridors to a high-value power pellet. The short one climbs right past a small pellet sitting in an alcove; the long one detours around it. A patient Pac-Man takes the short route — the small pellet is no threat, he just walks past it to the bigger prize. But our discounter has a problem: the closer he gets to that small pellet, the larger it looms, until at the moment he’s adjacent it outshines the still-distant power pellet. He veers in, eats it, and the plan is ruined.</p>
+<p>The whole mechanism is two tiny functions. First, the discount itself:</p>
+<pre><code class="language-clojure">(defn delta
+  "Hyperbolic discount factor at subjective delay `d`: 1/(1 + k·d).
+   δ(k,0)=1; strictly decreasing in d for k&gt;0; k=0 ⇒ δ≡1 (no discounting)."
+  [k d]
+  (/ 1.0 (+ 1.0 (* (double k) (double d)))))
+</code></pre>
+<p>A reward <code>d</code> steps away is multiplied by <code>1/(1 + k·d)</code> rather than the exponential <code>γ^d</code>. The test pins the arithmetic exactly: <code>δ(0,d)=1</code> for every <code>d</code> (no discounting at all), <code>δ(1,0)=1</code>, and <code>δ(2,3)=1/7</code>. It is also strictly decreasing in <code>d</code> for <code>k&gt;0</code>. That <code>1/7</code> is the crux — compare it to an exponential. Here are the two curves:</p>
+<p><img src="figures/ch09-discount-curves.png" alt="Two discount curves over time: a steep exponential 1/2^t that plunges toward zero, and a shallower hyperbolic 1/(1+2t) that starts dropping faster but crosses above the exponential in the tail and decays much more slowly."></p>
+<p>The hyperbolic curve (right) starts dropping <em>faster</em> than the exponential near <code>t=0</code>, then crosses <strong>above</strong> it and lingers in the tail. That crossing is the entire story. Because the early slope is steep, the gap in perceived value between “now” and “one step from now” is huge — so an imminent small reward can beat a larger one that’s a few steps off. Yet because the tail is flat, two rewards both far in the future look almost equally valued. As time passes and a far reward becomes a near one, its perceived value shoots up disproportionately, and Pac-Man’s ranking flips. That is a <strong>preference reversal</strong>: an exponential discounter can never have one, a hyperbolic discounter cannot avoid one.</p>
+<h2 id="naive-versus-sophisticated"><a class="header" href="#naive-versus-sophisticated">Naive versus sophisticated</a></h2>
+<p>The second function is where the two personalities split. When Pac-Man plans, he simulates his own future self choosing actions. The question is: what delay does he assume that future self is operating under?</p>
+<pre><code class="language-clojure">(defn bias-&gt;perceived-delay
+  "The perceivedDelay function the agent uses for its SIMULATED future self when
+   choosing that self's action (agentmodels: perceivedDelay = naive ? delay+1 : 0).
+     :naive         → (fn [d] (inc d))   ; believes future self stays patient
+     :sophisticated → (fn [_] 0)         ; models future self's present bias
+   Only the policy that picks the simulated future action uses this; the
+   continuation VALUE always uses the true d+1. At k=0 (δ≡1) both coincide and
+   equal the unbiased agent. (Default → sophisticated/0 for any other key.)"
+  [bias]
+  (case bias
+    :naive         inc
+    :sophisticated (constantly 0)
+    (constantly 0)))
+</code></pre>
+<p>The <strong>Naive</strong> agent passes <code>(inc d)</code> — he models his future self as <em>more patient than he is</em>, with an ever-growing delay clock that flattens the discount. So when he plans, the small pellet four steps away looks negligible: “future me will be patient and walk past it.” The <strong>Sophisticated</strong> agent passes <code>0</code> — he models his future self as re-planning from delay zero, with exactly the same present-bias he feels right now. He correctly predicts that future-him will succumb, and routes around the temptation in advance.</p>
+<p>The asymmetry is razor-thin and it’s all in the recursion in <code>build-biased-eu</code>. The continuation <em>value</em> always uses the true <code>(inc d)</code>; only the <em>policy</em> that picks the simulated future action uses <code>(pd-fn d)</code>:</p>
+<pre><code class="language-clojure">        backup  (fn [s t dv dp]
+                  (let [eu    @eu-atom
+                        q-pol (mapv (fn [a] (eu s a t dp)) (range A))
+                        q-val (if (== dp dv) q-pol (mapv (fn [a] (eu s a t dv)) (range A)))]
+                    (case backup-kind
+                      :soft
+                      (let [w (softmax-vec (mapv #(* alpha %) q-pol))]
+                        (reduce + (map * w q-val)))
+                      :hard
+                      (let [m    (apply max q-pol)
+                            idxs (filterv #(&gt; (nth q-pol %) (- m 1e-9)) (range A))]
+                        (/ (reduce + (map #(nth q-val %) idxs)) (count idxs))))))
+</code></pre>
+<p><code>q-pol</code> ranks actions at the <em>perceived</em> delay <code>dp</code>; <code>q-val</code> averages utilities at the <em>true</em> delay <code>dv</code>. For the Naive agent <code>dp = dv</code> at every node (he never notices the difference), so the two rows coincide — which is exactly why he predicts a future that never arrives. For the Sophisticated agent <code>dp = 0</code> while <code>dv ≥ 1</code>, and the split is real.</p>
+<h2 id="plan-versus-do"><a class="header" href="#plan-versus-do">Plan versus do</a></h2>
+<p>This is a generative function like any other — <code>make-biased-mdp-agent</code> returns the same <code>{:policy :act :expected-utility …}</code> shape as a rational agent, and <code>simulate-biased-mdp</code> rolls it out. The twist is that real execution always re-plans from delay zero each step (<code>(act s)</code> evaluates EU at <code>d=0</code>), so the trajectory the agent <em>believes</em> it will follow can diverge from what it <em>actually does</em>. <code>planned-rollout</code> traces the believed path; <code>simulate-biased-mdp</code> traces the real one.</p>
+<p>The restaurant grid makes this concrete. With discount <code>k=3</code> and a hard (<code>α=##Inf</code>) policy, the test sweeps three agents through the 8×6 grid:</p>
+<pre><code class="language-clojure">(def K 3.0)
+(let [rational (rest-agent :naive 0.0)              ; k=0 ⇒ unbiased
+      naive    (rest-agent :naive K)
+      soph     (rest-agent :sophisticated K)]
+  (assert-equal "rational (k=0) reaches Veg"             :veg     (bp/restaurant-endpoint rational r-start 16))
+  (assert-equal "Naive (k=3) is captured by Donut-North" :donut-n (bp/restaurant-endpoint naive r-start 16))
+  (assert-equal "Sophisticated (k=3) reaches Veg"        :veg     (bp/restaurant-endpoint soph  r-start 16)))
+</code></pre>
+<p>The rational agent (<code>k=0</code>, which collapses the whole machinery back to the unbiased agent — the test confirms <code>δ≡1</code> makes it match the standard tensor <code>Q</code> to within <code>1e-4</code>) walks the short route to the high-value goal. The <strong>Naive</strong> agent (<code>k=3</code>) heads for the same goal but is captured by the tempting near reward when he passes adjacent to it: he ends at Donut-North. The <strong>Sophisticated</strong> agent (<code>k=3</code>) foresees that capture and takes the long way, reaching the goal. And the plan-versus-do gap is asserted directly: the Naive agent <em>plans</em> to reach the goal (<code>Naive PLANS to reach Veg</code> → <code>:veg</code>) but his actual endpoint differs (<code>Naive's plan ≠ what it does</code>), while the Sophisticated agent’s plan equals his deed (<code>plan == do (both Veg)</code>). The equal-value decoy near the goal is reached by nobody — temptation, not indifference, is what diverts the Naive agent.</p>
+<p>The same reversal shows up starkly in the procrastination world: a Naive agent at <code>k=4</code> “works on day 0” is false — he <code>PLANS to work</code> but <code>NEVER works in reality</code>, and his preference over a single state literally flips, preferring to wait at delay 0 (<code>EU(wait) &gt; EU(work)</code>) but believing he’ll work at delay 1 (<code>EU(work) &gt; EU(wait)</code>). Sophistication is the cure: it <code>completes where Naive fails</code>, working no later than the Naive agent at every discount the test sweeps.</p>
+<p>Naive and Sophisticated differ by one line — <code>inc</code> versus <code>(constantly 0)</code> — and yet one is doomed to repeat a mistake it can see coming while the other pre-commits its way out. Next we extend this to <em>bounded</em> foresight: an agent whose look-ahead is capped, valuing nothing beyond its horizon.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="time-inconsistency-ii-procrastination-and-changing-plans"><a class="header" href="#time-inconsistency-ii-procrastination-and-changing-plans">Time Inconsistency II: Procrastination and Changing Plans</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 5b-time-inconsistency.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 5b (time inconsistency II).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-5"><a class="header" href="#the-pac-man-scenario-5">The Pac-Man scenario</a></h2>
-<p>Procrastination MDP = Pac-Man must eat a power pellet before a deadline or lose the level (work/wait actions, deadline T, diminishing reward). Naive hyperbolic Pac-Man keeps deferring the grab — always ‘next step’ — until forced or failing; Sophisticated commits. dynamicActionExpectedUtilities shows EU of each action changing with position and subjective delay along the trajectory. Discount-rate sweep finds the threshold above which Pac-Man never acts.</p>
-<h2 id="what-this-chapter-builds-on-5"><a class="header" href="#what-this-chapter-builds-on-5">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/biased_planners.cljs (procrastination-mdp time-augmented wait/work MDP, biased-eu with perceived-delay branching, planned-rollout for the believed-vs-actual divergence). Tests: agentmodels_biased_planners_test.cljs (procrastination preference reversal — naive procrastinates, sophisticated commits). The dynamic-EU-along-trajectory overlay (per-step Q at the agent’s current delay) is presentation-layer work to write for the figure.</li>
-</ul>
-<h2 id="live-figures-planned-5"><a class="header" href="#live-figures-planned-5">Live figures (planned)</a></h2>
-<ul>
-<li>ch10-procrastination-graph.png — work/wait transition graph authored figure</li>
-<li>ch10-dynamic-eu.gif — per-step action-EU overlay changing as Naive Pac-Man defers (presentation V-shading per delay)</li>
-<li>ch10-discount-threshold.png — final-state / time-elapsed vs discount rate k sweep</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>Pac-Man has a power pellet to eat and a deadline to eat it by. Every step he can
+<strong>work</strong> (grab the pellet now, paying a small cost up front) or <strong>wait</strong> (drift
+one step closer to the deadline, paying a tiny patience cost). The reward for the
+pellet lands one step <em>after</em> he works — so the cost is felt now, the payoff
+later. A patient agent works on day zero. A present-biased agent keeps telling
+itself <em>I’ll do it tomorrow</em> — and tomorrow it says the same thing.</p>
+<p>This chapter is about the gap between what a hyperbolic agent <strong>believes it will
+do</strong> and what it <strong>actually does</strong>. For a Naive agent those two stories diverge,
+and that divergence <em>is</em> time inconsistency. The glyphs and scoring are on the
+<a href="#the-pac-man-maze-a-legend">shared legend</a>; here we only need <em>work</em> and <em>wait</em>.</p>
+<h2 id="why-the-reversal-happens"><a class="header" href="#why-the-reversal-happens">Why the reversal happens</a></h2>
+<p>The hyperbolic discount factor weights a reward by how many subjective steps away
+it sits. In <code>biased_planners.cljs</code> it is one line:</p>
+<pre><code class="language-clojure">(defn delta
+  "Hyperbolic discount factor at subjective delay `d`: 1/(1 + k·d).
+   δ(k,0)=1; strictly decreasing in d for k&gt;0; k=0 ⇒ δ≡1 (no discounting)."
+  [k d]
+  (/ 1.0 (+ 1.0 (* (double k) (double d)))))
+</code></pre>
+<p>At <code>k = 0</code> this is flat — <code>δ(0, d) = 1</code> for every <code>d</code>, recovering the unbiased
+exponential agent. For <code>k &gt; 0</code> it drops fast and then <em>flattens</em>: the companion
+test pins <code>δ(2, 3) = 1/7</code> and checks <code>δ(1, ·)</code> is strictly decreasing. The
+flattening is the whole story. Seen from far away (large delay) two future
+rewards look almost equally distant, so the agent happily prefers the larger
+later one. Seen from up close (delay 0) the near reward towers over the far one.
+As the agent walks toward a decision, the curve under its feet steepens and its
+preference <em>reverses</em>.</p>
+<p><img src="figures/ch09-discount-curves.png" alt="Hyperbolic versus exponential discount curves: the exponential curve decays at a constant proportional rate while the hyperbolic curve drops steeply at first and then flattens, so two distant rewards look nearly equal but a near reward dominates — the crossing that produces preference reversal."></p>
+<p>The exponential curve never crosses itself under a shift in viewpoint; the
+hyperbolic one does. That crossing is exactly the procrastination spiral: from
+tomorrow’s vantage, working looks worth it; from today’s, waiting always wins.</p>
+<h2 id="believe-versus-do"><a class="header" href="#believe-versus-do">Believe versus do</a></h2>
+<p>The agent’s recursion carries two clocks. Objective time <code>t</code> drives the deadline;
+subjective delay <code>d</code> drives <code>delta</code>. The single line that separates a Naive agent
+from a Sophisticated one is which delay it hands to its <em>simulated future self</em>
+when predicting that self’s action:</p>
+<pre><code class="language-clojure">(defn bias-&gt;perceived-delay
+  "The perceivedDelay function the agent uses for its SIMULATED future self when
+   choosing that self's action (agentmodels: perceivedDelay = naive ? delay+1 : 0).
+     :naive         → (fn [d] (inc d))   ; believes future self stays patient
+     :sophisticated → (fn [_] 0)         ; models future self's present bias
+   Only the policy that picks the simulated future action uses this; the
+   continuation VALUE always uses the true d+1. At k=0 (δ≡1) both coincide and
+   equal the unbiased agent. (Default → sophisticated/0 for any other key.)"
+  [bias]
+  (case bias
+    :naive         inc
+    :sophisticated (constantly 0)
+    (constantly 0)))
+</code></pre>
+<p>A <strong>Naive</strong> agent (<code>inc</code>) models its future self as keeping the same ever-growing
+delay clock — so the future always looks patient, and the agent predicts it will
+resist temptation later. A <strong>Sophisticated</strong> agent (<code>constantly 0</code>) correctly
+models its future self as re-planning from delay 0, carrying the same present
+bias it has now, so it <em>foresees</em> that it would succumb.</p>
+<p>This belief is captured by <code>planned-rollout</code> — the trajectory the agent <em>thinks</em>
+it will follow. At each predicted future step it advances the policy delay through
+its own <code>pd-fn</code>:</p>
+<pre><code class="language-clojure">(defn planned-rollout
+  "The trajectory the agent BELIEVES it will follow — predicting each future
+   action with the perceivedDelay its OWN recursion uses (Naive: the policy delay
+   grows along the plan, so the far future looks patient; Sophisticated: it stays
+   0). Contrast with `simulate-biased-mdp`, which re-plans from delay 0 each REAL
+   step. For a Naive agent the two DIVERGE — its plan reaches the patient goal while
+   it actually defects to the nearby temptation — which is exactly time-inconsistency.
+   For a Sophisticated (or k=0) agent plan == do. ..."
+  [{:keys [mdp eu params]} start horizon]
+  (let [{:keys [T terminals A]} mdp
+        pd-fn (bias-&gt;perceived-delay (:bias params))
+        H     (:horizon params)]
+    (loop [s start, d 0, step 0, states [start], actions []]
+      (if (or (&gt;= step horizon) (contains? terminals s))
+        {:states states :actions actions}
+        (let [a  (argmax-of (mapv #(eu s % H d) (range A)))    ; predicted action at policy-delay d
+              s' (agent/sample-next T s a)]
+          (recur s' (pd-fn d) (inc step) (conj states s') (conj actions a)))))))
+</code></pre>
+<p>Notice the recursion: after each predicted step the delay becomes <code>(pd-fn d)</code>.
+For a Naive agent that is <code>(inc d)</code>, so the believed future drifts ever more
+patient and the plan eventually grabs the pellet. The plan is a fiction the agent
+tells itself.</p>
+<p>What the agent <em>actually</em> does is a different function, and the difference is one
+word — it re-plans from delay 0 on every real step:</p>
+<pre><code class="language-clojure">(defn simulate-biased-mdp
+  "Roll a biased MDP agent out from `start` for ≤ horizon steps (= agent/simulate-mdp's
+   :host path, which re-plans via :act each step — the d=0 re-planning that drives
+   Naive time-inconsistency). :rollout-mode :fused is unsupported: biased agents
+   carry no tensor :Q, so rollout/rollout-mdp would deref nil (genmlx-m3nn) — use
+   the default :host rollout."
+  [ag start horizon &amp; [opts]]
+  (when (= (:rollout-mode opts) :fused)
+    (throw (ex-info (str "simulate-biased-mdp does not support :rollout-mode :fused — "
+                         "biased agents have no tensor :Q; use the default :host rollout")
+                    {:agent-keys (keys ag)})))
+  (agent/simulate-mdp ag start horizon opts))
+</code></pre>
+<p><code>simulate-biased-mdp</code> delegates to the ordinary host rollout, whose <code>:act</code>
+evaluates expected utility at delay 0 each step (the agent’s <code>:act</code> is built to
+re-plan from delay 0 — agentmodels’ <code>delay || 0</code>). So <code>planned-rollout</code> lets the
+delay grow along the imagined future; <code>simulate-biased-mdp</code> resets it to 0 every
+real step. For a Naive agent these read out two different trajectories from the
+<em>same</em> expected-utility function. That mismatch is time inconsistency made into
+two callable functions.</p>
+<h2 id="what-the-numbers-say"><a class="header" href="#what-the-numbers-say">What the numbers say</a></h2>
+<p>Build the procrastination MDP (reward 4.5, work cost −1, wait cost −0.1, deadline
+10) and sweep the discount rate <code>k</code>. At <code>k = 0</code> the Naive agent <strong>works on day 0</strong>
+— it is just the unbiased agent. As <code>k</code> climbs the first work-day is
+non-decreasing (it procrastinates more), and the test pins the headline reversal:
+the Naive agent <strong>works at <code>k = 0</code> but never completes at <code>k = 4</code></strong>, and still
+fails to finish by the deadline at <code>k = 8</code>. The preference flips.</p>
+<p>The mechanism is asserted directly at the start state <code>W_0</code>. With <code>k = 4</code>:</p>
+<pre><code class="language-clojure">(let [n4 (bp/make-biased-mdp-agent {:mdp pmdp :alpha ##Inf :gamma 1.0 :n-iters 14}
+                                   {:discount 4.0 :bias :naive})
+      H  14, eu (:eu n4)]                       ; action 0 = wait, 1 = work
+  ;; PLANS to work — its planned-rollout contains a work action
+  (some #(= 1 %) (:actions (bp/planned-rollout n4 0 10)))
+  ;; but NEVER works in reality — simulate-biased-mdp contains no work action
+  (not-any? #(= 1 %) (:actions (bp/simulate-biased-mdp n4 0 10)))
+  ;; W_0 preference reverses:
+  (and (&gt; (eu 0 0 H 0) (eu 0 1 H 0))     ; at d=0: EU(wait) &gt; EU(work)
+       (&gt; (eu 0 1 H 1) (eu 0 0 H 1))))   ; at d=1: EU(work) &gt; EU(wait)
+</code></pre>
+<p>The same <code>eu</code> function says <em>wait beats work at delay 0</em> and <em>work beats wait at
+delay 1</em>. From tomorrow’s view (<code>d = 1</code>) the agent prefers to have worked; from
+today’s view (<code>d = 0</code>) it prefers to wait. <code>planned-rollout</code> reads the optimistic
+<code>d = 1</code>-and-beyond story and reports a plan that works; <code>simulate-biased-mdp</code>
+re-reads <code>d = 0</code> every step and reports a trajectory that never does.</p>
+<p>The Sophisticated agent, seeing this in advance, behaves differently — and the
+test quantifies the advantage: at <code>k = 2</code> the Sophisticated agent <strong>completes
+(works)</strong> where the Naive agent <strong>never does</strong>, and across every swept <code>k</code> in
+<code>[0, 0.5, 1, 2, 4]</code> the Sophisticated agent works no later than the Naive one.
+Foreseeing the spiral is what lets it commit.</p>
+<p>The contrast survives in space, too. In the Restaurant-Choice grid (Section 3 of
+the same test) a Naive agent with <code>k = 3</code> <strong>plans to reach the high-value Veg
+cache but is actually captured by the adjacent Donut</strong>, while the Sophisticated
+agent’s plan equals its action — both reach Veg. <code>planned-rollout</code> returns Veg;
+<code>restaurant-endpoint</code> returns Donut-North; the two disagree, and that disagreement
+is, once more, the whole of the phenomenon.</p>
+<p>Next: when the agent cannot even see far enough to plan — bounding the look-ahead
+itself, with reward-myopia and bounded value of information.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="bounded-agents-reward-myopia-and-update-myopia"><a class="header" href="#bounded-agents-reward-myopia-and-update-myopia">Bounded Agents: Reward-Myopia and Update-Myopia</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 5c-myopic.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 5c (myopic agents).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-6"><a class="header" href="#the-pac-man-scenario-6">The Pac-Man scenario</a></h2>
-<p>Reward-myopic Pac-Man only looks C_g steps ahead — greedy about nearby pellets, may miss optimal routes to power pellets (epsilon-greedy-like on bandits). Update-myopic Pac-Man assumes belief updates stop after C_m steps: with hidden ghosts observable only by moving adjacent, a C_m=1 Pac-Man won’t plan a route that first reveals ghost positions then exploits the info — the Restaurant-Search failure mode. Runtime: update-myopic scales better than full POMDP.</p>
-<h2 id="what-this-chapter-builds-on-6"><a class="header" href="#what-this-chapter-builds-on-6">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/biased_planners.cljs (reward-myopia C_g and update-myopia C_m bounds in the delay-indexed recursion, line-mdp reward-myopia corridor, make-biased-pomdp-agent with C_m bound, simulate-biased-pomdp, voi-world value-of-information walk-and-check POMDP). Limit recovery biased(C_g=Inf) matches standard agent — agentmodels_biased_planners_test.cljs. Bandit reward-myopia regret-ratio + runtime-scaling timing harness to write for figures.</li>
-</ul>
-<h2 id="live-figures-planned-6"><a class="header" href="#live-figures-planned-6">Live figures (planned)</a></h2>
-<ul>
-<li>ch11-rewardmyopic-bandit.png — average-reward-near-optimal-despite-myopia bar/line</li>
-<li>ch11-voi-failure.gif — update-myopic Pac-Man avoiding the info-revealing detour (voi-world)</li>
-<li>ch11-runtime-scaling.png — runtime vs trials: update-myopic vs optimal POMDP line chart</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>A rational Pac-Man plans to the horizon and assigns the right price to every fact he could discover. Real Pac-Man — and the people agentmodels.org wants to model — does neither. This chapter adds two <em>bounds</em> to the planner and watches them make Pac-Man fail in two distinct, characteristically human ways. The glyph and scoring legend lives on the <a href="#the-pac-man-maze-a-legend">shared page</a>; here we only change how far ahead Pac-Man can think.</p>
+<p>Both bounds live in the same delay-indexed expected-utility recursion the discounting chapter introduced. The key idea: the recursion carries a <em>subjective delay</em> <code>d</code> alongside objective time, and each bound is a single comparison against <code>d</code>.</p>
+<h2 id="reward-myopia-a-horizon-cap-c_g"><a class="header" href="#reward-myopia-a-horizon-cap-c_g">Reward-myopia: a horizon cap C_g</a></h2>
+<p>Reward-myopia says: value everything past <code>C_g</code> look-ahead steps at exactly zero. Pac-Man becomes greedy about whatever pellet is close and blind to anything further out. The whole mechanism is one extra clause in the base case of the recursion:</p>
+<pre><code class="language-clojure">(defn delta
+  "Hyperbolic discount factor at subjective delay `d`: 1/(1 + k·d).
+   δ(k,0)=1; strictly decreasing in d for k&gt;0; k=0 ⇒ δ≡1 (no discounting)."
+  [k d]
+  (/ 1.0 (+ 1.0 (* (double k) (double d)))))
+</code></pre>
+<p><code>delta</code> is the discount; reward-myopia rides on top of it. Inside <code>build-biased-eu</code> the expected-utility function <code>eu</code> reads:</p>
+<pre><code class="language-clojure">(fn [s a t d]
+  (let [u (* (delta k d) (get-in Rh [s a]))]
+    (if (or (terms s) (&lt;= t 1) (&gt;= d cg))
+      u
+      (+ u (* gamma
+              (reduce-kv
+                (fn [acc s' pr]
+                  (if (pos? pr)
+                    (+ acc (* pr (backup s' (dec t) (inc d) (pd-fn d))))
+                    acc))
+                0.0 (get-in Th [s a])))))))
+</code></pre>
+<p>Read the <code>if</code>: the agent stops recursing — returns only the discounted immediate reward <code>u</code> — when the state is terminal, when objective time runs out (<code>t ≤ 1</code>), <strong>or when the subjective delay reaches the cap</strong> (<code>d ≥ cg</code>, where <code>cg</code> is <code>:reward-myopic-bound</code>). Everything beyond <code>C_g</code> steps contributes nothing. The default is <code>##Inf</code>: with no cap the clause never fires and you get the ordinary unbounded agent back.</p>
+<p>The companion test builds a one-row corridor — a small reward one step to Pac-Man’s left, a big reward five steps to his right — and asks where he heads first:</p>
+<pre><code class="language-clojure">(defn line-first-action [cg]
+  ((:act (bp/make-biased-mdp-agent {:mdp lmdp :alpha ##Inf :gamma 1.0 :n-iters 10}
+                                   {:discount 0.0 :bias :sophisticated :reward-myopic-bound cg}))
+   l-start))
+;; action 0 = left (toward small/near), 1 = right (toward big/far)
+</code></pre>
+<p>The unbounded agent (<code>C_g = ##Inf</code>) walks <strong>right</strong>, toward the big reward five steps away — action <code>1</code>. The capped agent (<code>C_g = 2</code>) cannot see five steps, so the big reward is invisible and it grabs the small one to its <strong>left</strong> — action <code>0</code>. Same world, same utilities; the only difference is how far the agent is allowed to look.</p>
+<p>This is also the limit-recovery anchor. With <code>:discount 0.0</code> the discount <code>δ ≡ 1</code>, the recursion no longer depends on <code>d</code>, and a biased agent with <code>C_g = ##Inf</code> reproduces the standard agent <em>exactly</em>. The test confirms it numerically against both the recursive expected utility and the tensor value-iteration <code>Q</code>: across every state-action pair, the maximum disagreement is <strong>below 1e-4</strong> (for both a soft α = 1.0 policy and a hard α = ∞ policy), and the first action at the start state agrees. The bound is a true superset — turn the knob to infinity and the bias disappears with no residue.</p>
+<h2 id="update-myopia-a-belief-update-cap-c_m-and-the-failure-of-curiosity"><a class="header" href="#update-myopia-a-belief-update-cap-c_m-and-the-failure-of-curiosity">Update-myopia: a belief-update cap C_m, and the failure of curiosity</a></h2>
+<p>Reward-myopia bounds how far you look for <em>reward</em>. Update-myopia bounds how far you look for <em>information</em> — and it is the more interesting failure, because it is the failure to be curious.</p>
+<p>In a POMDP, a good plan can be worth taking <em>because it reveals something</em>: walk to the signpost, learn where the reward is, then commit. Valuing that detour requires the planner to simulate its own future belief <em>updating</em>. Update-myopia severs exactly that: the agent plans as if it will stop learning after <code>C_m</code> steps. Past that point its simulated future self is frozen — it keeps acting but never revises its belief — so any information available only farther ahead is priced at zero. The agent under-explores.</p>
+<p>In the belief-space recursion this is one gate on the Bayes filter:</p>
+<pre><code class="language-clojure">;; I_{d&lt;C_m}: keep the observation factor while d&lt;C_m, else ignore it (the
+;; simulated future self stops learning — push-forward only, which for a
+;; world-independent transition leaves the belief unchanged).
+(gated   (fn [belief s' o d]
+           (if (&lt; d cm) (bayes-update worlds observe belief s' o) belief))
+</code></pre>
+<p>While the simulated delay <code>d</code> is below the cap <code>cm</code> (<code>:update-myopic-bound</code>), <code>gated</code> runs a real Bayesian update on the belief. Once <code>d ≥ cm</code> it returns the belief untouched — observations stop counting. Crucially this gate biases <em>planning only</em>: the real rollout filter, <code>:update-belief</code>, is the ungated <code>bayes-update</code>, so the agent genuinely keeps learning as it walks — it just fails to <em>anticipate</em> that it will.</p>
+<p>The test world is a walk-and-check POMDP. Two goals — A at one end of the top row, B at the other — and a signpost one step below the start that reveals which goal actually pays. The prior is <code>{:A 0.55 :B 0.45}</code> and the true rewarding goal is B (the minority of the prior).</p>
+<p><img src="figures/ch05-haunted.png" alt="A small hidden-state maze: Pac-Man’s start at top-center with two candidate caches at opposite ends of the top corridor, and a signpost floor cell one step below the start that reveals which cache is the true reward. An update-myopic Pac-Man, planning as if his belief will never update, sees no value in the one-step detour down to the signpost and commits blind."></p>
+<p>This is the haunted maze the legend describes — the reward is hidden, and the only way to learn it is to detour onto the signpost. The figure shows what an update-myopic agent never plans: the small step <em>down</em> to read the sign before choosing a corridor.</p>
+<pre><code class="language-clojure">(def opt (pomdp-agent ##Inf))   ; optimal: values information
+(def myo (pomdp-agent 0))        ; update-myopic: never updates in look-ahead
+;; action 3 = down = the 1-step detour onto the signpost (which reveals the world)
+</code></pre>
+<p>The optimal agent (<code>C_m = ##Inf</code>) chooses action <strong>3</strong> — down, onto the signpost — first. The update-myopic agent (<code>C_m = 0</code>) does <strong>not</strong>: with its planned belief frozen at the prior, the detour buys nothing, so it skips it. Rolled out under the true world B, the consequences diverge cleanly. The optimal agent walks and checks, then reaches the <strong>true goal B</strong>. The myopic agent commits blind to the higher-prior goal <strong>A</strong> — and is wrong.</p>
+<p>You can see the value-of-information directly in the numbers. Comparing the value of stepping toward the signpost against stepping toward goal A, the optimal agent prefers the detour by strictly more than the myopic one does. Stronger: the optimal agent values the <em>very same detour action</em> by <strong>more than 1.0</strong> above the myopic agent — roughly the gap between collecting the true reward and committing blind. That gap is information value, not a one-step time-cost artifact: the myopic agent’s planner literally cannot represent that the step is about to teach it something.</p>
+<p>A reassuring closing detail from the test: the bound only touches planning. Hand the agent an un-normalised prior <code>{:A 1.1 :B 0.9}</code> and it normalises internally to sum 1, then acts <em>identically</em> to the <code>{0.55, 0.45}</code> agent — the belief recursion always reasons over a genuine distribution.</p>
+<h2 id="two-knobs-one-recursion"><a class="header" href="#two-knobs-one-recursion">Two knobs, one recursion</a></h2>
+<p>Reward-myopia (<code>d ≥ C_g</code> truncates value) and update-myopia (<code>d &lt; C_m</code> gates learning) are independent comparisons against the same subjective-delay counter. Neither needs a new engine, a new handler, or a new inference path — they are pure host arithmetic over the expected-utility recursion, and at the unbounded limit both vanish into the rational agent. Bound a planner two different ways and you get two different shapes of human shortsightedness from one line of code each.</p>
+<p>Next: when the <em>world itself</em> is uncertain, and we must do inference over an agent’s plan rather than just run it forward.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="joint-inference-of-biases-and-preferences-i-procrastination-and-no-exploration"><a class="header" href="#joint-inference-of-biases-and-preferences-i-procrastination-and-no-exploration">Joint Inference of Biases and Preferences I: Procrastination and No-Exploration</a></h1>
+<h1 id="joint-inference-of-biases-and-preferences-i"><a class="header" href="#joint-inference-of-biases-and-preferences-i">Joint Inference of Biases and Preferences I</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 5d-joint-inference.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 5d (joint inference).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-7"><a class="header" href="#the-pac-man-scenario-7">The Pac-Man scenario</a></h2>
-<p>A Pac-Man that never explores an unknown corridor: the Optimal model explains it as strongly preferring the known reward; the Possibly-Reward-myopic model explains it as greedy (low C_g). The procrastination scenario: a Pac-Man that must hit a switch before a countdown — Naive hyperbolic Pac-Man keeps deferring, while the Optimal-only model wrongly infers the switch reward is tiny + noise is huge. Online posteriors revise sharply when the task finally completes.</p>
-<h2 id="what-this-chapter-builds-on-7"><a class="header" href="#what-this-chapter-builds-on-7">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — joint inference over agent TYPE and parameters (U, alpha, b0, k, C). Tests: test/genmlx/agentmodels_5d_joint_test.cljs (optimal explains waiting via E[reward]~0.530 + E[alpha]~457.5, predictWorkLastMinute~0.006; discounting via E[discount]~2.63, predict~0.216; posterior revision on completion E[reward]&gt;2.0 and E[alpha] collapses &gt;100x; online sequence 9 entries). Example examples/agentmodels/joint_5d_inference.cljs. Built on biased_planners.cljs + inverse.cljs p/assess + standard inference backends.</li>
-</ul>
-<h2 id="live-figures-planned-7"><a class="header" href="#live-figures-planned-7">Live figures (planned)</a></h2>
-<ul>
-<li>ch12-procrastination-timeseries.gif — posterior E[reward], E[alpha], E[discount], predict-work over t=0..9, optimal vs discounting (presentation bars per step)</li>
-<li>ch12-noexplore-horizon.png — E[chocolate utility] and E[C_g] vs time horizon 2..10, optimal vs reward-myopic</li>
-<li>ch12-completion-revision.png — before/after posterior bars when the switch is finally hit</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>In every earlier chapter we knew what kind of mind we were watching. We assumed a
+discount rate and inferred a reward, or assumed optimality and inferred noise. But a
+real observer faces a harder question: <em>which kind of agent is this in the first
+place?</em> A Pac-Man who waits at a corridor mouth and never explores the dark branch
+might be perfectly rational and simply uninterested — or biased, and merely
+short-sighted about a payoff down the corridor. The behaviour is the same; the
+explanations are not. So we infer the agent’s <strong>type and its parameters jointly</strong>,
+and let the data say which story it prefers.</p>
+<p>See <a href="#the-pac-man-maze-a-legend">the legend</a> for the maze glyphs and the −1 step cost.</p>
+<h2 id="two-models-for-the-same-waiting"><a class="header" href="#two-models-for-the-same-waiting">Two models for the same waiting</a></h2>
+<p>The classic test case is <em>procrastination</em>. A Pac-Man must hit a switch before a
+countdown expires. Each day it can <strong>wait</strong> (cheap, but the deadline creeps closer)
+or <strong>work</strong> (pay a cost now, finish the task). Our Pac-Man waits eight days running.
+What explains that?</p>
+<p>Two models compete over the very same observation. An <strong>Optimal</strong> model fixes the
+discount to zero — no present bias allowed — so the only way it can rationalize all
+that waiting is to decide the switch reward must be tiny <em>and</em> the agent’s choices
+must be very noisy. A <strong>Possibly-Discounting</strong> model lets the hyperbolic discount
+range over <code>{0, ½, 1, 2, 4}</code>; it can read the waiting as ordinary time-inconsistency,
+keeping the reward respectable and the noise low.</p>
+<p>Both are the <em>same</em> forward planner — <code>bp/make-biased-mdp-agent</code> over a
+<code>bp/procrastination-mdp</code> — wired into one generative function that traces three
+latents:</p>
+<pre><code class="language-clojure">(defn joint-procrastination-model
+  "Joint GF tracing :reward, :alpha, :discount (indices into finite prior boxes);
+   the sampled tuple selects a precomputed forward agent; one softmax-action site
+   :a0 :a1 ... per observed wait-state, scored at the remaining horizon
+   (horizon-fn s). All agents + EU-row arrays precomputed before `gen` (the body is
+   re-run per enumerated tuple, so it only indexes)."
+  [{:keys [states horizon-fn reward-vals alpha-vals discount-vals alpha-probs] :as cfg} agents]
+  (let [reward-box   (h/uniform-draw reward-vals)
+        alpha-box    (if alpha-probs (h/weighted-draw alpha-vals alpha-probs) (h/uniform-draw alpha-vals))
+        discount-box (h/uniform-draw discount-vals)
+        rows (into {} (for [[k {:keys [agent]}] agents]
+                        [k (mapv (fn [s] (mx/array (eu-row-at agent s (horizon-fn s)) mx/float32))
+                                 states)]))]
+    (gen []
+      (let [ri (trace :reward   (:dist reward-box))
+            ai (trace :alpha    (:dist alpha-box))
+            di (trace :discount (:dist discount-box))
+            er (rows [ri ai di])
+            al (:alpha (agents [ri ai di]))]
+        (doseq [i (range (count states))]
+          (trace (keyword (str "a" i)) (h/softmax-action al (nth er i))))
+        [ri ai di]))))
+</code></pre>
+<p>Read the body top to bottom and it is just a story about an agent. First sample the
+three hidden settings — reward, softmax noise <code>alpha</code>, discount — as indices into
+finite prior boxes. That tuple <em>selects</em> one of the forward agents we precomputed
+(no planning happens inside <code>gen</code>; the body only indexes the cached expected-utility
+rows). Then, for each observed wait-state, the agent emits an action from its softmax
+policy <code>h/softmax-action</code>. The action site is scored at the <strong>remaining</strong> horizon —
+the deadline shrinks as days pass — which is the faithful reading of agentmodels’
+<code>observe(act(state, 0), action)</code>. The likelihood of “wait” on day <code>i</code> is exactly the
+policy probability of waiting; there is no bespoke likelihood function anywhere.</p>
+<h2 id="inverting-it-by-exact-enumeration"><a class="header" href="#inverting-it-by-exact-enumeration">Inverting it by exact enumeration</a></h2>
+<p>Because the priors are finite, the inference is exact: enumerate every
+<code>[reward alpha discount]</code> tuple, ask the model to <code>p/assess</code> the full observation
+under that tuple, and normalize the resulting log-weights.</p>
+<pre><code class="language-clojure">(defn joint-posterior
+  "Exact P(reward,alpha,discount | actions). Enumerate the joint finite prior; for
+   each tuple assess the joint GF on the full choicemap; normalize. Returns
+   {:joint {[ri ai di] prob} :marginals {:reward {...} :alpha {...} :discount {...}}}."
+  [{:keys [states actions reward-vals alpha-vals discount-vals] :as cfg} agents]
+  (assert (= (count states) (count actions))
+          (str "5d joint: states/actions length mismatch " (count states) " vs " (count actions)))
+  (let [model (joint-procrastination-model cfg agents)
+        tuples (for [ri (range (count reward-vals))
+                     ai (range (count alpha-vals))
+                     di (range (count discount-vals))] [ri ai di])
+        ;; assess args are [] — joint-procrastination-model returns a gen-fn closing
+        ;; over cfg/agents/rows, so its (gen []) body takes no positional args.
+        logw (into {} (for [[ri ai di :as tup] tuples]
+                        [tup (mx/item (:weight (p/assess (dyn/auto-key model) []
+                                                         (multi-full-cm ri ai di actions))))]))
+        post (inv/normalize-logs logw)]
+    {:joint post
+     :marginals {:reward   (marginal post reward-vals 0)
+                 :alpha    (marginal post alpha-vals 1)
+                 :discount (marginal post discount-vals 2)}}))
+</code></pre>
+<p>The engine never changed. <code>p/assess</code> is the same GFI operation used everywhere in the
+library; here it scores a fully-constrained choicemap (the latent tuple plus the
+observed actions) and hands back a log-weight. Joint inference is just enumeration
+plus normalization on top of that contract — exactly the orthogonality this book keeps
+arguing for. The result is a joint distribution over the agent’s hidden type, with
+clean marginals for each latent.</p>
+<p><img src="figures/ch13-bias-posterior.png" alt="A joint posterior over an agent’s hidden parameters, shown as a bar distribution that concentrates probability mass on a small region of the latent space — the kind of distribution joint inference returns."></p>
+<p>The figure above is illustrative — a representative joint posterior over an agent’s
+hidden settings, not these exact procrastination marginals. What you should take from
+it is the <em>shape</em>: joint inference returns a full distribution over the type, with
+mass pooling on the explanations that fit, rather than a single point estimate.</p>
+<h2 id="what-the-two-models-conclude"><a class="header" href="#what-the-two-models-conclude">What the two models conclude</a></h2>
+<p>Run both models on the eight observed waits (<code>j5d/analyze</code>) and the contrast is
+stark. The <strong>Optimal</strong> model, forbidden from invoking present bias, is cornered into
+a low-reward, high-noise explanation: its posterior reward expectation collapses to
+<strong>E[reward] ≈ 0.530</strong> and its noise expectation balloons to <strong>E[alpha] ≈ 457.5</strong>.
+Translated: “the switch is barely worth anything, and this agent is essentially
+flipping coins.” The <strong>Possibly-Discounting</strong> model tells a kinder story — it keeps
+<strong>E[reward] ≈ 2.849</strong> and reads the waiting off the discount instead, with
+<strong>E[discount] ≈ 2.631</strong>.</p>
+<p>This shows up directly in prediction. Asked for the posterior-predictive probability
+that Pac-Man finally works at the last minute, the Optimal model says
+<strong>P(work) ≈ 0.0056</strong> while the discounting model says <strong>P(work) ≈ 0.216</strong> — a factor
+of more than thirty between them (both still below 0.3, because eight straight waits
+is strong evidence of a procrastinator either way).</p>
+<h2 id="the-moment-the-task-completes"><a class="header" href="#the-moment-the-task-completes">The moment the task completes</a></h2>
+<p>The decisive test is what happens when the waiting <em>ends</em>. Append a ninth
+observation — Pac-Man finally hits the switch at <code>W_8</code> — and re-infer. The two models
+revise in opposite ways.</p>
+<pre><code class="language-clojure">(defn online-posteriors
+  "Posterior expectations + predict-work after each prefix of the observed
+   sequence (index 0 = prior). Reuses joint-posterior on truncated observations."
+  [{:keys [states actions] :as cfg} agents predict-state predict-horizon]
+  (mapv (fn [L]
+          (let [c (assoc cfg :states (vec (take L states)) :actions (vec (take L actions)))
+                {:keys [joint marginals]} (joint-posterior c agents)]
+            {:n L
+             :E-reward   (expect (:reward marginals))
+             :E-alpha    (expect (:alpha marginals))
+             :E-discount (expect (:discount marginals))
+             :predict-work (predict-work joint agents predict-state predict-horizon)}))
+        (range (inc (count states)))))
+</code></pre>
+<p>The Optimal model’s “noisy and indifferent” story cannot survive a deliberate
+completion. Its reward expectation jumps by <strong>more than 2.0</strong>, and — most tellingly —
+its inferred noise <em>collapses by over 100×</em>: the moment the agent acts purposefully,
+“random flailing” stops being a credible account. The discounting model barely
+flinches: its alpha changes by <strong>less than 3×</strong> (it never needed high noise), while
+its reward rises moderately by <strong>more than 1.0</strong>. The Optimal model’s alpha revision
+dwarfs the discounting model’s — it had the most to take back.</p>
+<p>The online sequence makes the build-up visible too. It returns <strong>nine</strong> entries —
+the prior plus one per observation. Index 0 is the untouched prior (its
+<code>E[discount]</code> sits exactly at the prior mean <strong>1.5</strong>). As the waits accumulate,
+<code>predict-work</code> <em>falls</em> and <code>E[discount]</code> <em>rises</em> toward <strong>≈ 2.63</strong> — the observer
+watching the evidence pile up and concluding, day by day, that it is looking at a
+procrastinator.</p>
+<p>Next we extend the same joint machinery from a one-dimensional countdown to spatial
+exploration — inferring not just <em>how</em> biased a Pac-Man is, but <em>whether the bias
+exists at all</em>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="joint-inference-ii-was-that-detour-noise-bias-or-taste"><a class="header" href="#joint-inference-ii-was-that-detour-noise-bias-or-taste">Joint Inference II: Was That Detour Noise, Bias, or Taste?</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 5e-joint-inference.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 5e (joint inference II).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-8"><a class="header" href="#the-pac-man-scenario-8">The Pac-Man scenario</a></h2>
-<p>A Pac-Man that passes near a power pellet but eats a regular pellet first could be (a) noisy, (b) a Naive hyperbolic discounter tempted by the immediate pellet, or (c) genuinely preferring regular pellets. Joint inference over all three from repeated plays: observing the same ‘mistake’ three times collapses the noise explanation. Expanding the preference space (DonutN != DonutS, positive time cost) lets alternative tastes compete with discounting. Uses the full [immediate, delayed] restaurant-twin geometry.</p>
-<h2 id="what-this-chapter-builds-on-8"><a class="header" href="#what-this-chapter-builds-on-8">What this chapter builds on</a></h2>
+<p>Watch a Pac-Man pass right by a power pellet — fifty points, glowing cyan, one corridor away — and stop to eat a plain ten-point pellet first. Why? Three stories fit equally well from a single glance:</p>
 <ul>
-<li><strong>genmlx code:</strong> exists — full joint model (discount in {0,1}, sophisticatedOrNaive, vegMinusDonut, donutTempting summary stats), conditioning on Naive path once vs three times, two-donut and positive-timeCost competing explanations. Tests: test/genmlx/agentmodels_5e_joint_test.cljs ([imm,del] 6×8 grid 48+4 twins=52 states, 2-step stay delivers delta(d)*imm + delta(d+1)*del disU formula, joint k+utility inference) + agentmodels_biased_inverse_test.cljs (naive EU(a0)=8/3 tie, soph=2.5, pi_naive(a0)=0.5 vs pi_soph(a0)=0, prior decomposition via p/assess on {:bias} alone, posterior concentrates on :sophisticated). Examples restaurant_joint_inference.cljs, biased_inverse.cljs.</li>
+<li>He is <strong>noisy</strong>: a softmax actor with low <code>alpha</code> who simply slipped.</li>
+<li>He is <strong>biased</strong>: a <em>Naive</em> hyperbolic discounter, tempted by the nearer reward because his future self looks (to him) like it will hold out.</li>
+<li>He has <strong>taste</strong>: he genuinely values plain pellets more than power pellets.</li>
 </ul>
-<h2 id="live-figures-planned-8"><a class="header" href="#live-figures-planned-8">Live figures (planned)</a></h2>
+<p>One observation cannot tell these apart. This chapter is about what <em>can</em>: watching the same detour happen again, and giving taste a seat at the table so it has to compete with bias. (For the glyphs and the −1-per-step scoring, see <a href="#the-pac-man-maze-a-legend">the legend</a>.)</p>
+<h2 id="the-temptation-maze-as-an-mdp"><a class="header" href="#the-temptation-maze-as-an-mdp">The temptation maze as an MDP</a></h2>
+<p>We strip the maze down to its decision spine. From the start, Pac-Man can head toward the <strong>temptation gate</strong> (action <code>0</code>) or take the <strong>safe route</strong> (action <code>1</code>). At the gate he can succumb and eat the donut now (Rd = 5), or continue on to the more valuable veg (Rv = 8). The safe route reaches veg with no temptation along the way. Here is the hand-built MDP, copied verbatim from <code>examples/agentmodels/biased_inverse.cljs</code>:</p>
+<pre><code class="language-clojure">(defn temptation-mdp
+  "Build the minimal 5-state / 2-action temptation MDP (see namespace notes).
+   Returns an MDP map {:S :A :T :R :terminals} feeding make-biased-mdp-agent."
+  []
+  (let [S 5
+        A 2
+        ;; T[s][a][s'] one-hot transitions
+        T-rows [[[0 1 0 0 0] [0 0 1 0 0]]    ; start : a0→tempt, a1→safe1
+                [[0 0 0 1 0] [0 0 0 0 1]]    ; tempt : a0→donut(eat), a1→veg(continue)
+                [[0 0 0 0 1] [0 0 0 0 1]]    ; safe1 : both → veg
+                [[0 0 0 1 0] [0 0 0 1 0]]    ; donut : absorbing
+                [[0 0 0 0 1] [0 0 0 0 1]]]   ; veg   : absorbing
+        R-rows [[0 0]                         ; start
+                [5 0]                         ; tempt : a0 eat donut (Rd=5), a1 continue
+                [0 0]                         ; safe1
+                [0 0]                         ; donut
+                [8 8]]                        ; veg   : Rv=8
+        T (mx/array (clj-&gt;js T-rows) mx/float32)
+        R (mx/array (clj-&gt;js R-rows) mx/float32)]
+    {:S S :A A :T T :R R :terminals {3 :donut 4 :veg}}))
+</code></pre>
+<p>The reward crossover is the whole trick. With hyperbolic discount <code>k = 1</code>, a self standing <em>at the gate</em> (delay 0) values the donut at <code>δ(1)·5 = 2.5</code> and veg at <code>δ(2)·8 = 8/3 ≈ 2.667</code> — so the gate-self would prefer veg, barely. But a self planning <em>from the start</em> (delay 1) values the donut even less. The result is a textbook preference reversal, and it splits the two biases cleanly. The companion test <code>agentmodels_biased_inverse_test.cljs</code> pins the expected utilities at the start state: the <strong>Naive</strong> agent sees <code>EU(start) = [8/3, 8/3]</code> — a dead tie, because he believes his future self will resist temptation, so both routes look like they reach veg. The <strong>Sophisticated</strong> agent sees <code>EU(start) = [2.5, 8/3]</code> — he foresees his own succumbing on the tempting route, and discounts it.</p>
+<p>Those expected utilities become softmax policies. At the decisive softmax limit (<code>alpha = ##Inf</code>):</p>
 <ul>
-<li>ch13-three-explanations.png — the ambiguous detour on the maze with three candidate causes</li>
-<li>ch13-once-vs-thrice.gif — posterior bars for sophisticatedOrNaive/discount/alpha after 1 vs 3 identical observations</li>
-<li>ch13-competing-tastes.png — prior vs posterior bars over vegMinusDonut, donutNGreaterDonutS, timeCost</li>
+<li><code>π_naive(a0) = 0.5</code>, <code>π_naive(a1) = 0.5</code> — the Naive agent is <em>indifferent</em> at the start and may head for temptation.</li>
+<li><code>π_soph(a0) = 0.0</code>, <code>π_soph(a1) = 1.0</code> — the Sophisticated agent <em>never</em> heads for temptation.</li>
 </ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>Heading for the gate is therefore diagnostic of Naivety; taking the safe route is evidence — but not proof — of Sophistication.</p>
+<h2 id="bias-as-a-traced-latent"><a class="header" href="#bias-as-a-traced-latent">Bias as a traced latent</a></h2>
+<p>The point of <code>genmlx.agents</code> is that an agent is a generative function, and the thing we want to infer about him — his bias — is just one more traced random choice inside it. The joint model below draws <code>:bias</code> from the prior, lets that draw <em>select</em> a precomputed forward planner, and then emits one softmax-action site per observed state:</p>
+<pre><code class="language-clojure">(defn biased-agent-model
+  [{:keys [states alpha prior mdp] :or {alpha ##Inf} :as cfg}]
+  (let [agents    (bias-agents cfg)
+        n-actions (:A mdp)
+        box       (if prior
+                    (h/weighted-draw bias-values prior)
+                    (h/uniform-draw bias-values))
+        ;; Precompute the policy logit array per (bias, state) ONCE — the gen body
+        ;; is re-run per IS particle, so it must only index, never rebuild arrays.
+        rows      (into {} (for [b bias-values]
+                             [b (mapv #(mx/array (clj-&gt;js (bp/eu-row (agents b) % n-actions)) mx/float32)
+                                      states)]))]
+    (gen []
+      (let [bi   (trace :bias (:dist box))
+            bias (h/draw-value box bi)
+            er   (rows bias)]
+        (doseq [t (range (count states))]
+          (trace (keyword (str "a" t))
+                 (h/softmax-action alpha (nth er t))))
+        bi))))
+</code></pre>
+<p>The likelihood of an observed action is <em>just the agent’s own softmax policy probability</em> — there is no bespoke likelihood function anywhere. Inverting the model is then mechanical: enumerate the finite bias prior, <code>assess</code> the full trajectory under each value, and normalize. Because the bias set is finite and <code>assess</code> only scores, this is the exact closed-form posterior — no sampling, no approximation. Inference is fully pluggable: the same model also accepts importance sampling as a cross-check, with no change to the agent.</p>
+<h2 id="one-detour-proves-little"><a class="header" href="#one-detour-proves-little">One detour proves little</a></h2>
+<p>Condition on a single safe-route observation. With a uniform prior over <code>{:naive :sophisticated}</code>, the test reports:</p>
+<pre><code>P(:naive | safe×1) = 1/3        P(:sophisticated | safe×1) = 2/3
+</code></pre>
+<p>That is the figure below: after watching the careful route exactly once, the odds are two-to-one that Pac-Man is Sophisticated rather than Naive (0.667 vs 0.333). The arithmetic is transparent — each safe step is twice as likely under Sophisticated (<code>π_soph(a1) = 1</code> vs <code>π_naive(a1) = 0.5</code>), so the 1:2 likelihood ratio tilts a 1:1 prior to a 1:2 posterior.</p>
+<p><img src="figures/ch13-bias-posterior.png" alt="Two posterior bars over Pac-Man’s bias after one safe-route observation: the Naive bar at one-third and the taller Sophisticated bar at two-thirds, a two-to-one lead."></p>
+<p>The mirror case is sharper. If Pac-Man instead heads <em>for</em> the gate even once, the Sophisticated story is annihilated — <code>π_soph(a0) = 0</code> — so <code>P(:naive | tempt×1) = 1.0</code> exactly. A single move toward temptation is a smoking gun; a single careful move is only suggestive.</p>
+<h2 id="seeing-it-three-times-collapses-the-noise-story"><a class="header" href="#seeing-it-three-times-collapses-the-noise-story">Seeing it three times collapses the noise story</a></h2>
+<p>Now the crux. A genuinely careless agent would slip <em>occasionally</em>, not reliably. So repeat the safe-route observation and watch the explanations sort themselves out. The exact posterior follows a clean law, asserted in the test as <code>P(:soph | n safe) = 1/(1 + (1/2)ⁿ)</code>:</p>
+<ul>
+<li>n = 1: P(:soph) = 2/3 ≈ 0.667</li>
+<li>n = 2: P(:soph) = 4/5 = 0.800</li>
+<li>n = 3: P(:soph) = <strong>8/9 ≈ 0.889</strong></li>
+</ul>
+<p>Each repeated detour multiplies the likelihood ratio by another factor of two, and the posterior climbs monotonically — the test verifies <code>P(:soph|×1) &lt; P(:soph|×2) &lt; P(:soph|×3)</code>. A noise explanation cannot keep up with that, because noise would not produce the <em>same</em> deliberate choice three times running. Repetition is what separates a systematic bias from a random slip.</p>
+<p>This identifiability survives softer rationality, too. Drop to a finite <code>alpha = 2</code>, where even the Sophisticated agent occasionally wanders toward temptation, and the posterior loosens but still points the right way: the test pins <code>P(:soph | safe×3) ≈ 0.5515</code> and the mirror <code>P(:naive | tempt×3) ≈ 0.5638</code>, both safely above one-half. An importance-sampling run of N = 5000 particles agrees with the exact answer to within 0.05, with effective sample size comfortably above N/4 — the pluggable sampler reproduces the closed-form posterior it had no part in deriving.</p>
+<h2 id="letting-taste-compete-with-bias"><a class="header" href="#letting-taste-compete-with-bias">Letting taste compete with bias</a></h2>
+<p>So far the only explanations on offer were bias and noise. But the original detour had a third reading — maybe Pac-Man just <em>likes plain pellets</em>. To let taste compete, we expand the latent space from one dimension to the full restaurant-twin preference table. The joint model in <code>restaurant_joint_inference.cljs</code> traces seven indices at once — the immediate and delayed utilities of donut and veg, the discount, the bias, and the softmax <code>alpha</code>:</p>
+<pre><code class="language-clojure">(defn joint-posterior
+  "Exact P(params | trajectory). Enumerate the joint finite prior; for each tuple
+   assess the joint GF on the full choicemap (latent indices + observed actions);
+   normalize. `:number-repeats` r conditions on the SAME action sequence r+1 times
+   (agentmodels numberRepeats — strengthens the evidence). Returns
+   {:joint {tuple prob} :posterior &lt;summary&gt; :prior &lt;summary&gt; :n-tuples n}."
+  [{:keys [states actions number-repeats] :or {number-repeats 0} :as spec} agents]
+  (assert (= (count states) (count actions))
+          (str "5e joint: states/actions length mismatch " (count states) " vs " (count actions)))
+  (let [model   (dyn/auto-key (joint-restaurant-model spec states agents))
+        reps    (inc number-repeats)
+        tuples  (keys agents)
+        logw    (into {}
+                      (for [tup tuples]
+                        [tup (* reps (mx/item (:weight (p/assess model []
+                                                                 (full-cm tup actions)))))]))
+        post    (inv/normalize-logs logw)
+        uniform (let [n (count tuples)] (mapv (fn [t] [t (/ 1.0 n)]) tuples))]
+    {:joint     post
+     :posterior (summarize post agents)
+     :prior     (summarize uniform agents)
+     :n-tuples  (count tuples)}))
+</code></pre>
+<p>The summary statistics are the verbatim webppl-agents predicates — <code>donut-tempting?</code> tests whether the discounted utilities encode a preference reversal (veg preferred from afar, donut preferred up close), and <code>veg-minus-donut</code> measures net taste. With the discount fixed at <code>k = 1</code>, conditioning on the tempting detour raises <code>P(donutTempting)</code> from a prior under 0.1 toward ~0.9, and <code>E[vegMinusDonut]</code> turns positive — the agent net-prefers veg yet was tempted, exactly the discounting signature. And the <code>:number-repeats</code> knob does for the joint model what repetition did for the bias model: seeing the same path again strengthens the discounting explanation over the high-noise one, because noise, unlike a stable bias or a stable taste, does not repeat.</p>
+<p>The same maze, the same GFI <code>assess</code>, three rival explanations — and the only thing that ever decided between them was <em>how many times you looked</em>.</p>
+<p>Next: from inferring why one agent acted to coordinating several of them.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="efficient-inference-one-model-many-backends"><a class="header" href="#efficient-inference-one-model-many-backends">Efficient Inference: One Model, Many Backends</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 6-efficient-inference.md, 6a-inference-dp.md, 6b-inference-sampling.md, 6c-inference-rl.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 6 (efficient inference: dynamic programming, sampling, RL/gradient).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-9"><a class="header" href="#the-pac-man-scenario-9">The Pac-Man scenario</a></h2>
-<p>The same Pac-Man goal-inference problem solved four ways that MUST agree: (6a) DP — value iteration over maze states == faithful recursive EU; (6b) sampling — exact enumeration vs importance sampling vs Metropolis-Hastings over the joint goal-inference GF; (6c) RL/gradient — gradient and amortized utility recovery through the differentiable planner. Demonstrates inference is a pluggable orthogonal axis over the agent-GF.</p>
-<h2 id="what-this-chapter-builds-on-9"><a class="header" href="#what-this-chapter-builds-on-9">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/differentiable.cljs (build-diff-mdp, diff-q via value-iteration-lazy, action-loglik-loss, recover-params Adam, loss-at). agent.cljs value-iteration vs recursive-eu certified equal. Tests: test/genmlx/agentmodels_ch06_pluggable_inference_test.cljs (VI==recursive-EU, enumerate/IS/MH agreement cross-checked by independent posterior-sequence oracle, gradient/amortized recovery) + agentmodels_diff_learn_test.cljs (diff-reward reconstructs R, lazy Q matches eager 1e-5, fix-alpha-learn-utilities + fix-utilities-learn-alpha to likelihood-equivalence). Example examples/agentmodels/ch06_pluggable_inference.cljs. The 6a/6b/6c stubs in agentmodels are fleshed out here.</li>
-</ul>
-<h2 id="live-figures-planned-9"><a class="header" href="#live-figures-planned-9">Live figures (planned)</a></h2>
-<ul>
-<li>ch14-backend-agreement.png — same posterior from enumerate/IS/MH overlaid as bars</li>
-<li>ch14-dp-value-iteration.gif — V(s) sweeps converging across the maze (cs188 rl.cljs value-iteration display → canvas)</li>
-<li>ch14-gradient-recovery.png — loss-history curve recovering planted utilities + alpha</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>agentmodels.org treats the inference method as fixed scaffolding bolted around each
+model: this chapter does dynamic programming, that one does MCMC. GenMLX takes the
+opposite stance, and it is the whole point of <code>genmlx.agents</code>. An agent <strong>is</strong> a
+generative function. The machinery you use to read a posterior off that function —
+exact enumeration, importance sampling, Metropolis-Hastings, gradient ascent — is a
+pluggable seam, orthogonal to the agent itself. Swap the backend and the answer must
+not change. This is the inference analogue of GenMLX’s compilation creed: <em>the agent
+GF is ground truth; every backend is just a different way of reading it.</em></p>
+<p>We will hold one Pac-Man inverse-planning problem fixed and solve it four ways. Watch
+Pac-Man take a few steps in the maze; which cache does he value? The glyphs and the
+−1 step cost are on the <a href="#the-pac-man-maze-a-legend">shared legend</a>. We place three caches — call
+them <code>:a</code>, <code>:b</code>, <code>:c</code> — at distinct corners. Pac-Man starts in the centre and we see
+him move <em>left, left, up</em>. Two leftward steps are ambiguous between the two left-hand
+caches; only the final upward step tilts the evidence toward the upper one. So the
+posterior should sharpen in two stages, and it should land <em>non-degenerate</em> — <code>:a</code>
+favoured, but <code>:b</code> keeping real probability mass. That non-degeneracy matters: it
+forces the four backends to genuinely agree on a distribution, not just on an argmax.</p>
+<h2 id="6a-forward-planning-two-backends-that-agree"><a class="header" href="#6a-forward-planning-two-backends-that-agree">(6a) Forward planning, two backends that agree</a></h2>
+<p>Even <em>forward</em> planning has a backend swap. Each candidate agent solves its plan by
+tensor value iteration, exposing both a Q-table <code>:Q</code> (dynamic programming) and a
+faithful recursive expected-utility function <code>:expected-utility</code>. They compute the
+same quantity — <code>Q[s,a]</code> is exactly <code>EU(s,a)</code> at the same horizon — by structurally
+different routes. The example checks this first:</p>
+<pre><code class="language-clojure">(defn check-6a-vi-eq-recursive []
+  (println "\n-- (6a) Efficient exact: value iteration :Q == recursive expected-utility --")
+  (let [ag       (goal-agents :a)
+        Q        (:Q ag)
+        eu       (:expected-utility ag)
+        ;; compare over the non-terminal observed states (and both actions there)
+        max-diff (reduce max 0
+                         (for [s obs-states a [0 1 2 3]]
+                           (Math/abs (- (mx/item (mx/idx (mx/idx Q s) a)) (eu s a)))))]
+    (chk/check-true "value iteration Q[s,a] == recursive EU(s,a) to 1e-3"
+                    (&lt; max-diff 1e-3))))
+</code></pre>
+<p>Value iteration is the memoized, vectorized form of the recursive Bellman expectation;
+the recursion is the textbook definition. They are the same equation. The test asserts
+the maximum disagreement over every observed <code>(s,a)</code> pair is below <code>1e-3</code> — DP and
+recursion agree to the float32 floor. This is the simplest instance of the chapter’s
+thesis: the planner’s backend is itself a swappable detail.</p>
+<h2 id="6b-inverse-planning-three-backends-that-agree"><a class="header" href="#6b-inverse-planning-three-backends-that-agree">(6b) Inverse planning, three backends that agree</a></h2>
+<p>Now invert. We write a <em>single</em> joint generative function whose latent <code>:goal</code> is a
+categorical index over the caches, with a uniform prior. For each step Pac-Man took,
+the model traces a softmax-action site over the chosen agent’s Q-row. The action
+likelihood <em>is</em> the agent’s own policy — there is no bespoke likelihood function to
+write and no chance of the forward and inverse models drifting apart:</p>
+<pre><code class="language-clojure">(defn goal-inference-model
+  []
+  (let [box  (h/uniform-draw goals)
+        rows (into {} (for [g goals]
+                        [g (mapv #(mx/idx (:Q (goal-agents g)) %) obs-states)]))]
+    (gen []
+      (let [gi   (trace :goal (:dist box))
+            goal (h/draw-value box gi)
+            er   (rows goal)]
+        (doseq [t (range (count obs-states))]
+          (trace (keyword (str "a" t))
+                 (h/softmax-action ALPHA (nth er t))))
+        gi))))
+</code></pre>
+<p>With this one GF in hand, the three backends are nothing but different GFI calls
+against it. The <em>exact</em> posterior enumerates the finite goal prior and uses <code>p/assess</code>
+to score the full trajectory <code>{:goal i, :a0 a0, …}</code>, then normalizes — closed form, no
+sampling, the ground truth. <em>Importance sampling</em> (<code>is/importance-sampling</code>) samples
+the goal, constrains the observed actions, and groups the normalized particle weights
+by sampled goal. <em>Metropolis-Hastings</em> (<code>mcmc/mh</code>) walks the discrete <code>:goal</code> latent,
+accepting moves by the MH ratio, and reads the posterior off the chain’s empirical
+frequencies:</p>
+<pre><code class="language-clojure">(defn is-goal-posterior
+  [actions n key]
+  (let [model (goal-inference-model)
+        obs   (h/action-choicemap actions)
+        {:keys [traces log-weights]} (is/importance-sampling {:samples n :key key} model [] obs)
+        {:keys [probs]} (iu/normalize-log-weights log-weights)
+        ess   (iu/compute-ess log-weights)
+        post  (reduce (fn [m [tr w]]
+                        (let [i (int (mx/item (cm/get-choice (:choices tr) [:goal])))]
+                          (update m (nth goals i) + w)))
+                      (zipmap goals (repeat 0.0))
+                      (map vector traces probs))]
+    {:posterior (normalize-map post) :ess ess}))
+</code></pre>
+<p>Three completely different control flows — a closed-form sum, a weighted particle
+cloud, a random walk — converge to the same distribution. A single sampling run is an
+<em>estimate</em>, never the posterior, so the example asserts agreement to tolerance with
+deterministic seeds: importance sampling matches the exact posterior to within a total
+variation of <code>0.03</code>, and Metropolis-Hastings to within <code>0.05</code>, both run at 5000
+samples. The importance sampler keeps a healthy effective sample size — above 500, more
+than 10% of N — confirming the weights have not collapsed onto one particle.</p>
+<p>How do we know the <em>exact</em> posterior is itself correct, rather than the model and its
+assessor being circularly self-consistent? An independent oracle. <code>inv/posterior-sequence</code>
+accumulates per-cell action log-likelihoods with no joint GF at all — a genuinely
+different code path through <code>inverse.cljs</code> — and reports the posterior after each
+observed action:</p>
+<pre><code class="language-clojure">(defn posterior-sharpening
+  []
+  (let [prior (zipmap goals (repeat (/ 1.0 (count goals))))]
+    (inv/posterior-sequence goal-agents prior observations)))
+</code></pre>
+<p>The example asserts this independent sequence agrees with the <code>p/assess</code>-based exact
+posterior to a total variation of <code>1e-4</code> — the closed form is cross-checked against
+math that shares none of its implementation. The sequence also makes the two-stage
+sharpening visible: a flat 1/3 prior, then mass moving toward the two left-hand caches
+after the leftward steps, then concentrating on <code>:a</code> after the disambiguating <em>up</em>.</p>
+<p>The bars below show exactly this kind of converged cache posterior — the distribution
+that enumeration, importance sampling, and Metropolis-Hastings all land on:</p>
+<p><img src="figures/cache-posterior.png" alt="Bar chart of the posterior probability over Pac-Man’s valued cache, with one cache clearly favoured but a second retaining substantial probability mass — the non-degenerate goal posterior that the exact, importance-sampling, and Metropolis-Hastings backends all agree on."></p>
+<p>The reader should see one cache standing tallest while a rival keeps a real share of
+the mass — precisely the non-degenerate posterior that makes “the backends agree” a
+meaningful claim rather than a trivial one.</p>
+<h2 id="6c-when-the-latent-goes-continuous-swap-to-gradients"><a class="header" href="#6c-when-the-latent-goes-continuous-swap-to-gradients">(6c) When the latent goes continuous, swap to gradients</a></h2>
+<p>Replace the discrete goal with a <em>continuous</em> utility vector over the same caches and
+the natural backend swaps again — now to gradient ascent. The differentiable planner
+in <code>genmlx.agents.differentiable</code> keeps the entire chain lazy and differentiable:
+utilities flow into a reward tensor, through lazy value iteration, into a Q-table, a
+log-softmax, and finally a gather of the observed action log-likelihoods. No <code>mx/item</code>
+or <code>mx/eval!</code> appears inside the loss, because either would sever the backward pass:</p>
+<pre><code class="language-clojure">(defn action-loglik-loss
+  [{:keys [S A] :as dmdp} theta-u tc log-alpha n-iters states-obs actions-obs]
+  (let [alpha  (mx/exp log-alpha)
+        Q      (diff-q dmdp theta-u tc alpha n-iters)                    ; [S,A]
+        logits (mx/multiply alpha Q)                                     ; [S,A]
+        logp   (mx/subtract logits (mx/expand-dims (mx/logsumexp logits [-1]) -1))  ; log_softmax over actions
+        flat   (mx/reshape logp #js [(* S A)])
+        idx    (mx/array (clj-&gt;js (mapv (fn [s a] (+ (* s A) a)) states-obs actions-obs)) mx/int32)
+        ll     (mx/sum (mx/take-idx flat idx 0))]                        ; Σ_m log π(a_m|s_m)
+    (mx/negative ll)))
+</code></pre>
+<p><code>recover-params</code> then runs Adam on this loss to recover the planted utilities. Because
+utilities are identifiable only up to scale and a multiplicative interaction with the
+rationality <code>alpha</code>, success is judged not by exact parameter recovery but by
+<em>likelihood equivalence</em>: the recovered loss should be no worse than the loss at the
+true planted utilities, and the recovered utility ordering should be correct. The
+example plants <code>[5.0 0.0 0.0]</code> — cache <code>:a</code> valued, the others not — and asserts that
+after 250 Adam steps the recovered <code>:a</code> utility is the largest of the three, the
+recovered loss is within <code>1e-2</code> of the plant loss, and the loss actually decreased from
+its initial value. Same forward agent, same observed trajectory; only the backend
+changed, from a posterior over a discrete goal to a gradient through the planner.</p>
+<h2 id="the-seam"><a class="header" href="#the-seam">The seam</a></h2>
+<p>Four backends — dynamic programming, exact enumeration, importance sampling,
+Metropolis-Hastings, and gradient ascent — all read the same agent generative
+function, and all agree: VI equals recursive expected-utility to <code>1e-3</code>, and
+enumeration, IS, and MH agree with each other and with an independent oracle to within
+total variations of <code>1e-4</code> to <code>0.05</code>. Nothing in the agent changed between backends.
+Inference is the pluggable, orthogonal axis the thesis promised.</p>
+<p>Next we let Pac-Man reason about something he <em>cannot see</em>: a ghost whose cell is
+hidden state, turning the maze into a POMDP.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="multi-agent-models-coordination-adversaries-and-signaling"><a class="header" href="#multi-agent-models-coordination-adversaries-and-signaling">Multi-Agent Models: Coordination, Adversaries, and Signaling</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 7-multi-agent.md.</p>
+<p><strong>Ports</strong> agentmodels.org Chapter 7 (multi-agent).</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-10"><a class="header" href="#the-pac-man-scenario-10">The Pac-Man scenario</a></h2>
-<p>Schelling coordination = two Pac-Men trying to meet at a junction without communicating, the popular corridor as the focal point; recursive theory-of-mind at increasing depth predicts convergence. Adversarial = Pac-Man vs ghost planning ahead via simulate/act alternation (minimax/expectimax) on the cs188 GameState. RSA signaling = Pac-Man signaling ghost positions to a partner through movement patterns (literal vs pragmatic listener/speaker).</p>
-<h2 id="what-this-chapter-builds-on-10"><a class="header" href="#what-this-chapter-builds-on-10">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — Schelling + focal-point amplification + RSA scalar implicature shipped. Tests: test/genmlx/agentmodels_multi_agent_test.cljs (bob(0)=0.55 prior, focal amplification strictly increasing, alice(4)&gt;=0.83; exact ~ importance-sampling tol 0.05; L0/S1/L1 RSA, ‘some’ implies not-all, pragmatic posteriors analytically verified). Example examples/agentmodels/multi_agent.cljs. Adversarial Pac-Man tree search ALREADY exists in cs188.agents (minimax/alpha-beta/expectimax over generate-successor, proven alpha-beta==minimax) — partial: bridging cs188.agents adversarial search into a genmlx multi-agent GF narrative is the one must-write piece.</li>
-</ul>
-<h2 id="live-figures-planned-10"><a class="header" href="#live-figures-planned-10">Live figures (planned)</a></h2>
-<ul>
-<li>ch15-schelling-convergence.png — meeting-probability vs recursion depth line chart</li>
-<li>ch15-adversarial-pacman.gif — Pac-Man vs ghost expectimax self-play (cs188 play.cljs / web canvas)</li>
-<li>ch15-rsa-implicature.png — literal vs pragmatic listener posterior bars</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>So far every Pac-Man has reasoned about a <em>maze</em>. Now they reason about <em>each
+other</em>. An agent who models another agent is still just a generative function —
+only now the world it samples from contains a second mind. That recursion is the
+whole subject of this chapter, and it shows up in three guises: two Pac-Men
+trying to <em>meet</em>, a Pac-Man trying to <em>escape</em> a ghost, and a Pac-Man trying to
+<em>signal</em> where a ghost is. (The glyphs and scoring live on the shared
+<a href="#the-pac-man-maze-a-legend">legend</a>.)</p>
+<h2 id="coordination-meeting-at-the-focal-corridor"><a class="header" href="#coordination-meeting-at-the-focal-corridor">Coordination: meeting at the focal corridor</a></h2>
+<p>Two Pac-Men want to rendezvous at a junction. They cannot communicate; each can
+only <em>imagine</em> where the other will go and try to match. The maze has a popular
+corridor and an unpopular one — a slight bias, <code>0.55</code> versus <code>0.45</code>. That tiny
+asymmetry is a <em>focal point</em>: a place that stands out enough to coordinate on.</p>
+<p>Here is the core coordination model. It samples both locations and then
+<em>conditions on meeting</em> using the native bernoulli-observe idiom — a Bernoulli
+whose success probability is <code>1</code> exactly when the two locations match, observed
+to be <code>1</code>:</p>
+<pre><code class="language-clojure">(defn coordination-model
+  "One agent reasoning about the other: sample my location ~ prior and the other's
+   ~ `other-probs`, then CONDITION on meeting."
+  [other-probs]
+  (gen []
+    (let [other (trace :other (dist/categorical (mx/log other-probs)))
+          me    (trace :me    (dist/categorical (mx/log location-prior)))
+          match (.astype (mx/equal me other) mx/float32)]
+      (trace :meet (dist/bernoulli match))           ; observed = 1  ⇒  condition(me == other)
+      me)))
+</code></pre>
+<p>Nothing here decides <em>how</em> we reason about that model. The posterior over <code>:me</code>
+is produced by a pluggable backend — exact enumeration by default, importance
+sampling on demand — and <code>coordinate</code> just hands the model and the
+“meeting-happened” observation to whatever <code>infer</code> it is given:</p>
+<pre><code class="language-clojure">(defn coordinate
+  "The coordination posterior over my location (the [2] marginal of :me), given the
+   other agent's location distribution. `infer` is the pluggable reasoning backend."
+  [other-probs infer]
+  (infer (coordination-model other-probs) MEET :me 2))
+</code></pre>
+<p>The interesting part is the recursion of theory-of-mind. Alice at depth <code>d</code>
+coordinates with her <em>model</em> of Bob at depth <code>d-1</code>; Bob at depth <code>d</code> coordinates
+with Alice at depth <code>d</code>; and Bob at depth <code>0</code> is the non-strategic base case who
+simply follows the prior. Each agent is memoized over the depth ladder so the
+mutual recursion terminates:</p>
+<pre><code class="language-clojure">(defn schelling-agents
+  ([] (schelling-agents exact-marginal))
+  ([infer]
+   (let [alice (atom nil)
+         bob   (atom nil)]
+     (reset! alice (exact/with-cache (fn [d] (coordinate (@bob (dec d)) infer))))
+     (reset! bob   (exact/with-cache (fn [d] (if (zero? d)
+                                               location-prior
+                                               (coordinate (@alice d) infer)))))
+     {:alice @alice :bob @bob})))
+</code></pre>
+<p>Why does this converge on the popular corridor? Because conditioning on a <em>match</em>
+multiplies each agent’s belief by the other’s belief, and that product is sharper
+than either factor — the <code>0.55</code> bias compounds at every rung. The test confirms
+the climb exactly. Bob at depth <code>0</code> is just the prior, <code>P(popular) = 0.55</code>. One
+level of reasoning lifts Alice to <code>0.5990</code> and Bob to <code>0.6461</code>; a second level
+reaches Alice <code>0.6905</code> and Bob <code>0.7317</code>. The probability is <em>strictly increasing</em>
+in depth, and by depth <code>4</code> Alice’s belief in the popular corridor has climbed to
+at least <code>0.83</code>. Deeper theory-of-mind doesn’t add information — it amplifies the
+one asymmetry that was already there until the focal point dominates.</p>
+<p>Crucially, <em>the agents never change</em>. Swapping the exact backend for importance
+sampling over the very same <code>coordination-model</code> GF reproduces the answer: exact
+Alice(1) <code>0.5990</code> versus importance-sampled Alice(1) within a tolerance of <code>0.05</code>
+across <code>4000</code> samples. Inference is an axis orthogonal to the model — the entire
+thesis of <code>genmlx.agents</code> in one assertion.</p>
+<h2 id="adversary-pac-man-versus-the-ghost-a-classical-baseline"><a class="header" href="#adversary-pac-man-versus-the-ghost-a-classical-baseline">Adversary: Pac-Man versus the ghost (a classical baseline)</a></h2>
+<p>When the second agent is a <em>ghost</em> instead of a partner, coordination becomes
+conflict, and the natural tool is game-tree search. The model represents this as
+a recursive value over board positions — the mover picks a move under a softmax
+policy of its <em>own</em> continuation value, while the value passed up to the scorer
+is the expectation under the mover’s policy. As <code>α → ∞</code> the softmax collapses to
+an <code>argmax</code>, and soft expectimax becomes hard, adversarial minimax:</p>
+<pre><code class="language-clojure">(reset! val
+  (exact/with-cache
+    (fn [board mover scorer]
+      (if (terminal? board)
+        (utility board scorer)
+        (let [ms  (legal-moves board)
+              qs  (mapv (fn [m] (@val (place board m mover) (other-player mover) mover)) ms)
+              pol (policy-weights alpha qs)
+              vs  (mapv (fn [m] (@val (place board m mover) (other-player mover) scorer)) ms)]
+          (reduce + (map * pol vs)))))))
+</code></pre>
+<p><strong>A deliberate honesty note:</strong> this minimax/expectimax tree search is a
+<em>classical baseline</em>, not GFI inference. It is the one place this book steps
+outside the agent-as-generative-function frame. The recursion above is plain host
+arithmetic over a transposition table (<code>with-cache</code>); MLX appears only in the
+final <code>softmax-action</code> policy distribution. The pure-search agent is included
+because the chapter needs a strong adversary to plan <em>against</em>, not because it is
+itself a probabilistic program.</p>
+<p>The test exercises it on two tic-tac-toe positions that stand in for the
+escape-and-block dynamics of a chase. On a forced-win board the planning agent
+completes the line at cell <code>2</code>, and so does the one-step agent — an immediate win
+needs no lookahead. The discriminator is the forced-<em>block</em> board: planning
+blocks at cell <code>5</code> to salvage a draw (value <code>0</code>) instead of conceding a loss
+(value <code>−10</code>), so the block’s value strictly beats every alternative, while the
+non-planning agent is <em>indifferent</em> — every immediate move is non-terminal and
+scores <code>0</code>. Lookahead is exactly what separates a Pac-Man who survives from one
+who walks into the ghost. At <code>α = ∞</code> the softmax-action policy is deterministic:
+five rollouts all take cell <code>2</code>, and <code>best-move</code> is bit-repeatable.</p>
+<h2 id="signaling-literal-versus-pragmatic-listeners"><a class="header" href="#signaling-literal-versus-pragmatic-listeners">Signaling: literal versus pragmatic listeners</a></h2>
+<p>The third multi-agent pattern is <em>communication</em>. A Pac-Man emits a signal about
+ghost positions; a partner interprets it. The Rational Speech Acts (RSA) tower
+formalizes how interpretation deepens with reasoning. A denotation matrix says
+which signals are literally true of which world-states; the literal listener
+<code>L0</code> takes a signal at face value, a state <code>~ prior</code> conditioned on the signal’s
+meaning holding:</p>
+<pre><code class="language-clojure">(defn literal-listener-model
+  "L0 as a GF: a state ~ prior, observe that the utterance's denotation (`truth-row`,
+   a [n-states] 0/1 vector gathered at the sampled state) holds."
+  [state-prior truth-row]
+  (gen []
+    (let [s (trace :s (dist/categorical (mx/log state-prior)))]
+      (trace :holds (dist/bernoulli (mx/take-idx truth-row s)))   ; observed = 1 ⇒ condition(denotes)
+      s)))
+</code></pre>
+<p>The pragmatic <em>speaker</em> <code>S1</code> is a softmax-action agent — <code>factor(α·EU)</code> with
+utility equal to the literal listener’s log-score — and the pragmatic <em>listener</em>
+<code>L1</code> is the Bayesian inversion of that speaker. The chapter’s canonical example is
+scalar implicature: utterances <code>[all some none]</code> over states <code>[0 1 2 3]</code> counting
+sprouted seeds. Literally, “some” is true of states <code>{1,2,3}</code>, so <code>L0(some)</code>
+spreads uniformly — <code>1/3</code> on each, <code>0</code> on state <code>0</code>. But a speaker who <em>knew</em> all
+three sprouted would almost surely say “all”: <code>S1(all | s=3) = 0.9</code>, leaving only
+<code>0.1</code> for “some”. The pragmatic listener reasons backward through that choice. On
+hearing “some” she infers the speaker <em>would have said “all” if all were true</em>,
+so <code>L1(some)</code> concentrates on the middle states — <code>10/21</code> on state <code>1</code>, <code>10/21</code>
+on state <code>2</code> — and assigns a mere <code>1/21</code> to “all” (state <code>3</code>) and <code>0</code> to “none”.
+The weak word implies <em>not-all</em>: this is the scalar implicature, derived rather
+than stipulated, with <code>P(3 | some) ≪ P(1 | some)</code>.</p>
+<p>The figure below shows the kind of sharply asymmetric posterior this recursive
+reasoning produces — most of the mass shifted onto the pragmatically-favored
+interpretation and almost none on the literal-but-uninformative alternative,
+exactly the shape of <code>L1(some)</code> above:</p>
+<p><img src="figures/cache-posterior.png" alt="Posterior bar chart showing probability mass concentrated on the pragmatically inferred interpretation and near-zero on the over-informative alternative, the characteristic shape of an RSA pragmatic listener’s belief."></p>
+<p>The same tower, fed a different denotation, yields referential implicature: an
+ambiguous “uboth” signal that is literally true of two referents resolves toward
+the one the unambiguous signal <em>didn’t</em> claim, <code>P(r1 | uboth) = 0.75</code> versus
+<code>0.25</code> for <code>r0</code>. And because <code>L0</code> runs through the pluggable inference seam, the
+implicature survives even when the literal listener is <em>sampled</em> rather than
+enumerated — a mixed pipeline (importance-sampled <code>L0</code>, exact <code>S1</code>/<code>L1</code>) still
+gives <code>P(0 | some) = 0</code> exactly and <code>P(1 | some) ≈ P(2 | some) ≈ 0.476</code>. The
+backend moved; the meaning did not.</p>
+<hr>
+<p>Coordination, conflict, and communication all reduce to one move: putting a
+<em>model of another agent</em> inside your own generative function. That completes the
+agentmodels arc in the maze. The next chapter is a quick-start tour of the
+<code>genmlx.agents</code> library itself — every agent family we have met, reachable behind a
+single <code>require</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="quick-start-guide-to-the-genmlxagents-library"><a class="header" href="#quick-start-guide-to-the-genmlxagents-library">Quick-Start Guide to the genmlx.agents Library</a></h1>
 <blockquote>
-<p><strong>Ports</strong> agentmodels.org 8-guide-library.md.</p>
+<p><strong>Ports</strong> agentmodels.org Ch 8 (the webppl-agents library) — here as a single
+guided tour over the <code>genmlx.agents</code> spine, told in Pac-Man mazes.</p>
 </blockquote>
-<p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-11"><a class="header" href="#the-pac-man-scenario-11">The Pac-Man scenario</a></h2>
-<p>A tutorial-style tour building each agent on Pac-Man worlds: line MDP = corridor; gridworld with walls = maze; named features (gold/silver) = pellets/power-pellets with different utilities; line POMDP with signpost = a corridor with a hidden ghost (treasureAt3 → ghostAt[x,y]); custom RANDOM and EPSILON-GREEDY policy GFs. Shows the minimal agent contract (:act + :params) and the four constructors.</p>
-<h2 id="what-this-chapter-builds-on-11"><a class="header" href="#what-this-chapter-builds-on-11">What this chapter builds on</a></h2>
-<ul>
-<li><strong>genmlx code:</strong> exists — src/genmlx/agents/CONTRACTS.md (frozen v1.0 API: the four constructor shapes), worlds.cljs (line-mdp, hike-mdp), agent.cljs (make-mdp-agent optimal/soft), biased_planners.cljs (Naive hyperbolic), pomdp.cljs + pomdp_env.cljs (line POMDP belief filter). Tests: test/genmlx/agentmodels_ch08_library_test.cljs (make-line-mdp + agent, hiking, naive biased, POMDP belief snaps at signpost + QMDP reaches goal, custom RANDOM + EPSILON-GREEDY GFs) + agents_api_test.cljs (8 namespaces load) + agents_contracts_test.cljs (per-constructor return-map shapes + :act signatures pinned). Example examples/agentmodels/ch08_library_guide.cljs.</li>
-</ul>
-<h2 id="live-figures-planned-11"><a class="header" href="#live-figures-planned-11">Live figures (planned)</a></h2>
-<ul>
-<li>ch16-corridor-basic.png — bare line MDP / 3×4 gridworld with walls (render.cljs)</li>
-<li>ch16-named-features.gif — agent navigating to the gold (power-pellet) terminal</li>
-<li>ch16-custom-policy.gif — epsilon-greedy Pac-Man wandering then exploiting</li>
-</ul>
-<!-- TODO(content): prose + code listings lifted from the example + embedded live figures -->
+<p>This chapter is the orientation lap. Everything earlier in the book built one
+agent family at a time; here we line them all up on Pac-Man worlds and show that
+they share a deliberately tiny contract, that they compose, and that you can drop
+in your own policy without leaving the GFI. One <code>require</code> carries the whole tour:</p>
+<pre><code class="language-clojure">(require '[genmlx.agents.pacman :as pac])
+</code></pre>
+<p>The glyph and scoring legend (walls, pellets, power pellets, fruit, the per-step
+time cost) lives on the <a href="#the-pac-man-maze-a-legend">shared legend page</a> — we lean on it here
+rather than restating it.</p>
+<h2 id="the-whole-contract-is-two-keys"><a class="header" href="#the-whole-contract-is-two-keys">The whole contract is two keys</a></h2>
+<p>The honest surface is small. Every constructor in <code>genmlx.agents</code> returns a map,
+and the <em>only</em> keys you are promised on <strong>every</strong> agent are <code>:act</code> and <code>:params</code>.
+Everything else is family-specific — there is no universal <code>:policy</code>, no universal
+<code>:Q</code>, and not even a single <code>:act</code> arity. The contracts test pins exactly this:</p>
+<pre><code class="language-clojure">(doseq [[nm a] [["mdp" mdp-ag] ["biased" biased-ag] ["pomdp" pomdp-ag] ["bandit" bandit-ag]]]
+  (assert-true (str nm ": :act is callable")  (fn? (:act a)))
+  (assert-true (str nm ": :params is a map")  (map? (:params a))))
+</code></pre>
+<p>That loop passes for all four families. So the mental model is: an agent is a map
+with a callable <code>:act</code>; the family tells you how to <em>call</em> <code>:act</code> and what extra
+machinery (a value table, a belief filter, an arm posterior) rides alongside.</p>
+<h2 id="pacmdp-agent--the-optimal-or-soft-planner"><a class="header" href="#pacmdp-agent--the-optimal-or-soft-planner"><code>pac/mdp-agent</code> — the optimal (or soft) planner</a></h2>
+<p>The flagship family is the fully-observed MDP planner. The Pac-Man binding is a
+one-line convenience wrapper that compiles an ASCII maze and hands it to
+<code>agent/make-mdp-agent</code>:</p>
+<pre><code class="language-clojure">(defn mdp-agent
+  "Optimal (alpha ##Inf) or soft (finite alpha) MDP Pac-Man over a maze. Returns the
+   agent/make-mdp-agent contract {:mdp :Q :V :policy :act :expected-utility :params}.
+   Opts: :maze (ascii, default classic-maze) :utilities :noise :alpha :gamma :n-iters."
+  ([] (mdp-agent {}))
+  ([{:keys [maze utilities noise alpha gamma n-iters]
+     :or   {maze classic-maze utilities pacman-scoring noise 0.0
+            alpha ##Inf gamma 1.0 n-iters 30}}]
+   (agent/make-mdp-agent {:mdp   (pacman-mdp {:ascii maze :utilities utilities
+                                              :gamma gamma :noise noise})
+                          :alpha alpha :gamma gamma :n-iters n-iters})))
+</code></pre>
+<p><code>alpha ##Inf</code> is the optimal agent (a hard argmax over Q-values); any finite
+<code>alpha</code> is the soft-rational Boltzmann planner. The returned map carries the full
+MDP surface: <code>:Q</code>, <code>:V</code>, a <code>:policy</code> generative function, <code>:act</code>, and
+<code>:expected-utility</code>. The <code>:act</code> is <em>state-based</em> — <code>(act s)</code> draws fresh entropy,
+<code>(act s key)</code> is deterministic in the key — and both return an action integer.</p>
+<p>On the <code>classic-maze</code> (a ring with four equidistant caches — pellet, power pellet,
+and fruit at the corners), value is the only thing breaking the tie, so an optimal
+Pac-Man heads for the highest cache. Here it is rolling out from the centre:</p>
+<p><img src="figures/classic-rollout.gif" alt="Animation of the optimal MDP Pac-Man walking from the centre of the maze, choosing the route to the highest-value cache, one frame per step."></p>
+<p>Each frame is one <code>:act</code> call followed by a transition sample. The floor shading
+is the value function <code>V(s)</code> underneath — the agent is, frame by frame, climbing
+its own value gradient toward the fruit.</p>
+<h2 id="pacbiased-agent--present-bias-same-shape-minus-the-table"><a class="header" href="#pacbiased-agent--present-bias-same-shape-minus-the-table"><code>pac/biased-agent</code> — present bias, same shape minus the table</a></h2>
+<p>The hyperbolic-discounting planner is the genuine time-inconsistent agent. Its
+binding takes a <code>bias</code> spec (<code>{:discount k :bias :naive|:sophisticated}</code>) and
+otherwise mirrors <code>mdp-agent</code>. The contract difference is the load-bearing one:
+the biased agent is <em>recursion-only</em>, so it has a <code>:policy</code> and an
+<code>:expected-utility</code> but <strong>no</strong> tensor <code>:Q</code>/<code>:V</code>. The contracts test asserts both
+directions of that boundary at once:</p>
+<pre><code class="language-clojure">;; biased: GF policy + EU, but NO tensor :Q/:V (recursion-only) — the key drift
+(assert-true "biased: has :policy :expected-utility but NO :Q/:V (recursion-only)"
+             (and (some? (:policy biased-ag)) (fn? (:expected-utility biased-ag))
+                  (nil? (:Q biased-ag)) (nil? (:V biased-ag))))
+</code></pre>
+<p>At <code>:discount 0</code> the biased planner recovers the unbiased plan exactly — a useful
+sanity anchor. The <code>:act</code> arities are identical to the MDP agent’s, so from a
+caller’s seat a biased Pac-Man is a drop-in for an optimal one; only its <em>choices</em>
+betray the present bias.</p>
+<h2 id="pacpomdp-agent--a-hidden-cache-and-a-belief-filter"><a class="header" href="#pacpomdp-agent--a-hidden-cache-and-a-belief-filter"><code>pac/pomdp-agent</code> — a hidden cache and a belief filter</a></h2>
+<p>When the maze hides which cache actually pays, the planner state stays the single
+dense cell index and the uncertainty lives in a <strong>belief</strong> over latent worlds. The
+<code>pomdp-agent</code> binding builds a QMDP agent over a <code>pacman-pomdp</code> env (default
+<code>haunted-maze</code>, where a plain floor cell at index 12 is the signpost that reveals
+the truth). Its surface is belief-shaped: <code>:belief-Q</code>, <code>:update-belief</code>,
+<code>:expected-utility</code>, and the per-world agents — but its <code>:act</code> is now
+<em>belief-based</em>, <code>(act belief s)</code>.</p>
+<p>The belief is just a normalized <code>{world -&gt; prob}</code> map, and the filter obeys a
+clean observation contract. The contracts test pins the headline behaviors: the
+prior is flat, a <code>nil</code> observation is the identity, and a real observation at the
+signpost snaps the belief to certainty while staying normalized.</p>
+<pre><code class="language-clojure">(let [ub    (:update-belief pomdp-ag)
+      prior (:prior pomdp-ag)]
+  (assert-close "prior sums to 1" 1.0 (reduce + (vals prior)) 1e-9)
+  ;; nil-obs is the identity (absence is non-informative — the unified contract)
+  (assert-true "nil observation leaves the belief unchanged (agent level)"
+               (= prior (ub prior 10 nil)))
+  ;; an informative observation snaps + stays normalized
+  (let [b' (ub prior 7 :A)]
+    (assert-close "reveal :A at the signpost -&gt; P(:A)=1" 1.0 (:A b') 1e-9)
+    (assert-close "filtered belief stays normalized" 1.0 (reduce + (vals b')) 1e-9)))
+</code></pre>
+<p>So the prior splits its mass evenly, observing <code>:A</code> at the signpost drives
+<code>P(:A) = 1.0</code>, and the posterior still sums to <code>1.0</code> to within <code>1e-9</code>. The
+manifest action trajectory is orthogonal to the latent world: the agent walks
+toward the signpost, <em>learns</em>, then commits.</p>
+<h2 id="pacbandit-agent--corridors-as-arms"><a class="header" href="#pacbandit-agent--corridors-as-arms"><code>pac/bandit-agent</code> — corridors as arms</a></h2>
+<p>The bandit family re-stories the maze: corridors become Bernoulli fruit-spawners,
+and a “world” is the posterior over each arm’s payout. There is no GF policy here
+(Thompson sampling and softmax-of-means are not a distribution over a fixed action
+set), so the contract is <code>{:act :update-belief :arm-values :params}</code>. The belief
+is <code>{:arms [[α β] ...]}</code>, one Beta per arm, and the update is conjugate. The
+contracts test reads off the exact numbers:</p>
+<pre><code class="language-clojure">(let [vals (:arm-values bandit-ag)
+      ub   (:update-belief bandit-ag)]
+  (assert-close "Beta(1,1) arm mean = 0.5" 0.5 (first (vals bandit-belief)) 1e-9)
+  (let [b' (ub bandit-belief 0 1)]            ; success on arm 0
+    (assert-true "conjugate update: arm 0 success -&gt; alpha+1" (= [2 1] (get-in b' [:arms 0])))
+    (assert-true "conjugate update: other arms unchanged"     (= [1 1] (get-in b' [:arms 1])))))
+</code></pre>
+<p>A fresh <code>Beta(1,1)</code> arm has mean exactly <code>0.5</code>; a success on arm 0 increments its
+α to give <code>[2 1]</code> while arm 1 stays <code>[1 1]</code> untouched. The <code>:act</code> here is
+<code>(act belief key)</code> and returns an arm index — belief-based, like the POMDP agent,
+but keyed by entropy rather than by current cell.</p>
+<h2 id="bring-your-own-policy"><a class="header" href="#bring-your-own-policy">Bring your own policy</a></h2>
+<p>The point of the two-key contract is that <em>you</em> can satisfy it. A policy is just
+an ordinary generative function whose <code>:action</code> site is the decision. Here are two
+custom agents from the tour. First a uniform random walker:</p>
+<pre><code class="language-clojure">(defn random-policy
+  "A custom RANDOM agent: act uniformly at random over `n-actions`, via the
+   value-carrying uniform-draw helper."
+  [n-actions]
+  (gen [_s] (trace :action (:dist (h/uniform-draw (vec (range n-actions)))))))
+</code></pre>
+<p>And an epsilon-greedy chooser that flips a biased coin between exploring uniformly
+and exploiting the greedy argmax of a host-side Q-row:</p>
+<pre><code class="language-clojure">(defn epsilon-greedy-policy
+  "A custom EPSILON-GREEDY agent: with prob epsilon explore uniformly, else exploit
+   the greedy argmax of the Q-row via exact/categorical-argmax. `q-rows` is the
+   host-side [S][A] value table (mx/-&gt;clj of an agent's :Q)."
+  [q-rows n-actions epsilon]
+  (gen [s]
+    (let [explore (trace :explore (dist/flip epsilon))]
+      (trace :action
+             (if (pos? (mx/item explore))
+               (:dist (h/uniform-draw (vec (range n-actions))))
+               (exact/categorical-argmax (mx/array (nth q-rows s) mx/float32)))))))
+</code></pre>
+<p>Because these are GFs, they slot into the same rollout and inference machinery as
+the built-in families — no engine change. The example checks the limiting cases:
+with <code>epsilon = 0.0</code> the policy <em>always</em> takes the greedy argmax action (pure
+exploitation over 10 draws), and with <code>epsilon = 1.0</code> it explores more than one
+distinct action over 60 draws (pure exploration), while the random walker keeps
+every one of 40 draws inside the legal index range <code>0..3</code>.</p>
+<p>The minimal world to test any of this on is the <code>corridor</code> — a one-row hallway to
+a single power pellet — the smallest MDP that still has a real decision:</p>
+<p><img src="figures/corridor-rollout.gif" alt="Animation of the minimal corridor agent walking step by step rightward along a one-row hallway to reach its goal at the end."></p>
+<p>There is the whole library in one frame: a <code>:act</code> is called, a step is taken, and
+the agent advances toward value. Swap the policy and the picture stays the same;
+only the path changes.</p>
+<p><strong>Next:</strong> with the families and the contract in hand, the following chapters turn
+the camera around — using inference <em>over</em> an agent to recover the parameters
+behind its choices.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="beyond-agentmodels-llm-as-policy-llm-over-agent-and-remote-environments"><a class="header" href="#beyond-agentmodels-llm-as-policy-llm-over-agent-and-remote-environments">Beyond agentmodels: LLM-as-Policy, LLM-over-Agent, and Remote Environments</a></h1>
 <blockquote>
 <p><strong>Ports</strong> agentmodels.org extension beyond agentmodels (Phase 3 external environment + LLM agents); thematically continues 4 / 6.</p>
 </blockquote>
 <p><em>(Chapter content is authored under the book’s content epics. Code is lifted verbatim from a runnable <code>examples/agentmodels/*.cljs</code>; every figure is a live capture from the Pac-Man environment — see <a href="../PLAN.html">the authoring contract</a>.)</em></p>
-<h2 id="the-pac-man-scenario-12"><a class="header" href="#the-pac-man-scenario-12">The Pac-Man scenario</a></h2>
+<h2 id="the-pac-man-scenario"><a class="header" href="#the-pac-man-scenario">The Pac-Man scenario</a></h2>
 <p>LLM-as-policy = a Pac-Man whose action logits ARE an LLM’s p/assess log-probs over up/down/left/right given a state description. LLM-over-agent = inverse planning over a hidden goal that FUSES the agent-GF likelihood P(action|goal) with an LLM reasoner P_LLM(yes|goal). Remote = a Gym-style episodic transport running a Pac-Man MDP/POMDP env as an HTTP service (genmlx.world.net), with async client rollouts crossing the wire.</p>
-<h2 id="what-this-chapter-builds-on-12"><a class="header" href="#what-this-chapter-builds-on-12">What this chapter builds on</a></h2>
+<h2 id="what-this-chapter-builds-on"><a class="header" href="#what-this-chapter-builds-on">What this chapter builds on</a></h2>
 <ul>
 <li><strong>genmlx code:</strong> partial — LLM-as-policy and LLM-over-agent exist and are tested but SKIP when qwen3-0.6b is absent (no always-on regression): test/genmlx/agents_llm_policy_test.cljs (per-action LLM logits, p/assess==logsoftmax, reproducible, state-dependent) + test/genmlx/agents_llm_inverse_test.cljs (fused agent+LLM posterior, g* optimal-action MAP). Remote is explicitly PROVISIONAL/unfrozen: src/genmlx/agents/remote.cljs (gym-transport, mdp-env-handler, pomdp-env-handler, remote-mdp-rollout, remote-pomdp-rollout) marked maturity:partial in CONTRACTS.md. Mark this chapter clearly as the unfrozen frontier; the cs188 layout→genmlx bridge (~20 lines) for a live remote Pac-Man env is must-write.</li>
 </ul>
-<h2 id="live-figures-planned-12"><a class="header" href="#live-figures-planned-12">Live figures (planned)</a></h2>
+<h2 id="live-figures-planned"><a class="header" href="#live-figures-planned">Live figures (planned)</a></h2>
 <ul>
 <li>ch17-llm-policy.png — LLM per-action logits → softmax action bars for a maze state</li>
 <li>ch17-llm-inverse.png — fused agent+LLM posterior over hidden goal bars</li>
