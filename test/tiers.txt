@@ -33,6 +33,7 @@ medium test/genmlx/agents_contracts_test.cljs
 medium test/genmlx/agents_fused_pomdp_test.cljs
 slow test/genmlx/agents_llm_inverse_test.cljs
 slow test/genmlx/agents_llm_policy_test.cljs
+slow test/genmlx/agents_pacman_test.cljs
 medium test/genmlx/amortized_test.cljs
 slow test/genmlx/analytical_posterior_referee_test.cljs
 fast test/genmlx/assess_propose_test.cljs
@@ -65,6 +66,7 @@ fast test/genmlx/combinator_extra_property_test.cljs
 fast test/genmlx/combinator_map_test2.cljs
 fast test/genmlx/combinator_mask_test.cljs
 fast test/genmlx/combinator_mix_test2.cljs
+fast test/genmlx/combinator_nested_regen_test.cljs core
 fast test/genmlx/combinator_property_test.cljs core
 fast test/genmlx/combinator_recurse_test2.cljs
 fast test/genmlx/combinator_regen_weight_test.cljs core
@@ -92,10 +94,12 @@ fast test/genmlx/compiled_unfold_test.cljs
 medium test/genmlx/conjugacy_test.cljs
 medium test/genmlx/conjugate_bb_test.cljs
 medium test/genmlx/conjugate_gp_test.cljs
-medium test/genmlx/conjugate_posterior_test.cljs
+slow test/genmlx/conjugate_posterior_test.cljs
 medium test/genmlx/conjugate_test.cljs
 fast test/genmlx/contract_verification_test.cljs
+medium test/genmlx/control_metareasoner_test.cljs
 fast test/genmlx/correctness_test.cljs
+fast test/genmlx/cost_test.cljs
 fast test/genmlx/custom_gradient_test.cljs
 fast test/genmlx/dep_graph_test.cljs
 fast test/genmlx/det_contract_test.cljs core
@@ -236,6 +240,7 @@ slow test/genmlx/llm_forward_parity_test.cljs
 fast test/genmlx/llm_forward_seam_test.cljs
 slow test/genmlx/llm_gemma4_test.cljs
 slow test/genmlx/llm_grammar_test.cljs
+slow test/genmlx/llm_moe_guard_test.cljs
 fast test/genmlx/llm_msa_scoring_test.cljs
 slow test/genmlx/llm_msa_test.cljs
 fast test/genmlx/llm_pure_helpers_test.cljs
@@ -261,6 +266,7 @@ fast test/genmlx/mcmc_elim_filter_test.cljs core
 medium test/genmlx/mcmc_property_test.cljs
 slow test/genmlx/mcmc_stationary_test.cljs
 slow test/genmlx/membrane_churn_test.cljs
+fast test/genmlx/membrane_coverage_test.cljs
 fast test/genmlx/membrane_guard_test.cljs
 fast test/genmlx/membrane_honesty_test.cljs
 fast test/genmlx/memory_test.cljs
@@ -339,9 +345,11 @@ medium test/genmlx/smcp3_kernel_test.cljs
 fast test/genmlx/splice_property_test.cljs
 fast test/genmlx/splice_weight_test.cljs core
 fast test/genmlx/stack_unstack_property_test.cljs
+medium test/genmlx/steppable_test.cljs
 slow test/genmlx/stress_test.cljs
 fast test/genmlx/strip_compiled_test.cljs core
 medium test/genmlx/support_property_test.cljs
+fast test/genmlx/synth_steppable_test.cljs
 medium test/genmlx/synthesis_exact_test.cljs
 fast test/genmlx/temperature_sampling_test.cljs
 fast test/genmlx/tensor_trace_property_test.cljs
@@ -390,6 +398,7 @@ fast test/genmlx/vupdate_test.cljs
 fast test/genmlx/well_formedness_test.cljs
 fast test/genmlx/wishart_gradient_test.cljs
 fast test/genmlx/world_memory_test.cljs
+medium test/genmlx/world_proc_test.cljs
 fast test/genmlx/wp2_generate_test.cljs
 fast test/genmlx/wp3_update_test.cljs
 fast test/genmlx/wp4_update_test.cljs

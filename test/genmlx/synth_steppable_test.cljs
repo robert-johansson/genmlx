@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.synth-steppable-test
   "Self-tests for genmlx.control.synth-steppable (genmlx-yd7c): the {:propose :deepen
    :stop} synthesis substrate. Trivial injected scorer (no GPU) so the test is pure +

@@ -254,8 +254,14 @@
    Stable at all shapes (~95% first-try acceptance) — the basis for the
    gamma-ratio Beta sampler that replaces Johnk's algorithm (bean genmlx-gcw4)."
   [shape-param rate key]
-  (let [a (mx/realize shape-param)
-        r (mx/realize rate)
+  ;; Read shape & rate with ONE combined GPU eval instead of two separate
+  ;; mx/realize syncs. defdist auto-wraps every param with ensure-array, so these
+  ;; constants are MLX arrays that each forced a Metal dispatch per draw; sharing
+  ;; the dispatch halves that overhead at tens of thousands of scalar draws.
+  ;; Values are unchanged — only the dispatch is shared (genmlx-3rkq).
+  (mx/eval! shape-param rate)
+  (let [a (mx/item shape-param)
+        r (mx/item rate)
         alpha<1? (< a 1.0)
         a' (if alpha<1? (inc a) a)
         d (- a' (/ 1.0 3.0))
@@ -266,9 +272,16 @@
               ;; draw, so splitting it for the next attempt correlated
               ;; successive rejection rounds (genmlx-njaq).
               (let [[k1 k2 k-next] (rng/split-n k 3)
-                    x (mx/realize (rng/normal k1 []))
-                    v (js/Math.pow (+ 1.0 (* c x)) 3)
-                    u (mx/realize (rng/uniform k2 []))]
+                    x-arr (rng/normal k1 [])
+                    u-arr (rng/uniform k2 [])
+                    ;; One combined eval for the (x,u) candidate pair rather than
+                    ;; two separate realizes — halves the per-attempt GPU syncs.
+                    ;; item on an already-eval'd array is a host read, not a
+                    ;; second dispatch (genmlx-3rkq).
+                    _ (mx/eval! x-arr u-arr)
+                    x (mx/item x-arr)
+                    u (mx/item u-arr)
+                    v (js/Math.pow (+ 1.0 (* c x)) 3)]
                 (if (and (> v 0)
                          (< (js/Math.log u) (+ (* 0.5 x x) (* d (+ 1 (- v) (js/Math.log v))))))
                   (/ (* d v) r)
@@ -808,9 +821,11 @@
           (let [alpha-vals (mx/->clj alpha)
                 k (count alpha-vals)
                 keys (rng/split-n key k)
-                gammas (mapv (fn [a ki]
-                               (let [g (dc/dist-sample (gamma-dist (mx/scalar a) ONE) ki)]
-                                 (mx/realize g)))
+                ;; Call gamma-sample-scalar directly: it already returns a host
+                ;; float, so the old (dist-sample → mx/scalar wrap → mx/realize)
+                ;; round-tripped a value we already had on the host — one wasted
+                ;; GPU eval per component, k per Dirichlet draw (genmlx-3rkq).
+                gammas (mapv (fn [a ki] (gamma-sample-scalar (mx/scalar a) ONE ki))
                              alpha-vals keys)
                 total (reduce + gammas)
                 normalized (mapv #(/ % total) gammas)]

@@ -1,4 +1,10 @@
-;; @tier medium
+;; @tier slow
+;; Three-family IS convergence (Gamma-Poisson, Normal-Inverse-Gamma,
+;; Dirichlet-Categorical) at 5000-10000 samples each — ~250s standalone, and
+;; gamma-heavy so it scales badly under the medium tier's PARALLEL GPU
+;; contention. It belongs in the serial `slow` tier (convergence suites), which
+;; both fits the 600s cap and removes the contention. The scalar Marsaglia-Tsang
+;; gamma sampler's per-draw GPU round-trips were also cut ~33% (genmlx-3rkq).
 (ns genmlx.conjugate-posterior-test
   "Conjugate posterior verification against analytically derived ground truth.
 
