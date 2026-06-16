@@ -241,6 +241,14 @@
 
 (println "\nGround truth: v ~ N(0,3) (mean=0, std=3). R-hat target <= 1.01 (Vehtari et al. 2021).")
 (println "bulk/tail-ESS are rank-normalized (Vehtari); R-hat + ESS are multi-chain on v.")
+;; genmlx-whsw: this is the CENTERED funnel — a hard-geometry stress test by
+;; design. High R-hat / low bulk-ESS here is the EXPECTED, honest result (the
+;; v–x_i correlation in the neck defeats centered HMC/NUTS; centered RW-MH is
+;; hopeless), NOT a pipeline bug. The model and ground truth are well-posed; the
+;; diagnostics faithfully report the difficulty. A non-centered reparameterized
+;; reference that DOES converge is tracked separately (see whsw follow-up).
+(println "\nNOTE: centered funnel is a hard-geometry stress test — high R-hat is")
+(println "the expected honest result (not a bug). See genmlx-whsw.")
 
 (write-json "data.json"
   {:experiment "neals-funnel"
@@ -249,7 +257,11 @@
    :diagnostics {:r-hat-target 1.01
                  :n-chains 4
                  :ess-note (str "ess = sum of per-chain Geyer ESS; "
-                                "bulk/tail-ESS rank-normalized (Vehtari et al. 2021)")}
+                                "bulk/tail-ESS rank-normalized (Vehtari et al. 2021)")
+                 :interpretation (str "CENTERED funnel: high R-hat / low bulk-ESS is the "
+                                      "EXPECTED honest result for this hard geometry (the v-x_i "
+                                      "neck correlation defeats centered HMC/NUTS), not a bug. "
+                                      "Model + ground truth are well-posed (genmlx-whsw).")}
    :ground-truth {:v-mean 0.0 :v-std 3.0
                   :note "joint funnel: v ~ N(0,3) marginally (no observations)"}
    :results all-summaries})
