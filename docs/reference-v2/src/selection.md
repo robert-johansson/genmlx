@@ -129,7 +129,7 @@ Create a hierarchical selection that maps parent addresses to sub-selections. Th
 
 **Returns:** ISelection with per-address sub-selections.
 
-For addresses present in the map, `selected?` returns `true` and `get-subselection` returns the associated sub-selection. For addresses not in the map, `selected?` returns `false` and `get-subselection` returns `none`.
+For addresses present in the map, `get-subselection` returns the associated sub-selection. `selected?` returns `true` only when an address maps to the canonical `all` selection (a full leaf selection); mapping an address to a *partial* sub-selection means "descend into it" and does not select the leaf itself. For addresses not in the map, `selected?` returns `false` and `get-subselection` returns `none`.
 
 ```clojure
 ;; Select :x and :y under :sub1, everything under :sub2
@@ -215,10 +215,4 @@ Selections drive which variables MCMC kernels propose changes to:
 ;; MH targeting only :slope
 (mcmc/mh {:samples 1000 :selection (sel/select :slope)}
          model args obs)
-
-;; Block Gibbs: cycle through variable groups
-(mcmc/gibbs {:samples 1000
-             :blocks [(sel/select :slope)
-                      (sel/select :intercept)]}
-            model args obs)
 ```

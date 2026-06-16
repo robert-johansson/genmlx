@@ -6,10 +6,10 @@ Source: `src/genmlx/trace.cljs`, `src/genmlx/diff.cljs`
 
 ## Trace Record
 
-A `Trace` is a ClojureScript record with five fields:
+A `Trace` is a ClojureScript record with six fields:
 
 ```clojure
-(defrecord Trace [gen-fn args choices retval score])
+(defrecord Trace [gen-fn args choices retval score omega])
 ```
 
 | Field | Type | Description |
@@ -19,6 +19,7 @@ A `Trace` is a ClojureScript record with five fields:
 | `choices` | [ChoiceMap](choicemap.md) | All random choices made during execution |
 | `retval` | Any | Return value of the model body |
 | `score` | MLX scalar | Log-joint probability: log p(choices \| args) |
+| `omega` | Any (optional, default nil) | Encapsulated randomness used to realize the score when it is an unbiased density estimator rather than an exact density (thesis §4.5); nil for ordinary exact-density traces |
 
 All field values are accessible via keyword lookup on the trace record.
 
@@ -30,11 +31,11 @@ All field values are accessible via keyword lookup on the trace record.
 (make-trace {:gen-fn gf :args args :choices cm :retval rv :score s})
 ```
 
-Create a `Trace` from a map. All five fields are required.
+Create a `Trace` from a map (a thin wrapper over `map->Trace`). The five core fields `:gen-fn`, `:args`, `:choices`, `:retval`, `:score` are expected; `:omega` is optional (defaults to nil).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `m` | Map | Map with keys `:gen-fn`, `:args`, `:choices`, `:retval`, `:score` |
+| `m` | Map | Map with keys `:gen-fn`, `:args`, `:choices`, `:retval`, `:score` (and optional `:omega`) |
 
 **Returns:** `Trace` record.
 
@@ -105,7 +106,7 @@ Used by `update` and `regenerate` to correctly recompute scores when sub-model c
 
 ### `::element-scores`
 
-Attached by the `MapCombinator` and `VmapGF` to cache per-element log-probabilities. This is a vector of MLX scalars, one per element in the mapped collection.
+Attached by the `MapCombinator` and `VmapCombinator` to cache per-element log-probabilities. This is a vector of MLX scalars, one per element in the mapped collection.
 
 ```clojure
 ;; After simulating a Map combinator
@@ -163,13 +164,13 @@ Returns true if the diff indicates no change.
 
 **Returns:** Boolean.
 
-### `changed?`
+### `vector-diff?`
 
 ```clojure
-(changed? d)
+(vector-diff? d)
 ```
 
-Returns true if the diff indicates any change (i.e., not `no-change`).
+Returns true if the diff is a `:vector-diff` (changes at specific vector indices). Construct one with `(vector-diff changed)`, where `changed` is a collection of changed indices.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|

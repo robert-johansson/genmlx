@@ -1,8 +1,10 @@
 # Neural Networks
 
-Wrap MLX neural network modules as generative functions and train them with native MLX optimizers. The `nn` namespace provides constructors for common layers, activation functions, a bridge from `nn.Module` to the GFI, and training utilities.
+Build neural network layers as functional data and train them with pure-function optimizers over MLX autograd. The `nn` namespace provides constructors for common layers, activation functions, a bridge from a layer to the GFI, and training utilities.
 
-A `NeuralNetGF` is a deterministic generative function -- it makes no random choices, always scores zero, and its return value is the module's forward pass. This makes neural networks composable with probabilistic models via `splice`.
+Each layer is a plain ClojureScript map of the form `{:params {...} :forward (fn [x] ...) :type ...}` -- not an MLX `nn.*` module. Parameters are flat maps with deterministic key order, directly usable with MLX autograd.
+
+A `NeuralNetGF` is a deterministic generative function -- it makes no random choices, always scores zero, and its return value is the layer's forward pass. This makes neural networks composable with probabilistic models via `splice`.
 
 ```clojure
 (require '[genmlx.nn :as nn])
@@ -20,7 +22,7 @@ Source: `src/genmlx/nn.cljs`
 (nn/linear in-dims out-dims & {:keys [bias]})
 ```
 
-Create an `nn.Linear` layer that computes `y = x @ W^T + b`.
+Create a Linear layer that computes `y = x @ W^T + b`. Weights use Kaiming uniform initialization (`uniform(-k, k)` where `k = 1/sqrt(in-dims)`).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -28,7 +30,7 @@ Create an `nn.Linear` layer that computes `y = x @ W^T + b`.
 | `out-dims` | integer | Number of output features |
 | `bias` | boolean | Whether to include a bias term (default: `true`) |
 
-**Returns:** MLX `nn.Linear` module.
+**Returns:** layer map `{:params {:weight .. :bias ..} :forward (fn [x] ..) :type :linear :rebuild ..}`.
 
 ---
 
@@ -38,13 +40,13 @@ Create an `nn.Linear` layer that computes `y = x @ W^T + b`.
 (nn/sequential layers)
 ```
 
-Create an `nn.Sequential` module from a vector of layers. Layers are applied in order during the forward pass.
+Compose a vector of layers. Layers are applied in order during the forward pass. Parameters are flattened with index-prefixed keys (`:0/weight`, `:0/bias`, `:1/weight`, ...).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `layers` | vector | Ordered vector of MLX `nn.Module` layers |
+| `layers` | vector | Ordered vector of layer maps |
 
-**Returns:** MLX `nn.Sequential` module.
+**Returns:** layer map `{:params {...} :forward (fn [x] ..) :type :sequential :layers [..] :rebuild ..}`.
 
 **Example:**
 ```clojure
@@ -59,13 +61,13 @@ Create an `nn.Sequential` module from a vector of layers. Layers are applied in 
 (nn/layer-norm dims)
 ```
 
-Create an `nn.LayerNorm` layer.
+Create a layer-normalization layer: `y = (x - mean) / sqrt(var + eps) * gamma + beta`.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `dims` | integer | Normalized dimension size |
 
-**Returns:** MLX `nn.LayerNorm` module.
+**Returns:** layer map with `:params {:gamma .. :beta ..}` and `:type :layer-norm`.
 
 ---
 
@@ -75,14 +77,14 @@ Create an `nn.LayerNorm` layer.
 (nn/embedding num-embeddings dims)
 ```
 
-Create an `nn.Embedding` layer that maps integer indices to dense vectors.
+Create an embedding layer that maps integer indices to dense vectors (`indices -> weight[indices]`).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `num-embeddings` | integer | Size of the vocabulary |
 | `dims` | integer | Embedding dimension |
 
-**Returns:** MLX `nn.Embedding` module.
+**Returns:** layer map with `:params {:weight ..}` and `:type :embedding`.
 
 ---
 
@@ -92,13 +94,13 @@ Create an `nn.Embedding` layer that maps integer indices to dense vectors.
 (nn/dropout p)
 ```
 
-Create an `nn.Dropout` layer.
+Create a no-op dropout layer. Its forward pass is the identity function -- the `p` argument is ignored. Stochasticity during forward passes is handled by the generative function framework, not by dropout masks.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `p` | float | Dropout probability |
+| `p` | float | Dropout probability (ignored) |
 
-**Returns:** MLX `nn.Dropout` module.
+**Returns:** layer map `{:params {} :forward identity :type :dropout}`.
 
 ---
 
@@ -110,9 +112,9 @@ Create an `nn.Dropout` layer.
 (nn/relu)
 ```
 
-Create an `nn.ReLU` activation module.
+Create a ReLU activation layer (`max(x, 0)`).
 
-**Returns:** MLX `nn.ReLU` module.
+**Returns:** layer map `{:params {} :forward .. :type :relu}`.
 
 ---
 
@@ -122,9 +124,9 @@ Create an `nn.ReLU` activation module.
 (nn/gelu)
 ```
 
-Create an `nn.GELU` activation module.
+Create a GELU activation layer (tanh approximation).
 
-**Returns:** MLX `nn.GELU` module.
+**Returns:** layer map `{:params {} :forward .. :type :gelu}`.
 
 ---
 
@@ -134,9 +136,9 @@ Create an `nn.GELU` activation module.
 (nn/tanh-act)
 ```
 
-Create an `nn.Tanh` activation module.
+Create a tanh activation layer.
 
-**Returns:** MLX `nn.Tanh` module.
+**Returns:** layer map `{:params {} :forward mx/tanh :type :tanh}`.
 
 ---
 
@@ -146,9 +148,9 @@ Create an `nn.Tanh` activation module.
 (nn/sigmoid-act)
 ```
 
-Create an `nn.Sigmoid` activation module.
+Create a sigmoid activation layer.
 
-**Returns:** MLX `nn.Sigmoid` module.
+**Returns:** layer map `{:params {} :forward mx/sigmoid :type :sigmoid}`.
 
 ---
 
@@ -157,18 +159,18 @@ Create an `nn.Sigmoid` activation module.
 ### `nn->gen-fn`
 
 ```clojure
-(nn/nn->gen-fn module)
+(nn/nn->gen-fn layer-or-atom)
 ```
 
-Wrap an MLX `nn.Module` as a deterministic generative function. The module's `.forward` method becomes the generative function body. The resulting `NeuralNetGF` implements the full GFI: `simulate`, `generate`, `update`, `regenerate`, `assess`, `propose`, and `project`.
+Wrap a layer (a layer map or an atom holding one) as a deterministic generative function. The layer's `:forward` closure becomes the generative function body. The resulting `NeuralNetGF` implements the full GFI: `simulate`, `generate`, `update`, `regenerate`, `assess`, `propose`, and `project`.
 
 Because the function is deterministic, its choicemap is always empty and all weights/scores are zero.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `module` | nn.Module | An MLX neural network module |
+| `layer-or-atom` | map or atom | A layer map, or an atom containing one |
 
-**Returns:** `NeuralNetGF` -- a generative function wrapping the module.
+**Returns:** `NeuralNetGF` -- a generative function wrapping the layer.
 
 **Example:**
 ```clojure
@@ -183,7 +185,7 @@ Because the function is deterministic, its choicemap is always empty and all wei
 (def model
   (gen [x]
     (let [pred (splice :nn gen-net [x])
-          sigma (trace :sigma (dist/gamma 1 1))]
+          sigma (trace :sigma (dist/gamma-dist 1 1))]
       (trace :y (dist/gaussian pred sigma)))))
 ```
 
@@ -194,25 +196,27 @@ Because the function is deterministic, its choicemap is always empty and all wei
 ### `value-and-grad`
 
 ```clojure
-(nn/value-and-grad module loss-fn)
+(nn/value-and-grad layer-ref loss-fn)
 ```
 
-Create a function that computes both a loss value and gradients with respect to the module's parameters. Uses MLX's native `nn.valueAndGrad`.
+Create a function that computes both a loss value and gradients with respect to the layer's parameters. Bridges to MLX autograd via `mx/value-and-grad`.
+
+The `loss-fn` receives the layer's rebuilt `forward` function as its first argument (so that autograd traces through the tracked parameter arrays), followed by the inputs.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `module` | nn.Module | The module whose parameters will be differentiated |
-| `loss-fn` | function | `(fn [& inputs] -> MLX scalar loss)` |
+| `layer-ref` | atom | An atom containing the layer map whose parameters are differentiated |
+| `loss-fn` | function | `(fn [forward-fn & inputs] -> MLX scalar loss)` |
 
-**Returns:** `function` -- `(fn [& inputs] -> [loss, grad-tree])` where `loss` is an MLX scalar and `grad-tree` is a tree of parameter gradients.
+**Returns:** `function` -- `(fn [& inputs] -> [loss param-grads])` where `loss` is an MLX scalar and `param-grads` is a flat map from parameter key to gradient array (same keys as `(:params layer)`).
 
 **Example:**
 ```clojure
-(def net (nn/sequential [(nn/linear 4 1)]))
+(def net (atom (nn/sequential [(nn/linear 4 1)])))
 (def loss-and-grad
   (nn/value-and-grad net
-    (fn [x y]
-      (let [pred (.forward net x)]
+    (fn [forward-fn x y]
+      (let [pred (forward-fn x)]
         (mx/mean (mx/square (mx/subtract pred y)))))))
 
 (let [[loss grads] (loss-and-grad x-batch y-batch)]
@@ -227,16 +231,22 @@ Create a function that computes both a loss value and gradients with respect to 
 (nn/optimizer type lr)
 ```
 
-Create a native MLX optimizer.
+Create a pure-function optimizer step. The returned step function takes the current flat parameter map and the gradient map and returns a new parameter map; `:adam`/`:adamw` close over their own moment state in an internal atom.
+
+```clojure
+(nn/optimizer type lr & {:as opts})
+```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `type` | keyword | Optimizer type: `:adam`, `:sgd`, or `:adamw` |
+| `type` | keyword | Optimizer type: `:sgd`, `:adam`, or `:adamw` |
 | `lr` | float | Learning rate |
+| `opts` | map | Optional hyperparameters (e.g. `:beta1` `:beta2` `:eps` for Adam, `:weight-decay` for AdamW) |
 
-**Returns:** MLX optimizer instance.
+**Returns:** `function` -- a step function `(fn [params grads] -> new-params)`.
 
 **Example:**
 ```clojure
 (def opt (nn/optimizer :adam 0.001))
+(def new-params (opt (:params @net) grads))
 ```

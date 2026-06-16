@@ -190,7 +190,7 @@ MLX operations are **lazy** — they build a computation graph that executes on 
 
 ## Distribution catalog
 
-GenMLX includes 27 built-in distributions. Here are the most common ones:
+GenMLX includes 36 distribution constructors. Here are the most common ones:
 
 **Continuous:**
 

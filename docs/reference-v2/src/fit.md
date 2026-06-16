@@ -104,7 +104,7 @@ Options for `opts`:
     {:method :vi
      :iterations 2000
      :verbose? true}))
-;; [fit] Selected method: vi -- User-specified
+;; [fit] Selected method: vi — User-specified
 ```
 
 ---
@@ -150,7 +150,7 @@ Select the optimal inference method for a model given observations. Analyzes the
 ;; => :hmc
 
 (:reason selection)
-;; => "Static model with 2 residual dims (< 10)"
+;; => "Static model with 2 residual dims (≤ 10)"
 
 (:n-residual selection)
 ;; => 2

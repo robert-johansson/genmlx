@@ -212,7 +212,7 @@ Both modes use JSON with the following structure:
 {
   "version": 1,
   "format": "genmlx-choices-v1",
-  "gen_fn_id": "optional-id",
+  "gen-fn-id": "optional-id",
   "choices": { ... }
 }
 ```
@@ -222,10 +222,11 @@ Both modes use JSON with the following structure:
 {
   "version": 1,
   "format": "genmlx-trace-v1",
-  "gen_fn_id": "optional-id",
+  "gen-fn-id": "optional-id",
   "choices": { ... },
   "args": [ ... ],
   "score": 0.0,
+  "score-type": "joint",
   "retval": ...
 }
 ```

@@ -105,7 +105,7 @@ Uses `mx/value-and-grad` for a single forward+backward pass.
 (def model
   (gen [x]
     (let [mu (trace :mu (dist/gaussian 0 10))
-          sigma (trace :sigma (dist/half-normal 1))]
+          sigma (trace :sigma (dist/exponential 1))]
       (trace :y (dist/gaussian mu sigma)))))
 
 (def obs (cm/choicemap :y (mx/scalar 3.0)))
