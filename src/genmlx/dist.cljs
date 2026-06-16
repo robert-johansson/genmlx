@@ -9,7 +9,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.dist.core :as dc]
             [genmlx.mlx.constants :refer [LOG-2PI ZERO ONE TWO HALF
-                                          NEG-INF LOG-2PI-HALF MLX-PI
+                                          NEG-INF LOG-2PI-HALF MLX-PI LOG-PI
                                           SQRT-TWO]])
   (:require-macros [genmlx.dist.macros :refer [defdist]]))
 
@@ -737,7 +737,7 @@
                   half-df1 (mx/multiply HALF (mx/add df ONE))
                   log-norm (mx/subtract (mx/lgamma half-df1)
                                         (mx/add (mx/lgamma half-df)
-                                                (mx/multiply HALF (mx/log (mx/multiply df (mx/scalar js/Math.PI))))))]
+                                                (mx/multiply HALF (mx/log (mx/multiply df MLX-PI)))))]
               (-> log-norm
                   (mx/subtract (mx/log scale))
                   (mx/subtract (mx/multiply half-df1
@@ -875,21 +875,21 @@
           (let [u (rng/uniform key [])
                 z (mx/subtract u HALF)]
             (mx/add loc (mx/multiply scale
-                                     (mx/divide (mx/sin (mx/multiply (mx/scalar js/Math.PI) z))
-                                                (mx/cos (mx/multiply (mx/scalar js/Math.PI) z)))))))
+                                     (mx/divide (mx/sin (mx/multiply MLX-PI z))
+                                                (mx/cos (mx/multiply MLX-PI z)))))))
   (log-prob [v]
     ;; -log(pi * scale * (1 + ((v - loc) / scale)^2))
             (let [z (mx/divide (mx/subtract v loc) scale)]
               (mx/negative
-               (mx/add (mx/scalar (js/Math.log js/Math.PI))
+               (mx/add LOG-PI
                        (mx/log scale)
                        (mx/log (mx/add ONE (mx/square z)))))))
   (reparam [key]
            (let [u (rng/uniform key [])
                  z (mx/subtract u HALF)]
              (mx/add loc (mx/multiply scale
-                                      (mx/divide (mx/sin (mx/multiply (mx/scalar js/Math.PI) z))
-                                                 (mx/cos (mx/multiply (mx/scalar js/Math.PI) z))))))))
+                                      (mx/divide (mx/sin (mx/multiply MLX-PI z))
+                                                 (mx/cos (mx/multiply MLX-PI z))))))))
 
 (defmethod dc/dist-sample-n* :cauchy [d key n]
   (let [{:keys [loc scale]} (:params d)
@@ -897,8 +897,8 @@
         u (rng/uniform key [n])
         z (mx/subtract u HALF)]
     (mx/add loc (mx/multiply scale
-                             (mx/divide (mx/sin (mx/multiply (mx/scalar js/Math.PI) z))
-                                        (mx/cos (mx/multiply (mx/scalar js/Math.PI) z)))))))
+                             (mx/divide (mx/sin (mx/multiply MLX-PI z))
+                                        (mx/cos (mx/multiply MLX-PI z)))))))
 
 (let [raw cauchy]
   (defn cauchy
@@ -915,7 +915,9 @@
   "Inverse-Gamma distribution with shape and scale parameters."
   [shape-param scale-param]
   (sample [key]
-    ;; Sample gamma(shape, 1/scale), then invert
+    ;; InvGamma(shape, scale) = scale / G where G ~ Gamma(shape, rate=1)
+    ;; (genmlx-21kt: the old "gamma(shape, 1/scale), then invert" comment
+    ;; mis-described this — the code samples rate=1 and divides scale, not 1/g).
           (let [g (dc/dist-sample (gamma-dist shape-param ONE) key)]
             (mx/divide scale-param g)))
   (log-prob [v]
@@ -1708,7 +1710,7 @@
       samples)))
 
 (defmethod dc/dist-log-prob :iid [d vals]
-  (let [{:keys [base-dist t]} (:params d)
+  (let [{:keys [base-dist]} (:params d)            ; t unused here (genmlx-21kt)
         vals (mx/ensure-array vals)
         val-shape (mx/shape vals)
         ndim (count val-shape)

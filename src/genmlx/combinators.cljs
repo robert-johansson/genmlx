@@ -503,7 +503,7 @@
 (defn- unfold-simulate-fused
   "Fused Unfold simulate: 2 Metal dispatches for T steps."
   [this args kernel fused-cache n init-state extra]
-  (let [{:keys [compiled-fn noise-dim addr-order noise-site-types state-keys]}
+  (let [{:keys [compiled-fn addr-order noise-site-types state-keys]}  ; noise-dim unused (genmlx-21kt)
         (get-or-build-fused-unfold fused-cache kernel n extra)
         key (rng/fresh-key)
         noise (cops/generate-noise-matrix key n noise-site-types)
@@ -1565,7 +1565,7 @@
 (defn- scan-simulate-fused
   "Fused Scan simulate: compiled fn over all T steps."
   [this args kernel fused-cache init-carry inputs n]
-  (let [{:keys [compiled-fn noise-dim addr-order noise-site-types]}
+  (let [{:keys [compiled-fn addr-order noise-site-types]}  ; noise-dim unused (genmlx-21kt)
         (get-or-build-fused-scan fused-cache kernel n)
         key (rng/fresh-key)
         noise (cops/generate-noise-matrix key n noise-site-types)
