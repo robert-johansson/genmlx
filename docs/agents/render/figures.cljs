@@ -17,6 +17,9 @@
             [genmlx.agents.pomdp :as pomdp]
             [genmlx.agents.inverse :as inv]
             [agentmodels.biased-inverse :as bi]
+            [agentmodels.ch06-pluggable-inference :as ch06]
+            [agentmodels.joint-5d-inference :as j5]
+            [agentmodels.multi-agent :as ma]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             ["fs" :as fs]))
@@ -230,6 +233,40 @@
   (emit! "ch07-posterior-anim" :bars-anim
          (mapv (fn [post] (pac/belief->bars "P(favourite cache | steps so far)" post :power)) pseq)
          {:width 470 :delay 700}))
+
+;; --- ch14: the SAME goal posterior from three backends that agree -------------
+(let [acts  ch06/obs-actions
+      mk    (fn [title m] {:title title
+                           :bars (mapv (fn [g] (cond-> {:label (name g) :weight (double (get m g 0.0))}
+                                                 (= g :a) (assoc :highlight true)))
+                                       ch06/goals)})
+      exact (ch06/exact-goal-posterior acts)
+      is    (:posterior (ch06/is-goal-posterior acts 5000 (rng/fresh-key 3)))
+      mh    (:posterior (ch06/mh-goal-posterior acts {:samples 5000 :burn 300 :key (rng/fresh-key 4)}))]
+  (emit! "ch14-backend-agreement" :bars-anim
+         [(mk "P(goal | behaviour) — exact enumeration" exact)
+          (mk "P(goal | behaviour) — importance sampling" is)
+          (mk "P(goal | behaviour) — Metropolis-Hastings" mh)]
+         {:width 480 :delay 1100}))
+
+;; --- ch15: Schelling focal-point convergence vs theory-of-mind depth ----------
+(let [sch    (ma/schelling-agents)
+      ladder (into [(ma/p-popular ((:bob sch) 0))]
+                   (mapcat (fn [d] [(ma/p-popular ((:alice sch) d)) (ma/p-popular ((:bob sch) d))])
+                           (range 1 5)))]
+  (emit! "ch15-schelling" :lines
+         {:title "Schelling coordination climbs with theory-of-mind depth" :xlabel "reasoning step" :ylabel "P(popular corridor)"
+          :series [{:label "P(popular)" :points ladder}]}
+         {:width 500 :height 300}))
+
+;; --- ch12: the joint posterior revising sharply when Pac-Man finally acts -----
+(let [cfg    (j5/demo-cfg {:optimal? false :extra-work? true})
+      agents (j5/build-agents cfg)
+      pseq   (j5/online-posteriors cfg agents 8 2)]
+  (emit! "ch12-online-revision" :lines
+         {:title "E[reward] revises sharply when Pac-Man finally acts" :xlabel "observations seen" :ylabel "E[reward]"
+          :series [{:label "E[reward]" :points (mapv :E-reward pseq)}]}
+         {:width 500 :height 300}))
 
 ;; --- manifest ---------------------------------------------------------------
 (fs/writeFileSync (str data-dir "/manifest.json")
