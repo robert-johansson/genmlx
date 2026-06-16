@@ -140,9 +140,17 @@
     (kernel trace fixed-key)))
 
 (defn seed
-  "Fix the PRNG key for a kernel. The same key is used every call.
-   Returns (fn [trace _key] -> trace).
-   If kernel has a reversal, the composite does too."
+  "Fix the PRNG key for a kernel: the SAME key is used on every call (the
+   threaded run-kernel key is ignored). Returns (fn [trace _key] -> trace);
+   if kernel has a reversal, the composite does too.
+
+   CONTRACT (genmlx-wkbc): this is for SINGLE-STEP determinism or DETERMINISTIC
+   kernels (e.g. update-kernel) only. Do NOT wrap a stochastic kernel with seed
+   and run it in a MULTI-STEP CHAIN: now that mh-kernel/random-walk respect their
+   threaded key (genmlx-vv3t), a constant key makes every step propose the
+   IDENTICAL move, so the chain cannot mix. For a reproducible chain pass a fixed
+   :key to run-kernel instead — it threads a deterministic but EVOLVING per-step
+   key sequence (see kernel_combinator_test/seed-convergence-test)."
   [kernel fixed-key]
   (let [result (seed-raw kernel fixed-key)
         rev (reversal kernel)]
