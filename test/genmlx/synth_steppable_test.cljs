@@ -20,9 +20,12 @@
       {:log-ml (- (:true-ml cand) (/ 4.0 (js/Math.sqrt depth)))  ;; bias -> 0 as depth grows
        :method :handler-is :conjugate? false})))
 
+;; A (conjugate) is the shallow-depth winner; B (IS, the true best) is UNDER-rated at
+;; depth 64 (-8.0 - 4/8 = -8.5 < A=-8.2) so it LOSES until deepened, then recovers
+;; (-8.0 - 4/sqrt(512) ~= -8.18 > A) and wins — the directional-margin deepen scenario.
 (def stream
-  [{:id :A :true-ml -10.0 :conjugate? true}
-   {:id :B :true-ml -8.0  :conjugate? false}    ;; IS candidate (the late, best one)
+  [{:id :A :true-ml -8.2  :conjugate? true}
+   {:id :B :true-ml -8.0  :conjugate? false}    ;; IS candidate (the late, true-best one, under-rated shallow)
    {:id :C :true-ml -12.0 :conjugate? true}])
 
 (println "\n== synth_steppable: proc drives default policy to a committed stop ==")
@@ -31,8 +34,11 @@
                                {:budget-ms 60000 :chunk 1 :gc-every 0})]
   (assert-true "proc reaches a committed stop (:done)" (= :done (:stopped-by out)))
   (assert-true "all 3 candidates revealed" (= 3 (count (:pool (:state out)))))
-  (assert-true ":best = highest-log-ml candidate (B, after exact A/C and IS B@64)"
-               (= :B (:best out))))
+  ;; The default greedy policy only PROPOSES (never deepens), so B stays under-rated at
+  ;; depth 64 (-8.5) and the shallow winner A (-8.2) is selected — exactly the mis-ranking
+  ;; the controller's :deepen action exists to correct (demonstrated below).
+  (assert-true ":best = shallow winner A (default propose-only policy never deepens B)"
+               (= :A (:best out))))
 
 (println "\n== synth_steppable: action interface (propose / deepen / stop) + cost ==")
 (let [base (ss/synth-steppable {:stream stream :score (make-scorer)
@@ -50,11 +56,15 @@
     (let [{s2 :state c2 :cost} ((:apply-action base) s1 :propose)]
       (assert-true "propose B (IS) charges :particles = init-depth (64)" (= 64 (:particles c2)))
       (assert-true "after proposing IS candidate B, :deepen available" (some #{:deepen} ((:actions base) s2)))
+      (assert-true "before deepen, shallow winner is A (B@64 under-rated, losing)"
+                   (= :A (:id ((:best-entry base) s2))))
       (let [b-shallow (:log-ml (first (filter #(= :B (:id %)) (:pool s2))))
             {s3 :state c3 :cost} ((:apply-action base) s2 :deepen)
             b-deep (:log-ml (first (filter #(= :B (:id %)) (:pool s3))))]
         (assert-true "deepen B raises its log-ml toward true (-8) — IS bias shrinks"
                      (> b-deep b-shallow))
+        (assert-true "deepen FLIPS the selection: B now beats A (the depth knob paying off)"
+                     (= :B (:id ((:best-entry base) s3))))
         (assert-true "deepen charges extra :particles (512-64=448)" (= 448 (:particles c3)))
         (assert-true "deepen B reaches depth 512" (= 512 (:depth (first (filter #(= :B (:id %)) (:pool s3))))))
         ;; stop

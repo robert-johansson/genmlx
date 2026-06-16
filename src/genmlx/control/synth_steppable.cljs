@@ -50,14 +50,26 @@
     {:entry entry :cost (cost/cost+ gpu host)}))
 
 (defn- deepen-target
-  "The pool index of the IS (non-conjugate) entry most worth deepening — the leading
-   IS contender below max-depth (deepening the contender is what could change the
-   ranking). nil when none qualifies."
-  [pool max-depth]
-  (let [cands (->> (map-indexed vector pool)
-                   (filter (fn [[_ e]] (and (not (:conjugate? e)) (< (:depth e) max-depth)))))]
-    (when (seq cands)
-      (first (apply max-key (fn [[_ e]] (:log-ml e)) cands)))))
+  "The pool index of the IS (non-conjugate) entry worth deepening — an IS candidate
+   below max-depth that is currently LOSING to the best OTHER candidate by no more than
+   `margin`. The gate is DIRECTIONAL on purpose: the importance-sampling log-evidence
+   estimate is DOWNWARD-biased, so deepening can only RAISE a candidate's score — it can
+   flip a candidate from losing to winning, never the reverse. Therefore deepening is a
+   live action ONLY for a candidate that is currently behind a competitor but close
+   enough that the shrinking bias could lift it ahead (0 <= best_other - score <= margin).
+   A candidate already ahead needs no re-scoring (deepening cannot change the selection),
+   and one behind by more than `margin` is not plausibly recoverable — neither is offered,
+   so the metareasoner never pays a re-scoring tax it cannot recoup. nil when none qualify."
+  [pool max-depth margin]
+  (let [is-cands (->> (map-indexed vector pool)
+                      (filter (fn [[_ e]] (and (not (:conjugate? e)) (< (:depth e) max-depth)))))
+        contestable (filter (fn [[i e]]
+                              (let [others (keep-indexed (fn [j o] (when (not= j i) (:log-ml o))) pool)
+                                    gap (when (seq others) (- (apply max others) (:log-ml e)))]
+                                (and gap (>= gap 0) (<= gap margin))))
+                            is-cands)]
+    (when (seq contestable)
+      (first (apply max-key (fn [[_ e]] (:log-ml e)) contestable)))))
 
 (defn synth-steppable
   "Build a synthesis steppable. config:
@@ -69,14 +81,14 @@
      :proposal-cost  (fn [cand] -> cost-meter) host cost of one proposal
                      (default {:llm-tokens 120 :sci-evals 1})
    Returns {:init :actions :apply-action :done? :best :step :best-entry}."
-  [{:keys [stream score init-depth deepen-factor max-depth proposal-cost]
-    :or {init-depth 64 deepen-factor 8 max-depth 4096
+  [{:keys [stream score init-depth deepen-factor max-depth proposal-cost deepen-margin]
+    :or {init-depth 64 deepen-factor 8 max-depth 4096 deepen-margin 2.0
          proposal-cost (fn [_] {:llm-tokens 120 :sci-evals 1})}
     :as config}]
   (let [cfg (assoc config :init-depth init-depth :proposal-cost proposal-cost)
         n-stream (count stream)
         can-propose? (fn [s] (< (:stream-idx s) n-stream))
-        can-deepen?  (fn [s] (some? (deepen-target (:pool s) max-depth)))
+        can-deepen?  (fn [s] (some? (deepen-target (:pool s) max-depth deepen-margin)))
         best-entry   (fn [s] (when (seq (:pool s)) (apply max-key :log-ml (:pool s))))]
     {:init (fn [] {:pool [] :stream-idx 0 :stopped? false})
 
@@ -94,7 +106,7 @@
            {:state (-> s (update :pool conj entry) (update :stream-idx inc))
             :cost cost})
          :deepen
-         (let [i (deepen-target (:pool s) max-depth)
+         (let [i (deepen-target (:pool s) max-depth deepen-margin)
                e (nth (:pool s) i)
                new-depth (min max-depth (* deepen-factor (:depth e)))
                {result :result gpu :cost} (cost/measure (fn [] (score (:cand e) new-depth)))
