@@ -178,6 +178,23 @@
       (catch :default e
         (is false (str "SMC gradient: " (.-message e))))))
 
+  (testing "[P]-vector param throws a clear contract error (genmlx-wys4)"
+    ;; A multi-element init-state param has no defined semantics on this path;
+    ;; it must fail fast with an explicit contract error, not a confusing
+    ;; broadcast_to shape error (or a silently-wrong gradient).
+    (let [msg (try
+                (cg/smc-log-ml-gradient
+                  lg-kernel (mx/scalar 0.0)
+                  (mx/array [0.0 1.0])          ; [P=2] param — unsupported
+                  smc-obs
+                  {:particles 30 :tau 1.0 :key (rng/fresh-key 21)})
+                nil
+                (catch :default e (.-message e)))]
+      (is (some? msg) "[P]-vector param must throw, not silently broadcast")
+      (is (and msg (.includes msg "scalar"))
+          (str "error names the scalar/length-1 contract, got: " msg))
+      (is (and msg (.includes msg "wys4")) "error cites genmlx-wys4")))
+
   (testing "FD comparison for SMC gradient"
     (try
       (let [eps 1e-3

@@ -169,6 +169,22 @@
                                         gumbel-t tau-arr)]
                   (recur (inc t) resampled-state
                          (mx/add log-ml ml-inc)))))))
+        ;; genmlx-wys4: the objective broadcasts the init-state param across
+        ;; particles (params IS init-state), which is only defined for a scalar /
+        ;; length-1 param. A general [P]-vector param has no init-state semantics
+        ;; on this path and would otherwise surface as a confusing broadcast_to
+        ;; shape error. Fail fast with an explicit contract error; full multi-param
+        ;; compiled SMC log-ML gradient requires make-parameterized-extend.
+        _ (let [pshape (mx/shape (mx/ensure-array model-params))
+                psize (reduce * 1 pshape)]
+            (when (> psize 1)
+              (throw (ex-info (str "compiled-smc-log-ml-gradient supports a scalar / "
+                                   "length-1 init-state param only; got param shape "
+                                   (pr-str pshape) " (size " psize "). Multi-param "
+                                   "parameterization requires make-parameterized-extend "
+                                   "(genmlx-wys4).")
+                              {:param-shape pshape :param-size psize
+                               :supported "scalar or length-1"}))))
         vag (mx/value-and-grad objective)
         [value grad] (vag model-params)]
     (mx/materialize! value grad)
