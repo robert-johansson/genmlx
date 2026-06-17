@@ -46,8 +46,7 @@
   [args target-sym env]
   (let [results (mapv #(analyze-affine % target-sym env) args)]
     (if (every? :affine? results)
-      (let [target-results (filter :has-target? results)
-            const-results (filter (complement :has-target?) results)]
+      (let [target-results (filter :has-target? results)]
         (if (empty? target-results)
           ;; No target dependency — pure constant addition
           (affine-constant (cons 'mx/add (map :offset results)))

@@ -55,9 +55,9 @@
    POMDP belief filter (genmlx.agents.pomdp) reuses the same normalization."
   [logm]
   (let [hi (apply max (vals logm))
-        ex (into {} (map (fn [[g l]] [g (Math/exp (- l hi))]) logm))
+        ex (update-vals logm (fn [l] (Math/exp (- l hi))))
         z  (reduce + (vals ex))]
-    (into {} (map (fn [[g e]] [g (/ e z)]) ex))))
+    (update-vals ex (fn [e] (/ e z)))))
 
 (defn- stack-log-policies
   "Stack the goal policies into one [G,S,A] log-action-probability tensor (bean

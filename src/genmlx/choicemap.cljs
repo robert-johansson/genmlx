@@ -196,12 +196,10 @@
   "Build a ChoiceMap from a flat {keyword -> value} map.
    Each key becomes a top-level Value entry."
   [m]
-  (if (seq m)
-    (reduce-kv
-      (fn [cm addr val] (set-value cm addr val))
-      EMPTY
-      m)
-    EMPTY))
+  (reduce-kv
+    (fn [cm addr val] (set-value cm addr val))
+    EMPTY
+    m))
 
 ;; ---------------------------------------------------------------------------
 ;; Stack/Unstack for batched execution

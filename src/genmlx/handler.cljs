@@ -395,7 +395,7 @@
   (-> state
       (update :choices cm/set-submap addr (:choices sub-result))
       (update :score mx/add (:score sub-result))
-      (update :splice-scores (fn [ss] (assoc (or ss {}) addr (:score sub-result))))
+      (update :splice-scores (fnil assoc {}) addr (:score sub-result))
       (update :score-type tr/combine-score-types (:score-type sub-result))
       (cond->
        (and (contains? state :weight) (:weight sub-result))

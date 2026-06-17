@@ -73,13 +73,6 @@
   [encoder]
   (if (instance? Atom encoder) encoder (atom encoder)))
 
-(defn- fwd
-  "Get the current forward function from an encoder (atom or map)."
-  [encoder]
-  (if (instance? Atom encoder)
-    (:forward @encoder)
-    (:forward encoder)))
-
 ;; ---------------------------------------------------------------------------
 ;; ELBO loss for training
 ;; ---------------------------------------------------------------------------
@@ -121,8 +114,8 @@
    Returns (fn [forward-fn data] -> scalar loss) for use with nn/value-and-grad."
   [encoder model latent-addrs & {:keys [model-args-fn observations-fn posterior-family
                                          log-joint-fn]
-                                  :or {model-args-fn (fn [x] [x])
-                                       observations-fn (fn [_] cm/EMPTY)
+                                  :or {model-args-fn vector
+                                       observations-fn (constantly cm/EMPTY)
                                        posterior-family gaussian-posterior}}]
   (let [model (dyn/auto-key model)
         d (count latent-addrs)

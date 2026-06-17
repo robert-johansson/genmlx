@@ -86,7 +86,7 @@
         g->idx (zipmap goals-vec (range))]
     (mx/array
       (clj->js (vec (for [s (range S)]
-                      (let [gi (get g->idx (get terminals s))]
+                      (let [gi (g->idx (terminals s))]
                         (vec (for [g (range (count goals-vec))] (if (= g gi) 1.0 0.0)))))))
       mx/float32)))
 
@@ -115,7 +115,7 @@
   [{:keys [grid utilities start gamma noise] :or {utilities {} gamma 1.0 noise 0.0}}]
   (let [{:keys [W H S walls terminals]} (parse-grid grid)
         A          (count action-deltas)
-        time-cost  (get utilities :timeCost 0.0)
+        time-cost  (:timeCost utilities 0.0)
         ns-fn      (fn [s a] (next-state W H walls s a))
         ;; geometry (host-side, pure CLJS) -> [S,A] table of next-state indices
         ns-rows    (vec (for [s (range S)] (vec (for [a (range A)] (ns-fn s a)))))

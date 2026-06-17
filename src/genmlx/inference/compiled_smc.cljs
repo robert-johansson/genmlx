@@ -62,7 +62,7 @@
   [extend-fn noise-t current-state obs-t all-addrs t N]
   (let [kernel-args [(mx/ensure-array t) current-state]
         {:keys [obs-log-prob values-map retval]} (extend-fn noise-t kernel-args obs-t)
-        new-particles (mx/stack (mapv #(get values-map %) all-addrs) 1)
+        new-particles (mx/stack (mapv values-map all-addrs) 1)
         new-state (or retval (get values-map (first all-addrs)))
         ml-inc (mx/subtract (mx/logsumexp obs-log-prob)
                              (mx/scalar (js/Math.log N)))]

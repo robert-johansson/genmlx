@@ -14,11 +14,11 @@
    pure-function optimizers. `NeuralNetGF` wraps layers as
    deterministic generative functions for the GFI."
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.constants :refer [ZERO]]
             [genmlx.mlx.random :as rng]
             [genmlx.protocols :as p]
             [genmlx.trace :as tr]
-            [genmlx.choicemap :as cm]
-))
+            [genmlx.choicemap :as cm]))
 
 ;; Forward declarations for rebuild functions (defined after constructors).
 (declare make-linear-rebuild make-layer-norm-rebuild make-embedding-rebuild
@@ -73,7 +73,7 @@
 ;; Activation layers (no parameters)
 ;; ---------------------------------------------------------------------------
 
-(defn relu [] {:params {} :forward (fn [x] (mx/maximum x (mx/scalar 0.0))) :type :relu})
+(defn relu [] {:params {} :forward (fn [x] (mx/maximum x ZERO)) :type :relu})
 (defn gelu []
   {:params {}
    :forward (fn [x]
@@ -216,7 +216,6 @@
 ;; ---------------------------------------------------------------------------
 
 ;; Deterministic GF: score and all weights/projections are zero.
-(def ^:private ZERO (mx/scalar 0.0))
 
 (defn- run-forward
   "Run the wrapped layer's forward pass on the first arg."

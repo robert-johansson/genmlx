@@ -28,40 +28,40 @@
    dtype is not float32. A fresh key is uint32[2]; the float 0-scalar that an
    autograd boundary can produce (shape [], float32) is rejected. Shape/dtype
    are lazy-graph metadata, so this is a cheap check (no GPU eval)."
-  [k]
-  (and (mx/array? k)
-       (= [2] (mx/shape k))
-       (not= mx/float32 (mx/dtype k))))
+  [key]
+  (and (mx/array? key)
+       (= [2] (mx/shape key))
+       (not= mx/float32 (mx/dtype key))))
 
 (defn- check-key
   "Raise a clear error if k is non-nil but not a valid PRNG key. Catches a
    mis-typed key (e.g. a float scalar from a coerced-nil autograd arg) at the
    rng boundary with an actionable message, instead of letting it reach NAPI
    and crash Metal with a C++ exception (SIGTRAP)."
-  [k where]
-  (when (and (some? k) (not (valid-key? k)))
+  [key where]
+  (when (and (some? key) (not (valid-key? key)))
     (throw (ex-info (str "rng/" where ": malformed PRNG key — expected a uint32 "
                          "array of shape [2], got "
-                         (if (mx/array? k)
-                           (str "shape " (mx/shape k) " dtype " (mx/dtype k))
-                           (pr-str k))
+                         (if (mx/array? key)
+                           (str "shape " (mx/shape key) " dtype " (mx/dtype key))
+                           (pr-str key))
                          ". A float scalar here usually means a nil key was "
                          "coerced at an autograd boundary; thread a real key.")
-                    {:key-shape (when (mx/array? k) (mx/shape k))
-                     :key-dtype (when (mx/array? k) (mx/dtype k))}))))
+                    {:key-shape (when (mx/array? key) (mx/shape key))
+                     :key-dtype (when (mx/array? key) (mx/dtype key))}))))
 
 (defn- check-key-present
   "Like check-key, but nil is also an error: split/split-n require a real key.
    Raising here gives an actionable message instead of the raw NAPI error a
    nil reaching .randomSplit produces. Nil-tolerant call sites use
    split-or-nils / split-n-or-nils."
-  [k where]
-  (when (nil? k)
+  [key where]
+  (when (nil? key)
     (throw (ex-info (str "rng/" where ": key is nil — thread a real PRNG key "
                          "(rng/fresh-key), or use rng/" where "-or-nils for "
                          "nil-as-no-entropy call sites.")
                     {:key nil})))
-  (check-key k where))
+  (check-key key where))
 
 (defn split
   "Split a key into two independent sub-keys. Returns [k1 k2]."
@@ -158,12 +158,3 @@
   ([key mean cov shape]
    (.keyMultivariateNormal c key
      (mx/array mean) (mx/array cov) (clj->js shape))))
-
-(defn- permutation
-  ([key n]
-   (let [rand-vals (uniform key [n])]
-     (mx/argsort rand-vals)))
-  ([key arr axis]
-   (let [n (nth (mx/shape arr) axis)
-         perm (permutation key n)]
-     (mx/take-idx arr perm axis))))

@@ -1377,8 +1377,3 @@
 (def cpu "cpu")
 (def gpu "gpu")
 
-(def pi    (.-PI js/Math))
-(def e-val (.-E js/Math))
-(def inf   js/Infinity)
-(def nan   js/NaN)
-

@@ -1339,7 +1339,7 @@
     :theorem "Simulate distribution matches the analytical Dist⟦E⟧.
               Sample moments converge to analytical moments."
     :tags #{:semantics}
-    :check (fn [{:keys [_model _args]}]
+    :check (fn [_]
              ;; Tests on a fixed reference model (gaussian chain)
              ;; x ~ N(0,1), y ~ N(x, 0.5)
              ;; Analytical: E[y]=0, Var[y]=1.25, Cov(x,y)=1
@@ -1370,7 +1370,7 @@
     :theorem "The gen body maps to P = (X, Y, p, f) where all four
               components agree with the analytical denotation."
     :tags #{:semantics}
-    :check (fn [{:keys [_model _args]}]
+    :check (fn [_]
              ;; Fixed reference: x ~ N(0,1), y ~ N(x, 0.5)
              ;; At tau = {:x 0.5, :y 1.0}:
              ;;   p: score = log N(0.5;0,1) + log N(1.0;0.5,0.5)
@@ -1405,7 +1405,7 @@
     :theorem "For conjugate models with analytical handler, generate weight
               equals the log marginal likelihood."
     :tags #{:inference :internal-proposal}
-    :check (fn [{:keys [_model _args]}]
+    :check (fn [_]
              ;; Fixed conjugate model: mu ~ N(0,2), y ~ N(mu,1)
              ;; Analytical: log N(3; 0, sqrt(5))
              (let [conj-model (dyn/auto-key
@@ -1467,7 +1467,7 @@
               and cycle of same components converge to the analytical
               posterior mean."
     :tags #{:inference :mcmc}
-    :check (fn [{:keys [_model _args]}]
+    :check (fn [_]
              ;; Fixed model: x ~ N(0,1), y ~ N(0,1), obs ~ N(x+y, 0.5), obs=2
              ;; Analytical posterior mean of x+y = 8/4.5 = 1.778
              (let [kern-model (dyn/auto-key
@@ -1541,7 +1541,7 @@
               checked on a 3-component Gaussian mixture whose exact density is
               an independent closed form."
     :tags #{:encapsulated :inference}
-    :check (fn [{:keys [_model _args]}]
+    :check (fn [_]
              (let [w [0.3 0.5 0.2] mu [-2 0 3] sg [1 0.5 2]
                    {:keys [gf]} (enc/mixture-density
                                  {:weights w :means mu :sigmas sg :k 32})
@@ -1572,7 +1572,7 @@
               weight is EXACTLY 0. Without stored omega a fresh xi would inject
               nonzero weight into SMC/MH."
     :tags #{:encapsulated :inference}
-    :check (fn [{:keys [_model _args]}]
+    :check (fn [_]
              (let [{:keys [gf]} (enc/marginalized-gaussian
                                  {:n 2 :tau 1.0 :sigma 1.0 :k 16})
                    theta (mx/scalar 0.4)
@@ -1593,7 +1593,7 @@
               distribution. Normal-Normal conjugate: posterior mean recovered to
               tolerance (independent closed form 24/13)."
     :tags #{:encapsulated :mcmc :inference}
-    :check (fn [{:keys [_model _args]}]
+    :check (fn [_]
              (let [{:keys [gf]} (enc/marginalized-gaussian
                                  {:n 3 :tau 0.6 :sigma 0.8 :k 8})
                    y (mx/array [1.0 2.0 3.0])
@@ -2371,7 +2371,8 @@
                  :or {n-trials 10}}]
   (let [model (dyn/auto-key model)
         selected (cond
-                   law-names (filter #(contains? (set law-names) (:name %)) laws)
+                   law-names (let [name-set (set law-names)]
+                               (filter #(contains? name-set (:name %)) laws))
                    tags (let [tag-set (set tags)]
                           (filter #(some tag-set (:tags %)) laws))
                    :else laws)

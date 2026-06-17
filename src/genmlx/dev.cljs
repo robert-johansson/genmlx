@@ -27,10 +27,10 @@
 (defn- compile-validators
   "Precompile a {key -> schema} map into {key -> {:validate :explain :schema}}."
   [schema-map]
-  (into {} (map (fn [[k schema]] [k {:validate (m/validator schema)
-                                     :explain  (m/explainer schema)
-                                     :schema   schema}]))
-        schema-map))
+  (update-vals schema-map
+               (fn [schema] {:validate (m/validator schema)
+                             :explain  (m/explainer schema)
+                             :schema   schema})))
 
 (def ^:private op->validator
   (compile-validators

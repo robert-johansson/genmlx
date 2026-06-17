@@ -10,6 +10,7 @@
    Composes with differentiable.cljs for gradient computation and
    compiled-gen.cljs for optional Metal kernel fusion."
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.constants :as constants]
             [genmlx.mlx.random :as rng]
             [genmlx.inference.differentiable :as diff]
             [genmlx.compiled-gen :as cg]))
@@ -171,9 +172,8 @@
         ;; Trace-adaptive damping: λ = max(floor, 1e-4·tr(F)/D)
         _ (mx/materialize! fisher-sym)
         tr-F (mx/item (mx/sum (mx/diag fisher-sym)))
-        lambda (if damping
-                 damping
-                 (max 1e-6 (* 1e-4 (/ (js/Math.abs tr-F) D))))
+        lambda (or damping
+                   (max 1e-6 (* 1e-4 (/ (js/Math.abs tr-F) D))))
         fisher (mx/add fisher-sym (mx/multiply (mx/scalar lambda) (mx/eye D)))]
     (mx/materialize! fisher)
     {:fisher fisher
@@ -208,7 +208,7 @@
         log-ml-val (mx/item log-ml)
         log-det-val (mx/item log-det)
         log-evidence (+ log-ml-val
-                        (* 0.5 D (js/Math.log (* 2 js/Math.PI)))
+                        (* 0.5 D constants/LOG-2PI)
                         (* -0.5 log-det-val))]
     (cond-> {:log-evidence log-evidence
              :log-ml log-ml-val
@@ -262,7 +262,7 @@
         diag-clj (mx/->clj diag-cov)
         ;; Scale the negativity threshold to the matrix so float32 round-off near
         ;; zero is not flagged, while a real negative variance is.
-        max-abs (reduce (fn [m x] (max m (js/Math.abs x))) 0.0 diag-clj)
+        max-abs (reduce max 0.0 (map js/Math.abs diag-clj))
         tol (* 1e-8 (max 1.0 max-abs))
         neg-idxs (vec (keep-indexed (fn [i x] (when (< x (- tol)) i)) diag-clj))
         se-clj (mapv (fn [x] (if (< x (- tol))

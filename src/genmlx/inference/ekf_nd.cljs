@@ -320,6 +320,7 @@
          (let [{:keys [obs-fn jacobian-fn noise-std mask]} (:params dist)]
            (ekf-nd-update-j addrs means covs obs obs-fn jacobian-fn
                             noise-std mask))))}))
+
 (defn make-multi-ekf-transition
   "Handler middleware: wraps generate-transition for multi-dim EKF."
   [latent-addrs]

@@ -636,7 +636,7 @@
    Zero weights get a large negative logit (-100) with zero gradient.
    Positive weights get log(weights) with correct gradients."
   [weights]
-  (let [weights (.astype weights mx/float32)
+  (let [weights (mx/astype weights mx/float32)
         positive (mx/greater weights (mx/scalar 0))
         ;; Safe log: only compute log for positive weights
         safe-log (mx/log (mx/maximum weights (mx/scalar 1e-10)))
@@ -1515,10 +1515,11 @@
 (defn- wrap-angle
   "Wrap value to [-π, π)."
   [x]
-  (mx/subtract x
-               (mx/multiply (mx/scalar (* 2.0 js/Math.PI))
-                            (mx/floor (mx/divide (mx/add x MLX-PI)
-                                                 (mx/scalar (* 2.0 js/Math.PI)))))))
+  (let [two-pi (mx/scalar (* 2.0 js/Math.PI))]
+    (mx/subtract x
+                 (mx/multiply two-pi
+                              (mx/floor (mx/divide (mx/add x MLX-PI)
+                                                   two-pi))))))
 
 (defdist von-mises
   "Von Mises distribution on [-π, π) with mean direction mu and concentration kappa."

@@ -47,7 +47,7 @@
   "Additive merge of CostMeters (associative + commutative on every field).
    Always returns a meter with the full key set."
   [& meters]
-  (reduce (fn [acc m] (merge-with + acc m)) zero meters))
+  (apply merge-with + zero meters))
 
 (def ^:dynamic *wall-clock?*
   "When true, `measure` brackets the thunk with Bun.nanoseconds and reports
@@ -91,4 +91,4 @@
    chain a->b->c gives 2 + 1 + 0 = 3."
   [model]
   (let [g (dg/build-dep-graph (:schema model))]
-    (reduce + 0 (map (fn [n] (count (dg/find-descendants g n))) (:nodes g)))))
+    (reduce + (map (fn [n] (count (dg/find-descendants g n))) (:nodes g)))))

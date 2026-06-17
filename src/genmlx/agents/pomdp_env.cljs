@@ -98,8 +98,7 @@
      ;; adjacency-gated local reveal: observe the open/closed status of every
      ;; restaurant the agent is currently adjacent to (nil if none).
      :observe     (fn [world loc]
-                    (let [o (vec (for [r restaurants :when (contains? (adj r) loc)] [r (world r)]))]
-                      (when (seq o) o)))}))
+                    (not-empty (vec (for [r restaurants :when (contains? (adj r) loc)] [r (world r)]))))}))
 
 (defn bandit-pomdp
   "Multi-armed bandit POMDP (agentmodels Ch 3c/3d). The hidden state is the

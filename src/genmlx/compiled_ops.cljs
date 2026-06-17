@@ -632,8 +632,8 @@
             {:values (:values result)
              :score (:score result)
              :weight (:weight result)
-             :retval (when retval-fn
-                       (retval-fn (:values result) mlx-args))}))))))
+             ;; retval-fn proven truthy by the outer guard (every? some? + retval-fn)
+             :retval (retval-fn (:values result) mlx-args)}))))))
 
 (defn make-branch-rewritten-regenerate
   "Build a compiled regenerate for models with rewritable branches (L1-M4).
@@ -777,13 +777,18 @@
 
         :else nil))))
 
+(defn- noise-fn-site?
+  "True when a site-spec exists and its dist-type has a :noise-fn transform."
+  [s]
+  (boolean (and s (:noise-fn (get compiled/noise-transforms-full (:dist-type s))))))
+
 (defn- assign-noise-indices
   "Assign sequential noise indices to site-specs that have noise-fns.
    Returns vector of indices (nil for delta/unsupported sites)."
   [site-specs]
   (second
    (reduce (fn [[idx acc] s]
-             (if (and s (:noise-fn (get compiled/noise-transforms-full (:dist-type s))))
+             (if (noise-fn-site? s)
                [(inc idx) (conj acc idx)]
                [idx (conj acc nil)]))
            [0 []] site-specs)))
@@ -791,8 +796,7 @@
 (defn- extract-noise-site-types
   "Filter site-specs to those with noise-fns."
   [site-specs]
-  (filterv (fn [s] (and s (:noise-fn (get compiled/noise-transforms-full (:dist-type s)))))
-           site-specs))
+  (filterv noise-fn-site? site-specs))
 
 (defn generate-noise-matrix
   "Generate [T, K] noise matrix where each column has the correct distribution.

@@ -101,7 +101,7 @@
                        "t" [:lit "\t"]
                        "r" [:lit "\r"]
                        [:lit c]))
-       :class-char (fn [c] c)
+       :class-char identity
        :range      (fn [from to] (char-range from to))
        :class-body (fn [& items]
                      (reduce (fn [acc item]

@@ -15,16 +15,12 @@
 ;; Helpers
 ;; ---------------------------------------------------------------------------
 
-(def ^:private mlx-arr?
-  "Check if x is an MLX array."
-  mx/array?)
-
 (defn- axis-size-of
   "Get the leading dimension size of an arg."
   [a]
   (cond
     (nil? a) nil
-    (mlx-arr? a) (first (mx/shape a))
+    (mx/array? a) (first (mx/shape a))
     (sequential? a) (count a)
     :else nil))
 
@@ -57,7 +53,7 @@
   "Index into an arg at position i."
   [a i]
   (cond
-    (mlx-arr? a) (mx/index a i)
+    (mx/array? a) (mx/index a i)
     (sequential? a) (nth a i)
     :else a))
 
@@ -87,10 +83,10 @@
     true
 
     (nil? in-axes)
-    (every? mlx-arr? args)
+    (every? mx/array? args)
 
     :else
-    (every? (fn [[a ax]] (or (nil? ax) (mlx-arr? a)))
+    (every? (fn [[a ax]] (or (nil? ax) (mx/array? a)))
             (map vector args in-axes))))
 
 (defn- scalar-leaf?
@@ -100,7 +96,7 @@
     (= cm cm/EMPTY) true
     (cm/has-value? cm)
     (let [v (cm/get-value cm)]
-      (or (not (mlx-arr? v)) (= [] (mx/shape v))))
+      (or (not (mx/array? v)) (= [] (mx/shape v))))
     (instance? cm/Node cm)
     (every? (fn [[_ sub]] (scalar-leaf? sub)) (:m cm))
     :else true))
@@ -128,7 +124,7 @@
 (defn- scalar-value-leaf?
   "Check if a single leaf value is scalar (not [N]-shaped)."
   [v]
-  (or (not (mlx-arr? v)) (= [] (mx/shape v))))
+  (or (not (mx/array? v)) (= [] (mx/shape v))))
 
 (defn- stack-choices
   "Stack N choicemaps into one with [N]-shaped leaves.

@@ -158,7 +158,7 @@
         ;; Rejuvenation
         final-traces (if rejuvenation-fn
                        (let [rkeys (rng/split-n-or-nils rejuv-key particles)]
-                         (mapv (fn [t rk] (rejuvenation-fn t rk)) new-traces rkeys))
+                         (mapv rejuvenation-fn new-traces rkeys))
                        new-traces)
         ;; log-ML increment: against the post-resample weights the step
         ;; started from (see smc/log-ml-increment-from — subtracting the

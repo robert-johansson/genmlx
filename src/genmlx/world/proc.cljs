@@ -37,7 +37,7 @@
 (defn- now-ns
   "The sole clock read: Bun.nanoseconds as a JS number (0 off-Bun)."
   []
-  (if (and Bun (fn? (.-nanoseconds Bun)))
+  (if (available?)
     (js/Number (.nanoseconds Bun))
     0))
 

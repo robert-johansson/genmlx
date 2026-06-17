@@ -38,10 +38,16 @@
                                          traces)))]
     {:probs probs :values values}))
 
-(defn weighted-mean [{:keys [probs values]}]
+(defn weighted-mean
+  "Posterior mean E_posterior[theta] = sum_i p_i * value_i over a weighted-latent
+   map {:probs [N] :values [N]}."
+  [{:keys [probs values]}]
   (reduce + 0.0 (map * probs values)))
 
-(defn weighted-variance [{:keys [probs values] :as wl}]
+(defn weighted-variance
+  "Posterior variance Var_posterior(theta) = sum_i p_i * (value_i - mean)^2 over a
+   weighted-latent map. Used by `neg-bayes-risk` as the squared-error decision-value."
+  [{:keys [probs values] :as wl}]
   (let [m (weighted-mean wl)]
     (reduce + 0.0 (map (fn [p v] (let [d (- v m)] (* p d d))) probs values))))
 

@@ -231,13 +231,12 @@
   (mx/array
     (mapv (fn [memory]
             (mapv (fn [op-key]
-                    (if (nil? goal)
-                      0.5
-                      (if-let [impl (lookup-implication memory pkey op-key)]
-                        (if (= (:consequent impl) goal)
-                          (beta-mean impl)
-                          (- 1.0 (beta-mean impl)))
-                        0.5)))
+                    (let [impl (lookup-implication memory pkey op-key)]
+                      (cond
+                        (nil? goal)                 0.5
+                        (nil? impl)                 0.5
+                        (= (:consequent impl) goal) (beta-mean impl)
+                        :else                       (- 1.0 (beta-mean impl)))))
                   op-keys))
           particle-memories)))
 

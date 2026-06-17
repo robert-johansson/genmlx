@@ -24,7 +24,7 @@
 (defn- observation-addr-set
   "Set of top-level observation addresses from a constraints ChoiceMap."
   [data]
-  (if (and data (instance? cm/Node data))
+  (if (instance? cm/Node data)
     (set (keys (:m data)))
     #{}))
 

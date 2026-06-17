@@ -224,9 +224,9 @@
   "Indices of moves whose :applicable? predicate accepts `trace` (a move with no
    predicate is always applicable)."
   [moves trace]
-  (filterv (fn [i] (let [pred (:applicable? (nth moves i))]
-                     (or (nil? pred) (pred trace))))
-           (range (count moves))))
+  (vec (keep-indexed (fn [i {pred :applicable?}]
+                       (when (or (nil? pred) (pred trace)) i))
+                     moves)))
 
 (defn reversible-jump-mh-step
   "One reversible-jump MH step. `moves` is a vector of maps

@@ -21,8 +21,7 @@
    byte-tokenization conditional), NOT the raw model evidence p_LM(text). It is
    the correct importance weight for THIS GF and is comparable across values of
    the same schema; it is not a model-marginal likelihood."
-  (:require [genmlx.mlx :as mx]
-            [genmlx.protocols :as p]
+  (:require [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
             [genmlx.llm.backend :as llm]
             [genmlx.llm.bytes :as bytes]
@@ -37,7 +36,7 @@
 (defn- logsumexp-vals
   "logsumexp over a seq of JS numbers. -Inf for empty."
   [xs]
-  (let [m (reduce (fn [a b] (if (> b a) b a)) js/Number.NEGATIVE_INFINITY xs)]
+  (let [m (reduce max js/Number.NEGATIVE_INFINITY xs)]
     (if (= m js/Number.NEGATIVE_INFINITY)
       js/Number.NEGATIVE_INFINITY
       (+ m (js/Math.log (reduce (fn [s x] (+ s (js/Math.exp (- x m)))) 0.0 xs))))))

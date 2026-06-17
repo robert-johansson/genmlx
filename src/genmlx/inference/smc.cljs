@@ -608,7 +608,7 @@
   [state indices]
   (cond
     (nil? state) nil
-    (map? state) (into {} (map (fn [[k v]] [k (mx/take-idx v indices)]) state))
+    (map? state) (update-vals state #(mx/take-idx % indices))
     :else (mx/take-idx state indices)))
 
 (defn- materialize-state! [state]

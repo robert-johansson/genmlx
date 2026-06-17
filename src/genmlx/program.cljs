@@ -170,7 +170,7 @@
                                     " (trace :sigma-" (name v)
                                     " (dist/exponential 1))"))
                              var-names)]
-    (into [] (concat ar-bindings cross-bindings sigma-bindings))))
+    (vec (concat ar-bindings cross-bindings sigma-bindings))))
 
 (defn build-transition-source
   "Build a transition model source string from variable names and edge structure.
@@ -488,25 +488,24 @@
   [{:keys [y cols]}]
   (let [n (count y)
         p (count cols)]
-    (if (<= n p)
-      1.0
-      (if (= p 1)
-        (let [x (:values (first cols))
-              xx (dot x x)
-              xy (dot x y)
-              beta-hat (/ xy xx)
-              residuals (mapv (fn [yi xi] (- yi (* beta-hat xi))) y x)]
-          (/ (dot residuals residuals) n))
-        (let [x1 (:values (first cols))
-              x2 (:values (second cols))
-              g00 (dot x1 x1) g01 (dot x1 x2) g11 (dot x2 x2)
-              det-g (- (* g00 g11) (* g01 g01))
-              xy1 (dot x1 y) xy2 (dot x2 y)
-              b1 (/ (- (* g11 xy1) (* g01 xy2)) det-g)
-              b2 (/ (- (* g00 xy2) (* g01 xy1)) det-g)
-              residuals (mapv (fn [yi x1i x2i] (- yi (* b1 x1i) (* b2 x2i)))
-                              y x1 x2)]
-          (/ (dot residuals residuals) n))))))
+    (cond
+      (<= n p) 1.0
+      (= p 1) (let [x (:values (first cols))
+                    xx (dot x x)
+                    xy (dot x y)
+                    beta-hat (/ xy xx)
+                    residuals (mapv (fn [yi xi] (- yi (* beta-hat xi))) y x)]
+                (/ (dot residuals residuals) n))
+      :else   (let [x1 (:values (first cols))
+                    x2 (:values (second cols))
+                    g00 (dot x1 x1) g01 (dot x1 x2) g11 (dot x2 x2)
+                    det-g (- (* g00 g11) (* g01 g01))
+                    xy1 (dot x1 y) xy2 (dot x2 y)
+                    b1 (/ (- (* g11 xy1) (* g01 xy2)) det-g)
+                    b2 (/ (- (* g00 xy2) (* g01 xy1)) det-g)
+                    residuals (mapv (fn [yi x1i x2i] (- yi (* b1 x1i) (* b2 x2i)))
+                                    y x1 x2)]
+                (/ (dot residuals residuals) n)))))
 
 (defn- log-ml-variable
   "Analytical log marginal likelihood for one variable's transition.
@@ -855,7 +854,7 @@
    ar-prior-mean ar-var beta-var]
   (mapv
    (fn [parents]
-     (let [preds (into [target] (vec (sort-by name parents)))
+     (let [preds (into [target] (sort-by name parents))
            [t1 t2 t3] (log-ml-suffstat-terms
                        target preds n all-dots xty-dots yty
                        known-sigma ar-prior-mean ar-var beta-var)]
@@ -903,7 +902,7 @@
          per-variable
          (into {}
                (map (fn [target]
-                      (let [candidates (vec (filter #(not= % target) var-names))
+                      (let [candidates (vec (remove #{target} var-names))
                             parent-sets (score-parent-sets-for-variable
                                          target candidates n all-dots xty-dots yty known-sigma
                                          ar-prior-mean ar-var beta-var)
@@ -1044,7 +1043,7 @@
                                     " (trace :sigma-" (name v)
                                     " (dist/exponential 1))"))
                              var-names)
-        all-bindings (into [] (concat ar-bindings cross-bindings sigma-bindings))
+        all-bindings (vec (concat ar-bindings cross-bindings sigma-bindings))
         binding-str (str/join "\n        " all-bindings)
         destructure-keys (str/join " " (map #(str (name %) "-prev") var-names))
         hint ";; mean: use mx/multiply, mx/add with ar-VAR, VAR-prev, optionally beta-SRC->TGT\n      ;; e.g. (mx/add (mx/multiply ar-y y-prev) (mx/multiply beta-x->y x-prev))\n      "

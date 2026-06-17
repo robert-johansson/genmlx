@@ -20,8 +20,8 @@
    NOTE: Drops skip edges (a→c when a→b→c also exists). This is a known
    limitation — fix requires schema to track direct vs transitive deps separately."
   [trace-sites addr-set]
-  (let [site-map (into {} (map (juxt :addr identity))
-                        (filter #(contains? addr-set (:addr %)) trace-sites))]
+  (let [relevant (filter #(contains? addr-set (:addr %)) trace-sites)
+        site-map (into {} (map (juxt :addr identity)) relevant)]
     (into {}
       (map (fn [site]
              (let [transitive (set/intersection (:deps site) addr-set)
@@ -32,7 +32,7 @@
                                     #{}
                                     transitive)]
                [(:addr site) (set/difference transitive indirect)]))
-           (filter #(contains? addr-set (:addr %)) trace-sites)))))
+           relevant))))
 
 (defn build-dep-graph
   "Build a directed acyclic graph from schema trace sites.
@@ -52,7 +52,7 @@
                          parent parents]
                      [parent child]))
         children (reduce (fn [m [from to]] (update m from (fnil conj #{}) to))
-                         (into {} (map (fn [a] [a #{}]) addr-set))
+                         (zipmap addr-set (repeat #{}))
                          edges)]
     (->DepGraph addr-set edges direct-parents children)))
 
@@ -218,7 +218,7 @@
                                               (update nbr (fnil conj #{}) node)))
                               adj
                               neighbors)))
-                  (into {} (map (fn [n] [n #{}]) unobserved))
+                  (zipmap unobserved (repeat #{}))
                   unobserved)
             ;; Find connected components via BFS
             components (loop [remaining unobserved

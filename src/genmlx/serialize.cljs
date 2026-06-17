@@ -10,7 +10,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
             [genmlx.protocols :as p]
-            [cljs.reader :as reader]))
+            [cljs.reader :as reader]
+            [clojure.string :as str]))
 
 (def ^:private fs (js/require "fs"))
 
@@ -97,9 +98,9 @@
   [s]
   (let [s (if (keyword? s) (subs (str s) 1) s)]
     (cond
-      (= "k:" (subs s 0 (min 2 (count s)))) (keyword (subs s 2))
-      (= "i:" (subs s 0 (min 2 (count s)))) (js/parseInt (subs s 2) 10)
-      (= "s:" (subs s 0 (min 2 (count s)))) (subs s 2)
+      (str/starts-with? s "k:") (keyword (subs s 2))
+      (str/starts-with? s "i:") (js/parseInt (subs s 2) 10)
+      (str/starts-with? s "s:") (subs s 2)
       :else (keyword s))))
 
 ;; ---------------------------------------------------------------------------
@@ -301,7 +302,7 @@
 ;; File I/O convenience
 ;; ---------------------------------------------------------------------------
 
-(defn save-choices-to-file
+(defn save-choices-to-file!
   "Save a trace's choices to a JSON file."
   [trace path & {:keys [gen-fn-id]}]
   (let [json (save-choices trace :gen-fn-id gen-fn-id)]
@@ -319,7 +320,7 @@
   (let [json (.readFileSync fs path "utf8")]
     (reconstruct-trace gen-fn args json)))
 
-(defn save-trace-to-file
+(defn save-trace-to-file!
   "Save a full trace to a JSON file."
   [trace path & {:keys [gen-fn-id]}]
   (let [json (save-trace trace :gen-fn-id gen-fn-id)]

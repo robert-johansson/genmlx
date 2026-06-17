@@ -239,8 +239,7 @@
                                      cm (:values r)))
                         cm/EMPTY (map-indexed vector results))
         retvals (mapv :retval results)
-        score (reduce (fn [acc r] (mx/add acc (:score r)))
-                      ZERO results)
+        score (sum-field results :score)
         element-scores (mapv :score results)]
     (tag-joint
       (with-meta
@@ -2160,11 +2159,10 @@
     (let [log-w (log-weights-fn args)
           ;; Check if component index is constrained
           idx-constraint (cm/get-submap constraints :component-idx)
+          idx-dist (dc/->Distribution :categorical {:logits log-w})
           idx-result (if (cm/has-value? idx-constraint)
-                       (let [d (dc/->Distribution :categorical {:logits log-w})]
-                         (dc/dist-generate d idx-constraint))
-                       (let [d (dc/->Distribution :categorical {:logits log-w})]
-                         {:trace (dc/dist-simulate d) :weight ZERO}))
+                       (dc/dist-generate idx-dist idx-constraint)
+                       {:trace (dc/dist-simulate idx-dist) :weight ZERO})
           idx (mx/item (cm/get-value (:choices (:trace idx-result))))
           component (nth components (int idx))
           comp-constraints (without-component-idx constraints)]

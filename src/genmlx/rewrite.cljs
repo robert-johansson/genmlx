@@ -36,7 +36,7 @@
    edge originating at an eliminated node."
   [graph eliminated]
   (-> graph
-      (update :nodes #(reduce disj % eliminated))
+      (update :nodes set/difference eliminated)
       (update :edges (fn [edges]
                        (into #{} (remove (fn [[a _]] (contains? eliminated a))) edges)))))
 
