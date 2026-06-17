@@ -417,6 +417,37 @@
       (is (cm/has-value? (cm/get-submap (:choices t) :y)) "multi-param: has :y"))))
 
 ;; ---------------------------------------------------------------------------
+;; 11. Compiled-assess of a delta-literal site (genmlx-hkwi regression)
+;; ---------------------------------------------------------------------------
+
+(deftest compiled-assess-delta-literal-test
+  (testing "compiled assess of a (dist/delta <literal>) site does not throw the
+            napi MxArray-recovery error and matches the handler path"
+    ;; Static model -> compiled path. The delta literal `1` compiles to a raw JS
+    ;; number; pre-fix, delta's compiled log-prob called (mx/shape param) on it
+    ;; and threw "Failed to recover MxArray type from napi value" on ASSESS
+    ;; (simulate was fine — it wraps via ensure-array). This is the assess-side
+    ;; sibling of the simulate-side genmlx-lcka fix. genmlx-hkwi.
+    (let [m       (gen [] (let [a (trace :a (dist/gaussian 0 1))]
+                            (trace :b (dist/delta 1))
+                            a))
+          schema  (:schema m)
+          gf      (dyn/auto-key m)
+          choices (:choices (p/simulate gf []))
+          ;; assess via the COMPILED path (was the throwing case). mx/realize
+          ;; materializes + extracts to a JS number.
+          w-compiled (mx/realize (:weight (p/assess gf [] choices)))
+          ;; force the HANDLER path (drop the compiled-assess key) for parity
+          handler-gf (dyn/auto-key
+                       (dyn/->DynamicGF (:body-fn m) (:source m)
+                                        (dissoc schema :compiled-assess)))
+          w-handler  (mx/realize (:weight (p/assess handler-gf [] choices)))]
+      (is (some? (:compiled-assess schema)) "model is on the compiled-assess path")
+      (is (h/finite? w-compiled) "compiled assess weight is finite (no napi throw)")
+      (is (h/close? w-compiled w-handler 1e-5)
+          "compiled assess weight matches the handler path (delta contributes 0)"))))
+
+;; ---------------------------------------------------------------------------
 ;; Run
 ;; ---------------------------------------------------------------------------
 
