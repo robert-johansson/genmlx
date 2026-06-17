@@ -438,13 +438,24 @@
                       {:gen-fn gf :args elem-args
                        :choices old-choices :retval nil
                        :score (mx/scalar 0.0)})
+          ;; Child's full OLD joint score, re-scored under old choices (the
+          ;; elem-trace carries score 0, so it must be computed). An EMPTY-
+          ;; selection regenerate retains every site (no sampling) and returns
+          ;; the re-scored old joint as :score, using the SAME key-threading
+          ;; path as the real regenerate below — so it works for keyless spliced
+          ;; kernels. (project/assess route through the kernel's generate/assess
+          ;; ensure-key and throw "No PRNG key" for a keyless kernel — genmlx-1sni.)
+          child-old-score (:score (:trace (p/regenerate gf elem-trace (sel/select))))
           {:keys [trace weight]} (p/regenerate gf elem-trace sub-selection)]
-      ;; The child returns its final MH weight w = ΔS - pr, computed against
-      ;; the constructed old score of 0. The parent's batched regenerate
-      ;; accumulator holds proposal ratios (its final weight is
-      ;; ΔS_total - accumulator), so convert back: pr = S'_child - w.
+      ;; The parent's batched regenerate accumulator holds per-element proposal
+      ;; ratios (its final weight is ΔS_total - Σ pr). The child returns its
+      ;; retained-only weight w = W_child against the constructed old score of 0,
+      ;; so the proposal ratio is pr = S'_child - S_old_child - w (genmlx-1sni).
+      ;; Omitting S_old_child leaked the old combinator joint score into the
+      ;; weight (a full prior resample gave a non-zero weight instead of 0).
       {:choices (:choices trace) :score (:score trace)
-       :weight (mx/subtract (:score trace) weight) :retval (:retval trace)})
+       :weight (mx/subtract (mx/subtract (:score trace) child-old-score) weight)
+       :retval (:retval trace)})
 
     ;; Update mode
     (and old-i (not= old-i cm/EMPTY))

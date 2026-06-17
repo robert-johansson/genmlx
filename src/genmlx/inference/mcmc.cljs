@@ -1344,8 +1344,10 @@
   "Run n-warmup steps adapting step-size via dual averaging.
    step-fn: (fn [q eps-val metric key] -> {:state q' :accept-stat alpha})
    warmup-metric: metric to use during warmup (nil = identity).
+   key: PRNG key threaded through warmup steps (nil = no entropy / unseeded).
+        Split per step OUTSIDE tidy-run so warmup is reproducible (genmlx-vv3t).
    Returns {:step-size adapted-eps :state final-q :metric diagonal-or-nil}."
-  [n-warmup target-accept init-q step-fn n-params init-eps adapt-metric? warmup-metric]
+  [n-warmup target-accept init-q step-fn n-params init-eps adapt-metric? warmup-metric key]
   (let [gamma 0.05
         t0 10
         kappa 0.75
@@ -1359,15 +1361,19 @@
            log-eps-bar 0.0
            h-bar 0.0
            current-eps init-eps
-           welford init-welford]
+           welford init-welford
+           rk key]
       (if (> m n-warmup)
         {:step-size (js/Math.exp log-eps-bar)
          :state q
          :metric (when welford (welford-variance (second welford) (nth welford 2)))}
-        (let [;; Wrap step-fn in tidy-run to clean up intermediate MLX arrays
+        (let [;; Split the warmup key BEFORE tidy-run — splitting inside would let
+              ;; tidy free the sub-key arrays. [nil nil] when rk is nil (unseeded).
+              [step-key rk'] (rng/split-or-nils rk)
+              ;; Wrap step-fn in tidy-run to clean up intermediate MLX arrays
               ;; (NUTS builds ~10K arrays per step via binary tree — OOMs without cleanup)
               result (mx/tidy-run
-                      #(step-fn q current-eps warmup-metric nil)
+                      #(step-fn q current-eps warmup-metric step-key)
                       (fn [{:keys [state]}] [state]))
               _ (mx/clear-cache!)
               {:keys [state accept-stat]} result
@@ -1387,7 +1393,7 @@
                                q-js (mx/->clj state)]
                            (welford-update mean-v m2-v n q-js)))]
           (recur (inc m) state log-eps-bar' h-bar' (js/Math.exp log-eps')
-                 welford'))))))
+                 welford' rk'))))))
 
 ;; ---------------------------------------------------------------------------
 ;; MALA step-size adaptation (mirrors HMC's find-reasonable-epsilon)
@@ -1396,14 +1402,14 @@
 (defn- find-reasonable-mala-epsilon
   "Find initial MALA step-size yielding ~50% acceptance via doubling/halving.
    Same algorithm as find-reasonable-epsilon but using MALA proposals."
-  [q val-grad-compiled q-shape]
+  [q val-grad-compiled q-shape key]
   (let [test-accept
         (fn [eps-val]
           (let [eps (mx/scalar eps-val)
                 half-eps2 (mx/scalar (* 0.5 eps-val eps-val))
                 two-eps-sq (mx/scalar (* 2.0 eps-val eps-val))
                 {:keys [accepted?]}
-                (mala-step q val-grad-compiled eps half-eps2 two-eps-sq q-shape nil)]
+                (mala-step q val-grad-compiled eps half-eps2 two-eps-sq q-shape key)]
             (if accepted? 1.0 0.0)))
         init-a (test-accept 1.0)
         dir (if (> init-a 0.5) 1 -1)]
@@ -1419,12 +1425,12 @@
    dual-averaging expects: (fn [q eps-val metric key] -> {:state q' :accept-stat alpha})
    MALA doesn't use a mass matrix, so metric is ignored."
   [val-grad-compiled q-shape]
-  (fn [q eps-val _metric _key]
+  (fn [q eps-val _metric key]
     (let [eps (mx/scalar eps-val)
           half-eps2 (mx/scalar (* 0.5 eps-val eps-val))
           two-eps-sq (mx/scalar (* 2.0 eps-val eps-val))
           {:keys [state accepted?]}
-          (mala-step q val-grad-compiled eps half-eps2 two-eps-sq q-shape nil)]
+          (mala-step q val-grad-compiled eps half-eps2 two-eps-sq q-shape key)]
       {:state state
        :accept-stat (if accepted? 1.0 0.0)})))
 
@@ -1465,12 +1471,17 @@
              {:keys [adapted-eps warmup-q]}
              (if (and adapt-step-size (> burn 0))
                (let [n-warmup (min burn 200)
+                     ;; Derive a warmup key DISJOINT from the sampling stream so
+                     ;; warmup is reproducible under a fixed :key (genmlx-vv3t).
+                     ;; nil-tolerant: [nil nil] when key is nil (unseeded).
+                     [warmup-key _sample-key] (rng/split-or-nils (rng/ensure-key key))
+                     [eps-key wloop-key] (rng/split-or-nils warmup-key)
                      init-eps (find-reasonable-mala-epsilon
-                               init-q val-grad-compiled q-shape)
+                               init-q val-grad-compiled q-shape eps-key)
                      step-fn (make-mala-step-fn val-grad-compiled q-shape)
                      result (dual-averaging-warmup
                              n-warmup target-accept init-q step-fn
-                             n-params init-eps false nil)]
+                             n-params init-eps false nil wloop-key)]
                  (println "Adapted MALA step-size:" (:step-size result))
                  {:adapted-eps (:step-size result)
                   :warmup-q (:state result)})
@@ -1617,12 +1628,15 @@
                   {:keys [adapted-eps warmup-q]}
                   (if (and adapt-step-size (nil? chain-fn) (> burn 0))
                     (let [n-warmup (min warmup-steps burn)
+                          ;; Warmup key DISJOINT from the sampling stream (genmlx-vv3t).
+                          [warmup-key _sample-key] (rng/split-or-nils (rng/ensure-key key))
+                          [eps-key wloop-key] (rng/split-or-nils warmup-key)
                           init-eps (find-reasonable-mala-epsilon
-                                    init-params val-grad-compiled q-shape)
+                                    init-params val-grad-compiled q-shape eps-key)
                           step-fn (make-mala-step-fn val-grad-compiled q-shape)
                           result (dual-averaging-warmup
                                   n-warmup target-accept init-params step-fn
-                                  n-params init-eps false nil)]
+                                  n-params init-eps false nil wloop-key)]
                       (println "Adapted MALA step-size:" (:step-size result))
                       {:adapted-eps (:step-size result)
                        :warmup-q (:state result)})
@@ -1996,11 +2010,11 @@
 
 (defn- find-reasonable-epsilon
   "Find initial step-size yielding ~50% acceptance via doubling/halving."
-  [q neg-U-fn grad-neg-U q-shape metric]
+  [q neg-U-fn grad-neg-U q-shape metric key]
   (let [half (mx/scalar 0.5)
         test-accept
         (fn [eps]
-          (let [p0 (let [p (sample-momentum metric q-shape nil)] (mx/materialize! p) p)
+          (let [p0 (let [p (sample-momentum metric q-shape key)] (mx/materialize! p) p)
                 current-H (hamiltonian neg-U-fn q p0 half metric)
                 [q' p'] (leapfrog-step grad-neg-U q p0
                                        (mx/scalar eps) (mx/scalar (* 0.5 eps)) metric)
@@ -2067,25 +2081,28 @@
            ;; Adaptive warmup: dual averaging + optional metric estimation
              {:keys [adapted-eps warmup-q adapted-metric]}
              (if (and (or adapt-step-size adapt-metric) (> burn 0))
-               (let [hmc-step-fn
-                     (fn [q eps-val m _key]
+               (let [;; Warmup key DISJOINT from the sampling stream (genmlx-vv3t).
+                     [warmup-key _sample-key] (rng/split-or-nils (rng/ensure-key key))
+                     [eps-key wloop-key] (rng/split-or-nils warmup-key)
+                     hmc-step-fn
+                     (fn [q eps-val m step-key]
                        (let [eps-mx (mx/scalar eps-val)
                              half-eps-mx (mx/scalar (* 0.5 eps-val))
                              half-mx (mx/scalar 0.5)
                              {:keys [state log-accept]}
                              (hmc-step q neg-U-compiled grad-neg-U
                                        eps-mx half-eps-mx half-mx q-shape
-                                       leapfrog-steps m nil)]
+                                       leapfrog-steps m step-key)]
                          {:state state
                           :accept-stat (let [a (js/Math.exp log-accept)]
                                          (if (js/isNaN a) 0.0 (min 1.0 a)))}))
                      init-eps (if adapt-step-size
                                 (find-reasonable-epsilon init-q neg-U-compiled grad-neg-U
-                                                         q-shape metric)
+                                                         q-shape metric eps-key)
                                 step-size)
                      result (dual-averaging-warmup
                              burn target-accept init-q hmc-step-fn n-params init-eps
-                             adapt-metric (when-not adapt-metric metric))]
+                             adapt-metric (when-not adapt-metric metric) wloop-key)]
                  {:adapted-eps (when adapt-step-size (:step-size result))
                   :warmup-q (:state result)
                   :adapted-metric (:metric result)})
@@ -2250,24 +2267,27 @@
                   {:keys [adapted-eps warmup-q]}
                   (if (and adapt-step-size (nil? chain-fn) (> burn 0))
                     (let [n-warmup (min warmup-steps burn)
+                          ;; Warmup key DISJOINT from the sampling stream (genmlx-vv3t).
+                          [warmup-key _sample-key] (rng/split-or-nils (rng/ensure-key key))
+                          [eps-key wloop-key] (rng/split-or-nils warmup-key)
                           init-eps (find-reasonable-epsilon
                                     init-params neg-U-compiled grad-neg-U
-                                    q-shape nil)
+                                    q-shape nil eps-key)
                           half-mx (mx/scalar 0.5)
                           hmc-step-fn
-                          (fn [q eps-val _m _key]
+                          (fn [q eps-val _m step-key]
                             (let [eps-mx (mx/scalar eps-val)
                                   half-eps-mx (mx/scalar (* 0.5 eps-val))
                                   {:keys [state log-accept]}
                                   (hmc-step q neg-U-compiled grad-neg-U
                                             eps-mx half-eps-mx half-mx q-shape
-                                            leapfrog-steps nil nil)]
+                                            leapfrog-steps nil step-key)]
                               {:state state
                                :accept-stat (let [a (js/Math.exp log-accept)]
                                               (if (js/isNaN a) 0.0 (min 1.0 a)))}))
                           result (dual-averaging-warmup
                                   n-warmup target-accept init-params hmc-step-fn
-                                  n-params init-eps false nil)]
+                                  n-params init-eps false nil wloop-key)]
                       (println "Adapted HMC step-size:" (:step-size result))
                       {:adapted-eps (:step-size result)
                        :warmup-q (:state result)})
@@ -2533,15 +2553,20 @@
            ;; Adaptive warmup: dual averaging + optional metric estimation
              {:keys [adapted-eps warmup-q adapted-metric]}
              (if (and (or adapt-step-size adapt-metric) (> burn 0))
-               (let [nuts-step-fn
-                     (fn [q eps-val m _key]
+               (let [;; Warmup key DISJOINT from the sampling stream (genmlx-vv3t).
+                     [warmup-key-outer _sample-key] (rng/split-or-nils (rng/ensure-key key))
+                     [eps-key wloop-key] (rng/split-or-nils warmup-key-outer)
+                     nuts-step-fn
+                     (fn [q eps-val m step-key]
                        (let [eps-mx (mx/scalar eps-val)
                              half-eps-mx (mx/scalar (* 0.5 eps-val))
                              half-mx (mx/scalar 0.5)
                              local-ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld
                                         :eps eps-mx :half-eps half-eps-mx
                                         :half half-mx :metric m}
-                             warmup-key (rng/fresh-key)
+                             ;; Use the threaded warmup sub-key instead of fresh
+                             ;; entropy so warmup is reproducible (genmlx-vv3t).
+                             warmup-key (rng/ensure-key step-key)
                              [momentum-key slice-key dir-key tree-key] (rng/split-n warmup-key 4)
                              p0 (let [p (sample-momentum m q-shape momentum-key)] (mx/materialize! p) p)
                              current-H (hamiltonian neg-ld-compiled q p0 half-mx m)
@@ -2585,11 +2610,11 @@
                                       dk-next tk-next))))))
                      init-eps (if adapt-step-size
                                 (find-reasonable-epsilon init-q neg-ld-compiled grad-neg-ld
-                                                         q-shape metric)
+                                                         q-shape metric eps-key)
                                 step-size)
                      result (dual-averaging-warmup
                              burn target-accept init-q nuts-step-fn n-params init-eps
-                             adapt-metric (when-not adapt-metric metric))]
+                             adapt-metric (when-not adapt-metric metric) wloop-key)]
                  {:adapted-eps (when adapt-step-size (:step-size result))
                   :warmup-q (:state result)
                   :adapted-metric (:metric result)})
