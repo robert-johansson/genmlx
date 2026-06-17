@@ -179,4 +179,46 @@
       (is (h/close? 0.0 (mx/realize (mx/amax (mx/abs weight))) 1e-3)
           "every particle weight is 0"))))
 
+(def ab-kernel
+  ;; Two-site kernel: b depends on a. A partial selection (resample :a, retain
+  ;; :b) yields a genuinely non-zero retained-only weight.
+  (gen [_mu]
+    (let [a (trace :a (dist/gaussian 0 1))]
+      (trace :b (dist/gaussian a 1)))))
+
+(def ab-map-spliced
+  (let [mgf (comb/map-combinator (dyn/auto-key ab-kernel))]
+    (gen []
+      (splice :m mgf [(mx/scalar 0.0) (mx/scalar 0.0)]))))
+
+(deftest vregenerate-spliced-combinator-fallback-partial-retained-oracle
+  (testing "combinator-batched-fallback regen, PARTIAL select (resample :a, retain :b):
+            batched weight == analytical retained-only Gaussian oracle (genmlx-1sni anti-vacuity)"
+    ;; Guards against a vacuous fix: the all-zero test passes even if the path
+    ;; zeroed ALL weights. Here the retained :b under the resampled parent :a
+    ;; gives W = Σ_i [lp_N(b; a_new,1) - lp_N(b; a_old,1)], a real non-zero value.
+    (let [n 6
+          vt (dyn/vsimulate ab-map-spliced [] n (rng/fresh-key 211))
+          sel-a (sel/hierarchical :m (sel/from-paths [[0 :a] [1 :a]]))
+          {:keys [vtrace weight]} (dyn/vregenerate ab-map-spliced vt sel-a
+                                                   (rng/fresh-key 212))
+          mget (fn [choices i k]
+                 (cm/get-value (cm/get-submap (cm/get-submap (cm/get-submap choices :m) i) k)))
+          sq (fn [x] (mx/multiply x x))
+          ;; W = Σ_i 0.5*((b-a_old)^2 - (b-a_new)^2); the s=1 normalizers cancel.
+          oracle (reduce (fn [acc i]
+                           (let [a-old (mget (:choices vt) i :a)
+                                 a-new (mget (:choices vtrace) i :a)
+                                 b     (mget (:choices vt) i :b)]
+                             (mx/add acc (mx/multiply (mx/scalar 0.5)
+                                          (mx/subtract (sq (mx/subtract b a-old))
+                                                       (sq (mx/subtract b a-new)))))))
+                         (mx/scalar 0.0) [0 1])]
+      (mx/eval! weight oracle)
+      (is (= [n] (mx/shape weight)))
+      (is (> (mx/realize (mx/amax (mx/abs oracle))) 0.1)
+          "anti-vacuity: the partial-regen retained weight is genuinely non-zero")
+      (is (h/close? 0.0 (mx/realize (mx/amax (mx/abs (mx/subtract weight oracle)))) 1e-4)
+          "batched retained-only weight matches the analytical Gaussian oracle"))))
+
 (cljs.test/run-tests)
