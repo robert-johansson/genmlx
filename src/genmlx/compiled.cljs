@@ -694,7 +694,21 @@
    {:noise-fn nil ;; no randomness
     :transform nil ;; value = first dist-arg
     :log-prob (fn [v param]
-                (mx/where (mx/equal v param) ZERO NEG-INF))}
+                ;; Reduce the trailing event axes to the JOINT point-mass
+                ;; log-prob: 0 iff ALL elements match, else -Inf. Mirrors the
+                ;; handler delta (dist.cljs, genmlx-exw9). Without this a vector
+                ;; point mass (dist/delta <tensor>) scores an elementwise [T]
+                ;; mask instead of a joint scalar, so two of three mismatched
+                ;; components could read finite while the joint must be -Inf,
+                ;; and the [T] mask broadcasts the scalar accumulator to [T]
+                ;; (compiled != handler — genmlx-kftc). Event rank is taken from
+                ;; the dist arg (param), so any leading batch axis is preserved;
+                ;; a scalar point mass (ev=0) is unchanged.
+                (let [eq (mx/equal v param)
+                      ev (count (mx/shape param))
+                      joint (reduce (fn [m _] (mx/all m (dec (count (mx/shape m)))))
+                                    eq (range ev))]
+                  (mx/where joint ZERO NEG-INF)))}
 
    :laplace
    {:noise-fn (fn [key] (rng/uniform key []))

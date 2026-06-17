@@ -241,12 +241,39 @@
   "Standard errors from the Fisher information matrix.
    SE(θ_i) = sqrt(F⁻¹_ii) — the Cramér-Rao lower bound.
 
-   Returns {:std-errors [D] array, :covariance [D,D] array}."
+   Returns {:std-errors [D] array, :covariance [D,D] array}, plus a :warning
+   string when the Fisher is not positive-definite (see below).
+
+   An observed Fisher built from float32 finite differences of an IS-estimated
+   gradient is not guaranteed PD, so F⁻¹ = robust-solve(F, I) can have a NEGATIVE
+   diagonal entry — i.e. a negative 'variance', which is not a valid covariance.
+   Clamping such an entry to 1e-10 would report a confident ~zero SE (≈1e-5) for
+   a maximally-uncertain direction, INVERTING the truth. Instead a genuinely
+   negative variance is surfaced as NaN (SE undefined — the Cramér-Rao bound
+   does not apply) and the offending indices are reported under :warning. The
+   1e-10 floor is retained ONLY as a sqrt-of-zero guard for non-negative tiny
+   variances (genmlx-ppok)."
   [fisher]
   (let [D (first (mx/shape fisher))
         cov (robust-solve fisher (mx/eye D) D default-solve-schedule)
         _ (mx/materialize! cov)
         diag-cov (mx/diag cov)
-        se (mx/sqrt (mx/maximum diag-cov (mx/scalar 1e-10)))]
+        _ (mx/materialize! diag-cov)
+        diag-clj (mx/->clj diag-cov)
+        ;; Scale the negativity threshold to the matrix so float32 round-off near
+        ;; zero is not flagged, while a real negative variance is.
+        max-abs (reduce (fn [m x] (max m (js/Math.abs x))) 0.0 diag-clj)
+        tol (* 1e-8 (max 1.0 max-abs))
+        neg-idxs (vec (keep-indexed (fn [i x] (when (< x (- tol)) i)) diag-clj))
+        se-clj (mapv (fn [x] (if (< x (- tol))
+                               js/NaN
+                               (js/Math.sqrt (max x 1e-10))))
+                     diag-clj)
+        se (mx/array se-clj)]
     (mx/materialize! se)
-    {:std-errors se :covariance cov}))
+    (cond-> {:std-errors se :covariance cov}
+      (seq neg-idxs)
+      (assoc :warning
+             (str "Fisher not positive-definite: F⁻¹ has a negative variance at "
+                  "parameter index(es) " neg-idxs "; SE is undefined (NaN) there "
+                  "— the Cramér-Rao bound does not apply.")))))

@@ -129,4 +129,38 @@
         (is (and (> f00 0) (> f11 0)) "Fisher diagonal positive")
         (is (> det-val 0) "Fisher determinant positive")))))
 
+;; ---------------------------------------------------------------------------
+;; Non-PD Fisher: negative F⁻¹ variance must NOT be clamped to a confident ~zero
+;; SE (genmlx-ppok). F = [[1 2][2 1]] is symmetric, invertible (det -3), but
+;; INDEFINITE (eigs 3, -1), so F⁻¹ = [[-1/3 2/3][2/3 -1/3]] has a negative
+;; diagonal — an impossible variance. The old code returned sqrt(max(-1/3,1e-10))
+;; = 1e-5, reporting near-zero uncertainty for a not-estimable direction.
+;; ---------------------------------------------------------------------------
+
+(deftest std-errors-indefinite-fisher-surfaced
+  (testing "negative F⁻¹ variance -> NaN + :warning, not a confident ~zero SE"
+    (let [F (mx/array [[1.0 2.0] [2.0 1.0]])
+          {:keys [std-errors warning]} (fisher/parameter-std-errors F)
+          se (mx/->clj std-errors)]
+      (is (every? #(js/Number.isNaN %) se)
+          "SE is NaN where F⁻¹ variance is negative (not 1e-5)")
+      (is (not-any? #(and (js/isFinite %) (< % 1e-3)) se)
+          "no confident ~zero SE is reported for the indefinite direction")
+      (is (some? warning) "a :warning names the non-PD parameter indices")))
+  (testing "positive-definite Fisher is unchanged (no warning, exact SEs)"
+    (let [F (mx/array [[4.0 0.0] [0.0 100.0]])
+          {:keys [std-errors warning]} (fisher/parameter-std-errors F)
+          se (mx/->clj std-errors)]
+      (is (h/close? 0.5 (first se) 1e-5) "SE0 = sqrt(1/4) = 0.5")
+      (is (h/close? 0.1 (second se) 1e-5) "SE1 = sqrt(1/100) = 0.1")
+      (is (nil? warning) "PD Fisher: no warning")))
+  (testing "the 1e-10 floor is retained for a NON-negative tiny variance (sqrt-of-zero guard)"
+    (let [F (mx/array [[1.0e12 0.0] [0.0 4.0]])  ; F⁻¹ diag = [1e-12, 0.25]
+          {:keys [std-errors warning]} (fisher/parameter-std-errors F)
+          se (mx/->clj std-errors)]
+      (is (h/close? 1e-5 (first se) 1e-7) "tiny non-negative variance floored to sqrt(1e-10)=1e-5")
+      (is (not (js/Number.isNaN (first se))) "floored value is finite, not NaN")
+      (is (h/close? 0.5 (second se) 1e-5) "the other SE = sqrt(1/4) = 0.5")
+      (is (nil? warning) "no warning for a non-negative tiny variance"))))
+
 (cljs.test/run-tests)
