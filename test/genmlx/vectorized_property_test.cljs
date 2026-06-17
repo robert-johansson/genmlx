@@ -116,14 +116,18 @@
           x-arr (cm/get-value (cm/get-submap (:choices vt) :x))]
       (shape= x-arr [n]))))
 
-(defspec vgenerate-empty-constraints-weight-is-scalar-0 50
+(defspec vgenerate-empty-constraints-weight-is-zero 50
   (prop/for-all [n gen-n
                  k gen-key]
     (let [vt (dyn/vgenerate ind-model [] cm/EMPTY n k)
           w (:weight vt)
           _ (mx/eval! w)]
-      ;; Empty constraints -> weight = 0 (scalar)
-      (close? 0.0 (mx/item w) 0.01))))
+      ;; Empty constraints -> weight = 0 for EVERY particle. The weight is
+      ;; [N]-shaped by the vgenerate batch-axis convention (the [N]-zeros init,
+      ;; genmlx-x93e/fgb6), not a scalar — so assert all elements are ~0
+      ;; (mx/item would need size 1 and throws for n>1).
+      (and (= [n] (mx/shape w))
+           (close? 0.0 (mx/item (mx/amax (mx/abs w))) 0.01)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Statistical Equivalence (1)
