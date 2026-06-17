@@ -59,7 +59,7 @@
    Use it directly, not wrapped in a combinator."
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.mlx.constants :refer [ZERO]]
+            [genmlx.mlx.constants :refer [ZERO LOG-2PI]]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.protocols :as p]
@@ -268,8 +268,6 @@
 ;; Gaussian log-density helper (estimator-internal; the TEST oracle is an
 ;; independent JS implementation, never this).
 ;; ---------------------------------------------------------------------------
-
-(def ^:private LOG-2PI (js/Math.log (* 2 js/Math.PI)))
 
 (defn- gauss-logpdf
   "logN(x; mu, sigma), elementwise over MLX arrays. sigma is an MLX scalar."

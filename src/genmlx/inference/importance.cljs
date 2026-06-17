@@ -38,7 +38,7 @@
 
    Returns {:traces [Trace ...] :log-weights [MLX-scalar ...]
             :log-ml-estimate MLX-scalar}"
-  [{:keys [samples key gc-every] :or {samples 100}} model args observations]
+  [{:keys [samples key gc-every] :or {samples 100 gc-every 50}} model args observations]
   (let [model (-> model dyn/auto-key strip-analytical)
         keys (rng/split-n (rng/ensure-key key) samples)
         ;; Deep-materialize EACH FULL trace (all choice leaves + retval + score),
@@ -49,7 +49,6 @@
         ;; evaluates every leaf, detaching it so the per-sample intermediates
         ;; become dead + sweepable (genmlx-py4a). mh already does this via
         ;; collect-samples/tidy-step.
-        gc-every (or gc-every 50)
         results (into []
                       (map-indexed
                        (fn [i ki]

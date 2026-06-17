@@ -14,7 +14,6 @@
    - make-differentiable-chain: build a differentiable MH chain function"
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [genmlx.inference.util :as u]
             [genmlx.inference.differentiable-resample :as dr]
             [genmlx.compiled-ops :as cops]))
 

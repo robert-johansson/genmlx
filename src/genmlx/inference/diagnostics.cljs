@@ -70,10 +70,9 @@
   "Materialize a chain (vector of MLX scalars or plain numbers) to doubles."
   [chain]
   (mapv (fn [s]
-          (cond
-            (number? s) s
-            (mx/array? s) (do (mx/materialize! s) (mx/item s))
-            :else s))
+          (if (mx/array? s)
+            (do (mx/materialize! s) (mx/item s))
+            s))
         chain))
 
 (defn- quantile

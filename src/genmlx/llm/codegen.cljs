@@ -30,7 +30,6 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.llm.backend :as llm]
-            [genmlx.llm.core :as llm-core]
             [genmlx.llm.bytes :as bytes]
             [promesa.core :as pr])
   (:require-macros [genmlx.gen :refer [gen]]))

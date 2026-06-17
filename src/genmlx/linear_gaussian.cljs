@@ -87,9 +87,8 @@
    Returns {:marginal-ll scalar :post-mean [p] :post-cov [p p]}."
   [m0 S0 obs-specs]
   (let [final (reduce (fn [{:keys [mean cov ll]} ob]
-                        (let [r (lg-kalman-step {:mean mean :cov cov} ob)]
-                          {:mean (:mean r) :cov (:cov r)
-                           :ll (mx/add ll (:ll r))}))
+                        (let [step (lg-kalman-step {:mean mean :cov cov} ob)]
+                          (assoc step :ll (mx/add ll (:ll step)))))
                       {:mean m0 :cov S0 :ll (mx/scalar 0.0)}
                       obs-specs)]
     {:marginal-ll (:ll final) :post-mean (:mean final) :post-cov (:cov final)}))

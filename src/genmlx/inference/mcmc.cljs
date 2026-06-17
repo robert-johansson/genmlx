@@ -7,6 +7,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.mlx :as mx]
+            [genmlx.mlx.constants :refer [LOG-2PI]]
             [genmlx.mlx.random :as rng]
             [genmlx.trace :as tr]
             [genmlx.dynamic :as dyn]
@@ -1759,10 +1760,6 @@
                       next-key))))))))
 
 ;; ---------------------------------------------------------------------------
-;; Shared Hamiltonian helper
-;; ---------------------------------------------------------------------------
-
-;; ---------------------------------------------------------------------------
 ;; Mass matrix helpers for HMC / NUTS
 ;; ---------------------------------------------------------------------------
 
@@ -2469,7 +2466,7 @@
     (let [key (rng/ensure-key key)
           [k1 k2 k3] (rng/split-n key 3)
           tree1 (build-tree ctx q p log-u v (dec j) current-H k1)]
-      (if (not (:s' tree1))
+      (if-not (:s' tree1)
         tree1
         (let [[q2 p2] (if (pos? v)
                         [(:q-plus tree1) (:p-plus tree1)]
@@ -2655,7 +2652,7 @@
   [params prior-std d]
   (let [z (mx/divide params (mx/scalar prior-std))]
     (+ (* -0.5 (mx/realize (mx/sum (mx/square z))))
-       (* (- d) (+ (js/Math.log prior-std) (* 0.5 (js/Math.log (* 2 js/Math.PI))))))))
+       (* (- d) (+ (js/Math.log prior-std) (* 0.5 LOG-2PI))))))
 
 (defn elliptical-slice-step
   "One elliptical slice sampling step for models with Gaussian priors.
@@ -2850,11 +2847,11 @@
              (let [final-scores (score-fn params)
                    _ (mx/materialize! final-scores params)
                    ;; Handle scalar (0-dim) scores — single restart or collapsed batch
-                   scalar? (= 0 (count (mx/shape final-scores)))
+                   scalar? (empty? (mx/shape final-scores))
                    best-idx (if scalar? 0 (mx/item (mx/argmax final-scores)))
                    best-params-raw (mx/take-idx params (mx/array best-idx mx/int32))
                    ;; take-idx may squeeze to 0-dim for D=1; ensure 1D for indexing
-                   best-params (if (= 0 (count (mx/shape best-params-raw)))
+                   best-params (if (empty? (mx/shape best-params-raw))
                                  (mx/reshape best-params-raw [1])
                                  best-params-raw)
                    best-score (if scalar? (mx/item final-scores) (mx/item (mx/index final-scores best-idx)))

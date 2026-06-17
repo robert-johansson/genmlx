@@ -16,8 +16,8 @@
    :compiled-prefix-regenerate :compiled-prefix-assess :compiled-prefix-project])
 
 (defn- compilation-level [schema]
-  (let [has-compiled? (some #(get schema %) compiled-schema-keys)
-        has-prefix?   (some #(get schema %) prefix-schema-keys)]
+  (let [has-compiled? (some schema compiled-schema-keys)
+        has-prefix?   (some schema prefix-schema-keys)]
     (cond
       (and has-compiled? (:static? schema))       :L1-M2
       (and has-compiled? (:has-branches? schema))  :L1-M4

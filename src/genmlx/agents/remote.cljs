@@ -133,7 +133,7 @@
         ;; EDN-encode the observation for the wire (JSON has no keywords/vectors):
         ;; pr-str round-trips ANY observe range (a keyword, nil, or a [restaurant
         ;; open?] vector) — remote-pomdp-rollout decodes with reader/read-string.
-        enc        (fn [o] (pr-str o))
+        enc        pr-str
         s0         (or start (:start-idx env))
         st         (atom s0)
         kref       (atom key)]

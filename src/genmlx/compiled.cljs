@@ -14,7 +14,7 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.mlx.constants :refer [ZERO ONE TWO HALF NEG-INF
-                                          LOG-2PI-HALF LOG-2 LOG-PI MLX-PI]]
+                                          LOG-2PI LOG-2PI-HALF LOG-2 LOG-PI MLX-PI]]
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
             [genmlx.vectorized :as vec]
@@ -42,7 +42,7 @@
      (mx/subtract
       (mx/subtract (mx/multiply (mx/scalar -0.5) quad-sum)
                    (mx/sum (mx/log std)))
-      (mx/scalar (* 0.5 dim (js/Math.log (* 2 js/Math.PI))))))))
+      (mx/scalar (* 0.5 dim LOG-2PI))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Core: compiled unfold step loop
@@ -1328,8 +1328,7 @@
              (= "let" (name (first form)))
              (vector? (second form)))
         (let [result (walk-rewrite-bindings (partition 2 (second form)) sites)]
-          (if (:failed? result)
-            nil
+          (when-not (:failed? result)
             (walk-rewrite-forms (concat (drop 2 form) rest-forms) (:sites result))))
 
         ;; do form
@@ -1342,16 +1341,14 @@
         (let [addr (second form)
               dist-form (nth form 2)
               info (extract-dist-info dist-form)]
-          (if info
-            (walk-rewrite-forms rest-forms (conj sites (assoc info :addr addr)))
-            nil))
+          (when info
+            (walk-rewrite-forms rest-forms (conj sites (assoc info :addr addr)))))
 
         ;; if/if-not → try to rewrite
         (and (seq? form) (seq form) (symbol? (first form))
              (let [n (name (first form))] (or (= n "if") (= n "if-not"))))
-        (if-let [branch (analyze-rewritable-branch form)]
-          (walk-rewrite-forms rest-forms (conj sites branch))
-          nil)
+        (when-let [branch (analyze-rewritable-branch form)]
+          (walk-rewrite-forms rest-forms (conj sites branch)))
 
         ;; Contains gen calls → fail
         (contains-gen-call-any? form)

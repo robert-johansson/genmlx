@@ -92,7 +92,7 @@
                (repeat (count param-addrs) proposal-std)
                proposal-std)
         ;; Initialize
-        [init-key loop-key] (rng/split (rng/ensure-key key))
+        [_init-key loop-key] (rng/split (rng/ensure-key key))
         init-vals (or init-params
                       (let [trace (:trace (p/generate model args observations))]
                         (extract-param-vals trace param-addrs)))

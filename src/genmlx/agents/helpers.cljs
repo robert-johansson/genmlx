@@ -20,8 +20,7 @@
             [genmlx.choicemap :as cm]
             [genmlx.combinators :as comb]
             [genmlx.inference.exact :as exact])
-  (:require-macros [genmlx.gen :refer [gen]]
-                   [genmlx.dist.macros :refer [defdist]]))
+  (:require-macros [genmlx.dist.macros :refer [defdist]]))
 
 ;; ---------------------------------------------------------------------------
 ;; factor-dist — soft conditioning

@@ -4,6 +4,7 @@
    and gradient estimators (reparameterization, REINFORCE)."
   (:require [genmlx.protocols :as p]
             [genmlx.mlx :as mx]
+            [genmlx.mlx.constants :refer [LOG-2PI]]
             [genmlx.mlx.random :as rng]
             [genmlx.dynamic :as dyn]
             [genmlx.inference.util :as u]
@@ -25,7 +26,7 @@
         eps (rng/normal (rng/ensure-key key) [n-samples d])
         samples (mx/add mu (mx/multiply sigma eps))
         ;; log q(z) for each sample
-        log-2pi-scalar (mx/scalar (js/Math.log (* 2 js/Math.PI)))
+        log-2pi-scalar (mx/scalar LOG-2PI)
         diff-norm (mx/divide (mx/subtract samples mu) sigma)
         log-q-per-dim (mx/multiply (mx/scalar -0.5)
                                    (mx/add log-2pi-scalar

@@ -16,9 +16,7 @@
    Initial params can be a map of {name -> MLX-array}."
   ([] {:params {} :version 0})
   ([init-params]
-   {:params (into {} (map (fn [[k v]]
-                            [k (if (mx/array? v) v (mx/scalar v))])
-                          init-params))
+   {:params (update-vals init-params #(if (mx/array? %) % (mx/scalar %)))
     :version 0}))
 
 (defn get-param

@@ -49,7 +49,6 @@
    independent of d, so perceivedDelay is irrelevant and `biased-eu` reproduces
    `agent/recursive-eu` and the tensor `Q` exactly (the limit-recovery anchor)."
   (:require [genmlx.mlx :as mx]
-            [genmlx.dist :as dist]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
             [genmlx.inference.exact :as exact]

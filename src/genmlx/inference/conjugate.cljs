@@ -74,10 +74,11 @@
                    (mx/add (mx/multiply inv-prior mean)
                            (mx/multiply inv-obs obs)))
         ;; Masked: if mask=0, posterior unchanged, ll=0
+        one-minus-mask (mx/subtract (mx/scalar 1.0) mask)
         final-mean (mx/add (mx/multiply mask new-mean)
-                           (mx/multiply (mx/subtract (mx/scalar 1.0) mask) mean))
+                           (mx/multiply one-minus-mask mean))
         final-var (mx/add (mx/multiply mask new-var)
-                          (mx/multiply (mx/subtract (mx/scalar 1.0) mask) var))]
+                          (mx/multiply one-minus-mask var))]
     {:posterior {:mean final-mean :var final-var}
      :ll (mx/multiply mask ll)}))
 

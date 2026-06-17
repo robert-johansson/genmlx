@@ -43,7 +43,7 @@
                            "use approximate inference.")
                       {:n-combinations n-combos
                        :max-combinations max-combos
-                       :addr-supports (into {} (map (fn [[a s]] [a (count s)]) addr-supports))})))
+                       :addr-supports (update-vals addr-supports count)})))
     (mapv (fn [combo]
             (let [combo-cm (cm/from-flat-map (zipmap addrs combo))
                   full-cm (if observations (cm/merge-cm observations combo-cm) combo-cm)

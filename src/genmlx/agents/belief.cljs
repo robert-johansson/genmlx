@@ -132,9 +132,8 @@
         ;; that explicitly so a WORLD-DEPENDENT nil observe model — where other
         ;; worlds yield non-nil at s' — can't make L disagree with the host. The
         ;; emergent all-ones only held when nil was world-independent.
-        is-nil   (mx/equal true-obs (mx/scalar nil-obs-id))                         ; []
-        L        (mx/where is-nil (mx/ones [W] mx/float32) match)]                  ; [W]
-    L))
+        is-nil   (mx/equal true-obs (mx/scalar nil-obs-id))]                        ; []
+    (mx/where is-nil (mx/ones [W] mx/float32) match)))                              ; [W]
 
 ;; -- belief <-> vector seam (host map/vector callers <-> [W] MLX) --------------
 

@@ -102,7 +102,7 @@
         [f-mean A] (ekf-linearize transition-fn mean)]
     {:mean f-mean
      :var  (mx/add (mx/multiply A (mx/multiply A var))
-                   (mx/multiply process-noise process-noise))}))
+                   (mx/square process-noise))}))
 
 (defn ekf-update
   "EKF update step: linearize h at belief mean, then Kalman update.

@@ -75,7 +75,7 @@
   (->> token-index
        (map-indexed vector)
        (reduce (fn [trie [id tok]]
-                 (if (and tok (pos? (count tok)))
+                 (if (seq tok)
                    (trie-insert trie id tok)
                    trie))
                {:children {} :token-ids #{}})

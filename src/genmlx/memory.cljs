@@ -295,7 +295,7 @@
   [{:keys [db]} key]
   (let [row (.get (.query db "SELECT key, kind, payload, score_type, created_at
                               FROM objects WHERE key = ?") key)]
-    (when (and row (not (undefined? row)))
+    (when row
       {:key        (.-key row)
        :kind       (.-kind row)
        :payload    (.-payload row)

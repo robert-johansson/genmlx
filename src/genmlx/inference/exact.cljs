@@ -245,7 +245,7 @@
    with merge-sub-result. Only supports simulate/generate contexts — throws
    on update/regenerate (which require trace-level operations incompatible
    with full marginalization)."
-  [gf args {:keys [constraints key old-choices selection param-store]}]
+  [gf args {:keys [constraints old-choices selection param-store]}]
   (when (or (and old-choices (not= old-choices cm/EMPTY))
             selection)
     (throw (ex-info "Exact sub-models do not support update/regenerate"
@@ -369,11 +369,10 @@
   [log-probs axes target-addr support]
   (let [m-lp (marginal log-probs axes target-addr)
         m-p (mx/exp m-lp)
-        _ (mx/eval! m-p)
-        k (count support)]
-    (into {} (map (fn [i sv]
-                    [(mx/item sv) (mx/item (mx/slice m-p i (inc i)))])
-                  (range k) support))))
+        _ (mx/eval! m-p)]
+    (into {} (map-indexed (fn [i sv]
+                            [(mx/item sv) (mx/item (mx/slice m-p i (inc i)))])
+                          support))))
 
 ;; ---------------------------------------------------------------------------
 ;; Expectation, entropy, variance

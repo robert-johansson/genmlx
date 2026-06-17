@@ -16,11 +16,6 @@
   [schema]
   (count (:trace-sites schema)))
 
-(defn- count-splice-sites
-  "Number of splice sites in the schema."
-  [schema]
-  (count (:splice-sites schema)))
-
 (defn- has-splice?
   "Does the model have any splice sites (sub-model calls)?"
   [schema]

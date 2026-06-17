@@ -177,17 +177,15 @@
           ;; Check score finiteness
           _ (mx/materialize! (:score result))
           score-val (mx/item (:score result))
-          violations (if (js/Number.isFinite score-val)
-                       violations
-                       (conj violations {:type :non-finite-score
-                                         :severity :error
-                                         :message (str "Model score is " score-val)}))
-          ;; Check empty model
-          violations (if (= (:choices result) cm/EMPTY)
-                       (conj violations {:type :empty-model
-                                         :severity :warning
-                                         :message "Model body contains no trace calls"})
-                       violations)]
+          violations (cond-> violations
+                       (not (js/Number.isFinite score-val))
+                       (conj {:type :non-finite-score
+                              :severity :error
+                              :message (str "Model score is " score-val)})
+                       (= (:choices result) cm/EMPTY)
+                       (conj {:type :empty-model
+                              :severity :warning
+                              :message "Model body contains no trace calls"}))]
       {:violations violations :trace trace})
     (catch :default e
       {:violations [{:type :execution-error

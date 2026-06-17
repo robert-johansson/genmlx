@@ -100,13 +100,13 @@
         act (fn [belief s]
               (let [q (belief-Q belief s)]
                 (int (mx/item (:retval (p/simulate (dyn/auto-key policy) [q]))))))]
-    {:worlds (vec worlds) :world-agents world-agents :prior prior :observe observe
+    {:worlds worlds-vec :world-agents world-agents :prior prior :observe observe
      :belief-Q belief-Q :update-belief update-belief :act act
      ;; tensor belief kernel (bean genmlx-kpuo): same map-in/map-out contract as
      ;; :update-belief but the filter runs as pure MLX [W] ops (no per-step host
      ;; map arithmetic, no mx/item). Opt-in via simulate-pomdp :belief-mode :tensor.
      :update-belief-tensor (fn [belief loc obs]
-                             (belief/update-belief-map observe (vec worlds) belief loc obs))
+                             (belief/update-belief-map observe worlds-vec belief loc obs))
      :expected-utility (fn [belief s a]
                          (reduce + (map (fn [[w b]]
                                           (* b ((:expected-utility (world-agents w)) s a)))

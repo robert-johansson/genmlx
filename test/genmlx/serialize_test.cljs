@@ -100,7 +100,7 @@
                       x)))
           tr1 (p/simulate model [])
           path "/tmp/genmlx_serialize_test.json"]
-      (ser/save-choices-to-file tr1 path :gen-fn-id "file-test")
+      (ser/save-choices-to-file! tr1 path :gen-fn-id "file-test")
       (let [choices (ser/load-choices-from-file path)
             x-orig (mx/item (cm/get-value (cm/get-submap (:choices tr1) :x)))
             x-loaded (mx/item (cm/get-value (cm/get-submap choices :x)))]
@@ -113,7 +113,7 @@
                     (trace :x (dist/gaussian mu 1))))
           tr1 (p/simulate model [2.0])
           path "/tmp/genmlx_trace_test.json"]
-      (ser/save-trace-to-file tr1 path)
+      (ser/save-trace-to-file! tr1 path)
       (let [tr2 (ser/load-trace-from-file model path)
             x-orig (mx/item (cm/get-value (cm/get-submap (:choices tr1) :x)))
             x-loaded (mx/item (cm/get-value (cm/get-submap (:choices tr2) :x)))]
@@ -151,7 +151,7 @@
                       (mx/add x y))))
           tr1 (p/simulate model [0.0])
           path "/tmp/genmlx_reconstruct_test.json"]
-      (ser/save-choices-to-file tr1 path)
+      (ser/save-choices-to-file! tr1 path)
       (let [tr2 (ser/reconstruct-trace-from-file model [0.0] path)
             x-orig (mx/item (cm/get-value (cm/get-submap (:choices tr1) :x)))
             x-recon (mx/item (cm/get-value (cm/get-submap (:choices tr2) :x)))

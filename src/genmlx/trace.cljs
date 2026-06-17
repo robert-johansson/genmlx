@@ -66,7 +66,7 @@
   "The score encoding of a trace: its ::score-type metadata, or :joint when
    untagged (hand-rolled traces in tests, deserialized traces)."
   [trace]
-  (get (meta trace) ::score-type :joint))
+  (::score-type (meta trace) :joint))
 
 (defn with-score-type
   "Return trace tagged with score-type st, preserving other metadata."

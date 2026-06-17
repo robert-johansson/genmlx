@@ -269,7 +269,7 @@
           ;; 1-row matrix → out-of-range garbage (decoded to "导图" instead of the
           ;; real next token). Using (dec t) is correct whether .forward returns
           ;; [1 1 vocab] or a full [1 T vocab].
-          t (nth (mx/shape logits) 1)]
+          t (second (mx/shape logits))]
       (-> logits (mx/index 0) (mx/index (dec t))))))
 
 (defn next-token-logprobs
