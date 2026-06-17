@@ -704,7 +704,15 @@
                 ;; (compiled != handler — genmlx-kftc). Event rank is taken from
                 ;; the dist arg (param), so any leading batch axis is preserved;
                 ;; a scalar point mass (ev=0) is unchanged.
-                (let [eq (mx/equal v param)
+                ;; A bare numeric-literal delta arg (dist/delta 1) compiles to a
+                ;; raw JS number; mx/shape (.shapeOf) is &MxArray-only, so taking
+                ;; (count (mx/shape param)) on it throws "Failed to recover MxArray
+                ;; type from napi value" on the compiled-assess path. Wrap it —
+                ;; the assess-side sibling of the simulate-side genmlx-lcka fix
+                ;; (compiled.cljs delta site step). ensure-array is identity on a
+                ;; real array (vector point mass), so event-rank logic is unchanged.
+                (let [param (mx/ensure-array param)
+                      eq (mx/equal v param)
                       ev (count (mx/shape param))
                       joint (reduce (fn [m _] (mx/all m (dec (count (mx/shape m)))))
                                     eq (range ev))]
