@@ -264,9 +264,24 @@
    {:init-posterior (fn [{:keys [mu sigma]}] {:mean mu :var (mx/multiply sigma sigma)})
     :posterior-mean :mean
     :update-step (fn [posterior obs-value {:keys [sigma]}]
-                   (let [obs-var (mx/multiply sigma sigma)
-                         {:keys [mean var ll]} (nn-iid-update-step posterior obs-value obs-var)]
-                     {:posterior {:mean mean :var var} :ll ll}))}
+                   (let [obs-var (mx/multiply sigma sigma)]
+                     ;; nn-iid-update-step hard-codes the HOMOSCEDASTIC
+                     ;; normal-iid-normal closed form (det Sigma =
+                     ;; (s2)^(T-1)*(s2+T*tau2), etc.), treating obs-var as a
+                     ;; SCALAR s2. A per-element [T] sigma (heteroscedastic
+                     ;; iid-gaussian) is a different MVN marginal
+                     ;; N(y; m0*1, diag(sigma_i^2)+tau2 11^T); the homoscedastic
+                     ;; form silently mis-scores it as a [T]-shaped ll. Bail to
+                     ;; the handler joint path, which scores the per-element sigma
+                     ;; correctly via dist-log-prob :iid-gaussian (genmlx-symr).
+                     ;; This is the correctness guarantee: it catches a [T] sigma
+                     ;; however it is expressed, even when detect-conjugate-pairs'
+                     ;; static gate could not prove the shape.
+                     (when (seq (mx/shape obs-var))
+                       (throw (ex-info "heteroscedastic [T]-sigma iid-gaussian: homoscedastic conjugate form invalid; bailing analytical elimination to the handler joint path"
+                                       {:genmlx.analytical/bail true})))
+                     (let [{:keys [mean var ll]} (nn-iid-update-step posterior obs-value obs-var)]
+                       {:posterior {:mean mean :var var} :ll ll})))}
    :beta-bernoulli
    {:init-posterior (fn [{:keys [alpha beta-param]}] {:alpha alpha :beta beta-param})
     :posterior-mean (fn [{:keys [alpha beta]}] (mx/divide alpha (mx/add alpha beta)))

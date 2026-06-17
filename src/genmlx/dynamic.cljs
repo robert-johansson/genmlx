@@ -1407,13 +1407,23 @@
                                (fn [rt] (run-body gf rt exec-args)))
         ;; Thesis update weight: non-fresh score minus old [N]-shaped score —
         ;; the same convention as the scalar run-update path.
-        weight (mx/subtract (:weight result) (:score vtrace))]
+        weight (mx/subtract (:weight result) (:score vtrace))
+        ;; On a structure-shrinking move (e.g. a host-arg branch flip that visits
+        ;; :b under new args, deleting :a), the batched-update-transition writes
+        ;; :discard only for OVERWRITTEN choices, never the un-revisited old
+        ;; addresses. Mirror the scalar p/update / p/update-with-args
+        ;; post-process so deleted old addresses (with their [N]-shaped values)
+        ;; appear in the discard, keeping forward/reverse round-trips recoverable
+        ;; (genmlx-6v3h). The weight is unaffected — the deleted site is already
+        ;; charged via the old [N]-shaped score.
+        discard (add-deleted-to-discard (:discard result)
+                                        (:choices vtrace) (:choices result))]
     {:vtrace (tag-vtrace
                (vec/->VectorizedTrace gf exec-args (:choices result)
                                       (:score result) weight
                                       n (:retval result)))
      :weight weight
-     :discard (:discard result)}))
+     :discard discard}))
 
 (defn vupdate
   "Batched update: run model body ONCE with batched update handler.

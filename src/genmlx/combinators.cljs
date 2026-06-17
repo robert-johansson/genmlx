@@ -37,6 +37,21 @@
     kern
     (vary-meta kern assoc :genmlx.dynamic/key :genmlx.dynamic/auto-key)))
 
+(defn- splice-key
+  "The entropy seed for a combinator GFI op. Returns a REAL PRNG key threaded in
+   via :genmlx.dynamic/key metadata (the batched-splice fallback attaches a
+   per-particle key so a spliced non-DynamicGF combinator descends entropy from
+   the threaded top-level key instead of self-seeding via js/Math.random —
+   genmlx-9ssv), otherwise a fresh self-seeded key. The :genmlx.dynamic/auto-key
+   sentinel (set by ensure-kernel-key) means 'self-seed', so it falls through to
+   fresh-key. Behaviour is IDENTICAL to the old (rng/fresh-key) for any caller
+   that does not attach a real key."
+  [this]
+  (let [k (:genmlx.dynamic/key (meta this))]
+    (if (and (some? k) (not= k :genmlx.dynamic/auto-key))
+      k
+      (rng/fresh-key))))
+
 ;; ---------------------------------------------------------------------------
 ;; Score-type propagation (genmlx-lbae)
 ;;
@@ -169,7 +184,7 @@
   "Fused Map simulate: all N elements in one call via broadcasting."
   [this args kernel fused-fn addr-order]
   (let [n (count (first args))
-        key (rng/fresh-key)
+        key (splice-key this)
         stacked-args (mapv (fn [arg-col]
                              (mx/stack (mapv mx/ensure-array arg-col)))
                            args)
@@ -191,7 +206,7 @@
   "Compiled Map simulate: call compiled-simulate per element."
   [this args kernel csim]
   (let [n (count (first args))
-        init-key (rng/fresh-key)
+        init-key (splice-key this)
         results (loop [i 0 key init-key acc []]
                   (if (>= i n)
                     acc
@@ -247,7 +262,7 @@
     (if-let [cgen (cops/get-compiled-generate kernel)]
       ;; Compiled path — call compiled-generate directly per element
       (let [n (count (first args))
-            init-key (rng/fresh-key)]
+            init-key (splice-key this)]
         (loop [i 0 key init-key
                choices cm/EMPTY score ZERO weight ZERO
                retvals [] element-scores []]
@@ -295,7 +310,7 @@
       (let [old-choices (:choices trace)
             args (:args trace)
             n (count (first args))
-            init-key (rng/fresh-key)]
+            init-key (splice-key this)]
         (loop [i 0 key init-key
                choices cm/EMPTY score ZERO discard cm/EMPTY
                retvals [] element-scores []]
@@ -372,7 +387,7 @@
             args (:args trace)
             n (count (first args))
             old-element-scores (::element-scores (meta trace))
-            init-key (rng/fresh-key)]
+            init-key (splice-key this)]
         (loop [i 0 key init-key
                choices cm/EMPTY score ZERO weight ZERO
                retvals [] element-scores []]
@@ -505,7 +520,7 @@
   [this args kernel fused-cache n init-state extra]
   (let [{:keys [compiled-fn addr-order noise-site-types state-keys]}  ; noise-dim unused (genmlx-21kt)
         (get-or-build-fused-unfold fused-cache kernel n extra)
-        key (rng/fresh-key)
+        key (splice-key this)
         noise (cops/generate-noise-matrix key n noise-site-types)
         ;; Pack map init-state to flat [N] array for compiled fn
         init-flat (if state-keys
@@ -525,7 +540,7 @@
 (defn- unfold-simulate-compiled
   "Compiled Unfold simulate: call compiled-simulate per step."
   [this args kernel n init-state extra csim]
-  (let [init-key (rng/fresh-key)]
+  (let [init-key (splice-key this)]
     (loop [t 0 state init-state key init-key
            choices cm/EMPTY score ZERO
            states [] step-scores []]
@@ -584,7 +599,7 @@
     (let [[n init-state & extra] args]
       (if-let [cgen (cops/get-compiled-generate kernel)]
         ;; Compiled path
-        (let [init-key (rng/fresh-key)]
+        (let [init-key (splice-key this)]
           (loop [t 0 state init-state key init-key
                  choices cm/EMPTY score ZERO weight ZERO
                  states [] step-scores []]
@@ -670,7 +685,7 @@
               start-state (if (pos? first-changed)
                             (nth (:retval trace) (dec first-changed))
                             init-state)
-              init-key (when cupd (rng/fresh-key))]
+              init-key (when cupd (splice-key this))]
           ;; Execute steps first-changed..n-1. `nf` accumulates the non-fresh
           ;; score: prefix steps are retained verbatim (their non-fresh score
           ;; is the recorded prefix score); compiled steps never sample fresh
@@ -748,7 +763,7 @@
           {:keys [args choices]} trace
           [n init-state & extra] args
           old-step-scores (::step-scores (meta trace))
-          init-key (when cregen (rng/fresh-key))]
+          init-key (when cregen (splice-key this))]
       (loop [t 0 state init-state key init-key
              new-choices cm/EMPTY score ZERO weight ZERO
              states [] step-scores [] st :joint]
@@ -926,7 +941,7 @@
           branch (nth branches idx)]
       (if-let [csim (cops/get-compiled-simulate branch)]
         ;; L1-M5: compiled path
-        (let [key (rng/fresh-key)
+        (let [key (splice-key this)
               result (csim key (vec branch-args))
               choices (cm/from-flat-map (:values result))]
           (tag-joint
@@ -953,7 +968,7 @@
           branch (nth branches idx)]
       (if-let [cgen (cops/get-compiled-generate branch)]
         ;; Compiled path
-        (let [key (rng/fresh-key)
+        (let [key (splice-key this)
               result (cgen key (vec branch-args) constraints)
               choices (values->choices (:values result))]
           {:trace (tag-joint
@@ -989,7 +1004,7 @@
               cupd (cops/get-compiled-update branch)]
           (if cupd
             ;; WP-8: compiled update path
-            (let [key (rng/fresh-key)
+            (let [key (splice-key this)
                   result (cupd key (vec branch-args) constraints (:choices trace))
                   new-choices (values->choices (:values result))
                   new-discard (values->choices (:discard result))]
@@ -1045,7 +1060,7 @@
           branch (nth (:branches this) idx)]
       (if-let [cregen (cops/get-compiled-regenerate branch)]
         ;; WP-9A: compiled regenerate path
-        (let [key (rng/fresh-key)
+        (let [key (splice-key this)
               result (cregen key (vec branch-args) (:choices trace) selection)
               new-choices (values->choices (:values result))
               ;; compiled-regenerate returns proposal_ratio in :weight
@@ -1567,7 +1582,7 @@
   [this args kernel fused-cache init-carry inputs n]
   (let [{:keys [compiled-fn addr-order noise-site-types]}  ; noise-dim unused (genmlx-21kt)
         (get-or-build-fused-scan fused-cache kernel n)
-        key (rng/fresh-key)
+        key (splice-key this)
         noise (cops/generate-noise-matrix key n noise-site-types)
         [outputs-tensor scores-tensor total-score]
         (compiled-fn (mx/ensure-array init-carry)
@@ -1588,7 +1603,7 @@
 (defn- scan-simulate-compiled
   "Compiled Scan simulate: call compiled-simulate per step."
   [this args kernel init-carry inputs n csim]
-  (let [init-key (rng/fresh-key)]
+  (let [init-key (splice-key this)]
     (loop [t 0 carry init-carry key init-key
            choices cm/EMPTY score ZERO
            outputs [] step-scores [] step-carries []]
@@ -1656,7 +1671,7 @@
           n (count inputs)]
       (if-let [cgen (cops/get-compiled-generate kernel)]
         ;; Compiled path
-        (let [init-key (rng/fresh-key)]
+        (let [init-key (splice-key this)]
           (loop [t 0 carry init-carry key init-key
                  choices cm/EMPTY score ZERO weight ZERO
                  outputs [] step-scores [] step-carries []]
@@ -1754,7 +1769,7 @@
               start-carry (if (pos? first-changed)
                             (nth old-step-carries (dec first-changed))
                             init-carry)
-              init-key (when cupd (rng/fresh-key))]
+              init-key (when cupd (splice-key this))]
           ;; Execute steps first-changed..n-1. `nf` accumulates the non-fresh
           ;; score (see Unfold update for the convention); final thesis
           ;; weight = nf - old_total.
@@ -1829,7 +1844,7 @@
           [init-carry inputs] args
           n (count inputs)
           old-step-scores (::step-scores (meta trace))
-          init-key (when cregen (rng/fresh-key))]
+          init-key (when cregen (splice-key this))]
       (loop [t 0 carry init-carry key init-key
              new-choices cm/EMPTY score ZERO weight ZERO
              outputs [] step-scores [] step-carries [] st :joint]
@@ -2095,7 +2110,7 @@
           component (nth components (int idx))]
       (if-let [csim (cops/get-compiled-simulate component)]
         ;; L1-M5: compiled path
-        (let [key (rng/fresh-key)
+        (let [key (splice-key this)
               result (csim key (vec args))
               choices (cm/from-flat-map (:values result))
               choices (cm/set-choice choices [:component-idx]
@@ -2133,7 +2148,7 @@
           comp-constraints (without-component-idx constraints)]
       (if-let [cgen (cops/get-compiled-generate component)]
         ;; Compiled path — only the component generate is compiled
-        (let [key (rng/fresh-key)
+        (let [key (splice-key this)
               result (cgen key (vec args) comp-constraints)
               comp-choices (values->choices (:values result))]
           {:trace (tag-joint
@@ -2290,7 +2305,7 @@
               cupd (cops/get-compiled-update component)]
           (if cupd
             ;; WP-8: compiled update path
-            (let [key (rng/fresh-key)
+            (let [key (splice-key this)
                   result (cupd key (vec args) inner-constraints inner-old-choices)
                   inner-score (:score result)
                   new-score (mx/add inner-score old-idx-score)
@@ -2419,7 +2434,7 @@
               inner-old-choices (without-component-idx old-choices)]
           (if-let [cregen (cops/get-compiled-regenerate component)]
             ;; WP-9A: compiled regenerate path
-            (let [key (rng/fresh-key)
+            (let [key (splice-key this)
                   result (cregen key (vec args) inner-old-choices selection)
                   inner-score (:score result)
                   new-score (mx/add inner-score old-idx-score)

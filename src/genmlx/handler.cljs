@@ -493,7 +493,14 @@
    Unstacks [N]-particle state, runs combinator GFI N times, stacks results."
   [state addr gf args]
   (let [n (:batch-size state)
-        [k1 k2] (rng/split (:key state))
+        ;; Per-particle keys + one carry key. Attaching each particle's key to
+        ;; the spliced combinator (via :genmlx.dynamic/key metadata, read by
+        ;; combinators/splice-key) makes a spliced non-DynamicGF combinator
+        ;; descend entropy from the threaded top-level key instead of
+        ;; self-seeding via js/Math.random — so two runs under a fixed key are
+        ;; bit-identical (genmlx-9ssv). The carry key replaces the old dead k2.
+        part-keys (rng/split-n (:key state) (inc n))
+        k-carry (nth part-keys n)
         ;; Extract scoped state
         sub-constraints (cm/get-submap (:constraints state) addr)
         sub-old-choices (cm/get-submap (:old-choices state) addr)
@@ -518,11 +525,11 @@
                             ;; Scalar constraints: replicate
                             (vec (repeat n sub-constraints))
                             (cm/unstack-choicemap sub-constraints n mx/index scalar-leaf-val?)))
-        ;; Run per-particle
+        ;; Run per-particle, each with its own threaded key on the combinator
         results (mapv
                  (fn [i]
                    (run-batched-particle
-                    gf
+                    (vary-meta gf assoc :genmlx.dynamic/key (nth part-keys i))
                     (mapv #(extract-scalar-arg % i) args)
                     sub-selection
                     (when per-old-choices (nth per-old-choices i))
@@ -531,6 +538,6 @@
         ;; Stack results and merge into parent state
         sub-result (stack-particle-results results)
         state' (-> state
-                   (assoc :key k1)
+                   (assoc :key k-carry)
                    (merge-sub-result addr sub-result))]
     [state' (:retval sub-result)]))

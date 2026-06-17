@@ -171,6 +171,30 @@
    scored as if rate were lambda."
   #{:normal-normal})
 
+(defn- provably-vector-sigma-form?
+  "Best-effort static check: is this source form a provably non-scalar
+   (vector/tensor) value? Recognizes a bare vector literal and (mx/array
+   <vector-literal>) — the common way a per-element [T] sigma is written in a
+   gen body. EARLY-decline signal only; the runtime backstop in the
+   :normal-iid-normal update-step is the correctness guarantee for any [T] sigma
+   expressed differently (a model arg, a let-binding)."
+  [form]
+  (boolean
+    (or (vector? form)
+        (and (seq? form) (seq form) (symbol? (first form))
+             (= "array" (name (first form)))
+             (vector? (second form))))))
+
+(defn- heteroscedastic-iid-obs?
+  "An :iid-gaussian obs whose sigma (dist-arg index 1) is a provably non-scalar
+   [T] vector. The homoscedastic normal-iid-normal conjugate form (the only
+   closed form GenMLX implements) is INVALID for a per-element sigma — the
+   correct marginal is N(y; m0*1, diag(sigma_i^2)+tau2 11^T), not the scalar-s2
+   form — so it must not be detected as conjugate (genmlx-symr)."
+  [obs-site]
+  (and (= :iid-gaussian (:dist-type obs-site))
+       (provably-vector-sigma-form? (nth (:dist-args obs-site) 1 nil))))
+
 (defn detect-conjugate-pairs
   "Scan schema trace sites for conjugate pairs.
 
@@ -190,6 +214,9 @@
         site-map (into {} (map (juxt :addr identity)) static-sites)]
     (vec
       (for [obs-site static-sites
+            ;; genmlx-symr: a heteroscedastic [T]-sigma iid-gaussian obs is NOT
+            ;; conjugate under the homoscedastic closed form — decline it early.
+            :when (not (heteroscedastic-iid-obs? obs-site))
             prior-addr (:deps obs-site)
             :let [prior-site (get site-map prior-addr)]
             :when prior-site

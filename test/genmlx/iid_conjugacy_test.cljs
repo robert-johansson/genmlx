@@ -289,4 +289,134 @@
       (doseq [r results]
         (is (h/close? (:weight r) (:score r) 1e-6) "score ~ weight")))))
 
+;; ---------------------------------------------------------------------------
+;; 11. Heteroscedastic [T]-sigma iid-gaussian (genmlx-symr)
+;;
+;; nn-iid-update-step hard-codes the HOMOSCEDASTIC normal-iid-normal closed form
+;; (treats obs-var as a SCALAR s2). dist/iid-gaussian also accepts a per-element
+;; [T] sigma, whose correct marginal is the DIFFERENT MVN
+;;   N(y; m0*1, diag(sigma_i^2) + tau2 11^T).
+;; Before the fix a [T]-sigma model was routed to L3 analytical elimination and
+;; silently mis-scored — the ll came out [T]-shaped (not the joint scalar),
+;; flowing into :score/:weight. The fix is defense-in-depth: a static gate in
+;; detect-conjugate-pairs declines a provably-vector sigma, and a runtime
+;; backstop in the :normal-iid-normal update-step throws {:analytical/bail true}
+;; for ANY non-scalar obs-var, re-routing to the handler joint path which scores
+;; the per-element sigma correctly (dist-log-prob :iid-gaussian).
+;;
+;; INDEPENDENT oracles (ke9i discipline): the correct heteroscedastic marginal,
+;; computed two ways that do NOT touch the function under test.
+;; ---------------------------------------------------------------------------
+
+(defn oracle-marginal-het-closed
+  "Closed-form heteroscedastic shared-mu marginal log-evidence via the
+   matrix-determinant lemma / Sherman-Morrison rank-1 update of
+   Sigma = diag(s2s) + tau2 11^T. Reduces to oracle-marginal-closed when all
+   s2s are equal (verified in het-oracle-self-consistency)."
+  [ys m0 tau2 s2s]
+  (let [T (count ys)
+        d (map #(- % m0) ys)
+        w (map #(/ 1.0 %) s2s)                 ; precisions 1/s_i^2
+        A (+ 1.0 (* tau2 (reduce + w)))        ; 1 + tau2 1^T D^{-1} 1
+        sum-dw (reduce + (map * d w))
+        sum-d2w (reduce + (map (fn [di wi] (* di di wi)) d w))
+        logdet (+ (reduce + (map js/Math.log s2s)) (js/Math.log A))
+        quad (- sum-d2w (/ (* tau2 sum-dw sum-dw) A))]
+    (* -0.5 (+ (* T (js/Math.log (* 2 js/Math.PI))) logdet quad))))
+
+(defn oracle-marginal-het-quad
+  "Independent METHOD: numerically marginalise mu for heteroscedastic s_i^2.
+   p(ys) = ∫ N(mu; m0, tau2) * prod_i N(y_i; mu, s2s_i) dmu."
+  [ys m0 tau2 s2s]
+  (let [tau (js/Math.sqrt tau2)
+        lo (- m0 (* 8 tau)) hi (+ m0 (* 8 tau))
+        n 40000 dx (/ (- hi lo) n)
+        lpn (js/Math.log (js/Math.sqrt (* 2 js/Math.PI tau2)))]
+    (loop [k 0 acc 0.0]
+      (if (> k n)
+        (js/Math.log (* dx acc))
+        (let [mu (+ lo (* k dx))
+              lp (- (- (/ (* (- mu m0) (- mu m0)) (* 2 tau2))) lpn)
+              ll (reduce (fn [a [y s2]]
+                           (+ a (* -0.5 (+ (js/Math.log (* 2 js/Math.PI s2))
+                                           (/ (* (- y mu) (- y mu)) s2)))))
+                         0.0 (map vector ys s2s))]
+          (recur (inc k) (+ acc (js/Math.exp (+ lp ll)))))))))
+
+(deftest het-oracle-self-consistency
+  (testing "the heteroscedastic oracle reduces to the homoscedastic one for equal s2s"
+    (let [ys [1.0 2.0 3.0 4.0 5.0]]
+      (is (h/close? (oracle-marginal-closed ys 0 100 1)
+                    (oracle-marginal-het-closed ys 0 100 [1 1 1 1 1]) 1e-6)
+          "het closed-form == homoscedastic closed-form at uniform s2s")))
+  (testing "the two independent heteroscedastic methods agree (trustworthy ground truth)"
+    (let [ys [0.5 1.5 -0.5 2.0 0.0]
+          s2s [1.0 4.0 0.25 1.96 0.49]]
+      (is (h/close? (oracle-marginal-het-closed ys 0 100 s2s)
+                    (oracle-marginal-het-quad ys 0 100 s2s) 1e-3)
+          "het closed-form == numerical-quadrature marginal"))))
+
+;; ys = [0.5 1.5 -0.5 2.0 0.0], sigma = [1 2 0.5 1.4 0.7] -> s2s = [1 4 0.25 1.96 0.49]
+(def het-sigma (mx/array [1.0 2.0 0.5 1.4 0.7]))
+(def het-ys (mx/array [0.5 1.5 -0.5 2.0 0.0]))
+;; INLINE (mx/array [...]) literal so the static gate can prove the [T] shape;
+;; a def'd-symbol or arg sigma is static-blind and is the runtime backstop's job.
+(def het-model
+  (gen [] (let [mu (trace :mu (dist/gaussian 0 10))]
+            (trace :ys (dist/iid-gaussian mu (mx/array [1.0 2.0 0.5 1.4 0.7]) 5))
+            mu)))
+(def sca-model
+  (gen [] (let [mu (trace :mu (dist/gaussian 0 10))]
+            (trace :ys (dist/iid-gaussian mu (mx/scalar 1.0) 5))
+            mu)))
+;; sigma supplied as a model ARG — the static gate cannot prove its shape, so
+;; the RUNTIME backstop is the load-bearing guard for this case.
+(def arg-model
+  (gen [sig] (let [mu (trace :mu (dist/gaussian 0 10))]
+               (trace :ys (dist/iid-gaussian mu sig 5))
+               mu)))
+
+(deftest heteroscedastic-detection-declined
+  (testing "a provably-vector [T] sigma is declined by static detection"
+    (is (empty? (conj/detect-conjugate-pairs (:schema het-model)))
+        "het [T]-sigma: NO conjugate pair detected"))
+  (testing "a scalar sigma is still detected as conjugate (path unchanged)"
+    (is (= 1 (count (conj/detect-conjugate-pairs (:schema sca-model))))
+        "scalar sigma: still :normal-iid-normal conjugate"))
+  (testing "an arg-supplied sigma is NOT declined statically (runtime must guard it)"
+    (is (= 1 (count (conj/detect-conjugate-pairs (:schema arg-model))))
+        "arg sigma: static gate is blind, detection still fires")))
+
+(deftest heteroscedastic-runtime-bails-to-scalar
+  (testing "[T]-sigma literal: detection-declined -> handler scores a JOINT SCALAR weight"
+    (let [gf (dyn/auto-key het-model)
+          w  (:weight (p/generate gf [] (cm/choicemap :ys het-ys)))]
+      (is (= [] (mx/shape w)) "het generate weight is a joint scalar, not [T]")
+      (is (js/isFinite (mx/item w)) "het generate weight is finite")))
+  (testing "[T]-sigma via model arg: runtime backstop bails -> joint SCALAR weight"
+    (let [gf (dyn/auto-key arg-model)
+          w  (:weight (p/generate gf [het-sigma] (cm/choicemap :ys het-ys)))]
+      (is (= [] (mx/shape w)) "arg [T]-sigma generate weight is a joint scalar, not [T]")
+      (is (js/isFinite (mx/item w)) "arg [T]-sigma generate weight is finite"))))
+
+(deftest scalar-sigma-analytical-still-exact
+  ;; The supported (scalar-sigma) analytical path must STILL equal the closed-form
+  ;; MVN marginal exactly — this is the "analytical == closed-form MVN oracle"
+  ;; guarantee, verified against an INDEPENDENT oracle (not nn-iid-update-step).
+  (testing "scalar-sigma generate weight == independent MVN marginal oracle"
+    (let [gf (dyn/auto-key sca-model)
+          w  (mx/item (:weight (p/generate gf [] (cm/choicemap :ys het-ys))))
+          ys [0.5 1.5 -0.5 2.0 0.0]]
+      (is (h/close? w (oracle-marginal-closed ys 0 100 1) 1e-3)
+          "scalar-sigma weight == closed-form oracle")
+      (is (h/close? w (oracle-marginal-het-quad ys 0 100 [1 1 1 1 1]) 1e-3)
+          "scalar-sigma weight == numerical-quadrature oracle")))
+  ;; And the scalar arg path stays analytical-exact too (runtime sees scalar obs-var).
+  (testing "scalar-sigma via model arg stays analytical and exact"
+    (let [gf (dyn/auto-key arg-model)
+          w  (mx/item (:weight (p/generate gf [(mx/scalar 1.0)] (cm/choicemap :ys het-ys))))
+          ys [0.5 1.5 -0.5 2.0 0.0]]
+      (is (h/close? w (oracle-marginal-closed ys 0 100 1) 1e-3)
+          "scalar arg-sigma weight == closed-form oracle"))))
+
 (cljs.test/run-tests)

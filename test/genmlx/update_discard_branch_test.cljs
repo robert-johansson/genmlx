@@ -116,4 +116,44 @@
           total (+ (mx/item (:weight fwd)) (mx/item (:weight rev)))]
       (is (h/close? 0.0 total 1e-4) "fwd_weight + rev_weight ~ 0"))))
 
+;; -------------------------------------------------------------------------
+;; Batched analogue (genmlx-6v3h): vupdate*/vupdate-args must add deleted old
+;; addresses to the discard on a structure-shrinking move, like the scalar path.
+;; The batch branches on a HOST ARG (per-particle branching / mx/item is not
+;; allowed in a vectorized body), so old args visit :a and new args visit :b.
+;; -------------------------------------------------------------------------
+
+(def arg-branch-model
+  (gen [flag]
+    (if flag
+      (trace :a (dist/gaussian 0 1))
+      (trace :b (dist/gaussian 5 1)))))
+
+(defn- leaf-vec [choices addr]
+  (mx/->clj (cm/get-value (cm/get-submap choices addr))))
+
+(deftest batched-arg-branch-discard
+  (testing "structure-shrinking vupdate-args: deleted :a appears in the discard with its [N] values"
+    (let [n 4
+          vt (dyn/vsimulate arg-branch-model [true] n (rng/fresh-key 1))
+          r  (dyn/vupdate-args arg-branch-model vt [false] cm/EMPTY (rng/fresh-key 2))
+          discard (:discard r)
+          new-choices (:choices (:vtrace r))]
+      (is (cm/has-value? (cm/get-submap (:choices vt) :a)) "old trace has :a")
+      (is (cm/has-value? (cm/get-submap new-choices :b)) "new trace has :b")
+      (is (not (cm/has-value? (cm/get-submap new-choices :a))) "new trace dropped :a")
+      (is (cm/has-value? (cm/get-submap discard :a)) "discard includes the deleted :a")
+      (is (= [n] (mx/shape (cm/get-value (cm/get-submap discard :a)))) "discarded :a is [N]-shaped")
+      (is (= (leaf-vec (:choices vt) :a) (leaf-vec discard :a))
+          "discarded :a values == the original per-particle :a values (round-trip recoverable)")
+      (is (= [n] (mx/shape (:weight r))) "weight is [N]-shaped")
+      (is (every? js/isFinite (mx/->clj (:weight r))) "weight is finite (unaffected by the discard fix)")))
+  (testing "non-shrinking overwrite vupdate: discard carries the overwritten address only"
+    (let [n 4
+          plain (gen [] (trace :x (dist/gaussian 0 1)))
+          vt (dyn/vsimulate plain [] n (rng/fresh-key 3))
+          r  (dyn/vupdate plain vt (cm/choicemap :x (mx/zeros [n])) (rng/fresh-key 4))]
+      (is (cm/has-value? (cm/get-submap (:discard r) :x)) "overwritten :x is in the discard")
+      (is (= '(:x) (keys (:m (:discard r)))) "no spurious deleted addresses added"))))
+
 (cljs.test/run-tests)
