@@ -127,23 +127,23 @@
 ;; :m <per-index>). execute-sub reconstructs the child without ::element-scores,
 ;; so the rehydration path is exercised for real (not a manual strip).
 
+;; splice SPREADS its trailing args, so the Map's single arg (the input vector)
+;; is passed directly — (splice :m mcomb [0 1 2]) gives the Map args [[0 1 2]].
 (def parent
-  (dyn/auto-key (gen [] (splice :m (comb/map-combinator map-kernel) [[0.0 1.0 2.0]]))))
+  (dyn/auto-key (gen [] (splice :m (comb/map-combinator map-kernel) [0.0 1.0 2.0]))))
 
 (deftest map-through-real-splice-regen-weight
-  ;; This exercises the rehydration through a REAL splice (execute-sub drops
-  ;; ::element-scores). The genmlx-1a23 VALUE fix is verified here: the
-  ;; through-splice weight equals the project oracle. NOTE: a separate
-  ;; pre-existing bug (genmlx-d8j4) makes a spliced Map's weight/score [N]-
-  ;; broadcast rather than scalar — the value is correct in every entry, so we
-  ;; reduce both sides with mx/mean to compare the (broadcast) scalar value.
+  ;; Exercises the rehydration through a REAL splice (execute-sub drops
+  ;; ::element-scores). The genmlx-1a23 fix is verified end-to-end: the
+  ;; through-splice regen weight is scalar AND equals the project oracle.
   (let [sel-ab (sel/hierarchical :m (idx-paths 3 :a :b))
         ret    (sel/hierarchical :m (idx-paths 3 :c))
         tr     (p/simulate parent [])
         {tr2 :trace w :weight} (p/regenerate parent tr sel-ab)
         oracle (mx/subtract (p/project parent tr2 ret) (p/project parent tr ret))]
-    (is (close? (num (mx/mean w)) (num (mx/mean oracle)))
-        (str "through-splice weight = delta-project, got " (num (mx/mean w))
-             " vs oracle " (num (mx/mean oracle))))))
+    (is (= [] (mx/shape w)) "parent regen weight is scalar")
+    (is (close? (num w) (num oracle))
+        (str "through-splice weight = delta-project, got " (num w)
+             " vs oracle " (num oracle)))))
 
 (cljs.test/run-tests)
