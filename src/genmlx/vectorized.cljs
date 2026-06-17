@@ -147,6 +147,22 @@
 ;; Merge two VectorizedTraces by boolean mask (for per-particle MH accept/reject)
 ;; ---------------------------------------------------------------------------
 
+(defn- mask->leaf-rank
+  "Reshape an [N] particle accept-mask to [N,1,...,1] matching the rank of a
+   leaf value v, so (mx/where ...) selects whole particles along the leading
+   particle axis and broadcasts over the trailing latent dims. Without this,
+   MLX right-aligned broadcasting aligns the [N] mask against the leaf's
+   trailing axis — a hard crash when N != D and a silent feature-axis mix when
+   N == D for vector-valued latents ([N,D]: gaussian-vec/broadcasted-normal/
+   dirichlet) (genmlx-3nme). Mirrors the leading-axis gather semantics that
+   reindex-choicemap already uses via take-idx. A rank-1 ([N]) leaf — the
+   scalar-latent case — needs no reshape, so this is identity there."
+  [mask v]
+  (let [r (count (mx/shape v))]
+    (if (> r 1)
+      (mx/reshape mask (into [(first (mx/shape mask))] (repeat (dec r) 1)))
+      mask)))
+
 (defn- merge-choicemap-by-mask
   "Recursively merge two identically-structured choicemaps using an [N] boolean mask.
    Where mask=true takes from proposed, where false keeps current."
@@ -154,7 +170,7 @@
   (walk-choicemap current
                   (fn [cv]
                     (let [pv (cm/get-value proposed)]
-                      (mx/where mask pv cv)))
+                      (mx/where (mask->leaf-rank mask cv) pv cv)))
                   (fn [k sub] (merge-choicemap-by-mask
                                 sub (cm/-get-submap proposed k) mask))))
 
@@ -165,7 +181,7 @@
   [cur prop mask]
   (cond
     (and (mx/array? cur) (mx/array? prop))
-    (mx/where mask prop cur)
+    (mx/where (mask->leaf-rank mask cur) prop cur)
 
     (and (map? cur) (map? prop))
     (into {} (map (fn [[k v]] [k (merge-state-by-mask v (get prop k) mask)])) cur)

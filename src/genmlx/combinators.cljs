@@ -109,6 +109,25 @@
           ZERO
           results))
 
+(defn- rehydrate-element-meta
+  "Recover a combinator's per-element/per-step score metadata when it was lost
+   across a splice boundary (execute-sub reconstructs the child trace with only
+   ::splice-scores) or a serialize round-trip. We re-generate the trace fully
+   constrained from its own choices: generate re-threads sequential carry/state
+   and re-attaches ::element-scores / ::step-scores (recursively, for nested
+   combinators), reproducing the exact old per-element scores. The downstream
+   regenerate then takes its metadata-PRESENT path — which is correct for both
+   fast-eligible and general (project-based) kernels — instead of the
+   -(:score trace) re-base that ONLY undid the fast path's ZERO-old inflation
+   and was spurious (too low/high by the old combinator score) for a spliced
+   general-path kernel (genmlx-1a23). No-op when the metadata is already present
+   or there are no choices to reconstruct from."
+  [comb meta-key trace]
+  (if (or (meta-key (meta trace))
+          (empty? (cm/addresses (:choices trace))))
+    trace
+    (:trace (p/generate (ensure-kernel-key comb) (:args trace) (:choices trace)))))
+
 (defn- values->choices
   "Convert compiled result {:values {addr->val}} to a ChoiceMap."
   [values]
@@ -365,7 +384,8 @@
   ;; (:score trace). Correct at the end instead of silently returning wrong
   ;; weights (genmlx-v740). When metadata is present the path is unchanged.
   (regenerate [this trace selection]
-    (let [trace (ensure-joint-self this :regenerate trace)]
+    (let [trace (ensure-joint-self this :regenerate trace)
+          trace (rehydrate-element-meta this ::element-scores trace)]
      (if-let [cregen (cops/get-compiled-regenerate kernel)]
       ;; WP-9A: compiled regenerate path
       (let [old-choices (:choices trace)
@@ -743,6 +763,7 @@
   ;; recorded on (:score trace). Correct at the end (genmlx-v740).
   (regenerate [this trace selection]
     (let [trace (ensure-joint-self this :regenerate trace)
+          trace (rehydrate-element-meta this ::step-scores trace)
           kern (:kernel this)
           cregen (cops/get-compiled-regenerate kern)
           {:keys [args choices]} trace
@@ -1823,6 +1844,7 @@
   ;; Same ::step-scores-loss correction as Unfold regenerate (genmlx-v740).
   (regenerate [this trace selection]
     (let [trace (ensure-joint-self this :regenerate trace)
+          trace (rehydrate-element-meta this ::step-scores trace)
           kern (:kernel this)
           cregen (cops/get-compiled-regenerate kern)
           {:keys [args choices]} trace
