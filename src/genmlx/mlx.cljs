@@ -682,11 +682,11 @@
   "Vectorized map: transforms f into a batched version that operates over
    an additional batch dimension. Pure graph-to-graph transformation."
   ([f]
-   (fn [& args] (let [r (.vmap M f (to-array args))] (aget r 0))))
+   (fn [& args] (let [r (.vmap c f (to-array args))] (aget r 0))))
   ([f in-axes]
-   (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes))] (aget r 0))))
+   (fn [& args] (let [r (.vmap c f (to-array args) (clj->js in-axes))] (aget r 0))))
   ([f in-axes out-axes]
-   (fn [& args] (let [r (.vmap M f (to-array args) (clj->js in-axes) (clj->js out-axes))] (aget r 0)))))
+   (fn [& args] (let [r (.vmap c f (to-array args) (clj->js in-axes) (clj->js out-axes))] (aget r 0)))))
 
 (defn- grad-args
   "Marshal an arg vector for the autograd NAPI boundary. Every arg must be a
