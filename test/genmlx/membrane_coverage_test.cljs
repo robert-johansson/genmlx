@@ -29,7 +29,7 @@
             [genmlx.test-helpers :as h]
             [genmlx.mlx :as mx]))
 
-(def ^:private core (js/require "@mlx-node/core"))
+(def ^:private core (js/require "@genmlx/core"))
 (def ^:private fs (js/require "fs"))
 
 ;; The membrane = both Layer-0 files that bind @mlx-node/core. An export is

@@ -12,7 +12,7 @@
 ;; Shapes are JS number[] (no BigInt64Array conversion needed).
 ;; =========================================================================
 
-(defonce ^:private c (js/require "@mlx-node/core"))
+(defonce ^:private c (js/require "@genmlx/core"))
 
 ;; =========================================================================
 ;; Key management

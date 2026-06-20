@@ -20,7 +20,7 @@
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]))
 
-(defonce ^:private core (js/require "@mlx-node/core"))
+(defonce ^:private core (js/require "@genmlx/core"))
 
 (defn- caught-message
   "Run f, return the caught error message, or ::no-throw."
