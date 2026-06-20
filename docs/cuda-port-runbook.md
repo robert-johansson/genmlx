@@ -46,7 +46,7 @@ The vendored MLX fork (v0.32.0) already contains the full CUDA backend (`mlx-nod
 
 **Risks (ranked):**
 - **A. x86_64 vs aarch64.** Upstream validated CUDA *only* on aarch64 (GB10/DGX Spark). x86_64+NVIDIA is a less-trodden path (MLX C++ supports it; the surface crate is unvalidated there). **Confirm `uname -m` first.**
-- **B. CUDA toolkit version.** The fork's CMake hard-rejects CUDA 13.1 (`mlx/CMakeLists.txt:159-162 FATAL_ERROR`); cuDNN mandatory. Target CUDA 12.4–12.9 or ≥13.2, cuDNN 9.
+- **B. CUDA 13.0 on Thor is supported — the only real unknown is Blackwell-arch bring-up.** There is **no** CUDA-version guard (v1's "13.1 FATAL_ERROR / need ≥13.2" was fiction). Our vendored MLX fork's base is commit **`2e6632e5b`, dated 2026-05-29** (v0.32.0 *dev* — recent, not old; the version *number* is misleading). It **post-dates upstream's CUDA-13.0 support**: MLX issue #3109 (2026-02-07) states *"CUDA 13.0 is working fine"*; the only 13.x bug is a **13.1-specific** nvcc reduce-kernel regression, fixed in PR #3273 (also pre-#3598, so in our base). **CCCL is pinned to v3.1.3** (the CUDA-13 line) and MLX's install docs officially list `pip install mlx[cuda13]`. **Thor uses 13.0, sidestepping the 13.1 bug.** So the toolkit version is NOT a blocker. The one genuine unknown is whether MLX's May-2026 kernels build for **Thor's specific Blackwell SM** under the Jetson aarch64 toolchain — normal bring-up, box-only. Fallback if a kernel won't compile for Thor's arch: bump the vendored MLX submodule forward, re-applying our 9 add-only math commits. **Requires Nvidia driver ≥ 580** (CUDA-13 package req) + cuDNN 9.
 - **C. searchsorted perf.** The fast fix (CPU-route) keeps correctness but a host round-trip in the SMC resample loop. The proper fix (port the kernel to `.cu`) keeps it on GPU. Do fast first, proper after a green boot.
 - **D. LLM/paged-attn has no CUDA kernels** (`.metal`-only). Core GFI/distributions/inference do not need it. **Scope `@mlx-node/lm` out of v1.**
 
@@ -57,8 +57,10 @@ The vendored MLX fork (v0.32.0) already contains the full CUDA backend (`mlx-nod
 | Item | Requirement | Source |
 |---|---|---|
 | **GPU compute capability** | ≥ 7.0 (Volta); SM 90+ gets `a`-suffix kernels | `mlx/backend/cuda/CMakeLists.txt:152-175` |
-| **CUDA Toolkit** | **12.4–12.9 or ≥13.2. NOT 13.1** (hard FATAL_ERROR) | `mlx/CMakeLists.txt:159-162` |
+| **CUDA Toolkit** | **CUDA 13.0 is supported** — no version is gated out (verified: NO CUDA-version `FATAL_ERROR`); our fork base (2026-05-29) post-dates upstream's 13.0 support; CCCL pinned v3.1.3. `≥12.8`→compress-mode+fp4, `≥12.9`→batched-gemm. **Avoid 13.1** (nvcc reduce-kernel bug, issue #3109). See Risk B. | `backend/cuda/CMakeLists.txt:74,84,147,221` |
+| **Nvidia driver** | **≥ 580** (CUDA-13 package requirement) | MLX install docs |
 | **cuDNN** | **Mandatory** — install cuDNN 9 | `mlx/CMakeLists.txt:155-158` |
+| **Target box (confirmed)** | **Jetson AGX Thor 128GB · CUDA 13.0 · aarch64 (Blackwell)** | user, 2026-06-20 |
 | **System libs** | `liblapacke-dev` + BLAS/LAPACK (`libblas.so` = CBLAS, `liblapack.so`), build-essential, cmake ≥3.25, ninja | MLX links LAPACK for CPU-stream linalg |
 | **Rust / Node / Bun / nbb** | stable rust; Node 18+ and/or Bun; nbb pinned `1.4.208` | CLAUDE.md |
 | **Network at configure time** | CCCL v3.1.3 + CUTLASS fetched by CMake | `mlx/backend/cuda/CMakeLists.txt:223-224` |
@@ -67,12 +69,12 @@ The vendored MLX fork (v0.32.0) already contains the full CUDA backend (`mlx-nod
 ```bash
 uname -m                          # aarch64 (validated GB10/DGX) or x86_64 (higher risk)
 nvidia-smi                        # driver + GPU; note compute capability (90a Hopper/GB10, 89 Ada, 80 Ampere)
-nvcc --version                    # toolkit — must NOT be 13.1
+nvcc --version                    # Thor ships CUDA 13.0 — no version is gated, but see Risk B (v0.32.0 fork vs nvcc-13/Blackwell)
 ls /usr/lib/*/libcudnn*           # cuDNN present?
 dpkg -l | grep -E 'lapacke|liblapack|libopenblas|libblas'
 ```
 
-> **`MLX_CUDA_ARCHITECTURES`**: the `build.rs` Linux branch defaults to `121a` (GB10/sm_121). On any other GPU you **must** set it: `90a`=H100, `89`=L40/4090, `80`=A100. Export it before building.
+> **`MLX_CUDA_ARCHITECTURES`**: the `build.rs` Linux branch defaults to `121a` (GB10/sm_121). **Jetson AGX Thor is Blackwell-class but NOT GB10** — confirm its real arch on the box (`__nvcc_device_query` or `nvidia-smi`; Thor is sm_110-class). Simplest: **leave `MLX_CUDA_ARCHITECTURES` unset and let CMake auto-detect the device arch** (`backend/cuda/CMakeLists.txt:152` runs `__nvcc_device_query`), rather than hardcoding `121a`. Other refs: `90a`=H100, `89`=L40/4090, `80`=A100.
 
 ---
 
@@ -261,8 +263,8 @@ End state for v1 (core, no LLM): 1-6 green; 7 green once searchsorted is CPU-rou
 | **More fork-only Metal symbols undefined on Linux** | Possible | `nm`/link pass on the box; extend the stub TU. |
 | **build.rs has no CUDA path** | Certain | `git checkout 87a59fc -- build.rs mlx_paged_stubs_linux.cpp` (Option B) or the 7 surgical edits (Option A). |
 | **GCC rejects MLX C++20 headers via the cc bridge** | Possible | C++17(mac)/C++20(linux) split (§3a-5). |
-| **CUDA 13.1 hard-rejected** | If box ships 13.1 | Install 12.4–12.9 or ≥13.2; cuDNN 9 mandatory. |
-| **`MLX_CUDA_ARCHITECTURES=121a` wrong for the GPU** | If not GB10 | Export the right arch (90a/89/80) before building. |
+| **MLX kernels won't build for Thor's Blackwell SM** | Possible — box-only bring-up | CUDA 13.0 itself is supported (fork base 2026-05-29 post-dates 13.0; CCCL v3.1.3). If a kernel won't compile for Thor's arch, bump the vendored MLX submodule forward (re-apply the 9 add-only math commits). Avoid CUDA 13.1 (nvcc reduce bug). |
+| **`MLX_CUDA_ARCHITECTURES=121a` wrong for Thor** | Likely (Thor ≠ GB10) | Leave it unset → CMake auto-detects via `__nvcc_device_query`; or set Thor's real Blackwell arch. |
 | **split-cuDNN: `-lcudnn` unresolved** | Possible | Add `cudnn_graph`/`cudnn_ops`/`cudnn_engines_*` per the cmake link line. |
 | **x86_64 not upstream-validated** | If box is x86_64 | MLX C++ supports it; expect more debugging. |
 | **paged-attn / LLM has no CUDA kernels** | Certain | Scope `@mlx-node/lm` out of v1. Stubs throw if reached (they are not — gated on `mlx_metal_is_available()`). |
