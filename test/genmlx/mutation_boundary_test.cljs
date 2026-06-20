@@ -14,6 +14,7 @@
             [genmlx.selection :as sel]
             [genmlx.protocols :as p]
             [genmlx.gfi :as gfi]
+            [genmlx.world.train :as train]
             [genmlx.test-helpers :as th])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -355,6 +356,29 @@
               "handler score must be finite")
           (is (th/close? compiled-score handler-score 1e-4)
               "compiled simulate score must equal handler assess weight"))))))
+
+;; =========================================================================
+;; Test 10: world.train (the native training engine) is a quarantined boundary
+;;   — the training membrane's mutable state (the engine handle + the per-trainer
+;;   `state` atom) never leaks into pure GFI results. This is the LIGHT, no-GPU
+;;   guard (genmlx-zftr Phase 0); the heavy "a train-step doesn't leak" behavioral
+;;   proof runs in world_train_test.cljs on the slow tier.
+;; =========================================================================
+
+(deftest world-train-boundary-is-quarantined
+  (testing "the training membrane exposes a boolean availability probe (no throw)"
+    (is (boolean? (train/available?))
+        "train/available? must return a boolean at the boundary"))
+  (testing "probing the training membrane does not perturb pure simulate results"
+    (let [key (rng/fresh-key 1000)
+          t1  (p/simulate (dyn/with-key simple-model key) [2.0])
+          r1  (th/realize (:retval t1))
+          _   (train/available?)            ; touch the training boundary
+          _   (train/trainer? r1)           ; a pure predicate over the boundary's type
+          t2  (p/simulate (dyn/with-key simple-model key) [2.0])
+          r2  (th/realize (:retval t2))]
+      (is (th/close? r1 r2 1e-10)
+          "touching the training membrane must not affect pure GFI results"))))
 
 ;; =========================================================================
 ;; Run
