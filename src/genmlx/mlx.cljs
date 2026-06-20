@@ -1042,13 +1042,20 @@
    once per genuine dead-buffer climb (a sweep frees them, count drops below LOW,
    re-arm). Shared by all three sweep sites; they cooperate via this one state."
   []
-  (let [n  (get-num-resources)
-        hi @buffer-count-threshold
-        lo (* 0.75 hi)]
-    (cond
-      (and proactive-armed? (> n hi))       (do (set! proactive-armed? false) true)
-      (and (not proactive-armed?) (< n lo)) (do (set! proactive-armed? true) false)
-      :else false)))
+  (if-not (metal-is-available?)
+    ;; Buffer-COUNT pressure is a Metal-specific concept (the ~499k-buffer wall,
+    ;; bean genmlx-5ucd). On non-Metal backends (e.g. CUDA) the allocator has no
+    ;; count wall and get-num-resources returns 0, so the proactive count-sweep
+    ;; is a no-op — skip the FFI hop and report no pressure. Byte-vs-pressure
+    ;; cleanup (auto-cleanup!/gfi-cleanup!) still runs on CUDA's real memory.
+    false
+    (let [n  (get-num-resources)
+          hi @buffer-count-threshold
+          lo (* 0.75 hi)]
+      (cond
+        (and proactive-armed? (> n hi))       (do (set! proactive-armed? false) true)
+        (and (not proactive-armed?) (< n lo)) (do (set! proactive-armed? true) false)
+        :else false))))
 
 (defn- count-sweep!
   "Reclaim dead Metal buffers (proactive Layer-2 sweep). force-gc! finalizes
