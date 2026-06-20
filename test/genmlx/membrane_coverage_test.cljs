@@ -111,7 +111,15 @@
 
    ;; a foreign tensor class distinct from MxArray (the membrane's value type)
    :foreign-tensor-type
-   #{"Tensor"}})
+   #{"Tensor"}
+
+   ;; native MLX graph-caching compile — DELIBERATELY bypassed. The membrane's
+   ;; compile-fn (mlx.cljs) is an identity pass-through: GenMLX compilation uses
+   ;; noise transforms + the expression compiler (Level 1), not MLX's compile
+   ;; (which would sever the autograd tape across model-body eval!). vmap — the
+   ;; sibling transform relocated alongside it into @genmlx/core — IS wrapped.
+   :compile-strategy-bypass
+   #{"compileFn"}})
 
 (def ^:private omitted (reduce into #{} (vals intentional-omissions)))
 
@@ -198,11 +206,11 @@
   (testing "the partition tiles the full surface (wrapped ⊎ omitted = exports)"
     (let [wrapped (filter referenced? exported-fns)]
       ;; Coarse canary: catches a surface change even when add+omit happen together.
-      (is (= 212 (count exported-fns))
+      (is (= 214 (count exported-fns))
           (str "@mlx-node/core surface size changed: " (count exported-fns)
-               " fns (pinned at 212) — the partition test above pinpoints what moved."))
-      (is (= 48 (count omitted))
-          (str "intentional-omissions size changed: " (count omitted) " (pinned at 48)."))
+               " fns (pinned at 214) — the partition test above pinpoints what moved."))
+      (is (= 49 (count omitted))
+          (str "intentional-omissions size changed: " (count omitted) " (pinned at 49)."))
       (is (= (count exported-fns) (+ (count wrapped) (count omitted)))
           (str "partition must tile exactly: wrapped " (count wrapped)
                " + omitted " (count omitted) " = exports " (count exported-fns))))))
