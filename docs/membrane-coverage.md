@@ -1,6 +1,6 @@
 # Compute-membrane coverage matrix (`@mlx-node/core` → `mlx.cljs`)
 
-*Audit: `genmlx-0vwn` / `genmlx-e3jg`. Snapshot grounded 2026-06-15.*
+*Audit: `genmlx-0vwn` / `genmlx-e3jg`. Snapshot grounded 2026-06-20.*
 
 The `@mlx-node/core` package is GenMLX's compute substrate (Layer C). The
 **membrane** — `src/genmlx/mlx.cljs` + `src/genmlx/mlx/random.cljs` (Layer 0) —
@@ -17,32 +17,38 @@ stubs; the membrane stays thin and honest.
 
 ## Source of truth for the surface
 
-The export surface is read from **`packages/core/index.d.cts`** (the `types`
-target in `@mlx-node/core`'s `package.json`). The older `index.d.ts` (Apr 1) is
-**stale** — it still lists `getParameters`/`applyGradients`, which no longer
-exist; the training surface is now engine-class-only. Any audit that reads
-`.d.ts` is wrong on day one.
+The export surface is enumerated from the **live `@genmlx/core` runtime module**
+(`Object.keys(require("@genmlx/core")).filter(k => typeof core[k] === "function")`) —
+this is what `membrane_coverage_test` partitions, and it is the authority. The package
+ships **no `types` field**; its `index.d.ts` is a regenerated snapshot that can lag the
+runtime, so any audit that reads a `.d.ts` can be wrong. Concretely, the live surface
+has **214** function exports while the d.ts declares 213 — the one runtime-only name is
+`Gradients` (a real class export, correctly on the `:training-orchestration` omission
+allowlist). When the doc and the live test disagree, the test is right.
 
 ## Summary
 
 | | Count |
 |---|---:|
-| Function exports (`typeof === "function"`, incl. classes) | **212** |
-| → Wrapped in the membrane | **164** |
-| → Intentionally omitted | **48** |
+| Function exports (`typeof === "function"`, incl. classes) | **214** |
+| → Wrapped in the membrane | **167** |
+| → Intentionally omitted | **47** |
 
-`wrapped ⊎ omitted = 212` — the partition tiles the surface exactly (asserted by
+`wrapped ⊎ omitted = 214` — the partition tiles the surface exactly (asserted by
 `coverage-accounting-test`). Non-function exports (DType constants etc.) and
 per-class *method* coverage (e.g. `MxArray.addmm` / `argpartition` /
 `putAlongAxis`) are out of scope for this floor — see *Deferred* below.
 
-## Wrapped (162)
+## Wrapped (167)
 
 Not enumerated here (a static list would drift). The membrane binds every export
 not on the omission allowlist below — covering the full pure-math / reduction /
 linalg / FFT-free array surface, RNG keys (`mlx/random.cljs`), autograd
 (`value_and_grad` / `grad`), memory introspection + control, and the LLM
-forward-pass primitives. Recently completed (this audit): the trig/hyperbolic
+forward-pass primitives. As of `genmlx-zftr` (Phase 0) the **training membrane
+face** `world/train.cljs` also wraps `GrpoTrainingEngine` and
+`createRandomQwen35Checkpoint` behind its mutable-state quarantine (the GRPO
+engine is NOT in the pure compute membrane). Recently completed (this audit): the trig/hyperbolic
 family (`arcsin`/`arctan`/`sinh`/`cosh`), `log-softmax`, `logical-and/or/not`,
 `isfinite`, `cumprod`, `roll`, `pad`, the memory introspection ops
 (`get-memory-limit`/`get-wired-limit`/`memory-stats`/`get-memory-snapshot`,
@@ -52,7 +58,7 @@ architecture generation).
 To list the wrapped set, run the audit recipe and take the complement of the
 omissions.
 
-## Intentionally omitted (50)
+## Intentionally omitted (47)
 
 Each export below is deliberately **not** in the pure compute membrane. The
 category records where the capability belongs instead.
@@ -63,27 +69,30 @@ category records where the capability belongs instead.
 |---|---|---|
 | `broadcastTo` | `:broken` | Native op mis-fills size-1 dims. `mx/broadcast-to` is a custom reconstruction; pinned by `broadcast-to-omission-test`. |
 | `getProfilingData`, `isProfilingEnabled`, `setProfilingEnabled`, `resetProfilingData` | `:profiling-gated-i0s4` | Profiling instrumentation; wire-on-demand behind the `genmlx-i0s4` cost meter. |
-| `buildRewardOutputs`, `createRandomQwen3Checkpoint`, `createRandomQwen35Checkpoint`, `createRandomQwen35MoeCheckpoint` | `:training-orchestration` | GRPO/SFT training surface — bind at engine level in a future `@mlx-node/trl` Layer-6 ns with the mutable-state quarantine, never the pure membrane (`genmlx-706r`). |
+| `buildRewardOutputs`, `createRandomQwen3Checkpoint`, `createRandomQwen35MoeCheckpoint` | `:training-orchestration` | Remaining native training surface — bind in `world/train.cljs` as Phase 1-4 tap them, behind the mutable-state quarantine (`genmlx-zftr`/`genmlx-706r`). The GRPO engine + `createRandomQwen35Checkpoint` are already **wrapped** there. |
 | `convertForeignWeights`, `convertGgufToSafetensors`, `convertModel`, `convertParquetToJsonl` | `:model-conversion` | Offline weight/format conversion tooling — not graph ops. |
 | `createPaddleocrVlConfig`, `createQianfanOcrConfig`, `documentToXlsx`, `formatDocument`, `saveToXlsx`, `parsePaddleResponse`, `parseToolCallsFromText`, `parseVlmOutput` | `:ocr-vlm-document` | OCR / vision-language / document pipelines — bind via `@mlx-node/lm` vision (`llm/vision.cljs`). |
+| `compileFn` | `:compile-strategy-bypass` | Native MLX graph-caching compile, deliberately bypassed — GenMLX compilation uses noise transforms + the expression compiler (Level 1), not MLX's compile. |
 
-### Classes (27)
+### Classes (26)
 
 A JS `class` is a function export, so it counts toward the runtime surface and
 must be accounted for. None are wrapped as compute ops.
 
 | Exports | Category | Reason |
 |---|---|---|
-| `GrpoTrainingEngine`, `SftTrainingEngine`, `NativeRewardRegistry`, `Gradients`, `OutputStore`, `ResponseStore` | `:training-orchestration` | Training engines + result/registry types — engine-level, mutable-state quarantine (future `@mlx-node/trl` Layer-6). |
+| `SftTrainingEngine`, `NativeRewardRegistry`, `Gradients`, `OutputStore`, `ResponseStore` | `:training-orchestration` | Remaining training engines + result/registry types — bind in `world/train.cljs` as Phase 1-4 tap them. `GrpoTrainingEngine` is already **wrapped** there (`genmlx-zftr`). |
 | `Gemma4Model`, `HarrierModel`, `Lfm2Model`, `Qwen3Model`, `Qwen35Model`, `Qwen35MoeModel`, `Qwen3Tokenizer`, `BatchGenerationResult`, `GenerationResult`, `ChatStreamHandle` | `:llm-orchestration` | Loaded-model / tokenizer / generation classes — bound via `@mlx-node/lm` ChatSession (`msa.cljs` / `backend.cljs`). The per-token GFI path reaches the low-level forward, not these. |
 | `DocLayoutModel`, `DocOrientationModel`, `DocUnwarpModel`, `PrivacyFilterModel`, `QianfanOCRModel`, `TextDetModel`, `TextRecModel`, `VLModel`, `VlmChatResult`, `VlmProcessedImage` | `:ocr-vlm-document` | OCR / vision-language pipeline classes — `@mlx-node/lm` vision. |
 | `Tensor` | `:foreign-tensor-type` | A foreign tensor class distinct from `MxArray` (the membrane's value type). |
 
 ## Deferred (separate beans, not part of this floor)
 
-- **`@mlx-node/trl` training engines** — bind `GrpoTrainingEngine` / `SftTrainingEngine`
-  at engine level in a Layer-6 ns with the mutable-state quarantine. This is the
-  real GRPO/SFT work and feeds the self-training-coder flywheel (`genmlx-706r`).
+- **Native training engines** — `GrpoTrainingEngine` is now wrapped in the
+  `world/train.cljs` training face behind the mutable-state quarantine
+  (`genmlx-zftr` Phase 0). `SftTrainingEngine` + the reward/result types bind there
+  incrementally as Phase 1-4 tap them; this feeds the GFI-reward GRPO flywheel
+  (`genmlx-ugkv` / `genmlx-706r`).
 - **Profiling data** — gate on the `genmlx-i0s4` cost meter.
 - **`MxArray` array-method gaps** — `addmm` / `argpartition` / `putAlongAxis` and
   the rest of the ~150-method class surface (category-b appendix).

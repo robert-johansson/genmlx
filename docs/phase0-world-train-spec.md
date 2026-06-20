@@ -166,3 +166,60 @@ This is the surface-drift guard recognizing the newly-tapped stack.
 
 **Per the milestone protocol, this spec is presented for review. No code will be written until it is
 approved.** The natural review questions are the three open decisions in §9.
+
+---
+
+## 11. Spec corrections after native-surface verification (2026-06-20, IMPLEMENTED)
+
+The spec above was written from inspection. Before writing the membrane, the actual `@genmlx/core`
+training surface was verified against the typings + reflection, which forced the following corrections.
+The implementation (`src/genmlx/world/train.cljs`, `test/genmlx/world_train_test.cljs`) is built against
+the **verified** surface, not the inspected one. All Phase-0 acceptance assertions pass (25/25 on Metal).
+
+**Module + naming (factual fixes):**
+1. **Bind `@genmlx/core`, not `@mlx-node/core`** (§2/§9.1 named the wrong module). GenMLX loads
+   `@genmlx/core` (mlx.cljs:27); both expose an identical training surface but they are separate addons.
+   `train.cljs` requires `@genmlx/core` for consistency.
+2. **Class is `GrpoTrainingEngine`** (not `GRPOEngine`); config is `GrpoEngineConfig` (camelCase);
+   factories `fromQwen35`/`fromQwen35Moe`, ctor `(Qwen3Model, config)`.
+3. **`step`/`epoch` are getters**, `startEpoch()` is no-arg, `endEpoch(secs)` takes seconds.
+
+**Capability gaps (forced API changes):**
+4. **No native `saveCheckpoint`/`loadCheckpoint`.** The engine persists only OPTIMIZER moments via
+   `saveOptimizerState`/`loadOptimizerState`; model WEIGHTS are saved on the model handle (`saveModel`).
+   So the face exposes honest `save-optimizer-state!`/`load-optimizer-state!` (not a lying "checkpoint").
+5. **No native `dispose`.** `dispose!` is implemented in CLJS via the engine's terminal `reset()` — which
+   releases the model-thread training run so the model can host a NEW trainer — plus marking the handle
+   disposed. (The native model thread hosts only ONE active training run; freeing it on teardown is
+   required for `with-trainer` re-entry.)
+6. **No `:seed` in `GrpoEngineConfig`.** §8's "config :seed controls reproducibility" is unsupported;
+   the engine owns its MLX sampler RNG (training RNG ≠ GenMLX inference RNG). `:seed` is dropped.
+7. **`:beta` → `klCoef`.** Mapped explicitly. NOTE the §8 framing "accepted but no-op-under-autograd"
+   is wrong: native autograd **errors** on `klCoef > 0` (`grpo/autograd.rs:75` returns
+   `Err("KL penalty (beta > 0) requires reference model logprobs ... not yet supported")`). So a
+   `train-step!` with `:kl-coef`/`:beta` > 0 **rejects**; leave it 0 (default) for KL-free training.
+   `world_train_test` asserts this rejection.
+8. **`registerBuiltinReward` is an instance method** (not a standalone export); `BuiltinRewardType`
+   values are the strings `Length`/`ToolUse`/`XmlFormat`/`JsonSchema`.
+
+**Reward bridge (design improvement, §5):** the spec's all-in-one `trainStepAuto` ThreadsafeFunction
+callback is **not** used. `trainStepAuto` filters out `finish_reason='length'` completions as an
+OOM guard (`engine.rs:1067`), which skips the entire step for any model whose rollouts never emit EOS
+(e.g. a tiny random checkpoint). Instead `train-step!` composes the explicit
+**`generateBatchForTraining` → score-in-CLJS → `trainStepWithGenerations`** flow: it keeps the pure
+reward scorer in CLJS between two awaits (a cleaner Phase-1 GFI-reward seam, no native callback
+marshalling) and trains UNCONDITIONALLY. The pure reward-fn is `(prompt, completion-text) -> number`,
+mapped over completions in prompt-major order.
+
+**Teardown primitive (§3/§4):** `with-trainer` uses **`p/handle`**, not `p/finally`. Under nbb a
+`p/finally` teardown followed by a downstream `p/catch` double-settles (the catch handler runs yet the
+promise stays rejected — verified). `p/handle` disposes on both arms and re-raises exactly once.
+(`world/net.cljs`'s `with-server` shares the latent `p/finally` quirk — captured as a follow-up.)
+
+**Quarantine record (§9.3):** `defrecord Trainer [engine model state]` where `state` is an `atom`
+(CLJS `defrecord` has no `^:mutable`; the atom mirrors `CljsForwardModel`'s cache atom).
+
+**Phase-0 test vehicle:** a tiny random Qwen3.5 checkpoint (`createRandomQwen35Checkpoint`, 2 layers /
+hidden 64) with the **real Qwen3.5 vocab (248320) + a real tokenizer copied in** (generation needs a
+tokenizer; the random checkpoint writes none). The length/content reward must give the group nonzero
+variance (a constant reward ⇒ zero advantage ⇒ no update).

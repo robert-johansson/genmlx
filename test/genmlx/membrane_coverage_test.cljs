@@ -2,7 +2,7 @@
 (ns genmlx.membrane-coverage-test
   "genmlx-0vwn / genmlx-e3jg: compute-membrane coverage drift-guard.
 
-   The @mlx-node/core surface is the substrate (Layer C) the GenMLX membrane
+   The @genmlx/core surface is the substrate (Layer C) the GenMLX membrane
    (Layer 0 = mlx.cljs + mlx/random.cljs) binds to. This test PARTITIONS the
    full runtime function-export surface into:
 
@@ -22,9 +22,12 @@
    to do about it. The count is kept as a coarse canary (catches an add+omit done
    in one commit, which A/B/C alone would pass).
 
-   SoT for the surface = packages/core/index.d.cts (the current types target in
-   package.json) — NOT the stale index.d.ts (Apr 1). NO no-op stubs: an export is
-   either genuinely wrapped or honestly omitted with a category + reason."
+   SoT for the surface = the LIVE @genmlx/core runtime module (what `core` below reads
+   via js/require, and what this test partitions). The package ships no `types` field;
+   its `index.d.ts` is a regenerated snapshot that can lag the runtime (e.g. `Gradients`
+   is a live export absent from the d.ts), so the runtime — not any .d.ts — is authority.
+   NO no-op stubs: an export is either genuinely wrapped or honestly omitted with a
+   category + reason."
   (:require [cljs.test :refer [deftest is testing]]
             [genmlx.test-helpers :as h]
             [genmlx.mlx :as mx]))
@@ -32,16 +35,20 @@
 (def ^:private core (js/require "@genmlx/core"))
 (def ^:private fs (js/require "fs"))
 
-;; The membrane = both Layer-0 files that bind @mlx-node/core. An export is
-;; WRAPPED iff its native name is referenced here as a property (.-name) or a
-;; method call (.name ...) — the only ways a NAPI export can be reached.
+;; The membrane = the Layer-0 files that bind @genmlx/core: the pure COMPUTE
+;; membrane (mlx.cljs + mlx/random.cljs) plus the TRAINING membrane face
+;; (world/train.cljs, genmlx-zftr — the GRPO engine behind its mutable-state
+;; quarantine). An export is WRAPPED iff its native name is referenced in one of
+;; these as a property (.-name c) or a method call (.name c …).
 (def ^:private membrane-src
   (str (.readFileSync fs "src/genmlx/mlx.cljs" "utf8")
        "\n"
-       (.readFileSync fs "src/genmlx/mlx/random.cljs" "utf8")))
+       (.readFileSync fs "src/genmlx/mlx/random.cljs" "utf8")
+       "\n"
+       (.readFileSync fs "src/genmlx/world/train.cljs" "utf8")))
 
 (defn- referenced?
-  "True if the membrane BINDS native export `nm` off the @mlx-node/core object
+  "True if the membrane BINDS native export `nm` off the @genmlx/core object
    `c` — as a property ref (.-nm c) or a method head (.nm c …), the uniform wrap
    convention in both Layer-0 files (each `(defonce ^:private c (js/require ...))`).
    Scoping to the `c` receiver (rather than any object) is deliberate: it stops a
@@ -56,14 +63,14 @@
 
    Known limitation (genmlx-0vwn, accepted): a 'dangling wrap' — a (.-x c) left in
    the source after upstream DELETES export x — is not flagged here directly; the
-   212 count canary + tiling invariant in coverage-accounting-test catch it
+   214 count canary + tiling invariant in coverage-accounting-test catch it
    indirectly (a deletion drops the surface count below the pin)."
   [nm]
   (some? (re-find (re-pattern (str "\\.-?" nm "\\s+c[^A-Za-z0-9_]")) membrane-src)))
 
 ;; ---------------------------------------------------------------------------
 ;; INTENTIONAL OMISSIONS — the coverage matrix, machine-checked.
-;; Each entry is an @mlx-node/core export deliberately NOT wrapped in the pure
+;; Each entry is an @genmlx/core export deliberately NOT wrapped in the pure
 ;; compute membrane, with the reason it belongs elsewhere (or nowhere). Classes
 ;; appear here too: a JS `class` is a function export, so it counts toward the
 ;; runtime surface and must be accounted for. Categories double as the "where
@@ -78,13 +85,15 @@
    :profiling-gated-i0s4
    #{"getProfilingData" "isProfilingEnabled" "setProfilingEnabled" "resetProfilingData"}
 
-   ;; GRPO/SFT training surface — to be bound at ENGINE level in a future
-   ;; @mlx-node/trl Layer-6 ns WITH the mutable-state quarantine (in-place weight
-   ;; + optimizer-state mutation), never in the pure membrane. (genmlx-706r)
+   ;; Native training surface. The GRPO engine + the random-Qwen3.5 checkpoint helper
+   ;; are now WRAPPED in genmlx.world.train (genmlx-zftr Phase 0) behind the
+   ;; mutable-state quarantine — never the pure compute membrane. The remainder bind
+   ;; incrementally as Phase 1-4 tap them (SFT engine, reward registry, result/
+   ;; persistence types, the Qwen3/MoE random-checkpoint helpers). (genmlx-706r)
    :training-orchestration
    #{"buildRewardOutputs"
-     "createRandomQwen3Checkpoint" "createRandomQwen35Checkpoint" "createRandomQwen35MoeCheckpoint"
-     "GrpoTrainingEngine" "SftTrainingEngine" "NativeRewardRegistry"
+     "createRandomQwen3Checkpoint" "createRandomQwen35MoeCheckpoint"
+     "SftTrainingEngine" "NativeRewardRegistry"
      "Gradients" "OutputStore" "ResponseStore"}
 
    ;; offline weight/format conversion tooling — not graph ops
@@ -184,17 +193,17 @@
 ;; The drift guard proper — the e3jg/0vwn floor deliverable.
 ;; ---------------------------------------------------------------------------
 (deftest coverage-partition-test
-  (testing "every @mlx-node/core export is WRAPPED ∪ INTENTIONAL-OMISSIONS (two-directional)"
+  (testing "every @genmlx/core export is WRAPPED ∪ INTENTIONAL-OMISSIONS (two-directional)"
     ;; A — nothing unaccounted: an export neither wrapped nor on the allowlist
     (let [unaccounted (sort (remove referenced? (remove omitted exported-fns)))]
       (is (empty? unaccounted)
-          (str "Unaccounted @mlx-node/core exports — wire them into the membrane "
+          (str "Unaccounted @genmlx/core exports — wire them into the membrane "
                "or add to intentional-omissions with a reason (genmlx-0vwn): "
                (vec unaccounted))))
     ;; B — no stale omissions: an allowlisted name no longer exported upstream
     (let [stale (sort (remove exported-fns omitted))]
       (is (empty? stale)
-          (str "Stale omissions — these were deleted from @mlx-node/core (the "
+          (str "Stale omissions — these were deleted from @genmlx/core (the "
                "rebase tax surfacing); remove them from the allowlist: " (vec stale))))
     ;; C — clean partition: an omission that is now actually wrapped
     (let [misclassified (sort (filter referenced? omitted))]
@@ -207,10 +216,10 @@
     (let [wrapped (filter referenced? exported-fns)]
       ;; Coarse canary: catches a surface change even when add+omit happen together.
       (is (= 214 (count exported-fns))
-          (str "@mlx-node/core surface size changed: " (count exported-fns)
+          (str "@genmlx/core surface size changed: " (count exported-fns)
                " fns (pinned at 214) — the partition test above pinpoints what moved."))
-      (is (= 49 (count omitted))
-          (str "intentional-omissions size changed: " (count omitted) " (pinned at 49)."))
+      (is (= 47 (count omitted))
+          (str "intentional-omissions size changed: " (count omitted) " (pinned at 47)."))
       (is (= (count exported-fns) (+ (count wrapped) (count omitted)))
           (str "partition must tile exactly: wrapped " (count wrapped)
                " + omitted " (count omitted) " = exports " (count exported-fns))))))

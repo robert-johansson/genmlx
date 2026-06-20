@@ -35,7 +35,7 @@ structure. No GPU work occurs until `mx/eval!` is called. This means most of
 (or wrappers like `item`, `->clj`, `materialize!`). Everything else — arithmetic,
 reductions, autograd, vmap, compile — builds lazy graphs.
 
-**mlx-node is at the heart of GenMLX.** The Rust/NAPI layer (212 @mlx-node/core function exports, pinned by the coverage matrix; 5 crates)
+**mlx-node is at the heart of GenMLX.** The Rust/NAPI layer (214 @genmlx/core function exports, pinned by the coverage matrix; 5 crates)
 is not "mutable substrate we contain" — it is a functional graph engine that aligns
 naturally with ClojureScript's value semantics. `mlx.cljs` is the thin membrane
 between them; `Either<&MxArray, f64>` in Rust handles type coercion so CLJS
@@ -172,7 +172,7 @@ The implementation layers map onto the three-layer purity model:
 
 ```
 ── Layer C (GPU execution) ──────────────────────────────────────────────
-  mlx-node Rust/C++   5 crates; 212 @mlx-node/core function exports (coverage-matrix-pinned). MxArray = Arc<lazy graph node>.
+  mlx-node Rust/C++   5 crates; 214 @genmlx/core function exports (coverage-matrix-pinned). MxArray = Arc<lazy graph node>.
                       eval! is the only operation that dispatches to Metal.
 
 ── Membrane (mlx.cljs) ─────────────────────────────────────────────────
@@ -228,6 +228,16 @@ direct import of dynamic.cljs).
      face of the Bun world membrane (`world/net.cljs`): created by `serve!`, scoped
      and torn down by `with-server`'s `p/finally` (the blessed path) — analogous to
      the KV-cache try/finally. A bare `serve!` hands the lifecycle to the caller.
+   - The native `GrpoTrainingEngine` handle in the TRAINING face of the world
+     membrane (`world/train.cljs`, genmlx-zftr): an externally-mutating native engine
+     that updates model weights + AdamW moments IN PLACE — the training `eval!`
+     -equivalent, the sole side effect of that face. Fenced by the `with-trainer`
+     blessed scope whose `p/handle` teardown disposes it on success OR throw
+     (mirroring `llm/backend.cljs`'s KV-cache try/finally and `world/net.cljs`'s
+     `with-server`); a bare `make-trainer!`/`dispose!` hands the lifecycle to the
+     caller. Per-trainer mutable state lives in one `atom` (`:disposed?`), mirroring
+     `CljsForwardModel`'s cache atom. The in-place weight updates are a *parallel*
+     path that never composes back into the pure GFI-score gradient flow.
 2. **Data-driven, open for extension.** Distributions are a single `Distribution`
    record with open multimethods. New distributions via `defdist`. New execution
    strategies via `dispatch/with-handler` or `dispatch/with-dispatch`. Grammar
