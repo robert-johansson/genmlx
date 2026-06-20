@@ -24,7 +24,7 @@
 ;; Module loading
 ;; =========================================================================
 
-(defonce ^:private c (js/require "@mlx-node/core"))
+(defonce ^:private c (js/require "@genmlx/core"))
 (defonce ^:private M (.-MxArray c))
 
 ;; Forward declarations for functions referenced before definition.
@@ -71,7 +71,7 @@
   "Best-effort @mlx-node/core package version, for DIAGNOSTICS ONLY (never a hard
    pin — there is no runtime version export). \"unknown\" if it can't be read."
   []
-  (try (.-version (js/require "@mlx-node/core/package.json"))
+  (try (.-version (js/require "@genmlx/core/package.json"))
        (catch :default _ "unknown")))
 
 (defn native-report

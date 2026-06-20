@@ -9,7 +9,7 @@
             ;; first-class core export). @mlx-node/lm's re-export of it was
             ;; removed upstream (mlx-node #57); relying on it broke on a clean
             ;; `tsc -b`. See bean genmlx-mwm4.
-            ["@mlx-node/core" :as mlx-core]
+            ["@genmlx/core" :as mlx-core]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             ;; f6ov: model-family-dispatching façade over the GenMLX-owned

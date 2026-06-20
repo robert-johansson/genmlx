@@ -11,6 +11,7 @@
     "test:xval-llm": "python3 scripts/llm_forward_xval_mlxlm.py"
   },
   "dependencies": {
+    "@genmlx/core": "file:./mlx-node/packages/genmlx-core",
     "@mlx-node/core": "file:./mlx-node/packages/core",
     "@mlx-node/lm": "file:./mlx-node/packages/lm"
   }
