@@ -962,6 +962,25 @@
 (defn clear-cache!      []  (.clearCache c))
 
 (defn metal-is-available? [] (.metalIsAvailable c))
+
+;; --- Backend capability probe: is the Metal buffer-COUNT wall trackable? ---
+;; The ~499000-buffer count wall (genmlx-5ucd) and its proactive count-sweep are
+;; a Metal-specific concern. The resource-count getters (get-num-resources /
+;; get-resource-limit) are defined only in MLX's Metal allocator; on a non-Metal
+;; backend (CUDA) the count has no wall and get-num-resources returns 0, while a
+;; degraded Metal host can return 0 from get-resource-limit (which is why
+;; buffer-count-limit at :929-931 falls back to 499000 there). count-tracking-
+;; available? is the single backend-aware gate: it is true exactly when Metal is
+;; present AND a real (positive) resource limit was read at load — i.e. when the
+;; count-sweep heuristic is meaningful. On Metal this is true (metalIsAvailable
+;; => true and get-resource-limit => a large positive count), so every count-aware
+;; path stays byte-identical to before; on CUDA it is false, short-circuiting the
+;; count machinery to a no-op without an FFI hop. buffer-count-limit (:929) and
+;; metal-is-available? (just above) are both in scope here.
+(def ^:private count-tracking-available?
+  (and (try (metal-is-available?) (catch :default _ false))
+       (pos? buffer-count-limit)))
+
 (defn gpu-architecture-gen
   "The Metal GPU architecture generation as an integer (e.g. 16 = M4). This is
    the SOLE native source of the arch generation — metalDeviceInfo does NOT
@@ -1042,11 +1061,12 @@
    once per genuine dead-buffer climb (a sweep frees them, count drops below LOW,
    re-arm). Shared by all three sweep sites; they cooperate via this one state."
   []
-  (if-not (metal-is-available?)
+  (if-not count-tracking-available?
     ;; Buffer-COUNT pressure is a Metal-specific concept (the ~499k-buffer wall,
     ;; bean genmlx-5ucd). On non-Metal backends (e.g. CUDA) the allocator has no
-    ;; count wall and get-num-resources returns 0, so the proactive count-sweep
-    ;; is a no-op — skip the FFI hop and report no pressure. Byte-vs-pressure
+    ;; count wall and get-num-resources returns 0 (and a degraded Metal host
+    ;; reports no resource limit), so the proactive count-sweep is a no-op —
+    ;; skip the get-num-resources FFI hop and report no pressure. Byte-vs-pressure
     ;; cleanup (auto-cleanup!/gfi-cleanup!) still runs on CUDA's real memory.
     false
     (let [n  (get-num-resources)
