@@ -100,7 +100,9 @@
    :model-conversion
    #{"convertForeignWeights" "convertGgufToSafetensors" "convertModel" "convertParquetToJsonl"}
 
-   ;; OCR / vision-language / document pipelines — bind via @mlx-node/lm vision (llm/vision.cljs)
+   ;; OCR / document-pipeline classes — GenMLX does not use these; its VLM path
+   ;; (llm/vision.cljs) routes through the Qwen VL model classes below, not the
+   ;; PaddleOCR / document-understanding pipeline.
    :ocr-vlm-document
    #{"createPaddleocrVlConfig" "createQianfanOcrConfig"
      "documentToXlsx" "formatDocument" "saveToXlsx"
@@ -109,10 +111,11 @@
      "QianfanOCRModel" "TextDetModel" "TextRecModel"
      "VLModel" "VlmChatResult" "VlmProcessedImage"}
 
-   ;; loaded-model / tokenizer / generation classes — bound via @mlx-node/lm
-   ;; ChatSession (msa.cljs / backend.cljs), the LLM orchestration boundary, not
-   ;; the pure compute membrane. The per-token GFI path reaches the low-level
-   ;; forward, not these high-level classes.
+   ;; loaded-model / tokenizer / generation classes — bound directly via @genmlx/core
+   ;; native classes in llm/backend.cljs (load-upstream-model + Qwen3Tokenizer +
+   ;; chatSessionStart) and llm/vision.cljs (bean genmlx-qt34), the LLM orchestration
+   ;; boundary, not the pure compute membrane. The per-token GFI path reaches the
+   ;; low-level forward, not these high-level classes.
    :llm-orchestration
    #{"Gemma4Model" "HarrierModel" "Lfm2Model" "Qwen3Model" "Qwen35Model" "Qwen35MoeModel"
      "Qwen3Tokenizer"

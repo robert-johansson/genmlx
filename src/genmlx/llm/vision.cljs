@@ -3,8 +3,9 @@
 
    Two layers, one per concern:
 
-   - **Async I/O** wraps `@mlx-node/lm`'s `loadSession` / `send`. Used to load
-     the VLM and classify individual cells. Returns promises.
+   - **Async I/O** wraps the native `@genmlx/core` VL forward (`load` +
+     `chatSessionStart` with image bytes per message). Used to load the VLM and
+     classify individual cells. Returns promises.
    - **Sync GFI** wraps the per-cell categorical structure as a `gen` function.
      Each cell is a trace site at a keyword address; observations from the VLM
      become constraints when invoking via `p/generate`.
@@ -15,32 +16,56 @@
 
    See `examples/vlm_grid_gf.cljs` for the end-to-end demo.
 
-   Operational note: `classify-cell` calls `session.reset()` on every call. Without
-   that, conversation history accumulates across independent classifications and
-   per-call latency grows monotonically with N (verified empirically — 0.6s rises
-   to 116s by the 18th call). With reset, latency is flat. See
-   `../genmlx-lab/dev/docs/INVESTIGATION_VLM_PER_CELL_PROBE.md`."
-  (:require ["@mlx-node/lm" :as mlx-lm]
-            [genmlx.gen :refer [gen]]
+   Operational note: each `classify-cell` runs a fresh turn-1 `chatSessionStart`,
+   so conversation history does not accumulate across independent classifications.
+   (The old @mlx-node/lm session path needed an explicit `session.reset()` per call
+   to stop per-call latency growing monotonically with N — 0.6s rising to 116s by
+   the 18th call; see
+   `../genmlx-lab/dev/docs/INVESTIGATION_VLM_PER_CELL_PROBE.md`.)"
+  (:require [genmlx.gen :refer [gen]]
             [genmlx.dynamic :as dyn]
             [genmlx.dist :as dist]
             [genmlx.mlx :as mx]
             [promesa.core :as pr]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            ["fs" :as fs]))
+
+;; Single @genmlx/core addon (js/require) — bean genmlx-qt34. Same reason as
+;; genmlx.llm.backend: GenMLX rides on ONE MLX-linking .node addon; the former
+;; @mlx-node/lm dependency pulled in a second core (upstream @mlx-node/core) that
+;; SIGTRAPs alongside @genmlx/core. The VL-capable native classes (Qwen35Model /
+;; Qwen35MoeModel / Gemma4Model) accept image bytes per chatSessionStart message.
+(defonce ^:private mlx-core (js/require "@genmlx/core"))
 
 ;; ---------------------------------------------------------------------------
 ;; Async I/O layer
 ;; ---------------------------------------------------------------------------
 
 (defn load-vlm
-  "Load a VLM session via `@mlx-node/lm`'s `loadSession`. Returns a promise.
+  "Load a vision-language model via the native @genmlx/core forward, dispatching on
+   config.json model_type. Returns a promise of the native model instance
+   (Qwen35Model / Qwen35MoeModel / Gemma4Model), whose `chatSessionStart` accepts
+   image bytes per message. The checkpoint's safetensors must include the vision
+   tower; verified target: Qwen3.6-35B-A3B-4bit (model_type qwen3_5_moe).
 
-   Supports any model whose `model_type` is recognized by mlx-node and whose
-   safetensors include vision_tower / visual / embed_vision weights. Verified
-   today: Qwen3.6-35B-A3B-4bit (`Qwen3_5MoeForConditionalGeneration` architecture
-   loaded via `qwen3_5_moe`)."
+   NOTE (bean genmlx-qt34): migrated off @mlx-node/lm's generic loadSession to the
+   single @genmlx/core addon. The VLM *generation* path (classify-cell) has no
+   automated test — the verified VL checkpoint is a large MoE — so this I/O layer
+   is exercised via the live demo (examples/vlm_grid_gf.cljs), not the test suite."
   [model-path]
-  (.loadSession mlx-lm model-path))
+  (let [mt (-> (.readFileSync fs (str model-path "/config.json") "utf8")
+               js/JSON.parse
+               .-model_type)]
+    (if-let [cls (case mt
+                   "qwen3_5"     (.-Qwen35Model mlx-core)
+                   "qwen3_5_moe" (.-Qwen35MoeModel mlx-core)
+                   "gemma4"      (.-Gemma4Model mlx-core)
+                   nil)]
+      (.load cls model-path)
+      (throw (ex-info (str "genmlx.llm.vision/load-vlm: no native VL-capable "
+                           "@genmlx/core model class for model_type " (pr-str mt))
+                      {:genmlx/error :unsupported-vlm-type :model-type mt
+                       :model-path model-path})))))
 
 (defn- option->line
   "Format one option for the classification prompt. Accepts a bare string or a
@@ -66,21 +91,21 @@
    (e.g. \"empty (a blank white cell with thin gray borders)\" beats just
    \"empty\").
 
-   Always calls `session.reset()` before the send so history doesn't accumulate
-   across independent calls. Disables the model's reasoning trace and the
-   default repetition penalty so short single-word answers come through cleanly."
-  [session image-bytes options]
-  (pr/let [_ (.reset session)
-           opts-text (str/join "\n" (map option->line options))
+   `vlm` is a native model from `load-vlm`. Each call runs a fresh turn-1
+   `chatSessionStart` (the image bytes ride in the user message), so history
+   doesn't accumulate across independent calls — no explicit reset needed.
+   Disables the model's reasoning trace and the default repetition penalty so
+   short single-word answers come through cleanly."
+  [vlm image-bytes options]
+  (pr/let [opts-text (str/join "\n" (map option->line options))
            prompt (str "What is shown in this image? Answer with EXACTLY ONE of:\n"
                        opts-text
                        "\n\nOutput ONLY the single word, nothing else.")
+           messages (clj->js [{:role "user" :content prompt :images [image-bytes]}])
            config #js {:maxNewTokens 8
                        :reasoningEffort "none"
                        :repetitionPenalty 1.0}
-           result (.send session prompt
-                          #js {:images #js [image-bytes]
-                               :config config})]
+           result (.chatSessionStart vlm messages config)]
     ;; Keep the WHOLE answer (lowercased, alphanumerics + single spaces):
     ;; taking only the first word made multi-word labels ("fire truck")
     ;; unmatchable in label->index (genmlx-xwxh). label->index normalizes
@@ -95,18 +120,18 @@
   "Classify all cells of an N×M grid. Returns a promise of
    `{:rows N :cols M :labels <2D vector of strings>}`.
 
-   `crop-fn` takes `[r c]` and returns a Uint8Array of cell image bytes (or a
-   promise of one). `options` is the vector of allowed labels.
+   `vlm` is a native model from `load-vlm`. `crop-fn` takes `[r c]` and returns a
+   Uint8Array of cell image bytes (or a promise of one). `options` is the vector
+   of allowed labels.
 
-   Cells are processed strictly sequentially. A single ChatSession does not
-   support concurrent send()s — reset() will throw if one is in flight — and
-   the model's Metal kernels serialize anyway, so concurrency wouldn't help.
+   Cells are processed strictly sequentially — the model's Metal kernels serialize
+   anyway, so concurrency wouldn't help.
 
    `progress-fn` (optional) is called as `(progress-fn r c label dt-ms)` after
    each cell completes."
-  ([session rows cols crop-fn options]
-   (classify-grid session rows cols crop-fn options nil))
-  ([session rows cols crop-fn options progress-fn]
+  ([vlm rows cols crop-fn options]
+   (classify-grid vlm rows cols crop-fn options nil))
+  ([vlm rows cols crop-fn options progress-fn]
    (let [coords (vec (for [r (range rows) c (range cols)] [r c]))]
      (pr/let
       [results (reduce
@@ -114,7 +139,7 @@
                   (pr/let [acc acc-promise
                            t0 (.now js/performance)
                            bytes (crop-fn r c)
-                           label (classify-cell session bytes options)
+                           label (classify-cell vlm bytes options)
                            dt (- (.now js/performance) t0)]
                     (when progress-fn (progress-fn r c label dt))
                     (conj acc [r c label])))
