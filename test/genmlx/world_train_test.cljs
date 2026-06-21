@@ -171,14 +171,47 @@
                                (= 4 @re-calls))
           _       (assert-true "multi-prompt demux: prompt-major pairing (group 0 -> prompt 0, group 1 -> prompt 1)"
                                (= ["alpha" "alpha" "beta" "beta"] @re-pairs))
-          ;; --- KL under autograd is rejected (the honest contract: klCoef>0 errors) ---
+          ;; --- Phase 1.5 (genmlx-65d5): KL-to-base penalty under autograd ---
+          ;; (1) klCoef>0 now TRAINS (the rejection is gone): a true KL-to-base
+          ;; penalty is wired through the autograd path, so a step applies gradients
+          ;; without error instead of rejecting.
+          rfn      (fn [_ c] (double (count (distinct (seq c)))))
           klres   (train/with-trainer model {:group-size 2 :kl-coef 0.1 :max-completion-length 12}
                     (fn [t]
-                      (-> (train/train-step! t ["Hi there"] (fn [_ c] (double (count (distinct (seq c))))))
-                          (p/then (fn [_] :no-throw))
-                          (p/catch (fn [_] :rejected)))))
-          _       (assert-true "kl-coef>0 makes train-step! reject under autograd (reference-model KL unsupported)"
-                               (= :rejected klres))
+                      (-> (train/train-step! t ["Hi there"] rfn)
+                          (p/then (fn [m] (:gradients-applied? m)))
+                          (p/catch (fn [_] :threw)))))
+          _       (assert-true "kl-coef>0 trains under autograd (reference-model KL now wired, not rejected)"
+                               (true? klres))
+          ;; (2) KL MEASURABLY regularizes toward the base policy. Load two FRESH
+          ;; models from the SAME random checkpoint (identical initial weights) and
+          ;; run K steps each — one KL-free, one with a strong KL-to-base. The
+          ;; strong-KL run must stay CLOSER to base (smaller forward-logits drift from
+          ;; the shared initial logits). KL(ref||policy) and its gradient are 0 at
+          ;; step 1 (policy==ref by construction), so the effect needs multiple steps.
+          ;; run-steps returns the LAST train-step metrics (so we can confirm the KL
+          ;; run actually trained — a NaN-skipped step would falsely show ~0 drift).
+          run-steps (fn [t n]
+                      (reduce (fn [acc _] (p/then acc (fn [_] (train/train-step! t ["Hi there"] rfn))))
+                              (p/resolved nil) (range n)))
+          drift   (fn [kl]
+                    (p/let [m     (.load (.-Qwen35Model gcore) dir)
+                            base  (mx/->clj (.forward m in))
+                            last  (train/with-trainer m
+                                    {:group-size 4 :kl-coef kl :learning-rate 0.03 :max-completion-length 12}
+                                    (fn [t] (run-steps t 4)))
+                            after (mx/->clj (.forward m in))]
+                      {:drift (l1 base after) :applied? (boolean (:gradients-applied? last))}))
+          rf      (drift 0.0)
+          rk      (drift 20.0)
+          _       (println "    drift kl=0:" (:drift rf) " | drift kl=20:" (:drift rk)
+                           " | kl-run last-step trained?" (:applied? rk))
+          _       (assert-true "KL-free run actually moved from base (sanity)"
+                               (> (:drift rf) 0.0))
+          _       (assert-true "strong-KL run trained (gradients applied, not NaN-skipped)"
+                               (:applied? rk))
+          _       (assert-true "KL regularizes toward base: strong-KL drift < KL-free drift"
+                               (< (:drift rk) (:drift rf)))
           _       (clean-dir!)]
     (summary))))
 

@@ -103,10 +103,14 @@
    chunk-size knobs cap peak memory for large-vocab models (the native docs
    recommend :lm-head-chunk-size 2 and :forward-chunk-size 4 for group-size >= 4).
 
-   `:beta`/`:kl-coef` -> klCoef. Setting it > 0 makes `train-step!` ERROR under autograd
-   (reference-model KL is not yet supported natively); leave it 0 (default) for KL-free
-   training. There is no `:seed` — the engine owns its MLX sampler RNG (training RNG ≠
-   GenMLX inference RNG; no native config field exists to seed it)."
+   `:beta`/`:kl-coef` -> klCoef. Setting it > 0 applies a true KL-to-base penalty
+   through the autograd path (genmlx-65d5): on the first KL-enabled step the native
+   engine snapshots the frozen base policy, then each step adds the k3 KL term
+   `KL(ref‖policy)` (β-scaled) regularizing toward that base. KL(ref‖policy) and its
+   gradient are 0 at step 1 (policy == ref by construction); the effect grows as the
+   policy diverges. Leave it 0 (default) for KL-free training. There is no `:seed` —
+   the engine owns its MLX sampler RNG (training RNG ≠ GenMLX inference RNG; no native
+   config field exists to seed it)."
   [config]
   (clj->js
     (merge
