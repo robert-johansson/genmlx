@@ -88,9 +88,11 @@
 ;; isolate the FIRST function form and pr-str it back to a clean code string.
 ;; ===========================================================================
 
-(defn- strip-think
+(defn strip-think
   "Drop everything up to and including the final `</think>` (Qwen reasoning),
-   whose contents are full of parens that would fool a first-paren extractor."
+   whose contents are full of parens that would fool a first-paren extractor.
+   Public so the offline distillation filter (genmlx.world.distill) shares the
+   exact same completion-cleaning as the online reward."
   [s]
   (let [s (str s)]
     (if-let [idx (str/last-index-of s "</think>")]
