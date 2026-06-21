@@ -166,7 +166,7 @@
                            (sb/collect-verdicts candidates
                                                 {:out-path   (.join path-mod out-dir "_sandbox_verdicts.edn")
                                                  :eval-opts  eval-opts :timeout-ms tmo
-                                                 :poll-ms    400 :verbose? verbose?}))]
+                                                 :poll-ms    400 :verbose? verbose? :gen? gen}))]
           (let [n-timeout (count (filter #(contains? #{:timeout :crashed} (:reason %)) verdicts))
                 selected (d/rank-and-select verdicts top-k)
                 records  (d/build-sft-records tasks-by-id selected)

@@ -15,6 +15,7 @@
        [--n-particles N] [--min-log-ml F]"
   (:require [genmlx.world.distill :as d]
             [genmlx.world.distill-tasks :as t]
+            [genmlx.world.distill-gen :as g]
             [clojure.string :as str]))
 
 (def fs (js/require "fs"))
@@ -45,10 +46,14 @@
       min-ml (let [m (and (string? (:min-log-ml opts)) (js/parseFloat (:min-log-ml opts)))]
                (when (and m (not (js/isNaN m))) m))
       eopts  (cond-> {:n-particles n-part} min-ml (assoc :min-log-ml min-ml))
+      ;; --gen routes against the scaled generated task set (genmlx.world.distill-gen);
+      ;; otherwise the 12 in-tree seeds. Must match the parent filter's task source, else
+      ;; every candidate whose id is not a seed is dropped as :unknown-task.
+      tasks-by-id (if (:gen opts) g/tasks-by-id t/tasks-by-id)
       rows   (read-candidates cf)]
   (doseq [i (range start (count rows))]
     (let [{:keys [task-id sample-idx raw-text]} (d/candidate->fields (nth rows i))
-          task    (get t/tasks-by-id task-id)
+          task    (get tasks-by-id task-id)
           verdict (if task
                     (assoc (d/evaluate-candidate (merge task eopts) raw-text sample-idx) :index i)
                     {:index i :unknown-task? true :task-id task-id :sample-idx sample-idx})]

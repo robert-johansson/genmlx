@@ -65,13 +65,13 @@
 
 (defn- grade
   "Sandbox-grade one candidates file (a student's eval completions). Returns a promise
-   of the verdict vector."
-  [label candidates out-dir eval-opts timeout-ms]
+   of the verdict vector. `gen?` routes the worker against the scaled generated task set."
+  [label candidates out-dir eval-opts timeout-ms gen?]
   (println (str "  grading " label " (" candidates ") ..."))
   (sb/collect-verdicts candidates
                        {:out-path   (.join path-mod out-dir (str "_eval_" label ".edn"))
                         :eval-opts  eval-opts
-                        :timeout-ms timeout-ms :poll-ms 400 :verbose? false}))
+                        :timeout-ms timeout-ms :poll-ms 400 :verbose? false :gen? gen?}))
 
 (defn- print-table [report]
   (let [k (:k report)]
@@ -133,10 +133,10 @@
     (ensure-dir out-dir)
     (when min-ml (println (str "  applying model-evidence floor --min-log-ml " min-ml
                                " (must match the corpus build)")))
-    (p/let [b-verdicts (grade "baseline" baseline out-dir eopts tmo)
-            s-verdicts (grade "sft" sft out-dir eopts tmo)]
-      (warn-non-eval! (concat b-verdicts s-verdicts))
-      (let [report (assoc (sft/eval-report b-verdicts s-verdicts kk t/tasks-by-id)
+    (p/let [b-verdicts (grade "baseline" baseline out-dir eopts tmo gen)
+            s-verdicts (grade "sft" sft out-dir eopts tmo gen)]
+      (warn-non-eval! (concat b-verdicts s-verdicts) eval?)
+      (let [report (assoc (sft/eval-report b-verdicts s-verdicts kk tasks-by-id)
                           :min-log-ml min-ml :n-particles n-part)]
         (write-json (.join path-mod out-dir "eval_report.json") report)
         (print-table report)

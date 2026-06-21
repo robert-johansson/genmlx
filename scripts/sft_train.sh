@@ -48,6 +48,8 @@ ITERS="${ITERS:-200}"
 BATCH="${BATCH:-1}"
 LR="${LR:-1e-5}"
 MAXSEQ="${MAXSEQ:-2048}"
+VAL_BATCHES="${VAL_BATCHES:--1}"   # -1 = all valid rows; cap it (e.g. 15) to bound the val memory spike on a 32GB box
+SAVE_EVERY="${SAVE_EVERY:-100}"
 FUSE="${FUSE:-1}"
 LOG="${LOG:-$DATA/train.log}"
 
@@ -59,7 +61,7 @@ MODEL="$MODELS/$STUDENT"
 echo "Student:  $MODEL"
 echo "Data:     $DATA ($(wc -l < "$DATA/train.jsonl" | tr -d ' ') train, $(wc -l < "$DATA/valid.jsonl" | tr -d ' ') valid)"
 echo "Adapter:  $ADAPTER"
-echo "Config:   rank=16 (sft_lora.yaml), layers=$NUM_LAYERS, iters=$ITERS, batch=$BATCH, lr=$LR, maxseq=$MAXSEQ, mask-prompt"
+echo "Config:   rank=16 (sft_lora.yaml), layers=$NUM_LAYERS, iters=$ITERS, batch=$BATCH, lr=$LR, maxseq=$MAXSEQ, val-batches=$VAL_BATCHES, save-every=$SAVE_EVERY, mask-prompt"
 echo "Log:      $LOG"
 echo ""
 
@@ -118,8 +120,8 @@ python3 -m mlx_lm lora \
   --max-seq-length "$MAXSEQ" \
   --steps-per-report 20 \
   --steps-per-eval 50 \
-  --val-batches -1 \
-  --save-every 100 \
+  --val-batches "$VAL_BATCHES" \
+  --save-every "$SAVE_EVERY" \
   --adapter-path "$ADAPTER" 2>&1 | tee "$LOG"
 
 echo ""
