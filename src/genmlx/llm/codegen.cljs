@@ -116,29 +116,9 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
 ;; 7.4 Code extraction
 ;; ============================================================
 
-(defn extract-code
-  "Extract ClojureScript code from LLM output text."
-  [text]
-  (cond
-    ;; Empty text
-    (not (seq text))
-    ""
-
-    ;; Fenced code block
-    (re-find #"```(?:clojure|cljs|clojurescript|clj)?\s*\n" text)
-    (if-let [m (re-find #"```(?:clojure|cljs|clojurescript|clj)?\s*\n([\s\S]*?)```" text)]
-      (str/trim (nth m 1))
-      "")
-
-    ;; Starts with paren -- raw code
-    (str/starts-with? (str/trim text) "(")
-    (str/trim text)
-
-    ;; Strip prefix to first paren
-    :else
-    (if-let [idx (str/index-of text "(")]
-      (subs text idx)
-      "")))
+;; extract-code lives in the native-free genmlx.codegen.eval (genmlx-t246/ugkv);
+;; re-exported here so existing callers are unchanged.
+(def extract-code ceval/extract-code)
 
 ;; ============================================================
 ;; 7.5 Reader-constrained byte GF
@@ -301,39 +281,9 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
 ;; 7.8 Transition function verification
 ;; ============================================================
 
-(defn verify-transition-fn
-  "Verify a transition function against observed transitions.
-
-   code-str:    ClojureScript evaluating to (fn [state action] -> state)
-   transitions: [{:state map :action keyword :expected map}]
-
-   Returns {:accuracy :total :correct :failures :error?}"
-  [code-str transitions]
-  (let [total (count transitions)
-        r (eval-fn code-str)
-        f (:fn r)]
-    (if (:error r)
-      {:accuracy 0.0 :total total :correct 0 :failures [] :error (:error r)}
-      (let [results (map-indexed
-                      (fn [i {:keys [state action expected]}]
-                        (try
-                          (let [actual (f state action)]
-                            (if (= expected actual)
-                              {:correct true}
-                              {:correct false
-                               :index i :state state :action action
-                               :expected expected :actual actual}))
-                          (catch :default e
-                            {:correct false
-                             :index i :state state :action action
-                             :expected expected :actual (str "ERROR: " (.-message e))})))
-                      transitions)
-            correct (count (filter :correct results))
-            failures (vec (remove :correct results))]
-        {:accuracy (if (zero? total) 1.0 (/ correct total))
-         :total total
-         :correct correct
-         :failures failures}))))
+;; verify-transition-fn lives in the native-free genmlx.codegen.eval (genmlx-ugkv);
+;; re-exported here so existing callers are unchanged.
+(def verify-transition-fn ceval/verify-transition-fn)
 
 ;; ============================================================
 ;; 7.9 Revision
@@ -420,52 +370,10 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
 ;; 7.11 Structural scoring
 ;; ============================================================
 
-(defn- form-contains?
-  "Does the form tree contain this symbol anywhere?"
-  [form sym]
-  (cond
-    (= form sym) true
-    (sequential? form) (some #(form-contains? % sym) form)
-    :else false))
-
-(defn- count-occurrences
-  "Count occurrences of sym in form tree."
-  [form sym]
-  (cond
-    (= form sym) 1
-    (sequential? form) (transduce (map #(count-occurrences % sym)) + 0 form)
-    :else 0))
-
-(defn- returns-map-literals?
-  "Check if case/cond branches return map literals."
-  [form]
-  (cond
-    (map? form) true
-    (and (sequential? form) (= 'case (first form)))
-    (let [branches (drop 2 form)
-          values (take-nth 2 (rest branches))]
-      (some map? values))
-    (sequential? form) (some returns-map-literals? form)
-    :else false))
-
-(def ^:private occurrence-weights
-  "Per-occurrence penalty weights for commonly misused patterns."
-  {'assoc -2 'assoc-in -3 'update-in -3 'cond-> -4})
-
-(defn score-structure
-  "Score the structural quality of a ClojureScript form.
-   Higher = more idiomatic for transition functions.
-
-   Rewards: case dispatch, map literal returns, dec/inc, :keys destructuring.
-   Penalizes: assoc, assoc-in, update-in, cond-> (commonly misused patterns)."
-  [form]
-  (+ (if (form-contains? form 'case) 5 0)
-     (if (returns-map-literals? form) 4 0)
-     (if (form-contains? form 'dec) 3 0)
-     (if (form-contains? form 'inc) 3 0)
-     (if (form-contains? form :keys) 2 0)
-     (reduce-kv (fn [acc sym w] (+ acc (* w (count-occurrences form sym))))
-                0 occurrence-weights)))
+;; score-structure (and its form-walk helpers) live in the native-free
+;; genmlx.codegen.eval (genmlx-ugkv); re-exported here so existing callers are
+;; unchanged.
+(def score-structure ceval/score-structure)
 
 ;; ============================================================
 ;; 7.12 Scored generation
