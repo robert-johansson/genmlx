@@ -4,19 +4,79 @@
 
    This is Layer 0 of the LLM integration — everything above (token-transition
    handler, beam search, grammar constraints) builds on these functions."
-  (:require ["@mlx-node/lm" :as mlx-lm :refer [ChatSession]]
-            ;; Qwen3Tokenizer is sourced from @mlx-node/core directly (it is a
-            ;; first-class core export). @mlx-node/lm's re-export of it was
-            ;; removed upstream (mlx-node #57); relying on it broke on a clean
-            ;; `tsc -b`. See bean genmlx-mwm4.
-            ["@genmlx/core" :as mlx-core]
-            [genmlx.mlx :as mx]
+  (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             ;; f6ov: model-family-dispatching façade over the GenMLX-owned
             ;; forwards (vanilla Qwen3 + Qwen3.5 hybrid GatedDeltaNet). Same
             ;; 6-fn interface either way; routes on config.json model_type.
             [genmlx.llm.forward :as fwd]
-            [promesa.core :as p]))
+            [promesa.core :as p]
+            ["fs" :as fs]))
+
+;; ---------------------------------------------------------------------------
+;; Native LLM surface — the single @genmlx/core addon (bean genmlx-qt34,
+;; finishing the PR #143 genmlx-core migration; backend was the last holdout)
+;;
+;; GenMLX rides on ONE MLX-linking .node addon: @genmlx/core, the GenMLX-owned
+;; superset over stock mlx-core. Loading a SECOND MLX-linking addon in the same
+;; process is the proven-broken case — incompatible MxArray NAPI types + separate
+;; Metal pools → SIGTRAP (bean genmlx-nldo). The former @mlx-node/lm dependency
+;; pulled in exactly such a second core (upstream @mlx-node/core), which is why
+;; every llm/* test crashed once @genmlx/core also loaded. So this backend now
+;; loads, detects, and generates entirely through @genmlx/core's native classes
+;; (Qwen3Model / Qwen35Model / … with .load / .forward / .forwardWithCache /
+;; .initCaches / .resetCaches / .chatSessionStart, plus Qwen3Tokenizer) — exactly
+;; as genmlx.world.train already does.
+;;
+;; js/require (CommonJS), NOT an ESM :require: @genmlx/core's package `main` is a
+;; bare Node-API addon (./index.node) with no "import" export condition, so an ESM
+;; :require compiles to an `import` of a .node file, which bun 1.3.x rejects ("To
+;; load Node-API modules, use require()…"). js/require is the correct .node load.
+;; ---------------------------------------------------------------------------
+
+(defonce ^:private mlx-core (js/require "@genmlx/core"))
+
+(defn- detect-model-type
+  "Read config.json's model_type, mirroring the former @mlx-node/lm detectModelType
+   so the owned/upstream dispatch and the trace-site :type are unchanged: default
+   \"qwen3\"; normalize gemma4_text → gemma4; a Qwen3 backbone exported as a base
+   model (architectures has Qwen3Model but not Qwen3ForCausalLM) is an embedding
+   model → \"harrier\". Returns the model_type string."
+  [model-path]
+  (let [config (-> (.readFileSync fs (str model-path "/config.json") "utf8")
+                   (js/JSON.parse))
+        raw    (or (.-model_type config) "qwen3")
+        mtype  (if (= raw "gemma4_text") "gemma4" raw)
+        archs  (or (.-architectures config) #js [])]
+    (if (and (= mtype "qwen3")
+             (.includes archs "Qwen3Model")
+             (not (.includes archs "Qwen3ForCausalLM")))
+      "harrier"
+      mtype)))
+
+(defn- load-upstream-model
+  "Load a native @genmlx/core model instance for the upstream forward path,
+   dispatching on model_type. Each native class exposes .forward /
+   .forwardWithCache / .initCaches / .resetCaches (driven by forward-pass /
+   forward-prefill / forward-step) and .chatSessionStart (generate-text), so the
+   downstream backend fns are unchanged. Returns a promise of the instance, or
+   throws if @genmlx/core has no model class for this family."
+  [model-type model-path]
+  (if-let [cls (case model-type
+                 "qwen3"       (.-Qwen3Model mlx-core)
+                 "qwen3_5"     (.-Qwen35Model mlx-core)
+                 "qwen3_5_moe" (.-Qwen35MoeModel mlx-core)
+                 "gemma4"      (.-Gemma4Model mlx-core)
+                 "harrier"     (.-HarrierModel mlx-core)
+                 "lfm2"        (.-Lfm2Model mlx-core)
+                 nil)]
+    (.load cls model-path)
+    (throw (ex-info (str "genmlx.llm.backend: @genmlx/core has no native model "
+                         "class for model_type " (pr-str model-type)
+                         " — load a supported family (qwen3 / qwen3_5 / gemma4 / "
+                         "harrier / lfm2 / qwen3_5_moe) or extend load-upstream-model.")
+                    {:genmlx/error :unsupported-upstream-type
+                     :model-type model-type :model-path model-path}))))
 
 ;; ---------------------------------------------------------------------------
 ;; GenMLX-owned forward (f6ov): a value-level CLJS forward over genmlx.rs
@@ -141,7 +201,7 @@
    either). The VLM path (genmlx.llm.vision/load-vlm) is separate and unaffected."
   ([model-path] (load-model model-path {}))
   ([model-path opts]
-   (p/let [model-type (.detectModelType mlx-lm model-path)
+   (p/let [model-type (detect-model-type model-path)
            tokenizer (.fromPretrained (.-Qwen3Tokenizer mlx-core)
                                       (str model-path "/tokenizer.json"))]
      ;; genmlx-5luk: refuse a known-crashing native MoE forward BEFORE the native
@@ -178,7 +238,7 @@
              {:model (->CljsForwardModel (fwd/load-model model-path) (atom nil))
               :tokenizer tokenizer
               :type (keyword model-type)})
-           (p/let [model (.loadModel mlx-lm model-path)]
+           (p/let [model (load-upstream-model model-type model-path)]
              ;; Tier-B (upstream path): assert the loaded instance exposes the
              ;; native forward methods — catches the genmlx-7siy stale prebuilt.
              (assert-upstream-forward! model)
@@ -350,7 +410,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn generate-text
-  "Generate text from a prompt using the ChatSession API.
+  "Generate text from a prompt using the native chatSessionStart API.
    Returns a promise of the generated text string.
 
    opts map:
@@ -361,15 +421,20 @@
   ([{:keys [model]} prompt {:keys [max-tokens temperature system-prompt]
                             :or {max-tokens 100 temperature 0.7}}]
    (when (cljs-forward-model? model)
-     (throw (ex-info (str "generate-text uses ChatSession, which requires the "
-                          "upstream model. Load with {:cljs-forward? false}, or "
-                          "use generate-text-raw (works on the owned forward).")
+     (throw (ex-info (str "generate-text drives the native model's chatSessionStart, "
+                          "which requires the upstream model. Load with "
+                          "{:cljs-forward? false}, or use generate-text-raw (works "
+                          "on the owned forward).")
                      {:model-type (type model)})))
-   (let [session (ChatSession. model
-                               (clj->js (cond-> {:maxNewTokens max-tokens
-                                                 :temperature temperature}
-                                          system-prompt (assoc :system system-prompt))))]
-     (p/let [result (.send session prompt)]
+   ;; chatSessionStart applies the chat template internally and starts a fresh
+   ;; turn-1 conversation per call (system prompt goes in the message list, not a
+   ;; :system config field), so it matches the old new-ChatSession-per-call
+   ;; isolation. ChatResult exposes the decoded text via .text.
+   (let [messages (clj->js (cond-> []
+                             system-prompt (conj {:role "system" :content system-prompt})
+                             :always       (conj {:role "user" :content prompt})))
+         config   (clj->js {:maxNewTokens max-tokens :temperature temperature})]
+     (p/let [result (.chatSessionStart model messages config)]
        (.-text result)))))
 
 (defn generate-text-raw
