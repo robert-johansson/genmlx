@@ -51,7 +51,27 @@
    :low-evidence "model evidence below the configured :min-log-ml floor"
    :test-fail    "failed at least one held-out test"
    :no-oracle    "task carries no held-out oracle (no :transitions and no :test-cases) — misconfigured"
+   :timeout      "evaluation exceeded the per-candidate timeout (non-terminating untrusted code)"
+   :crashed      "evaluation crashed the worker process (native abort)"
    :unknown-kind "task :kind is neither :program nor :function"})
+
+(defn timeout-verdict
+  "The verdict a sandboxed evaluation gets when the worker had to be killed: a
+   non-terminating (`:timeout`) or process-crashing (`:crashed`) candidate. Never
+   kept; carries the provenance the in-process path would. The runner's process
+   isolation produces these — evaluate-candidate itself never returns them."
+  [task sample-idx reason]
+  {:task-id (:id task) :sample-idx sample-idx :kind (:kind task)
+   :code "" :parse? false :kept? false :reason reason})
+
+(defn candidate->fields
+  "Normalize a raw candidate row (from raw_candidates.jsonl, keywordized) to
+   {:task-id :sample-idx :raw-text}, accepting the field-name aliases the teacher
+   side might use (task_id/task-id/id; sample_idx/sample-idx; raw_text/completion/text)."
+  [c]
+  {:task-id    (or (:task_id c) (:task-id c) (:id c))
+   :sample-idx (or (:sample_idx c) (:sample-idx c) 0)
+   :raw-text   (or (:raw_text c) (:completion c) (:text c) "")})
 
 (defn- safe-div
   "n/d as a float, or 0.0 when d is 0 — for rate stats over possibly-empty sets."

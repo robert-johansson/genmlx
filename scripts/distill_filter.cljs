@@ -17,9 +17,14 @@
      2. Filter the teacher's candidates (steps 3-4):
           bun run --bun nbb scripts/distill_filter.cljs \\
             --candidates <raw_candidates.jsonl> --out <dir> \\
-            [--top-k 1] [--n-particles 50] [--min-log-ml <float>]
-        --top-k     best candidates kept per prompt (default 1 — one best exemplar)
+            [--top-k 1] [--n-particles 50] [--min-log-ml <float>] \\
+            [--timeout-ms 15000] [--no-sandbox]
+        --top-k      best candidates kept per prompt (default 1 — one best exemplar)
         --min-log-ml optional absolute model-evidence floor for :program candidates
+        --timeout-ms per-candidate evaluation budget; a non-terminating teacher
+                     candidate is killed and recorded :timeout (default 15000)
+        --no-sandbox evaluate in-process (faster, but a non-terminating candidate
+                     hangs the whole run — use only on trusted input)
         raw_candidates.jsonl lines: {task_id, sample_idx, raw_text} (aliases accepted:
         completion / text for raw_text). Writes into <dir>:
           distill_sft.jsonl  — Qwen3 chat rows (the corpus)
@@ -30,7 +35,9 @@
    lands in the repo (the repo intentionally has no catch-all gitignore)."
   (:require [genmlx.world.distill :as d]
             [genmlx.world.distill-tasks :as t]
-            [clojure.string :as str]))
+            [genmlx.world.distill-sandbox :as sb]
+            [clojure.string :as str]
+            [promesa.core :as p]))
 
 (def fs (js/require "fs"))
 (def path-mod (js/require "path"))
@@ -102,71 +109,81 @@
 ;; Mode 2 — filter candidates into an SFT corpus.
 ;; ---------------------------------------------------------------------------
 
-(defn- candidate->fields
-  "Normalize a candidate row: task id, sample index, and raw text (accepting a few
-   field-name aliases the teacher side might use)."
-  [c]
-  {:task-id    (or (:task_id c) (:task-id c) (:id c))
-   :sample-idx (or (:sample_idx c) (:sample-idx c) 0)
-   :raw-text   (or (:raw_text c) (:completion c) (:text c) "")})
+;; In-process scoring (the --no-sandbox path): fast, but a non-terminating candidate
+;; hangs the whole run. The default path isolates each candidate in a worker process.
+(defn- score-in-process [rows eval-opts note]
+  (vec (for [c rows
+             :let [{:keys [task-id sample-idx raw-text]} (d/candidate->fields c)
+                   task (get t/tasks-by-id task-id)]
+             :when task]
+         (do (note (str "scoring " task-id " #" sample-idx))
+             (let [v (d/evaluate-candidate (merge task eval-opts) raw-text sample-idx)]
+               (note (str "  -> " (:reason v) (when (:log-ml v) (str " log-ml=" (:log-ml v)))))
+               v)))))
 
-(defn- filter! [{:keys [candidates out top-k n-particles min-log-ml]}]
+(defn- filter! [{:keys [candidates out top-k n-particles min-log-ml timeout-ms no-sandbox]}]
   (let [out-dir   (or out (default-out-dir))
         top-k     (pos-int-or-nil (or top-k 1))
         n-part    (pos-int-or-nil (or n-particles 50))
+        tmo       (pos-int-or-nil (or timeout-ms 15000))
         min-ml    (let [m (and (string? min-log-ml) (js/parseFloat min-log-ml))]
                     (when (and m (not (js/isNaN m))) m))]
     (cond
-      (or (nil? top-k) (nil? n-part))
-      (do (println "ERROR: --top-k and --n-particles must be positive integers")
+      (or (nil? top-k) (nil? n-part) (nil? tmo))
+      (do (println "ERROR: --top-k, --n-particles and --timeout-ms must be positive integers")
           (set! (.-exitCode js/process) 1))
 
       :else
       (let [{:keys [rows skipped]} (read-jsonl candidates)
+            _        (ensure-dir out-dir)
             _        (println (str "Read " (count rows) " candidates from " candidates
                                    (when (pos? skipped)
-                                     (str " (" skipped " malformed lines skipped)"))))
-            ;; attach scoring opts to each task at evaluate time via assoc
+                                     (str " (" skipped " malformed lines skipped)"))
+                                   (if no-sandbox "  [in-process]"
+                                       (str "  [sandboxed, timeout " tmo "ms]"))))
+            ;; attach scoring opts to each task at evaluate time via assoc/merge
             eval-opts (cond-> {:n-particles n-part} min-ml (assoc :min-log-ml min-ml))
             verbose? (.. js/process -env -DISTILL_VERBOSE)
             prog-log (.join path-mod out-dir "progress.log")
-            _        (when verbose? (ensure-dir out-dir) (.writeFileSync fs prog-log ""))
+            _        (when verbose? (.writeFileSync fs prog-log ""))
             note     (fn [s] (when verbose? (println s) (.appendFileSync fs prog-log (str s "\n"))))
-            verdicts (vec (for [c rows
-                                :let [{:keys [task-id sample-idx raw-text]} (candidate->fields c)
-                                      task (get t/tasks-by-id task-id)]
-                                :when task]
-                            (do (note (str "scoring " task-id " #" sample-idx))
-                                (let [v (d/evaluate-candidate (merge task eval-opts) raw-text sample-idx)]
-                                  (note (str "  -> " (:reason v)
-                                             (when (:log-ml v) (str " log-ml=" (:log-ml v)))))
-                                  v))))
-            unknown  (- (count rows) (count verdicts))
-            selected (d/rank-and-select verdicts top-k)
-            records  (d/build-sft-records t/tasks-by-id selected)
-            stats    (assoc (d/verdicts->stats t/tasks verdicts selected)
-                            :top-k top-k :n-particles n-part :min-log-ml min-ml
-                            :malformed-lines-skipped skipped
-                            :candidates-with-unknown-task unknown)]
-        (ensure-dir out-dir)
-        (write-jsonl (.join path-mod out-dir "distill_sft.jsonl") records)
-        (write-jsonl (.join path-mod out-dir "verdicts.jsonl") verdicts)
-        (write-json  (.join path-mod out-dir "stats.json") stats)
-        (println "\n== distillation stats ==")
-        (doseq [k [:n-candidates :n-tasks :n-tasks-attempted :n-kept :n-selected
-                   :parse-rate :eval-rate :program-pass-rate :function-pass-rate
-                   :mean-log-ml :yield-per-prompt :task-space-coverage
-                   :n-prompts-covered :n-selected-noisy-is :drop-reasons]]
-          (println (str "  " (name k) ": " (get stats k))))
-        (when (pos? (:n-selected-noisy-is stats))
-          (println (str "  WARNING: " (:n-selected-noisy-is stats)
-                        " selected program(s) ranked by non-reproducible importance sampling")))
-        (when (pos? unknown)
-          (println (str "  WARNING: " unknown " candidates referenced an unknown task_id (skipped)")))
-        (println (str "\nWrote:\n  " (.join path-mod out-dir "distill_sft.jsonl")
-                      "  (" (count records) " SFT rows)\n  "
-                      (.join path-mod out-dir "verdicts.jsonl") "\n  "
-                      (.join path-mod out-dir "stats.json")))))))
+            unknown  (count (remove #(get t/tasks-by-id (:task-id (d/candidate->fields %))) rows))]
+        (p/let [verdicts (if no-sandbox
+                           (p/resolved (score-in-process rows eval-opts note))
+                           (sb/collect-verdicts candidates
+                                                {:out-path   (.join path-mod out-dir "_sandbox_verdicts.edn")
+                                                 :eval-opts  eval-opts :timeout-ms tmo
+                                                 :poll-ms    400 :verbose? verbose?}))]
+          (let [n-timeout (count (filter #(contains? #{:timeout :crashed} (:reason %)) verdicts))
+                selected (d/rank-and-select verdicts top-k)
+                records  (d/build-sft-records t/tasks-by-id selected)
+                stats    (assoc (d/verdicts->stats t/tasks verdicts selected)
+                                :top-k top-k :n-particles n-part :min-log-ml min-ml
+                                :sandboxed? (not no-sandbox) :timeout-ms tmo
+                                :n-timed-out n-timeout
+                                :malformed-lines-skipped skipped
+                                :candidates-with-unknown-task unknown)]
+            (write-jsonl (.join path-mod out-dir "distill_sft.jsonl") records)
+            (write-jsonl (.join path-mod out-dir "verdicts.jsonl") verdicts)
+            (write-json  (.join path-mod out-dir "stats.json") stats)
+            (println "\n== distillation stats ==")
+            (doseq [k [:n-candidates :n-tasks :n-tasks-attempted :n-kept :n-selected
+                       :parse-rate :eval-rate :program-pass-rate :function-pass-rate
+                       :mean-log-ml :yield-per-prompt :task-space-coverage
+                       :n-prompts-covered :n-selected-noisy-is :n-timed-out :drop-reasons]]
+              (println (str "  " (name k) ": " (get stats k))))
+            (when (pos? n-timeout)
+              (println (str "  NOTE: " n-timeout
+                            " candidate(s) were non-terminating/crashing and recorded :timeout/:crashed")))
+            (when (pos? (:n-selected-noisy-is stats))
+              (println (str "  WARNING: " (:n-selected-noisy-is stats)
+                            " selected program(s) ranked by non-reproducible importance sampling")))
+            (when (pos? unknown)
+              (println (str "  WARNING: " unknown " candidates referenced an unknown task_id (skipped)")))
+            (println (str "\nWrote:\n  " (.join path-mod out-dir "distill_sft.jsonl")
+                          "  (" (count records) " SFT rows)\n  "
+                          (.join path-mod out-dir "verdicts.jsonl") "\n  "
+                          (.join path-mod out-dir "stats.json")))))))))
 
 ;; ---------------------------------------------------------------------------
 
@@ -178,10 +195,13 @@
                      (.join path-mod (default-out-dir) "tasks.jsonl")))
 
     (:candidates opts)
-    (filter! opts)
+    (-> (p/resolved nil)
+        (p/then (fn [_] (filter! opts)))
+        (p/catch (fn [e] (println "ERROR:" (.-message e))
+                   (set! (.-exitCode js/process) 1))))
 
     :else
     (do (println "usage:")
         (println "  --export-tasks <tasks.jsonl>")
-        (println "  --candidates <raw_candidates.jsonl> [--out <dir>] [--top-k 1] [--n-particles 50] [--min-log-ml <float>]")
+        (println "  --candidates <raw_candidates.jsonl> [--out <dir>] [--top-k 1] [--n-particles 50] [--min-log-ml <float>] [--timeout-ms 15000] [--no-sandbox]")
         (set! (.-exitCode js/process) 1))))
