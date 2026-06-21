@@ -22,19 +22,22 @@ The export surface is enumerated from the **live `@genmlx/core` runtime module**
 this is what `membrane_coverage_test` partitions, and it is the authority. The package
 ships **no `types` field**; its `index.d.ts` is a regenerated snapshot that can lag the
 runtime, so any audit that reads a `.d.ts` can be wrong. Concretely, the live surface
-has **214** function exports while the d.ts declares 213 — the one runtime-only name is
-`Gradients` (a real class export, correctly on the `:training-orchestration` omission
-allowlist). When the doc and the live test disagree, the test is right.
+has **216** function exports (2026-06-21 W-B / genmlx-hg7q added the `valueAndGrad` /
+`computeGradients` module free fns — they moved from MxArray methods to module exports;
+the `index.d.ts` is a regenerated snapshot that can lag, so re-derive its count from the
+live module after a rebuild). One runtime-only name is `Gradients` (a real class export,
+correctly on the `:training-orchestration` omission allowlist). When the doc and the live
+test disagree, the test is right.
 
 ## Summary
 
 | | Count |
 |---|---:|
-| Function exports (`typeof === "function"`, incl. classes) | **214** |
-| → Wrapped in the membrane | **167** |
+| Function exports (`typeof === "function"`, incl. classes) | **216** |
+| → Wrapped in the membrane | **169** |
 | → Intentionally omitted | **47** |
 
-`wrapped ⊎ omitted = 214` — the partition tiles the surface exactly (asserted by
+`wrapped ⊎ omitted = 216` — the partition tiles the surface exactly (asserted by
 `coverage-accounting-test`). Non-function exports (DType constants etc.) and
 per-class *method* coverage (e.g. `MxArray.addmm` / `argpartition` /
 `putAlongAxis`) are out of scope for this floor — see *Deferred* below.
