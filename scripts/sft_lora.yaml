@@ -1,0 +1,13 @@
+# LoRA adapter hyperparameters for the cljs-coder SFT step (genmlx-o8w9).
+# Consumed via:  python -m mlx_lm lora -c scripts/sft_lora.yaml ...
+#
+# rank 16 / scale 20 mirrors the proven cljs FIM run (lora_config_v2.yaml). On the
+# qwen3.5-0.8b-bf16 student a 32GB Mac mini trains this comfortably; the ceiling-raiser
+# qwen3.5-4b-bf16 also fits at this rank under LoRA (not full FT). A small dropout guards
+# against overfitting the small distilled corpus (the distilled set is high-value but
+# tiny until genmlx-7473 scales it). Everything else (num-layers, iters, batch, lr,
+# max-seq-length, --mask-prompt) is passed as a flag by scripts/sft_train.sh.
+lora_parameters:
+  rank: 16
+  scale: 20.0
+  dropout: 0.05
