@@ -35,6 +35,7 @@
    lands in the repo (the repo intentionally has no catch-all gitignore)."
   (:require [genmlx.world.distill :as d]
             [genmlx.world.distill-tasks :as t]
+            [genmlx.world.distill-gen :as g]
             [genmlx.world.distill-sandbox :as sb]
             [clojure.string :as str]
             [promesa.core :as p]))
@@ -49,6 +50,15 @@
 (defn- default-out-dir []
   (let [tmp (or (.. js/process -env -TMPDIR) "/tmp")]
     (.join path-mod tmp "genmlx-distill")))
+
+(defn- task-source
+  "Pick the task source: the scaled generated set (genmlx.world.distill-gen, --gen) or
+   the 12 in-tree seeds (genmlx.world.distill-tasks). Both expose the same shape — the
+   pure core (rank-and-select / build-sft-records / verdicts->stats) is task-agnostic."
+  [gen?]
+  (if gen?
+    {:tasks g/all-tasks :tasks-by-id g/tasks-by-id :label "distill-gen (scaled)"}
+    {:tasks t/tasks :tasks-by-id t/tasks-by-id :label "distill-tasks (seed)"}))
 
 ;; ---------------------------------------------------------------------------
 ;; Tiny CLI arg parsing: --key value pairs + bare --flags.
@@ -99,11 +109,12 @@
 ;; Mode 1 — export teacher-facing task prompts.
 ;; ---------------------------------------------------------------------------
 
-(defn- export-tasks! [path]
+(defn- export-tasks! [path gen?]
   (ensure-dir (.dirname path-mod path))
-  (write-jsonl path (map t/task->prompt-record t/tasks))
-  (println (str "Exported " (count t/tasks) " task prompts -> " path))
-  (println "  (held-out oracle signal NOT included — no test leakage)"))
+  (let [tasks (if gen? g/train-tasks t/tasks)]
+    (write-jsonl path (map (if gen? g/task->prompt-record t/task->prompt-record) tasks))
+    (println (str "Exported " (count tasks) (if gen? " TRAIN" "") " task prompts -> " path))
+    (println "  (held-out oracle signal NOT included — no test leakage)")))
 
 ;; ---------------------------------------------------------------------------
 ;; Mode 2 — filter candidates into an SFT corpus.
@@ -111,18 +122,19 @@
 
 ;; In-process scoring (the --no-sandbox path): fast, but a non-terminating candidate
 ;; hangs the whole run. The default path isolates each candidate in a worker process.
-(defn- score-in-process [rows eval-opts note]
+(defn- score-in-process [rows eval-opts note tasks-by-id]
   (vec (for [c rows
              :let [{:keys [task-id sample-idx raw-text]} (d/candidate->fields c)
-                   task (get t/tasks-by-id task-id)]
+                   task (get tasks-by-id task-id)]
              :when task]
          (do (note (str "scoring " task-id " #" sample-idx))
              (let [v (d/evaluate-candidate (merge task eval-opts) raw-text sample-idx)]
                (note (str "  -> " (:reason v) (when (:log-ml v) (str " log-ml=" (:log-ml v)))))
                v)))))
 
-(defn- filter! [{:keys [candidates out top-k n-particles min-log-ml timeout-ms no-sandbox]}]
-  (let [out-dir   (or out (default-out-dir))
+(defn- filter! [{:keys [candidates out top-k n-particles min-log-ml timeout-ms no-sandbox gen]}]
+  (let [{:keys [tasks tasks-by-id label]} (task-source gen)
+        out-dir   (or out (default-out-dir))
         top-k     (pos-int-or-nil (or top-k 1))
         n-part    (pos-int-or-nil (or n-particles 50))
         tmo       (pos-int-or-nil (or timeout-ms 15000))
@@ -137,6 +149,7 @@
       (let [{:keys [rows skipped]} (read-jsonl candidates)
             _        (ensure-dir out-dir)
             _        (println (str "Read " (count rows) " candidates from " candidates
+                                   "  [tasks: " label "]"
                                    (when (pos? skipped)
                                      (str " (" skipped " malformed lines skipped)"))
                                    (if no-sandbox "  [in-process]"
@@ -147,17 +160,17 @@
             prog-log (.join path-mod out-dir "progress.log")
             _        (when verbose? (.writeFileSync fs prog-log ""))
             note     (fn [s] (when verbose? (println s) (.appendFileSync fs prog-log (str s "\n"))))
-            unknown  (count (remove #(get t/tasks-by-id (:task-id (d/candidate->fields %))) rows))]
+            unknown  (count (remove #(get tasks-by-id (:task-id (d/candidate->fields %))) rows))]
         (p/let [verdicts (if no-sandbox
-                           (p/resolved (score-in-process rows eval-opts note))
+                           (p/resolved (score-in-process rows eval-opts note tasks-by-id))
                            (sb/collect-verdicts candidates
                                                 {:out-path   (.join path-mod out-dir "_sandbox_verdicts.edn")
                                                  :eval-opts  eval-opts :timeout-ms tmo
                                                  :poll-ms    400 :verbose? verbose?}))]
           (let [n-timeout (count (filter #(contains? #{:timeout :crashed} (:reason %)) verdicts))
                 selected (d/rank-and-select verdicts top-k)
-                records  (d/build-sft-records t/tasks-by-id selected)
-                stats    (assoc (d/verdicts->stats t/tasks verdicts selected)
+                records  (d/build-sft-records tasks-by-id selected)
+                stats    (assoc (d/verdicts->stats tasks verdicts selected)
                                 :top-k top-k :n-particles n-part :min-log-ml min-ml
                                 :sandboxed? (not no-sandbox) :timeout-ms tmo
                                 :n-timed-out n-timeout
@@ -192,7 +205,8 @@
     (:export-tasks opts)
     (export-tasks! (if (string? (:export-tasks opts))
                      (:export-tasks opts)
-                     (.join path-mod (default-out-dir) "tasks.jsonl")))
+                     (.join path-mod (default-out-dir) "tasks.jsonl"))
+                   (:gen opts))
 
     (:candidates opts)
     (-> (p/resolved nil)

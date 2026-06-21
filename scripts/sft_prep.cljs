@@ -32,6 +32,7 @@
    the repo."
   (:require [genmlx.world.sft :as sft]
             [genmlx.world.distill-tasks :as t]
+            [genmlx.world.distill-gen :as g]
             [clojure.string :as str]))
 
 (def fs (js/require "fs"))
@@ -97,16 +98,17 @@
 ;; Mode 3 — build the mlx-lm LoRA data dir.
 ;; ---------------------------------------------------------------------------
 
-(defn- build-data-dir! [{:keys [corpus out pairs blend valid-frac]}]
+(defn- build-data-dir! [{:keys [corpus out pairs blend valid-frac eval-ids]}]
   (let [out-dir (or out (default-out-dir))
+        eval-ids (or eval-ids sft/eval-task-ids)
         n-blend (pos-int-or blend 0)
         vfrac   (frac-or valid-frac 0.15)
         {:keys [rows skipped]} (read-jsonl corpus)
         ;; 1. partition by task: drop any held-out eval-task row, report it.
         {:keys [train-rows dropped-eval eval-task-ids-present train-task-ids]}
-        (sft/partition-corpus rows)
+        (sft/partition-corpus rows eval-ids)
         ;; 2. HARD leakage guard — abort if any eval row survived into training.
-        _ (sft/assert-train-disjoint! train-rows)
+        _ (sft/assert-train-disjoint! train-rows eval-ids)
         ;; 3. strip provenance -> bare {messages}; optionally blend volume rows.
         distilled (mapv sft/row->messages train-rows)
         vol       (when (and pairs (pos? n-blend)) (:rows (read-jsonl pairs)))
@@ -133,18 +135,24 @@
     ;; Honesty: partition-corpus + assert-train-disjoint! guarantee the DISTILLED rows are
     ;; disjoint from the held-out eval tasks. Blended volume rows carry no :task-id, so the
     ;; task-id guard cannot see them — say so rather than print an unconditional ✓ (genmlx-o8w9 review).
-    (if (and pairs (pos? n-blend))
-      (println (str "\n  LEAKAGE GUARD: distilled rows are disjoint from held-out eval tasks ["
-                    (str/join ", " (sort sft/eval-task-ids)) "] ✓"
-                    "\n  NOTE: " (min n-blend (count vol)) " blended volume rows are NOT task-id-screened"
-                    " (general-cljs corpus, no :task-id) — assumed task-neutral."))
-      (println (str "\n  LEAKAGE GUARD: held-out eval tasks ["
-                    (str/join ", " (sort sft/eval-task-ids)) "] are absent from training ✓")))))
+    (let [ids   (sort eval-ids)
+          shown (if (<= (count ids) 8) (str "[" (str/join ", " ids) "]")
+                    (str (count ids) " held-out tasks"))]
+      (if (and pairs (pos? n-blend))
+        (println (str "\n  LEAKAGE GUARD: distilled rows are disjoint from held-out eval tasks "
+                      shown " ✓"
+                      "\n  NOTE: " (min n-blend (count vol)) " blended volume rows are NOT task-id-screened"
+                      " (general-cljs corpus, no :task-id) — assumed task-neutral."))
+        (println (str "\n  LEAKAGE GUARD: held-out eval tasks " shown
+                      " are absent from training ✓"))))))
 
 ;; ---------------------------------------------------------------------------
 
 (let [opts (parse-args (vec (drop 2 (.-argv js/process))))
-      {:keys [train eval]} (sft/split-tasks t/tasks)]
+      gen? (:gen opts)
+      {:keys [train eval]} (if gen? {:train g/train-tasks :eval g/eval-tasks}
+                               (sft/split-tasks t/tasks))
+      eval-ids (if gen? g/eval-task-ids sft/eval-task-ids)]
   (cond
     (:export-train-tasks opts)
     (export-side! (if (string? (:export-train-tasks opts)) (:export-train-tasks opts)
@@ -157,7 +165,7 @@
                   :eval eval)
 
     (:corpus opts)
-    (try (build-data-dir! opts)
+    (try (build-data-dir! (assoc opts :eval-ids eval-ids))
          (catch :default e
            (println "ERROR:" (.-message e))
            (set! (.-exitCode js/process) 1)))

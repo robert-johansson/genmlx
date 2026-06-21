@@ -27,6 +27,7 @@
    neither SFT nor GRPO can lift it, so it bounds the achievable ceiling)."
   (:require [genmlx.world.sft :as sft]
             [genmlx.world.distill-tasks :as t]
+            [genmlx.world.distill-gen :as g]
             [genmlx.world.distill-sandbox :as sb]
             [clojure.string :as str]
             [promesa.core :as p]))
@@ -107,9 +108,10 @@
 (defn- warn-non-eval!
   "Symmetric to the corpus-side assert-train-disjoint!: warn loudly if any graded
    candidate references a NON-held-out (train) task — its pass@k is then not a held-out
-   measurement and would inflate the reported lift (genmlx-o8w9 review)."
-  [verdicts]
-  (let [non-eval (distinct (remove sft/eval-task? (map :task-id verdicts)))]
+   measurement and would inflate the reported lift (genmlx-o8w9 review). `eval?` is the
+   held-out predicate on a task-id (the seed set's or the scaled distill-gen set's)."
+  [verdicts eval?]
+  (let [non-eval (distinct (remove eval? (map :task-id verdicts)))]
     (when (seq non-eval)
       (println (str "  WARNING: graded candidates reference NON-held-out task(s): "
                     (str/join ", " non-eval)
@@ -117,8 +119,10 @@
                     " measurement (did you point --baseline/--sft at the wrong file? use"
                     " sft_prep --export-eval-tasks).")))))
 
-(defn- run! [{:keys [baseline sft out k n-particles timeout-ms min-log-ml]}]
-  (let [out-dir (or out (default-out-dir))
+(defn- run! [{:keys [baseline sft out k n-particles timeout-ms min-log-ml gen]}]
+  (let [tasks-by-id (if gen g/tasks-by-id t/tasks-by-id)
+        eval?       (if gen #(contains? g/eval-task-ids %) sft/eval-task?)
+        out-dir (or out (default-out-dir))
         kk      (pos-int-or k 4)
         n-part  (pos-int-or n-particles 50)
         tmo     (pos-int-or timeout-ms 15000)
