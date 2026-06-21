@@ -94,7 +94,14 @@
 
    Supported kebab keys: :learning-rate :group-size :kl-coef (alias :beta) :loss-type
    :max-completion-length :temperature :top-p :top-k :clip-epsilon :gradient-clip-norm
-   :gradient-accumulation-steps :repetition-penalty.
+   :gradient-accumulation-steps :repetition-penalty :enable-thinking :lm-head-chunk-size
+   :forward-chunk-size.
+
+   :enable-thinking false adds empty <think></think> tags to the prompt so a Qwen3
+   model emits a DIRECT answer instead of a (possibly truncated) reasoning block —
+   essential when the completion must be parseable output (e.g. code). The two
+   chunk-size knobs cap peak memory for large-vocab models (the native docs
+   recommend :lm-head-chunk-size 2 and :forward-chunk-size 4 for group-size >= 4).
 
    `:beta`/`:kl-coef` -> klCoef. Setting it > 0 makes `train-step!` ERROR under autograd
    (reference-model KL is not yet supported natively); leave it 0 (default) for KL-free
@@ -117,7 +124,10 @@
         (contains? config :clip-epsilon)                (assoc :clipEpsilon (:clip-epsilon config))
         (contains? config :gradient-clip-norm)          (assoc :gradientClipNorm (:gradient-clip-norm config))
         (contains? config :gradient-accumulation-steps) (assoc :gradientAccumulationSteps (:gradient-accumulation-steps config))
-        (contains? config :repetition-penalty)          (assoc :repetitionPenalty (:repetition-penalty config)))
+        (contains? config :repetition-penalty)          (assoc :repetitionPenalty (:repetition-penalty config))
+        (contains? config :enable-thinking)             (assoc :enableThinking (:enable-thinking config))
+        (contains? config :lm-head-chunk-size)          (assoc :lmHeadChunkSize (:lm-head-chunk-size config))
+        (contains? config :forward-chunk-size)          (assoc :forwardChunkSize (:forward-chunk-size config)))
       (:raw config))))
 
 (def ^:private reward-type->native

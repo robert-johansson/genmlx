@@ -142,3 +142,52 @@ The loop is plain promesa over the Phase-0 effect. The **proof** is that `:rewar
 
 **Per the milestone protocol, this spec is presented for review. No code will be written until it is
 approved.** The natural review questions are the four open decisions in §8.
+
+---
+
+## Delivered (2026-06-20)
+
+Phase 1 shipped as a **pure, native-free reward layer** over the merged Phase-0 effect.
+
+### Files
+- **`src/genmlx/world/train_reward.cljs`** (NEW) — the reward-fn builders:
+  `model-evidence-reward` (the headline: Bayesian model evidence) and
+  `transition-fn-reward` (program correctness, lightly exercised). Each returns a
+  pure `(fn [prompt completion] -> number)`. Plus the demo task
+  (`gaussian-mean-task`) + prompt/batch builders (`task->prompts`).
+- **`src/genmlx/llm/msa_score.cljs`** (NEW) + **`genmlx.codegen.eval`** additions —
+  the eval/score/extract spine made **native-free** (the genmlx-t246 pattern):
+  `genmlx.llm.msa` and `genmlx.llm.codegen` now re-export from them. This is why the
+  reward path does not load `genmlx.llm.backend` (which ESM-imports the native LM
+  addon and crashes under bun 1.3.x — see bean genmlx-qt34): **reward purity is now a
+  load-time guarantee, not just a convention** — the reward layer literally cannot
+  reach the policy model.
+- **`src/genmlx/world/train.cljs`** — added `:enable-thinking` / `:lm-head-chunk-size`
+  / `:forward-chunk-size` config keys (thinking-off is required for a 0.8B to emit
+  the code form directly instead of a truncated reasoning block).
+- **`test/genmlx/world_train_reward_test.cljs`** (NEW, `@tier slow`) — Part A
+  correctness gates (deterministic, validated against a closed-form
+  gaussian-gaussian marginal **independent oracle**) + Part B the real qwen3.5-0.8b
+  GRPO trend.
+
+### The reward (headline)
+`completion -> extract (fn [trace] ...) -> SCI eval -> GF -> score-model = log p(data | program)`,
+clamped to a **finite floor** (`-100.0`, never `##-Inf` — the GRPO-poison guard) and
+protected by a **coverage guard** (a program that ignores the data traces none of the
+observed sites and would otherwise score weight 0, *beating* a correct model — the
+guard floors it). Shaping knobs (`:lambda-c` compilation bonus, `:lambda-k` Occam
+penalty) are off by default. **KL-free** (`:kl-coef 0.0`); true KL-to-base is Phase 1.5
+(bean genmlx-65d5).
+
+### Framing
+"Bayesian model evidence as the RL signal for an LLM" = the **wake phase** of
+wake/sleep at the level of program space; the GRPO group-mean baseline is exactly the
+REINFORCE-with-baseline estimator in `inference/adev.cljs`.
+
+### How to run
+```bash
+# fast correctness gates only (no GPU train):
+PHASE1_SKIP_TRAIN=1 bun run --bun nbb test/genmlx/world_train_reward_test.cljs
+# full (loads qwen3.5-0.8b, runs the real GRPO trend — serial, ~minutes):
+bun run --bun nbb test/genmlx/world_train_reward_test.cljs
+```

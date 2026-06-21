@@ -71,11 +71,14 @@ fast test/genmlx/combinator_property_test.cljs core
 fast test/genmlx/combinator_recurse_test2.cljs
 fast test/genmlx/combinator_regen_weight_test.cljs core
 fast test/genmlx/combinator_scan_test2.cljs
+fast test/genmlx/combinator_splice_general_regen_test.cljs core
+fast test/genmlx/combinator_splice_repro_test.cljs core
 fast test/genmlx/combinator_switch_test2.cljs
 fast test/genmlx/combinator_unfold_test2.cljs
 fast test/genmlx/combinators_test.cljs core
 fast test/genmlx/compile_fn_test.cljs
 bench test/genmlx/compiled_benchmark.cljs
+fast test/genmlx/compiled_delta_event_reduce_test.cljs core
 fast test/genmlx/compiled_equiv_property_test.cljs
 fast test/genmlx/compiled_equivalence_test.cljs
 medium test/genmlx/compiled_gen_test.cljs
@@ -265,6 +268,7 @@ medium test/genmlx/mcmc_diagnostics_test.cljs
 fast test/genmlx/mcmc_elim_filter_test.cljs core
 medium test/genmlx/mcmc_property_test.cljs
 slow test/genmlx/mcmc_stationary_test.cljs
+fast test/genmlx/mcmc_warmup_reproducibility_test.cljs core
 slow test/genmlx/membrane_churn_test.cljs
 fast test/genmlx/membrane_coverage_test.cljs
 fast test/genmlx/membrane_guard_test.cljs
@@ -282,6 +286,7 @@ medium test/genmlx/new_dist_test.cljs
 fast test/genmlx/nn_test.cljs
 fast test/genmlx/non_gaussian_contract_test.cljs
 fast test/genmlx/normalization_verification_test.cljs
+medium test/genmlx/nuts_noncentered_funnel_test.cljs
 bench test/genmlx/optimization_benchmark.cljs
 bench test/genmlx/paper_bench_changepoint.cljs
 bench test/genmlx/paper_bench_funnel.cljs
@@ -381,6 +386,7 @@ bench test/genmlx/vectorized_benchmark.cljs
 fast test/genmlx/vectorized_equivalence_test.cljs
 bench test/genmlx/vectorized_grad_benchmark.cljs
 medium test/genmlx/vectorized_grad_test.cljs
+fast test/genmlx/vectorized_mask_merge_test.cljs core
 medium test/genmlx/vectorized_mcmc_fix_test.cljs
 fast test/genmlx/vectorized_property_test.cljs
 fast test/genmlx/vectorized_shape_test.cljs
@@ -399,6 +405,8 @@ fast test/genmlx/well_formedness_test.cljs
 fast test/genmlx/wishart_gradient_test.cljs
 fast test/genmlx/world_memory_test.cljs
 medium test/genmlx/world_proc_test.cljs
+slow test/genmlx/world_train_reward_test.cljs
+slow test/genmlx/world_train_test.cljs
 fast test/genmlx/wp2_generate_test.cljs
 fast test/genmlx/wp3_update_test.cljs
 fast test/genmlx/wp4_update_test.cljs
