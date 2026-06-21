@@ -725,7 +725,7 @@
    (fn [& args]
      (swap! grad-depth inc)
      (try
-       (let [grads (.computeGradients M f (grad-args args))]
+       (let [grads (.computeGradients c f (grad-args args))]
          (aget grads 0))
        (finally (swap! grad-depth dec)))))
   ([f argnums]
@@ -733,7 +733,7 @@
      (swap! grad-depth inc)
      (try
        (let [argnum-vec (->argnum-vec argnums)
-             grads (.computeGradients M f (grad-args args))]
+             grads (.computeGradients c f (grad-args args))]
          (if (= 1 (count argnum-vec))
            (aget grads (first argnum-vec))
            (mapv #(aget grads %) argnum-vec)))
@@ -746,14 +746,14 @@
    (fn [& args]
      (swap! grad-depth inc)
      (try
-       (let [result (.valueAndGrad M f (grad-args args))]
+       (let [result (.valueAndGrad c f (grad-args args))]
          [(aget result 0) (aget result 1)])
        (finally (swap! grad-depth dec)))))
   ([f argnums]
    (fn [& args]
      (swap! grad-depth inc)
      (try
-       (let [result (.valueAndGrad M f (grad-args args))
+       (let [result (.valueAndGrad c f (grad-args args))
              v (aget result 0)
              argnum-vec (->argnum-vec argnums)
              g (if (= 1 (count argnum-vec))

@@ -63,7 +63,7 @@
 
    Known limitation (genmlx-0vwn, accepted): a 'dangling wrap' — a (.-x c) left in
    the source after upstream DELETES export x — is not flagged here directly; the
-   214 count canary + tiling invariant in coverage-accounting-test catch it
+   216 count canary + tiling invariant in coverage-accounting-test catch it
    indirectly (a deletion drops the surface count below the pin)."
   [nm]
   (some? (re-find (re-pattern (str "\\.-?" nm "\\s+c[^A-Za-z0-9_]")) membrane-src)))
@@ -218,9 +218,9 @@
   (testing "the partition tiles the full surface (wrapped ⊎ omitted = exports)"
     (let [wrapped (filter referenced? exported-fns)]
       ;; Coarse canary: catches a surface change even when add+omit happen together.
-      (is (= 214 (count exported-fns))
+      (is (= 216 (count exported-fns))
           (str "@genmlx/core surface size changed: " (count exported-fns)
-               " fns (pinned at 214) — the partition test above pinpoints what moved."))
+               " fns (pinned at 216) — the partition test above pinpoints what moved."))
       (is (= 47 (count omitted))
           (str "intentional-omissions size changed: " (count omitted) " (pinned at 47)."))
       (is (= (count exported-fns) (+ (count wrapped) (count omitted)))
