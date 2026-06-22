@@ -333,10 +333,14 @@
 ;; ===========================================================================
 
 (defn- score-candidates
-  "Render + check every proposed candidate against the observations."
+  "Render + check every proposed candidate against the observations. A candidate may
+   carry a raw `:code` string (a real-LLM proposer emits the program text directly — see
+   genmlx.world.llm-proposer); that raw code is checked VERBATIM so the LLM's DSL slips
+   reach the check node exactly as written. Otherwise the code is rendered from `:spec'`
+   (the structured-proposer path)."
   [candidates observations opts]
   (for [c candidates
-        :let [code (render (:spec' c))
+        :let [code (or (:code c) (render (:spec' c)))
               fb   (check code observations opts)]]
     (assoc c :code code :feedback fb :evidence (:evidence fb))))
 
@@ -395,8 +399,12 @@
                    :method (:method init-fb) :delta nil :accepted? true
                    :n-candidates 0}]]
       (if (>= t max-steps)
-        {:spec (:spec state) :code (render (:spec state)) :feedback (:feedback state)
-         :trajectory traj :stop-reason :max-steps :steps t}
+        ;; report the VERBATIM checked code (the feedback's :code — what actually scored);
+        ;; falls back to render. For the structured proposer these are identical (the spec
+        ;; round-trips); for a real-LLM proposer the verbatim code is authoritative even if
+        ;; its parsed :spec' is an imperfect round-trip (genmlx.world.llm-proposer).
+        {:spec (:spec state) :code (or (:code (:feedback state)) (render (:spec state)))
+         :feedback (:feedback state) :trajectory traj :stop-reason :max-steps :steps t}
         (let [cands (vec (propose (:spec state) (:feedback state)))
               {:keys [best improved?]} (step state cands observations opts)]
           (if-not improved?
@@ -404,8 +412,8 @@
             ;; :stuck = the current state never reached a finite evidence AND no valid
             ;; candidate did either (a structurally-incomplete init the proposer could
             ;; not complete) — NOT a fitted plateau, so report it distinctly.
-            {:spec (:spec state) :code (render (:spec state)) :feedback (:feedback state)
-             :trajectory traj :steps t
+            {:spec (:spec state) :code (or (:code (:feedback state)) (render (:spec state)))
+             :feedback (:feedback state) :trajectory traj :steps t
              :stop-reason (if (scored? (:feedback state)) :plateau :stuck)}
             (let [prev-ev (:evidence (:feedback state))
                   delta   (when (and prev-ev (:evidence best)) (- (:evidence best) prev-ev))]
