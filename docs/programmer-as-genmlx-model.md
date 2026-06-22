@@ -323,3 +323,61 @@ The kernel ships **five** form-level edit ops (`add-latent`/`add-obs`/`set-args`
 repeated sites into a `Map` combinator needs the synthesis SCI sandbox to expose the
 combinators — so the kernel ships `homogeneous-obs?`, the pure predicate that *detects*
 the fold opportunity, rather than a rewrite that would render an un-evaluable form.
+
+## 11. Phase 2 — search over edits: SMC/beam beats greedy ✅
+
+Phase 2 (`src/genmlx/world/search.cljs`, native-free, 19/19 `test/genmlx/search_test.cljs`)
+turns the greedy kernel into a **particle search over construction steps** — the
+best-of-K wrapper moved to the *step* level, where the oracle signal is dense (exp A).
+Instead of one greedy state that commits to the single best edit, it keeps a
+**population** of partial-model particles; each step expands every non-done particle by
+its proposed edits, dedups by rendered program, **adaptively allocates** the beam width
+(wider when the top candidates score within a margin — an ambiguous structural step),
+and selects the next population by **`:beam`** (deterministic top-B) or **`:smc`**
+(resample ∝ softmax of intermediate evidence, exact-scored particles weighted above
+noisy IS ones). It stops when the *whole population* plateaus. All on the Phase-1
+spec / edit ops / four-level `check` / exact oracle; the proposer is still injected.
+
+**`backtrack-refine` — the regenerate-style move.** On plateau, the best particle's
+trajectory is re-opened decision-by-decision: at each step take a *road not taken* (an
+alternative proposed edit) from the spec *before* it and greedy-continue — keeping the
+best result. This lets even a width-1 (greedy) search escape a structural lock-in. It is
+the design's "backtracking = reconsider an earlier decision given later feedback" realized
+as **deterministic backtracking (best-first re-search over the trajectory)** — *not* MCMC
+(no stochastic accept/reject), and *not* the literal materialized programmer-GF +
+`p/regenerate` stochastic move (the §2 fixpoint, deferred). Honest about the layer.
+
+**Result — `scripts/synth_search_probe.cljs`, greedy vs beam through the *same* code
+path (greedy = beam-width 1), same proposers, same budget:**
+
+```
+model     greedy   beam     winner   structure-reached
+linreg    −10.14   −6.90    BEAM     yes      (+3.24 nats — the headline)
+kalman    −5.05    −4.92    beam     yes      (+0.13)
+hier      −12.36   −12.36   tie      yes      (greedy already optimal)
+gmm       −17.62   −17.62   tie      NO       (IS-scoring bottleneck, see below)
+```
+
+**Solves 3/4; beam ≥ greedy on every model; strictly wins on 2.** The headline is
+**linreg**: greedy commits to the no-intercept branch and locks in (−10.14); the beam
+keeps the *full-intercept* branch alive too, and the exact oracle prefers it after noise
+tuning (−6.90) — a clean exact +3-nat win that *directly* fixes the Phase-1 greedy
+limitation (and confirms the full-intercept model is the global optimum, contra the
+Phase-1 lock-in). The width-1 + `backtrack-refine` path reaches the same −6.90,
+recovering the branch a narrow search first missed.
+
+**Honest: GMM is NOT solved — by *either* search, and that is a SCORING bottleneck, not
+a search one.** The 2-component mixture's marginal is estimated by importance sampling
+from the *prior* over 6 discrete assignments (`z0..z5`), which rarely hits the right
+assignment, so `log-mean-exp` is biased **low** and never clears the single-cluster
+baseline. The search *correctly declines* an edit whose estimated evidence is worse — it
+faithfully reflects an unreliable oracle. (The IS estimate is also un-seeded, so GMM is
+noisy run-to-run; the exact models are bit-reproducible.) Unblocking it needs a better
+discrete-latent marginal — **enumerate / Rao-Blackwellize the assignments** (GenMLX has
+both) — which is orthogonal to the search. Tracked as **`genmlx-akvp`**.
+
+**Take:** the search beats greedy wherever the oracle is sound, and where it doesn't the
+bottleneck is cleanly localized to the oracle, not the search. Phase 3 (`genmlx-oexl`)
+swaps the structured proposer for a *learned* one (REPL-trace SFT + GRPO); Phase 4
+(`genmlx-gjih`) is the resource-rational metareasoner over the control sites (beam
+width, particle budget, when to stop — the adaptive allocation here is its seed).
