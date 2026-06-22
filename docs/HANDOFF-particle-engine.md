@@ -209,6 +209,16 @@ A reproducible head-to-head on probabilistic-program synthesis:
 - State the honest scope: this wins on program/model synthesis (GenMLX's domain); general cljs is
   the teacher's.
 
+**ALSO probe ADVANCED models (required — user ask).** Beyond the simple single-latent conjugate
+programs, hand-craft 2–4 harder, oracle-scoreable GenMLX models and run the SAME best-of-K-vs-teacher
+comparison: e.g. linear regression (coupled slope+intercept+noise — L3 joint linear-Gaussian
+eliminator scores it exactly), a hierarchical/group-means model, a small mixture (GMM), and/or a
+Kalman/HMM chain (L3.5). The 0.8B was SFT'd ONLY on simple single-latent programs, so expect
+whole-program best-of-K to DEGRADE or fail on these — that is the POINT: measure where the
+whole-program approach breaks as model complexity rises. Report the hit-rate curve vs complexity.
+This is the empirical signal for whether advanced models need a stepwise/FIM strategy (§12), and
+whether the teacher (or a FIM coder) is needed there. Be honest about the breakdown point.
+
 ---
 
 ## 9. REPRODUCTION (if an artifact is missing/stale)
@@ -260,5 +270,42 @@ After the clean Route-A benchmark on PROGRAM tasks:
   plainly, and recommend planning around the qwen-3.6 teacher for this use case. Do not spin a loss
   as a win. Capture the numbers either way in `docs/cljs-coder-loop-results.md` and on genmlx-qsoa.
 
-Suggested order: Route A primitive → clean benchmark → go/no-go call → demo script → (if green and
-time remains) Route B forward-batching with the golden-oracle gate → update results doc + beans.
+Suggested order: Route A primitive → clean benchmark → go/no-go call → demo script (incl. the
+ADVANCED-model probe in §8) → (if green and time remains) Route B forward-batching with the
+golden-oracle gate → update results doc + beans → write up §12 findings.
+
+---
+
+## 12. ADVANCED MODELS & the FIM / stepwise question (research direction — do NOT need to fully build this run)
+
+User's framing (2026-06-22): simple programs are demo'd whole-program; **advanced GenMLX models
+(hierarchical, coupled regression, mixtures, Kalman/HMM, combinator-structured) likely need a
+STEPWISE construction strategy, and FIM (fill-in-the-middle) may be a good mechanism — possibly
+requiring a FIM-capable qwen *coder* model.** This run's job is to PROBE and DOCUMENT, not to build
+the full stepwise engine.
+
+Why stepwise (the real lever): whole-program best-of-K hit-rate COLLAPSES as models grow (search
+space explodes; a small model rarely emits a long correct program). Stepwise construction with
+PER-STEP oracle scoring rescues it — model evidence on a PARTIAL model is still a real number, so
+it gives intermediate reward to prune the search (SMC over construction steps, not whole programs).
+GenMLX uniquely supplies that intermediate reward + the composition machinery (GFI update/regenerate/
+edit/CompositeEdit; combinators Map/Unfold/Scan for repeated structure).
+
+FIM's role + the resolved tension: FIM is a natural per-step mechanism — fix the interface
+(prefix `(fn [trace] (let [` + suffix `] {observations}))`), fill the body (middle) — and it
+composes with particles+oracle (K fills per hole → score → keep best). We DROPPED FIM earlier
+(prior cljs fine-tunes failed), BUT that was FIM-for-WHOLE-generation on qwen2 (non-owned-forward).
+KEY: the inference particle+oracle loop does NOT need owned-forward/differentiability (that was only
+for GRPO weight updates) — so a FIM-capable qwen CODER can be used as a PURE PROPOSAL, scored by the
+GenMLX oracle, sidestepping exactly what broke before. Trade-off: FIM-coder capability vs the cheap
+local 0.8B. (Caveat: qwen2.5-coder is FIM-capable but qwen2 arch; check whether a qwen3-family /
+Qwen3-Coder model offers FIM tokens. FIM tokens: `<|fim_prefix|> <|fim_suffix|> <|fim_middle|>`.)
+
+Nuance: stepwise is the STRATEGY; FIM is ONE mechanism. Alternatives to validate empirically:
+(a) instruct-driven stepwise ("here is the partial model, add the next latent" — no FIM tokens),
+(b) grammar/SMC-guided structured generation fully inside the GFI (reader-as-grammar / instaparse +
+incremental oracle scoring — no FIM model at all, composes natively). Pick by experiment.
+
+Deliverable for THIS run re advanced models: the §8 advanced-model probe (the hit-rate-vs-complexity
+curve) + a written note in `docs/cljs-coder-loop-results.md` on where whole-program breaks and which
+stepwise mechanism looks most promising. Captured as a DRAFT bean for the full stepwise/FIM engine.
