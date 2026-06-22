@@ -76,7 +76,10 @@
                      (if expand-k (take expand-k cs) cs))
           cur-ev   (or (:evidence p) ##-Inf)
           children (for [c cands
-                         :let [code (syn/render (:spec' c))
+                         ;; a candidate may carry raw `:code` (a real-LLM proposer emits
+                         ;; the program text directly — genmlx.world.llm-proposer); check
+                         ;; it VERBATIM so DSL slips reach the check node. Else render :spec'.
+                         :let [code (or (:code c) (syn/render (:spec' c)))
                                fb   (syn/check code observations opts)]
                          :when (syn/scored? fb)]
                      {:spec (:spec' c) :feedback fb :evidence (:evidence fb) :done? false

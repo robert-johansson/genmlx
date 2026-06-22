@@ -302,7 +302,8 @@ verifier turns a 0/16 whole-program problem into a sequence of locally-checkable
   *isolate* the loop-vs-cliff claim from generation noise. The driver is
   proposer-agnostic (an injected `(fn [spec feedback] → candidates)`), so wiring a real
   LLM proposer is a drop-in; **Phase 3 learns it**. So experiment B proves the loop +
-  oracle, not (yet) that a cheap LLM is the proposer.
+  oracle, not (yet) that a cheap LLM is the proposer. **§12 now closes that gap — it puts a
+  real LLM (both tiers) in this exact loop.**
 - The monotone evidence climb is **true by construction** (the driver only appends an
   improving step), so it is *not* itself evidence of success — the discriminating facts
   are that the **structural** edit was accepted and the loop self-terminated.
@@ -381,3 +382,208 @@ bottleneck is cleanly localized to the oracle, not the search. Phase 3 (`genmlx-
 swaps the structured proposer for a *learned* one (REPL-trace SFT + GRPO); Phase 4
 (`genmlx-gjih`) is the resource-rational metareasoner over the control sites (beam
 width, particle budget, when to stop — the adaptive allocation here is its seed).
+
+## 12. A REAL LLM in the loop — the load-bearing thesis test (`genmlx-0yv7`)
+
+Sections 10–11 proved the *scaffold* with a hand-coded structured move-vocabulary. They
+did **not** prove the *thesis*, because they never put a real LLM in the loop —
+feedback-conditioning was plumbed but never exercised against a real generator. This
+section closes that gap: a real policy LLM is the proposer, conditioned each step on the
+verifier's feedback, run via `scripts/synth_llm_probe.cljs` against the three
+exact-scoreable advanced models (`linreg` / `kalman` / `hier`) — plus a deliberately
+*harder*, multi-piece model (`vslope`, below) — and the same exact oracle.
+
+**Architecture (native-free, out-of-process).** The synthesis loop never loads a model.
+A resident `scripts/llm_server.py` mlx-lm worker holds the policy LLM in memory;
+`genmlx.world.llm-proposer/call-server` reaches it over HTTP with a synchronous `curl`
+(the driver is synchronous; an LLM call is a genuine I/O boundary). The proposer is a
+drop-in for the already-injected `(fn [spec feedback] → candidates)` slot — so the Phase-1
+driver and the Phase-2 search run **unchanged**; only the proposer differs from the
+structured control. The check node sees the LLM's *literal* code (`synth`/`search` prefer
+a candidate's raw `:code`), so a real DSL slip reaches the verifier exactly as written.
+
+**The mechanism that putting a real LLM in the loop forced us to build: REPL revision.**
+The decisive empirical finding is that a strong instruct model (Qwen3.6-35B-A3B) produces
+the *correct model structure* (e.g. `slope·x + intercept` for `linreg`) but with a
+*one-eval-away DSL slip* — most often a noise **scale given a `(dist/gaussian ..)` prior**
+(which can go negative → non-finite evidence), or a **hallucinated distribution**
+(`dist/positiveskew`). With *no* feedback (one-shot best-of-K) every candidate carried the
+slip, so **0/K scored** — the cliff, reproduced with a real model under a good DSL prompt.
+And a naïve loop that only conditions on the *accepted* model's status **stalls**: when a
+slip blocks *every* candidate, the model is never told *why*. So the proposer
+(`make-proposer`) is a **mini-REPL**: it proposes K candidates, **checks its own output
+against the verifier**, and on a slip **re-prompts the model with that specific error**
+(the most-progressed failure's verdict — a non-positive scale, a missing distribution, an
+uncovered address) up to `:revise` times. This is the north-star inner loop — *propose →
+eval → read the error → revise* — and it is exactly what a one-shot interface denies the
+model. The driver's outer loop still owns **fit** (accept only when exact evidence climbs);
+the proposer's inner loop owns **self-correction**. The structured proposer never slipped,
+so this was invisible until a real LLM exposed it — which is precisely why the step-up
+mattered.
+
+**Exactly-scoreable models, not just valid ones.** The exact oracle is the north star's
+edge, so the DSL prompt also guides the model to write models the oracle can score
+*exactly*: a Gaussian observation with a **fixed positive noise** and its **mean written
+inline** in the `(dist/gaussian ..)` is conjugate → `:exact`; a *latent* σ or a
+*let-factored* mean falls back to noisy importance sampling / HMC and looks worse than it
+is. This is legitimate domain guidance (it aligns the generator with the exact eliminator;
+the structured probe used fixed σ for the same reason) and is given identically to both
+arms. Making the eliminator itself handle latent-σ / let-factored means is the orthogonal
+oracle-reach work (`genmlx-w47t` / `genmlx-aw46`).
+
+### What we ran
+
+Three arms per task, **same model, same DSL prompt, same exact oracle** — the only
+difference is the feedback loop: (1) **one-shot best-of-K** (K full programs, no feedback —
+the control); (2) **greedy loop** (`synth/synthesize` + the LLM proposer); (3) **beam loop**
+(`search/search`, population). Two tiers — the resource-rational fast/slow pair the Phase-4
+metareasoner allocates between: **fast** = `qwen3.5-0.8b-cljs-sft600` (1.4 GB), **slow** =
+`Qwen3.6-35B-A3B-4bit` (19 GB, 3 B-active MoE). "Solved" = reached evidence above a bar set
+≈ halfway from the structureless crude baseline to the data-warranted optimum (so passing
+it requires the *structure*, which the crude model cannot reach). Artifacts: the **fast
+tier** is the complete JSON `~/genmlx-loop-artifacts/particle/synth_llm_probe_fast.json`;
+the **slow-tier** numbers below are read from the run logs (`/tmp/probe_linreg3.log`,
+`/tmp/probe_kh.log`) — those runs were stopped after their decisive arms to free the 19 GB
+model for the fast tier, before the end-of-run artifact write, so there is no slow-tier
+JSON (the only on-disk slow artifact is a *stale* pre-fix run that should be ignored).
+
+### Results — the slow tier (Qwen3.6-35B-A3B, ~10 s/sample)
+
+```
+model    bar     one-shot best-of-K       greedy loop (+revision)   verdict
+linreg   −12.2   −7.51  (6/8 valid)  ✓    −8.31  (1 step)      ✓    both SOLVE  — a tie on the bar
+kalman   −6.0    −6.37  (2/6 valid)  ✗    −5.79  (1 step)      ✓    LOOP SOLVES, one-shot does not
+```
+(K=8 for linreg, K=6 for kalman — the valid-count denominators show it.)
+
+Two clean, opposite outcomes that together tell the honest story. On **linreg** (one
+structural idea — a line) the strong model + the DSL prompt produces 6/8 valid candidates
+and one-shot best-of-8 nails it at −7.51; the loop **ties on the solve-bar** at −8.31
+(though one-shot is ~0.8 nats higher in raw evidence — the "tie" is on solving, not on the
+number). On **kalman** (the harder temporal structure — an AR(1) latent chain) the slip
+rate is higher (only 2/6 one-shot candidates valid) and **one-shot best-of-6 falls short of
+the structure bar (−6.37)**, while the **loop, conditioned on the verifier's feedback,
+climbs past it (−5.79)** in a single accepted step. So where one-shot is *good enough* the loop ties; where
+one-shot *isn't* — exactly the regime the north star targets — the loop wins. (The 0/16
+cliff itself was reproduced earlier in this session with the *weaker* whole-program prompt:
+0/8 valid one-shot; the DSL prompt + the loop is what dissolves it.) The kalman margin is
+**modest** and is really a noise-scale *refinement* + *reliability* win (one-shot's
+best-of-K lottery left the structural model's σ un-tuned at −6.37; the loop tuned it to
+−5.79) rather than a pure structure win — and a fast-tier sample even found a *simpler*
+model at −3.28, the exact oracle correctly preferring the **simplest adequate** model
+(experiment A's Occam) over the 35B's more elaborate AR coupling.
+
+### Results — the fast tier (`qwen3.5-0.8b-cljs-sft600`, ~4 s/sample)
+
+(The 0.8B is only ~2.4× cheaper per sample than the 35B here, not ~10×: its frequent
+**degenerate runs hit the token cap** instead of stopping at EOS, eroding the cheap model's
+speed advantage — another reason the cheap tier needs Phase-3 specialization.)
+
+```
+model    bar     one-shot best-of-8        greedy loop (2 seeds)     beam loop (2 seeds)
+linreg   −12.2   −110.2 (1/8 valid)   ✗    −17.92, −17.92      ✗     −17.92, −17.92      ✗
+kalman   −6.0    −3.28  (2/8 valid)   ✓    −7.27,  −10.15      ✗     −7.27,  −10.15      ✗
+hier     −18.0   −138.6 (1/8 valid)   ✗    −23.77, −23.77      ✗     −23.77, −23.77      ✗
+```
+
+The cheap student **fails the advanced models in *both* arms** — one-shot best-of-8 mostly
+emits malformed or structureless candidates (1/8 valid on linreg/hier, scoring junk), and
+the loop **stalls at the crude baseline** (−17.92 on linreg, greedy *and* beam, both seeds).
+Worse, on kalman the **loop is *below* one-shot** (−7.27/−10.15 vs −3.28): a single lucky
+one-shot sample found a good simple model, but the weak model's *incremental* edits in the
+loop are poor, and a poor proposer makes the population (beam) no better than greedy
+(identical −7.27/−10.15) — a population only helps if at least one of its members is good.
+Revision recovers its *format* slips (coverage, syntax) but cannot supply the *structure
+inference* it lacks: SFT'd on whole-program cljs (not REPL traces), it does not propose the
+slope / coupling / group-split the crude model is missing. This is the honest two-tier
+result — the cheap proposer is **not yet capable** of driving the loop on these models — and
+it is exactly what **Phase 3 (`genmlx-oexl`) exists to fix**: specialize the 0.8B on the
+REPL-trace corpus (the very trajectories the slow-tier runs here produce), so it learns the
+*propose-eval-revise policy*, not whole programs. Until then the metareasoner escalates to
+the big model for structure (the fast/slow `:which` decision).
+
+### A harder benchmark — does the loop's edge grow with structural complexity?
+
+The three models above are *single-idea* (one line / one chain / one group-split), and a
+strong model + the DSL prompt one-shots the easy ones — so they under-test the loop. The
+`vslope` model is deliberately *multi-piece*: **3 groups, each a distinct line in `x`** —
+the data-warranted model needs **6 latents** (a slope *and* an intercept per group), **3
+linear means**, and a tuned noise, all in one program (exactly scoreable, linear-Gaussian,
+calibrated crude ≈ −30 / gold ≈ −17, bar −23.5). The hypothesis: with more pieces, each a
+chance to slip, one-shot best-of-K's joint success rate drops while the loop's revision +
+per-step selection recover the slips — so the loop's margin over one-shot should *widen*.
+
+**Result — and the diagnosis it forced (35B):**
+
+```
+vslope    bar     one-shot best-of-8       loop (greedy / beam)      verdict
+−23.5             −25.25  (4/8 valid)  ✗    −14.61  (both solve) ✓    LOOP WINS by ~10.6 nats
+```
+(greedy reaches −14.61 in 2 steps, beam in 4 — both converge to the σ-grid optimum.)
+
+The first cut **inverted the hypothesis and was the more useful for it.** One-shot best-of-8
+fell short (−25.25); the greedy loop *also* fell short (−26.08) and even slightly *below*
+one-shot — it had **built the full 6-latent structure** (−26.08 is, to the decimal, the
+calibrated full model at σ=1) but then **plateaued without tuning the noise scale**. The
+LLM proposes structure and neglects the nuisance σ — the exact move the *structured*
+proposer (§§10–11) supplied via a σ-grid. Adding that one move back — **union the LLM
+proposer (hard structural moves) with a cheap deterministic shared-σ grid (the
+hyperparameter), the oracle selecting per step** — flips it cleanly: the loop builds the
+structure (step 1, −26) then the oracle tunes σ to the data's true scale (step 2, **−14.61**,
+past even the σ=0.2 gold), while one-shot, which cannot refine, stays at −25.25. **A ~10.6-nat
+win on the model one-shot can't crack** — and a sharp statement of *where* the loop's value
+lives: the LLM for structure, the exact oracle for refinement, and one-shot has neither
+loop. This is the resource-rational split made concrete (cheap grid for the scalar
+hyperparameter, expensive model only for structure).
+
+### Honest verdict — does a real LLM in the loop beat one-shot best-of-K?
+
+**The thesis scaffold holds with a real generator, and the answer is resource-rational, not
+unconditional.**
+
+1. **Validated.** The loop — a *real* LLM proposer + the exact oracle + REPL revision —
+   builds the advanced models that whole-program best-of-16 got 0/16 on (linreg −8.31,
+   kalman −5.79, both above the structure bar). The feedback loop is no longer a scaffold
+   demonstrated only with a hand-coded vocabulary; it works end-to-end with a real model.
+   (Honest attribution: the 0/16 cliff used a *weaker* whole-program prompt, so it is the
+   **DSL prompt + the loop together** that dissolve it — not the loop alone; with the DSL
+   prompt, one-shot already clears the easier models, see below.)
+2. **The load-bearing addition was forced by the real LLM: revision.** A strong model emits
+   correct structure with one-eval-away slips; with no feedback every candidate carries one
+   (0/K valid), and a fit-only loop stalls because it never sees *why*. Re-prompting with the
+   verifier's specific error is what closes the loop. This was invisible with the structured
+   proposer — discovering it is the concrete payoff of *actually putting an LLM in the loop*.
+3. **Beats one-shot, and the margin grows with structural complexity.** On *easy* structure
+   with a *strong* model and a good DSL prompt, one-shot best-of-K already succeeds and the
+   loop **ties** it (linreg). On *harder* structure one-shot's slip rate rises and the loop
+   **wins**: kalman −5.79 vs −6.37, and — decisively — the multi-piece **`vslope`** model
+   (6 latents + 3 lines + a tuned scale) where one-shot tops out at −25.25 (can't assemble
+   *and* tune in one program) while the loop reaches **−14.61, a ~10.6-nat win**. The loop's
+   value is the *composition* one-shot lacks: **LLM for hard structure + exact oracle for
+   refinement**, applied step by step. On the *weak* tier the loop is necessary but not
+   sufficient — the 0.8B needs Phase-3 specialization. So the loop's value is **conditional
+   on the regime** (the resource-rational claim itself): spend one shot when it suffices,
+   spend the loop — and escalate the model — when it does not.
+4. **Honest limitations.** (a) The loop must carry *both* kinds of move: the harder `vslope`
+   model exposed that an LLM proposes structure but neglects the nuisance noise scale, so the
+   loop needs a cheap σ-refinement move (a grid) alongside the LLM's structural edits — with
+   only the LLM it built the structure but stalled at σ=1 (−26); the win required adding the
+   grid back. (b) The DSL
+   prompt is tuned to produce *exactly-scoreable* models (fixed σ, inline means), aligning
+   the generator with the exact eliminator; broadening the eliminator to score latent-σ /
+   let-factored models (`genmlx-w47t` / `genmlx-aw46`) would let the model write more natural
+   code and is the binding oracle-reach constraint. (c) Phase-2 beam-vs-greedy in the
+   *stochastic* regime is only weakly exercised here: the strong tier solves greedily in one
+   step (no room for the population to help) and the weak tier fails both — so the clean
+   beam-beats-greedy evidence remains the structured probe's (§11, linreg +3.24 nats). The
+   structured-proposer results (§§10–11) stand as the deterministic **control**.
+
+**Bottom line:** putting a real LLM in the loop confirms the north star's core bet — the
+closed feedback loop with an exact verifier turns one-shot-fragile model-building into
+locally-checkable, self-correcting construction — and the win is **largest exactly where it
+should be**: on the hardest, multi-piece model the loop beats one-shot by ~10.6 nats
+(−14.6 vs −25.3), because it *composes* what one-shot cannot — LLM-proposed structure with
+oracle-driven refinement, step by step. It also sharpens honestly: the win is
+regime-dependent (one shot suffices on easy models), the loop must carry both structural and
+hyperparameter moves, the cheap proposer needs Phase 3, and the exact oracle's reach is the
+next lever. This is the validated ground Phase 3 (`genmlx-oexl`) now builds on.
