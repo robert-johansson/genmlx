@@ -293,6 +293,42 @@
       (is (= [:z0 :z1] (:latent-addrs (first chains))) "latent-only chain: latents [z0 z1]")
       (is (= [:z2] (:obs-addrs (first chains))) "latent-only chain: z2 is obs"))))
 
+(deftest detect-kalman-chains-branching-tree
+  ;; Regression for genmlx-iraj: a CENTERED hierarchy is a TREE (grand -> {ga,gb,gc}),
+  ;; not a linear chain. detect-kalman-chains must REFUSE it (a branch node has >1 latent
+  ;; successor) rather than silently follow the first successor — the old code returned a
+  ;; bogus 1-chain whose Kalman path produced a non-deterministic, grossly-wrong marginal
+  ;; mislabeled :exact. Refusing lets method-selection fall through to lg-block (which
+  ;; declines latent-in-latent priors) and then to honest IS.
+  (testing "centered hierarchy (a tree) is NOT detected as a Kalman chain"
+    (let [s (schema/extract-schema '([x]
+              (let [grand (trace :grand (dist/gaussian 0 5))
+                    ga (trace :ga (dist/gaussian grand 2))
+                    gb (trace :gb (dist/gaussian grand 2))
+                    gc (trace :gc (dist/gaussian grand 2))]
+                (trace :a0 (dist/gaussian ga 1))
+                (trace :b0 (dist/gaussian gb 1))
+                (trace :c0 (dist/gaussian gc 1))
+                grand)))
+          pairs (conj/detect-conjugate-pairs s)
+          chains (aff/detect-kalman-chains pairs)]
+      (is (= 0 (count chains))
+          "branching tree: refused (no chain), not a bogus 1-chain")))
+  (testing "a genuine linear chain branching point only at OBSERVATIONS is still a chain"
+    ;; sanity: a normal Kalman node has 1 latent successor + many obs successors; that is
+    ;; NOT a branch and must still be detected.
+    (let [s (schema/extract-schema '([x]
+              (let [z0 (trace :z0 (dist/gaussian 0 1))
+                    z1 (trace :z1 (dist/gaussian (mx/multiply 0.9 z0) 0.5))]
+                (trace :y0a (dist/gaussian z0 0.3))
+                (trace :y0b (dist/gaussian z0 0.3))
+                (trace :y1 (dist/gaussian z1 0.3))
+                z1)))
+          pairs (conj/detect-conjugate-pairs s)
+          chains (aff/detect-kalman-chains pairs)]
+      (is (= 1 (count chains)) "multi-obs-per-latent linear chain: still 1 chain")
+      (is (= [:z0 :z1] (:latent-addrs (first chains))) "linear chain: latents [z0 z1]"))))
+
 (deftest detect-kalman-chains-mixed
   (testing "Mixed: chain + independent conjugate pair"
     (let [s (schema/extract-schema '([x]
