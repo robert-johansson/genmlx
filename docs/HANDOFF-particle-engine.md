@@ -276,7 +276,14 @@ golden-oracle gate → update results doc + beans → write up §12 findings.
 
 ---
 
-## 12. ADVANCED MODELS & the FIM / stepwise question (research direction — do NOT need to fully build this run)
+## 12. ADVANCED MODELS — STEPWISE construction (FIM is one mechanism to explore later)
+
+**User-confirmed stance (2026-06-22): STEPWISE construction is the long-term strategy/goal for
+advanced GenMLX model synthesis. FIM is a possible mechanism WITHIN stepwise — worth exploring
+later — but NOT necessarily the path. Do not over-index on FIM; the primary frame is stepwise +
+per-step oracle scoring, with the mechanism chosen empirically.**
+
+(Research direction — this run PROBES and DOCUMENTS; it does NOT need to fully build the engine.)
 
 User's framing (2026-06-22): simple programs are demo'd whole-program; **advanced GenMLX models
 (hierarchical, coupled regression, mixtures, Kalman/HMM, combinator-structured) likely need a
