@@ -106,7 +106,10 @@
                                        the teacher only generated over train tasks)"
   ([rows] (partition-corpus rows eval-task-ids))
   ([rows eval-ids]
-   (let [{train true dropped false} (group-by #(train-task? (:task-id %)) rows)]
+   ;; group on `eval-ids` directly (NOT the hardcoded train-task?), so a custom
+   ;; held-out set — e.g. the scaled genmlx.world.distill-gen eval ids — is honored.
+   (let [train? (fn [r] (not (contains? eval-ids (:task-id r))))
+         {train true dropped false} (group-by train? rows)]
      {:train-rows            (vec train)
       :dropped-eval          (vec dropped)
       :train-task-ids        (into (sorted-set) (map :task-id) train)
