@@ -360,37 +360,53 @@
           ;; Addresses that appear as priors
           prior-set (set (map :prior-addr nn-pairs))
 
-          ;; Follow chains from each root
+          ;; Follow chains from each root. Returns {:steps [...] :valid? bool}; :valid?
+          ;; is false for a structure that is NOT a linear chain (a branching tree or a
+          ;; cycle), so the comprehension below drops it.
           follow-chain
           (fn [root]
             (loop [current root
-                   steps []]
-              (let [successors (get by-prior current [])
-                    ;; Chain successor: obs that is itself a prior of another pair
-                    chain-next (first (filter #(contains? prior-set (:obs-addr %)) successors))
-                    ;; Observations: non-chain successors
-                    obs (filterv #(not= (:obs-addr %) (:obs-addr chain-next)) successors)
-                    step {:latent current
-                          :observations (mapv :obs-addr obs)
-                          :obs-dep-types (mapv :dependency-type obs)
-                          :transition (when chain-next (:dependency-type chain-next))
-                          :noise-std (when chain-next
-                                       (let [args (:dist-args (:obs-site chain-next))]
-                                         (when (>= (count args) 2) (second args))))
-                          :next-latent (when chain-next (:obs-addr chain-next))}
-                    steps' (conj steps step)]
-                (if chain-next
-                  (recur (:obs-addr chain-next) steps')
-                  steps'))))
+                   steps   []
+                   seen    #{}]
+              (if (contains? seen current)
+                ;; a cycle is not a valid linear chain
+                {:steps steps :valid? false}
+                (let [successors (get by-prior current [])
+                      ;; Chain successors: successors that are THEMSELVES a prior of
+                      ;; another pair (i.e. intermediate latent nodes).
+                      chain-cands (filter #(contains? prior-set (:obs-addr %)) successors)
+                      chain-next  (first chain-cands)
+                      ;; Observations: non-chain successors
+                      obs (filterv #(not= (:obs-addr %) (:obs-addr chain-next)) successors)
+                      step {:latent current
+                            :observations (mapv :obs-addr obs)
+                            :obs-dep-types (mapv :dependency-type obs)
+                            :transition (when chain-next (:dependency-type chain-next))
+                            :noise-std (when chain-next
+                                         (let [args (:dist-args (:obs-site chain-next))]
+                                           (when (>= (count args) 2) (second args))))
+                            :next-latent (when chain-next (:obs-addr chain-next))}
+                      steps' (conj steps step)]
+                  (cond
+                    ;; BRANCHING: a node with >1 latent (chain) successor is a TREE, not a
+                    ;; linear chain (e.g. a centered hierarchy grand -> {g_a,g_b,g_c}).
+                    ;; Refuse it rather than silently following only the first successor —
+                    ;; doing so mishandles the other branches' observations and produces a
+                    ;; wrong, non-deterministic marginal mislabeled :kalman (bug genmlx-iraj).
+                    ;; Refusing lets method-selection fall through to lg-block (which
+                    ;; correctly declines latent-in-latent priors) and then to IS.
+                    (> (count chain-cands) 1) {:steps steps' :valid? false}
+                    chain-next (recur (:obs-addr chain-next) steps' (conj seen current))
+                    :else {:steps steps' :valid? true})))))
 
           ;; Find chain roots: priors that are not obs of any NN pair
           obs-set (set (map :obs-addr nn-pairs))
           chain-roots (set/difference prior-set obs-set)
 
           chains (for [root chain-roots
-                       :let [steps (follow-chain root)]
-                       ;; Must have at least 2 latent nodes to be a chain
-                       :when (>= (count steps) 2)]
+                       :let [{:keys [steps valid?]} (follow-chain root)]
+                       ;; A valid linear chain with at least 2 latent nodes.
+                       :when (and valid? (>= (count steps) 2))]
                    {:steps steps
                     :latent-addrs (mapv :latent steps)
                     :obs-addrs (into [] (mapcat :observations) steps)})]
