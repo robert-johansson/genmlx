@@ -27,6 +27,20 @@
 ;; (genmlx-s8e8, the thesis x' parameter)
 (defrecord ArgsUpdateEdit [new-args argdiffs constraints])
 
+;; Sequential composition of edits applied left-to-right. The composite's
+;; backward-request is the constituent backward-requests in REVERSE order, so
+;; edit(gf, (:trace (edit gf t composite)), backward) reconstructs t. This is
+;; the substrate for combinatorial entailment (genmlx-uobz): a relation never
+;; applied as a whole — e.g. Opposite∘More — is DERIVED by chaining moves whose
+;; individual inverses are known, and the entailed reverse path
+;; (compose(bwd e2, bwd e1)) does real, reversible work rather than two fresh
+;; forward updates. Losslessness is inherited from the constituents: it holds
+;; exactly when each edit's backward-request is value-lossless (ConstraintEdit
+;; and structure-preserving ArgsUpdateEdit are — see the :edit-backward-request-
+;; roundtrip and :update-args-roundtrip laws in gfi.cljs; SelectionEdit is NOT,
+;; since regenerate resamples and discards the old value).
+(defrecord CompositeEdit [edits])
+
 ;; Constructors
 (defn constraint-edit
   "Create a ConstraintEdit (equivalent to update)."
@@ -52,6 +66,15 @@
    (->ProposalEdit forward-gf nil backward-gf nil))
   ([forward-gf forward-args backward-gf backward-args]
    (->ProposalEdit forward-gf forward-args backward-gf backward-args)))
+
+(defn composite-edit
+  "Compose EditRequests into one reversible edit applied left-to-right.
+   (composite-edit e1 e2 ...) — applying it threads the trace through each edit
+   in turn, sums the weights, and produces a backward-request that reverses the
+   whole chain (the constituent backwards in reverse order). Reconstructs the
+   original trace iff every constituent is value-lossless."
+  [& edits]
+  (->CompositeEdit (vec edits)))
 
 ;; ---------------------------------------------------------------------------
 ;; IEdit protocol
@@ -187,6 +210,29 @@
      :discard (discard-of update-result)
      :backward-request (->ProposalEdit backward-gf backward-args
                                         forward-gf forward-args)}))
+
+(defmethod edit-dispatch CompositeEdit
+  [gf trace {:keys [edits]}]
+  ;; Fold the edits left-to-right, threading the trace, summing weights, and
+  ;; collecting each backward-request. `cons` prepends, so processing [e1 e2 …]
+  ;; leaves `backwards` = (bwd-eN … bwd-e1) — exactly the order in which they
+  ;; must be applied to walk back to the original trace. Discards merge
+  ;; earliest-wins (the oldest value at a re-touched address is the true
+  ;; original), via merge-cm's b-overrides-a with the accumulator as b.
+  (let [{:keys [trace weight backwards discard]}
+        (reduce
+         (fn [acc req]
+           (let [r (edit-dispatch gf (:trace acc) req)]
+             {:trace (:trace r)
+              :weight (w-add (:weight acc) (:weight r))
+              :backwards (cons (:backward-request r) (:backwards acc))
+              :discard (cm/merge-cm (discard-of r) (:discard acc))}))
+         {:trace trace :weight 0 :backwards () :discard cm/EMPTY}
+         edits)]
+    {:trace trace
+     :weight weight
+     :discard discard
+     :backward-request (->CompositeEdit (vec backwards))}))
 
 (defmethod edit-dispatch :default
   [_gf _trace edit-request]
