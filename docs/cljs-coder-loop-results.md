@@ -105,5 +105,15 @@ The held-out lift of the GRPO'd model is measured by re-running the SAME mlx-lm 
 (mlx-lm respects EOS, so the filler does not affect the deployed model). Whether GRPO is
 shipped over SFT-600 is decided by that objective re-eval — RLVR gains are modest by nature.
 
-<!-- final GRPO held-out numbers appended after the run -->
+**Run outcome (2026-06-22): the native GRPO engine WEDGED.** A real run (SFT-600 base, 15
+steps, band 8) loaded the model and completed 2 steps cleanly (step 0 reward-mean −9.68,
+valid-rate 0.50, 8/8 learnable; step 1 −11.77) — then the native `generateBatchForTraining`
+**stalled mid-step-2 and made no progress for ~3.5h** (the Metal-stall risk documented in the
+project memory; `Context leak detected, CoreAnalytics returned false`). Killed; no sharpened
+model was produced. The GRPO MECHANISM is validated (load + reward bridge + gradient step all
+work, with a clean 8/8-learnable signal), but a sustained multi-step run is not reliable on
+this 32GB box overnight. Re-running needs: a smaller band + fewer steps + lower max-completion
+length, per-step generation timeouts/checkpointing in the native engine, and ideally a fresh
+process (a reboot clears any residual Metal wedge). The SFT model (above) is the shipped
+deliverable; GRPO would, at best, modestly sharpen its pass@1 toward the pass@4 ceiling.
 
