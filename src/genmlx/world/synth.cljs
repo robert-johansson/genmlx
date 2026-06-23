@@ -332,17 +332,61 @@
 ;; out the noise). The three experiment-B targets are exact, so this does not bite.
 ;; ===========================================================================
 
+(def default-noise-grid
+  "The shared observation-σ line-search grid for the co-refined accept rule (R1,
+   genmlx-8smp). A structural edit is judged at its grid-BEST shared obs noise, not its
+   emitted-valley σ — so a correct structure paired with a too-small/too-large scale is not
+   rejected before σ can rescue it. (genmlx.world.harvest/noise-grid aliases this — one
+   source of truth across the loop proposer's σ-refiner and the accept rule.)"
+  [0.1 0.2 0.3 0.5 0.7 1.0 1.5 2.5])
+
+(defn co-refine-spec
+  "Score `spec` at each σ in `grid` (a shared obs-noise line search over ALL obs sites) and
+   return the best-evidence verdict {:evidence :feedback :sigma :spec'} — the spec re-noised
+   to its grid-best scale — or nil if no σ produced a finite evidence.
+
+   This is the R1 (genmlx-8smp) accept-rule fix made a primitive: the strict ratchet scored
+   a structural edit at its EMITTED σ (a deep valley — varying-slopes partial −63.76 @σ=0.5
+   vs −21 @σ=3.0) and rejected it before the separate σ-refiner arm could rescue it. Judging
+   at grid-best σ removes that ordering deadlock. The σ-search is DETERMINISTIC, not the LLM:
+   the LLM-attributable contribution is the STRUCTURE; this tunes the nuisance scale (R1's
+   mandatory ablation — a win that exists only under co-refinement is deterministic-σ-search,
+   not an LLM-loop vindication). The incumbent is co-refined the SAME way (synthesize co-
+   refines the init crude; every accepted candidate is already grid-best) — consistent
+   maximization, which avoids the empirical-Bayes over-acceptance bias of comparing a
+   max-over-σ child against a fixed-σ incumbent (the over-acceptance guard, R1, confirms
+   Occam still holds: it does NOT add a spurious latent on data from the simpler model)."
+  [spec observations grid opts]
+  (->> grid
+       (keep (fn [g]
+               (let [s  (reduce #(set-noise %1 %2 g) spec (map :addr (:obs spec)))
+                     fb (check (render s) observations opts)]
+                 (when (scored? fb) {:evidence (:evidence fb) :feedback fb :sigma g :spec' s}))))
+       (reduce (fn [a b] (if (or (nil? a) (> (:evidence b) (:evidence a))) b a)) nil)))
+
 (defn- score-candidates
   "Render + check every proposed candidate against the observations. A candidate may
    carry a raw `:code` string (a real-LLM proposer emits the program text directly — see
    genmlx.world.llm-proposer); that raw code is checked VERBATIM so the LLM's DSL slips
    reach the check node exactly as written. Otherwise the code is rendered from `:spec'`
-   (the structured-proposer path)."
-  [candidates observations opts]
-  (for [c candidates
-        :let [code (or (:code c) (render (:spec' c)))
-              fb   (check code observations opts)]]
-    (assoc c :code code :feedback fb :evidence (:evidence fb))))
+   (the structured-proposer path).
+
+   When `:co-refine-sigma?` is set (R1, genmlx-8smp), each candidate that round-trips to a
+   spec with obs sites is judged at its GRID-BEST shared obs σ via `co-refine-spec` (the
+   accepted candidate then carries the re-noised spec + its `:sigma`), so a correct structure
+   is not rejected in its fixed-σ valley. A candidate that cannot be co-refined (off-grammar
+   raw `:code` with no spec, or no obs sites) falls back to the verbatim check — its DSL
+   slips still reach the check node exactly as written."
+  [candidates observations {:keys [co-refine-sigma? noise-grid] :as opts}]
+  (let [grid (or noise-grid default-noise-grid)]
+    (for [c candidates]
+      (if-let [cr (and co-refine-sigma? (:spec' c) (seq (:obs (:spec' c)))
+                       (co-refine-spec (:spec' c) observations grid opts))]
+        (assoc c :spec' (:spec' cr) :code (render (:spec' cr))
+               :feedback (:feedback cr) :evidence (:evidence cr) :sigma (:sigma cr))
+        (let [code (or (:code c) (render (:spec' c)))
+              fb   (check code observations opts)]
+          (assoc c :code code :feedback fb :evidence (:evidence fb)))))))
 
 (defn- deterministic-method?
   "True iff a verdict's evidence came from a reproducible analytical method (not IS)."
@@ -387,11 +431,20 @@
    edit taken, the chosen code, its exact evidence, the scoring :method, and the :delta
    from the prior state — the reportable artifact AND (design-doc §2) the shape of the
    future SFT corpus."
-  [{:keys [init-spec observations propose max-steps plateau-eps n-particles]
+  [{:keys [init-spec observations propose max-steps plateau-eps n-particles
+           co-refine-sigma? noise-grid]
     :or   {max-steps 12 plateau-eps 0.05 n-particles 2000}}]
-  (let [opts      {:plateau-eps plateau-eps :n-particles n-particles}
+  (let [opts      {:plateau-eps plateau-eps :n-particles n-particles
+                   :co-refine-sigma? co-refine-sigma? :noise-grid noise-grid}
+        grid      (or noise-grid default-noise-grid)
+        ;; Co-refine the INIT crude too when on, so the incumbent enters the loop at its
+        ;; grid-best σ — consistent maximization (see co-refine-spec): otherwise step 1
+        ;; compares a max-over-σ child against a fixed-σ incumbent (over-acceptance bias).
+        init-cr   (when (and co-refine-sigma? (seq (:obs init-spec)))
+                    (co-refine-spec init-spec observations grid opts))
+        init-spec (if init-cr (:spec' init-cr) init-spec)
         init-code (render init-spec)
-        init-fb   (check init-code observations opts)]
+        init-fb   (if init-cr (:feedback init-cr) (check init-code observations opts))]
     (loop [state {:spec init-spec :feedback init-fb}
            t     0
            traj  [{:step 0 :edit :init :desc "crude covering model"
@@ -422,7 +475,8 @@
                      (conj traj {:step (inc t) :edit (:edit best) :desc (:desc best)
                                  :code (:code best) :evidence (:evidence best)
                                  :method (:method (:feedback best)) :delta delta
-                                 :accepted? true :n-candidates (count cands)})))))))))
+                                 :sigma (:sigma best) :accepted? true
+                                 :n-candidates (count cands)})))))))))
 
 ;; ===========================================================================
 ;; 6. Proposer helpers — generic parameter-refinement moves + combinators

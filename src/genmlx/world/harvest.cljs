@@ -38,8 +38,10 @@
   "The shared observation-σ refinement grid. The LLM neglects the nuisance scale (it
    proposes structure but leaves σ ~1); this cheap deterministic grid is the type-II ML
    move over ONE observation scale, oracle-selected per step (accepted only when it
-   improves exact evidence)."
-  [0.1 0.2 0.3 0.5 0.7 1.0 1.5 2.5])
+   improves exact evidence). Aliases `genmlx.world.synth/default-noise-grid` — ONE source of
+   truth shared by this σ-refiner union arm AND the accept rule's co-refinement (R1,
+   genmlx-8smp), so the loop tunes σ over the same grid however it is applied."
+  syn/default-noise-grid)
 
 (defn noise-refiner
   "A pure proposer offering each grid σ as a shared-noise edit over all obs sites (the σ
@@ -66,17 +68,24 @@
      :max-tokens    per-sample cap (default 384)
      :revise        max self-correction re-prompts when no candidate scores (default 0)
      :n-particles   IS particles for the internal revise-decision check (default 2000)
-     :seed          worker RNG seed (default 1)"
-  [{:keys [call-llm task-desc observations k temperature max-tokens revise n-particles seed system]
+     :seed          worker RNG seed (default 1)
+     :co-refine-sigma?  when true (R1, genmlx-8smp) the accept rule judges each structural
+                    candidate at its grid-best σ, so the σ tuning lives INSIDE the accept and
+                    the separate σ-refiner union arm is redundant — drop it, keeping the
+                    proposer purely structural (LLM-only). The clean co-refine arm: all σ
+                    handling in one place, none laundered as separate accepted steps."
+  [{:keys [call-llm task-desc observations k temperature max-tokens revise n-particles seed system
+           co-refine-sigma?]
     :or   {k 4 temperature 0.7 max-tokens 384 revise 0 n-particles 2000 seed 1}}]
-  (syn/union-proposer
-   (lp/make-proposer (cond-> {:call-llm call-llm :task-desc task-desc :observations observations
-                              :k k :temperature temperature :max-tokens max-tokens
-                              :revise revise :n-particles n-particles :seed seed}
-                       ;; an optional system override (e.g. the SFT student's short system,
-                       ;; to keep train==inference); omitted -> make-proposer's default-system.
-                       system (assoc :system system)))
-   noise-refiner))
+  (let [llm (lp/make-proposer (cond-> {:call-llm call-llm :task-desc task-desc :observations observations
+                                       :k k :temperature temperature :max-tokens max-tokens
+                                       :revise revise :n-particles n-particles :seed seed}
+                                ;; an optional system override (e.g. the SFT student's short system,
+                                ;; to keep train==inference); omitted -> make-proposer's default-system.
+                                system (assoc :system system)))]
+    (if co-refine-sigma?
+      llm
+      (syn/union-proposer llm noise-refiner))))
 
 ;; ===========================================================================
 ;; 2. Run a task (or a seq) through the driver, collecting trajectories.
@@ -98,9 +107,13 @@
      :init-spec   REQUIRED — the crude covering model to start from
      :strategy    :greedy (`syn/synthesize`) | :beam (`se/search`)   default :greedy
      :max-steps :plateau-eps :n-particles                            driver knobs
+     :co-refine-sigma? :noise-grid    R1 (genmlx-8smp) co-refined accept — judge each
+                       structural candidate at its grid-best shared obs σ (forwarded to
+                       the greedy driver; the R2 co-refine loop arm sets this true)
      :beam-width :adaptive? :seed                                    beam-only knobs"
   [{:keys [id task-desc observations solve-bar]}
-   {:keys [propose init-spec strategy max-steps plateau-eps n-particles beam-width adaptive? seed]
+   {:keys [propose init-spec strategy max-steps plateau-eps n-particles beam-width adaptive? seed
+           co-refine-sigma? noise-grid]
     :or   {strategy :greedy max-steps 6 plateau-eps 0.05 n-particles 2000
            beam-width 4 adaptive? true seed 1}}]
   (when-not propose   (throw (js/Error. "harvest-task: :propose is required")))
@@ -108,7 +121,8 @@
   (let [res   (case strategy
                 :greedy (syn/synthesize {:init-spec init-spec :observations observations
                                          :propose propose :max-steps max-steps
-                                         :plateau-eps plateau-eps :n-particles n-particles})
+                                         :plateau-eps plateau-eps :n-particles n-particles
+                                         :co-refine-sigma? co-refine-sigma? :noise-grid noise-grid})
                 :beam   (se/search {:init-spec init-spec :observations observations
                                     :propose propose :beam-width beam-width :adaptive? adaptive?
                                     :strategy :beam :max-steps max-steps :plateau-eps plateau-eps
