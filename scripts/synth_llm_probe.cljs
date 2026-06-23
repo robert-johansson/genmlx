@@ -37,6 +37,7 @@
   (:require [genmlx.world.llm-proposer :as lp]
             [genmlx.world.synth :as syn]
             [genmlx.world.search :as se]
+            [genmlx.world.harvest :as h]
             [clojure.string :as str]))
 
 (def os   (js/require "os"))
@@ -151,27 +152,14 @@
   (syn/spec [(syn/latent 'mu "gaussian" [0 10])]
             (for [k (keys obs)] (syn/obs k "gaussian" ['mu 3.0]))))
 
-;; Noise-scale refinement — the nuisance hyperparameter the LLM neglects (it proposes
-;; STRUCTURE but leaves σ at ~1; the harder vslope model exposed this). This cheap,
-;; deterministic shared-σ grid is the move the structured proposer (§10-11) used: type-II
-;; ML over ONE observation scale. Unioned into the loop proposer below — LLM for the hard
-;; structural moves, grid for the hyperparameter (the resource-rational split). The grid is
-;; oracle-selected per step (the loop accepts a σ only when it improves exact evidence).
-(def noise-grid [0.1 0.2 0.3 0.5 0.7 1.0 1.5 2.5])
-(defn- noise-refiner [spec _fb]
-  (let [obs (:obs spec)
-        cur (last (:args (first obs)))]
-    (if (and (seq obs) (every? #(>= (count (:args %)) 2) obs))
-      (for [g noise-grid :when (not= g cur)]
-        {:edit :set-noise :desc (str "shared obs σ -> " g)
-         :spec' (reduce #(syn/set-noise %1 %2 g) spec (map :addr obs))})
-      [])))
+;; The loop proposer = the SHARED LLM ∪ σ-grid proposer (genmlx.world.harvest/loop-proposer):
+;; the LLM for the hard structural moves, the deterministic shared-σ grid for the nuisance
+;; scale (the resource-rational split; oracle-gated per step). The Phase-3 harvest reuses
+;; this SAME proposer, so the SFT corpus reflects exactly the loop this probe validates.
 (defn- loop-proposer [task-desc obs np seed]
-  (syn/union-proposer
-   (lp/make-proposer {:call-llm counting-call :task-desc task-desc :observations obs
-                      :k k-step :temperature temp :max-tokens max-toks
-                      :revise revise :n-particles (if (pos? np) np 2000) :seed seed})
-   noise-refiner))
+  (h/loop-proposer {:call-llm counting-call :task-desc task-desc :observations obs
+                    :k k-step :temperature temp :max-tokens max-toks
+                    :revise revise :n-particles (if (pos? np) np 2000) :seed seed}))
 
 (defn run-greedy [{:keys [task-desc obs np]} seed]
   (let [prop (loop-proposer task-desc obs np seed)
