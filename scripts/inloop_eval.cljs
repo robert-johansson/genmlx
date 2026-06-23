@@ -40,10 +40,15 @@
 (def cohort-sel (env "COHORT" "all"))            ;; within | family | all
 (def server-url (env "SERVER_URL" "http://127.0.0.1:8765"))
 (def tier       (env "TIER" "unknown"))
-(def k-oneshot  (envi "K_ONESHOT" 16))
 (def k-step     (envi "K_STEP" 4))
 (def max-steps  (envi "MAX_STEPS" 8))
 (def revise     (envi "REVISE" 2))
+;; COMPUTE_MATCHED=1 (R0, genmlx-2uzj): the one-shot+rerank baseline arm spends the loop's
+;; LLM sample budget (K_STEP x MAX_STEPS x (1+REVISE)) so the comparison is fair, not a
+;; K=4-vs-loop strawman. The permanent baseline every LLM phase must beat.
+(def k-oneshot  (if (= "1" (env "COMPUTE_MATCHED" "0"))
+                  (* k-step max-steps (inc revise))
+                  (envi "K_ONESHOT" 16)))
 (def temp       (envf "TEMP" 0.7))
 (def max-toks   (envi "MAX_TOKENS" 320))
 (def np         (envi "NP" 2000))
