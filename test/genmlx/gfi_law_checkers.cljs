@@ -485,8 +485,34 @@
 ;; choice gradient tests. See gfi_gradient_test.cljs for derivation.
 ;; ---------------------------------------------------------------------------
 
+(defn- ad-fd-match?
+  "True when AD gradient matches a finite-difference estimate, using the same
+   combined absolute (5e-2) / relative (5e-2) tolerance as the choice-gradient
+   tests."
+  [ad fd]
+  (let [abs-diff (js/Math.abs (- ad fd))
+        max-mag (js/Math.max (js/Math.abs ad) (js/Math.abs fd))]
+    (or ;; Both near zero
+        (and (< (js/Math.abs ad) 1e-6)
+             (< (js/Math.abs fd) 1e-6))
+        ;; Absolute match
+        (< abs-diff 5e-2)
+        ;; Relative match
+        (and (> max-mag 1e-6)
+             (< (/ abs-diff max-mag) 5e-2)))))
+
 (defn check-argument-gradient
-  "Law: ∂/∂x_i score(τ; x) via AD matches symmetric FD."
+  "Law: ∂/∂x_i score(τ; x) via AD matches finite difference.
+
+   Compares AD against the symmetric FD AND the two one-sided FDs, passing
+   when AD matches ANY of them. At a smooth point all three FD estimates
+   coincide, so this is exactly the symmetric-FD test. At a non-differentiable
+   cusp (e.g. a Laplace site whose location x lands within the FD step h of its
+   sampled value, where log p has a |v - x|/scale term), AD returns a valid
+   subgradient equal to ONE of the one-sided slopes ±1/scale, while symmetric
+   FD straddles the cusp and averages the two opposite slopes to a meaningless
+   value. Matching AD against the one-sided FDs accepts the correct subgradient
+   there without ever passing a genuinely-wrong gradient at a smooth point."
   [gf args]
   (try
     (let [trace (p/simulate gf args)
@@ -503,38 +529,36 @@
                     score-fn (fn [x-a]
                                (:weight (p/generate gf (assoc args-v i x-a) choices)))
                     ad-g (safe-realize ((mx/grad score-fn) x-arr))
-                    ;; Symmetric FD gradient
-                    sp (safe-realize
-                         (:weight (p/generate gf
-                                    (assoc args-v i (mx/scalar (+ x-num h)))
-                                    choices)))
-                    sm (safe-realize
-                         (:weight (p/generate gf
-                                    (assoc args-v i (mx/scalar (- x-num h)))
-                                    choices)))
-                    fd-g (/ (- sp sm) (* 2.0 h))]
-                {:i i :ad ad-g :fd fd-g}))
+                    score-at (fn [xv]
+                               (safe-realize
+                                 (:weight (p/generate gf
+                                            (assoc args-v i (mx/scalar xv))
+                                            choices))))
+                    s0 (score-at x-num)
+                    sp (score-at (+ x-num h))
+                    sm (score-at (- x-num h))
+                    ;; Symmetric + one-sided FD gradients. At a cusp the
+                    ;; one-sided slopes recover the AD subgradient; at a smooth
+                    ;; point all three agree.
+                    fd-sym (/ (- sp sm) (* 2.0 h))
+                    fd-left (/ (- s0 sm) h)
+                    fd-right (/ (- sp s0) h)]
+                {:i i :ad ad-g :fd fd-sym :fd-left fd-left :fd-right fd-right}))
             (range (count args-v)))
           all-match?
           (every?
-            (fn [{:keys [ad fd]}]
-              (let [abs-diff (js/Math.abs (- ad fd))
-                    max-mag (js/Math.max (js/Math.abs ad) (js/Math.abs fd))]
-                (or ;; Both near zero
-                    (and (< (js/Math.abs ad) 1e-6)
-                         (< (js/Math.abs fd) 1e-6))
-                    ;; Absolute match
-                    (< abs-diff 5e-2)
-                    ;; Relative match
-                    (and (> max-mag 1e-6)
-                         (< (/ abs-diff max-mag) 5e-2)))))
+            (fn [{:keys [ad fd fd-left fd-right]}]
+              (or (ad-fd-match? ad fd)
+                  (ad-fd-match? ad fd-left)
+                  (ad-fd-match? ad fd-right)))
             per-arg)]
       (result all-match?
               "argument-gradient"
-              (str (mapv (fn [{:keys [i ad fd]}]
+              (str (mapv (fn [{:keys [i ad fd fd-left fd-right]}]
                            (str "arg" i ":ad=" (.toFixed ad 6)
                                 " fd=" (.toFixed fd 6)
-                                " diff=" (.toFixed (js/Math.abs (- ad fd)) 6)))
+                                " fd-left=" (.toFixed fd-left 6)
+                                " fd-right=" (.toFixed fd-right 6)))
                          per-arg))))
     (catch :default e
       (result false "argument-gradient" (str e)))))
