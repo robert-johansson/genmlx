@@ -52,6 +52,16 @@
            (trace (keyword (str "y" i)) (dist/gaussian mu 1)))
          mu)))
 
+(def dynamic-cauchy-model
+  "Handler-path model with a NON-quadratic cauchy likelihood, so the
+   finite-difference gradient genuinely depends on the step size :fd-h
+   (a quadratic Gaussian score is exact under central FD for any h)."
+  (gen [n]
+       (let [mu (trace :mu (dist/gaussian 0 10))]
+         (dotimes [i (mx/item n)]
+           (trace (keyword (str "y" i)) (dist/cauchy mu 1)))
+         mu)))
+
 ;; ---------------------------------------------------------------------------
 ;; 1. Compilation level detection
 ;; ---------------------------------------------------------------------------
@@ -133,6 +143,49 @@
           [loss grad] (loss-grad-fn params)]
       (mx/materialize! loss grad)
       (is (> (first (mx/->clj grad)) 0) "gradient at mu=5 points back toward data (grad > 0 for loss)"))))
+
+;; ---------------------------------------------------------------------------
+;; 4b. :fd-h threads into the handler-path :loss-grad-fn (genmlx-983x)
+;; ---------------------------------------------------------------------------
+
+(deftest fd-h-threading-test
+  (testing ":fd-h configures the finite-diff step of the returned :loss-grad-fn"
+    (let [obs    (cm/choicemap :y0 (mx/scalar 3.0) :y1 (mx/scalar -2.0))
+          args   [(mx/scalar 2)]
+          addrs  [:mu]
+          params (mx/array [0.5])
+          big-h   0.3
+          small-h 1e-4
+          {big-lg :loss-grad-fn score-fn :score-fn level :compilation-level}
+          (co/make-compiled-loss-grad dynamic-cauchy-model args obs addrs {:fd-h big-h})
+          {small-lg :loss-grad-fn}
+          (co/make-compiled-loss-grad dynamic-cauchy-model args obs addrs {:fd-h small-h})
+          ;; default arity (no opts) must behave as :fd-h 1e-4
+          {def-lg :loss-grad-fn}
+          (co/make-compiled-loss-grad dynamic-cauchy-model args obs addrs)
+          [_ big-grad]   (big-lg params)
+          [_ small-grad] (small-lg params)
+          [_ def-grad]   (def-lg params)
+          ;; Independent oracle: central finite difference of -score at big-h.
+          neg-score (fn [p] (mx/negative (score-fn p)))
+          ei (mx/array [big-h])
+          oracle-big (/ (- (mx/item (neg-score (mx/add params ei)))
+                           (mx/item (neg-score (mx/subtract params ei))))
+                        (* 2.0 big-h))]
+      (mx/materialize! big-grad small-grad def-grad)
+      (let [bg (first (mx/->clj big-grad))
+            sg (first (mx/->clj small-grad))
+            dg (first (mx/->clj def-grad))]
+        (is (= :handler level) "non-quadratic dynamic model uses the handler path")
+        (is (h/close? bg oracle-big 1e-5)
+            ":loss-grad-fn gradient equals central-FD at the configured :fd-h")
+        (is (h/close? dg sg 1e-9)
+            "default arity (no opts) uses :fd-h 1e-4")
+        ;; Anti-vacuity: on a non-quadratic score a different step yields a
+        ;; genuinely different gradient, proving :fd-h is actually threaded
+        ;; rather than ignored in favour of a hardcoded constant.
+        (is (> (js/Math.abs (- bg sg)) 1e-4)
+            "different :fd-h yields a different gradient (threading is non-vacuous)")))))
 
 ;; ---------------------------------------------------------------------------
 ;; 5. Convergence: Gaussian mean estimation (tensor-native)

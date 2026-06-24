@@ -300,6 +300,8 @@
    args: model arguments (vector)
    observations: ChoiceMap of observed values
    addresses: vector of latent addresses to optimize
+   opts (optional):
+     :fd-h — finite-diff step for the handler path's :loss-grad-fn (default 1e-4)
 
    Returns:
      {:loss-grad-fn       (fn [params-tensor] -> [loss grad])
@@ -308,7 +310,9 @@
       :n-params           int
       :compilation-level  :tensor-native | :compiled-generate | :handler
       :latent-index       {addr -> int}}"
-  [model args observations addresses]
+  ([model args observations addresses]
+   (make-compiled-loss-grad model args observations addresses {}))
+  ([model args observations addresses {:keys [fd-h] :or {fd-h 1e-4}}]
   (let [model-keyed (dyn/auto-key model)
         ;; L3.5: filter out analytically eliminated addresses
         eliminated (u/get-eliminated-addresses model)
@@ -355,7 +359,7 @@
             neg-score (fn [params] (mx/negative (gfi-score-fn params)))
             loss-grad (fn [params]
                         (let [loss (neg-score params)
-                              grad (finite-diff-grad neg-score params 1e-4)]
+                              grad (finite-diff-grad neg-score params fd-h)]
                           (mx/materialize! loss grad)
                           [loss grad]))]
         {:loss-grad-fn loss-grad
@@ -363,7 +367,7 @@
          :init-params init-params
          :n-params n-params
          :compilation-level :handler
-         :latent-index latent-index}))))
+         :latent-index latent-index})))))
 
 (defn learn
   "Learn model parameters via compiled gradient optimization.
@@ -393,7 +397,7 @@
     :or {iterations 1000 lr 0.01 log-every 50}
     :as opts}]
   (let [{:keys [score-fn init-params n-params compilation-level latent-index]}
-        (make-compiled-loss-grad model args observations addresses)
+        (make-compiled-loss-grad model args observations addresses opts)
         train-opts (merge {:iterations iterations :lr lr :log-every log-every
                            :callback callback}
                           (select-keys opts [:beta1 :beta2 :epsilon :fd-h]))
