@@ -821,31 +821,6 @@
 ;; Vectorized Compiled Trajectory MH (N chains × K steps per dispatch)
 ;; ---------------------------------------------------------------------------
 
-(defn- make-vectorized-compiled-chain
-  "Build a compiled K-step MH chain for [N,D]-shaped params as one fused lazy-graph evaluation.
-   Returns compiled fn: (params [N,D], noise [K,N,D], uniforms [K,N]) → params [N,D]."
-  [k-steps score-fn proposal-std n-chains n-params]
-  (let [chain-fn
-        (fn [params noise-3d uniforms-2d]
-          (loop [p params, i 0]
-            (if (>= i k-steps) p
-                (let [row (mx/reshape
-                           (mx/take-idx noise-3d (mx/array [i] mx/int32) 0)
-                           [n-chains n-params])
-                      proposal (mx/add p (mx/multiply proposal-std row))
-                      s-cur (score-fn p)
-                      s-prop (score-fn proposal)
-                      log-alpha (mx/subtract s-prop s-cur)
-                      u-row (mx/reshape
-                             (mx/take-idx uniforms-2d (mx/array [i] mx/int32) 0)
-                             [n-chains])
-                      log-u (mx/log u-row)
-                      accept? (mx/greater log-alpha log-u)
-                      p' (mx/where (mx/expand-dims accept? 1) proposal p)]
-                  (recur p' (inc i))))))
-        compiled (mx/compile-fn chain-fn)]
-    compiled))
-
 (defn- make-vectorized-compiled-trajectory
   "Build a compiled K-step MH trajectory for [N,D]-shaped params.
    Returns compiled fn: (params [N,D], noise [K,N,D], uniforms [K,N]) → [K,N,D]."

@@ -243,7 +243,7 @@
                                          (check-no-mutation source)
                                          (check-no-hof-gen-fns source)))
          ;; Runtime trials — execution-based checks
-         base-key (or key (rng/fresh-key))
+         base-key (rng/ensure-key key)
          trial-keys (rng/split-n base-key n-trials)
          trial-results (mapv #(run-validation-trial gf args %) trial-keys)
          trial-violations (->> (mapcat :violations trial-results)
