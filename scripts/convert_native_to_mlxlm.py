@@ -124,22 +124,28 @@ def convert(native_dir, base_dir, out_dir):
         os.path.join(out_dir, "model.safetensors"), out, metadata={"format": "mlx"}
     )
 
-    # Copy config + tokenizer/aux files from the base (HF) checkpoint; skip the
-    # base's own weights and shard index (we wrote a single-file safetensors).
-    skip_ext = (".safetensors",)
+    # Copy aux files (tokenizer, chat template, etc.), skipping weights/shard
+    # index. config.json MUST come from --base: the native dir's config.json is
+    # the engine's minimal config, not the HF/mlx-lm one. Everything else (the
+    # tokenizer and chat template) is the MODEL's own and is taken from the
+    # native dir when present (a fine-tuned model may carry a custom tokenizer or
+    # chat template), falling back to --base.
+    skip_ext = (".safetensors", ".mlx")
     skip_names = {"model.safetensors.index.json"}
-    copied = []
-    for fn in os.listdir(base_dir):
-        if fn in skip_names or fn.endswith(skip_ext):
-            continue
-        src = os.path.join(base_dir, fn)
+    aux_names = {fn for fn in os.listdir(base_dir) + os.listdir(native_dir)
+                 if fn not in skip_names and not fn.endswith(skip_ext)}
+    copied = {}
+    for fn in sorted(aux_names):
+        src_dir = base_dir if fn == "config.json" else (
+            native_dir if os.path.isfile(os.path.join(native_dir, fn)) else base_dir)
+        src = os.path.join(src_dir, fn)
         if os.path.isfile(src):
             shutil.copy2(src, os.path.join(out_dir, fn))
-            copied.append(fn)
+            copied[fn] = os.path.basename(src_dir)
 
     print(f"  native weights:   {len(weights)} keys ({weights_file})")
     print(f"  mlx-lm weights:   {len(out)} keys  ({n_split * 2} from {n_split} fused splits)")
-    print(f"  copied from base: {sorted(copied)}")
+    print(f"  aux files:        " + ", ".join(f"{fn}<-{d}" for fn, d in copied.items()))
     print(f"  wrote:            {out_dir}/model.safetensors")
     return out
 
