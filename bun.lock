@@ -4,11 +4,11 @@
   "workspaces": {
     "": {
       "dependencies": {
-        "@genmlx/core": "file:/home/robert/code/mlx/mlx-node/packages/genmlx-core",
+        "@genmlx/core": "file:./mlx-node/packages/genmlx-core",
       },
     },
   },
   "packages": {
-    "@genmlx/core": ["@genmlx/core@file:../mlx-node/packages/genmlx-core", {}],
+    "@genmlx/core": ["@genmlx/core@file:mlx-node/packages/genmlx-core", {}],
   }
 }
