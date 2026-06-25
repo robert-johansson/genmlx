@@ -53,6 +53,14 @@ yarn build             # runs build:native (cmake + cargo) AND build:ts (tsc -b)
                        # Do NOT use `yarn build:native` alone — without build:ts,
                        # @mlx-node/lm has no dist/ and the LLM API won't import.
                        # Needs cmake, cargo, and (macOS 26+) the Metal Toolchain on PATH.
+node packages/genmlx-core/build.mjs   # REQUIRED: builds the @genmlx/core addon
+                       # (packages/genmlx-core/index.node) that GenMLX actually loads
+                       # at genmlx.mlx, plus colocates mlx.metallib/paged_attn.metallib.
+                       # `yarn build` above builds the SEPARATE @mlx-node/core addon, NOT
+                       # this one — skip this line and every `nbb` run fails at
+                       # (js/require "@genmlx/core"). Run it AFTER `yarn build` (it reuses
+                       # the metallibs that build produced). The .node is gitignored, so
+                       # this regenerates it on every fresh clone.
 cd ..
 
 # Install GenMLX's native dependency. @mlx-node/core and @mlx-node/lm resolve from
