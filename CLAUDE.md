@@ -112,11 +112,17 @@ bun run --bun nbb test/genmlx/vectorized_test.cljs
 bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 ```
 
-No build step, no compilation. nbb interprets ClojureScript directly.
+No build step for the ClojureScript — nbb interprets it directly. The **native
+addon does** need building from the `mlx-node` submodule on a fresh clone:
+`cd mlx-node && yarn install && yarn build && node packages/genmlx-core/build.mjs`.
+That last step is **required and easy to miss**: `yarn build` builds the
+`@mlx-node/core` addon, but GenMLX's Layer 0 loads **`@genmlx/core`**
+(`packages/genmlx-core/index.node`, gitignored), which only `build.mjs` produces —
+skip it and every `nbb` run fails at `(js/require "@genmlx/core")`.
 
-**Requirements:** macOS with Apple Silicon, Bun (or Node.js 18+), `npm install`
-for `@mlx-node/core` and `@mlx-node/lm`, and nbb `1.4.208` (pinned via the `nbb`
-script in `package.json`). Malli is a git submodule tracking **official upstream
+**Requirements:** macOS with Apple Silicon, Bun (or Node.js 18+), the native build
+above (`@genmlx/core` via `build.mjs`, plus `@mlx-node/core`/`@mlx-node/lm`), and
+nbb `1.4.208` (pinned via the `nbb` script in `package.json`). Malli is a git submodule tracking **official upstream
 `metosin/malli`** on the nbb classpath — the earlier robert-johansson/malli fork
 existed only for nbb 1.4.206 compatibility, which 1.4.208 made unnecessary (its
 SCI exposes `IPrintWithWriter`).
