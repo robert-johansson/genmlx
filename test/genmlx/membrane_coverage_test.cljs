@@ -109,7 +109,7 @@
      "parsePaddleResponse" "parseToolCallsFromText" "parseVlmOutput"
      "DocLayoutModel" "DocOrientationModel" "DocUnwarpModel" "PrivacyFilterModel"
      "QianfanOCRModel" "TextDetModel" "TextRecModel"
-     "VLModel" "VlmChatResult" "VlmProcessedImage"}
+     "VLModel" "VlmChatResult"}
 
    ;; loaded-model / tokenizer / generation classes — bound directly via @genmlx/core
    ;; native classes in llm/backend.cljs (load-upstream-model + Qwen3Tokenizer +
@@ -131,7 +131,13 @@
    ;; (which would sever the autograd tape across model-body eval!). vmap — the
    ;; sibling transform relocated alongside it into @genmlx/core — IS wrapped.
    :compile-strategy-bypass
-   #{"compileFn"}})
+   #{"compileFn"}
+
+   ;; quantized QMV microbenchmark — a perf-measurement entry point exposed by
+   ;; the CUDA genmlx-core build, not a graph op the membrane wraps (genmlx-0vwn
+   ;; surface re-pin for the Jetson Thor / CUDA port).
+   :benchmark-microbench
+   #{"quantizedQmvMicrobench"}})
 
 (def ^:private omitted (reduce into #{} (vals intentional-omissions)))
 
