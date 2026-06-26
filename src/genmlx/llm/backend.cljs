@@ -422,6 +422,50 @@
       (-> logits (mx/index 0) (mx/index 0)))))
 
 ;; ---------------------------------------------------------------------------
+;; Tier-2 branchable cache (native MoE only) — bean mlx-19wy / P2
+;;
+;; The opaque numeric branch id IS the handle. branch-cache! forks the
+;; model-internal cache at its CURRENT position (after init-cache! +
+;; forward-prefill, plus any forward-steps) into an INDEPENDENT branch —
+;; O(prefix) once; forward-branch then advances THAT branch in place,
+;; O(1)/step, exactly like forward-step but against the isolated branch.
+;; Only the native qwen3_next / qwen3_5_moe path exposes this surface; the
+;; dense CljsForwardModel does not (it must keep the replay path).
+;; ---------------------------------------------------------------------------
+
+(defn supports-branching?
+  "True iff `model` is the native MoE class exposing the branchable-cache
+   surface. The dense CljsForwardModel has no native branch surface."
+  [model]
+  (and (not (cljs-forward-model? model))
+       (fn? (.-branchCache model))))
+
+(defn branch-cache!
+  "Fork the model-internal cache at its CURRENT position into an independent
+   branch; returns the branch's opaque numeric id. Call AFTER init-cache! +
+   forward-prefill (and any forward-steps). O(prefix) once. Native MoE only."
+  [model]
+  (.branchCache model))
+
+(defn branch-from
+  "Fork a new sub-branch from existing branch `id`; returns the new id."
+  [model id]
+  (.branchFrom model id))
+
+(defn forward-branch
+  "Advance branch `id` by one token, returning next-position logits of shape
+   [vocab]. O(1) in sequence length — same contract as forward-step, against
+   the isolated branch instead of the model-internal cache."
+  [model id token-id]
+  (-> (.forwardBranch model id (ids->input [token-id]))
+      (mx/index 0) (mx/index 0)))
+
+(defn dispose-branch!
+  "Free branch `id` and its cache tensors. Idempotent. Native MoE only."
+  [model id]
+  (.disposeBranch model id))
+
+;; ---------------------------------------------------------------------------
 ;; Text generation (smoke test / convenience)
 ;; ---------------------------------------------------------------------------
 
