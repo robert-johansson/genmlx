@@ -12,5 +12,8 @@
   },
   "dependencies": {
     "@genmlx/core": "file:./mlx-node/packages/genmlx-core"
+  },
+  "devDependencies": {
+    "long": "^5.3.2"
   }
 }
