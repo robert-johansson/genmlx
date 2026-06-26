@@ -65,7 +65,11 @@
   (if-let [cls (case model-type
                  "qwen3"       (.-Qwen3Model mlx-core)
                  "qwen3_5"     (.-Qwen35Model mlx-core)
+                 ;; Both MoE families share the native Qwen35MoeModel engine:
+                 ;; qwen3_5_moe (256-expert) and qwen3_next (the 80B
+                 ;; Qwen3-Coder-Next, config.json model_type "qwen3_next").
                  "qwen3_5_moe" (.-Qwen35MoeModel mlx-core)
+                 "qwen3_next"  (.-Qwen35MoeModel mlx-core)
                  "gemma4"      (.-Gemma4Model mlx-core)
                  "harrier"     (.-HarrierModel mlx-core)
                  "lfm2"        (.-Lfm2Model mlx-core)
@@ -74,7 +78,8 @@
     (throw (ex-info (str "genmlx.llm.backend: @genmlx/core has no native model "
                          "class for model_type " (pr-str model-type)
                          " — load a supported family (qwen3 / qwen3_5 / gemma4 / "
-                         "harrier / lfm2 / qwen3_5_moe) or extend load-upstream-model.")
+                         "harrier / lfm2 / qwen3_5_moe / qwen3_next) or extend "
+                         "load-upstream-model.")
                     {:genmlx/error :unsupported-upstream-type
                      :model-type model-type :model-path model-path}))))
 
@@ -160,23 +165,30 @@
 ;; Model loading
 ;; ---------------------------------------------------------------------------
 
-(def ^:private crashing-native-moe-types
-  "model_type values whose native (upstream mlx-node) forward hard-crashes the
-   process with an uncatchable SIGTRAP on real checkpoints. Currently the
-   256-expert qwen3_5_moe MoE/VLM forward (genmlx-5luk): the panic is a C++
-   exception in the native gather_mm / mlx_qwen35_moe_forward over the expert
-   weight tensors during prefill, surfaced as SIGTRAP and uncatchable from CLJS.
-   No qwen3_5_moe checkpoint is verified-working and the owned CLJS forward does
-   not implement the MoE family, so loading one is refused by default."
-  #{"qwen3_5_moe"})
+(def ^:private native-moe-types
+  "model_type values whose forward exists ONLY on the native (upstream mlx-node)
+   path — the GenMLX-owned CLJS forward (genmlx.llm.forward) implements just the
+   dense qwen3 / qwen3_5 families, never the MoE ones. Both members route to the
+   native Qwen35MoeModel engine: qwen3_5_moe (256-expert) and qwen3_next (the 80B
+   Qwen3-Coder-Next). Whether that native forward is SAFE to run depends on the
+   GPU backend — see unsupported-native-moe? (genmlx-5luk, re-gated by mlx-2h4l)."
+  #{"qwen3_5_moe" "qwen3_next"})
 
 (defn unsupported-native-moe?
-  "True when `model-type` would route to a known-crashing native MoE forward and
-   the caller has NOT opted in via {:allow-native-moe? true}. Pure and
-   side-effect-free so the load-model guard is unit-testable without loading a
-   model, and usable as a public 'would this model be refused?' query (genmlx-5luk)."
+  "True when loading `model-type` would route to the native MoE forward AND that
+   forward crashes on the current GPU backend — i.e. on Metal, where the
+   256-expert gather_mm / mlx_qwen35_moe_forward over the expert tensors raises an
+   uncatchable C++ SIGTRAP during prefill (genmlx-5luk). On CUDA the same native
+   forward is verified safe (no SIGTRAP, correct output at ~native tok/s; mlx-2h4l),
+   so it is NOT refused there. {:allow-native-moe? true} overrides the Metal
+   refusal at the caller's risk.
+
+   Platform-gated via mx/metal-is-available? (false on CUDA, true on Metal); the
+   load-model guard stays unit-testable without loading a model, and this remains
+   usable as a public 'would this model be refused here?' query."
   [model-type opts]
-  (and (contains? crashing-native-moe-types model-type)
+  (and (contains? native-moe-types model-type)
+       (mx/metal-is-available?)
        (not (:allow-native-moe? opts))))
 
 (defn load-model
@@ -193,6 +205,9 @@
      and the upstream model otherwise. So trusted Qwen3/Qwen3.5 checkpoints run on
      the owned forward by default; MoE/Gemma/other types fall back to upstream
      automatically (and auto-upgrade once the owned forward learns the family).
+     The MoE families (qwen3_next — the 80B Qwen3-Coder-Next — and qwen3_5_moe)
+     have no owned forward, so they route to the native Qwen35MoeModel; on CUDA
+     this is the default path, on Metal it is refused (unsupported-native-moe?).
    - true:  force the GenMLX-owned forward (throws if the family is unsupported).
    - false: force the upstream model (the borrowed-forward fallback).
    The owned forward (CljsForwardModel) drives the forward/cache API used by the
@@ -204,11 +219,12 @@
    (p/let [model-type (detect-model-type model-path)
            tokenizer (.fromPretrained (.-Qwen3Tokenizer mlx-core)
                                       (str model-path "/tokenizer.json"))]
-     ;; genmlx-5luk: refuse a known-crashing native MoE forward BEFORE the native
-     ;; .loadModel below, so callers get a CATCHABLE rejection instead of the
-     ;; uncatchable SIGTRAP the native qwen3_5_moe prefill raises once the model
-     ;; is loaded and simulate runs a forward. Opt in with {:allow-native-moe?
-     ;; true} to attempt it anyway at your own risk.
+     ;; genmlx-5luk (re-gated, mlx-2h4l): on Metal, refuse a crashing native MoE
+     ;; forward BEFORE the native .load below, so callers get a CATCHABLE
+     ;; rejection instead of the uncatchable SIGTRAP the native MoE prefill raises
+     ;; once the model is loaded and simulate runs a forward. On CUDA the native
+     ;; MoE forward is verified safe, so unsupported-native-moe? is false there and
+     ;; load proceeds. Opt in with {:allow-native-moe? true} to bypass on Metal.
      (if (unsupported-native-moe? model-type opts)
        ;; Return a REJECTED promise, not (throw …): a throw inside this p/let body
        ;; is wrapped by promesa/nbb and loses the ex-info data, so a caller's
@@ -217,11 +233,11 @@
        (p/rejected
         (ex-info
          (str "genmlx.llm/load-model: model_type \"" model-type "\" is not "
-              "supported — its native MoE forward crashes the process with "
-              "an uncatchable SIGTRAP on real checkpoints (e.g. "
-              "Qwen3.6-35B-A3B-4bit; bean genmlx-5luk). Load a dense qwen3 / "
-              "qwen3_5 checkpoint, or pass {:allow-native-moe? true} to "
-              "bypass this guard at your own risk.")
+              "supported on this Metal backend — its native MoE forward crashes "
+              "the process with an uncatchable SIGTRAP on real checkpoints (e.g. "
+              "Qwen3.6-35B-A3B-4bit; bean genmlx-5luk). The same forward runs on "
+              "CUDA (mlx-2h4l). Load a dense qwen3 / qwen3_5 checkpoint, or pass "
+              "{:allow-native-moe? true} to bypass this guard at your own risk.")
          {:genmlx/error :unsupported-model-type
           :model-type (keyword model-type)
           :model-path model-path}))
