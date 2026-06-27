@@ -466,6 +466,41 @@
   (.disposeBranch model id))
 
 ;; ---------------------------------------------------------------------------
+;; Flat VLM prefill (native MoE VLM only) — flat-VLM-prefill
+;;
+;; Image-conditioned prefill that writes the FLAT model-internal caches (the same
+;; caches branch-cache! forks), so an image-conditioned prefix becomes branchable.
+;; The vision merge otherwise lives only on the paged path, where branchCache is
+;; refused. After vlm-prefill-flat!, branch-cache! / forward-branch work unchanged
+;; — the substrate for resource-rational VISION (expensive look once, cheap
+;; branched re-looks / particles).
+;; ---------------------------------------------------------------------------
+
+(defn supports-vlm-prefill?
+  "True iff `model` exposes the native flat VLM prefill (image-conditioned
+   branchable prefix). Native MoE VLM only."
+  [model]
+  (and (not (cljs-forward-model? model))
+       (fn? (.-vlmPrefillFlat model))))
+
+(defn vlm-prefill-flat!
+  "Image-conditioned FLAT prefill. Native-preprocesses the raw image bytes, merges
+   vision features into inputs_embeds, and runs the decoder over them writing the
+   model-internal FLAT caches. Returns last-position logits of shape [vocab].
+   After this, branch-cache! / forward-branch work unchanged on the image-
+   conditioned prefix.
+
+   `tokens` — a Uint32Array of chat-rendered prompt token ids containing one
+              IMAGE_TOKEN_ID (248056) per image (native expands each to its grid).
+   `images` — a seq of Uint8Array image bytes (PNG/JPEG).
+
+   Mutates model state: rebuilds the flat caches internally (do NOT call
+   init-cache! first). Native MoE VLM only (see supports-vlm-prefill?)."
+  [model tokens images]
+  (-> (.vlmPrefillFlat model tokens (clj->js (vec images)))
+      (mx/index 0) (mx/index 0)))
+
+;; ---------------------------------------------------------------------------
 ;; Text generation (smoke test / convenience)
 ;; ---------------------------------------------------------------------------
 
