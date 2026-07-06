@@ -21,13 +21,45 @@
 (defn normalize-log-weights
   "Given a vector of MLX log-weight scalars, return
    {:log-probs <MLX array>, :probs <clj vector of doubles>}
-   after log-softmax normalization."
+   after log-softmax normalization.
+
+   Degenerate populations are UNRECOVERABLE and fail loudly (genmlx-ng9t):
+   when EVERY log-weight is -Inf (logsumexp = -Inf), the normalized probs are
+   all NaN, and a NaN cumsum makes every resampler's exhaustion branch fire —
+   the population would silently collapse to the last particle with
+   valid-looking traces (only the -Inf log-ML hints). Throws
+   `:genmlx/error :degenerate-particles` instead. A NaN or +Inf weight
+   likewise poisons normalization and throws its own named error. A SINGLE
+   -Inf weight among finite ones is fine (prob 0, never resampled)."
   [log-weights]
   (let [w-arr (materialize-weights log-weights)
-        log-probs (mx/subtract w-arr (mx/logsumexp w-arr))
-        _ (mx/materialize! log-probs)
-        probs (mx/->clj (mx/exp log-probs))]
-    {:log-probs log-probs :probs probs}))
+        lse (mx/logsumexp w-arr)
+        lse-val (mx/realize lse)]
+    (when-not (js/isFinite lse-val)
+      (cond
+        (js/isNaN lse-val)
+        (throw (ex-info "particle log-weights contain NaN — normalization is undefined"
+                        {:genmlx/error :nan-weights
+                         :n-particles (count log-weights)}))
+
+        (= lse-val js/Number.NEGATIVE_INFINITY)
+        (throw (ex-info (str "all " (count log-weights) " particle log-weights are -Inf: "
+                             "every particle is impossible under the constraints/observations, "
+                             "so normalization and resampling are undefined (a resample would "
+                             "silently collapse the population to one arbitrary particle). "
+                             "Check the observations against the model's support, or improve "
+                             "the proposal.")
+                        {:genmlx/error :degenerate-particles
+                         :n-particles (count log-weights)}))
+
+        :else
+        (throw (ex-info "a particle log-weight is +Inf — normalization is undefined"
+                        {:genmlx/error :infinite-weight
+                         :n-particles (count log-weights)}))))
+    (let [log-probs (mx/subtract w-arr lse)
+          _ (mx/materialize! log-probs)
+          probs (mx/->clj (mx/exp log-probs))]
+      {:log-probs log-probs :probs probs})))
 
 (defn compute-param-layout
   "Compute the flatten/unflatten layout for addresses that may hold array-valued choices.
