@@ -666,18 +666,70 @@
 ;; Poisson
 ;; ---------------------------------------------------------------------------
 
+(defn- poisson-sample-small*
+  "Exact Poisson sampler for SMALL rates: count unit-rate exponential
+   inter-arrivals (-log(1-u) ~ Exp(1)) until the cumulative sum exceeds rate.
+   The log-space form of Knuth's product loop — the classic form multiplies
+   uniforms against l = exp(-rate), which underflows to 0.0 for rate >= ~708
+   and silently pins every sample near ~700-745 while log-prob scores the true
+   distribution (genmlx-2nec). O(rate) iterations, so large rates go through
+   PTRS instead. Returns a JS number count."
+  [rate-val key]
+  (loop [k 0 s 0.0 rk key]
+    (let [[rk1 rk2] (rng/split rk)
+          u (mx/realize (rng/uniform rk1 []))
+          s (- s (js/Math.log (- 1.0 u)))]
+      (if (> s rate-val)
+        k
+        (recur (inc k) s rk2)))))
+
+(defn- poisson-sample-ptrs*
+  "Exact Poisson sampler for rate >= 10: Hörmann's PTRS transformed rejection
+   with squeeze (1993) — the same algorithm NumPy uses above rate 10. O(1)
+   expected attempts (~94% acceptance), no underflow at any rate. Returns a JS
+   number count."
+  [rate-val key]
+  (let [b (+ 0.931 (* 2.53 (js/Math.sqrt rate-val)))
+        a (+ -0.059 (* 0.02483 b))
+        inv-alpha (+ 1.1239 (/ 1.1328 (- b 3.4)))
+        vr (- 0.9277 (/ 3.6224 (- b 2.0)))
+        log-rate (js/Math.log rate-val)]
+    (loop [rk key]
+      (let [[k1 rk'] (rng/split rk)
+            [k2 k3] (rng/split k1)
+            u (- (mx/realize (rng/uniform k2 [])) 0.5)
+            v (mx/realize (rng/uniform k3 []))
+            us (- 0.5 (js/Math.abs u))
+            k (js/Math.floor (+ (* (+ (/ (* 2.0 a) us) b) u) rate-val 0.43))]
+        (cond
+          ;; squeeze: immediate accept for the bulk
+          (and (>= us 0.07) (<= v vr))
+          k
+
+          ;; obvious rejects (k negative, or us tiny with v above the hat)
+          (or (neg? k) (and (< us 0.013) (> v us)))
+          (recur rk')
+
+          ;; exact acceptance test against the Poisson pmf
+          (<= (js/Math.log (* v (/ inv-alpha (+ (/ a (* us us)) b))))
+              (- (* k log-rate) rate-val (log-gamma (+ k 1.0))))
+          k
+
+          :else (recur rk'))))))
+
+(defn- poisson-sample*
+  "Exact Poisson sampler, correct at every rate (genmlx-2nec): inter-arrival
+   counting below 10, PTRS at 10 and above. Returns a JS number count."
+  [rate-val key]
+  (if (< rate-val 10.0)
+    (poisson-sample-small* rate-val key)
+    (poisson-sample-ptrs* rate-val key)))
+
 (defdist poisson
   "Poisson distribution with the given rate."
   [rate]
   (sample [key]
-    ;; Knuth's algorithm
-          (let [l (js/Math.exp (- (mx/realize rate)))]
-            (loop [k 0 p 1.0 rk key]
-              (let [[rk1 rk2] (rng/split rk)
-                    p (* p (mx/realize (rng/uniform rk1 [])))]
-                (if (> p l)
-                  (recur (inc k) p rk2)
-                  (mx/scalar k))))))
+          (mx/scalar (poisson-sample* (mx/realize rate) key)))
   (log-prob [v]
             (-> (mx/multiply v (mx/log rate))
                 (mx/subtract rate)
@@ -1015,18 +1067,14 @@
    r: number of successes, p: probability of success."
   [r p]
   (sample [key]
-    ;; Gamma-Poisson mixture: lambda ~ Gamma(r, p/(1-p)), then x ~ Poisson(lambda)
+    ;; Gamma-Poisson mixture: lambda ~ Gamma(r, p/(1-p)), then x ~ Poisson(lambda).
+    ;; The Poisson stage shares poisson-sample* — the inline Knuth product loop
+    ;; inherited the exp(-lambda) underflow for large gamma draws (genmlx-2nec).
           (let [[k1 k2] (rng/split key)
                 rate (mx/divide p (mx/subtract ONE p))
                 g (dc/dist-sample (gamma-dist r rate) k1)
-                g-val (mx/realize g)
-                l (js/Math.exp (- g-val))]
-            (loop [k 0 pr 1.0 rk k2]
-              (let [[rk1 rk2] (rng/split rk)
-                    pr (* pr (mx/realize (rng/uniform rk1 [])))]
-                (if (> pr l)
-                  (recur (inc k) pr rk2)
-                  (mx/scalar k))))))
+                g-val (mx/realize g)]
+            (mx/scalar (poisson-sample* g-val k2))))
   (log-prob [v]
     ;; log C(v + r - 1, v) + r*log(p) + v*log(1-p)
             (let [log-coeff (log-choose (mx/subtract (mx/add v r) ONE) v)]
