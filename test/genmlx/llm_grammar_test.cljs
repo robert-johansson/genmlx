@@ -138,6 +138,49 @@
                       (= :dead (gram/dfa-advance dfa s2 "5")))))
   (assert-equal "wrong char → dead" :dead (gram/dfa-advance dfa (:start dfa) "a")))
 
+(println "\n== DFA: class escapes + anchors (genmlx-bgyu) ==")
+
+;; Escapes inside character classes used to be LITERAL: [\d] compiled to the
+;; class {d} — digits forbidden, the letter d allowed — silently masking
+;; generation to the wrong language.
+(let [dfa (gram/compile-regex "[\\d]+")]
+  (assert-true "[\\d]+ accepts '42'" (gram/dfa-accepts? dfa "42"))
+  (assert-true "[\\d]+ rejects 'd'" (not (gram/dfa-accepts? dfa "d"))))
+(let [dfa (gram/compile-regex "[\\d.]+")]
+  (assert-true "[\\d.]+ accepts '3.14'" (gram/dfa-accepts? dfa "3.14"))
+  (assert-true "[\\d.]+ rejects 'dd'" (not (gram/dfa-accepts? dfa "dd"))))
+(let [dfa (gram/compile-regex "[\\w\\s]+")]
+  (assert-true "[\\w\\s]+ accepts 'a b_1'" (gram/dfa-accepts? dfa "a b_1"))
+  (assert-true "[\\w\\s]+ rejects '!'" (not (gram/dfa-accepts? dfa "!"))))
+(let [dfa (gram/compile-regex "[^\\d]+")]
+  (assert-true "[^\\d]+ accepts 'abc'" (gram/dfa-accepts? dfa "abc"))
+  (assert-true "[^\\d]+ rejects '12'" (not (gram/dfa-accepts? dfa "12"))))
+(let [dfa (gram/compile-regex "[\\]\\\\]")]
+  (assert-true "literal class escapes still work: ]" (gram/dfa-accepts? dfa "]"))
+  (assert-true "literal class escapes still work: backslash" (gram/dfa-accepts? dfa "\\")))
+
+;; ^ and $ used to parse as LITERAL characters: "^[a-z]+$" required a literal
+;; '^' as the first byte and dead-ended generation immediately. compile-regex
+;; is whole-string anchored, so leading ^ / trailing $ are now stripped;
+;; anywhere else they are a loud parse error; escaped forms match literally.
+(let [dfa (gram/compile-regex "^[a-z]+$")]
+  (assert-true "^[a-z]+$ accepts 'abc'" (gram/dfa-accepts? dfa "abc"))
+  (assert-true "^[a-z]+$ rejects '^abc$'" (not (gram/dfa-accepts? dfa "^abc$"))))
+(let [dfa (gram/compile-regex "^a$")]
+  (assert-true "^a$ == a" (gram/dfa-accepts? dfa "a")))
+(let [dfa (gram/compile-regex "\\^a")]
+  (assert-true "\\^a matches literal '^a'" (gram/dfa-accepts? dfa "^a")))
+(let [dfa (gram/compile-regex "price\\$")]
+  (assert-true "price\\$ matches literal 'price$'" (gram/dfa-accepts? dfa "price$")))
+(let [dfa (gram/compile-regex "a\\$$")]
+  (assert-true "a\\$$ (escaped dollar + anchor) matches 'a$'" (gram/dfa-accepts? dfa "a$")))
+(assert-true "mid-pattern ^ is a loud parse error"
+             (try (gram/compile-regex "a^b") false (catch :default _ true)))
+(assert-true "mid-pattern $ is a loud parse error"
+             (try (gram/compile-regex "a$b") false (catch :default _ true)))
+(assert-true "class escape as range endpoint is a loud error"
+             (try (gram/compile-regex "[\\d-x]") false (catch :default _ true)))
+
 ;; ============================================================
 ;; 2. Token masking tests (needs tokenizer)
 ;; ============================================================

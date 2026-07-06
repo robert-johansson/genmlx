@@ -62,14 +62,31 @@
      <atom> = lit | escape | dot | class | group
      group = <'('> regex <')'>
      dot = <'.'>
-     lit = #'[^\\\\\\[\\]().*+?|{}]'
-     escape = <'\\\\'> #'[dwsDWSntr\\\\.*+?|()\\[\\]{}]'
+     lit = #'[^\\\\\\[\\]().*+?|{}^$]'
+     escape = <'\\\\'> #'[dwsDWSntr^$\\\\.*+?|()\\[\\]{}]'
      class = <'['> neg? class-body <']'>
      neg = <'^'>
      class-body = class-item+
      <class-item> = range | class-char
      range = class-char <'-'> class-char
-     class-char = #'[^\\]\\\\^-]' | <'\\\\'> #'.'"))
+     class-char = #'[^\\]\\\\^-]' | class-escape
+     class-escape = <'\\\\'> #'.'"))
+
+(defn- strip-anchors
+  "Remove a single leading ^ and trailing (unescaped) $ from a regex string.
+   compile-regex is whole-string anchored, so the anchors are redundant —
+   but users write them habitually, and they used to parse as LITERAL
+   characters: \"^[a-z]+$\" compiled to a DFA requiring a literal '^', which
+   dead-ended generation after 0 bytes with no error (genmlx-bgyu).
+   Anchors anywhere ELSE are now a loud parse error (excluded from lit);
+   match a literal ^ or $ by escaping it."
+  [s]
+  (let [s (if (.startsWith s "^") (subs s 1) s)]
+    (if (and (.endsWith s "$")
+             ;; unescaped: an even number of backslashes precedes the $
+             (even? (count (re-find #"\\*$" (subs s 0 (dec (count s)))))))
+      (subs s 0 (dec (count s)))
+      s)))
 
 (defn parse-regex
   "Parse a regex string into an AST.
@@ -82,7 +99,7 @@
      [:star a]          — zero or more
      [:empty]           — empty string"
   [regex-str]
-  (let [tree (regex-grammar regex-str)]
+  (let [tree (regex-grammar (strip-anchors regex-str))]
     (when (insta/failure? tree)
       (throw (js/Error. (str "Invalid regex: " regex-str "\n" (pr-str tree)))))
     (insta/transform
@@ -101,8 +118,33 @@
                        "t" [:lit "\t"]
                        "r" [:lit "\r"]
                        [:lit c]))
+       ;; Escapes INSIDE character classes expand to the same char-sets as
+       ;; top-level escapes — [\d] used to keep the literal letter d
+       ;; (class-char returned the escaped char verbatim), silently masking
+       ;; generation to the wrong language (genmlx-bgyu). Returns a SET for
+       ;; the class escapes (class-body merges sets) or a single-char string
+       ;; for literal escapes (\\ \] \- \. ...).
+       :class-escape (fn [c]
+                       (case c
+                         "d" digit-chars
+                         "D" (set/difference printable-chars digit-chars)
+                         "w" word-chars
+                         "W" (set/difference printable-chars word-chars)
+                         "s" space-chars
+                         "S" (set/difference printable-chars space-chars)
+                         "n" "\n"
+                         "t" "\t"
+                         "r" "\r"
+                         c))
        :class-char identity
-       :range      (fn [from to] (char-range from to))
+       :range      (fn [from to]
+                     ;; a class escape is a SET — meaningless as a range
+                     ;; endpoint ([\d-x]); reject loudly rather than
+                     ;; charCodeAt-ing garbage.
+                     (when (or (set? from) (set? to))
+                       (throw (js/Error.
+                               "Invalid regex: character-class escape cannot be a range endpoint")))
+                     (char-range from to))
        :class-body (fn [& items]
                      (reduce (fn [acc item]
                                (if (set? item) (into acc item) (conj acc item)))
