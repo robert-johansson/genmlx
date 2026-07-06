@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.llm-branched-test
   "Branch-using GFI (genmlx.llm.branched) on the REAL resident 80B Qwen3-Coder-Next
    (the second path). Thor/CUDA-only + heavy (loads the 42GB MoE) -> gated on the

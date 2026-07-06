@@ -1,3 +1,4 @@
+;; @tier slow
 (ns genmlx.qwen3-moe-layout-coherence-test
   "Dual-checkpoint CUDA coherence guard (genmlx-6ijc / mlx-cft4).
 

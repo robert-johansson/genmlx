@@ -1,3 +1,4 @@
+;; @tier fast
 (ns genmlx.sft-test
   "Tests for the pure SFT core (genmlx.world.sft, genmlx-o8w9): the leakage-guarded
    train/eval task split, mlx-lm corpus shaping, the Chen-et-al. pass@k estimator, and

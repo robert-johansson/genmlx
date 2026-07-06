@@ -1,3 +1,4 @@
+;; @tier medium
 (ns genmlx.curriculum-test
   "Well-posedness + integration tests for the REPL-synthesis curriculum generator
    (genmlx.world.curriculum, bean genmlx-ilna). NATIVE-FREE: uses the exact oracle
