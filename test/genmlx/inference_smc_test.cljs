@@ -114,20 +114,29 @@
 ;; ==========================================================================
 
 (deftest smc-log-ml
-  (testing "SMC log-ML is finite"
+  (testing "SMC log-ML matches the analytical marginal likelihood"
     ;; SMC log-ML is the product of incremental marginal likelihoods:
-    ;; log p(y) = sum_t log p(y_t | y_{0:t-1})
-    ;; For sequential observation incorporation, this equals the full
-    ;; marginal likelihood. However, the SMC estimate has high variance
-    ;; especially with few particles and many steps.
-    ;; We test finiteness and negative sign (log-prob must be negative).
-    ;; SMC log-ML via incremental observation is unbiased on linear scale
-    ;; but can have high variance. The incremental sum may even be slightly
-    ;; positive due to particle approximation noise. Test finiteness only.
-    (let [result (smc/smc {:particles 200 :key (rng/fresh-key 99)}
-                           normal-normal-model [ys] obs-seq)
-          log-ml (h/realize (:log-ml-estimate result))]
-      (is (js/isFinite log-ml) "log-ML is finite"))))
+    ;; log p(y) = sum_t log p(y_t | y_{0:t-1}).
+    ;; This test used to assert FINITENESS ONLY, with a comment excusing
+    ;; "slightly positive" estimates as particle noise — which masked
+    ;; genmlx-uxjm: the per-step increment was the raw p/update weight
+    ;; log p(obs) − log p(sampled) (the model pre-traces all obs sites), an
+    ;; invalid increment with infinite-mean noise that drifted the estimate
+    ;; +entropy(obs)/step (observed: +0.3 to +2.4 where −7.8 is correct).
+    ;; With the projected obs-only increment the estimator is consistent:
+    ;; pin it against the closed form across three seeds. 1000 particles —
+    ;; the N(0,10) prior vs obs near 3 makes init weights heavily skewed, so
+    ;; 200-particle estimates still wander ±0.6 (observed); at 1000 the
+    ;; worst observed error over 5 seeds was 0.25, giving 2x headroom on the
+    ;; 0.5 band.
+    (doseq [seed [99 100 101]]
+      (let [result (smc/smc {:particles 1000 :key (rng/fresh-key seed)}
+                             normal-normal-model [ys] obs-seq)
+            log-ml (h/realize (:log-ml-estimate result))]
+        (is (js/isFinite log-ml) (str "log-ML finite (seed " seed ")"))
+        (is (h/close? analytical-log-ml log-ml 0.5)
+            (str "log-ML " log-ml " ≈ analytic " analytical-log-ml
+                 " (seed " seed ")"))))))
 
 ;; ==========================================================================
 ;; 5. SMC weights are finite

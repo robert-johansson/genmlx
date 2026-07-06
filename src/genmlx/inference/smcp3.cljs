@@ -85,8 +85,13 @@
                     If nil, falls back to constraint-based update (plain p/update)
                     — the forward-kernel is NOT used in this case.
                     Weight semantics change:
-                      with backward:    weight = obs_update + update + backward_score - forward_score
-                      without backward: weight = update_weight only (no proposal correction)
+                      with backward:    weight = obs_project + edit_weight
+                                        (edit_weight = update + backward_score - forward_score)
+                      without backward: weight = obs_project only (no proposal correction)
+                    obs_project = project over the step's obs addresses,
+                    log p(y_t = obs | ·) — NOT the raw update weight, which on a
+                    pre-traced (replaced) obs site would be log p(obs) − log
+                    p(sampled), an invalid SMC increment (genmlx-uxjm).
                     Pass nil for both kernels for standard SMC.
                     With both kernels, the step's observations are applied via
                     p/update BEFORE the proposal edit (so the forward kernel
@@ -111,6 +116,17 @@
                                 (vec (repeat particles (mx/scalar 0.0)))])
                              [traces log-weights])
         obs-empty? (empty? (cm/addresses observations))
+        ;; Observation-increment scale (genmlx-uxjm): when the fixed-args model
+        ;; traced the step's obs sites at init, updating them REPLACES a
+        ;; prior-sampled value and the thesis update weight is
+        ;; log p(obs) − log p(sampled) — an invalid SMC increment. Project the
+        ;; obs addresses of the post-update trace instead: log p(y_t = obs | ·),
+        ;; identical to the update weight when the sites were genuinely fresh.
+        obs-sel (when-not obs-empty? (smc/obs-selection observations))
+        obs-weight (fn [tr]
+                     (if obs-empty?
+                       (mx/scalar 0.0)
+                       (p/project model tr obs-sel)))
         ;; Per-particle keys derived from the step-key so the per-particle
         ;; proposal/update sampling is reproducible under a fixed seed
         ;; (genmlx-ivs0); rekey falls back to auto-key when no seed is given.
@@ -127,7 +143,9 @@
                           ;; without this step the observations never reach the
                           ;; trace. Doing it before the edit lets the forward
                           ;; kernel condition on them (locally-optimal
-                          ;; proposals). Weights compose additively.
+                          ;; proposals). Weights compose additively: obs
+                          ;; increment on the projected obs-only scale, then
+                          ;; the proposal-corrected edit weight.
                           (let [obs-result (when-not obs-empty?
                                              (p/update (rekey (:gen-fn trace) k-obs) trace observations))
                                 trace1 (if obs-result (:trace obs-result) trace)
@@ -135,20 +153,23 @@
                                 edit-req (edit/proposal-edit (rekey forward-kernel k-fwd) backward-kernel)
                                 {:keys [trace weight]} (edit/edit (rekey (:gen-fn trace1) k-upd) trace1 edit-req)
                                 weight (if obs-result
-                                         (mx/add (:weight obs-result) weight)
+                                         (mx/add (obs-weight trace1) weight)
                                          weight)]
                             (mx/materialize! weight)
                             {:trace trace :weight weight})
                           ;; Without backward kernel, fall back to constraint update.
                           ;; This changes weight semantics: no backward/forward proposal
-                          ;; correction is applied — weight is pure update weight only.
-                          (let [{:keys [trace weight]}
+                          ;; correction is applied — weight is the projected obs
+                          ;; increment only.
+                          (let [{:keys [trace]}
                                 (edit/edit (rekey (:gen-fn trace) k-upd) trace
-                                           (edit/constraint-edit observations))]
+                                           (edit/constraint-edit observations))
+                                weight (obs-weight trace)]
                             (mx/materialize! weight)
                             {:trace trace :weight weight}))
-                        ;; Standard update
-                        (let [{:keys [trace weight]} (p/update (rekey (:gen-fn trace) k-upd) trace observations)]
+                        ;; Standard update, on the projected obs-only scale
+                        (let [{:keys [trace]} (p/update (rekey (:gen-fn trace) k-upd) trace observations)
+                              weight (obs-weight trace)]
                           (mx/materialize! weight)
                           {:trace trace :weight weight}))))
                   traces' pkeys)

@@ -83,12 +83,13 @@
    (genmlx-jr90: one strip, no copy drift)."
   dyn/strip-analytical-path)
 
-(defn- obs-selection
+(defn obs-selection
   "Selection covering exactly the addresses present in an observation
-   choicemap (hierarchical when the choicemap nests). Used to put the cSMC
-   reference particle's weight on the same obs-only scale as the other
-   particles: project of the obs sites = the generate weight the particle
-   would have received had only the observations been constrained."
+   choicemap (hierarchical when the choicemap nests). Project over it is the
+   obs-only incremental weight log p(y_t = obs | rest of trace) — the correct
+   SMC increment when a fixed-args model's pre-traced obs site is REPLACED by
+   an update (genmlx-uxjm), and the scale the cSMC reference particle always
+   used. Public: smcp3 shares it."
   [obs]
   (letfn [(paths->sel [paths]
             (sel/->Hierarchical
@@ -249,7 +250,24 @@
                                i))
                             (range) update-keys traces')
         new-traces    (mapv :trace results)
-        update-weights (mapv :weight results)
+        ;; Per-particle incremental weight. With per-step args (smc-args) the
+        ;; obs sites are FRESH under the new args, so the thesis update weight
+        ;; is the exact increment (log p(y_t | ...) plus the retained
+        ;; re-scoring the args change requires). On the plain fixed-args
+        ;; driver the model traced ALL obs sites at init, so step t's update
+        ;; REPLACES a prior-sampled value and the thesis weight is
+        ;; log p(obs) − log p(sampled) — an invalid SMC increment:
+        ;; E[1/p(s|x)] is the Lebesgue measure of the obs support (infinite
+        ;; for continuous obs), giving the log-ML estimator infinite-mean
+        ;; noise and a systematic +entropy(obs)/step drift (genmlx-uxjm).
+        ;; Re-score via project over the step's obs addresses —
+        ;; log p(y_t = obs | rest of trace) — the same obs-only scale the
+        ;; cSMC reference path uses; identical to the update weight whenever
+        ;; the site was genuinely fresh.
+        update-weights (if step-spec
+                         (mapv :weight results)
+                         (let [obs-sel (obs-selection obs)]
+                           (mapv #(p/project model % obs-sel) new-traces)))
         new-weights   (mapv mx/add weights' update-weights)
         ;; Rejuvenation
         final-traces  (smc-rejuvenate new-traces rejuvenation-steps
@@ -494,13 +512,18 @@
                   ;; log p(y_t | x_ref) — the same obs-only scale as the
                   ;; freshly updated particles.
                   obs-sel (obs-selection obs-t)
+                  ;; EVERY particle is re-scored on the obs-only scale, not
+                  ;; just the reference: the plain update weight on a replaced
+                  ;; obs site is log p(obs) − log p(sampled) — the invalid
+                  ;; increment of genmlx-uxjm — and it also sat on a different
+                  ;; scale from the reference's projected weight, which
+                  ;; systematically disfavored the reference in the final
+                  ;; weighted draw (breaking cSMC invariance for pmcmc).
                   results (mapv (fn [i trace]
                                   (let [r (p/update (:gen-fn trace) trace obs-t)
-                                        r (if (= i ref-idx)
-                                            (assoc r :weight
-                                                   (p/project particle-model (:trace r)
-                                                              obs-sel))
-                                            r)]
+                                        r (assoc r :weight
+                                                 (p/project particle-model (:trace r)
+                                                            obs-sel))]
                                     (break-particle-graph! r i)))
                                 (range particles) traces')
                   new-traces (mapv :trace results)
@@ -739,10 +762,18 @@
                        vtrace)
               prev-weights (:weight vtrace)
               ;; 2. Batched update
-              {updated-vtrace :vtrace update-weight :weight}
+              {updated-vtrace :vtrace}
                 (dyn/vupdate (:gen-fn vtrace) vtrace (nth obs-vec t) update-key)
+              ;; Batched analogue of the smc-step increment fix (genmlx-uxjm):
+              ;; the model traced all obs sites at init, so the vupdate weight
+              ;; at step t is log p(obs) − log p(sampled) per particle — an
+              ;; invalid increment. Project the step's obs sites instead:
+              ;; the [N]-shaped log p(y_t | ·). (vproject consumes no
+              ;; randomness; the key only satisfies ensure-key.)
+              step-weight (dyn/vproject (:gen-fn vtrace) updated-vtrace
+                                        (obs-selection (nth obs-vec t)) update-key)
               ;; 3. Accumulate weights
-              cumul-weights (mx/add prev-weights update-weight)
+              cumul-weights (mx/add prev-weights step-weight)
               ;; Break lazy graph — weights carried across timesteps
               _ (mx/materialize! cumul-weights)
               vtrace (assoc updated-vtrace :weight cumul-weights)
