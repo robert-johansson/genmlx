@@ -159,7 +159,12 @@
    :tieWordEmbeddings true :attentionBias false :maxPositionEmbeddings 512
    :padTokenId 0 :eosTokenId 1 :bosTokenId 2
    :linearNumValueHeads 4 :linearNumKeyHeads 2 :linearKeyHeadDim 16 :linearValueHeadDim 16
-   :linearConvKernelDim 4 :fullAttentionInterval 2 :partialRotaryFactor 0.5 :ropeTheta 10000.0})
+   :linearConvKernelDim 4 :fullAttentionInterval 2 :partialRotaryFactor 0.5 :ropeTheta 10000.0
+   ;; Required by Qwen35Config since the MTP feature (mlx-node a90def7): the NAPI
+   ;; object conversion does not apply the Rust serde(default), so a missing field
+   ;; throws "Missing field nMtpLayers" at checkpoint construction (genmlx-boqh).
+   ;; 0 = checkpoint ships no MTP heads (speculative decode unavailable).
+   :nMtpLayers 0})
 
 ;; ===========================================================================
 ;; Prompt + result marshalling.
