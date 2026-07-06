@@ -39,7 +39,11 @@
 
 (deftest linalg-qr-bad-input-is-catchable
   ;; Same escape-path class through the void out-param decomposition shims.
-  (let [msg (caught-message #(.qr (mx/array #js [1.0 2.0 3.0])))]
+  ;; qr is a MODULE-level export ((.qr core a)), not an MxArray instance
+  ;; method — the old call form threw SCI's "Could not find instance method"
+  ;; before ever reaching the native guard, so this assertion never actually
+  ;; exercised the escape path (genmlx-ne1q).
+  (let [msg (caught-message #(.qr core (mx/array #js [1.0 2.0 3.0])))]
     (is (not= ::no-throw msg) "1-D input to QR must throw, not return")
     (is (re-find #"MLX error in qr_q" (str msg))
         "null out-param surfaces as a catchable napi error with context")))
