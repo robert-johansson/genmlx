@@ -553,15 +553,30 @@
            f32 (js/Float32Array.from (clj->js flat-data))]
        (.fromFloat32 c f32 (clj->js shape-or-dtype)))
      (let [[flat-data sh] (infer-shape v)]
-       (if (= shape-or-dtype int32)
+       (cond
+         (= shape-or-dtype int32)
          (.fromInt32 c (js/Int32Array.from (clj->js flat-data)) (clj->js sh))
+         ;; uint32 must NOT round-trip through Float32Array + astype: values
+         ;; above the 24-bit mantissa are silently rounded (genmlx-st0y —
+         ;; corrupted deserialized PRNG keys). The static class constructor
+         ;; is exact (module-level fromUint32 does not exist; the static
+         ;; takes a BigInt64Array shape).
+         (= shape-or-dtype uint32)
+         (.fromUint32 M (js/Uint32Array.from (clj->js flat-data))
+                        (js/BigInt64Array.from (clj->js sh) js/BigInt))
+         :else
          (let [f32 (js/Float32Array.from (clj->js flat-data))
                arr (.fromFloat32 c f32 (clj->js sh))]
            (if (= shape-or-dtype float32) arr (.astype c arr shape-or-dtype)))))))
   ([v shape-vec dtype]
    (let [[flat-data _] (infer-shape v)]
-     (if (= dtype int32)
+     (cond
+       (= dtype int32)
        (.fromInt32 c (js/Int32Array.from (clj->js flat-data)) (clj->js shape-vec))
+       (= dtype uint32)
+       (.fromUint32 M (js/Uint32Array.from (clj->js flat-data))
+                      (js/BigInt64Array.from (clj->js shape-vec) js/BigInt))
+       :else
        (let [f32 (js/Float32Array.from (clj->js flat-data))
              arr (.fromFloat32 c f32 (clj->js shape-vec))]
          (if (= dtype float32) arr (.astype c arr dtype)))))))
@@ -810,9 +825,16 @@
   (set! clj-read-count (inc clj-read-count))
   (.eval a)
   (let [sh (shape a)
-        flat (if (= (.dtypeOf c a) int32)
-               (vec (js->clj (.toInt32 a)))
-               (vec (js->clj (.toFloat32 a))))]
+        dt (.dtypeOf c a)
+        ;; Integer dtypes must go through their EXACT converters. Reading
+        ;; uint32 through .toFloat32 value-converts via astype(float32), so
+        ;; values above the 24-bit mantissa are silently rounded — a
+        ;; serialized PRNG key (uint32[2], full 32-bit range) round-tripped
+        ;; to a DIFFERENT key (genmlx-st0y).
+        flat (cond
+               (= dt int32)  (vec (js->clj (.toInt32 a)))
+               (= dt uint32) (vec (js->clj (.toUint32 a)))
+               :else         (vec (js->clj (.toFloat32 a))))]
     (unflatten flat sh)))
 
 (defn eval!

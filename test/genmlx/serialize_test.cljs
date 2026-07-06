@@ -10,7 +10,8 @@
             [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
             [genmlx.combinators :as comb]
-            [genmlx.serialize :as ser])
+            [genmlx.serialize :as ser]
+            [genmlx.mlx.random :as rng])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 (def ^:private fs (js/require "fs"))
@@ -219,6 +220,25 @@
       (is (= (mx/dtype (cm/get-value (cm/get-submap loaded :k)))
              (mx/dtype (cm/get-value (cm/get-submap (:choices tr1) :k))))
           "uint32 dtype survives"))))
+
+(deftest uint32-full-range-round-trip
+  (testing "uint32 values above the float32 24-bit mantissa are bit-exact"
+    ;; Pre-fix, ->clj read uint32 through .toFloat32 and mx/array rebuilt it
+    ;; through Float32Array + astype — BOTH silently rounded values >= 2^24,
+    ;; so a serialized PRNG key restored to a DIFFERENT key with the same
+    ;; dtype tag: silently non-reproducible replay (genmlx-st0y).
+    (let [k (first (rng/split (rng/fresh-key 424242)))
+          _ (mx/eval! k)
+          truth (vec (js->clj (.toUint32 k)))
+          _ (is (boolean (some #(> % 16777216) truth))
+                "test key exercises the >2^24 range")
+          restored (ser/data->value (ser/value->data k))]
+      (is (= truth (mx/->clj k)) "->clj reads uint32 exactly")
+      (is (= truth (mx/->clj restored)) "value->data/data->value bit-exact")
+      (is (= (mx/dtype k) (mx/dtype restored)) "dtype preserved")
+      (let [[a b] (rng/split restored)]
+        (is (= [2] (vec (mx/shape a)) (vec (mx/shape b)))
+            "restored key is a usable PRNG key")))))
 
 (deftest batched-score-save-trace
   (testing "save-trace handles [N]-shaped batched scores"
