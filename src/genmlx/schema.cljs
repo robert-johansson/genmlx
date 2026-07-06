@@ -170,6 +170,29 @@
        (filter keyword?)
        set))
 
+(defn- splice-addrs-in
+  "Keyword addresses of all literal splice calls anywhere inside form.
+   (A dynamic splice address is invisible here, but it also sets
+   :dynamic-addresses?, which disqualifies every consumer of this info.)"
+  [form]
+  (->> (find-all-calls [form] #(call-named? % "splice"))
+       (map second)
+       (filter keyword?)
+       set))
+
+(defn- splice-provenance-of
+  "Splice addresses whose RETVALS flow into form: the union of the
+   ::splice-provenance sets of the form's free symbols. Complements
+   compute-deps (which tracks trace-address provenance) for the
+   regenerate fast-path gate (genmlx-njzu)."
+  [env form]
+  (reduce (fn [acc sym]
+            (if-let [sp (get-in env [::splice-provenance sym])]
+              (into acc sp)
+              acc))
+          #{}
+          (find-symbols form)))
+
 (defn- gen-binding-sym?
   "True for an unqualified symbol that is one of the gen-macro runtime bindings
    (trace/splice) — i.e. a tracing capability that must stay in head position."
@@ -265,7 +288,18 @@
         dist-type (extract-dist-type dist-form)
         dist-args (when (and (seq? dist-form) (seq dist-form))
                     (vec (rest dist-form)))
-        deps (compute-deps env dist-form)
+        ;; Deps flow from referenced bindings AND from any literal trace call
+        ;; nested inside the dist args — (trace :y (gaussian (trace :mu ...) 1))
+        ;; makes :y depend on :mu (genmlx-dv66; symbols-only compute-deps left
+        ;; the edge invisible and mis-gated the fast regenerate path).
+        deps (into (compute-deps env dist-form)
+                   (disj (trace-addrs-in dist-form) addr))
+        ;; Splice addresses whose retvals feed this site's dist params —
+        ;; via a let-bound (or derived) symbol, or a splice literal nested in
+        ;; the dist args. Kept SEPARATE from :deps (whose consumers — dep-order
+        ;; topo sort, conjugacy, affine — expect trace addresses only).
+        splice-deps (into (splice-provenance-of env dist-form)
+                          (splice-addrs-in dist-form))
         ;; Walk sub-forms first (handles nested traces in dist args)
         acc' (walk-forms acc env args)]
     (-> acc'
@@ -274,6 +308,7 @@
                                    :dist-type dist-type
                                    :dist-args (or dist-args [])
                                    :deps deps
+                                   :splice-deps splice-deps
                                    ;; direct trace-alias provenance for dist-arg
                                    ;; symbols (genmlx-1thx)
                                    :arg-aliases (or (::arg-aliases env) {})
@@ -287,6 +322,11 @@
         static? (keyword? addr-form)
         addr (if static? addr-form :dynamic)
         deps (compute-deps env (cons 'splice args))
+        ;; Other splices whose retvals feed THIS splice's args (directly or
+        ;; via a derived binding) — the splice↔splice edge of the regenerate
+        ;; fast-path gate (genmlx-njzu).
+        splice-deps (into (splice-provenance-of env (vec args))
+                          (disj (splice-addrs-in (vec args)) addr))
         ;; Walk sub-forms
         acc' (walk-forms acc env args)]
     (-> acc'
@@ -295,6 +335,7 @@
                                     :gf-form gf-form
                                     :splice-args splice-args
                                     :deps deps
+                                    :splice-deps splice-deps
                                     :static? static?})
         (cond-> (not static?) (assoc :dynamic-addresses? true)))))
 
@@ -321,7 +362,14 @@
                                ;; (trace :x ...) or wrapped, e.g.
                                ;; (mx/add (trace :x ...) 1).
                                sym-deps (into (compute-deps env val-form)
-                                              (trace-addrs-in val-form))]
+                                              (trace-addrs-in val-form))
+                               ;; Splice-retval provenance flows the same two
+                               ;; ways: from bindings already carrying it, and
+                               ;; from a splice literal in the value form —
+                               ;; (splice :sub gf) or (mx/add (splice :sub gf) 1)
+                               ;; (genmlx-njzu). Cleared on rebinding below.
+                               sym-splices (into (splice-provenance-of env val-form)
+                                                 (splice-addrs-in val-form))]
                            (if (symbol? sym)
                              ;; Maintain direct trace-alias provenance: record
                              ;; sym -> :addr when bound directly to (trace :addr
@@ -329,6 +377,12 @@
                              ;; reuse of the name is not mistaken for a direct
                              ;; natural parameter (genmlx-1thx).
                              (let [env1 (if (seq sym-deps) (assoc env sym sym-deps) env)
+                                   env1 (cond
+                                          (seq sym-splices)
+                                          (assoc-in env1 [::splice-provenance sym] sym-splices)
+                                          (get-in env1 [::splice-provenance sym])
+                                          (update env1 ::splice-provenance dissoc sym)
+                                          :else env1)
                                    alias-addr (bare-trace-alias-addr val-form)
                                    env2 (cond
                                           alias-addr (assoc-in env1 [::arg-aliases sym] alias-addr)
@@ -343,6 +397,14 @@
                                           (reduce (fn [e s] (assoc e s sym-deps))
                                                   env (find-symbols sym))
                                           env)
+                                   env1 (if (seq sym-splices)
+                                          (reduce (fn [e s]
+                                                    (assoc-in e [::splice-provenance s] sym-splices))
+                                                  env1 (find-symbols sym))
+                                          (if (::splice-provenance env1)
+                                            (update env1 ::splice-provenance
+                                                    #(apply dissoc % (find-symbols sym)))
+                                            env1))
                                    env2 (if (::arg-aliases env1)
                                           (update env1 ::arg-aliases
                                                   #(apply dissoc % (find-symbols sym)))

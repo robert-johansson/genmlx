@@ -326,6 +326,7 @@ slow test/genmlx/qwen2_coder_test.cljs
 slow test/genmlx/qwen3_moe_layout_coherence_test.cljs
 fast test/genmlx/rb_mixture_test.cljs
 fast test/genmlx/recurse_test.cljs
+fast test/genmlx/regen_gate_test.cljs core
 medium test/genmlx/regen_structure_test.cljs
 fast test/genmlx/remaining_fixes_test.cljs
 slow test/genmlx/repl_corpus_test.cljs

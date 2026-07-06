@@ -187,18 +187,30 @@
 (defn- regen-fast-eligible?
   "The fast regenerate path (per-site convention, no project pass) is provably
    equivalent to the general retained-only path iff (a) no structure change can
-   occur and (b) the selected sites are mutually independent (no selected site
-   feeds another selected site's distribution parameters). Otherwise the
-   general path is required for correctness.
+   occur and (b) the selected objects — trace sites AND splices — are mutually
+   independent (no selected object feeds another selected object's distribution
+   parameters or arguments). Otherwise the general path is required for
+   correctness.
 
    (a) holds when the model has no branches (the address set is fixed).
    (b) holds when, for every selected static site, none of its dependency set
-       contains another selected site.
+       (:deps trace-address edges + :splice-deps splice-retval edges,
+       genmlx-njzu/dv66) contains another selected object, and for every
+       selection-touched splice, no selected site feeds its args and no other
+       touched splice feeds it.
+
+   A selected object feeding a RETAINED (unselected) one is fine on the fast
+   path: the retained site's (lp-new − lp-old) lands in the weight via the
+   score difference, matching the general path's retained-only term — only
+   jointly-selected interacting pairs diverge (verified both ways in
+   regen_gate_test).
+
    Returns false conservatively whenever the schema lacks the static info
    needed to prove eligibility (dynamic addresses, loops, missing trace-sites)."
   [gf selection]
   (let [schema (:schema gf)
-        sites (or (:trace-sites schema) [])]
+        sites (or (:trace-sites schema) [])
+        splices (or (:splice-sites schema) [])]
     (cond
       *force-general-regen* false
       (:has-branches? schema) false
@@ -210,18 +222,36 @@
       ;; retained-only path (genmlx-9yuw).
       (:opaque-gen-escape? schema) false
       :else
-      ;; Only the parent's DIRECT trace sites are checked here. Spliced
-      ;; sub-gfs recurse through p/regenerate and gate themselves; a parent
-      ;; with no directly-selected sites (e.g. one that only splices children
-      ;; and retains its own observations) is fast-eligible — the existing
-      ;; execute-sub composition handles the child weights exactly.
+      ;; Spliced sub-gfs recurse through p/regenerate and gate themselves —
+      ;; execute-sub composes their weights exactly. What they can NOT see is
+      ;; coupling through the PARENT: a splice retval feeding a selected parent
+      ;; site, or a selected parent site feeding a splice's args. When both
+      ;; ends of such an edge are selected, the fast per-site weight is wrong
+      ;; (genmlx-njzu), so those edges join the mutual-independence check.
       (let [selected (into #{} (comp (map :addr)
                                      (filter #(sel/selected? selection %)))
-                           sites)]
-        (every? (fn [s]
-                  (or (not (contains? selected (:addr s)))
-                      (empty? (set/intersection selected (set (:deps s))))))
-                sites)))))
+                           sites)
+            ;; A splice is "touched" when its address is selected or the
+            ;; selection descends into it (hierarchical / complement forms).
+            touched? (fn [addr]
+                       (or (sel/selected? selection addr)
+                           (not (identical? sel/none
+                                            (sel/get-subselection selection addr)))))
+            touched-splices (into #{} (comp (map :addr) (filter touched?))
+                                  splices)]
+        (and
+         (every? (fn [s]
+                   (or (not (contains? selected (:addr s)))
+                       (and (empty? (set/intersection selected (set (:deps s))))
+                            (empty? (set/intersection touched-splices
+                                                      (set (:splice-deps s)))))))
+                 sites)
+         (every? (fn [sp]
+                   (or (not (contains? touched-splices (:addr sp)))
+                       (and (empty? (set/intersection selected (set (:deps sp))))
+                            (empty? (set/intersection (disj touched-splices (:addr sp))
+                                                      (set (:splice-deps sp)))))))
+                 splices))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Execution helpers — each takes [gf args key opts] and returns a GFI result.
