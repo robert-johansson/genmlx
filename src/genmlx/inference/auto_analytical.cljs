@@ -338,16 +338,36 @@
 ;; Auto-Kalman handlers (for detected linear-Gaussian chains)
 ;; ---------------------------------------------------------------------------
 
+(defn- resolve-affine-form
+  "Resolve an affine coefficient/offset FORM from schema extraction to an MLX
+   scalar for Kalman math: a number or an MLX array. Returns nil for symbolic
+   forms (a model-arg symbol, an unevaluated op list) — the caller must bail
+   or decline; substituting a guess silently mis-scores (genmlx-rmy7)."
+  [x]
+  (cond (number? x)   (mx/scalar x)
+        (mx/array? x) x
+        :else         nil))
+
 (defn- kalman-predict-belief
-  "Predict belief for step i given belief from step i-1.
+  "Predict belief for step i given belief from step i-1:
+     mean' = c * mean + b        (the transition offset b — a drift chain
+                                  z' ~ N(z + b, q) — shifts the mean; it was
+                                  silently dropped before, genmlx-rmy7)
+     var'  = c^2 * var + q       (a constant offset does not move the variance)
    transition: the transition descriptor from steps[i-1]
-   noise-var: process noise variance for step i"
+   noise-var: process noise variance for step i.
+   Throws the analytical bail (caught by the dispatcher, which redoes the op
+   on the handler joint path) when the coefficient or offset is a symbolic
+   form this runtime cannot evaluate — the genmlx-0e0j discipline; falling
+   back per-site would mix marginal and plug-in scoring."
   [prev-belief transition noise-var]
-  (let [coeff (if (= :direct (:type transition))
-                (mx/scalar 1.0)
-                (let [c (:coefficient transition)]
-                  (if (number? c) (mx/scalar c) c)))]
-    {:mean (mx/multiply coeff (:mean prev-belief))
+  (let [direct? (= :direct (:type transition))
+        coeff  (if direct? (mx/scalar 1.0) (resolve-affine-form (:coefficient transition)))
+        offset (if direct? (mx/scalar 0.0) (resolve-affine-form (:offset transition)))]
+    (when (or (nil? coeff) (nil? offset))
+      (throw (ex-info "Kalman transition coefficient/offset unresolvable (symbolic); bailing analytical elimination to the handler joint path"
+                      {:genmlx.analytical/bail true :transition transition})))
+    {:mean (mx/add (mx/multiply coeff (:mean prev-belief)) offset)
      :var (mx/add (mx/multiply coeff (mx/multiply coeff (:var prev-belief)))
                   noise-var)}))
 
@@ -381,22 +401,17 @@
 
 (defn- resolve-loading-offset
   "Compute loading coefficient and offset for a Kalman observation dep type.
-   Returns [loading offset] for :direct and :affine with numeric coefficients.
-   Returns nil for :nonlinear or :affine with symbolic (non-numeric, non-array)
-   coefficients — caller should fall through to the base handler."
+   Returns [loading offset] for :direct and :affine with numeric/MLX-array
+   coefficient AND offset. Returns nil for :nonlinear or when EITHER form is
+   symbolic (a model-arg symbol, an unevaluated op list) — the caller bails to
+   the handler joint path. A symbolic offset used to be silently substituted
+   with 0.0, mis-scoring every obs update on such a chain (genmlx-rmy7)."
   [dep-type]
   (case (:type dep-type)
     :direct [(mx/scalar 1.0) (mx/scalar 0.0)]
-    :affine (let [c (:coefficient dep-type)
-                  o (:offset dep-type)]
-              ;; Only handle numeric or MLX array coefficients at runtime.
-              ;; Symbolic forms from schema extraction are not usable here.
-              (when (or (number? c) (mx/array? c))
-                [(if (number? c) (mx/scalar c) c)
-                 (cond (number? o) (mx/scalar o)
-                       (= 0 o) (mx/scalar 0.0)
-                       (mx/array? o) o
-                       :else (mx/scalar 0.0))]))
+    :affine (let [c (resolve-affine-form (:coefficient dep-type))
+                  o (resolve-affine-form (:offset dep-type))]
+              (when (and c o) [c o]))
     ;; :nonlinear or unknown — can't handle analytically
     nil))
 

@@ -295,23 +295,29 @@
         ;; affine misclassification by rewriting the env from :arg-aliases. The
         ;; :direct case IS rename-resilient (conjugacy.cljs uses :arg-aliases).
         target-sym (symbol (name prior-addr))
-        ;; Build env from obs-site deps (symbols that map to trace addrs)
-        ;; We need to know which symbols in the expression are trace-dependent
-        env (into {} (map (fn [dep] [(symbol (name dep)) #{dep}]))
-                     (:deps obs-site))
-        result (when natural-arg
+        ;; The name-based target match is only sound when the name-matching
+        ;; symbol still IS the raw prior draw. When the walker recorded
+        ;; :arg-aliases, require live provenance: a rebinding
+        ;; (let [mu (trace :mu ...) mu (mx/add mu 1)] ...) clears the alias, so
+        ;; `mu` inside ANY expression — bare or composite — no longer counts as
+        ;; the target and the site declines to :nonlinear instead of scoring
+        ;; the raw draw where a derived value flows (genmlx-94qc; generalizes
+        ;; the bare-symbol genmlx-1thx guard to composite expressions).
+        ;; Hand-built schemas without :arg-aliases keep the legacy name match.
+        target-live? (or (not (contains? obs-site :arg-aliases))
+                         (= prior-addr (get (:arg-aliases obs-site) target-sym)))
+        ;; Per-symbol dep provenance: prefer the walker-recorded binding-env
+        ;; slice (:arg-deps), which also carries DERIVED locals under other
+        ;; names (q = (mx/exp mu)) so they classify nonlinear instead of
+        ;; constant (genmlx-94qc). Fall back to the legacy name-keyed
+        ;; reconstruction from the flat :deps set.
+        env (or (:arg-deps obs-site)
+                (into {} (map (fn [dep] [(symbol (name dep)) #{dep}]))
+                      (:deps obs-site)))
+        result (when (and natural-arg target-live?)
                  (analyze-affine natural-arg target-sym env))]
     (cond
-      ;; A bare-symbol natural parameter that is NOT a direct trace alias of the
-      ;; prior is a rebinding whose defining expression the schema has erased
-      ;; (only the symbol survives, e.g. (let [mu (trace :mu ...) mu (mx/add mu 5)]
-      ;; ...)); its affine form is unknowable, so decline rather than assume
-      ;; coeff 1 / offset 0 via the name-based target match (genmlx-1thx). Only
-      ;; applies when the walker recorded :arg-aliases provenance; hand-built
-      ;; schemas without it keep the legacy behavior.
-      (and (symbol? natural-arg)
-           (contains? obs-site :arg-aliases)
-           (not= prior-addr (get (:arg-aliases obs-site) natural-arg)))
+      (not target-live?)
       {:type :nonlinear}
 
       (or (nil? result)

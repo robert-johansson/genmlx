@@ -300,6 +300,14 @@
         ;; topo sort, conjugacy, affine — expect trace addresses only).
         splice-deps (into (splice-provenance-of env dist-form)
                           (splice-addrs-in dist-form))
+        ;; Per-symbol dep provenance for the dist-form's free symbols — the
+        ;; binding-env slice affine analysis needs to tell a genuinely
+        ;; independent symbol (constant) from a DERIVED local that carries a
+        ;; prior's dependence under a different name (q = (mx/exp mu)), which
+        ;; the flat :deps set cannot distinguish (genmlx-94qc).
+        arg-deps (into {}
+                       (keep (fn [s] (when-let [d (get env s)] [s d])))
+                       (find-symbols dist-form))
         ;; Walk sub-forms first (handles nested traces in dist args)
         acc' (walk-forms acc env args)]
     (-> acc'
@@ -309,6 +317,7 @@
                                    :dist-args (or dist-args [])
                                    :deps deps
                                    :splice-deps splice-deps
+                                   :arg-deps arg-deps
                                    ;; direct trace-alias provenance for dist-arg
                                    ;; symbols (genmlx-1thx)
                                    :arg-aliases (or (::arg-aliases env) {})
@@ -376,7 +385,15 @@
                              ;; ...), and clear it on any rebinding so an affine
                              ;; reuse of the name is not mistaken for a direct
                              ;; natural parameter (genmlx-1thx).
-                             (let [env1 (if (seq sym-deps) (assoc env sym sym-deps) env)
+                             ;; Rebinding to a dep-FREE value must CLEAR the
+                             ;; symbol's old deps, not keep them: stale deps made
+                             ;; :arg-deps lie about what a rebound local carries
+                             ;; (genmlx-94qc). (Dropping the edge is correct, not
+                             ;; just permissible — the new binding genuinely does
+                             ;; not depend on the old value.)
+                             (let [env1 (if (seq sym-deps)
+                                          (assoc env sym sym-deps)
+                                          (dissoc env sym))
                                    env1 (cond
                                           (seq sym-splices)
                                           (assoc-in env1 [::splice-provenance sym] sym-splices)

@@ -35,6 +35,7 @@ slow test/genmlx/agents_llm_inverse_test.cljs
 slow test/genmlx/agents_llm_policy_test.cljs
 slow test/genmlx/agents_pacman_test.cljs
 medium test/genmlx/amortized_test.cljs
+fast test/genmlx/analytical_offset_rebind_test.cljs
 slow test/genmlx/analytical_posterior_referee_test.cljs
 fast test/genmlx/assess_propose_test.cljs
 medium test/genmlx/audit_gaps_test.cljs
