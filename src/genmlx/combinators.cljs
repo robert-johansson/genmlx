@@ -2401,35 +2401,71 @@
           log-w ((:log-weights-fn this) args)
           idx-dist (dc/->Distribution :categorical {:logits log-w})
           old-idx-score (dc/dist-log-prob idx-dist (mx/scalar old-idx mx/int32))
-          idx-selected? (sel/selected? selection :component-idx)]
+          idx-selected? (sel/selected? selection :component-idx)
+          ;; Regenerate the CURRENT component's sites under `selection`,
+          ;; keeping component index `idx` (whose score contribution is
+          ;; `idx-score`). :component-idx does not exist inside the component,
+          ;; so passing the full selection through is exact: inner sites the
+          ;; selection names resample, the rest are retained. Shared by the
+          ;; index-not-selected branch and the same-index-resample branch —
+          ;; the latter used to RETAIN every inner site blindly, freezing
+          ;; selected latents whenever the index resample landed on the same
+          ;; component (probability = that component's weight) with weight 0,
+          ;; so nothing downstream noticed (genmlx-uizc).
+          regen-within
+          (fn [idx idx-score]
+            (let [component (nth (:components this) idx)
+                  inner-old-score (mx/subtract (:score trace) old-idx-score)
+                  inner-old-choices (without-component-idx old-choices)]
+              (if-let [cregen (cops/get-compiled-regenerate component)]
+                ;; WP-9A: compiled regenerate path
+                (let [key (splice-key this)
+                      result (cregen key (vec args) inner-old-choices selection)
+                      inner-score (:score result)
+                      new-score (mx/add inner-score idx-score)
+                      new-choices (cm/set-choice (values->choices (:values result))
+                                                 [:component-idx]
+                                                 (mx/scalar idx mx/int32))
+                      ;; weight = new_score - old_score - proposal_ratio
+                      proposal-ratio (:weight result)
+                      weight (mx/subtract (mx/subtract new-score (:score trace)) proposal-ratio)]
+                  {:trace (tag-joint
+                            (with-meta
+                              (tr/make-trace {:gen-fn this :args args
+                                              :choices new-choices
+                                              :retval (:retval result)
+                                              :score new-score})
+                              {::compiled-path true}))
+                   :weight weight})
+                ;; Fallback: handler path
+                (let [inner-old-trace (tr/make-trace {:gen-fn component :args args
+                                                      :choices inner-old-choices
+                                                      :retval (:retval trace) :score inner-old-score})
+                      result (p/regenerate component inner-old-trace selection)
+                      new-inner-trace (:trace result)
+                      new-score (mx/add (:score new-inner-trace) idx-score)]
+                  {:trace (tag-from-traces
+                            (tr/make-trace {:gen-fn this :args args
+                                            :choices (cm/set-choice (:choices new-inner-trace)
+                                                                    [:component-idx]
+                                                                    (mx/scalar idx mx/int32))
+                                            :retval (:retval new-inner-trace)
+                                            :score new-score})
+                            [new-inner-trace])
+                   :weight (:weight result)}))))]
       (if idx-selected?
-        ;; Resample the component index. Only :component-idx is selected, so
-        ;; the inner component sites are UNSELECTED and must be retained
-        ;; whenever the structure is unchanged (genmlx-zek9).
+        ;; Resample the component index from its prior (the selected-site
+        ;; convention: the index resample's own weight delta cancels to 0).
         (let [new-idx-trace (dc/dist-simulate idx-dist)
               new-idx (int (mx/item (cm/get-value (:choices new-idx-trace))))
               new-idx-score (:score new-idx-trace)]
           (if (= new-idx old-idx)
-            ;; Same component resampled: retain the unselected inner choices.
-            ;; Nothing under the component moves, so the retained-only weight
-            ;; is 0 (and the selected index resample cancels its own delta).
-            (let [component (nth (:components this) old-idx)
-                  inner-old-choices (without-component-idx old-choices)
-                  inner-old-score (mx/subtract (:score trace) old-idx-score)
-                  inner-old-trace (tr/make-trace {:gen-fn component :args args
-                                                  :choices inner-old-choices
-                                                  :retval (:retval trace)
-                                                  :score inner-old-score})
-                  new-score (mx/add inner-old-score new-idx-score)]
-              {:trace (tag-from-traces
-                        (tr/make-trace {:gen-fn this :args args
-                                        :choices (cm/set-choice inner-old-choices
-                                                                [:component-idx]
-                                                                (mx/scalar new-idx mx/int32))
-                                        :retval (:retval trace)
-                                        :score new-score})
-                        [inner-old-trace])
-               :weight ZERO})
+            ;; Same component resampled: regenerate WITHIN the component under
+            ;; the remaining selection (selected inner sites resample,
+            ;; unselected ones are retained) and compose the weights — the
+            ;; index part cancels to 0, the inner regenerate weight passes
+            ;; through (genmlx-uizc; blind retention froze selected latents).
+            (regen-within old-idx new-idx-score)
             ;; Different component: EVERYTHING under the Mix is freshly drawn
             ;; from the prior, so the regenerate MH weight is exactly 0: the
             ;; score delta cancels against the forward/backward prior-proposal
@@ -2448,46 +2484,8 @@
                                         :score new-score})
                         [new-comp-trace])
                :weight ZERO})))
-        ;; Same component: regenerate within the component
-        (let [component (nth (:components this) old-idx)
-              inner-old-score (mx/subtract (:score trace) old-idx-score)
-              inner-old-choices (without-component-idx old-choices)]
-          (if-let [cregen (cops/get-compiled-regenerate component)]
-            ;; WP-9A: compiled regenerate path
-            (let [key (splice-key this)
-                  result (cregen key (vec args) inner-old-choices selection)
-                  inner-score (:score result)
-                  new-score (mx/add inner-score old-idx-score)
-                  new-choices (cm/set-choice (values->choices (:values result))
-                                             [:component-idx]
-                                             (mx/scalar old-idx mx/int32))
-                  ;; weight = new_score - old_score - proposal_ratio
-                  proposal-ratio (:weight result)
-                  weight (mx/subtract (mx/subtract new-score (:score trace)) proposal-ratio)]
-              {:trace (tag-joint
-                        (with-meta
-                          (tr/make-trace {:gen-fn this :args args
-                                          :choices new-choices
-                                          :retval (:retval result)
-                                          :score new-score})
-                          {::compiled-path true}))
-               :weight weight})
-            ;; Fallback: handler path
-            (let [inner-old-trace (tr/make-trace {:gen-fn component :args args
-                                                  :choices inner-old-choices
-                                                  :retval (:retval trace) :score inner-old-score})
-                  result (p/regenerate component inner-old-trace selection)
-                  new-inner-trace (:trace result)
-                  new-score (mx/add (:score new-inner-trace) old-idx-score)]
-              {:trace (tag-from-traces
-                        (tr/make-trace {:gen-fn this :args args
-                                        :choices (cm/set-choice (:choices new-inner-trace)
-                                                                [:component-idx]
-                                                                (mx/scalar old-idx mx/int32))
-                                        :retval (:retval new-inner-trace)
-                                        :score new-score})
-                        [new-inner-trace])
-               :weight (:weight result)})))))))
+        ;; Index not selected — same component: regenerate within it.
+        (regen-within old-idx old-idx-score)))))
 
 ;; ---------------------------------------------------------------------------
 ;; IEdit implementations — delegate to edit-dispatch for all combinator types

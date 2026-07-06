@@ -14,6 +14,7 @@
             [genmlx.dynamic :as dyn]
             [genmlx.gen :refer [gen]]
             [genmlx.dist :as dist]
+            [genmlx.dist.core :as dc]
             [genmlx.combinators :as comb]
             [genmlx.inference.smc :as smc]))
 
@@ -128,5 +129,63 @@
                            (rest (:traces result)))
             different-count (count (filter #(> (js/Math.abs (- % ref-x)) 5) other-xs))]
         (is (> different-count 0) "cSMC: other particles differ from reference")))))
+
+;; ---------------------------------------------------------------------------
+;; 4. Mix regenerate: selected inner sites resample on a same-index resample
+;;    (genmlx-uizc — blind retention froze them with weight 0)
+;; ---------------------------------------------------------------------------
+
+(deftest mix-regenerate-selected-inner-sites
+  (testing "Mix + sel/all resamples inner sites on same-idx outcomes; idx-only selection still retains"
+    (let [c0 (dyn/auto-key (gen [] (trace :x (dist/gaussian -50 0.1))))
+          c1 (dyn/auto-key (gen [] (trace :x (dist/gaussian 50 0.1))))
+          mix (comb/mix-combinator [c0 c1] (fn [_] (mx/array [0.0 0.0])))
+          tr0 (p/simulate (dyn/with-key mix (rng/fresh-key 1)) [])
+          old-x (mx/realize (cm/get-choice (:choices tr0) [:x]))
+          old-idx (mx/realize (cm/get-choice (:choices tr0) [:component-idx]))
+          regen (fn [sel seed]
+                  (let [r (p/regenerate (dyn/with-key mix (rng/fresh-key seed)) tr0 sel)]
+                    {:x (mx/realize (cm/get-choice (:choices (:trace r)) [:x]))
+                     :idx (mx/realize (cm/get-choice (:choices (:trace r)) [:component-idx]))
+                     :w (mx/realize (:weight r))}))
+          all-runs (mapv #(regen sel/all (+ 100 %)) (range 12))
+          same-idx-all (filterv #(= (:idx %) old-idx) all-runs)
+          idx-only-runs (mapv #(regen (sel/select :component-idx) (+ 300 %)) (range 12))
+          same-idx-only (filterv #(= (:idx %) old-idx) idx-only-runs)]
+      ;; symmetric 2-component mix: same-idx outcomes occur w.p. 1/2 per run
+      (is (pos? (count same-idx-all)) "sel/all: at least one same-idx outcome sampled")
+      (is (every? #(not= (:x %) old-x) same-idx-all)
+          "sel/all + same idx: selected :x RESAMPLED, never frozen")
+      (is (every? #(< (js/Math.abs (:w %)) 1e-6) all-runs)
+          "sel/all: full-prior resample weight is exactly 0")
+      (is (pos? (count same-idx-only)) "idx-only: at least one same-idx outcome sampled")
+      (is (every? #(= (:x %) old-x) same-idx-only)
+          "(select :component-idx) + same idx: unselected :x RETAINED (genmlx-zek9)"))))
+
+;; ---------------------------------------------------------------------------
+;; 5. Poisson sampler moments at large rate (genmlx-2nec — the Knuth product
+;;    loop underflowed exp(-rate) for rate >= ~708, pinning samples near 700)
+;; ---------------------------------------------------------------------------
+
+(deftest poisson-large-rate-moments
+  (testing "poisson(2000) samples have the right mean/variance (was pinned ~700)"
+    (let [n 150
+          xs (mapv (fn [i] (mx/realize (dc/dist-sample (dist/poisson 2000)
+                                                       (rng/fresh-key (+ 7000 i)))))
+                   (range n))
+          m (/ (reduce + xs) n)
+          v (/ (reduce + (map #(let [d (- % m)] (* d d)) xs)) n)]
+      ;; mean 2000, sd ~44.7: sample-mean SE ~3.7 (a ~7-sigma band);
+      ;; var estimate SE ~ var*sqrt(2/n) ~ 231 (a ~5x band)
+      (is (h/close? 2000 m 25) (str "mean ~2000 (got " m ")"))
+      (is (h/close? 2000 v 1200) (str "variance ~2000 (got " v ")"))
+      (is (> (apply min xs) 1700) "no sample anywhere near the old ~700 pin")))
+  (testing "poisson small/branch-boundary rates still correct"
+    (doseq [[rate n tol] [[3 300 0.5] [9.9 300 1.2] [10.1 300 1.2]]]
+      (let [xs (mapv (fn [i] (mx/realize (dc/dist-sample (dist/poisson rate)
+                                                         (rng/fresh-key (+ 9000 i)))))
+                     (range n))
+            m (/ (reduce + xs) n)]
+        (is (h/close? rate m tol) (str "poisson(" rate ") mean (got " m ")"))))))
 
 (cljs.test/run-tests)
