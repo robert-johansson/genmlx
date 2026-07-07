@@ -72,11 +72,13 @@
   (dec-dispose! [d handle] "Dispose a handle (frees the native branch).")
   (dec-live-handles [d] "Collection of live handles (the R1/R2 ledger)."))
 
+(defn- mat [a] (mx/materialize! a) a)
+
 (deftype NativeDecoder [model live]
   ITokenDecoder
   (dec-prefill! [_ prompt-ids]
     (llm/init-cache! model)
-    (let [logits (mx/materialize! (llm/forward-prefill model (vec prompt-ids)))
+    (let [logits (mat (llm/forward-prefill model (vec prompt-ids)))
           root (llm/branch-cache! model)]
       (swap! live conj root)
       {:root root :logits logits}))
@@ -85,7 +87,7 @@
       (swap! live conj b)
       b))
   (dec-step! [_ handle tok-id]
-    (mx/materialize! (llm/forward-branch model handle tok-id)))
+    (mat (llm/forward-branch model handle tok-id)))
   (dec-dispose! [_ handle]
     (swap! live disj handle)
     (try (llm/dispose-branch! model handle) (catch :default _ nil)))
@@ -101,7 +103,7 @@
   ITokenDecoder
   (dec-prefill! [_ prompt-ids]
     (vreset! prompt-ref (vec prompt-ids))
-    (let [logits (mx/materialize! (llm/forward-pass model (vec prompt-ids)))
+    (let [logits (mat (llm/forward-pass model (vec prompt-ids)))
           root (swap! counter inc)]
       (swap! live assoc root [])
       {:root root :logits logits}))
@@ -112,7 +114,7 @@
   (dec-step! [_ handle tok-id]
     (let [toks (conj (get @live handle) tok-id)]
       (swap! live assoc handle toks)
-      (mx/materialize! (llm/forward-pass model (into @prompt-ref toks)))))
+      (mat (llm/forward-pass model (into @prompt-ref toks)))))
   (dec-dispose! [_ handle] (swap! live dissoc handle))
   (dec-live-handles [_] (keys @live)))
 

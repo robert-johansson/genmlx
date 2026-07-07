@@ -31,7 +31,14 @@
     (do (swap! pass inc) (println "  PASS" label))
     (do (swap! fail inc) (println "  FAIL" label))))
 
-(def dense-dir (path/join (os/homedir) ".cache" "models" "qwen3.5-0.8b-mlx-bf16"))
+;; A GENUINELY dense bf16 checkpoint. NOTE: qwen3.5-0.8b-mlx-bf16 is 4-bit
+;; quantized despite its name (see the x76x root-cause) and the CLJS forward
+;; path cannot read packed embeddings (genmlx-vmks), so V5 rides the 0.6B.
+(def dense-dir
+  (let [cands [(path/join (os/homedir) ".cache" "models" "qwen3-0.6b-mlx-bf16")
+               (path/join (os/homedir) ".cache" "models" "qwen3-0.6b")]]
+    (or (first (filter #(.existsSync fs (path/join % "tokenizer.json")) cands))
+        (first cands))))
 (def moe-dir (some-> js/process .-env .-GENMLX_MOE_MODEL))
 
 (defn- summary []
