@@ -195,9 +195,13 @@
       (is (>= (:active-bytes snap) 0)))
     ;; synchronize() returns void → nil; the barrier must not throw
     (is (nil? (mx/synchronize!)) "synchronize! is a void Metal barrier")
-    ;; gpu-architecture-gen: the real M-generation integer (e.g. 16 = M4)
-    (is (number? (mx/gpu-architecture-gen)) "gpu-architecture-gen returns an integer")
-    (is (>= (mx/gpu-architecture-gen) 0))))
+    ;; gpu-architecture-gen: the real M-generation integer (e.g. 16 = M4) on
+    ;; Metal; nil off-Metal — never an Apple-parse of a CUDA arch string
+    ;; (genmlx-yjyl honesty gate).
+    (if (mx/metal-is-available?)
+      (do (is (number? (mx/gpu-architecture-gen)) "gpu-architecture-gen returns an integer on Metal")
+          (is (>= (mx/gpu-architecture-gen) 0)))
+      (is (nil? (mx/gpu-architecture-gen)) "gpu-architecture-gen is nil off-Metal (no fabricated gen)"))))
 
 (deftest broadcast-to-omission-test
   (testing "native broadcastTo is OMITTED (broken: mis-fills size-1 dims); the custom broadcast-to stays"

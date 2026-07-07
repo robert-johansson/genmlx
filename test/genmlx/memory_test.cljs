@@ -23,11 +23,16 @@
 
 (deftest metal-availability
   (testing "metal device"
-    (is (mx/metal-is-available?) "metal-is-available? returns true")))
+    ;; Platform-honest (genmlx-nvna): assert the call works and returns a
+    ;; boolean on EVERY host — true on Metal, false on CUDA — instead of
+    ;; hard-asserting true (which made this file permanently red off-Metal).
+    (is (boolean? (mx/metal-is-available?))
+        "metal-is-available? returns a boolean without throwing")))
 
 (deftest metal-device-info
   (testing "metal-device-info returns expected fields"
-    (let [info (mx/metal-device-info)]
+    (let [metal? (mx/metal-is-available?)
+          info (mx/metal-device-info)]
       (is (map? info) "device-info is a map")
       ;; :resource-limit removed — v0.31.2's metalDeviceInfo no longer reports it.
       (is (contains? info :device-name) "has :device-name")
@@ -36,13 +41,22 @@
       (is (or (string? (:device-name info)) (= :unavailable (:device-name info)))
           "device-name is a derived string or :unavailable, not fabricated")
       (is (contains? info :memory-size) "has :memory-size")
-      (is (> (:memory-size info) 0) "memory-size > 0")
       (is (contains? info :max-buffer-length) "has :max-buffer-length")
       (is (contains? info :max-recommended-working-set-size) "has :max-recommended-working-set-size")
-      ;; genmlx-r3u4: the real GPU arch generation integer replaces the old
-      ;; hardcoded :architecture "apple" placeholder.
       (is (contains? info :architecture-gen) "has :architecture-gen")
-      (is (number? (:architecture-gen info)) "architecture-gen is a real integer (gpu-architecture-gen)"))))
+      (if metal?
+        (do
+          ;; Metal host: real values required.
+          (is (> (:memory-size info) 0) "memory-size > 0 on Metal")
+          ;; genmlx-r3u4: the real GPU arch generation integer replaces the old
+          ;; hardcoded :architecture "apple" placeholder.
+          (is (number? (:architecture-gen info)) "architecture-gen is a real integer on Metal")
+          (is (string? (:device-name info)) "device-name derived from arch-gen on Metal"))
+        (do
+          ;; Non-Metal host: assert the NEGATIVE contract (genmlx-nvna/yjyl) —
+          ;; no fabricated Apple identity parsed out of a CUDA arch string.
+          (is (nil? (:architecture-gen info)) "architecture-gen is nil off-Metal (no fabricated gen)")
+          (is (= :unavailable (:device-name info)) "device-name :unavailable off-Metal"))))))
 
 (deftest set-cache-limit-roundtrip
   (testing "set-cache-limit! roundtrip"

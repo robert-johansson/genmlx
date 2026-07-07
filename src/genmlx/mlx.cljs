@@ -1049,15 +1049,20 @@
    expose architecture or a device name (it returns only availability +
    working-set size). metal-device-info below derives its :architecture-gen and
    :device-name from THIS, never from a fabricated constant (genmlx-r3u4).
+   Returns nil off-Metal: the native parser applies Apple-format assumptions
+   to whatever arch string the backend reports, so on CUDA it would turn
+   sm_110 into a fabricated \"gen 11\" (genmlx-yjyl).
    Read-only introspection (genmlx-0vwn)."
-  [] (.gpuArchitectureGen c))
+  [] (when (metal-is-available?) (.gpuArchitectureGen c)))
 (defn metal-device-info
   "Honest device introspection. Native metalDeviceInfo() exposes only memory
    limits + availability — it does NOT report architecture or a device name, so
    we never fabricate those (the old hardcoded \"apple\"/\"apple-gpu\" lied,
    genmlx-r3u4). :architecture-gen is the real GPU arch generation integer from
    gpu-architecture-gen (e.g. 16 = M4); :device-name is a label DERIVED from it
-   (varies with hardware), or :unavailable if the arch gen cannot be read."
+   (varies with hardware), or :unavailable if the arch gen cannot be read —
+   including on any non-Metal backend, where both are nil/:unavailable rather
+   than an Apple-parsed CUDA arch string (genmlx-yjyl)."
   []
   (let [info (js/JSON.parse (.metalDeviceInfo c))
         arch-gen (gpu-architecture-gen)]
