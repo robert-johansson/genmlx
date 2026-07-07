@@ -59,10 +59,29 @@
                (update :choices cm/set-value addr value)
                (update :score mx/add lp))]))
 
+(defn- assert-leaf-constraint!
+  "Throw when the constraint at a primitive site is a NON-EMPTY NODE (a
+   nested choicemap where a value belongs). Silently falling through to
+   fresh sampling (weight 0, :unused-constraints nil) made the user believe
+   they conditioned while the importance weight was wrong — Gen.jl throws on
+   this shape mismatch, and so do we (genmlx-dp60)."
+  [constraint addr op]
+  (when (and (some? constraint)
+             (not (cm/has-value? constraint))
+             (seq (cm/-submaps constraint)))
+    (throw (ex-info (str (name op) ": constraint at address " addr " is a nested "
+                         "choicemap, but the site is a primitive distribution — it "
+                         "would be silently ignored (site sampled fresh, weight 0). "
+                         "Provide a VALUE at " addr ", or fix the constraint's "
+                         "address path.")
+                    {:genmlx/error :node-constraint-at-leaf
+                     :addr addr :op op}))))
+
 (defn generate-transition
   "Pure: if constrained at addr, use constraint; otherwise simulate."
   [state addr dist]
   (let [constraint (cm/get-submap (:constraints state) addr)]
+    (assert-leaf-constraint! constraint addr :generate)
     (if (cm/has-value? constraint)
       (let [value (cm/get-value constraint)
             lp (dc/dist-log-prob dist value)]
@@ -100,6 +119,7 @@
   [state addr dist]
   (let [constraint (cm/get-submap (:constraints state) addr)
         old-choice (cm/get-submap (:old-choices state) addr)]
+    (assert-leaf-constraint! constraint addr :update)
     (cond
       ;; New constraint provided
       (cm/has-value? constraint)
@@ -256,6 +276,7 @@
    unconstrained sites delegate to batched-simulate-transition."
   [state addr dist]
   (let [constraint (cm/get-submap (:constraints state) addr)]
+    (assert-leaf-constraint! constraint addr :generate)
     (if (cm/has-value? constraint)
       ;; Constrained: scalar observation, scalar log-prob → broadcasts into [N] score/weight.
       ;; ensure-array so the stored choice is an MxArray (a raw JS number is rejected by
@@ -278,6 +299,7 @@
   (let [n (:batch-size state)
         constraint (cm/get-submap (:constraints state) addr)
         old-choice (cm/get-submap (:old-choices state) addr)]
+    (assert-leaf-constraint! constraint addr :update)
     (cond
       ;; New constraint provided
       (cm/has-value? constraint)

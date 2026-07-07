@@ -409,11 +409,34 @@
   (let [cfn (:compiled-simulate (:schema gf))]
     (make-compiled-trace gf args (cfn key (vec args)))))
 
+(defn- assert-no-node-constraints!
+  "The compiled site steps read constraints with cm/has-value? and silently
+   fall through to sampling on a NODE-shaped (nested) constraint at a
+   primitive site — the same silent mis-conditioning the handler transitions
+   now throw on (genmlx-dp60). Static models have literal site addresses in
+   the schema, so the shape check runs once up front here."
+  [gf constraints op]
+  (when constraints
+    (doseq [{:keys [addr]} (:trace-sites (:schema gf))]
+      (let [c (cm/get-submap constraints addr)]
+        (when (and (some? c)
+                   (not (cm/has-value? c))
+                   (seq (cm/-submaps c)))
+          (throw (ex-info (str (name op) ": constraint at address " addr
+                               " is a nested choicemap, but the site is a "
+                               "primitive distribution — it would be silently "
+                               "ignored (site sampled fresh, weight 0). Provide "
+                               "a VALUE at " addr ", or fix the constraint's "
+                               "address path.")
+                          {:genmlx/error :node-constraint-at-leaf
+                           :addr addr :op op})))))))
+
 (defn- run-generate-compiled [gf args key {:keys [constraints]}]
-  (let [cfn (:compiled-generate (:schema gf))
-        result (cfn key (vec args) constraints)]
-    {:trace (make-compiled-trace gf args result)
-     :weight (:weight result)}))
+  (let [cfn (:compiled-generate (:schema gf))]
+    (assert-no-node-constraints! gf constraints :generate)
+    (let [result (cfn key (vec args) constraints)]
+      {:trace (make-compiled-trace gf args result)
+       :weight (:weight result)})))
 
 (defn- run-update-compiled
   "Static models have a fixed address set (no fresh/removed sites), so the
@@ -421,6 +444,7 @@
    score' - score."
   [gf args key {:keys [trace constraints]}]
   (let [cfn (:compiled-update (:schema gf))
+        _ (assert-no-node-constraints! gf constraints :update)
         result (cfn key (vec args) constraints (:choices trace))]
     {:trace (make-compiled-trace gf args result)
      :weight (mx/subtract (:score result) (:score trace))
@@ -457,6 +481,7 @@
 
 (defn- run-generate-prefix [gf args key {:keys [constraints]}]
   (let [pfx (:compiled-prefix-generate (:schema gf))
+        _ (assert-no-node-constraints! gf constraints :generate)
         result (pfx key (vec args) constraints)
         replay (compiled/make-replay-generate-transition (:values result))
         handler-result (rt/run-handler replay
@@ -470,6 +495,7 @@
 
 (defn- run-update-prefix [gf args key {:keys [trace constraints]}]
   (let [pfx (:compiled-prefix-update (:schema gf))
+        _ (assert-no-node-constraints! gf constraints :update)
         result (pfx key (vec args) constraints (:choices trace))
         replay (cops/make-replay-update-transition (:values result))
         ;; Prefix sites never sample fresh (values come from constraints or
