@@ -62,10 +62,15 @@
                   (close? s w 0.01))))
 
 (defspec law:halts-with-probability-one 100
-  ;; [T] Def 2.1.16 — simulate(P, x) terminates with probability 1
+  ;; [T] Def 2.1.16 — simulate(P, x) terminates with probability 1.
+  ;; SMOKE CHECK ONLY (genmlx-rqi1): halting w.p. 1 is not decidable from
+  ;; finitely many runs — a non-terminating model would hang the harness
+  ;; rather than fail this spec, and a throwing model fails every other
+  ;; law too. Kept as an explicit statement of the thesis well-formedness
+  ;; requirement, not as evidence of it.
   (prop/for-all [m gen-model]
-                (let [t (p/simulate (:model m) (:args m))]
-                  (some? t))))
+                (every? some?
+                        (repeatedly 3 #(p/simulate (:model m) (:args m))))))
 
 ;; ---------------------------------------------------------------------------
 ;; GENERATE laws [T] §2.3.1

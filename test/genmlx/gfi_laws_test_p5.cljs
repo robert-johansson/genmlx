@@ -100,26 +100,49 @@
                   (close? mean 1.6 0.15))))
 
 (defspec law:mh-proposal-reversibility 100
-  ;; [T] §3.4.2 — regenerate-based MH is reversible: forward and reverse
-  ;; moves both produce valid traces with finite weights
-  (prop/for-all [m gen-multisite]
+  ;; [T] §3.4.2 — regenerate-based MH is reversible (genmlx-rqi1):
+  ;; (1) forcing values back to t's (update(t', t.choices)) recovers the
+  ;;     ORIGINAL trace exactly (address set, leaf values, score);
+  ;; (2) the forced reverse move's retained-only weight, computed with
+  ;;     independent project passes, cancels the forward weight:
+  ;;     w_fwd + w_rev = 0 (detailed balance, w(t->t') = -w(t'->t)).
+  ;; Residual gap: regenerate cannot be forced to propose specific values,
+  ;; so w_rev comes from the retained-only formula on the actual reverse
+  ;; pair, pinning regenerate's REPORTED forward weight to the identity.
+  (prop/for-all [m gen-nonbranching]
                 (let [{:keys [model args]} m
                       t (p/simulate model args)
-                      sel-addr (first (first (cm/addresses (:choices t))))
-                      sel (sel/select sel-addr)
+                      addrs (cm/addresses (:choices t))
+                      sel-path (first addrs)
+                      sel (gfi/path->selection sel-path)
                       ;; Forward move
                       {fwd-trace :trace fwd-weight :weight}
                       (p/regenerate model t sel)
                       w-fwd (ev fwd-weight)
-                      ;; Reverse move
-                      {rev-trace :trace rev-weight :weight}
-                      (p/regenerate model fwd-trace sel)
-                      w-rev (ev rev-weight)]
-                  (and (js/Number.isFinite w-fwd)
-                       (js/Number.isFinite w-rev)
-                       ;; Reverse trace preserves address set
-                       (= (set (cm/addresses (:choices t)))
-                          (set (cm/addresses (:choices rev-trace))))))))
+                      ;; Forced reverse move
+                      {rev-trace :trace} (p/update model fwd-trace (:choices t))
+                      rev-paths (cm/addresses (:choices rev-trace))
+                      fwd-path-set (set (cm/addresses (:choices fwd-trace)))
+                      retained (remove #(= % sel-path)
+                                       (filter fwd-path-set rev-paths))
+                      w-rev (reduce
+                             (fn [acc path]
+                               (let [s (gfi/path->selection path)]
+                                 (+ acc
+                                    (- (ev (p/project model rev-trace s))
+                                       (ev (p/project model fwd-trace s))))))
+                             0.0 retained)]
+                  (and (h/finite? w-fwd)
+                       ;; (1) forced reverse recovers the original trace
+                       (= (set addrs) (set rev-paths))
+                       (every? (fn [path]
+                                 (close? (ev (cm/get-choice (:choices t) path))
+                                         (ev (cm/get-choice (:choices rev-trace) path))
+                                         1e-5))
+                               addrs)
+                       (close? (ev (:score t)) (ev (:score rev-trace)) 0.01)
+                       ;; (2) detailed balance: weights cancel
+                       (close? (+ w-fwd w-rev) 0.0 0.05)))))
 
 (t/deftest regenerate-weight-chain-model-exact
   (t/testing "Regenerate weight on gaussian chain matches child log-prob change"

@@ -301,10 +301,15 @@
                   (close? s w 0.01))))
 
 (defspec law:halts-with-probability-one 100
-  ;; [T] Def 2.1.16 — simulate(P, x) terminates with probability 1
+  ;; [T] Def 2.1.16 — simulate(P, x) terminates with probability 1.
+  ;; SMOKE CHECK ONLY (genmlx-rqi1): halting w.p. 1 is not decidable from
+  ;; finitely many runs — a non-terminating model would hang the harness
+  ;; rather than fail this spec, and a throwing model fails every other
+  ;; law too. Kept as an explicit statement of the thesis well-formedness
+  ;; requirement, not as evidence of it.
   (prop/for-all [m gen-model]
-                (let [t (p/simulate (:model m) (:args m))]
-                  (some? t))))
+                (every? some?
+                        (repeatedly 3 #(p/simulate (:model m) (:args m))))))
 
 ;; ---------------------------------------------------------------------------
 ;; GENERATE laws [T] §2.3.1
@@ -450,10 +455,31 @@
 ;; ---------------------------------------------------------------------------
 
 (defspec law:regenerate-empty-identity 100
-  ;; regenerate(t, none).weight = 0
+  ;; regenerate(t, none).weight = 0 AND choices unchanged (same address
+  ;; set, same value at every leaf) — the theorem says identity, so check
+  ;; the trace too, not just the weight (genmlx-rqi1)
   (prop/for-all [m gen-nonbranching]
                 (let [t (p/simulate (:model m) (:args m))
-                      {:keys [weight]} (p/regenerate (:model m) t sel/none)]
+                      {:keys [trace weight]} (p/regenerate (:model m) t sel/none)
+                      old-paths (cm/addresses (:choices t))]
+                  (and (close? 0.0 (ev weight) 0.01)
+                       (= (set old-paths)
+                          (set (cm/addresses (:choices trace))))
+                       (every? (fn [path]
+                                 (close? (ev (cm/get-choice (:choices t) path))
+                                         (ev (cm/get-choice (:choices trace) path))
+                                         1e-6))
+                               old-paths)))))
+
+(defspec law:regenerate-select-all-zero 100
+  ;; [T] §3.4.2 retained-only weight (genmlx-hmch, genmlx-yep2):
+  ;; regenerate(t, all).weight = 0 for ANY model — a full-prior resample is
+  ;; its own proposal, so the MH weight is identically 0. Runs over the FULL
+  ;; pool (splices + branching): the genmlx-njzu fast-path bug violated this
+  ;; law exactly on splice + dependent-site models (genmlx-rqi1).
+  (prop/for-all [m gen-model]
+                (let [t (p/simulate (:model m) (:args m))
+                      {:keys [weight]} (p/regenerate (:model m) t sel/all)]
                   (close? 0.0 (ev weight) 0.01))))
 
 (defspec law:regenerate-preserves-unselected 100
@@ -575,16 +601,23 @@
 (defspec law:update-compositionality 100
   ;; [T] Proposition 2.3.2 -- splice weight decomposition
   ;; For P3 = P1;P2: w3 = w1 + w2 where w1 = inner score diff, w2 = outer-only diff
-  ;; Verified by projecting onto inner/outer partitions independently
+  ;; Verified by projecting onto inner/outer partitions independently.
+  ;; The splice namespace is DERIVED from the trace (first hierarchical
+  ;; path's top-level prefix) instead of hardcoding :inner — the hardcoded
+  ;; version was degenerate (w1 = 0, w2 = w3) for splice-nested, whose top
+  ;; namespace is :mid (genmlx-rqi1).
   (prop/for-all [m gen-splice]
                 (let [{:keys [model args]} m
                       t1 (p/simulate model args)
+                      inner-addr (some (fn [path]
+                                         (when (> (count path) 1) (first path)))
+                                       (cm/addresses (:choices t1)))
                       t2 (p/simulate model args)
                       ;; Total update weight
                       {:keys [trace weight]} (p/update model t1 (:choices t2))
                       w3 (ev weight)
                       ;; Partition: inner (splice namespace) vs outer
-                      inner-sel (sel/hierarchical :inner sel/all)
+                      inner-sel (sel/hierarchical inner-addr sel/all)
                       outer-sel (sel/complement-sel inner-sel)
                       ;; w1 = inner score difference via project
                       w1 (- (ev (p/project model trace inner-sel))
@@ -592,7 +625,8 @@
                       ;; w2 = outer-only score difference via project
                       w2 (- (ev (p/project model trace outer-sel))
                             (ev (p/project model t1 outer-sel)))]
-                  (close? w3 (+ w1 w2) 0.05))))
+                  (and (some? inner-addr) ;; splice pool => must exist
+                       (close? w3 (+ w1 w2) 0.05)))))
 
 (defspec law:nested-splice-compositionality 50
   ;; [T] Prop 2.3.2 at 2 levels of nesting
@@ -885,26 +919,49 @@
                   (close? mean 1.6 0.15))))
 
 (defspec law:mh-proposal-reversibility 100
-  ;; [T] §3.4.2 — regenerate-based MH is reversible: forward and reverse
-  ;; moves both produce valid traces with finite weights
-  (prop/for-all [m gen-multisite]
+  ;; [T] §3.4.2 — regenerate-based MH is reversible (genmlx-rqi1):
+  ;; (1) forcing values back to t's (update(t', t.choices)) recovers the
+  ;;     ORIGINAL trace exactly (address set, leaf values, score);
+  ;; (2) the forced reverse move's retained-only weight, computed with
+  ;;     independent project passes, cancels the forward weight:
+  ;;     w_fwd + w_rev = 0 (detailed balance, w(t->t') = -w(t'->t)).
+  ;; Residual gap: regenerate cannot be forced to propose specific values,
+  ;; so w_rev comes from the retained-only formula on the actual reverse
+  ;; pair, pinning regenerate's REPORTED forward weight to the identity.
+  (prop/for-all [m gen-nonbranching]
                 (let [{:keys [model args]} m
                       t (p/simulate model args)
-                      sel-addr (first (first (cm/addresses (:choices t))))
-                      sel (sel/select sel-addr)
+                      addrs (cm/addresses (:choices t))
+                      sel-path (first addrs)
+                      sel (gfi/path->selection sel-path)
                       ;; Forward move
                       {fwd-trace :trace fwd-weight :weight}
                       (p/regenerate model t sel)
                       w-fwd (ev fwd-weight)
-                      ;; Reverse move
-                      {rev-trace :trace rev-weight :weight}
-                      (p/regenerate model fwd-trace sel)
-                      w-rev (ev rev-weight)]
-                  (and (js/Number.isFinite w-fwd)
-                       (js/Number.isFinite w-rev)
-                       ;; Reverse trace preserves address set
-                       (= (set (cm/addresses (:choices t)))
-                          (set (cm/addresses (:choices rev-trace))))))))
+                      ;; Forced reverse move
+                      {rev-trace :trace} (p/update model fwd-trace (:choices t))
+                      rev-paths (cm/addresses (:choices rev-trace))
+                      fwd-path-set (set (cm/addresses (:choices fwd-trace)))
+                      retained (remove #(= % sel-path)
+                                       (filter fwd-path-set rev-paths))
+                      w-rev (reduce
+                             (fn [acc path]
+                               (let [s (gfi/path->selection path)]
+                                 (+ acc
+                                    (- (ev (p/project model rev-trace s))
+                                       (ev (p/project model fwd-trace s))))))
+                             0.0 retained)]
+                  (and (h/finite? w-fwd)
+                       ;; (1) forced reverse recovers the original trace
+                       (= (set addrs) (set rev-paths))
+                       (every? (fn [path]
+                                 (close? (ev (cm/get-choice (:choices t) path))
+                                         (ev (cm/get-choice (:choices rev-trace) path))
+                                         1e-5))
+                               addrs)
+                       (close? (ev (:score t)) (ev (:score rev-trace)) 0.01)
+                       ;; (2) detailed balance: weights cancel
+                       (close? (+ w-fwd w-rev) 0.0 0.05)))))
 
 (t/deftest regenerate-weight-chain-model-exact
   (t/testing "Regenerate weight on gaussian chain matches child log-prob change"
@@ -1804,6 +1861,28 @@
                              :n-trials 5)]
       (t/is (:all-pass? report)
             (str "GFI laws failed: "
+                 (pr-str (filterv #(not (:pass? %)) (:results report))))))))
+
+(t/deftest gfi-verify-splice
+  (t/testing "gfi/verify runs the full algebraic law catalog on a
+              splice-bearing model (genmlx-rqi1)"
+    ;; The genmlx-njzu regenerate fast-path bug violated
+    ;; :regenerate-select-all-zero ONLY on splice + dependent-site models,
+    ;; and the catalog previously never ran against one — gaussian-chain
+    ;; was the sole full-catalog model. splice-dependent is exactly the
+    ;; njzu shape: (splice :inner sub) feeding (trace :b (gaussian a 1)).
+    (let [slow-laws #{:mixture-kernel-stationarity
+                      :hmc-acceptance-correctness
+                      :proposal-training-objective
+                      :involutive-mh-convergence}
+          algebraic-laws (->> gfi/laws
+                              (remove #(slow-laws (:name %)))
+                              (mapv :name))
+          report (gfi/verify (:model splice-dependent) (:args splice-dependent)
+                             :law-names algebraic-laws
+                             :n-trials 2)]
+      (t/is (:all-pass? report)
+            (str "GFI laws failed on splice model: "
                  (pr-str (filterv #(not (:pass? %)) (:results report))))))))
 
 (t/deftest gfi-verify-branching

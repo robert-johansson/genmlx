@@ -146,11 +146,16 @@
 
    {:name :halts-with-probability-one
     :from "[T] Def 2.1.16"
-    :theorem "simulate(P, x) terminates with probability 1"
-    :tags #{:simulate :well-formedness}
+    :theorem "simulate(P, x) terminates with probability 1.
+              SMOKE CHECK ONLY: halting w.p. 1 is not decidable from
+              finitely many runs. This check runs simulate a few times and
+              confirms each returns a trace — a non-terminating model hangs
+              the harness rather than failing this law, and a throwing model
+              fails every other law too. Kept as an explicit statement of
+              the thesis well-formedness requirement, not as evidence of it."
+    :tags #{:simulate :well-formedness :smoke}
     :check (fn [{:keys [model args]}]
-             (let [t (p/simulate model args)]
-               (some? t)))}
+             (every? some? (repeatedly 3 #(p/simulate model args))))}
 
    ;; ===================================================================
    ;; GENERATE laws
@@ -175,10 +180,13 @@
                (approx= (ev (:score trace)) (ev weight) 0.01)))}
 
    {:name :return-value-independence
-    :from "[T] §2.3.1"
-    :theorem "f(x, tau) depends only on x and tau. Two generates with
-              identical choices produce identical retvals."
-    :tags #{:generate :core}
+    :from "[T] §2.3.1; Fig 2-1, Val⟦E⟧"
+    :theorem "f(x, tau) depends only on x and tau — Val⟦E⟧(sigma)(tau) is a
+              well-defined function. Two generates with identical args and
+              choices produce identical retvals. (Absorbed the former
+              :val-function-correctness, which was the same check under a
+              second name.)"
+    :tags #{:generate :semantics :core}
     :check (fn [{:keys [model args]}]
              (let [t (p/simulate model args)
                    r1 (:trace (p/generate model args (:choices t)))
@@ -311,13 +319,21 @@
 
    {:name :regenerate-empty-identity
     :from "[D] regenerate with empty selection"
-    :theorem "regenerate(P, t, none).weight = 0 and choices unchanged"
+    :theorem "regenerate(P, t, none).weight = 0 and choices unchanged:
+              same address set, same value at every leaf."
     :tags #{:regenerate :core}
     :check (fn [{:keys [model args]}]
              (let [t (p/simulate model args)
                    {:keys [trace weight]} (p/regenerate model t sel/none)
-                   w (ev weight)]
-               (approx= 0.0 w 0.01)))}
+                   old-paths (all-leaf-addrs (:choices t))]
+               (and (approx= 0.0 (ev weight) 0.01)
+                    (= (set old-paths)
+                       (set (all-leaf-addrs (:choices trace))))
+                    (every? (fn [path]
+                              (approx= (ev (cm/get-choice (:choices t) path))
+                                       (ev (cm/get-choice (:choices trace) path))
+                                       1e-6))
+                            old-paths))))}
 
    {:name :regenerate-preserves-unselected
     :from "[D] regenerate"
@@ -450,31 +466,64 @@
 
    {:name :mh-proposal-reversibility
     :from "[T] §3.4.2"
-    :theorem "Regenerate-based MH proposals are reversible: after
-              regenerate(t, S) -> t', regenerate(t', S) produces a
-              valid trace with finite weight. Combined with
-              preserves-unselected, this ensures the Markov chain
-              can reach the original state."
+    :theorem "Regenerate-based MH proposals are reversible. After a forward
+              move regenerate(t, S) -> (t', w_fwd):
+              (1) forcing the values back to t's (update(t', t.choices))
+              recovers the ORIGINAL trace exactly — same address set, same
+              leaf values, same score — so the chain can return to its
+              previous state; and
+              (2) the forced reverse move's retained-only weight
+              w_rev = sum over retained a of [project(t'', a) - project(t', a)]
+              (retained = leaves present in both t' and t'', minus S)
+              cancels the forward weight: w_fwd + w_rev = 0 — the
+              detailed-balance identity w(t -> t') = -w(t' -> t).
+              Residual gap (documented, not hidden): regenerate cannot be
+              forced to propose specific values, so w_rev comes from the
+              retained-only formula evaluated with independent project
+              passes on the actual reverse pair — the check pins
+              regenerate's REPORTED forward weight (fast or general path)
+              against that identity, rather than comparing two independent
+              regenerate calls."
     :tags #{:regenerate :inference :mcmc}
     :check (fn [{:keys [model args]}]
              (let [t (p/simulate model args)
                    addrs (all-leaf-addrs (:choices t))]
                (if (empty? addrs)
                  true
-                 (let [sel (sel/select (first (first addrs)))
+                 (let [sel-path (first addrs)
+                       sel (path->selection sel-path)
                        ;; Forward move
                        {fwd-trace :trace fwd-weight :weight}
                        (p/regenerate model t sel)
                        w-fwd (ev fwd-weight)
-                       ;; Reverse move
-                       {rev-trace :trace rev-weight :weight}
-                       (p/regenerate model fwd-trace sel)
-                       w-rev (ev rev-weight)]
+                       ;; Forced reverse move: constrain everything back to
+                       ;; the original values (unselected sites are already
+                       ;; retained, so only the selected site + any
+                       ;; structure-changed sites actually move).
+                       {rev-trace :trace} (p/update model fwd-trace (:choices t))
+                       rev-paths (all-leaf-addrs (:choices rev-trace))
+                       ;; Retained = present in both t' and t'', minus S
+                       fwd-path-set (set (all-leaf-addrs (:choices fwd-trace)))
+                       retained (remove #(= % sel-path)
+                                        (filter fwd-path-set rev-paths))
+                       w-rev (reduce
+                              (fn [acc path]
+                                (let [s (path->selection path)]
+                                  (+ acc
+                                     (- (ev (p/project model rev-trace s))
+                                        (ev (p/project model fwd-trace s))))))
+                              0.0 retained)]
                    (and (js/Number.isFinite w-fwd)
-                        (js/Number.isFinite w-rev)
-                        ;; Reverse trace has same address set
-                        (= (set (all-leaf-addrs (:choices t)))
-                           (set (all-leaf-addrs (:choices rev-trace)))))))))}
+                        ;; (1) forced reverse recovers the original trace
+                        (= (set addrs) (set rev-paths))
+                        (every? (fn [path]
+                                  (approx= (ev (cm/get-choice (:choices t) path))
+                                           (ev (cm/get-choice (:choices rev-trace) path))
+                                           1e-5))
+                                addrs)
+                        (approx= (ev (:score t)) (ev (:score rev-trace)) 0.01)
+                        ;; (2) detailed balance: weights cancel
+                        (approx= (+ w-fwd w-rev) 0.0 0.05))))))}
 
    {:name :flat-selection-at-splice
     :from "[T] §3.4, Gen.jl selection semantics (genmlx-yey5)"
@@ -686,23 +735,35 @@
    {:name :update-compositionality
     :from "[T] Proposition 2.3.2"
     :theorem "For P3 = P1;P2 (splice): log w3 = log w1 + log w2
-              where w1 = inner score diff, w2 = outer score diff"
+              where w1 = inner score diff, w2 = outer score diff.
+              The inner (splice) namespace is DERIVED from the trace: the
+              first hierarchical leaf path's top-level prefix. Models whose
+              traces have only flat addresses (no splice) are explicitly
+              SKIPPED — for them the partition is vacuous (w1 = 0 and
+              w2 = w3 by construction), so a pass would assert nothing.
+              Splice coverage comes from running the law catalog against a
+              splice-bearing model (see gfi_laws_test_p10)."
     :tags #{:update :compositionality :splice}
     :check (fn [{:keys [model args]}]
              (let [t1 (p/simulate model args)
-                   t2 (p/simulate model args)
-                   {:keys [trace weight]} (p/update model t1 (:choices t2))
-                   w3 (ev weight)
-                   ;; Partition: inner (splice namespace) vs outer
-                   inner-sel (sel/hierarchical :inner sel/all)
-                   outer-sel (sel/complement-sel inner-sel)
-                   ;; w1 = inner score difference via project
-                   w1 (- (ev (p/project model trace inner-sel))
-                         (ev (p/project model t1 inner-sel)))
-                   ;; w2 = outer score difference via project
-                   w2 (- (ev (p/project model trace outer-sel))
-                         (ev (p/project model t1 outer-sel)))]
-               (approx= w3 (+ w1 w2) 0.05)))}
+                   inner-addr (some (fn [path]
+                                      (when (> (count path) 1) (first path)))
+                                    (all-leaf-addrs (:choices t1)))]
+               (if (nil? inner-addr)
+                 true ;; explicit skip: no splice namespace to partition on
+                 (let [t2 (p/simulate model args)
+                       {:keys [trace weight]} (p/update model t1 (:choices t2))
+                       w3 (ev weight)
+                       ;; Partition: inner (splice namespace) vs outer
+                       inner-sel (sel/hierarchical inner-addr sel/all)
+                       outer-sel (sel/complement-sel inner-sel)
+                       ;; w1 = inner score difference via project
+                       w1 (- (ev (p/project model trace inner-sel))
+                             (ev (p/project model t1 inner-sel)))
+                       ;; w2 = outer score difference via project
+                       w2 (- (ev (p/project model trace outer-sel))
+                             (ev (p/project model t1 outer-sel)))]
+                   (approx= w3 (+ w1 w2) 0.05)))))}
 
    ;; ===================================================================
    ;; EDIT laws [T] Prop 2.3.1 via edit interface
@@ -923,11 +984,15 @@
     :theorem "Choice gradients: d(score)/d(tau[a]) matches finite-difference
               approximation for all continuous addresses within the distribution
               support (a probe that leaves support has an undefined FD gradient
-              and is skipped — genmlx-v4mz)."
+              and is skipped — genmlx-v4mz). Only TOP-LEVEL leaf addresses are
+              checked: grad/choice-gradients does not accept hierarchical
+              (splice-namespaced) paths, so those are skipped (genmlx-rqi1)."
     :tags #{:gradient :core}
     :check (fn [{:keys [model args]}]
              (let [t (p/simulate model args)
-                   addrs (->> (:choices t) all-leaf-addrs (mapv first))
+                   addrs (->> (:choices t) all-leaf-addrs
+                              (filter #(= 1 (count %)))
+                              (mapv first))
                    grads (grad/choice-gradients model t addrs)
                    h 1e-3]
                (every?
@@ -994,20 +1059,22 @@
     :from "[T] Alg 2, Eq 3.2"
     :theorem "IS weight from generate with partial constraints equals the
               log-prob contribution of constrained addresses:
-              weight = project(trace, obs_selection)"
+              weight = project(trace, obs_selection).
+              Constrains a full leaf PATH (hierarchical through splices),
+              not just a top-level key (genmlx-rqi1)."
     :tags #{:inference :importance-sampling}
     :check (fn [{:keys [model args]}]
              (let [t (p/simulate model args)
                    addrs (all-leaf-addrs (:choices t))]
                (if (< (count addrs) 2)
                  true
-                 (let [obs-addr (first (first addrs))
-                       obs-val (choice-val (:choices t) obs-addr)
-                       obs (cm/choicemap obs-addr obs-val)
+                 (let [obs-path (first addrs)
+                       obs-val (cm/get-choice (:choices t) obs-path)
+                       obs (cm/set-choice cm/EMPTY obs-path obs-val)
                        {:keys [trace weight]} (p/generate model args obs)
                        w (ev weight)
                        expected (ev (p/project model trace
-                                               (sel/select obs-addr)))]
+                                               (path->selection obs-path)))]
                    (approx= w expected 0.01)))))}
 
    {:name :proposal-support-coverage
@@ -1020,9 +1087,9 @@
                    addrs (all-leaf-addrs (:choices t))]
                (if (< (count addrs) 2)
                  true
-                 (let [obs-addr (first (first addrs))
-                       obs-val (choice-val (:choices t) obs-addr)
-                       obs (cm/choicemap obs-addr obs-val)
+                 (let [obs-path (first addrs)
+                       obs-val (cm/get-choice (:choices t) obs-path)
+                       obs (cm/set-choice cm/EMPTY obs-path obs-val)
                        weights (repeatedly 20
                                            #(ev (:weight (p/generate model args obs))))]
                    (every? js/Number.isFinite weights)))))}
@@ -1322,17 +1389,6 @@
                        t (p/simulate model args)
                        trace-addrs (set (map first (all-leaf-addrs (:choices t))))]
                    (= schema-addrs trace-addrs)))))}
-
-   {:name :val-function-correctness
-    :from "[T] Fig 2-1, Val⟦E⟧"
-    :theorem "Val⟦E⟧(sigma)(tau) is a well-defined function: given fixed args
-              and choices, retval is deterministic."
-    :tags #{:semantics :core}
-    :check (fn [{:keys [model args]}]
-             (let [t (p/simulate model args)
-                   r1 (:trace (p/generate model args (:choices t)))
-                   r2 (:trace (p/generate model args (:choices t)))]
-               (approx= (ev (:retval r1)) (ev (:retval r2)) 1e-10)))}
 
    {:name :dist-analytical-match
     :from "[T] Fig 2-1, Dist⟦E⟧"

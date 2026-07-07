@@ -6,8 +6,19 @@
             [genmlx.gfi :as gfi]
             [genmlx.mlx.random :as rng]
             [genmlx.gfi-laws-helpers :as glh
-             :refer [gaussian-chain branching-model]])
+             :refer [gaussian-chain branching-model splice-dependent]])
   (:require-macros [genmlx.gen :refer [gen]]))
+
+;; Laws excluded from full-catalog integration runs: statistical/training
+;; convergence laws with their own dedicated deftests (p1-p9).
+(def ^:private slow-laws
+  #{:mixture-kernel-stationarity
+    :hmc-acceptance-correctness
+    :proposal-training-objective
+    :involutive-mh-convergence})
+
+(def ^:private algebraic-laws
+  (->> gfi/laws (remove #(slow-laws (:name %))) (mapv :name)))
 
 ;; ---------------------------------------------------------------------------
 ;; Integration tests — gfi/verify runs many laws internally, heavy on memory
@@ -19,14 +30,7 @@
     ;; :mixture-kernel-stationarity, :hmc-acceptance-correctness,
     ;; :proposal-training-objective. The integration test verifies the
     ;; gfi/verify API on algebraic laws, not MCMC/training convergence.
-    (let [slow-laws #{:mixture-kernel-stationarity
-                      :hmc-acceptance-correctness
-                      :proposal-training-objective
-                      :involutive-mh-convergence}
-          algebraic-laws (->> gfi/laws
-                              (remove #(slow-laws (:name %)))
-                              (mapv :name))
-          report (gfi/verify (:model gaussian-chain) (:args gaussian-chain)
+    (let [report (gfi/verify (:model gaussian-chain) (:args gaussian-chain)
                              :law-names algebraic-laws
                              ;; n-trials=2: API integration test, not statistical.
                              ;; Statistical rigor is in individual law tests (p1-p9).
@@ -34,6 +38,21 @@
                              :n-trials 2)]
       (t/is (:all-pass? report)
             (str "GFI laws failed: "
+                 (pr-str (filterv #(not (:pass? %)) (:results report))))))))
+
+(t/deftest gfi-verify-splice
+  (t/testing "gfi/verify runs the full algebraic law catalog on a
+              splice-bearing model (genmlx-rqi1)"
+    ;; The genmlx-njzu regenerate fast-path bug violated
+    ;; :regenerate-select-all-zero ONLY on splice + dependent-site models,
+    ;; and the catalog previously never ran against one — gaussian-chain
+    ;; was the sole full-catalog model. splice-dependent is exactly the
+    ;; njzu shape: (splice :inner sub) feeding (trace :b (gaussian a 1)).
+    (let [report (gfi/verify (:model splice-dependent) (:args splice-dependent)
+                             :law-names algebraic-laws
+                             :n-trials 2)]
+      (t/is (:all-pass? report)
+            (str "GFI laws failed on splice model: "
                  (pr-str (filterv #(not (:pass? %)) (:results report))))))))
 
 (t/deftest gfi-verify-branching

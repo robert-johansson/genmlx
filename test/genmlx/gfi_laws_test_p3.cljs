@@ -120,16 +120,23 @@
 (defspec law:update-compositionality 100
   ;; [T] Proposition 2.3.2 -- splice weight decomposition
   ;; For P3 = P1;P2: w3 = w1 + w2 where w1 = inner score diff, w2 = outer-only diff
-  ;; Verified by projecting onto inner/outer partitions independently
+  ;; Verified by projecting onto inner/outer partitions independently.
+  ;; The splice namespace is DERIVED from the trace (first hierarchical
+  ;; path's top-level prefix) instead of hardcoding :inner — the hardcoded
+  ;; version was degenerate (w1 = 0, w2 = w3) for splice-nested, whose top
+  ;; namespace is :mid (genmlx-rqi1).
   (prop/for-all [m gen-splice]
                 (let [{:keys [model args]} m
                       t1 (p/simulate model args)
+                      inner-addr (some (fn [path]
+                                         (when (> (count path) 1) (first path)))
+                                       (cm/addresses (:choices t1)))
                       t2 (p/simulate model args)
                       ;; Total update weight
                       {:keys [trace weight]} (p/update model t1 (:choices t2))
                       w3 (ev weight)
                       ;; Partition: inner (splice namespace) vs outer
-                      inner-sel (sel/hierarchical :inner sel/all)
+                      inner-sel (sel/hierarchical inner-addr sel/all)
                       outer-sel (sel/complement-sel inner-sel)
                       ;; w1 = inner score difference via project
                       w1 (- (ev (p/project model trace inner-sel))
@@ -137,7 +144,8 @@
                       ;; w2 = outer-only score difference via project
                       w2 (- (ev (p/project model trace outer-sel))
                             (ev (p/project model t1 outer-sel)))]
-                  (close? w3 (+ w1 w2) 0.05))))
+                  (and (some? inner-addr) ;; splice pool => must exist
+                       (close? w3 (+ w1 w2) 0.05)))))
 
 (defspec law:nested-splice-compositionality 50
   ;; [T] Prop 2.3.2 at 2 levels of nesting

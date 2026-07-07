@@ -115,10 +115,31 @@
 ;; ---------------------------------------------------------------------------
 
 (defspec law:regenerate-empty-identity 100
-  ;; regenerate(t, none).weight = 0
+  ;; regenerate(t, none).weight = 0 AND choices unchanged (same address
+  ;; set, same value at every leaf) — the theorem says identity, so check
+  ;; the trace too, not just the weight (genmlx-rqi1)
   (prop/for-all [m gen-nonbranching]
                 (let [t (p/simulate (:model m) (:args m))
-                      {:keys [weight]} (p/regenerate (:model m) t sel/none)]
+                      {:keys [trace weight]} (p/regenerate (:model m) t sel/none)
+                      old-paths (cm/addresses (:choices t))]
+                  (and (close? 0.0 (ev weight) 0.01)
+                       (= (set old-paths)
+                          (set (cm/addresses (:choices trace))))
+                       (every? (fn [path]
+                                 (close? (ev (cm/get-choice (:choices t) path))
+                                         (ev (cm/get-choice (:choices trace) path))
+                                         1e-6))
+                               old-paths)))))
+
+(defspec law:regenerate-select-all-zero 100
+  ;; [T] §3.4.2 retained-only weight (genmlx-hmch, genmlx-yep2):
+  ;; regenerate(t, all).weight = 0 for ANY model — a full-prior resample is
+  ;; its own proposal, so the MH weight is identically 0. Runs over the FULL
+  ;; pool (splices + branching): the genmlx-njzu fast-path bug violated this
+  ;; law exactly on splice + dependent-site models (genmlx-rqi1).
+  (prop/for-all [m gen-model]
+                (let [t (p/simulate (:model m) (:args m))
+                      {:keys [weight]} (p/regenerate (:model m) t sel/all)]
                   (close? 0.0 (ev weight) 0.01))))
 
 (defspec law:regenerate-preserves-unselected 100
