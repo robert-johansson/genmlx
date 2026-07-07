@@ -133,8 +133,24 @@
                 ;; Characterized 2026-07-07 over 10 pairs at 6 tokens: mean
                 ;; |delta| 0.42, max 1.0, max rel (d/(1+|w|)) 0.122 — the old
                 ;; 0.05 ABS band failed 9/10 pairs. Same llm_branched policy:
-                ;; relative, never bit-exact. Magnitude growth vs June is
-                ;; tracked in genmlx-cnhi.
+                ;; relative, never bit-exact.
+                ;;
+                ;; ATTRIBUTION (genmlx-cnhi, closed 2026-07-07): the jitter is
+                ;; INHERENT to the current kernel set — kernel-level
+                ;; nondeterminism (MoE gather_mm/reduction order), confirmed by
+                ;; repeated assess on IDENTICAL choices spreading 0.125-0.625
+                ;; nats in-process. Exonerated by direct probe: CUDA graphs
+                ;; (spread unchanged with MLX_USE_CUDA_GRAPHS=0), cross-thread
+                ;; lazy encoders (zero creation events during inference), MLX
+                ;; kernel changes (none in the window), mlx-node forward
+                ;; changes (none), toolchain (no nvcc/driver upgrades). The
+                ;; apparent "10x growth vs June" was an artifact: June's
+                ;; evidence was ONE 3-token sample under a 0.05 band; the July
+                ;; numbers are a 25-sample 6-token characterization. A smaller
+                ;; DETERMINISTIC per-choices offset (chunked-prefill vs
+                ;; stepwise reduction order) stacks on the jitter. Observed max
+                ;; rel to date 0.17 vs the 0.2 band — if this flakes, widen to
+                ;; 0.3 rather than chasing determinism the kernels don't offer.
                 (assert-true "assess weight ~ simulate score (GFI consistency, MoE-jitter relative band)"
                              (< (/ (abs (- sc w)) (+ 1.0 (abs w))) 0.2))
                 (println (str "  score=" sc "  assess-weight=" w
