@@ -80,13 +80,23 @@
 
 (let [model (dyn/auto-key linear-model)
       obs (cm/choicemap :y0 (mx/scalar 2.5) :y1 (mx/scalar 4.5) :y2 (mx/scalar 6.5))
-      {:keys [trace weight]} (p/generate model [xs] obs)
-      w (mx/item weight)]
+      ;; A SINGLE prior draw (slope, intercept ~ N(0,10)) lands far enough from
+      ;; the data that any fixed cutoff on one weight is flaky by construction:
+      ;; measured on Thor/CUDA, P(weight < -1000) ~ 0.28 PER DRAW (genmlx-yf1h).
+      ;; The sound form of "the weight is finite, not absurdly small" is over
+      ;; the BEST of 20 independent draws: P(all 20 < -1000) ~ 0.28^20 < 1e-11,
+      ;; and the measured best-of-20 ranges [-30, -3].
+      results (mapv (fn [_] (p/generate model [xs] obs)) (range 20))
+      ws (mapv #(mx/item (:weight %)) results)
+      w (first ws)]
   (assert-true "weight is not zero (observations have probability)" (not= 0.0 w))
-  (assert-true "weight is negative (log-space)" (< w 0))
+  ;; sigma=1 Gaussian log-density is bounded above by log(1/sqrt(2*pi)) < 0,
+  ;; so every weight (a sum of three such log-probs) is strictly negative.
+  (assert-true "weights are negative (log-space)" (every? #(< % 0) ws))
   ;; Weight should be sum of log-probs of observed y values under their conditional distributions
-  ;; We can't easily decompose it here, but we can check it's reasonable
-  (assert-true "weight is not -Inf" (> w -1000)))
+  ;; We can't easily decompose it here, but we can check the best draw is reasonable
+  (assert-true "best-of-20 weight is not -Inf-like (some prior draw fits the data)"
+               (> (apply max ws) -1000)))
 
 ;; ============================================================
 ;; Listing 2.4: Same model, different interpretation
@@ -158,8 +168,14 @@
       r2 (importance/importance-sampling {:samples 200} model [xs] obs)
       lml1 (mx/item (:log-ml-estimate r1))
       lml2 (mx/item (:log-ml-estimate r2))]
-  (assert-true "two estimates are similar (within 3.0)"
-               (< (js/Math.abs (- lml1 lml2)) 3.0))
+  ;; Band derived from the estimator's measured sampling distribution, not
+  ;; hand-tuned (genmlx-yf1h): over 30 replicates on Thor/CUDA the 200-sample
+  ;; IS log-ML estimate has sd ~ 1.32, so |diff of two| ~ HalfNormal(sd 1.87);
+  ;; the old band 3.0 was ~1.6 sigma (measured P(fail) ~ 13%). 8.0 is ~4.3
+  ;; sigma: P(fail) ~ 2e-5 while still catching a broken estimator (which
+  ;; disagrees by tens of nats).
+  (assert-true "two estimates are similar (within 8.0, ~4.3 sigma of the measured run-to-run spread)"
+               (< (js/Math.abs (- lml1 lml2)) 8.0))
   (assert-true "log-ML is in reasonable range" (and (> lml1 -30) (< lml1 0))))
 
 ;; ============================================================
@@ -169,27 +185,36 @@
 
 (let [model (dyn/auto-key linear-model)
       obs (cm/choicemap :y0 (mx/scalar 2.5) :y1 (mx/scalar 4.5) :y2 (mx/scalar 6.5))
-      ;; Prior samples (simulate)
+      ;; Prior samples (simulate). 100 draws: the sample mean is ~N(0, 1.0),
+      ;; so |mean| < 5 is a 5-sigma bound (50 draws made it a flaky 3.5 sigma).
       prior-slopes (mapv (fn [_]
                            (mx/item (cm/get-choice (:choices (p/simulate model [xs])) [:slope])))
-                         (range 50))
-      ;; Posterior samples (generate + weight)
-      posterior-results (mapv (fn [_] (p/generate model [xs] obs)) (range 100))
-      post-log-weights (mapv #(mx/item (:weight %)) posterior-results)
-      post-slopes (mapv #(mx/item (cm/get-choice (:choices (:trace %)) [:slope])) posterior-results)
-      ;; Normalize posterior weights
-      max-w (apply max post-log-weights)
-      unnorm (mapv #(js/Math.exp (- % max-w)) post-log-weights)
-      total (reduce + unnorm)
-      post-weights (mapv #(/ % total) unnorm)
-      ;; Weighted posterior mean
+                         (range 100))
+      ;; SNIS posterior-mean of the slope from 100 weighted prior samples.
+      ;; A SINGLE such estimate is dominated by the few best-fitting draws:
+      ;; measured on Thor/CUDA its sd is ~1.1 (one replicate landed at -0.77 —
+      ;; farther from 2 than the prior mean is), so the old single-run
+      ;; "closer to 2 than the prior mean" comparison was flaky by construction
+      ;; (genmlx-yf1h). Average 8 independent replicates instead: sd ~ 0.40.
+      snis-mean (fn []
+                  (let [rs (mapv (fn [_] (p/generate model [xs] obs)) (range 100))
+                        lw (mapv #(mx/item (:weight %)) rs)
+                        sl (mapv #(mx/item (cm/get-choice (:choices (:trace %)) [:slope])) rs)
+                        mw (apply max lw)
+                        un (mapv #(js/Math.exp (- % mw)) lw)
+                        tot (reduce + un)]
+                    (reduce + (map (fn [s u] (* s (/ u tot))) sl un))))
+      post-means (mapv (fn [_] (snis-mean)) (range 8))
+      ;; Weighted posterior mean, averaged across the replicates
       prior-mean (/ (reduce + prior-slopes) (count prior-slopes))
-      post-mean (reduce + (map * post-slopes post-weights))]
+      post-mean (/ (reduce + post-means) (count post-means))]
   (assert-true "prior mean is near 0 (broad prior)" (< (js/Math.abs prior-mean) 5))
-  ;; With data y=[2.5, 4.5, 6.5] at x=[1,2,3], the true slope is ~2.0
-  (assert-true "posterior mean is closer to 2 than prior mean"
-               (< (js/Math.abs (- post-mean 2.0))
-                  (js/Math.abs (- prior-mean 2.0)))))
+  ;; With data y=[2.5, 4.5, 6.5] at x=[1,2,3], the true slope is ~2.0, while the
+  ;; PRIOR mean of the slope is 0 BY CONSTRUCTION (analytic, distance 2 from
+  ;; the truth). Conditioning must pull the estimate toward the data: with the
+  ;; 8-replicate average (sd ~0.40, centered ~2.1) this is a ~4.6-sigma bound.
+  (assert-true "posterior mean is closer to 2 than the prior mean (0) is"
+               (< (js/Math.abs (- post-mean 2.0)) 2.0)))
 
 ;; ============================================================
 ;; Listing 2.9: Nested choice maps (for splice)

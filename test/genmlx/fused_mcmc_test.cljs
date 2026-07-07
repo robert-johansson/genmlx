@@ -30,6 +30,14 @@
 (def ^:private std-normal-score
   (fn [p] (mx/multiply (mx/scalar -0.5) (mx/sum (mx/multiply p p)))))
 
+;; Host-speed scale for the absolute wall-clock assertions below. The ms
+;; budgets were tuned on Apple Silicon; slower hosts (Thor/CUDA aarch64) run
+;; the same suites with TEST_TIME_SCALE=N (the same knob test/run.sh uses to
+;; scale tier caps; genmlx-9ox0). Default 1 keeps the Apple baselines intact.
+(def ^:private time-scale
+  (let [s (js/parseFloat (or (.. js/process -env -TEST_TIME_SCALE) "1"))]
+    (if (and (js/isFinite s) (pos? s)) s 1)))
+
 ;; ---------------------------------------------------------------------------
 ;; Model
 ;; ---------------------------------------------------------------------------
@@ -158,8 +166,13 @@
             mean (/ (reduce + vals) (count vals))
             variance (/ (reduce + (map #(* (- % mean) (- % mean)) vals)) (count vals))
             std-dev (js/Math.sqrt variance)]
-        (is (h/close? 0.0 mean 0.3) "posterior mean ~ 0")
-        (is (h/close? 1.0 std-dev 0.3) "posterior std ~ 1")))))
+        ;; N-aware bounds (genmlx-9ox0): 500 RW-MH samples at proposal-std 0.5
+        ;; on N(0,1) have an integrated autocorrelation time of ~20, so
+        ;; ESS ~ 25 and SE(mean) ~ 1/sqrt(25) = 0.2. The old tol 0.3 was
+        ;; ~1.7 sigma (observed miss: 0.334 on Thor). 0.75 is ~3.75 sigma;
+        ;; SE(std) ~ 1/sqrt(2*ESS) ~ 0.14, so 0.5 is ~3.5 sigma.
+        (is (h/close? 0.0 mean 0.75) "posterior mean ~ 0")
+        (is (h/close? 1.0 std-dev 0.5) "posterior std ~ 1")))))
 
 (deftest fused-burn-collect-thin2-test
   (testing "fused burn+collect thin=2"
@@ -191,10 +204,14 @@
           mean2 (/ (reduce + x2) (count x2))
           var1 (/ (reduce + (map #(* (- % mean1) (- % mean1)) x1)) (count x1))
           var2 (/ (reduce + (map #(* (- % mean2) (- % mean2)) x2)) (count x2))]
-      (is (h/close? 0.0 mean1 0.25) "dim1 mean ~ 0")
-      (is (h/close? 0.0 mean2 0.25) "dim2 mean ~ 0")
-      (is (h/close? 1.0 var1 0.4) "dim1 var ~ 1")
-      (is (h/close? 1.0 var2 0.4) "dim2 var ~ 1"))))
+      ;; Same ESS derivation as above: 2000 samples, tau ~ 20 -> ESS ~ 100,
+      ;; SE(mean) ~ 0.1 and SE(var) ~ sqrt(2*tau/N) ~ 0.14. The old tols
+      ;; (0.25, 0.4) were 2.5/2.8 sigma — flaky by construction across four
+      ;; simultaneous asserts. 0.4/0.6 give ~4 sigma each.
+      (is (h/close? 0.0 mean1 0.4) "dim1 mean ~ 0")
+      (is (h/close? 0.0 mean2 0.4) "dim2 mean ~ 0")
+      (is (h/close? 1.0 var1 0.6) "dim1 var ~ 1")
+      (is (h/close? 1.0 var2 0.6) "dim2 var ~ 1"))))
 
 (deftest performance-test
   (testing "performance"
@@ -213,7 +230,10 @@
                 (mx/materialize! (aget r 0) (aget r 1))))
           t1 (.now js/Date)
           fused-ms (/ (- t1 t0) 5.0)]
-      (is (< fused-ms 200) "fused < 200ms per chain"))))
+      ;; 200ms budget tuned on Apple Silicon (observed 231ms on Thor/CUDA);
+      ;; scaled by the TEST_TIME_SCALE host-speed knob (genmlx-9ox0).
+      (is (< fused-ms (* 200 time-scale))
+          (str "fused < " (* 200 time-scale) "ms per chain")))))
 
 (deftest model-integration-linreg-test
   (testing "model integration: linreg"
@@ -299,7 +319,10 @@
                linreg-model [xs] obs)
           t1 (.now js/Date)]
       (is (= [200 4 2] (mx/shape (:samples r2))) "cached vectorized samples shape")
-      (is (< (- t1 t0) 500) "cached vectorized < 500ms"))))
+      ;; 500ms budget tuned on Apple Silicon; scaled by the TEST_TIME_SCALE
+      ;; host-speed knob (genmlx-9ox0).
+      (is (< (- t1 t0) (* 500 time-scale))
+          (str "cached vectorized < " (* 500 time-scale) "ms")))))
 
 (deftest fused-vectorized-mh-thin2-test
   (testing "fused-vectorized-mh thin=2"

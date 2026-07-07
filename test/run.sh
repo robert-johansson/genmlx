@@ -31,6 +31,16 @@
 # the genmlx-5ucd buffer-count mitigation make concurrent GPU load safe, and
 # do_one retries once on the known parallel-bunx launcher race; genmlx-q69j).
 # Slow/bench stay strictly serial. TEST_JOBS=1 restores fully-serial runs.
+#
+# TEST_TIME_SCALE — host-speed scale (positive integer, default 1) multiplying
+# every per-tier wall-clock cap, so slower-than-Apple hosts don't need retagged
+# tiers (the @tier tags are shared with Apple Silicon; genmlx-9ox0). It is
+# exported to the test processes, and perf-assert tests (fused_mcmc_test) scale
+# their absolute-ms assertions by the same knob. Thor/CUDA (aarch64 Tegra):
+#   TEST_TIME_SCALE=8 test/run.sh all
+# (8, not the 4-6 first estimated: measured solo times llm_token_mcmc 264s vs
+# the 45s fast cap and vi_property 672s vs the 150s medium cap need >=6, and 8
+# keeps headroom for TEST_JOBS=1 serial runs where the J-way cap relief is off.)
 set -u -o pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -53,14 +63,26 @@ JOBS="${TEST_JOBS:-4}"
 
 [ -f "$MANIFEST" ] || { echo "FATAL: $MANIFEST not found"; exit 2; }
 
-tier_timeout() {            # per-tier per-file wall-clock cap (seconds)
+# Host-speed scale (see header). Validated once here; exported so both the
+# per-file workers (tier_timeout below) and the test processes themselves
+# (perf asserts reading js/process.env.TEST_TIME_SCALE) see the same value.
+SCALE="${TEST_TIME_SCALE:-1}"
+case "$SCALE" in
+  ''|*[!0-9]*) echo "FATAL: TEST_TIME_SCALE must be a positive integer (got '$SCALE')"; exit 2 ;;
+esac
+[ "$SCALE" -ge 1 ] || { echo "FATAL: TEST_TIME_SCALE must be >= 1 (got '$SCALE')"; exit 2; }
+export TEST_TIME_SCALE="$SCALE"
+
+tier_timeout() {            # per-tier per-file wall-clock cap (seconds), x host-speed scale
+  local base
   case "$1" in
-    core|fast) echo 45  ;;
-    medium)    echo 150 ;;
-    slow)      echo 600 ;;
-    bench)     echo 900 ;;
-    *)         echo 120 ;;
+    core|fast) base=45  ;;
+    medium)    base=150 ;;
+    slow)      base=600 ;;
+    bench)     base=900 ;;
+    *)         base=120 ;;
   esac
+  echo $(( base * ${TEST_TIME_SCALE:-1} ))
 }
 tier_jobs() {               # fast/medium parallel; slow/bench serial (GPU/RAM contention)
   case "$1" in
@@ -275,7 +297,7 @@ run_tiers() {
   export -f do_one tier_timeout tier_jobs
   export JOBS
 
-  echo "nbb: '$NBB_CMD'  jobs(fast/medium): $JOBS"
+  echo "nbb: '$NBB_CMD'  jobs(fast/medium): $JOBS  time-scale: ${TEST_TIME_SCALE}x"
   local grand_pass=0 grand_fail=0
   for tier in "${tiers[@]}"; do
     local files; files="$(manifest_files_for_tier "$tier")"

@@ -111,6 +111,12 @@ bun run --bun nbb test/genmlx/genjax_compat_test.cljs      # 73/73
 # Vectorized inference tests + benchmarks
 bun run --bun nbb test/genmlx/vectorized_test.cljs
 bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
+
+# Tiered runner (per-file process isolation; see the test/run.sh header).
+# Per-tier wall-clock caps and the absolute-ms perf assertions (fused_mcmc_test)
+# are tuned on Apple Silicon. Slower hosts scale BOTH with the host-speed knob
+# instead of retagging tiers (genmlx-9ox0) — on Thor/CUDA (aarch64 Tegra):
+TEST_TIME_SCALE=8 test/run.sh all
 ```
 
 No build step for the ClojureScript — nbb interprets it directly. The **native

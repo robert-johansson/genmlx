@@ -17,7 +17,8 @@
      (c) OCCAM on single-Gaussian data: K=1 is best (within epsilon of K=2) — the
          scorer does not prefer a spurious mixture.
      (d) DETERMINISM / variance: the collapsed estimator is bit-identical across
-         runs (zero Monte Carlo variance), unlike a naive IS estimate which spreads."
+         runs (zero Monte Carlo variance), unlike a naive IS estimate which spreads
+         across seeds and whose LOG value is biased low in expectation (Jensen)."
   (:require [genmlx.inference.rb-mixture :as rb]))
 
 (def ^:private pass (atom 0))
@@ -126,25 +127,43 @@
 ;; (d) determinism (zero variance) vs a naive Monte-Carlo estimate's spread
 ;; ===========================================================================
 
+(defn- mulberry32
+  "Deterministic 32-bit host PRNG (mulberry32). Part-d seeds the naive MC
+   estimator with this so the MC-vs-exact contrast is reproducible run-to-run
+   and across hosts (genmlx-h18c) — js/Math.random made the old assertion a
+   coin flip (see part-d)."
+  [seed]
+  (let [state (volatile! (unsigned-bit-shift-right seed 0))]
+    (fn []
+      (vswap! state #(bit-or (+ % 0x6D2B79F5) 0))
+      (let [x @state
+            t (js/Math.imul (bit-xor x (unsigned-bit-shift-right x 15)) (bit-or 1 x))
+            t (bit-xor (+ t (js/Math.imul (bit-xor t (unsigned-bit-shift-right t 7))
+                                          (bit-or 61 t)))
+                       t)]
+        (/ (unsigned-bit-shift-right (bit-xor t (unsigned-bit-shift-right t 14)) 0)
+           4294967296)))))
+
 (defn- mc-gmm-log-evidence
   "Naive IS estimate of the SAME marginal: sample assignments z ~ uniform and
    component means mu_k ~ prior, score the joint likelihood, log-mean-exp. This
    is the high-variance fallback the collapsed estimator replaces — it samples
    BOTH the discrete K^N sum AND the continuous means. Used only to exhibit MC
-   spread; not part of the scorer."
-  [ys {:keys [k m0 s0 sigma]} n-samples]
+   spread; not part of the scorer. `rand-fn` is a [0,1) uniform source (seeded
+   via mulberry32 for reproducibility)."
+  [ys {:keys [k m0 s0 sigma]} n-samples rand-fn]
   (let [ysv (vec ys) n (count ysv)
         ln2pi (js/Math.log (* 2 js/Math.PI))
         snsq (* sigma sigma)
         gauss (fn [] ; Box-Muller standard normal
-                (let [u1 (js/Math.random) u2 (js/Math.random)]
+                (let [u1 (rand-fn) u2 (rand-fn)]
                   (* (js/Math.sqrt (* -2 (js/Math.log u1)))
                      (js/Math.cos (* 2 js/Math.PI u2)))))
         logp-y (fn [y mu] (- (* -0.5 ln2pi) (js/Math.log sigma)
                              (/ (* (- y mu) (- y mu)) (* 2 snsq))))
         sample (fn []
                  (let [mus (vec (repeatedly k #(+ m0 (* s0 (gauss)))))
-                       zs  (vec (repeatedly n #(rand-int k)))]
+                       zs  (vec (repeatedly n #(js/Math.floor (* (rand-fn) k))))]
                    ;; p(z)=(1/k)^n is constant over uniform z draws -> the IS
                    ;; weight is the data likelihood (prior-proposal for mu and z).
                    (reduce + (map (fn [y z] (logp-y y (nth mus z))) ysv zs))))
@@ -161,17 +180,28 @@
         c (rb/collapsed-gmm-log-evidence ys opts)]
     (assert-true "collapsed estimator is BIT-IDENTICAL across runs (deterministic, zero variance)"
                  (and (= a b) (= b c)))
-    ;; contrast: the naive IS estimate of the SAME marginal spreads run-to-run
-    ;; and is biased LOW (it almost never hits the right assignment by chance).
-    (let [mc (vec (repeatedly 5 #(mc-gmm-log-evidence ys opts 4000)))
-          lo (apply min mc) hi (apply max mc) spread (- hi lo)]
+    ;; Contrast: the naive IS estimate of the SAME marginal spreads across seeds,
+    ;; and its LOG value is biased low in expectation (Jensen: E[log W-hat] <
+    ;; log E[W-hat] = log W). The old assertion here — MAX of 5 log-estimates
+    ;; strictly below the exact value — was statistically unsound (genmlx-h18c):
+    ;; the estimator is UNBIASED in probability space, so single log-estimates
+    ;; overshoot the exact log-evidence with P ~ 0.5 (measured: 52% of 4000-sample
+    ;; runs; batch-mean over 60 unseeded 5-run batches = -27.1 +/- 6.9 with 0/60
+    ;; >= exact -13.32). Sound form: assert the MEAN of the log-estimates below
+    ;; the exact value, on a SEEDED stream (mulberry32, base 2026 — chosen as a
+    ;; typical batch: mean -24.5 ~ population mean -27.1; its max -11.85 even
+    ;; exceeds the exact value, deterministically exhibiting the overshoot that
+    ;; broke the old form).
+    (let [mc (mapv #(mc-gmm-log-evidence ys opts 4000 (mulberry32 (+ 2026 %))) (range 5))
+          lo (apply min mc) hi (apply max mc) spread (- hi lo)
+          mc-mean (/ (reduce + mc) (count mc))]
       (println (str "    exact (collapsed) = " (fmt a)
-                    "   |   naive IS over 5 runs: [" (fmt lo) " , " (fmt hi)
-                    "]  spread=" (fmt spread)))
-      (assert-true "naive Monte-Carlo estimate has NON-ZERO run-to-run spread (variance the RB scorer removes)"
+                    "   |   naive IS over 5 seeded runs: [" (fmt lo) " , " (fmt hi)
+                    "]  mean=" (fmt mc-mean) "  spread=" (fmt spread)))
+      (assert-true "naive Monte-Carlo estimate has NON-ZERO seed-to-seed spread (variance the RB scorer removes)"
                    (> spread 1e-6))
-      (assert-true "naive Monte-Carlo estimate is biased LOW vs the exact value (misses the right assignment)"
-                   (< hi a)))))
+      (assert-true "MEAN of naive Monte-Carlo log-estimates is biased LOW vs the exact value (Jensen; single runs may overshoot)"
+                   (< mc-mean a)))))
 
 ;; ===========================================================================
 
