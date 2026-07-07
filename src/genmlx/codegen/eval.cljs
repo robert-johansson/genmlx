@@ -1,13 +1,16 @@
 (ns genmlx.codegen.eval
   "Native-free ClojureScript reader/eval spine for code synthesis (genmlx-t246).
 
-   These helpers depend ONLY on edamame (the reader) + sci.core (the evaluator) —
+   These helpers depend ONLY on edamame (the reader) + sci.core (the evaluator)
+   + genmlx.sandbox (child_process, for the opt-in sandboxed verify path) —
    no @mlx-node native code. They were extracted from genmlx.llm.codegen so a
    downstream consumer (e.g. arc3-solver) can use the synthesis-eval spine
    without loading the native LM stack (@mlx-node/lm) that genmlx.llm.codegen's
    other requires pull in. genmlx.llm.codegen re-exports these for back-compat."
-  (:require [clojure.string :as str]
+  (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [edamame.core :as eda]
+            [genmlx.sandbox :as sandbox]
             [sci.core :as sci]))
 
 (def ^:private eda-opts
@@ -93,34 +96,82 @@
 
    code-str:    ClojureScript evaluating to (fn [state action] -> state)
    transitions: [{:state map :action keyword :expected map}]
+   opts (3-arity, optional):
+     :sandbox {:time-ms N ...} — OPT-IN (genmlx-uv9j; from arc3-solver-u65s):
+        run the WHOLE verification (candidate eval + every transition
+        application) in a killable subprocess via
+        genmlx.sandbox/eval-with-budget, so a non-terminating or O(huge)
+        candidate aborts at the budget and returns
+        {:accuracy 0.0 ... :error \"sandbox timeout ...\" :sandbox-error :timeout}
+        instead of hanging the verify loop forever (in-process SCI cannot be
+        interrupted). The map is passed through as eval-with-budget opts
+        (see genmlx.sandbox for :time-ms/:startup-ms semantics and the EDN
+        boundary — states/actions/expecteds must be EDN; cwd must be the
+        repo root). Adds ~0.3-0.5 s subprocess overhead per call.
+        Without :sandbox, behavior is the unchanged in-process 2-arity.
 
-   Returns {:accuracy :total :correct :failures :error?}"
+   Returns {:accuracy :total :correct :failures :error?}; when the sandbox
+   itself aborts, additionally :sandbox-error (:timeout | :eval-error |
+   :unserializable | :spawn-error)."
+  ([code-str transitions {:keys [sandbox]}]
+   (if-not sandbox
+     (verify-transition-fn code-str transitions)
+     (let [form (str "(require '[genmlx.codegen.eval :as gce--sb])\n"
+                     "(gce--sb/verify-transition-fn-edn "
+                     (pr-str code-str) " (quote " (pr-str (vec transitions)) "))")
+           r    (sandbox/eval-with-budget form sandbox)]
+       (if (:error r)
+         {:accuracy 0.0 :total (count transitions) :correct 0 :failures []
+          :sandbox-error (:error r)
+          :error (if (= :timeout (:error r))
+                   (str "sandbox timeout after " (:time-ms r) "ms")
+                   (str "sandbox " (name (:error r))
+                        (when (:message r) (str ": " (:message r)))))}
+         (:value r)))))
+  ([code-str transitions]
+   (let [total (count transitions)
+         r (eval-fn code-str)
+         f (:fn r)]
+     (if (:error r)
+       {:accuracy 0.0 :total total :correct 0 :failures [] :error (:error r)}
+       (let [results (map-indexed
+                       (fn [i {:keys [state action expected]}]
+                         (try
+                           (let [actual (f state action)]
+                             (if (= expected actual)
+                               {:correct true}
+                               {:correct false
+                                :index i :state state :action action
+                                :expected expected :actual actual}))
+                           (catch :default e
+                             {:correct false
+                              :index i :state state :action action
+                              :expected expected :actual (str "ERROR: " (.-message e))})))
+                       transitions)
+             correct (count (filter :correct results))
+             failures (vec (remove :correct results))]
+         {:accuracy (if (zero? total) 1.0 (/ correct total))
+          :total total
+          :correct correct
+          :failures failures})))))
+
+(defn- edn-safe
+  "Force v EDN-round-trippable: return v if (pr-str v) reads back as EDN,
+   otherwise the printed form itself (or \"<unprintable>\")."
+  [v]
+  (let [printed (try (pr-str v) (catch :default _ "<unprintable>"))]
+    (try (edn/read-string printed)
+         (catch :default _ printed))))
+
+(defn verify-transition-fn-edn
+  "verify-transition-fn whose :failures are forced EDN-round-trippable (an
+   :actual that doesn't survive pr-str -> edn/read-string is replaced by its
+   printed form). This is the CHILD-SIDE entry point for the sandboxed verify
+   path (genmlx-uv9j): the whole result map must cross the subprocess EDN
+   boundary of genmlx.sandbox."
   [code-str transitions]
-  (let [total (count transitions)
-        r (eval-fn code-str)
-        f (:fn r)]
-    (if (:error r)
-      {:accuracy 0.0 :total total :correct 0 :failures [] :error (:error r)}
-      (let [results (map-indexed
-                      (fn [i {:keys [state action expected]}]
-                        (try
-                          (let [actual (f state action)]
-                            (if (= expected actual)
-                              {:correct true}
-                              {:correct false
-                               :index i :state state :action action
-                               :expected expected :actual actual}))
-                          (catch :default e
-                            {:correct false
-                             :index i :state state :action action
-                             :expected expected :actual (str "ERROR: " (.-message e))})))
-                      transitions)
-            correct (count (filter :correct results))
-            failures (vec (remove :correct results))]
-        {:accuracy (if (zero? total) 1.0 (/ correct total))
-         :total total
-         :correct correct
-         :failures failures}))))
+  (-> (verify-transition-fn code-str transitions)
+      (update :failures (fn [fs] (mapv #(update % :actual edn-safe) fs)))))
 
 (defn- form-contains?
   "Does the form tree contain this symbol anywhere?"

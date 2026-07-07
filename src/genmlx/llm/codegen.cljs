@@ -285,7 +285,11 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
 ;; ============================================================
 
 ;; verify-transition-fn lives in the native-free genmlx.codegen.eval (genmlx-ugkv);
-;; re-exported here so existing callers are unchanged.
+;; re-exported here so existing callers are unchanged. Its opt-in 3-arity
+;; (code-str transitions {:sandbox {:time-ms N}}) runs the verification in a
+;; killable subprocess so a non-terminating candidate can't hang the verify
+;; loop (genmlx-uv9j) — see genmlx.codegen.eval/verify-transition-fn and
+;; genmlx.sandbox.
 (def verify-transition-fn ceval/verify-transition-fn)
 
 ;; ============================================================

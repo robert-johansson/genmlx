@@ -79,6 +79,7 @@ fast test/genmlx/combinator_switch_test2.cljs
 fast test/genmlx/combinator_unfold_test2.cljs
 bench test/genmlx/compiled_benchmark.cljs
 fast test/genmlx/compiled_delta_event_reduce_test.cljs core
+fast test/genmlx/compiled_edges_test.cljs
 fast test/genmlx/compiled_equivalence_test.cljs
 fast test/genmlx/compiled_equiv_property_test.cljs
 fast test/genmlx/compiled_generate_test.cljs
@@ -95,6 +96,7 @@ fast test/genmlx/compiled_simulate_test.cljs core
 medium test/genmlx/compiled_smc_test.cljs
 fast test/genmlx/compiled_unfold_test.cljs
 fast test/genmlx/compile_fn_test.cljs
+fast test/genmlx/cone_regen_test.cljs
 medium test/genmlx/conjugacy_test.cljs
 medium test/genmlx/conjugate_bb_test.cljs
 medium test/genmlx/conjugate_gp_test.cljs
@@ -102,11 +104,13 @@ slow test/genmlx/conjugate_posterior_test.cljs
 medium test/genmlx/conjugate_test.cljs
 fast test/genmlx/contract_verification_test.cljs
 medium test/genmlx/control_metareasoner_test.cljs
+medium test/genmlx/conv_scatter_test.cljs
 slow test/genmlx/co_refine_accept_test.cljs
 fast test/genmlx/correctness_test.cljs
 fast test/genmlx/cost_test.cljs
 medium test/genmlx/curriculum_test.cljs
 fast test/genmlx/custom_gradient_test.cljs
+fast test/genmlx/degenerate_weights_test.cljs
 fast test/genmlx/dep_graph_test.cljs
 fast test/genmlx/det_contract_test.cljs core
 medium test/genmlx/differentiable_hard2_test.cljs
@@ -270,6 +274,7 @@ fast test/genmlx/loop_obs_test.cljs
 bench test/genmlx/lowering_ground_truth_2.cljs
 bench test/genmlx/lowering_ground_truth.cljs
 fast test/genmlx/malli_load_test.cljs
+fast test/genmlx/map_diff_weight_test.cljs
 fast test/genmlx/map_dist_test.cljs
 medium test/genmlx/map_test.cljs
 fast test/genmlx/mcmc_defaults_test.cljs core
@@ -286,6 +291,7 @@ fast test/genmlx/membrane_honesty_test.cljs
 fast test/genmlx/memory_test.cljs
 bench test/genmlx/metal_gc_stress.cljs
 fast test/genmlx/method_selection_test.cljs
+fast test/genmlx/mix_regen_general_test.cljs
 fast test/genmlx/mlx_fused_ops_test.cljs
 medium test/genmlx/multistep_kalman_ekf_test.cljs
 fast test/genmlx/mutation_boundary_test.cljs core
@@ -294,6 +300,7 @@ bench test/genmlx/nbb_benchmark.cljs
 medium test/genmlx/neg_binomial_test.cljs
 medium test/genmlx/new_dist_test.cljs
 fast test/genmlx/nn_test.cljs
+fast test/genmlx/node_constraint_test.cljs
 fast test/genmlx/non_gaussian_contract_test.cljs
 fast test/genmlx/normalization_verification_test.cljs
 medium test/genmlx/nuts_noncentered_funnel_test.cljs
@@ -310,6 +317,9 @@ bench test/genmlx/paper_bench_hmm.cljs
 bench test/genmlx/paper_bench_linreg.cljs
 bench test/genmlx/paper_bench_vectorization.cljs
 fast test/genmlx/partial_compile_test.cljs core
+fast test/genmlx/pef_corpus.cljs
+slow test/genmlx/pef_deep_test.cljs
+fast test/genmlx/pef_test.cljs
 bench test/genmlx/perfbench_curvefit.cljs
 bench test/genmlx/perfbench_large.cljs
 medium test/genmlx/phase_a_test.cljs
@@ -323,6 +333,7 @@ fast test/genmlx/program_golden_test.cljs
 fast test/genmlx/program_test.cljs
 fast test/genmlx/project_test.cljs
 medium test/genmlx/proposal_edit_test.cljs
+fast test/genmlx/qwake_gradient_test.cljs
 slow test/genmlx/qwen2_coder_test.cljs
 slow test/genmlx/qwen3_moe_layout_coherence_test.cljs
 fast test/genmlx/rb_mixture_test.cljs
@@ -342,6 +353,7 @@ exclude test/genmlx/run_inference.cljs
 exclude test/genmlx/run_property.cljs
 exclude test/genmlx/run_remaining.cljs
 bench test/genmlx/runtime_overhead_benchmark.cljs
+fast test/genmlx/sandbox_test.cljs
 slow test/genmlx/sbc_test.cljs
 fast test/genmlx/schema_test.cljs core
 fast test/genmlx/score_gradient_test.cljs core
@@ -369,15 +381,19 @@ fast test/genmlx/stack_unstack_property_test.cljs
 medium test/genmlx/steppable_test.cljs
 slow test/genmlx/stress_test.cljs
 fast test/genmlx/strip_compiled_test.cljs core
+fast test/genmlx/support_guard_test.cljs
 medium test/genmlx/support_property_test.cljs
 medium test/genmlx/synthesis_exact_test.cljs
 fast test/genmlx/synth_steppable_test.cljs
 slow test/genmlx/synth_test.cljs
+medium test/genmlx/tabular_test.cljs
 fast test/genmlx/temperature_sampling_test.cljs
 fast test/genmlx/tensor_trace_property_test.cljs
 medium test/genmlx/tensor_trace_test.cljs
 exclude test/genmlx/test_helpers.cljs
 exclude test/genmlx/test_models.cljs
+slow test/genmlx/token_smc_real_test.cljs
+fast test/genmlx/token_smc_test.cljs
 fast test/genmlx/trace_immutability_property_test.cljs
 fast test/genmlx/trace_immutability_test.cljs core
 fast test/genmlx/trace_mh_elim_test.cljs core
@@ -394,11 +410,13 @@ fast test/genmlx/tutorial/ch08_test.cljs
 fast test/genmlx/tutorial/ch09_test.cljs
 fast test/genmlx/tutorial/ch10_test.cljs
 fast test/genmlx/unfold_splice_test.cljs
+fast test/genmlx/union_proposer_test.cljs
 medium test/genmlx/untested_features_test.cljs
 medium test/genmlx/update_args_test.cljs
 fast test/genmlx/update_discard_branch_test.cljs
 fast test/genmlx/update_weight_test.cljs core
 fast test/genmlx/validation_test.cljs
+fast test/genmlx/vcone_regen_test.cljs
 bench test/genmlx/vectorized_benchmark.cljs
 fast test/genmlx/vectorized_equivalence_test.cljs
 bench test/genmlx/vectorized_grad_benchmark.cljs
