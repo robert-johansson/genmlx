@@ -132,7 +132,9 @@
              :score (:score result)
              :weight (:weight result)
              ;; retval-fn proven truthy by the outer guard (every? some? + retval-fn)
-             :retval (retval-fn (:values result) mlx-args)}))))))
+             ;; RAW args, matching M2 simulate + the handler: an arg-derived
+             ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
+             :retval (retval-fn (:values result) args-vec)}))))))
 
 (defn make-branch-rewritten-generate
   "Build a compiled generate for models with rewritable branches (L1-M4).
@@ -159,7 +161,9 @@
              :score (:score result)
              :weight (:weight result)
              ;; retval-fn proven truthy by prepare-branch-sites
-             :retval (retval-fn (:values result) mlx-args)}))))))
+             ;; RAW args, matching M2 simulate + the handler: an arg-derived
+             ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
+             :retval (retval-fn (:values result) args-vec)}))))))
 
 (defn make-compiled-prefix-generate
   "Build a compiled prefix generate function from a gen schema and source.
@@ -248,7 +252,9 @@
              :score (:score result)
              :discard (:discard result)
              ;; retval-fn proven truthy by the outer guard (every? some? + retval-fn)
-             :retval (retval-fn (:values result) mlx-args)}))))))
+             ;; RAW args, matching M2 simulate + the handler: an arg-derived
+             ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
+             :retval (retval-fn (:values result) args-vec)}))))))
 
 (defn get-compiled-update
   "Returns the compiled-update function for a gen-fn, or nil."
@@ -277,7 +283,9 @@
             {:values (select-keys (:values result) addrs)
              :score (:score result)
              :discard (:discard result)
-             :retval (retval-fn (:values result) mlx-args)}))))))
+             ;; RAW args, matching M2 simulate + the handler: an arg-derived
+             ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
+             :retval (retval-fn (:values result) args-vec)}))))))
 
 (defn make-compiled-prefix-update
   "Build a compiled prefix update function.
@@ -352,7 +360,9 @@
                  {:values {} :score (mx/scalar 0.0)}
                  step-fns)]
             {:score (:score result)
-             :retval (retval-fn (:values result) mlx-args)}))))))
+             ;; RAW args, matching M2 simulate + the handler: an arg-derived
+             ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
+             :retval (retval-fn (:values result) args-vec)}))))))
 
 (defn make-branch-rewritten-assess
   "Build a compiled assess for branch-rewritten models (L1-M4).
@@ -371,7 +381,9 @@
                  {:values (seed-conds args-vec) :score (mx/scalar 0.0)}
                  step-fns)]
             {:score (:score result)
-             :retval (retval-fn (:values result) mlx-args)}))))))
+             ;; RAW args, matching M2 simulate + the handler: an arg-derived
+             ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
+             :retval (retval-fn (:values result) args-vec)}))))))
 
 (defn make-compiled-prefix-assess
   "Build a compiled prefix assess function.
@@ -633,7 +645,9 @@
              :score (:score result)
              :weight (:weight result)
              ;; retval-fn proven truthy by the outer guard (every? some? + retval-fn)
-             :retval (retval-fn (:values result) mlx-args)}))))))
+             ;; RAW args, matching M2 simulate + the handler: an arg-derived
+             ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
+             :retval (retval-fn (:values result) args-vec)}))))))
 
 (defn make-branch-rewritten-regenerate
   "Build a compiled regenerate for models with rewritable branches (L1-M4).
@@ -664,7 +678,9 @@
                   {:values (select-keys (:values result) addrs)
                    :score (:score result)
                    :weight (:weight result)
-                   :retval (retval-fn (:values result) mlx-args)})))))))))
+                   ;; RAW args, matching M2 simulate + the handler: an arg-derived
+             ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
+             :retval (retval-fn (:values result) args-vec)})))))))))
 
 (defn make-compiled-prefix-regenerate
   "Build a compiled prefix regenerate function.

@@ -511,11 +511,18 @@
    source: (params-vec body-forms...)
    Returns: {name-string → {:kind :param/:trace/:expr ...}}"
   [source]
-  (let [params (first source)
-        param-env (into {} (map-indexed
-                            (fn [i p] [(name p) {:kind :param :index i}])
-                            params))]
-    (walk-binding-forms param-env (rest source))))
+  (let [params (first source)]
+    ;; Destructured params ({:keys [a]}, [x y]) are legal fn syntax the
+    ;; handler executes fine, but (name p) on a non-symbol THROWS — and the
+    ;; M2 builder runs eagerly at make-gen-fn time, crashing model DEFINITION
+    ;; (genmlx-8mih). Decline compilation instead: nil propagates through
+    ;; prepare-static-sites/prepare-prefix-sites and the model stays on the
+    ;; handler path.
+    (when (every? symbol? params)
+      (let [param-env (into {} (map-indexed
+                                (fn [i p] [(name p) {:kind :param :index i}])
+                                params))]
+        (walk-binding-forms param-env (rest source))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Expression compiler: source form → pure closure
@@ -872,17 +879,17 @@
              (seq (:trace-sites schema))
              (empty? (:splice-sites schema))
              (empty? (:param-sites schema)))
-    (let [binding-env (build-binding-env source)
-          static-sites (filterv :static? (:trace-sites schema))
-          site-specs (build-fused-site-specs static-sites binding-env)]
-      (when (every? some? site-specs)
+    (when-let [binding-env (build-binding-env source)]
+      (let [static-sites (filterv :static? (:trace-sites schema))
+            site-specs (build-fused-site-specs static-sites binding-env)]
+        (when (every? some? site-specs)
         (let [return-expr (extract-return-expr (:return-form schema))
               retval-fn (compile-expr return-expr binding-env #{})]
           {:site-specs site-specs
            :retval-fn retval-fn
            :addrs (mapv :addr static-sites)
            :n-sites (count static-sites)
-           :binding-env binding-env})))))
+           :binding-env binding-env}))))))
 
 (defn- site-noise-fn
   "Return the noise-generation function for a site-spec, or nil for delta.
@@ -1140,8 +1147,8 @@
              (empty? (:param-sites schema)))
     (let [raw-prefix (extract-prefix-sites source)]
       (when (seq raw-prefix)
-        (let [binding-env (build-binding-env source)
-              compiled-sites
+        (when-let [binding-env (build-binding-env source)]
+          (let [compiled-sites
               (reduce
                (fn [acc site]
                  (let [cargs (mapv #(compile-expr % binding-env #{})
@@ -1154,7 +1161,7 @@
           (when (seq compiled-sites)
             {:compiled-sites compiled-sites
              :addrs (mapv :addr compiled-sites)
-             :binding-env binding-env}))))))
+             :binding-env binding-env})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Compiled prefix function
@@ -1388,8 +1395,8 @@
    and compiles return expression.
    Returns {:site-specs [...] :retval-fn fn :addrs [...]} or nil."
   [schema source raw-sites]
-  (let [base-env (build-binding-env source)
-        binding-env
+  (when-let [base-env (build-binding-env source)]
+   (let [binding-env
         (reduce-kv
          (fn [env k v]
            (if (= (:kind v) :expr)
@@ -1470,7 +1477,7 @@
           {:site-specs site-specs
            :retval-fn retval-fn
            :seed-conds seed-conds
-           :addrs (mapv :addr site-specs)})))))
+           :addrs (mapv :addr site-specs)}))))))
 
 (defn prepare-branch-sites
   "Common pipeline for branch-rewritten compilation (M4).
