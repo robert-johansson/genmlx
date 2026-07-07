@@ -462,6 +462,48 @@ anchoring chains at the posterior mean (the genmlx-540f failure class).
 The law `:score-type-soundness` in `gfi.cljs` and `score_type_test.cljs`
 guard the convention.
 
+## 3.4 Path-Equivalence Fuzzing: Enforcing "the Handler is Ground Truth"
+
+The compilation ladder's contract — every alternate path (compiled, prefix,
+branch-rewrite, analytical, batched) must be observationally equivalent to
+the handler interpretation — was historically enforced by hand-written
+tests. The 2026-07 audit showed the failure mode of that regime: every
+critical it found was a *divergence between two implementations of the same
+math*, discovered by hand-comparing paths on a hand-built model. PEF
+(`src/genmlx/pef.cljs`, bean genmlx-0bgi) institutionalizes that audit as a
+generator:
+
+- **Model generator** — a togglable feature grammar (dist families,
+  site dependencies, affine/nonlinear parameter expressions, let-rebinding,
+  nested trace calls in dist-args, splices in both dependency directions,
+  M4-eligible and structure-changing branches, model args) drives a
+  test.check genome generator. Genomes materialize through the same
+  `make-gen-fn` + quoted-source mechanism as hand-written models, so schema
+  extraction, L1 compilation, and L3 conjugacy analysis all run for real.
+  Everything derives from one seed; every failure prints as a
+  paste-runnable `pef/reproduce` one-liner.
+- **Path registry** — pair specs (data, extensible) compare the model
+  against `strip-compiled` / `strip-analytical` / forced-general-regenerate
+  / batched execution per GFI op, composing on the `gfi.cljs` laws where
+  they already encode the property (compiled-equivalence, fast-vs-general
+  regenerate, vectorized shapes). Comparison policies: `:eps` for exact
+  math under float32 reduction jitter, `:statistical` with
+  variance-derived bands for estimator pairs (SMC vs IS), bit-exact where
+  no resampling is involved (update round-trips).
+- **Invariants** — alternate-path *soundness* (selected ⇒ equivalent),
+  compiled-path *liveness* (on the independent-sites profile the L1 path
+  must fire above a pinned threshold — an eligibility gate that silently
+  routes everything to the handler fails the suite, not just perf),
+  crash-freedom (any un-graceful throw from any op is a failure artifact),
+  discard round-trips, and score-type conservation.
+- **Tiers** — a fast-core smoke slice (`pef_test.cljs`, ~100 models,
+  seconds), a deep mode (`pef_deep_test.cljs`, `PEF_MODELS` env, default
+  2000), and a frozen regression corpus (`pef_corpus.cljs`) holding the
+  minimal model for every divergence ever found, starting with the audit's
+  own bug classes. New PEF findings get shrunk, filed as beans, and
+  appended; the fuzzer found its first real bug (the M3 prefix walker
+  accepting nested-trace dist-args) on its first smoke run.
+
 ---
 
 # Part IV -- Extended Thesis Mechanisms
@@ -665,6 +707,21 @@ src/genmlx/
     structured.cljs            ;; structured generation API
     msa.cljs                   ;; Model Synthesis Architecture (LLM proposes programs)
     vision.cljs                ;; VLM input adaptation
+    branched.cljs              ;; branch-using GFI on the native branchable KV cache
+    smc.cljs                   ;; token-SMC: particle filtering where each particle IS a
+                               ;;   cache branch (genmlx-5qk7) — twisted SMC/SMC-steering
+                               ;;   semantics (target ∝ p_LM · Π φ_s; grammar-masked
+                               ;;   proposal weights = the mask log-normalizer), prefill
+                               ;;   once per prompt, fork-on-resample with immediate loser
+                               ;;   disposal (live handles ≤ N+1; all disposed on return —
+                               ;;   with-token-smc* scopes live branches like
+                               ;;   with-llm-branches*). The decoder is an abstraction
+                               ;;   (native branches / dense replay / synthetic table), so
+                               ;;   the exactness suite runs model-free against enumerable
+                               ;;   posteriors. This is the second path made concrete:
+                               ;;   resource-rational synthesis = many cheap partial
+                               ;;   hypotheses + principled reallocation on the resident
+                               ;;   model.
 
   ;; Layer 9: Analysis
   affine.cljs, conjugacy.cljs, dep_graph.cljs, rewrite.cljs   ;; rewrite.cljs: build-analytical-plan; used by compiled + schema pipelines

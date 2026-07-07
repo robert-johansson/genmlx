@@ -1060,13 +1060,17 @@
     {:prefix prefix :stopped false}
     (let [[_sym val-form] (first bindings)]
       (if (simple-trace-call? val-form)
-        ;; Static trace in binding → add to prefix
+        ;; Static trace in binding → add to prefix. A NESTED trace call inside
+        ;; the dist-args (the dv66 shape) is NOT a simple site: the inner site
+        ;; is invisible to the compiled prefix, whose site would then read a
+        ;; value that never exists at runtime (found by PEF, genmlx-0bgi).
         (let [addr (second val-form)
               dist-form (nth val-form 2)
-              info (extract-dist-info dist-form)]
+              info (when-not (contains-gen-call-any? dist-form)
+                     (extract-dist-info dist-form))]
           (if info
             (recur (rest bindings) (conj prefix (assoc info :addr addr)))
-            ;; Unrecognizable dist form → stop
+            ;; Unrecognizable or nested-gen dist form → stop
             {:prefix prefix :stopped true}))
         ;; Not a simple trace
         (if (contains-gen-call-any? val-form)
@@ -1098,11 +1102,13 @@
              (= "do" (name (first form))))
         (walk-prefix-forms (concat (rest form) rest-forms) prefix)
 
-        ;; Simple trace at top level
+        ;; Simple trace at top level (same nested-gen guard as the binding
+        ;; walker — see walk-prefix-bindings)
         (simple-trace-call? form)
         (let [addr (second form)
               dist-form (nth form 2)
-              info (extract-dist-info dist-form)]
+              info (when-not (contains-gen-call-any? dist-form)
+                     (extract-dist-info dist-form))]
           (if info
             (walk-prefix-forms rest-forms (conj prefix (assoc info :addr addr)))
             prefix))
