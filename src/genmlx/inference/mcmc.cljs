@@ -11,6 +11,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.trace :as tr]
             [genmlx.dynamic :as dyn]
+            [genmlx.vectorized :as vz]
             [genmlx.inference.util :as u]
             [genmlx.inference.kernel :as kern]
             [genmlx.learning :as learn]))
@@ -736,6 +737,50 @@
                :final-params (aget result 0)
                :chain-fn cfn
                :acceptance-rate (/ (mx/item (aget result 2)) total-steps)})))))))
+
+;; ---------------------------------------------------------------------------
+;; Vectorized GFI MH (N parallel chains over a VectorizedTrace, genmlx-js93)
+;; ---------------------------------------------------------------------------
+
+(defn vmh-step
+  "One vectorized MH move on N independent chains held in a VectorizedTrace:
+   dyn/vregenerate proposes per-lane (the batched cone path makes a
+   single-site selection O(|direct children|) graph work on static models),
+   then an [N] accept mask selects proposed-vs-current per lane. Returns the
+   merged VectorizedTrace. Same accept/merge discipline as smc.cljs
+   vsmc-rejuvenate; per-move materialize of weight/mask/score breaks lazy
+   graph accumulation across moves (mcmc hot-loop rule)."
+  [gf vtrace selection key]
+  (let [key (rng/ensure-key key)
+        [regen-key accept-key] (rng/split key)
+        n (:n-particles vtrace)
+        {proposed :vtrace w :weight} (dyn/vregenerate gf vtrace selection regen-key)
+        _ (mx/materialize! w)
+        u (rng/uniform accept-key [n])
+        accept-mask (mx/less (mx/log u) w)
+        _ (mx/materialize! accept-mask)
+        merged (vz/merge-vtraces-by-mask vtrace proposed accept-mask)]
+    (mx/materialize! (:score merged))
+    merged))
+
+(defn vmh
+  "Vectorized single-site MH: run `iters` sweeps over `addresses` (default:
+   the schema's :dep-order, else the vtrace's leaf addresses), one vmh-step
+   per address per sweep, N chains as one broadcast. Returns the final
+   VectorizedTrace. Options: :iters (default 1), :addresses, :key."
+  [gf vtrace {:keys [iters addresses key] :or {iters 1}}]
+  (let [addrs (or addresses
+                  (seq (:dep-order (:schema gf)))
+                  (cm/addresses (:choices vtrace)))]
+    (loop [i 0 vt vtrace k (rng/ensure-key key)]
+      (if (= i iters)
+        vt
+        (let [[vt' k'] (reduce (fn [[vt k] addr]
+                                 (let [[k1 k2] (rng/split k)]
+                                   [(vmh-step gf vt (sel/select addr) k1) k2]))
+                               [vt k]
+                               addrs)]
+          (recur (inc i) vt' k'))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized Compiled MH (N parallel chains)

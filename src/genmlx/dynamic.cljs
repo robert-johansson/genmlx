@@ -1077,7 +1077,7 @@
    lets a 'handler ground truth' comparison silently exercise a compiled or
    analytical path (genmlx-pkmx)."
   (into [:compiled-simulate :compiled-generate :compiled-update :compiled-assess
-         :compiled-project :compiled-regenerate :cone-regenerate
+         :compiled-project :compiled-regenerate :cone-regenerate :vcone-regenerate
          :compiled-prefix :compiled-prefix-generate :compiled-prefix-update
          :compiled-prefix-regenerate :compiled-prefix-assess :compiled-prefix-project]
         analytical-path-schema-keys))
@@ -1245,7 +1245,10 @@
    ;; genmlx-ltx2: cone-restricted single-site regenerate — M2 static list
    ;; only (NOT branch-rewrite: a rewritten branch's site set is
    ;; selection-dependent, so a static cone is undefined there)
-   [:cone-regenerate cops/make-cone-regenerate]])
+   [:cone-regenerate cops/make-cone-regenerate]
+   ;; genmlx-js93: the [N]-lane cone for vregenerate (same gates + a
+   ;; dist-constructor requirement; declines per-call like the scalar cone)
+   [:vcone-regenerate cops/make-vcone-regenerate]])
 
 (def ^:private branch-ops
   [[:compiled-simulate compiled/make-branch-rewritten-simulate]
@@ -1629,16 +1632,23 @@
     (let [key (rng/ensure-key key)
           n (:n-particles vtrace)
           old-score (:score vtrace)
-          result (rt/run-handler h/batched-regenerate-transition
-                                 {:choices cm/EMPTY :score SCORE-ZERO
-                                  :weight SCORE-ZERO :key key
-                                  :selection selection
-                                  :old-choices (:choices vtrace)
-                                  :batch-size n :batched? true
-                                  :executor execute-sub
-                                  :batched-sub-regen batched-sub-regen
-                                  :param-store (param-store gf)}
-                                 (fn [rt] (run-body gf rt (:args vtrace))))
+          ;; Batched cone path first (genmlx-js93): O(|direct children|)
+          ;; graph work per move for single-site selections, all N lanes as
+          ;; one broadcast. nil declines to the full batched handler pass.
+          cone-res (when-let [vcone-fn (:vcone-regenerate (:schema gf))]
+                     (vcone-fn key (vec (:args vtrace)) (:choices vtrace)
+                               selection old-score n))
+          result (or cone-res
+                     (rt/run-handler h/batched-regenerate-transition
+                                     {:choices cm/EMPTY :score SCORE-ZERO
+                                      :weight SCORE-ZERO :key key
+                                      :selection selection
+                                      :old-choices (:choices vtrace)
+                                      :batch-size n :batched? true
+                                      :executor execute-sub
+                                      :batched-sub-regen batched-sub-regen
+                                      :param-store (param-store gf)}
+                                     (fn [rt] (run-body gf rt (:args vtrace)))))
           new-score (:score result)
           proposal-ratio (:weight result)
           weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)]

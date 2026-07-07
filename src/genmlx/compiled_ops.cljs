@@ -11,6 +11,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
             [genmlx.handler :as h]
+            [genmlx.dist :as dist]
+            [genmlx.dist.core :as dc]
             [genmlx.compiled :as compiled]))
 
 ;; ===========================================================================
@@ -718,6 +720,93 @@
                  :score score'
                  :weight (:weight new-res)
                  :retval (retval-fn (:values new-res) args-vec)}))))))))
+
+(def ^:private vcone-dist-constructors
+  "dist-type -> runtime Distribution constructor for the BATCHED cone path
+   (genmlx-js93). [N]-lane resampling must go through dc/dist-sample-n on a
+   real Distribution — bit-identical to the batched handler transition — not
+   the scalar noise transforms. A dist-type absent here (e.g. :iid-gaussian,
+   no defdist constructor) declines the whole model to the batched handler."
+  {:gaussian dist/gaussian :normal dist/gaussian
+   :uniform dist/uniform
+   :bernoulli dist/bernoulli :flip dist/bernoulli
+   :exponential dist/exponential
+   :log-normal dist/log-normal
+   :laplace dist/laplace
+   :cauchy dist/cauchy
+   :delta dist/delta})
+
+(defn make-vcone-regenerate
+  "Batched cone-restricted regenerate (genmlx-js93) — the [N]-lane
+   generalization of make-cone-regenerate. For a SINGLE-site selection on a
+   flat static model the cone is address-determined (per-model, not
+   per-particle), so the static? gate IS the lane-uniformity gate: all N
+   chains recompute the same {s} ∪ direct-children(s) sites as one broadcast.
+
+   Sampling and log-probs go through the real Distribution (constructed from
+   the compiled arg closures' [N]-shaped values) via dc/dist-sample-n /
+   dc/dist-log-prob with the handler's exact key discipline (retained sites
+   never split; one split at s), so results are BIT-IDENTICAL to the batched
+   handler path under the same key.
+
+   Returns (fn [key args-vec old-choices selection old-score n]
+             -> {:choices :score :weight :retval}, nil to decline per-call)
+   or nil when the model can't take the path at all. :weight is the proposal
+   ratio; the caller computes W = (score' − old-score) − ratio, all [N]."
+  [schema source]
+  (when-let [{:keys [site-specs retval-fn]} (prepare-regen-parts schema source)]
+    (let [addrs (mapv :addr site-specs)
+          specs-by-addr (into {} (map (juxt :addr identity)) site-specs)
+          direct-children (:direct-children schema)
+          dep-order (:dep-order schema)]
+      (when (and (seq addrs) (map? direct-children) (seq dep-order)
+                 (every? #(contains? vcone-dist-constructors (:dist-type %))
+                         site-specs))
+        (fn vcone-regenerate [key args-vec old-choices selection old-score n]
+          (let [selected (filterv #(sel/selected? selection %) addrs)]
+            (when (= 1 (count selected))
+              (let [s (first selected)
+                    cone (conj (get direct-children s #{}) s)
+                    cone-order (filterv cone (vec dep-order))
+                    mlx-args (compiled/ensure-mlx-args args-vec)
+                    values-old (reduce (fn [m a]
+                                         (assoc m a (cm/get-value
+                                                     (cm/get-submap old-choices a))))
+                                       {} addrs)
+                    mk-dist (fn [values addr]
+                              (let [{:keys [compiled-args dist-type]} (specs-by-addr addr)
+                                    eval-args (mapv #(% values mlx-args) compiled-args)]
+                                (apply (vcone-dist-constructors dist-type) eval-args)))
+                    ;; OLD pass: Σ lp_old over the cone under old values
+                    partial-old (reduce (fn [acc a]
+                                          (mx/add acc (dc/dist-log-prob
+                                                       (mk-dist values-old a)
+                                                       (get values-old a))))
+                                        (mx/scalar 0.0) cone-order)
+                    ;; resample s exactly like the batched handler transition:
+                    ;; [k1 k2] split, dist-sample-n with k2 (k1 unused — no
+                    ;; later selected site exists in a single-site selection)
+                    [_k1 k2] (rng/split key)
+                    dist-s (mk-dist values-old s) ; s's params read only parents
+                    v' (dc/dist-sample-n dist-s k2 n)
+                    new-lp-s (dc/dist-log-prob dist-s v')
+                    old-lp-s (dc/dist-log-prob dist-s (get values-old s))
+                    values-new (assoc values-old s v')
+                    ;; NEW pass: Σ lp_new over the cone under s ↦ v'
+                    partial-new (reduce (fn [acc a]
+                                          (mx/add acc
+                                                  (if (= a s)
+                                                    new-lp-s
+                                                    (dc/dist-log-prob
+                                                     (mk-dist values-new a)
+                                                     (get values-new a)))))
+                                        (mx/scalar 0.0) cone-order)
+                    score' (mx/add (mx/subtract old-score partial-old)
+                                   partial-new)]
+                {:choices (cm/set-value old-choices s v')
+                 :score score'
+                 :weight (mx/subtract new-lp-s old-lp-s)
+                 :retval (retval-fn values-new args-vec)}))))))))
 
 (defn make-branch-rewritten-regenerate
   "Build a compiled regenerate for models with rewritable branches (L1-M4).
