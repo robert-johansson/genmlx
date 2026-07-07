@@ -509,12 +509,26 @@
    Returns a promise of the generated text string.
 
    opts map:
-     :max-tokens     — maximum new tokens (default 100)
-     :temperature    — sampling temperature (default 0.7)
-     :system-prompt  — optional system message prepended to chat"
+     :max-tokens       — maximum new tokens (default 100)
+     :temperature      — sampling temperature (default 0.7)
+     :system-prompt    — optional system message prepended to chat
+     :reasoning-effort — native reasoningEffort control (default \"none\").
+                         ChatResult.text contains only post-</think> content,
+                         and the TemplateHonoring families (qwen3 / qwen3_5 /
+                         qwen3_5_moe / qwen3_next) default to thinking ON when
+                         reasoningEffort is unset — so without this default a
+                         thinking model spends the whole token budget inside
+                         <think> and a non-thinking coder model (qwen3_next,
+                         which never emits </think> after the injected <think>
+                         opener) returns \"\" ALWAYS (bean genmlx-87ga).
+                         Defaulting to \"none\" mirrors generate-text-raw's
+                         explicit think-skip. Pass \"medium\"/\"high\" to
+                         re-enable thinking (.text is then the post-think
+                         answer only)."
   ([model-map prompt] (generate-text model-map prompt {}))
-  ([{:keys [model]} prompt {:keys [max-tokens temperature system-prompt]
-                            :or {max-tokens 100 temperature 0.7}}]
+  ([{:keys [model]} prompt {:keys [max-tokens temperature system-prompt reasoning-effort]
+                            :or {max-tokens 100 temperature 0.7
+                                 reasoning-effort "none"}}]
    (when (cljs-forward-model? model)
      (throw (ex-info (str "generate-text drives the native model's chatSessionStart, "
                           "which requires the upstream model. Load with "
@@ -528,7 +542,8 @@
    (let [messages (clj->js (cond-> []
                              system-prompt (conj {:role "system" :content system-prompt})
                              :always       (conj {:role "user" :content prompt})))
-         config   (clj->js {:maxNewTokens max-tokens :temperature temperature})]
+         config   (clj->js (cond-> {:maxNewTokens max-tokens :temperature temperature}
+                             reasoning-effort (assoc :reasoningEffort reasoning-effort)))]
      (p/let [result (.chatSessionStart model messages config)]
        (.-text result)))))
 
