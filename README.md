@@ -10,15 +10,17 @@ GenMLX implements Gen's **Generative Function Interface (GFI)** — the same arc
 
 Gen implementations exist for Julia and JAX — but nothing for MLX. MLX's unified memory model is a natural fit for probabilistic programming: MCMC control flow runs on CPU while all numerics stay on GPU, with zero data transfer cost. ClojureScript on Node.js gives direct access to MLX through a native addon with no FFI overhead, and nbb provides a fast REPL for interactive model development.
 
-- **MLX-native** — unified memory, lazy evaluation, dynamic shapes, `mx/grad` through entire models (Apple Silicon)
-- **~32,000 lines of ClojureScript** — protocols, records, persistent data structures, the whole thing is readable in an afternoon
+- **MLX-native** — unified memory, lazy evaluation, dynamic shapes, `mx/grad` through entire models (Apple Silicon via Metal, or Linux/NVIDIA via CUDA)
+- **~51,700 lines of ClojureScript** — protocols, records, persistent data structures, all readable source
 - **GPU end-to-end** — scores and choice values are MLX arrays throughout, extracted with `mx/item` only at inference boundaries
 - **5-level compilation ladder** — progressively moves work from the host interpreter into fused MLX computation graphs, from shape-based batching (L0) through auto-analytical elimination (L3) to single fused graphs (L4)
 
 ## Requirements
 
-- **macOS with Apple Silicon (M1/M2/M3/M4).** macOS-only for now — `mlx-node` does not support Linux/CUDA yet.
-- **C++ toolchain**
+- **A supported GPU platform** — one of:
+  - **macOS with Apple Silicon (M1/M2/M3/M4)** — the Metal backend. The Xcode/Metal toolchain bullets below are macOS-specific.
+  - **Linux with an NVIDIA GPU** — the CUDA backend. The same repo and build work unchanged: `mlx-node`'s build script selects `MLX_BUILD_CUDA=ON` on Linux automatically (developed and tested on an aarch64 Jetson AGX Thor). Requires the CUDA toolkit (`nvcc` on `PATH`); skip the Xcode/Metal bullets below. At runtime you may need `CUDA_HOME=/usr/local/cuda` and `/usr/local/cuda/lib64` on `LD_LIBRARY_PATH` (and, on aarch64, `GLIBC_TUNABLES=glibc.rtld.optional_static_tls=8192`). Metal-specific material in this README — the 499K Metal buffer limit, `.metallib` files — does not apply on CUDA.
+- **C++ toolchain** (macOS)
   - Xcode Command Line Tools — `xcode-select --install` (provides `clang++`, `make`, and the macOS SDK). Note: the CLT do **not** include CMake — install it separately (below).
   - First launch setup — `sudo xcodebuild -runFirstLaunch`
   - Metal Toolchain — `xcodebuild -downloadComponent MetalToolchain` (required on macOS 26+; the build hard-fails without it)
@@ -87,7 +89,8 @@ bun run --bun nbb -e '(require (quote [genmlx.mlx :as mx])) (prn (mx/native-core
 > compatibility, which `1.4.208` makes unnecessary):
 >
 > - [`mlx-node`](https://github.com/robert-johansson/mlx-node) — adds a custom
->   `genmlx.rs` Rust module with 138 module-level NAPI exports tuned for
+>   `genmlx.rs` Rust module with 220 module-level NAPI function exports (pinned
+>   by the membrane coverage matrix, `docs/membrane-coverage.md`) tuned for
 >   ClojureScript (`Either<MxArray, number>` inputs, `number[]` shapes, CPU-stream
 >   PRNG, fused scalar extraction). It vendors the MLX C++ source as a further
 >   *nested* submodule ([`mlx`](https://github.com/robert-johansson/mlx) at
@@ -290,7 +293,7 @@ Aliases: `normal` → `gaussian`, `flip` → `bernoulli`
 - **Importance Sampling** — `importance-sampling`, `importance-resampling`; vectorized variants via `vgenerate`
 - **Metropolis-Hastings** — `mh` (via GFI `regenerate`), `mh-custom` (with proposal generative function)
 - **Compiled MCMC** — `compiled-mh`, `compiled-mala` (random-walk in parameter space, `mx/tidy` per step)
-- **Fused MCMC** — `fused-mh`, `fused-mala`, `fused-hmc` (entire chains compiled via `mx/compile-fn`)
+- **Fused MCMC** — `fused-mh`, `fused-mala`, `fused-hmc` (entire chains built as single fused lazy graphs)
 - **Vectorized MCMC** — `vectorized-compiled-mh`, `vectorized-mala` (batched particles)
 - **MALA** — `mala` (gradient-informed Langevin proposals)
 - **HMC** — `hmc` (compiled leapfrog integration, adaptive step-size via dual averaging)
@@ -307,7 +310,7 @@ Aliases: `normal` → `gaussian`, `flip` → `bernoulli`
 - **Variational Inference** — `vi` (ADVI with mean-field Gaussian guide), `programmable-vi` with pluggable objectives (`elbo`, `iwelbo`, `wake-sleep`) and gradient estimators (`reinforce`, reparameterization); compiled variants via `compiled-vi`, `compiled-programmable-vi`
 - **ADEV** — automatic differentiation of expected values with reparameterization and REINFORCE strategies, vectorized GPU execution, compiled optimization loops, baseline variance reduction
 - **Amortized Inference** — `neural-importance-sampling` (learned neural proposals)
-- **Analytical Elimination** — auto-conjugacy detection (5 families), joint linear-Gaussian regression, Rao-Blackwellization; exact marginal likelihood (matches the closed form to the float32 floor, ~1e-6 nats), ESS gains up to ~50×
+- **Analytical Elimination** — auto-conjugacy detection (7 families), joint linear-Gaussian regression, Rao-Blackwellization; exact marginal likelihood (matches the closed form to the float32 floor, ~1e-6 nats), ESS gains up to ~50×
 - **Kalman Filter** — handler middleware for linear-Gaussian SSMs, sequential updates, exact marginal LL
 - **Extended Kalman Filter** — nonlinear SSMs via auto-diff linearization (1D and N-dimensional)
 - **HMM Forward Algorithm** — discrete latent state-space models, exact marginal likelihood
@@ -350,7 +353,7 @@ Every generative function supports the full Gen interface:
 (p/regenerate model trace selection) ;; => {:trace Trace :weight MLX-scalar}
 
 ;; Score fully-specified choices
-(p/assess model args choices)        ;; => {:weight MLX-scalar}
+(p/assess model args choices)        ;; => {:retval any :weight MLX-scalar}
 
 ;; Log-probability of selected addresses
 (p/project model trace selection)    ;; => MLX-scalar
@@ -389,7 +392,7 @@ Also in the vertical: `genmlx.agents.inverse` (goal inference / IRL), `genmlx.ag
 
 ### genmlx.llm — LLMs as generative functions
 
-A local LLM wrapped as a `DynamicGF`: each generated token is a trace site (`:t0`, `:t1`, …) sampling from a categorical over the model's logits, with a KV cache for O(n) generation. All GFI operations apply — `simulate` generates text, `generate` constrains and scores tokens, `assess` scores a sequence — and grammar / byte / reader constraints compose as handler middleware (`genmlx.llm.grammar`, `genmlx.llm.bytes`, `genmlx.llm.codegen`). Following "sync math, async events": model loading and tokenization are async (promesa) at the I/O boundary, while the GFI ops themselves are synchronous.
+A local LLM wrapped as a `DynamicGF`: each generated token is a trace site (`:t0`, `:t1`, …) sampling from a categorical over the model's logits, with a KV cache for O(n) generation. All GFI operations apply — `simulate` generates text, `generate` constrains and scores tokens, `assess` scores a sequence — and grammar / byte / reader constraints compose as handler middleware (`genmlx.llm.grammar`, `genmlx.llm.bytes`, `genmlx.llm.codegen`). Note: the regex→DFA constraint alphabet is printable ASCII (32–126) in v1, so grammar-constrained generation and scoring are ASCII-only. Following "sync math, async events": model loading and tokenization are async (promesa) at the I/O boundary, while the GFI ops themselves are synchronous.
 
 ```clojure
 (require '[genmlx.llm.backend :as llm]
@@ -421,7 +424,7 @@ The key insight: MLX operations broadcast naturally. Sample `[N]` values instead
 ```
 
 - `VectorizedTrace` — choices where leaves hold `[N]`-shaped arrays
-- 26 distributions have native batch sampling (`dist-sample-n`), others fall back to sequential
+- Most distributions have native batch sampling (`dist-sample-n`); the rest fall back to sequential
 - Vectorized importance sampling and SMC initialization built on `vgenerate`
 
 ## Neural Network Integration
@@ -508,11 +511,11 @@ bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 ## MLX Optimization Strategy
 
 - **Compilation ladder** — 5 levels (L0–L4) progressively fuse more work into MLX graphs
-- **Loop compilation** — entire MCMC chains compiled into single Metal dispatches via `mx/compile-fn`
-- **`mx/compile-fn`** on score functions — JIT-compiles into cached Metal programs
+- **Loop compilation** — entire MCMC chains built as single fused lazy graphs, dispatched to the GPU in one go (`fused-mh`, `fused-mala`, `fused-hmc`)
+- **Noise transforms + expression compiler (L1)** — score functions compiled from model source forms into pure MLX graphs (`mx/compile-fn` itself is an identity pass-through — see the mlx.cljs docstring)
 - **`mx/value-and-grad`** — fused forward+backward in a single GPU dispatch
 - **Auto-analytical elimination** — conjugacy detection and Rao-Blackwellization (L3)
-- **Compiled Adam** — 9.2x faster than handler loop via `mx/compile-fn` + `mx/value-and-grad` (L4)
+- **Compiled Adam** — 9.2x faster than handler loop via fused graphs + `mx/value-and-grad` (L4)
 - **Adaptive step-size** — HMC dual averaging (Hoffman & Gelman 2014) auto-tunes during burn-in
 - **`mx/tidy` + `mx/eval!` discipline** — bounds graph size, prevents Metal resource exhaustion
 - **`mx/vmap`** in combinators — batch GPU execution across particles/instances
@@ -520,7 +523,7 @@ bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 
 ## GPU Resource Management
 
-Apple Silicon has a hard kernel-level limit of **499,000 simultaneous Metal buffer objects** per process. This limit is identical across M1–M4 and all Pro/Max/Ultra variants. GenMLX manages this automatically in all built-in inference algorithms, but understanding it helps when writing custom inference loops or running very large models.
+*(Metal backend only — this section does not apply on Linux/CUDA.)* Apple Silicon has a hard kernel-level limit of **499,000 simultaneous Metal buffer objects** per process. This limit is identical across M1–M4 and all Pro/Max/Ultra variants. GenMLX manages this automatically in all built-in inference algorithms, but understanding it helps when writing custom inference loops or running very large models.
 
 ### Monitoring
 

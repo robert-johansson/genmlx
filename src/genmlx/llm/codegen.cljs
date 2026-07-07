@@ -134,15 +134,18 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
    model-map: {:model :tokenizer :type} from llm/load-model.
    opts:
      :trie       pre-built byte trie (from bytes/build-byte-trie)
+     :prepared   {:token-index :trie} from bytes/prepare (the generate-cljs
+                 option shape) — its :trie is used when :trie is absent
      :min-bytes  minimum bytes before allowing :complete to stop (default 10)
-     -- pass (bytes/prepare tokenizer) to share across GFs."
+   Either :trie or :prepared shares the trie across GFs; with neither, the
+   trie (~400K nodes) is rebuilt on every call."
   ([model-map] (make-reader-constrained-gf model-map {}))
   ([model-map opts]
    (let [{:keys [model]} model-map
          {:keys [min-bytes] :or {min-bytes 10}} opts
-         {:keys [trie]} (if (:trie opts)
-                          opts
-                          (bytes/prepare (:tokenizer model-map)))]
+         trie (or (:trie opts)
+                  (get-in opts [:prepared :trie])
+                  (:trie (bytes/prepare (:tokenizer model-map))))]
      (dyn/auto-key
       (gen [prompt-ids max-bytes]
            (if (zero? max-bytes)
@@ -392,6 +395,11 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
    2. Template mismatch: the chat API and format-chat may differ in template
       details (system tokens, role markers), shifting the conditioning prefix
       the GF scores under.
+   3. Temperature mismatch: generation samples through the chat API at
+      :temperature (default 0.7), but the GF scores raw temperature-1.0
+      logits (make-llm-gf traces categorical(logits) unscaled). :weight is
+      the log-prob under the T=1 model, not under the sampling distribution
+      that actually produced the text.
    Weights are comparable ACROSS candidates scored the same way (the MSA/
    ranking use case); do not read them as exact evidence of the generation.
 

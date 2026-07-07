@@ -24,7 +24,13 @@
      [:or ...] (alternation).
    Unsupported forms throw a clear ex-info (no silent fallthrough): :optional map
    entries, recursive/registry refs, :multi, :map-of, open maps. These are
-   deferred to a later schema-directed decoder (v1.1)."
+   deferred to a later schema-directed decoder (v1.1).
+
+   v1 string limitations (genmlx-6dax): :string content is printable-ASCII
+   only — the [^\"] class expands over grammar.cljs's ASCII 32–126 alphabet,
+   so generated/scored strings can never contain non-ASCII characters,
+   newlines, or tabs, in addition to the documented no-embedded-quote/
+   backslash restriction. Non-ASCII values are off-grammar and score -Inf."
   (:require [malli.core :as m]
             [clojure.string :as str]
             [edamame.core :as eda]))
@@ -90,6 +96,8 @@
 ;; a range. Enums (the common keyword case) use exact alternation instead.
 (def ^:private keyword-regex      ":[a-zA-Z][a-zA-Z0-9_\\-]*")
 ;; EDN string with no embedded quote/backslash (v1 limitation, documented).
+;; Also printable-ASCII only: [^"] expands over grammar.cljs's 32–126
+;; alphabet, so no non-ASCII chars and no newlines/tabs (genmlx-6dax).
 (def ^:private string-regex       "\"[^\"]*\"")
 
 (defn- int-regex [props]

@@ -13,8 +13,9 @@ ClojureScript's immutable data, open multimethods, and macro system map perfectl
 onto the GFI's mathematical structure. MLX's lazy graphs, unified memory, and
 broadcasting reinforce this — functional-style array programming without penalty.
 
-~43,100 lines of ClojureScript across 105 source files. Purely functional,
-data-driven, GPU end-to-end.
+~51,700 lines of ClojureScript across 126 source files (as of 2026-07-07;
+`wc -l` over `src/**/*.cljs` + `*.cljc`). Purely functional, data-driven,
+GPU end-to-end.
 
 ## Three-layer purity architecture
 
@@ -120,7 +121,9 @@ That last step is **required and easy to miss**: `yarn build` builds the
 (`packages/genmlx-core/index.node`, gitignored), which only `build.mjs` produces —
 skip it and every `nbb` run fails at `(js/require "@genmlx/core")`.
 
-**Requirements:** macOS with Apple Silicon, Bun (or Node.js 18+), the native build
+**Requirements:** macOS with Apple Silicon (Metal backend) *or* Linux with an
+NVIDIA GPU (CUDA backend — `mlx-node`'s build selects it automatically on
+Linux; developed and tested on an aarch64 Jetson AGX Thor), Bun (or Node.js 18+), the native build
 above (`@genmlx/core` via `build.mjs`, plus `@mlx-node/core`/`@mlx-node/lm`), and
 nbb `1.4.208` (pinned via the `nbb` script in `package.json`). Malli is a git submodule tracking **official upstream
 `metosin/malli`** on the nbb classpath — the earlier robert-johansson/malli fork

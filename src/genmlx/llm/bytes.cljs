@@ -20,7 +20,14 @@
 
    Greedy tokenization: when a trie node has both token-ids AND children,
    always continue (extend to a longer token). Only commit a token when
-   forced (leaf node with no children). This matches BPE longest-match."
+   forced (leaf node with no children). This matches BPE longest-match.
+
+   LIMITATION — grammar-constrained paths are printable-ASCII only
+   (genmlx-6dax): constrain-bytes filters byte marginals through DFAs from
+   genmlx.llm.grammar, whose wildcard alphabet is ASCII 32–126. Regex
+   wildcards/negated classes never admit non-ASCII bytes or newlines, so
+   DFA-constrained generation/scoring of non-ASCII content is off-grammar
+   (unconstrained byte generation via make-byte-llm-gf is not affected)."
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
@@ -397,7 +404,11 @@
    at the first token boundary) so grammar boundaries inside multi-byte tokens
    never strand generation. See trie-advance.
 
-   Generation stops when the DFA has no valid continuations."
+   Generation stops when the DFA has no valid continuations.
+
+   LIMITATION: the DFA alphabet is printable ASCII (32–126) — regex wildcards
+   and negated classes never admit non-ASCII bytes or newlines, so constrained
+   output is ASCII-only (see genmlx.llm.grammar, genmlx-6dax)."
   ([model-map constraint] (constrain-bytes model-map constraint {}))
   ([model-map constraint opts]
    (let [{:keys [model tokenizer]} model-map

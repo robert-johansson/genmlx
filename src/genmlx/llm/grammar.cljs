@@ -11,7 +11,15 @@
    Architecture:
      regex string → (Instaparse) → AST → (Thompson) → NFA → (subset) → DFA
      DFA + token-index → per-state valid-token masks
-     mask + logits → constrained categorical → GFI trace site"
+     mask + logits → constrained categorical → GFI trace site
+
+   LIMITATION — printable-ASCII alphabet (genmlx-6dax): the wildcard alphabet
+   is chars 32–126 (see printable-chars below), so `.`, negated classes like
+   [^\"], and \\D \\W \\S never match non-ASCII characters or control chars
+   (including newline; \\s/\\n match explicitly listed whitespace only).
+   Non-ASCII content is silently off-grammar: it cannot be generated, and
+   scoring it yields -Inf / :off-grammar. Explicit literals outside ASCII are
+   not supported by the alphabet either."
   (:require [instaparse.core :as insta]
             [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
@@ -36,6 +44,10 @@
 (def ^:private word-chars (into (into lower-chars upper-chars)
                                 (conj digit-chars "_")))
 (def ^:private space-chars #{" " "\t" "\n" "\r"})
+;; The wildcard alphabet for `.`, negated classes ([^…]) and \D \W \S.
+;; Printable ASCII ONLY (32–126): those constructs never match bytes >= 127
+;; (any non-ASCII/UTF-8 text) or control chars incl. newline, so non-ASCII
+;; content can be neither generated nor scored on-grammar (genmlx-6dax).
 (def ^:private printable-chars (set (map #(js/String.fromCharCode %) (range 32 127))))
 
 ;; ============================================================

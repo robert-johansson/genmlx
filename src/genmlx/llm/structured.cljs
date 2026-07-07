@@ -194,9 +194,17 @@
 ;; ============================================================
 
 (defn encode-prompt
-  "Encode a prompt string to int token ids (promise). Wraps the model's chat
-   template when :chat? true (default false: raw encoding)."
+  "Encode a prompt string to int token ids (promise). Raw tokenization only —
+   no chat-template wrapping. To condition on a chat-formatted prompt, render
+   the template into the string yourself before calling (the native chat
+   template is applied only inside llm/generate-text's chatSessionStart; see
+   genmlx.llm.codegen/format-chat for the Qwen3 template). A `:chat?` option
+   was formerly documented here but never implemented; it was removed rather
+   than left lying (genmlx-6dax).
+
+   opts :add-special? — pass the tokenizer's add-special-tokens flag
+   (default false)."
   ([model-map prompt] (encode-prompt model-map prompt {}))
-  ([{:keys [tokenizer]} prompt {:keys [chat? add-special?] :or {add-special? false}}]
+  ([{:keys [tokenizer]} prompt {:keys [add-special?] :or {add-special? false}}]
    (pr/let [ids (llm/encode tokenizer prompt add-special?)]
      (vec ids))))
