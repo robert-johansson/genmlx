@@ -768,22 +768,37 @@
 
 (defn vmh
   "Vectorized single-site MH: run `iters` sweeps over `addresses` (default:
-   the schema's :dep-order, else the vtrace's leaf addresses), one vmh-step
-   per address per sweep, N chains as one broadcast. Returns the final
-   VectorizedTrace. Options: :iters (default 1), :addresses, :key."
+   the schema's :dep-order, else the vtrace's leaf addresses), N chains as
+   one broadcast. Returns the final VectorizedTrace.
+
+   When the model carries :fused-vmh (static + cone-eligible, genmlx-hwhp)
+   the whole sweep runs through the fused runner — O(1) host work and one
+   GPU sync per move, choicemap/retval built once per sweep — and is
+   BIT-IDENTICAL to the per-move vmh-step path under the same key. Any
+   decline (no fused runner, or an address outside its plan) falls back to
+   one vmh-step per address with the same PRNG discipline.
+   Options: :iters (default 1), :addresses, :key."
   [gf vtrace {:keys [iters addresses key] :or {iters 1}}]
-  (let [addrs (or addresses
-                  (seq (:dep-order (:schema gf)))
-                  (cm/addresses (:choices vtrace)))]
+  (let [addrs (vec (or addresses
+                       (seq (:dep-order (:schema gf)))
+                       (cm/addresses (:choices vtrace))))
+        fused (:fused-vmh (:schema gf))]
     (loop [i 0 vt vtrace k (rng/ensure-key key)]
       (if (= i iters)
         vt
-        (let [[vt' k'] (reduce (fn [[vt k] addr]
-                                 (let [[k1 k2] (rng/split k)]
-                                   [(vmh-step gf vt (sel/select addr) k1) k2]))
-                               [vt k]
-                               addrs)]
-          (recur (inc i) vt' k'))))))
+        (if-let [r (when fused
+                     (fused (vec (:args vt)) (:choices vt) (:score vt)
+                            (:n-particles vt) k addrs))]
+          (recur (inc i)
+                 (assoc vt :choices (:choices r) :score (:score r)
+                           :retval (:retval r))
+                 (:key r))
+          (let [[vt' k'] (reduce (fn [[vt k] addr]
+                                   (let [[k1 k2] (rng/split k)]
+                                     [(vmh-step gf vt (sel/select addr) k1) k2]))
+                                 [vt k]
+                                 addrs)]
+            (recur (inc i) vt' k')))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized Compiled MH (N parallel chains)

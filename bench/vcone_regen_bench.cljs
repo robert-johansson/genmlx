@@ -88,7 +88,7 @@
 (defn- fmt [[m sd]] (str (.toFixed m 0) "±" (.toFixed sd 0)))
 
 (println "== vcone_regen_bench v2: one vmh sweep, mean±sd ms ==")
-(println "topology\tT-sites\tsweep-len\tN\tcone\thandler\tspeedup")
+(println "topology\tT-sites\tsweep-len\tN\tfused\tper-move\thandler\tstep-x\tfused-x")
 
 ;; warmup
 (let [m (pef/source->model (chain-source 16))]
@@ -96,17 +96,22 @@
 
 (defn- bench-row! [nm source-fn size addrs-fn n cone-reps handler-reps]
   (let [model (pef/source->model (source-fn size))
-        _ (assert (fn? (:vcone-regenerate (:schema model)))
-                  (str nm " " size ": vcone must attach"))
+        _ (assert (fn? (:fused-vmh (:schema model)))
+                  (str nm " " size ": fused-vmh must attach"))
         addrs (addrs-fn model)
         t-sites (count (:trace-sites (:schema model)))
-        cone (stats (mapv #(sweep-ms model addrs n (+ 10 %)) (range cone-reps)))
-        handler (stats (mapv #(sweep-ms (update model :schema dissoc :vcone-regenerate)
+        fused (stats (mapv #(sweep-ms model addrs n (+ 10 %)) (range cone-reps)))
+        stepped (stats (mapv #(sweep-ms (update model :schema dissoc :fused-vmh)
+                                        addrs n (+ 30 %))
+                             (range cone-reps)))
+        handler (stats (mapv #(sweep-ms (update model :schema dissoc
+                                                :fused-vmh :vcone-regenerate)
                                         addrs n (+ 50 %))
                              (range handler-reps)))]
     (println (str nm "\t" t-sites "\t" (count (or addrs (:dep-order (:schema model))))
-                  "\t" n "\t" (fmt cone) "\t" (fmt handler)
-                  "\t" (.toFixed (/ (first handler) (first cone)) 1) "x"))))
+                  "\t" n "\t" (fmt fused) "\t" (fmt stepped) "\t" (fmt handler)
+                  "\t" (.toFixed (/ (first handler) (first stepped)) 1) "x"
+                  "\t" (.toFixed (/ (first handler) (first fused)) 1) "x"))))
 
 (def ^:private all-addrs (fn [m] (vec (:dep-order (:schema m)))))
 (defn- h-addrs-of [steps] (fn [_] (mapv #(keyword (str "h" %)) (range steps))))

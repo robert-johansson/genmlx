@@ -808,6 +808,118 @@
                  :weight (mx/subtract new-lp-s old-lp-s)
                  :retval (retval-fn values-new args-vec)}))))))))
 
+(defn make-fused-vmh
+  "Fused vectorized single-site MH sweep (genmlx-hwhp) — the O(1)-per-move
+   host-work driver behind mcmc/vmh. The per-move vmh-step path pays light
+   O(T) host work every move (values-map seed, merge walk over all leaves,
+   eligibility scan, per-move VectorizedTrace construction), which caps the
+   speedup over the batched handler at the heavy/light interpretation ratio
+   (~20x, genmlx-da04). This runner threads the values map and [N] score
+   ACROSS moves: per move it touches only {s} ∪ direct-children(s) — one
+   leaf assoc, O(|cone|) graph nodes, one GPU sync — and builds the
+   choicemap/retval ONCE at sweep end.
+
+   PRNG discipline replicates the per-move driver EXACTLY (per move:
+   [k1 k2]=split(k); [regen-key accept-key]=split(k1); [_ ksample]=
+   split(regen-key); uniform(accept-key,[n]); k=k2), and the merge nodes are
+   built with the same where(mask, proposed, current) shapes — so the final
+   choices and score are BIT-IDENTICAL to a vmh-step-per-move sweep under
+   the same key.
+
+   Returns (fn [args-vec old-choices score0 n key0 sweep-addrs]
+             -> {:choices :score :retval :key}, nil to decline when any swept
+   address is outside the plan) or nil when the model can't take the path."
+  [schema source]
+  (when-let [{:keys [site-specs retval-fn]} (prepare-regen-parts schema source)]
+    (let [addrs (mapv :addr site-specs)
+          specs-by-addr (into {} (map (juxt :addr identity)) site-specs)
+          direct-children (:direct-children schema)
+          dep-order (:dep-order schema)]
+      (when (and (seq addrs) (map? direct-children) (seq dep-order)
+                 (every? #(contains? vcone-dist-constructors (:dist-type %))
+                         site-specs))
+        (let [;; per-address cone order, precomputed once (was an O(T) filterv
+              ;; per move)
+              plan (into {}
+                         (map (fn [s]
+                                [s (filterv (conj (get direct-children s #{}) s)
+                                            (vec dep-order))]))
+                         addrs)
+              ;; mask->leaf-rank replica (vectorized.cljs) so merge nodes are
+              ;; shaped identically to merge-choicemap-by-mask's
+              lift-mask (fn [mask v]
+                          (let [r (count (mx/shape v))]
+                            (if (> r 1)
+                              (mx/reshape mask (into [(first (mx/shape mask))]
+                                                     (repeat (dec r) 1)))
+                              mask)))]
+          (fn fused-vmh [args-vec old-choices score0 n key0 sweep-addrs]
+            (when (every? #(contains? plan %) sweep-addrs)
+              (let [mlx-args (compiled/ensure-mlx-args args-vec)
+                    mk-dist (fn [values addr]
+                              (let [{:keys [compiled-args dist-type]} (specs-by-addr addr)
+                                    eval-args (mapv #(% values mlx-args) compiled-args)]
+                                (apply (vcone-dist-constructors dist-type) eval-args)))
+                    values0 (reduce (fn [m a]
+                                      (assoc m a (cm/get-value
+                                                  (cm/get-submap old-choices a))))
+                                    {} addrs)
+                    [values score kfin]
+                    (loop [as (seq sweep-addrs)
+                           values values0
+                           score score0
+                           k (rng/ensure-key key0)]
+                      (if (nil? as)
+                        [values score k]
+                        (let [s (first as)
+                              [k1 k2] (rng/split k)
+                              [regen-key accept-key] (rng/split k1)
+                              [_k ksample] (rng/split regen-key)
+                              cone-order (plan s)
+                              partial-old (reduce (fn [acc a]
+                                                    (mx/add acc (dc/dist-log-prob
+                                                                 (mk-dist values a)
+                                                                 (get values a))))
+                                                  (mx/scalar 0.0) cone-order)
+                              dist-s (mk-dist values s)
+                              v' (dc/dist-sample-n dist-s ksample n)
+                              new-lp-s (dc/dist-log-prob dist-s v')
+                              old-lp-s (dc/dist-log-prob dist-s (get values s))
+                              values-prop (assoc values s v')
+                              partial-new (reduce (fn [acc a]
+                                                    (mx/add acc
+                                                            (if (= a s)
+                                                              new-lp-s
+                                                              (dc/dist-log-prob
+                                                               (mk-dist values-prop a)
+                                                               (get values-prop a)))))
+                                                  (mx/scalar 0.0) cone-order)
+                              score-prop (mx/add (mx/subtract score partial-old)
+                                                 partial-new)
+                              ratio (mx/subtract new-lp-s old-lp-s)
+                              w (mx/subtract (mx/subtract score-prop score) ratio)
+                              u (rng/uniform accept-key [n])
+                              mask (mx/less (mx/log u) w)
+                              cur (get values s)
+                              merged-v (mx/where (lift-mask mask cur) v' cur)
+                              merged-score (mx/where mask score-prop score)]
+                          ;; ONE GPU sync per move; merged leaves stay lazy
+                          ;; depth-1 and evaluate inside a later move's sync
+                          (mx/materialize! merged-score)
+                          (recur (next as)
+                                 (assoc values s merged-v)
+                                 merged-score
+                                 k2))))
+                    touched (set sweep-addrs)
+                    final-choices (reduce (fn [cm a] (cm/set-value cm a (get values a)))
+                                          old-choices touched)]
+                ;; sweep-end sync: settle every still-lazy merged leaf
+                (apply mx/materialize! score (map values touched))
+                {:choices final-choices
+                 :score score
+                 :retval (retval-fn values args-vec)
+                 :key kfin}))))))))
+
 (defn make-branch-rewritten-regenerate
   "Build a compiled regenerate for models with rewritable branches (L1-M4).
    Returns (fn [key args-vec old-choices selection]

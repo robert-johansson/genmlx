@@ -1077,7 +1077,7 @@
    lets a 'handler ground truth' comparison silently exercise a compiled or
    analytical path (genmlx-pkmx)."
   (into [:compiled-simulate :compiled-generate :compiled-update :compiled-assess
-         :compiled-project :compiled-regenerate :cone-regenerate :vcone-regenerate
+         :compiled-project :compiled-regenerate :cone-regenerate :vcone-regenerate :fused-vmh
          :compiled-prefix :compiled-prefix-generate :compiled-prefix-update
          :compiled-prefix-regenerate :compiled-prefix-assess :compiled-prefix-project]
         analytical-path-schema-keys))
@@ -1248,7 +1248,9 @@
    [:cone-regenerate cops/make-cone-regenerate]
    ;; genmlx-js93: the [N]-lane cone for vregenerate (same gates + a
    ;; dist-constructor requirement; declines per-call like the scalar cone)
-   [:vcone-regenerate cops/make-vcone-regenerate]])
+   [:vcone-regenerate cops/make-vcone-regenerate]
+   ;; genmlx-hwhp: the fused vmh sweep runner (O(1)-per-move host work)
+   [:fused-vmh cops/make-fused-vmh]])
 
 (def ^:private branch-ops
   [[:compiled-simulate compiled/make-branch-rewritten-simulate]

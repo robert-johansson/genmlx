@@ -149,5 +149,49 @@
     (assert-true "vmh: incremental [N] scores == fresh full re-score (1e-2)"
                  (< (max-abs-diff (:score vt) (:score (:vtrace fresh))) 1e-2))))
 
+;; =========================================================================
+;; 5. Fused vmh sweep (genmlx-hwhp): bitwise-equal to the per-move driver
+;; =========================================================================
+(println "\n-- 5. fused vmh == per-move vmh (bitwise, same key) --")
+
+(def sum-ret (gen [] (let [a (trace :a (dist/gaussian 0 1))
+                           b (trace :b (dist/gaussian a 1))]
+                       (mx/add a b))))
+
+(doseq [[nm m addrs] [["chain3" chain3 [:a :b :c]]
+                      ["skip" skip [:a :b :c]]
+                      ["sum-ret" sum-ret [:a :b]]]]
+  (assert-true (str nm " has :fused-vmh") (fn? (:fused-vmh (:schema m))))
+  (let [vt0 (dyn/vsimulate m [] N (rng/fresh-key 500))
+        run (fn [gf] (mcmc/vmh gf vt0 {:iters 3 :addresses addrs
+                                       :key (rng/fresh-key 501)}))
+        fused (run m)
+        stepped (run (update m :schema dissoc :fused-vmh))]
+    (doseq [addr addrs]
+      (assert-true (str nm " " addr ": fused choices bit-identical to per-move")
+                   (arrays-equal? (vleaf fused addr) (vleaf stepped addr))))
+    (assert-true (str nm ": fused [N] score bit-identical to per-move")
+                 (arrays-equal? (:score fused) (:score stepped)))
+    (assert-true (str nm ": retval within 1e-6 of per-move")
+                 (< (max-abs-diff (:retval fused) (:retval stepped)) 1e-6))))
+
+;; decline: an address outside the plan falls back to the per-move path
+(let [vt0 (dyn/vsimulate chain3 [] N (rng/fresh-key 510))
+      run (fn [gf] (mcmc/vmh gf vt0 {:iters 1 :addresses [:a :nope]
+                                     :key (rng/fresh-key 511)}))
+      fused-declined (run chain3)
+      stepped (run (update chain3 :schema dissoc :fused-vmh))]
+  (assert-true "fused decline (:nope): result equals per-move path"
+               (and (arrays-equal? (vleaf fused-declined :a) (vleaf stepped :a))
+                    (arrays-equal? (:score fused-declined) (:score stepped)))))
+
+;; drift on the FUSED path: incremental score vs fresh full re-score
+(let [n 256
+      vt0 (dyn/vsimulate chain3 [] n (rng/fresh-key 520))
+      vt (mcmc/vmh chain3 vt0 {:iters 40 :key (rng/fresh-key 521)})
+      fresh (dyn/vregenerate chain3 vt sel/none (rng/fresh-key 522))]
+  (assert-true "fused vmh 120 moves: incremental scores == fresh re-score (1e-2)"
+               (< (max-abs-diff (:score vt) (:score (:vtrace fresh))) 1e-2)))
+
 (println (str "\n== vcone-regen: " @pass " passed, " @fail " failed =="))
 (when (pos? @fail) (set! (.-exitCode js/process) 1))
