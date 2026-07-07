@@ -1,0 +1,290 @@
+{
+ "assumptions": [
+  "per-task cost uniform within (tier,strategy): reports carry only aggregate cost",
+  "oneshot/loop gen-time split proportional to samples (oneshot = 27x4)",
+  "cost unit = measured gen-time seconds per tier (35B per-token cost inherent)",
+  "within cohort: leave-one-instance-out lookup; held-out family: global-train-best fallback"
+ ],
+ "arm-cost-s-per-task": {
+  "base/oneshot": 19.231,
+  "base/loop": 48.435,
+  "sft600/oneshot": 16.34,
+  "sft600/loop": 36.917,
+  "grpo/oneshot": 14.237,
+  "grpo/loop": 27.947,
+  "qwen35b/oneshot": 30.797,
+  "qwen35b/loop": 55.891
+ },
+ "cohorts": {
+  "within-LOIO": {
+   "frontier": {
+    "base/oneshot": {
+     "n": 15,
+     "solve-rate": 0.0667,
+     "mean-cost-s": 19.2314
+    },
+    "base/loop": {
+     "n": 15,
+     "solve-rate": 0.2,
+     "mean-cost-s": 48.4346
+    },
+    "sft600/oneshot": {
+     "n": 15,
+     "solve-rate": 0.0,
+     "mean-cost-s": 16.3404
+    },
+    "sft600/loop": {
+     "n": 15,
+     "solve-rate": 0.2667,
+     "mean-cost-s": 36.9171
+    },
+    "grpo/oneshot": {
+     "n": 15,
+     "solve-rate": 0.1333,
+     "mean-cost-s": 14.2371
+    },
+    "grpo/loop": {
+     "n": 15,
+     "solve-rate": 0.4667,
+     "mean-cost-s": 27.947
+    },
+    "qwen35b/oneshot": {
+     "n": 15,
+     "solve-rate": 0.4667,
+     "mean-cost-s": 30.7972
+    },
+    "qwen35b/loop": {
+     "n": 15,
+     "solve-rate": 0.2667,
+     "mean-cost-s": 55.8912
+    },
+    "round-robin": {
+     "n": 15,
+     "solve-rate": 0.2333,
+     "mean-cost-s": 31.2245
+    },
+    "per-family-allocator": {
+     "n": 15,
+     "solve-rate": 0.7333,
+     "mean-cost-s": 23.0331
+    },
+    "per-task-oracle": {
+     "n": 15,
+     "solve-rate": 0.7333,
+     "mean-cost-s": 22.262
+    }
+   },
+   "best-fixed": "grpo/loop",
+   "allocator-dominates": {
+    "base/oneshot": false,
+    "base/loop": true,
+    "sft600/oneshot": false,
+    "sft600/loop": true,
+    "grpo/oneshot": false,
+    "grpo/loop": true,
+    "qwen35b/oneshot": true,
+    "qwen35b/loop": true,
+    "round-robin": true
+   },
+   "gate-pass": false,
+   "bootstrap-solve-margin-vs-best-fixed": {
+    "mean": 0.2682,
+    "ci95": [
+     0.06666666666666665,
+     0.46666666666666673
+    ],
+    "vs": "grpo/loop",
+    "B": 2000,
+    "seed": 20260707
+   },
+   "headroom-to-per-task-oracle": 0.0
+  },
+  "held-out-family": {
+   "frontier": {
+    "base/oneshot": {
+     "n": 12,
+     "solve-rate": 0.0,
+     "mean-cost-s": 19.2314
+    },
+    "base/loop": {
+     "n": 12,
+     "solve-rate": 0.0,
+     "mean-cost-s": 48.4346
+    },
+    "sft600/oneshot": {
+     "n": 12,
+     "solve-rate": 0.0,
+     "mean-cost-s": 16.3404
+    },
+    "sft600/loop": {
+     "n": 12,
+     "solve-rate": 0.25,
+     "mean-cost-s": 36.9171
+    },
+    "grpo/oneshot": {
+     "n": 12,
+     "solve-rate": 0.0,
+     "mean-cost-s": 14.2371
+    },
+    "grpo/loop": {
+     "n": 12,
+     "solve-rate": 0.0833,
+     "mean-cost-s": 27.947
+    },
+    "qwen35b/oneshot": {
+     "n": 12,
+     "solve-rate": 0.1667,
+     "mean-cost-s": 30.7972
+    },
+    "qwen35b/loop": {
+     "n": 12,
+     "solve-rate": 0.1667,
+     "mean-cost-s": 55.8912
+    },
+    "round-robin": {
+     "n": 12,
+     "solve-rate": 0.0833,
+     "mean-cost-s": 31.2245
+    },
+    "per-family-allocator": {
+     "n": 12,
+     "solve-rate": 0.0833,
+     "mean-cost-s": 27.947
+    },
+    "per-task-oracle": {
+     "n": 12,
+     "solve-rate": 0.4167,
+     "mean-cost-s": 21.9196
+    }
+   },
+   "best-fixed": "sft600/loop",
+   "allocator-dominates": {
+    "base/oneshot": false,
+    "base/loop": true,
+    "sft600/oneshot": false,
+    "sft600/loop": false,
+    "grpo/oneshot": false,
+    "grpo/loop": false,
+    "qwen35b/oneshot": false,
+    "qwen35b/loop": false,
+    "round-robin": true
+   },
+   "gate-pass": false,
+   "bootstrap-solve-margin-vs-best-fixed": {
+    "mean": -0.1662,
+    "ci95": [
+     -0.4166666666666667,
+     0.0
+    ],
+    "vs": "sft600/loop",
+    "B": 2000,
+    "seed": 20260707
+   },
+   "headroom-to-per-task-oracle": 0.3333
+  },
+  "all-27": {
+   "frontier": {
+    "base/oneshot": {
+     "n": 27,
+     "solve-rate": 0.037,
+     "mean-cost-s": 19.2314
+    },
+    "base/loop": {
+     "n": 27,
+     "solve-rate": 0.1111,
+     "mean-cost-s": 48.4346
+    },
+    "sft600/oneshot": {
+     "n": 27,
+     "solve-rate": 0.0,
+     "mean-cost-s": 16.3404
+    },
+    "sft600/loop": {
+     "n": 27,
+     "solve-rate": 0.2593,
+     "mean-cost-s": 36.9171
+    },
+    "grpo/oneshot": {
+     "n": 27,
+     "solve-rate": 0.0741,
+     "mean-cost-s": 14.2371
+    },
+    "grpo/loop": {
+     "n": 27,
+     "solve-rate": 0.2963,
+     "mean-cost-s": 27.947
+    },
+    "qwen35b/oneshot": {
+     "n": 27,
+     "solve-rate": 0.3333,
+     "mean-cost-s": 30.7972
+    },
+    "qwen35b/loop": {
+     "n": 27,
+     "solve-rate": 0.2222,
+     "mean-cost-s": 55.8912
+    },
+    "round-robin": {
+     "n": 27,
+     "solve-rate": 0.1667,
+     "mean-cost-s": 31.2245
+    },
+    "per-family-allocator": {
+     "n": 27,
+     "solve-rate": 0.4444,
+     "mean-cost-s": 25.217
+    },
+    "per-task-oracle": {
+     "n": 27,
+     "solve-rate": 0.5926,
+     "mean-cost-s": 22.1099
+    }
+   },
+   "best-fixed": "qwen35b/oneshot",
+   "allocator-dominates": {
+    "base/oneshot": false,
+    "base/loop": true,
+    "sft600/oneshot": false,
+    "sft600/loop": true,
+    "grpo/oneshot": false,
+    "grpo/loop": true,
+    "qwen35b/oneshot": true,
+    "qwen35b/loop": true,
+    "round-robin": true
+   },
+   "gate-pass": false,
+   "bootstrap-solve-margin-vs-best-fixed": {
+    "mean": 0.114,
+    "ci95": [
+     -0.07407407407407407,
+     0.29629629629629634
+    ],
+    "vs": "qwen35b/oneshot",
+    "B": 2000,
+    "seed": 20260707
+   },
+   "headroom-to-per-task-oracle": 0.1481
+  }
+ },
+ "verdict": "NO-GO",
+ "metadata": {
+  "bean": "genmlx-brsu",
+  "script": "scripts/oracle_allocator.py",
+  "source-files": {
+   "inloop_eval_base-full27.json": "5dfdedc54c63fd59",
+   "inloop_eval_sft600-full27.json": "fdef25ea73f05e60",
+   "inloop_eval_grpo-full27.json": "f1a163a80b987f70",
+   "inloop_eval_qwen35b.json": "fd6fac515abb105b"
+  },
+  "git-sha": "9ebe0f4c11e57d6922176aa264e1a2bf40629a67",
+  "timestamp": "2026-07-07T18:29:09.123247+00:00",
+  "eval-config": {
+   "k-oneshot": 4,
+   "k-step": 4,
+   "max-steps": 6,
+   "revise": 2,
+   "temp": 0.7,
+   "np": 2000
+  }
+ }
+}
