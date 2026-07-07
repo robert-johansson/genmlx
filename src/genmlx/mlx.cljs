@@ -262,6 +262,19 @@
 (def inner        (.-inner c))
 (def outer        (.-outer c))
 
+(defn conv2d
+  "2D convolution (NHWC): input [N H W C-in], weight [C-out kh kw C-in] →
+   [N H' W' C-out]. Cross-correlation semantics (no kernel flip), so offset/
+   template searches use it directly. opts {:stride s|[sh sw] :padding p|[ph pw]
+   :dilation d|[dh dw] :groups g}, defaults 1/0/1/1. Pure graph op (genmlx-lgbx)."
+  ([input weight] (.conv2d c input weight))
+  ([input weight {:keys [stride padding dilation groups]}]
+   (let [pair    (fn [x d] (cond (nil? x) [d d] (number? x) [x x] :else x))
+         [sh sw] (pair stride 1)
+         [ph pw] (pair padding 0)
+         [dh dw] (pair dilation 1)]
+     (.conv2d c input weight sh sw ph pw dh dw (or groups 1)))))
+
 ;; Variadic arithmetic -- CLJS reduce over Rust binary ops.
 (def ^:private add* (.-add c))
 (defn add
@@ -467,6 +480,33 @@
 
 (defn take-along-axis [a indices axis]
   (.takeAlongAxis c a indices axis))
+
+;; --- Scatter (gather's write-side duals, genmlx-lgbx) ---
+
+(defn put-along-axis
+  "Scatter with OVERWRITE: put values into a at indices along axis (matches
+   mx.put_along_axis). Duplicate indices overwrite in undefined order — only
+   unique-index or write-identical patterns are deterministic. Pure graph op."
+  [a indices values axis]
+  (.putAlongAxis c a (ensure-int-indices indices) values axis))
+
+(defn scatter-add
+  "Scatter with ACCUMULATION: add values into a at indices along axis;
+   duplicate indices accumulate (mx scatter_add_axis). The histogram
+   primitive — see bincount. Pure graph op."
+  [a indices values axis]
+  (.scatterAdd c a (ensure-int-indices indices) values axis))
+
+(defn bincount
+  "Occurrence count of each id in [0,n): ids (any shape, int-coerced) →
+   [n] int32 counts. Composed as scatter-add of ones — MLX has no native
+   bincount. Pure graph op."
+  [ids n]
+  (let [idx (ensure-int-indices (flatten ids))]
+    (.scatterAdd c (.zeros c (clj->js [n]) int32)
+                 idx
+                 (.ones c (.shapeOf c idx) int32)
+                 0)))
 
 (defn index [a i]
   (.take c a (if (number? i) (scalar i int32) i) 0))

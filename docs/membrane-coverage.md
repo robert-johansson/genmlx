@@ -22,8 +22,10 @@ The export surface is enumerated from the **live `@genmlx/core` runtime module**
 this is what `membrane_coverage_test` partitions, and it is the authority. The package
 ships **no `types` field**; its `index.d.ts` is a regenerated snapshot that can lag the
 runtime, so any audit that reads a `.d.ts` can be wrong. Concretely, the live surface
-has **216** function exports (2026-06-21 W-B / genmlx-hg7q added the `valueAndGrad` /
+has **220** function exports (2026-06-21 W-B / genmlx-hg7q added the `valueAndGrad` /
 `computeGradients` module free fns — they moved from MxArray methods to module exports;
+2026-07-07 genmlx-lgbx added `conv2d` / `scatterAdd` / `putAlongAxis` — the first two
+FFI-shimmed but never exported, the last newly shimmed via `scatter_add_axis`;
 the `index.d.ts` is a regenerated snapshot that can lag, so re-derive its count from the
 live module after a rebuild). One runtime-only name is `Gradients` (a real class export,
 correctly on the `:training-orchestration` omission allowlist). When the doc and the live
@@ -33,16 +35,16 @@ test disagree, the test is right.
 
 | | Count |
 |---|---:|
-| Function exports (`typeof === "function"`, incl. classes) | **216** |
-| → Wrapped in the membrane | **169** |
-| → Intentionally omitted | **47** |
+| Function exports (`typeof === "function"`, incl. classes) | **220** |
+| → Wrapped in the membrane | **172** |
+| → Intentionally omitted | **48** |
 
-`wrapped ⊎ omitted = 216` — the partition tiles the surface exactly (asserted by
+`wrapped ⊎ omitted = 220` — the partition tiles the surface exactly (asserted by
 `coverage-accounting-test`). Non-function exports (DType constants etc.) and
-per-class *method* coverage (e.g. `MxArray.addmm` / `argpartition` /
-`putAlongAxis`) are out of scope for this floor — see *Deferred* below.
+per-class *method* coverage (e.g. `MxArray.addmm` / `argpartition`) are out of
+scope for this floor — see *Deferred* below.
 
-## Wrapped (167)
+## Wrapped (172)
 
 Not enumerated here (a static list would drift). The membrane binds every export
 not on the omission allowlist below — covering the full pure-math / reduction /
@@ -97,8 +99,9 @@ must be accounted for. None are wrapped as compute ops.
   incrementally as Phase 1-4 tap them; this feeds the GFI-reward GRPO flywheel
   (`genmlx-ugkv` / `genmlx-706r`).
 - **Profiling data** — gate on the `genmlx-i0s4` cost meter.
-- **`MxArray` array-method gaps** — `addmm` / `argpartition` / `putAlongAxis` and
-  the rest of the ~150-method class surface (category-b appendix).
+- **`MxArray` array-method gaps** — `addmm` / `argpartition` and the rest of the
+  ~150-method class surface (category-b appendix). (`putAlongAxis` graduated to a
+  wrapped module export in genmlx-lgbx, 2026-07-07.)
 - **Non-function exports** — DType constants and class instances (a separate spike).
 
 ## Re-audit recipe
