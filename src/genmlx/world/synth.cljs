@@ -520,7 +520,12 @@
     (let [cands (mapcat (fn [p] (p spec feedback)) proposers)]
       (->> cands
            (reduce (fn [[seen acc] c]
-                     (let [k (render (:spec' c))]
+                     ;; Dedup by the candidate's raw :code when it carries one:
+                     ;; every off-grammar (:llm-raw) candidate falls back to
+                     ;; :spec' = current spec, so a render-only key collapsed
+                     ;; ALL raw candidates in a step to the first — distinct
+                     ;; DSL slips never reached the check node (genmlx-mo69).
+                     (let [k (or (:code c) (render (:spec' c)))]
                        (if (contains? seen k) [seen acc] [(conj seen k) (conj acc c)])))
                    [#{} []])
            second))))
