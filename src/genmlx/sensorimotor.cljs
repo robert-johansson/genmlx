@@ -268,6 +268,25 @@
    Caller threads PRNG via the key arg → uniform draw (no host-side rand)."
   [log-weights u]
   (let [n      (count log-weights)
+        max-w  (apply max log-weights)]
+    ;; Degenerate populations are unrecoverable and fail loudly (genmlx-2c4k,
+    ;; mirroring u/normalize-log-weights): with all-(-Inf) weights every
+    ;; shifted term is NaN, no bucket matches, and the (dec n) fallback fills
+    ;; EVERY slot — a silent collapse to the last particle. NaN/+Inf weights
+    ;; likewise poison normalization. This variant takes plain JS numbers, so
+    ;; it cannot route through the MLX-array choke point.
+    (when (some js/isNaN log-weights)
+      (throw (ex-info "particle log-weights contain NaN — normalization is undefined"
+                      {:genmlx/error :nan-weights :n-particles n})))
+    (when (= max-w js/Number.NEGATIVE_INFINITY)
+      (throw (ex-info (str "all " n " particle log-weights are -Inf: every particle "
+                           "is impossible under the constraints/observations, so "
+                           "resampling would silently collapse the population.")
+                      {:genmlx/error :degenerate-particles :n-particles n})))
+    (when (= max-w js/Number.POSITIVE_INFINITY)
+      (throw (ex-info "a particle log-weight is +Inf — normalization is undefined"
+                      {:genmlx/error :infinite-weight :n-particles n}))))
+  (let [n      (count log-weights)
         max-w  (apply max log-weights)
         shifted (mapv #(Math/exp (- % max-w)) log-weights)
         z      (apply + shifted)

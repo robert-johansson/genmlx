@@ -146,8 +146,34 @@
              log-ml (mx/scalar 0.0)
              final-ess nil]
         (if (>= t T)
-          {:log-ml log-ml :particles current-particles
-           :addr-index addr-index :final-ess final-ess}
+          (do
+            ;; Degenerate-population boundary check (genmlx-2c4k). The tensor
+            ;; resampler runs inside the fused loop where a per-step host sync
+            ;; would serialize the sweep, so the guard is post-hoc: an all-
+            ;; (-Inf) step makes that step's ml-inc -Inf (and its resample
+            ;; already collapsed to an arbitrary particle), so a non-finite
+            ;; total log-ML is exactly the degenerate signature. Skipped under
+            ;; grad (the differentiable :gumbel-softmax path runs inside
+            ;; value-and-grad, where forcing the graph is not allowed).
+            (when (and (pos? T) (not (mx/in-grad?)))
+              (let [v (mx/realize log-ml)]
+                (when-not (js/isFinite v)
+                  (throw
+                   (ex-info
+                    (if (js/isNaN v)
+                      "compiled-smc: log-ML is NaN — particle weights contain NaN"
+                      (if (neg? v)
+                        (str "compiled-smc: log-ML is -Inf — at some step every "
+                             "particle was impossible under the observations and "
+                             "the resample silently collapsed. Check the "
+                             "observations against the kernel's support.")
+                        "compiled-smc: log-ML is +Inf — a particle weight is +Inf"))
+                    {:genmlx/error (if (js/isNaN v)
+                                     :nan-weights
+                                     (if (neg? v) :degenerate-particles :infinite-weight))
+                     :log-ml v :T T :n-particles N})))))
+            {:log-ml log-ml :particles current-particles
+             :addr-index addr-index :final-ess final-ess})
           (let [{:keys [new-particles new-state obs-log-prob ml-inc]}
                 (extend-particles extend-fn (mx/index (:extend-noise noise) t)
                                   current-state (nth obs-vec t) all-addrs t N)

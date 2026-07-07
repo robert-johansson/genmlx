@@ -18,6 +18,8 @@
             [genmlx.mlx.random :as rng]
             [genmlx.inference.util :as u]
             [genmlx.inference.smc :as smc]
+            [genmlx.inference.compiled-smc :as csmc]
+            [genmlx.sensorimotor :as sm]
             [genmlx.dist :as dist]
             [genmlx.choicemap :as cm])
   (:require-macros [genmlx.gen :refer [gen]]))
@@ -129,6 +131,66 @@
                                          :resample-method method
                                          :key (rng/fresh-key 13)}
                                         step-model [] impossible-obs)))))
+
+;; ===========================================================================
+;; genmlx-2c4k follow-up: two resamplers bypass the normalize-log-weights
+;; choke point and used to collapse silently — sensorimotor's plain-number
+;; systematic-resample (the (dec n) exhaustion fallback fills EVERY slot on
+;; an all-(-Inf) population) and compiled-smc's fused tensor resampler
+;; (softmax NaN -> searchsorted clamps every ancestor to particle N-1; the
+;; guard there is post-hoc at the sweep boundary, where -Inf log-ML is
+;; exactly the degenerate signature).
+;; ===========================================================================
+(println "\n-- sensorimotor systematic-resample (plain numbers): degenerate throws --")
+
+(assert-true "all-(-Inf) weights throw :degenerate-particles"
+             (= :degenerate-particles
+                (error-kind #(sm/systematic-resample [neg-inf neg-inf neg-inf] 0.5))))
+
+(assert-true "a NaN weight throws :nan-weights"
+             (= :nan-weights
+                (error-kind #(sm/systematic-resample [0.0 js/NaN -1.0] 0.5))))
+
+(assert-true "a +Inf weight throws :infinite-weight"
+             (= :infinite-weight
+                (error-kind #(sm/systematic-resample
+                              [0.0 js/Number.POSITIVE_INFINITY] 0.5))))
+
+(let [idx (sm/systematic-resample [-0.5 -0.5 neg-inf -0.5] 0.25)]
+  (assert-true "healthy weights (one -Inf among finite): valid indices"
+               (and (= 4 (count idx)) (every? #(<= 0 % 3) idx)))
+  (assert-true "healthy weights: the -Inf particle is never resampled"
+               (not-any? #(= 2 %) idx)))
+
+(println "\n-- compiled-smc tensor path: boundary check throws --")
+
+;; :y is a point mass at the latent — constraining it to a constant is
+;; impossible for (almost surely) every particle at once.
+(def ^:private delta-kernel
+  (gen [t state]
+    (let [s (trace :x (dist/gaussian state 1))]
+      (trace :y (dist/delta s))
+      s)))
+
+(assert-true "compiled-smc throws :degenerate-particles on an impossible observation"
+             (= :degenerate-particles
+                (error-kind #(csmc/compiled-smc {:particles 8 :key (rng/fresh-key 17)}
+                                                delta-kernel 0.0
+                                                [(cm/set-choice cm/EMPTY [:y] (mx/scalar 3.0))]))))
+
+(def ^:private rw-kernel
+  (gen [t state]
+    (let [s (trace :x (dist/gaussian state 1))]
+      (trace :y (dist/gaussian s 0.5))
+      s)))
+
+(assert-true "compiled-smc healthy sweep still returns a finite log-ML"
+             (js/isFinite
+              (mx/realize
+               (:log-ml (csmc/compiled-smc {:particles 8 :key (rng/fresh-key 19)}
+                                           rw-kernel 0.0
+                                           [(cm/set-choice cm/EMPTY [:y] (mx/scalar 0.3))
+                                            (cm/set-choice cm/EMPTY [:y] (mx/scalar -0.1))])))))
 
 ;; ===========================================================================
 (println (str "\n== degenerate-weights: " @pass " passed, " @fail " failed =="))
