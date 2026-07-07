@@ -193,6 +193,51 @@
           #{}
           (find-symbols form)))
 
+(defn- direct-set-of-form
+  "The set of trace addresses whose VALUES this form's own evaluation reads
+   DIRECTLY — the deterministic-read relation for cone-restricted regenerate
+   (genmlx-ltx2). Three rules distinguish it from the transitive compute-deps:
+     1. a free symbol resolves through the ::direct env, where a trace-bound
+        symbol carries ONLY its own address (never its ancestors' — reading b
+        where b = (trace :b (gaussian a 1)) reads :b's VALUE, not :a's);
+     2. a nested literal (trace :addr ...) contributes ONLY {addr} — its
+        dist-arg reads belong to that SITE, not to the surrounding form
+        (a textual union here would re-transitivize chains and destroy the
+        cone's O(|children|) bound);
+     3. deterministic ops union their children (over-approximation is safe:
+        an over-large cone wastes work but never corrupts a weight;
+        under-approximation is a soundness bug)."
+  [env form]
+  (cond
+    (symbol? form) (get-in env [::direct form] #{})
+
+    (and (seq? form) (seq form))
+    (if-let [addr (and (call-named? form "trace")
+                       (keyword? (second form))
+                       (second form))]
+      #{addr}
+      (reduce (fn [acc f] (into acc (direct-set-of-form env f))) #{} form))
+
+    (vector? form)
+    (reduce (fn [acc f] (into acc (direct-set-of-form env f))) #{} form)
+
+    (map? form)
+    (reduce (fn [acc f] (into acc (direct-set-of-form env f))) #{} (mapcat identity form))
+
+    (set? form)
+    (reduce (fn [acc f] (into acc (direct-set-of-form env f))) #{} form)
+
+    :else #{}))
+
+(defn- bind-direct
+  "Record (or clear, when empty) a symbol's ::direct entry — the same
+   assoc-or-dissoc-on-rebind discipline handle-let uses for transitive deps."
+  [env sym direct-set]
+  (cond
+    (seq direct-set) (assoc-in env [::direct sym] direct-set)
+    (get-in env [::direct sym]) (update env ::direct dissoc sym)
+    :else env))
+
 (defn- gen-binding-sym?
   "True for an unqualified symbol that is one of the gen-macro runtime bindings
    (trace/splice) — i.e. a tracing capability that must stay in head position."
@@ -294,6 +339,9 @@
         ;; the edge invisible and mis-gated the fast regenerate path).
         deps (into (compute-deps env dist-form)
                    (disj (trace-addrs-in dist-form) addr))
+        ;; Direct deterministic reads only (genmlx-ltx2): trace-bound symbols
+        ;; contribute their own address, nested trace literals only theirs.
+        direct-deps (disj (direct-set-of-form env dist-form) addr)
         ;; Splice addresses whose retvals feed this site's dist params —
         ;; via a let-bound (or derived) symbol, or a splice literal nested in
         ;; the dist args. Kept SEPARATE from :deps (whose consumers — dep-order
@@ -316,6 +364,7 @@
                                    :dist-type dist-type
                                    :dist-args (or dist-args [])
                                    :deps deps
+                                   :direct-deps direct-deps
                                    :splice-deps splice-deps
                                    :arg-deps arg-deps
                                    ;; direct trace-alias provenance for dist-arg
@@ -378,7 +427,11 @@
                                ;; (splice :sub gf) or (mx/add (splice :sub gf) 1)
                                ;; (genmlx-njzu). Cleared on rebinding below.
                                sym-splices (into (splice-provenance-of env val-form)
-                                                 (splice-addrs-in val-form))]
+                                                 (splice-addrs-in val-form))
+                               ;; Direct deterministic reads of the bound value
+                               ;; (genmlx-ltx2): trace calls contribute only
+                               ;; their own address (see direct-set-of-form).
+                               sym-direct (direct-set-of-form env val-form)]
                            (if (symbol? sym)
                              ;; Maintain direct trace-alias provenance: record
                              ;; sym -> :addr when bound directly to (trace :addr
@@ -400,6 +453,7 @@
                                           (get-in env1 [::splice-provenance sym])
                                           (update env1 ::splice-provenance dissoc sym)
                                           :else env1)
+                                   env1 (bind-direct env1 sym sym-direct)
                                    alias-addr (bare-trace-alias-addr val-form)
                                    env2 (cond
                                           alias-addr (assoc-in env1 [::arg-aliases sym] alias-addr)
@@ -422,6 +476,10 @@
                                             (update env1 ::splice-provenance
                                                     #(apply dissoc % (find-symbols sym)))
                                             env1))
+                                   ;; destructured direct reads: conservative
+                                   ;; full-union per bound symbol (genmlx-ltx2)
+                                   env1 (reduce (fn [e s] (bind-direct e s sym-direct))
+                                                env1 (find-symbols sym))
                                    env2 (if (::arg-aliases env1)
                                           (update env1 ::arg-aliases
                                                   #(apply dissoc % (find-symbols sym)))
@@ -760,15 +818,18 @@
       ;; Single arity: (fn [params] body...)
       (let [params (first rest-args)
             body (rest rest-args)
-            ;; Remove fn params from env (they shadow outer bindings)
-            env' (reduce dissoc env params)]
+            ;; Remove fn params from env (they shadow outer bindings) —
+            ;; including their ::direct entries (genmlx-ltx2)
+            env' (reduce (fn [e p] (bind-direct (dissoc e p) p #{}))
+                         env params)]
         (walk-forms acc env' body))
       ;; Multi-arity: (fn ([params] body...) ([params] body...))
       (reduce (fn [acc arity]
                 (if (and (sequential? arity) (seq arity) (vector? (first arity)))
                   (let [params (first arity)
                         body (rest arity)
-                        env' (reduce dissoc env params)]
+                        env' (reduce (fn [e p] (bind-direct (dissoc e p) p #{}))
+                                     env params)]
                     (walk-forms acc env' body))
                   acc))
               acc
@@ -786,7 +847,8 @@
                            (let [params (second fd)
                                  fn-body (drop 2 fd)
                                  env' (if (vector? params)
-                                        (reduce dissoc env params)
+                                        (reduce (fn [e p] (bind-direct (dissoc e p) p #{}))
+                                                env params)
                                         env)]
                              (walk-forms acc env' fn-body))
                            acc))
@@ -816,11 +878,14 @@
                                   (into (splice-provenance-of env a))
                                   (into (splice-addrs-in a))))
                             #{} call-args)
+        arg-direct (reduce (fn [d a] (into d (direct-set-of-form env a)))
+                           #{} call-args)
         bind (fn [env params]
                (reduce (fn [e s]
                          (let [e (if (seq arg-deps)
                                    (assoc e s arg-deps)
                                    (dissoc e s))
+                               e (bind-direct e s arg-direct)
                                e (cond
                                    (seq arg-splices)
                                    (assoc-in e [::splice-provenance s] arg-splices)
@@ -986,6 +1051,19 @@
           (assoc :params (vec params)
                  :return-form (last body)
                  :dep-order (topo-sort (:trace-sites result))
+                 ;; Inverted direct-read relation {parent -> #{children}} over
+                 ;; static sites — the cone of a single-site regenerate
+                 ;; (genmlx-ltx2). Built here from per-site :direct-deps, NOT
+                 ;; via dep_graph's compute-direct-parents (which drops skip
+                 ;; edges a->c when a->b->c also exists).
+                 :direct-children (reduce (fn [m site]
+                                            (reduce (fn [m p]
+                                                      (update m p (fnil conj #{})
+                                                              (:addr site)))
+                                                    m
+                                                    (:direct-deps site)))
+                                          {}
+                                          (filter :static? (:trace-sites result)))
                  :opaque-gen-escape? opaque-escape?
                  ;; CLAUDE.md definition: static = all keyword-literal
                  ;; addresses, no branches, no loops, no splices. Splices

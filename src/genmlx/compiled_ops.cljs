@@ -614,12 +614,10 @@
 
           :else nil)))))
 
-(defn make-compiled-regenerate
-  "Build a compiled regenerate function from a gen schema and source.
-   Returns (fn [key args-vec old-choices selection]
-             -> {:values :score :weight :retval})
-   or nil if the model can't be compiled.
-   :weight = proposal ratio (NOT final weight — DynamicGF computes that)."
+(defn- prepare-regen-parts
+  "Shared prelude for the full and cone-restricted compiled regenerates:
+   per-site regenerate step-fns + compiled retval-fn, or nil when the model
+   is not M2-compilable."
   [schema source]
   (when (and (:static? schema)
              (seq (:trace-sites schema))
@@ -633,21 +631,93 @@
           return-expr (compiled/extract-return-expr (:return-form schema))
           retval-fn (compiled/compile-expr return-expr binding-env #{})]
       (when (and step-fns (every? some? step-fns) retval-fn)
-        (fn compiled-regenerate [key args-vec old-choices selection]
-          (let [mlx-args (compiled/ensure-mlx-args args-vec)
-                result
-                (reduce
-                 (fn [state step-fn]
-                   (step-fn state mlx-args old-choices selection))
-                 {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
-                 step-fns)]
-            {:values (:values result)
-             :score (:score result)
-             :weight (:weight result)
-             ;; retval-fn proven truthy by the outer guard (every? some? + retval-fn)
-             ;; RAW args, matching M2 simulate + the handler: an arg-derived
-             ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
-             :retval (retval-fn (:values result) args-vec)}))))))
+        {:site-specs site-specs :step-fns step-fns :retval-fn retval-fn}))))
+
+(defn make-compiled-regenerate
+  "Build a compiled regenerate function from a gen schema and source.
+   Returns (fn [key args-vec old-choices selection]
+             -> {:values :score :weight :retval})
+   or nil if the model can't be compiled.
+   :weight = proposal ratio (NOT final weight — DynamicGF computes that)."
+  [schema source]
+  (when-let [{:keys [step-fns retval-fn]} (prepare-regen-parts schema source)]
+    (fn compiled-regenerate [key args-vec old-choices selection]
+      (let [mlx-args (compiled/ensure-mlx-args args-vec)
+            result
+            (reduce
+             (fn [state step-fn]
+               (step-fn state mlx-args old-choices selection))
+             {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
+             step-fns)]
+        {:values (:values result)
+         :score (:score result)
+         :weight (:weight result)
+         ;; retval-fn proven truthy by prepare-regen-parts
+         ;; RAW args, matching M2 simulate + the handler: an arg-derived
+         ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
+         :retval (retval-fn (:values result) args-vec)}))))
+
+(defn make-cone-regenerate
+  "Cone-restricted compiled regenerate (genmlx-ltx2). For a SINGLE-site
+   selection on a flat static model, only the selected site s and its DIRECT
+   children (sites whose dist params read s's value through deterministic
+   code — schema :direct-children) change log-prob; every other retained
+   site's contribution cancels exactly. Reuses the same per-site step-fns as
+   the full compiled regenerate over just that cone, twice:
+     OLD pass (selection = none): partial-old = Σ lp_old(cone)
+     NEW pass (real selection):   partial-new = Σ lp_new(cone),
+                                  :weight = proposal ratio at s
+   Returns the same result shape as make-compiled-regenerate with the
+   incremental score old-score − partial-old + partial-new, so the caller's
+   weight algebra W = (score' − old-score) − ratio = Σ_children (lp_new −
+   lp_old) is unchanged. Key discipline matches the handler exactly —
+   retained sites never split, so for a single-site selection the resampled
+   value is bit-identical to the full paths under the same key. Graph work is
+   O(|cone|); the values-map seed is O(T) cheap host assocs.
+   Returns (fn [key args-vec old-choices selection old-score]
+             -> {:values :score :weight :retval}, nil to decline per-call)
+   or nil when the model can't take the cone path at all."
+  [schema source]
+  (when-let [{:keys [site-specs step-fns retval-fn]}
+             (prepare-regen-parts schema source)]
+    (let [addrs (mapv :addr site-specs)
+          addr->step (zipmap addrs step-fns)
+          direct-children (:direct-children schema)
+          dep-order (:dep-order schema)]
+      (when (and (seq addrs) (map? direct-children) (seq dep-order))
+        (fn cone-regenerate [key args-vec old-choices selection old-score]
+          (let [selected (filterv #(sel/selected? selection %) addrs)]
+            ;; MVP gate: exactly one selected schema address; anything else
+            ;; declines to the full compiled path (multi-site cones deferred).
+            (when (= 1 (count selected))
+              (let [s (first selected)
+                    cone (conj (get direct-children s #{}) s)
+                    cone-order (filterv cone (vec dep-order))
+                    cone-steps (mapv addr->step cone-order)
+                    mlx-args (compiled/ensure-mlx-args args-vec)
+                    ;; Seed EVERY site's value from the old trace: cone steps
+                    ;; read parent values from this map, and retval-fn needs
+                    ;; the full map. Host-map assocs only — no graph nodes.
+                    values-old (reduce (fn [m a]
+                                         (assoc m a (cm/get-value
+                                                     (cm/get-submap old-choices a))))
+                                       {} addrs)
+                    run (fn [sel']
+                          (reduce (fn [state step-fn]
+                                    (step-fn state mlx-args old-choices sel'))
+                                  {:values values-old
+                                   :score (mx/scalar 0.0)
+                                   :weight (mx/scalar 0.0)
+                                   :key key}
+                                  cone-steps))
+                    old-res (run sel/none)
+                    new-res (run selection)
+                    score' (mx/add (mx/subtract old-score (:score old-res))
+                                   (:score new-res))]
+                {:values (:values new-res)
+                 :score score'
+                 :weight (:weight new-res)
+                 :retval (retval-fn (:values new-res) args-vec)}))))))))
 
 (defn make-branch-rewritten-regenerate
   "Build a compiled regenerate for models with rewritable branches (L1-M4).

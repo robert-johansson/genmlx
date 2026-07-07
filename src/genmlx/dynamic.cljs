@@ -451,9 +451,17 @@
      :discard (cm/from-flat-map (:discard result))}))
 
 (defn- run-regen-compiled [gf _args key {:keys [trace selection]}]
-  (let [cfn (:compiled-regenerate (:schema gf))
+  (let [schema (:schema gf)
         old-score (:score trace)
-        result (cfn key (vec (:args trace)) (:choices trace) selection)
+        ;; Cone-restricted path first (genmlx-ltx2): O(|direct children|)
+        ;; graph work for single-site selections; returns nil to decline,
+        ;; falling through to the full compiled regenerate. Both return the
+        ;; same result shape, so the weight algebra below is shared.
+        result (or (when-let [cone-fn (:cone-regenerate schema)]
+                     (cone-fn key (vec (:args trace)) (:choices trace)
+                              selection old-score))
+                   ((:compiled-regenerate schema)
+                    key (vec (:args trace)) (:choices trace) selection))
         weight (mx/subtract (mx/subtract (:score result) old-score) (:weight result))]
     {:trace (make-compiled-trace gf (:args trace) result)
      :weight weight}))
@@ -1069,7 +1077,7 @@
    lets a 'handler ground truth' comparison silently exercise a compiled or
    analytical path (genmlx-pkmx)."
   (into [:compiled-simulate :compiled-generate :compiled-update :compiled-assess
-         :compiled-project :compiled-regenerate
+         :compiled-project :compiled-regenerate :cone-regenerate
          :compiled-prefix :compiled-prefix-generate :compiled-prefix-update
          :compiled-prefix-regenerate :compiled-prefix-assess :compiled-prefix-project]
         analytical-path-schema-keys))
@@ -1233,7 +1241,11 @@
    [:compiled-update cops/make-compiled-update]
    [:compiled-assess cops/make-compiled-assess]
    [:compiled-project cops/make-compiled-project]
-   [:compiled-regenerate cops/make-compiled-regenerate]])
+   [:compiled-regenerate cops/make-compiled-regenerate]
+   ;; genmlx-ltx2: cone-restricted single-site regenerate — M2 static list
+   ;; only (NOT branch-rewrite: a rewritten branch's site set is
+   ;; selection-dependent, so a static cone is undefined there)
+   [:cone-regenerate cops/make-cone-regenerate]])
 
 (def ^:private branch-ops
   [[:compiled-simulate compiled/make-branch-rewritten-simulate]
