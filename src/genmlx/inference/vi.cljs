@@ -257,7 +257,14 @@
    Returns (fn [samples] -> MLX scalar)."
   [log-p-fn log-q-fn]
   (fn [samples]
-    (let [vmapped-p (mx/vmap log-p-fn)
+    ;; Wake phase treats z as FIXED data drawn from (SNIS-corrected) p: only
+    ;; the θ-dependence THROUGH log q(z; θ) may carry gradient. With a
+    ;; reparameterized sampler the samples themselves depend on θ, and the
+    ;; pathwise term Σ w_k (∂log q/∂z_k)(∂z_k/∂θ) has nonzero expectation —
+    ;; for a location-family guide it exactly CANCELS the wanted gradient
+    ;; (∂z/∂θ = 1, ∂log q/∂z = −∂log q/∂θ), freezing the guide (genmlx-vsmi).
+    (let [samples (mx/stop-gradient samples)
+          vmapped-p (mx/vmap log-p-fn)
           vmapped-q (mx/vmap log-q-fn)
           log-p (vmapped-p samples)
           log-q (vmapped-q samples)
