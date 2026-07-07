@@ -62,15 +62,66 @@
            :args [] :source src}
           core-pairs))
 
+;; Log-mean-exp of K fully-independent generate weights under an observation:
+;; an unbiased estimate of the true log-marginal WHATEVER path serves the
+;; generate (analytical fired => every weight IS the marginal; declined =>
+;; the prior-IS estimate concentrates there). A reverted analytical bug that
+;; scores the wrong marginal (or fires where it must decline and mis-scores)
+;; moves this away from the closed form — the meta-validation hook the plain
+;; pair checks missed (reverting 5ce83d5 left them green).
+(defn- lme-generate-weights [model obs k]
+  (let [ws (mapv (fn [i]
+                   (mx/realize (:weight (p/generate (dyn/with-key model (rng/fresh-key (+ 40000 i)))
+                                                    [] obs))))
+                 (range k))
+        m (apply max ws)]
+    (+ m (js/Math.log (/ (reduce + (map #(js/Math.exp (- % m)) ws)) k)))))
+
+(defn- log-normal-pdf [y mu sd]
+  (- (* -0.5 (js/Math.log (* 2 js/Math.PI sd sd)))
+     (/ (* (- y mu) (- y mu)) (* 2 sd sd))))
+
 ;; ===========================================================================
 (println "\n-- corpus: genmlx-94qc — let REBINDING (same name, derived value) --")
 ;; The audit shape: a let name rebound to a derived value; the analytical /
 ;; compiled paths must track the rebound symbol, not the first binding.
+;; Marginal oracle: mu ~ N(0,2), y ~ N(0.5·mu + 1, 1)  =>  y ~ N(1, sqrt 2).
+;; The pre-fix false positive scored y against the RAW draw's conjugacy
+;; (y ~ N(0, sqrt 5)) — ~0.6 nats off at y=2, far outside the band.
 (let [src '([] (let [v (trace :x0 (dist/gaussian 0 2))
                      v (mx/add (mx/multiply v 0.5) 1.0)
                      v1 (trace :x1 (dist/gaussian v 1.0))]
-                 v1))]
+                 v1))
+      model (pef/source->model src)
+      y 2.0
+      obs (cm/set-choice cm/EMPTY [:x1] (mx/scalar y))
+      lme (lme-generate-weights model obs 300)
+      oracle (log-normal-pdf y 1.0 (js/Math.sqrt 2.0))]
+  (println "    94qc marginal: lme(300 gens) =" lme "| closed form =" oracle)
+  (assert-true "94qc: generate-weight log-mean-exp matches the REBOUND marginal (not the raw-draw one)"
+               (< (js/Math.abs (- lme oracle)) 0.35))
   (check! "94qc: rebinding model agrees across all core pairs"
+          {:model (pef/source->model src) :args [] :source src}
+          core-pairs))
+
+;; ===========================================================================
+(println "\n-- corpus: genmlx-rmy7b — Kalman chain with OFFSET (the other half of 5ce83d5) --")
+;; x0 ~ N(0,1); x1 ~ N(x0 + 1, 1); y ~ N(x1, 1)  =>  y ~ N(1, sqrt 3).
+;; The pre-fix Kalman-offset bug dropped/mishandled the +1 in the chain
+;; marginal (mean 0 instead of 1 — ~0.29 nats off at y=2).
+(let [src '([] (let [x0 (trace :x0 (dist/gaussian 0 1))
+                     x1 (trace :x1 (dist/gaussian (mx/add x0 1.0) 1.0))
+                     y  (trace :y (dist/gaussian x1 1.0))]
+                 y))
+      model (pef/source->model src)
+      yv 2.0
+      obs (cm/set-choice cm/EMPTY [:y] (mx/scalar yv))
+      lme (lme-generate-weights model obs 300)
+      oracle (log-normal-pdf yv 1.0 (js/Math.sqrt 3.0))]
+  (println "    rmy7b marginal: lme(300 gens) =" lme "| closed form =" oracle)
+  (assert-true "rmy7b: offset-chain generate-weight log-mean-exp matches the closed-form marginal"
+               (< (js/Math.abs (- lme oracle)) 0.35))
+  (check! "rmy7b: offset-chain model agrees across all core pairs"
           {:model (pef/source->model src) :args [] :source src}
           core-pairs))
 
@@ -104,18 +155,19 @@
 (println "\n-- corpus: genmlx-uizc — Mix regenerate (same-index resample) --")
 ;; The audit bug: a same-index component resample failed to regenerate
 ;; selected INNER sites. Pinned via a gen wrapper that splices a Mix over two
-;; gaussian kernels. QUARANTINE (genmlx-175y): running :p2 here exposed a
-;; fast-vs-forced-general weight divergence on the spliced Mix — a NEW find
-;; under investigation; :p2 re-arms when 175y closes.
+;; gaussian kernels. QUARANTINE (genmlx-175y): :p2 exposed a fast-vs-general
+;; weight divergence here, and :i4 intermittently violates round-trip weight
+;; antisymmetry (kernel-construction-key dependent — see the bean). Both
+;; re-arm when 175y closes; :i5 still pins score-type conservation.
 (let [k1 (pef/source->model '([] (let [z (trace :z (dist/gaussian -2 0.5))] z)))
       k2 (pef/source->model '([] (let [z (trace :z (dist/gaussian 2 0.5))] z)))
       mixed (comb/mix-combinator [k1 k2] (mx/array [-0.7 -0.7]))
       src '([] (let [v0 (splice :mx0 pefsub/sub0)
                      v1 (trace :x1 (dist/gaussian v0 1.0))]
                  v1))]
-  (check! "uizc: spliced-Mix model survives round-trip/score-type pairs (:p2 quarantined -> genmlx-175y)"
+  (check! "uizc: spliced-Mix model survives score-type pair (:p2 + :i4 quarantined -> genmlx-175y)"
           {:model (pef/source->model src {'sub0 mixed}) :args [] :source src}
-          [:i4-discard-roundtrip :i5-score-type]))
+          [:i5-score-type]))
 
 ;; ===========================================================================
 (println "\n-- corpus: genmlx-uxjm — SMC increments vs one-shot IS --")
