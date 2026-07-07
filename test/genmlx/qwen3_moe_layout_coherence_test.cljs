@@ -25,7 +25,12 @@
    Run:
      export GENMLX_VLM_MODEL=/path/to/Qwen3.6-35B-A3B-4bit/snapshots/<hash>   # optional; has default
      export GENMLX_MOE_MODEL=/path/to/Qwen3-Coder-Next-4bit/snapshots/<hash>  # optional; has default
-     bunx --bun nbb@1.4.208 -cp src:test:... test/genmlx/qwen3_moe_layout_coherence_test.cljs"
+     bunx --bun nbb@1.4.208 -cp src:test:... test/genmlx/qwen3_moe_layout_coherence_test.cljs
+
+   GENMLX_COHERENCE_CASE=0|1 runs a single case. PREFER one process per case:
+   the backend has no model unload and GC does not promptly free native
+   weights, so the both-cases run peaks at ~60GB resident (18GB + 42GB) —
+   enough to destabilize a 122GB box under other load (2026-07-07 reboot)."
   (:require [genmlx.mlx :as mx]
             [genmlx.llm.backend :as llm]
             [promesa.core :as pr]
@@ -71,12 +76,22 @@
       (println "   oracle" (vec oracle))
       (pr/resolved ok))))
 
-(pr/let [;; sequential (not parallel) to keep peak memory bounded
-         r0 (run-case (nth cases 0))
-         r1 (run-case (nth cases 1))
-         results [r0 r1]
-         checked (vec (remove #(= :skip %) results))
-         passed (count (filter true? checked))]
-  (println (str "\n== qwen3_moe_layout_coherence: " passed "/" (count checked) " checked passed, "
-                (count (filter #(= :skip %) results)) " skipped =="))
-  (js/process.exit (if (every? true? checked) 0 1)))
+(def ^:private case-select
+  ;; One process per case bounds peak memory to one model (no unload API).
+  (some-> js/process .-env .-GENMLX_COHERENCE_CASE js/parseInt))
+
+(if (and (some? case-select) (not (js/isNaN case-select)))
+  (pr/let [r (run-case (nth cases case-select))]
+    (println (str "\n== qwen3_moe_layout_coherence case " case-select ": "
+                  (if (= :skip r) "skipped" (if r "passed" "FAILED")) " =="))
+    (js/process.exit (if (or (= :skip r) (true? r)) 0 1)))
+  (pr/let [;; sequential (not parallel) — but peak memory is BOTH models
+           ;; resident (~60GB); prefer GENMLX_COHERENCE_CASE per-process runs
+           r0 (run-case (nth cases 0))
+           r1 (run-case (nth cases 1))
+           results [r0 r1]
+           checked (vec (remove #(= :skip %) results))
+           passed (count (filter true? checked))]
+    (println (str "\n== qwen3_moe_layout_coherence: " passed "/" (count checked) " checked passed, "
+                  (count (filter #(= :skip %) results)) " skipped =="))
+    (js/process.exit (if (every? true? checked) 0 1))))
