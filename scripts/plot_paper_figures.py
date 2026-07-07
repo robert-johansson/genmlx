@@ -869,7 +869,7 @@ def load_genmlx_crosssystem():
 
     def cmp(config, model, algo, particles=None):
         r = native(config, particles)
-        if r is None:
+        if r is None or r.get('mean_ms') is None:  # absent or skipped bench
             return None
         return {'model': model, 'algorithm': algo, 'time_ms': r['mean_ms'],
                 'time_ms_std': r.get('std_ms'), 'time_ms_min': r.get('min_ms'),
@@ -879,6 +879,8 @@ def load_genmlx_crosssystem():
         cmp('VIS-linreg', 'linreg', 'IS', particles=1000),   # vectorized IS (N=1000)
         cmp('fused-MH-linreg', 'linreg', 'MH'),              # compiled MH
         cmp('VIS-gmm', 'gmm', 'IS', particles=1000),
+        cmp('VIS-hmm', 'hmm', 'IS', particles=1000),         # vectorized IS, shared exp4 HMM spec
+        cmp('SMC-hmm', 'hmm', 'SMC', particles=100),         # batched bootstrap PF (T=50)
         cmp('L3-exact', 'linreg', 'L3'),                     # GenMLX-only exact marginal
     ] if c is not None]
     return {'system': 'genmlx', 'backend': 'Metal GPU', 'comparisons': comparisons}
