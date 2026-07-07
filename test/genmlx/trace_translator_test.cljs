@@ -332,6 +332,52 @@
       (is (< (js/Math.abs (- (:log-ml ctf) analytic)) 0.06)
           (str "reparam-bridged log-ML " (:log-ml ctf) " ~ analytic " analytic)))))
 
+(deftest coarse-to-fine-stage-obs
+  (testing "stage>=1 obs condition the bridged target even when h does NOT copy them (genmlx-rirn)"
+    ;; coarse: x only. fine: x plus NEW data site :y — observed at stage 1.
+    ;; h copies :x ONLY, so pre-fix the bridged generate freshly sampled :y
+    ;; and the returned log-ML estimated the UNCONDITIONED model (~0 nats)
+    ;; instead of log p(y*).
+    (let [coarse (gen [] (trace :x (dist/gaussian 0 2)))
+          fine (gen [] (let [x (trace :x (dist/gaussian 0 2))]
+                         (trace :y (dist/gaussian x 1))))
+          y* 1.5
+          obs1 (cm/choicemap :y (mx/scalar y*))
+          xcopy (tt/trace-translator
+                 {:p2 fine
+                  :h (fn [in _aux]
+                       {:trace (-> cm/EMPTY (tt/copy-choice in :x))
+                        :aux cm/EMPTY})
+                  :volume-preserving? true})
+          n 4000
+          ctf (tt/coarse-to-fine-smc {:models [coarse fine]
+                                      :stage-obs [cm/EMPTY obs1]
+                                      :translators [xcopy]
+                                      :n-particles n :key (rng/fresh-key 21)})
+          ;; analytic log p(y*) = log N(1.5; 0, sqrt(4+1))
+          analytic (o-log-gauss y* 0 (js/Math.sqrt 5))]
+      (is (< (js/Math.abs (- (:log-ml ctf) analytic)) 0.06)
+          (str "stage-1-obs-conditioned log-ML " (:log-ml ctf) " ~ analytic " analytic))
+      ;; every returned fine particle carries the OBSERVED :y, not a fresh one
+      (is (every? (fn [t] (< (js/Math.abs (- (it (cm/get-value (cm/get-submap (:choices t) :y))) y*)) 1e-6))
+                  (:particles ctf))
+          "bridged particles hold the observed :y value")))
+  (testing "conflict between h output and stage obs throws (genmlx-rirn)"
+    (let [coarse (gen [] (let [x (trace :x (dist/gaussian 0 2))] (trace :y (dist/gaussian x 1))))
+          fine (gen [] (let [x (trace :x (dist/gaussian 0 2))] (trace :y (dist/gaussian x 1))))
+          obs1 (cm/choicemap :y (mx/scalar 1.5))
+          ;; h copies BOTH :x and :y — :y then collides with the stage obs
+          full-copy (tt/trace-translator
+                     {:p2 fine
+                      :h (fn [in _aux] {:trace in :aux cm/EMPTY})
+                      :volume-preserving? true})]
+      (is (thrown-with-msg? js/Error #"stage obs|conflict"
+            (tt/coarse-to-fine-smc {:models [coarse fine]
+                                    :stage-obs [cm/EMPTY obs1]
+                                    :translators [full-copy]
+                                    :n-particles 4 :key (rng/fresh-key 22)}))
+          "h-output/stage-obs collision is a loud error"))))
+
 ;; ===========================================================================
 ;; 7b. Preconditions (adversarial-review hardening)
 ;; ===========================================================================

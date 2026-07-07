@@ -167,6 +167,37 @@
                                "or pass :volume-preserving? true for discrete/copy-only moves.")
                           {:genmlx/error :translator-missing-jacobian}))))
 
+(defn- leaf-paths*
+  "All leaf address paths of a choicemap (depth-first)."
+  ([cmap] (leaf-paths* cmap []))
+  ([cmap prefix]
+   (cond
+     (nil? cmap) []
+     (cm/has-value? cmap) [prefix]
+     :else (mapcat (fn [[k sub]] (leaf-paths* sub (conj prefix k)))
+                   (cm/-submaps cmap)))))
+
+(defn- assert-obs-compatible!
+  "Throw when the bijection's output holds a DIFFERENT value than the stage
+   obs at any observed address — silently letting either side win would
+   corrupt the bridged target (genmlx-rirn). h writing the SAME value (the
+   identity-bridge carry-the-data-forward pattern) is allowed; the obs copy
+   wins in the merge either way."
+  [out-choices obs]
+  (when-let [clash (seq (filter (fn [path]
+                                  (let [hv (cm/get-choice out-choices path)]
+                                    (and (some? hv)
+                                         (not= (mx/realize hv)
+                                               (mx/realize (cm/get-choice obs path))))))
+                                (leaf-paths* obs)))]
+    (throw (ex-info (str "trace-translator conflict: the bijection h produces "
+                         "values that DISAGREE with the stage obs at "
+                         (pr-str (vec clash))
+                         " — observed sites must not be rewritten by h (drop "
+                         "them from h's output, or from :stage-obs).")
+                    {:genmlx/error :translator-obs-conflict
+                     :addresses (vec clash)}))))
+
 (defn apply-translator
   "Apply trace translator `tt` to input trace `in-trace`, producing a trace of
    the target model p2 with new args `args2`. Returns
@@ -174,11 +205,18 @@
    where log-w is the Eq 3.12 importance weight (log domain). `key` supplies
    entropy for the forward auxiliary proposal.
 
+   The optional `obs` choicemap carries NEW observations for the target model
+   (thesis §3.6.4 — data arriving at a finer stage): merged into the bridged
+   generate's constraints, so score2 (hence the weight) targets p2
+   CONDITIONED on them instead of freshly sampling those sites. h's output
+   and `obs` must be disjoint — a collision throws (genmlx-rirn).
+
    PRECONDITION: `in-trace` must be JOINT-scored — the Eq 3.12 weight
    differences score1 against score2, so a :marginal trace (latents pinned at
    the posterior mean) would silently corrupt it. Asserted (genmlx-540f class);
    all internal call sites already strip the analytical path."
-  [tt in-trace args2 key]
+  ([tt in-trace args2 key] (apply-translator tt in-trace args2 key nil))
+  ([tt in-trace args2 key obs]
   (tr/assert-joint! in-trace :apply-translator)
   (let [{:keys [p2 q1 q2 h]} tt
         in-choices (:choices in-trace)
@@ -192,15 +230,22 @@
         hres (h in-choices rho1)
         out-choices (:trace hres)
         rho2 (or (:aux hres) cm/EMPTY)
+        ;; 2b. merge stage observations into the bridged constraints
+        constraints (if (and obs (seq (leaf-paths* obs)))
+                      (do (assert-obs-compatible! out-choices obs)
+                          (cm/merge-cm out-choices obs))
+                      out-choices)
         ;; 3. target trace, fully constrained -> score2 (= generate weight).
         ;; Strip the L3 analytical path: a conjugate p2 would otherwise return a
         ;; :marginal score with latents pinned at the posterior mean, corrupting
         ;; the importance weight (genmlx-540f). Translators need joint scores.
-        gen (p/generate (dyn/with-key (dyn/strip-analytical-path p2) k2) args2 out-choices)
+        gen (p/generate (dyn/with-key (dyn/strip-analytical-path p2) k2) args2 constraints)
         out-trace (:trace gen)
         score2 (:score out-trace)
-        ;; 4. backward auxiliary density q2(rho2; out-choices)   (numerator)
-        q2-score (if q2 (:weight (p/assess (dyn/auto-key q2) [out-choices] rho2)) ZERO)
+        ;; 4. backward auxiliary density q2(rho2; out-trace choices) (numerator)
+        ;; — conditions on the ACTUAL output trace (which now includes any
+        ;; stage obs), not just h's output.
+        q2-score (if q2 (:weight (p/assess (dyn/auto-key q2) [(:choices out-trace)] rho2)) ZERO)
         ;; 5. Jacobian of the continuous part of h
         ldj (log-det-of tt hres in-choices rho1)
         ;; 6. Eq 3.12 weight in log domain
@@ -208,7 +253,7 @@
         log-w (mx/add (mx/subtract score2 score1)
                       (mx/subtract q2-score q1-score)
                       ldj)]
-    {:trace out-trace :weight log-w :aux rho2 :log-det-jacobian ldj}))
+    {:trace out-trace :weight log-w :aux rho2 :log-det-jacobian ldj})))
 
 (defn translator-weight
   "The Eq 3.12 importance weight (an MLX scalar) of applying `tt` to `in-trace`
@@ -360,8 +405,11 @@
               bridged (mapv (fn [j]
                               (let [{:keys [trace lw]} (nth parts' j)
                                     {t2 :trace w :weight}
+                                    ;; thread the NEXT stage's observations into
+                                    ;; the bridged target (genmlx-rirn)
                                     (apply-translator tt trace (args-of (inc stage))
-                                                      (nth keysT j))]
+                                                      (nth keysT j)
+                                                      (obs-of (inc stage)))]
                                 {:trace t2 :lw (+ lw (mx/realize w))}))
                             (range n))]
           (recur (inc stage) bridged log-ml' (nth keysT n)))))))
