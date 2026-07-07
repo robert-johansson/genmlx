@@ -6,8 +6,10 @@
    diverged in the 2026-07-06 audit (genmlx-ansg), recast as a permanent
    property. New PEF failures get shrunk and appended here.
 
-   Open bugs deliberately NOT yet encoded (add on fix): genmlx-5a87 (Map
-   update-with-diffs vs p/update), genmlx-dp60, genmlx-8mih.
+   Open bugs deliberately NOT yet encoded (add on fix): genmlx-8mih.
+   (genmlx-5a87 is fixed and pinned by map_diff_weight_test.cljs — the pair
+   registry does not exercise update-with-diffs; genmlx-dp60 is fixed and
+   pinned by node_constraint_test.cljs.)
 
    Run: bunx --bun nbb@1.4.208 test/genmlx/pef_corpus.cljs"
   (:require [genmlx.pef :as pef]

@@ -2584,7 +2584,16 @@
               choices (assemble-choices results (comp :choices :trace))
               retvals (mapv (comp :retval :trace) results)
               score (sum-field results (comp :score :trace))
-              weight (mx/subtract score (:score trace))
+              ;; Thesis re-basing, mirroring the p/update fallback (the raw
+              ;; delta score − old_total equals the thesis weight ONLY when
+              ;; no element samples fresh sites; a structure-flipping kernel
+              ;; leaks fresh log-probs into it — genmlx-5a87, the zek9 class):
+              ;; W = Σ w_i + Σ old_element_i − old_total, where updated
+              ;; elements carry their p/update thesis weight against the
+              ;; recorded element score and unchanged elements contribute 0.
+              constructed-old (reduce mx/add ZERO old-element-scores)
+              weight (mx/subtract (mx/add (sum-field results :weight) constructed-old)
+                                  (:score trace))
               discard (assemble-indexed-discards results)
               element-scores (mapv (comp :score :trace) results)]
           {:trace (tag-from-traces
