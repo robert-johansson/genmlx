@@ -1,0 +1,209 @@
+{
+  "columns": {
+    "fused-ms": "fused vmh sweep (mean/sd ms)",
+    "per-move-ms": "per-move stepped cone (no fusion)",
+    "handler-ms": "full-body batched handler baseline",
+    "step-x": "handler/stepped speedup",
+    "fused-x": "handler/fused speedup"
+  },
+  "rows": [
+    {
+      "handler-reps": 2,
+      "handler-ms": {
+        "mean": 691.8853239999996,
+        "sd": 128.5476202723899
+      },
+      "n": 16,
+      "t-sites": 64,
+      "per-move-ms": {
+        "mean": 149.0452540000001,
+        "sd": 8.409209040594606
+      },
+      "cone-reps": 3,
+      "step-x": 4.642115769751374,
+      "fused-x": 7.212961755583922,
+      "sweep-len": 64,
+      "fused-ms": {
+        "mean": 95.92250000000013,
+        "sd": 12.254683071334053
+      },
+      "topology": "chain"
+    },
+    {
+      "handler-reps": 2,
+      "handler-ms": {
+        "mean": 580.3982034999999,
+        "sd": 1.3888263076081813
+      },
+      "n": 256,
+      "t-sites": 64,
+      "per-move-ms": {
+        "mean": 143.2173026666663,
+        "sd": 6.550607939600753
+      },
+      "cone-reps": 3,
+      "step-x": 4.0525704135823455,
+      "fused-x": 7.037463362244879,
+      "sweep-len": 64,
+      "fused-ms": {
+        "mean": 82.47264299999976,
+        "sd": 11.743352750287091
+      },
+      "topology": "chain"
+    },
+    {
+      "handler-reps": 2,
+      "handler-ms": {
+        "mean": 9850.697285000002,
+        "sd": 48.84146202366814
+      },
+      "n": 16,
+      "t-sites": 256,
+      "per-move-ms": {
+        "mean": 1106.8389379999996,
+        "sd": 15.884245617672686
+      },
+      "cone-reps": 3,
+      "step-x": 8.89984707513064,
+      "fused-x": 26.840575338913915,
+      "sweep-len": 256,
+      "fused-ms": {
+        "mean": 367.0076799999997,
+        "sd": 45.38386062004357
+      },
+      "topology": "chain"
+    },
+    {
+      "handler-reps": 2,
+      "handler-ms": {
+        "mean": 19993.468485499998,
+        "sd": 7174.957256083124
+      },
+      "n": 256,
+      "t-sites": 256,
+      "per-move-ms": {
+        "mean": 1119.412787666668,
+        "sd": 9.930599431376006
+      },
+      "cone-reps": 3,
+      "step-x": 17.860675441429326,
+      "fused-x": 48.06100508363049,
+      "sweep-len": 256,
+      "fused-ms": {
+        "mean": 416.0018803333296,
+        "sd": 47.24162277637198
+      },
+      "topology": "chain"
+    },
+    {
+      "handler-reps": 1,
+      "handler-ms": {
+        "mean": 243196.815996,
+        "sd": 0
+      },
+      "n": 256,
+      "t-sites": 1024,
+      "per-move-ms": {
+        "mean": 13332.457997,
+        "sd": 107.38944186661458
+      },
+      "cone-reps": 3,
+      "step-x": 18.240958722744363,
+      "fused-x": 173.05703414536612,
+      "sweep-len": 1024,
+      "fused-ms": {
+        "mean": 1405.2986473333247,
+        "sd": 68.47237388343538
+      },
+      "topology": "chain"
+    },
+    {
+      "handler-reps": 2,
+      "handler-ms": {
+        "mean": 16436.478044499992,
+        "sd": 302.5109745674211
+      },
+      "n": 256,
+      "t-sites": 255,
+      "per-move-ms": {
+        "mean": 1157.0416256666842,
+        "sd": 69.90947990730722
+      },
+      "cone-reps": 3,
+      "step-x": 14.205606505322864,
+      "fused-x": 40.726239338916834,
+      "sweep-len": 255,
+      "fused-ms": {
+        "mean": 403.5844780000043,
+        "sd": 72.17447426077604
+      },
+      "topology": "tree"
+    },
+    {
+      "handler-reps": 1,
+      "handler-ms": {
+        "mean": 256724.56144900003,
+        "sd": 0
+      },
+      "n": 256,
+      "t-sites": 1023,
+      "per-move-ms": {
+        "mean": 14922.869946666624,
+        "sd": 3148.372092863369
+      },
+      "cone-reps": 3,
+      "step-x": 17.203430865947173,
+      "fused-x": 137.59766112797863,
+      "sweep-len": 1023,
+      "fused-ms": {
+        "mean": 1865.7625379999906,
+        "sd": 428.96415662608877
+      },
+      "topology": "tree"
+    },
+    {
+      "handler-reps": 2,
+      "handler-ms": {
+        "mean": 9575.072261499998,
+        "sd": 1486.481320029533
+      },
+      "n": 256,
+      "t-sites": 256,
+      "per-move-ms": {
+        "mean": 819.3345553333638,
+        "sd": 16.821785761142884
+      },
+      "cone-reps": 3,
+      "step-x": 11.686401115603106,
+      "fused-x": 24.65346455681341,
+      "sweep-len": 128,
+      "fused-ms": {
+        "mean": 388.38647766663536,
+        "sd": 212.1618675229268
+      },
+      "topology": "sv"
+    },
+    {
+      "handler-reps": 1,
+      "handler-ms": {
+        "mean": 143746.49292599992,
+        "sd": 0
+      },
+      "n": 256,
+      "t-sites": 1024,
+      "per-move-ms": {
+        "mean": 8896.97354966666,
+        "sd": 2812.0976125238144
+      },
+      "cone-reps": 3,
+      "step-x": 16.1567854645792,
+      "fused-x": 122.87877712290432,
+      "sweep-len": 512,
+      "fused-ms": {
+        "mean": 1169.8235960000118,
+        "sd": 319.0164826914043
+      },
+      "topology": "sv"
+    }
+  ]
+}

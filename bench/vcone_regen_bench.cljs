@@ -87,6 +87,44 @@
 
 (defn- fmt [[m sd]] (str (.toFixed m 0) "±" (.toFixed sd 0)))
 
+;; -- results artifact (genmlx-xppr) ----------------------------------------
+;; Paper house rule: every cited number lands as a committed results/**
+;; artifact with git SHA, hardware, and runtime metadata. Rows accumulate
+;; here and are written to results/vcone/{data,metadata}.json at the end.
+
+(def ^:private fs (js/require "fs"))
+(def ^:private cp (js/require "child_process"))
+(def ^:private rows (atom []))
+
+(defn- jsonify [x] (clj->js x :keyword-fn (fn [k] (subs (str k) 1))))
+
+(defn- write-artifacts! []
+  (.mkdirSync fs "results/vcone" #js {:recursive true})
+  (.writeFileSync fs "results/vcone/data.json"
+                  (js/JSON.stringify
+                   (jsonify {:columns {:fused-ms "fused vmh sweep (mean/sd ms)"
+                                       :per-move-ms "per-move stepped cone (no fusion)"
+                                       :handler-ms "full-body batched handler baseline"
+                                       :step-x "handler/stepped speedup"
+                                       :fused-x "handler/fused speedup"}
+                             :rows @rows})
+                   nil 2))
+  (.writeFileSync fs "results/vcone/metadata.json"
+                  (js/JSON.stringify
+                   (jsonify {:bench "bench/vcone_regen_bench.cljs"
+                             :command "bunx --bun nbb@1.4.208 bench/vcone_regen_bench.cljs"
+                             :git-sha (.trim (str (.execSync cp "git rev-parse HEAD")))
+                             :timestamp (.toISOString (js/Date.))
+                             :hardware {:platform (.-platform js/process)
+                                        :arch (.-arch js/process)
+                                        :metal? (mx/metal-is-available?)
+                                        :device-name (:device-name (mx/metal-device-info))}
+                             :runtime {:bun (.-bun (.-versions js/process))
+                                       :node (.-node (.-versions js/process))
+                                       :nbb "1.4.208"}})
+                   nil 2))
+  (println "  wrote results/vcone/{data,metadata}.json"))
+
 (println "== vcone_regen_bench v2: one vmh sweep, mean±sd ms ==")
 (println "topology\tT-sites\tsweep-len\tN\tfused\tper-move\thandler\tstep-x\tfused-x")
 
@@ -111,7 +149,16 @@
     (println (str nm "\t" t-sites "\t" (count (or addrs (:dep-order (:schema model))))
                   "\t" n "\t" (fmt fused) "\t" (fmt stepped) "\t" (fmt handler)
                   "\t" (.toFixed (/ (first handler) (first stepped)) 1) "x"
-                  "\t" (.toFixed (/ (first handler) (first fused)) 1) "x"))))
+                  "\t" (.toFixed (/ (first handler) (first fused)) 1) "x"))
+    (swap! rows conj
+           {:topology nm :t-sites t-sites
+            :sweep-len (count (or addrs (:dep-order (:schema model))))
+            :n n :cone-reps cone-reps :handler-reps handler-reps
+            :fused-ms {:mean (first fused) :sd (second fused)}
+            :per-move-ms {:mean (first stepped) :sd (second stepped)}
+            :handler-ms {:mean (first handler) :sd (second handler)}
+            :step-x (/ (first handler) (first stepped))
+            :fused-x (/ (first handler) (first fused))})))
 
 (def ^:private all-addrs (fn [m] (vec (:dep-order (:schema m)))))
 (defn- h-addrs-of [steps] (fn [_] (mapv #(keyword (str "h" %)) (range steps))))
@@ -130,3 +177,5 @@
 ;; stochastic volatility (sweep latent h's only)
 (bench-row! "sv" sv-source 128 (h-addrs-of 128) 256 3 2)
 (bench-row! "sv" sv-source 512 (h-addrs-of 512) 256 3 1)
+
+(write-artifacts!)

@@ -1,0 +1,17 @@
+{
+  "bench": "bench/vcone_regen_bench.cljs",
+  "command": "bunx --bun nbb@1.4.208 bench/vcone_regen_bench.cljs",
+  "git-sha": "89116267f0bdc47f75a911d9aa67bc5fd93de458",
+  "timestamp": "2026-07-07T17:24:07.843Z",
+  "hardware": {
+    "platform": "linux",
+    "arch": "arm64",
+    "metal?": false,
+    "device-name": "unavailable"
+  },
+  "runtime": {
+    "bun": "1.3.14",
+    "node": "24.3.0",
+    "nbb": "1.4.208"
+  }
+}
