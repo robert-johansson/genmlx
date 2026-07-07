@@ -137,7 +137,17 @@
    ;; the CUDA genmlx-core build, not a graph op the membrane wraps (genmlx-0vwn
    ;; surface re-pin for the Jetson Thor / CUDA port).
    :benchmark-microbench
-   #{"quantizedQmvMicrobench"}})
+   #{"quantizedQmvMicrobench"}
+
+   ;; seeds the CALLING napi thread's MLX default RNG (thread-local in this
+   ;; fork). Not a membrane concern: GenMLX's inference PRNG is keyed
+   ;; (mlx/random.cljs), and reproducible TRAINING generation rides the
+   ;; GrpoEngineConfig `seed` field instead (applied on the model thread at
+   ;; InitTraining — a caller-thread seed can never reach the training
+   ;; sampler). Kept as a primitive for main-thread unkeyed draws
+   ;; (MxArray.categorical) in probes/tests (genmlx-at2q).
+   :calling-thread-rng
+   #{"seedGlobalRng"}})
 
 (def ^:private omitted (reduce into #{} (vals intentional-omissions)))
 
@@ -224,11 +234,11 @@
   (testing "the partition tiles the full surface (wrapped ⊎ omitted = exports)"
     (let [wrapped (filter referenced? exported-fns)]
       ;; Coarse canary: catches a surface change even when add+omit happen together.
-      (is (= 216 (count exported-fns))
+      (is (= 217 (count exported-fns))
           (str "@genmlx/core surface size changed: " (count exported-fns)
-               " fns (pinned at 216) — the partition test above pinpoints what moved."))
-      (is (= 47 (count omitted))
-          (str "intentional-omissions size changed: " (count omitted) " (pinned at 47)."))
+               " fns (pinned at 217) — the partition test above pinpoints what moved."))
+      (is (= 48 (count omitted))
+          (str "intentional-omissions size changed: " (count omitted) " (pinned at 48)."))
       (is (= (count exported-fns) (+ (count wrapped) (count omitted)))
           (str "partition must tile exactly: wrapped " (count wrapped)
                " + omitted " (count omitted) " = exports " (count exported-fns))))))

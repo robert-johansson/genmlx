@@ -95,7 +95,7 @@
    Supported kebab keys: :learning-rate :group-size :kl-coef (alias :beta) :loss-type
    :max-completion-length :temperature :top-p :top-k :clip-epsilon :gradient-clip-norm
    :gradient-accumulation-steps :repetition-penalty :enable-thinking :lm-head-chunk-size
-   :forward-chunk-size.
+   :forward-chunk-size :seed.
 
    :enable-thinking false adds empty <think></think> tags to the prompt so a Qwen3
    model emits a DIRECT answer instead of a (possibly truncated) reasoning block —
@@ -108,9 +108,14 @@
    engine snapshots the frozen base policy, then each step adds the k3 KL term
    `KL(ref‖policy)` (β-scaled) regularizing toward that base. KL(ref‖policy) and its
    gradient are 0 at step 1 (policy == ref by construction); the effect grows as the
-   policy diverges. Leave it 0 (default) for KL-free training. There is no `:seed` —
-   the engine owns its MLX sampler RNG (training RNG ≠ GenMLX inference RNG; no native
-   config field exists to seed it)."
+   policy diverges. Leave it 0 (default) for KL-free training.
+
+   `:seed` seeds the MODEL THREAD's MLX RNG once at trainer init. MLX's default
+   PRNG state is thread-local, and the engine samples on the model thread — a
+   caller-side seed can never reach it — so this config field is the one honest
+   reproducibility knob: two trainers over identically-initialized models with
+   the same seed + config generate the same completions (common-random-numbers
+   paired experiments, genmlx-at2q). GenMLX's keyed inference RNG is unaffected."
   [config]
   (clj->js
     (merge
@@ -131,7 +136,8 @@
         (contains? config :repetition-penalty)          (assoc :repetitionPenalty (:repetition-penalty config))
         (contains? config :enable-thinking)             (assoc :enableThinking (:enable-thinking config))
         (contains? config :lm-head-chunk-size)          (assoc :lmHeadChunkSize (:lm-head-chunk-size config))
-        (contains? config :forward-chunk-size)          (assoc :forwardChunkSize (:forward-chunk-size config)))
+        (contains? config :forward-chunk-size)          (assoc :forwardChunkSize (:forward-chunk-size config))
+        (contains? config :seed)                        (assoc :seed (:seed config)))
       (:raw config))))
 
 (def ^:private reward-type->native

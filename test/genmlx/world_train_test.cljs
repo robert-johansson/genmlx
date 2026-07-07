@@ -183,35 +183,82 @@
                           (p/catch (fn [_] :threw)))))
           _       (assert-true "kl-coef>0 trains under autograd (reference-model KL now wired, not rejected)"
                                (true? klres))
-          ;; (2) KL MEASURABLY regularizes toward the base policy. Load two FRESH
-          ;; models from the SAME random checkpoint (identical initial weights) and
-          ;; run K steps each — one KL-free, one with a strong KL-to-base. The
-          ;; strong-KL run must stay CLOSER to base (smaller forward-logits drift from
-          ;; the shared initial logits). KL(ref||policy) and its gradient are 0 at
-          ;; step 1 (policy==ref by construction), so the effect needs multiple steps.
-          ;; run-steps returns the LAST train-step metrics (so we can confirm the KL
-          ;; run actually trained — a NaN-skipped step would falsely show ~0 drift).
+          ;; (2) KL-to-base wiring, theorem-anchored (genmlx-at2q, REDESIGNED).
+          ;;
+          ;; HISTORY: the original assert — 'strong-KL drift < KL-free drift over
+          ;; 4 steps on a random tiny checkpoint' — was a single unpaired draw and
+          ;; failed ~1/3 of runs. Probes (documented on the bean) showed the
+          ;; PROPERTY ITSELF is not a theorem in this regime: with common random
+          ;; numbers the contrast is deterministic per checkpoint yet its SIGN
+          ;; varies by checkpoint (3/6 wins at beta 2 and 5; 1/6 clipped at beta
+          ;; 20; a retraction variant 2/4). On a random policy the k3 KL term
+          ;; contributes large gradient components, so total drift MAGNITUDE
+          ;; confounds gradient magnitude with pull direction — beta>0 can move
+          ;; weights MORE while still reshaping the objective toward base. The
+          ;; regularization-magnitude claim belongs to real-policy scale runs
+          ;; (PHASE1_FULL_TREND territory), not tiny random checkpoints.
+          ;;
+          ;; What IS a theorem, and what is asserted here under CRN pairing
+          ;; (fresh checkpoint per trial + the `:seed` trainer config, which
+          ;; seeds the MODEL THREAD's RNG at init — MLX PRNG state is
+          ;; thread-local, so a caller-side seed can never reach the training
+          ;; sampler; the mlx-node frozen-key compiled-categorical bug that ALSO
+          ;; froze the stream is fixed alongside):
+          ;;   T1 ANCHOR:     KL(ref||policy) and its k3 gradient are EXACTLY 0
+          ;;                  at policy == ref, so the FIRST step of a beta=20
+          ;;                  run and a beta=0 run coincide (drift-after-step-1
+          ;;                  equal within float-reduction jitter).
+          ;;   T2 WIRED:      by step 4 the paired trajectories DIVERGE far
+          ;;                  beyond jitter — beta genuinely reshapes training
+          ;;                  (a dead KL term fails T2; a mis-anchored one T1).
           run-steps (fn [t n]
                       (reduce (fn [acc _] (p/then acc (fn [_] (train/train-step! t ["Hi there"] rfn))))
                               (p/resolved nil) (range n)))
-          drift   (fn [kl]
-                    (p/let [m     (.load (.-Qwen35Model gcore) dir)
-                            base  (mx/->clj (.forward m in))
-                            last  (train/with-trainer m
-                                    {:group-size 4 :kl-coef kl :learning-rate 0.03 :max-completion-length 12}
-                                    (fn [t] (run-steps t 4)))
-                            after (mx/->clj (.forward m in))]
-                      {:drift (l1 base after) :applied? (boolean (:gradients-applied? last))}))
-          rf      (drift 0.0)
-          rk      (drift 20.0)
-          _       (println "    drift kl=0:" (:drift rf) " | drift kl=20:" (:drift rk)
-                           " | kl-run last-step trained?" (:applied? rk))
-          _       (assert-true "KL-free run actually moved from base (sanity)"
-                               (> (:drift rf) 0.0))
-          _       (assert-true "strong-KL run trained (gradients applied, not NaN-skipped)"
-                               (:applied? rk))
-          _       (assert-true "KL regularizes toward base: strong-KL drift < KL-free drift"
-                               (< (:drift rk) (:drift rf)))
+          drifts  (fn [cdir kl seed]
+                    (p/let [m   (.load (.-Qwen35Model gcore) cdir)
+                            base (mx/->clj (.forward m in))
+                            out (train/with-trainer m
+                                  {:group-size 4 :kl-coef kl :learning-rate 0.03
+                                   :gradient-clip-norm 1.0 :max-completion-length 12
+                                   :seed seed}
+                                  (fn [t]
+                                    (p/let [r1 (train/train-step! t ["Hi there"] rfn)
+                                            d1 (l1 base (mx/->clj (.forward m in)))
+                                            _  (run-steps t 3)
+                                            d4 (l1 base (mx/->clj (.forward m in)))]
+                                      {:d1 d1 :d4 d4
+                                       :applied? (boolean (:gradients-applied? r1))})))]
+                      out))
+          rel-diff (fn [a b] (/ (js/Math.abs (- a b)) (js/Math.max (js/Math.abs b) 1e-9)))
+          trial   (fn [i seed]
+                    (let [cdir (str dir "-kl" i)]
+                      (p/let [_  (.rmSync fs cdir #js {:recursive true :force true})
+                              _  (train/random-qwen35-checkpoint! cdir {:vocabSize qwen35-vocab})
+                              _  (.copyFileSync fs (.join path real-tok-dir "tokenizer.json")
+                                                (.join path cdir "tokenizer.json"))
+                              _  (.copyFileSync fs (.join path real-tok-dir "tokenizer_config.json")
+                                                (.join path cdir "tokenizer_config.json"))
+                              rk (drifts cdir 20.0 seed)
+                              rf (drifts cdir 0.0 seed)]
+                        (.rmSync fs cdir #js {:recursive true :force true})
+                        (println (str "    ckpt " i ": step1 rel-diff " (rel-diff (:d1 rk) (:d1 rf))
+                                      " | step4 rel-diff " (rel-diff (:d4 rk) (:d4 rf))
+                                      " | d4 kl20=" (:d4 rk) " kl0=" (:d4 rf)))
+                        {:kl rk :free rf
+                         :t1? (< (rel-diff (:d1 rk) (:d1 rf)) 1e-3)
+                         :t2? (> (rel-diff (:d4 rk) (:d4 rf)) 1e-3)})))
+          trials  (reduce (fn [acc [i seed]]
+                            (p/then acc (fn [rs] (p/then (trial i seed) #(conj rs %)))))
+                          (p/resolved []) [[0 11] [1 23]])
+          _       (assert-true "runs moved from base and trained (sanity, both checkpoints)"
+                               (every? #(and (pos? (get-in % [:free :d4]))
+                                             (get-in % [:kl :applied?])
+                                             (get-in % [:free :applied?]))
+                                       trials))
+          _       (assert-true "T1 KL anchor: at policy==ref the beta=20 and beta=0 first steps coincide (CRN, both checkpoints)"
+                               (every? :t1? trials))
+          _       (assert-true "T2 KL wired: by step 4 the beta=20 trajectory diverges from beta=0 (CRN, both checkpoints)"
+                               (every? :t2? trials))
           _       (clean-dir!)]
     (summary))))
 
