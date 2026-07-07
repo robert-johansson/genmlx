@@ -794,6 +794,58 @@
                        (if (vector? fn-defs) fn-defs []))]
       (walk-forms acc' env body))))
 
+(defn- walk-iife
+  "Walk ((fn [params] body...) args...) — an immediately-invoked fn literal.
+   It runs exactly once, so it is not a capability escape (see ns note), but
+   its params must be bound to the call arguments' dependency sets: handle-fn's
+   shadow-only dissoc dropped the argument→parameter edge, so a trace site
+   inside the body got UNDER-approximated :deps — the one direction the :deps
+   consumers (regenerate fast gate, conjugacy, affine) assume never happens
+   (genmlx-7qdz). Binding is conservative: every param symbol gets the union of
+   ALL arguments' deps (no positional matching), which stays sound for varargs,
+   destructured params, and arity mismatch."
+  [acc env fn-form call-args]
+  (let [acc' (walk-forms acc env call-args) ; record sites nested in the args
+        arg-deps (reduce (fn [d a]
+                           (-> d
+                               (into (compute-deps env a))
+                               (into (trace-addrs-in a))))
+                         #{} call-args)
+        arg-splices (reduce (fn [d a]
+                              (-> d
+                                  (into (splice-provenance-of env a))
+                                  (into (splice-addrs-in a))))
+                            #{} call-args)
+        bind (fn [env params]
+               (reduce (fn [e s]
+                         (let [e (if (seq arg-deps)
+                                   (assoc e s arg-deps)
+                                   (dissoc e s))
+                               e (cond
+                                   (seq arg-splices)
+                                   (assoc-in e [::splice-provenance s] arg-splices)
+                                   (get-in e [::splice-provenance s])
+                                   (update e ::splice-provenance dissoc s)
+                                   :else e)]
+                           ;; a param is never a direct trace alias
+                           (if (get-in e [::arg-aliases s])
+                             (update e ::arg-aliases dissoc s)
+                             e)))
+                       env
+                       (disj (find-symbols params) '&)))
+        has-name? (symbol? (second fn-form))
+        arities (if has-name? (drop 2 fn-form) (rest fn-form))]
+    (if (vector? (first arities))
+      ;; Single arity: ((fn [params] body...) args...)
+      (walk-forms acc' (bind env (first arities)) (rest arities))
+      ;; Multi-arity: walk every arity body under the same conservative binding
+      (reduce (fn [acc arity]
+                (if (and (sequential? arity) (seq arity) (vector? (first arity)))
+                  (walk-forms acc (bind env (first arity)) (rest arity))
+                  acc))
+              acc'
+              arities))))
+
 (defn- handle-call [acc env head args]
   (let [n (name head)]
     (case n
@@ -844,9 +896,13 @@
     (and (seq? form) (seq form) (symbol? (first form)))
     (handle-call acc env (first form) (rest form))
 
-    ;; List without symbol head (e.g., ((fn ...) arg)) → walk all children
+    ;; List without symbol head. An immediately-invoked fn literal —
+    ;; ((fn [z] body) arg) — binds its params to the arguments' dep sets
+    ;; (genmlx-7qdz); any other non-symbol head just walks all children.
     (and (seq? form) (seq form))
-    (walk-forms acc env form)
+    (if (fn-literal? (first form))
+      (walk-iife acc env (first form) (rest form))
+      (walk-forms acc env form))
 
     ;; Vector → walk elements (traces can appear inside vector literals)
     (and (vector? form) (seq form))

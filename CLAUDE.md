@@ -98,8 +98,8 @@ done
 bun run --bun nbb test/genmlx/level0_certification_test.cljs
 
 # Level 1 compilation tests
-bun run --bun nbb test/genmlx/schema_test.cljs                # 227/227 (L1-M1)
-bun run --bun nbb test/genmlx/compiled_simulate_test.cljs      # 82/82  (L1-M2)
+bun run --bun nbb test/genmlx/schema_test.cljs                # 266/266 (L1-M1)
+bun run --bun nbb test/genmlx/compiled_simulate_test.cljs      # 85/85  (L1-M2)
 bun run --bun nbb test/genmlx/partial_compile_test.cljs        # 92/92  (L1-M3)
 bun run --bun nbb test/genmlx/combinator_compile_test.cljs     # 92/92  (L1-M5)
 
@@ -509,8 +509,8 @@ Pattern:
 After any change, verify:
 - All core tests pass (no FAIL lines in output)
 - `level0_certification_test.cljs`: 68/68 (L0)
-- `schema_test.cljs`: 227/227 (L1-M1)
-- `compiled_simulate_test.cljs`: 82/82 (L1-M2)
+- `schema_test.cljs`: 266/266 (L1-M1)
+- `compiled_simulate_test.cljs`: 85/85 (L1-M2)
 - `partial_compile_test.cljs`: 92/92 (L1-M3)
 - `combinator_compile_test.cljs`: 92/92 (L1-M5)
 - `l4_certification_test.cljs`: 41/41 (L4)

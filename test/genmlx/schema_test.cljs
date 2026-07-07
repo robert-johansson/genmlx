@@ -1165,4 +1165,67 @@
           ls (-> model :schema :loop-sites first)]
       (is (= 2 (count (:trace-sites ls))) "loop analysis sees both trace sites"))))
 
+;; Test 68: IIFE binds params to argument deps (genmlx-7qdz)
+(deftest test-68-iife-param-deps
+  (testing "7qdz: immediately-invoked fn binds param to argument deps"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                    ((fn [z] (trace :y (dist/gaussian z (mx/scalar 1)))) a)))
+          s (:schema model)
+          y-site (first (filter #(= :y (:addr %)) (:trace-sites s)))]
+      (is (= #{:a} (:deps y-site)) ":y depends on :a through the IIFE param")
+      (is (:static? s) "IIFE tracer stays static (runs exactly once)")
+      (is (= [:a :y] (:dep-order s)) "topo order :a before :y"))))
+
+;; Test 69: IIFE variants — varargs, named, destructured param (genmlx-7qdz)
+(deftest test-69-iife-variants
+  (testing "7qdz: varargs IIFE param carries arg deps"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                    ((fn [& zs] (trace :y (dist/gaussian (first zs) (mx/scalar 1)))) a)))
+          y-site (->> model :schema :trace-sites (filter #(= :y (:addr %))) first)]
+      (is (contains? (:deps y-site) :a) "varargs param carries arg deps")))
+  (testing "7qdz: named IIFE param carries arg deps"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                    ((fn go [z] (trace :y (dist/gaussian z (mx/scalar 1)))) a)))
+          y-site (->> model :schema :trace-sites (filter #(= :y (:addr %))) first)]
+      (is (contains? (:deps y-site) :a) "named-fn param carries arg deps")))
+  (testing "7qdz: destructured IIFE param carries arg deps"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                    ((fn [{:keys [m]}] (trace :y (dist/gaussian m (mx/scalar 1)))) {:m a})))
+          y-site (->> model :schema :trace-sites (filter #(= :y (:addr %))) first)]
+      (is (contains? (:deps y-site) :a) "destructured param carries arg deps"))))
+
+;; Test 70: IIFE param shadowing still clears deps (genmlx-7qdz)
+(deftest test-70-iife-shadowing
+  (testing "7qdz: IIFE param bound to a dep-free arg shadows the outer dep"
+    (let [model (gen []
+                  (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                    ((fn [a] (trace :y (dist/gaussian a (mx/scalar 1)))) (mx/scalar 3))))
+          y-site (->> model :schema :trace-sites (filter #(= :y (:addr %))) first)]
+      (is (= #{} (:deps y-site)) "shadowed param bound to a constant has no deps"))))
+
+;; Test 71: splice provenance flows through IIFE params (genmlx-7qdz)
+(deftest test-71-iife-splice-provenance
+  (testing "7qdz: splice retval through an IIFE param lands in :splice-deps"
+    (let [sub (gen [] (trace :z (dist/gaussian (mx/scalar 0) (mx/scalar 10))))
+          model (gen []
+                  (let [v (splice :sub sub)]
+                    ((fn [z] (trace :y (dist/gaussian z (mx/scalar 1)))) v)))
+          y-site (->> model :schema :trace-sites (filter #(= :y (:addr %))) first)]
+      (is (contains? (:splice-deps y-site) :sub) ":y splice-dep on :sub through the IIFE param"))))
+
+;; Test 72: letfn tracer remains an opaque escape (genmlx-7qdz pin)
+(deftest test-72-letfn-tracer-escape
+  (testing "7qdz: letfn-bound tracer sets :opaque-gen-escape? (not static)"
+    (let [model (gen []
+                  (letfn [(f [z] (trace :y (dist/gaussian z (mx/scalar 1))))]
+                    (let [a (trace :a (dist/gaussian (mx/scalar 0) (mx/scalar 1)))]
+                      (f a))))
+          s (:schema model)]
+      (is (:opaque-gen-escape? s) "letfn tracer escapes")
+      (is (not (:static? s)) "letfn tracer model is not static"))))
+
 (cljs.test/run-tests)

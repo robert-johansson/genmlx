@@ -55,6 +55,18 @@
                   x)))
 ;; F: literal trace nested in another site's dist-args (:mu -> :y)
 (def mF (gen [] (trace :y (dist/gaussian (trace :mu (dist/gaussian 0 1)) 1))))
+;; G: site feeds a dependent site THROUGH an immediately-invoked fn literal's
+;; parameter (genmlx-7qdz: the dropped arg->param dep edge made the coupled
+;; {:a :y} selection wrongly fast-eligible)
+(def mG (gen [] (let [a (trace :a (dist/gaussian 0 10))]
+                  ((fn [z] (trace :y (dist/gaussian z 1))) a)
+                  a)))
+;; H: same coupling via letfn — an opaque escape, so the gate must decline
+;; fast for EVERY selection (genmlx-7qdz pin)
+(def mH (gen [] (letfn [(f [z] (trace :y (dist/gaussian z 1)))]
+                  (let [a (trace :a (dist/gaussian 0 10))]
+                    (f a)
+                    a))))
 
 (defn- fast-vs-general
   "Regenerate with the same key on the default path and the forced-general
@@ -95,6 +107,13 @@
 (check-case "E sel/all"        mE sel/all        :zero? true)
 (check-case "E (select :x :y)" mE (sel/select :x :y) :zero? true)
 
+(println "\n-- IIFE/letfn coupling (genmlx-7qdz) --")
+(check-case "G sel/all"                  mG sel/all            :zero? true)
+(check-case "G (select :a :y)"           mG (sel/select :a :y) :zero? true)
+(check-case "G (select :a), :y retained" mG (sel/select :a))
+(check-case "H sel/all"                  mH sel/all            :zero? true)
+(check-case "H (select :a), :y retained" mH (sel/select :a))
+
 (println "\n-- eligibility routing (gate must not degrade either direction) --")
 (let [elig? @#'dyn/regen-fast-eligible?]
   (assert-true "A sel/all NOT fast-eligible"          (false? (elig? mA sel/all)))
@@ -104,7 +123,15 @@
   (assert-true "C (select :sub) fast-eligible"        (true?  (elig? mA (sel/select :sub))))
   (assert-true "D (select :x) fast-eligible"          (true?  (elig? mB (sel/select :x))))
   (assert-true "E sel/all fast-eligible"              (true?  (elig? mE sel/all)))
-  (assert-true "F (select :mu) fast-eligible"         (true?  (elig? mF (sel/select :mu)))))
+  (assert-true "F (select :mu) fast-eligible"         (true?  (elig? mF (sel/select :mu))))
+  ;; genmlx-7qdz: the IIFE arg->param edge must gate the coupled selection...
+  (assert-true "G sel/all NOT fast-eligible"          (false? (elig? mG sel/all)))
+  (assert-true "G (select :a :y) NOT fast-eligible"   (false? (elig? mG (sel/select :a :y))))
+  ;; ...without losing the fast path for the legal selected->retained case
+  (assert-true "G (select :a) fast-eligible"          (true?  (elig? mG (sel/select :a))))
+  ;; letfn tracer is an opaque escape: never fast, for any selection
+  (assert-true "H (select :a) NOT fast-eligible"      (false? (elig? mH (sel/select :a))))
+  (assert-true "H sel/all NOT fast-eligible"          (false? (elig? mH sel/all))))
 
 (println (str "\n== regen-gate: " @passes " passed, " @fails " failed =="))
 (when (pos? @fails) (set! (.-exitCode js/process) 1))
