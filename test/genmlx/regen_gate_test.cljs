@@ -133,5 +133,34 @@
   (assert-true "H (select :a) NOT fast-eligible"      (false? (elig? mH (sel/select :a))))
   (assert-true "H sel/all NOT fast-eligible"          (false? (elig? mH sel/all))))
 
+(println "\n-- batched decline surface on spliced models (genmlx-89jo) --")
+;; The njzu shape (site -> splice arg -> site) on the BATCHED path. A
+;; non-fast-eligible selection on a spliced model must decline with the
+;; documented ex-info — never a raw null deref (before the 0901fc6 gate fix,
+;; coupled selections were wrongly fast-eligible and fell through the fast
+;; path into one). Fast-eligible spliced selections keep working (8xia/20p7).
+(def mI (gen [] (let [x (trace :x0 (dist/gaussian 0 1))
+                      v (splice :sp0 subx x)]
+                  (trace :x2 (dist/gaussian v 0.7))
+                  v)))
+
+(let [n  4
+      vt (dyn/vsimulate mI [] n (rng/fresh-key 11))
+      run (fn [selection]
+            (try (do (dyn/vregenerate mI vt selection (rng/fresh-key 12)) :ok)
+                 (catch :default e
+                   (if (= :batched-regenerate-unsupported
+                          (:genmlx/error (ex-data e)))
+                     :loud-decline
+                     :raw-crash))))]
+  (assert-true "I coupled [[:x0] [:sp0 :z]]: loud decline, not a null deref"
+               (= :loud-decline (run (sel/from-paths [[:x0] [:sp0 :z]]))))
+  (assert-true "I sel/all: loud decline, not a null deref"
+               (= :loud-decline (run sel/all)))
+  (assert-true "I (select :x2): fast-eligible spliced vregenerate still works"
+               (= :ok (run (sel/select :x2))))
+  (assert-true "I [:sp0 :z]: sub-descending vregenerate still works"
+               (= :ok (run (sel/select [:sp0 :z])))))
+
 (println (str "\n== regen-gate: " @passes " passed, " @fails " failed =="))
 (when (pos? @fails) (set! (.-exitCode js/process) 1))

@@ -659,8 +659,9 @@
         ;; score with [n]-shaped leaves (no finiteness assert — see docstring).
         ;; vregenerate is exercised only through its documented decline
         ;; surface elsewhere (branch/splice batched regen is unsupported by
-        ;; contract; the decline currently null-derefs on splices —
-        ;; genmlx-89jo).
+        ;; contract for non-fast-eligible selections; the spliced decline —
+        ;; formerly a null deref, genmlx-89jo — is pinned in
+        ;; regen_gate_test.cljs since the 0901fc6 gate fix).
         shape-run
         (try
           (let [n 7
