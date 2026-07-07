@@ -165,12 +165,20 @@
 
 (defn- merge-choicemap-by-mask
   "Recursively merge two identically-structured choicemaps using an [N] boolean mask.
-   Where mask=true takes from proposed, where false keeps current."
+   Where mask=true takes from proposed, where false keeps current.
+   IDENTICAL leaves are returned as-is without an mx/where node (exact:
+   where(mask, a, a) = a) — a single-site regenerate proposal shares every
+   unchanged leaf object with the current trace (cm/set-value structural
+   sharing; the batched handler's unselected branch reuses the old array), so
+   this drops the merge from O(T) graph nodes per move to O(changed leaves)
+   (genmlx-da04, the js93 driver residual)."
   [current proposed mask]
   (walk-choicemap current
                   (fn [cv]
                     (let [pv (cm/get-value proposed)]
-                      (mx/where (mask->leaf-rank mask cv) pv cv)))
+                      (if (identical? cv pv)
+                        cv
+                        (mx/where (mask->leaf-rank mask cv) pv cv))))
                   (fn [k sub] (merge-choicemap-by-mask
                                 sub (cm/-get-submap proposed k) mask))))
 
@@ -181,7 +189,9 @@
   [cur prop mask]
   (cond
     (and (mx/array? cur) (mx/array? prop))
-    (mx/where (mask->leaf-rank mask cur) prop cur)
+    (if (identical? cur prop)
+      cur ; exact: where(mask, a, a) = a — skip the node (genmlx-da04)
+      (mx/where (mask->leaf-rank mask cur) prop cur))
 
     (and (map? cur) (map? prop))
     (into {} (map (fn [[k v]] [k (merge-state-by-mask v (get prop k) mask)])) cur)

@@ -755,10 +755,13 @@
         [regen-key accept-key] (rng/split key)
         n (:n-particles vtrace)
         {proposed :vtrace w :weight} (dyn/vregenerate gf vtrace selection regen-key)
-        _ (mx/materialize! w)
+        ;; The accept comparison is a GRAPH node (mx/less), not a host read —
+        ;; build the whole move lazily and pay ONE GPU sync: materializing the
+        ;; merged score forces the mask (and weight) with it. Merged leaves
+        ;; stay lazy at depth 1 and evaluate inside the NEXT move's sync
+        ;; (genmlx-da04: 3 syncs/move -> 1 was a dominant per-move residual).
         u (rng/uniform accept-key [n])
         accept-mask (mx/less (mx/log u) w)
-        _ (mx/materialize! accept-mask)
         merged (vz/merge-vtraces-by-mask vtrace proposed accept-mask)]
     (mx/materialize! (:score merged))
     merged))
