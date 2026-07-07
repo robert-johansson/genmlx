@@ -426,6 +426,15 @@
         (:discard sub-result)
         (update :discard cm/set-submap addr (:discard sub-result))
 
+        ;; genmlx-175y: fresh subtree paths from a structure-changing sub
+        ;; regenerate (Mix component flip) accumulate addr-prefixed, so the
+        ;; parent's general retained-only path can exclude them from its
+        ;; retained set. Absent tag => key never appears in state.
+        (seq (:fresh-paths sub-result))
+        (update :fresh-paths (fnil into #{})
+                (map (fn [path] (into [addr] path)))
+                (:fresh-paths sub-result))
+
         (or (:splice-scores sub-result) (:nested-splice-scores sub-result))
         (update :nested-splice-scores
                 (fn [nss]

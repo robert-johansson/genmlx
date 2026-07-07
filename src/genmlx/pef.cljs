@@ -769,12 +769,27 @@
     (if (empty? (leaf-paths new-constraints))
       {:pass? true :skipped :empty-constraints}
       (let [{:keys [trace weight discard]} (p/update model t1 new-constraints)
-            back (p/update model trace discard)]
+            back (p/update model trace discard)
+            constrained-paths (set (leaf-paths new-constraints))]
         ;; a structure-changing update (branch flip) removes sites: the
-        ;; round-trip contract only covers structure-preserving updates
-        (if (not= (set (leaf-paths (:choices t1)))
-                  (set (leaf-paths (:choices (:trace back)))))
+        ;; round-trip contract only covers structure-preserving updates.
+        ;; A Mix component flip (a :component-idx-style constraint differing
+        ;; from the trace's value) is ALSO a structure change the leaf-path-set
+        ;; comparison cannot see — both kernels trace the same inner addresses,
+        ;; but the new component is freshly drawn there, and exact antisymmetry
+        ;; provably fails by the fresh draws' scores (genmlx-175y). Its
+        ;; signature is address-based: the discard then covers sites BEYOND the
+        ;; constrained set (a structure-preserving update discards exactly the
+        ;; constrained-and-present old values).
+        (cond
+          (not= (set (leaf-paths (:choices t1)))
+                (set (leaf-paths (:choices (:trace back)))))
           {:pass? true :skipped :structure-change}
+
+          (not (every? constrained-paths (leaf-paths discard)))
+          {:pass? true :skipped :component-flip}
+
+          :else
           (let [w1 (ev weight) w2 (ev (:weight back))
                 anti? (if (and (js/isFinite w1) (js/isFinite w2))
                         (close? (+ w1 w2) 0.0 eps)

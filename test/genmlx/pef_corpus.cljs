@@ -16,6 +16,7 @@
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
             [genmlx.choicemap :as cm]
+            [genmlx.selection :as sel]
             [genmlx.combinators :as comb]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]))
@@ -157,19 +158,37 @@
 (println "\n-- corpus: genmlx-uizc — Mix regenerate (same-index resample) --")
 ;; The audit bug: a same-index component resample failed to regenerate
 ;; selected INNER sites. Pinned via a gen wrapper that splices a Mix over two
-;; gaussian kernels. QUARANTINE (genmlx-175y): :p2 exposed a fast-vs-general
-;; weight divergence here, and :i4 intermittently violates round-trip weight
-;; antisymmetry (kernel-construction-key dependent — see the bean). Both
-;; re-arm when 175y closes; :i5 still pins score-type conservation.
+;; gaussian kernels. :p2 and :i4 re-armed (genmlx-175y closed): Mix now
+;; derives all entropy from its splice key (same-key regenerate reproduces
+;; the same move), a component flip tags its fresh subtree paths so the
+;; general retained-only path excludes them, and the i4 guard skips flip
+;; updates (fresh draws at common addresses — antisymmetry is out of
+;; contract there). Deep coverage: mix_regen_general_test.cljs.
 (let [k1 (pef/source->model '([] (let [z (trace :z (dist/gaussian -2 0.5))] z)))
       k2 (pef/source->model '([] (let [z (trace :z (dist/gaussian 2 0.5))] z)))
       mixed (comb/mix-combinator [k1 k2] (mx/array [-0.7 -0.7]))
       src '([] (let [v0 (splice :mx0 pefsub/sub0)
                      v1 (trace :x1 (dist/gaussian v0 1.0))]
-                 v1))]
-  (check! "uizc: spliced-Mix model survives score-type pair (:p2 + :i4 quarantined -> genmlx-175y)"
-          {:model (pef/source->model src {'sub0 mixed}) :args [] :source src}
-          [:i5-score-type]))
+                 v1))
+      model (pef/source->model src {'sub0 mixed})]
+  (check! "uizc: spliced-Mix model agrees across regen/round-trip/score-type pairs"
+          {:model model :args [] :source src}
+          [:p2-regen-fast-vs-general :i4-discard-roundtrip :i5-score-type])
+  ;; The :p2 pair selects the FIRST leaf path ([:mx0 :component-idx] sorts
+  ;; after [:mx0 :z] only sometimes) — pin the failing shape explicitly: a
+  ;; selection on the Mix's component index, where a flip freshly redraws the
+  ;; whole component at the same inner addresses (genmlx-175y).
+  (let [sl (sel/from-paths [[:mx0 :component-idx]])
+        agree? (every? (fn [seed]
+                         (let [t (p/simulate (dyn/with-key model (rng/fresh-key (* seed 13))) [])
+                               mk #(dyn/with-key model (rng/fresh-key seed))
+                               wf (mx/item (:weight (p/regenerate (mk) t sl)))
+                               wg (mx/item (:weight (binding [dyn/*force-general-regen* true]
+                                                      (p/regenerate (mk) t sl))))]
+                           (< (js/Math.abs (- wf wg)) 0.01)))
+                       (range 1 13))]
+    (assert-true "uizc: fast == general weight on explicit [:mx0 :component-idx] selection (12 seeds)"
+                 agree?)))
 
 ;; ===========================================================================
 (println "\n-- corpus: genmlx-uxjm — SMC increments vs one-shot IS --")

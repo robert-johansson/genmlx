@@ -2123,16 +2123,21 @@
 (defrecord MixCombinator [components log-weights-fn]
   p/IGenerativeFunction
   (simulate [this args]
-    ;; Sample component index, then simulate that component
-    (let [log-w (log-weights-fn args)
-          idx-trace (p/simulate (dc/->Distribution
-                                 :categorical {:logits log-w}) [])
+    ;; Sample component index, then simulate that component. ALL Mix entropy
+    ;; derives from (splice-key this) via rng/split (genmlx-175y): k-idx keys
+    ;; the index draw, k-comp keys the component draw — a threaded key
+    ;; reproduces the trace. With no threaded key splice-key self-seeds
+    ;; (fresh-key), preserving the old stochastic behavior.
+    (let [[k-idx k-comp] (rng/split (splice-key this))
+          log-w (log-weights-fn args)
+          idx-dist (vary-meta (dc/->Distribution :categorical {:logits log-w})
+                              assoc :genmlx.dynamic/key k-idx)
+          idx-trace (dc/dist-simulate idx-dist)
           idx (mx/item (cm/get-value (:choices idx-trace)))
           component (nth components (int idx))]
       (if-let [csim (cops/get-compiled-simulate component)]
         ;; L1-M5: compiled path
-        (let [key (splice-key this)
-              result (csim key (vec args))
+        (let [result (csim k-comp (vec args))
               choices (cm/from-flat-map (:values result))
               choices (cm/set-choice choices [:component-idx]
                                      (mx/scalar (int idx) mx/int32))]
@@ -2144,7 +2149,9 @@
                               :score (mx/add (:score result) (:score idx-trace))})
               {::compiled-path true})))
         ;; L0: handler path
-        (let [comp-trace (p/simulate component args)]
+        (let [comp-trace (p/simulate (vary-meta component assoc
+                                                :genmlx.dynamic/key k-comp)
+                                     args)]
           (tag-from-traces
             (tr/make-trace {:gen-fn this :args args
                             :choices (cm/set-choice (:choices comp-trace)
@@ -2156,10 +2163,14 @@
 
   p/IGenerate
   (generate [this args constraints]
-    (let [log-w (log-weights-fn args)
+    ;; Keyed like simulate (genmlx-175y): k-idx keys an unconstrained index
+    ;; draw, k-comp keys the component generate.
+    (let [[k-idx k-comp] (rng/split (splice-key this))
+          log-w (log-weights-fn args)
           ;; Check if component index is constrained
           idx-constraint (cm/get-submap constraints :component-idx)
-          idx-dist (dc/->Distribution :categorical {:logits log-w})
+          idx-dist (vary-meta (dc/->Distribution :categorical {:logits log-w})
+                              assoc :genmlx.dynamic/key k-idx)
           idx-result (if (cm/has-value? idx-constraint)
                        (dc/dist-generate idx-dist idx-constraint)
                        {:trace (dc/dist-simulate idx-dist) :weight ZERO})
@@ -2168,8 +2179,7 @@
           comp-constraints (without-component-idx constraints)]
       (if-let [cgen (cops/get-compiled-generate component)]
         ;; Compiled path — only the component generate is compiled
-        (let [key (splice-key this)
-              result (cgen key (vec args) comp-constraints)
+        (let [result (cgen k-comp (vec args) comp-constraints)
               comp-choices (values->choices (:values result))]
           {:trace (tag-joint
                     (with-meta
@@ -2183,7 +2193,9 @@
                       {::compiled-path true}))
            :weight (mx/add (:weight result) (:weight idx-result))})
         ;; Fallback: handler path
-        (let [{:keys [trace weight]} (p/generate component args comp-constraints)]
+        (let [{:keys [trace weight]} (p/generate (vary-meta component assoc
+                                                           :genmlx.dynamic/key k-comp)
+                                                 args comp-constraints)]
           {:trace (tag-from-traces
                     (tr/make-trace {:gen-fn this :args args
                                     :choices (cm/set-choice (:choices trace)
@@ -2402,6 +2414,14 @@
           idx-dist (dc/->Distribution :categorical {:logits log-w})
           old-idx-score (dc/dist-log-prob idx-dist (mx/scalar old-idx mx/int32))
           idx-selected? (sel/selected? selection :component-idx)
+          ;; genmlx-175y: ALL regenerate entropy derives from (splice-key this):
+          ;; k-idx keys the index resample, k-comp keys component work (the
+          ;; inner regenerate OR the fresh component simulate — only one runs
+          ;; per call). Two same-key regenerate calls now reproduce the same
+          ;; move, so the fast≡general law's same-key premise is implementable
+          ;; on Mix. With no threaded key splice-key self-seeds, preserving the
+          ;; old stochastic behavior.
+          [k-idx k-comp] (rng/split (splice-key this))
           ;; Regenerate the CURRENT component's sites under `selection`,
           ;; keeping component index `idx` (whose score contribution is
           ;; `idx-score`). :component-idx does not exist inside the component,
@@ -2419,8 +2439,7 @@
                   inner-old-choices (without-component-idx old-choices)]
               (if-let [cregen (cops/get-compiled-regenerate component)]
                 ;; WP-9A: compiled regenerate path
-                (let [key (splice-key this)
-                      result (cregen key (vec args) inner-old-choices selection)
+                (let [result (cregen k-comp (vec args) inner-old-choices selection)
                       inner-score (:score result)
                       new-score (mx/add inner-score idx-score)
                       new-choices (cm/set-choice (values->choices (:values result))
@@ -2441,22 +2460,34 @@
                 (let [inner-old-trace (tr/make-trace {:gen-fn component :args args
                                                       :choices inner-old-choices
                                                       :retval (:retval trace) :score inner-old-score})
-                      result (p/regenerate component inner-old-trace selection)
+                      result (p/regenerate (vary-meta component assoc
+                                                      :genmlx.dynamic/key k-comp)
+                                           inner-old-trace selection)
                       new-inner-trace (:trace result)
                       new-score (mx/add (:score new-inner-trace) idx-score)]
-                  {:trace (tag-from-traces
-                            (tr/make-trace {:gen-fn this :args args
-                                            :choices (cm/set-choice (:choices new-inner-trace)
-                                                                    [:component-idx]
-                                                                    (mx/scalar idx mx/int32))
-                                            :retval (:retval new-inner-trace)
-                                            :score new-score})
-                            [new-inner-trace])
-                   :weight (:weight result)}))))]
+                  (cond-> {:trace (tag-from-traces
+                                    (tr/make-trace {:gen-fn this :args args
+                                                    :choices (cm/set-choice (:choices new-inner-trace)
+                                                                            [:component-idx]
+                                                                            (mx/scalar idx mx/int32))
+                                                    :retval (:retval new-inner-trace)
+                                                    :score new-score})
+                                    [new-inner-trace])
+                           :weight (:weight result)}
+                    ;; genmlx-175y: a nested structure change inside the
+                    ;; component (e.g. a Mix of Mixes) surfaces here — pass its
+                    ;; fresh-path tag through unprefixed (component addresses
+                    ;; sit directly under this Mix).
+                    (seq (:genmlx.dynamic/fresh-paths result))
+                    (assoc :genmlx.dynamic/fresh-paths
+                           (:genmlx.dynamic/fresh-paths result)))))))]
       (if idx-selected?
         ;; Resample the component index from its prior (the selected-site
         ;; convention: the index resample's own weight delta cancels to 0).
-        (let [new-idx-trace (dc/dist-simulate idx-dist)
+        ;; Keyed with k-idx (genmlx-175y; dc/dist-simulate on an unkeyed dist
+        ;; self-seeds via js/Math.random).
+        (let [new-idx-trace (dc/dist-simulate (vary-meta idx-dist assoc
+                                                         :genmlx.dynamic/key k-idx))
               new-idx (int (mx/item (cm/get-value (:choices new-idx-trace))))
               new-idx-score (:score new-idx-trace)]
           (if (= new-idx old-idx)
@@ -2472,7 +2503,8 @@
             ;; ratio (W = dS - proposal_ratio, proposal_ratio = dS here). The
             ;; old scoreDelta return un-cancelled the whole subtree score at
             ;; parent splices and skewed top-level MH acceptance (genmlx-v740).
-            (let [new-component (ensure-kernel-key (nth (:components this) new-idx))
+            (let [new-component (vary-meta (nth (:components this) new-idx)
+                                           assoc :genmlx.dynamic/key k-comp)
                   new-comp-trace (p/simulate new-component args)
                   new-score (mx/add (:score new-comp-trace) new-idx-score)]
               {:trace (tag-from-traces
@@ -2483,7 +2515,17 @@
                                         :retval (:retval new-comp-trace)
                                         :score new-score})
                         [new-comp-trace])
-               :weight ZERO})))
+               :weight ZERO
+               ;; genmlx-175y: the flip freshly draws the WHOLE new component,
+               ;; and both kernels may trace the SAME inner addresses — tag the
+               ;; fresh subtree paths so a parent taking the general retained-
+               ;; only regenerate path excludes them from its retained set
+               ;; (thesis: fresh sites cancel; address presence in both traces
+               ;; cannot see a Mix flip). Read by execute-sub / merge-sub-result
+               ;; / regen-retained-selection; address-based behavior is
+               ;; unchanged when the tag is absent.
+               :genmlx.dynamic/fresh-paths
+               (into #{} (cm/addresses (:choices new-comp-trace)))})))
         ;; Index not selected — same component: regenerate within it.
         (regen-within old-idx old-idx-score)))))
 

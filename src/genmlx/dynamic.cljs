@@ -131,8 +131,13 @@
                                     :retval (:retval result)
                                     :score new-score})
                     (or (:score-type result) :joint))]
-    {:trace (attach-splice-scores new-trace result)
-     :weight weight}))
+    (cond-> {:trace (attach-splice-scores new-trace result)
+             :weight weight}
+      ;; genmlx-175y: re-export fresh subtree paths accumulated from spliced
+      ;; sub-results (merge-sub-result addr-prefixes them) so a GRANDparent
+      ;; taking the general retained-only path can exclude them even when this
+      ;; level ran the fast per-site convention.
+      (seq (:fresh-paths result)) (assoc ::fresh-paths (:fresh-paths result)))))
 
 (defn- selected-path?
   "Does selection `sel` select the full leaf path `path` (a vector of
@@ -147,15 +152,24 @@
 
 (defn- regen-retained-selection
   "Selection of the RETAINED leaf addresses of a regenerate move: leaf paths
-   present in BOTH the new and old choices, minus the selected ones. Returns
-   nil when nothing is retained (weight is then 0)."
-  [new-choices old-choices selection]
-  (let [old-set (set (cm/addresses old-choices))
-        retained (into [] (comp (filter old-set)
-                                (remove #(selected-path? selection %)))
-                       (cm/addresses new-choices))]
-    (when (seq retained)
-      (sel/from-paths retained))))
+   present in BOTH the new and old choices, minus the selected ones, minus any
+   provenance-tagged FRESH paths (genmlx-175y: a spliced Mix component flip
+   freshly draws the whole new component at the SAME inner addresses, so
+   address presence in both traces wrongly counts them retained — the tag, not
+   value equality, is the exact signal: compiled paths rebuild arrays and
+   discrete draws can collide by value). Returns nil when nothing is retained
+   (weight is then 0). Behavior is unchanged when fresh-paths is nil/empty."
+  ([new-choices old-choices selection]
+   (regen-retained-selection new-choices old-choices selection nil))
+  ([new-choices old-choices selection fresh-paths]
+   (let [old-set (set (cm/addresses old-choices))
+         fresh? (or fresh-paths #{})
+         retained (into [] (comp (filter old-set)
+                                 (remove #(selected-path? selection %))
+                                 (remove fresh?))
+                        (cm/addresses new-choices))]
+     (when (seq retained)
+       (sel/from-paths retained)))))
 
 (defn- make-regen-result-general
   "Build the regenerate return for the retained-only GENERAL path
@@ -177,12 +191,16 @@
                                       :score (:score result)})
                       (tr/with-score-type (or (:score-type result) :joint))
                       (attach-splice-scores result))
-        retained-sel (regen-retained-selection (:choices result) (:choices trace) selection)
+        retained-sel (regen-retained-selection (:choices result) (:choices trace)
+                                               selection (:fresh-paths result))
         weight (if retained-sel
                  (mx/subtract (p/project gf new-trace retained-sel)
                               (p/project gf trace retained-sel))
                  SCORE-ZERO)]
-    {:trace new-trace :weight weight}))
+    (cond-> {:trace new-trace :weight weight}
+      ;; genmlx-175y: re-export for recursive propagation through multi-level
+      ;; splices (see make-regen-result).
+      (seq (:fresh-paths result)) (assoc ::fresh-paths (:fresh-paths result)))))
 
 (defn- regen-fast-eligible?
   "The fast regenerate path (per-site convention, no project pass) is provably
@@ -1151,18 +1169,27 @@
                                                              :retval nil :score old-sub-score})
                                              (attach-old-splice-meta old-sub-splice-scores
                                                                      old-sub-nested-splice-scores))
-                               {:keys [trace weight]} (p/regenerate gf old-trace selection)]
+                               regen-result (p/regenerate gf old-trace selection)
+                               {:keys [trace weight]} regen-result]
                            ;; The child returns its final MH weight
                            ;; w = ΔS_child - pr_child, but the parent regenerate
                            ;; state accumulates proposal ratios (make-regen-result
                            ;; computes W = ΔS_total - accumulator). Convert back:
                            ;; pr_child = ΔS_child - w. The constructed old score
                            ;; cancels, so a missing old-splice-score stays exact.
-                           [trace {:choices (:choices trace) :retval (:retval trace)
-                                   :score (:score trace)
-                                   :weight (mx/subtract
-                                            (mx/subtract (:score trace) old-sub-score)
-                                            weight)}])
+                           [trace (cond-> {:choices (:choices trace) :retval (:retval trace)
+                                           :score (:score trace)
+                                           :weight (mx/subtract
+                                                    (mx/subtract (:score trace) old-sub-score)
+                                                    weight)}
+                                    ;; genmlx-175y: a structure change inside the
+                                    ;; sub (Mix component flip) tags its freshly
+                                    ;; drawn subtree paths; hand them to
+                                    ;; merge-sub-result for addr-prefixed
+                                    ;; accumulation so the parent's retained set
+                                    ;; can exclude them.
+                                    (seq (::fresh-paths regen-result))
+                                    (assoc :fresh-paths (::fresh-paths regen-result)))])
 
                          ;; Update mode: has old-choices (possibly with new constraints)
                          (and old-choices (not= old-choices cm/EMPTY))
