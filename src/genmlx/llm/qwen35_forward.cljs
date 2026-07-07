@@ -35,6 +35,7 @@
    Same 6-fn interface as qwen3-forward (load-model/forward/next-token-logits/
    prefill/step/init-cache) so genmlx.llm.forward / CljsForwardModel drive it."
   (:require [genmlx.mlx :as mx]
+            [genmlx.llm.qwen3-forward :as q3]
             ["fs" :as fs]))
 
 ;; ----------------------------------------------------------------------------
@@ -69,10 +70,13 @@
      :model-type    (.-model_type c)}))
 
 (defn load-model
-  "Load a Qwen3.5 checkpoint as {:config .. :weights {name -> MxArray}}."
+  "Load a Qwen3.5 checkpoint as {:config .. :weights {name -> MxArray}}.
+   Affine-quantized checkpoints are dequantized at load (q3/load-weights —
+   genmlx-9iqc/-vmks): the packed U32 [out, in/8] weights otherwise abort the
+   forward at the first reshape (e.g. size T*(hidden/8) into (1,T,hidden))."
   [dir]
   {:config  (load-config dir)
-   :weights (mx/load-safetensors (str dir "/model.safetensors"))})
+   :weights (q3/load-weights dir)})
 
 (def ^:private wp "language_model.model.")
 

@@ -20,8 +20,19 @@
    full-attention KV cache). 4B additionally exercises the GQA-in-GDN path
    (linear_num_value_heads 32 > linear_num_key_heads 16, repeat factor 2).
 
-   Skips each model cleanly if its checkpoint is absent."
+   Skips each model cleanly if its checkpoint is absent.
+
+   QUANTIZED checkpoints (genmlx-9iqc/-vmks): the owned forward reads them via
+   dequantize-at-load, so simulate/assess/parity all run — but the two
+   top-5-ids-EXACT assertions only apply to full-precision checkpoints. The
+   golden pins were captured from the bf16 weights (a quantized snapshot is a
+   different model whose top-5 tail genuinely differs), and CLJS
+   (dequantized-bf16 matmul) vs upstream (fused quantized kernels) split
+   exact bf16-ULP logprob ties in different orders. Argmax-exact and the
+   logprob bands — the invariants that bound real divergence — stay asserted
+   unconditionally."
   (:require [genmlx.llm.backend :as llm]
+            [genmlx.llm.qwen3-forward :as q3]
             [genmlx.mlx :as mx]
             [promesa.core :as pr]
             ["fs" :as fs]))
@@ -69,7 +80,8 @@
     (reduce max (map (fn [i] (js/Math.abs (- (aget a i) (aget b i)))) ids))))
 
 (defn check-model [{:keys [name dir upstream? argmax decoded argmax-lp top5]}]
-  (let [path (str model-root "/" dir)]
+  (let [path       (str model-root "/" dir)
+        quantized? (and (.existsSync fs path) (some? (q3/load-quantization path)))]
     (if-not (.existsSync fs path)
       (do (println (str "\n== " name " — SKIP (absent: " path ") ==")) (pr/resolved nil))
       (pr/let [m   (llm/load-model path {:cljs-forward? true})
@@ -85,7 +97,10 @@
               lp     (log-softmax logits)]
           (assert= "uncached argmax == golden (Paris id)" argmax (mx/item (mx/argmax logits)))
           (assert= "argmax decodes to expected word" decoded dec)
-          (assert= "top-5 token ids == golden" top5 (topk-ids lp 5))
+          (if quantized?
+            (println (str "    [info] top-5 == golden not asserted: quantized checkpoint"
+                          " (pins are for the bf16 weights; genmlx-9iqc)"))
+            (assert= "top-5 token ids == golden" top5 (topk-ids lp 5)))
           (assert-close "argmax logprob within cross-kernel band" argmax-lp
                         (mx/item (mx/index lp argmax)) 0.25)
 
@@ -114,7 +129,10 @@
                   d (max-abs-diff cl up up-ids)]
               (println (str "    [info] CLJS-vs-upstream top5 max logprob diff = " (.toFixed d 5)))
               (assert= "CLJS argmax == upstream argmax" (mx/item (mx/argmax up)) (mx/item (mx/argmax cl)))
-              (assert= "CLJS top-5 ids == upstream top-5 ids" up-ids (topk-ids cl 5))
+              (if quantized?
+                (println (str "    [info] top-5-ids exact not asserted: dequantized-bf16 vs"
+                              " fused-quantized kernels split bf16-ULP ties (genmlx-9iqc)"))
+                (assert= "CLJS top-5 ids == upstream top-5 ids" up-ids (topk-ids cl 5)))
               (assert-true "CLJS vs upstream logprobs agree on top-5 (<0.25, bf16 cross-kernel)"
                            (< d 0.25)))))))))
 

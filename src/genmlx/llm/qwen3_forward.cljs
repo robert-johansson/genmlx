@@ -28,11 +28,118 @@
      :rope-theta   (.-rope_theta c)
      :tie?         (.-tie_word_embeddings c)}))
 
+;; ----------------------------------------------------------------------------
+;; MLX affine-quantized checkpoints — dequantize at load (genmlx-9iqc/-vmks)
+;;
+;; Quantized checkpoints store each Linear/Embedding weight as THREE tensors:
+;; `X.weight` U32 [out, in/(32/bits)] (values packed LSB-first per word —
+;; mlx ops.cpp: out_el |= w_el << (k*bits)) plus `X.scales`/`X.biases`
+;; [out, in/group_size]. Reading the packed U32 raw is what produced the
+;; "Cannot reshape array of size T*(hidden/8) into (1,T,hidden)" abort. The
+;; owned forward is written over full-precision tensors, so we dequantize the
+;; whole map once at load (w = scale*q + bias with groups along the input
+;; axis — mlx backend/cpu/quantized.cpp). Shared by the qwen3 and qwen3.5
+;; family loaders.
+;; ----------------------------------------------------------------------------
+
+(defn load-quantization
+  "Parse config.json's `quantization` block, or nil for a full-precision
+   checkpoint. :per-layer? flags per-tensor override sub-objects (mixed
+   quantization), which dequantize-weights does not implement."
+  [dir]
+  (let [c (js/JSON.parse (.readFileSync fs (str dir "/config.json") "utf8"))
+        q (.-quantization c)]
+    (when q
+      {:bits       (.-bits q)
+       :group-size (.-group_size q)
+       :mode       (or (.-mode q) "affine")
+       :per-layer? (boolean (some #(object? (unchecked-get q %)) (js-keys q)))})))
+
+(defn dequantizable?
+  "True if dequantize-weights implements this quantization: uniform MLX
+   `affine` mode with power-of-two bits (2/4/8 — the ones that pack evenly
+   into u32 words). mxfp4/nvfp4/mxfp8/odd-bit and per-layer-mixed checkpoints
+   must use the upstream forward."
+  [{:keys [bits mode per-layer?]}]
+  (and (= mode "affine") (contains? #{2 4 8} bits) (not per-layer?)))
+
+(defn dequantize-weights
+  "Replace every packed-quantized weight in a load-safetensors map with its
+   dequantized full-precision tensor (in the scales' dtype, e.g. bf16), and
+   drop the folded-in `.scales`/`.biases` entries. Non-quantized tensors
+   (norms, conv1d, A_log, dt_bias, ...) pass through untouched. A tensor is
+   quantized iff its `.scales` sibling exists.
+
+   Unpacking is pure uint32 arithmetic (floor-divide/remainder by 2^bits —
+   exact for the full u32 range; the membrane has no bitwise ops), so the
+   values are identical to MLX's own dequantize. Each tensor is materialized
+   here — load is an I/O boundary — so neither the packed sources nor the
+   unpack graphs are retained.
+
+   Throws (naming the quantization) for schemes dequantizable? rejects."
+  [weights {:keys [bits] :as qz}]
+  (when-not (dequantizable? qz)
+    (throw (ex-info (str "dequantize-weights: unsupported quantization " (pr-str qz)
+                         " — the owned CLJS forward implements uniform affine "
+                         "bits 2/4/8 only. Load with {:cljs-forward? false} to "
+                         "use the upstream forward.")
+                    {:quantization qz})))
+  (let [pf      (quot 32 bits)                       ; values per u32 word
+        divisor (mx/array [(js/Math.pow 2 bits)] [] mx/uint32)
+        dequant
+        (fn [nm wq scales biases]
+          (let [[out gcount] (mx/shape scales)
+                in (* pf (second (mx/shape wq)))
+                gs (quot in gcount)]
+            (when-not (= in (* gs gcount))
+              (throw (ex-info (str "dequantize-weights: " nm " scales shape "
+                                   (mx/shape scales) " does not tile its weight "
+                                   (mx/shape wq) " at bits=" bits)
+                              {:tensor nm :quantization qz})))
+            ;; value k of each u32 word is original column j*pf+k (LSB-first)
+            (let [parts (loop [cur wq k 0 acc []]
+                          (if (= k pf)
+                            acc
+                            (recur (mx/floor-divide cur divisor) (inc k)
+                                   (conj acc (mx/remainder cur divisor)))))
+                  q  (-> (mx/stack parts 2)           ; [out in/pf pf]
+                         (mx/reshape [out in])
+                         (mx/astype mx/float32))
+                  s3 (mx/reshape (mx/astype scales mx/float32) [out gcount 1])
+                  b3 (mx/reshape (mx/astype biases mx/float32) [out gcount 1])
+                  w  (-> (mx/reshape q [out gcount gs])
+                         (mx/multiply s3)
+                         (mx/add b3)
+                         (mx/reshape [out in])
+                         (mx/astype (mx/dtype scales)))]
+              (mx/materialize! w)
+              w)))]
+    (reduce-kv
+     (fn [m k v]
+       (let [base (when (.endsWith k ".weight")
+                    (subs k 0 (- (count k) (count ".weight"))))]
+         (cond
+           ;; folded into the dequantized weight below
+           (or (.endsWith k ".scales") (.endsWith k ".biases")) m
+           (and base (contains? weights (str base ".scales")))
+           (assoc m k (dequant k v (get weights (str base ".scales"))
+                              (get weights (str base ".biases"))))
+           :else (assoc m k v))))
+     {} weights)))
+
+(defn load-weights
+  "Load a checkpoint's model.safetensors as {name -> MxArray}, dequantizing
+   at load when config.json declares a quantization (see dequantize-weights)."
+  [dir]
+  (let [w  (mx/load-safetensors (str dir "/model.safetensors"))
+        qz (load-quantization dir)]
+    (if qz (dequantize-weights w qz) w)))
+
 (defn load-model
   "Load a Qwen3 checkpoint as {:config .. :weights {name -> MxArray}}."
   [dir]
   {:config (load-config dir)
-   :weights (mx/load-safetensors (str dir "/model.safetensors"))})
+   :weights (load-weights dir)})
 
 (defn- causal-mask
   "Additive causal mask [seq seq]: 0 on/below the diagonal, large-negative above."

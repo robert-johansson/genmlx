@@ -643,9 +643,12 @@
       ;; mode (2.5) is the keeper. Semantic correctness is covered model-free by
       ;; synthesis_exact_test + the wired synthesis->exact-evidence path.
       (assert-true "posterior mean is finite (template-mode mechanics)" (js/isFinite (:mean post)))
-      (println "    posterior mean:" (.toFixed (:mean post) 3))
+      ;; some-> : a nil mean (no valid candidate) must not throw and kill the
+      ;; file before the knowledge-mode sections — the FAIL above already
+      ;; records it (deprecated template mode; checkpoint-dependent output).
+      (println "    posterior mean:" (some-> (:mean post) (.toFixed 3)))
       (when (:variance post)
-        (println "    posterior var:" (.toFixed (:variance post) 3))))
+        (println "    posterior var:" (some-> (:variance post) (.toFixed 3)))))
 
     ;; Model should be a map with :gf as a DynamicGF (or nil)
     (when (:gf (:model result))
@@ -670,7 +673,10 @@
       (assert-true "posterior mean is a number" (number? (:mean post)))
       ;; LLM may not perfectly capture 30/strength; just verify it's a reasonable number
       (assert-true "posterior mean is finite" (js/isFinite (:mean post)))
-      (println "    posterior mean:" (.toFixed (:mean post) 3))))
+      ;; some-> : nil-safe (see the 2.3 x-causes-y note) — the quantized 0.8b
+      ;; copies "30/strength" verbatim into the candidate code (invalid CLJS),
+      ;; so all template-mode candidates can fail eval => posterior nil.
+      (println "    posterior mean:" (some-> (:mean post) (.toFixed 3)))))
 
   ;; -- 2.4 generate-knowledge-candidate (base model) --
   (println "\n-- 2.4 generate-knowledge-candidate: sensor fusion --")

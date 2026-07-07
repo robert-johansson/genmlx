@@ -36,13 +36,19 @@
 (defn supported?
   "True if the owned forward implements this checkpoint's config.json model_type
    AND its loader can read the weights (a single model.safetensors — see
-   loadable-weights?). backend/load-model's smart default uses this: the owned
-   forward only when BOTH hold, the upstream forward otherwise (so a supported
-   family with a sharded/index.json checkpoint safely falls back rather than
-   erroring, and auto-upgrades once the owned loader learns the layout, o94r)."
+   loadable-weights?) AND any declared quantization is one the owned loader can
+   dequantize at load (q3/dequantizable? — uniform affine 2/4/8-bit; exotic or
+   per-layer-mixed schemes fall back to the upstream forward, which drives the
+   native quantized kernels). backend/load-model's smart default uses this: the
+   owned forward only when ALL hold, the upstream forward otherwise (so a
+   supported family with a sharded/index.json checkpoint safely falls back
+   rather than erroring, and auto-upgrades once the owned loader learns the
+   layout, o94r)."
   [dir]
   (and (contains? supported-model-types (detect-model-type dir))
-       (loadable-weights? dir)))
+       (loadable-weights? dir)
+       (let [qz (q3/load-quantization dir)]
+         (or (nil? qz) (q3/dequantizable? qz)))))
 
 (defn load-model
   "Load a checkpoint, dispatching on config.json model_type. Returns the family's
