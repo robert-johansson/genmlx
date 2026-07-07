@@ -216,9 +216,13 @@
             ;; This is mathematically correct: P(x=1|p=0) = 0, log(0) = -Inf.
             ;; The mx/where guards ensure 0 * -Inf = 0, not NaN.
             (let [log-p (mx/log p)
-                  log-1-p (mx/log (mx/subtract ONE p))]
-              (mx/add (mx/where (mx/equal v ZERO) ZERO (mx/multiply v log-p))
-                      (mx/where (mx/equal v ONE) ZERO (mx/multiply (mx/subtract ONE v) log-1-p)))))
+                  log-1-p (mx/log (mx/subtract ONE p))
+                  ;; Support guard (genmlx-7oen): v must be exactly 0 or 1 —
+                  ;; unguarded, lp(0.5) was finite.
+                  in-support (mx/maximum (mx/equal v ZERO) (mx/equal v ONE))
+                  lp (mx/add (mx/where (mx/equal v ZERO) ZERO (mx/multiply v log-p))
+                             (mx/where (mx/equal v ONE) ZERO (mx/multiply (mx/subtract ONE v) log-1-p)))]
+              (mx/where in-support lp NEG-INF)))
   (support [] BERNOULLI-SUPPORT))
 
 (defmethod dc/dist-log-prob-support :bernoulli [d]
@@ -312,13 +316,17 @@
             ;; Boundary: log(v) → -Inf at v=0, log(1-v) → -Inf at v=1.
             ;; Mathematically correct for the beta distribution — the density
             ;; is 0 at the boundaries when alpha > 1 or beta > 1 respectively.
+            ;; Support guard (genmlx-7oen): v outside [0,1] gave NaN.
             (let [log-beta-val (mx/subtract (mx/add (mx/lgamma alpha)
                                                     (mx/lgamma beta-param))
-                                            (mx/lgamma (mx/add alpha beta-param)))]
-              (-> (mx/add (mx/multiply (mx/subtract alpha ONE) (mx/log v))
-                          (mx/multiply (mx/subtract beta-param ONE)
-                                       (mx/log (mx/subtract ONE v))))
-                  (mx/subtract log-beta-val)))))
+                                            (mx/lgamma (mx/add alpha beta-param)))
+                  in-support (mx/multiply (mx/greater-equal v ZERO)
+                                          (mx/less-equal v ONE))
+                  lp (-> (mx/add (mx/multiply (mx/subtract alpha ONE) (mx/log v))
+                                 (mx/multiply (mx/subtract beta-param ONE)
+                                              (mx/log (mx/subtract ONE v))))
+                         (mx/subtract log-beta-val))]
+              (mx/where in-support lp NEG-INF))))
 
 (let [raw beta-dist]
   (defn beta-dist
@@ -340,11 +348,13 @@
     ;; shared with the gamma-ratio Beta sampler above.
           (mx/scalar (gamma-sample-scalar shape-param rate key)))
   (log-prob [v]
-            (let [k shape-param]
-              (-> (mx/add (mx/multiply (mx/subtract k ONE) (mx/log v))
-                          (mx/multiply k (mx/log rate)))
-                  (mx/subtract (mx/multiply rate v))
-                  (mx/subtract (mx/lgamma k))))))
+            ;; Support guard (genmlx-7oen): v <= 0 gave NaN (log of negative).
+            (let [k shape-param
+                  lp (-> (mx/add (mx/multiply (mx/subtract k ONE) (mx/log v))
+                                 (mx/multiply k (mx/log rate)))
+                         (mx/subtract (mx/multiply rate v))
+                         (mx/subtract (mx/lgamma k)))]
+              (mx/where (mx/greater v ZERO) lp NEG-INF))))
 
 (let [raw gamma-dist]
   (defn gamma-dist
@@ -731,9 +741,13 @@
   (sample [key]
           (mx/scalar (poisson-sample* (mx/realize rate) key)))
   (log-prob [v]
-            (-> (mx/multiply v (mx/log rate))
-                (mx/subtract rate)
-                (mx/subtract (mx/lgamma (mx/add v ONE))))))
+            ;; Support guard (genmlx-7oen): counts are nonnegative integers.
+            (let [in-support (mx/multiply (mx/greater-equal v ZERO)
+                                          (mx/equal v (mx/floor v)))
+                  lp (-> (mx/multiply v (mx/log rate))
+                         (mx/subtract rate)
+                         (mx/subtract (mx/lgamma (mx/add v ONE))))]
+              (mx/where in-support lp NEG-INF))))
 
 (let [raw poisson]
   (defn poisson
@@ -840,13 +854,15 @@
   (sample [key]
           (mx/exp (mx/add mu (mx/multiply sigma (rng/normal key [])))))
   (log-prob [v]
+            ;; Support guard (genmlx-7oen): v <= 0 gave NaN (log of negative).
             (let [log-v (mx/log v)
-                  z (mx/divide (mx/subtract log-v mu) sigma)]
-              (mx/negative
-               (mx/add log-v
-                       LOG-2PI-HALF
-                       (mx/log sigma)
-                       (mx/multiply HALF (mx/square z))))))
+                  z (mx/divide (mx/subtract log-v mu) sigma)
+                  lp (mx/negative
+                      (mx/add log-v
+                              LOG-2PI-HALF
+                              (mx/log sigma)
+                              (mx/multiply HALF (mx/square z))))]
+              (mx/where (mx/greater v ZERO) lp NEG-INF)))
   (reparam [key]
            (mx/exp (mx/add mu (mx/multiply sigma (rng/normal key []))))))
 
@@ -989,10 +1005,12 @@
             (mx/divide scale-param g)))
   (log-prob [v]
     ;; log p(v) = shape*log(scale) - log-gamma(shape) - (shape+1)*log(v) - scale/v
-            (-> (mx/multiply shape-param (mx/log scale-param))
-                (mx/subtract (mx/lgamma shape-param))
-                (mx/subtract (mx/multiply (mx/add shape-param ONE) (mx/log v)))
-                (mx/subtract (mx/divide scale-param v)))))
+    ;; Support guard (genmlx-7oen): v <= 0 gave NaN (log of negative).
+            (let [lp (-> (mx/multiply shape-param (mx/log scale-param))
+                         (mx/subtract (mx/lgamma shape-param))
+                         (mx/subtract (mx/multiply (mx/add shape-param ONE) (mx/log v)))
+                         (mx/subtract (mx/divide scale-param v)))]
+              (mx/where (mx/greater v ZERO) lp NEG-INF))))
 
 (defmethod dc/dist-sample-n* :inv-gamma [d key n]
   (let [{:keys [shape-param scale-param]} (:params d)
@@ -1026,10 +1044,15 @@
     ;; log p(k) = k * log(1-p) + log(p)
     ;; xlogy guard: at p=1 (legal — success on the first trial, k=0 w.p. 1)
     ;; the k*log(1-p) term is 0*-Inf = NaN without it (genmlx-yeam).
-            (mx/add (mx/where (mx/equal v ZERO)
-                              ZERO
-                              (mx/multiply v (mx/log (mx/subtract ONE p))))
-                    (mx/log p)))
+    ;; Support guard (genmlx-7oen): k must be a nonnegative integer — an
+    ;; unguarded lp(-1) scored HIGHER than lp(0).
+            (let [in-support (mx/multiply (mx/greater-equal v ZERO)
+                                          (mx/equal v (mx/floor v)))
+                  lp (mx/add (mx/where (mx/equal v ZERO)
+                                       ZERO
+                                       (mx/multiply v (mx/log (mx/subtract ONE p))))
+                             (mx/log p))]
+              (mx/where in-support lp NEG-INF)))
   (support []
     ;; Dynamic support up to 0.999 quantile (capped at 10000)
            (let [p-val (mx/realize p)
@@ -1077,10 +1100,14 @@
             (mx/scalar (poisson-sample* g-val k2))))
   (log-prob [v]
     ;; log C(v + r - 1, v) + r*log(p) + v*log(1-p)
-            (let [log-coeff (log-choose (mx/subtract (mx/add v r) ONE) v)]
-              (-> log-coeff
-                  (mx/add (mx/multiply r (mx/log p)))
-                  (mx/add (mx/multiply v (mx/log (mx/subtract ONE p))))))))
+    ;; Support guard (genmlx-7oen): counts are nonnegative integers.
+            (let [log-coeff (log-choose (mx/subtract (mx/add v r) ONE) v)
+                  in-support (mx/multiply (mx/greater-equal v ZERO)
+                                          (mx/equal v (mx/floor v)))
+                  lp (-> log-coeff
+                         (mx/add (mx/multiply r (mx/log p)))
+                         (mx/add (mx/multiply v (mx/log (mx/subtract ONE p)))))]
+              (mx/where in-support lp NEG-INF))))
 
 (let [raw neg-binomial]
   (defn neg-binomial
@@ -1114,16 +1141,21 @@
     ;; xlogy guards (cf. bernoulli): at p=0 with v=0 the first term is
     ;; 0*log(0) = 0*-Inf = NaN without the guard; at p=1 with v=n the
     ;; second term likewise (genmlx-yeam).
+            ;; Support guard (genmlx-7oen): k must be an integer in [0, n].
             (let [log-coeff (log-choose n-trials v)
-                  n-minus-v (mx/subtract n-trials v)]
-              (-> log-coeff
-                  (mx/add (mx/where (mx/equal v ZERO)
-                                    ZERO
-                                    (mx/multiply v (mx/log p))))
-                  (mx/add (mx/where (mx/equal n-minus-v ZERO)
-                                    ZERO
-                                    (mx/multiply n-minus-v
-                                                 (mx/log (mx/subtract ONE p))))))))
+                  n-minus-v (mx/subtract n-trials v)
+                  in-support (-> (mx/greater-equal v ZERO)
+                                 (mx/multiply (mx/less-equal v n-trials))
+                                 (mx/multiply (mx/equal v (mx/floor v))))
+                  lp (-> log-coeff
+                         (mx/add (mx/where (mx/equal v ZERO)
+                                           ZERO
+                                           (mx/multiply v (mx/log p))))
+                         (mx/add (mx/where (mx/equal n-minus-v ZERO)
+                                           ZERO
+                                           (mx/multiply n-minus-v
+                                                        (mx/log (mx/subtract ONE p))))))]
+              (mx/where in-support lp NEG-INF)))
   (support []
            (let [nt (int (mx/realize n-trials))]
              (mapv #(mx/scalar % mx/int32) (range (inc nt))))))
