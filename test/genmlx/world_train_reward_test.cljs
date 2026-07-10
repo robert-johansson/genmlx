@@ -303,9 +303,18 @@
               (assert-true (str "reward-mean TRENDS UP: mean(last " trend-k ") > mean(first " trend-k ") "
                                 "(policy learns to write better-fitting programs)")
                            (> last-k first-k)))
-          (println (str "    [smoke] strict reward-mean trend + gradient-progress asserted only under "
-                        "PHASE1_FULL_TREND=1 (verified manually 2026-06-20: -13.4 -> -9.0, valid-rate 0.50 -> 0.88); "
-                        "applied=" (count applied) "/" n-steps))))))))
+          (do
+            ;; genmlx-li1p regression guard: the engine once cached garbage
+            ;; old-logprobs (unnormalized vocab-id-0 logit) and recomputed
+            ;; completion logprobs off by one — every real-checkpoint step
+            ;; NaN'd and SKIPPED silently (gradients-applied?=false), and this
+            ;; smoke stayed green because nothing asserted the apply. The one
+            ;; honest signal that the weight-update effect actually fired:
+            (assert-true "every smoke step APPLIED gradients (genmlx-li1p: a skip means NaN grads / garbage ratios)"
+                         (= n-steps (count applied)))
+            (println (str "    [smoke] strict reward-mean trend + gradient-progress asserted only under "
+                          "PHASE1_FULL_TREND=1 (verified manually 2026-06-20: -13.4 -> -9.0, valid-rate 0.50 -> 0.88); "
+                          "applied=" (count applied) "/" n-steps)))))))))
 
 ;; ===========================================================================
 
