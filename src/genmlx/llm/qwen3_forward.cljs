@@ -65,16 +65,17 @@
 
 (defn dequantizable?
   "True if dequantize-weights implements this quantization: MLX `affine` mode
-   with power-of-two bits (2/4/8 — the ones that pack evenly into u32 words)
-   for the global scheme AND for every per-tensor override. Mixed checkpoints
-   are fine as long as each scheme is power-of-two affine — group size is
-   inferred per-tensor from the scales shape regardless. mxfp4/nvfp4/mxfp8 and
-   odd-bit schemes (e.g. a 3-bit global, whose values straddle u32 words) must
-   use the upstream forward."
+   with bits in {2,3,4,5,6,8} for the global scheme AND every per-tensor
+   override. Power-of-two widths unpack via pure u32 arithmetic; the odd
+   widths (3/5/6 — values straddle u32 words) go through the native
+   mx/dequantize kernel (genmlx-q5uq/-dlvi). Mixed checkpoints are fine —
+   group size is inferred per-tensor from the scales shape regardless.
+   mxfp4/nvfp4/mxfp8 schemes must use the upstream forward."
   [{:keys [bits mode overrides]}]
-  (and (= mode "affine")
-       (contains? #{2 4 8} bits)
-       (every? #(contains? #{2 4 8} (:bits %)) (vals overrides))))
+  (let [ok #{2 3 4 5 6 8}]
+    (and (= mode "affine")
+         (contains? ok bits)
+         (every? #(contains? ok (:bits %)) (vals overrides)))))
 
 (defn dequantize-weights
   "Replace every packed-quantized weight in a load-safetensors map with its
@@ -83,13 +84,15 @@
    (norms, conv1d, A_log, dt_bias, ...) pass through untouched. A tensor is
    quantized iff its `.scales` sibling exists.
 
-   Unpacking is pure uint32 arithmetic (floor-divide/remainder by 2^bits —
-   exact for the full u32 range; the membrane has no bitwise ops), so the
-   values are identical to MLX's own dequantize. Each tensor's bit width comes
-   from its :overrides entry when present, else the global :bits (group size
-   is inferred from the scales shape either way). Each tensor is materialized
-   here — load is an I/O boundary — so neither the packed sources nor the
-   unpack graphs are retained.
+   Power-of-two widths unpack via pure uint32 arithmetic (floor-divide/
+   remainder by 2^bits — exact for the full u32 range; the membrane has no
+   bitwise ops), values identical to MLX's own dequantize (pinned by
+   gather_qmm_oracle_test Part 1). Odd widths (3/5/6) straddle u32 words and
+   go through the native mx/dequantize kernel instead (genmlx-dlvi). Each
+   tensor's bit width comes from its :overrides entry when present, else the
+   global :bits (group size is inferred from the scales shape either way).
+   Each tensor is materialized here — load is an I/O boundary — so neither
+   the packed sources nor the unpack graphs are retained.
 
    opts {:skip? (fn [base-name] ...)}: tensors whose base name matches stay
    PACKED — weight, .scales and .biases all pass through untouched. This is
@@ -102,39 +105,48 @@
   (when-not (dequantizable? qz)
     (throw (ex-info (str "dequantize-weights: unsupported quantization " (pr-str qz)
                          " — the owned CLJS forward implements affine "
-                         "bits 2/4/8 only (global and per-tensor overrides). "
-                         "Load with {:cljs-forward? false} to "
+                         "bits 2/3/4/5/6/8 only (global and per-tensor "
+                         "overrides). Load with {:cljs-forward? false} to "
                          "use the upstream forward.")
                     {:quantization qz})))
   (let [dequant
         (fn [nm base wq scales biases]
           (let [t-bits  (get-in overrides [base :bits] bits)
-                pf      (quot 32 t-bits)             ; values per u32 word
-                divisor (mx/array [(js/Math.pow 2 t-bits)] [] mx/uint32)
+                p2?     (contains? #{2 4 8} t-bits)
                 [out gcount] (mx/shape scales)
-                in (* pf (second (mx/shape wq)))
+                in (if p2?
+                     (* (quot 32 t-bits) (second (mx/shape wq)))
+                     (quot (* 32 (second (mx/shape wq))) t-bits))
                 gs (quot in gcount)]
             (when-not (= in (* gs gcount))
               (throw (ex-info (str "dequantize-weights: " nm " scales shape "
                                    (mx/shape scales) " does not tile its weight "
                                    (mx/shape wq) " at bits=" t-bits)
                               {:tensor nm :quantization qz})))
-            ;; value k of each u32 word is original column j*pf+k (LSB-first)
-            (let [parts (loop [cur wq k 0 acc []]
-                          (if (= k pf)
-                            acc
-                            (recur (mx/floor-divide cur divisor) (inc k)
-                                   (conj acc (mx/remainder cur divisor)))))
-                  q  (-> (mx/stack parts 2)           ; [out in/pf pf]
-                         (mx/reshape [out in])
-                         (mx/astype mx/float32))
-                  s3 (mx/reshape (mx/astype scales mx/float32) [out gcount 1])
-                  b3 (mx/reshape (mx/astype biases mx/float32) [out gcount 1])
-                  w  (-> (mx/reshape q [out gcount gs])
-                         (mx/multiply s3)
-                         (mx/add b3)
-                         (mx/reshape [out in])
-                         (mx/astype (mx/dtype scales)))]
+            (let [w (if p2?
+                      ;; pure unpack: value k of each u32 word is original
+                      ;; column j*pf+k (LSB-first)
+                      (let [pf      (quot 32 t-bits)
+                            divisor (mx/array [(js/Math.pow 2 t-bits)] [] mx/uint32)
+                            parts (loop [cur wq k 0 acc []]
+                                    (if (= k pf)
+                                      acc
+                                      (recur (mx/floor-divide cur divisor) (inc k)
+                                             (conj acc (mx/remainder cur divisor)))))
+                            q  (-> (mx/stack parts 2)   ; [out in/pf pf]
+                                   (mx/reshape [out in])
+                                   (mx/astype mx/float32))
+                            s3 (mx/reshape (mx/astype scales mx/float32) [out gcount 1])
+                            b3 (mx/reshape (mx/astype biases mx/float32) [out gcount 1])]
+                        (-> (mx/reshape q [out gcount gs])
+                            (mx/multiply s3)
+                            (mx/add b3)
+                            (mx/reshape [out in])
+                            (mx/astype (mx/dtype scales))))
+                      ;; odd widths: the native kernel owns the cross-word
+                      ;; bit extraction
+                      (mx/dequantize wq scales biases
+                                     {:bits t-bits :group-size gs}))]
               (mx/materialize! w)
               w)))]
     (reduce-kv

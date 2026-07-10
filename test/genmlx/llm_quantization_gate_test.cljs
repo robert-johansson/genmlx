@@ -92,12 +92,14 @@
 (assert-true "genuinely mixed but all power-of-two (4 global, 8 override)"
              (q3/dequantizable? {:bits 4 :mode "affine"
                                  :overrides {"x" {:bits 8 :group-size 64}}}))
-(assert-true "odd-bit GLOBAL rejected even with p2 overrides (bits=3)"
-             (not (q3/dequantizable? {:bits 3 :mode "affine"
-                                      :overrides {"x" {:bits 8 :group-size 64}}})))
-(assert-true "odd-bit OVERRIDE rejected (bits=3 override)"
-             (not (q3/dequantizable? {:bits 8 :mode "affine"
-                                      :overrides {"x" {:bits 3 :group-size 64}}})))
+(assert-true "odd-bit GLOBAL accepted (bits=3 — native mx/dequantize, genmlx-dlvi)"
+             (q3/dequantizable? {:bits 3 :mode "affine"
+                                 :overrides {"x" {:bits 8 :group-size 64}}}))
+(assert-true "odd-bit OVERRIDE accepted (bits=5)"
+             (q3/dequantizable? {:bits 8 :mode "affine"
+                                 :overrides {"x" {:bits 5 :group-size 64}}}))
+(assert-true "unknown bit width rejected (bits=7)"
+             (not (q3/dequantizable? {:bits 7 :mode "affine" :overrides {}})))
 (assert-true "non-affine mode rejected"
              (not (q3/dequantizable? {:bits 8 :mode "mxfp4" :overrides {}})))
 
@@ -143,8 +145,10 @@
                  (and (= 80 (count (:overrides qz)))
                       (every? #(and (= 8 (:bits %)) (= 64 (:group-size %)))
                               (vals (:overrides qz)))))
-    (assert-true "3bit: dequantizable? FALSE (odd-bit global — needs native dequantize)"
-                 (not (q3/dequantizable? qz))))
+    (assert-true "3bit: dequantizable? TRUE (odd bits via native mx/dequantize, genmlx-dlvi)"
+                 (q3/dequantizable? qz))
+    (assert-true "3bit: fwd/supported? TRUE (all gates down, mixed 3/8-bit resolves per-tensor)"
+                 (fwd/supported? d)))
   (println "  SKIP: Ornith-1.0-35B-3bit not cached"))
 
 (if-let [d (snapshot-dir "models--mlx-community--Ornith-1.0-35B-4bit")]
