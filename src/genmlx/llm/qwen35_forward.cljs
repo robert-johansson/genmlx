@@ -220,6 +220,29 @@
                    {:rhs-indices idx :bits bits :group-size group-size
                     :transpose true :sorted? false})))
 
+(defn- moe-intervene
+  "Interpretability intervention on router probs [BT E] (genmlx-4wsn):
+     {:ablate #{ids}}   — zero those experts' routing probability: they can
+                          never enter the top-k; renormalization
+                          redistributes their share to the survivors.
+     {:boost {id amt}}  — add amt to those experts' probability pre-top-k:
+                          a continuous steering dial (probs are <=1, so
+                          amt >= 1.0 pins the expert into every token's
+                          top-k with dominant weight).
+   Pure: builds the [1 E] adjustment rows from the spec and broadcasts."
+  [probs {:keys [ablate boost]} E]
+  (let [probs (if (seq ablate)
+                (mx/multiply probs
+                             (mx/array (mapv #(if (contains? ablate %) 0.0 1.0)
+                                             (range E))
+                                       [1 E] mx/float32))
+                probs)]
+    (if (seq boost)
+      (mx/add probs
+              (mx/array (mapv #(double (get boost % 0.0)) (range E))
+                        [1 E] mx/float32))
+      probs)))
+
 (defn moe-mlp
   "Sparse-MoE MLP (qwen3_5_moe) over the post-attention-normed hidden `hn`
    [B T hidden]. Mirrors sparse_moe.rs / router.rs (genmlx-g6vk D1):
@@ -240,7 +263,16 @@
    Batch (genmlx-9uyg): `hn` is [B T hidden]; routing/experts are row-wise,
    so the B·T rows flatten together and the batch axis costs nothing.
    `b` is threaded from forward-hidden (one shape query per forward,
-   genmlx-t2cz)."
+   genmlx-t2cz).
+
+   Interpretability seams (genmlx-4wsn; both nil in production):
+     cfg :moe-intervene — {prefix-or-:all {:ablate #{ids} :boost {id amt}}}
+       router-prob intervention applied pre-top-k (see moe-intervene).
+     cfg :moe-tap — (fn [prefix top-idx topw]) called with THIS layer's
+       lazy [BT k] top-expert indices + renormalized weights: the
+       router-inspection tap. Caller-owned collection state (the nn.cljs
+       caller-owned-state pattern); the owned forward stays pure with a
+       nil tap."
   [cfg w prefix hn b T]
   (let [{:keys [hidden n-experts n-active expert-qz]} cfg
         BT     (* b T)
@@ -249,11 +281,17 @@
         x      (mx/reshape hn [BT hidden])
         ;; --- router (gate.weight is dequantized at load) ---
         probs  (mx/softmax (mx/astype (linear x (g "gate.weight")) mx/float32) -1)
+        probs  (if-let [iv (and (:moe-intervene cfg)
+                                (or (get (:moe-intervene cfg) prefix)
+                                    (get (:moe-intervene cfg) :all)))]
+                 (moe-intervene probs iv n-experts)
+                 probs)
         order  (mx/argsort probs -1)                              ; [BT E] ascending
         top    (mx/astype (slice-ax order 2 1 (- n-experts n-active) n-experts)
                           mx/uint32)                              ; [BT k]
         topw   (mx/take-along-axis probs (mx/astype top mx/int32) 1) ; [BT k] f32
         topw   (mx/divide topw (mx/sum topw [1] true))            ; renormalize
+        _      (when-let [tap (:moe-tap cfg)] (tap prefix top topw))
         ;; --- experts: x [BT 1 1 hidden] x idx [BT k] -> [BT k 1 moe-inter] ---
         x4     (mx/reshape x [BT 1 1 hidden])
         gate-o (switch-glu w (str prefix "switch_mlp.gate_proj.") x4 top expert-qz)
