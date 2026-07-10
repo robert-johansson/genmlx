@@ -553,7 +553,11 @@
 ;;   and dispose is dropping it from the ledger (arrays are reclaimed by
 ;;   GC + MLX refcounting, not deterministically). Branch entries carry the
 ;;   cache cell's :rope-delta, so branches off a VLM prefix (install-prefill!)
-;;   rotate at physical-offset + rope-delta transparently.
+;;   rotate at physical-offset + rope-delta transparently. Entries may be
+;;   [K]-batched (genmlx-lo6e): they then carry :batch and advance via
+;;   forward-branch-batched; resample-lanes!/resample-branch-lanes! reindex
+;;   the lane axis (one gather per cache array) — the token-SMC resample on
+;;   the batch dim instead of per-branch fork/replay loops.
 ;;
 ;; The upstream DENSE natives (e.g. Qwen3Model with {:cljs-forward? false})
 ;; expose neither surface — they keep the replay path (genmlx.llm.smc
@@ -587,18 +591,13 @@
 (defn branch-cache!
   "Fork the model-internal cache at its CURRENT position into an independent
    branch; returns the branch's opaque numeric id. Call AFTER init-cache! +
-   forward-prefill (and any forward-steps). Owned: O(1) reference share.
-   A [K]-batched cache (forward-step-batched ran) is refused — the branch
-   ledger is scalar; batched-lane branching is a genmlx-9uyg follow-up."
+   forward-prefill (and any forward-steps). Owned: O(1) reference share —
+   including a [K]-batched cache (forward-step-batched ran): the branch
+   entry carries :batch and advances via forward-branch-batched
+   (genmlx-lo6e; a whole-batch fork is still just holding the reference)."
   [model]
   (if (cljs-forward-model? model)
-    (let [state (or @(:cache model) {:cache nil :offset 0})]
-      (when (:batch state)
-        (throw (ex-info (str "branch-cache!: the cache is [K=" (:batch state)
-                             "]-batched — the owned branch ledger is scalar "
-                             "(batched-lane branching is a follow-up).")
-                        {:genmlx/error :batched-cache-branch :batch (:batch state)})))
-      (owned-branch! model state))
+    (owned-branch! model (or @(:cache model) {:cache nil :offset 0}))
     (.branchCache model)))
 
 (defn branch-from
@@ -612,17 +611,88 @@
   "Advance branch `id` by one token, returning next-position logits of shape
    [vocab]. O(1) in sequence length — same contract as forward-step, against
    the isolated branch instead of the model-internal cache. Owned branches
-   rotate at offset + rope-delta (VLM prefixes shift transparently)."
+   rotate at offset + rope-delta (VLM prefixes shift transparently). A
+   [K]-batched branch is refused — continue it with forward-branch-batched."
   [model id token-id]
   (if (cljs-forward-model? model)
-    (let [{:keys [cache offset rope-delta]} (owned-branch-state model id)
-          [logits cache'] (fwd/step (:fwd model) cache
-                                    (+ offset (or rope-delta 0)) token-id)]
-      (swap! (:branches model) assoc-in [:branches id]
-             {:cache cache' :offset (inc offset) :rope-delta rope-delta})
-      logits)
+    (let [{:keys [cache offset rope-delta batch]} (owned-branch-state model id)]
+      (when batch
+        (throw (ex-info (str "forward-branch: branch " id " is [K=" batch
+                             "]-batched — a scalar step would mis-shape it. "
+                             "Continue with forward-branch-batched.")
+                        {:genmlx/error :batched-branch-scalar-step
+                         :id id :batch batch})))
+      (let [[logits cache'] (fwd/step (:fwd model) cache
+                                      (+ offset (or rope-delta 0)) token-id)]
+        (swap! (:branches model) assoc-in [:branches id]
+               {:cache cache' :offset (inc offset) :rope-delta rope-delta})
+        logits))
     (-> (.forwardBranch model id (ids->input [token-id]))
         (mx/index 0) (mx/index 0))))
+
+(defn forward-branch-batched
+  "Advance a [K]-batched branch `id` by one lockstep token per lane
+   (genmlx-lo6e): `tok` is a [K]-shaped int array; returns logits [K vocab].
+   Mirrors forward-step-batched against the isolated branch: a still-scalar
+   branch (forked before any batched step) is lazily tiled to K via
+   fwd/broadcast-cache on the first call; afterwards K must stay stable
+   (resample-branch-lanes! may change it deliberately). Owned path only."
+  [model id tok]
+  (when-not (cljs-forward-model? model)
+    (throw (ex-info "forward-branch-batched drives the OWNED branch ledger; the native model has no batched branch surface."
+                    {:genmlx/error :batched-branch-owned-only
+                     :model-type (type model)})))
+  (let [k (first (mx/shape tok))
+        {:keys [cache offset rope-delta batch]} (owned-branch-state model id)]
+    (when (nil? cache)
+      (throw (ex-info (str "forward-branch-batched: branch " id " has no prefix.")
+                      {:genmlx/error :no-prefill :id id})))
+    (let [cache (cond
+                  (nil? batch) (fwd/broadcast-cache cache k)
+                  (= batch k)  cache
+                  :else (throw (ex-info (str "forward-branch-batched: batch width "
+                                             "changed mid-decode: " batch " -> " k)
+                                        {:genmlx/error :batch-width-changed
+                                         :id id :batch batch :k k})))
+          [logits cache'] (fwd/step-batched (:fwd model) cache
+                                            (+ offset (or rope-delta 0)) tok)]
+      (swap! (:branches model) assoc-in [:branches id]
+             {:cache cache' :offset (inc offset) :rope-delta rope-delta :batch k})
+      logits)))
+
+(defn- resampled-state
+  "Reindex the lane axis of a batched cache-cell value by `idx` (vector or
+   [K'] MxArray); returns the new cell value with :batch updated to K'."
+  [{:keys [cache offset rope-delta batch] :as state} idx]
+  (when-not batch
+    (throw (ex-info "resample-lanes: the cache is not [K]-batched (no batched step ran)."
+                    {:genmlx/error :resample-scalar-cache :state (dissoc state :cache)})))
+  (let [k' (if (mx/array? idx) (first (mx/shape idx)) (count idx))]
+    {:cache (fwd/resample-cache-lanes cache idx) :offset offset
+     :rope-delta rope-delta :batch k'}))
+
+(defn resample-lanes!
+  "Token-SMC resample on the batch axis (genmlx-lo6e): reindex the LIVE
+   [K]-batched cache's lanes so lane j continues from ancestor (idx j) —
+   one gather per cache array instead of per-branch fork/replay loops.
+   `idx` is a [K'] int vector or MxArray (K' may differ from K). Owned
+   path only; returns nil."
+  [model idx]
+  (when-not (cljs-forward-model? model)
+    (throw (ex-info "resample-lanes! drives the OWNED forward's batched cache."
+                    {:genmlx/error :resample-owned-only :model-type (type model)})))
+  (swap! (:cache model) resampled-state idx)
+  nil)
+
+(defn resample-branch-lanes!
+  "resample-lanes! against batched branch `id` instead of the live cache."
+  [model id idx]
+  (when-not (cljs-forward-model? model)
+    (throw (ex-info "resample-branch-lanes! drives the OWNED branch ledger."
+                    {:genmlx/error :resample-owned-only :model-type (type model)})))
+  (let [state (owned-branch-state model id)]
+    (swap! (:branches model) assoc-in [:branches id] (resampled-state state idx))
+    nil))
 
 (defn dispose-branch!
   "Free branch `id`: native frees its cache tensors; owned drops the ledger

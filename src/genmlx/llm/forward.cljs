@@ -119,3 +119,20 @@
                  (assoc m' kk (mx/broadcast-to arr (into [k] (rest sh))))))
              {} ce)))
         cache))
+
+(defn resample-cache-lanes
+  "Reindex the lane axis of a [K …]-batched per-layer cache: lane j of the
+   result is lane (idx j) of the input — ONE gather (mx/take-idx axis 0) per
+   cache array. This IS the token-SMC resample step on the batch axis
+   (genmlx-lo6e): duplicated ancestors share nothing until written (the
+   gathered arrays are fresh persistent values), dropped lanes are
+   reclaimed by refcounting. `idx` is a [K'] int vector or MxArray; K' may
+   differ from K (lane growth/shrink). Family-agnostic, pure — returns the
+   new cache value."
+  [cache idx]
+  (let [idx (if (mx/array? idx) idx (mx/array (vec idx) [(count idx)] mx/int32))]
+    (mapv (fn [ce]
+            (when ce
+              (reduce-kv (fn [m' kk arr] (assoc m' kk (mx/take-idx arr idx 0)))
+                         {} ce)))
+          cache)))
