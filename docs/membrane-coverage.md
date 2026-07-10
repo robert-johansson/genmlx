@@ -22,14 +22,15 @@ The export surface is enumerated from the **live `@genmlx/core` runtime module**
 this is what `membrane_coverage_test` partitions, and it is the authority. The package
 ships **no `types` field**; its `index.d.ts` is a regenerated snapshot that can lag the
 runtime, so any audit that reads a `.d.ts` can be wrong. Concretely, the live surface
-has **222** function exports (2026-06-21 W-B / genmlx-hg7q added the `valueAndGrad` /
+has **223** function exports (2026-06-21 W-B / genmlx-hg7q added the `valueAndGrad` /
 `computeGradients` module free fns — they moved from MxArray methods to module exports;
 2026-07-07 genmlx-lgbx added `conv2d` / `scatterAdd` / `putAlongAxis` — the first two
 FFI-shimmed but never exported, the last newly shimmed via `scatter_add_axis`;
 the `index.d.ts` is a regenerated snapshot that can lag, so re-derive its count from the
 live module after a rebuild; 2026-07-10 genmlx-q5uq added `gatherQmm` / `dequantize` —
 both FFI-shimmed since the MoE/quantize work but never exported; they unlock the owned
-qwen3_5_moe forward's packed-expert path and odd-bit dequantization). One runtime-only name is `Gradients` (a real class export,
+qwen3_5_moe forward's packed-expert path and odd-bit dequantization; same day genmlx-w3og
+added `qwen35VlmPreprocess` — native image preprocessing for the owned vision tower). One runtime-only name is `Gradients` (a real class export,
 correctly on the `:training-orchestration` omission allowlist). When the doc and the live
 test disagree, the test is right.
 
@@ -37,8 +38,8 @@ test disagree, the test is right.
 
 | | Count |
 |---|---:|
-| Function exports (`typeof === "function"`, incl. classes) | **222** |
-| → Wrapped in the membrane | **174** |
+| Function exports (`typeof === "function"`, incl. classes) | **223** |
+| → Wrapped in the membrane | **175** |
 | → Intentionally omitted | **48** |
 
 `wrapped ⊎ omitted = 220` — the partition tiles the surface exactly (asserted by

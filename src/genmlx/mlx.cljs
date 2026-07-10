@@ -292,6 +292,17 @@
               (or group-size 64) (or bits 4) (or mode "affine")
               (boolean sorted?)))
 
+(defn vlm-preprocess
+  "Native qwen3.5-VL image preprocessing (genmlx-w3og): decode (PNG/JPEG) +
+   smart-resize (CatmullRom) + normalize + patchify, byte-exact with the
+   native VLM path. `images` is a seq of Uint8Array byte buffers. Returns
+   [pixel-values grid-thw]: [num-patches 3 ps ps] f32 patches in (ph, pw)
+   row-major order and [n-images 3] (t h w). Image decode is I/O — the vision
+   analogue of tokenization — so it stays native by design; the OWNED CLJS
+   tower (genmlx.llm.qwen35-vision-forward) consumes its output."
+  [images]
+  (vec (.qwen35VlmPreprocess c (into-array images))))
+
 (defn dequantize
   "Dequantize a packed-quantized tensor (mlx.core.dequantize): `w` u32-packed
    [.., out, in/(32/bits)] with `scales`/`biases` [.., out, in/group-size] back
@@ -385,10 +396,12 @@
   ([a axes] (prod* a (->js axes))))
 (defn mean
   ([a] (mean* a))
-  ([a axes] (mean* a (->js axes))))
+  ([a axes] (mean* a (->js axes)))
+  ([a axes keepdims] (mean* a (->js axes) keepdims)))
 (defn variance
   ([a] (var* a))
-  ([a axes] (var* a (->js axes))))
+  ([a axes] (var* a (->js axes)))
+  ([a axes keepdims] (var* a (->js axes) keepdims)))
 (defn std
   ([a] (std* a))
   ([a axes] (std* a (->js axes))))
