@@ -24,27 +24,24 @@
       (.-model_type)))
 
 (defn loadable-weights?
-  "True if the owned single-file loader can read this checkpoint's weights — i.e.
-   a single `model.safetensors` exists. The owned loader (q3/q35 load-model ->
-   mx/load-safetensors) does NOT yet read HuggingFace sharded / index.json
-   layouts (model.safetensors-0000N-of-... + model.safetensors.index.json),
-   tracked by genmlx-o94r. Until then such checkpoints must use the upstream
-   loader even when their model_type is owned-supported."
+  "True if the owned loader can read this checkpoint's weights: either a
+   single `model.safetensors`, or the HuggingFace sharded layout
+   (model-0000N-of-… + model.safetensors.index.json), which q3/load-weights
+   resolves via the index's weight_map and merges shard-by-shard
+   (genmlx-sbif; the single-file-only era was genmlx-o94r)."
   [dir]
-  (.existsSync fs (str dir "/model.safetensors")))
+  (or (.existsSync fs (str dir "/model.safetensors"))
+      (.existsSync fs (str dir "/model.safetensors.index.json"))))
 
 (defn supported?
   "True if the owned forward implements this checkpoint's config.json model_type
-   AND its loader can read the weights (a single model.safetensors — see
+   AND its loader can read the weights (single-file or sharded — see
    loadable-weights?) AND any declared quantization is one the owned loader can
    dequantize at load (q3/dequantizable? — affine 2/4/8-bit, globally and for
    every per-tensor override; exotic or odd-bit schemes fall back to the
-   upstream forward, which drives the
-   native quantized kernels). backend/load-model's smart default uses this: the
-   owned forward only when ALL hold, the upstream forward otherwise (so a
-   supported family with a sharded/index.json checkpoint safely falls back
-   rather than erroring, and auto-upgrades once the owned loader learns the
-   layout, o94r)."
+   upstream forward, which drives the native quantized kernels).
+   backend/load-model's smart default uses this: the owned forward only when
+   ALL hold, the upstream forward otherwise."
   [dir]
   (and (contains? supported-model-types (detect-model-type dir))
        (loadable-weights? dir)

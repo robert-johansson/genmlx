@@ -144,11 +144,36 @@
            :else (assoc m k v))))
      {} weights)))
 
-(defn load-weights
-  "Load a checkpoint's model.safetensors as {name -> MxArray}, dequantizing
-   at load when config.json declares a quantization (see dequantize-weights)."
+(defn weight-files
+  "Resolve a checkpoint's weight file paths: [model.safetensors] when the
+   single-file layout exists, else the distinct shard files named by
+   model.safetensors.index.json's weight_map (the HF sharded layout,
+   genmlx-sbif). Single-file wins when both exist (some single-file
+   checkpoints ship a redundant index). Throws when neither is present."
   [dir]
-  (let [w  (mx/load-safetensors (str dir "/model.safetensors"))
+  (let [single (str dir "/model.safetensors")
+        index  (str dir "/model.safetensors.index.json")]
+    (cond
+      (.existsSync fs single) [single]
+      (.existsSync fs index)
+      (let [wm (.-weight_map (js/JSON.parse (.readFileSync fs index "utf8")))]
+        (->> (js-keys wm)
+             (map #(unchecked-get wm %))
+             distinct
+             sort
+             (mapv #(str dir "/" %))))
+      :else
+      (throw (ex-info (str "load-weights: neither model.safetensors nor "
+                           "model.safetensors.index.json exists in " dir)
+                      {:dir dir})))))
+
+(defn load-weights
+  "Load a checkpoint's weights as {name -> MxArray} — a single
+   model.safetensors or all shards of an HF index.json layout, merged
+   (see weight-files) — dequantizing at load when config.json declares a
+   quantization (see dequantize-weights)."
+  [dir]
+  (let [w  (reduce (fn [m f] (into m (mx/load-safetensors f))) {} (weight-files dir))
         qz (load-quantization dir)]
     (if qz (dequantize-weights w qz) w)))
 
