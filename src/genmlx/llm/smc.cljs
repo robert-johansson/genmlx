@@ -301,6 +301,175 @@
               (mx/force-gc!))
             (recur (inc t) st'' knext)))))))
 
+;; ===========================================================================
+;; Batched-lane filter (genmlx-k7nj): K particles = ONE [K]-batched branch
+;; ===========================================================================
+
+(defn- lane-rows
+  "Slice a [K V] logits array into K [V] rows."
+  [logits-k n]
+  (mapv #(mx/take-idx logits-k (mx/scalar % mx/int32) 0) (range n)))
+
+(defn- run-filter-lanes
+  "Batched-lane core loop (genmlx-k7nj): the K particles ride the lane axis
+   of ONE [K]-batched owned branch — each round is a single
+   forward-branch-batched step and resampling is one lane-axis gather
+   (resample-branch-lanes!) instead of per-branch fork/replay loops. The
+   weight algebra is identical to run-filter (grammar-mask log-normalizer
+   increments; :model → 0), computed per lane on host-sliced rows, so a
+   particle's weight is a deterministic function of its token sequence in
+   both engines — the sweep-equivalence gate.
+
+   Scope: :model and :grammar-masked proposals. fn proposals and :twist have
+   per-particle host contracts and stay on the per-branch engine (token-smc
+   routes them there; direct callers get the loud errors below).
+
+   Returns {:particles [{:tokens :log-w :finished? :dfa}] :log-ml-estimate
+   :ess-trajectory :root :lanes} — :root/:lanes are LIVE branch ids the
+   caller must dispose (token-smc does, in its normal flow and on throw)."
+  [model {:keys [particles ess-threshold max-tokens eos-id proposal
+                 constraint key callback gc-every]
+          :or {particles 8 ess-threshold 0.5 proposal :model gc-every 1}}
+   prompt-ids]
+  (when-not (contains? #{:model :grammar-masked} proposal)
+    (throw (ex-info "lanes mode supports :model and :grammar-masked proposals only — fn proposals need a per-lane batched contract; use the per-branch engine."
+                    {:genmlx/error :lanes-proposal-unsupported :proposal proposal})))
+  (when (and (= proposal :grammar-masked) (nil? constraint))
+    (throw (ex-info "proposal :grammar-masked requires a :constraint"
+                    {:genmlx/error :missing-constraint})))
+  (let [n particles
+        key (rng/ensure-key key)
+        _ (llm/init-cache! model)
+        logits0 (mat (llm/forward-prefill model (vec prompt-ids)))
+        root (llm/branch-cache! model)
+        lanes (llm/branch-from model root)
+        vocab (first (mx/shape logits0))
+        pad-id (or eos-id 0)
+        zeros-k (fn [] (let [z (mx/zeros [n])] (mx/materialize! z) z))]
+    (if (zero? max-tokens)
+      {:particles (vec (repeat n {:tokens [] :log-w (mx/scalar 0.0)
+                                  :finished? true :dfa (ginit constraint)}))
+       :log-ml-estimate (mx/scalar 0.0) :ess-trajectory []
+       :root root :lanes lanes}
+      (try
+       (loop [t 0
+             ;; round-0 lanes share the prefill logits; the first batched
+             ;; step tiles the branch cache to K (forward-branch-batched)
+             logits-k (mx/broadcast-to (mx/expand-dims logits0 0) [n vocab])
+             tokens (vec (repeat n []))
+             dfas (vec (repeat n (ginit constraint)))
+             finished (vec (repeat n false))
+             log-w (zeros-k)
+             seg-w (zeros-k)
+             log-ml (mx/scalar 0.0)
+             ess-traj []
+             key key]
+        (let [alive (count (remove true? finished))]
+          (if (or (zero? alive) (>= t max-tokens))
+            (let [final-ml (mx/add log-ml (ismc/log-ml-increment-from log-w seg-w))
+                  lw-host (mx/->clj log-w)]
+              {:particles (mapv (fn [i]
+                                  {:tokens (tokens i)
+                                   :log-w (mx/scalar (nth lw-host i))
+                                   :finished? (boolean (finished i))
+                                   :dfa (dfas i)})
+                                (range n))
+               :log-ml-estimate final-ml :ess-trajectory ess-traj
+               :root root :lanes lanes})
+            (let [[kt kr knext] (rng/split-n key 3)
+                  rows (when constraint (lane-rows logits-k n))
+                  ;; per-lane grammar mask on host-sliced rows; finished (or
+                  ;; deadlocked) lanes keep the raw row so batch sampling
+                  ;; never sees an all--inf row
+                  masked-info
+                  (when constraint
+                    (mapv (fn [i]
+                            (if (finished i)
+                              {:row (rows i) :dead? false}
+                              (let [m (gram/apply-mask constraint (dfas i) (rows i))
+                                    lse-m (lse-item m)]
+                                (if (= lse-m js/Number.NEGATIVE_INFINITY)
+                                  {:row (rows i) :dead? true}
+                                  {:row m :dead? false :lse-masked lse-m}))))
+                          (range n)))
+                  q-logits-k (case proposal
+                               :grammar-masked (mx/stack (mapv :row masked-info) 0)
+                               :model logits-k)
+                  tok (dc/dist-sample (dist/categorical q-logits-k) kt) ; [K]
+                  tok-ids (vec (mx/->clj tok))
+                  ;; per-lane state advance (host bookkeeping)
+                  stepped
+                  (mapv (fn [i]
+                          (let [tok-id (long (nth tok-ids i))]
+                            (cond
+                              (finished i)
+                              {:tokens (tokens i) :dfa (dfas i) :finished? true
+                               :inc 0.0 :fed pad-id}
+
+                              (and constraint (:dead? (masked-info i)))
+                              ;; mask deadlock: no valid token under the twist
+                              {:tokens (tokens i) :dfa (dfas i) :finished? true
+                               :inc js/Number.NEGATIVE_INFINITY :fed pad-id}
+
+                              :else
+                              (let [inc-w (if (= proposal :grammar-masked)
+                                            (- (:lse-masked (masked-info i))
+                                               (lse-item (rows i)))
+                                            0.0)
+                                    tokens' (conj (tokens i) tok-id)
+                                    dfa' (gadvance constraint (dfas i) tok-id)
+                                    done? (or (= tok-id eos-id)
+                                              (>= (count tokens') max-tokens))]
+                                {:tokens tokens' :dfa dfa' :finished? done?
+                                 :inc inc-w :fed (if done? pad-id tok-id)}))))
+                        (range n))
+                  log-w' (let [w (mx/add log-w (mx/array (mapv :inc stepped)))]
+                           (mx/materialize! w) w)
+                  tokens' (mapv :tokens stepped)
+                  dfas' (mapv :dfa stepped)
+                  finished' (mapv :finished? stepped)
+                  ess (u/ess-from-log-weight-array log-w')
+                  resample? (< ess (* ess-threshold (max 1 alive)))
+                  any-alive? (some false? finished')
+                  ;; ONE lockstep batched step for all K lanes (dead lanes
+                  ;; feed pad; their rows are never read again)
+                  logits-k' (when any-alive?
+                              (mat (llm/forward-branch-batched
+                                    model lanes
+                                    (mx/array (mapv :fed stepped) mx/int32))))
+                  st' (if resample?
+                        (let [ml-inc (ismc/log-ml-increment-from log-w' seg-w)
+                              lw-host (mx/->clj log-w')
+                              idx (u/systematic-resample
+                                   (mapv #(mx/scalar %) lw-host) n kr)
+                              idx-arr (mx/array idx mx/int32)]
+                          ;; the cache gather IS the resample step (lo6e D1)
+                          (llm/resample-branch-lanes! model lanes idx)
+                          {:logits (when logits-k'
+                                     (mat (mx/take-idx logits-k' idx-arr 0)))
+                           :tokens (mapv tokens' idx) :dfas (mapv dfas' idx)
+                           :finished (mapv finished' idx)
+                           :log-w (zeros-k) :seg-w (zeros-k)
+                           :log-ml (mx/add log-ml ml-inc)})
+                        {:logits logits-k' :tokens tokens' :dfas dfas'
+                         :finished finished' :log-w log-w' :seg-w seg-w
+                         :log-ml log-ml})]
+              (when callback (callback {:step t :ess ess :resampled? resample?}))
+              (when (and gc-every (pos? gc-every) (zero? (mod (inc t) gc-every)))
+                (mx/force-gc!))
+              (recur (inc t) (:logits st') (:tokens st') (:dfas st')
+                     (:finished st') (:log-w st') (:seg-w st') (:log-ml st')
+                     (conj ess-traj ess) knext)))))
+       (catch :default e
+         ;; this engine created root+lanes; free them (and ONLY them) on throw
+         (doseq [id [lanes root]]
+           (try (llm/dispose-branch! model id) (catch :default _ nil)))
+         (throw e))))))
+
+(defn- dispose-lanes! [model result]
+  (doseq [id [(:lanes result) (:root result)]]
+    (when id (try (llm/dispose-branch! model id) (catch :default _ nil)))))
+
 (defn- dispose-all! [decoder result]
   (doseq [pt (:particles result)] (dec-dispose! decoder (:handle pt)))
   (dec-dispose! decoder (:root result)))
@@ -393,6 +562,13 @@
           :twist (fn [state token-prefix] log-phi)
           :rejuvenation {:steps K :selection sel :gf gf}  ;; v1: at filter end
           :decoder d              ;; override (tests); default decoder-for
+          :lanes? bool            ;; batched-lane engine (genmlx-k7nj): K
+                                  ;; particles ride the lane axis of ONE
+                                  ;; [K]-batched owned branch — one lockstep
+                                  ;; forward per round, resample = one lane
+                                  ;; gather. Owned forward only; :model /
+                                  ;; :grammar-masked proposals; no :twist,
+                                  ;; no :decoder override.
           :gc-every n             ;; force-gc! cadence in rounds (default 1; R4)
           :key k :callback fn}
 
@@ -406,19 +582,38 @@
    returns prompt-only particles and log-ml 0. All particles at -Inf weight
    throw :degenerate-particles (genmlx-ng9t) — all-impossible is loud."
   [opts model-map prompt-ids]
-  (let [decoder (or (:decoder opts) (decoder-for model-map))
-        result (try (run-filter decoder opts prompt-ids)
-                    (catch :default e
-                      ;; twist/proposal threw: dispose every live handle, rethrow
-                      (doseq [h (vec (dec-live-handles decoder))]
-                        (dec-dispose! decoder h))
-                      (throw e)))
-        result (rejuvenate-particles result (:rejuvenation opts))
-        out {:particles (export-particles result model-map)
-             :log-ml-estimate (:log-ml-estimate result)
-             :ess-trajectory (:ess-trajectory result)}]
-    (dispose-all! decoder result)
-    out))
+  (if (:lanes? opts)
+    (let [model (:model model-map)]
+      (when (:twist opts)
+        (throw (ex-info "lanes mode does not support :twist (per-particle host contract) — use the per-branch engine."
+                        {:genmlx/error :lanes-twist-unsupported})))
+      (when (:decoder opts)
+        (throw (ex-info "lanes mode drives the owned batched branch directly — :decoder override is a per-branch concept."
+                        {:genmlx/error :lanes-decoder-unsupported})))
+      (when-not (llm/supports-branching? model)
+        (throw (ex-info "lanes mode requires the OWNED forward's branch ledger — load with {:cljs-forward? true} (or a supported family's smart default)."
+                        {:genmlx/error :lanes-owned-only})))
+      (let [result (run-filter-lanes model opts prompt-ids)
+            out {:particles (export-particles
+                             (rejuvenate-particles result (:rejuvenation opts))
+                             model-map)
+                 :log-ml-estimate (:log-ml-estimate result)
+                 :ess-trajectory (:ess-trajectory result)}]
+        (dispose-lanes! model result)
+        out))
+    (let [decoder (or (:decoder opts) (decoder-for model-map))
+          result (try (run-filter decoder opts prompt-ids)
+                      (catch :default e
+                        ;; twist/proposal threw: dispose every live handle, rethrow
+                        (doseq [h (vec (dec-live-handles decoder))]
+                          (dec-dispose! decoder h))
+                        (throw e)))
+          result (rejuvenate-particles result (:rejuvenation opts))
+          out {:particles (export-particles result model-map)
+               :log-ml-estimate (:log-ml-estimate result)
+               :ess-trajectory (:ess-trajectory result)}]
+      (dispose-all! decoder result)
+      out)))
 
 (defn with-token-smc*
   "Run the filter and call (f {:particles [..with LIVE :handle..]
