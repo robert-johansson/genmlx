@@ -37,8 +37,9 @@
   "True if the owned forward implements this checkpoint's config.json model_type
    AND its loader can read the weights (a single model.safetensors — see
    loadable-weights?) AND any declared quantization is one the owned loader can
-   dequantize at load (q3/dequantizable? — uniform affine 2/4/8-bit; exotic or
-   per-layer-mixed schemes fall back to the upstream forward, which drives the
+   dequantize at load (q3/dequantizable? — affine 2/4/8-bit, globally and for
+   every per-tensor override; exotic or odd-bit schemes fall back to the
+   upstream forward, which drives the
    native quantized kernels). backend/load-model's smart default uses this: the
    owned forward only when ALL hold, the upstream forward otherwise (so a
    supported family with a sharded/index.json checkpoint safely falls back

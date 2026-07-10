@@ -44,8 +44,10 @@
 
 (defn load-quantization
   "Parse config.json's `quantization` block, or nil for a full-precision
-   checkpoint. :per-layer? flags per-tensor override sub-objects (mixed
-   quantization), which dequantize-weights does not implement."
+   checkpoint. Per-tensor override sub-objects (mixed quantization — e.g.
+   Ornith's 3-bit checkpoint keeps its routers at 8-bit) are parsed into
+   :overrides {tensor-base-name {:bits b :group-size g}}; dequantize-weights
+   resolves each tensor against them, falling back to the global scheme."
   [dir]
   (let [c (js/JSON.parse (.readFileSync fs (str dir "/config.json") "utf8"))
         q (.-quantization c)]
@@ -53,15 +55,26 @@
       {:bits       (.-bits q)
        :group-size (.-group_size q)
        :mode       (or (.-mode q) "affine")
-       :per-layer? (boolean (some #(object? (unchecked-get q %)) (js-keys q)))})))
+       :overrides  (reduce (fn [m k]
+                             (let [v (unchecked-get q k)]
+                               (if (object? v)
+                                 (assoc m k {:bits       (.-bits v)
+                                             :group-size (.-group_size v)})
+                                 m)))
+                           {} (js-keys q))})))
 
 (defn dequantizable?
-  "True if dequantize-weights implements this quantization: uniform MLX
-   `affine` mode with power-of-two bits (2/4/8 — the ones that pack evenly
-   into u32 words). mxfp4/nvfp4/mxfp8/odd-bit and per-layer-mixed checkpoints
-   must use the upstream forward."
-  [{:keys [bits mode per-layer?]}]
-  (and (= mode "affine") (contains? #{2 4 8} bits) (not per-layer?)))
+  "True if dequantize-weights implements this quantization: MLX `affine` mode
+   with power-of-two bits (2/4/8 — the ones that pack evenly into u32 words)
+   for the global scheme AND for every per-tensor override. Mixed checkpoints
+   are fine as long as each scheme is power-of-two affine — group size is
+   inferred per-tensor from the scales shape regardless. mxfp4/nvfp4/mxfp8 and
+   odd-bit schemes (e.g. a 3-bit global, whose values straddle u32 words) must
+   use the upstream forward."
+  [{:keys [bits mode overrides]}]
+  (and (= mode "affine")
+       (contains? #{2 4 8} bits)
+       (every? #(contains? #{2 4 8} (:bits %)) (vals overrides))))
 
 (defn dequantize-weights
   "Replace every packed-quantized weight in a load-safetensors map with its
@@ -72,29 +85,33 @@
 
    Unpacking is pure uint32 arithmetic (floor-divide/remainder by 2^bits —
    exact for the full u32 range; the membrane has no bitwise ops), so the
-   values are identical to MLX's own dequantize. Each tensor is materialized
+   values are identical to MLX's own dequantize. Each tensor's bit width comes
+   from its :overrides entry when present, else the global :bits (group size
+   is inferred from the scales shape either way). Each tensor is materialized
    here — load is an I/O boundary — so neither the packed sources nor the
    unpack graphs are retained.
 
    Throws (naming the quantization) for schemes dequantizable? rejects."
-  [weights {:keys [bits] :as qz}]
+  [weights {:keys [bits overrides] :as qz}]
   (when-not (dequantizable? qz)
     (throw (ex-info (str "dequantize-weights: unsupported quantization " (pr-str qz)
-                         " — the owned CLJS forward implements uniform affine "
-                         "bits 2/4/8 only. Load with {:cljs-forward? false} to "
+                         " — the owned CLJS forward implements affine "
+                         "bits 2/4/8 only (global and per-tensor overrides). "
+                         "Load with {:cljs-forward? false} to "
                          "use the upstream forward.")
                     {:quantization qz})))
-  (let [pf      (quot 32 bits)                       ; values per u32 word
-        divisor (mx/array [(js/Math.pow 2 bits)] [] mx/uint32)
-        dequant
-        (fn [nm wq scales biases]
-          (let [[out gcount] (mx/shape scales)
+  (let [dequant
+        (fn [nm base wq scales biases]
+          (let [t-bits  (get-in overrides [base :bits] bits)
+                pf      (quot 32 t-bits)             ; values per u32 word
+                divisor (mx/array [(js/Math.pow 2 t-bits)] [] mx/uint32)
+                [out gcount] (mx/shape scales)
                 in (* pf (second (mx/shape wq)))
                 gs (quot in gcount)]
             (when-not (= in (* gs gcount))
               (throw (ex-info (str "dequantize-weights: " nm " scales shape "
                                    (mx/shape scales) " does not tile its weight "
-                                   (mx/shape wq) " at bits=" bits)
+                                   (mx/shape wq) " at bits=" t-bits)
                               {:tensor nm :quantization qz})))
             ;; value k of each u32 word is original column j*pf+k (LSB-first)
             (let [parts (loop [cur wq k 0 acc []]
@@ -122,7 +139,7 @@
            ;; folded into the dequantized weight below
            (or (.endsWith k ".scales") (.endsWith k ".biases")) m
            (and base (contains? weights (str base ".scales")))
-           (assoc m k (dequant k v (get weights (str base ".scales"))
+           (assoc m k (dequant k base v (get weights (str base ".scales"))
                               (get weights (str base ".biases"))))
            :else (assoc m k v))))
      {} weights)))
