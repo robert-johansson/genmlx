@@ -243,7 +243,13 @@
    :conv = last K-1 conv inputs [1 K-1 conv-dim], :rec = recurrent state
    [1 Hv Dv Dk]. Returns [out [1 T hidden] new-cache-entry].
 
-   Mirrors gated_delta_net.rs::forward + gated_delta.rs (use_kernel=false)."
+   Mirrors gated_delta_net.rs::forward + gated_delta.rs (use_kernel=false).
+   The recurrence routes by block size (genmlx-ps8a): T>1 (prefill chunks)
+   takes ONE fused chunk-parallel mx/gated-delta-scan membrane call (the
+   native CUDA prefill algorithm, BT=64 WY form) instead of T host-loop
+   iterations; T=1 (decode) keeps the per-step reduce — the correctness
+   reference, byte-identical to the pre-ps8a path. Parity between the two
+   is pinned by gdn_scan_contract_test."
   [cfg w prefix hn T ce]
   (let [{:keys [eps lin-k-heads lin-v-heads lin-k-dim lin-v-dim conv-k]} cfg
         Hk      lin-k-heads
@@ -290,33 +296,46 @@
         beta   (mx/astype (mx/sigmoid bb) mx/float32)  ; [1 T Hv]
         a-log  (mx/astype (g "A_log") mx/float32)      ; [Hv]
         dt-bias (mx/astype (g "dt_bias") mx/float32)   ; [Hv]
-        gg     (mx/exp (mx/multiply (mx/multiply (mx/exp a-log) -1.0)
-                                    (softplus (mx/add (mx/astype aa mx/float32) dt-bias))))  ; [1 T Hv]
+        ;; Log-space decay gate, computed DIRECTLY — never (mx/log gg): strong
+        ;; decay underflows exp-space gg to 0 and log(0) = -inf would NaN the
+        ;; fused scan's in-chunk decay-diff (genmlx-ps8a).
+        g-log  (mx/multiply (mx/multiply (mx/exp a-log) -1.0)
+                            (softplus (mx/add (mx/astype aa mx/float32) dt-bias)))  ; [1 T Hv]
         ;; --- GQA: repeat q,k from Hk to Hv heads (np.repeat along head axis) ---
         rep (quot Hv Hk)
         q   (mx/astype (if (> rep 1) (mx/repeat-arr q rep 2) q) mx/float32)
         k   (mx/astype (if (> rep 1) (mx/repeat-arr k rep 2) k) mx/float32)
         v   (mx/astype v mx/float32)
-        ;; --- gated delta recurrence (sequential over T), f32 accumulation ---
+        ;; --- gated delta recurrence, f32 accumulation ---
         init-state (if ce (:rec ce) (mx/zeros [1 Hv Dv Dk] mx/float32))
-        [final-state outs]
-        (reduce
-         (fn [[st outs] t]
-           (let [qt (mx/squeeze (slice-ax q  1 t (inc t)) [1])   ; [1 Hv Dk]
-                 kt (mx/squeeze (slice-ax k  1 t (inc t)) [1])   ; [1 Hv Dk]
-                 vt (mx/squeeze (slice-ax v  1 t (inc t)) [1])   ; [1 Hv Dv]
-                 gt (mx/squeeze (slice-ax gg 1 t (inc t)) [1])   ; [1 Hv]
-                 bt (mx/squeeze (slice-ax beta 1 t (inc t)) [1]) ; [1 Hv]
-                 st (mx/multiply st (mx/reshape gt [1 Hv 1 1]))  ; decay state
-                 k4 (mx/reshape kt [1 Hv 1 Dk])
-                 kv-mem (mx/sum (mx/multiply st k4) [3] false)   ; [1 Hv Dv]
-                 delta  (mx/multiply (mx/subtract vt kv-mem) (mx/reshape bt [1 Hv 1]))
-                 st (mx/add st (mx/multiply k4 (mx/reshape delta [1 Hv Dv 1])))
-                 q4 (mx/reshape qt [1 Hv 1 Dk])
-                 yt (mx/sum (mx/multiply st q4) [3] false)]      ; [1 Hv Dv]
-             [st (conj outs (mx/reshape yt [1 1 Hv Dv]))]))
-         [init-state []] (range T))
-        y (mx/astype (mx/concatenate outs 1) dtype)    ; [1 T Hv Dv], back to model dtype
+        [y-f32 final-state]
+        (if (> T 1)
+          ;; Multi-token block (prefill chunk): ONE fused chunk-parallel scan
+          ;; (BT=64 WY form) instead of T host-loop iterations — the 45→17.6
+          ;; ms/token lever (genmlx-ps8a). Same math as the per-step reduce
+          ;; below (parity pinned by gdn_scan_contract_test).
+          (mx/gated-delta-scan q k v g-log beta init-state)
+          ;; T=1 (decode): per-step recurrence — the correctness reference.
+          (let [gg (mx/exp g-log)                       ; [1 T Hv]
+                [final-state outs]
+                (reduce
+                 (fn [[st outs] t]
+                   (let [qt (mx/squeeze (slice-ax q  1 t (inc t)) [1])   ; [1 Hv Dk]
+                         kt (mx/squeeze (slice-ax k  1 t (inc t)) [1])   ; [1 Hv Dk]
+                         vt (mx/squeeze (slice-ax v  1 t (inc t)) [1])   ; [1 Hv Dv]
+                         gt (mx/squeeze (slice-ax gg 1 t (inc t)) [1])   ; [1 Hv]
+                         bt (mx/squeeze (slice-ax beta 1 t (inc t)) [1]) ; [1 Hv]
+                         st (mx/multiply st (mx/reshape gt [1 Hv 1 1]))  ; decay state
+                         k4 (mx/reshape kt [1 Hv 1 Dk])
+                         kv-mem (mx/sum (mx/multiply st k4) [3] false)   ; [1 Hv Dv]
+                         delta  (mx/multiply (mx/subtract vt kv-mem) (mx/reshape bt [1 Hv 1]))
+                         st (mx/add st (mx/multiply k4 (mx/reshape delta [1 Hv Dv 1])))
+                         q4 (mx/reshape qt [1 Hv 1 Dk])
+                         yt (mx/sum (mx/multiply st q4) [3] false)]      ; [1 Hv Dv]
+                     [st (conj outs (mx/reshape yt [1 1 Hv Dv]))]))
+                 [init-state []] (range T))]
+            [(mx/concatenate outs 1) final-state]))
+        y (mx/astype y-f32 dtype)    ; [1 T Hv Dv], back to model dtype
         ;; --- gated RMSNorm: silu(z) * rms_norm(y, norm_weight[Dv], eps) ---
         z4 (mx/reshape z [1 T Hv Dv])
         y-norm (mx/multiply (mx/silu z4) (mx/rms-norm y (g "norm.weight") eps))
@@ -487,10 +506,12 @@
 
 (defn materialize-cache!
   "Force-evaluate every array in a per-layer cache (the {:k :v} / {:conv :rec}
-   entries). The chunked-prefill eval boundary: without it each chunk's whole
-   lazy graph — including the GDN recurrence's per-token [1 Hv Dv Dk] f32
-   states, ~2 MB × T × layers — stays live into the next chunk, and a long
-   (e.g. VLM) prefill OOMs the box (measured >105 GB at T≈630, genmlx-w3og)."
+   entries) — the chunked-prefill eval boundary. History: with the per-token
+   host-loop GDN recurrence this was load-bearing (each chunk's live graph
+   held ~2 MB × T × layers of f32 states; an unchunked ~630-token VLM prefill
+   OOMed at >105 GB, genmlx-w3og). The fused GDN scan (genmlx-ps8a) removed
+   that pressure — T=624 unchunked now holds >120 GB free — so this boundary
+   is a cheap memory backstop, not a correctness requirement."
   [cache]
   (apply mx/materialize! (mapcat vals (remove nil? cache)))
   cache)

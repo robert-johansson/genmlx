@@ -1,0 +1,56 @@
+{
+  "bean": "genmlx-ps8a",
+  "model": "/home/robert/.cache/huggingface/hub/models--mlx-community--Ornith-1.0-35B-4bit/snapshots/781f91090809411b7fc07449817f398a99feb188",
+  "T": 624,
+  "prefill": [
+    {
+      "chunk": 48,
+      "total-ms": 3697.0377179999996,
+      "ms-per-token": 5.924739932692307
+    },
+    {
+      "chunk": 96,
+      "total-ms": 3118.6226260000003,
+      "ms-per-token": 4.997792669871795
+    },
+    {
+      "chunk": 192,
+      "total-ms": 3112.755521000003,
+      "ms-per-token": 4.988390258012825
+    },
+    {
+      "chunk": 312,
+      "total-ms": 3285.437492000001,
+      "ms-per-token": 5.265124185897437
+    },
+    {
+      "chunk": 624,
+      "total-ms": 3244.1629909999974,
+      "ms-per-token": 5.198979152243585
+    }
+  ],
+  "decode": {
+    "cold-ms": 226.61352199999965,
+    "warm-mean-ms": 115.2963042499996,
+    "warm-ms": [
+      107.75326300000597,
+      108.05654299999878,
+      106.40355299999646,
+      105.12988300000143,
+      111.70480700000189,
+      113.20599899999797,
+      145.61658799999714,
+      124.4997979999971
+    ]
+  },
+  "reference": {
+    "pre-fuse-ms-per-token": {
+      "chunk48": 45.3,
+      "chunk96": 46,
+      "chunk192": 54.6
+    },
+    "native-ms-per-token": 17.6,
+    "pre-fuse-decode-warm-ms": 131,
+    "source": "genmlx-puip P0(b)(ii), 2026-07-10"
+  }
+}

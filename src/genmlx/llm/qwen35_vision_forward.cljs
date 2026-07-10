@@ -289,16 +289,20 @@
    load-vision-config; `images` = seq of byte buffers; `tokens` = chat-rendered
    prompt ids with ONE image_pad marker per image.
 
-   The decoder prefill runs CHUNKED (`:chunk` opt, default 48 tokens), with
-   the carry-over cache materialized between chunks: the GDN recurrence
-   builds ~2 MB of live f32 state per token per layer inside one lazy graph,
-   so an unchunked ~630-token VLM prefill OOMs the box (>105 GB measured —
-   the chunk boundary is the eval boundary that caps it).
+   The decoder prefill runs CHUNKED (`:chunk` opt, default 192 tokens), with
+   the carry-over cache materialized between chunks. History: the default was
+   48 when the GDN recurrence ran as a per-token host loop (~2 MB of live f32
+   state per token per layer in one lazy graph; an unchunked ~630-token VLM
+   prefill OOMed the box at >105 GB — genmlx-w3og). The fused GDN scan
+   (genmlx-ps8a) removed that graph-size pressure — the ps8a chunk sweep
+   measured 5.0 ms/token at 192 vs 5.9 at 48 on the 35B, with unchunked also
+   safe — so 192 is now the measured optimum; the chunk boundary is retained
+   as a cheap memory backstop.
 
    Returns {:logits [vocab] :cache :seq-len :rope-delta} — continue decoding
    with q35/step at offset (+ seq-len rope-delta) + relative step index
    (compressed M-RoPE positions; genmlx-52mh)."
-  [{:keys [config weights] :as model} vcfg images tokens & [{:keys [chunk] :or {chunk 48}}]]
+  [{:keys [config weights] :as model} vcfg images tokens & [{:keys [chunk] :or {chunk 192}}]]
   (let [[pv grid-arr] (mx/vlm-preprocess images)
         grids   (mapv vec (mx/->clj grid-arr))
         m       (:merge vcfg)

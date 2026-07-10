@@ -292,6 +292,23 @@
               (or group-size 64) (or bits 4) (or mode "affine")
               (boolean sorted?)))
 
+(defn gated-delta-scan
+  "Chunk-parallel gated-delta (GDN) recurrence over a whole token block —
+   the fused GDN-prefill primitive (genmlx-ps8a; mlx-core's
+   gated_delta_chunked_ops, BT=64 WY form — the algorithm behind the native
+   CUDA prefill path). q/k [B T Hv Dk] (GQA-expanded, RMS-norm-scaled),
+   v [B T Hv Dv], g-log/beta [B T Hv], state [B Hv Dv Dk]. `g-log` MUST be
+   the log-space decay gate computed directly
+   (-exp(A_log) * softplus(a + dt_bias)) — NOT (mx/log g): strong decay
+   underflows exp-space g to 0 and the in-chunk decay-diff turns
+   inf - inf = NaN. Accumulation is f32; y/state' come back in the input
+   dtypes. Deterministic (no gather_mm). The per-step host reduce in
+   qwen35_forward's gdn-layer remains the T=1 decode path and the
+   correctness reference. Returns [y state']. Pure graph op."
+  [q k v g-log beta state]
+  (let [r (.gatedDeltaScan c q k v g-log beta state)]
+    [(aget r 0) (aget r 1)]))
+
 (defn vlm-preprocess
   "Native qwen3.5-VL image preprocessing (genmlx-w3og): decode (PNG/JPEG) +
    smart-resize (CatmullRom) + normalize + patchify, byte-exact with the
