@@ -21,8 +21,15 @@
    - On-disk checkpoint pre-splits the GDN input projection into 4 tensors
      (in_proj_qkv / in_proj_z / in_proj_b / in_proj_a), NOT the fused
      in_proj_qkvz/in_proj_ba of the Rust struct. We use the split tensors.
-   - Tensor prefix is `language_model.model.` (multimodal wrapper); tie_word_embeddings
-     => logits = hidden @ embed_tokens^T (no lm_head tensor).
+   - Tensor prefix is `language_model.model.` (multimodal wrapper). Logits:
+     tied checkpoints (dense qwen3.5) use hidden @ embed_tokens^T; untied
+     ones (Ornith / qwen3_5_moe) ship a real `language_model.lm_head` tensor.
+   - qwen3_5_moe (genmlx-g6vk): the dense-MLP seam branches per layer to a
+     sparse-MoE block — router softmax (precise f32, over ALL experts, BEFORE
+     top-k), argsort top-k, renormalized weights, SwitchGLU via mx/gather-qmm
+     over PACKED expert tensors, plus an always-on sigmoid-gated shared
+     expert. Experts stay quantized end-to-end (spec §3): same kernel as the
+     native path, third of the memory of dequantizing.
    - RMSNormGated = silu(gate) * rms_norm(value, weight, eps) — gate applied
      AFTER the norm (swiglu(gate, normed) per Activations::swiglu). This matches
      the upstream Rust, which is what produced the golden values.
@@ -67,16 +74,58 @@
      :lin-k-dim     (.-linear_key_head_dim tc)
      :lin-v-dim     (.-linear_value_head_dim tc)
      :conv-k        (.-linear_conv_kernel_dim tc)
+     ;; untied lm_head (Ornith ships one; dense qwen3.5 ties). Default = tied
+     ;; when the field is absent — matching HF semantics for this family.
+     :tie?          (not (false? (.-tie_word_embeddings tc)))
+     ;; sparse-MoE dims (qwen3_5_moe; absent => dense MLP everywhere)
+     :n-experts     (.-num_experts tc)
+     :n-active      (.-num_experts_per_tok tc)
+     :moe-inter     (.-moe_intermediate_size tc)
+     :sparse-step   (or (.-decoder_sparse_step tc) 1)
+     :mlp-only      (set (vec (or (.-mlp_only_layers tc) #js [])))
      :model-type    (.-model_type c)}))
 
+(defn- moe-layer?
+  "Layer i uses the sparse-MoE MLP (mirrors the upstream gating: every
+   `decoder_sparse_step`-th layer, except `mlp_only_layers`, when experts
+   exist)."
+  [{:keys [n-experts sparse-step mlp-only]} i]
+  (and (some? n-experts) (pos? n-experts)
+       (pos? sparse-step)
+       (zero? (mod (inc i) sparse-step))
+       (not (contains? mlp-only i))))
+
 (defn load-model
-  "Load a Qwen3.5 checkpoint as {:config .. :weights {name -> MxArray}}.
+  "Load a Qwen3.5 / qwen3_5_moe checkpoint as {:config .. :weights ..}.
    Affine-quantized checkpoints are dequantized at load (q3/load-weights —
    genmlx-9iqc/-vmks): the packed U32 [out, in/8] weights otherwise abort the
-   forward at the first reshape (e.g. size T*(hidden/8) into (1,T,hidden))."
+   forward at the first reshape (e.g. size T*(hidden/8) into (1,T,hidden)).
+
+   MoE checkpoints (genmlx-g6vk, spec §3/§5.3): the `switch_mlp` expert
+   tensors stay PACKED (weight+scales+biases) and are driven by mx/gather-qmm
+   in the forward — dequantizing Ornith's 32B expert params would triple them
+   to ~64 GB. Everything else dequantizes as usual. The experts' (bits,
+   group-size) land in config :expert-qz; per-tensor overrides on switch_mlp
+   tensors are rejected (none exist in any known checkpoint — the overrides
+   cover routers/gates only)."
   [dir]
-  {:config  (load-config dir)
-   :weights (q3/load-weights dir)})
+  (let [cfg  (load-config dir)
+        moe? (and (:n-experts cfg) (pos? (:n-experts cfg)))
+        qz   (q3/load-quantization dir)]
+    (when (and moe? qz)
+      (doseq [[base _] (:overrides qz)]
+        (when (.includes base ".switch_mlp.")
+          (throw (ex-info (str "qwen35 load-model: per-tensor quantization "
+                               "override on packed expert tensor " base
+                               " — gather-qmm runs experts at the GLOBAL "
+                               "(bits, group-size); this checkpoint needs "
+                               "per-projection expert quantization support.")
+                          {:base base :quantization qz})))))
+    {:config  (cond-> cfg
+                (and moe? qz) (assoc :expert-qz {:bits       (:bits qz)
+                                                 :group-size (:group-size qz)}))
+     :weights (q3/load-weights dir (when (and moe? qz)
+                                     {:skip? #(.includes % ".switch_mlp.")}))}))
 
 (def ^:private wp "language_model.model.")
 
@@ -122,6 +171,62 @@
     (linear (mx/multiply (mx/silu (linear hn (g "gate_proj.weight")))
                          (linear hn (g "up_proj.weight")))
             (g "down_proj.weight"))))
+
+(defn- switch-glu
+  "One SwitchGLU projection through the PACKED [E, out, in-packed] expert
+   tensor at `prefix` (+.scales/.biases), via mx/gather-qmm with per-row
+   expert indices `idx`. x [.., 1, in] -> [.., k, 1, out] following mlx-lm's
+   SwitchLinear broadcasting (idx [T k] against x [T 1 1 in])."
+  [w prefix x idx {:keys [bits group-size]}]
+  (let [g (fn [s] (get w (str prefix s)))]
+    (mx/gather-qmm x (g "weight") (g "scales") (g "biases")
+                   {:rhs-indices idx :bits bits :group-size group-size
+                    :transpose true :sorted? false})))
+
+(defn moe-mlp
+  "Sparse-MoE MLP (qwen3_5_moe) over the post-attention-normed hidden `hn`
+   [1 T hidden]. Mirrors sparse_moe.rs / router.rs (genmlx-g6vk D1):
+
+     router logits -> softmax over ALL experts in PRECISE f32 (before top-k)
+     -> top-k by argsort (mx/topk returns values, not indices)
+     -> renormalize the k weights (norm_topk_prob, default true)
+     -> SwitchGLU: down(silu(gate(x,idx)) * up(x,idx)) via gather-qmm on the
+        packed expert tensors (the same kernel the native path drives)
+     -> weighted sum over the k experts
+     -> + shared expert (dense SwiGLU, runs for EVERY token), sigmoid-gated
+        by a per-token scalar.
+
+   `sorted?` stays false: measured on this backend the flag is a performance
+   hint, not a contract (gather_qmm_oracle_test Part 3); sorting tokens by
+   expert is a later optimization."
+  [cfg w prefix hn T]
+  (let [{:keys [hidden n-experts n-active expert-qz]} cfg
+        g      (fn [s] (get w (str prefix s)))
+        dtype  (mx/dtype hn)
+        x      (mx/reshape hn [T hidden])
+        ;; --- router (gate.weight is dequantized at load) ---
+        probs  (mx/softmax (mx/astype (linear x (g "gate.weight")) mx/float32) -1)
+        order  (mx/argsort probs -1)                              ; [T E] ascending
+        top    (mx/astype (slice-ax order 1 (- n-experts n-active) n-experts)
+                          mx/uint32)                              ; [T k]
+        topw   (mx/take-along-axis probs (mx/astype top mx/int32) 1) ; [T k] f32
+        topw   (mx/divide topw (mx/sum topw [1] true))            ; renormalize
+        ;; --- experts: x [T 1 1 hidden] x idx [T k] -> [T k 1 moe-inter] ---
+        x4     (mx/reshape x [T 1 1 hidden])
+        gate-o (switch-glu w (str prefix "switch_mlp.gate_proj.") x4 top expert-qz)
+        up-o   (switch-glu w (str prefix "switch_mlp.up_proj.")   x4 top expert-qz)
+        expert (switch-glu w (str prefix "switch_mlp.down_proj.")
+                           (mx/multiply (mx/silu gate-o) up-o) top expert-qz)
+        expert (mx/reshape expert [T n-active hidden])            ; [T k hidden]
+        moe-o  (mx/sum (mx/multiply expert
+                                    (mx/reshape (mx/astype topw dtype)
+                                                [T n-active 1]))
+                       [1] false)                                 ; [T hidden]
+        ;; --- shared expert: dense SwiGLU for every token, sigmoid-gated ---
+        shared (mx/reshape (mlp w (str prefix "shared_expert.") x) [T hidden])
+        sgate  (mx/sigmoid (linear x (g "shared_expert_gate.weight")))  ; [T 1]
+        out    (mx/add moe-o (mx/multiply shared sgate))]
+    (mx/reshape out [1 T hidden])))
 
 ;; ----------------------------------------------------------------------------
 ;; GatedDeltaNet linear-attention layer
@@ -283,11 +388,19 @@
                            (full-attn-layer config weights (str p "self_attn.") hn T
                                             (nth cache i) offset mask))
                  h1 (mx/add h a)
-                 mn (mx/rms-norm h1 (get weights (str p "post_attention_layernorm.weight")) eps)]
-             [(mx/add h1 (mlp weights (str p "mlp.") mn)) (conj nc ce')]))
+                 mn (mx/rms-norm h1 (get weights (str p "post_attention_layernorm.weight")) eps)
+                 m  (if (moe-layer? config i)
+                      (moe-mlp config weights (str p "mlp.") mn T)
+                      (mlp weights (str p "mlp.") mn))]
+             [(mx/add h1 m) (conj nc ce')]))
          [h0 []] (range n-layers))
-        hf (mx/rms-norm h (get weights (str wp "norm.weight")) eps)]
-    [(mx/reshape (linear hf embed) [T vocab]) new-cache]))      ; tied lm_head
+        hf (mx/rms-norm h (get weights (str wp "norm.weight")) eps)
+        ;; tied: logits = h @ embed^T; untied (Ornith): a real lm_head tensor,
+        ;; dequantized at load, OUTSIDE the `language_model.model.` prefix.
+        lmw (if (:tie? config)
+              embed
+              (get weights "language_model.lm_head.weight"))]
+    [(mx/reshape (linear hf lmw) [T vocab]) new-cache]))
 
 (defn forward
   "Uncached full forward over a token-id sequence. Returns logits [seq vocab]."

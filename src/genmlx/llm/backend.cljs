@@ -201,13 +201,12 @@
 
    Forward selection (f6ov), :cljs-forward? in opts:
    - omitted (DEFAULT): SMART — use the GenMLX-OWNED pure-CLJS forward for the
-     model families it implements (genmlx.llm.forward/supported?: qwen3, qwen3_5)
-     and the upstream model otherwise. So trusted Qwen3/Qwen3.5 checkpoints run on
-     the owned forward by default; MoE/Gemma/other types fall back to upstream
-     automatically (and auto-upgrade once the owned forward learns the family).
-     The MoE families (qwen3_next — the 80B Qwen3-Coder-Next — and qwen3_5_moe)
-     have no owned forward, so they route to the native Qwen35MoeModel; on CUDA
-     this is the default path, on Metal it is refused (unsupported-native-moe?).
+     model families it implements (genmlx.llm.forward/supported?: qwen3,
+     qwen3_5, and qwen3_5_moe since genmlx-g6vk — Ornith/Qwen3.6-A3B TEXT runs
+     owned by default now) and the upstream model otherwise, auto-upgrading as
+     the owned forward learns families. qwen3_next (the 80B Qwen3-Coder-Next)
+     still has no owned forward and routes to the native model; on CUDA that
+     is the default path, on Metal it is refused (unsupported-native-moe?).
    - true:  force the GenMLX-owned forward (throws if the family is unsupported).
    - false: force the upstream model (the borrowed-forward fallback).
    The owned forward (CljsForwardModel) drives the forward/cache API used by the

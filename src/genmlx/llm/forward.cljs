@@ -15,8 +15,10 @@
 
 (def supported-model-types
   "config.json model_type strings the GenMLX-owned forward actually implements.
-   Anything else must use the upstream forward (load-model {:cljs-forward? false})."
-  #{"qwen3" "qwen3_5"})
+   Anything else must use the upstream forward (load-model {:cljs-forward? false}).
+   qwen3_5_moe (Ornith, Qwen3.6-A3B — genmlx-g6vk) rides the qwen3_5 hybrid
+   forward with a per-layer sparse-MoE MLP branch."
+  #{"qwen3" "qwen3_5" "qwen3_5_moe"})
 
 (defn- detect-model-type [dir]
   (-> (.readFileSync fs (str dir "/config.json") "utf8")
@@ -56,8 +58,9 @@
   [dir]
   (let [mt (detect-model-type dir)]
     (case mt
-      "qwen3_5" (assoc (q35/load-model dir) :impl :qwen3_5)
-      "qwen3"   (assoc (q3/load-model dir)  :impl :qwen3)
+      "qwen3_5"     (assoc (q35/load-model dir) :impl :qwen3_5)
+      "qwen3_5_moe" (assoc (q35/load-model dir) :impl :qwen3_5)
+      "qwen3"       (assoc (q3/load-model dir)  :impl :qwen3)
       (throw (ex-info (str "genmlx.llm.forward: the GenMLX-owned forward does not "
                            "implement model_type " (pr-str mt) "; load with "
                            "{:cljs-forward? false} to use the upstream forward.")

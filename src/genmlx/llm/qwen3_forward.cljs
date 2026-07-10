@@ -91,8 +91,14 @@
    here — load is an I/O boundary — so neither the packed sources nor the
    unpack graphs are retained.
 
+   opts {:skip? (fn [base-name] ...)}: tensors whose base name matches stay
+   PACKED — weight, .scales and .biases all pass through untouched. This is
+   how the owned MoE forward keeps its 32B expert params packed for
+   mx/gather-qmm instead of tripling them to bf16 (genmlx-g6vk, spec §5.3).
+
    Throws (naming the quantization) for schemes dequantizable? rejects."
-  [weights {:keys [bits overrides] :as qz}]
+  ([weights qz] (dequantize-weights weights qz nil))
+  ([weights {:keys [bits overrides] :as qz} {:keys [skip?]}]
   (when-not (dequantizable? qz)
     (throw (ex-info (str "dequantize-weights: unsupported quantization " (pr-str qz)
                          " — the owned CLJS forward implements affine "
@@ -133,16 +139,22 @@
               w)))]
     (reduce-kv
      (fn [m k v]
-       (let [base (when (.endsWith k ".weight")
-                    (subs k 0 (- (count k) (count ".weight"))))]
+       (let [base    (when (.endsWith k ".weight")
+                       (subs k 0 (- (count k) (count ".weight"))))
+             sb      (when (or (.endsWith k ".scales") (.endsWith k ".biases"))
+                       (subs k 0 (- (count k) (count ".scales")))) ; same length
+             skip-fn (or skip? (constantly false))]
          (cond
+           ;; packed-by-request: weight AND its scales/biases pass through
+           (and base (skip-fn base))  (assoc m k v)
+           (and sb (skip-fn sb))      (assoc m k v)
            ;; folded into the dequantized weight below
            (or (.endsWith k ".scales") (.endsWith k ".biases")) m
            (and base (contains? weights (str base ".scales")))
            (assoc m k (dequant k base v (get weights (str base ".scales"))
                               (get weights (str base ".biases"))))
            :else (assoc m k v))))
-     {} weights)))
+     {} weights))))
 
 (defn weight-files
   "Resolve a checkpoint's weight file paths: [model.safetensors] when the
@@ -171,11 +183,13 @@
   "Load a checkpoint's weights as {name -> MxArray} — a single
    model.safetensors or all shards of an HF index.json layout, merged
    (see weight-files) — dequantizing at load when config.json declares a
-   quantization (see dequantize-weights)."
-  [dir]
-  (let [w  (reduce (fn [m f] (into m (mx/load-safetensors f))) {} (weight-files dir))
-        qz (load-quantization dir)]
-    (if qz (dequantize-weights w qz) w)))
+   quantization (see dequantize-weights; opts {:skip?} selects tensors
+   that stay packed)."
+  ([dir] (load-weights dir nil))
+  ([dir opts]
+   (let [w  (reduce (fn [m f] (into m (mx/load-safetensors f))) {} (weight-files dir))
+         qz (load-quantization dir)]
+     (if qz (dequantize-weights w qz opts) w))))
 
 (defn load-model
   "Load a Qwen3 checkpoint as {:config .. :weights {name -> MxArray}}."

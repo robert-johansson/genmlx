@@ -123,16 +123,17 @@
                          (vals (:overrides qz))))
     (assert-true "8bit: dequantizable? TRUE (gate 3 no longer fires)"
                  (q3/dequantizable? qz))
-    ;; fwd/supported? must now fail for exactly ONE reason: model_type.
-    ;; Gate 2 fell with sharded loading (genmlx-sbif); gate 3 fell above.
-    (assert-true "8bit: model_type still unsupported (gate 1 stands)"
-                 (not (contains? fwd/supported-model-types "qwen3_5_moe")))
+    ;; All three gates are down: gate 3 fell with per-tensor overrides
+    ;; (genmlx-a2mq), gate 2 with sharded loading (genmlx-sbif), gate 1 with
+    ;; the owned qwen3_5_moe forward (genmlx-g6vk).
+    (assert-true "8bit: model_type owned (gate 1 fell — genmlx-g6vk)"
+                 (contains? fwd/supported-model-types "qwen3_5_moe"))
     (assert-true "8bit: sharded layout loadable (gate 2 no longer fires)"
                  (fwd/loadable-weights? d))
     (assert-true "8bit: 8 shard files resolved from index.json"
                  (= 8 (count (q3/weight-files d))))
-    (assert-true "8bit: fwd/supported? still false overall"
-                 (not (fwd/supported? d))))
+    (assert-true "8bit: fwd/supported? TRUE — Ornith runs the owned forward"
+                 (fwd/supported? d)))
   (println "  SKIP: Ornith-1.0-35B-8bit not cached"))
 
 (if-let [d (snapshot-dir "models--mlx-community--Ornith-1.0-35B-3bit")]
