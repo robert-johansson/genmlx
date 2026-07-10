@@ -605,3 +605,81 @@ through the DFA) or the prior text left the grammar's language."
            ;; (new-score − old-score) − ratio (genmlx-fayo C8). The dispatcher
            ;; gates fast vs general; this supplies the general arm.
            :regenerate-general (wrap-grammar h/regenerate-transition-general constraint))))
+
+;; ============================================================
+;; Vectorized grammar (genmlx-9uyg) — batched-DFA tables + hook
+;;
+;; vsimulate/vgenerate BYPASS the dispatcher, so wrap-grammar cannot
+;; intercept a [K]-lane LLM-GF. Instead the grammar becomes DATA: dense
+;; [S V] tables (per-state logit mask + per-(state, token) transition), and
+;; per-lane DFA state becomes a [K] int32 array driven by pure gathers —
+;; the whole constraint stays on-GPU, one gather per step. Semantics mirror
+;; wrap-grammar exactly: masked logits renormalize through categorical's
+;; log-softmax, eos is valid only in accept states, and sampling eos HOLDS
+;; the state (never advances through the eos literal — genmlx-xwxh).
+;; ============================================================
+
+(defn build-vtables
+  "Compile a `compile-constraint` result into dense batched-DFA tables over
+   a vocab of `vocab-size` logits:
+
+     :mask-table  [S V] f32 — 0 for valid (state, token), -inf otherwise;
+                  row r is exactly apply-mask's mask for state r (incl. the
+                  eos-only-in-accept override and -inf beyond token-index).
+     :trans-table [S V] int32 — dense row index after consuming the token;
+                  invalid tokens route to the dead row, eos self-loops.
+     :states      alive DFA states in row order (dense row -> DFA state).
+     :start-row / :dead-row — dense indices. The dead row absorbs and keeps
+                  eos at 0 so it can never NaN a score; live lanes cannot
+                  reach it (only masked-out tokens transition there).
+
+   Build cost is one get-mask + one dfa-advance-string per VALID
+   (state, token) pair — the same S×V sweep precompute-masks already does."
+  [{:keys [dfa token-index eos-id] :as constraint} vocab-size]
+  (let [states (vec (sort (:alive dfa)))
+        row-of (zipmap states (range))
+        dead   (count states)
+        S      (inc dead)
+        V      vocab-size
+        n      (min (count token-index) V)
+        mask   (js/Float32Array. (* S V))
+        trans  (js/Int32Array. (* S V))]
+    (.fill mask neg-inf)
+    (.fill trans dead)
+    (doseq [[s r] (map vector states (range))]
+      (let [src  (get-mask constraint s)
+            base (* r V)]
+        (dotimes [t n]
+          (when (zero? (aget src t))
+            (aset mask (+ base t) 0.0)
+            (aset trans (+ base t)
+                  (get row-of (dfa-advance-string dfa s (nth token-index t))
+                      dead))))
+        (when (< eos-id V)
+          (aset mask (+ base eos-id)
+                (if (contains? (:accept dfa) s) 0.0 neg-inf))
+          (aset trans (+ base eos-id) r))))
+    (when (< eos-id V)
+      (aset mask (+ (* dead V) eos-id) 0.0))
+    {:mask-table  (.fromFloat32 mx/core mask #js [S V])
+     :trans-table (.fromInt32 mx/core trans #js [S V])
+     :states      states
+     :start-row   (get row-of (:start dfa))
+     :dead-row    dead}))
+
+(defn vectorized-hook
+  "The make-llm-gf-batched :hook over build-vtables output. State = dense
+   DFA row per lane: a scalar int32 before the first sample establishes K,
+   a [K] int32 array after. :mask row-gathers the per-lane logit masks;
+   :advance gathers next rows by (state, token) — all pure MLX graph ops."
+  [{:keys [mask-table trans-table start-row]}]
+  {:init (fn [] (mx/scalar start-row mx/int32))
+   :mask (fn [st logits _i]
+           (mx/add logits (mx/take-idx mask-table st 0)))
+   :advance (fn [st tok]
+              (let [tok  (mx/astype tok mx/int32)
+                    rows (mx/take-idx trans-table st 0)]     ; [V] or [K V]
+                (if (pos? (count (mx/shape st)))
+                  (mx/squeeze (mx/take-along-axis rows (mx/expand-dims tok 1) 1)
+                              [1])                            ; [K]
+                  (mx/take-idx rows tok 0))))})               ; scalar st: [K]

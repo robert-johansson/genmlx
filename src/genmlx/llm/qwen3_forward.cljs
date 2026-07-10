@@ -230,18 +230,21 @@
 
 (defn- attention
   "Self-attention for one layer over the pre-attention-normed hidden `hn`
-   [seq hidden]. GQA via the fast SDPA (q has n-heads, k/v have n-kv-heads).
-   `ce` is the prior {:k :v} cache entry (or nil); `offset` is the absolute
-   position of the first new token (for RoPE + correct causal scope). Returns
-   [attn-out new-cache-entry] — the new entry holds the post-RoPE k/v of the full
-   context, so it threads straight into the next step."
-  [{:keys [n-heads n-kv-heads head-dim eps rope-theta]} w prefix hn seq ce offset mask]
-  (let [g     (fn [s] (get w (str prefix s)))
+   [B T hidden] (B read from the shape — the [K]-particle batch axis,
+   genmlx-9uyg; B=1 for the scalar paths). GQA via the fast SDPA (q has
+   n-heads, k/v have n-kv-heads). `ce` is the prior {:k :v} cache entry
+   (or nil, arrays [B nh T d]); `offset` is the absolute position of the
+   first new token (for RoPE + correct causal scope; lockstep across lanes).
+   Returns [attn-out [B T hidden] new-cache-entry] — the new entry holds the
+   post-RoPE k/v of the full context, so it threads straight into the next step."
+  [{:keys [n-heads n-kv-heads head-dim eps rope-theta]} w prefix hn T ce offset mask]
+  (let [B     (first (mx/shape hn))
+        g     (fn [s] (get w (str prefix s)))
         scale (/ 1.0 (js/Math.sqrt head-dim))
         proj-heads (fn [name nh norm?]
                      (let [t (-> (linear hn (g (str name "_proj.weight")))
-                                 (mx/reshape [1 seq nh head-dim])
-                                 (mx/transpose [0 2 1 3]))]      ; [1 nh seq d]
+                                 (mx/reshape [B T nh head-dim])
+                                 (mx/transpose [0 2 1 3]))]      ; [B nh T d]
                        (if norm?
                          (-> t (mx/rms-norm (g (str name "_norm.weight")) eps)
                                (mx/rope head-dim false rope-theta 1.0 offset))
@@ -252,8 +255,8 @@
         k-full (if ce (mx/concatenate [(:k ce) k] 2) k)          ; concat along seq axis
         v-full (if ce (mx/concatenate [(:v ce) v] 2) v)
         o (-> (mx/scaled-dot-product-attention q k-full v-full scale mask)
-              (mx/transpose [0 2 1 3])                            ; [1 seq nh d]
-              (mx/reshape [seq (* n-heads head-dim)]))]
+              (mx/transpose [0 2 1 3])                            ; [B T nh d]
+              (mx/reshape [B T (* n-heads head-dim)]))]
     [(linear o (g "o_proj.weight")) {:k k-full :v v-full}]))
 
 (defn- mlp
@@ -269,26 +272,22 @@
   [{:keys [config]}]
   (vec (repeat (:n-layers config) nil)))
 
-(defn forward-cached
-  "Run the forward over `token-ids` starting at absolute position `offset`, using
-   and extending the per-layer KV `cache` (vector of {:k :v} or nils). A causal
-   mask is applied only for multi-token chunks (prefill); a single-token step
-   attends to the whole cache unmasked. Returns [logits new-cache] where logits
-   is [seq vocab]."
-  [{:keys [config weights]} token-ids cache offset]
+(defn- forward-hidden
+  "Layer loop over pre-built hidden states h0 [B T hidden] (B read from the
+   shape — the [K]-particle batch axis, genmlx-9uyg). The [T, T] causal mask
+   (multi-token chunks only) broadcasts over [B H]. Returns
+   [logits [B T vocab] new-cache]."
+  [{:keys [config weights]} h0 T cache offset]
   (let [{:keys [n-layers eps]} config
-        seq   (count token-ids)
-        ids   (mx/array (vec token-ids) [seq] mx/int32)
         embed (get weights "model.embed_tokens.weight")
         dtype (mx/dtype embed)
-        mask  (when (> seq 1) (causal-mask seq dtype))
-        h0    (mx/take-idx embed ids 0)                          ; [seq hidden]
+        mask  (when (> T 1) (causal-mask T dtype))
         [h new-cache]
         (reduce
          (fn [[h nc] layer]
            (let [p  (str "model.layers." layer ".")
                  hn (mx/rms-norm h (get weights (str p "input_layernorm.weight")) eps)
-                 [a ce] (attention config weights (str p "self_attn.") hn seq
+                 [a ce] (attention config weights (str p "self_attn.") hn T
                                    (nth cache layer) offset mask)
                  h1 (mx/add h a)
                  mn (mx/rms-norm h1 (get weights (str p "post_attention_layernorm.weight")) eps)]
@@ -296,6 +295,50 @@
          [h0 []] (range n-layers))
         hf (mx/rms-norm h (get weights "model.norm.weight") eps)]
     [(linear hf embed) new-cache]))                              ; tied lm_head
+
+(defn forward-cached
+  "Run the forward over `token-ids` starting at absolute position `offset`, using
+   and extending the per-layer KV `cache` (vector of {:k :v} or nils). A causal
+   mask is applied only for multi-token chunks (prefill); a single-token step
+   attends to the whole cache unmasked. Returns [logits new-cache] where logits
+   is [seq vocab]."
+  [{:keys [config weights] :as model} token-ids cache offset]
+  (let [seq   (count token-ids)
+        ids   (mx/array (vec token-ids) [1 seq] mx/int32)
+        embed (get weights "model.embed_tokens.weight")
+        h0    (mx/take-idx embed ids 0)                          ; [1 seq hidden]
+        [logits new-cache] (forward-hidden model h0 seq cache offset)]
+    [(mx/reshape logits [seq (:vocab config)]) new-cache]))
+
+(defn step-batched
+  "Advance K lockstep lanes one token each from a [K …]-shaped `cache`
+   (current length = `offset`, shared across lanes — the
+   no-per-lane-early-stop contract, genmlx-9uyg). `tok` is a [K]-shaped int
+   array of per-lane token ids. Returns [logits cache'] with logits [K vocab]."
+  [{:keys [config weights] :as model} cache offset tok]
+  (let [K     (first (mx/shape tok))
+        embed (get weights "model.embed_tokens.weight")
+        h0    (mx/reshape (mx/take-idx embed (mx/astype tok mx/int32) 0)
+                          [K 1 (:hidden config)])
+        [logits new-cache] (forward-hidden model h0 1 cache offset)]
+    [(mx/reshape logits [K (:vocab config)]) new-cache]))
+
+(defn prefill-batched
+  "Process K equal-length prompts in ONE [B T] forward over a fresh cache
+   (batch-independence entry, genmlx-9uyg — the particle path itself prefills
+   at B=1 and tiles). Returns [last-logits cache] with last-logits [B vocab]."
+  [{:keys [config weights] :as model} prompts]
+  (let [B (count prompts)
+        T (count (first prompts))]
+    (when-not (every? #(= T (count %)) prompts)
+      (throw (ex-info "prefill-batched: prompts must be equal token length"
+                      {:lengths (mapv count prompts)})))
+    (let [ids   (mx/array (vec (apply concat prompts)) [B T] mx/int32)
+          embed (get weights "model.embed_tokens.weight")
+          h0    (mx/take-idx embed ids 0)                        ; [B T hidden]
+          [logits cache] (forward-hidden model h0 T (init-cache model) 0)
+          last' (mx/take-idx logits (mx/arange (dec T) T) 1)]    ; [B 1 vocab]
+      [(mx/reshape last' [B (:vocab config)]) cache])))
 
 (defn forward
   "Uncached full forward over a token-id sequence (offset 0, fresh cache).

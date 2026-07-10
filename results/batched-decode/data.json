@@ -1,0 +1,28 @@
+{
+  "model": "/home/robert/.cache/models/qwen3.5-0.8b-mlx-bf16",
+  "prompt-tokens": 5,
+  "n-steps": 32,
+  "warmup": 4,
+  "rows": [
+    {
+      "k": 1,
+      "ms-per-step": 51.119451843750014,
+      "ms-per-lane-step": 51.119451843750014
+    },
+    {
+      "k": 2,
+      "ms-per-step": 58.757426468750026,
+      "ms-per-lane-step": 29.378713234375013
+    },
+    {
+      "k": 4,
+      "ms-per-step": 63.254737750000004,
+      "ms-per-lane-step": 15.813684437500001
+    },
+    {
+      "k": 8,
+      "ms-per-step": 68.0384985,
+      "ms-per-lane-step": 8.5048123125
+    }
+  ]
+}

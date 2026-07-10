@@ -25,7 +25,8 @@
   (:require [cljs.test :refer [deftest is testing]]
             [genmlx.test-helpers :as h]
             [genmlx.mlx :as mx]
-            [genmlx.mlx.random :as rng]))
+            [genmlx.mlx.random :as rng]
+            [genmlx.llm.qwen35-forward :as q35]))
 
 ;; Production dims (Ornith 35B GDN): Hv=32, Dk=Dv=128.
 (def ^:private Hv 32)
@@ -38,30 +39,13 @@
   (mx/take-idx a (mx/arange start stop) 1))
 
 (defn- per-step-ref
-  "Token-serial gated-delta recurrence — mirrors qwen35_forward.cljs
-   gdn-layer's inner reduce / Rust gated_delta_step, generalized over B.
-   `gg` is the EXP-space gate. Returns [y state']."
+  "Token-serial gated-delta recurrence — the PRODUCTION per-step path
+   (qwen35_forward/gdn-recur-steps, the T=1 decode arm, B-general since
+   genmlx-9uyg). Using the production fn as the reference means the decode
+   path and this gate cannot drift apart. `gg` is the EXP-space gate.
+   Returns [y state']."
   [q k v gg beta state]
-  (let [[b T _ _] (mx/shape q)
-        [st outs]
-        (reduce
-         (fn [[st outs] t]
-           (let [qt (mx/squeeze (slice-t q t (inc t)) [1])    ; [B Hv Dk]
-                 kt (mx/squeeze (slice-t k t (inc t)) [1])    ; [B Hv Dk]
-                 vt (mx/squeeze (slice-t v t (inc t)) [1])    ; [B Hv Dv]
-                 gt (mx/squeeze (slice-t gg t (inc t)) [1])   ; [B Hv]
-                 bt (mx/squeeze (slice-t beta t (inc t)) [1]) ; [B Hv]
-                 st (mx/multiply st (mx/reshape gt [b Hv 1 1]))
-                 k4 (mx/reshape kt [b Hv 1 Dk])
-                 kv-mem (mx/sum (mx/multiply st k4) [3] false)      ; [B Hv Dv]
-                 delta  (mx/multiply (mx/subtract vt kv-mem)
-                                     (mx/reshape bt [b Hv 1]))
-                 st (mx/add st (mx/multiply k4 (mx/reshape delta [b Hv Dv 1])))
-                 q4 (mx/reshape qt [b Hv 1 Dk])
-                 yt (mx/sum (mx/multiply st q4) [3] false)]          ; [B Hv Dv]
-             [st (conj outs (mx/reshape yt [b 1 Hv Dv]))]))
-         [state []] (range T))]
-    [(mx/concatenate outs 1) st]))
+  (q35/gdn-recur-steps q k v gg beta state))
 
 (defn- rand-inputs
   "Well-conditioned random GDN inputs at production dims: q/k carry the

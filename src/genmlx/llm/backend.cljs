@@ -481,15 +481,58 @@
    after install-prefill! of a VLM prefix)."
   [model token-id]
   (if (cljs-forward-model? model)
-    (let [{:keys [cache offset rope-delta]} @(:cache model)
-          [logits cache'] (fwd/step (:fwd model) cache
-                                    (+ offset (or rope-delta 0)) token-id)]
-      (reset! (:cache model) {:cache cache' :offset (inc offset)
-                              :rope-delta rope-delta})
-      logits)
+    (let [{:keys [cache offset rope-delta batch]} @(:cache model)]
+      (when batch
+        (throw (ex-info (str "forward-step: the cache is [K=" batch "]-batched "
+                             "(forward-step-batched ran) — a scalar step would "
+                             "mis-shape it. Continue with forward-step-batched, "
+                             "or init-cache!/forward-prefill afresh.")
+                        {:genmlx/error :batched-cache-scalar-step :batch batch})))
+      (let [[logits cache'] (fwd/step (:fwd model) cache
+                                      (+ offset (or rope-delta 0)) token-id)]
+        (reset! (:cache model) {:cache cache' :offset (inc offset)
+                                :rope-delta rope-delta})
+        logits))
     (let [input (ids->input [token-id])
           logits (forward-with-cache model input)]
       (-> logits (mx/index 0) (mx/index 0)))))
+
+(defn forward-step-batched
+  "Advance K lockstep decode lanes by one token each on the OWNED path
+   (genmlx-9uyg). `tok` is a [K]-shaped int array of per-lane token ids;
+   returns next-position logits of shape [K vocab].
+
+   On the FIRST call after a B=1 prefill the per-layer cache is tiled to K
+   via fwd/broadcast-cache (persistent values — the B=1 prefix is shared,
+   not copied) and K is recorded in the cache cell; afterwards K must stay
+   stable. All lanes advance in lockstep at the shared scalar offset
+   (rotating at offset + rope-delta, so lanes over a VLM prefix work
+   unchanged) — this bakes in no-per-lane-early-stop; dead lanes are the
+   CALLER's concern (make-llm-gf-batched feeds pad and freezes their
+   logprob via the masked-EOS algebra)."
+  [model tok]
+  (when-not (cljs-forward-model? model)
+    (throw (ex-info (str "forward-step-batched drives the OWNED forward; the "
+                         "native model has no batched step surface.")
+                    {:genmlx/error :batched-step-owned-only
+                     :model-type (type model)})))
+  (let [k (first (mx/shape tok))
+        {:keys [cache offset rope-delta batch]} @(:cache model)]
+    (when (nil? cache)
+      (throw (ex-info "forward-step-batched: no prefix in the cache — call init-cache! + forward-prefill first."
+                      {:genmlx/error :no-prefill})))
+    (let [cache (cond
+                  (nil? batch) (fwd/broadcast-cache cache k)
+                  (= batch k)  cache
+                  :else (throw (ex-info (str "forward-step-batched: batch width changed "
+                                             "mid-decode: " batch " -> " k)
+                                        {:genmlx/error :batch-width-changed
+                                         :batch batch :k k})))
+          [logits cache'] (fwd/step-batched (:fwd model) cache
+                                            (+ offset (or rope-delta 0)) tok)]
+      (reset! (:cache model) {:cache cache' :offset (inc offset)
+                              :rope-delta rope-delta :batch k})
+      logits)))
 
 ;; ---------------------------------------------------------------------------
 ;; Branchable cache — native MoE (bean mlx-19wy) + owned forward (genmlx-7f93)
@@ -544,10 +587,18 @@
 (defn branch-cache!
   "Fork the model-internal cache at its CURRENT position into an independent
    branch; returns the branch's opaque numeric id. Call AFTER init-cache! +
-   forward-prefill (and any forward-steps). Owned: O(1) reference share."
+   forward-prefill (and any forward-steps). Owned: O(1) reference share.
+   A [K]-batched cache (forward-step-batched ran) is refused — the branch
+   ledger is scalar; batched-lane branching is a genmlx-9uyg follow-up."
   [model]
   (if (cljs-forward-model? model)
-    (owned-branch! model (or @(:cache model) {:cache nil :offset 0}))
+    (let [state (or @(:cache model) {:cache nil :offset 0})]
+      (when (:batch state)
+        (throw (ex-info (str "branch-cache!: the cache is [K=" (:batch state)
+                             "]-batched — the owned branch ledger is scalar "
+                             "(batched-lane branching is a follow-up).")
+                        {:genmlx/error :batched-cache-branch :batch (:batch state)})))
+      (owned-branch! model state))
     (.branchCache model)))
 
 (defn branch-from

@@ -190,7 +190,7 @@
 
 (defn moe-mlp
   "Sparse-MoE MLP (qwen3_5_moe) over the post-attention-normed hidden `hn`
-   [1 T hidden]. Mirrors sparse_moe.rs / router.rs (genmlx-g6vk D1):
+   [B T hidden]. Mirrors sparse_moe.rs / router.rs (genmlx-g6vk D1):
 
      router logits -> softmax over ALL experts in PRECISE f32 (before top-k)
      -> top-k by argsort (mx/topk returns values, not indices)
@@ -203,55 +203,94 @@
 
    `sorted?` stays false: measured on this backend the flag is a performance
    hint, not a contract (gather_qmm_oracle_test Part 3); sorting tokens by
-   expert is a later optimization."
+   expert is a later optimization.
+
+   Batch (genmlx-9uyg): `hn` is [B T hidden]; routing/experts are row-wise,
+   so the B·T rows flatten together and the batch axis costs nothing."
   [cfg w prefix hn T]
   (let [{:keys [hidden n-experts n-active expert-qz]} cfg
+        b      (first (mx/shape hn))
+        BT     (* b T)
         g      (fn [s] (get w (str prefix s)))
         dtype  (mx/dtype hn)
-        x      (mx/reshape hn [T hidden])
+        x      (mx/reshape hn [BT hidden])
         ;; --- router (gate.weight is dequantized at load) ---
         probs  (mx/softmax (mx/astype (linear x (g "gate.weight")) mx/float32) -1)
-        order  (mx/argsort probs -1)                              ; [T E] ascending
+        order  (mx/argsort probs -1)                              ; [BT E] ascending
         top    (mx/astype (slice-ax order 1 (- n-experts n-active) n-experts)
-                          mx/uint32)                              ; [T k]
-        topw   (mx/take-along-axis probs (mx/astype top mx/int32) 1) ; [T k] f32
+                          mx/uint32)                              ; [BT k]
+        topw   (mx/take-along-axis probs (mx/astype top mx/int32) 1) ; [BT k] f32
         topw   (mx/divide topw (mx/sum topw [1] true))            ; renormalize
-        ;; --- experts: x [T 1 1 hidden] x idx [T k] -> [T k 1 moe-inter] ---
-        x4     (mx/reshape x [T 1 1 hidden])
+        ;; --- experts: x [BT 1 1 hidden] x idx [BT k] -> [BT k 1 moe-inter] ---
+        x4     (mx/reshape x [BT 1 1 hidden])
         gate-o (switch-glu w (str prefix "switch_mlp.gate_proj.") x4 top expert-qz)
         up-o   (switch-glu w (str prefix "switch_mlp.up_proj.")   x4 top expert-qz)
         expert (switch-glu w (str prefix "switch_mlp.down_proj.")
                            (mx/multiply (mx/silu gate-o) up-o) top expert-qz)
-        expert (mx/reshape expert [T n-active hidden])            ; [T k hidden]
+        expert (mx/reshape expert [BT n-active hidden])           ; [BT k hidden]
         moe-o  (mx/sum (mx/multiply expert
                                     (mx/reshape (mx/astype topw dtype)
-                                                [T n-active 1]))
-                       [1] false)                                 ; [T hidden]
+                                                [BT n-active 1]))
+                       [1] false)                                 ; [BT hidden]
         ;; --- shared expert: dense SwiGLU for every token, sigmoid-gated ---
-        shared (mx/reshape (mlp w (str prefix "shared_expert.") x) [T hidden])
-        sgate  (mx/sigmoid (linear x (g "shared_expert_gate.weight")))  ; [T 1]
+        shared (mx/reshape (mlp w (str prefix "shared_expert.") x) [BT hidden])
+        sgate  (mx/sigmoid (linear x (g "shared_expert_gate.weight")))  ; [BT 1]
         out    (mx/add moe-o (mx/multiply shared sgate))]
-    (mx/reshape out [1 T hidden])))
+    (mx/reshape out [b T hidden])))
 
 ;; ----------------------------------------------------------------------------
 ;; GatedDeltaNet linear-attention layer
 ;; ----------------------------------------------------------------------------
 
+(defn gdn-recur-steps
+  "Token-serial gated-delta recurrence over q/k [B T Hv Dk], v [B T Hv Dv],
+   gg/beta [B T Hv] (gg is the EXP-space gate), state [B Hv Dv Dk] — all f32.
+   Returns [y [B T Hv Dv] state']. B is read from the shapes (the
+   [K]-particle batch axis, genmlx-9uyg; at B=1 this is byte-identical to the
+   pre-9uyg inline reduce). This is the CORRECTNESS REFERENCE for the fused
+   mx/gated-delta-scan: gdn_scan_contract_test uses THIS fn as its per-step
+   reference, so the production decode path and the scan gate cannot drift."
+  [q k v gg beta init-state]
+  (let [[b T Hv Dk] (mx/shape q)
+        Dv (last (mx/shape v))
+        [final-state outs]
+        (reduce
+         (fn [[st outs] t]
+           (let [qt (mx/squeeze (slice-ax q  1 t (inc t)) [1])   ; [B Hv Dk]
+                 kt (mx/squeeze (slice-ax k  1 t (inc t)) [1])   ; [B Hv Dk]
+                 vt (mx/squeeze (slice-ax v  1 t (inc t)) [1])   ; [B Hv Dv]
+                 gt (mx/squeeze (slice-ax gg 1 t (inc t)) [1])   ; [B Hv]
+                 bt (mx/squeeze (slice-ax beta 1 t (inc t)) [1]) ; [B Hv]
+                 st (mx/multiply st (mx/reshape gt [b Hv 1 1]))  ; decay state
+                 k4 (mx/reshape kt [b Hv 1 Dk])
+                 kv-mem (mx/sum (mx/multiply st k4) [3] false)   ; [B Hv Dv]
+                 delta  (mx/multiply (mx/subtract vt kv-mem) (mx/reshape bt [b Hv 1]))
+                 st (mx/add st (mx/multiply k4 (mx/reshape delta [b Hv Dv 1])))
+                 q4 (mx/reshape qt [b Hv 1 Dk])
+                 yt (mx/sum (mx/multiply st q4) [3] false)]      ; [B Hv Dv]
+             [st (conj outs (mx/reshape yt [b 1 Hv Dv]))]))
+         [init-state []] (range T))]
+    [(mx/concatenate outs 1) final-state]))
+
 (defn- gdn-layer
   "GatedDeltaNet linear attention over the pre-attention-normed hidden
-   `hn` [1 T hidden]. `ce` is the prior {:conv :rec} cache entry (or nil):
-   :conv = last K-1 conv inputs [1 K-1 conv-dim], :rec = recurrent state
-   [1 Hv Dv Dk]. Returns [out [1 T hidden] new-cache-entry].
+   `hn` [B T hidden] (B read from the shape — the [K]-particle batch axis,
+   genmlx-9uyg; B=1 for the scalar paths). `ce` is the prior {:conv :rec}
+   cache entry (or nil): :conv = last K-1 conv inputs [B K-1 conv-dim],
+   :rec = recurrent state [B Hv Dv Dk]. Returns [out [B T hidden]
+   new-cache-entry].
 
    Mirrors gated_delta_net.rs::forward + gated_delta.rs (use_kernel=false).
    The recurrence routes by block size (genmlx-ps8a): T>1 (prefill chunks)
    takes ONE fused chunk-parallel mx/gated-delta-scan membrane call (the
-   native CUDA prefill algorithm, BT=64 WY form) instead of T host-loop
-   iterations; T=1 (decode) keeps the per-step reduce — the correctness
-   reference, byte-identical to the pre-ps8a path. Parity between the two
-   is pinned by gdn_scan_contract_test."
+   native CUDA prefill algorithm, BT=64 WY form; batch-ready by
+   construction) instead of T host-loop iterations; T=1 (decode) keeps the
+   per-step reduce (gdn-recur-steps) — the correctness reference,
+   byte-identical to the pre-ps8a path at B=1. Parity between the two is
+   pinned by gdn_scan_contract_test."
   [cfg w prefix hn T ce]
   (let [{:keys [eps lin-k-heads lin-v-heads lin-k-dim lin-v-dim conv-k]} cfg
+        b       (first (mx/shape hn))
         Hk      lin-k-heads
         Hv      lin-v-heads
         Dk      lin-k-dim
@@ -263,27 +302,27 @@
         g       (fn [s] (get w (str prefix s)))
         dtype   (mx/dtype hn)
         ;; --- input projections (pre-split on disk) ---
-        qkv     (linear hn (g "in_proj_qkv.weight"))  ; [1 T conv-dim]
-        z       (linear hn (g "in_proj_z.weight"))    ; [1 T val-dim]
-        bb      (linear hn (g "in_proj_b.weight"))    ; [1 T Hv]
-        aa      (linear hn (g "in_proj_a.weight"))    ; [1 T Hv]
+        qkv     (linear hn (g "in_proj_qkv.weight"))  ; [B T conv-dim]
+        z       (linear hn (g "in_proj_z.weight"))    ; [B T val-dim]
+        bb      (linear hn (g "in_proj_b.weight"))    ; [B T Hv]
+        aa      (linear hn (g "in_proj_a.weight"))    ; [B T Hv]
         ;; --- depthwise causal conv1d over qkv (sum of K shifted weighted slices) ---
         conv-w  (g "conv1d.weight")                   ; [conv-dim K 1]
-        pad     (if ce (:conv ce) (mx/zeros [1 (dec K) conv-dim] dtype))
-        padded  (mx/concatenate [pad qkv] 1)          ; [1 T+K-1 conv-dim]
+        pad     (if ce (:conv ce) (mx/zeros [b (dec K) conv-dim] dtype))
+        padded  (mx/concatenate [pad qkv] 1)          ; [B T+K-1 conv-dim]
         conv-out (reduce (fn [acc j]
                            (let [wj  (mx/reshape (slice-ax conv-w 1 j (inc j)) [1 1 conv-dim])
-                                 seg (slice-ax padded 1 j (+ j T))]   ; [1 T conv-dim]
+                                 seg (slice-ax padded 1 j (+ j T))]   ; [B T conv-dim]
                              (mx/add acc (mx/multiply seg wj))))
-                         (mx/zeros [1 T conv-dim] dtype)
+                         (mx/zeros [b T conv-dim] dtype)
                          (range K))
         conv-out (mx/silu conv-out)
         ;; new conv-state = last K-1 timesteps of the conv input
         new-conv (slice-ax padded 1 T (+ T (dec K)))
         ;; --- split q/k/v and reshape to heads ---
-        q (mx/reshape (slice-ax conv-out 2 0 key-dim)             [1 T Hk Dk])
-        k (mx/reshape (slice-ax conv-out 2 key-dim (* 2 key-dim)) [1 T Hk Dk])
-        v (mx/reshape (slice-ax conv-out 2 (* 2 key-dim) conv-dim) [1 T Hv Dv])
+        q (mx/reshape (slice-ax conv-out 2 0 key-dim)             [b T Hk Dk])
+        k (mx/reshape (slice-ax conv-out 2 key-dim (* 2 key-dim)) [b T Hk Dk])
+        v (mx/reshape (slice-ax conv-out 2 (* 2 key-dim) conv-dim) [b T Hv Dv])
         ;; --- q/k RMSNorm (no weight) with inv-scale (matches Python/Rust exactly) ---
         inv (js/Math.pow Dk -0.5)
         q (mx/multiply (rms-no-weight q Dk 1e-6) (* inv inv))
@@ -293,53 +332,35 @@
         ;; "float32") to match the upstream fused kernel's f32 state accumulation;
         ;; projections/conv stay in the model dtype, and y is cast back below so
         ;; the residual stream remains bf16.
-        beta   (mx/astype (mx/sigmoid bb) mx/float32)  ; [1 T Hv]
+        beta   (mx/astype (mx/sigmoid bb) mx/float32)  ; [B T Hv]
         a-log  (mx/astype (g "A_log") mx/float32)      ; [Hv]
         dt-bias (mx/astype (g "dt_bias") mx/float32)   ; [Hv]
         ;; Log-space decay gate, computed DIRECTLY — never (mx/log gg): strong
         ;; decay underflows exp-space gg to 0 and log(0) = -inf would NaN the
         ;; fused scan's in-chunk decay-diff (genmlx-ps8a).
         g-log  (mx/multiply (mx/multiply (mx/exp a-log) -1.0)
-                            (softplus (mx/add (mx/astype aa mx/float32) dt-bias)))  ; [1 T Hv]
+                            (softplus (mx/add (mx/astype aa mx/float32) dt-bias)))  ; [B T Hv]
         ;; --- GQA: repeat q,k from Hk to Hv heads (np.repeat along head axis) ---
         rep (quot Hv Hk)
         q   (mx/astype (if (> rep 1) (mx/repeat-arr q rep 2) q) mx/float32)
         k   (mx/astype (if (> rep 1) (mx/repeat-arr k rep 2) k) mx/float32)
         v   (mx/astype v mx/float32)
         ;; --- gated delta recurrence, f32 accumulation ---
-        init-state (if ce (:rec ce) (mx/zeros [1 Hv Dv Dk] mx/float32))
+        init-state (if ce (:rec ce) (mx/zeros [b Hv Dv Dk] mx/float32))
         [y-f32 final-state]
         (if (> T 1)
           ;; Multi-token block (prefill chunk): ONE fused chunk-parallel scan
           ;; (BT=64 WY form) instead of T host-loop iterations — the 45→17.6
-          ;; ms/token lever (genmlx-ps8a). Same math as the per-step reduce
-          ;; below (parity pinned by gdn_scan_contract_test).
+          ;; ms/token lever (genmlx-ps8a). Same math as gdn-recur-steps
+          ;; (parity pinned by gdn_scan_contract_test).
           (mx/gated-delta-scan q k v g-log beta init-state)
           ;; T=1 (decode): per-step recurrence — the correctness reference.
-          (let [gg (mx/exp g-log)                       ; [1 T Hv]
-                [final-state outs]
-                (reduce
-                 (fn [[st outs] t]
-                   (let [qt (mx/squeeze (slice-ax q  1 t (inc t)) [1])   ; [1 Hv Dk]
-                         kt (mx/squeeze (slice-ax k  1 t (inc t)) [1])   ; [1 Hv Dk]
-                         vt (mx/squeeze (slice-ax v  1 t (inc t)) [1])   ; [1 Hv Dv]
-                         gt (mx/squeeze (slice-ax gg 1 t (inc t)) [1])   ; [1 Hv]
-                         bt (mx/squeeze (slice-ax beta 1 t (inc t)) [1]) ; [1 Hv]
-                         st (mx/multiply st (mx/reshape gt [1 Hv 1 1]))  ; decay state
-                         k4 (mx/reshape kt [1 Hv 1 Dk])
-                         kv-mem (mx/sum (mx/multiply st k4) [3] false)   ; [1 Hv Dv]
-                         delta  (mx/multiply (mx/subtract vt kv-mem) (mx/reshape bt [1 Hv 1]))
-                         st (mx/add st (mx/multiply k4 (mx/reshape delta [1 Hv Dv 1])))
-                         q4 (mx/reshape qt [1 Hv 1 Dk])
-                         yt (mx/sum (mx/multiply st q4) [3] false)]      ; [1 Hv Dv]
-                     [st (conj outs (mx/reshape yt [1 1 Hv Dv]))]))
-                 [init-state []] (range T))]
-            [(mx/concatenate outs 1) final-state]))
-        y (mx/astype y-f32 dtype)    ; [1 T Hv Dv], back to model dtype
+          (gdn-recur-steps q k v (mx/exp g-log) beta init-state))
+        y (mx/astype y-f32 dtype)    ; [B T Hv Dv], back to model dtype
         ;; --- gated RMSNorm: silu(z) * rms_norm(y, norm_weight[Dv], eps) ---
-        z4 (mx/reshape z [1 T Hv Dv])
+        z4 (mx/reshape z [b T Hv Dv])
         y-norm (mx/multiply (mx/silu z4) (mx/rms-norm y (g "norm.weight") eps))
-        y-flat (mx/reshape y-norm [1 T val-dim])]
+        y-flat (mx/reshape y-norm [b T val-dim])]
     [(linear y-flat (g "out_proj.weight")) {:conv new-conv :rec final-state}]))
 
 ;; ----------------------------------------------------------------------------
@@ -394,25 +415,28 @@
 ;; ----------------------------------------------------------------------------
 
 (defn- full-attn-layer
-  "Qwen3.5 full attention over `hn` [1 T hidden]. q_proj is 2x width: first
+  "Qwen3.5 full attention over `hn` [B T hidden] (B read from the shape —
+   the [K]-particle batch axis, genmlx-9uyg). q_proj is 2x width: first
    head-dim = query, second = output gate (sigmoid). PARTIAL RoPE over the first
-   rope_dims of head_dim. `ce` = prior {:k :v} (post-RoPE) cache or nil; `offset`
-   is the absolute position of the first new token. Returns [out new-cache-entry].
+   rope_dims of head_dim. `ce` = prior {:k :v} (post-RoPE, [B H T hd]) cache or
+   nil; `offset` is the absolute position of the first new token (lockstep
+   across lanes). Returns [out new-cache-entry].
 
    Mirrors attention.rs::Qwen3_5Attention::forward."
   [cfg w prefix hn T ce offset mask mrope]
   (let [{:keys [n-heads n-kv-heads head-dim eps rope-theta partial]} cfg
+        b   (first (mx/shape hn))
         H   n-heads
         Hkv n-kv-heads
         hd  head-dim
         rope-dims (js/Math.floor (* hd partial))
         scale (js/Math.pow hd -0.5)
         g   (fn [s] (get w (str prefix s)))
-        qg  (mx/reshape (linear hn (g "q_proj.weight")) [1 T H (* 2 hd)])
-        queries (slice-ax qg 3 0 hd)                          ; [1 T H hd]
-        gate    (mx/reshape (slice-ax qg 3 hd (* 2 hd)) [1 T (* H hd)])
-        keys    (mx/reshape (linear hn (g "k_proj.weight")) [1 T Hkv hd])
-        values  (mx/reshape (linear hn (g "v_proj.weight")) [1 T Hkv hd])
+        qg  (mx/reshape (linear hn (g "q_proj.weight")) [b T H (* 2 hd)])
+        queries (slice-ax qg 3 0 hd)                          ; [B T H hd]
+        gate    (mx/reshape (slice-ax qg 3 hd (* 2 hd)) [b T (* H hd)])
+        keys    (mx/reshape (linear hn (g "k_proj.weight")) [b T Hkv hd])
+        values  (mx/reshape (linear hn (g "v_proj.weight")) [b T Hkv hd])
         queries (mx/rms-norm queries (g "q_norm.weight") eps)
         keys    (mx/rms-norm keys    (g "k_norm.weight") eps)
         ;; transpose to [1 heads T hd], then rotate: 3-axis interleaved M-RoPE
@@ -426,8 +450,8 @@
         k-full (if ce (mx/concatenate [(:k ce) k] 2) k)        ; concat along seq
         v-full (if ce (mx/concatenate [(:v ce) v] 2) v)
         o (-> (mx/scaled-dot-product-attention q k-full v-full scale mask)
-              (mx/transpose [0 2 1 3])                          ; [1 T H hd]
-              (mx/reshape [1 T (* H hd)]))
+              (mx/transpose [0 2 1 3])                          ; [B T H hd]
+              (mx/reshape [b T (* H hd)]))
         o (mx/multiply o (mx/sigmoid gate))]                   ; output gate
     [(linear o (g "o_proj.weight")) {:k k-full :v v-full}]))
 
@@ -442,11 +466,12 @@
   (vec (repeat (:n-layers config) nil)))
 
 (defn- forward-hidden
-  "Layer loop over pre-built hidden states h0 [1 T hidden]: rotate with the
-   3-axis `mrope` tables when given (VLM prefill), else scalar RoPE at
+  "Layer loop over pre-built hidden states h0 [B T hidden] (B read from the
+   shape — the [K]-particle batch axis, genmlx-9uyg): rotate with the 3-axis
+   `mrope` tables when given (VLM prefill, B=1), else scalar RoPE at
    `offset`. `prior` = physical tokens already in the cache (mask width for a
    chunked prefill block; 0 for a from-scratch prefill). Returns
-   [logits new-cache]."
+   [logits [B T vocab] new-cache]."
   [{:keys [config weights]} h0 T cache offset mrope prior]
   (let [{:keys [n-layers eps vocab layer-types]} config
         embed (get weights (str wp "embed_tokens.weight"))
@@ -474,19 +499,51 @@
         lmw (if (:tie? config)
               embed
               (get weights "language_model.lm_head.weight"))]
-    [(mx/reshape (linear hf lmw) [T vocab]) new-cache]))
+    [(linear hf lmw) new-cache]))
 
 (defn forward-cached
   "Run the forward over `token-ids` from absolute position `offset`, threading
    and extending the per-layer `cache`. Returns [logits new-cache] with logits
    [seq vocab]. A causal mask is built for multi-token chunks (prefill)."
   [{:keys [config weights] :as model} token-ids cache offset]
-  (let [{:keys [hidden]} config
+  (let [{:keys [hidden vocab]} config
         T     (count token-ids)
         ids   (mx/array (vec token-ids) [T] mx/int32)
         embed (get weights (str wp "embed_tokens.weight"))
-        h0    (mx/reshape (mx/take-idx embed ids 0) [1 T hidden])]
-    (forward-hidden model h0 T cache offset nil offset)))
+        h0    (mx/reshape (mx/take-idx embed ids 0) [1 T hidden])
+        [logits new-cache] (forward-hidden model h0 T cache offset nil offset)]
+    [(mx/reshape logits [T vocab]) new-cache]))
+
+(defn step-batched
+  "Advance K lockstep lanes one token each from a [K …]-shaped `cache`
+   (current length = `offset`, shared across lanes — the
+   no-per-lane-early-stop contract, genmlx-9uyg). `tok` is a [K]-shaped int
+   array of per-lane token ids. Returns [logits cache'] with logits [K vocab]."
+  [{:keys [config weights] :as model} cache offset tok]
+  (let [{:keys [hidden vocab]} config
+        K     (first (mx/shape tok))
+        embed (get weights (str wp "embed_tokens.weight"))
+        h0    (mx/reshape (mx/take-idx embed (mx/astype tok mx/int32) 0)
+                          [K 1 hidden])
+        [logits new-cache] (forward-hidden model h0 1 cache offset nil offset)]
+    [(mx/reshape logits [K vocab]) new-cache]))
+
+(defn prefill-batched
+  "Process K equal-length prompts in ONE [B T] forward over a fresh cache
+   (batch-independence entry, genmlx-9uyg — the particle path itself prefills
+   at B=1 and tiles). Returns [last-logits cache] with last-logits [B vocab]."
+  [{:keys [config weights] :as model} prompts]
+  (let [{:keys [hidden vocab]} config
+        B (count prompts)
+        T (count (first prompts))]
+    (when-not (every? #(= T (count %)) prompts)
+      (throw (ex-info "prefill-batched: prompts must be equal token length"
+                      {:lengths (mapv count prompts)})))
+    (let [ids   (mx/array (vec (apply concat prompts)) [B T] mx/int32)
+          embed (get weights (str wp "embed_tokens.weight"))
+          h0    (mx/take-idx embed ids 0)                        ; [B T hidden]
+          [logits cache] (forward-hidden model h0 T (init-cache model) 0 nil 0)]
+      [(mx/reshape (slice-ax logits 1 (dec T) T) [B vocab]) cache])))
 
 (defn forward-embeds
   "VLM-prefill entry (genmlx-w3og): run the forward over pre-merged input
@@ -498,11 +555,12 @@
    physical tokens already in `cache` (0 for the first chunk).
    Returns [logits new-cache]."
   [{:keys [config] :as model} h0 cache position-ids prior]
-  (let [{:keys [head-dim partial rope-theta mrope-section]} config
+  (let [{:keys [head-dim partial rope-theta mrope-section vocab]} config
         T     (count (first position-ids))
         dims  (js/Math.floor (* head-dim partial))
-        mrope (mrope-tables position-ids (or mrope-section [11 11 10]) dims rope-theta)]
-    (forward-hidden model h0 T cache 0 mrope prior)))
+        mrope (mrope-tables position-ids (or mrope-section [11 11 10]) dims rope-theta)
+        [logits new-cache] (forward-hidden model h0 T cache 0 mrope prior)]
+    [(mx/reshape logits [T vocab]) new-cache]))
 
 (defn materialize-cache!
   "Force-evaluate every array in a per-layer cache (the {:k :v} / {:conv :rec}

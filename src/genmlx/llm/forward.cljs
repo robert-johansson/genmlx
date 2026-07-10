@@ -9,7 +9,8 @@
 
    This keeps the proven vanilla-Qwen3 path (qwen3-forward) untouched: the only
    backend change is requiring this façade instead of qwen3-forward directly."
-  (:require [genmlx.llm.qwen3-forward :as q3]
+  (:require [genmlx.mlx :as mx]
+            [genmlx.llm.qwen3-forward :as q3]
             [genmlx.llm.qwen35-forward :as q35]
             [genmlx.llm.qwen35-vision-forward :as vis]
             ["fs" :as fs]))
@@ -80,3 +81,41 @@
 (defn init-cache         [m]                (if (q35? m) (q35/init-cache m)             (q3/init-cache m)))
 (defn prefill            [m ids]            (if (q35? m) (q35/prefill m ids)            (q3/prefill m ids)))
 (defn step               [m cache offset id] (if (q35? m) (q35/step m cache offset id)  (q3/step m cache offset id)))
+
+;; --- [K]-particle batch axis (genmlx-9uyg) ---------------------------------
+
+(defn step-batched
+  "Advance K lockstep lanes one token each: `tok` is a [K]-shaped int array,
+   `cache` a [K …]-tiled per-layer cache. Returns [logits [K vocab] cache']."
+  [m cache offset tok]
+  (if (q35? m) (q35/step-batched m cache offset tok) (q3/step-batched m cache offset tok)))
+
+(defn prefill-batched
+  "K equal-length prompts through ONE [B T] forward over a fresh cache.
+   Returns [last-logits [B vocab] cache]. The particle path itself prefills
+   at B=1 and tiles with broadcast-cache; this entry exists for genuinely
+   different prompts (and the batch-independence gate)."
+  [m prompts]
+  (if (q35? m) (q35/prefill-batched m prompts) (q3/prefill-batched m prompts)))
+
+(defn broadcast-cache
+  "Tile a B=1 per-layer cache to B=k for lockstep [K]-lane decode. Family-
+   agnostic: every entry is a map of arrays with leading batch dim 1
+   ({:k :v} full-attn / {:conv :rec} GDN), and mx/broadcast-to over immutable
+   MxArray values shares — never copies or aliases-mutably — the prefix, so
+   the B=1 original stays live and valid (the same persistent-value property
+   the owned branch ledger rides, genmlx-7f93)."
+  [cache k]
+  (mapv (fn [ce]
+          (when ce
+            (reduce-kv
+             (fn [m' kk arr]
+               (let [sh (mx/shape arr)]
+                 (when-not (= 1 (first sh))
+                   (throw (ex-info (str "broadcast-cache: entry " kk
+                                        " has leading dim " (first sh)
+                                        " — expected a B=1 cache")
+                                   {:key kk :shape (vec sh)})))
+                 (assoc m' kk (mx/broadcast-to arr (into [k] (rest sh))))))
+             {} ce)))
+        cache))
