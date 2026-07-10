@@ -429,34 +429,98 @@
 
 (def ^:private neg-inf js/Number.NEGATIVE_INFINITY)
 
+;; --- fast mask context (genmlx-4tcd) ---------------------------------------
+;;
+;; The naive mask sweep advances EVERY vocab token through the DFA from every
+;; state: S × V full-token advances with a per-char vector-keyed map lookup —
+;; ~8 minutes for a realistic tool-call grammar (773 states × 151k tokens).
+;; Two structural facts make it ~100x cheaper:
+;;   1. a token can only be valid from state s if its FIRST char has an
+;;      out-transition from s — bucket the vocab by first char once, then per
+;;      state only walk the buckets of s's out-chars;
+;;   2. the DFA transitions convert once into nested JS Maps, so the inner
+;;      advance is two .get calls per char instead of a fresh [state ch]
+;;      vector key against a CLJS map.
+;; Semantics are IDENTICAL to the naive sweep (same validity rule).
+
+(defn- transitions-jsmap
+  "JS Map {state -> JS Map {char -> state'}} view of (:transitions dfa)."
+  [dfa]
+  (let [m (js/Map.)]
+    (doseq [[[s ch] to] (:transitions dfa)]
+      (let [row (or (.get m s) (let [r (js/Map.)] (.set m s r) r))]
+        (.set row ch to)))
+    m))
+
+(defn- first-char-buckets
+  "JS Map {first-char -> JS Array of token ids} over the token index."
+  [token-index]
+  (let [m (js/Map.)]
+    (dotimes [i (count token-index)]
+      (let [t (nth token-index i)]
+        (when (and t (pos? (count t)))
+          (let [c (.charAt t 0)
+                arr (or (.get m c) (let [a (array)] (.set m c a) a))]
+            (.push arr i)))))
+    m))
+
+(defn mask-ctx
+  "Precomputed fast-sweep context for (dfa, token-index) — build once, use
+   for every state. {:jsm :buckets :n}."
+  [dfa token-index]
+  {:jsm (transitions-jsmap dfa)
+   :buckets (first-char-buckets token-index)
+   :n (count token-index)})
+
+(defn- advance-fast
+  "dfa-advance-string over the JS-map transitions; :dead on any miss."
+  [jsm state s]
+  (let [n (count s)]
+    (loop [st state i 0]
+      (if (>= i n)
+        st
+        (let [row (.get jsm st)
+              nxt (when row (.get row (.charAt s i)))]
+          (if (nil? nxt) :dead (recur nxt (inc i))))))))
+
+(defn- compute-valid-mask*
+  "compute-valid-mask over a prebuilt mask-ctx."
+  [dfa {:keys [jsm buckets n]} state token-index]
+  (let [mask (js/Float32Array. n)
+        alive (:alive dfa)
+        row (.get jsm state)]
+    (.fill mask neg-inf)
+    (when row
+      (.forEach row
+        (fn [_to ch _m]
+          (when-let [ids (.get buckets ch)]
+            (dotimes [j (.-length ids)]
+              (let [i (aget ids j)
+                    final (advance-fast jsm state (nth token-index i))]
+                (when (and (not= final :dead) (contains? alive final))
+                  (aset mask i 0.0))))))))
+    mask))
+
 (defn compute-valid-mask
   "For a given DFA state, compute a logit mask over the vocabulary.
    Returns a Float32Array: 0.0 for valid tokens, -Infinity for invalid.
 
    A token is valid if advancing through all its chars from the given
-   state doesn't reach :dead and the resulting state is alive or accept."
-  [dfa state token-index]
-  (let [n (count token-index)
-        mask (js/Float32Array. n)
-        alive (:alive dfa)]
-    (.fill mask neg-inf)
-    (dotimes [i n]
-      (let [tok-str (nth token-index i)
-            final (when (and tok-str (pos? (count tok-str)))
-                    (dfa-advance-string dfa state tok-str))]
-        (when (and (some? final)
-                   (not= final :dead)
-                   (contains? alive final))
-          (aset mask i 0.0))))
-    mask))
+   state doesn't reach :dead and the resulting state is alive or accept.
+   Pass a prebuilt `ctx` (mask-ctx) when sweeping many states."
+  ([dfa state token-index]
+   (compute-valid-mask* dfa (mask-ctx dfa token-index) state token-index))
+  ([dfa state token-index ctx]
+   (compute-valid-mask* dfa ctx state token-index)))
 
 (defn precompute-masks
   "Precompute valid-token masks for every DFA state.
    Returns a map of {state -> Float32Array mask}.
    Trades memory for O(1) runtime lookup per token step."
   [dfa token-index]
-  (into {} (for [state (:alive dfa)]
-             [state (compute-valid-mask dfa state token-index)])))
+  (let [ctx (mask-ctx dfa token-index)]
+    (into {} (for [state (:alive dfa)]
+               [state (compute-valid-mask* dfa ctx state token-index)]))))
 
 ;; ============================================================
 ;; Grammar constraint record
@@ -489,13 +553,18 @@
      {:dfa dfa
       :token-index token-index
       :eos-id eos-id
-      :masks masks})))
+      :masks masks
+      ;; lazily-built fast-sweep context for on-demand masks on large DFAs
+      ;; (delay = construction-scoped memo of a deterministic value)
+      :ctx (delay (mask-ctx dfa token-index))})))
 
 (defn get-mask
   "Get the logit mask for a DFA state, using precomputed cache if available."
-  [{:keys [dfa token-index masks]} state]
+  [{:keys [dfa token-index masks ctx]} state]
   (or (get masks state)
-      (compute-valid-mask dfa state token-index)))
+      (if ctx
+        (compute-valid-mask dfa state token-index @ctx)
+        (compute-valid-mask dfa state token-index))))
 
 (defn apply-mask
   "Apply a grammar mask to logits. Returns masked logits as MxArray.
@@ -642,18 +711,21 @@ through the DFA) or the prior text left the grammar's language."
         S      (inc dead)
         V      vocab-size
         n      (min (count token-index) V)
+        ctx    (mask-ctx dfa token-index)
+        jsm    (:jsm ctx)
         mask   (js/Float32Array. (* S V))
         trans  (js/Int32Array. (* S V))]
     (.fill mask neg-inf)
     (.fill trans dead)
     (doseq [[s r] (map vector states (range))]
-      (let [src  (get-mask constraint s)
+      (let [src  (or (get (:masks constraint) s)
+                     (compute-valid-mask dfa s token-index ctx))
             base (* r V)]
         (dotimes [t n]
           (when (zero? (aget src t))
             (aset mask (+ base t) 0.0)
             (aset trans (+ base t)
-                  (get row-of (dfa-advance-string dfa s (nth token-index t))
+                  (get row-of (advance-fast jsm s (nth token-index t))
                       dead))))
         (when (< eos-id V)
           (aset mask (+ base eos-id)
