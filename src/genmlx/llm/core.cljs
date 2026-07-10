@@ -36,6 +36,15 @@
    a categorical distribution over the vocabulary. Generation stops
    at EOS or max-tokens, whichever comes first.
 
+   opts (genmlx-jq6l):
+     :images — seq of image byte buffers closed over at construction: the gf
+       then represents p(answer-tokens | images, prompt) on the OWNED VLM
+       path. prompt-ids must carry one <|image_pad|> marker per image (encode
+       a llm/render-chat prompt built with :images). Every GFI op re-runs the
+       body and therefore the full vision prefill — the replay-oracle
+       semantics; the expensive look is per-op, not amortized (branch-ledger
+       amortization is the token-SMC/branched layer's job).
+
    Uses KV cache for O(n) generation instead of O(n²). The cache is
    initialized at the start of each gen body execution and reset at
    the end (including on early EOS exit).
@@ -43,28 +52,31 @@
    Not safe for concurrent execution on the same model — each concurrent
    path needs its own model instance. Not compatible with vsimulate/vgenerate
    (uses mx/item for EOS check, which requires scalar values)."
-  [model-map]
-  (let [{:keys [model tokenizer]} model-map
-        eos (llm/eos-token-id tokenizer)]
-    (dyn/auto-key
-     (gen [prompt-ids max-tokens]
-          (if (zero? max-tokens)
-            prompt-ids
-            (do
-              (llm/init-cache! model)
-              (try
-                (let [logits (llm/forward-prefill model prompt-ids)]
-                  (loop [i 0, context prompt-ids, logits logits]
-                    (if (>= i max-tokens)
-                      context
-                      (let [tok (trace (t-addr i) (dist/categorical logits))
-                            tok-id (mx/item tok)]
-                        (if (= tok-id eos)
-                          (conj context tok-id)
-                          (let [next-logits (llm/forward-step model tok-id)]
-                            (recur (inc i) (conj context tok-id) next-logits)))))))
-                (finally
-                  (llm/reset-cache! model)))))))))
+  ([model-map] (make-llm-gf model-map {}))
+  ([model-map {:keys [images]}]
+   (let [{:keys [model tokenizer]} model-map
+         eos (llm/eos-token-id tokenizer)]
+     (dyn/auto-key
+      (gen [prompt-ids max-tokens]
+           (if (zero? max-tokens)
+             prompt-ids
+             (do
+               (llm/init-cache! model)
+               (try
+                 (let [logits (if (seq images)
+                                (llm/forward-prefill model prompt-ids {:images images})
+                                (llm/forward-prefill model prompt-ids))]
+                   (loop [i 0, context prompt-ids, logits logits]
+                     (if (>= i max-tokens)
+                       context
+                       (let [tok (trace (t-addr i) (dist/categorical logits))
+                             tok-id (mx/item tok)]
+                         (if (= tok-id eos)
+                           (conj context tok-id)
+                           (let [next-logits (llm/forward-step model tok-id)]
+                             (recur (inc i) (conj context tok-id) next-logits)))))))
+                 (finally
+                   (llm/reset-cache! model))))))))))
 
 (defn make-llm-gf-uncached
   "Like make-llm-gf but without KV cache. Recomputes full context at

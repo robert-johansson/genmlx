@@ -10,6 +10,9 @@
             ;; forwards (vanilla Qwen3 + Qwen3.5 hybrid GatedDeltaNet). Same
             ;; 6-fn interface either way; routes on config.json model_type.
             [genmlx.llm.forward :as fwd]
+            ;; jq6l: the owned VLM prefill (vision tower + M-RoPE decoder
+            ;; prefill) — the images route of forward-prefill on the owned path.
+            [genmlx.llm.qwen35-vision-forward :as vfwd]
             [promesa.core :as p]
             ["fs" :as fs]))
 
@@ -224,7 +227,10 @@
    The owned forward (CljsForwardModel) drives the forward/cache API used by the
    LLM-as-GF; it does NOT load the upstream model, so the ChatSession-based
    generate-text path requires {:cljs-forward? false} (generate-text-raw works on
-   either). The VLM path (genmlx.llm.vision/load-vlm) is separate and unaffected."
+   either). VLM checkpoints take image prompts on the owned path via
+   forward-prefill {:images …} / make-llm-gf {:images …} with render-chat
+   (genmlx-jq6l); the native chat-level VLM path (genmlx.llm.vision/load-vlm)
+   remains separate."
   ([model-path] (load-model model-path {}))
   ([model-path opts]
    (p/let [model-type (detect-model-type model-path)
@@ -405,16 +411,49 @@
    Processes all tokens at once, populates the KV cache, and returns
    logits for the last position as an MxArray of shape [vocab_size].
 
-   Must call init-cache! before this."
-  [model token-ids]
-  (if (cljs-forward-model? model)
-    (let [ids (->id-vec token-ids)
-          [logits cache] (fwd/prefill (:fwd model) ids)]
-      (reset! (:cache model) {:cache cache :offset (count ids)})
-      logits)
-    (let [input (ids->input token-ids)
-          logits (forward-with-cache model input)]
-      (-> logits (mx/index 0) (mx/index 0)))))
+   Must call init-cache! before this.
+
+   3-arity (owned path only, genmlx-jq6l): opts {:images [byte-buffers]
+   :chunk n} routes an image-bearing prompt through the owned VLM prefill
+   (vision tower -> pad-slot scatter -> chunked 3-axis M-RoPE decoder
+   prefill). `token-ids` must carry ONE <|image_pad|> marker per image (the
+   chat layout render-chat produces; the expand happens inside). The cache
+   cell then holds the image-conditioned prefix WITH its rope-delta, so
+   forward-step / branch-cache! / forward-branch continue from it
+   transparently. On the native model use vlm-prefill-flat! instead — its
+   cache is internal and this fn cannot adopt it."
+  ([model token-ids]
+   (if (cljs-forward-model? model)
+     (let [ids (->id-vec token-ids)
+           [logits cache] (fwd/prefill (:fwd model) ids)]
+       (reset! (:cache model) {:cache cache :offset (count ids)})
+       logits)
+     (let [input (ids->input token-ids)
+           logits (forward-with-cache model input)]
+       (-> logits (mx/index 0) (mx/index 0)))))
+  ([model token-ids {:keys [images chunk]}]
+   (if-not (seq images)
+     (forward-prefill model token-ids)
+     (do
+       (when-not (cljs-forward-model? model)
+         (throw (ex-info (str "forward-prefill with :images drives the OWNED VLM "
+                              "prefill; the native model's image prefill is "
+                              "vlm-prefill-flat! (internal flat caches).")
+                         {:genmlx/error :vlm-prefill-owned-only
+                          :model-type (type model)})))
+       (let [fm (:fwd model)
+             vcfg (:vcfg fm)]
+         (when-not vcfg
+           (throw (ex-info (str "forward-prefill with :images — this checkpoint "
+                                "has no vision_config (not a VLM), or was loaded "
+                                "before the :vcfg attach (genmlx-jq6l); reload it.")
+                           {:genmlx/error :no-vision-tower :dir (:dir fm)})))
+         (let [{:keys [logits cache seq-len rope-delta]}
+               (vfwd/vlm-prefill fm vcfg images (->id-vec token-ids)
+                                 (when chunk {:chunk chunk}))]
+           (reset! (:cache model) {:cache cache :offset seq-len
+                                   :rope-delta rope-delta})
+           logits))))))
 
 (defn install-prefill!
   "Install an externally-built owned-forward prefill into a CljsForwardModel's
@@ -578,6 +617,43 @@
       (mx/index 0) (mx/index 0)))
 
 ;; ---------------------------------------------------------------------------
+;; Chat template (owned path) — genmlx-jq6l
+;;
+;; The native path renders chat internally (chatSessionStart); the owned path
+;; has no native template, so demos and generate-text-raw hand-built ChatML.
+;; render-chat is the single source of truth for that hand-building: the Qwen
+;; ChatML dialect, including the per-image vision markers the VLM prefills
+;; expand and the <think></think> skip that native reasoningEffort "none"
+;; injects. Pure string function — encode the result with the tokenizer.
+;; ---------------------------------------------------------------------------
+
+(defn render-chat
+  "Render a Qwen-ChatML prompt string from `messages` and end it with the
+   assistant opener — the owned-path chat template.
+
+   messages: seq of {:role \"system\"|\"user\"|\"assistant\" :content str
+   :images <count or seq>}. Each image on a message contributes one
+   <|vision_start|><|image_pad|><|vision_end|> marker BEFORE its content —
+   one marker per image, in order: exactly the layout the VLM prefills
+   (owned vlm-prefill / native vlmPrefillFlat) expand.
+
+   opts {:think-skip? bool} (default true): append <think>\\n\\n</think>\\n\\n
+   after the assistant opener — the owned-path equivalent of native
+   reasoningEffort \"none\". Pass false to let a thinking model reason."
+  ([messages] (render-chat messages {}))
+  ([messages {:keys [think-skip?] :or {think-skip? true}}]
+   (str (apply str
+               (for [{:keys [role content images]} messages]
+                 (let [n (cond (number? images) images
+                               (seq images) (count images)
+                               :else 0)]
+                   (str "<|im_start|>" role "\n"
+                        (apply str (repeat n "<|vision_start|><|image_pad|><|vision_end|>"))
+                        content "<|im_end|>\n"))))
+        "<|im_start|>assistant\n"
+        (when think-skip? "<think>\n\n</think>\n\n"))))
+
+;; ---------------------------------------------------------------------------
 ;; Text generation (smoke test / convenience)
 ;; ---------------------------------------------------------------------------
 
@@ -638,12 +714,10 @@
                                           :or {max-tokens 100
                                                temperature 0
                                                system-prompt "You are a helpful assistant."}}]
-   (let [think-skip (if (#{:qwen3 :qwen3_5 :qwen3_5_moe} type)
-                      "<think>\n\n</think>\n\n"
-                      "")
-         chat-str (str "<|im_start|>system\n" system-prompt "<|im_end|>\n"
-                       "<|im_start|>user\n" prompt "<|im_end|>\n"
-                       "<|im_start|>assistant\n" think-skip)
+   (let [chat-str (render-chat [{:role "system" :content system-prompt}
+                                {:role "user" :content prompt}]
+                               {:think-skip? (contains? #{:qwen3 :qwen3_5 :qwen3_5_moe}
+                                                        type)})
          eos-id (eos-token-id tokenizer)
          greedy? (or (nil? temperature) (<= temperature 0))
          inv-temp (when-not greedy? (mx/scalar (/ 1.0 temperature)))

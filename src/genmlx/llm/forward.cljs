@@ -11,6 +11,7 @@
    backend change is requiring this façade instead of qwen3-forward directly."
   (:require [genmlx.llm.qwen3-forward :as q3]
             [genmlx.llm.qwen35-forward :as q35]
+            [genmlx.llm.qwen35-vision-forward :as vis]
             ["fs" :as fs]))
 
 (def supported-model-types
@@ -52,15 +53,21 @@
 
 (defn load-model
   "Load a checkpoint, dispatching on config.json model_type. Returns the family's
-   {:config :weights ..} tagged with :impl so the other fns route correctly.
+   {:config :weights ..} tagged with :impl so the other fns route correctly,
+   plus :dir and — for qwen3.5-family VLM checkpoints — :vcfg (the parsed
+   vision_config; nil for text-only checkpoints), so the backend can route an
+   image-bearing forward-prefill to the owned VLM prefill (genmlx-jq6l; the
+   tower weights are in :weights already — the loader reads every tensor).
    Throws on a model_type the owned forward does not implement, instead of
    silently mis-routing it to the vanilla-Qwen3 forward."
   [dir]
   (let [mt (detect-model-type dir)]
     (case mt
-      "qwen3_5"     (assoc (q35/load-model dir) :impl :qwen3_5)
-      "qwen3_5_moe" (assoc (q35/load-model dir) :impl :qwen3_5)
-      "qwen3"       (assoc (q3/load-model dir)  :impl :qwen3)
+      "qwen3_5"     (assoc (q35/load-model dir) :impl :qwen3_5 :dir dir
+                           :vcfg (vis/load-vision-config dir))
+      "qwen3_5_moe" (assoc (q35/load-model dir) :impl :qwen3_5 :dir dir
+                           :vcfg (vis/load-vision-config dir))
+      "qwen3"       (assoc (q3/load-model dir)  :impl :qwen3 :dir dir)
       (throw (ex-info (str "genmlx.llm.forward: the GenMLX-owned forward does not "
                            "implement model_type " (pr-str mt) "; load with "
                            "{:cljs-forward? false} to use the upstream forward.")
