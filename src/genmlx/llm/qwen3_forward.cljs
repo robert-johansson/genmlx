@@ -211,11 +211,43 @@
          qz (load-quantization dir)]
      (if qz (dequantize-weights w qz opts) w))))
 
+;; ---------------------------------------------------------------------------
+;; Load-time transposed-weight memo (genmlx-t2cz L6)
+;;
+;; `linear` is y = x Wᵀ, so every call built a fresh lazy transpose node —
+;; ~200-400 NAPI crossings per decode step across the layer stack. The
+;; transpose of an immutable weight is a deterministic zero-copy VIEW, so we
+;; build it ONCE per weight at load and reuse the node every step. WeakMap
+;; keyed by array identity: write-once at load (prepare-weight-transposes!),
+;; never mutated at run time (no tidy-scope hazard — the views are created
+;; outside any tidy), invisible to results — an audited memoization cache of
+;; deterministic values (CLAUDE.md mutable-boundary category).
+;; ---------------------------------------------------------------------------
+
+(def ^:private wt-cache (js/WeakMap.))
+
+(defn prepare-weight-transposes!
+  "Populate wt-cache with a lazy transposed view for every 2-D tensor in
+   `weights` (the decode-hot linear weights; 1-D norms and packed 3-D expert
+   tensors skip). Load-time only. Returns `weights`."
+  [weights]
+  (doseq [[_ w] weights]
+    (when (and (mx/array? w) (= 2 (count (mx/shape w))))
+      (.set wt-cache w (mx/transpose w))))
+  weights)
+
+(defn transposed
+  "The load-time transposed view of weight `w` when prepared, else a fresh
+   lazy transpose node (per-call fallback — non-weight arrays never enter
+   the cache, so run-time behavior is unchanged for them)."
+  [w]
+  (or (.get wt-cache w) (mx/transpose w)))
+
 (defn load-model
   "Load a Qwen3 checkpoint as {:config .. :weights {name -> MxArray}}."
   [dir]
   {:config (load-config dir)
-   :weights (load-weights dir)})
+   :weights (prepare-weight-transposes! (load-weights dir))})
 
 (defn- causal-mask
   "Additive causal mask [seq seq]: 0 on/below the diagonal, large-negative above."
@@ -224,9 +256,10 @@
     (mx/astype (mx/array flat [seq seq]) dtype)))
 
 (defn- linear
-  "HF Linear with no bias: y = x W^T (W is [out, in])."
+  "HF Linear with no bias: y = x W^T (W is [out, in]). Wᵀ comes from the
+   load-time transposed-view memo when `w` is a prepared weight (genmlx-t2cz)."
   [x w]
-  (mx/matmul x (mx/transpose w)))
+  (mx/matmul x (transposed w)))
 
 (defn- attention
   "Self-attention for one layer over the pre-attention-normed hidden `hn`

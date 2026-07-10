@@ -137,7 +137,7 @@
                           [1 T (:hidden cfg)])
           hn  (mx/rms-norm h0 (get w (str wp "layers.0.post_attention_layernorm.weight"))
                            (:eps cfg))
-          got (mx/reshape (q35/moe-mlp cfg w (str wp "layers.0.mlp.") hn T)
+          got (mx/reshape (q35/moe-mlp cfg w (str wp "layers.0.mlp.") hn 1 T)
                           [T (:hidden cfg)])
           ref (pure-moe-reference cfg w (str wp "layers.0.mlp.") hn T)
           scale (mx/item (mx/amax (mx/abs ref)))

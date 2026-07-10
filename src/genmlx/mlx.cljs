@@ -302,12 +302,37 @@
    (-exp(A_log) * softplus(a + dt_bias)) — NOT (mx/log g): strong decay
    underflows exp-space g to 0 and the in-chunk decay-diff turns
    inf - inf = NaN. Accumulation is f32; y/state' come back in the input
-   dtypes. Deterministic (no gather_mm). The per-step host reduce in
-   qwen35_forward's gdn-layer remains the T=1 decode path and the
-   correctness reference. Returns [y state']. Pure graph op."
+   dtypes. Deterministic (no gather_mm). The T=1 decode path is the fused
+   gated-delta-step below; qwen35_forward's gdn-recur-steps host reduce
+   remains the correctness reference for both (gdn_scan_contract_test).
+   Returns [y state']. Pure graph op."
   [q k v g-log beta state]
   (let [r (.gatedDeltaScan c q k v g-log beta state)]
     [(aget r 0) (aget r 1)]))
+
+(defn gated-delta-step
+  "Fused single-token (T=1) gated-delta (GDN) decode step — the per-step
+   companion to gated-delta-scan (genmlx-t2cz): ONE membrane crossing per
+   GDN layer per decode step, replacing the ~30-lazy-op CLJS host
+   recurrence. Same math as one gdn-recur-steps iteration (parity pinned by
+   gdn_scan_contract_test). q/k [B 1 Hv Dk] (GQA-expanded, RMS-norm-scaled),
+   v [B 1 Hv Dv], g-log/beta [B 1 Hv], state [B Hv Dv Dk]. `g-log` is the
+   LOG-SPACE decay gate (the scan's contract; exp is applied inside the
+   graph). Inputs promote to f32 internally; y returns in v's dtype, state'
+   in state's dtype. Deterministic. Returns [y state']. Pure graph op."
+  [q k v g-log beta state]
+  (let [r (.gatedDeltaStep c q k v g-log beta state)]
+    [(aget r 0) (aget r 1)]))
+
+(defn slice-nd
+  "Contiguous n-d slice with per-axis [start stop) bounds — ONE membrane
+   call over the native slice export, a VIEW at eval (no gather kernel;
+   contrast take-idx, which costs a dtype query + an arange + a gather).
+   `starts`/`stops` must have one entry per axis; stops CLAMP to the dim
+   (numpy semantics — verified on this backend), so callers can pass a huge
+   stop for 'to the end' without a shape query (genmlx-t2cz). Pure graph op."
+  [a starts stops]
+  (.slice c a (clj->js starts) (clj->js stops)))
 
 (defn vlm-preprocess
   "Native qwen3.5-VL image preprocessing (genmlx-w3og): decode (PNG/JPEG) +

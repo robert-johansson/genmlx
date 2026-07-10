@@ -96,6 +96,32 @@
        (zero? (mod (inc i) sparse-step))
        (not (contains? mlp-only i))))
 
+(def ^:private wp "language_model.model.")
+
+(defn- gdn-derived
+  "Load-time derived per-GDN-layer constants (genmlx-t2cz L4): for each
+   linear_attention layer prefix, :neg-a = -exp(f32 A_log) and :dt-f32 =
+   f32 dt_bias — the weight-derived g-log inputs that otherwise rebuild 4
+   lazy nodes per layer per decode step — plus a shared :ones-dk for the
+   weightless q/k RMSNorm. Pure load-time value derivation (lazy views over
+   immutable weights, built outside any tidy scope)."
+  [cfg weights]
+  (let [{:keys [lin-k-heads lin-v-heads lin-k-dim lin-v-dim conv-k]} cfg
+        conv-dim (+ (* 2 lin-k-heads lin-k-dim) (* lin-v-heads lin-v-dim))]
+    (into {:ones-dk (mx/ones [lin-k-dim])}
+          (for [i     (range (:n-layers cfg))
+                :when (= "linear_attention" (nth (:layer-types cfg) i))
+                :let  [p (str wp "layers." i ".linear_attn.")]]
+            [p {:neg-a   (mx/multiply (mx/exp (mx/astype (get weights (str p "A_log"))
+                                                         mx/float32))
+                                      -1.0)
+                :dt-f32  (mx/astype (get weights (str p "dt_bias")) mx/float32)
+                ;; [K conv-dim] layout of conv1d.weight for the T=1 decode
+                ;; conv fast path (broadcast-multiply + K-axis sum)
+                :conv-w2 (mx/transpose (mx/reshape (get weights (str p "conv1d.weight"))
+                                                   [conv-dim conv-k])
+                                       [1 0])}]))))
+
 (defn load-model
   "Load a Qwen3.5 / qwen3_5_moe checkpoint as {:config .. :weights ..}.
    Affine-quantized checkpoints are dequantized at load (q3/load-weights —
@@ -122,35 +148,41 @@
                                "(bits, group-size); this checkpoint needs "
                                "per-projection expert quantization support.")
                           {:base base :quantization qz})))))
-    {:config  (cond-> cfg
-                (and moe? qz) (assoc :expert-qz {:bits       (:bits qz)
-                                                 :group-size (:group-size qz)}))
-     :weights (q3/load-weights dir (when (and moe? qz)
-                                     {:skip? #(.includes % ".switch_mlp.")}))}))
-
-(def ^:private wp "language_model.model.")
+    (let [weights (q3/prepare-weight-transposes!
+                   (q3/load-weights dir (when (and moe? qz)
+                                          {:skip? #(.includes % ".switch_mlp.")})))
+          cfg     (cond-> cfg
+                    (and moe? qz) (assoc :expert-qz {:bits       (:bits qz)
+                                                     :group-size (:group-size qz)}))]
+      {:config  (assoc cfg :derived (gdn-derived cfg weights))
+       :weights weights})))
 
 ;; ----------------------------------------------------------------------------
 ;; Small composed primitives
 ;; ----------------------------------------------------------------------------
 
+(def ^:private END
+  "'To the end' slice stop: mlx slice CLAMPS stops to the dim (numpy
+   semantics), so no shape query is needed for open-ended axes."
+  1073741824)
+
 (defn- slice-ax
-  "Contiguous slice [start, stop) along `axis` (any axis), via gather. mx/slice
-   is axis-0 only, so we use take-idx with an arange index — semantically a slice."
-  [a axis start stop]
-  (mx/take-idx a (mx/arange start stop) axis))
+  "Contiguous slice [start, stop) along `axis` of an `nd`-dim array — ONE
+   membrane call (mx/slice-nd), a VIEW at eval. Replaces the arange+take
+   gather (3 NAPI crossings + a gather kernel per call — the largest single
+   contributor to the decode per-op floor, genmlx-t2cz P0: ~570 gather
+   slices per 35B decode step)."
+  [a nd axis start stop]
+  (mx/slice-nd a
+               (assoc (vec (repeat nd 0)) axis start)
+               (assoc (vec (repeat nd END)) axis stop)))
 
 (defn- linear
-  "HF Linear with no bias: y = x W^T (W is [out, in])."
+  "HF Linear with no bias: y = x W^T (W is [out, in]). Wᵀ comes from the
+   load-time transposed-view memo when `w` is a prepared weight
+   (q3/transposed, genmlx-t2cz)."
   [x w]
-  (mx/matmul x (mx/transpose w)))
-
-(defn- rms-no-weight
-  "RMSNorm over the last axis with no learnable weight (weight=1):
-   x / sqrt(mean(x^2, -1) + eps). Implemented via the fast rms-norm with a
-   ones weight (identical result; weight just multiplies by 1)."
-  [x dim eps]
-  (mx/rms-norm x (mx/ones [dim]) eps))
+  (mx/matmul x (q3/transposed w)))
 
 (defn- softplus
   "softplus(x) = log(1 + exp(x)). Inputs here (a + dt_bias) are bounded, so the
@@ -206,10 +238,11 @@
    expert is a later optimization.
 
    Batch (genmlx-9uyg): `hn` is [B T hidden]; routing/experts are row-wise,
-   so the B·T rows flatten together and the batch axis costs nothing."
-  [cfg w prefix hn T]
+   so the B·T rows flatten together and the batch axis costs nothing.
+   `b` is threaded from forward-hidden (one shape query per forward,
+   genmlx-t2cz)."
+  [cfg w prefix hn b T]
   (let [{:keys [hidden n-experts n-active expert-qz]} cfg
-        b      (first (mx/shape hn))
         BT     (* b T)
         g      (fn [s] (get w (str prefix s)))
         dtype  (mx/dtype hn)
@@ -217,7 +250,7 @@
         ;; --- router (gate.weight is dequantized at load) ---
         probs  (mx/softmax (mx/astype (linear x (g "gate.weight")) mx/float32) -1)
         order  (mx/argsort probs -1)                              ; [BT E] ascending
-        top    (mx/astype (slice-ax order 1 (- n-experts n-active) n-experts)
+        top    (mx/astype (slice-ax order 2 1 (- n-experts n-active) n-experts)
                           mx/uint32)                              ; [BT k]
         topw   (mx/take-along-axis probs (mx/astype top mx/int32) 1) ; [BT k] f32
         topw   (mx/divide topw (mx/sum topw [1] true))            ; renormalize
@@ -256,11 +289,11 @@
         [final-state outs]
         (reduce
          (fn [[st outs] t]
-           (let [qt (mx/squeeze (slice-ax q  1 t (inc t)) [1])   ; [B Hv Dk]
-                 kt (mx/squeeze (slice-ax k  1 t (inc t)) [1])   ; [B Hv Dk]
-                 vt (mx/squeeze (slice-ax v  1 t (inc t)) [1])   ; [B Hv Dv]
-                 gt (mx/squeeze (slice-ax gg 1 t (inc t)) [1])   ; [B Hv]
-                 bt (mx/squeeze (slice-ax beta 1 t (inc t)) [1]) ; [B Hv]
+           (let [qt (mx/squeeze (slice-ax q  4 1 t (inc t)) [1])   ; [B Hv Dk]
+                 kt (mx/squeeze (slice-ax k  4 1 t (inc t)) [1])   ; [B Hv Dk]
+                 vt (mx/squeeze (slice-ax v  4 1 t (inc t)) [1])   ; [B Hv Dv]
+                 gt (mx/squeeze (slice-ax gg 3 1 t (inc t)) [1])   ; [B Hv]
+                 bt (mx/squeeze (slice-ax beta 3 1 t (inc t)) [1]) ; [B Hv]
                  st (mx/multiply st (mx/reshape gt [b Hv 1 1]))  ; decay state
                  k4 (mx/reshape kt [b Hv 1 Dk])
                  kv-mem (mx/sum (mx/multiply st k4) [3] false)   ; [B Hv Dv]
@@ -281,16 +314,16 @@
    new-cache-entry].
 
    Mirrors gated_delta_net.rs::forward + gated_delta.rs (use_kernel=false).
-   The recurrence routes by block size (genmlx-ps8a): T>1 (prefill chunks)
-   takes ONE fused chunk-parallel mx/gated-delta-scan membrane call (the
-   native CUDA prefill algorithm, BT=64 WY form; batch-ready by
-   construction) instead of T host-loop iterations; T=1 (decode) keeps the
-   per-step reduce (gdn-recur-steps) — the correctness reference,
-   byte-identical to the pre-ps8a path at B=1. Parity between the two is
-   pinned by gdn_scan_contract_test."
-  [cfg w prefix hn T ce]
-  (let [{:keys [eps lin-k-heads lin-v-heads lin-k-dim lin-v-dim conv-k]} cfg
-        b       (first (mx/shape hn))
+   The recurrence routes by block size: T>1 (prefill chunks) takes ONE fused
+   chunk-parallel mx/gated-delta-scan membrane call (the native CUDA prefill
+   algorithm, BT=64 WY form; batch-ready by construction — genmlx-ps8a);
+   T=1 (decode) takes ONE fused mx/gated-delta-step membrane call (the same
+   math as one gdn-recur-steps iteration — genmlx-t2cz). gdn-recur-steps
+   remains in source as the host-loop correctness reference; parity of both
+   fused primitives against it is pinned by gdn_scan_contract_test.
+   `b` is threaded from forward-hidden (one shape query per forward)."
+  [cfg w prefix hn b T ce]
+  (let [{:keys [eps lin-k-heads lin-v-heads lin-k-dim lin-v-dim conv-k derived]} cfg
         Hk      lin-k-heads
         Hv      lin-v-heads
         Dk      lin-k-dim
@@ -300,6 +333,7 @@
         val-dim (* Hv Dv)
         conv-dim (+ (* 2 key-dim) val-dim)            ; q + k + v channels
         g       (fn [s] (get w (str prefix s)))
+        der     (get derived prefix)
         dtype   (mx/dtype hn)
         ;; --- input projections (pre-split on disk) ---
         qkv     (linear hn (g "in_proj_qkv.weight"))  ; [B T conv-dim]
@@ -310,35 +344,48 @@
         conv-w  (g "conv1d.weight")                   ; [conv-dim K 1]
         pad     (if ce (:conv ce) (mx/zeros [b (dec K) conv-dim] dtype))
         padded  (mx/concatenate [pad qkv] 1)          ; [B T+K-1 conv-dim]
-        conv-out (reduce (fn [acc j]
-                           (let [wj  (mx/reshape (slice-ax conv-w 1 j (inc j)) [1 1 conv-dim])
-                                 seg (slice-ax padded 1 j (+ j T))]   ; [B T conv-dim]
-                             (mx/add acc (mx/multiply seg wj))))
-                         (mx/zeros [b T conv-dim] dtype)
-                         (range K))
+        conv-out (if (= T 1)
+                   ;; T=1 (decode): padded is exactly [B K conv-dim] — the
+                   ;; whole conv is one broadcast-multiply + K-axis sum
+                   ;; (genmlx-t2cz L3; ~4 lazy ops instead of ~5 per tap).
+                   (mx/sum (mx/multiply padded
+                                        (or (:conv-w2 der)
+                                            (mx/transpose (mx/reshape conv-w [conv-dim K])
+                                                          [1 0])))
+                           [1] true)                  ; [B 1 conv-dim]
+                   (reduce (fn [acc j]
+                             (let [wj  (mx/reshape (slice-ax conv-w 3 1 j (inc j)) [1 1 conv-dim])
+                                   seg (slice-ax padded 3 1 j (+ j T))]   ; [B T conv-dim]
+                               (mx/add acc (mx/multiply seg wj))))
+                           (mx/zeros [b T conv-dim] dtype)
+                           (range K)))
         conv-out (mx/silu conv-out)
         ;; new conv-state = last K-1 timesteps of the conv input
-        new-conv (slice-ax padded 1 T (+ T (dec K)))
+        new-conv (slice-ax padded 3 1 T (+ T (dec K)))
         ;; --- split q/k/v and reshape to heads ---
-        q (mx/reshape (slice-ax conv-out 2 0 key-dim)             [b T Hk Dk])
-        k (mx/reshape (slice-ax conv-out 2 key-dim (* 2 key-dim)) [b T Hk Dk])
-        v (mx/reshape (slice-ax conv-out 2 (* 2 key-dim) conv-dim) [b T Hv Dv])
+        q (mx/reshape (slice-ax conv-out 3 2 0 key-dim)             [b T Hk Dk])
+        k (mx/reshape (slice-ax conv-out 3 2 key-dim (* 2 key-dim)) [b T Hk Dk])
+        v (mx/reshape (slice-ax conv-out 3 2 (* 2 key-dim) conv-dim) [b T Hv Dv])
         ;; --- q/k RMSNorm (no weight) with inv-scale (matches Python/Rust exactly) ---
         inv (js/Math.pow Dk -0.5)
-        q (mx/multiply (rms-no-weight q Dk 1e-6) (* inv inv))
-        k (mx/multiply (rms-no-weight k Dk 1e-6) inv)
+        ones-dk (or (:ones-dk derived) (mx/ones [Dk]))
+        q (mx/multiply (mx/rms-norm q ones-dk 1e-6) (* inv inv))
+        k (mx/multiply (mx/rms-norm k ones-dk 1e-6) inv)
         ;; --- gates: beta = sigmoid(b); g = exp(-exp(A_log) * softplus(a + dt_bias)) ---
         ;; The SSM recurrence + gates run in float32 (config mamba_ssm_dtype:
         ;; "float32") to match the upstream fused kernel's f32 state accumulation;
         ;; projections/conv stay in the model dtype, and y is cast back below so
-        ;; the residual stream remains bf16.
+        ;; the residual stream remains bf16. -exp(A_log) and f32 dt_bias are
+        ;; load-time derived constants (genmlx-t2cz L4; per-call fallback for
+        ;; models loaded without :derived, e.g. hand-built test models).
         beta   (mx/astype (mx/sigmoid bb) mx/float32)  ; [B T Hv]
-        a-log  (mx/astype (g "A_log") mx/float32)      ; [Hv]
-        dt-bias (mx/astype (g "dt_bias") mx/float32)   ; [Hv]
+        neg-a  (or (:neg-a der)
+                   (mx/multiply (mx/exp (mx/astype (g "A_log") mx/float32)) -1.0)) ; [Hv]
+        dt-bias (or (:dt-f32 der) (mx/astype (g "dt_bias") mx/float32))            ; [Hv]
         ;; Log-space decay gate, computed DIRECTLY — never (mx/log gg): strong
         ;; decay underflows exp-space gg to 0 and log(0) = -inf would NaN the
         ;; fused scan's in-chunk decay-diff (genmlx-ps8a).
-        g-log  (mx/multiply (mx/multiply (mx/exp a-log) -1.0)
+        g-log  (mx/multiply neg-a
                             (softplus (mx/add (mx/astype aa mx/float32) dt-bias)))  ; [B T Hv]
         ;; --- GQA: repeat q,k from Hk to Hv heads (np.repeat along head axis) ---
         rep (quot Hv Hk)
@@ -354,8 +401,10 @@
           ;; ms/token lever (genmlx-ps8a). Same math as gdn-recur-steps
           ;; (parity pinned by gdn_scan_contract_test).
           (mx/gated-delta-scan q k v g-log beta init-state)
-          ;; T=1 (decode): per-step recurrence — the correctness reference.
-          (gdn-recur-steps q k v (mx/exp g-log) beta init-state))
+          ;; T=1 (decode): ONE fused per-step membrane call (genmlx-t2cz) —
+          ;; same math as (gdn-recur-steps q k v (mx/exp g-log) beta st),
+          ;; parity pinned by gdn_scan_contract_test.
+          (mx/gated-delta-step q k v g-log beta init-state))
         y (mx/astype y-f32 dtype)    ; [B T Hv Dv], back to model dtype
         ;; --- gated RMSNorm: silu(z) * rms_norm(y, norm_weight[Dv], eps) ---
         z4 (mx/reshape z [b T Hv Dv])
@@ -400,11 +449,11 @@
   "Rotate the first rope-dims of x [1 H T head-dim] with the per-position
    cos/sin [1 1 T rope-dims]; pass the remaining dims through untouched."
   [x {:keys [cos sin dims]} head-dim]
-  (let [xr   (slice-ax x 3 0 dims)
-        xp   (slice-ax x 3 dims head-dim)
+  (let [xr   (slice-ax x 4 3 0 dims)
+        xp   (slice-ax x 4 3 dims head-dim)
         h    (quot dims 2)
-        x1   (slice-ax xr 3 0 h)
-        x2   (slice-ax xr 3 h dims)
+        x1   (slice-ax xr 4 3 0 h)
+        x2   (slice-ax xr 4 3 h dims)
         rh   (mx/concatenate [(mx/multiply x2 -1.0) x1] 3)
         rot  (mx/astype (mx/add (mx/multiply xr cos) (mx/multiply rh sin))
                         (mx/dtype x))]
@@ -422,10 +471,10 @@
    nil; `offset` is the absolute position of the first new token (lockstep
    across lanes). Returns [out new-cache-entry].
 
-   Mirrors attention.rs::Qwen3_5Attention::forward."
-  [cfg w prefix hn T ce offset mask mrope]
+   Mirrors attention.rs::Qwen3_5Attention::forward. `b` is threaded from
+   forward-hidden (one shape query per forward, genmlx-t2cz)."
+  [cfg w prefix hn b T ce offset mask mrope]
   (let [{:keys [n-heads n-kv-heads head-dim eps rope-theta partial]} cfg
-        b   (first (mx/shape hn))
         H   n-heads
         Hkv n-kv-heads
         hd  head-dim
@@ -433,8 +482,8 @@
         scale (js/Math.pow hd -0.5)
         g   (fn [s] (get w (str prefix s)))
         qg  (mx/reshape (linear hn (g "q_proj.weight")) [b T H (* 2 hd)])
-        queries (slice-ax qg 3 0 hd)                          ; [B T H hd]
-        gate    (mx/reshape (slice-ax qg 3 hd (* 2 hd)) [b T (* H hd)])
+        queries (slice-ax qg 4 3 0 hd)                          ; [B T H hd]
+        gate    (mx/reshape (slice-ax qg 4 3 hd (* 2 hd)) [b T (* H hd)])
         keys    (mx/reshape (linear hn (g "k_proj.weight")) [b T Hkv hd])
         values  (mx/reshape (linear hn (g "v_proj.weight")) [b T Hkv hd])
         queries (mx/rms-norm queries (g "q_norm.weight") eps)
@@ -476,6 +525,7 @@
   (let [{:keys [n-layers eps vocab layer-types]} config
         embed (get weights (str wp "embed_tokens.weight"))
         dtype (mx/dtype embed)
+        b     (first (mx/shape h0))
         mask  (when (> T 1) (causal-mask T (or prior 0) dtype))
         [h new-cache]
         (reduce
@@ -483,13 +533,13 @@
            (let [p  (str wp "layers." i ".")
                  hn (mx/rms-norm h (get weights (str p "input_layernorm.weight")) eps)
                  [a ce'] (if (= "linear_attention" (nth layer-types i))
-                           (gdn-layer config weights (str p "linear_attn.") hn T (nth cache i))
-                           (full-attn-layer config weights (str p "self_attn.") hn T
+                           (gdn-layer config weights (str p "linear_attn.") hn b T (nth cache i))
+                           (full-attn-layer config weights (str p "self_attn.") hn b T
                                             (nth cache i) offset mask mrope))
                  h1 (mx/add h a)
                  mn (mx/rms-norm h1 (get weights (str p "post_attention_layernorm.weight")) eps)
                  m  (if (moe-layer? config i)
-                      (moe-mlp config weights (str p "mlp.") mn T)
+                      (moe-mlp config weights (str p "mlp.") mn b T)
                       (mlp weights (str p "mlp.") mn))]
              [(mx/add h1 m) (conj nc ce')]))
          [h0 []] (range n-layers))
@@ -543,7 +593,7 @@
           embed (get weights (str wp "embed_tokens.weight"))
           h0    (mx/take-idx embed ids 0)                        ; [B T hidden]
           [logits cache] (forward-hidden model h0 T (init-cache model) 0 nil 0)]
-      [(mx/reshape (slice-ax logits 1 (dec T) T) [B vocab]) cache])))
+      [(mx/reshape (slice-ax logits 3 1 (dec T) T) [B vocab]) cache])))
 
 (defn forward-embeds
   "VLM-prefill entry (genmlx-w3og): run the forward over pre-merged input

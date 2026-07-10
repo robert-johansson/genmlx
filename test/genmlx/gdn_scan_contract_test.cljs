@@ -151,4 +151,72 @@
                                (mx/zeros [1 Hv Dv (dec Dk)] mx/float32)))
         "state with wrong Dk rejected")))
 
+;; ---------------------------------------------------------------------------
+;; mx/gated-delta-step — the fused T=1 decode companion (genmlx-t2cz).
+;; Same op sequence as ONE gdn-recur-steps iteration built Rust-side, so
+;; parity is BIT-EXACT (identical graph, deterministic ops) — a stronger
+;; gate than the scan's reduction-order tolerance.
+;; ---------------------------------------------------------------------------
+
+(deftest step-parity-bit-exact
+  (doseq [b [1 2 8]]
+    (testing (str "B=" b " fused step vs per-step reference")
+      (let [{:keys [q k v g-log beta state]} (rand-inputs (+ 200 b) b 1)
+            ;; the reference gate is exp(g-log) — exactly the node the fused
+            ;; step builds internally (and what production's per-step arm fed)
+            [y-ref s-ref] (per-step-ref q k v (mx/exp g-log) beta state)
+            [y-new s-new] (mx/gated-delta-step q k v g-log beta state)]
+        (is (= [b 1 Hv Dv] (mx/shape y-new)) (str "B=" b " y shape"))
+        (is (= [b Hv Dv Dk] (mx/shape s-new)) (str "B=" b " state shape"))
+        (is (zero? (max-abs-diff y-ref y-new)) (str "B=" b " output bit-parity"))
+        (is (zero? (max-abs-diff s-ref s-new)) (str "B=" b " state bit-parity"))))))
+
+(deftest step-chained-equals-scan
+  ;; 8 chained fused steps ≡ one T=8 per-step reference run ≡ (within TOL)
+  ;; one T=8 scan: pins the decode arm against BOTH references.
+  (let [T 8
+        {:keys [q k v g-log beta state]} (rand-inputs 31 1 T)
+        [y-ref s-ref] (per-step-ref q k v (mx/exp g-log) beta state)
+        slice1 (fn [a t] (slice-t a t (inc t)))
+        [ys s-end] (reduce (fn [[ys st] t]
+                             (let [[yt st'] (mx/gated-delta-step
+                                             (slice1 q t) (slice1 k t) (slice1 v t)
+                                             (slice1 g-log t) (slice1 beta t)
+                                             st)]
+                               [(conj ys yt) st']))
+                           [[] state] (range T))
+        y-chained (mx/concatenate ys 1)]
+    (is (zero? (max-abs-diff y-ref y-chained)) "chained fused steps ≡ per-step run (bit)")
+    (is (zero? (max-abs-diff s-ref s-end)) "chained final state ≡ per-step run (bit)")))
+
+(deftest step-strong-decay-stays-finite
+  ;; Same log-space contract as the scan: g-log ~ -100 (exp-space g
+  ;; underflows to exactly 0) must stay finite and match the reference.
+  (let [{:keys [q k v beta state]} (rand-inputs 37 1 1)
+        g-log (mx/full [1 1 Hv] -100.0)
+        gg    (mx/exp g-log)
+        [y-ref _] (per-step-ref q k v gg beta state)
+        [y-new s-new] (mx/gated-delta-step q k v g-log beta state)]
+    (is (h/finite? (mx/item (mx/amax (mx/abs y-new)))) "y finite under strong decay")
+    (is (h/finite? (mx/item (mx/amax (mx/abs s-new)))) "state finite under strong decay")
+    (is (zero? (max-abs-diff y-ref y-new)) "strong-decay output bit-parity")))
+
+(deftest step-determinism
+  (let [{:keys [q k v g-log beta state]} (rand-inputs 41 1 1)
+        [y1 s1] (mx/gated-delta-step q k v g-log beta state)
+        [y2 s2] (mx/gated-delta-step q k v g-log beta state)]
+    (is (zero? (max-abs-diff y1 y2)) "step y bit-identical across runs")
+    (is (zero? (max-abs-diff s1 s2)) "step state bit-identical across runs")))
+
+(deftest step-shape-validation
+  (let [{:keys [q k v g-log beta state]} (rand-inputs 43 1 2)]
+    (is (thrown-with-msg? js/Error #"gated_delta_step"
+          (mx/gated-delta-step q k v g-log beta state))
+        "T=2 rejected (the step is T=1 only; use gated-delta-scan)")
+    (let [{:keys [q k v g-log beta]} (rand-inputs 47 1 1)]
+      (is (thrown-with-msg? js/Error #"gated_delta_step"
+            (mx/gated-delta-step q k v g-log beta
+                                 (mx/zeros [1 Hv Dv (dec Dk)] mx/float32)))
+          "state with wrong Dk rejected"))))
+
 (cljs.test/run-tests)

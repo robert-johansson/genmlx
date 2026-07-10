@@ -36,7 +36,7 @@ structure. No GPU work occurs until `mx/eval!` is called. This means most of
 (or wrappers like `item`, `->clj`, `materialize!`). Everything else — arithmetic,
 reductions, autograd, vmap, compile — builds lazy graphs.
 
-**mlx-node is at the heart of GenMLX.** The Rust/NAPI layer (224 @genmlx/core function exports, pinned by the coverage matrix; 5 crates)
+**mlx-node is at the heart of GenMLX.** The Rust/NAPI layer (225 @genmlx/core function exports, pinned by the coverage matrix; 5 crates)
 is not "mutable substrate we contain" — it is a functional graph engine that aligns
 naturally with ClojureScript's value semantics. `mlx.cljs` is the thin membrane
 between them; `Either<&MxArray, f64>` in Rust handles type coercion so CLJS
@@ -187,7 +187,7 @@ The implementation layers map onto the three-layer purity model:
 
 ```
 ── Layer C (GPU execution) ──────────────────────────────────────────────
-  mlx-node Rust/C++   5 crates; 224 @genmlx/core function exports (coverage-matrix-pinned). MxArray = Arc<lazy graph node>.
+  mlx-node Rust/C++   5 crates; 225 @genmlx/core function exports (coverage-matrix-pinned). MxArray = Arc<lazy graph node>.
                       eval! is the only operation that dispatches to Metal.
 
 ── Membrane (mlx.cljs) ─────────────────────────────────────────────────
@@ -232,8 +232,11 @@ direct import of dynamic.cljs).
      no-ops in production)
    - Memoization caches of deterministic values: `fused-cache` atoms on
      Unfold/Scan combinator records (`combinators.cljs`), `with-cache` in
-     `inference/exact.cljs`, and the construction-scoped expected-utility
-     atoms in `agents/` built on it — write-once, invisible to results
+     `inference/exact.cljs`, the construction-scoped expected-utility
+     atoms in `agents/` built on it, and the load-time transposed-weight
+     WeakMap in `llm/qwen3_forward.cljs` (populated once per load-model with
+     zero-copy transposed views; never written at run time — genmlx-t2cz)
+     — write-once, invisible to results
    - Training state owned by the caller: `nn.cljs` layer refs and optimizer
      state atoms, the encoder atom in `inference/amortized.cljs`
    - The `defdist` registry bookkeeping atom in `dist/core.cljs` (never read
