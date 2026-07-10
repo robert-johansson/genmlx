@@ -275,6 +275,37 @@
          [dh dw] (pair dilation 1)]
      (.conv2d c input weight sh sw ph pw dh dw (or groups 1)))))
 
+(defn gather-qmm
+  "Quantized gather-matmul over PACKED expert tensors (mlx.core.gather_qmm) —
+   the MoE expert primitive (genmlx-q5uq). `x` [.., in]; `w` [E, out,
+   in/(32/bits)] u32-packed with `scales`/`biases` [E, out, in/group-size];
+   `:rhs-indices` selects the expert(s) per row of x (`:lhs-indices` the rows).
+   opts {:lhs-indices :rhs-indices :transpose :group-size :bits :mode :sorted?}
+   default true / 64 / 4 / \"affine\" / false, matching mlx.core. `:sorted?` is
+   a performance hint that indices arrive ascending (contiguous expert blocks);
+   results are correct either way (gather_qmm_oracle_test measures both). Keeps
+   the 32B expert params packed — never unpacked — on the owned MoE forward.
+   Pure graph op."
+  [x w scales biases {:keys [lhs-indices rhs-indices transpose group-size bits mode sorted?]}]
+  (.gatherQmm c x w scales biases lhs-indices rhs-indices
+              (if (some? transpose) transpose true)
+              (or group-size 64) (or bits 4) (or mode "affine")
+              (boolean sorted?)))
+
+(defn dequantize
+  "Dequantize a packed-quantized tensor (mlx.core.dequantize): `w` u32-packed
+   [.., out, in/(32/bits)] with `scales`/`biases` [.., out, in/group-size] back
+   to full precision (the scales' dtype unless :out-dtype ≥ 0: 0=float32,
+   5=bfloat16, 6=float16). Handles ALL bit widths including the odd ones
+   (3/5/6) whose packed values straddle u32 words — the ones the pure
+   floor-divide/remainder unpack in qwen3-forward/dequantize-weights cannot
+   express. opts {:group-size :bits :mode :out-dtype}, defaults 64 / 4 /
+   \"affine\" / scales-dtype, matching mlx.core. Pure graph op."
+  ([w scales biases] (dequantize w scales biases nil))
+  ([w scales biases {:keys [group-size bits mode out-dtype]}]
+   (.dequantize c w scales biases (or group-size 64) (or bits 4)
+                (or mode "affine") (if (some? out-dtype) out-dtype -1))))
+
 ;; Variadic arithmetic -- CLJS reduce over Rust binary ops.
 (def ^:private add* (.-add c))
 (defn add
