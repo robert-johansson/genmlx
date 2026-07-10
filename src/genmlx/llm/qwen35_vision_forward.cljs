@@ -31,6 +31,7 @@
    the membrane stays thin (docs/membrane-coverage.md); float dtypes follow
    MLX promotion exactly as the native ops do (f32 pixels x bf16 weights)."
   (:require [genmlx.mlx :as mx]
+            [genmlx.llm.qwen35-forward :as q35]
             ["fs" :as fs]))
 
 (defn load-vision-config
@@ -238,3 +239,111 @@
               (recur (rest gs) (+ start np) (conj acc y)))
             acc))]
     (if (= 1 (count outs)) (first outs) (mx/concatenate outs 0))))
+
+;; ----------------------------------------------------------------------------
+;; VLM prefill: expand pads, merge features into embeds, M-RoPE positions
+;; ----------------------------------------------------------------------------
+
+(def image-token-id 248056)
+
+(defn- expand-image-pads
+  "Expand each single <|image_pad|> marker to its image's merged token count
+   (one marker per image, in order — the chat-template layout)."
+  [tokens counts]
+  (loop [ts tokens cs counts out []]
+    (if-let [t (first ts)]
+      (if (and (= t image-token-id) (seq cs))
+        (recur (rest ts) (rest cs) (into out (repeat (first cs) image-token-id)))
+        (recur (rest ts) cs (conj out t)))
+      out)))
+
+(defn- mrope-position-ids
+  "3-axis M-RoPE position ids [[t…] [h…] [w…]] + rope-delta for the expanded
+   token seq (mirrors get_rope_index): text advances all three axes together;
+   each image block gets (t, h, w) spatial ids from a shared base; after an
+   image the counter jumps to base + max(t,h,w). rope-delta = max-pos + 1 - T."
+  [tokens merged-grids]
+  (let [T (count tokens)]
+    (loop [i 0 gs merged-grids pos 0 t [] h [] w []]
+      (if (< i T)
+        (if (= (nth tokens i) image-token-id)
+          (let [[gt gh gw] (first gs)
+                n (* gt gh gw)
+                idxs (for [ti (range gt) hi (range gh) wi (range gw)] [ti hi wi])]
+            (recur (+ i n) (rest gs)
+                   (+ pos (max gt gh gw))
+                   (into t (map #(+ pos (nth % 0)) idxs))
+                   (into h (map #(+ pos (nth % 1)) idxs))
+                   (into w (map #(+ pos (nth % 2)) idxs))))
+          (recur (inc i) gs (inc pos) (conj t pos) (conj h pos) (conj w pos)))
+        {:position-ids [t h w]
+         :rope-delta (- (inc (reduce max 0 (concat t h w))) T)}))))
+
+(defn vlm-prefill
+  "The owned VLM prefill (genmlx-w3og): native preprocessing (mx/vlm-preprocess)
+   -> OWNED vision tower -> expand <|image_pad|> markers -> scatter feature
+   rows into the pad slots of the text embeddings -> 3-axis M-RoPE prefill
+   through the owned qwen3_5(_moe) decoder.
+
+   `model` = the fwd model map {:config :weights}; `vcfg` from
+   load-vision-config; `images` = seq of byte buffers; `tokens` = chat-rendered
+   prompt ids with ONE image_pad marker per image.
+
+   The decoder prefill runs CHUNKED (`:chunk` opt, default 48 tokens), with
+   the carry-over cache materialized between chunks: the GDN recurrence
+   builds ~2 MB of live f32 state per token per layer inside one lazy graph,
+   so an unchunked ~630-token VLM prefill OOMs the box (>105 GB measured —
+   the chunk boundary is the eval boundary that caps it).
+
+   Returns {:logits [vocab] :cache :seq-len :rope-delta} — continue decoding
+   with q35/step at offset (+ seq-len rope-delta) + relative step index
+   (compressed M-RoPE positions; genmlx-52mh)."
+  [{:keys [config weights] :as model} vcfg images tokens & [{:keys [chunk] :or {chunk 48}}]]
+  (let [[pv grid-arr] (mx/vlm-preprocess images)
+        grids   (mapv vec (mx/->clj grid-arr))
+        m       (:merge vcfg)
+        merged  (mapv (fn [[t h w]] [t (quot h m) (quot w m)]) grids)
+        counts  (mapv (fn [[t h w]] (* t h w)) merged)
+        expanded (expand-image-pads (vec tokens) counts)
+        T       (count expanded)
+        {:keys [position-ids rope-delta]} (mrope-position-ids expanded merged)
+        ;; text embeddings with feature rows spliced into the pad runs
+        embed   (get weights "language_model.model.embed_tokens.weight")
+        feats   (mx/astype (vision-features weights vcfg pv grids) (mx/dtype embed))
+        h0      (let [ids (mx/array expanded [T] mx/int32)
+                      te  (mx/take-idx embed ids 0)          ; [T hidden]
+                      runs (loop [i 0 segs [] fstart 0]      ; splice per segment
+                             (if (< i T)
+                               (if (= (nth expanded i) image-token-id)
+                                 (let [j (loop [j i] (if (and (< j T) (= (nth expanded j) image-token-id)) (recur (inc j)) j))
+                                       n (- j i)]
+                                   (recur j (conj segs (mx/take-idx feats (mx/arange fstart (+ fstart n)) 0))
+                                          (+ fstart n)))
+                                 (let [j (loop [j i] (if (and (< j T) (not= (nth expanded j) image-token-id)) (recur (inc j)) j))]
+                                   (recur j (conj segs (mx/take-idx te (mx/arange i j) 0)) fstart)))
+                               segs))]
+                  (mx/reshape (if (= 1 (count runs)) (first runs) (mx/concatenate runs 0))
+                              [1 T (:hidden config)]))
+        _ (mx/materialize! h0)
+        h0-flat (mx/reshape h0 [T (:hidden config)])
+        [last-logits cache]
+        (loop [start 0 cache (q35/init-cache model) logits nil]
+          (if (< start T)
+            (let [n    (min chunk (- T start))
+                  hs   (mx/reshape (mx/take-idx h0-flat (mx/arange start (+ start n)) 0)
+                                   [1 n (:hidden config)])
+                  pids (mapv #(subvec (vec %) start (+ start n)) position-ids)
+                  [lg c] (q35/forward-embeds model hs cache pids start)
+                  ;; materialize the kept row — an UNevaluated logits node
+                  ;; would pin the whole chunk graph (GDN states included)
+                  ;; across chunks and OOM exactly like the unchunked path
+                  last-row (mx/index lg (dec n))]
+              (mx/materialize! last-row)
+              (q35/materialize-cache! c)
+              (mx/force-gc!)
+              (recur (+ start n) c last-row))
+            [logits cache]))]
+    {:logits last-logits
+     :cache  cache
+     :seq-len T
+     :rope-delta rope-delta}))

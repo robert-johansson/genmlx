@@ -65,6 +65,7 @@
      :vocab         (.-vocab_size tc)
      :eps           (.-rms_norm_eps tc)
      :rope-theta    (.-rope_theta rp)
+     :mrope-section (some-> (.-mrope_section rp) vec)
      :partial       (.-partial_rotary_factor rp)
      :full-interval (.-full_attention_interval tc)
      :layer-types   (vec (.-layer_types tc))
@@ -158,11 +159,15 @@
   (mx/log1p (mx/exp x)))
 
 (defn- causal-mask
-  "Additive causal mask [seq seq]: 0 on/below the diagonal, large-negative above.
-   Broadcasts to [1 H seq seq] inside SDPA."
-  [seq dtype]
-  (let [flat (vec (for [i (range seq) j (range seq)] (if (<= j i) 0.0 -1e9)))]
-    (mx/astype (mx/array flat [seq seq]) dtype)))
+  "Additive causal mask [seq, prior+seq] for a block of `seq` new tokens on
+   top of `prior` cached ones: row i attends to every cached column and to
+   new columns j <= i. Broadcasts to [1 H seq prior+seq] inside SDPA.
+   prior=0 gives the classic square causal mask."
+  ([seq dtype] (causal-mask seq 0 dtype))
+  ([seq prior dtype]
+   (let [flat (vec (for [i (range seq) j (range (+ prior seq))]
+                     (if (<= j (+ prior i)) 0.0 -1e9)))]
+     (mx/astype (mx/array flat [seq (+ prior seq)]) dtype))))
 
 (defn- mlp
   "SwiGLU MLP over the post-attention-normed hidden `hn`: down(silu(gate)·up)."
@@ -319,6 +324,53 @@
     [(linear y-flat (g "out_proj.weight")) {:conv new-conv :rec final-state}]))
 
 ;; ----------------------------------------------------------------------------
+;; Interleaved M-RoPE (VLM prefill — genmlx-w3og)
+;; ----------------------------------------------------------------------------
+
+(defn mrope-tables
+  "Interleaved M-RoPE cos/sin tables [T rope-dims] from 3-axis position ids
+   [[t…] [h…] [w…]] (host vectors). Mirrors MultimodalRoPE +
+   apply_multimodal_rotary_pos_emb_interleaved's stride-3 per-frequency axis
+   selector (mrope_section [th tw]-style, e.g. Ornith [11 11 10]): frequency
+   slot j in the half-dim table takes axis h at j ≡ 1 (mod 3) below 3·sec_h,
+   axis w at j ≡ 2 (mod 3) below 3·sec_w, else axis t; the doubled cos/sin
+   repeats the selector (emb = concat[freqs freqs])."
+  [pos-ids sec rope-dims theta]
+  (let [half (quot rope-dims 2)
+        T    (count (first pos-ids))
+        inv  (mx/array (vec (for [i (range half)]
+                              (/ 1.0 (js/Math.pow theta (/ (* 2 i) rope-dims)))))
+                       [1 1 half] mx/float32)
+        pos  (mx/astype (mx/array (vec (apply concat pos-ids)) [3 T 1] mx/int32)
+                        mx/float32)
+        fr   (mx/multiply pos inv)                    ; [3 T half]
+        emb  (mx/concatenate [fr fr] 2)               ; [3 T rope-dims]
+        sel-half (reduce (fn [s [dim limit off]]
+                           (reduce #(assoc %1 %2 dim) s (range off (min limit half) 3)))
+                         (vec (repeat half 0))
+                         [[1 (* 3 (nth sec 1)) 1] [2 (* 3 (nth sec 2)) 2]])
+        sel  (vec (map #(nth sel-half (mod % half)) (range rope-dims)))
+        idx  (mx/astype (mx/broadcast-to (mx/array sel [1 1 rope-dims] mx/int32)
+                                         [1 T rope-dims])
+                        mx/int32)
+        gsel (fn [a] (mx/reshape (mx/take-along-axis a idx 0) [1 1 T rope-dims]))]
+    {:cos (gsel (mx/cos emb)) :sin (gsel (mx/sin emb)) :dims rope-dims}))
+
+(defn- mrope-apply
+  "Rotate the first rope-dims of x [1 H T head-dim] with the per-position
+   cos/sin [1 1 T rope-dims]; pass the remaining dims through untouched."
+  [x {:keys [cos sin dims]} head-dim]
+  (let [xr   (slice-ax x 3 0 dims)
+        xp   (slice-ax x 3 dims head-dim)
+        h    (quot dims 2)
+        x1   (slice-ax xr 3 0 h)
+        x2   (slice-ax xr 3 h dims)
+        rh   (mx/concatenate [(mx/multiply x2 -1.0) x1] 3)
+        rot  (mx/astype (mx/add (mx/multiply xr cos) (mx/multiply rh sin))
+                        (mx/dtype x))]
+    (mx/concatenate [rot xp] 3)))
+
+;; ----------------------------------------------------------------------------
 ;; Full softmax attention layer (partial RoPE + output gate)
 ;; ----------------------------------------------------------------------------
 
@@ -329,7 +381,7 @@
    is the absolute position of the first new token. Returns [out new-cache-entry].
 
    Mirrors attention.rs::Qwen3_5Attention::forward."
-  [cfg w prefix hn T ce offset mask]
+  [cfg w prefix hn T ce offset mask mrope]
   (let [{:keys [n-heads n-kv-heads head-dim eps rope-theta partial]} cfg
         H   n-heads
         Hkv n-kv-heads
@@ -344,9 +396,13 @@
         values  (mx/reshape (linear hn (g "v_proj.weight")) [1 T Hkv hd])
         queries (mx/rms-norm queries (g "q_norm.weight") eps)
         keys    (mx/rms-norm keys    (g "k_norm.weight") eps)
-        ;; transpose to [1 heads T hd], then partial RoPE at absolute offset
-        q (-> (mx/transpose queries [0 2 1 3]) (mx/rope rope-dims false rope-theta 1.0 offset))
-        k (-> (mx/transpose keys    [0 2 1 3]) (mx/rope rope-dims false rope-theta 1.0 offset))
+        ;; transpose to [1 heads T hd], then rotate: 3-axis interleaved M-RoPE
+        ;; over the partial dims (VLM prefill) or scalar-offset partial RoPE.
+        rot (if mrope
+              (fn [x] (mrope-apply x mrope hd))
+              (fn [x] (mx/rope x rope-dims false rope-theta 1.0 offset)))
+        q (rot (mx/transpose queries [0 2 1 3]))
+        k (rot (mx/transpose keys    [0 2 1 3]))
         v (mx/transpose values [0 2 1 3])
         k-full (if ce (mx/concatenate [(:k ce) k] 2) k)        ; concat along seq
         v-full (if ce (mx/concatenate [(:v ce) v] 2) v)
@@ -366,18 +422,17 @@
   [{:keys [config]}]
   (vec (repeat (:n-layers config) nil)))
 
-(defn forward-cached
-  "Run the forward over `token-ids` from absolute position `offset`, threading
-   and extending the per-layer `cache`. Returns [logits new-cache] with logits
-   [seq vocab]. A causal mask is built for multi-token chunks (prefill)."
-  [{:keys [config weights]} token-ids cache offset]
-  (let [{:keys [n-layers eps hidden vocab layer-types]} config
-        T     (count token-ids)
-        ids   (mx/array (vec token-ids) [T] mx/int32)
+(defn- forward-hidden
+  "Layer loop over pre-built hidden states h0 [1 T hidden]: rotate with the
+   3-axis `mrope` tables when given (VLM prefill), else scalar RoPE at
+   `offset`. `prior` = physical tokens already in the cache (mask width for a
+   chunked prefill block; 0 for a from-scratch prefill). Returns
+   [logits new-cache]."
+  [{:keys [config weights]} h0 T cache offset mrope prior]
+  (let [{:keys [n-layers eps vocab layer-types]} config
         embed (get weights (str wp "embed_tokens.weight"))
         dtype (mx/dtype embed)
-        mask  (when (> T 1) (causal-mask T dtype))
-        h0    (mx/reshape (mx/take-idx embed ids 0) [1 T hidden])
+        mask  (when (> T 1) (causal-mask T (or prior 0) dtype))
         [h new-cache]
         (reduce
          (fn [[h nc] i]
@@ -386,7 +441,7 @@
                  [a ce'] (if (= "linear_attention" (nth layer-types i))
                            (gdn-layer config weights (str p "linear_attn.") hn T (nth cache i))
                            (full-attn-layer config weights (str p "self_attn.") hn T
-                                            (nth cache i) offset mask))
+                                            (nth cache i) offset mask mrope))
                  h1 (mx/add h a)
                  mn (mx/rms-norm h1 (get weights (str p "post_attention_layernorm.weight")) eps)
                  m  (if (moe-layer? config i)
@@ -401,6 +456,44 @@
               embed
               (get weights "language_model.lm_head.weight"))]
     [(mx/reshape (linear hf lmw) [T vocab]) new-cache]))
+
+(defn forward-cached
+  "Run the forward over `token-ids` from absolute position `offset`, threading
+   and extending the per-layer `cache`. Returns [logits new-cache] with logits
+   [seq vocab]. A causal mask is built for multi-token chunks (prefill)."
+  [{:keys [config weights] :as model} token-ids cache offset]
+  (let [{:keys [hidden]} config
+        T     (count token-ids)
+        ids   (mx/array (vec token-ids) [T] mx/int32)
+        embed (get weights (str wp "embed_tokens.weight"))
+        h0    (mx/reshape (mx/take-idx embed ids 0) [1 T hidden])]
+    (forward-hidden model h0 T cache offset nil offset)))
+
+(defn forward-embeds
+  "VLM-prefill entry (genmlx-w3og): run the forward over pre-merged input
+   embeddings h0 [1 T hidden] with 3-axis M-RoPE `position-ids`
+   [[t…] [h…] [w…]] (host vectors, from the vision merge). Keys land in the
+   cache at COMPRESSED M-RoPE positions; every subsequent forward-cached step
+   must therefore rotate at `physical-offset + rope-delta` (the caller owns
+   the delta — cf. the native genmlx-52mh continuation fix). `prior` =
+   physical tokens already in `cache` (0 for the first chunk).
+   Returns [logits new-cache]."
+  [{:keys [config] :as model} h0 cache position-ids prior]
+  (let [{:keys [head-dim partial rope-theta mrope-section]} config
+        T     (count (first position-ids))
+        dims  (js/Math.floor (* head-dim partial))
+        mrope (mrope-tables position-ids (or mrope-section [11 11 10]) dims rope-theta)]
+    (forward-hidden model h0 T cache 0 mrope prior)))
+
+(defn materialize-cache!
+  "Force-evaluate every array in a per-layer cache (the {:k :v} / {:conv :rec}
+   entries). The chunked-prefill eval boundary: without it each chunk's whole
+   lazy graph — including the GDN recurrence's per-token [1 Hv Dv Dk] f32
+   states, ~2 MB × T × layers — stays live into the next chunk, and a long
+   (e.g. VLM) prefill OOMs the box (measured >105 GB at T≈630, genmlx-w3og)."
+  [cache]
+  (apply mx/materialize! (mapcat vals (remove nil? cache)))
+  cache)
 
 (defn forward
   "Uncached full forward over a token-id sequence. Returns logits [seq vocab]."

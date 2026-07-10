@@ -99,6 +99,11 @@
    how the owned MoE forward keeps its 32B expert params packed for
    mx/gather-qmm instead of tripling them to bf16 (genmlx-g6vk, spec §5.3).
 
+   Every 64 dequantized tensors the loader force-GCs: the per-tensor unpack
+   graphs (pf part arrays × ~2000 tensors) otherwise pile up as untracked
+   garbage until the END of the load — measured >60 GB transient on the
+   Ornith 8-bit and enough to OOM the Thor on the 4-bit (pf=8, genmlx-w3og).
+
    Throws (naming the quantization) for schemes dequantizable? rejects."
   ([weights qz] (dequantize-weights weights qz nil))
   ([weights {:keys [bits overrides] :as qz} {:keys [skip?]}]
@@ -109,8 +114,11 @@
                          "overrides). Load with {:cljs-forward? false} to "
                          "use the upstream forward.")
                     {:quantization qz})))
-  (let [dequant
+  (let [n-dequant (volatile! 0)
+        dequant
         (fn [nm base wq scales biases]
+          (when (zero? (mod (vswap! n-dequant inc) 64))
+            (mx/force-gc!))
           (let [t-bits  (get-in overrides [base :bits] bits)
                 p2?     (contains? #{2 4 8} t-bits)
                 [out gcount] (mx/shape scales)
