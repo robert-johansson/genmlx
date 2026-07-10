@@ -39,9 +39,14 @@
         with-token-smc* exposes live handles to a continuation inside a scope
         and tears everything down in a finally — mirroring with-llm-branches*.
      R3 prefill runs once per prompt; per-step cost is N × decode-step + O(N)
-        bookkeeping. Fork cost is backend-dependent (CUDA flat path: a cache
-        COPY; Metal paged path: a block-share) — measured numbers live in
-        bench/token_smc_bench.cljs, not hidden here.
+        bookkeeping. Fork cost is backend-dependent (owned CljsForwardModel:
+        an O(1) persistent-value reference share; CUDA native flat path: a
+        cache COPY; Metal paged path: a block-share) — measured numbers live
+        in bench/owned_branch.cljs + bench/token_smc.cljs, not hidden here.
+     R4 dropped per-step graphs are force-gc!'d every :gc-every rounds
+        (default 1): JS GC cannot see native buffer sizes, so without this an
+        N-particle filter accumulates N x T dead transient graphs (measured
+        ~8 GB/s dark pages on a 35B — the genmlx-h3p5 OOM class).
 
    V1 DEVIATIONS (documented on the bean): rejuvenation runs at filter END
    (post-loop token-MCMC via the CONSTRAINED gf's regenerate — π-invariant for
@@ -94,8 +99,10 @@
   (dec-live-handles [_] @live))
 
 (defn native-decoder
-  "Decoder over the native branchable KV cache (requires
-   llm/supports-branching?)."
+  "Decoder over the branchable KV cache surface (requires
+   llm/supports-branching?): the native MoE branch primitives, or the owned
+   CljsForwardModel whose persistent-value caches make dec-fork! an O(1)
+   reference share (genmlx-7f93)."
   [model]
   (->NativeDecoder model (atom #{})))
 
@@ -120,9 +127,11 @@
 
 (defn replay-decoder
   "Correct-but-O(T)-per-step decoder for models WITHOUT the branch surface
-   (dense CljsForwardModel): a handle is a token vector; every step
-   re-forwards prompt+tokens through the uncached forward. The asymmetry vs
-   the native decoder is the documented R3 cost difference, not hidden."
+   (upstream dense natives; since genmlx-7f93 the owned CljsForwardModel
+   branches natively): a handle is a token vector; every step re-forwards
+   prompt+tokens through the uncached forward. The asymmetry vs the branch
+   decoder is the documented R3 cost difference, not hidden — and the
+   parity/benchmark oracle for the owned branch path."
   [model]
   (->ReplayDecoder model (volatile! []) (atom {}) (atom 0)))
 
@@ -181,10 +190,19 @@
 (defn- run-filter
   "Core loop shared by token-smc and with-token-smc*. Returns
    {:particles [{:handle :tokens :log-w :finished? :dfa}]
-    :log-ml-estimate mx-scalar :ess-trajectory [..] :decoder d}."
+    :log-ml-estimate mx-scalar :ess-trajectory [..] :decoder d}.
+
+   Per-round cleanup (:gc-every, default 1): mx/force-gc! after every round's
+   particle steps — the R4 resource property. Each step DROPS the particle's
+   previous logits/cache graph, but JS GC cannot see the native buffer sizes
+   behind those references, so an N-particle filter otherwise accumulates
+   N x T dead transient graphs before any collection runs. On a 35B owned
+   model that measured ~8 GB/s of driver-side dark pages (the genmlx-h3p5
+   OOM-cascade class, reboot #3 2026-07-10) — a filter-scale hazard, not a
+   decoder-specific one. 0/false disables (model-free table-decoder tests)."
   [decoder {:keys [particles ess-threshold max-tokens eos-id proposal twist
-                   constraint key callback]
-            :or {particles 8 ess-threshold 0.5 proposal :model}}
+                   constraint key callback gc-every]
+            :or {particles 8 ess-threshold 0.5 proposal :model gc-every 1}}
    prompt-ids]
   (when (and (= proposal :grammar-masked) (nil? constraint))
     (throw (ex-info "proposal :grammar-masked requires a :constraint"
@@ -279,6 +297,8 @@
                 resample? (< ess (* ess-threshold (max 1 alive)))
                 st'' (if resample? (resample! st' kr) st')]
             (when callback (callback {:step t :ess ess :resampled? resample?}))
+            (when (and gc-every (pos? gc-every) (zero? (mod (inc t) gc-every)))
+              (mx/force-gc!))
             (recur (inc t) st'' knext)))))))
 
 (defn- dispose-all! [decoder result]
@@ -373,6 +393,7 @@
           :twist (fn [state token-prefix] log-phi)
           :rejuvenation {:steps K :selection sel :gf gf}  ;; v1: at filter end
           :decoder d              ;; override (tests); default decoder-for
+          :gc-every n             ;; force-gc! cadence in rounds (default 1; R4)
           :key k :callback fn}
 
    model-map: {:model :tokenizer} (llm/load-model) — or nil with :decoder.

@@ -1,0 +1,31 @@
+{
+  "model": "/home/robert/.cache/huggingface/hub/models--mlx-community--Ornith-1.0-35B-4bit/snapshots/781f91090809411b7fc07449817f398a99feb188",
+  "moe?": true,
+  "fork": {
+    "forks": 200,
+    "us-per-fork": 10
+  },
+  "decode": [
+    {
+      "T": 16,
+      "prefill-ms": 599,
+      "branch-ms-per-step": 131.75,
+      "replay-ms-per-step": 625.75,
+      "replay-over-branch": 4.749525616698293
+    },
+    {
+      "T": 64,
+      "prefill-ms": 1827,
+      "branch-ms-per-step": 130.75,
+      "replay-ms-per-step": 2035.5,
+      "replay-over-branch": 15.567877629063098
+    }
+  ],
+  "filter": {
+    "particles": 4,
+    "max-tokens": 8,
+    "branch-secs": 7.249,
+    "replay-secs": 27.812,
+    "replay-over-branch": 3.8366671265002075
+  }
+}

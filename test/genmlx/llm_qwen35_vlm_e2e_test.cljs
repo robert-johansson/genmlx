@@ -81,22 +81,36 @@
                     " | owned argmax=" am " top5=" (pr-str (mapv first t5))))
       (assert-true "owned VLM prefill produced finite logits"
                    (js/isFinite (second (first t5))))
-      (pr/let [ids (loop [c cache i 0 id am acc [am]]
-                     (if (< i 11)
-                       (let [[lg c'] (q35/step fm c (+ seq-len rope-delta i) id)
-                             nid (mx/item (mx/argmax lg))]
-                         (recur c' (inc i) nid (conj acc nid)))
-                       acc))
-               text (llm/decode tok (js/Uint32Array.from (into-array ids)))]
-        (println (str "  owned greedy continuation: " (pr-str text)))
-        (.writeFileSync fs result-file
-                        (js/JSON.stringify
-                         (clj->js {:tokens tokens :argmax am :top5 t5
-                                   :seq-len seq-len :rope-delta rope-delta
-                                   :continuation text})))
-        (println (str "  result saved -> " result-file
-                      "\n  now run: GENMLX_VLM_E2E_MODE=native …"))
-        (finish)))))
+      ;; Continuation decodes through the backend BRANCH surface (genmlx-7f93):
+      ;; install-prefill! adopts the image-conditioned cache + rope-delta into
+      ;; the CljsForwardModel cell, and a branch forked off it must carry the
+      ;; M-RoPE shift transparently — the same offset math as the old direct
+      ;; (q35/step fm c (+ seq-len rope-delta i) id) loop, now owned by the
+      ;; branch ledger. A wrong/lost delta degrades this continuation visibly
+      ;; (the genmlx-52mh failure mode).
+      (llm/install-prefill! (:model m) {:cache cache :seq-len seq-len
+                                        :rope-delta rope-delta})
+      (let [bid (llm/branch-cache! (:model m))]
+        (assert-true "owned model exposes the branch surface over the VLM prefix"
+                     (llm/supports-branching? (:model m)))
+        (pr/let [ids (loop [i 0 id am acc [am]]
+                       (if (< i 11)
+                         (let [lg (llm/forward-branch (:model m) bid id)
+                               nid (mx/item (mx/argmax lg))]
+                           (recur (inc i) nid (conj acc nid)))
+                         acc))
+                 text (llm/decode tok (js/Uint32Array.from (into-array ids)))]
+          (llm/dispose-branch! (:model m) bid)
+          (println (str "  owned greedy continuation (decoded on a BRANCH off the image prefix): "
+                        (pr-str text)))
+          (.writeFileSync fs result-file
+                          (js/JSON.stringify
+                           (clj->js {:tokens tokens :argmax am :top5 t5
+                                     :seq-len seq-len :rope-delta rope-delta
+                                     :continuation text})))
+          (println (str "  result saved -> " result-file
+                        "\n  now run: GENMLX_VLM_E2E_MODE=native …"))
+          (finish))))))
 
 (defn- run-native []
   (if-not (.existsSync fs result-file)

@@ -92,11 +92,23 @@
 ;; it presents the SAME stateful API as the upstream model (init-cache! /
 ;; forward-prefill / forward-step / reset-cache!) and every caller (LLM-as-GF,
 ;; byte/structured GFs) works unchanged. The forward dispatches on model_type
-;; (vanilla Qwen3 or Qwen3.5 hybrid). The atom is the one audited KV-cache
-;; mutation boundary.
+;; (vanilla Qwen3 or Qwen3.5 hybrid).
+;;
+;; The cache cell holds {:cache <per-layer vec> :offset <physical tokens>
+;; :rope-delta <M-RoPE shift, nil = 0>}: `offset` counts PHYSICAL tokens in the
+;; cache; rotation happens at offset + rope-delta (nonzero only after a VLM
+;; prefill, whose compressed M-RoPE positions end below the physical length —
+;; genmlx-52mh). `branches` is the owned branch ledger
+;; {:next-id <int> :branches {id -> same shape as the cache cell}} — because
+;; prefill/step RETURN persistent caches of immutable MxArrays, forking is
+;; nothing but holding a second reference to the current cache value
+;; (genmlx-7f93); dispose is dropping it. Both atoms are audited KV-cache
+;; mutation boundaries (cache fenced by try/finally in consumers, branches by
+;; the with-llm-branches* / token-smc disposal scopes).
 ;; ---------------------------------------------------------------------------
 
-(defrecord CljsForwardModel [fwd cache])  ; fwd = {:config :weights :impl}; cache = atom
+(defrecord CljsForwardModel [fwd cache branches])
+;; fwd = {:config :weights :impl}; cache + branches = atoms (see above)
 
 (defn cljs-forward-model? [model] (instance? CljsForwardModel model))
 
@@ -250,7 +262,8 @@
            (do
              ;; Tier-B (owned path): assert the owned forward surface before use.
              (assert-owned-forward!)
-             {:model (->CljsForwardModel (fwd/load-model model-path) (atom nil))
+             {:model (->CljsForwardModel (fwd/load-model model-path) (atom nil)
+                                         (atom {:next-id 1 :branches {}}))
               :tokenizer tokenizer
               :type (keyword model-type)})
            (p/let [model (load-upstream-model model-type model-path)]
@@ -403,66 +416,131 @@
           logits (forward-with-cache model input)]
       (-> logits (mx/index 0) (mx/index 0)))))
 
+(defn install-prefill!
+  "Install an externally-built owned-forward prefill into a CljsForwardModel's
+   cache cell: `state` = {:cache <per-layer cache> :seq-len <physical tokens>
+   :rope-delta <M-RoPE offset shift, optional>} — exactly the shape
+   genmlx.llm.qwen35-vision-forward/vlm-prefill returns. After this,
+   forward-step / branch-cache! / forward-branch continue from the (possibly
+   image-conditioned) prefix, rotating at physical-offset + rope-delta
+   transparently (genmlx-52mh). Owned path only."
+  [model {:keys [cache seq-len rope-delta]}]
+  (when-not (cljs-forward-model? model)
+    (throw (ex-info "install-prefill! installs an OWNED per-layer cache value; the native model manages its cache internally (use vlm-prefill-flat!)."
+                    {:genmlx/error :not-owned-model :model-type (type model)})))
+  (reset! (:cache model) {:cache cache :offset seq-len :rope-delta rope-delta})
+  nil)
+
 (defn forward-step
   "Run a single-token cached forward pass.
 
    Takes one token ID (integer), uses the KV cache from previous calls,
    and returns logits for the next position as an MxArray of shape [vocab_size].
 
-   Constant time in sequence length — does not recompute the full context."
+   Constant time in sequence length — does not recompute the full context.
+   On the owned path, rotation happens at offset + rope-delta (nonzero only
+   after install-prefill! of a VLM prefix)."
   [model token-id]
   (if (cljs-forward-model? model)
-    (let [{:keys [cache offset]} @(:cache model)
-          [logits cache'] (fwd/step (:fwd model) cache offset token-id)]
-      (reset! (:cache model) {:cache cache' :offset (inc offset)})
+    (let [{:keys [cache offset rope-delta]} @(:cache model)
+          [logits cache'] (fwd/step (:fwd model) cache
+                                    (+ offset (or rope-delta 0)) token-id)]
+      (reset! (:cache model) {:cache cache' :offset (inc offset)
+                              :rope-delta rope-delta})
       logits)
     (let [input (ids->input [token-id])
           logits (forward-with-cache model input)]
       (-> logits (mx/index 0) (mx/index 0)))))
 
 ;; ---------------------------------------------------------------------------
-;; Tier-2 branchable cache (native MoE only) — bean mlx-19wy / P2
+;; Branchable cache — native MoE (bean mlx-19wy) + owned forward (genmlx-7f93)
 ;;
 ;; The opaque numeric branch id IS the handle. branch-cache! forks the
 ;; model-internal cache at its CURRENT position (after init-cache! +
-;; forward-prefill, plus any forward-steps) into an INDEPENDENT branch —
-;; O(prefix) once; forward-branch then advances THAT branch in place,
-;; O(1)/step, exactly like forward-step but against the isolated branch.
-;; Only the native qwen3_next / qwen3_5_moe path exposes this surface; the
-;; dense CljsForwardModel does not (it must keep the replay path).
+;; forward-prefill, plus any forward-steps) into an INDEPENDENT branch;
+;; forward-branch then advances THAT branch in place, O(1)/step, exactly like
+;; forward-step but against the isolated branch. Two implementations:
+;;
+;; - NATIVE (qwen3_next / qwen3_5_moe upstream instances): the Tier-2 Rust
+;;   branch surface (.branchCache / .branchFrom / .forwardBranch /
+;;   .disposeBranch). Fork cost is backend-dependent (CUDA flat path: a cache
+;;   copy); dispose frees native tensors deterministically.
+;; - OWNED (CljsForwardModel, any family): the per-layer cache is a persistent
+;;   vector of immutable MxArrays, so a fork IS holding a second reference to
+;;   the current cache value — O(1), no copy, no eval-before-write hazard —
+;;   and dispose is dropping it from the ledger (arrays are reclaimed by
+;;   GC + MLX refcounting, not deterministically). Branch entries carry the
+;;   cache cell's :rope-delta, so branches off a VLM prefix (install-prefill!)
+;;   rotate at physical-offset + rope-delta transparently.
+;;
+;; The upstream DENSE natives (e.g. Qwen3Model with {:cljs-forward? false})
+;; expose neither surface — they keep the replay path (genmlx.llm.smc
+;; ReplayDecoder / the make-llm-gf replay oracle).
 ;; ---------------------------------------------------------------------------
 
 (defn supports-branching?
-  "True iff `model` is the native MoE class exposing the branchable-cache
-   surface. The dense CljsForwardModel has no native branch surface."
+  "True iff `model` exposes the branchable-cache surface: the owned
+   CljsForwardModel (persistent-value caches — forking is reference-sharing,
+   genmlx-7f93) or a native MoE class with the Tier-2 branch methods."
   [model]
-  (and (not (cljs-forward-model? model))
-       (fn? (.-branchCache model))))
+  (or (cljs-forward-model? model)
+      (fn? (.-branchCache model))))
+
+(defn- owned-branch-state
+  "Look up owned branch `id`'s {:cache :offset :rope-delta}, or throw."
+  [model id]
+  (or (get-in @(:branches model) [:branches id])
+      (throw (ex-info (str "genmlx.llm.backend: unknown owned branch id " id
+                           " (disposed, or from another model?)")
+                      {:genmlx/error :unknown-branch-id :id id}))))
+
+(defn- owned-branch!
+  "Register `state` as a new owned branch; returns its fresh numeric id."
+  [model state]
+  (let [id (:next-id @(:branches model))]
+    (swap! (:branches model)
+           #(-> % (update :next-id inc) (assoc-in [:branches id] state)))
+    id))
 
 (defn branch-cache!
   "Fork the model-internal cache at its CURRENT position into an independent
    branch; returns the branch's opaque numeric id. Call AFTER init-cache! +
-   forward-prefill (and any forward-steps). O(prefix) once. Native MoE only."
+   forward-prefill (and any forward-steps). Owned: O(1) reference share."
   [model]
-  (.branchCache model))
+  (if (cljs-forward-model? model)
+    (owned-branch! model (or @(:cache model) {:cache nil :offset 0}))
+    (.branchCache model)))
 
 (defn branch-from
   "Fork a new sub-branch from existing branch `id`; returns the new id."
   [model id]
-  (.branchFrom model id))
+  (if (cljs-forward-model? model)
+    (owned-branch! model (owned-branch-state model id))
+    (.branchFrom model id)))
 
 (defn forward-branch
   "Advance branch `id` by one token, returning next-position logits of shape
    [vocab]. O(1) in sequence length — same contract as forward-step, against
-   the isolated branch instead of the model-internal cache."
+   the isolated branch instead of the model-internal cache. Owned branches
+   rotate at offset + rope-delta (VLM prefixes shift transparently)."
   [model id token-id]
-  (-> (.forwardBranch model id (ids->input [token-id]))
-      (mx/index 0) (mx/index 0)))
+  (if (cljs-forward-model? model)
+    (let [{:keys [cache offset rope-delta]} (owned-branch-state model id)
+          [logits cache'] (fwd/step (:fwd model) cache
+                                    (+ offset (or rope-delta 0)) token-id)]
+      (swap! (:branches model) assoc-in [:branches id]
+             {:cache cache' :offset (inc offset) :rope-delta rope-delta})
+      logits)
+    (-> (.forwardBranch model id (ids->input [token-id]))
+        (mx/index 0) (mx/index 0))))
 
 (defn dispose-branch!
-  "Free branch `id` and its cache tensors. Idempotent. Native MoE only."
+  "Free branch `id`: native frees its cache tensors; owned drops the ledger
+   reference (GC + MLX refcounting reclaim the arrays). Idempotent."
   [model id]
-  (.disposeBranch model id))
+  (if (cljs-forward-model? model)
+    (do (swap! (:branches model) update :branches dissoc id) nil)
+    (.disposeBranch model id)))
 
 ;; ---------------------------------------------------------------------------
 ;; Flat VLM prefill (native MoE VLM only) — flat-VLM-prefill

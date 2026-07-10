@@ -218,8 +218,9 @@
    (branch-using inference on the resident MoE). All OTHER GFI ops delegate to the
    plain make-llm-gf oracle (the handler replay path), so the branched gf is a full
    drop-in generative function. The model must expose the branch surface
-   (llm/supports-branching? — the native MoE path; a dense CljsForwardModel does not,
-   and would need the replay path). Optional `constraint` is a genmlx.llm.grammar
+   (llm/supports-branching? — the native MoE path, or the owned CljsForwardModel
+   whose persistent-value caches fork by reference-sharing, genmlx-7f93; only the
+   upstream DENSE natives need the replay path). Optional `constraint` is a genmlx.llm.grammar
    constraint threaded as grammar masking through both simulate and regenerate.
 
    Returns a DynamicGF; run inference inside (with-llm-branches* model ...)."
@@ -254,8 +255,12 @@
   "Single-site Metropolis-Hastings over a branched LLM-GF, using the standard GFI
    regenerate weight as the log MH acceptance ratio (matches inference/mcmc mh-step),
    and disposing the loser ledger's UNIQUE (suffix) branches each step so live
-   branches stay bounded to ~2 ledgers over an arbitrarily long chain. Run inside
-   with-llm-branches*. Returns {:trace :accept-rate :max-live}."
+   branches stay bounded to ~2 ledgers over an arbitrarily long chain. Each step
+   also force-gc!s: on the OWNED forward, disposing a loser ledger only drops
+   CLJS references to multi-GB cache values that JS GC cannot size (the
+   genmlx-h3p5 dark-page class) — the per-iteration cleanup CLAUDE.md sanctions
+   for inference hot loops. Run inside with-llm-branches*.
+   Returns {:trace :accept-rate :max-live}."
   [model gf init-trace selection n key]
   (loop [t init-trace, key key, i 0, accepts 0, max-live 0]
     (if (>= i n)
@@ -269,5 +274,6 @@
             winner (if accept? (:trace result) t)
             loser  (if accept? t (:trace result))]
         (doseq [b (set/difference (suffix-ids loser k) (suffix-ids winner k))] (dispose! model b))
+        (mx/force-gc!)
         (recur winner nk (inc i) (if accept? (inc accepts) accepts)
                (max max-live (or (branch-scope-live) 0)))))))

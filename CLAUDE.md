@@ -238,7 +238,9 @@ direct import of dynamic.cljs).
      state atoms, the encoder atom in `inference/amortized.cljs`
    - The `defdist` registry bookkeeping atom in `dist/core.cljs` (never read
      by computation paths)
-   - KV cache mutation in `llm/backend.cljs` (always in try/finally)
+   - KV cache mutation in `llm/backend.cljs` (always in try/finally), plus the
+     owned branch ledger on `CljsForwardModel` (persistent cache VALUES keyed
+     by branch id; fenced by `with-llm-branches*` / token-SMC disposal scopes)
    - The live `Bun.serve` listener (an OS resource, not pure state) in the network
      face of the Bun world membrane (`world/net.cljs`): created by `serve!`, scoped
      and torn down by `with-server`'s `p/finally` (the blessed path) — analogous to
