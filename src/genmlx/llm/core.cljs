@@ -201,8 +201,12 @@
                                    toks)
                             s    (mx/stack toks 0)]       ; [T K] / [T]
                         (if k (mx/transpose s [1 0]) s))) ; [K T]
+         ;; mx/item on a bool array yields the NUMBER 0/1 — and (not 0) is
+         ;; false in CLJS, so a bare (not (mx/item …)) can NEVER see death.
+         ;; Found by llm_batched_checkevery_test (genmlx-lo6e D3).
          all-dead? (fn [active]
-                     (not (mx/item (mx/any active))))]
+                     (let [v (mx/item (mx/any active))]
+                       (or (false? v) (== 0 v))))]
      (dyn/auto-key
       (gen [prompt-ids max-tokens]
            (if (zero? max-tokens)
