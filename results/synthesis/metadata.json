@@ -1,18 +1,18 @@
 {
   "experiment": "synthesis",
-  "git_sha": "c9253bc",
-  "timestamp": "2026-06-13T08:59:44.273Z",
+  "git_sha": "58b0afd",
+  "timestamp": "2026-07-11T14:54:46.801Z",
   "hardware": {
-    "platform": "darwin",
+    "platform": "linux",
     "arch": "arm64",
-    "cpus": 10,
-    "memory": "32GB"
+    "cpus": 14,
+    "memory": "123GB"
   },
   "runtime": {
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "0f2495b53a593683bace2e656903bd7a9496fc239dd67ddda7f9923dddb918c3",
-  "duration_ms": 8261,
+  "source_hash": "904444d14a439405a5df4307bdafced8d13d6b26f9bafde7d3b898655eb829ee",
+  "duration_ms": 44931,
   "script": "bench/synthesis_occam.cljs"
 }

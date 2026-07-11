@@ -1,53 +1,104 @@
 ============================================================
  synthesis-Occam: deterministic scoring
 ============================================================
-Fixture: /Users/robert/code/genmlx/bench/fixtures/synthesis_occam_programs.edn
-Frozen programs: 50 
+Fixture [qwen3-0.6b]: /home/robert/code/mlx/genmlx/bench/fixtures/synthesis_occam_programs.edn
+Fixture [coder-next]: /home/robert/code/mlx/genmlx/bench/fixtures/synthesis_occam_programs_coder_next.edn
 
--- [1] fire-rate --
-  candidates: 50   eval-ok: 49   parsed: 46
-  fired (exact/kalman): 24   fire-rate: 49.0% of eval-ok
+
+===== tier qwen3-0.6b (50 frozen programs) =====
+
+-- [1] fire-rate (qwen3-0.6b) --
+  candidates: 50   eval-ok: 48   parsed: 50
+  fired (exact/kalman): 25   fire-rate: 52.1% of eval-ok
     coin-bias: 0/5 (0%)
     decay-time: 0/4 (0%)
-    defect-rate: 0/5 (0%)
+    defect-rate: 0/4 (0%)
     distance-sensor: 4/5 (80%)
     gps-position: 2/5 (40%)
-    scale-weight: 4/5 (80%)
+    scale-weight: 5/5 (100%)
     temperature: 4/5 (80%)
     test-score: 5/5 (100%)
     voltage-meter: 5/5 (100%)
     wait-time: 0/5 (0%)
 
--- [2] |IS - analytic| on firing subset ( 4000 particles) --
+-- [2] |IS - analytic| on firing subset (qwen3-0.6b, 4000 particles) --
     temperature  y*=24.899  exact=-1.6146  IS=-1.5727  |gap|=0.0419
     temperature  y*=25.050  exact=-2.0704  IS=-2.0485  |gap|=0.0218
     temperature  y*=24.904  exact=-1.3286  IS=-1.2879  |gap|=0.0408
     temperature  y*=14.896  exact=-1.3463  IS=-1.3132  |gap|=0.0331
     scale-weight  y*=80.072  exact=-2.6822  IS=-2.6845  |gap|=0.0023
     scale-weight  y*=0.029  exact=-2.5286  IS=-2.6270  |gap|=0.0984
-    scale-weight  y*=30.523  exact=-2.6073  IS=-2.6149  |gap|=0.0076
-    scale-weight  y*=10.268  exact=-2.2042  IS=-2.2009  |gap|=0.0032
-    distance-sensor  y*=10.041  exact=-1.0312  IS=-1.0313  |gap|=0.0001
-    distance-sensor  y*=70.095  exact=-3.3331  IS=-3.3216  |gap|=0.0115
-    distance-sensor  y*=0.070  exact=-0.9264  IS=-0.9421  |gap|=0.0158
-    distance-sensor  y*=10.359  exact=-2.6048  IS=-2.6198  |gap|=0.0150
-    test-score  y*=-0.961  exact=-3.2456  IS=-3.2878  |gap|=0.0423
-    test-score  y*=70.692  exact=-3.2434  IS=-3.2844  |gap|=0.0410
-    test-score  y*=49.783  exact=-3.2414  IS=-3.2566  |gap|=0.0153
-    test-score  y*=29.655  exact=-3.3336  IS=-3.3382  |gap|=0.0046
-    test-score  y*=70.196  exact=-3.2413  IS=-3.2527  |gap|=0.0114
-    voltage-meter  y*=49.989  exact=-3.2411  IS=-3.2293  |gap|=0.0118
-    voltage-meter  y*=0.001  exact=-0.9202  IS=-0.8865  |gap|=0.0337
-    voltage-meter  y*=-0.012  exact=-0.9240  IS=-0.9191  |gap|=0.0049
-    voltage-meter  y*=49.819  exact=-2.6032  IS=-2.6136  |gap|=0.0104
-    voltage-meter  y*=-0.029  exact=-0.9194  IS=-0.9490  |gap|=0.0296
-    gps-position  y*=10.151  exact=-2.6030  IS=-2.6200  |gap|=0.0170
-    gps-position  y*=70.682  exact=-3.2434  IS=-3.2691  |gap|=0.0257
-  n=24  mean=0.0225  median=0.0155  max=0.0984
+    scale-weight  y*=60.523  exact=-2.6073  IS=-2.6149  |gap|=0.0076
+    scale-weight  y*=30.251  exact=-2.6037  IS=-2.5953  |gap|=0.0084
+    scale-weight  y*=10.110  exact=-2.2019  IS=-2.2027  |gap|=0.0008
+    distance-sensor  y*=10.009  exact=-1.0305  IS=-1.0190  |gap|=0.0115
+    distance-sensor  y*=70.735  exact=-3.3353  IS=-3.3185  |gap|=0.0168
+    distance-sensor  y*=0.083  exact=-0.9273  IS=-0.9360  |gap|=0.0087
+    distance-sensor  y*=9.591  exact=-2.6055  IS=-2.6220  |gap|=0.0165
+    test-score  y*=0.692  exact=-3.2434  IS=-3.2844  |gap|=0.0410
+    test-score  y*=69.783  exact=-3.2414  IS=-3.2566  |gap|=0.0153
+    test-score  y*=50.758  exact=-3.2439  IS=-3.2732  |gap|=0.0293
+    test-score  y*=30.647  exact=-3.3348  IS=-3.3347  |gap|=0.0001
+    test-score  y*=69.989  exact=-3.2411  IS=-3.2293  |gap|=0.0118
+    voltage-meter  y*=50.081  exact=-3.2412  IS=-3.2317  |gap|=0.0095
+    voltage-meter  y*=-0.006  exact=-0.9202  IS=-0.9394  |gap|=0.0192
+    voltage-meter  y*=-0.039  exact=-0.9247  IS=-0.9630  |gap|=0.0383
+    voltage-meter  y*=49.869  exact=-2.6029  IS=-2.5989  |gap|=0.0040
+    voltage-meter  y*=-0.002  exact=-0.9190  IS=-0.9736  |gap|=0.0546
+    gps-position  y*=10.358  exact=-2.6048  IS=-2.6256  |gap|=0.0208
+    gps-position  y*=70.132  exact=-3.2412  IS=-3.2159  |gap|=0.0253
+  n=25  mean=0.0231  median=0.0168  max=0.0984
     [0.00-0.02] ############## 14
     [0.02-0.05] ######### 9
-    [0.05-0.10] # 1
+    [0.05-0.10] ## 2
     [0.10-0.20]  0
+    [0.20-0.50]  0
+    [0.50-1.00]  0
+    [1.00-inf]  0
+
+===== tier coder-next (50 frozen programs) =====
+
+-- [1] fire-rate (coder-next) --
+  candidates: 50   eval-ok: 50   parsed: 50
+  fired (exact/kalman): 21   fire-rate: 42.0% of eval-ok
+    coin-bias: 0/5 (0%)
+    decay-time: 0/5 (0%)
+    defect-rate: 0/5 (0%)
+    distance-sensor: 1/5 (20%)
+    gps-position: 3/5 (60%)
+    scale-weight: 3/5 (60%)
+    temperature: 4/5 (80%)
+    test-score: 5/5 (100%)
+    voltage-meter: 5/5 (100%)
+    wait-time: 0/5 (0%)
+
+-- [2] |IS - analytic| on firing subset (coder-next, 4000 particles) --
+    temperature  y*=19.690  exact=-2.5498  IS=-2.5164  |gap|=0.0335
+    temperature  y*=20.133  exact=-2.5483  IS=-2.5148  |gap|=0.0335
+    temperature  y*=19.616  exact=-2.5508  IS=-2.5349  |gap|=0.0159
+    temperature  y*=19.652  exact=-2.5503  IS=-2.5172  |gap|=0.0331
+    scale-weight  y*=100.157  exact=-3.2413  IS=-3.2661  |gap|=0.0248
+    scale-weight  y*=100.606  exact=-3.9454  IS=-3.9695  |gap|=0.0240
+    scale-weight  y*=102.457  exact=-3.9521  IS=-3.9728  |gap|=0.0207
+    distance-sensor  y*=100.566  exact=-3.9454  IS=-3.9337  |gap|=0.0117
+    test-score  y*=0.028  exact=-1.2657  IS=-1.2667  |gap|=0.0010
+    test-score  y*=0.013  exact=-1.2656  IS=-1.2647  |gap|=0.0008
+    test-score  y*=0.078  exact=-1.2670  IS=-1.2579  |gap|=0.0091
+    test-score  y*=100.927  exact=-3.8122  IS=-3.8206  |gap|=0.0084
+    test-score  y*=-0.961  exact=-3.2456  IS=-3.2878  |gap|=0.0423
+    voltage-meter  y*=5.991  exact=-5.5260  IS=-5.5755  |gap|=0.0496
+    voltage-meter  y*=-1.226  exact=-5.5242  IS=-5.6598  |gap|=0.1356
+    voltage-meter  y*=9.104  exact=-5.5283  IS=-5.3905  |gap|=0.1378
+    voltage-meter  y*=0.805  exact=-5.5242  IS=-5.4234  |gap|=0.1008
+    voltage-meter  y*=2.127  exact=-5.5244  IS=-5.4464  |gap|=0.0780
+    gps-position  y*=0.080  exact=-5.5254  IS=-5.4917  |gap|=0.0337
+    gps-position  y*=-0.605  exact=-5.5254  IS=-5.5446  |gap|=0.0192
+    gps-position  y*=-3.944  exact=-5.5261  IS=-5.6186  |gap|=0.0925
+  n=21  mean=0.0431  median=0.0331  max=0.1378
+    [0.00-0.02] ####### 7
+    [0.02-0.05] ######### 9
+    [0.05-0.10] ## 2
+    [0.10-0.20] ### 3
     [0.20-0.50]  0
     [0.50-1.00]  0
     [1.00-inf]  0
@@ -60,8 +111,10 @@ Frozen programs: 50
   8 |     1      | -21.039    | -21.039      | -7.352
   Bayesian evidence selects m=1 (simplest adequate); max-likelihood selects m=8 (most complex).
   GenMLX-exact vs closed-form max |diff| = 0.000001
-  Wrote: /Users/robert/code/genmlx/results/synthesis/data.json
+  Wrote: /home/robert/code/mlx/genmlx/results/synthesis/data.json
 
 ============================================================
- fire-rate=49.0%  (24/49)    |IS-analytic| median=0.0155    Occam: bayes->m1 vs mle->m8
+ [qwen3-0.6b] fire-rate=52.1%  (25/48)    |IS-analytic| median=0.0168
+ [coder-next] fire-rate=42.0%  (21/50)    |IS-analytic| median=0.0331
+ Occam: bayes->m1 vs mle->m8
 ============================================================

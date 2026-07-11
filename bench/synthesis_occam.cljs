@@ -26,6 +26,14 @@
         true (simplest adequate) complexity and declines; max-likelihood keeps
         rising -> overfits. This is the measured Occam's-razor contrast.
 
+   PROPOSER TIERS (genmlx-8dfk, paper E11): deliverables 1-2 are computed per
+   proposer tier — the 0.6b fixture (consumer-hardware tier) and, when present,
+   the Coder-Next fixture (synthesis_occam_programs_coder_next.edn). The
+   top-level fire_rate / is_vs_analytic keys keep the original 0.6b shape
+   (figure-script compatibility); :tiers carries every tier including the 0.6b
+   one. The Occam curve (deliverable 3) is fixture-independent and reported
+   once.
+
    Run: bun run --bun nbb bench/synthesis_occam.cljs
    (or via the harness:  run_experiments.cljs --only synthesis)"
   (:require [genmlx.llm.msa :as msa]
@@ -51,6 +59,9 @@
 
 (def fixture-path
   (.resolve path-mod (js/process.cwd) "bench/fixtures/synthesis_occam_programs.edn"))
+
+(def coder-next-fixture-path
+  (.resolve path-mod (js/process.cwd) "bench/fixtures/synthesis_occam_programs_coder_next.edn"))
 
 (defn ensure-dir [dir]
   (when-not (.existsSync fs dir)
@@ -90,65 +101,24 @@
   (println "Generate it first:  bun run --bun nbb bench/synthesis_occam_generate.cljs")
   (js/process.exit 1))
 
-(def records (reader/read-string (.readFileSync fs fixture-path "utf8")))
+(def tier-fixtures
+  (into [{:tier "qwen3-0.6b" :path fixture-path}]
+        (if (.existsSync fs coder-next-fixture-path)
+          [{:tier "coder-next" :path coder-next-fixture-path}]
+          (do (println "NOTE: no coder-next fixture at" coder-next-fixture-path
+                       "— scoring the 0.6b tier only.")
+              nil))))
 
 (println "============================================================")
 (println " synthesis-Occam: deterministic scoring")
 (println "============================================================")
-(println "Fixture:" fixture-path)
-(println "Frozen programs:" (count records) "\n")
+(doseq [{:keys [tier path]} tier-fixtures]
+  (println (str "Fixture [" tier "]: " path)))
+(println)
 
 ;; ===========================================================================
-;; Deliverable 1 — fire-rate over the synthesized models
+;; Deliverables 1+2, per proposer tier
 ;; ===========================================================================
-
-(println "-- [1] fire-rate --")
-
-(def scored-models
-  (vec
-   (for [rec records]
-     (let [gf     (msa/eval-model (:code rec))
-           method (when gf (:method (msa/score-model* gf (:observations rec))))
-           fired? (boolean (#{:exact :kalman} method))]
-       (assoc rec
-              :gf gf
-              :eval-ok? (boolean gf)
-              :method (when method (name method))
-              :fired? fired?
-              :family (when fired? "normal-normal"))))))
-
-(def n-candidates (count scored-models))
-(def n-eval-ok   (count (filter :eval-ok? scored-models)))
-(def n-parsed    (count (filter :parsed? scored-models)))
-(def firing      (filterv :fired? scored-models))
-(def n-fired     (count firing))
-(def fire-rate   (if (pos? n-eval-ok) (/ n-fired n-eval-ok) 0))
-
-(defn group-rate [key-fn]
-  (->> scored-models
-       (filter :eval-ok?)
-       (group-by key-fn)
-       (map (fn [[k models]]
-              [k {:n (count models)
-                  :fired (count (filter :fired? models))
-                  :rate (/ (count (filter :fired? models)) (count models))}]))
-       (into {})))
-
-(def by-task (group-rate :task-id))
-
-(println (str "  candidates: " n-candidates "   eval-ok: " n-eval-ok
-              "   parsed: " n-parsed))
-(println (str "  fired (exact/kalman): " n-fired
-              "   fire-rate: " (.toFixed (* 100.0 fire-rate) 1) "% of eval-ok"))
-(doseq [[task {:keys [n fired rate]}] (sort-by key by-task)]
-  (println (str "    " (name task) ": " fired "/" n
-                " (" (.toFixed (* 100.0 rate) 0) "%)")))
-
-;; ===========================================================================
-;; Deliverable 2 — |IS - analytic| on the firing subset
-;; ===========================================================================
-
-(println "\n-- [2] |IS - analytic| on firing subset (" is-particles "particles) --")
 
 ;; No observed dataset -> compare at a MODEL-CONSISTENT datum: the prior-
 ;; predictive mean of the observation site (mean over K batched prior draws).
@@ -164,53 +134,125 @@
 (defn obs-choicemap [obs-addr v]
   (cm/set-value cm/EMPTY obs-addr (mx/scalar v)))
 
-(def is-gaps
-  (vec
-   (for [[i rec] (map-indexed vector firing)]
-     (let [gf      (:gf rec)
-           addr    (:obs-addr rec)
-           obs-val (central-obs gf addr (+ 31000 i))
-           exact   (msa/score-model gf {addr obs-val})
-           is      (mx/item (:log-ml-estimate
-                             (is/vectorized-importance-sampling
-                              {:samples is-particles :key (rng/fresh-key (+ 9000 i))}
-                              gf [] (obs-choicemap addr obs-val))))
-           gap     (js/Math.abs (- exact is))]
-       (mx/clear-cache!)
-       (println (str "    " (name (:task-id rec))
-                     "  y*=" (.toFixed obs-val 3)
-                     "  exact=" (.toFixed exact 4)
-                     "  IS=" (.toFixed is 4)
-                     "  |gap|=" (.toFixed gap 4)))
-       {:task-id (name (:task-id rec))
-        :obs obs-val :exact exact :is is :gap gap}))))
-
-(def gap-values (mapv :gap is-gaps))
-
-;; Histogram bins for |gap|
 (def gap-bin-edges [0.0 0.02 0.05 0.1 0.2 0.5 1.0])
 (defn bin-label [lo hi] (str (.toFixed lo 2) "-" (if hi (.toFixed hi 2) "inf")))
-(def gap-histogram
-  (let [edges gap-bin-edges]
-    (vec
-     (for [i (range (count edges))]
-       (let [lo (nth edges i)
-             hi (when (< (inc i) (count edges)) (nth edges (inc i)))
-             in-bin (filter (fn [g] (and (>= g lo) (or (nil? hi) (< g hi)))) gap-values)]
-         {:bin (bin-label lo hi) :lo lo :hi hi :count (count in-bin)})))))
 
-(def gap-summary
-  {:n (count gap-values)
-   :mean (mean gap-values)
-   :median (median gap-values)
-   :max (if (seq gap-values) (apply max gap-values) 0)})
+(defn score-tier
+  "Deliverable 1 (fire-rate) + deliverable 2 (|IS - analytic| on the firing
+   subset) over one tier's frozen records. Deterministic: per-firing-model
+   seeds depend only on the model's index within the tier.
 
-(println (str "  n=" (:n gap-summary)
-              "  mean=" (.toFixed (:mean gap-summary) 4)
-              "  median=" (.toFixed (:median gap-summary) 4)
-              "  max=" (.toFixed (:max gap-summary) 4)))
-(doseq [{:keys [bin count]} gap-histogram]
-  (println (str "    [" bin "] " (apply str (repeat count "#")) " " count)))
+   The frozen :raw-text is the artifact of truth; parse -> assemble -> eval
+   are re-derived here (all deterministic), so every tier is measured by the
+   SAME parser version regardless of which normalize-llm the generator ran
+   under (the frozen :code/:parsed? fields are generation-time telemetry)."
+  [tier records]
+  (println (str "-- [1] fire-rate (" tier ") --"))
+  (let [scored-models
+        (vec
+         (for [rec records]
+           (let [dist-map (or (msa/parse-math (:raw-text rec)) {})
+                 code     (msa/assemble-gen-fn (:variables rec) dist-map)
+                 gf       (msa/eval-model code)
+                 method   (when gf (:method (msa/score-model* gf (:observations rec))))
+                 fired?   (boolean (#{:exact :kalman} method))]
+             (assoc rec
+                    :gf gf
+                    :code code
+                    :parsed? (boolean (seq dist-map))
+                    :eval-ok? (boolean gf)
+                    :method (when method (name method))
+                    :fired? fired?
+                    :family (when fired? "normal-normal")))))
+        n-candidates (count scored-models)
+        n-eval-ok    (count (filter :eval-ok? scored-models))
+        n-parsed     (count (filter :parsed? scored-models))
+        firing       (filterv :fired? scored-models)
+        n-fired      (count firing)
+        fire-rate    (if (pos? n-eval-ok) (/ n-fired n-eval-ok) 0)
+        by-task      (->> scored-models
+                          (filter :eval-ok?)
+                          (group-by :task-id)
+                          (map (fn [[k models]]
+                                 [k {:n (count models)
+                                     :fired (count (filter :fired? models))
+                                     :rate (/ (count (filter :fired? models))
+                                              (count models))}]))
+                          (into {}))]
+    (println (str "  candidates: " n-candidates "   eval-ok: " n-eval-ok
+                  "   parsed: " n-parsed))
+    (println (str "  fired (exact/kalman): " n-fired
+                  "   fire-rate: " (.toFixed (* 100.0 fire-rate) 1) "% of eval-ok"))
+    (doseq [[task {:keys [n fired rate]}] (sort-by key by-task)]
+      (println (str "    " (name task) ": " fired "/" n
+                    " (" (.toFixed (* 100.0 rate) 0) "%)")))
+
+    (println (str "\n-- [2] |IS - analytic| on firing subset (" tier ", "
+                  is-particles " particles) --"))
+    (let [is-gaps
+          (vec
+           (for [[i rec] (map-indexed vector firing)]
+             (let [gf      (:gf rec)
+                   addr    (:obs-addr rec)
+                   obs-val (central-obs gf addr (+ 31000 i))
+                   exact   (msa/score-model gf {addr obs-val})
+                   is      (mx/item (:log-ml-estimate
+                                     (is/vectorized-importance-sampling
+                                      {:samples is-particles :key (rng/fresh-key (+ 9000 i))}
+                                      gf [] (obs-choicemap addr obs-val))))
+                   gap     (js/Math.abs (- exact is))]
+               (mx/clear-cache!)
+               (println (str "    " (name (:task-id rec))
+                             "  y*=" (.toFixed obs-val 3)
+                             "  exact=" (.toFixed exact 4)
+                             "  IS=" (.toFixed is 4)
+                             "  |gap|=" (.toFixed gap 4)))
+               {:task-id (name (:task-id rec))
+                :obs obs-val :exact exact :is is :gap gap})))
+          gap-values (mapv :gap is-gaps)
+          gap-histogram
+          (vec
+           (for [i (range (count gap-bin-edges))]
+             (let [lo (nth gap-bin-edges i)
+                   hi (when (< (inc i) (count gap-bin-edges)) (nth gap-bin-edges (inc i)))
+                   in-bin (filter (fn [g] (and (>= g lo) (or (nil? hi) (< g hi)))) gap-values)]
+               {:bin (bin-label lo hi) :lo lo :hi hi :count (count in-bin)})))
+          gap-summary
+          {:n (count gap-values)
+           :mean (mean gap-values)
+           :median (median gap-values)
+           :max (if (seq gap-values) (apply max gap-values) 0)}]
+      (println (str "  n=" (:n gap-summary)
+                    "  mean=" (.toFixed (:mean gap-summary) 4)
+                    "  median=" (.toFixed (:median gap-summary) 4)
+                    "  max=" (.toFixed (:max gap-summary) 4)))
+      (doseq [{:keys [bin count]} gap-histogram]
+        (println (str "    [" bin "] " (apply str (repeat count "#")) " " count)))
+      {:tier tier
+       :scored-models scored-models
+       :fire-rate {:n_candidates n-candidates
+                   :n_eval_ok n-eval-ok
+                   :n_parsed n-parsed
+                   :n_fired n-fired
+                   :fire_rate fire-rate
+                   :by_family {:normal-normal n-fired :none (- n-eval-ok n-fired)}
+                   :by_task (into {} (map (fn [[k v]] [k v]) by-task))}
+       :is-gaps {:n_firing (:n gap-summary)
+                 :particles is-particles
+                 :summary gap-summary
+                 :histogram gap-histogram
+                 :per_model is-gaps}})))
+
+(def tier-results
+  (vec (for [{:keys [tier path]} tier-fixtures]
+         (let [records (reader/read-string (.readFileSync fs path "utf8"))]
+           (println (str "\n===== tier " tier " (" (count records)
+                         " frozen programs) =====\n"))
+           (score-tier tier records)))))
+
+;; Backward-compatible top-level bindings = the 0.6b tier (figure scripts).
+(def base-tier (first tier-results))
+(def scored-models (:scored-models base-tier))
 
 ;; ===========================================================================
 ;; Deliverable 3 — Occam curve (Bayesian log-ML vs max-likelihood)
@@ -317,29 +359,43 @@
 ;; Emit results/synthesis/data.json
 ;; ===========================================================================
 
+(def os (js/require "os"))
+
+(defn per-model-rows [tier-result]
+  (mapv (fn [r] {:task-id (name (:task-id r))
+                 :eval-ok (:eval-ok? r)
+                 :parsed (:parsed? r)
+                 :obs-depends (:obs-depends? r)
+                 :method (:method r)
+                 :fired (:fired? r)})
+        (:scored-models tier-result)))
+
 (write-json
  "data.json"
  {:experiment "synthesis"
   :description (str "Measured synthesis Occam: fire-rate of analytical elimination over "
                     "LLM-synthesized models, |IS - analytic| on the firing subset, and a "
-                    "Bayesian-evidence vs max-likelihood Occam curve.")
+                    "Bayesian-evidence vs max-likelihood Occam curve. Fire-rate and IS-gap "
+                    "are reported per proposer tier (0.6b consumer tier + Coder-Next when "
+                    "its fixture is present); top-level keys are the 0.6b tier.")
   :timestamp (.toISOString (js/Date.))
-  :hardware {:platform "macOS" :chip "Apple Silicon" :gpu "Metal"}
-  :config {:synthesizer "qwen3-0.6b base, knowledge mode (frozen programs)"
+  ;; platform-honest (genmlx-yjyl): read the host, never assert a platform
+  :hardware {:platform (.platform os)
+             :arch (.arch os)
+             :cpus (count (.cpus os))
+             :gpu (if (mx/metal-is-available?) "Metal" "CUDA")}
+  :config {:synthesizer "knowledge mode (frozen programs); tiers: see :tiers"
            :conjugate_family "normal-normal"
            :is_particles is-particles}
-  :fire_rate {:n_candidates n-candidates
-              :n_eval_ok n-eval-ok
-              :n_parsed n-parsed
-              :n_fired n-fired
-              :fire_rate fire-rate
-              :by_family {:normal-normal n-fired :none (- n-eval-ok n-fired)}
-              :by_task (into {} (map (fn [[k v]] [k v]) by-task))}
-  :is_vs_analytic {:n_firing (:n gap-summary)
-                   :particles is-particles
-                   :summary gap-summary
-                   :histogram gap-histogram
-                   :per_model is-gaps}
+  :fire_rate (:fire-rate base-tier)
+  :is_vs_analytic (:is-gaps base-tier)
+  :tiers (into {}
+               (map (fn [tr]
+                      [(:tier tr)
+                       {:fire_rate (:fire-rate tr)
+                        :is_vs_analytic (:is-gaps tr)
+                        :per_model (per-model-rows tr)}]))
+               tier-results)
   :occam {:data occ-data
           :tau occ-tau
           :sigma occ-sigma
@@ -348,19 +404,17 @@
           :selected_by_bayes selected-by-bayes
           :selected_by_mle selected-by-mle
           :genmlx_vs_closed_max_abs_diff genmlx-vs-closed-max}
-  :per_model (mapv (fn [r] {:task-id (name (:task-id r))
-                            :eval-ok (:eval-ok? r)
-                            :parsed (:parsed? r)
-                            :obs-depends (:obs-depends? r)
-                            :method (:method r)
-                            :fired (:fired? r)})
-                   scored-models)})
+  :per_model (per-model-rows base-tier)})
 
 (mx/force-gc!)
 
 (println "\n============================================================")
-(println (str " fire-rate=" (.toFixed (* 100.0 fire-rate) 1) "%  ("
-              n-fired "/" n-eval-ok ")    "
-              "|IS-analytic| median=" (.toFixed (:median gap-summary) 4) "    "
-              "Occam: bayes->m" selected-by-bayes " vs mle->m" selected-by-mle))
+(doseq [tr tier-results]
+  (let [fr (:fire-rate tr)
+        gs (get-in tr [:is-gaps :summary])]
+    (println (str " [" (:tier tr) "] fire-rate="
+                  (.toFixed (* 100.0 (:fire_rate fr)) 1) "%  ("
+                  (:n_fired fr) "/" (:n_eval_ok fr) ")    "
+                  "|IS-analytic| median=" (.toFixed (:median gs) 4)))))
+(println (str " Occam: bayes->m" selected-by-bayes " vs mle->m" selected-by-mle))
 (println "============================================================")

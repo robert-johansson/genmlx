@@ -1,7 +1,7 @@
 {
-  "description": "Measured synthesis Occam: fire-rate of analytical elimination over LLM-synthesized models, |IS - analytic| on the firing subset, and a Bayesian-evidence vs max-likelihood Occam curve.",
+  "description": "Measured synthesis Occam: fire-rate of analytical elimination over LLM-synthesized models, |IS - analytic| on the firing subset, and a Bayesian-evidence vs max-likelihood Occam curve. Fire-rate and IS-gap are reported per proposer tier (0.6b consumer tier + Coder-Next when its fixture is present); top-level keys are the 0.6b tier.",
   "config": {
-    "synthesizer": "qwen3-0.6b base, knowledge mode (frozen programs)",
+    "synthesizer": "knowledge mode (frozen programs); tiers: see :tiers",
     "conjugate_family": "normal-normal",
     "is_particles": 4000
   },
@@ -54,9 +54,10 @@
     "genmlx_vs_closed_max_abs_diff": 5.379464234067655e-7
   },
   "hardware": {
-    "platform": "macOS",
-    "chip": "Apple Silicon",
-    "gpu": "Metal"
+    "platform": "linux",
+    "arch": "arm64",
+    "cpus": 14,
+    "gpu": "CUDA"
   },
   "experiment": "synthesis",
   "per_model": [
@@ -119,10 +120,10 @@
     {
       "task-id": "scale-weight",
       "eval-ok": true,
-      "parsed": false,
+      "parsed": true,
       "obs-depends": false,
-      "method": "hmc",
-      "fired": false
+      "method": "exact",
+      "fired": true
     },
     {
       "task-id": "scale-weight",
@@ -342,16 +343,16 @@
     },
     {
       "task-id": "defect-rate",
-      "eval-ok": true,
-      "parsed": false,
+      "eval-ok": false,
+      "parsed": true,
       "obs-depends": false,
-      "method": "hmc",
+      "method": null,
       "fired": false
     },
     {
       "task-id": "defect-rate",
       "eval-ok": true,
-      "parsed": false,
+      "parsed": true,
       "obs-depends": false,
       "method": "hmc",
       "fired": false
@@ -367,7 +368,7 @@
     {
       "task-id": "defect-rate",
       "eval-ok": true,
-      "parsed": false,
+      "parsed": true,
       "obs-depends": false,
       "method": "hmc",
       "fired": false
@@ -462,12 +463,12 @@
     }
   ],
   "is_vs_analytic": {
-    "n_firing": 24,
+    "n_firing": 25,
     "particles": 4000,
     "summary": {
-      "n": 24,
-      "mean": 0.0224749098221461,
-      "median": 0.015520662069320679,
+      "n": 25,
+      "mean": 0.023113195896148683,
+      "median": 0.016776561737060547,
       "max": 0.09841585159301758
     },
     "histogram": [
@@ -487,7 +488,7 @@
         "bin": "0.05-0.10",
         "lo": 0.05,
         "hi": 0.1,
-        "count": 1
+        "count": 2
       },
       {
         "bin": "0.10-0.20",
@@ -526,180 +527,187 @@
         "task-id": "temperature",
         "obs": 25.050182342529297,
         "exact": -2.070356845855713,
-        "is": -2.0485363006591797,
-        "gap": 0.021820545196533203
+        "is": -2.0485358238220215,
+        "gap": 0.021821022033691406
       },
       {
         "task-id": "temperature",
         "obs": 24.904239654541016,
-        "exact": -1.328649640083313,
+        "exact": -1.3286497592926025,
         "is": -1.2878570556640625,
-        "gap": 0.04079258441925049
+        "gap": 0.04079270362854004
       },
       {
         "task-id": "temperature",
         "obs": 14.895614624023438,
         "exact": -1.3463422060012817,
-        "is": -1.3131990432739258,
-        "gap": 0.03314316272735596
+        "is": -1.3131985664367676,
+        "gap": 0.03314363956451416
       },
       {
         "task-id": "scale-weight",
-        "obs": 80.07207489013672,
+        "obs": 80.07208251953125,
         "exact": -2.6821951866149902,
-        "is": -2.6844677925109863,
-        "gap": 0.0022726058959960938
+        "is": -2.684467315673828,
+        "gap": 0.0022721290588378906
       },
       {
         "task-id": "scale-weight",
-        "obs": 0.0293523371219635,
+        "obs": 0.02935236692428589,
         "exact": -2.5285935401916504,
         "is": -2.627009391784668,
         "gap": 0.09841585159301758
       },
       {
         "task-id": "scale-weight",
-        "obs": 30.523258209228516,
+        "obs": 60.52326202392578,
         "exact": -2.607306957244873,
-        "is": -2.614898681640625,
-        "gap": 0.007591724395751953
+        "is": -2.614898204803467,
+        "gap": 0.00759124755859375
       },
       {
         "task-id": "scale-weight",
-        "obs": 10.267979621887207,
-        "exact": -2.2041752338409424,
-        "is": -2.20094633102417,
-        "gap": 0.003228902816772461
+        "obs": 30.251392364501953,
+        "exact": -2.6036758422851562,
+        "is": -2.5952868461608887,
+        "gap": 0.008388996124267578
+      },
+      {
+        "task-id": "scale-weight",
+        "obs": 10.109886169433594,
+        "exact": -2.2018775939941406,
+        "is": -2.202683448791504,
+        "gap": 0.0008058547973632812
       },
       {
         "task-id": "distance-sensor",
-        "obs": 10.041054725646973,
-        "exact": -1.031184434890747,
-        "is": -1.031332015991211,
-        "gap": 0.0001475811004638672
+        "obs": 10.00946044921875,
+        "exact": -1.0305460691452026,
+        "is": -1.01900053024292,
+        "gap": 0.011545538902282715
       },
       {
         "task-id": "distance-sensor",
-        "obs": 70.0946044921875,
-        "exact": -3.3331313133239746,
-        "is": -3.3215856552124023,
-        "gap": 0.011545658111572266
+        "obs": 70.73516082763672,
+        "exact": -3.335257053375244,
+        "is": -3.3184804916381836,
+        "gap": 0.016776561737060547
       },
       {
         "task-id": "distance-sensor",
-        "obs": 0.07018568366765976,
-        "exact": -0.926352322101593,
-        "is": -0.9421167373657227,
-        "gap": 0.01576441526412964
+        "obs": 0.08298623561859131,
+        "exact": -0.9273229241371155,
+        "is": -0.9359807968139648,
+        "gap": 0.008657872676849365
       },
       {
         "task-id": "distance-sensor",
-        "obs": 10.358832359313965,
-        "exact": -2.604806423187256,
-        "is": -2.619840145111084,
-        "gap": 0.015033721923828125
+        "obs": 9.591262817382812,
+        "exact": -2.605466842651367,
+        "is": -2.6219992637634277,
+        "gap": 0.016532421112060547
       },
       {
         "task-id": "test-score",
-        "obs": -0.96100914478302,
-        "exact": -3.2455739974975586,
-        "is": -3.2878270149230957,
-        "gap": 0.04225301742553711
-      },
-      {
-        "task-id": "test-score",
-        "obs": 70.69172668457031,
+        "obs": 0.6917267441749573,
         "exact": -3.243434429168701,
-        "is": -3.2844457626342773,
-        "gap": 0.04101133346557617
+        "is": -3.284445285797119,
+        "gap": 0.04101085662841797
       },
       {
         "task-id": "test-score",
-        "obs": 49.783267974853516,
+        "obs": 69.78326416015625,
         "exact": -3.2413597106933594,
         "is": -3.256636619567871,
         "gap": 0.015276908874511719
       },
       {
         "task-id": "test-score",
-        "obs": 29.65494155883789,
-        "exact": -3.3335719108581543,
-        "is": -3.338163375854492,
-        "gap": 0.004591464996337891
+        "obs": 50.75762939453125,
+        "exact": -3.243893623352051,
+        "is": -3.27315616607666,
+        "gap": 0.029262542724609375
       },
       {
         "task-id": "test-score",
-        "obs": 70.19638061523438,
-        "exact": -3.241319179534912,
-        "is": -3.252716541290283,
-        "gap": 0.011397361755371094
+        "obs": 30.646894454956055,
+        "exact": -3.3347692489624023,
+        "is": -3.334712505340576,
+        "gap": 0.000056743621826171875
+      },
+      {
+        "task-id": "test-score",
+        "obs": 69.98931884765625,
+        "exact": -3.2411346435546875,
+        "is": -3.229288101196289,
+        "gap": 0.011846542358398438
       },
       {
         "task-id": "voltage-meter",
-        "obs": 49.98932647705078,
-        "exact": -3.2411341667175293,
-        "is": -3.2292885780334473,
-        "gap": 0.011845588684082031
+        "obs": 50.08073425292969,
+        "exact": -3.2411651611328125,
+        "is": -3.2316555976867676,
+        "gap": 0.009509563446044922
       },
       {
         "task-id": "voltage-meter",
-        "obs": 0.0007983148097991943,
-        "exact": -0.9201872944831848,
-        "is": -0.8865323066711426,
-        "gap": 0.033654987812042236
+        "obs": -0.006048375740647316,
+        "exact": -0.9202052354812622,
+        "is": -0.9394192695617676,
+        "gap": 0.01921403408050537
       },
       {
         "task-id": "voltage-meter",
-        "obs": -0.01179024949669838,
-        "exact": -0.9239825010299683,
-        "is": -0.9190611839294434,
-        "gap": 0.004921317100524902
+        "obs": -0.03899368643760681,
+        "exact": -0.9246664047241211,
+        "is": -0.9629502296447754,
+        "gap": 0.0382838249206543
       },
       {
         "task-id": "voltage-meter",
-        "obs": 49.81850814819336,
-        "exact": -2.603154182434082,
-        "is": -2.6135969161987305,
-        "gap": 0.010442733764648438
+        "obs": 49.86881637573242,
+        "exact": -2.6028831005096436,
+        "is": -2.598884105682373,
+        "gap": 0.003998994827270508
       },
       {
         "task-id": "voltage-meter",
-        "obs": -0.02901855856180191,
-        "exact": -0.9194095134735107,
-        "is": -0.9490194320678711,
-        "gap": 0.02960991859436035
+        "obs": -0.002277602441608906,
+        "exact": -0.9189910888671875,
+        "is": -0.9735908508300781,
+        "gap": 0.054599761962890625
       },
       {
         "task-id": "gps-position",
-        "obs": 10.150538444519043,
-        "exact": -2.6029772758483887,
-        "is": -2.6199822425842285,
-        "gap": 0.017004966735839844
+        "obs": 10.357762336730957,
+        "exact": -2.604793071746826,
+        "is": -2.6256322860717773,
+        "gap": 0.020839214324951172
       },
       {
         "task-id": "gps-position",
-        "obs": 70.68235778808594,
-        "exact": -3.2433724403381348,
-        "is": -3.2691144943237305,
-        "gap": 0.025742053985595703
+        "obs": 70.132080078125,
+        "exact": -3.241218090057373,
+        "is": -3.2159204483032227,
+        "gap": 0.02529764175415039
       }
     ]
   },
   "fire_rate": {
     "n_candidates": 50,
-    "n_eval_ok": 49,
-    "n_parsed": 46,
-    "n_fired": 24,
-    "fire_rate": 0.4897959183673469,
+    "n_eval_ok": 48,
+    "n_parsed": 50,
+    "n_fired": 25,
+    "fire_rate": 0.5208333333333334,
     "by_family": {
-      "normal-normal": 24,
-      "none": 25
+      "normal-normal": 25,
+      "none": 23
     },
     "by_task": {
       "scale-weight": {
         "n": 5,
-        "fired": 4,
-        "rate": 0.8
+        "fired": 5,
+        "rate": 1
       },
       "wait-time": {
         "n": 5,
@@ -722,7 +730,7 @@
         "rate": 0
       },
       "defect-rate": {
-        "n": 5,
+        "n": 4,
         "fired": 0,
         "rate": 0
       },
@@ -748,5 +756,1375 @@
       }
     }
   },
-  "timestamp": "2026-06-13T08:59:44.204Z"
+  "tiers": {
+    "qwen3-0.6b": {
+      "fire_rate": {
+        "n_candidates": 50,
+        "n_eval_ok": 48,
+        "n_parsed": 50,
+        "n_fired": 25,
+        "fire_rate": 0.5208333333333334,
+        "by_family": {
+          "normal-normal": 25,
+          "none": 23
+        },
+        "by_task": {
+          "scale-weight": {
+            "n": 5,
+            "fired": 5,
+            "rate": 1
+          },
+          "wait-time": {
+            "n": 5,
+            "fired": 0,
+            "rate": 0
+          },
+          "decay-time": {
+            "n": 4,
+            "fired": 0,
+            "rate": 0
+          },
+          "distance-sensor": {
+            "n": 5,
+            "fired": 4,
+            "rate": 0.8
+          },
+          "coin-bias": {
+            "n": 5,
+            "fired": 0,
+            "rate": 0
+          },
+          "defect-rate": {
+            "n": 4,
+            "fired": 0,
+            "rate": 0
+          },
+          "gps-position": {
+            "n": 5,
+            "fired": 2,
+            "rate": 0.4
+          },
+          "voltage-meter": {
+            "n": 5,
+            "fired": 5,
+            "rate": 1
+          },
+          "test-score": {
+            "n": 5,
+            "fired": 5,
+            "rate": 1
+          },
+          "temperature": {
+            "n": 5,
+            "fired": 4,
+            "rate": 0.8
+          }
+        }
+      },
+      "is_vs_analytic": {
+        "n_firing": 25,
+        "particles": 4000,
+        "summary": {
+          "n": 25,
+          "mean": 0.023113195896148683,
+          "median": 0.016776561737060547,
+          "max": 0.09841585159301758
+        },
+        "histogram": [
+          {
+            "bin": "0.00-0.02",
+            "lo": 0,
+            "hi": 0.02,
+            "count": 14
+          },
+          {
+            "bin": "0.02-0.05",
+            "lo": 0.02,
+            "hi": 0.05,
+            "count": 9
+          },
+          {
+            "bin": "0.05-0.10",
+            "lo": 0.05,
+            "hi": 0.1,
+            "count": 2
+          },
+          {
+            "bin": "0.10-0.20",
+            "lo": 0.1,
+            "hi": 0.2,
+            "count": 0
+          },
+          {
+            "bin": "0.20-0.50",
+            "lo": 0.2,
+            "hi": 0.5,
+            "count": 0
+          },
+          {
+            "bin": "0.50-1.00",
+            "lo": 0.5,
+            "hi": 1,
+            "count": 0
+          },
+          {
+            "bin": "1.00-inf",
+            "lo": 1,
+            "hi": null,
+            "count": 0
+          }
+        ],
+        "per_model": [
+          {
+            "task-id": "temperature",
+            "obs": 24.89858627319336,
+            "exact": -1.6146166324615479,
+            "is": -1.5727272033691406,
+            "gap": 0.04188942909240723
+          },
+          {
+            "task-id": "temperature",
+            "obs": 25.050182342529297,
+            "exact": -2.070356845855713,
+            "is": -2.0485358238220215,
+            "gap": 0.021821022033691406
+          },
+          {
+            "task-id": "temperature",
+            "obs": 24.904239654541016,
+            "exact": -1.3286497592926025,
+            "is": -1.2878570556640625,
+            "gap": 0.04079270362854004
+          },
+          {
+            "task-id": "temperature",
+            "obs": 14.895614624023438,
+            "exact": -1.3463422060012817,
+            "is": -1.3131985664367676,
+            "gap": 0.03314363956451416
+          },
+          {
+            "task-id": "scale-weight",
+            "obs": 80.07208251953125,
+            "exact": -2.6821951866149902,
+            "is": -2.684467315673828,
+            "gap": 0.0022721290588378906
+          },
+          {
+            "task-id": "scale-weight",
+            "obs": 0.02935236692428589,
+            "exact": -2.5285935401916504,
+            "is": -2.627009391784668,
+            "gap": 0.09841585159301758
+          },
+          {
+            "task-id": "scale-weight",
+            "obs": 60.52326202392578,
+            "exact": -2.607306957244873,
+            "is": -2.614898204803467,
+            "gap": 0.00759124755859375
+          },
+          {
+            "task-id": "scale-weight",
+            "obs": 30.251392364501953,
+            "exact": -2.6036758422851562,
+            "is": -2.5952868461608887,
+            "gap": 0.008388996124267578
+          },
+          {
+            "task-id": "scale-weight",
+            "obs": 10.109886169433594,
+            "exact": -2.2018775939941406,
+            "is": -2.202683448791504,
+            "gap": 0.0008058547973632812
+          },
+          {
+            "task-id": "distance-sensor",
+            "obs": 10.00946044921875,
+            "exact": -1.0305460691452026,
+            "is": -1.01900053024292,
+            "gap": 0.011545538902282715
+          },
+          {
+            "task-id": "distance-sensor",
+            "obs": 70.73516082763672,
+            "exact": -3.335257053375244,
+            "is": -3.3184804916381836,
+            "gap": 0.016776561737060547
+          },
+          {
+            "task-id": "distance-sensor",
+            "obs": 0.08298623561859131,
+            "exact": -0.9273229241371155,
+            "is": -0.9359807968139648,
+            "gap": 0.008657872676849365
+          },
+          {
+            "task-id": "distance-sensor",
+            "obs": 9.591262817382812,
+            "exact": -2.605466842651367,
+            "is": -2.6219992637634277,
+            "gap": 0.016532421112060547
+          },
+          {
+            "task-id": "test-score",
+            "obs": 0.6917267441749573,
+            "exact": -3.243434429168701,
+            "is": -3.284445285797119,
+            "gap": 0.04101085662841797
+          },
+          {
+            "task-id": "test-score",
+            "obs": 69.78326416015625,
+            "exact": -3.2413597106933594,
+            "is": -3.256636619567871,
+            "gap": 0.015276908874511719
+          },
+          {
+            "task-id": "test-score",
+            "obs": 50.75762939453125,
+            "exact": -3.243893623352051,
+            "is": -3.27315616607666,
+            "gap": 0.029262542724609375
+          },
+          {
+            "task-id": "test-score",
+            "obs": 30.646894454956055,
+            "exact": -3.3347692489624023,
+            "is": -3.334712505340576,
+            "gap": 0.000056743621826171875
+          },
+          {
+            "task-id": "test-score",
+            "obs": 69.98931884765625,
+            "exact": -3.2411346435546875,
+            "is": -3.229288101196289,
+            "gap": 0.011846542358398438
+          },
+          {
+            "task-id": "voltage-meter",
+            "obs": 50.08073425292969,
+            "exact": -3.2411651611328125,
+            "is": -3.2316555976867676,
+            "gap": 0.009509563446044922
+          },
+          {
+            "task-id": "voltage-meter",
+            "obs": -0.006048375740647316,
+            "exact": -0.9202052354812622,
+            "is": -0.9394192695617676,
+            "gap": 0.01921403408050537
+          },
+          {
+            "task-id": "voltage-meter",
+            "obs": -0.03899368643760681,
+            "exact": -0.9246664047241211,
+            "is": -0.9629502296447754,
+            "gap": 0.0382838249206543
+          },
+          {
+            "task-id": "voltage-meter",
+            "obs": 49.86881637573242,
+            "exact": -2.6028831005096436,
+            "is": -2.598884105682373,
+            "gap": 0.003998994827270508
+          },
+          {
+            "task-id": "voltage-meter",
+            "obs": -0.002277602441608906,
+            "exact": -0.9189910888671875,
+            "is": -0.9735908508300781,
+            "gap": 0.054599761962890625
+          },
+          {
+            "task-id": "gps-position",
+            "obs": 10.357762336730957,
+            "exact": -2.604793071746826,
+            "is": -2.6256322860717773,
+            "gap": 0.020839214324951172
+          },
+          {
+            "task-id": "gps-position",
+            "obs": 70.132080078125,
+            "exact": -3.241218090057373,
+            "is": -3.2159204483032227,
+            "gap": 0.02529764175415039
+          }
+        ]
+      },
+      "per_model": [
+        {
+          "task-id": "temperature",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "temperature",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "temperature",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "temperature",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "temperature",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "scale-weight",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "scale-weight",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "scale-weight",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "scale-weight",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "scale-weight",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "distance-sensor",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "distance-sensor",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "distance-sensor",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "distance-sensor",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "distance-sensor",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "test-score",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "test-score",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "test-score",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "test-score",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "test-score",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "voltage-meter",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "voltage-meter",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "voltage-meter",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "voltage-meter",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "voltage-meter",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "gps-position",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "gps-position",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "gps-position",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "gps-position",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "gps-position",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "coin-bias",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "coin-bias",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "coin-bias",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "coin-bias",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "coin-bias",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "defect-rate",
+          "eval-ok": false,
+          "parsed": true,
+          "obs-depends": false,
+          "method": null,
+          "fired": false
+        },
+        {
+          "task-id": "defect-rate",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "defect-rate",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "defect-rate",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "defect-rate",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "wait-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "wait-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "wait-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "wait-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "wait-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "decay-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "decay-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "decay-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "decay-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "decay-time",
+          "eval-ok": false,
+          "parsed": true,
+          "obs-depends": true,
+          "method": null,
+          "fired": false
+        }
+      ]
+    },
+    "coder-next": {
+      "fire_rate": {
+        "n_candidates": 50,
+        "n_eval_ok": 50,
+        "n_parsed": 50,
+        "n_fired": 21,
+        "fire_rate": 0.42,
+        "by_family": {
+          "normal-normal": 21,
+          "none": 29
+        },
+        "by_task": {
+          "scale-weight": {
+            "n": 5,
+            "fired": 3,
+            "rate": 0.6
+          },
+          "wait-time": {
+            "n": 5,
+            "fired": 0,
+            "rate": 0
+          },
+          "decay-time": {
+            "n": 5,
+            "fired": 0,
+            "rate": 0
+          },
+          "distance-sensor": {
+            "n": 5,
+            "fired": 1,
+            "rate": 0.2
+          },
+          "coin-bias": {
+            "n": 5,
+            "fired": 0,
+            "rate": 0
+          },
+          "defect-rate": {
+            "n": 5,
+            "fired": 0,
+            "rate": 0
+          },
+          "gps-position": {
+            "n": 5,
+            "fired": 3,
+            "rate": 0.6
+          },
+          "voltage-meter": {
+            "n": 5,
+            "fired": 5,
+            "rate": 1
+          },
+          "test-score": {
+            "n": 5,
+            "fired": 5,
+            "rate": 1
+          },
+          "temperature": {
+            "n": 5,
+            "fired": 4,
+            "rate": 0.8
+          }
+        }
+      },
+      "is_vs_analytic": {
+        "n_firing": 21,
+        "particles": 4000,
+        "summary": {
+          "n": 21,
+          "mean": 0.04314881279355004,
+          "median": 0.03314352035522461,
+          "max": 0.13781309127807617
+        },
+        "histogram": [
+          {
+            "bin": "0.00-0.02",
+            "lo": 0,
+            "hi": 0.02,
+            "count": 7
+          },
+          {
+            "bin": "0.02-0.05",
+            "lo": 0.02,
+            "hi": 0.05,
+            "count": 9
+          },
+          {
+            "bin": "0.05-0.10",
+            "lo": 0.05,
+            "hi": 0.1,
+            "count": 2
+          },
+          {
+            "bin": "0.10-0.20",
+            "lo": 0.1,
+            "hi": 0.2,
+            "count": 3
+          },
+          {
+            "bin": "0.20-0.50",
+            "lo": 0.2,
+            "hi": 0.5,
+            "count": 0
+          },
+          {
+            "bin": "0.50-1.00",
+            "lo": 0.5,
+            "hi": 1,
+            "count": 0
+          },
+          {
+            "bin": "1.00-inf",
+            "lo": 1,
+            "hi": null,
+            "count": 0
+          }
+        ],
+        "per_model": [
+          {
+            "task-id": "temperature",
+            "obs": 19.69027328491211,
+            "exact": -2.5498313903808594,
+            "is": -2.516357898712158,
+            "gap": 0.03347349166870117
+          },
+          {
+            "task-id": "temperature",
+            "obs": 20.13291358947754,
+            "exact": -2.5483264923095703,
+            "is": -2.5148158073425293,
+            "gap": 0.033510684967041016
+          },
+          {
+            "task-id": "temperature",
+            "obs": 19.616268157958984,
+            "exact": -2.55081844329834,
+            "is": -2.5349254608154297,
+            "gap": 0.015892982482910156
+          },
+          {
+            "task-id": "temperature",
+            "obs": 19.652050018310547,
+            "exact": -2.5503149032592773,
+            "is": -2.5171713829040527,
+            "gap": 0.03314352035522461
+          },
+          {
+            "task-id": "scale-weight",
+            "obs": 100.1574935913086,
+            "exact": -3.24125337600708,
+            "is": -3.2660932540893555,
+            "gap": 0.02483987808227539
+          },
+          {
+            "task-id": "scale-weight",
+            "obs": 100.60592651367188,
+            "exact": -3.9454150199890137,
+            "is": -3.9694623947143555,
+            "gap": 0.024047374725341797
+          },
+          {
+            "task-id": "scale-weight",
+            "obs": 102.45660400390625,
+            "exact": -3.952083110809326,
+            "is": -3.972804069519043,
+            "gap": 0.020720958709716797
+          },
+          {
+            "task-id": "distance-sensor",
+            "obs": 100.5662841796875,
+            "exact": -3.9453601837158203,
+            "is": -3.933682918548584,
+            "gap": 0.011677265167236328
+          },
+          {
+            "task-id": "test-score",
+            "obs": 0.02777651697397232,
+            "exact": -1.2657049894332886,
+            "is": -1.266700267791748,
+            "gap": 0.0009952783584594727
+          },
+          {
+            "task-id": "test-score",
+            "obs": 0.01306125521659851,
+            "exact": -1.2655547857284546,
+            "is": -1.2647051811218262,
+            "gap": 0.000849604606628418
+          },
+          {
+            "task-id": "test-score",
+            "obs": 0.07767978310585022,
+            "exact": -1.2670207023620605,
+            "is": -1.2578768730163574,
+            "gap": 0.009143829345703125
+          },
+          {
+            "task-id": "test-score",
+            "obs": 100.9269027709961,
+            "exact": -3.8121728897094727,
+            "is": -3.8206067085266113,
+            "gap": 0.008433818817138672
+          },
+          {
+            "task-id": "test-score",
+            "obs": -0.9610090851783752,
+            "exact": -3.2455739974975586,
+            "is": -3.2878270149230957,
+            "gap": 0.04225301742553711
+          },
+          {
+            "task-id": "voltage-meter",
+            "obs": 5.990550994873047,
+            "exact": -5.52595329284668,
+            "is": -5.575525283813477,
+            "gap": 0.049571990966796875
+          },
+          {
+            "task-id": "voltage-meter",
+            "obs": -1.2262276411056519,
+            "exact": -5.524234294891357,
+            "is": -5.659814357757568,
+            "gap": 0.13558006286621094
+          },
+          {
+            "task-id": "voltage-meter",
+            "obs": 9.104456901550293,
+            "exact": -5.528303146362305,
+            "is": -5.3904900550842285,
+            "gap": 0.13781309127807617
+          },
+          {
+            "task-id": "voltage-meter",
+            "obs": 0.8054862022399902,
+            "exact": -5.524191379547119,
+            "is": -5.423357963562012,
+            "gap": 0.10083341598510742
+          },
+          {
+            "task-id": "voltage-meter",
+            "obs": 2.1272101402282715,
+            "exact": -5.52438497543335,
+            "is": -5.4463934898376465,
+            "gap": 0.07799148559570312
+          },
+          {
+            "task-id": "gps-position",
+            "obs": 0.07983100414276123,
+            "exact": -5.525357723236084,
+            "is": -5.491702556610107,
+            "gap": 0.03365516662597656
+          },
+          {
+            "task-id": "gps-position",
+            "obs": -0.6048378944396973,
+            "exact": -5.5253753662109375,
+            "is": -5.544589519500732,
+            "gap": 0.019214153289794922
+          },
+          {
+            "task-id": "gps-position",
+            "obs": -3.944284677505493,
+            "exact": -5.526133060455322,
+            "is": -5.618617057800293,
+            "gap": 0.0924839973449707
+          }
+        ]
+      },
+      "per_model": [
+        {
+          "task-id": "temperature",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "temperature",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "temperature",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "temperature",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "temperature",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "scale-weight",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "scale-weight",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "scale-weight",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "scale-weight",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "scale-weight",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "distance-sensor",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "distance-sensor",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "distance-sensor",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "distance-sensor",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "distance-sensor",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "test-score",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "test-score",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "test-score",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "test-score",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "test-score",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "voltage-meter",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "voltage-meter",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "voltage-meter",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "voltage-meter",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "voltage-meter",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "gps-position",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "gps-position",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "gps-position",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "gps-position",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "exact",
+          "fired": true
+        },
+        {
+          "task-id": "gps-position",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "coin-bias",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "coin-bias",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "coin-bias",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "coin-bias",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "coin-bias",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "defect-rate",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "defect-rate",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "defect-rate",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "defect-rate",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "defect-rate",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "wait-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "wait-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "wait-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "wait-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "wait-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "decay-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "decay-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "decay-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "decay-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": true,
+          "method": "hmc",
+          "fired": false
+        },
+        {
+          "task-id": "decay-time",
+          "eval-ok": true,
+          "parsed": true,
+          "obs-depends": false,
+          "method": "hmc",
+          "fired": false
+        }
+      ]
+    }
+  },
+  "timestamp": "2026-07-11T14:54:46.412Z"
 }

@@ -171,13 +171,17 @@
 (defn normalize-llm
   "Normalize LLM math output for parsing.
    Lowercases distribution names, strips keyword=value prefixes,
-   removes empty lines and trailing periods."
+   removes empty lines, per-line trailing whitespace (markdown hard-break
+   habit — Coder-Next ends every line with two spaces, genmlx-8dfk), and
+   trailing periods."
   [text]
   (-> (str/trim text)
       (str/replace #"(?i)(Gaussian|Uniform|Bernoulli|Exponential)"
                    #(str/lower-case (first %)))
       (str/replace #"(?:mean|std|loc|scale|p|prob|low|high)\s*=\s*" "")
+      (str/replace #"[ \t]+\n" "\n")
       (str/replace #"\n\s*\n" "\n")
+      (str/replace #"[ \t]+$" "")
       (str/replace #"\.\s*$" "")))
 
 (defn parse-math
