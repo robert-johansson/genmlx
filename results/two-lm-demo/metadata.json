@@ -1,7 +1,7 @@
 {
   "bean": "genmlx-8dfk",
   "script": "bench/two_lm_demo.cljs",
-  "duration_ms": 154045,
+  "duration_ms": 156532,
   "hardware": {
     "platform": "linux",
     "arch": "arm64",
@@ -17,6 +17,6 @@
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "timestamp": "2026-07-11T15:10:45.872Z",
-  "git_sha": "e00741f"
+  "timestamp": "2026-07-11T16:19:30.612Z",
+  "git_sha": "de4911c"
 }

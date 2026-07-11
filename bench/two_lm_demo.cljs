@@ -204,8 +204,11 @@
        "For a linear trend, use latents slope and intercept with wide gaussian "
        "priors and mean (mx/add (mx/multiply slope (mx/scalar x)) intercept) "
        "with the numeric x of each observation. For a quadratic trend, add a "
-       "curvature latent multiplied by (mx/scalar (* x x)) — write the squared "
-       "number directly. Observation noise std is 1.\n"
+       "curvature latent multiplied by the SQUARED x written as a number — for "
+       "example the x=3 observation site of a quadratic model is:\n"
+       "(trace :y3 (dist/gaussian (mx/add (mx/multiply curvature (mx/scalar 9)) "
+       "(mx/add (mx/multiply slope (mx/scalar 3)) intercept)) 1))\n"
+       "Observation noise std is 1.\n"
        "Output ONLY the (fn [trace] ...) form. No prose, no code fences."))
 
 (defn coder-user [label]
@@ -449,14 +452,22 @@
               forced-rows
               (if skip-forced?
                 []
-                (pr/let [_ (println (str "\n[forced] generate with :vlm forced"
-                                         " to \"quadratic\" (seed " (first seeds) ")…"))
-                         row (run-one (first seeds) "quadratic")]
-                  (println (str "  vlm(forced)=" (:vlm-label row)
-                                "  W=" (.toFixed (:generate-weight row) 3)
-                                "  method=" (:method row)
-                                "  log-ml=" (.toFixed (:log-ml row) 3)))
-                  [row]))]
+                ;; force BOTH wrong labels: "quadratic" = the plausible wrong
+                ;; prior (coder must build real structure), "constant" = the
+                ;; bulletproof one (the few-shot example is the answer, the
+                ;; evidence gap is ~76 nats).
+                (pr/loop [fls ["quadratic" "constant"], acc []]
+                  (if-not (seq fls)
+                    acc
+                    (pr/let [_ (println (str "\n[forced] generate with :vlm forced"
+                                             " to \"" (first fls) "\" (seed "
+                                             (first seeds) ")…"))
+                             row (run-one (first seeds) (first fls))]
+                      (println (str "  vlm(forced)=" (:vlm-label row)
+                                    "  W=" (.toFixed (:generate-weight row) 3)
+                                    "  method=" (:method row)
+                                    "  log-ml=" (.toFixed (:log-ml row) 3)))
+                      (pr/recur (rest fls) (conj acc row))))))]
 
        ;; --- freeze fixtures --------------------------------------------------
        (let [all-rows (into rows forced-rows)
@@ -504,7 +515,15 @@
                                         "nondeterministic (genmlx-cnhi); "
                                         "transcripts are one-shot frozen "
                                         "fixtures, scores re-derived from "
-                                        "frozen :code are deterministic.")}
+                                        "frozen :code are deterministic.")
+                      :prompt_revision (str "2026-07-11: quadratic DSL "
+                                            "instruction strengthened with a "
+                                            "worked obs-site example after the "
+                                            "first freeze's forced arm emitted "
+                                            "a collinear curvature*x model; "
+                                            "this artifact is the FIRST run "
+                                            "under the revised prompt "
+                                            "(genmlx-8dfk).")}
              :reference {:ladder (into {} (map (fn [[l s]]
                                                  [l (select-keys s [:log-ml :method])]))
                                        reference)

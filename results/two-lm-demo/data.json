@@ -2,6 +2,19 @@
   "experiment": "two-lm-demo",
   "description": "Two heterogeneous LMs in one joint generative program: a grammar-constrained VLM GF (trend judgment over a rendered scatter) whose traced choice conditions a coder GF that proposes probabilistic programs, scored by exact evidence. The VLM is an advisory prior; the reference ladder is the evidence's own verdict on the data.",
   "config": {
+    "labels": [
+      "linear",
+      "quadratic",
+      "constant"
+    ],
+    "seeds": [
+      11,
+      12,
+      13,
+      14
+    ],
+    "prompt_revision": "2026-07-11: quadratic DSL instruction strengthened with a worked obs-site example after the first freeze's forced arm emitted a collinear curvature*x model; this artifact is the FIRST run under the revised prompt (genmlx-8dfk).",
+    "jitter_note": "Large-MoE forwards are kernel-level nondeterministic (genmlx-cnhi); transcripts are one-shot frozen fixtures, scores re-derived from frozen :code are deterministic.",
     "xs": [
       0,
       1,
@@ -22,21 +35,9 @@
       17.05,
       18.55
     ],
-    "true_structure": "linear",
-    "labels": [
-      "linear",
-      "quadratic",
-      "constant"
-    ],
-    "seeds": [
-      11,
-      12,
-      13,
-      14
-    ],
     "vlm_max_tokens": 8,
-    "coder_max_tokens": 512,
-    "jitter_note": "Large-MoE forwards are kernel-level nondeterministic (genmlx-cnhi); transcripts are one-shot frozen fixtures, scores re-derived from frozen :code are deterministic."
+    "true_structure": "linear",
+    "coder_max_tokens": 512
   },
   "reference": {
     "ladder": {
@@ -68,7 +69,7 @@
       "vlm-label": "linear",
       "method": "exact",
       "seed": 11,
-      "trace-score": -0.4457988739013672,
+      "trace-score": -0.08464622497558594,
       "code": "(fn [trace]\n  (let [intercept (trace :intercept (dist/gaussian 0 20))\n        slope (trace :slope (dist/gaussian 0 20))]\n    (trace :y0 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 0)) intercept) 1))\n    (trace :y1 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 1)) intercept) 1))\n    (trace :y2 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 2)) intercept) 1))\n    (trace :y3 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 3)) intercept) 1))\n    (trace :y4 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 4)) intercept) 1))\n    (trace :y5 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 5)) intercept) 1))\n    (trace :y6 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 6)) intercept) 1))\n    (trace :y7 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 7)) intercept) 1))))",
       "forced-label": null,
       "log-ml": -17.24519920349121
@@ -78,7 +79,7 @@
       "vlm-label": "linear",
       "method": "exact",
       "seed": 12,
-      "trace-score": -0.6616382598876953,
+      "trace-score": -0.1428089141845703,
       "code": "(fn [trace]\n  (let [intercept (trace :intercept (dist/gaussian 0 20))\n        slope (trace :slope (dist/gaussian 0 20))]\n    (trace :y0 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 0)) intercept) 1))\n    (trace :y1 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 1)) intercept) 1))\n    (trace :y2 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 2)) intercept) 1))\n    (trace :y3 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 3)) intercept) 1))\n    (trace :y4 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 4)) intercept) 1))\n    (trace :y5 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 5)) intercept) 1))\n    (trace :y6 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 6)) intercept) 1))\n    (trace :y7 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 7)) intercept) 1))))",
       "forced-label": null,
       "log-ml": -17.24519920349121
@@ -88,7 +89,7 @@
       "vlm-label": "linear",
       "method": "exact",
       "seed": 13,
-      "trace-score": -0.5390682220458984,
+      "trace-score": -0.16973304748535156,
       "code": "(fn [trace]\n  (let [intercept (trace :intercept (dist/gaussian 0 20))\n        slope (trace :slope (dist/gaussian 0 20))]\n    (trace :y0 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 0)) intercept) 1))\n    (trace :y1 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 1)) intercept) 1))\n    (trace :y2 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 2)) intercept) 1))\n    (trace :y3 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 3)) intercept) 1))\n    (trace :y4 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 4)) intercept) 1))\n    (trace :y5 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 5)) intercept) 1))\n    (trace :y6 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 6)) intercept) 1))\n    (trace :y7 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 7)) intercept) 1))))",
       "forced-label": null,
       "log-ml": -17.24519920349121
@@ -98,8 +99,8 @@
       "vlm-label": "linear",
       "method": "exact",
       "seed": 14,
-      "trace-score": -0.7690753936767578,
-      "code": "(fn [trace]\n  (let [intercept (trace :intercept (dist/gaussian 0 20))\n        slope (trace :slope (dist/gaussian 0 20))]\n    (trace :y0 (dist/gaussian (mx/add intercept (mx/multiply slope (mx/scalar 0))) 1))\n    (trace :y1 (dist/gaussian (mx/add intercept (mx/multiply slope (mx/scalar 1))) 1))\n    (trace :y2 (dist/gaussian (mx/add intercept (mx/multiply slope (mx/scalar 2))) 1))\n    (trace :y3 (dist/gaussian (mx/add intercept (mx/multiply slope (mx/scalar 3))) 1))\n    (trace :y4 (dist/gaussian (mx/add intercept (mx/multiply slope (mx/scalar 4))) 1))\n    (trace :y5 (dist/gaussian (mx/add intercept (mx/multiply slope (mx/scalar 5))) 1))\n    (trace :y6 (dist/gaussian (mx/add intercept (mx/multiply slope (mx/scalar 6))) 1))\n    (trace :y7 (dist/gaussian (mx/add intercept (mx/multiply slope (mx/scalar 7))) 1))))",
+      "trace-score": -0.07895851135253906,
+      "code": "(fn [trace]\n  (let [intercept (trace :intercept (dist/gaussian 0 20))\n        slope (trace :slope (dist/gaussian 0 20))]\n    (trace :y0 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 0)) intercept) 1))\n    (trace :y1 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 1)) intercept) 1))\n    (trace :y2 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 2)) intercept) 1))\n    (trace :y3 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 3)) intercept) 1))\n    (trace :y4 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 4)) intercept) 1))\n    (trace :y5 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 5)) intercept) 1))\n    (trace :y6 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 6)) intercept) 1))\n    (trace :y7 (dist/gaussian (mx/add (mx/multiply slope (mx/scalar 7)) intercept) 1))))",
       "forced-label": null,
       "log-ml": -17.24519920349121
     },
@@ -107,18 +108,29 @@
       "eval-ok?": true,
       "vlm-label": "quadratic",
       "method": "exact",
-      "generate-weight": -4.802436828613281,
+      "generate-weight": -5.333166122436523,
       "seed": 11,
-      "trace-score": -7.052436828613281,
-      "code": "(fn [trace]\n  (let [intercept (trace :intercept (dist/gaussian 0 20))\n        slope (trace :slope (dist/gaussian 0 20))\n        curvature (trace :curvature (dist/gaussian 0 20))]\n    (trace :y0 (dist/gaussian (mx/add (mx/add (mx/scalar 0) (mx/add (mx/multiply slope (mx/scalar 0)) (mx/multiply curvature (mx/scalar 0)))) intercept) 1))\n    (trace :y1 (dist/gaussian (mx/add (mx/add (mx/scalar 1) (mx/add (mx/multiply slope (mx/scalar 1)) (mx/multiply curvature (mx/scalar 1)))) intercept) 1))\n    (trace :y2 (dist/gaussian (mx/add (mx/add (mx/scalar 2) (mx/add (mx/multiply slope (mx/scalar 2)) (mx/multiply curvature (mx/scalar 2)))) intercept) 1))\n    (trace :y3 (dist/gaussian (mx/add (mx/add (mx/scalar 3) (mx/add (mx/multiply slope (mx/scalar 3)) (mx/multiply curvature (mx/scalar 3)))) intercept) 1))\n    (trace :y4 (dist/gaussian (mx/add (mx/add (mx/scalar 4) (mx/add (mx/multiply slope (mx/scalar 4)) (mx/multiply curvature (mx/scalar 4)))) intercept) 1))\n    (trace :y5 (dist/gaussian (mx/add (mx/add (mx/scalar 5) (mx/add (mx/multiply slope (mx/scalar 5)) (mx/multiply curvature (mx/scalar 5)))) intercept) 1))\n    (trace :y6 (dist/gaussian (mx/add (mx/add (mx/scalar 6) (mx/add (mx/multiply slope (mx/scalar 6)) (mx/multiply curvature (mx/scalar 6)))) intercept) 1))\n    (trace :y7 (dist/gaussian (mx/add (mx/add (mx/scalar 7) (mx/add (mx/multiply slope (mx/scalar 7)) (mx/multiply curvature (mx/scalar 7)))) intercept) 1))))",
+      "trace-score": -6.958166122436523,
+      "code": "(fn [trace]\n  (let [intercept (trace :intercept (dist/gaussian 0 20))\n        slope (trace :slope (dist/gaussian 0 20))\n        curvature (trace :curvature (dist/gaussian 0 20))]\n    (trace :y0 (dist/gaussian (mx/add (mx/multiply curvature (mx/scalar 0)) (mx/add (mx/multiply slope (mx/scalar 0)) intercept)) 1))\n    (trace :y1 (dist/gaussian (mx/add (mx/multiply curvature (mx/scalar 1)) (mx/add (mx/multiply slope (mx/scalar 1)) intercept)) 1))\n    (trace :y2 (dist/gaussian (mx/add (mx/multiply curvature (mx/scalar 4)) (mx/add (mx/multiply slope (mx/scalar 2)) intercept)) 1))\n    (trace :y3 (dist/gaussian (mx/add (mx/multiply curvature (mx/scalar 9)) (mx/add (mx/multiply slope (mx/scalar 3)) intercept)) 1))\n    (trace :y4 (dist/gaussian (mx/add (mx/multiply curvature (mx/scalar 16)) (mx/add (mx/multiply slope (mx/scalar 4)) intercept)) 1))\n    (trace :y5 (dist/gaussian (mx/add (mx/multiply curvature (mx/scalar 25)) (mx/add (mx/multiply slope (mx/scalar 5)) intercept)) 1))\n    (trace :y6 (dist/gaussian (mx/add (mx/multiply curvature (mx/scalar 36)) (mx/add (mx/multiply slope (mx/scalar 6)) intercept)) 1))\n    (trace :y7 (dist/gaussian (mx/add (mx/multiply curvature (mx/scalar 49)) (mx/add (mx/multiply slope (mx/scalar 7)) intercept)) 1))))",
       "forced-label": "quadratic",
-      "log-ml": -17.5886287689209
+      "log-ml": -22.790184020996094
+    },
+    {
+      "eval-ok?": true,
+      "vlm-label": "constant",
+      "method": "exact",
+      "generate-weight": -9.896638870239258,
+      "seed": 11,
+      "trace-score": -9.896638870239258,
+      "code": "(fn [trace]\n  (let [mu (trace :mu (dist/gaussian 0 20))]\n    (trace :y0 (dist/gaussian mu 1))\n    (trace :y1 (dist/gaussian mu 1))\n    (trace :y2 (dist/gaussian mu 1))\n    (trace :y3 (dist/gaussian mu 1))\n    (trace :y4 (dist/gaussian mu 1))\n    (trace :y5 (dist/gaussian mu 1))\n    (trace :y6 (dist/gaussian mu 1))\n    (trace :y7 (dist/gaussian mu 1))))",
+      "forced-label": "constant",
+      "log-ml": -92.11132049560547
     }
   ],
   "meta": {
     "bean": "genmlx-8dfk",
     "script": "bench/two_lm_demo.cljs",
-    "duration_ms": 154045,
+    "duration_ms": 156532,
     "hardware": {
       "platform": "linux",
       "arch": "arm64",
@@ -134,7 +146,7 @@
       "engine": "bun+nbb",
       "node": "v24.3.0"
     },
-    "timestamp": "2026-07-11T15:10:45.872Z",
-    "git_sha": "e00741f"
+    "timestamp": "2026-07-11T16:19:30.612Z",
+    "git_sha": "de4911c"
   }
 }
