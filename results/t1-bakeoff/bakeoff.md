@@ -81,17 +81,50 @@ NP=200 oracle; 9 `:program` tasks — the 8 `:function` tasks have behavioral
 oracles with no evidence solve bar and are excluded, listed in the output
 metadata).
 
-- **Arm A: 9/9 solved**, median tokens-to-solution 432, mean 2.0 search steps,
-  5770 completion tokens total, 0 errors (`t2-a.json`).
-- **Arms B/C: blocked** — with the owned 8-bit 35B resident, the *first task's
-  synchronous search/oracle phase* (before any LLM call) climbs to ~107 GB and
-  is floor-killed every time. Not the oracle particle count (NP=2000 and 200
-  identical), not MLX pool retention (`MLX_CACHE_LIMIT_GB=8` no effect), not
-  missing GC (a per-step synchronous sweep was added and is insufficient), and
-  not the model's normal first-forward transient (T1 on the same checkpoint
-  peaks at ~88 GB and recovers). Full evidence trail and next probes:
-  **genmlx-12w4**. T2 B/C numbers are deferred until that bug is fixed; no
-  cross-arm T2 comparison is claimed.
+All three arms 9/9 (`t2-{a,b,c}.json`, `compare-a-vs-b-vs-c.json`):
+
+| metric | A: 80B native | B: 35B-8bit owned | C: B + GRPO |
+|---|---|---|---|
+| solve rate | 9/9 | 9/9 | 9/9 |
+| median tokens-to-solution | **432** | 1558 | 1081 |
+| total completion tokens | **5770** | 11945 | 11341 |
+| total gen wall | **467 s** | 1394 s | 1290 s |
+| mean search steps | 2.0 | 2.0 | 2.0 |
+| LLM calls / errors | 9 / 0 | 9 / 0 | 9 / 0 |
+
+Reading:
+- **Every arm solves the full battery** in the same 2.0 search steps — the
+  in-the-loop discriminator is not *whether* but *how much compute to
+  solution* (the RRPS metric). The 80B needs ~2.7× fewer proposal tokens than
+  the raw 35B-8bit (432 vs 1558 median).
+- **Sharpening moves the RRPS metric**: C's median tokens-to-solution is
+  1081, −31% vs B (headline). Per task, C ≤ B on 7/9 (strictly better on 5,
+  equal on 2), worse on msa-1 (643 vs 177) and msa-5 (1942 vs 1605).
+- **Transfer honesty** (same protocol as T1): removing the train-overlap task
+  (`gaussian-mean-near2`), the 8-task transfer medians are B 1582 → C 1322,
+  **−16%** — real but roughly half the headline effect.
+
+### T2 caveats
+
+1. **msa-5's `solved?` is approximate for B and C** (as the runner docstring
+   warns for the one IS-scored task): both stopped with final best evidence
+   −3.27 against a bar of ≈−0.65; the solve flag comes from the mid-run
+   re-check, where IS noise on both sides of the comparison can cross the
+   bar. Arm A's msa-5 solve (tok=316) carries the same noise. Dropping msa-5
+   entirely leaves the ordering unchanged and helps C (it was C's worst
+   task): 8-task medians A 466 / B 1417 / C 1071; 7-task transfer medians
+   (also dropping the overlap task) B 1558 / C 1061.
+2. **Arms B/C ran at genmlx `36772ce`, arm A at `ad9dea3`** (pre-fix). The
+   fix between them (genmlx-12w4, see below) is memory-only (`:sweep-every`
+   wrapper sweep in the decode loop); it does not change sampled tokens
+   (seeds/PRNG untouched) — no re-run of A was warranted.
+3. **The earlier B/C blocker is root-caused and fixed** (genmlx-12w4, commit
+   `36772ce`): NOT the search/oracle phase (probed flat with the model
+   resident) but finalizer starvation in the synchronous decode loop —
+   ~240 MB/token of owned-forward intermediates stay live per sample because
+   the loop never yields to the event loop. Fixed with a per-32-token
+   synchronous wrapper sweep (`mx/jsc-cleanup!`), ≤17 ms/token. Both T2 runs
+   held ≥48 GB MemAvailable throughout (floor 25 GB), zero guard kills.
 
 ## Feeds
 

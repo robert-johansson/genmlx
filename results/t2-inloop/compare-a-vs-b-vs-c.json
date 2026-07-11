@@ -1,0 +1,370 @@
+{
+  "arms": {
+    "a": {
+      "file": "results/t2-inloop/t2-a.json",
+      "config": {
+        "max-steps": 8,
+        "boot": 2000,
+        "seed": 42,
+        "k-step": 4,
+        "np": 200,
+        "max-drives": 200,
+        "max-tokens": 512,
+        "beam-width": 2,
+        "temperature": 0.8,
+        "early-stop": true,
+        "revise": 2
+      },
+      "aggregate": {
+        "n-tasks": 9,
+        "n-solved": 9,
+        "solve-rate": 1,
+        "solve-ci": {
+          "mean": 1,
+          "lo": 1,
+          "hi": 1,
+          "n": 9
+        },
+        "median-tokens-to-solution": 432,
+        "mean-steps-used": 2,
+        "totals": {
+          "completion-tokens": 5770,
+          "gen-ms": 467107,
+          "wall-ms": 569811,
+          "calls": 9,
+          "samples": 36,
+          "drives": 18,
+          "errors": 0
+        }
+      }
+    },
+    "b": {
+      "file": "results/t2-inloop/t2-b.json",
+      "config": {
+        "max-steps": 8,
+        "boot": 2000,
+        "seed": 42,
+        "k-step": 4,
+        "np": 200,
+        "max-drives": 200,
+        "max-tokens": 512,
+        "beam-width": 2,
+        "temperature": 0.8,
+        "early-stop": true,
+        "revise": 2
+      },
+      "aggregate": {
+        "n-tasks": 9,
+        "n-solved": 9,
+        "solve-rate": 1,
+        "solve-ci": {
+          "mean": 1,
+          "lo": 1,
+          "hi": 1,
+          "n": 9
+        },
+        "median-tokens-to-solution": 1558,
+        "mean-steps-used": 2,
+        "totals": {
+          "completion-tokens": 11945,
+          "gen-ms": 1393755,
+          "wall-ms": 1488571,
+          "calls": 9,
+          "samples": 36,
+          "drives": 18,
+          "errors": 0
+        }
+      }
+    },
+    "c": {
+      "file": "results/t2-inloop/t2-c.json",
+      "config": {
+        "max-steps": 8,
+        "boot": 2000,
+        "seed": 42,
+        "k-step": 4,
+        "np": 200,
+        "max-drives": 200,
+        "max-tokens": 512,
+        "beam-width": 2,
+        "temperature": 0.8,
+        "early-stop": true,
+        "revise": 2
+      },
+      "aggregate": {
+        "n-tasks": 9,
+        "n-solved": 9,
+        "solve-rate": 1,
+        "solve-ci": {
+          "mean": 1,
+          "lo": 1,
+          "hi": 1,
+          "n": 9
+        },
+        "median-tokens-to-solution": 1081,
+        "mean-steps-used": 2,
+        "totals": {
+          "completion-tokens": 11341,
+          "gen-ms": 1290053,
+          "wall-ms": 1355565,
+          "calls": 9,
+          "samples": 36,
+          "drives": 18,
+          "errors": 0
+        }
+      }
+    }
+  },
+  "metrics": [
+    {
+      "metric": "n-tasks",
+      "values": {
+        "a": 9,
+        "b": 9,
+        "c": 9
+      }
+    },
+    {
+      "metric": "solve-rate",
+      "values": {
+        "a": 1,
+        "b": 1,
+        "c": 1
+      }
+    },
+    {
+      "metric": "solve CI lo",
+      "values": {
+        "a": 1,
+        "b": 1,
+        "c": 1
+      }
+    },
+    {
+      "metric": "solve CI hi",
+      "values": {
+        "a": 1,
+        "b": 1,
+        "c": 1
+      }
+    },
+    {
+      "metric": "median tok->soln",
+      "values": {
+        "a": 432,
+        "b": 1558,
+        "c": 1081
+      }
+    },
+    {
+      "metric": "mean steps-used",
+      "values": {
+        "a": 2,
+        "b": 2,
+        "c": 2
+      }
+    },
+    {
+      "metric": "completion tokens",
+      "values": {
+        "a": 5770,
+        "b": 11945,
+        "c": 11341
+      }
+    },
+    {
+      "metric": "gen-s total",
+      "values": {
+        "a": 467.107,
+        "b": 1393.755,
+        "c": 1290.053
+      }
+    },
+    {
+      "metric": "wall-s total",
+      "values": {
+        "a": 569.811,
+        "b": 1488.571,
+        "c": 1355.565
+      }
+    },
+    {
+      "metric": "llm calls",
+      "values": {
+        "a": 9,
+        "b": 9,
+        "c": 9
+      }
+    }
+  ],
+  "per-task": {
+    "a": [
+      {
+        "task_id": "gaussian-mean-near2",
+        "solved?": true,
+        "tokens-to-solution": 406,
+        "completion-tokens": 406
+      },
+      {
+        "task_id": "gaussian-mean-negshift",
+        "solved?": true,
+        "tokens-to-solution": 416,
+        "completion-tokens": 416
+      },
+      {
+        "task_id": "beta-bernoulli-coin",
+        "solved?": true,
+        "tokens-to-solution": 499,
+        "completion-tokens": 499
+      },
+      {
+        "task_id": "gamma-poisson-counts",
+        "solved?": true,
+        "tokens-to-solution": 432,
+        "completion-tokens": 432
+      },
+      {
+        "task_id": "msa-1",
+        "solved?": true,
+        "tokens-to-solution": 164,
+        "completion-tokens": 164
+      },
+      {
+        "task_id": "msa-2",
+        "solved?": true,
+        "tokens-to-solution": 759,
+        "completion-tokens": 759
+      },
+      {
+        "task_id": "msa-3",
+        "solved?": true,
+        "tokens-to-solution": 1149,
+        "completion-tokens": 1149
+      },
+      {
+        "task_id": "msa-4",
+        "solved?": true,
+        "tokens-to-solution": 1629,
+        "completion-tokens": 1629
+      },
+      {
+        "task_id": "msa-5",
+        "solved?": true,
+        "tokens-to-solution": 316,
+        "completion-tokens": 316
+      }
+    ],
+    "b": [
+      {
+        "task_id": "gaussian-mean-near2",
+        "solved?": true,
+        "tokens-to-solution": 1267,
+        "completion-tokens": 1267
+      },
+      {
+        "task_id": "gaussian-mean-negshift",
+        "solved?": true,
+        "tokens-to-solution": 1558,
+        "completion-tokens": 1558
+      },
+      {
+        "task_id": "beta-bernoulli-coin",
+        "solved?": true,
+        "tokens-to-solution": 1674,
+        "completion-tokens": 1674
+      },
+      {
+        "task_id": "gamma-poisson-counts",
+        "solved?": true,
+        "tokens-to-solution": 1275,
+        "completion-tokens": 1275
+      },
+      {
+        "task_id": "msa-1",
+        "solved?": true,
+        "tokens-to-solution": 177,
+        "completion-tokens": 177
+      },
+      {
+        "task_id": "msa-2",
+        "solved?": true,
+        "tokens-to-solution": 796,
+        "completion-tokens": 796
+      },
+      {
+        "task_id": "msa-3",
+        "solved?": true,
+        "tokens-to-solution": 1836,
+        "completion-tokens": 1836
+      },
+      {
+        "task_id": "msa-4",
+        "solved?": true,
+        "tokens-to-solution": 1757,
+        "completion-tokens": 1757
+      },
+      {
+        "task_id": "msa-5",
+        "solved?": true,
+        "tokens-to-solution": 1605,
+        "completion-tokens": 1605
+      }
+    ],
+    "c": [
+      {
+        "task_id": "gaussian-mean-near2",
+        "solved?": true,
+        "tokens-to-solution": 1081,
+        "completion-tokens": 1081
+      },
+      {
+        "task_id": "gaussian-mean-negshift",
+        "solved?": true,
+        "tokens-to-solution": 1061,
+        "completion-tokens": 1061
+      },
+      {
+        "task_id": "beta-bernoulli-coin",
+        "solved?": true,
+        "tokens-to-solution": 1626,
+        "completion-tokens": 1626
+      },
+      {
+        "task_id": "gamma-poisson-counts",
+        "solved?": true,
+        "tokens-to-solution": 853,
+        "completion-tokens": 853
+      },
+      {
+        "task_id": "msa-1",
+        "solved?": true,
+        "tokens-to-solution": 643,
+        "completion-tokens": 643
+      },
+      {
+        "task_id": "msa-2",
+        "solved?": true,
+        "tokens-to-solution": 796,
+        "completion-tokens": 796
+      },
+      {
+        "task_id": "msa-3",
+        "solved?": true,
+        "tokens-to-solution": 1582,
+        "completion-tokens": 1582
+      },
+      {
+        "task_id": "msa-4",
+        "solved?": true,
+        "tokens-to-solution": 1757,
+        "completion-tokens": 1757
+      },
+      {
+        "task_id": "msa-5",
+        "solved?": true,
+        "tokens-to-solution": 1942,
+        "completion-tokens": 1942
+      }
+    ]
+  }
+}
