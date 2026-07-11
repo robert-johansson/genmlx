@@ -1,0 +1,37 @@
+{
+  "battery-ids": [
+    "gaussian-mean-near2",
+    "gaussian-mean-negshift",
+    "beta-bernoulli-coin",
+    "gamma-poisson-counts",
+    "counter-machine",
+    "traffic-light",
+    "toggle-switch",
+    "factorial",
+    "fizzbuzz",
+    "gcd",
+    "palindrome?",
+    "sum-evens",
+    "msa-1",
+    "msa-2",
+    "msa-3",
+    "msa-4",
+    "msa-5"
+  ],
+  "arm": "c",
+  "temp": 0.8,
+  "model-dir": "/home/robert/genmlx-checkpoints/ornith35b-8bit-grpo-armc-merged",
+  "seed": 42,
+  "k": 4,
+  "stub": false,
+  "totals": {
+    "samples": 68,
+    "completion-tokens": 6408,
+    "gen-ms": 605083,
+    "errors": 0
+  },
+  "wall-ms": 109437,
+  "git-sha": "ad9dea3",
+  "max-tokens": 512,
+  "greedy-first": true
+}

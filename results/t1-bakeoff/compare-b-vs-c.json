@@ -1,0 +1,563 @@
+{
+  "a": {
+    "arm": "b",
+    "score": {
+      "overall": {
+        "keep-rate": 0.75,
+        "keep-ci": {
+          "mean": 0.75,
+          "lo": 0.6323529411764706,
+          "hi": 0.8529411764705882,
+          "n": 68
+        },
+        "evidence": {
+          "mean": -4.424870488361568,
+          "max": -0.0001260813095358415,
+          "n-kept": 24
+        },
+        "program-keep-rate": 0.6666666666666666,
+        "n-verdicts": 68,
+        "totals": {
+          "samples": 68,
+          "completion-tokens": 6130,
+          "gen-ms": 571203,
+          "errors": 0
+        },
+        "drop-reasons": {
+          "eval-error": 5,
+          "kept": 51,
+          "nonfinite-ml": 2,
+          "unparseable": 10
+        },
+        "wall-ms": 741803,
+        "tokens-to-first-valid": {
+          "median": 50,
+          "n-tasks-with-valid": 15,
+          "n-tasks": 17
+        },
+        "n-rows": 68,
+        "function-pass-ci": {
+          "mean": 0.84375,
+          "lo": 0.6875,
+          "hi": 0.96875,
+          "n": 32
+        },
+        "function-pass-rate": 0.84375,
+        "parse-rate": 0.8529411764705882
+      },
+      "arm": "b",
+      "config": {
+        "battery-ids": [
+          "gaussian-mean-near2",
+          "gaussian-mean-negshift",
+          "beta-bernoulli-coin",
+          "gamma-poisson-counts",
+          "counter-machine",
+          "traffic-light",
+          "toggle-switch",
+          "factorial",
+          "fizzbuzz",
+          "gcd",
+          "palindrome?",
+          "sum-evens",
+          "msa-1",
+          "msa-2",
+          "msa-3",
+          "msa-4",
+          "msa-5"
+        ],
+        "arm": "b",
+        "temp": 0.8,
+        "model-dir": "/home/robert/.cache/huggingface/hub/models--mlx-community--Ornith-1.0-35B-8bit/snapshots/28d10f45a04981989f5a2e53e38f6473e81e815a",
+        "seed": 42,
+        "k": 4,
+        "stub": false,
+        "git-sha": "7004f88",
+        "max-tokens": 512,
+        "greedy-first": true
+      },
+      "boot": 2000,
+      "seed": 42,
+      "np": 50,
+      "per-task": [
+        {
+          "task-id": "gaussian-mean-near2",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 0,
+          "pass-rate": 0,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": null
+        },
+        {
+          "task-id": "gaussian-mean-negshift",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 0.25,
+          "pass-rate": 0.25,
+          "log-ml-mean": -6.117076873779297,
+          "log-ml-max": -6.117076873779297,
+          "tokens-to-first-valid": 275
+        },
+        {
+          "task-id": "beta-bernoulli-coin",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": -4.249945282936096,
+          "log-ml-max": -4.18965482711792,
+          "tokens-to-first-valid": 118
+        },
+        {
+          "task-id": "gamma-poisson-counts",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": -10.38809585571289,
+          "log-ml-max": -10.217016220092773,
+          "tokens-to-first-valid": 99
+        },
+        {
+          "task-id": "counter-machine",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 48
+        },
+        {
+          "task-id": "traffic-light",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 49
+        },
+        {
+          "task-id": "toggle-switch",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 27
+        },
+        {
+          "task-id": "factorial",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 0.75,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 15
+        },
+        {
+          "task-id": "fizzbuzz",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 50
+        },
+        {
+          "task-id": "gcd",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 21
+        },
+        {
+          "task-id": "palindrome?",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 0,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": null
+        },
+        {
+          "task-id": "sum-evens",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 15
+        },
+        {
+          "task-id": "msa-1",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": -0.29389333724975586,
+          "log-ml-max": -0.18232154846191406,
+          "tokens-to-first-valid": 36
+        },
+        {
+          "task-id": "msa-2",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": -5.331851601600647,
+          "log-ml-max": -5.2785725593566895,
+          "tokens-to-first-valid": 183
+        },
+        {
+          "task-id": "msa-3",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 0.75,
+          "pass-rate": 0.5,
+          "log-ml-mean": -4.400712728500366,
+          "log-ml-max": -4.1985273361206055,
+          "tokens-to-first-valid": 255
+        },
+        {
+          "task-id": "msa-4",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 0.5,
+          "pass-rate": 0.25,
+          "log-ml-mean": -10.070368766784668,
+          "log-ml-max": -10.070368766784668,
+          "tokens-to-first-valid": 337
+        },
+        {
+          "task-id": "msa-5",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": -0.03821907827884663,
+          "log-ml-max": -0.0001260813095358415,
+          "tokens-to-first-valid": 73
+        }
+      ],
+      "timeout-ms": 60000,
+      "in": "results/t1-bakeoff/gen-b.jsonl"
+    }
+  },
+  "b": {
+    "arm": "c",
+    "score": {
+      "overall": {
+        "keep-rate": 0.7941176470588235,
+        "keep-ci": {
+          "mean": 0.7941176470588235,
+          "lo": 0.6911764705882353,
+          "hi": 0.8823529411764706,
+          "n": 68
+        },
+        "evidence": {
+          "mean": -4.164654775063216,
+          "max": 0.4645547866821289,
+          "n-kept": 27
+        },
+        "program-keep-rate": 0.75,
+        "n-verdicts": 68,
+        "totals": {
+          "samples": 68,
+          "completion-tokens": 6408,
+          "gen-ms": 605083,
+          "errors": 0
+        },
+        "drop-reasons": {
+          "eval-error": 5,
+          "kept": 54,
+          "unparseable": 9
+        },
+        "wall-ms": 109437,
+        "tokens-to-first-valid": {
+          "median": 62,
+          "n-tasks-with-valid": 16,
+          "n-tasks": 17
+        },
+        "n-rows": 68,
+        "function-pass-ci": {
+          "mean": 0.84375,
+          "lo": 0.71875,
+          "hi": 0.96875,
+          "n": 32
+        },
+        "function-pass-rate": 0.84375,
+        "parse-rate": 0.8676470588235294
+      },
+      "arm": "c",
+      "config": {
+        "battery-ids": [
+          "gaussian-mean-near2",
+          "gaussian-mean-negshift",
+          "beta-bernoulli-coin",
+          "gamma-poisson-counts",
+          "counter-machine",
+          "traffic-light",
+          "toggle-switch",
+          "factorial",
+          "fizzbuzz",
+          "gcd",
+          "palindrome?",
+          "sum-evens",
+          "msa-1",
+          "msa-2",
+          "msa-3",
+          "msa-4",
+          "msa-5"
+        ],
+        "arm": "c",
+        "temp": 0.8,
+        "model-dir": "/home/robert/genmlx-checkpoints/ornith35b-8bit-grpo-armc-merged",
+        "seed": 42,
+        "k": 4,
+        "stub": false,
+        "git-sha": "ad9dea3",
+        "max-tokens": 512,
+        "greedy-first": true
+      },
+      "boot": 2000,
+      "seed": 42,
+      "np": 50,
+      "per-task": [
+        {
+          "task-id": "gaussian-mean-near2",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 0.25,
+          "pass-rate": 0.25,
+          "log-ml-mean": -1.1497377157211304,
+          "log-ml-max": -1.1497377157211304,
+          "tokens-to-first-valid": 96
+        },
+        {
+          "task-id": "gaussian-mean-negshift",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 0.5,
+          "pass-rate": 0.5,
+          "log-ml-mean": -3.0895538330078125,
+          "log-ml-max": -2.6536717414855957,
+          "tokens-to-first-valid": 98
+        },
+        {
+          "task-id": "beta-bernoulli-coin",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": -4.249945282936096,
+          "log-ml-max": -4.18965482711792,
+          "tokens-to-first-valid": 118
+        },
+        {
+          "task-id": "gamma-poisson-counts",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": -10.85835075378418,
+          "log-ml-max": -10.217016220092773,
+          "tokens-to-first-valid": 99
+        },
+        {
+          "task-id": "counter-machine",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 48
+        },
+        {
+          "task-id": "traffic-light",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 51
+        },
+        {
+          "task-id": "toggle-switch",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 27
+        },
+        {
+          "task-id": "factorial",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 17
+        },
+        {
+          "task-id": "fizzbuzz",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 50
+        },
+        {
+          "task-id": "gcd",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 0.75,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 21
+        },
+        {
+          "task-id": "palindrome?",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 0,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": null
+        },
+        {
+          "task-id": "sum-evens",
+          "kind": "function",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": null,
+          "log-ml-max": null,
+          "tokens-to-first-valid": 15
+        },
+        {
+          "task-id": "msa-1",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": -0.23810744285583496,
+          "log-ml-max": -0.18232154846191406,
+          "tokens-to-first-valid": 36
+        },
+        {
+          "task-id": "msa-2",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": -5.3552552461624146,
+          "log-ml-max": -5.2785725593566895,
+          "tokens-to-first-valid": 183
+        },
+        {
+          "task-id": "msa-3",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 0.5,
+          "pass-rate": 0.5,
+          "log-ml-mean": -2.0522258281707764,
+          "log-ml-max": 0.4645547866821289,
+          "tokens-to-first-valid": 511
+        },
+        {
+          "task-id": "msa-4",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 0.5,
+          "pass-rate": 0.5,
+          "log-ml-mean": -8.994035243988037,
+          "log-ml-max": -8.858874320983887,
+          "tokens-to-first-valid": 349
+        },
+        {
+          "task-id": "msa-5",
+          "kind": "program",
+          "n": 4,
+          "parse-rate": 1,
+          "pass-rate": 1,
+          "log-ml-mean": -0.05441912442458252,
+          "log-ml-max": -0.00012852183422706887,
+          "tokens-to-first-valid": 73
+        }
+      ],
+      "timeout-ms": 60000,
+      "in": "results/t1-bakeoff/gen-c.jsonl"
+    }
+  },
+  "delta": [
+    {
+      "metric": "function-pass-rate",
+      "a": 0.84375,
+      "b": 0.84375,
+      "delta": 0
+    },
+    {
+      "metric": "keep-rate",
+      "a": 0.75,
+      "b": 0.7941176470588235,
+      "delta": 0.044117647058823484
+    },
+    {
+      "metric": "parse-rate",
+      "a": 0.8529411764705882,
+      "b": 0.8676470588235294,
+      "delta": 0.014705882352941235
+    },
+    {
+      "metric": "evidence-mean",
+      "a": -4.424870488361568,
+      "b": -4.164654775063216,
+      "delta": 0.26021571329835247
+    },
+    {
+      "metric": "evidence-max",
+      "a": -0.0001260813095358415,
+      "b": 0.4645547866821289,
+      "delta": 0.46468086799166475
+    },
+    {
+      "metric": "tok->valid median",
+      "a": 50,
+      "b": 62,
+      "delta": 12
+    },
+    {
+      "metric": "completion tokens",
+      "a": 6130,
+      "b": 6408,
+      "delta": 278
+    },
+    {
+      "metric": "gen-ms total",
+      "a": 571203,
+      "b": 605083,
+      "delta": 33880
+    }
+  ]
+}
