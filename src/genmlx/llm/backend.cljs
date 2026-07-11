@@ -821,29 +821,42 @@
      (p/let [result (.chatSessionStart model messages config)]
        (.-text result)))))
 
-(defn generate-text-raw
-  "Generate text by building a ChatML prompt manually and decoding token-by-token.
-   Bypasses ChatSession — works for models where ChatSession has issues (e.g. Qwen2).
+(defn generate-text-raw+
+  "generate-text-raw with generation metadata: resolves to
+   {:text string :n-tokens int :gen-ms number} instead of the bare string.
+   :n-tokens is the decode loop's own count of emitted tokens (the `acc` it
+   decodes — EOS excluded, never re-encoded); :gen-ms is wall-clock from
+   tokenizer encode through the last decoded token. Same opts as
+   generate-text-raw (which is a thin wrapper over this).
 
    opts map:
      :max-tokens     — maximum new tokens (default 100)
      :temperature    — sampling temperature (default 0, greedy argmax)
      :seed           — PRNG seed for reproducible sampling (optional)
      :system-prompt  — optional system message (default 'You are a helpful assistant.')"
-  ([model-map prompt] (generate-text-raw model-map prompt {}))
+  ([model-map prompt] (generate-text-raw+ model-map prompt {}))
   ([{:keys [model tokenizer type]} prompt {:keys [max-tokens temperature seed system-prompt]
                                           :or {max-tokens 100
                                                temperature 0
                                                system-prompt "You are a helpful assistant."}}]
-   (let [chat-str (render-chat [{:role "system" :content system-prompt}
+   (let [t0 (.now js/Date)
+         chat-str (render-chat [{:role "system" :content system-prompt}
                                 {:role "user" :content prompt}]
                                {:think-skip? (contains? #{:qwen3 :qwen3_5 :qwen3_5_moe}
                                                         type)})
          eos-id (eos-token-id tokenizer)
          greedy? (or (nil? temperature) (<= temperature 0))
          inv-temp (when-not greedy? (mx/scalar (/ 1.0 temperature)))
-         decode-acc (fn [acc]
-                      (decode tokenizer (js/Uint32Array.from (clj->js acc))))
+         finish (fn [acc]
+                  ;; decode is async — resolve it INTO the map so :text is a
+                  ;; string for raw+ consumers (a promise :text serializes as
+                  ;; garbage in JSONL). gen-ms is captured before the decode,
+                  ;; per the docstring (through the last decoded token).
+                  (let [gen-ms (- (.now js/Date) t0)]
+                    (p/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
+                      {:text text
+                       :n-tokens (count acc)
+                       :gen-ms gen-ms})))
          ;; Pick the next token id and advance the PRNG key. Greedy ignores
          ;; the key and takes the argmax; sampled splits the key and draws.
          pick (if greedy?
@@ -861,11 +874,21 @@
                 logits (forward-prefill model prompt-ids)
                 rk (rng/ensure-key (when seed (rng/fresh-key seed)))]
            (if (>= i max-tokens)
-             (decode-acc acc)
+             (finish acc)
              (let [[tok-id next-rk] (pick logits rk)]
                (if (= tok-id eos-id)
-                 (decode-acc acc)
+                 (finish acc)
                  (recur (inc i) (conj acc tok-id)
                         (forward-step model tok-id) next-rk)))))
          (finally
            (reset-cache! model)))))))
+
+(defn generate-text-raw
+  "Generate text by building a ChatML prompt manually and decoding token-by-token.
+   Bypasses ChatSession — works for models where ChatSession has issues (e.g. Qwen2).
+   Thin wrapper over generate-text-raw+ that drops the metadata and resolves to
+   just the text string; see generate-text-raw+ for the opts."
+  ([model-map prompt] (generate-text-raw model-map prompt {}))
+  ([model-map prompt opts]
+   (p/let [r (generate-text-raw+ model-map prompt opts)]
+     (:text r))))

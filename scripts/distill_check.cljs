@@ -12,9 +12,14 @@
    Usage (invoked by the parent, not by hand):
      bun run --bun nbb scripts/distill_check.cljs \\
        --candidates <raw_candidates.jsonl> --out <verdicts.edn> --start <i> \\
-       [--n-particles N] [--min-log-ml F]"
+       [--n-particles N] [--min-log-ml F] [--battery distill|t1]
+
+   --battery selects which in-tree task set resolves task ids (default the
+   distill seed set; \"t1\" adds the lifted MSA tasks of the T1 bake-off battery,
+   genmlx-8lm2). Mirrors the `batteries` registry in genmlx.world.distill-sandbox."
   (:require [genmlx.world.distill :as d]
             [genmlx.world.distill-tasks :as t]
+            [genmlx.world.t1-battery :as t1]
             [clojure.string :as str]))
 
 (def fs (js/require "fs"))
@@ -45,10 +50,11 @@
       min-ml (let [m (and (string? (:min-log-ml opts)) (js/parseFloat (:min-log-ml opts)))]
                (when (and m (not (js/isNaN m))) m))
       eopts  (cond-> {:n-particles n-part} min-ml (assoc :min-log-ml min-ml))
+      by-id  (case (:battery opts) "t1" t1/tasks-by-id t/tasks-by-id)
       rows   (read-candidates cf)]
   (doseq [i (range start (count rows))]
     (let [{:keys [task-id sample-idx raw-text]} (d/candidate->fields (nth rows i))
-          task    (get t/tasks-by-id task-id)
+          task    (get by-id task-id)
           verdict (if task
                     (assoc (d/evaluate-candidate (merge task eopts) raw-text sample-idx) :index i)
                     {:index i :unknown-task? true :task-id task-id :sample-idx sample-idx})]

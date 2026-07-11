@@ -34,12 +34,21 @@
    (reassembled by row :index, deduped, sentinels dropped)."
   (:require [genmlx.world.distill :as d]
             [genmlx.world.distill-tasks :as t]
+            [genmlx.world.t1-battery :as t1]
             [clojure.string :as str]
             [cljs.reader :as reader]
             [promesa.core :as p]))
 
 (def ^:private fs (js/require "fs"))
 (def ^:private cp (js/require "child_process"))
+
+(def ^:private batteries
+  "Task-battery registry for the :battery opt (and the worker's matching
+   --battery arg): which in-tree task set resolves candidate task ids. \"t1\" is
+   the T1 bake-off battery (genmlx-8lm2) — the distill seed set plus the lifted
+   MSA tasks. The worker (scripts/distill_check.cljs) mirrors this mapping."
+  {"distill" t/tasks-by-id
+   "t1"      t1/tasks-by-id})
 
 (defn- count-lines [path]
   (if (.existsSync fs path)
@@ -56,10 +65,11 @@
                           (catch :default _ nil))))
        vec))
 
-(defn- spawn-worker [candidates-file out-path start eval-opts]
+(defn- spawn-worker [candidates-file out-path start eval-opts battery]
   (let [args (cond-> ["run" "--bun" "nbb" "scripts/distill_check.cljs"
                       "--candidates" candidates-file "--out" out-path "--start" (str start)
                       "--n-particles" (str (:n-particles eval-opts 50))]
+               battery                (conj "--battery" battery)
                (:min-log-ml eval-opts) (conj "--min-log-ml" (str (:min-log-ml eval-opts))))]
     ;; detached -> the worker leads its own process group, so we can kill the whole
     ;; tree (wrapper + nbb/node grandchild). stdout ignored (wrapper is noisy; verdicts
@@ -128,27 +138,30 @@
    opts:
      :out-path    scratch EDN file accumulating verdict lines (required)
      :eval-opts   {:n-particles :min-log-ml} forwarded to evaluate-candidate
+     :battery     task-set name resolving candidate task ids (see `batteries`;
+                  default \"distill\" — the pre-8lm2 behavior, unchanged)
      :timeout-ms  per-candidate stall budget before the worker group is killed
                   (default 15000; must exceed the worker's cold-start ~2-4s)
      :poll-ms     watchdog poll interval (default 400)
      :verbose?    print per-worker / per-kill progress"
-  [candidates-file {:keys [out-path eval-opts timeout-ms poll-ms verbose?]
+  [candidates-file {:keys [out-path eval-opts battery timeout-ms poll-ms verbose?]
                     :or   {timeout-ms 15000 poll-ms 400}}]
-  (let [rows (read-candidates candidates-file)
-        n    (count rows)]
+  (let [rows  (read-candidates candidates-file)
+        n     (count rows)
+        by-id (get batteries battery t/tasks-by-id)]
     (.writeFileSync fs out-path "")
     (letfn [(step [start]
               (if (>= start n)
                 (p/resolved (assemble out-path))
                 (do (when verbose? (println (str "  [sandbox] worker resuming at row " start "/" n)))
-                    (-> (watch-worker (spawn-worker candidates-file out-path start eval-opts)
+                    (-> (watch-worker (spawn-worker candidates-file out-path start eval-opts battery)
                                       out-path timeout-ms poll-ms)
                         (p/then (fn [{:keys [status index]}]
                                   (if (= :done status)
                                     (assemble out-path)
                                     (let [reason (if (= :stall status) :timeout :crashed)
                                           {:keys [task-id sample-idx]} (d/candidate->fields (nth rows index))
-                                          task   (or (get t/tasks-by-id task-id) {:id task-id :kind nil})]
+                                          task   (or (get by-id task-id) {:id task-id :kind nil})]
                                       (when verbose?
                                         (println (str "  [sandbox] row " index " (" task-id " #" sample-idx
                                                       ") -> " reason "; resuming")))
