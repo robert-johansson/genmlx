@@ -1,0 +1,253 @@
+{
+  "overall": {
+    "keep-rate": 0.9117647058823529,
+    "keep-ci": {
+      "mean": 0.9117647058823529,
+      "lo": 0.8235294117647058,
+      "hi": 0.9705882352941176,
+      "n": 68
+    },
+    "evidence": {
+      "mean": -4.6472711222870515,
+      "max": -0.35228833204147847,
+      "n-kept": 34
+    },
+    "program-keep-rate": 0.9444444444444444,
+    "n-verdicts": 68,
+    "totals": {
+      "samples": 68,
+      "completion-tokens": 6245,
+      "gen-ms": 349370,
+      "errors": 0
+    },
+    "drop-reasons": {
+      "eval-error": 1,
+      "kept": 62,
+      "test-fail": 3,
+      "unparseable": 2
+    },
+    "wall-ms": 383726,
+    "tokens-to-first-valid": {
+      "median": 73.5,
+      "n-tasks-with-valid": 16,
+      "n-tasks": 17
+    },
+    "n-rows": 68,
+    "function-pass-ci": {
+      "mean": 0.875,
+      "lo": 0.75,
+      "hi": 0.96875,
+      "n": 32
+    },
+    "function-pass-rate": 0.875,
+    "parse-rate": 0.9705882352941176
+  },
+  "arm": "a",
+  "config": {
+    "battery-ids": [
+      "gaussian-mean-near2",
+      "gaussian-mean-negshift",
+      "beta-bernoulli-coin",
+      "gamma-poisson-counts",
+      "counter-machine",
+      "traffic-light",
+      "toggle-switch",
+      "factorial",
+      "fizzbuzz",
+      "gcd",
+      "palindrome?",
+      "sum-evens",
+      "msa-1",
+      "msa-2",
+      "msa-3",
+      "msa-4",
+      "msa-5"
+    ],
+    "arm": "a",
+    "temp": 0.8,
+    "model-dir": "/home/robert/code/mlx/models/Qwen3-Coder-Next-4bit/snapshots/7b9321eabb85ce79625cac3f61ea691e4ea984b5",
+    "seed": 42,
+    "k": 4,
+    "stub": false,
+    "git-sha": "d8a0f0f",
+    "max-tokens": 512,
+    "greedy-first": true
+  },
+  "boot": 2000,
+  "seed": 42,
+  "np": 50,
+  "per-task": [
+    {
+      "task-id": "gaussian-mean-near2",
+      "kind": "program",
+      "n": 4,
+      "parse-rate": 0.75,
+      "pass-rate": 0.75,
+      "log-ml-mean": -1.637233813603719,
+      "log-ml-max": -1.2120016813278198,
+      "tokens-to-first-valid": 96
+    },
+    {
+      "task-id": "gaussian-mean-negshift",
+      "kind": "program",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": -1.5941822528839111,
+      "log-ml-max": -1.5941822528839111,
+      "tokens-to-first-valid": 98
+    },
+    {
+      "task-id": "beta-bernoulli-coin",
+      "kind": "program",
+      "n": 4,
+      "parse-rate": 0.75,
+      "pass-rate": 0.75,
+      "log-ml-mean": -4.164952119191487,
+      "log-ml-max": -4.115546703338623,
+      "tokens-to-first-valid": 118
+    },
+    {
+      "task-id": "gamma-poisson-counts",
+      "kind": "program",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": -10.25648546218872,
+      "log-ml-max": -10.217018127441406,
+      "tokens-to-first-valid": 99
+    },
+    {
+      "task-id": "counter-machine",
+      "kind": "function",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": null,
+      "log-ml-max": null,
+      "tokens-to-first-valid": 44
+    },
+    {
+      "task-id": "traffic-light",
+      "kind": "function",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": null,
+      "log-ml-max": null,
+      "tokens-to-first-valid": 57
+    },
+    {
+      "task-id": "toggle-switch",
+      "kind": "function",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": null,
+      "log-ml-max": null,
+      "tokens-to-first-valid": 24
+    },
+    {
+      "task-id": "factorial",
+      "kind": "function",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 0,
+      "log-ml-mean": null,
+      "log-ml-max": null,
+      "tokens-to-first-valid": null
+    },
+    {
+      "task-id": "fizzbuzz",
+      "kind": "function",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": null,
+      "log-ml-max": null,
+      "tokens-to-first-valid": 66
+    },
+    {
+      "task-id": "gcd",
+      "kind": "function",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": null,
+      "log-ml-max": null,
+      "tokens-to-first-valid": 21
+    },
+    {
+      "task-id": "palindrome?",
+      "kind": "function",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": null,
+      "log-ml-max": null,
+      "tokens-to-first-valid": 13
+    },
+    {
+      "task-id": "sum-evens",
+      "kind": "function",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": null,
+      "log-ml-max": null,
+      "tokens-to-first-valid": 15
+    },
+    {
+      "task-id": "msa-1",
+      "kind": "program",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": -0.40546512603759766,
+      "log-ml-max": -0.40546512603759766,
+      "tokens-to-first-valid": 36
+    },
+    {
+      "task-id": "msa-2",
+      "kind": "program",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": -5.37218713760376,
+      "log-ml-max": -5.37218713760376,
+      "tokens-to-first-valid": 182
+    },
+    {
+      "task-id": "msa-3",
+      "kind": "program",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": -7.340060472488403,
+      "log-ml-max": -2.0413055419921875,
+      "tokens-to-first-valid": 247
+    },
+    {
+      "task-id": "msa-4",
+      "kind": "program",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": -9.789072275161743,
+      "log-ml-max": -8.358373641967773,
+      "tokens-to-first-valid": 337
+    },
+    {
+      "task-id": "msa-5",
+      "kind": "program",
+      "n": 4,
+      "parse-rate": 1,
+      "pass-rate": 1,
+      "log-ml-mean": -0.3927123634794003,
+      "log-ml-max": -0.35228833204147847,
+      "tokens-to-first-valid": 81
+    }
+  ],
+  "timeout-ms": 60000,
+  "in": "results/t1-bakeoff/gen-a.jsonl"
+}

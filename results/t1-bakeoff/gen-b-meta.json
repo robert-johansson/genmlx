@@ -1,0 +1,37 @@
+{
+  "battery-ids": [
+    "gaussian-mean-near2",
+    "gaussian-mean-negshift",
+    "beta-bernoulli-coin",
+    "gamma-poisson-counts",
+    "counter-machine",
+    "traffic-light",
+    "toggle-switch",
+    "factorial",
+    "fizzbuzz",
+    "gcd",
+    "palindrome?",
+    "sum-evens",
+    "msa-1",
+    "msa-2",
+    "msa-3",
+    "msa-4",
+    "msa-5"
+  ],
+  "arm": "b",
+  "temp": 0.8,
+  "model-dir": "/home/robert/.cache/huggingface/hub/models--mlx-community--Ornith-1.0-35B-8bit/snapshots/28d10f45a04981989f5a2e53e38f6473e81e815a",
+  "seed": 42,
+  "k": 4,
+  "stub": false,
+  "totals": {
+    "samples": 68,
+    "completion-tokens": 6130,
+    "gen-ms": 571203,
+    "errors": 0
+  },
+  "wall-ms": 741803,
+  "git-sha": "7004f88",
+  "max-tokens": 512,
+  "greedy-first": true
+}

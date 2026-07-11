@@ -1,0 +1,37 @@
+{
+  "battery-ids": [
+    "gaussian-mean-near2",
+    "gaussian-mean-negshift",
+    "beta-bernoulli-coin",
+    "gamma-poisson-counts",
+    "counter-machine",
+    "traffic-light",
+    "toggle-switch",
+    "factorial",
+    "fizzbuzz",
+    "gcd",
+    "palindrome?",
+    "sum-evens",
+    "msa-1",
+    "msa-2",
+    "msa-3",
+    "msa-4",
+    "msa-5"
+  ],
+  "arm": "a",
+  "temp": 0.8,
+  "model-dir": "/home/robert/code/mlx/models/Qwen3-Coder-Next-4bit/snapshots/7b9321eabb85ce79625cac3f61ea691e4ea984b5",
+  "seed": 42,
+  "k": 4,
+  "stub": false,
+  "totals": {
+    "samples": 68,
+    "completion-tokens": 6245,
+    "gen-ms": 349370,
+    "errors": 0
+  },
+  "wall-ms": 383726,
+  "git-sha": "d8a0f0f",
+  "max-tokens": 512,
+  "greedy-first": true
+}
