@@ -1,0 +1,22 @@
+{
+  "bean": "genmlx-8dfk",
+  "script": "bench/two_lm_demo.cljs",
+  "duration_ms": 154045,
+  "hardware": {
+    "platform": "linux",
+    "arch": "arm64",
+    "cpus": 14,
+    "gpu": "CUDA"
+  },
+  "experiment": "two-lm-demo",
+  "models": {
+    "vlm": "/home/robert/.cache/huggingface/hub/models--mlx-community--Qwen3.6-35B-A3B-4bit/snapshots/38740b847e4cb78f352aba30aa41c76e08e6eb46",
+    "coder": "/home/robert/code/mlx/models/Qwen3-Coder-Next-4bit/snapshots/7b9321eabb85ce79625cac3f61ea691e4ea984b5"
+  },
+  "runtime": {
+    "engine": "bun+nbb",
+    "node": "v24.3.0"
+  },
+  "timestamp": "2026-07-11T15:10:45.872Z",
+  "git_sha": "e00741f"
+}

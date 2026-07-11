@@ -79,6 +79,10 @@
        synchronous decode loop (default 32; 0/nil disables). Same finalizer-
        starvation exposure and fix as generate-text-raw+ (llm/sweep-tick!,
        genmlx-12w4/genmlx-nwsr); housekeeping only, results unchanged.
+     :prefill-chunk — owned path only: run the prefill in n-token blocks with
+       a materialize+sweep boundary per block (genmlx-nwsr). With :images this
+       is the VLM decoder-prefill chunk (vlm-prefill :chunk); without, the
+       chunked text prefill. nil (default) = single-slab prefill.
 
    Uses KV cache for O(n) generation instead of O(n²). The cache is
    initialized at the start of each gen body execution and reset at
@@ -89,7 +93,7 @@
    (uses mx/item for EOS check, which requires scalar values) — use
    make-llm-gf-batched for the [K]-particle path (genmlx-9uyg)."
   ([model-map] (make-llm-gf model-map {}))
-  ([model-map {:keys [images sweep-every] :or {sweep-every 32}}]
+  ([model-map {:keys [images sweep-every prefill-chunk] :or {sweep-every 32}}]
    (let [{:keys [model tokenizer]} model-map
          eos (llm/eos-token-id tokenizer)]
      (dyn/auto-key
@@ -99,8 +103,11 @@
              (do
                (llm/init-cache! model)
                (try
-                 (let [logits (if (seq images)
-                                (llm/forward-prefill model prompt-ids {:images images})
+                 (let [logits (if (or (seq images) prefill-chunk)
+                                (llm/forward-prefill model prompt-ids
+                                                     (cond-> {}
+                                                       (seq images) (assoc :images images)
+                                                       prefill-chunk (assoc :chunk prefill-chunk)))
                                 (llm/forward-prefill model prompt-ids))]
                    (loop [i 0, context prompt-ids, logits logits]
                      (if (>= i max-tokens)
