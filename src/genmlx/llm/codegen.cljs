@@ -137,12 +137,16 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
      :prepared   {:token-index :trie} from bytes/prepare (the generate-cljs
                  option shape) — its :trie is used when :trie is absent
      :min-bytes  minimum bytes before allowing :complete to stop (default 10)
+     :sweep-every in-loop dead-wrapper sweep every N bytes (default 32;
+                 0/nil disables) — the byte loop is synchronous, same
+                 finalizer starvation as the token loops (llm/sweep-tick!,
+                 genmlx-nwsr)
    Either :trie or :prepared shares the trie across GFs; with neither, the
    trie (~400K nodes) is rebuilt on every call."
   ([model-map] (make-reader-constrained-gf model-map {}))
   ([model-map opts]
    (let [{:keys [model]} model-map
-         {:keys [min-bytes] :or {min-bytes 10}} opts
+         {:keys [min-bytes sweep-every] :or {min-bytes 10 sweep-every 32}} opts
          trie (or (:trie opts)
                   (get-in opts [:prepared :trie])
                   (:trie (bytes/prepare (:tokenizer model-map))))]
@@ -184,15 +188,17 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
                              new-acc
 
                              (bytes/trie-leaf? next-node)
-                             (recur (inc i) trie new-prefix
-                                    (bytes/logits->logprobs
-                                     (llm/forward-step model
-                                                       (bytes/commit-token-id next-node)))
-                                    new-acc)
+                             (do (llm/sweep-tick! i sweep-every)
+                                 (recur (inc i) trie new-prefix
+                                        (bytes/logits->logprobs
+                                         (llm/forward-step model
+                                                           (bytes/commit-token-id next-node)))
+                                        new-acc))
 
                              :else
-                             (recur (inc i) next-node new-prefix logprobs
-                                    new-acc)))))))
+                             (do (llm/sweep-tick! i sweep-every)
+                                 (recur (inc i) next-node new-prefix logprobs
+                                        new-acc))))))))
                  (finally
                    (llm/reset-cache! model))))))))))
 

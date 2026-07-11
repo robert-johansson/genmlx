@@ -679,6 +679,38 @@
   (let [[logits cache] (forward-cached model (vec prompt-ids) (init-cache model) 0)]
     [(mx/index logits (dec (count prompt-ids))) cache]))
 
+(defn prefill-chunked
+  "Chunked prefill: process the prompt in `chunk`-token blocks through
+   forward-cached (offset + prior-width mask make continuation exact), with
+   materialize-cache! + mx/jsc-cleanup! at each block boundary. Same
+   [last-logits cache] contract as prefill; mathematically identical —
+   chunking is a memory boundary, not an approximation — but bf16
+   accumulation order differs across block boundaries, so logits match the
+   slab within cross-kernel tolerance (1-2 ULP; argmax + top-5 ids exact on
+   the 0.8B probe, genmlx-nwsr), the same bar as the forward's own golden
+   gate. Bounds the single-slab prefill
+   transient (~10-18 GB at T2-prompt sizes on the 8-bit 35B-A3B) to one
+   block's worth: without the boundary the whole-prompt graph evals as ONE
+   slab and its dead intermediate wrappers survive until the sync caller
+   yields (the same finalizer starvation as the decode loop, genmlx-12w4 /
+   genmlx-nwsr). chunk <= 0 or >= prompt length degrades to the single-slab
+   prefill."
+  [model prompt-ids chunk]
+  (let [ids (vec prompt-ids)
+        n   (count ids)]
+    (if (or (nil? chunk) (<= chunk 0) (>= chunk n))
+      (prefill model ids)
+      (loop [off 0, cache (init-cache model), last-logits nil]
+        (if (>= off n)
+          [last-logits cache]
+          (let [block (subvec ids off (min n (+ off chunk)))
+                [lg cache'] (forward-cached model block cache off)
+                lg-last (mx/index lg (dec (count block)))]
+            (materialize-cache! cache')
+            (mx/materialize! lg-last)
+            (mx/jsc-cleanup!)
+            (recur (+ off (count block)) cache' lg-last)))))))
+
 (defn step
   "Advance one token from `cache` (current length = `offset`). Returns
    [logits cache'] with logits [vocab]."

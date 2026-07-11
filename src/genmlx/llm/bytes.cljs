@@ -315,6 +315,10 @@
      :token-index  pre-built token index (from grammar/build-token-index)
      :trie         pre-built byte trie (from build-byte-trie)
      — or pass the result of (prepare tokenizer) to avoid rebuilding.
+     :sweep-every  in-loop dead-wrapper sweep every N bytes (default 32;
+                   0/nil disables) — the byte loop is synchronous with a
+                   per-byte mx/item, same finalizer starvation as the token
+                   loops (llm/sweep-tick!, genmlx-nwsr).
 
    Returns a DynamicGF that takes [prompt-ids max-bytes]:
      prompt-ids  vector of int token IDs (from llm/encode)
@@ -333,6 +337,7 @@
   ([model-map] (make-byte-llm-gf model-map {}))
   ([model-map opts]
    (let [{:keys [model tokenizer]} model-map
+         {:keys [sweep-every] :or {sweep-every 32}} opts
          {:keys [token-index trie]}
          (if (and (:token-index opts) (:trie opts))
            opts
@@ -359,6 +364,7 @@
                            [next-pos next-logprobs]
                            (trie-advance model trie trie-pos logprobs chosen-byte)]
 
+                       (llm/sweep-tick! i sweep-every)
                        (recur (inc i) next-pos next-logprobs
                               (conj bytes-acc chosen-byte)))))))))))))
 
@@ -404,6 +410,9 @@
    at the first token boundary) so grammar boundaries inside multi-byte tokens
    never strand generation. See trie-advance.
 
+   opts :sweep-every (default 32; 0/nil disables): in-loop dead-wrapper sweep
+   every N bytes, as in make-byte-llm-gf (genmlx-nwsr).
+
    Generation stops when the DFA has no valid continuations.
 
    LIMITATION: the DFA alphabet is printable ASCII (32–126) — regex wildcards
@@ -413,6 +422,7 @@
   ([model-map constraint opts]
    (let [{:keys [model tokenizer]} model-map
          eager? (boolean (:commit-eager? opts))
+         {:keys [sweep-every] :or {sweep-every 32}} opts
          dfa (if (string? constraint)
                (grammar/compile-regex constraint)
                constraint)
@@ -447,6 +457,7 @@
                                [next-pos next-logprobs]
                                (trie-advance model trie trie-pos* logprobs* chosen-byte eager?)]
 
+                           (llm/sweep-tick! i sweep-every)
                            (recur (inc i) next-pos next-dfa next-logprobs
                                   (conj bytes-acc chosen-byte)))))))))))))))
 

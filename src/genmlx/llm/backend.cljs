@@ -344,6 +344,23 @@
   (let [v (->id-vec ids)]
     (mx/array v [1 (count v)] mx/int32)))
 
+(defn sweep-tick!
+  "Bounded-retention sweep for SYNCHRONOUS per-token/per-byte decode loops:
+   calls mx/jsc-cleanup! when (inc i) is a positive multiple of sweep-every
+   (nil/0 disables). Such loops never yield to the event loop for a whole
+   sample, so Bun finalizers — the only thing that frees dead MxArray
+   buffers — cannot run; on the owned CLJS forward the per-token wrapped
+   intermediates then stay live for the entire sample (~0.1 GB/token on the
+   35B-A3B, enough to cross the Thor kill floor mid-sample, genmlx-12w4).
+   The sweep bounds that accumulation to sweep-every tokens' worth without
+   dropping the MLX buffer pool (unlike force-gc!, whose cache clear would
+   thrash the decode allocator). Housekeeping only — never affects
+   computation results, so it is safe inside gen bodies (genmlx-nwsr)."
+  [i sweep-every]
+  (when (and sweep-every (pos? sweep-every)
+             (zero? (mod (inc i) sweep-every)))
+    (mx/jsc-cleanup!)))
+
 (defn forward-pass
   "Run a forward pass through the model.
 
@@ -421,7 +438,13 @@
    cell then holds the image-conditioned prefix WITH its rope-delta, so
    forward-step / branch-cache! / forward-branch continue from it
    transparently. On the native model use vlm-prefill-flat! instead — its
-   cache is internal and this fn cannot adopt it."
+   cache is internal and this fn cannot adopt it.
+
+   Without :images, {:chunk n} runs the owned TEXT prefill in n-token blocks
+   with a materialize + sweep boundary per block (fwd/prefill-chunked,
+   genmlx-nwsr) — identical logits, bounds the single-slab prefill transient
+   for long prompts. Ignored on the native model (it manages its own
+   prefill memory)."
   ([model token-ids]
    (if (cljs-forward-model? model)
      (let [ids (->id-vec token-ids)
@@ -433,7 +456,12 @@
        (-> logits (mx/index 0) (mx/index 0)))))
   ([model token-ids {:keys [images chunk]}]
    (if-not (seq images)
-     (forward-prefill model token-ids)
+     (if (and chunk (cljs-forward-model? model))
+       (let [ids (->id-vec token-ids)
+             [logits cache] (fwd/prefill-chunked (:fwd model) ids chunk)]
+         (reset! (:cache model) {:cache cache :offset (count ids)})
+         logits)
+       (forward-prefill model token-ids))
      (do
        (when-not (cljs-forward-model? model)
          (throw (ex-info (str "forward-prefill with :images drives the OWNED VLM "
@@ -892,9 +920,7 @@
              (let [[tok-id next-rk] (pick logits rk)]
                (if (= tok-id eos-id)
                  (finish acc)
-                 (do (when (and sweep-every (pos? sweep-every)
-                                (zero? (mod (inc i) sweep-every)))
-                       (mx/jsc-cleanup!))
+                 (do (sweep-tick! i sweep-every)
                      (recur (inc i) (conj acc tok-id)
                             (forward-step model tok-id) next-rk))))))
          (finally

@@ -80,6 +80,19 @@
 (defn next-token-logits  [m ids]            (if (q35? m) (q35/next-token-logits m ids)  (q3/next-token-logits m ids)))
 (defn init-cache         [m]                (if (q35? m) (q35/init-cache m)             (q3/init-cache m)))
 (defn prefill            [m ids]            (if (q35? m) (q35/prefill m ids)            (q3/prefill m ids)))
+
+(defn prefill-chunked
+  "Chunked text prefill (genmlx-nwsr): q35-family only — blocks of `chunk`
+   tokens through forward-cached with a materialize-cache! + jsc-cleanup!
+   boundary per block, bounding the single-slab prefill transient. Logits
+   match the slab prefill within bf16 cross-kernel tolerance (argmax + top-5
+   exact; see q35/prefill-chunked). On the dense :qwen3 family this IGNORES
+   chunk and runs
+   the single-slab prefill: its multi-token mask has no prior-width support,
+   and dense owned checkpoints are small enough that the slab is not a
+   memory hazard."
+  [m ids chunk]
+  (if (q35? m) (q35/prefill-chunked m ids chunk) (q3/prefill m ids)))
 (defn step               [m cache offset id] (if (q35? m) (q35/step m cache offset id)  (q3/step m cache offset id)))
 
 ;; --- [K]-particle batch axis (genmlx-9uyg) ---------------------------------

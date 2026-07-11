@@ -132,7 +132,7 @@
 ;; Branched SIMULATE — build the trace make-llm-gf would + the fork ledger
 ;; ---------------------------------------------------------------------------
 
-(defn- branched-simulate [model eos constraint gf args key]
+(defn- branched-simulate [model eos constraint gf args key sweep-every]
   (let [[prompt-ids max-tokens] args, prompt (vec prompt-ids)]
     (if (zero? max-tokens)
       (mk-trace gf args cm/EMPTY prompt (mx/scalar 0.0) nil)
@@ -156,7 +156,8 @@
                 (if (= tok-id eos)
                   (mk-trace gf args choices' (conj ctx tok-id) score'
                             {:branches br' :logits lo' :toks tk' :dfas df'})
-                  (let [nl (mat (llm/forward-step model tok-id))]
+                  (let [_ (llm/sweep-tick! i sweep-every)
+                        nl (mat (llm/forward-step model tok-id))]
                     (recur (inc i) nl (gadvance constraint dfa tok-id) k1
                            choices' score' (conj ctx tok-id) br' lo' tk' df')))))))))))
 
@@ -164,7 +165,7 @@
 ;; Branched REGENERATE — resume at the divergence site, rescore the suffix
 ;; ---------------------------------------------------------------------------
 
-(defn- branched-regenerate [model eos constraint gf trace selection key]
+(defn- branched-regenerate [model eos constraint gf trace selection key sweep-every]
   (let [led (ledger trace)
         [prompt-ids max-tokens] (:args trace)
         oc (:choices trace)
@@ -205,7 +206,8 @@
                   {:trace (mk-trace gf (:args trace) nch' (into (vec prompt-ids) ntk') nsc'
                                     {:branches nbr' :logits nlo' :toks ntk' :dfas ndf'})
                    :weight weight'})
-              (let [nl (mat (llm/forward-branch model s used-id))]
+              (let [_ (llm/sweep-tick! j sweep-every)
+                    nl (mat (llm/forward-branch model s used-id))]
                 (recur (inc j) nl (gadvance constraint dfa used-id) key'
                        nbr' nlo' ntk' ndf' nch' nsc' weight')))))))))
 
@@ -223,19 +225,25 @@
    upstream DENSE natives need the replay path). Optional `constraint` is a genmlx.llm.grammar
    constraint threaded as grammar masking through both simulate and regenerate.
 
-   Returns a DynamicGF; run inference inside (with-llm-branches* model ...)."
+   Returns a DynamicGF; run inference inside (with-llm-branches* model ...).
+
+   3-arity opts: :sweep-every — in-loop dead-wrapper sweep every N tokens
+   inside the synchronous simulate/regenerate decode loops (default 32;
+   0/nil disables; llm/sweep-tick!, genmlx-nwsr). The ledger's live cache
+   values are unaffected — only dead per-step intermediates are collected."
   ([model-map] (make-llm-gf-branched model-map nil))
-  ([model-map constraint]
+  ([model-map constraint] (make-llm-gf-branched model-map constraint {}))
+  ([model-map constraint {:keys [sweep-every] :or {sweep-every 32}}]
    (let [{:keys [model tokenizer]} model-map
          eos (llm/eos-token-id tokenizer)
          base (core/make-llm-gf model-map)
          oracle (if constraint (gram/constrain base constraint) base)
          df (fn [op gf args key opts]
               (case op
-                :simulate   (branched-simulate model eos constraint gf args key)
+                :simulate   (branched-simulate model eos constraint gf args key sweep-every)
                 :regenerate (let [t (:trace opts), sl (:selection opts)]
                               (if (ledger t)
-                                (branched-regenerate model eos constraint gf t sl key)
+                                (branched-regenerate model eos constraint gf t sl key sweep-every)
                                 ;; no ledger (foreign trace) -> correct replay fallback
                                 (p/regenerate (dyn/with-key oracle key) t sl)))
                 :generate   (p/generate (dyn/with-key oracle key) args (:constraints opts))

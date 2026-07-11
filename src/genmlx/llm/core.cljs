@@ -75,6 +75,10 @@
        body and therefore the full vision prefill — the replay-oracle
        semantics; the expensive look is per-op, not amortized (branch-ledger
        amortization is the token-SMC/branched layer's job).
+     :sweep-every — sweep dead MLX wrappers every N tokens inside the body's
+       synchronous decode loop (default 32; 0/nil disables). Same finalizer-
+       starvation exposure and fix as generate-text-raw+ (llm/sweep-tick!,
+       genmlx-12w4/genmlx-nwsr); housekeeping only, results unchanged.
 
    Uses KV cache for O(n) generation instead of O(n²). The cache is
    initialized at the start of each gen body execution and reset at
@@ -85,7 +89,7 @@
    (uses mx/item for EOS check, which requires scalar values) — use
    make-llm-gf-batched for the [K]-particle path (genmlx-9uyg)."
   ([model-map] (make-llm-gf model-map {}))
-  ([model-map {:keys [images]}]
+  ([model-map {:keys [images sweep-every] :or {sweep-every 32}}]
    (let [{:keys [model tokenizer]} model-map
          eos (llm/eos-token-id tokenizer)]
      (dyn/auto-key
@@ -105,29 +109,35 @@
                              tok-id (mx/item tok)]
                          (if (= tok-id eos)
                            (conj context tok-id)
-                           (let [next-logits (llm/forward-step model tok-id)]
-                             (recur (inc i) (conj context tok-id) next-logits)))))))
+                           (do (llm/sweep-tick! i sweep-every)
+                               (let [next-logits (llm/forward-step model tok-id)]
+                                 (recur (inc i) (conj context tok-id) next-logits))))))))
                  (finally
                    (llm/reset-cache! model))))))))))
 
 (defn make-llm-gf-uncached
   "Like make-llm-gf but without KV cache. Recomputes full context at
    each token step — O(n²) but stateless. Useful for debugging or when
-   the model doesn't support KV cache."
-  [model-map]
-  (let [{:keys [model tokenizer]} model-map
-        eos (llm/eos-token-id tokenizer)]
-    (dyn/auto-key
-     (gen [prompt-ids max-tokens]
-          (loop [i 0, context prompt-ids]
-            (if (>= i max-tokens)
-              context
-              (let [logits (llm/forward-pass model context)
-                    tok (trace (t-addr i) (dist/categorical logits))
-                    tok-id (mx/item tok)]
-                (if (= tok-id eos)
-                  (conj context tok-id)
-                  (recur (inc i) (conj context tok-id))))))))))
+   the model doesn't support KV cache.
+
+   opts: :sweep-every — in-loop dead-wrapper sweep every N tokens (default
+   32; 0/nil disables), as in make-llm-gf (genmlx-nwsr)."
+  ([model-map] (make-llm-gf-uncached model-map {}))
+  ([model-map {:keys [sweep-every] :or {sweep-every 32}}]
+   (let [{:keys [model tokenizer]} model-map
+         eos (llm/eos-token-id tokenizer)]
+     (dyn/auto-key
+      (gen [prompt-ids max-tokens]
+           (loop [i 0, context prompt-ids]
+             (if (>= i max-tokens)
+               context
+               (let [logits (llm/forward-pass model context)
+                     tok (trace (t-addr i) (dist/categorical logits))
+                     tok-id (mx/item tok)]
+                 (if (= tok-id eos)
+                   (conj context tok-id)
+                   (do (llm/sweep-tick! i sweep-every)
+                       (recur (inc i) (conj context tok-id))))))))))))
 
 (defn make-llm-gf-batched
   "The [K]-particle LLM-GF (genmlx-9uyg, Route B): a DynamicGF over
@@ -165,6 +175,12 @@
                     eval and makes the site count data-dependent); safe for
                     vsimulate-style unconstrained use only — never with
                     constraints on later sites.
+     :sweep-every — in-loop dead-wrapper sweep every N sites (default 32;
+                    0/nil disables), as in make-llm-gf (genmlx-nwsr). Under
+                    scalar execution (per-site mx/item) it bounds retention
+                    exactly like the scalar loop; under vsimulate the loop
+                    stays lazy so there is little to free, and the sweep is
+                    near-free.
 
    Scalar GFI ops on this gf work through broadcasting (shapes []), but run
    the full max-tokens loop (no early exit) — for scalar use, make-llm-gf
@@ -173,7 +189,8 @@
    Retval: {:tokens [K max-tokens] int matrix ([max-tokens] under scalar
    execution), :active the final lane-liveness mask, :prompt-ids}."
   ([model-map] (make-llm-gf-batched model-map {}))
-  ([model-map {:keys [pad-id hook check-every]}]
+  ([model-map {:keys [pad-id hook check-every sweep-every]
+               :or {sweep-every 32}}]
    (let [{:keys [model tokenizer]} model-map
          _ (when-not (llm/cljs-forward-model? model)
              (throw (ex-info "make-llm-gf-batched requires the OWNED forward (CljsForwardModel) — load with {:cljs-forward? true} (or a supported family's smart default)."
@@ -235,6 +252,7 @@
                        ;; still-active lanes feed their sample; dead lanes
                        ;; (incl. just-eos'd) feed pad — eos is never fed.
                        (let [fed (mx/where act' tok pad-tok)]
+                         (llm/sweep-tick! i sweep-every)
                          (recur (inc i)
                                 (if (pos? (count (mx/shape fed)))
                                   (llm/forward-step-batched model fed)
