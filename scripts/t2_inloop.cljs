@@ -235,15 +235,27 @@
             resp)
         (throw (ex-info "t2 llm cache miss" {:t2/request req}))))))
 
+(def ^:private native-gc!
+  "Synchronous MLX sweep, set by real-generate! once genmlx.mlx is loaded (nil
+   under STUB=1, which must stay native-free). se/search is SYNCHRONOUS: a long
+   drive never yields to the event loop, so Bun's finalizers — the only thing
+   that frees dead MxArrays — never run and per-step oracle checks accumulate
+   live memory until OOM (observed: the owned-35B T2 arms ran ~100 GB deep and
+   were floor-killed). Calling this at every propose step bounds the growth to
+   one step's worth of checks."
+  (atom nil))
+
 (defn- wrap-propose
   "Wrap the loop proposer for metering + solve detection: count candidates, and —
    until the first solve — re-check each candidate against the solve bar,
    recording the drive-local cumulative completion tokens at the first crossing.
    With early-stop, a solved drive proposes nothing further (the population
    plateaus immediately instead of spending more GPU). All state is drive-local,
-   so re-drives replay identically."
+   so re-drives replay identically. Also sweeps dead MLX arrays synchronously
+   each step (see native-gc!)."
   [inner {:keys [bar observations check-opts drive]}]
   (fn [spec fb]
+    (when-let [g @native-gc!] (g))
     (if (and early-stop? (some? (:solved-tokens @drive)))
       []
       (let [cands (vec (inner spec fb))]
@@ -340,6 +352,7 @@
     (let [load-model (resolve 'genmlx.llm.backend/load-model)
           gen+       (resolve 'genmlx.llm.backend/generate-text-raw+)
           force-gc!  (resolve 'genmlx.mlx/force-gc!)
+          _          (reset! native-gc! force-gc!)
           t0         (.now js/Date)]
       (p/let [m (load-model model-dir)]
         (println (str "  loaded: " (name (:type m)) " in "
