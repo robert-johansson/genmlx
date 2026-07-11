@@ -28,7 +28,7 @@
      STEPS=10 GROUP_SIZE=8 MAX_COMPLETION=220 LR=1e-3 OPTIMIZER=sgd \\
        bunx --bun nbb@1.4.208 scripts/grpo_student.cljs
    Env: MODEL_DIR STEPS GROUP_SIZE MAX_COMPLETION LR OPTIMIZER (sgd|adamw)
-        KL_COEF NP REWARD_FLOOR SEED TEMP OUT_JSONL SAVE_DIR"
+        KL_COEF NP REWARD_FLOOR SEED TEMPERATURE OUT_JSONL SAVE_DIR"
   (:require [genmlx.world.train :as train]
             [genmlx.world.train-reward :as tr]
             [clojure.string :as str]
@@ -70,14 +70,21 @@
 (def np          (envi "NP" 50))
 (def train-floor (envf "REWARD_FLOOR" -20.0))
 (def seed        (envi "SEED" 1))
-(def temp        (envf "TEMP" 0.9))
+(def temp        (envf "TEMPERATURE" 0.9)  ;; NOT "TEMP" — Bun honors TEMP as its temp-dir)
 (def out-jsonl   (env "OUT_JSONL" nil))
 (def save-dir    (env "SAVE_DIR" nil))
+;; Backward-phase memory diet (genmlx-y7qe): both chunk knobs count SEQUENCES
+;; per chunk over the batch dim. lm-head 1 = one [1,T,V] f32 logit block live
+;; at a time; forward 2 = value_and_grad over 2 sequences per pass with grad
+;; accumulation across passes. Defaults sized so group-8/completion-220 on the
+;; 9B stays above the 25 GB MemAvailable floor.
+(def lm-head-chunk (envi "LM_HEAD_CHUNK" 1))
+(def forward-chunk (envi "FORWARD_CHUNK" 2))
 
 (def grpo-cfg
   {:learning-rate lr :temperature temp :gradient-clip-norm 0.5
    :kl-coef kl-coef :loss-type :grpo :enable-thinking false
-   :lm-head-chunk-size 2 :forward-chunk-size 4
+   :lm-head-chunk-size lm-head-chunk :forward-chunk-size forward-chunk
    :group-size group-size :max-completion-length max-comp :seed seed
    :raw {:optimizerType optimizer}})
 
@@ -96,6 +103,7 @@
   (println "  model     :" model-dir)
   (println "  optimizer :" optimizer " lr:" lr " steps:" n-steps
            " group:" group-size " max-completion:" max-comp " seed:" seed)
+  (println "  mem-diet  : lm-head-chunk:" lm-head-chunk " forward-chunk:" forward-chunk)
   (let [t0 (.now js/Date)
         {:keys [loader family model-type]} (model-family model-dir)]
     (println "  family    :" (name family) " (model_type" model-type ")")
