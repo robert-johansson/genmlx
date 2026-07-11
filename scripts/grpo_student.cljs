@@ -8,9 +8,11 @@
    (world/train_reward.cljs, the Phase-1 seam); GRPO climbs it. This script is
    the REAL-student runner: same validated loop as world_train_reward_test
    Part B, parameterized by checkpoint. Default student = Ornith-1.0-9B-bf16
-   (dense qwen3_5, 9.41B — the biggest student that trains on this box; the
-   35B-A3B MoE is arithmetic-infeasible: dequantized bf16 master weights alone
-   ~70 GB, AdamW fp32 moments ~280 GB).
+   (dense qwen3_5, 9.41B). The 35B-A3B MoE trains via the FROZEN-experts
+   path (genmlx-n32r): the non-expert stack (~3B params) dequantizes to bf16
+   masters while the ~32B of packed experts stay frozen behind gather_qmm —
+   full expert dequantize remains arithmetically infeasible (~64 GB masters
+   + ~64 GB grads). The model family is auto-detected from config.json.
 
    OPTIMIZER note (Thor 128 GB): AdamW's fp32 moments are 8 bytes/param —
    ~69 GB for the 9B text stack, peak ~110 GB: inside the dark-page danger
@@ -41,6 +43,17 @@
 (defn- envi [k d] (let [v (env k nil)] (if v (js/parseInt v 10) d)))
 (defn- envf [k d] (let [v (env k nil)] (if v (js/parseFloat v) d)))
 (defn- fx [x] (if (and (number? x) (js/isFinite x)) (.toFixed (js/Number x) 3) (str x)))
+
+(defn- model-family
+  "Detect the training family from config.json's model_type (genmlx-n32r):
+   qwen3_5_moe -> {:loader Qwen35MoeModel :family :qwen35-moe}, else the
+   dense default."
+  [dir]
+  (let [cfg (js/JSON.parse (.readFileSync fs (.join path dir "config.json") "utf8"))
+        mt  (or (.-model_type cfg) "qwen3_5")]
+    (if (str/starts-with? mt "qwen3_5_moe")
+      {:loader (.-Qwen35MoeModel gcore) :family :qwen35-moe :model-type mt}
+      {:loader (.-Qwen35Model gcore) :family :qwen35 :model-type mt})))
 
 (def default-9b
   (.join path (.homedir os)
@@ -83,8 +96,10 @@
   (println "  model     :" model-dir)
   (println "  optimizer :" optimizer " lr:" lr " steps:" n-steps
            " group:" group-size " max-completion:" max-comp " seed:" seed)
-  (let [t0 (.now js/Date)]
-    (p/let [model (.load (.-Qwen35Model gcore) model-dir)]
+  (let [t0 (.now js/Date)
+        {:keys [loader family model-type]} (model-family model-dir)]
+    (println "  family    :" (name family) " (model_type" model-type ")")
+    (p/let [model (.load loader model-dir)]
       (println "  loaded in" (js/Math.round (/ (- (.now js/Date) t0) 1000)) "s;"
                "MemAvailable" (mem-mb) "MB")
       (p/let
@@ -92,7 +107,7 @@
                                              {:reward-floor train-floor :n-particles np})
          prompts   (tr/task->prompts tr/gaussian-mean-task)
          history
-         (train/with-trainer model grpo-cfg
+         (train/with-trainer model grpo-cfg {:family family}
            (fn [trainer]
              (p/loop [step 0, hist []]
                (if (= step n-steps)
