@@ -1021,7 +1021,14 @@
 (def ^:private jsc
   (when (exists? js/Bun) (js/require "bun:jsc")))
 
-(defn jsc-cleanup! []
+(defn jsc-cleanup!
+  "Synchronously collect dead MxArray wrappers (Bun/JSC full GC + finalizer
+   drain) so their native buffers return to the MLX pool. The LIGHT boundary
+   helper for synchronous hot loops that never yield to the event loop (where
+   finalizers otherwise cannot run — e.g. the token decode loop, genmlx-12w4):
+   unlike force-gc! it does NOT drop the MLX buffer cache or compile cache, so
+   freed buffers stay poolable for the next iteration. No-op off Bun."
+  []
   (when jsc
     (.releaseWeakRefs jsc)
     (.drainMicrotasks jsc)

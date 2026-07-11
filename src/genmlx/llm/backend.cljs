@@ -833,12 +833,26 @@
      :max-tokens     — maximum new tokens (default 100)
      :temperature    — sampling temperature (default 0, greedy argmax)
      :seed           — PRNG seed for reproducible sampling (optional)
-     :system-prompt  — optional system message (default 'You are a helpful assistant.')"
+     :system-prompt  — optional system message (default 'You are a helpful assistant.')
+     :sweep-every    — sweep dead MLX wrappers every N decoded tokens (default
+                       32; 0/nil disables). The decode loop is SYNCHRONOUS — it
+                       never yields to the event loop for the whole sample, so
+                       Bun finalizers (the only thing that frees dead MxArray
+                       buffers) cannot run; on the owned CLJS forward the
+                       per-token wrapped intermediates then stay live for the
+                       entire sample (~0.1 GB/token on the 35B-A3B — enough to
+                       cross the Thor kill floor mid-sample on the 8-bit arm,
+                       genmlx-12w4). The in-loop mx/jsc-cleanup! bounds that
+                       accumulation to N tokens' worth without dropping the
+                       MLX buffer pool (unlike force-gc!, whose cache clear
+                       would thrash the decode allocator)."
   ([model-map prompt] (generate-text-raw+ model-map prompt {}))
-  ([{:keys [model tokenizer type]} prompt {:keys [max-tokens temperature seed system-prompt]
+  ([{:keys [model tokenizer type]} prompt {:keys [max-tokens temperature seed system-prompt
+                                                  sweep-every]
                                           :or {max-tokens 100
                                                temperature 0
-                                               system-prompt "You are a helpful assistant."}}]
+                                               system-prompt "You are a helpful assistant."
+                                               sweep-every 32}}]
    (let [t0 (.now js/Date)
          chat-str (render-chat [{:role "system" :content system-prompt}
                                 {:role "user" :content prompt}]
@@ -878,8 +892,11 @@
              (let [[tok-id next-rk] (pick logits rk)]
                (if (= tok-id eos-id)
                  (finish acc)
-                 (recur (inc i) (conj acc tok-id)
-                        (forward-step model tok-id) next-rk)))))
+                 (do (when (and sweep-every (pos? sweep-every)
+                                (zero? (mod (inc i) sweep-every)))
+                       (mx/jsc-cleanup!))
+                     (recur (inc i) (conj acc tok-id)
+                            (forward-step model tok-id) next-rk))))))
          (finally
            (reset-cache! model)))))))
 
