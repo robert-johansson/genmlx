@@ -70,7 +70,8 @@
 (def np          (envi "NP" 50))
 (def train-floor (envf "REWARD_FLOOR" -20.0))
 (def seed        (envi "SEED" 1))
-(def temp        (envf "TEMPERATURE" 0.9)  ;; NOT "TEMP" — Bun honors TEMP as its temp-dir)
+;; NOT "TEMP" — Bun honors TEMP as its temp-dir
+(def temp        (envf "TEMPERATURE" 0.9))
 (def out-jsonl   (env "OUT_JSONL" nil))
 (def save-dir    (env "SAVE_DIR" nil))
 ;; Backward-phase memory diet (genmlx-y7qe): both chunk knobs count SEQUENCES

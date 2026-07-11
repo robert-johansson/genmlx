@@ -64,7 +64,8 @@
 (def model-dir     (env "MODEL_DIR" nil))   ;; required for real runs — deliberately no default
 (def k-samples     (envi "K" 4))
 (def seed          (envi "SEED" 42))
-(def temp          (envf "TEMPERATURE" 0.8)  ;; NOT "TEMP" — Bun honors TEMP as its temp-dir (a bunx cache landed in ./0.8/ once))
+;; NOT "TEMP" — Bun honors TEMP as its temp-dir (a bunx cache landed in ./0.8/ once)
+(def temp          (envf "TEMPERATURE" 0.8))
 (def max-tokens    (envi "MAX_TOKENS" 512))
 (def greedy-first? (= "1" (env "GREEDY_FIRST" "1")))
 (def task-subset   (when-let [s (env "TASKS" nil)]
